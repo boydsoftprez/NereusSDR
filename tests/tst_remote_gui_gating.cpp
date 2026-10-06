@@ -753,10 +753,11 @@ private slots:
         QVERIFY(!labels.contains(QStringLiteral("Devices")));
         QCOMPARE(scopeOf(QStringLiteral("Microphone")), SetupScope::Mixed);
         QCOMPARE(scopeOf(QStringLiteral("Advanced")), SetupScope::Mixed);
-        // R-R3-44: this computer's VAX channels.
-        QCOMPARE(scopeOf(QStringLiteral("VAX")), SetupScope::ThisComputer);
-        // R-R3-42: this computer's TCI server.
-        QCOMPARE(scopeOf(QStringLiteral("TCI")), SetupScope::ThisComputer);
+        // R-R3-44 / R-R3-42 / R-SPK-21: this computer's VAX channels and TCI
+        // server, on one Digital modes page.
+        QCOMPARE(scopeOf(QStringLiteral("Digital modes")), SetupScope::ThisComputer);
+        QVERIFY(!labels.contains(QStringLiteral("VAX")));
+        QVERIFY(!labels.contains(QStringLiteral("TCI")));
         QCOMPARE(scopeOf(QStringLiteral("TCI Server")), SetupScope::ThisComputer);
     }
 
@@ -1859,7 +1860,7 @@ private slots:
         dialog.setTransmitPermitted(false, QStringLiteral("Remote transmit is unavailable"));
         auto* const localNotice = dialog.findChild<QLabel*>(QStringLiteral("setupLocalUnavailable"));
         QVERIFY(localNotice != nullptr);
-        for (const QString& label : {QStringLiteral("VAX"), QStringLiteral("Advanced")}) {
+        for (const QString& label : {QStringLiteral("Digital modes"), QStringLiteral("Advanced")}) {
             const int handOutsBefore = remote.localDspHandOutCount();
             dialog.selectPage(label);
             QWidget* const page = dialog.realizedPageForTest(label);
@@ -1870,7 +1871,7 @@ private slots:
             QVERIFY2(localNotice->isHidden(), qPrintable(label));
         }
 
-        QWidget* const vaxPage = dialog.realizedPageForTest(QStringLiteral("VAX"));
+        QWidget* const vaxPage = dialog.realizedPageForTest(QStringLiteral("Digital modes"));
         const QList<QLabel*> consumers = vaxPage->findChildren<QLabel*>(QStringLiteral("vaxConsumerLabel"));
         QCOMPARE(consumers.size(), 4);
         for (QLabel* consumer : consumers) {
@@ -1917,8 +1918,8 @@ private slots:
         RadioModel remote(RadioModel::Role::Remote);
         SetupDialog dialog(&remote);
         dialog.setReceiverAudioNote(RemoteReceiverAudioNote::OpusChosen);  // before the page exists
-        dialog.selectPage(QStringLiteral("VAX"));
-        QWidget* const page = dialog.realizedPageForTest(QStringLiteral("VAX"));
+        dialog.selectPage(QStringLiteral("Digital modes"));
+        QWidget* const page = dialog.realizedPageForTest(QStringLiteral("Digital modes"));
         QVERIFY(page != nullptr);
         auto* const note = page->findChild<QLabel*>(QStringLiteral("vaxCompressedAudioNote"));
         QVERIFY(note != nullptr);
@@ -1932,8 +1933,8 @@ private slots:
 
         RadioModel local;
         SetupDialog localDialog(&local);
-        localDialog.selectPage(QStringLiteral("VAX"));
-        QWidget* const localPage = localDialog.realizedPageForTest(QStringLiteral("VAX"));
+        localDialog.selectPage(QStringLiteral("Digital modes"));
+        QWidget* const localPage = localDialog.realizedPageForTest(QStringLiteral("Digital modes"));
         QVERIFY(localPage != nullptr);
         auto* const localNote = localPage->findChild<QLabel*>(QStringLiteral("vaxCompressedAudioNote"));
         QVERIFY(localNote != nullptr);
@@ -1964,8 +1965,8 @@ private slots:
         current = RemoteReceiverAudioNote::OpusChosen;
         auto* dialog = new SetupDialog(&remote, &root);
         MainWindow::seedReceiverAudioNote(dialog, source);
-        dialog->selectPage(QStringLiteral("VAX"));
-        QWidget* const page = dialog->realizedPageForTest(QStringLiteral("VAX"));
+        dialog->selectPage(QStringLiteral("Digital modes"));
+        QWidget* const page = dialog->realizedPageForTest(QStringLiteral("Digital modes"));
         QVERIFY(page != nullptr);
         auto* const note = page->findChild<QLabel*>(QStringLiteral("vaxCompressedAudioNote"));
         QVERIFY(note != nullptr);
@@ -2071,7 +2072,7 @@ private slots:
         SetupDialog dialog(&remote);
         dialog.setTransmitPermitted(false, QStringLiteral("Remote transmit is unavailable"));
         const int handOutsBefore = remote.localDspHandOutCount();
-        for (const char* label : {"TCI", "TCI Server"}) {
+        for (const char* label : {"Digital modes", "TCI Server"}) {
             const QString name = QString::fromLatin1(label);
             dialog.selectPage(name);
             QWidget* const page = dialog.realizedPageForTest(name);
@@ -2211,7 +2212,7 @@ private slots:
         SetupDialog dialog(&local);
         auto* const localNotice = dialog.findChild<QLabel*>(QStringLiteral("setupLocalUnavailable"));
         QVERIFY(localNotice != nullptr);
-        for (const char* label : {"Outputs", "Microphone", "VAX", "TCI", "Advanced"}) {
+        for (const char* label : {"Outputs", "Microphone", "Digital modes", "Advanced"}) {
             const QString name = QString::fromLatin1(label);
             dialog.selectPage(name);
             QWidget* const page = dialog.realizedPageForTest(name);

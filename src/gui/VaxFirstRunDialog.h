@@ -71,7 +71,7 @@ signals:
 
     // Scenario A, B: user clicked "Customize…" / "Why do I need this?" link.
     // Sub-Phase 12 wires this to SetupDialog::selectPage(pageLabel).
-    // pageLabel is "VAX" — the Audio → VAX left-nav item label.
+    // pageLabel is "Digital modes": the Audio left-nav item that holds VAX (R-SPK-21).
     void openSetupAudioPage(const QString& pageLabel);
 
     // Scenario B: user clicked "Open download page" for a vendor product.

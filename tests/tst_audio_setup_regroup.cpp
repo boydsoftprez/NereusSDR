@@ -37,6 +37,22 @@
 //      board's group or the placeholder in view.
 //  17. Mic gain is its own group, outside both sources.
 //  18. Captures of the Microphone page (as 10).
+//  19. Audio reads Outputs, Microphone, Digital modes, TX Profile,
+//      Advanced; VAX and TCI are one Digital modes page, ThisComputer.
+//  20. Each Digital modes and Advanced control appears once across Setup
+//      (four times for a VAX card's own), on its page.
+//  21. VAX cards on a Mac or Linux build: Device shows NereusSDR VAX n,
+//      no picker; Used by and Activity.
+//  22. VAX cards laid out for Windows: a cable picker, "On" greyed until a
+//      cable is picked; no Rename.
+//  23. No text or tooltip on the VAX section says PipeWire on a Mac or
+//      Windows layout.
+//  24. The VAX status line for each system.
+//  25. TCI: the sentence replaces the Master Mute box; Audio stream and
+//      Transmit keep every key; the Opus note still shows.
+//  26. Advanced holds Logs, Feature Flags and Reset, the DSP group hidden;
+//      the cables row is on Digital modes.
+//  27. Captures of Digital modes and Advanced (as 10).
 //
 // Modification history (NereusSDR):
 //   2026-10-06 - Written for the radio speaker and Audio Setup plan, Task 9.
@@ -45,6 +61,9 @@
 //   2026-10-06 - The Microphone page (Task 10): cases 11 to 18; case 2 no
 //                longer looks for a Devices page. J.J. Boyd (KG4VCF), with
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-06 - Digital modes and Advanced (Task 11): cases 19 to 27.
+//                J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -62,11 +81,13 @@
 #include <QScopeGuard>
 #include <QSignalSpy>
 #include <QSlider>
+#include <QSpinBox>
 #include <QStackedWidget>
 #include <QStyleFactory>
 #include <QToolButton>
 #include <QTreeWidget>
 
+#include "OperatorWording.h"
 #include "core/AppSettings.h"
 #include "core/AudioEngine.h"
 #include "core/RadioConnection.h"
@@ -74,7 +95,11 @@
 #include "core/session/IStationLink.h"
 #include "gui/HGauge.h"
 #include "gui/SetupDialog.h"
+#include "gui/setup/AudioAdvancedPage.h"
+#include "gui/setup/AudioDigitalModesPage.h"
 #include "gui/setup/AudioOutputsPage.h"
+#include "gui/setup/AudioTciPage.h"
+#include "gui/setup/AudioVaxPage.h"
 #include "gui/setup/AudioTxInputPage.h"
 #include "gui/setup/DeviceCard.h"
 #include "gui/setup/SoundSystemLine.h"
@@ -281,6 +306,42 @@ void saveCapture(QWidget* w, const QString& stem)
     const int scale = qRound(shot.devicePixelRatio());
     const QString path = QStringLiteral("%1/%2@%3x.png").arg(dir, stem).arg(scale);
     QVERIFY2(shot.save(path), qPrintable(path));
+}
+
+DetectedCable outputCable(const QString& name)
+{
+    return DetectedCable{VirtualCableProduct::VbCable, name, false, 0};
+}
+
+// Every text and tooltip a widget under `root` carries.
+QStringList textsUnder(QWidget* root)
+{
+    QStringList out;
+    QList<QWidget*> all = root->findChildren<QWidget*>();
+    all.prepend(root);
+    for (QWidget* w : all) {
+        out << w->toolTip();
+        if (auto* l = qobject_cast<QLabel*>(w)) {
+            out << l->text();
+        } else if (auto* b = qobject_cast<QAbstractButton*>(w)) {
+            out << b->text();
+        } else if (auto* g = qobject_cast<QGroupBox*>(w)) {
+            out << g->title();
+        } else if (auto* c = qobject_cast<QComboBox*>(w)) {
+            for (int i = 0; i < c->count(); ++i) {
+                out << c->itemText(i);
+            }
+        }
+    }
+    out.removeAll(QString());
+    return out;
+}
+
+// Lays VAX sections out for `system` until the guard goes.
+auto vaxSystem(SoundSystemLine::System system)
+{
+    AudioVaxPage::setSystemForTest(system);
+    return qScopeGuard([] { AudioVaxPage::setSystemForTest(std::nullopt); });
 }
 
 } // namespace
@@ -956,6 +1017,406 @@ private slots:
         QVERIFY(page.micGainSlider()->isEnabled());
     }
 
+    // 19. The Audio pages and their order.
+    void audioPagesAndOrder()
+    {
+        RadioModel model;
+        SetupDialog dialog(&model);
+        QTreeWidgetItem* audio = audioCategory(dialog);
+        QVERIFY(audio != nullptr);
+        QStringList order;
+        for (int i = 0; i < audio->childCount(); ++i) {
+            order << audio->child(i)->text(0);
+        }
+        QCOMPARE(order, (QStringList{QStringLiteral("Outputs"), QStringLiteral("Microphone"),
+                                     QStringLiteral("Digital modes"),
+                                     QStringLiteral("TX Profile"),
+                                     QStringLiteral("Advanced")}));
+
+        const QStringList labels = dialog.pageLabelsForTest();
+        QVERIFY(!labels.contains(QStringLiteral("VAX")));
+        QVERIFY(!labels.contains(QStringLiteral("TCI")));
+        QCOMPARE(labels.count(QStringLiteral("Digital modes")), 1);
+        const int digital = static_cast<int>(labels.indexOf(QStringLiteral("Digital modes")));
+        QCOMPARE(dialog.pageScopeAtForTest(digital), SetupScope::ThisComputer);
+
+        dialog.selectPage(QStringLiteral("Digital modes"));
+        auto* page = qobject_cast<AudioDigitalModesPage*>(
+            dialog.realizedPageForTest(QStringLiteral("Digital modes")));
+        QVERIFY(page != nullptr);
+        QCOMPARE(page->pageTitle(), QStringLiteral("Digital modes"));
+        QVERIFY(page->vaxSection() != nullptr);
+        QVERIFY(page->tciSection() != nullptr);
+
+        // VAX first, then TCI.
+        AudioDigitalModesPage shown(&model);
+        auto* vaxHeading = child<QLabel>(&shown, "digitalModesVaxHeading");
+        auto* tciHeading = child<QLabel>(&shown, "digitalModesTciHeading");
+        QVERIFY(vaxHeading && tciHeading);
+        shown.resize(760, 2400);
+        shown.show();
+        QApplication::processEvents();
+        const auto yOf = [&shown](QWidget* w) { return w->mapTo(&shown, QPoint(0, 0)).y(); };
+        QVERIFY(yOf(vaxHeading) < yOf(shown.vaxSection()));
+        QVERIFY(yOf(shown.vaxSection()) < yOf(tciHeading));
+        QVERIFY(yOf(tciHeading) < yOf(shown.tciSection()));
+    }
+
+    // 20. Every Digital modes and Advanced control once across Setup.
+    void digitalModesAndAdvancedControlsArePresentOnce()
+    {
+        RadioModel model;
+        SetupDialog dialog(&model);
+        dialog.realizeAllPagesForTest();
+        QWidget* digital = dialog.realizedPageForTest(QStringLiteral("Digital modes"));
+        QWidget* advanced = dialog.realizedPageForTest(QStringLiteral("Advanced"));
+        QVERIFY(digital && advanced);
+
+        for (const char* name : {"vaxIntro", "vaxSystemStatus", "vaxSystemStatusDot",
+                                 "vaxCompressedAudioNote", "detectedCablesLabel",
+                                 "detectedCablesRescan", "tciSeparateNote",
+                                 "tciAudioStreamGroup", "tciTransmitGroup",
+                                 "tciSliceARateCombo", "tciStreamFormatCombo",
+                                 "tciStreamChannelsCombo", "tciBlockSizeSpin",
+                                 "tciTxChannelCombo", "tciTxBufferingSpin"}) {
+            QVERIFY2(countNamed(&dialog, QLatin1String(name)) == 1, name);
+            QVERIFY2(countNamed(digital, QLatin1String(name)) == 1, name);
+        }
+        QCOMPARE(static_cast<int>(dialog.findChildren<VaxChannelCard*>().size()), 4);
+        for (const char* name : {"vaxEnable", "vaxFormat", "vaxConsumerLabel",
+                                 "vaxLevelGauge", "vaxCardStatus", "vaxRename",
+                                 "vaxCopyName"}) {
+            QVERIFY2(countNamed(&dialog, QLatin1String(name)) == 4, name);
+            QVERIFY2(countNamed(digital, QLatin1String(name)) == 4, name);
+        }
+        for (const char* name : {"audioAdvancedDspGroup", "audioAdvancedDspRate",
+                                 "audioAdvancedDspBlockSize", "audioAdvancedLogsGroup",
+                                 "openLogsFolder", "audioAdvancedFeatureFlagsGroup",
+                                 "sendIqToVax", "txMonitorToVax",
+                                 "muteVaxDuringTxOtherSlice", "audioAdvancedResetGroup",
+                                 "resetAllAudio"}) {
+            QVERIFY2(countNamed(&dialog, QLatin1String(name)) == 1, name);
+            QVERIFY2(countNamed(advanced, QLatin1String(name)) == 1, name);
+        }
+        // The old Master Mute box and cables group are gone everywhere.
+        for (QGroupBox* box : dialog.findChildren<QGroupBox*>()) {
+            QVERIFY(box->title() != QStringLiteral("Master Mute Behavior"));
+            QVERIFY(box->title() != QStringLiteral("Detected Virtual Cables"));
+        }
+    }
+
+    // 21. A Mac or Linux layout names the channel's own device.
+    void vaxCardsNameTheirDeviceOffWindows()
+    {
+        for (SoundSystemLine::System system :
+             {SoundSystemLine::System::Mac, SoundSystemLine::System::Linux}) {
+            const auto restore = vaxSystem(system);
+            AudioVaxPage page(nullptr);
+            QCOMPARE(countNamed(&page, QStringLiteral("vaxDevicePicker")), 0);
+            for (int ch = 1; ch <= 4; ++ch) {
+                VaxChannelCard* card = page.channelCard(ch);
+                QVERIFY(card != nullptr);
+                auto* device = child<QLabel>(card, "vaxDeviceName");
+                QVERIFY(device != nullptr);
+                QCOMPARE(device->text(), QStringLiteral("NereusSDR VAX %1").arg(ch));
+                QVERIFY(child<QCheckBox>(card, "vaxEnable")->isEnabled());
+                QVERIFY(child<QPushButton>(card, "vaxRename")->isEnabled());
+                QVERIFY(child<QLabel>(card, "vaxCardStatus")->isHidden());
+            }
+            QStringList rows;
+            for (QLabel* l : page.channelCard(1)->findChildren<QLabel*>()) {
+                rows << l->text();
+            }
+            QVERIFY(rows.contains(QStringLiteral("Device:")));
+            QVERIFY(rows.contains(QStringLiteral("Format:")));
+            QVERIFY(rows.contains(QStringLiteral("Used by:")));
+            QVERIFY(rows.contains(QStringLiteral("Activity:")));
+            QVERIFY(!rows.contains(QStringLiteral("Level:")));
+            QVERIFY(!rows.contains(QStringLiteral("Exposed to system as:")));
+            QCOMPARE(page.introText(system), child<QLabel>(&page, "vaxIntro")->text());
+        }
+    }
+
+    // 22. A Windows layout picks a cable per channel; "On" waits for it.
+    void vaxCardsPickACableOnWindows()
+    {
+        const auto restore = vaxSystem(SoundSystemLine::System::Windows);
+        AudioVaxPage page(nullptr);
+        page.setDetectedCablesForTest({outputCable(QStringLiteral("CABLE Input")),
+                                       outputCable(QStringLiteral("CABLE-A Input")),
+                                       DetectedCable{VirtualCableProduct::VbCable,
+                                                     QStringLiteral("CABLE Output"), true, 0}});
+        VaxChannelCard* card = page.channelCard(1);
+        QCOMPARE(countNamed(&page, QStringLiteral("vaxDeviceName")), 0);
+        auto* picker = child<QComboBox>(card, "vaxDevicePicker");
+        QVERIFY(picker != nullptr);
+        // "(pick a cable)" and the two output cables; the input end is not offered.
+        QCOMPARE(picker->count(), 3);
+        QCOMPARE(picker->currentIndex(), 0);
+        auto* on = child<QCheckBox>(card, "vaxEnable");
+        QVERIFY(!on->isEnabled());
+        QCOMPARE(on->toolTip(), QStringLiteral("Pick a cable first."));
+        auto* line = child<QLabel>(card, "vaxCardStatus");
+        QVERIFY(!line->isHidden());
+        QCOMPARE(line->text(), QStringLiteral("Pick a cable first."));
+        QVERIFY(!child<QPushButton>(card, "vaxRename")->isEnabled());
+        QVERIFY(!child<QPushButton>(card, "vaxCopyName")->isEnabled());
+
+        picker->setCurrentIndex(1);
+        emit picker->activated(1);
+        QCOMPARE(card->currentDeviceName(), QStringLiteral("CABLE Input"));
+        QCOMPARE(AppSettings::instance()
+                     .value(QStringLiteral("audio/Vax1/DeviceName")).toString(),
+                 QStringLiteral("CABLE Input"));
+        QVERIFY(on->isEnabled());
+        QVERIFY(line->isHidden());
+        QVERIFY(child<QPushButton>(card, "vaxCopyName")->isEnabled());
+        QCOMPARE(picker->currentText(), QStringLiteral("CABLE Input"));
+
+        // Back to no cable.
+        picker->setCurrentIndex(0);
+        emit picker->activated(0);
+        QVERIFY(card->currentDeviceName().isEmpty());
+        QVERIFY(!on->isEnabled());
+
+        // The status line and cables row.
+        QCOMPARE(page.statusLineText(), QStringLiteral("2 virtual cables found."));
+        QVERIFY(!page.statusLineShowsProblem());
+        QVERIFY(page.detectedCablesText().startsWith(QStringLiteral("Detected virtual cables: 3 cables")));
+        page.setDetectedCablesForTest({});
+        QCOMPARE(page.statusLineText(),
+                 QStringLiteral("No virtual cable found. Install one, then click Rescan."));
+        QVERIFY(page.statusLineShowsProblem());
+        QCOMPARE(page.detectedCablesText(), QStringLiteral("Detected virtual cables: None."));
+    }
+
+    // 23. No PipeWire on a Mac or Windows layout.
+    void vaxSectionSaysNoPipeWireOffLinux()
+    {
+        for (SoundSystemLine::System system :
+             {SoundSystemLine::System::Mac, SoundSystemLine::System::Windows}) {
+            const auto restore = vaxSystem(system);
+            AudioVaxPage page(nullptr);
+            page.setDetectedCablesForTest({outputCable(QStringLiteral("CABLE Input"))});
+            for (const QString& text : textsUnder(&page)) {
+                QVERIFY2(!text.contains(QLatin1String("PipeWire"), Qt::CaseInsensitive),
+                         qPrintable(text));
+            }
+        }
+        // Linux names its own sound system.
+        const auto restore = vaxSystem(SoundSystemLine::System::Linux);
+        AudioVaxPage page(nullptr);
+        QVERIFY(child<QPushButton>(page.channelCard(1), "vaxCopyName")
+                    ->toolTip().contains(QLatin1String("nereussdr.vax-1")));
+    }
+
+    // 24. The status line for each system.
+    void vaxStatusTexts_data()
+    {
+        QTest::addColumn<int>("system");
+        QTest::addColumn<int>("backend");
+        QTest::addColumn<int>("cables");
+        QTest::addColumn<bool>("failed");
+        QTest::addColumn<bool>("open");
+        QTest::addColumn<bool>("anyOn");
+        QTest::addColumn<QString>("text");
+        QTest::addColumn<bool>("problem");
+        const int mac = static_cast<int>(SoundSystemLine::System::Mac);
+        const int win = static_cast<int>(SoundSystemLine::System::Windows);
+        const int lin = static_cast<int>(SoundSystemLine::System::Linux);
+        const int pw = static_cast<int>(LinuxAudioBackend::PipeWire);
+        const int pactl = static_cast<int>(LinuxAudioBackend::Pactl);
+        const int none = static_cast<int>(LinuxAudioBackend::None);
+        QTest::newRow("mac off") << mac << none << 0 << false << false << false
+                                 << QStringLiteral("No VAX channel is on.") << false;
+        QTest::newRow("mac loaded") << mac << none << 0 << false << true << true
+                                    << QStringLiteral("The NereusSDR VAX driver is loaded.") << false;
+        QTest::newRow("mac other devices") << mac << none << 0 << false << false << true
+            << QStringLiteral("The channels that are on use the devices shown below.") << false;
+        QTest::newRow("mac failed") << mac << none << 0 << true << false << true
+            << QStringLiteral("The NereusSDR VAX driver did not load. Allow it in System "
+                              "Settings > Privacy & Security or reinstall NereusSDR, then "
+                              "restart NereusSDR.") << true;
+        QTest::newRow("win one") << win << none << 1 << false << false << false
+                                 << QStringLiteral("1 virtual cable found.") << false;
+        QTest::newRow("win none") << win << none << 0 << false << false << false
+            << QStringLiteral("No virtual cable found. Install one, then click Rescan.") << true;
+        QTest::newRow("linux pipewire") << lin << pw << 0 << false << true << true
+            << QStringLiteral("VAX devices are made through PipeWire.") << false;
+        QTest::newRow("linux pactl") << lin << pactl << 0 << false << false << false
+            << QStringLiteral("VAX devices are made through PulseAudio (pactl).") << false;
+        QTest::newRow("linux none") << lin << none << 0 << false << false << false
+            << QStringLiteral("No sound system is running, so the VAX devices cannot be made.")
+            << true;
+        QTest::newRow("linux failed") << lin << pw << 0 << true << false << true
+            << QStringLiteral("A VAX device could not be made. Check that PipeWire or "
+                              "PulseAudio is running, then turn the channel off and on.")
+            << true;
+    }
+
+    void vaxStatusTexts()
+    {
+        QFETCH(int, system);
+        QFETCH(int, backend);
+        QFETCH(int, cables);
+        QFETCH(bool, failed);
+        QFETCH(bool, open);
+        QFETCH(bool, anyOn);
+        QFETCH(QString, text);
+        QFETCH(bool, problem);
+        AudioVaxPage::StatusInputs in;
+        in.system = static_cast<SoundSystemLine::System>(system);
+        in.linuxBackend = static_cast<LinuxAudioBackend>(backend);
+        in.cablesFound = cables;
+        in.ownDeviceFailed = failed;
+        in.ownDeviceOpen = open;
+        in.anyOn = anyOn;
+        QCOMPARE(AudioVaxPage::statusText(in), text);
+        QCOMPARE(AudioVaxPage::statusIsProblem(in), problem);
+        QVERIFY2(OperatorWording::isPlain(text), qPrintable(text));
+        // A Mac card whose own device did not open says so on its line.
+        if (in.system == SoundSystemLine::System::Mac && failed) {
+            const auto restore = vaxSystem(SoundSystemLine::System::Mac);
+            AudioVaxPage page(nullptr);
+            VaxChannelCard* card = page.channelCard(1);
+            child<QCheckBox>(card, "vaxEnable")->setChecked(true);
+            card->setBusOpen(false);
+            QCOMPARE(page.statusLineText(), text);
+            QVERIFY(page.statusLineShowsProblem());
+            QCOMPARE(child<QLabel>(card, "vaxCardStatus")->text(),
+                     QStringLiteral("Not available until the VAX driver is allowed (see above)."));
+            QVERIFY(!child<QLabel>(card, "vaxCardStatus")->isHidden());
+            QCOMPARE(card->statusLineText(),
+                     QStringLiteral("Not available until the VAX driver is allowed (see above)."));
+        }
+    }
+
+    // 25. TCI: one sentence, two groups, every key, and the Opus note.
+    void tciSectionKeepsItsKeys()
+    {
+        auto& s = AppSettings::instance();
+        const QStringList keys{QStringLiteral("TciSliceA_OutputSampleRate"),
+                               QStringLiteral("TciAudioStreamSampleType"),
+                               QStringLiteral("TciAudioStreamChannels"),
+                               QStringLiteral("TciAudioStreamSamples"),
+                               QStringLiteral("TciTxChannel"),
+                               QStringLiteral("TciTxStreamBufferingMs")};
+        QMap<QString, QVariant> saved;
+        for (const QString& k : keys) {
+            if (s.contains(k)) {
+                saved.insert(k, s.value(k));
+            }
+        }
+        const auto putBack = qScopeGuard([&] {
+            for (const QString& k : keys) {
+                s.remove(k);
+                if (saved.contains(k)) {
+                    s.setValue(k, saved.value(k));
+                }
+            }
+        });
+        for (const QString& k : keys) {
+            s.remove(k);
+        }
+        s.setValue(QStringLiteral("TciSliceA_OutputSampleRate"), QStringLiteral("96000"));
+        s.setValue(QStringLiteral("TciAudioStreamSampleType"), QStringLiteral("Int16"));
+        s.setValue(QStringLiteral("TciAudioStreamChannels"), 1);
+        s.setValue(QStringLiteral("TciAudioStreamSamples"), 512);
+        s.setValue(QStringLiteral("TciTxChannel"), QStringLiteral("Left"));
+        s.setValue(QStringLiteral("TciTxStreamBufferingMs"), 80);
+
+        RadioModel model;
+        AudioTciPage tci(&model);
+        auto* note = child<QLabel>(&tci, "tciSeparateNote");
+        QVERIFY(note != nullptr);
+        QCOMPARE(note->text(),
+                 QStringLiteral("TCI audio is separate from the PC and radio speaker volumes; "
+                                "muting either one does not mute TCI."));
+        QVERIFY(OperatorWording::isPlain(note->text()));
+        auto* stream = child<QGroupBox>(&tci, "tciAudioStreamGroup");
+        auto* tx = child<QGroupBox>(&tci, "tciTransmitGroup");
+        QVERIFY(stream && tx);
+        QCOMPARE(stream->title(), QStringLiteral("Audio stream"));
+        QCOMPARE(tx->title(), QStringLiteral("Transmit"));
+        QCOMPARE(static_cast<int>(tci.findChildren<QGroupBox*>().size()), 2);
+
+        auto* rate = child<QComboBox>(stream, "tciSliceARateCombo");
+        auto* format = child<QComboBox>(stream, "tciStreamFormatCombo");
+        auto* channels = child<QComboBox>(stream, "tciStreamChannelsCombo");
+        auto* block = child<QSpinBox>(stream, "tciBlockSizeSpin");
+        auto* txChannel = child<QComboBox>(tx, "tciTxChannelCombo");
+        auto* buffering = child<QSpinBox>(tx, "tciTxBufferingSpin");
+        QVERIFY(rate && format && channels && block && txChannel && buffering);
+        QCOMPARE(rate->currentText(), QStringLiteral("96000"));
+        QCOMPARE(format->currentText(), QStringLiteral("Int16"));
+        QCOMPARE(channels->currentData().toInt(), 1);
+        QCOMPARE(block->value(), 512);
+        QCOMPARE(txChannel->currentText(), QStringLiteral("Left"));
+        QCOMPARE(buffering->value(), 80);
+        QStringList streamTexts = textsUnder(stream);
+        QVERIFY(streamTexts.contains(QStringLiteral("Slices C and D are not available over TCI.")));
+
+        rate->setCurrentIndex(rate->findText(QStringLiteral("192000")));
+        format->setCurrentIndex(format->findText(QStringLiteral("Float32")));
+        channels->setCurrentIndex(channels->findData(2));
+        block->setValue(1024);
+        txChannel->setCurrentIndex(txChannel->findText(QStringLiteral("Both")));
+        buffering->setValue(120);
+        QCOMPARE(s.value(QStringLiteral("TciSliceA_OutputSampleRate")).toString(),
+                 QStringLiteral("192000"));
+        QCOMPARE(s.value(QStringLiteral("TciAudioStreamSampleType")).toString(),
+                 QStringLiteral("Float32"));
+        QCOMPARE(s.value(QStringLiteral("TciAudioStreamChannels")).toInt(), 2);
+        QCOMPARE(s.value(QStringLiteral("TciAudioStreamSamples")).toInt(), 1024);
+        QCOMPARE(s.value(QStringLiteral("TciTxChannel")).toString(), QStringLiteral("Both"));
+        QCOMPARE(s.value(QStringLiteral("TciTxStreamBufferingMs")).toInt(), 120);
+
+        // The Opus note shows on Digital modes in a remote window.
+        RadioModel remote(RadioModel::Role::Remote);
+        SetupDialog dialog(&remote);
+        dialog.setReceiverAudioNote(RemoteReceiverAudioNote::OpusChosen);
+        dialog.selectPage(QStringLiteral("Digital modes"));
+        QWidget* page = dialog.realizedPageForTest(QStringLiteral("Digital modes"));
+        QVERIFY(page != nullptr);
+        auto* opus = child<QLabel>(page, "vaxCompressedAudioNote");
+        QVERIFY(opus != nullptr);
+        QVERIFY(!opus->isHidden());
+    }
+
+    // 26. Advanced: Logs, Feature Flags, Reset; DSP hidden; no cables row.
+    void advancedHoldsLogsFlagsAndReset()
+    {
+        RadioModel model;
+        AudioAdvancedPage page(&model);
+        page.resize(760, 900);
+        page.show();
+        QApplication::processEvents();
+        auto* dsp = child<QGroupBox>(&page, "audioAdvancedDspGroup");
+        auto* logs = child<QGroupBox>(&page, "audioAdvancedLogsGroup");
+        auto* flags = child<QGroupBox>(&page, "audioAdvancedFeatureFlagsGroup");
+        auto* reset = child<QGroupBox>(&page, "audioAdvancedResetGroup");
+        QVERIFY(dsp && logs && flags && reset);
+        QVERIFY(dsp->isHidden());
+        QVERIFY(!logs->isHidden());
+        QVERIFY(!reset->isHidden());
+        auto* open = child<QPushButton>(logs, "openLogsFolder");
+        QVERIFY(open != nullptr);
+        QCOMPARE(open->text(), QStringLiteral("Open logs folder"));
+        QVERIFY(open->isEnabled());
+        QVERIFY(child<QPushButton>(reset, "resetAllAudio") != nullptr);
+        QVERIFY(logs->mapTo(&page, QPoint(0, 0)).y() < reset->mapTo(&page, QPoint(0, 0)).y());
+        QCOMPARE(countNamed(&page, QStringLiteral("detectedCablesLabel")), 0);
+        QCOMPARE(countNamed(&page, QStringLiteral("detectedCablesRescan")), 0);
+        for (QAbstractButton* b : page.findChildren<QAbstractButton*>()) {
+            QVERIFY(b->text() != QStringLiteral("Rescan"));
+        }
+        for (const QString& text : textsUnder(&page)) {
+            QVERIFY2(!text.contains(QLatin1String("cable"), Qt::CaseInsensitive)
+                         || text.contains(QLatin1String("This will clear")),
+                     qPrintable(text));
+        }
+    }
+
     // 10. Captures (NEREUS_AUDIO_SETUP_CAPTURE_DIR).
     void captures()
     {
@@ -1067,6 +1528,74 @@ private slots:
             remote.setStationConnectionState(ConnectionState::Connected);
             shootMic(remote, QStringLiteral("microphone-remote-folded"), false, QString());
             shootMic(remote, QStringLiteral("microphone-remote-unfolded"), true, QString());
+        }
+        // 27. Digital modes and Advanced, under the same style.
+        auto shootDigital = [](RadioModel& model, const QString& stem,
+                               const QVector<DetectedCable>* cables,
+                               RemoteReceiverAudioNote note) {
+            AudioDigitalModesPage page(&model);
+            if (cables != nullptr) {
+                page.vaxSection()->setDetectedCablesForTest(*cables);
+            }
+            page.setReceiverAudioNote(note);
+            page.resize(760, 2300);
+            page.show();
+            QApplication::processEvents();
+            saveCapture(&page, stem);
+        };
+        {
+            RadioModel model;
+            const QVector<DetectedCable> none;
+            shootDigital(model, QStringLiteral("digital-modes-mac"), &none,
+                         RemoteReceiverAudioNote::None);
+        }
+        {
+            const auto restore = vaxSystem(SoundSystemLine::System::Mac);
+            RadioModel model;
+            AudioDigitalModesPage page(&model);
+            VaxChannelCard* card = page.vaxSection()->channelCard(1);
+            child<QCheckBox>(card, "vaxEnable")->setChecked(true);
+            card->setBusOpen(false);
+            page.vaxSection()->setDetectedCablesForTest({});
+            page.resize(760, 2300);
+            page.show();
+            QApplication::processEvents();
+            QCOMPARE(card->statusLineText(),
+                     QStringLiteral("Not available until the VAX driver is allowed (see above)."));
+            saveCapture(&page, QStringLiteral("digital-modes-mac-driver-failed"));
+            child<QCheckBox>(card, "vaxEnable")->setChecked(false);
+        }
+        {
+            const auto restore = vaxSystem(SoundSystemLine::System::Windows);
+            RadioModel model;
+            const QVector<DetectedCable> none;
+            shootDigital(model, QStringLiteral("digital-modes-windows-no-cables"), &none,
+                         RemoteReceiverAudioNote::None);
+            const QVector<DetectedCable> two{outputCable(QStringLiteral("CABLE Input")),
+                                             outputCable(QStringLiteral("CABLE-A Input"))};
+            shootDigital(model, QStringLiteral("digital-modes-windows-cables"), &two,
+                         RemoteReceiverAudioNote::None);
+        }
+        {
+            const auto restore = vaxSystem(SoundSystemLine::System::Linux);
+            RadioModel model;
+            const QVector<DetectedCable> none;
+            shootDigital(model, QStringLiteral("digital-modes-linux"), &none,
+                         RemoteReceiverAudioNote::None);
+        }
+        {
+            RadioModel remote(RadioModel::Role::Remote);
+            const QVector<DetectedCable> none;
+            shootDigital(remote, QStringLiteral("digital-modes-remote-opus"), &none,
+                         RemoteReceiverAudioNote::OpusChosen);
+        }
+        {
+            RadioModel model;
+            AudioAdvancedPage page(&model);
+            page.resize(760, 700);
+            page.show();
+            QApplication::processEvents();
+            saveCapture(&page, QStringLiteral("advanced"));
         }
     }
 };

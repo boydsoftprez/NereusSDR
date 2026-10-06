@@ -194,6 +194,11 @@
 //                section; the Devices page, whose microphone card moved
 //                there, is gone. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-06 - R-SPK-21, R-SPK-22, R-SPK-24 (radio speaker plan Task
+//                11): VAX and TCI are one "Digital modes" page, and Audio
+//                reads Outputs, Microphone, Digital modes, TX Profile,
+//                Advanced. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
 #include "SetupDialog.h"
@@ -225,6 +230,7 @@
 #include "setup/AudioTxInputPage.h"
 #include "setup/AudioVaxPage.h"
 #include "setup/AudioTciPage.h"
+#include "setup/AudioDigitalModesPage.h"
 #include "setup/AudioAdvancedPage.h"
 // DSP
 #include "setup/DspSetupPages.h"
@@ -1614,30 +1620,24 @@ void SetupDialog::buildTree()
         registerPage(audio, "Microphone", SetupScope::Mixed,  // I.1
                      [this] { return new AudioTxInputPage(m_model); }),
         /*nonTransmitPage=*/true);
+    // R-SPK-21 (Digital modes): VAX then TCI on one page.
     // R-R3-44: the VAX channels are this computer's in a remote window as in
     // a local one (a remote window feeds them from the Core's receiver
     // streams), and the page writes only this computer's audio/Vax* keys,
     // so it works in every window, connected or not.
-    registerPage(audio, "VAX", SetupScope::ThisComputer,
+    // R-R3-42: TCI configures the TCI server that runs on this computer, in
+    // a remote window as in a local one, and its keys are this computer's
+    // (SettingsScope "Tci"). It reaches no local DSP, so it works in a
+    // remote window, connected or not.
+    registerPage(audio, "Digital modes", SetupScope::ThisComputer,
                  [this] {
                      auto* vaxPage = new AudioVaxPage(m_model);
                      // R-R3-43 / R-R3-44: the compressed-audio note's state.
                      m_vaxPage = vaxPage;
                      vaxPage->setReceiverAudioNote(m_receiverAudioNote);
-                     return vaxPage;
+                     return new AudioDigitalModesPage(m_model, vaxPage,
+                                                      new AudioTciPage(m_model));
                  });
-    // R-R3-42: Audio > TCI configures the TCI server that runs on this
-    // computer, in a remote window as in a local one, and its keys are this
-    // computer's (SettingsScope "Tci"). It reaches no local DSP, so it
-    // works in a remote window, connected or not.
-    registerPage(audio, "TCI", SetupScope::ThisComputer,
-                 [this] { return new AudioTciPage(m_model); });
-    // R-R3-44: Mixed. Its VAX groups (VAX feedback tuning, the VAX flags,
-    // detected cables, Reset) are this computer's and work in a remote
-    // window; the DSP group writes the Core's audio/DspRate and
-    // audio/DspBlockSize and follows the Core's settings availability.
-    registerPage(audio, "Advanced", SetupScope::Mixed,
-                 [this] { return new AudioAdvancedPage(m_model); });
     // Phase 3M-1c J.3: TX Profile editor.
     //
     // R-R3-49 (parity Task 3): no longer held for remote transmit. In a
@@ -1665,6 +1665,13 @@ void SetupDialog::buildTree()
             m_model ? m_model->micProfileManager() : nullptr,
             m_model ? &m_model->transmitModel() : nullptr);
     }), /*nonTransmitPage=*/true);
+    // R-R3-44: Mixed. Its groups (Logs, the VAX flags, Reset) are this
+    // computer's and work in a remote window; the hidden DSP group writes
+    // the Core's audio/DspRate and audio/DspBlockSize and follows the
+    // Core's settings availability. R-SPK-21: last in Audio; the detected
+    // cables are on Digital modes.
+    registerPage(audio, "Advanced", SetupScope::Mixed,
+                 [this] { return new AudioAdvancedPage(m_model); });
 
     tick("Audio");
 

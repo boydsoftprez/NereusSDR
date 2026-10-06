@@ -29,16 +29,25 @@
 // Modification history (NereusSDR):
 //   2026-05-10 -- Phase 24 (Task 24.2): written by J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-06 -- R-SPK-21, R-SPK-22: J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code. The TCI section of Audio > Digital
+//                 modes: the Master Mute box becomes one sentence; the
+//                 settings sit in "Audio stream" and "Transmit" groups.
 // =================================================================
-
-#include "gui/SetupPage.h"
 
 #include <QCheckBox>
 #include <QComboBox>
 #include <QLabel>
 #include <QSpinBox>
+#include <QWidget>
+
+class QFormLayout;
+class QGroupBox;
+class QVBoxLayout;
 
 namespace NereusSDR {
+
+class RadioModel;
 
 // ---------------------------------------------------------------------------
 // AudioTciPage
@@ -47,9 +56,12 @@ namespace NereusSDR {
 //   - Per-slice output sample rate (Slice A)
 //   - Audio stream sample format + channel count + block size
 //   - TX audio direction + TX buffering
-//   - Read-only note explaining master-mute independence
+//   - A sentence that TCI audio is separate from the speaker volumes
+//
+// R-SPK-21: the TCI section of Setup > Audio > Digital modes, a plain
+// widget that AudioDigitalModesPage hosts (it owns the title and scroll).
 // ---------------------------------------------------------------------------
-class AudioTciPage : public SetupPage {
+class AudioTciPage : public QWidget {
     Q_OBJECT
 public:
     explicit AudioTciPage(RadioModel* model, QWidget* parent = nullptr);
@@ -67,11 +79,14 @@ private:
     QComboBox* m_txChannelCombo{nullptr};
     QSpinBox*  m_txBufferingSpin{nullptr};
 
+    QVBoxLayout* m_layout{nullptr};
+
     void buildUI();
-    void buildSampleRateGroup();
-    void buildFormatGroup();
-    void buildTxDirectionGroup();
-    void buildMasterMuteNoteGroup();
+    // "Audio stream" group rows.
+    void buildSampleRateGroup(QGroupBox* group, QFormLayout* form);
+    void buildFormatGroup(QGroupBox* group, QFormLayout* form);
+    // "Transmit" group rows.
+    void buildTxDirectionGroup(QGroupBox* group, QFormLayout* form);
 };
 
 } // namespace NereusSDR

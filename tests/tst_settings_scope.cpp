@@ -910,7 +910,8 @@ private slots:
     }
 
     // R-R3-44: Audio > VAX is a ThisComputer page, so the sweep above
-    // covers every key its class writes.
+    // covers every key its class writes. R-SPK-21: VAX and TCI are both on
+    // Audio > Digital modes.
     void vaxPageIsSweptAsThisComputers()
     {
         const QString root = QStringLiteral(NEREUS_SOURCE_DIR);
@@ -920,12 +921,13 @@ private slots:
             thisComputerPages(QString::fromUtf8(dialog.readAll()));
         bool found = false;
         for (const ThisComputerPage& page : pages) {
-            if (page.label == QStringLiteral("VAX")) {
+            if (page.label == QStringLiteral("Digital modes")) {
                 found = true;
                 QVERIFY(page.classes.contains(QStringLiteral("AudioVaxPage")));
+                QVERIFY(page.classes.contains(QStringLiteral("AudioTciPage")));
             }
         }
-        QVERIFY2(found, "Audio > VAX is not registered ThisComputer");
+        QVERIFY2(found, "Audio > Digital modes is not registered ThisComputer");
     }
 
     // iPhone app Task 19 (D40): DSP > Filter Presets is a Core page, and

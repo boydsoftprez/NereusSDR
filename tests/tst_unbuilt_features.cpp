@@ -933,7 +933,7 @@ private slots:
         GuiSessionCoordinator sessions;
         for (bool remote : {false, true}) {
             Hosts hosts(sessions, remote);
-            QWidget* page = hosts.page(QStringLiteral("TCI"));
+            QWidget* page = hosts.page(QStringLiteral("Digital modes"));
             QVERIFY2(page != nullptr, remote ? "remote" : "local");
             QVERIFY2(usableShown(page, QStringLiteral("tciStreamChannelsCombo")),
                      remote ? "remote" : "local");

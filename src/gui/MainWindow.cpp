@@ -604,6 +604,9 @@
 //   2026-10-06 - Radio speaker plan Task 6 (R-SPK-16, R-SPK-17): the title
 //                bar's RADIO group is handed this window's RadioModel.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-06 - Radio speaker plan Task 11 (R-SPK-21): Tools > VAX Audio
+//                opens Setup > Audio > Digital modes, which holds VAX now.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -11411,11 +11414,11 @@ void MainWindow::buildMenuBar()
         connect(tciAction, &QAction::triggered, this, &MainWindow::openTciSetupPage);
     }
     {
-        // R-R3-21: Setup > Audio > VAX, where the VAX channels are set up.
+        // R-R3-21: Setup > Audio > Digital modes (R-SPK-21), where the VAX channels are set up.
         QAction* daxAction = toolsMenu->addAction(QStringLiteral("&VAX Audio..."));
-        daxAction->setToolTip(QStringLiteral("Open Setup > Audio > VAX"));
+        daxAction->setToolTip(QStringLiteral("Open Setup > Audio > Digital modes"));
         connect(daxAction, &QAction::triggered, this,
-                [this]() { openSetupAtPage(QStringLiteral("VAX")); });
+                [this]() { openSetupAtPage(QStringLiteral("Digital modes")); });
     }
     {
         QAction* midiAction = toolsMenu->addAction(QStringLiteral("&MIDI Mapping..."));
@@ -17735,7 +17738,7 @@ void MainWindow::checkVaxFirstRun()
     });
 
     // Sub-Phase 12: wire "Customize…" / "Why do I need this?" → Setup → VAX.
-    // Opens (or raises) the Setup dialog and navigates to Audio → VAX.
+    // Opens (or raises) the Setup dialog and navigates to Audio → Digital modes.
     connect(dlg, &VaxFirstRunDialog::openSetupAudioPage, this,
             [this](const QString& pageLabel) {
         auto* dialog = createSetupDialog();
