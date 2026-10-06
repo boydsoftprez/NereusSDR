@@ -10,12 +10,15 @@ and no message. A checkout without every clone above it (a
 ``git worktree add`` under /private/tmp, or a machine with no deskhpsdr
 clone) could not commit a source or docs change, and nothing said why.
 
-Every clone is now required: the tag check compares ported comments with
-the upstream lines they cite, so a missing clone blocks the commit with a
-message naming it, rather than skipping the check or passing its cites as
-unchecked warnings.
+A commit that stages C or C++ now needs every clone: the tag check
+compares ported comments with the upstream lines they cite, so a missing
+clone blocks the commit with a message naming it, rather than skipping
+the check or passing its cites as unchecked warnings. Ported comments live
+only in C and C++ files, so a commit without any (docs, scripts) still
+goes through: it runs the check with the clones it finds, skips it without
+Thetis, and names what is missing.
 
-Each test runs the real hook against a staged docs-only change in a
+Each test runs the real hook against one staged file, C++ or docs, in a
 throwaway repository under ``tmp_path``. Every script the hook calls is a
 stub there, so the tests exercise only the hook's own control flow: the
 other gates exit 0 (CI runs the real ones as separate steps), and the
@@ -46,8 +49,13 @@ UPSTREAMS = {
 
 TAG_CHECK = "verify-inline-tag-preservation.py"
 SKIPPED = "[pre-commit] tag-preservation SKIPPED (NEREUS_SKIP_TAG_CHECK set)"
+DOCS_SKIPPED = "[pre-commit] tag-preservation SKIPPED (no Thetis clone found locally;"
+DOCS_PARTIAL = "[pre-commit] tag-preservation running without every upstream clone;"
 MISSING = "[pre-commit] BLOCKED: upstream clone missing"
 BLOCKED = "[pre-commit] BLOCKED: dropped developer-attribution tag"
+
+CXX = "src/Port.cpp"
+DOCS = "notes.md"
 
 PASSING_STUB = "import sys\nsys.exit(0)\n"
 TAG_CHECK_STUB = """\
@@ -68,8 +76,9 @@ def _env(**extra: str) -> dict[str, str]:
     return env
 
 
-def _checkout(tmp_path: Path, present=()) -> Path:
-    """A throwaway checkout with exactly the `present` clones beside it."""
+def _checkout(tmp_path: Path, present=(), staged: str = CXX) -> Path:
+    """A throwaway checkout with exactly the `present` clones beside it
+    and `staged` as the one staged change."""
     for name in present:
         (tmp_path / name).mkdir()
     repo = tmp_path / "NereusSDR"
@@ -80,8 +89,9 @@ def _checkout(tmp_path: Path, present=()) -> Path:
     for name in called:
         stub = TAG_CHECK_STUB if name == TAG_CHECK else PASSING_STUB
         (repo / "scripts" / name).write_text(stub)
-    (repo / "notes.md").write_text("docs-only change\n")
-    for args in (["init", "-q"], ["add", "notes.md"]):
+    (repo / staged).parent.mkdir(parents=True, exist_ok=True)
+    (repo / staged).write_text("// staged change\n")
+    for args in (["init", "-q"], ["add", staged]):
         _git(repo, *args)
 
     absent = [name for name in UPSTREAMS if name not in present]
@@ -130,7 +140,7 @@ def _describe(result: subprocess.CompletedProcess) -> str:
             f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}")
 
 
-def test_no_clones_blocks_and_names_every_one(tmp_path):
+def test_cxx_commit_with_no_clones_blocks_and_names_every_one(tmp_path):
     repo = _checkout(tmp_path)
     result, seen = _run_hook(repo)
     assert result.returncode == 1, _describe(result)
@@ -140,7 +150,7 @@ def test_no_clones_blocks_and_names_every_one(tmp_path):
 
 
 @pytest.mark.parametrize("missing", list(UPSTREAMS))
-def test_each_missing_clone_blocks_and_is_named(tmp_path, missing):
+def test_cxx_commit_with_a_missing_clone_blocks_and_names_it(tmp_path, missing):
     present = [name for name in UPSTREAMS if name != missing]
     repo = _checkout(tmp_path, present)
     result, seen = _run_hook(repo)
@@ -158,9 +168,53 @@ def test_skip_switch_still_skips_on_purpose(tmp_path):
     assert seen is None
 
 
+@pytest.mark.parametrize("staged", [CXX, "src/Port.h", "third_party/x.c"])
+def test_every_c_or_cxx_suffix_needs_the_clones(tmp_path, staged):
+    repo = _checkout(tmp_path, staged=staged)
+    result, seen = _run_hook(repo)
+    assert result.returncode == 1, _describe(result)
+    assert MISSING in result.stdout, _describe(result)
+    assert seen is None
+
+
+@pytest.mark.parametrize("missing", list(UPSTREAMS))
+def test_docs_commit_with_a_missing_clone_passes_and_names_it(tmp_path, missing):
+    present = [name for name in UPSTREAMS if name != missing]
+    repo = _checkout(tmp_path, present, staged=DOCS)
+    result, seen = _run_hook(repo)
+    assert result.returncode == 0, _describe(result)
+    assert MISSING not in result.stdout, _describe(result)
+    assert _named_missing(result) == {missing}, _describe(result)
+    if missing == "Thetis":
+        assert DOCS_SKIPPED in result.stdout, _describe(result)
+        assert seen is None, "the tag check ran without Thetis"
+    else:
+        assert DOCS_PARTIAL in result.stdout, _describe(result)
+        assert seen == _dirs(tmp_path, present), _describe(result)
+
+
+def test_docs_commit_with_no_clones_skips_and_names_every_one(tmp_path):
+    repo = _checkout(tmp_path, staged=DOCS)
+    result, seen = _run_hook(repo)
+    assert result.returncode == 0, _describe(result)
+    assert DOCS_SKIPPED in result.stdout, _describe(result)
+    assert _named_missing(result) == set(UPSTREAMS), _describe(result)
+    assert seen is None
+
+
+def test_docs_commit_with_some_clones_still_blocks_a_dropped_tag(tmp_path):
+    present = [name for name in UPSTREAMS if name != "mi0bot-Thetis"]
+    repo = _checkout(tmp_path, present, staged=DOCS)
+    result, seen = _run_hook(repo, tag_check_exit=1)
+    assert result.returncode == 1, _describe(result)
+    assert BLOCKED in result.stdout, _describe(result)
+    assert seen == _dirs(tmp_path, present)
+
+
+@pytest.mark.parametrize("staged", [CXX, DOCS])
 @pytest.mark.parametrize("tag_check_exit", [0, 1])
-def test_all_clones_present_keeps_strict_check(tmp_path, tag_check_exit):
-    repo = _checkout(tmp_path, list(UPSTREAMS))
+def test_all_clones_present_keeps_strict_check(tmp_path, tag_check_exit, staged):
+    repo = _checkout(tmp_path, list(UPSTREAMS), staged=staged)
     result, seen = _run_hook(repo, tag_check_exit)
     assert result.returncode == tag_check_exit, _describe(result)
     assert (BLOCKED in result.stdout) == (tag_check_exit != 0), _describe(result)
@@ -185,8 +239,8 @@ def test_worktree_elsewhere_finds_clones_beside_the_main_checkout(tmp_path):
     # Outside tmp_path, so no ancestor of the worktree holds the clones.
     worktree = tmp_path.parent / f"{tmp_path.name}-worktree"
     _git(repo, "worktree", "add", "-q", str(worktree))
-    (worktree / "more.md").write_text("another docs-only change\n")
-    _git(worktree, "add", "more.md")
+    (worktree / "src" / "More.cpp").write_text("// another change\n")
+    _git(worktree, "add", "src/More.cpp")
     result, seen = _run_hook(worktree)
     assert result.returncode == 0, _describe(result)
     assert seen == _dirs(tmp_path, UPSTREAMS), _describe(result)
