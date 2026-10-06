@@ -137,6 +137,10 @@ public:
     // change notifications are emitted for this wholesale replacement.
     QByteArray exportLocalXml(QString* error = nullptr) const;
     static bool validateLocalXml(const QByteArray& xml, QString* error = nullptr);
+    // The settings key an element name in the XML file stands for: the file
+    // writes "audio/DspRate" as <audio__s__DspRate>. The support bundle
+    // reads the file directly and checks keys, not element names.
+    static QString keyFromXmlTag(const QString& tag);
     bool importLocalXml(const QByteArray& xml, QString* error = nullptr);
 
     // Get/set top-level settings.

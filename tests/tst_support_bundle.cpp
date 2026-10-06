@@ -391,6 +391,40 @@ private slots:
         QVERIFY(entries.value(QStringLiteral("nereussdr.log")).contains("[REDACTED]"));
     }
 
+    void settingsKeepListMatchesEncodedKeysAndAudioDevices()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        SupportBundle::Inputs inputs = plantedInputs(dir);
+        // The settings file writes '/' in a key as "__s__" and ' ' as "__sp__".
+        writeText(inputs.settingsPath,
+                  QStringLiteral("<NereusSDR>"
+                                 "<audio__s__DspRate>48000</audio__s__DspRate>"
+                                 "<audio__s__Speakers__s__DriverApi>MME</audio__s__Speakers__s__DriverApi>"
+                                 "<audio__s__Speakers__s__DeviceName>Pat's Speakers</audio__s__Speakers__s__DeviceName>"
+                                 "<audio__s__Speakers__s__BufferSamples>256</audio__s__Speakers__s__BufferSamples>"
+                                 "<audio__s__Speakers__s__ExclusiveMode>False</audio__s__Speakers__s__ExclusiveMode>"
+                                 "<audio__s__Headphones__s__Enabled>True</audio__s__Headphones__s__Enabled>"
+                                 "<audio__s__Headphones__s__DriverApi>Pat Audio</audio__s__Headphones__s__DriverApi>"
+                                 "<audio__s__TxInput__s__SampleRate>abc</audio__s__TxInput__s__SampleRate>"
+                                 "<audio__s__TxInput__s__Channels>1</audio__s__TxInput__s__Channels>"
+                                 "</NereusSDR>"));
+        const QByteArray settings =
+            entriesOf(SupportBundle::buildCoreBundle(inputs)).value(QStringLiteral("settings.xml"));
+        QVERIFY(settings.contains("<audio__s__DspRate>48000</audio__s__DspRate>"));
+        QVERIFY(settings.contains("<audio__s__Speakers__s__DriverApi>MME</audio__s__Speakers__s__DriverApi>"));
+        QVERIFY(settings.contains("<audio__s__Speakers__s__BufferSamples>256</audio__s__Speakers__s__BufferSamples>"));
+        QVERIFY(settings.contains("<audio__s__Speakers__s__ExclusiveMode>False</audio__s__Speakers__s__ExclusiveMode>"));
+        QVERIFY(settings.contains("<audio__s__Headphones__s__Enabled>True</audio__s__Headphones__s__Enabled>"));
+        QVERIFY(settings.contains("<audio__s__TxInput__s__Channels>1</audio__s__TxInput__s__Channels>"));
+        // Device names, unknown driver names and malformed numbers stay out.
+        QVERIFY(!settings.contains("Pat"));
+        QVERIFY(!settings.contains("DeviceName"));
+        QVERIFY(!settings.contains("Headphones__s__DriverApi"));
+        QVERIFY(!settings.contains("abc"));
+        QCOMPARE(settings.count("<RedactedSetting>"), 3);
+    }
+
     void oversizedConfigurationIsOmittedAndReported()
     {
         QTemporaryDir dir;
