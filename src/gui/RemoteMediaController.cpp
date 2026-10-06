@@ -2,6 +2,9 @@
 // Modification history (NereusSDR):
 //   2026-10-04: Hold accepted Core waterfall levels in the remote codec window.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-04: Opt-in waterfall diagnostic binding, row and applied extras
+//               provenance only; no routing changes. J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
 //   2026-10-04: Keep local PC microphone preview capture while unkeyed,
 //               independently of uplink admission; discard preview PCM.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -6567,6 +6570,10 @@ void RemoteMediaController::receiveDisplayExtras(const QByteArray& packet)
     if (d->transmittingPans.contains(binding.panId)) { return; }
     binding.widget->setCoreWaterfallLevels(decoded.frame.waterfallLevelsDbm->first,
                                            decoded.frame.waterfallLevelsDbm->second);
+    if (qEnvironmentVariableIntValue("NEREUS_TRACE_WF_STATE") == 1) {
+        binding.widget->m_wfExtrasDiagnostics = SpectrumWidget::WaterfallExtrasDiagnostics{
+            decoded.frame.endpointId, decoded.frame.contextGeneration, decoded.frame.encoderSequence};
+    }
 }
 
 RemoteDisplayTelemetry RemoteMediaController::displayTelemetry() const
@@ -6723,9 +6730,28 @@ void RemoteMediaController::presentDueDisplay()
                 continue;
             }
             const QPointer<SpectrumWidget> widget = it->second.widget;
+            const bool traceWaterfall = qEnvironmentVariableIntValue("NEREUS_TRACE_WF_STATE") == 1;
+            if (traceWaterfall) {
+                widget->m_wfDiagnosticStack = d->stack;
+                widget->m_wfDiagnosticPanId = it->second.panId;
+                widget->m_wfDiagnosticSliceId = it->second.slice ? it->second.slice->sliceIndex() : -1;
+                widget->m_wfDiagnosticStreamEpoch = it->second.observedStreamEpoch;
+            }
+            // Diagnostic metadata follows the existing queue insertion only.
+            // Synthesized blends/repeats do not carry source encoder sequences.
+            const auto recordQueuedProvenance = [&]() {
+                if (!traceWaterfall || !widget || widget->m_remoteRowQueue.isEmpty()) { return; }
+                auto& row = widget->m_remoteRowQueue.last().diagnostics;
+                row.presentationKind = static_cast<int>(item.kind);
+                row.encoderSequence = item.kind == RemoteDisplayPresenter::Kind::Frame
+                    ? std::optional<quint32>(item.frame.encoderSequence) : std::nullopt;
+                row.sliceId = widget->m_wfDiagnosticSliceId;
+                row.bindingStreamEpoch = widget->m_wfDiagnosticStreamEpoch;
+            };
             if (item.kind != RemoteDisplayPresenter::Kind::Frame) {
                 if (widget->enqueueRemoteWaterfallRow(item.frame.waterfallDbm, item.frame.wideDbm,
                                                       item.capture)) {
+                    recordQueuedProvenance();
                     if (item.kind == RemoteDisplayPresenter::Kind::Blended) {
                         ++d->displayCounters.rowsBlended;
                     } else {
@@ -6746,9 +6772,11 @@ void RemoteMediaController::presentDueDisplay()
                                                        item.centreHz, item.spanHz);
                 }
                 if (item.frame.waterfallAdvance && widget) {
-                    widget->enqueueRemoteWaterfallRow(item.frame.waterfallDbm,
-                                                      item.frame.wideDbm,
-                                                      item.capture);
+                    if (widget->enqueueRemoteWaterfallRow(item.frame.waterfallDbm,
+                                                          item.frame.wideDbm,
+                                                          item.capture)) {
+                        recordQueuedProvenance();
+                    }
                 }
                 continue;
             }
