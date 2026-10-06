@@ -131,6 +131,11 @@ struct CodecContext {
     // P2CodecOrionMkII reads it for byte 1403 bit 1 in CmdHighPriority.
     bool    p2Rx1Preamp{false};
 
+    // The speaker amplifier mute, high-priority byte 1400 bit 1 (R-SPK-09).
+    // P2RadioConnection::buildCodecContext sets it from speakerAmplifierOff
+    // (SpeakerAmplifier.h); false on every model without the amplifier.
+    bool    p2SpeakerAmpOff{false};
+
     // Alex HPF / LPF bits — recomputed by P1RadioConnection on freq change
     // via AlexFilterMap. Codec only emits them.
     //

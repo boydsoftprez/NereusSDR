@@ -2169,6 +2169,13 @@ target_compile_definitions(tst_band_outputs_display PRIVATE NEREUS_BUILD_TESTS)
 # (netInterface.c:399-407 SetOCBits, setup.cs:12718). NereusSDR-original.
 nereus_add_test(tst_p2_band_outputs_push fakes/P2FakeRadio.cpp)
 
+# ── Radio speaker amplifier on Protocol 2 (R-SPK-08, R-SPK-09, R-SPK-15) ─────
+# High-priority byte 1400 bit 1 (Thetis network.c:1028, piHPSDR alex.h:129)
+# on the six amplifier models only, the rule table and one packet per change
+# against the fake radio. NereusSDR-original.
+nereus_add_test(tst_p2_speaker_amplifier fakes/P2FakeRadio.cpp)
+target_compile_definitions(tst_p2_speaker_amplifier PRIVATE NEREUS_BUILD_TESTS)
+
 # ── A band change must retune the DDC even while CTUN holds it ───────────────
 # CTUN pins the DDC via ReceiverManager::m_ddcFreqLocked so a VFO nudge inside
 # the pinned window moves the slice shift instead of retuning hardware. A band

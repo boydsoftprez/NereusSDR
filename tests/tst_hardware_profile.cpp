@@ -19,6 +19,9 @@ struct ExpectedInit {
     int        adcSupplyVoltage;
     bool       lrAudioSwap;
     HPSDRHW    board;
+    // R-SPK-08: Thetis HasAudioAmplifier, clsHardwareSpecific.cs:459-467
+    // [v2.10.3.15]. The ANAN-G2E stays false (D17, V-HW-6 pending).
+    bool       hasAudioAmplifier;
 };
 
 // Rows sourced per-case from Thetis clsHardwareSpecific.cs [v2.10.3.15]:
@@ -28,36 +31,36 @@ struct ExpectedInit {
 //   :171 ANAN_G2_1K  :178 ANVELINAPRO3 :185 REDPITAYA
 static const ExpectedInit kThetisInit[] = {
     // From Thetis clsHardwareSpecific.cs:87 [v2.10.3.15]
-    {HPSDRModel::HERMES,       1, false, 33, true,  HPSDRHW::Hermes},
+    {HPSDRModel::HERMES,       1, false, 33, true,  HPSDRHW::Hermes, false},
     // From Thetis clsHardwareSpecific.cs:94 [v2.10.3.15]
-    {HPSDRModel::ANAN10,       1, false, 33, true,  HPSDRHW::Hermes},
+    {HPSDRModel::ANAN10,       1, false, 33, true,  HPSDRHW::Hermes, false},
     // From Thetis clsHardwareSpecific.cs:101 [v2.10.3.15]
-    {HPSDRModel::ANAN10E,      1, false, 33, true,  HPSDRHW::HermesII},
+    {HPSDRModel::ANAN10E,      1, false, 33, true,  HPSDRHW::HermesII, false},
     // From Thetis clsHardwareSpecific.cs:108 [v2.10.3.15]
-    {HPSDRModel::ANAN100,      1, false, 33, true,  HPSDRHW::Hermes},
+    {HPSDRModel::ANAN100,      1, false, 33, true,  HPSDRHW::Hermes, false},
     // From Thetis clsHardwareSpecific.cs:115 [v2.10.3.15]
-    {HPSDRModel::ANAN100B,     1, false, 33, true,  HPSDRHW::HermesII},
+    {HPSDRModel::ANAN100B,     1, false, 33, true,  HPSDRHW::HermesII, false},
     // From Thetis clsHardwareSpecific.cs:122 [v2.10.3.15]
-    {HPSDRModel::ANAN100D,     2, false, 33, false, HPSDRHW::Angelia},
+    {HPSDRModel::ANAN100D,     2, false, 33, false, HPSDRHW::Angelia, false},
     // From Thetis clsHardwareSpecific.cs:129 [v2.10.3.15] //N1GP G2E added
-    {HPSDRModel::ANAN_G2E,     1, true,  33, false, HPSDRHW::HermesC10},
+    {HPSDRModel::ANAN_G2E,     1, true,  33, false, HPSDRHW::HermesC10, false},
     // From Thetis clsHardwareSpecific.cs:136 [v2.10.3.15]
-    {HPSDRModel::ANAN200D,     2, false, 50, false, HPSDRHW::Orion},
+    {HPSDRModel::ANAN200D,     2, false, 50, false, HPSDRHW::Orion, false},
     // From Thetis clsHardwareSpecific.cs:143 [v2.10.3.15]
-    {HPSDRModel::ORIONMKII,    2, true,  50, false, HPSDRHW::OrionMKII},
+    {HPSDRModel::ORIONMKII,    2, true,  50, false, HPSDRHW::OrionMKII, false},
     // From Thetis clsHardwareSpecific.cs:150 [v2.10.3.15]
-    {HPSDRModel::ANAN7000D,    2, true,  50, false, HPSDRHW::OrionMKII},
+    {HPSDRModel::ANAN7000D,    2, true,  50, false, HPSDRHW::OrionMKII, true},
     // From Thetis clsHardwareSpecific.cs:157 [v2.10.3.15]
-    {HPSDRModel::ANAN8000D,    2, true,  50, false, HPSDRHW::OrionMKII},
+    {HPSDRModel::ANAN8000D,    2, true,  50, false, HPSDRHW::OrionMKII, true},
     // From Thetis clsHardwareSpecific.cs:164 [v2.10.3.15]
-    {HPSDRModel::ANAN_G2,      2, true,  50, false, HPSDRHW::Saturn},
+    {HPSDRModel::ANAN_G2,      2, true,  50, false, HPSDRHW::Saturn, true},
     // From Thetis clsHardwareSpecific.cs:171 [v2.10.3.15] //G8NJJ: likely to need further changes for PA
-    {HPSDRModel::ANAN_G2_1K,   2, true,  50, false, HPSDRHW::Saturn},
+    {HPSDRModel::ANAN_G2_1K,   2, true,  50, false, HPSDRHW::Saturn, true},
     // From Thetis clsHardwareSpecific.cs:178 [v2.10.3.15]
-    {HPSDRModel::ANVELINAPRO3, 2, true,  50, false, HPSDRHW::OrionMKII},
+    {HPSDRModel::ANVELINAPRO3, 2, true,  50, false, HPSDRHW::OrionMKII, true},
     // From Thetis clsHardwareSpecific.cs:185 [v2.10.3.15] //DH1KLM
     // NetworkIO.SetMKIIBPF(0); // DH1KLM: changed for compatibility reasons for OpenHPSDR compat. DIY PA/Filter boards
-    {HPSDRModel::REDPITAYA,    2, false, 50, false, HPSDRHW::OrionMKII},
+    {HPSDRModel::REDPITAYA,    2, false, 50, false, HPSDRHW::OrionMKII, true},
 };
 static constexpr int kThetisInitCount = static_cast<int>(sizeof(kThetisInit) / sizeof(kThetisInit[0]));
 
@@ -100,6 +103,26 @@ private slots:
         QCOMPARE(profile.adcSupplyVoltage, expected.adcSupplyVoltage);
         QCOMPARE(profile.lrAudioSwap,      expected.lrAudioSwap);
         QCOMPARE(profile.effectiveBoard,   expected.board);
+        QCOMPARE(profile.hasAudioAmplifier, expected.hasAudioAmplifier);
+    }
+
+    // R-SPK-08: the switchable speaker amplifier on exactly six models.
+    // From Thetis clsHardwareSpecific.cs:459-467 [v2.10.3.15]
+    void hasAudioAmplifier_exactlySixModels() {
+        QList<HPSDRModel> withAmp;
+        for (int m = int(HPSDRModel::FIRST) + 1; m < int(HPSDRModel::LAST); ++m) {
+            if (profileForModel(HPSDRModel(m)).hasAudioAmplifier) {
+                withAmp.append(HPSDRModel(m));
+            }
+        }
+        const QList<HPSDRModel> expected{
+            HPSDRModel::ANAN7000D, HPSDRModel::ANAN8000D, HPSDRModel::ANAN_G2,
+            HPSDRModel::ANAN_G2_1K, HPSDRModel::ANVELINAPRO3, HPSDRModel::REDPITAYA,
+        };
+        QCOMPARE(withAmp, expected);
+        QVERIFY(!profileForModel(HPSDRModel::ANAN_G2E).hasAudioAmplifier);
+        QVERIFY(!profileForModel(HPSDRModel::HERMESLITE).hasAudioAmplifier);
+        QVERIFY(!HardwareProfile{}.hasAudioAmplifier);
     }
 
     void g2e_effectiveBoardIsHermesC10() {

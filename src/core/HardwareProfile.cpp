@@ -23,6 +23,10 @@
 //   2026-09-23: profileForStation() added for remote windows (R-R3-46),
 //                 NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-06: hasAudioAmplifier ported from HasAudioAmplifier
+//                 (clsHardwareSpecific.cs:459-467 [v2.10.3.15]) for the radio
+//                 speaker amplifier (R-SPK-08). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  clsHardwareSpecific.cs
@@ -210,6 +214,29 @@ HardwareProfile profileForModel(HPSDRModel model)
             break;
         case HPSDRModel::FIRST:
         case HPSDRModel::LAST:
+            break;
+    }
+
+    // The switchable speaker amplifier (R-SPK-08).
+    // From Thetis clsHardwareSpecific.cs:459-467 [v2.10.3.15]
+    //   return NetworkIO.CurrentRadioProtocol == RadioProtocol.ETH && //only protocol 2
+    //   (_model == HPSDRModel.ANAN7000D || _model == HPSDRModel.ANAN8000D ||
+    //   _model == HPSDRModel.ANVELINAPRO3 || _model == HPSDRModel.ANAN_G2 ||
+    //   _model == HPSDRModel.ANAN_G2_1K || _model == HPSDRModel.REDPITAYA);
+    // The protocol half lives in the reader: only P2RadioConnection uses it.
+    // The ANAN-G2E is not in Thetis's list and stays false until a bench
+    // shows its amplifier switches (D17, V-HW-6).
+    switch (model) {
+        case HPSDRModel::ANAN7000D:
+        case HPSDRModel::ANAN8000D:
+        case HPSDRModel::ANVELINAPRO3:
+        case HPSDRModel::ANAN_G2:
+        case HPSDRModel::ANAN_G2_1K:
+        case HPSDRModel::REDPITAYA:
+            p.hasAudioAmplifier = true;
+            break;
+        default:
+            p.hasAudioAmplifier = false;
             break;
     }
 

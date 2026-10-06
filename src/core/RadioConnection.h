@@ -15,6 +15,9 @@
 //               and the longest gap between the TX pump's wakes, with the
 //               radio's microphone frame sequence step across it. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-06: Radio speaker (R-SPK-09, R-SPK-15): the speaker amplifier
+//               inputs (mode, radio speaker mute, side tone expected).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "core/NereusCoreExport.h"
 #include "ConnectionState.h"
@@ -594,6 +597,20 @@ public slots:
     /// (netInterface.c:1522 prn->tx[i].pa = 0).
     virtual void setPaDisabled(bool disabled) { m_paDisabled = disabled; }
     bool paDisabled() const noexcept { return m_paDisabled; }
+
+    /// The radio's speaker amplifier (R-SPK-09, R-SPK-15). Three inputs to
+    /// speakerAmplifierOff (SpeakerAmplifier.h): the amplifier mode (0
+    /// Normal, 1 Off while transmitting, 2 Always off), the radio speaker's
+    /// mute, and whether a side tone is expected (true while CW or Tune).
+    /// RadioModel hands them over; safe to call before the connection runs.
+    /// Only Protocol 2 radios with HardwareProfile::hasAudioAmplifier put
+    /// them on the wire (high-priority byte 1400 bit 1); the base stores.
+    virtual void setSpeakerAmplifierMode(int mode) { m_speakerAmplifierMode = mode; }
+    int speakerAmplifierMode() const noexcept { return m_speakerAmplifierMode; }
+    virtual void setRadioSpeakerMuted(bool muted) { m_radioSpeakerMuted = muted; }
+    bool radioSpeakerMuted() const noexcept { return m_radioSpeakerMuted; }
+    virtual void setSidetoneExpected(bool expected) { m_sidetoneExpected = expected; }
+    bool sidetoneExpected() const noexcept { return m_sidetoneExpected; }
 
     /// The Alex tab's receive filter rows (Setup > Hardware > Alex-1 and
     /// Alex-2 Filters): each row's edges and per-row bypass for the
@@ -1358,6 +1375,13 @@ protected:
     // "Disable HF PA" (setPaDisabled), Thetis prn->tx[0].pa. Written and read
     // on the connection thread.
     bool m_paDisabled{false};
+
+    // The speaker amplifier inputs (setSpeakerAmplifierMode,
+    // setRadioSpeakerMuted, setSidetoneExpected). Written and read on the
+    // connection thread.
+    int  m_speakerAmplifierMode{0};
+    bool m_radioSpeakerMuted{false};
+    bool m_sidetoneExpected{false};
 
     // The Alex tab's receive filter rows (setAlexHpfEdges), Thetis's
     // shipped values until RadioModel hands the saved ones. Written and read

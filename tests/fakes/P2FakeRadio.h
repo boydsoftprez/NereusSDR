@@ -64,6 +64,13 @@ public:
     // Byte 1401 of the last high-priority packet, the band outputs, as the
     // OC byte (network.c: (oc_output << 1) & 0xfe). -1 before one arrives.
     int lastHighPriorityOcByte() const { return m_lastHighPriorityOcByte; }
+    // Byte 4 (run, MOX) and byte 1400 (transverter out, speaker amplifier
+    // mute, ATU tune) of every high-priority packet, in arrival order.
+    struct HighPriorityRecord {
+        quint8 flags{0};
+        quint8 byte1400{0};
+    };
+    const QVector<HighPriorityRecord>& highPriorityRecords() const { return m_highPriorityRecords; }
     // General command packets (60 bytes, command byte 0x00, outbound base
     // port) and byte 38 of the last one, the network watchdog (R-R3-49).
     int generalDatagrams() const { return m_generalDatagrams; }
@@ -94,6 +101,7 @@ private:
     int m_moxAssertedCount{0};
     quint8 m_lastHighPriorityFlags{0};
     int m_lastHighPriorityOcByte{-1};
+    QVector<HighPriorityRecord> m_highPriorityRecords;
     int m_generalDatagrams{0};
     int m_lastGeneralWatchdog{-1};
     quint32 m_ddcSequence{0};

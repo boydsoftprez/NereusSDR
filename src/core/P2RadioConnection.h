@@ -119,6 +119,9 @@
 //                the microphone frame sequence number to the TX pump's wake
 //                watch, and its figures in txSendStats. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-06 - Radio speaker (R-SPK-09, R-SPK-15): the speaker amplifier
+//                setters. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
 /*
@@ -342,6 +345,11 @@ public slots:
     void setHpfBypassOnPs(bool on) override;
     void setAlexHpfBypass(bool on) override;
     void setPaDisabled(bool disabled) override;
+    // The speaker amplifier inputs: stored, and sent at once while running
+    // (byte 1400 bit 1, buildCodecContext).
+    void setSpeakerAmplifierMode(int mode) override;
+    void setRadioSpeakerMuted(bool muted) override;
+    void setSidetoneExpected(bool expected) override;
     void setAlexHpfEdges(const codec::alex::AlexHpfEdges& edges) override;
     // The Alex-1 low-pass rows (stored for the next selection) and
     // 6m/ByPass on RX (re-selects at once).
