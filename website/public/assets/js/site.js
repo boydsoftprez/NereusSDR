@@ -227,8 +227,9 @@
       var found = null;
       for (var j = 0; j < rel.assets.length; j++) {
         var n = rel.assets[j].n;
-        // An asset whose URL leads anywhere else counts as not found.
-        if ((n === suffix || n.slice(-(suffix.length + 1)) === '-' + suffix) &&
+        // Match this product and version; dependency source archives share
+        // the source.tar.gz suffix. External URLs still count as not found.
+        if ((n === suffix || n === 'NereusSDR-' + rel.tag.slice(1) + '-' + suffix) &&
             isReleaseDownload(rel.assets[j].u)) {
           found = rel.assets[j];
           break;

@@ -13,6 +13,10 @@ SDR console for OpenHPSDR radios. Community contributions are welcome.
 3. Implement the fix or feature (one issue per PR).
 4. Open a pull request referencing the issue number (`Fixes #42`).
 
+New to Git, pull requests or AI coding tools? Follow
+[Contribute to NereusSDR with AI](docs/guides/contributing-with-ai.md) for
+a fork-to-PR walkthrough and prompts you can use in your chosen harness.
+
 ---
 
 ## Reporting Bugs
@@ -32,10 +36,13 @@ SDR console for OpenHPSDR radios. Community contributions are welcome.
 
 ## Submitting Code
 
-**Development tool:** NereusSDR is developed using [Claude Code](https://claude.com/claude-code)
-as the primary development environment. We **strongly encourage all contributors to use
-Claude Code** — it has full codebase context via `CLAUDE.md` and naturally produces code
-that matches our conventions.
+**Development tools:** Contributors are welcome to use Codex, Claude Code,
+OpenCode or another capable coding harness. Read `AGENTS.md` if present,
+`CLAUDE.md` and this guide before making changes, whichever tool you choose.
+AI can help investigate, implement and verify a change; the contributor
+reviews the result and remains responsible for the submitted work. Our
+[AI contribution walkthrough](docs/guides/contributing-with-ai.md) includes
+starter prompts and an OpenCode / Space Bunny Free option for experimenting.
 
 1. **Fork the repo** and create a feature branch from `main`.
 2. **One issue per PR.** Keep changes focused and reviewable.

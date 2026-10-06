@@ -227,7 +227,12 @@ find_upstream() {
         fi
         dir="$(dirname "$dir")"
     done
-    [ -d "/$name" ] && echo "/$name"
+    if [ -d "/$name" ]; then
+        echo "/$name"
+    fi
+    # An absent clone is a normal discovery result. Keep set -e from
+    # aborting the hook before the no-clone handling below can run.
+    return 0
 }
 
 THETIS_LOCAL="$(find_upstream Thetis "${NEREUS_THETIS_DIR:-}")"

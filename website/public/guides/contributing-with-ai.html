@@ -1,0 +1,197 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Contribute to NereusSDR with AI | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/guides/contributing-with-ai.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual · working draft<br>4 October 2026</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">16. Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">19. Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html">Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html">Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/contributing-with-ai.html" aria-current=page>Contribute to NereusSDR with AI</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="contribute-to-nereussdr-with-ai">Contribute to NereusSDR with AI</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#choose-your-tools">Choose your tools</a></li><li><a href="#fork-the-project-and-make-a-branch">Fork the project and make a branch</a></li><li><a href="#start-with-something-small">Start with something small</a></li><li><a href="#prompts-to-paste-into-your-harness">Prompts to paste into your harness</a></li><li><a href="#verify-the-change">Verify the change</a></li><li><a href="#commit-push-and-open-a-pull-request">Commit, push and open a pull request</a></li></ol></details>
+<p>Bring your curiosity. NereusSDR is a community project spanning an OpenHPSDR
+station engine, a desktop console, native iPhone and iPad clients, and the
+documentation that connects them. You can help improve any of it, and learn
+how to work in a real repository along the way.</p>
+<p>Strong coding skills are not a prerequisite. Bring curiosity and a
+willingness to learn something new. Know what you want to improve, describe
+it accurately, and test whether the result does what you intended.</p>
+<p>A clearer instruction, a reproducible bug report, a focused test or a
+small code improvement can all move the project forward. Experienced
+developers and people making their first pull request are welcome.
+Come <a href="https://discord.gg/m35ERjwRe">meet the community on Discord</a>
+and browse the <a href="https://github.com/boydsoftprez/NereusSDR/issues">open issues</a>.</p>
+<h2 id="choose-your-tools">Choose your tools</h2>
+<p>Use <a href="https://openai.com/codex/">Codex</a>,
+<a href="https://code.claude.com/docs/en/overview">Claude Code</a>,
+<a href="https://opencode.ai/docs/">OpenCode</a> or another coding harness you enjoy.
+For sustained work, choose a harness that can read repository files, edit
+them, run commands and use the results to decide its next step. The harness
+provides those tools; the model helps reason about what to do with them.</p>
+<p>Give it a clear goal and the repository instructions. Ask it to investigate,
+make a plan, carry out a focused change and check the result. For longer
+tasks, keep the agreed plan and verification results in working notes so
+you can resume with the same context. You remain the contributor: read the
+diff, understand the change and review what you submit.</p>
+<h3 id="try-opencode-and-space-bunny-free">Try OpenCode and Space Bunny Free</h3>
+<p>Want to experiment with a free model? As of 6 October 2026, OpenCode Zen
+lists <strong>Space Bunny Free</strong> (<code>space-bunny-free</code>) as a <strong>limited-time free
+model</strong>. Availability and pricing can change; check the current
+<a href="https://opencode.ai/docs/en/zen/">Zen model list</a> before starting.</p>
+<p>With Node.js and npm installed, one supported installation method is:</p>
+<pre><code class="language-bash">npm install -g opencode-ai
+</code></pre>
+<p>OpenCode's <a href="https://opencode.ai/docs/">installation guide</a> has other options.
+Once you have cloned your fork using the steps below, launch it inside the
+repository:</p>
+<pre><code class="language-bash">opencode
+</code></pre>
+<p>Use <code>/connect</code> to configure the OpenCode provider if needed, following its
+current account and API-key setup. Use <code>/models</code> to select <strong>Space Bunny
+Free</strong> when available. Confirm the selected model's price; other models
+may be paid. The <a href="https://opencode.ai/docs/models/">model selector documentation</a>
+explains switching models. Then paste the orientation prompt below.</p>
+<h2 id="fork-the-project-and-make-a-branch">Fork the project and make a branch</h2>
+<p>Install Git and create a GitHub account if you have not already. Visit
+<a href="https://github.com/boydsoftprez/NereusSDR">boydsoftprez/NereusSDR</a> and click
+<strong>Fork</strong> to create a copy under your own account.</p>
+<p>In a terminal, replace <code>YOUR-GITHUB-USERNAME</code> with your GitHub username:</p>
+<pre><code class="language-bash">git clone https://github.com/YOUR-GITHUB-USERNAME/NereusSDR.git
+cd NereusSDR
+git remote add upstream https://github.com/boydsoftprez/NereusSDR.git
+git fetch upstream
+git switch -c contrib/first-change upstream/main
+bash scripts/install-hooks.sh
+</code></pre>
+<p><code>origin</code> is your fork, where you will push your work. <code>upstream</code> is the
+shared NereusSDR repository. Your new branch starts from its current
+<code>main</code>; keep one focused change on that branch. On Windows, use Git Bash
+for these shell commands. GitHub's
+<a href="https://docs.github.com/en/pull-requests/how-tos/work-with-forks">fork documentation</a>
+explains the relationship between the two repositories.</p>
+<p>Open this cloned folder in your coding harness. Read <code>AGENTS.md</code> if present,
+then <a href="https://github.com/boydsoftprez/NereusSDR/blob/main/CLAUDE.md">CLAUDE.md</a>, <a href="https://github.com/boydsoftprez/NereusSDR/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a>
+and the relevant project docs. The file named <code>CLAUDE.md</code> contains useful
+project instructions whichever harness you choose. Ask your harness to
+read these existing instructions before it starts changing files.</p>
+<h2 id="start-with-something-small">Start with something small</h2>
+<p>A good first task is to clarify an instruction you found confusing in the
+<a href="/manual/index.html">user guide</a>. Explain where you got stuck and what
+would have helped. Ask the harness to check the relevant source and improve
+that paragraph without making promises the software cannot keep.</p>
+<p>For a code change, pick a reproducible issue and keep the first PR narrow.
+Discuss new features, visual or UX changes, architecture, user-facing
+defaults and DSP changes with the maintainer before implementing them.
+NereusSDR's remote Core, slices and panadapters have their own architecture;
+an implementation needs to fit that structure.</p>
+<p>If you use upstream code, read
+<a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/attribution/HOW-TO-PORT.md">HOW-TO-PORT.md</a> first. Preserve its required
+copyright headers, inline comments and provenance, and cite the actual
+source for protocol, hardware and DSP facts. Record the human author and
+AI tooling in the required modification history. These are part of the
+contribution, not a cleanup task to leave for someone else.</p>
+<h2 id="prompts-to-paste-into-your-harness">Prompts to paste into your harness</h2>
+<p>Replace the bracketed text with your own task. Run the orientation prompt
+first, then choose a change prompt. Ask follow-up questions when something
+in the answer does not make sense: learning the repo is part of the work.</p>
+<h3 id="1-get-oriented">1. Get oriented</h3>
+<pre><code class="language-text">I want to make my first contribution to NereusSDR and learn as I go.
+My goal is [describe what I want to improve and what a good result would
+look like]. Help me clarify that goal and how I can test the result.
+Read AGENTS.md if it
+exists, CLAUDE.md, CONTRIBUTING.md, README.md, docs/architecture/overview.md
+and docs/development/fast-test-loop.md. Inspect the current branch and
+working tree without changing anything.
+
+Explain how the Core, desktop console and phone client fit together.
+Suggest three small contributions I can learn from, including one docs
+task. For each, identify the relevant files and how
+we would verify it. Do not edit yet; help me choose a focused task.
+</code></pre>
+<h3 id="2-make-a-first-documentation-change">2. Make a first documentation change</h3>
+<pre><code class="language-text">Help me improve this confusing instruction: [paste the paragraph and
+describe where you got stuck]. Find its source under docs/ and check
+the relevant implementation or existing documentation.
+
+Propose a small edit that preserves the software's actual behavior.
+Explain the evidence for it, then make the agreed edit. If this page is
+published on the website, follow website/README.md to regenerate it.
+Run the relevant docs checks, review the diff and report the exact checks
+you ran. Do not invent features, test results or hardware validation.
+</code></pre>
+<h3 id="3-investigate-and-fix-a-bug">3. Investigate and fix a bug</h3>
+<pre><code class="language-text">Investigate this issue: [issue URL, reproduction steps and environment].
+Read the repository instructions and relevant source first. Reproduce
+the problem if possible, explain the root cause and propose a focused
+fix with a meaningful regression check.
+
+Follow NereusSDR's AppSettings and thread rules. Keep GUI dependencies
+out of src/core and src/models. Use cited sources for protocol, hardware
+and WDSP facts; read HOW-TO-PORT.md before porting code. Flag changes to
+the core RX path. Ask me to discuss any required UX, architecture,
+feature-scope, default or DSP decision with the maintainer first.
+
+Implement the agreed fix, build the matching test target before running
+its tests, and report actual results and what remains untested. Keep
+unrelated changes out of the diff.
+</code></pre>
+<h3 id="4-review-and-prepare-the-pr">4. Review and prepare the PR</h3>
+<pre><code class="language-text">Review our complete diff against upstream/main and the repository rules.
+Look for incorrect claims, unrelated changes, missing attribution and
+tests that do not exercise the problem. Check git diff --check.
+
+Summarize what changed and why in plain language. List the exact checks
+run and their results, plus platforms or radio behavior we did not test.
+Draft a PR description using .github/PULL_REQUEST_TEMPLATE.md, linking
+the issue if there is one. State how AI helped and what I should review
+before submitting. Do not commit or push until I have read the diff.
+</code></pre>
+<h2 id="verify-the-change">Verify the change</h2>
+<p>For application code, install the platform dependencies listed in
+<a href="https://github.com/boydsoftprez/NereusSDR#building-from-source">Building from Source</a>
+and <a href="https://github.com/boydsoftprez/NereusSDR/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a>. The project uses C++20 and Qt6.
+The usual configure and application build are:</p>
+<pre><code class="language-bash">cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DNEREUS_BUILD_TESTS=ON
+cmake --build build --parallel
+</code></pre>
+<p><code>NEREUS_BUILD_TESTS=ON</code> makes the test targets available; building them
+remains opt-in. Read <a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/development/fast-test-loop.md">the fast test loop</a> before testing.
+Build the specific test target that covers your change before running it;
+a normal application build does not rebuild the test executables. Start
+with the relevant test, then follow the project's broader verification
+requirements for the affected code. Tell reviewers which platform and
+radio you used and which behavior you could not check.</p>
+<p>For user-guide or website-guide changes, follow
+<a href="https://github.com/boydsoftprez/NereusSDR/blob/main/website/README.md">website/README.md</a> to install the renderer's
+dependencies, then run:</p>
+<pre><code class="language-bash">python3 docs/manual/check_manual.py
+python3 docs/manual/build_preview.py --website
+python3 -m unittest discover -s docs/manual -p 'test_build_preview.py'
+</code></pre>
+<p>Review the generated pages as well as the Markdown, and include the
+generated output when required by the website workflow. Before committing
+any change, inspect it yourself:</p>
+<pre><code class="language-bash">git status --short
+git diff --check
+git diff
+</code></pre>
+<h2 id="commit-push-and-open-a-pull-request">Commit, push and open a pull request</h2>
+<p>Set Git's author name and email to your own identity. This repository
+requires GPG-signed commits for integration into <code>main</code>; follow the
+<a href="https://github.com/boydsoftprez/NereusSDR/blob/main/CONTRIBUTING.md#commit-signing">commit-signing instructions</a> to
+configure your key. Stage the specific files you reviewed with
+<code>git add PATH-TO-FILE</code>, including any required generated pages.</p>
+<pre><code class="language-bash">git commit -S -m &quot;docs: clarify the connection instructions&quot;
+git push -u origin contrib/first-change
+</code></pre>
+<p>Change the commit message to describe your actual contribution. <code>-S</code>
+requests the GPG signature. If signing fails, fix the signing setup
+before pushing the contribution.</p>
+<p>On GitHub, open your fork and click <strong>Compare &amp; pull request</strong>. Check
+that the <strong>base repository</strong> is <code>boydsoftprez/NereusSDR</code>, the <strong>base branch</strong>
+is <code>main</code>, and the <strong>head branch</strong> is your fork's <code>contrib/first-change</code>.
+Use <strong>compare across forks</strong> if needed. GitHub documents this in
+<a href="https://docs.github.com/en/pull-requests/how-tos/create-pull-requests/creating-a-pull-request-from-a-fork">creating a PR from a fork</a>.</p>
+<p>Fill in the PR template: explain the problem and change, list the checks
+you actually ran, and include attribution when porting code. Link the
+relevant issue; use <code>Fixes #NUMBER</code> only when the PR resolves that issue.
+Mention how AI assisted your work. A draft PR is welcome when you want
+feedback while learning or have verification still to do.</p>
+<p>The maintainer and community review the proposal and CI checks it. Make
+requested edits on the same branch, commit and push again; they appear
+in the same PR. Once accepted and merged, your contribution becomes part
+of the shared project and can reach everyone in a future release.</p>
+<p>You can contribute from wherever you are, with whatever capable harness
+helps you work. Bring a question, a useful improvement and a willingness
+to learn together.</p>
+<div class="page-next"></div></main></div></body></html>
