@@ -143,6 +143,11 @@
 //                 Copyright (C) 2024-2026 Jeremy (KK7GWY) and
 //                 AetherSDR contributors. GPLv3; project source:
 //                 https://github.com/ten9876/AetherSDR
+//   2026-10-06 - Radio speaker plan Task 5 (R-SPK-19, D7): the floating
+//                 lock button shows the app's own lock / unlock icons
+//                 (AppIcon) in place of colour emoji text. J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 //=================================================================
@@ -389,6 +394,7 @@ warren@wpratt.com
 */
 
 #include "VfoWidget.h"
+#include "gui/widgets/AppIcon.h"
 #include "gui/TuneStepLabel.h"
 #include "DspParamPopup.h"
 #include "NnrControls.h"
@@ -3157,6 +3163,9 @@ void VfoWidget::setSlice(SliceModel* slice)
 // translucent filter bands the buttons effectively disappeared.  The dark
 // blue base matches the spectrum chrome palette and stays distinct from
 // either filter colour.
+// Logical size of the floating lock button's icon inside its 20 x 20 button.
+constexpr int kFlagLockIconPx = 16;
+
 static const char* kFloatingBtn =
     "QPushButton {"
     "  background: rgba(20,30,50,230); border: 1px solid rgba(80,100,130,180);"
@@ -3213,7 +3222,9 @@ void VfoWidget::buildFloatingButtons()
     }
 
     // Lock button — wired
-    m_lockBtn = makeBtn(QStringLiteral("\U0001F513"), kFloatingBtn);
+    m_lockBtn = makeBtn(QString(), kFloatingBtn);
+    m_lockBtn->setObjectName(QStringLiteral("VfoFlagLockButton"));
+    AppIcon::apply(m_lockBtn, QStringLiteral("unlock"), kFlagLockIconPx);
     // From Thetis console.resx:5787 — chkVFOLock.ToolTip
     m_lockBtn->setToolTip(QStringLiteral("Keeps the VFO from changing while in the middle of a QSO."));
     m_lockBtn->setCheckable(true);
@@ -3222,6 +3233,14 @@ void VfoWidget::buildFloatingButtons()
             applyLockedState(locked);
         }
     });
+    // A slice locked before the floating buttons existed shows its lock now
+    // (setLocked had no button to drive yet). Guarded, so nothing is emitted.
+    if (m_locked) {
+        const bool wasUpdating = m_updatingFromModel;
+        m_updatingFromModel = true;
+        applyLockedState(true);
+        m_updatingFromModel = wasUpdating;
+    }
     // Task 14a: the lock writes the slice too, so it is held on a listened
     // flag; the close button's words follow the access.
     if (isListening()) {
@@ -3279,7 +3298,8 @@ void VfoWidget::applyLockedState(bool on)
     if (m_lockBtn) {
         m_updatingFromModel = true;
         m_lockBtn->setChecked(on);
-        m_lockBtn->setText(on ? QStringLiteral("\U0001F512") : QStringLiteral("\U0001F513"));
+        AppIcon::apply(m_lockBtn, on ? QStringLiteral("lock") : QStringLiteral("unlock"),
+                       kFlagLockIconPx);
         if (on) {
             m_lockBtn->setStyleSheet(QStringLiteral(
                 "QPushButton { background: rgba(255,100,100,80); border: none;"

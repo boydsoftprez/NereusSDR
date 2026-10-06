@@ -1701,6 +1701,12 @@ nereus_add_test(tst_master_output_widget)
 # the fixed 32 px height. Live UI verification is the canonical check for
 # the menu-re-parent + in-window render on macOS.
 nereus_add_test(tst_title_bar)
+# Radio speaker plan Task 5 (R-SPK-19, D7): the app's own icon set and its
+# renderer replace colour emoji on the lock, pin and feature buttons; the
+# resource SVGs are compared byte-for-byte with the design folder's.
+nereus_add_test(tst_app_icon EXTRA_LABELS gui)
+target_compile_definitions(tst_app_icon PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 # ── Task A7 (bottom-banner cleanup): TitleBar::utcText() ─────────────────────
 # Single-row UTC clock moved from the bottom banner into TitleBar. Verifies

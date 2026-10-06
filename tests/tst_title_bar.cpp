@@ -15,6 +15,8 @@
 //   4. fixedHeight32 — strip height is pinned to 32 px.
 //   5. featureButtonEmitsSignal — clicking the 💡 feature button emits
 //      featureRequestClicked() exactly once (Task 10d).
+//   6. featureButtonShowsBulbIcon: the feature button shows the app's
+//      own bulb icon (AppIcon "bulb", R-SPK-19 / D7), not text.
 //
 // Live UI smoke (hosted-inside-QMainWindow + menu bar re-parenting
 // visuals) is the canonical verify; these tests only guard the
@@ -31,6 +33,7 @@
 
 #include "core/AudioEngine.h"
 #include "gui/TitleBar.h"
+#include "gui/widgets/AppIcon.h"
 #include "gui/widgets/MasterOutputWidget.h"
 
 using namespace NereusSDR;
@@ -115,6 +118,20 @@ private slots:
 
         btn->click();
         QCOMPARE(spy.count(), 1);
+    }
+
+    // ── 6. Feature button shows the bulb icon ──────────────────────────────
+
+    void featureButtonShowsBulbIcon() {
+        AudioEngine engine;
+        TitleBar bar(&engine);
+
+        auto* btn = bar.findChild<QPushButton*>(QStringLiteral("featureButton"));
+        QVERIFY(btn != nullptr);
+        QCOMPARE(btn->property(AppIcon::kIconProperty).toString(), QStringLiteral("bulb"));
+        QVERIFY(!btn->icon().isNull());
+        QCOMPARE(btn->iconSize(), QSize(22, 22));
+        QVERIFY(btn->text().isEmpty());
     }
 };
 
