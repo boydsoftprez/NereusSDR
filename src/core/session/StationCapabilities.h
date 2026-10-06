@@ -59,6 +59,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-06: Radio speaker: radioSpeakerVersion, after
+//               radeReasonVersion and before coreBuildInfo (R-SPK-14).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-09-30: RADE reason: radeReasonVersion, after
 //               rxFilterLowPassVersion and before coreBuildInfo. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -598,6 +601,12 @@ struct StationCapabilities {
     /// decodes). Sent after rxFilterLowPassVersion and before coreBuildInfo,
     /// only to a peer whose hello declared `radeReason` 1; 0 otherwise.
     int radeReasonVersion = 0;
+    /// Radio speaker (R-SPK-14): 1 means radio carries radioSpeakerVolume,
+    /// radioSpeakerMuted and speakerAmplifierMode (writable) and
+    /// radioSpeakerAvailability and speakerAmplifierAvailable (read-only).
+    /// Sent after radeReasonVersion and before coreBuildInfo, only to a
+    /// peer whose hello declared `radioSpeaker` 1; 0 otherwise.
+    int radioSpeakerVersion = 0;
     /// At most this many URLs are read, each at most kMaxMediaStunUrlBytes.
     static constexpr int kMaxMediaStunUrls = 8;
     static constexpr int kMaxMediaStunUrlBytes = 512;

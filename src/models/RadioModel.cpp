@@ -1005,6 +1005,13 @@
 //                line; the CW or Tune flag sent ahead of Tune's key
 //                (R-SPK-05 to R-SPK-07, R-SPK-11, R-SPK-12, R-SPK-15).
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-06 - Radio speaker in a remote window: the setters write
+//                through the mirror only while the Core offers the radio
+//                speaker (radioSpeakerVersion 1), the reports are the
+//                Core's, the reasons name an older Core, and
+//                radioSpeakerToolTip (R-SPK-06, R-SPK-13, R-SPK-14,
+//                R-SPK-16). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
 //=================================================================
@@ -20377,7 +20384,10 @@ bool isCwMode(DSPMode mode)
 void RadioModel::setRadioSpeakerVolume(int volume)
 {
     volume = std::clamp(volume, 0, kRadioSpeakerMaxVolume);
-    if (volume == m_radioSpeakerVolume) {
+    // R-SPK-06 / R-SPK-14: a remote window of a Core that does not offer the
+    // radio speaker changes nothing and sends nothing.
+    if (volume == m_radioSpeakerVolume
+        || (m_role == Role::Remote && !stationOffersRadioSpeaker())) {
         return;
     }
     m_radioSpeakerVolume = volume;
@@ -20391,7 +20401,8 @@ void RadioModel::setRadioSpeakerVolume(int volume)
 
 void RadioModel::setRadioSpeakerMuted(bool muted)
 {
-    if (muted == m_radioSpeakerMuted) {
+    if (muted == m_radioSpeakerMuted
+        || (m_role == Role::Remote && !stationOffersRadioSpeaker())) {
         return;
     }
     m_radioSpeakerMuted = muted;
@@ -20413,7 +20424,8 @@ void RadioModel::setRadioSpeakerMuted(bool muted)
 void RadioModel::setSpeakerAmplifierMode(int mode)
 {
     mode = std::clamp(mode, kSpeakerAmplifierNormal, kSpeakerAmplifierAlwaysOff);
-    if (mode == m_speakerAmplifierMode) {
+    if (mode == m_speakerAmplifierMode
+        || (m_role == Role::Remote && !stationOffersRadioSpeaker())) {
         return;
     }
     m_speakerAmplifierMode = mode;
@@ -20521,10 +20533,73 @@ void RadioModel::loadRadioSpeakerForConnect()
 
 QString RadioModel::radioSpeakerUnavailableReason() const
 {
-    if (m_radioSpeakerAvailability == kRadioSpeakerNoRadio) {
-        return tr("No radio connected");
+    if (m_radioSpeakerAvailability != kRadioSpeakerNoRadio) {
+        return QString();
     }
-    return QString();
+    // R-SPK-06 / R-SPK-14: a remote window of an older Core.
+    if (m_role == Role::Remote && !stationOffersRadioSpeaker()) {
+        return IStationLink::radioSpeakerUnavailableReason();
+    }
+    return tr("No radio connected");
+}
+
+QString RadioModel::radioSpeakerAddOnNote()
+{
+    return tr("Needs the Hermes Lite 2 audio add-on board for its headphone output.");
+}
+
+QString RadioModel::radioSpeakerToolTip() const
+{
+    if (m_radioSpeakerAvailability == kRadioSpeakerNoRadio) {
+        return radioSpeakerUnavailableReason();
+    }
+    // R-SPK-16: in a remote window RADIO is the speaker at the Core.
+    QString tip = m_role == Role::Remote
+        ? tr("Radio speaker at the Core (shared with every window and the phone)")
+        : tr("Radio speaker");
+    if (m_radioSpeakerAvailability == kRadioSpeakerNeedsAddOn) {
+        tip += QLatin1Char('\n') + radioSpeakerAddOnNote();
+    }
+    return tip;
+}
+
+bool RadioModel::stationOffersRadioSpeaker() const
+{
+    return m_station != nullptr && m_station->radioSpeakerAvailable();
+}
+
+bool RadioModel::applyStationRadioSpeakerValue(const QByteArray& name, const QVariant& value)
+{
+    if (m_role != Role::Remote) {
+        return false;
+    }
+    if (name == "radioSpeakerAvailability") {
+        bool ok = false;
+        const int availability = value.toInt(&ok);
+        if (!ok || availability < kRadioSpeakerNoRadio
+            || availability > kRadioSpeakerNeedsAddOn) {
+            return false;
+        }
+        m_stationRadioSpeakerAvailability = availability;
+        refreshRadioSpeakerReports();
+        return true;
+    }
+    if (name == "speakerAmplifierAvailable") {
+        m_stationSpeakerAmplifierAvailable = value.toBool();
+        refreshRadioSpeakerReports();
+        return true;
+    }
+    return false;
+}
+
+void RadioModel::clearStationRadioSpeaker()
+{
+    if (m_role != Role::Remote) {
+        return;
+    }
+    m_stationRadioSpeakerAvailability = kRadioSpeakerNoRadio;
+    m_stationSpeakerAmplifierAvailable = false;
+    refreshRadioSpeakerReports();
 }
 
 QString RadioModel::speakerAmplifierUnavailableReason() const
@@ -20533,7 +20608,7 @@ QString RadioModel::speakerAmplifierUnavailableReason() const
         return QString();
     }
     if (m_radioSpeakerAvailability == kRadioSpeakerNoRadio) {
-        return tr("No radio connected");
+        return radioSpeakerUnavailableReason();
     }
     // D17: the G2E is left off the amplifier list until it is bench-tested
     // (V-HW-6).
@@ -20547,7 +20622,16 @@ void RadioModel::refreshRadioSpeakerReports()
 {
     int availability = kRadioSpeakerNoRadio;
     bool amplifier = false;
-    if (m_connectionState == ConnectionState::Connected && m_connection != nullptr
+    if (m_role == Role::Remote) {
+        // R-SPK-06 / R-SPK-13: a remote window shows the Core's reports,
+        // and none from a Core that does not offer the radio speaker.
+        if (stationOffersRadioSpeaker()
+            && m_connectionState == ConnectionState::Connected) {
+            availability = m_stationRadioSpeakerAvailability;
+            amplifier = availability != kRadioSpeakerNoRadio
+                        && m_stationSpeakerAmplifierAvailable;
+        }
+    } else if (m_connectionState == ConnectionState::Connected && m_connection != nullptr
         && m_connection->carriesRadioAudio()) {
         // D11: the HL2 cannot report its audio add-on board, so its radio
         // speaker stays available with the add-on note, as Radio Mic does.

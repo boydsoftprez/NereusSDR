@@ -535,6 +535,11 @@
             "value": 1
         },
         {
+            "kind": "i64",
+            "name": "radioSpeakerVersion",
+            "value": 1
+        },
+        {
             "kind": "utf8",
             "name": "coreBuildInfo",
             "value": "{\"productVersion\":\"0.5.2\",\"sourceTag\":\"link-surface@fixture\"}"
@@ -5442,6 +5447,36 @@
                     "kind": "utf8",
                     "name": "diversityState",
                     "ordinal": 37
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "i64",
+                    "name": "radioSpeakerVolume",
+                    "ordinal": 38
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "bool",
+                    "name": "radioSpeakerMuted",
+                    "ordinal": 39
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "i64",
+                    "name": "speakerAmplifierMode",
+                    "ordinal": 40
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "i64",
+                    "name": "radioSpeakerAvailability",
+                    "ordinal": 41
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "bool",
+                    "name": "speakerAmplifierAvailable",
+                    "ordinal": 42
                 }
             ]
         },

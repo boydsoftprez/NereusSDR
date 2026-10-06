@@ -558,6 +558,13 @@
 //                the CW or Tune flag sent to the connection (R-SPK-05 to
 //                R-SPK-07, R-SPK-11, R-SPK-12, R-SPK-15). J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-06 - Radio speaker in a remote window: the setters write
+//                through the mirror only while the Core offers the radio
+//                speaker (radioSpeakerVersion 1), the reports are the
+//                Core's, the reasons name an older Core, and
+//                radioSpeakerToolTip (R-SPK-06, R-SPK-13, R-SPK-14,
+//                R-SPK-16). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
 //=================================================================
@@ -3091,6 +3098,21 @@ public:
     // Why the amplifier is off right now (R-SPK-10); empty while it is on
     // and when it is unavailable.
     QString speakerAmplifierStatus() const { return m_speakerAmplifierStatus; }
+    // R-SPK-16: the RADIO tooltip. In a remote window "Radio speaker at
+    // the Core (shared with every window and the phone)", locally "Radio
+    // speaker"; on a Hermes Lite 2 the add-on note follows on its own line
+    // (R-SPK-07); with no radio speaker to set, the reason instead.
+    QString radioSpeakerToolTip() const;
+    // R-SPK-07 / D11: the Hermes Lite 2's headphone output needs its audio
+    // add-on board, which the radio cannot report.
+    static QString radioSpeakerAddOnNote();
+    // Remote role (radioSpeakerVersion 1): the Core's two reports as it
+    // sent them (radioSpeakerAvailability 0 to 2, speakerAmplifierAvailable),
+    // applied by StationClient. False for any other name or a bad value, and
+    // on a Role::Local model. clearStationRadioSpeaker drops them when the
+    // link ends.
+    bool applyStationRadioSpeakerValue(const QByteArray& name, const QVariant& value);
+    void clearStationRadioSpeaker();
 
     // RADE end-of-over callsigns: the radio is sending FreeDV's end-of-over
     // frame after an operator's release (MoxController's end-of-over tail).
@@ -6531,6 +6553,9 @@ private:
     // R-SPK-15: the CW or Tune flag, sent to the connection on a change.
     bool computeSidetoneExpected() const;
     void refreshSidetoneExpected();
+    // Remote role: the link says the Core offers the radio speaker
+    // (IStationLink::radioSpeakerAvailable).
+    bool stationOffersRadioSpeaker() const;
     // Task 13: the radio's user digital inputs reach TxInhibitMonitor
     // (PollTXInhibit, console.cs:25849-25887 [v2.10.3.15]). Called from
     // wireConnectionSignals.
@@ -8084,6 +8109,9 @@ private:
     // it up after Tune ends until the radio has unkeyed.
     bool m_sidetoneExpected{false};
     bool m_tuneSidetoneHold{false};
+    // Remote role: the Core's reports as it last sent them.
+    int  m_stationRadioSpeakerAvailability{0};
+    bool m_stationSpeakerAmplifierAvailable{false};
     std::unique_ptr<RadioMicSource>        m_radioMicSource;
     // VAX TX consumer (added 2026-05-06, eager-borg-d64bed).  Pulls
     // audio from /nereussdr-vax-tx shared memory via AudioEngine and

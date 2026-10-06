@@ -12,6 +12,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-06  J.J. Boyd / KG4VCF  Radio speaker: the capture declares
+//                                    radioSpeaker, so radioSpeakerVersion
+//                                    and radio's five radio speaker
+//                                    properties are captured. AI-assisted
+//                                    via Anthropic Claude Code.
 //   2026-10-04  J.J. Boyd / KG4VCF  Complete conditional media fields,
 //                                    legacy nested variants and lossless
 //                                    bitrate refusal shapes. AI-assisted
@@ -708,7 +713,10 @@ std::optional<QList<QByteArray>> liveSessionWire(
                                   {"rxFilterLowPass", 1},
                                   // RADE reason: radeReasonVersion and
                                   // each slice's radeReason.
-                                  {"radeReason", 1}})));
+                                  {"radeReason", 1},
+                                  // Radio speaker: radioSpeakerVersion and
+                                  // radio's five radio speaker properties.
+                                  {"radioSpeaker", 1}})));
     clientEnd->sendText(SessionMessages::encode(SessionMessages::authRequest({}, block)));
 
     // The loopback delivers on later event-loop turns, as a socket would.
@@ -795,6 +803,8 @@ QJsonArray captureCapabilities()
     caps.rxFilterLowPassVersion = 1;
     // RADE reason: sent to a peer that declared radeReason.
     caps.radeReasonVersion = 1;
+    // Radio speaker: sent to a peer that declared radioSpeaker.
+    caps.radioSpeakerVersion = 1;
 
     // The values come from a live station with every feature a Core can
     // switch on: media, telemetry, an enforced display budget with its
