@@ -3491,7 +3491,7 @@ void RemotePeripheralsTest::remoteWindowSwitchesTheTunerThroughTheCore()
     QVERIFY(admitCoreTuner(station, tuner));
     NEREUS_TRY_VERIFY(cw.client.capabilities().txPermitted);
     QVERIFY(!station.receiveOnlyStationPolicy());
-    tuner.send(QStringLiteral("S0|state one_by_three=1 antA=1 operate=0 bypass=0"));
+    tuner.send(QStringLiteral("S0|state one_by_three=1 antA=1 state=0 bypass=0"));
     NEREUS_TRY_VERIFY(window.tunerModel()->hasAntennaSwitch());
     NEREUS_TRY_COMPARE(window.tunerModel()->antennaA(), 1);
 
@@ -3519,18 +3519,37 @@ void RemotePeripheralsTest::remoteWindowSwitchesTheTunerThroughTheCore()
     const int operateMark = tuner.commands.size();
     QCOMPARE(applet.operateButtonForTesting()->text(), QStringLiteral("STANDBY"));
     applet.operateButtonForTesting()->click();
-    const int bypassOff = tuner.waitFor(QStringLiteral("bypass=0"), operateMark);
-    const int operateOn = tuner.waitFor(QStringLiteral("operate=1"), operateMark);
+    const int bypassOff = tuner.waitFor(QStringLiteral("bypass set=0"), operateMark);
+    const int operateOn = tuner.waitFor(QStringLiteral("operate set=1"), operateMark);
     QVERIFY(bypassOff >= 0 && operateOn > bypassOff);
     NereusSDR::Test::settleSession();
-    QCOMPARE(tuner.commands.mid(operateMark).count(QStringLiteral("bypass=0")), 1);
+    QCOMPARE(tuner.commands.mid(operateMark).count(QStringLiteral("bypass set=0")), 1);
     QCOMPARE(applet.operateButtonForTesting()->text(), QStringLiteral("STANDBY"));
-    tuner.send(QStringLiteral("S0|state operate=1 bypass=0"));
+    tuner.send(QStringLiteral("S0|state state=1 bypass=0"));
     NEREUS_TRY_COMPARE(applet.operateButtonForTesting()->text(), QStringLiteral("OPERATE"));
     // OPERATE to BYPASS.
     const int bypassMark = tuner.commands.size();
     applet.operateButtonForTesting()->click();
-    QVERIFY(tuner.waitFor(QStringLiteral("bypass=1"), bypassMark) >= 0);
+    QVERIFY(tuner.waitFor(QStringLiteral("bypass set=1"), bypassMark) >= 0);
+    QCOMPARE(applet.operateButtonForTesting()->text(), QStringLiteral("OPERATE"));
+    tuner.send(QStringLiteral("S0|state state=1 bypass=1"));
+    NEREUS_TRY_COMPARE(applet.operateButtonForTesting()->text(), QStringLiteral("BYPASS"));
+
+    // BYPASS to STANDBY and back, using the captured native state fields.
+    const int standbyMark = tuner.commands.size();
+    applet.operateButtonForTesting()->click();
+    QVERIFY(tuner.waitFor(QStringLiteral("operate set=0"), standbyMark) >= 0);
+    QCOMPARE(applet.operateButtonForTesting()->text(), QStringLiteral("BYPASS"));
+    tuner.send(QStringLiteral("S0|state state=0 bypass=0"));
+    NEREUS_TRY_COMPARE(applet.operateButtonForTesting()->text(), QStringLiteral("STANDBY"));
+    const int resumeMark = tuner.commands.size();
+    applet.operateButtonForTesting()->click();
+    const int resumeBypassOff = tuner.waitFor(QStringLiteral("bypass set=0"), resumeMark);
+    const int resumeOperateOn = tuner.waitFor(QStringLiteral("operate set=1"), resumeMark);
+    QVERIFY(resumeBypassOff >= 0 && resumeOperateOn > resumeBypassOff);
+    QCOMPARE(applet.operateButtonForTesting()->text(), QStringLiteral("STANDBY"));
+    tuner.send(QStringLiteral("S0|state state=1 bypass=0"));
+    NEREUS_TRY_COMPARE(applet.operateButtonForTesting()->text(), QStringLiteral("OPERATE"));
     QVERIFY(refused.isEmpty());
 
     // On the air: disabled, with the reason; a request sent anyway is

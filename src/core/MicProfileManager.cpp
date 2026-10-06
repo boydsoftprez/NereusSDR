@@ -11,6 +11,9 @@
 // =================================================================
 //
 // Modification history (NereusSDR):
+//   2026-10-04 — Align the profile two-tone default with the full-envelope
+//                 transmit-model default for PS3 calibration. J.J. Boyd
+//                 (KG4VCF), with OpenAI Codex assistance.
 //   2026-04-28 — Original implementation for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via
 //                 Anthropic Claude Code.
@@ -1196,7 +1199,10 @@ QHash<QString, QVariant> MicProfileManager::defaultProfileValues()
     // Two-tone (7) + drive-power source (1)
     out.insert(QStringLiteral("TwoToneFreq1"),         QStringLiteral("700"));           // setup.cs:34226 [v2.10.3.13]
     out.insert(QStringLiteral("TwoToneFreq2"),         QStringLiteral("1900"));          // setup.cs:34227 [v2.10.3.13]
-    out.insert(QStringLiteral("TwoToneLevel"),         QStringLiteral("-6"));            // NereusSDR-original safer (Designer ships 0)
+    // Match TransmitModel's full-envelope default: -6 dB prevents PS3
+    // collection from reaching the upper amplitude buckets.
+    // From Thetis setup.Designer.cs:62168-62172 [v2.10.3.15].
+    out.insert(QStringLiteral("TwoToneLevel"),         QStringLiteral("0"));
     out.insert(QStringLiteral("TwoTonePower"),         QStringLiteral("50"));            // NereusSDR-original (Designer ships 10)
     out.insert(QStringLiteral("TwoToneFreq2Delay"),    QStringLiteral("0"));             // setup.Designer.cs:61943-61947 [v2.10.3.13]
     out.insert(QStringLiteral("TwoToneInvert"),        QStringLiteral("True"));          // setup.Designer.cs:61963 [v2.10.3.13]
@@ -1489,7 +1495,7 @@ void MicProfileManager::applyValuesToModel(const QHash<QString, QVariant>& value
     // Two-tone
     tx->setTwoToneFreq1(take(QStringLiteral("TwoToneFreq1"), QStringLiteral("700")).toInt());
     tx->setTwoToneFreq2(take(QStringLiteral("TwoToneFreq2"), QStringLiteral("1900")).toInt());
-    tx->setTwoToneLevel(take(QStringLiteral("TwoToneLevel"), QStringLiteral("-6")).toDouble());
+    tx->setTwoToneLevel(take(QStringLiteral("TwoToneLevel"), QStringLiteral("0")).toDouble());
     tx->setTwoTonePower(take(QStringLiteral("TwoTonePower"), QStringLiteral("50")).toInt());
     tx->setTwoToneFreq2Delay(take(QStringLiteral("TwoToneFreq2Delay"), QStringLiteral("0")).toInt());
     tx->setTwoToneInvert(take(QStringLiteral("TwoToneInvert"), QStringLiteral("True")) == QLatin1String("True"));

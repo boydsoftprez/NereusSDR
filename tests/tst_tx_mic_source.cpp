@@ -37,6 +37,8 @@
 //                 sequence step of 1) and once lost (a step of the frames
 //                 missed), and from waitForBlock itself. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-04: Deterministic longest-wake-interval stage split tests.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 // no-port-check: NereusSDR-original test file.  No Thetis logic ported.
@@ -469,6 +471,131 @@ private slots:
         QCOMPARE(watch.stats().longestGapNs, kFrameNs);
     }
 
+    void wakeWatch_splitBelongsToLongestInterval_data()
+    {
+        QTest::addColumn<qint64>("acquireStartNs");
+        QTest::addColumn<qint64>("workerNs");
+        QTest::addColumn<qint64>("acquireNs");
+        QTest::newRow("worker dominates") << qint64(1900) << qint64(900) << qint64(100);
+        QTest::newRow("acquire dominates") << qint64(1100) << qint64(100) << qint64(900);
+    }
+
+    void wakeWatch_splitBelongsToLongestInterval()
+    {
+        QFETCH(qint64, acquireStartNs);
+        QFETCH(qint64, workerNs);
+        QFETCH(qint64, acquireNs);
+        TxMicWakeWatch watch;
+        watch.begin();
+        watch.noteSequence(0xfffffffeU);
+        watch.noteWake(1000);
+        watch.noteSequence(1); // The unsigned radio sequence wraps.
+        watch.noteWake(2000, acquireStartNs);
+        // A shorter interval has a different split; it must not replace
+        // either component of the longest interval.
+        watch.noteWake(2500, 2250);
+        const TxMicWakeWatch::Stats st = watch.stats();
+        QCOMPARE(st.longestGapNs, qint64(1000));
+        QCOMPARE(st.gapStartSteadyNs, qint64(1000));
+        QCOMPARE(st.sequenceStep, qint64(3));
+        QCOMPARE(st.workerBetweenWaitsNs, workerNs);
+        QCOMPARE(st.acquireWaitNs, acquireNs);
+        QCOMPARE(st.workerBetweenWaitsNs + st.acquireWaitNs, st.longestGapNs);
+
+        watch.end();
+        watch.noteWake(10000, 2600);
+        QCOMPARE(watch.stats().workerBetweenWaitsNs, workerNs);
+        QCOMPARE(watch.stats().acquireWaitNs, acquireNs);
+        watch.begin();
+        QCOMPARE(watch.stats().workerBetweenWaitsNs, qint64(-1));
+        QCOMPARE(watch.stats().acquireWaitNs, qint64(-1));
+        watch.noteWake(20000, 10001);
+        QCOMPARE(watch.stats().longestGapNs, qint64(-1));
+        watch.noteWake(20200, 20050);
+        QCOMPARE(watch.stats().workerBetweenWaitsNs, qint64(50));
+        QCOMPARE(watch.stats().acquireWaitNs, qint64(150));
+    }
+
+    void wakeWatch_unknownOrInvalidSplitStaysUnknown_data()
+    {
+        QTest::addColumn<qint64>("acquireStartNs");
+        QTest::newRow("unknown") << qint64(-1);
+        QTest::newRow("before previous wake") << qint64(999);
+        QTest::newRow("after successful return") << qint64(2001);
+    }
+
+    void wakeWatch_unknownOrInvalidSplitStaysUnknown()
+    {
+        QFETCH(qint64, acquireStartNs);
+        TxMicWakeWatch watch;
+        watch.begin();
+        watch.noteWake(500);
+        watch.noteWake(1000, 600);
+        QCOMPARE(watch.stats().workerBetweenWaitsNs, qint64(100));
+        if (acquireStartNs < 0) {
+            watch.noteWake(2000); // Original synthetic caller API.
+        } else {
+            watch.noteWake(2000, acquireStartNs);
+        }
+        const TxMicWakeWatch::Stats st = watch.stats();
+        QCOMPARE(st.longestGapNs, qint64(1000));
+        QCOMPARE(st.gapStartSteadyNs, qint64(1000));
+        QCOMPARE(st.workerBetweenWaitsNs, qint64(-1));
+        QCOMPARE(st.acquireWaitNs, qint64(-1));
+    }
+
+    void wakeWatch_concurrentSnapshotsDescribeOneEvent()
+    {
+        TxMicWakeWatch watch;
+        watch.begin();
+        std::atomic<bool> writerDone{false};
+        std::thread writer([&] {
+            qint64 nowNs = 1000;
+            watch.noteSequence(0);
+            watch.noteWake(nowNs);
+            for (qint64 event = 1; event <= 200'000; ++event) {
+                const qint64 gapNs = 1000 + event;
+                const qint64 acquireStartNs = nowNs + gapNs / 4;
+                nowNs += gapNs;
+                watch.noteSequence(static_cast<quint32>(event));
+                watch.noteWake(nowNs, acquireStartNs);
+            }
+            writerDone.store(true, std::memory_order_release);
+        });
+        bool inconsistent = false;
+        quint64 reads = 0;
+        do {
+            const TxMicWakeWatch::Stats st = watch.stats();
+            if (st.longestGapNs >= 0) {
+                const qint64 event = st.longestGapNs - 1000;
+                const qint64 expectedStartNs = 1000 + (event - 1) * 1000
+                    + (event - 1) * event / 2;
+                inconsistent = inconsistent || event < 1 || event > 200'000
+                    || st.gapStartSteadyNs != expectedStartNs
+                    || st.workerBetweenWaitsNs != st.longestGapNs / 4
+                    || st.acquireWaitNs != st.longestGapNs - st.longestGapNs / 4
+                    || st.sequenceStep != 1;
+            }
+            if ((++reads % 64) == 0) {
+                watch.begin(); // Invalidation can overlap worker publication.
+            }
+        } while (!writerDone.load(std::memory_order_acquire));
+        writer.join();
+        QVERIFY2(!inconsistent, "A valid snapshot mixed fields from different wake intervals");
+        // A new key invalidates the previous published generation, even
+        // before the worker wakes again to establish its next baseline.
+        watch.begin();
+        QCOMPARE(watch.stats().longestGapNs, qint64(-1));
+        QCOMPARE(watch.stats().workerBetweenWaitsNs, qint64(-1));
+        QCOMPARE(watch.stats().acquireWaitNs, qint64(-1));
+        watch.noteWake(1000);
+        watch.noteWake(1020, 1005);
+        // An old-generation maximum must not suppress a smaller new one.
+        QCOMPARE(watch.stats().longestGapNs, qint64(20));
+        QCOMPARE(watch.stats().workerBetweenWaitsNs, qint64(5));
+        QCOMPARE(watch.stats().acquireWaitNs, qint64(15));
+    }
+
     // ── 10. waitForBlock times its wakes into the watch ───────────────────
     void waitForBlock_notesEachWakeInTheWatch()
     {
@@ -486,6 +613,9 @@ private slots:
         const TxMicWakeWatch::Stats st = src.wakeWatch().stats();
         QVERIFY2(st.longestGapNs >= 50'000'000, qPrintable(QString::number(st.longestGapNs)));
         QCOMPARE(st.sequenceStep, qint64(1));
+        QVERIFY(st.workerBetweenWaitsNs >= 0);
+        QVERIFY(st.acquireWaitNs >= 0);
+        QCOMPARE(st.workerBetweenWaitsNs + st.acquireWaitNs, st.longestGapNs);
         src.stop();
     }
 };
