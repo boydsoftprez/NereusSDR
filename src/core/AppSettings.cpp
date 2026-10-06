@@ -870,6 +870,11 @@ QByteArray AppSettings::exportLocalXml(QString* error) const
     return serializeLocalXml(m_settings, m_stationSettings, m_stationName, error);
 }
 
+QString AppSettings::keyFromXmlTag(const QString& tag)
+{
+    return decodeXmlKey(tag);
+}
+
 bool AppSettings::validateLocalXml(const QByteArray& input, QString* error)
 {
     QMap<QString, QString> settings;

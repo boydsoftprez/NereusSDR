@@ -159,11 +159,11 @@
   }
 
   /* ------------------------------------------------------------------ */
-  /* Latest release from GitHub. The page ships with v0.5.2 baked in and */
+  /* Latest release from GitHub. The page ships with v2026.10.0 baked in and */
   /* only switches when every download link can be matched.              */
   /* ------------------------------------------------------------------ */
 
-  var CACHE_KEY = 'nereussdr-latest-release-v1';
+  var CACHE_KEY = 'nereussdr-latest-release-v2';
 
   // A download link may only ever point at this repository's release files.
   var DOWNLOAD_PATH = '/' + REPO + '/releases/download/';
@@ -227,8 +227,9 @@
       var found = null;
       for (var j = 0; j < rel.assets.length; j++) {
         var n = rel.assets[j].n;
-        // An asset whose URL leads anywhere else counts as not found.
-        if ((n === suffix || n.slice(-(suffix.length + 1)) === '-' + suffix) &&
+        // Match this product and version; dependency source archives share
+        // the source.tar.gz suffix. External URLs still count as not found.
+        if ((n === suffix || n === 'NereusSDR-' + rel.tag.slice(1) + '-' + suffix) &&
             isReleaseDownload(rel.assets[j].u)) {
           found = rel.assets[j];
           break;

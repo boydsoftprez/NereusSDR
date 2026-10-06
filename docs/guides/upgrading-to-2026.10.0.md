@@ -95,7 +95,10 @@ Update the Core and desktop together for the new controls and authority rules.
 
 The native iPhone/iPad app is a full operating console for the same Core,
 with touch receiver controls, live display/audio and microphone/PTT uplink.
-Its validation and delivery are tracked independently of desktop packages.
+It is available through the [public TestFlight preview](https://testflight.apple.com/join/61K3p3xn).
+Install it separately on your iPhone or iPad and follow the
+[connection and pairing steps](../manual/06-iphone-connect.md). Its validation
+and delivery remain separate from desktop packages.
 
 ### IPv6 and CGNAT checks
 

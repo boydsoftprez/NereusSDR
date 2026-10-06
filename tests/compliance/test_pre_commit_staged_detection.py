@@ -89,11 +89,14 @@ class HookRepo:
             # More than common pipe buffers; matching names sort before zzz/.
             assert len(listing.encode()) > 200_000
 
-    def run(self, *, fail_verifier: str = "", grep_error: bool = False
+    def run(self, *, fail_verifier: str = "", grep_error: bool = False,
+            missing_upstreams: tuple[str, ...] = ()
             ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
         env = os.environ.copy()
         for name in ("THETIS", "MI0BOT", "DESKHPSDR", "FREEDV"):
             env[f"NEREUS_{name}_DIR"] = str(self.upstream)
+            if name in missing_upstreams:
+                env[f"NEREUS_{name}_DIR"] = str(self.path / "missing-upstream")
         env.pop("NEREUS_SKIP_TAG_CHECK", None)
         env.pop("CHECK_NEW_PORTS_FULL", None)
         env["FAIL_VERIFIER"] = fail_verifier
@@ -114,6 +117,23 @@ class PreCommitStagedDetectionTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.repo.close()
+
+    def test_docs_contributor_without_upstream_clones_can_run_hook(self) -> None:
+        self.repo.stage("docs/fixture.md")
+        result, calls = self.repo.run(
+            missing_upstreams=("THETIS", "MI0BOT", "DESKHPSDR", "FREEDV"))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("SKIPPED (no Thetis clone found locally", result.stdout)
+        self.assertEqual(calls, SOURCE_GATES[:-1])
+
+    def test_missing_optional_upstream_keeps_thetis_tag_gate_active(self) -> None:
+        self.repo.stage("docs/fixture.md")
+        for name in ("MI0BOT", "DESKHPSDR", "FREEDV"):
+            with self.subTest(upstream=name):
+                (self.repo.path / "verifier-calls").unlink(missing_ok=True)
+                result, calls = self.repo.run(missing_upstreams=(name,))
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(calls, SOURCE_GATES)
 
     def test_large_matching_index_runs_all_applicable_gates(self) -> None:
         self.repo.stage("CMakeLists.txt", "tests/CMakeLists.txt",

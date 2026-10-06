@@ -207,13 +207,38 @@ Release downloads include detached GPG signatures and a signed checksum list.
 Verify the list and the file you downloaded before installing:
 
 ```sh
-gpg --keyserver keyserver.ubuntu.com --recv-keys 4A95F4D22AEE9271D8A3C01B20C284473F97D2B3
-gpg --verify SHA256SUMS.txt.asc SHA256SUMS.txt
-# Use the row for your downloaded file; a full check expects every listed asset.
-awk -v file="YOUR_DOWNLOADED_FILENAME" '$2 == file { print }' SHA256SUMS.txt | sha256sum --check --strict
+(
+set -eu
+asset="YOUR_DOWNLOADED_FILENAME"
+GNUPGHOME=$(mktemp -d)
+export GNUPGHOME
+trap 'rm -rf "$GNUPGHOME"' EXIT HUP INT TERM
+curl -fL -o "$GNUPGHOME/signing-key.asc" https://nereussdr.com/nereussdr-signing-key.asc
+gpg --batch --with-colons --show-keys "$GNUPGHOME/signing-key.asc" > "$GNUPGHOME/key-info"
+fingerprint=$(awk -F: '$1 == "pub" { primary = 1; next } primary && $1 == "fpr" { print $10; primary = 0 }' "$GNUPGHOME/key-info")
+[ "$fingerprint" = 4A95F4D22AEE9271D8A3C01B20C284473F97D2B3 ] || { echo "Signing key fingerprint mismatch." >&2; exit 1; }
+gpg --batch --import "$GNUPGHOME/signing-key.asc"
+gpg --batch --verify SHA256SUMS.txt.asc SHA256SUMS.txt
+awk -v file="$asset" '
+  $2 == file { row = $0; count++ }
+  END {
+    if (count != 1) { print "Expected exactly one asset checksum." > "/dev/stderr"; exit 1 }
+    print row
+  }
+' SHA256SUMS.txt > "$GNUPGHOME/asset.sha256"
+sha256sum --check --strict "$GNUPGHOME/asset.sha256"
+)
 ```
 
-On macOS, use `shasum -a 256 -c` in place of `sha256sum --check --strict`.
+Download `SHA256SUMS.txt` and `SHA256SUMS.txt.asc` from the same release as
+your asset, and replace `YOUR_DOWNLOADED_FILENAME` with its exact filename.
+Verification uses a temporary keyring. GPG's warning that the key is not
+certified with a trusted signature is expected here; the full fingerprint
+check identifies the release key. On macOS, use `shasum -a 256 -c` in place of
+`sha256sum --check --strict`. For Raspberry Pi OS Lite or Armbian, follow the
+[Core install guide](docs/guides/install-core-sbc.md) for the complete download
+and installation commands.
+
 macOS release packaging uses Developer ID signing and notarization. Windows
 installers do not have an Authenticode signature and may prompt through SmartScreen.
 
