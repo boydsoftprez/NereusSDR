@@ -171,7 +171,7 @@ greyed out with the reason ("This radio has no switchable speaker amplifier.").
 The ANAN-G2E is not on the list: at their latest, Thetis and mi0bot-Thetis
 leave it out, and the G2E menu entries in piHPSDR and deskHPSDR never reach
 the wire (see "Source facts"). On a G2E the choice is greyed out with its
-own reason ("Not yet tested on the ANAN-G2E.") and the byte stays as today
+own reason ("Not tested on the ANAN-G2E.") and the byte stays as today
 (D17). It is turned on in a later change once V-HW-6 passes.
 
 R-SPK-09. The bit sent is "amplifier off" when any of these hold:
@@ -483,7 +483,7 @@ Software tests (this machine, offscreen):
 - V-SW-5. Availability: no radio gives disabled with "No radio connected";
   HL2 gives enabled with the add-on note; amplifier availability matches
   the R-SPK-08 board list for every `HPSDRModel` on P1 and P2, and the
-  G2E reports unavailable with "Not yet tested on the ANAN-G2E.".
+  G2E reports unavailable with "Not tested on the ANAN-G2E.".
   (R-SPK-06 to R-SPK-08, D17)
 - V-SW-6. Setup pages: each control from today's pages (found by its
   `nereusSetupId` where it has one, otherwise by object name, which the

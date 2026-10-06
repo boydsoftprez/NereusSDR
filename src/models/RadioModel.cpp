@@ -20613,7 +20613,7 @@ QString RadioModel::speakerAmplifierUnavailableReason() const
     // D17: the G2E is left off the amplifier list until it is bench-tested
     // (V-HW-6).
     if (m_hardwareProfile.model == HPSDRModel::ANAN_G2E) {
-        return tr("Not yet tested on the ANAN-G2E.");
+        return tr("Not tested on the ANAN-G2E.");
     }
     return tr("This radio has no switchable speaker amplifier.");
 }

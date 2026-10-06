@@ -3091,7 +3091,7 @@ public:
     bool speakerAmplifierAvailable() const { return m_speakerAmplifierAvailable; }
     // "No radio connected" with no radio; empty when available.
     QString radioSpeakerUnavailableReason() const;
-    // "No radio connected", "Not yet tested on the ANAN-G2E." (D17) or
+    // "No radio connected", "Not tested on the ANAN-G2E." (D17) or
     // "This radio has no switchable speaker amplifier."; empty when
     // available.
     QString speakerAmplifierUnavailableReason() const;

@@ -564,7 +564,7 @@ private slots:
             QVERIFY(radio.speakerAmplifierUnavailableReason().isEmpty());
         } else if (m == HPSDRModel::ANAN_G2E) {
             QCOMPARE(radio.speakerAmplifierUnavailableReason(),
-                     QStringLiteral("Not yet tested on the ANAN-G2E."));
+                     QStringLiteral("Not tested on the ANAN-G2E."));
         } else {
             QCOMPARE(radio.speakerAmplifierUnavailableReason(),
                      QStringLiteral("This radio has no switchable speaker amplifier."));

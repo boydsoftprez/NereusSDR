@@ -67,7 +67,7 @@ spec's sibling folder `2026-10-05-radio-speaker-and-audio-setup-design/`.
   except the surface manifest entries this plan adds.
 - **Operator wording.** Plain user words, no internal names. Strings fixed by the spec
   are used exactly: "No radio connected", "This Core can't set the radio speaker.
-  Update the Core.", "This radio has no switchable speaker amplifier.", "Not yet tested
+  Update the Core.", "This radio has no switchable speaker amplifier.", "Not tested
   on the ANAN-G2E.", "Radio speaker at the Core (shared with every window and the
   phone)", "Amplifier is off now: radio speaker muted." / "Amplifier is off now:
   transmitting." / "Amplifier is off now.", "Mute this phone", "Mute radio speaker".
@@ -372,7 +372,7 @@ D4, D11, D17.
   availability values 0 no radio, 1 available, 2 available but needs an add-on board;
   the two reason getters returning the spec's strings ("No radio connected"; for the
   amplifier "This radio has no switchable speaker amplifier." or, on `ANAN_G2E`, "Not
-  yet tested on the ANAN-G2E."; empty when available). Task 4 extends the reasons for
+  tested on the ANAN-G2E."; empty when available). Task 4 extends the reasons for
   remote windows. Also `QString speakerAmplifierStatus() const` with signal
   `speakerAmplifierStatusChanged()`: empty while the amplifier is on, otherwise
   "Amplifier is off now: radio speaker muted." (muted), "Amplifier is off now:
@@ -399,7 +399,7 @@ D4, D11, D17.
   tap starts.
 - V-SW-5 (local): no radio gives availability 0 and "No radio connected"; HL2 gives 2;
   every other P1/P2 board 1. `speakerAmplifierAvailable` matches the Task 2 list on P2
-  and is false on P1; the G2E reason is "Not yet tested on the ANAN-G2E.".
+  and is false on P1; the G2E reason is "Not tested on the ANAN-G2E.".
 - Without a connection, setting a value still stores it for the next connect to the
   same MAC only when a MAC is known; otherwise it is held in memory.
 
