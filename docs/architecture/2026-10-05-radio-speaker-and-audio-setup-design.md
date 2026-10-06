@@ -72,6 +72,7 @@ are listed again under "Design choices to confirm".
 | D14 | Rarely changed device settings fold under "Device details" on Outputs and Microphone. | JJ approved: the volume and device you change most stay in front. |
 | D15 | One layout on Mac, Windows and Linux. Differences are single rows or status lines inside it (see "Platforms"). | JJ asked for the same look everywhere. |
 | D16 | VAX Device row: Mac and Linux show NereusSDR's own device by name only. Windows picks an installed virtual cable. | NereusSDR brings its own VAX devices on Mac (a bundled driver) and Linux (devices it creates in PipeWire or PulseAudio). Windows has none only because of driver-signing cost. |
+| D17 | The ANAN-G2E shows the amplifier choice greyed out, with its own reason, until JJ bench-tests it (V-HW-6). | No reference sends the switch to a G2E at its latest (see "Source facts"), so we don't ship a control that may do nothing. JJ chose this over including it now or leaving it out for good. |
 
 ## Source facts
 
@@ -164,8 +165,9 @@ Anvelina Pro 3, ANAN-G2, ANAN-G2 1K or Red Pitaya. Anywhere else it is shown
 greyed out with the reason ("This radio has no switchable speaker amplifier.").
 The ANAN-G2E is not on the list: at their latest, Thetis and mi0bot-Thetis
 leave it out, and the G2E menu entries in piHPSDR and deskHPSDR never reach
-the wire (see "Source facts"). Adding it needs a source that the G2E has the
-amplifier and its firmware honours the bit, or a bench check on a G2E.
+the wire (see "Source facts"). On a G2E the choice is greyed out with its
+own reason ("Not yet tested on the ANAN-G2E.") and the byte stays as today
+(D17). It is turned on in a later change once V-HW-6 passes.
 
 R-SPK-09. The bit sent is "amplifier off" when any of these hold:
 
@@ -452,6 +454,9 @@ Hardware (a person at the radio):
   headphone output.
 - V-HW-5. Remote: a desktop remote window and the iPhone move the same
   RADIO value on a Core with a G2, and each follows the other.
+- V-HW-6. ANAN-G2E on P2 (JJ's bench): with a test build that sends the
+  amplifier bit, whether "amplifier off" silences the G2E's speaker. Pass
+  adds the G2E to the R-SPK-08 list; fail leaves D17 as it is.
 
 ## Design choices to confirm
 
@@ -460,12 +465,9 @@ confirms or changes them:
 
 1. D11: the HL2 keeps RADIO enabled with the add-on note, because the
    radio can't report the board.
-2. R-SPK-08: the ANAN-G2E gets no amplifier choice, because no reference
-   sends the bit to it; it is added once a source or a bench check shows
-   the G2E has the amplifier.
-3. R-SPK-09: Off while transmitting stays on for CW and Tune, as piHPSDR.
-4. R-SPK-12: RADIO is saved per radio (per MAC), not once per station.
-5. R-SPK-23: the amplifier choice reaches the phone through its Setup
+2. R-SPK-09: Off while transmitting stays on for CW and Tune, as piHPSDR.
+3. R-SPK-12: RADIO is saved per radio (per MAC), not once per station.
+4. R-SPK-23: the amplifier choice reaches the phone through its Setup
    (described Outputs page), not the Sound panel.
 
 ## Mockups
