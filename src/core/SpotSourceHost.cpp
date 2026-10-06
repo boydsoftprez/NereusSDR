@@ -161,6 +161,10 @@
 //                                    contributors, GPLv3), called here and
 //                                    not copied. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-06  J.J. Boyd / KG4VCF  reporterVersion() replaces the local
+//                                    versionString() so every caller sends
+//                                    the same reporter software tag.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/SpotSourceHost.h"
@@ -199,11 +203,6 @@ const QString SpotSourceHost::kConnected = QStringLiteral("connected");
 const QString SpotSourceHost::kError = QStringLiteral("error");
 
 namespace {
-
-QString versionString()
-{
-    return QStringLiteral("NereusSDR ") + QStringLiteral(NEREUSSDR_VERSION);
-}
 
 bool settingIsTrue(const QString& key)
 {
@@ -263,6 +262,11 @@ bool SpotSourceHost::isKnownSource(const QString& source)
 QString SpotSourceHost::consoleStream(const QString& source)
 {
     return QStringLiteral("spotConsole:") + source;
+}
+
+QString SpotSourceHost::reporterVersion()
+{
+    return QStringLiteral("NereusSDR ") + QStringLiteral(NEREUSSDR_VERSION);
 }
 
 QJsonObject SpotSourceHost::spotRecordFields(const SpotData& spot, const DxccColorProvider* dxcc)
@@ -512,7 +516,7 @@ void SpotSourceHost::restoreAutoStart(Placement placement)
         const QString pskCall = resolveCall(QStringLiteral("PskReporter/Callsign"));
         const QString pskGrid = resolveGrid(QStringLiteral("PskReporter/GridSquare"));
         if (!pskCall.isEmpty()) {
-            m_pskReporter->setIdentity(pskCall, pskGrid, versionString());
+            m_pskReporter->setIdentity(pskCall, pskGrid, reporterVersion());
             if (settingIsTrue(QStringLiteral("PskReporterAutoStart"))) {
                 // Enable FreeDV Reporter timer (every 5 minutes).  [original inline comment from main.cpp:2594]
                 m_pskReporter->setAutoSendIntervalSec(PskReporterClient::kReportingIntervalSec);
@@ -1103,8 +1107,8 @@ bool SpotSourceHost::startFreedvWith(QString* reason)
         AppSettings::instance().value(QStringLiteral("FreeDvReporter/Message")).toString();
     qCInfo(lcDsp) << "FreeDVReporter: starting connection with identity"
                   << "callsign=" << call << "grid=" << grid << "msg=" << message
-                  << "version=" << versionString();
-    m_freedv->setIdentity(call, grid, message, versionString());
+                  << "version=" << reporterVersion();
+    m_freedv->setIdentity(call, grid, message, reporterVersion());
     setSource(kFreedvReporter, kConnecting);
     m_freedv->startConnection();
     return true;
@@ -1136,7 +1140,7 @@ void SpotSourceHost::startPskReporterWith(const QString& callsign, const QString
     // and emits IPFIX datagrams with empty receiver
     // fields.  pskreporter.cpp:148-169 [@77e793a].
     // [moved from MainWindow::openSpotHub in parity Task 19]
-    m_pskReporter->setIdentity(callsign, gridSquare, versionString());
+    m_pskReporter->setIdentity(callsign, gridSquare, reporterVersion());
     // Enable FreeDV Reporter timer (every 5 minutes).  [original inline comment from main.cpp:2594]
     // Reporter timer fired; send in-progress packet.  [original inline comment from main.cpp:1611;
     // the tick is PskReporterClient's own timer, armed here]

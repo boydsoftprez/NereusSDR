@@ -142,6 +142,10 @@
 //                                    station" goes through the spot source
 //                                    host. AI tooling: Anthropic Claude
 //                                    Code.
+//   2026-10-06  J.J. Boyd / KG4VCF  An identity edit sends the reporters
+//                                    SpotSourceHost::reporterVersion(), not
+//                                    a "NereusSDR/<version>" variant.
+//                                    AI tooling: Anthropic Claude Code.
 
 #include "SpotHubDialog.h"
 
@@ -444,10 +448,8 @@ void SpotHubDialog::applyIdentityToClients(FreeDVReporterClient* freedv,
 {
     // Push to live clients if non-null. A connection that is
     // already up picks up the new identity without disconnect.
-    // Version string comes from CMake (NEREUSSDR_VERSION); the
-    // FreeDV / PSK Reporter pools want a versioned client tag.
-    const QString version =
-        QStringLiteral("NereusSDR/") + QStringLiteral(NEREUSSDR_VERSION);
+    // The same versioned client tag every other caller sends.
+    const QString version = SpotSourceHost::reporterVersion();
     if (freedv) {
         freedv->setIdentity(call, gridSquare, message, version);
     }
