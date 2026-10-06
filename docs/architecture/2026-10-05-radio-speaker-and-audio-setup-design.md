@@ -367,8 +367,10 @@ same mistake, by inserting before the spacer as `SetupPage` intends).
 **Outputs**
 
 - A "Sound system" status line at the top. It replaces the strip on every
-  page (problem 7). Mac: "Core Audio". Windows: "Windows audio", naming
-  WASAPI as the default driver. Linux: PipeWire (direct), PulseAudio
+  page (problem 7). Mac: "Core Audio". Windows: "Windows audio", saying
+  that a device left at the PortAudio default uses MME (PortAudio's first,
+  and so default, Windows host API) unless another driver such as WASAPI
+  is picked under Device details. Linux: PipeWire (direct), PulseAudio
   (through pactl, used when PipeWire is not found), or "None found" in red
   with what to start (from `LinuxAudioBackend`: PipeWire, Pactl, None).
 - **This computer** (cyan): Volume with Mute (the same control as PC in the
@@ -439,7 +441,7 @@ R-SPK-24. One layout on every system (D15). The differences:
 
 | | Mac | Windows | Linux |
 |---|---|---|---|
-| Sound system line | Core Audio | Windows audio (WASAPI default) | PipeWire, PulseAudio through pactl, or none found |
+| Sound system line | Core Audio | Windows audio (PortAudio default is MME; WASAPI when picked) | PipeWire, PulseAudio through pactl, or none found |
 | Driver API list | what PortAudio reports (Core Audio) | what PortAudio reports (WASAPI, DirectSound, MME...) | what PortAudio reports (PipeWire, PulseAudio, ALSA...) |
 | Exclusive / Event-driven / Bypass | greyed, "These three work only with WASAPI on Windows." | live when the card's driver is WASAPI, greyed otherwise | greyed, as on Mac |
 | VAX sentence | NereusSDR VAX 1 to 4 come from NereusSDR's own driver | each channel uses a virtual cable you install (VB-CABLE, Voicemeeter or VAC) | NereusSDR creates VAX 1 to 4 in the sound system |
