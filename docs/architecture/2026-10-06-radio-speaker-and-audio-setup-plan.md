@@ -230,8 +230,11 @@ spec's sibling folder `2026-10-05-radio-speaker-and-audio-setup-design/`.
 The controller flags these for JJ as candidates for an earlier independent review
 (`cost-aware-execution`): **Task 1** and **Task 3** touch the core RX audio path
 (I/Q to WDSP to audio, CLAUDE.md asks it to be flagged); **Task 2** writes a byte the
-radio acts on during transmit; **Task 4** changes what crosses the station link. JJ
-decides; nothing is added quietly.
+radio acts on during transmit; **Task 4** changes what crosses the station link.
+**JJ's decision (2026-10-06):** one independent review of Tasks 1 to 4 as a group,
+run as soon as Task 4 is committed and before Task 5's dependants (6, 9 onward) start;
+its findings get one fix wave and one scoped re-review, as at the finish. The
+whole-branch review at the end still runs.
 
 Order: 1, 2, 3, 4, then 5 to 11 (GUI; 5 before 6, 7; 8 before 9 to 11), then 12, then
 13. Tasks 5, 7 and 8 share no files with 1 to 4 and may run in a worktree in parallel
