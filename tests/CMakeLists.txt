@@ -8412,6 +8412,11 @@ nereus_add_test(tst_slice_chooser
 # with that reason, never writes the slice, and offers Take control and
 # Stop listening; a controlled flag offers Release. No radio, no RF.
 nereus_add_test(tst_vfo_widget_slice_access EXTRA_LABELS gui)
+# Radio speaker plan Task 7 (R-SPK-18, D6): the flag's audio tab shows
+# pc-on / pc-muted from the mute its audio controls show (the slice's, or
+# this device's listen mute on a listened flag). NEREUS_FLAG_CAPTURE_DIR
+# saves captures. No radio, no RF.
+nereus_add_test(tst_vfo_widget_audio_tab EXTRA_LABELS gui)
 
 # Slice control plan Task 15: the RX applet holds every shared slice control
 # on a listened slice, with the reason naming the controlling device, never

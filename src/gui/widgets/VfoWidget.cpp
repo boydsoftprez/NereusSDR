@@ -148,6 +148,12 @@
 //                 (AppIcon) in place of colour emoji text. J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-10-06 - Radio speaker plan Task 7 (R-SPK-18, D6): the audio tab
+//                 (objectName audioTabButton) shows the pc-on / pc-muted
+//                 icon and follows the mute the flag shows: the listen mute
+//                 on a listened flag, the slice's mute otherwise. J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 //=================================================================
@@ -546,6 +552,20 @@ static inline QString vfoFlatBtnStyle()
 // Tab-row selector buttons (12px, underline indicator, muted-blue default).
 // Diverges from buttonBaseStyle(): transparent bg, underline :checked indicator,
 // different font-size and base colour.
+// R-SPK-18, D6: the audio tab shows the PC speaker icon, muted or not,
+// following the mute the flag's audio controls show.
+constexpr int kAudioTabIconPx = 16;
+
+static void applyAudioTabIcon(QPushButton* tab, bool muted)
+{
+    if (!tab) {
+        return;
+    }
+    NereusSDR::AppIcon::apply(tab,
+        muted ? QStringLiteral("pc-muted") : QStringLiteral("pc-on"),
+        kAudioTabIconPx);
+}
+
 static inline QString vfoTabBtnStyle()
 {
     return QStringLiteral(
@@ -1313,6 +1333,14 @@ void VfoWidget::buildTabBar()
                 parentWidget()->update();
             }
         });
+        if (i == 0) {
+            // R-SPK-18, D6: the app's own speaker icon replaces the emoji
+            // text, so it renders the same on every platform and can show
+            // the slice's mute.
+            btn->setObjectName(QStringLiteral("audioTabButton"));
+            btn->setText(QString());
+            applyAudioTabIcon(btn, false);
+        }
         tabLayout->addWidget(btn, 1);  // stretch equally
         m_tabButtons.append(btn);
     }
@@ -1493,10 +1521,12 @@ void VfoWidget::buildAudioTab()
             if (isListening()) {
                 // Task 14b: mutes this slice on this device only.
                 m_listenMuted = on;
+                applyAudioTabIcon(m_tabButtons.value(0), on);
                 emit listenVolumeRequested(m_sliceIndex, m_listenVolume, on);
                 return;
             }
             m_modelMuted = on;
+            applyAudioTabIcon(m_tabButtons.value(0), on);
             emit muteChanged(on);
         });
         connect(m_binBtn, &QPushButton::toggled, this, [this](bool on) {
@@ -2883,6 +2913,7 @@ void VfoWidget::setMuted(bool v)
     m_modelMuted = v;
     // Task 14b: a listened flag shows this device's own mute instead.
     if (isListening()) { return; }
+    applyAudioTabIcon(m_tabButtons.value(0), v);
     if (m_muteBtn && m_muteBtn->isChecked() != v) {
         m_updatingFromModel = true;
         m_muteBtn->setChecked(v);
@@ -4194,6 +4225,7 @@ void VfoWidget::applyAudioBinding()
     const bool listening = isListening();
     const int value = listening ? m_listenVolume : m_modelAfGain;
     const bool muted = listening ? m_listenMuted : m_modelMuted;
+    applyAudioTabIcon(m_tabButtons.value(0), muted);
     const bool wasUpdating = m_updatingFromModel;
     m_updatingFromModel = true;
     m_afGainSlider->setValue(value);
