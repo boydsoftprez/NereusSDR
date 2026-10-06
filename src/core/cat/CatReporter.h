@@ -59,8 +59,11 @@
 // Modification history (NereusSDR):
 // 2026-10-04 - Native event-loop CAT adaptation by J.J. Boyd (KG4VCF),
 //              AI-assisted via OpenAI Codex.
+// 2026-10-06 - Export the class from the Windows Core DLL so the GUI and tests
+//              can use its signals. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 #pragma once
+#include "core/NereusCoreExport.h"
 #include "CatTypes.h"
 #include <QObject>
 #include <QPointer>
@@ -72,7 +75,7 @@
 #include <optional>
 namespace NereusSDR {
 class CatService; class RadioModel; class SliceModel;
-class CatReporter : public QObject {
+class NEREUS_CORE_EXPORT CatReporter : public QObject {
     Q_OBJECT
 public:
     CatReporter(CatService&, RadioModel&);

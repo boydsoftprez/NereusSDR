@@ -1,6 +1,9 @@
 // no-port-check: NereusSDR-original CAT accepted-activation ownership.
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-06 - Export the class from the Windows Core DLL so the GUI and tests
+//              can use its signals. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 #pragma once
+#include "core/NereusCoreExport.h"
 #include "core/MoxController.h"
 #include "core/SliceOwnership.h"
 #include <QObject>
@@ -9,7 +12,7 @@
 namespace NereusSDR {
 class RadioModel;
 enum class CatTransmitKind { Ptt, Tune, TwoTone };
-class CatTxCoordinator : public QObject {
+class NEREUS_CORE_EXPORT CatTxCoordinator : public QObject {
     Q_OBJECT
 public:
     explicit CatTxCoordinator(RadioModel& model);

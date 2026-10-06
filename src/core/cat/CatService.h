@@ -60,7 +60,10 @@ Added extended CAT commands for APF funtions - May 2017.
 //              same author and AI tooling; no new upstream port.
 // 2026-10-04 - Native separate Hamlib dialect and guarded lifecycle integration,
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex; no new Thetis port.
+// 2026-10-06 - Export the class from the Windows Core DLL so the GUI and tests
+//              can use its signals. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 #pragma once
+#include "core/NereusCoreExport.h"
 #include "CatModelAdapter.h"
 #include "CatTxCoordinator.h"
 #include "CatSettings.h"
@@ -82,7 +85,7 @@ Added extended CAT commands for APF funtions - May 2017.
 #include <memory>
 namespace NereusSDR {
 class RadioModel;
-class CatService : public QObject {
+class NEREUS_CORE_EXPORT CatService : public QObject {
     Q_OBJECT
 public:
     explicit CatService(RadioModel& model, QObject* parent = nullptr);

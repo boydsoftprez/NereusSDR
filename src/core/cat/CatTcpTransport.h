@@ -10,15 +10,18 @@
 // Modification history (NereusSDR):
 // 2026-10-04 - Native event-loop CAT adaptation by J.J. Boyd (KG4VCF),
 //              AI-assisted via OpenAI Codex.
+// 2026-10-06 - Export the class from the Windows Core DLL so the GUI and tests
+//              can use its signals. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 #pragma once
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QPointer>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QHash>
 namespace NereusSDR {
-class CatTcpTransport : public QObject {
+class NEREUS_CORE_EXPORT CatTcpTransport : public QObject {
     Q_OBJECT
 public:
     explicit CatTcpTransport(QObject* parent = nullptr);

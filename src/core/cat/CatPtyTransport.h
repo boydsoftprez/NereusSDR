@@ -1,13 +1,16 @@
 // no-port-check: NereusSDR-original POSIX PTY mechanics; no upstream code port.
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-06 - Export the class from the Windows Core DLL so the GUI and tests
+//              can use its signals. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 #pragma once
+#include "core/NereusCoreExport.h"
 #include "CatConfiguration.h"
 #include <QObject>
 #include <QTimer>
 #include <QSocketNotifier>
 #include <memory>
 namespace NereusSDR {
-class CatPtyTransport : public QObject {
+class NEREUS_CORE_EXPORT CatPtyTransport : public QObject {
     Q_OBJECT
 public:
     explicit CatPtyTransport(QObject* parent = nullptr);

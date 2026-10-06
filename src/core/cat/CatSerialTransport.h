@@ -24,14 +24,17 @@
 // Modification history (NereusSDR):
 // 2026-10-04 - Qt serial transport and sampled input pins by J.J. Boyd (KG4VCF),
 //              AI-assisted via OpenAI Codex.
+// 2026-10-06 - Export the class from the Windows Core DLL so the GUI and tests
+//              can use its signals. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 #pragma once
+#include "core/NereusCoreExport.h"
 #include "CatConfiguration.h"
 #include <QObject>
 #include <QTimer>
 #include <memory>
 namespace NereusSDR {
 // Narrow device boundary: production uses QSerialPort; tests inject byte/pin/error events.
-class CatSerialDevice : public QObject {
+class NEREUS_CORE_EXPORT CatSerialDevice : public QObject {
     Q_OBJECT
 public:
     using QObject::QObject;
@@ -47,7 +50,7 @@ signals:
     void bytesWritten(qint64);
     void errorOccurred(QString);
 };
-class CatSerialTransport : public QObject {
+class NEREUS_CORE_EXPORT CatSerialTransport : public QObject {
     Q_OBJECT
 public:
     explicit CatSerialTransport(std::shared_ptr<CatSerialDevice> device = {}, QObject* parent = nullptr);
