@@ -15,6 +15,8 @@ Claude Code.
 """
 from __future__ import annotations
 
+import re
+
 HEADER_WINDOW = 160
 
 _PY_SUFFIXES = {".py"}
@@ -56,3 +58,34 @@ def header_lines(text: str, suffix: str, window: int = HEADER_WINDOW) -> list[st
 
 def header_text(text: str, suffix: str, window: int = HEADER_WINDOW) -> str:
     return "\n".join(header_lines(text, suffix, window))
+
+
+# Pinned TCPIPcatServer.cs has a six-line author/inspiration notice, not a
+# per-file copyright/GPL grant. Only these single-source derivatives use it;
+# ordinary and multi-source ports retain every usual header requirement.
+CAT_TCP_NOTICE_PATHS = {
+    f"src/core/cat/{stem}{suffix}"
+    for stem in ("CatTcpTransport", "CatStreamFramer", "CatSession")
+    for suffix in (".h", ".cpp")
+}
+CAT_TCP_SOURCE = "Project Files/Source/Console/CAT/TCPIPcatServer.cs"
+CAT_TCP_NOTICE = (
+    "//=================================================================\n"
+    "// MW0LGE 2022\n"
+    "//=================================================================\n\n"
+    "// inspiration from https://www.codeproject.com/Articles/5733/A-TCP-IP-Server-written-in-C\n"
+    "//\n"
+)
+CAT_TCP_PROJECT_LICENSE = (
+    "Upstream source has an author/inspiration notice; "
+    "project-level GNU General Public License applies."
+)
+
+
+def uses_exact_tcp_notice(relative: str, head: str, source_cell: str | None) -> bool:
+    if relative not in CAT_TCP_NOTICE_PATHS:
+        return False
+    sources = re.findall(r"^// Ported from Thetis (.+)$", head, re.MULTILINE)
+    return (sources == [CAT_TCP_SOURCE]
+            and (source_cell is None or source_cell == CAT_TCP_SOURCE)
+            and head.lstrip("\ufeff").startswith(CAT_TCP_NOTICE))

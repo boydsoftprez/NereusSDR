@@ -1,5 +1,6 @@
 // no-port-check: NereusSDR-original desktop Remote Access runtime.
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "core/cat/CatService.h"
 #include "gui/GuiDesktopStationRuntime.h"
 #include "core/station/StationSliceOwnershipPolicy.h"
 
@@ -661,7 +662,13 @@ bool GuiDesktopStationRuntime::sameState(const RemoteStationPage::State& a,
 
 void GuiDesktopStationRuntime::stop()
 {
+    const QPointer<GuiDesktopStationRuntime> self(this);
+    const QPointer<RadioModel> model(m_model);
     m_closed = true;
+    if (model) {
+        model->catService()->stopAll();
+        if (!self || !model || m_model != model) { return; }
+    }
     if (!m_retirementPrepared) { m_backgroundStartWanted = false; }
     m_pendingBackgroundRequest = false;
     m_refreshTimer.stop();

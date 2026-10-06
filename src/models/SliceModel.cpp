@@ -8,6 +8,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-10-04 - Guard mode/filter notification continuations against deletion
+//              and superseding commits, including a return to the same tuple.
+//              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-04 - Guard frequency notification continuations against deletion/reentry.
+//              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-30 - RADE reason: applyRadeModeChange brackets each RADE
 //                 decoder start (RadioModel::beginRadeStart, endRadeStart)
 //                 so a create or start that fails gives the slice its
@@ -194,6 +199,7 @@
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+#include <QPointer>
 #include "SliceModel.h"
 
 #include "Band.h"
@@ -332,9 +338,13 @@ bool SliceModel::holdForListener()
 void SliceModel::applyFrequency(double freq)
 {
     if (!qFuzzyCompare(m_frequency, freq)) {
+        const QPointer<SliceModel> self(this);
         m_frequency = freq;
         emit frequencyChanged(freq);
+        // CAT/model callbacks may retire this slice or supersede the frequency.
+        if (!self || !qFuzzyCompare(m_frequency, freq)) { return; }
         noteDiversityPatternInputs();
+        if (!self || !qFuzzyCompare(m_frequency, freq)) { return; }
 
         // Phase 3P-II Task 64: emit bandChanged on band boundary cross.
         // Uses Band::bandFromFrequency (IARU Region 2, GEN fallback).
@@ -353,6 +363,11 @@ void SliceModel::applyFrequency(double freq)
 
 void SliceModel::applyRadeModeChange(DSPMode oldMode, DSPMode newMode)
 {
+    const QPointer<SliceModel> lifetime(this);
+    const quint64 modeRevision = m_modeRevision;
+    const auto currentMode = [lifetime,modeRevision] {
+        return lifetime && lifetime->m_modeRevision == modeRevision;
+    };
     // ── Phase 3R J3 + K-bench: RADE channel-additive lifecycle ────────────
     //
     // RADE_U / RADE_L are NereusSDR-native DSPModes (J1).  Original J3
@@ -399,15 +414,25 @@ void SliceModel::applyRadeModeChange(DSPMode oldMode, DSPMode newMode)
     //      no longer associated with the old caller's transmission.
     // Trigger: oldMode was a RADE sideband AND mode actually changed
     // (we're already inside the modeChanged guard).
-    if (isRade(oldMode) && !m_lastRadeRxCallsign.isEmpty()) {
+    // An early callback can commit a non-RADE mode before the old decoder
+    // retires. A nested setter must still complete that actual lifecycle.
+    auto* radio = qobject_cast<RadioModel*>(parent());
+    const bool retainedRade = radio != nullptr && radio->role() != RadioModel::Role::Remote
+        && !m_radeStartDeferredToAdmission && radio->wdspEngine() != nullptr
+        && radio->wdspEngine()->radeChannel(m_sliceIndex) != nullptr;
+    const bool oldRadeState = isRade(oldMode) || retainedRade;
+    if (oldRadeState && !m_lastRadeRxCallsign.isEmpty()) {
         m_lastRadeRxCallsign.clear();
-        emit lastRadeRxCallsignChanged(m_lastRadeRxCallsign);
+        const QString callsign = m_lastRadeRxCallsign;
+        emit lastRadeRxCallsignChanged(callsign);
+        if (!currentMode()) { return; }
     }
     // The same two cases end the old decoder (it is destroyed below),
     // and the VFO flag drops its sync dot (VfoWidget::setRadeActive):
     // the next decoder reports its own sync.
-    if (isRade(oldMode)) {
+    if (oldRadeState) {
         setRadeSynced(false);
+        if (!currentMode()) { return; }
     }
 
     // 2026-05-12 bench: stop the idle-clear timer when leaving
@@ -415,11 +440,10 @@ void SliceModel::applyRadeModeChange(DSPMode oldMode, DSPMode newMode)
     // fire would just re-emit lastRadeRxCallsignChanged("") and
     // snrDbChanged(NaN) needlessly.  Also stop on RADE_U <-> RADE_L
     // swaps for the same reason.
-    if (isRade(oldMode) && m_radeIdleClearTimer) {
+    if (oldRadeState && m_radeIdleClearTimer) {
         m_radeIdleClearTimer->stop();
     }
 
-    auto* radio = qobject_cast<RadioModel*>(parent());
     // Remote-daemon R2 Task 5: the only model-to-engine reach-through
     // in src/models outside RadioModel itself. Gate BEFORE any
     // channel creation, not merely before the resulting emit --
@@ -436,7 +460,9 @@ void SliceModel::applyRadeModeChange(DSPMode oldMode, DSPMode newMode)
         // admission instead (m_radeStartDeferredToAdmission).
         if (engine != nullptr && !m_radeStartDeferredToAdmission) {
             const int channelId = m_sliceIndex;
-            const bool oldIsRade = isRade(oldMode);
+            // Reconcile the owned decoder, rather than an intermediate logical
+            // old mode left by a superseded early notification continuation.
+            const bool oldIsRade = engine->radeChannel(channelId) != nullptr;
             const bool newIsRade = isRade(newMode);
 
             // RADE reason (2026-09-30): each start below is bracketed
@@ -452,8 +478,11 @@ void SliceModel::applyRadeModeChange(DSPMode oldMode, DSPMode newMode)
                 }
                 radeCh->setSideband(newMode == DSPMode::RADE_U);
                 radio->wireRadeChannel(channelId, radeCh, this);
+                if (!currentMode()) { return; }
                 const QString modelPath = radeModelPath();
-                if (!radeCh->start(modelPath)) {
+                const bool started = radeCh->start(modelPath);
+                if (!currentMode()) { return; }
+                if (!started) {
                     qCWarning(lcDsp)
                         << "SliceModel" << m_sliceIndex
                         << context
@@ -508,11 +537,22 @@ void SliceModel::setDspMode(DSPMode mode)
     const bool modeChanged = (m_dspMode != mode);
     const DSPMode oldMode = m_dspMode;
     m_dspMode = mode;
+    if (modeChanged) { ++m_modeRevision; ++m_modeFilterRevision; }
+    const quint64 modeRevision = m_modeRevision;
+    const quint64 filterRevision = m_modeFilterRevision;
+    const QPointer<SliceModel> lifetime(this);
+    const auto currentMode = [lifetime,modeRevision] {
+        return lifetime && lifetime->m_modeRevision == modeRevision;
+    };
+    const auto notifyMode = [&] { if (modeChanged) { emit dspModeChanged(mode); } };
 
     if (modeChanged) {
         // RADE threads (2026-09-30): the RADE start and stop below lives in
         // applyRadeModeChange, which restoreFromSettings runs too.
         applyRadeModeChange(oldMode, mode);
+        if (!currentMode()) { return; }
+        // A newer filter survives, but the committed mode still needs its notification.
+        if (filterRevision != m_modeFilterRevision) { notifyMode(); return; }
     }
 
     // Phase 3J-1 closeout Item 4 (2026-05-12): per-(band, mode) LastFilter.
@@ -547,7 +587,11 @@ void SliceModel::setDspMode(DSPMode mode)
                 .arg(bandKeyName(currentBand))
                 .arg(SliceModel::modeName(oldMode));
         s.setValue(oldPrefix + QStringLiteral("FilterLow"),  m_filterLow);
+        if (!currentMode()) { return; }
+        if (filterRevision != m_modeFilterRevision) { notifyMode(); return; }
         s.setValue(oldPrefix + QStringLiteral("FilterHigh"), m_filterHigh);
+        if (!currentMode()) { return; }
+        if (filterRevision != m_modeFilterRevision) { notifyMode(); return; }
 
         // 2. Restore filter for (currentBand, NEW mode); fall back to default.
         const QString newPrefix =
@@ -573,9 +617,14 @@ void SliceModel::setDspMode(DSPMode mode)
     bool filterChanged = (m_filterLow != low || m_filterHigh != high);
     m_filterLow = low;
     m_filterHigh = high;
+    if (filterChanged) { ++m_modeFilterRevision; }
+    const quint64 revision = m_modeFilterRevision;
 
     if (modeChanged) {
         emit dspModeChanged(mode);
+        // A callback may destroy the slice or commit newer mode/filter state.
+        // A revision also detects a nested change away and back to this tuple.
+        if (!lifetime || revision != m_modeFilterRevision) { return; }
     }
     if (filterChanged) {
         emit this->filterChanged(m_filterLow, m_filterHigh);
@@ -605,6 +654,7 @@ void SliceModel::setFilterLow(int low)
     if (holdsListenerWrite(filterLow(), low)) { return; }
     if (m_filterLow != low) {
         m_filterLow = low;
+        ++m_modeFilterRevision;
         emit filterChanged(m_filterLow, m_filterHigh);
     }
 }
@@ -614,6 +664,7 @@ void SliceModel::setFilterHigh(int high)
     if (holdsListenerWrite(filterHigh(), high)) { return; }
     if (m_filterHigh != high) {
         m_filterHigh = high;
+        ++m_modeFilterRevision;
         emit filterChanged(m_filterLow, m_filterHigh);
     }
 }
@@ -624,6 +675,7 @@ void SliceModel::setFilter(int low, int high)
     if (m_filterLow != low || m_filterHigh != high) {
         m_filterLow = low;
         m_filterHigh = high;
+        ++m_modeFilterRevision;
         emit filterChanged(m_filterLow, m_filterHigh);
     }
 }
@@ -2964,13 +3016,20 @@ void SliceModel::restoreFromSettings(Band band)
         if (m_dspMode != mode) {
             const DSPMode oldMode = m_dspMode;
             m_dspMode = mode;
+            ++m_modeRevision;
+            ++m_modeFilterRevision;
             // RADE threads (2026-09-30): the same RADE decoder start and
             // stop as setDspMode. A band saved in RADE, or a device's slice
             // made again from its saved band, otherwise read RADE and played
             // the sideband's audio with no decoder (and a band saved in SSB
             // kept a RADE slice's decoder).
+            const QPointer<SliceModel> lifetime(this);
+            const quint64 revision = m_modeRevision;
+            const quint64 filterRevision = m_modeFilterRevision;
             applyRadeModeChange(oldMode, mode);
+            if (!lifetime || revision != m_modeRevision) { return; }
             emit dspModeChanged(mode);
+            if (!lifetime || filterRevision != m_modeFilterRevision) { return; }
         }
     }
     // Phase 3J-1 closeout Item 4 (2026-05-12): prefer (band, currentMode)

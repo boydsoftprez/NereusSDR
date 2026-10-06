@@ -260,6 +260,50 @@ class TestRadioModelSetTune : public QObject {
     void clearSettings() { AppSettings::instance().clear(); }
 
 private slots:
+    void supersededPendingOffCannotRestorePower()
+    {
+        RadioModel model; MockConnection* conn = nullptr; setupModel(model, conn);
+        model.transmitModel().setPower(80);
+        KeyerIdentity cat = KeyerIdentity::station(PttMode::Manual); cat.program = true; cat.requestTag = 74;
+        model.setTune(true, cat); QVERIFY(model.isTune());
+        QVERIFY(model.endTuneIfRequest(74, model.moxController()->acceptedRequestGeneration()));
+        model.moxController()->onMoxButton(true);
+        model.transmitModel().setPower(37); pump();
+        QCOMPARE(model.transmitModel().power(), 37); QVERIFY(model.moxController()->isMox());
+        QVERIFY(!model.tuneOffPendingForTest());
+    }
+
+    void rejectedRepeatRetainsTaggedTune()
+    {
+        RadioModel model; MockConnection* conn = nullptr; setupModel(model, conn);
+        KeyerIdentity cat = KeyerIdentity::station(PttMode::Manual); cat.program = true; cat.requestTag = 66;
+        model.setTune(true, cat); QVERIFY(model.isTune());
+        const quint64 stamp = model.moxController()->acceptedRequestGeneration();
+        model.moxController()->setMoxCheck([] { return safety::BandPlanGuard::MoxCheckResult{false, QStringLiteral("repeat refused")}; });
+        model.setTune(true);
+        QCOMPARE(model.moxController()->acceptedRequestGeneration(), stamp);
+        QVERIFY(model.endTuneIfRequest(66, stamp)); pump();
+        QVERIFY(!model.isTune());
+    }
+
+    void taggedRepeatAdoptsSnapshotsAndStaleEndDoesNothing()
+    {
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn);
+        model.sliceById(0)->setDspMode(DSPMode::CWU);
+        KeyerIdentity cat = KeyerIdentity::station(PttMode::Manual);
+        cat.program = true; cat.requestTag = 52;
+        model.setTune(true, cat);
+        QVERIFY(model.isTune());
+        const quint64 stamp = model.moxController()->acceptedRequestGeneration();
+        model.setTune(true);
+        QVERIFY(!model.endTuneIfRequest(52, stamp));
+        QVERIFY(model.isTune());
+        model.setTune(false); pump();
+        QCOMPARE(model.sliceById(0)->dspMode(), DSPMode::CWU);
+    }
+
     // PA on-air gate review, Minor 2: a disconnect forgets the transmit band.
     // The next band the model sees is an initializing pass (it loads that
     // band's stored power and saves nothing), so a retune after a disconnect

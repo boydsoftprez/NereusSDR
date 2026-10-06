@@ -954,6 +954,24 @@ endif()
 # Source files
 # --------------------------------------------------------------------------
 set(CORE_SOURCES
+    src/core/cat/CatModelAdapter.cpp
+    src/core/cat/CatSettings.cpp
+    src/core/cat/CatSession.cpp
+    src/core/cat/RigctlProtocol.cpp
+    src/core/cat/CatTxCoordinator.cpp
+    src/core/cat/CatRxCommands.cpp
+    src/core/cat/CatDspCommands.cpp
+    src/core/cat/CatTxCommands.cpp
+    src/core/cat/CatGlobalCommands.cpp
+    src/core/cat/CatService.cpp
+    src/core/cat/CatStreamFramer.cpp
+    src/core/cat/CatTcpTransport.cpp
+    src/core/cat/CatSerialTransport.cpp
+    src/core/cat/CatPtyTransport.cpp
+    src/core/cat/CatReporter.cpp
+    src/core/cat/CatParser.cpp
+    src/core/cat/CatCommandRouter.cpp
+    src/core/cat/CatCommandCatalog.cpp
     src/core/AntennaLabels.cpp
     src/core/AppSettings.cpp
     src/core/settings/SettingsBackup.cpp
@@ -1925,6 +1943,8 @@ set(GUI_SOURCES
     src/gui/setup/TransmitSetupPages.cpp
     src/gui/setup/AppearanceSetupPages.cpp
     src/gui/setup/CatNetworkSetupPages.cpp
+    src/gui/setup/CatLiveSetupPages.cpp
+    src/gui/setup/CatLogWindow.cpp
     src/gui/setup/RemoteStationPage.cpp
     src/gui/setup/PgxlAdvancedPage.cpp
     src/gui/setup/TgxlAdvancedPage.cpp
@@ -1991,7 +2011,7 @@ qt_add_resources(RESOURCES resources.qrc)
 # iPhone app Task 14 (R-IOS-08): the pairing code's word list belongs to the
 # Core too (PairingCode, which calls Q_INIT_RESOURCE(pairing) likewise). The
 # iPhone app carries a byte-for-byte copy of the same file.
-qt_add_resources(CORE_RESOURCES resources/bandplans.qrc resources/pairing.qrc resources/setup.qrc)
+qt_add_resources(CORE_RESOURCES resources/bandplans.qrc resources/pairing.qrc resources/setup.qrc resources/cat.qrc)
 
 # --------------------------------------------------------------------------
 # App icon (per-platform) — from main (PR #11)

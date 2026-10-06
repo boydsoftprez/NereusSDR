@@ -17,6 +17,7 @@
 
 #include "OperatorWording.h"
 #include "core/AppSettings.h"
+#include "core/cat/CatService.h"
 #include "core/SliceOwnership.h"
 #include "core/RadioDiscovery.h"
 #include "core/WdspEngine.h"
@@ -122,6 +123,8 @@ private slots:
         QVERIFY2(sessions.replace({}, false, &error), qPrintable(error));
         auto* model = sessions.window()->radioModel();
         QVERIFY(!model->isConnected());
+        QVERIFY(model->catService()->isStarted());
+        QVERIFY(!model->catService()->isListening(1));
         QVERIFY(!sessions.desktopRuntime()->controller()->server());
         const auto generation = sessions.generation();
         for (int i = 0; i < 3; ++i) {

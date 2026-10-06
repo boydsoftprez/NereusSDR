@@ -49,6 +49,7 @@
 #include <QtTest/QtTest>
 #include <QSignalSpy>
 #include <QLoggingCategory>
+#include <memory>
 
 #include "core/MoxController.h"
 #include "core/PttMode.h"
@@ -72,6 +73,103 @@ class TestMoxControllerPttSourceDispatch : public QObject {
     Q_OBJECT
 
 private slots:
+    void discardRetiresModeBeforeReleaseCallbackCanSupersede()
+    {
+        MoxController ctrl; makeSync(ctrl);
+        KeyerIdentity cat = KeyerIdentity::station(PttMode::Cat); cat.requestTag = 72;
+        ctrl.onCatPtt(true, cat); drainEvents();
+        bool repeated = false;
+        connect(&ctrl, &MoxController::pttSourcesReleased, &ctrl, [&ctrl, &repeated] {
+            if (!repeated) { repeated = true; ctrl.onCatPtt(true); }
+        });
+        QVERIFY(ctrl.discardCatPttIfRequest(72));
+        ctrl.onMicPttFromRadio(false); ctrl.onVoxActive(false); drainEvents();
+        QVERIFY(ctrl.isMox());
+        ctrl.onCatPtt(false); drainEvents(); QVERIFY(!ctrl.isMox());
+    }
+
+    void acceptedPhaseRepeatKeepsTimerWalk()
+    {
+        MoxController ctrl; makeSync(ctrl);
+        QSignalSpy ready(&ctrl, &MoxController::txReady);
+        connect(&ctrl, &MoxController::txAboutToBegin, &ctrl, [&ctrl] { ctrl.setMox(true); });
+        ctrl.setMox(true); drainEvents();
+        QCOMPARE(ctrl.state(), MoxState::Tx);
+        QCOMPARE(ready.count(), 1);
+    }
+
+    void foreignIdleOffDoesNotSupersedePendingIntent()
+    {
+        MoxController ctrl;
+        KeyerIdentity cat = KeyerIdentity::station(PttMode::Manual);
+        cat.program = true; cat.requestTag = 61;
+        const quint64 stamp = ctrl.observeAcceptedRequest(cat, true);
+        KeyerIdentity foreign; foreign.deviceId = "foreign";
+        ctrl.setMox(false, foreign);
+        QCOMPARE(ctrl.acceptedRequestGeneration(), stamp);
+        foreign.requestTag = 61;
+        ctrl.setMox(false, foreign);
+        QCOMPARE(ctrl.acceptedRequestGeneration(), stamp);
+    }
+
+    void deletionDuringObservationHasNoOuterContinuation()
+    {
+        auto owner = std::make_unique<MoxController>();
+        QPointer<MoxController> ctrl(owner.get());
+        connect(ctrl, &MoxController::requestAccepted, ctrl,
+            [&owner](const KeyerIdentity&, quint64, bool) { owner.reset(); });
+        KeyerIdentity cat = KeyerIdentity::station(PttMode::Cat); cat.requestTag = 62;
+        ctrl->setMox(true, cat);
+        QVERIFY(ctrl.isNull());
+    }
+
+
+    void acceptedIntentHasTagAndSupersedesWithoutMoxEdge()
+    {
+        MoxController ctrl;
+        makeSync(ctrl);
+        KeyerIdentity cat = KeyerIdentity::station(PttMode::Cat);
+        cat.requestTag = 41;
+        QSignalSpy accepted(&ctrl, &MoxController::requestAccepted);
+        ctrl.onCatPtt(true, cat);
+        drainEvents();
+        QCOMPARE(ctrl.currentKeyer().requestTag, quint64(41));
+        QCOMPARE(accepted.count(), 1);
+        const quint64 first = ctrl.acceptedRequestGeneration();
+        ctrl.setMox(true);
+        QVERIFY(ctrl.acceptedRequestGeneration() > first);
+        QVERIFY(ctrl.discardCatPttIfRequest(41));
+        ctrl.onVoxActive(false);
+        ctrl.onMicPttFromRadio(false);
+        ctrl.onTciPtt(false);
+        drainEvents();
+        QVERIFY(ctrl.isMox());
+    }
+
+    void observationReentryAbortsOldCommit()
+    {
+        MoxController ctrl;
+        makeSync(ctrl);
+        connect(&ctrl, &MoxController::requestAccepted, &ctrl,
+                [&ctrl](const KeyerIdentity& keyer, quint64, bool on) {
+            if (on && keyer.requestTag == 42) { ctrl.setMox(false); }
+        });
+        KeyerIdentity cat = KeyerIdentity::station(PttMode::Cat);
+        cat.requestTag = 42;
+        ctrl.onCatPtt(true, cat);
+        drainEvents();
+        QVERIFY(!ctrl.isMox());
+    }
+
+    void rejectedIntentDoesNotAdvanceGeneration()
+    {
+        MoxController ctrl;
+        ctrl.setRxOnly(true);
+        const quint64 before = ctrl.acceptedRequestGeneration();
+        ctrl.setMox(true);
+        QCOMPARE(ctrl.acceptedRequestGeneration(), before);
+    }
+
 
     // ════════════════════════════════════════════════════════════════════════
     // § A — onMicPttFromRadio: MIC PTT from radio hardware

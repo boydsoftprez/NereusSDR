@@ -9898,3 +9898,37 @@ if(_label_names)
     endforeach()
     message(STATUS "NereusSDR: per-label test targets: ${_label_names}")
 endif()
+
+# Thetis CAT catalogue, also available to the headless Core.
+nereus_add_test(tst_cat_catalog CORE_ONLY)
+
+nereus_add_test(tst_cat_parser CORE_ONLY)
+
+nereus_add_test(tst_cat_bindings CORE_ONLY)
+nereus_add_test(tst_cat_settings CORE_ONLY)
+nereus_add_test(tst_cat_headless CORE_ONLY)
+
+nereus_add_test(tst_cat_tx_ownership CORE_ONLY)
+
+nereus_add_test(tst_cat_rx_commands CORE_ONLY)
+
+nereus_add_test(tst_cat_dsp_commands CORE_ONLY)
+nereus_add_test(tst_cat_tx_commands CORE_ONLY)
+nereus_add_test(tst_cat_coverage CORE_ONLY)
+
+nereus_add_test(tst_cat_tcp CORE_ONLY)
+nereus_add_test(tst_cat_reporting CORE_ONLY)
+
+nereus_add_test(tst_cat_serial CORE_ONLY)
+nereus_add_test(tst_cat_serial_ptt CORE_ONLY EXTRA_LABELS core models)
+
+nereus_add_test(tst_cat_pty CORE_ONLY)
+
+# Native CAT setup and applet controls.
+nereus_add_test(tst_cat_setup)
+nereus_add_test(tst_cat_applet)
+
+# Production TCP -> CAT parser -> model/connection intent and ownership gates.
+nereus_add_test(tst_cat_integration CORE_ONLY)
+
+nereus_add_test(tst_cat_rigctld CORE_ONLY)

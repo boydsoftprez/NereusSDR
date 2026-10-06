@@ -399,7 +399,7 @@ jobs:
           host: linux
           target: desktop
           arch: linux_gcc_64
-          modules: 'qtmultimedia qtshadertools qtwebsockets'
+          modules: 'qtmultimedia qtshadertools qtwebsockets qtserialport'
           cache: true
 
       - name: Configure
@@ -610,7 +610,7 @@ jobs:
           target: desktop
           arch: linux_gcc_64
           # Qt 6.8+ folds qtsvg into qtbase; not listable as a module.
-          modules: 'qtmultimedia qtshadertools qtwebsockets'
+          modules: 'qtmultimedia qtshadertools qtwebsockets qtserialport'
           cache: true
 
       # ------------------------------------------------------------------
@@ -640,7 +640,7 @@ jobs:
           host: windows
           target: desktop
           arch: win64_mingw
-          modules: 'qtmultimedia qtshadertools qtwebsockets'
+          modules: 'qtmultimedia qtshadertools qtwebsockets qtserialport'
           tools: 'tools_mingw1310'
           cache: true
 

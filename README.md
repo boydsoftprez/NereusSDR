@@ -183,6 +183,11 @@ if you want to host the remote-access service yourself.
   Core, with device authority and tuner sequencing. Hardware controls follow
   the connected radio's capabilities, including attenuation, preamp,
   microphone inputs and ADC overload indication.
+- **Native CAT control.** Four stable slice-bound Thetis CAT channels over TCP,
+  optional serial and macOS/Linux PTYs; separate four-channel Hamlib rigctld,
+  local Setup, status, log and tester. All listeners start disabled. The
+  [compatibility report](docs/architecture/thetis-cat-verification/README.md)
+  lists explicit unsupported capabilities and platform/client/bench limits.
 
 ## Radios and downloads
 
