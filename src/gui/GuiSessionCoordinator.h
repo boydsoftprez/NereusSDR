@@ -52,6 +52,13 @@ public:
         m_selection.connection.identityFingerprint = identityFingerprint;
     }
 
+#ifdef NEREUS_BUILD_TESTS
+    // Issue #351 tests: the hosted Core's wait for a lost link to come back
+    // in place, and running it out.
+    bool hostedInPlaceWaitActiveForTest() const { return m_hostedInPlaceDeadline.isActive(); }
+    void endHostedInPlaceWaitForTest() { m_hostedInPlaceDeadline.start(0); }
+#endif
+
 signals:
     void windowChanged(NereusSDR::MainWindow* window);
     void connectionsRequested();
@@ -87,6 +94,9 @@ private:
     bool m_retiringHostedRadio = false;
     bool m_hostedRadioAttempted = false;
     QTimer m_hostedDiscoveryRetry;
+    // Issue #351: how long a lost link that recovers in place (P1) has
+    // before the hosted Core retires it, as DaemonApp waits.
+    QTimer m_hostedInPlaceDeadline;
     StationStartupSelection m_selection;
     quint64 m_generation = 0;
     bool m_replacing = false;

@@ -174,6 +174,12 @@
 //                8544; netInterface.c:1249-1252; networkproto1.c:471
 //                [v2.10.3.15]). J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-06 - Issue #351: a lost link recovers in place. Each reconnect
+//                attempt waits the full silence window from the attempt (the
+//                stale last-frame time tripped the watchdog again 25 ms after
+//                the start went out), attempts come 1 s apart (was 5 s), and
+//                inPlaceRecoveryMs tells the owner how long they run.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*
@@ -882,7 +888,8 @@ void P1RadioConnection::init()
     connect(m_ep2PacerTimer, &QTimer::timeout, this, &P1RadioConnection::onEp2PacerTick);
 
     // Reconnect timer — single-shot; fires kReconnectIntervalMs after watchdog trips.
-    // Source: NereusSDR design doc §3.6 — 5-second reconnect interval, max 3 retries.
+    // Source: NereusSDR design doc §3.6 — max 3 retries; issue #351 moved the
+    // interval from 5 s to 1 s.
     m_reconnectTimer = new QTimer(this);
     m_reconnectTimer->setSingleShot(true);
     connect(m_reconnectTimer, &QTimer::timeout, this, &P1RadioConnection::onReconnectTimeout);
@@ -4705,6 +4712,12 @@ void P1RadioConnection::onReconnectTimeout()
     sendMetisStart(false);
     sendPrimingBurst(3);
 
+    // Issue #351: this attempt waits the full silence window from now, as
+    // setWatchdogEnabled does. Counted from the last frame before the loss,
+    // the window had long passed, so the watchdog's next tick (25 ms) called
+    // the link lost again unless the radio's answer had already arrived.
+    m_lastEp6At = QDateTime::currentDateTimeUtc();
+
     // Re-arm the watchdog so onReadyRead can complete the transition to Connected.
     if (!m_watchdogTimer->isActive()) {
         m_watchdogTimer->start();
@@ -4722,6 +4735,16 @@ void P1RadioConnection::onReconnectTimeout()
     // But we schedule a fallback in case no ep6 data arrives within the window
     // (i.e., watchdog trips again → re-arms reconnect timer).
     // No extra start() needed; see onWatchdogTick for the arming path.
+}
+
+int P1RadioConnection::inPlaceRecoveryMs() const noexcept
+{
+    // Issue #351: every attempt comes kReconnectIntervalMs after the loss or
+    // the last attempt's silence, and waits m_watchdogSilenceMs for its
+    // first frame; the last attempt's wait ends the budget, and one more
+    // interval covers its answer.
+    return kMaxReconnectAttempts * (m_reconnectIntervalMs + m_watchdogSilenceMs)
+        + m_reconnectIntervalMs;
 }
 
 // ---------------------------------------------------------------------------
