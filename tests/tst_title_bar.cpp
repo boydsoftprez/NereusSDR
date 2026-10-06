@@ -17,6 +17,9 @@
 //      featureRequestClicked() exactly once (Task 10d).
 //   6. featureButtonShowsBulbIcon: the feature button shows the app's
 //      own bulb icon (AppIcon "bulb", R-SPK-19 / D7), not text.
+//   7. stripOrderUtcPcRadioFeature: the strip runs UTC, 18 px gap, PC
+//      group, 16 px, RADIO group, spacing, feature button (R-SPK-17), and
+//      the RADIO group reads as no radio until setRadioModel().
 //
 // Live UI smoke (hosted-inside-QMainWindow + menu bar re-parenting
 // visuals) is the canonical verify; these tests only guard the
@@ -28,13 +31,18 @@
 #include <QtTest/QtTest>
 #include <QMenu>
 #include <QMenuBar>
+#include <QLabel>
+#include <QLayout>
 #include <QPushButton>
 #include <QSignalSpy>
+#include <QSlider>
 
 #include "core/AudioEngine.h"
 #include "gui/TitleBar.h"
 #include "gui/widgets/AppIcon.h"
 #include "gui/widgets/MasterOutputWidget.h"
+#include "gui/widgets/RadioSpeakerWidget.h"
+#include "models/RadioModel.h"
 
 using namespace NereusSDR;
 
@@ -132,6 +140,61 @@ private slots:
         QVERIFY(!btn->icon().isNull());
         QCOMPARE(btn->iconSize(), QSize(22, 22));
         QVERIFY(btn->text().isEmpty());
+    }
+
+    // ── 7. UTC, PC, RADIO, feature button, in that order ───────────────────
+
+    void stripOrderUtcPcRadioFeature() {
+        AudioEngine engine;
+        TitleBar bar(&engine);
+        auto* mb = new QMenuBar;
+        mb->addMenu(QStringLiteral("Radio"));
+        bar.setMenuBar(mb);
+
+        auto* utc = bar.findChild<QLabel*>(QStringLiteral("utcLabel"));
+        MasterOutputWidget* pc = bar.masterOutput();
+        RadioSpeakerWidget* radio = bar.radioSpeaker();
+        auto* feature = bar.findChild<QPushButton*>(QStringLiteral("featureButton"));
+        QVERIFY(utc && pc && radio && feature);
+        QCOMPARE(radio->parentWidget(), &bar);
+
+        QLayout* layout = bar.layout();
+        const int iUtc = layout->indexOf(utc);
+        const int iPc = layout->indexOf(pc);
+        const int iRadio = layout->indexOf(radio);
+        const int iFeature = layout->indexOf(feature);
+        QVERIFY(iUtc >= 0);
+        // One spacer between each named element, and only spacers between
+        // RADIO and the feature button.
+        QCOMPARE(iPc, iUtc + 2);
+        QCOMPARE(iRadio, iPc + 2);
+        QVERIFY(layout->itemAt(iUtc + 1)->spacerItem() != nullptr);
+        QVERIFY(layout->itemAt(iPc + 1)->spacerItem() != nullptr);
+        QVERIFY(iFeature > iRadio + 1);
+        for (int i = iRadio + 1; i < iFeature; ++i) {
+            QVERIFY(layout->itemAt(i)->spacerItem() != nullptr);
+        }
+        QCOMPARE(iFeature, layout->count() - 1);
+
+        bar.resize(1440, 32);
+        bar.show();
+        QApplication::processEvents();
+        // The visible gap from PC's readout to RADIO's icon is 16 px.
+        QCOMPARE(radio->x() - (pc->x() + pc->width()), 16);
+        QCOMPARE(bar.height(), 32);
+        QVERIFY(radio->y() >= 0 && radio->y() + radio->height() <= 32);
+
+        // Built with no model: disabled, never hidden.
+        auto* radioSlider = radio->findChild<QSlider*>(QStringLiteral("radioSlider"));
+        QVERIFY(radioSlider);
+        QVERIFY(radioSlider->isVisible());
+        QVERIFY(!radioSlider->isEnabled());
+        QCOMPARE(radioSlider->toolTip(), QStringLiteral("No radio connected"));
+
+        RadioModel model;
+        bar.setRadioModel(&model);
+        QCOMPARE(radio->radioModel(), &model);
+        QVERIFY(!radioSlider->isEnabled());
     }
 };
 

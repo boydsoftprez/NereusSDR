@@ -17,9 +17,17 @@
 //                announcing it (selectOutputDevice). J.J. Boyd
 //                (KG4VCF), with AI-assisted implementation via
 //                Anthropic Claude Code.
+//   2026-10-06 - Radio speaker plan Task 6 (R-SPK-17, D1, D5): pc-on /
+//                pc-muted icons through AppIcon replace the speaker emoji,
+//                a "PC" word label (pcLabel) sits between the button and
+//                the slider, and HeaderVolumeStyle exports the styles the
+//                RADIO group shares. J.J. Boyd (KG4VCF), with AI-assisted
+//                implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "MasterOutputWidget.h"
+
+#include "gui/widgets/AppIcon.h"
 
 #include "core/AppSettings.h"
 #include "core/AudioDeviceConfig.h"
@@ -63,10 +71,44 @@ static const char* kDbLabelStyle =
     "  color: #8aa8c0;"
     "}";
 
-// UTF-8 encodings of the two speaker glyphs — kept as raw escape
-// bytes to match the AetherSDR source style (no <QChar> fuss).
-static const char* kSpeakerOn  = "\xF0\x9F\x94\x8A";  // 🔊 U+1F50A
-static const char* kSpeakerOff = "\xF0\x9F\x94\x87";  // 🔇 U+1F507
+// The speaker button shows the app's own icons (R-SPK-19, D7), which look
+// the same on every platform, in place of the two emoji glyphs it drew as
+// text before.
+static const char* kPcOnIcon    = "pc-on";
+static const char* kPcMutedIcon = "pc-muted";
+
+namespace HeaderVolumeStyle {
+
+const char* const kIconButton =
+    "QPushButton { background: transparent; border: none; padding: 0; }";
+
+// The word label of layout A in header-layouts.html: 9 px, semi-bold, the
+// readout's text colour; the mockup's disabled grey while disabled.
+const char* const kWordLabel =
+    "QLabel { color: #8aa8c0; font-size: 9px; font-weight: 600; }"
+    "QLabel:disabled { color: #4a5a6a; }";
+
+const char* const kPcSlider = kSliderStyle;
+
+const char* const kRadioSlider =
+    "QSlider::groove:horizontal { background: #1a2a3a; height: 4px; border-radius: 2px; }"
+    "QSlider::handle:horizontal { background: #e0a030; width: 10px; margin: -3px 0; border-radius: 5px; }"
+    "QSlider::sub-page:horizontal { background: #e0a030; border-radius: 2px; }"
+    "QSlider::handle:horizontal:disabled { background: #4a5a6a; }"
+    "QSlider::sub-page:horizontal:disabled { background: #1a2a3a; }";
+
+const char* const kReadout =
+    "QLabel {"
+    "  font-size: 10px;"
+    "  background: #0a0a18;"
+    "  border: 1px solid #1e2e3e;"
+    "  border-radius: 3px;"
+    "  padding: 1px 2px;"
+    "  color: #8aa8c0;"
+    "}"
+    "QLabel:disabled { color: #4a5a6a; }";
+
+} // namespace HeaderVolumeStyle
 
 MasterOutputWidget::MasterOutputWidget(AudioEngine* audio, QWidget* parent)
     : QWidget(parent)
@@ -93,13 +135,13 @@ MasterOutputWidget::MasterOutputWidget(AudioEngine* audio, QWidget* parent)
     m_currentDeviceName = savedDevice;
 
     // ── Speaker button ─────────────────────────────────────────────────────
-    m_speakerBtn = new QPushButton(
-        QString::fromUtf8(savedMuted ? kSpeakerOff : kSpeakerOn), this);
+    m_speakerBtn = new QPushButton(this);
     m_speakerBtn->setObjectName(QStringLiteral("speakerBtn"));
     m_speakerBtn->setFixedSize(20, 20);
     m_speakerBtn->setCheckable(true);
     m_speakerBtn->setChecked(savedMuted);
     m_speakerBtn->setStyleSheet(QLatin1String(kSpeakerBtnStyle));
+    applySpeakerIcon(savedMuted);
     m_speakerBtn->setToolTip(QStringLiteral(
         "Click to mute/unmute master output — right-click for output devices"));
     m_speakerBtn->setAccessibleName(QStringLiteral("Master mute"));
@@ -107,6 +149,13 @@ MasterOutputWidget::MasterOutputWidget(AudioEngine* audio, QWidget* parent)
         "Mute or unmute master output; right-click for device picker"));
     m_speakerBtn->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_speakerBtn);
+
+    // ── "PC" word label (R-SPK-17, D1) ─────────────────────────────────────
+    // Tells this computer's group apart from RADIO at a glance.
+    m_pcLabel = new QLabel(QStringLiteral("PC"), this);
+    m_pcLabel->setObjectName(QStringLiteral("pcLabel"));
+    m_pcLabel->setStyleSheet(QLatin1String(HeaderVolumeStyle::kWordLabel));
+    layout->addWidget(m_pcLabel);
 
     // ── Slider (100 px wide, 16 px tall per design spec §7.3) ──────────────
     m_slider = new QSlider(Qt::Horizontal, this);
@@ -178,7 +227,7 @@ MasterOutputWidget::MasterOutputWidget(AudioEngine* audio, QWidget* parent)
         if (m_updatingFromModel) {
             return;
         }
-        m_speakerBtn->setText(QString::fromUtf8(muted ? kSpeakerOff : kSpeakerOn));
+        applySpeakerIcon(muted);
         if (m_audio) {
             m_audio->setMasterMuted(muted);
         }
@@ -288,14 +337,21 @@ void MasterOutputWidget::onAudioEngineMasterMutedChanged(bool m)
     m_updatingFromModel = true;
     // QSignalBlocker prevents the button's toggled() from re-entering
     // the widget→model lambda while we mirror the engine state into
-    // the UI. The text update still has to happen manually because
-    // the toggled() handler (which normally sets the glyph) is blocked.
+    // the UI. The icon update still has to happen manually because
+    // the toggled() handler (which normally sets the icon) is blocked.
     {
         QSignalBlocker blocker(m_speakerBtn);
         m_speakerBtn->setChecked(m);
-        m_speakerBtn->setText(QString::fromUtf8(m ? kSpeakerOff : kSpeakerOn));
+        applySpeakerIcon(m);
     }
     m_updatingFromModel = false;
+}
+
+void MasterOutputWidget::applySpeakerIcon(bool muted)
+{
+    AppIcon::apply(m_speakerBtn,
+                   QLatin1String(muted ? kPcMutedIcon : kPcOnIcon),
+                   HeaderVolumeStyle::kIconPx);
 }
 
 void MasterOutputWidget::onSpeakersConfigChanged(const AudioDeviceConfig& cfg)

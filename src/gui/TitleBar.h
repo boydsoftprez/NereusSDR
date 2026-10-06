@@ -65,6 +65,12 @@
 //                 because local time already sits in the menu bar and the
 //                 date is not an operator-facing fact worth the pixels.
 //                 NereusSDR-original UI, not a Thetis/AetherSDR port.
+//   2026-10-06 - Radio speaker plan Task 6 (R-SPK-16, R-SPK-17, D1): the
+//                 RADIO group (RadioSpeakerWidget) sits beside the PC group
+//                 (MasterOutputWidget), 16 px apart, before the feature
+//                 button; setRadioModel() hands it the model. J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "core/AudioEngine.h"
@@ -89,6 +95,8 @@ class QKeyEvent;
 namespace NereusSDR {
 
 class MasterOutputWidget;
+class RadioModel;
+class RadioSpeakerWidget;
 
 // ConnectionSegment — always-visible connection-state indicator living
 // in the TitleBar, between the menu bar and the centre "NereusSDR" label.
@@ -222,8 +230,12 @@ private:
 //   [stretch]
 //   [NereusSDR app-name label]
 //   [stretch]
-//   [MasterOutputWidget — speaker button + master slider + readout]
-//   [6 px spacing]
+//   [UTC clock]
+//   [18 px gap]
+//   [MasterOutputWidget, the PC group: icon + "PC" + slider + readout]
+//   [16 px gap]
+//   [RadioSpeakerWidget, the RADIO group: icon + "RADIO" + slider + readout]
+//   [spacing]
 //   [💡 feature-request button]
 //
 // macOS caveat: embedding the QMenuBar inside a custom widget prevents Qt
@@ -248,6 +260,11 @@ public:
     // signal into AudioEngine::setSpeakersConfig.
     MasterOutputWidget* masterOutput() const { return m_master; }
 
+    // R-SPK-17: the RADIO group. It reads as no radio connected until
+    // setRadioModel() hands it the window's model.
+    RadioSpeakerWidget* radioSpeaker() const { return m_radioSpeaker; }
+    void setRadioModel(RadioModel* model);
+
     // Non-owning accessor so MainWindow can wire connection-state signals
     // and the activity LED. Phase 3Q-6.
     ConnectionSegment* connectionSegment() const { return m_connectionSegment; }
@@ -266,6 +283,7 @@ private:
     QMenuBar*           m_menuBar{nullptr};
     ConnectionSegment*  m_connectionSegment{nullptr};
     MasterOutputWidget* m_master{nullptr};
+    RadioSpeakerWidget* m_radioSpeaker{nullptr};
     QPushButton*        m_featureBtn{nullptr};
     QLabel*             m_utcLabel{nullptr};
     QTimer*             m_utcTimer{nullptr};

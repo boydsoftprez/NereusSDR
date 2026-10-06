@@ -601,6 +601,9 @@
 //                first wiring names its own pan; slice add and remove are
 //                logged. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-06 - Radio speaker plan Task 6 (R-SPK-16, R-SPK-17): the title
+//                bar's RADIO group is handed this window's RadioModel.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -1345,6 +1348,9 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
     // reaches the engine through localAudioDevices(), not the audited
     // local-DSP accessor.
     m_titleBar = new TitleBar(m_radioModel->localAudioDevices(), this);
+    // R-SPK-17: the RADIO group reads and writes this window's model, the
+    // Core's radio speaker in a remote window (R-SPK-16).
+    m_titleBar->setRadioModel(m_radioModel);
     m_titleBar->setMenuBar(menuBar());
     setMenuWidget(m_titleBar);
 

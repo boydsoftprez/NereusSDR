@@ -1707,6 +1707,12 @@ nereus_add_test(tst_title_bar)
 nereus_add_test(tst_app_icon EXTRA_LABELS gui)
 target_compile_definitions(tst_app_icon PRIVATE
     NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+# Radio speaker plan Task 6 (R-SPK-06, R-SPK-07, R-SPK-16, R-SPK-17, D1, D5,
+# D10): the header's RADIO group writes and follows RadioModel without echo,
+# stays independent of PC, and is disabled with its reason when there is no
+# radio speaker to set. NEREUS_HEADER_CAPTURE_DIR saves header captures.
+nereus_add_test(tst_radio_speaker_widget EXTRA_LABELS gui)
+target_compile_definitions(tst_radio_speaker_widget PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Task A7 (bottom-banner cleanup): TitleBar::utcText() ─────────────────────
 # Single-row UTC clock moved from the bottom banner into TitleBar. Verifies

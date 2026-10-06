@@ -70,6 +70,11 @@
 //                 button shows the app's own bulb icon (AppIcon); the
 //                 QPainter lightbulb painter is removed. J.J. Boyd (KG4VCF),
 //                 with AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-06 - Radio speaker plan Task 6 (R-SPK-16, R-SPK-17, D1): the
+//                 RADIO group (RadioSpeakerWidget) follows the PC group
+//                 after kPcToRadioGap; setRadioModel() binds it. J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "TitleBar.h"
@@ -77,6 +82,7 @@
 #include "StyleConstants.h"
 #include "widgets/AppIcon.h"
 #include "widgets/MasterOutputWidget.h"
+#include "widgets/RadioSpeakerWidget.h"
 
 #include <QDateTime>
 #include <QHBoxLayout>
@@ -118,6 +124,12 @@ constexpr int kSpacing      = 6;
 // than a 24 px gap allowed, and 18 covers it with 2 px (Menlo) or 3 px
 // (the others) to spare.
 constexpr int kUtcToMasterGap = 18;
+
+// Visible gap between the PC group's readout and the RADIO group's icon
+// (R-SPK-17, header-layouts.html layout A). QBoxLayout adds its spacing
+// once beside a spacer item (measured: a 4 px spacer gave 10 px), so the
+// spacer is the rest.
+constexpr int kPcToRadioGap = 16;
 
 // Fixed strip height. From AetherSDR TitleBar.cpp:30.
 constexpr int kStripHeight = 32;
@@ -709,6 +721,7 @@ TitleBar::TitleBar(AudioEngine* audio, QWidget* parent)
     // and invited a mis-drag on a widget where an accidental grab changes
     // audio level (bench feedback, 2026-08-03).
     m_utcLabel = new QLabel(this);
+    m_utcLabel->setObjectName(QStringLiteral("utcLabel"));
     m_utcLabel->setToolTip(tr("UTC time"));
     m_utcLabel->setStyleSheet(QStringLiteral(
         "QLabel { color: #8aa8c0; font-size: 11px;"
@@ -719,6 +732,13 @@ TitleBar::TitleBar(AudioEngine* audio, QWidget* parent)
     // ── MasterOutputWidget — Task 10b composite ────────────────────────────
     m_master = new MasterOutputWidget(audio, this);
     m_hbox->addWidget(m_master);
+    m_hbox->addSpacing(kPcToRadioGap - kSpacing);
+
+    // ── RADIO group, R-SPK-17 ───────────────────────────────────────────
+    // Built with no model so the strip's order never changes; it shows
+    // no radio connected (disabled, never hidden) until setRadioModel().
+    m_radioSpeaker = new RadioSpeakerWidget(nullptr, this);
+    m_hbox->addWidget(m_radioSpeaker);
     m_hbox->addSpacing(10);
 
     auto tickUtc = [this]() {
@@ -780,6 +800,11 @@ void TitleBar::setMenuBar(QMenuBar* mb)
     m_menuBar = mb;
     // Insert at position 0 (before the first stretch).
     m_hbox->insertWidget(0, mb);
+}
+
+void TitleBar::setRadioModel(RadioModel* model)
+{
+    m_radioSpeaker->setRadioModel(model);
 }
 
 QString TitleBar::utcText() const
