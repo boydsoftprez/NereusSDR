@@ -103,6 +103,23 @@ All cites at Thetis v2.10.3.15 (`3759d09`) and piHPSDR `4aa95c5`.
   and while tuning, "if we expect a side tone from CW or TUNEing". Its
   comment also records that muting the amplifier "affects speakers,
   headphone, and LineOut", and that switching it makes the speakers "pop".
+- The ANAN-G2E, checked at each reference's latest, not only the pins
+  (Thetis `852bf0e`, mi0bot-Thetis `0cef1c9`, piHPSDR `2efb67f`, deskHPSDR
+  `e519024`, all fetched 2026-10-05). Thetis knows the G2E (`ANAN_G2E`,
+  "N1GP G2E added", `enums.cs:130`) but still leaves it out of
+  `HasAudioAmplifier` (`clsHardwareSpecific.cs:459-467`, unchanged on
+  master); mi0bot-Thetis is the same (`clsHardwareSpecific.cs:488-496`).
+  piHPSDR shows "Spkr Amp" for `NEW_DEVICE_G2E` (`radio_menu.c:720-721`,
+  added when the G1 was renamed G2E in `dc67fa2`), but its sender sets the
+  bit only inside `if (device == NEW_DEVICE_ORION2 || device ==
+  NEW_DEVICE_SATURN)` (`new_protocol.c:805-829` at `2efb67f`), so on a G2E
+  the menu sends nothing. deskHPSDR is the same: it added `NEW_DEVICE_G2E`
+  to its "Mute Spkr Amp" menu (`radio_menu.c:941-945`, `b0d0e99` "Add G2E
+  support"), but its sender also sets the bit only for `NEW_DEVICE_ORION2`
+  and `NEW_DEVICE_SATURN` (`new_protocol.c:1718-1733`), and the G2E is its
+  own device id (`NEW_DEVICE_G2E 1020`, `discovered.h:60`).
+  Neither pinned gateware covers the G2E. So no reference switches a G2E
+  amplifier on the wire, and none says whether the board has one.
 
 ## Behaviour
 
@@ -145,9 +162,10 @@ R-SPK-08. The amplifier choice is offered on exactly the boards where
 Thetis's `HasAudioAmplifier` is true: Protocol 2 with ANAN-7000D, ANAN-8000D,
 Anvelina Pro 3, ANAN-G2, ANAN-G2 1K or Red Pitaya. Anywhere else it is shown
 greyed out with the reason ("This radio has no switchable speaker amplifier.").
-The ANAN-G2E is not on Thetis's list, though piHPSDR offers the control on
-it. This spec follows Thetis; a bench check on a G2E can add it later with a
-cite.
+The ANAN-G2E is not on the list: at their latest, Thetis and mi0bot-Thetis
+leave it out, and the G2E menu entries in piHPSDR and deskHPSDR never reach
+the wire (see "Source facts"). Adding it needs a source that the G2E has the
+amplifier and its firmware honours the bit, or a bench check on a G2E.
 
 R-SPK-09. The bit sent is "amplifier off" when any of these hold:
 
@@ -442,8 +460,9 @@ confirms or changes them:
 
 1. D11: the HL2 keeps RADIO enabled with the add-on note, because the
    radio can't report the board.
-2. R-SPK-08: the ANAN-G2E follows Thetis (no amplifier choice) until a bench
-   check.
+2. R-SPK-08: the ANAN-G2E gets no amplifier choice, because no reference
+   sends the bit to it; it is added once a source or a bench check shows
+   the G2E has the amplifier.
 3. R-SPK-09: Off while transmitting stays on for CW and Tune, as piHPSDR.
 4. R-SPK-12: RADIO is saved per radio (per MAC), not once per station.
 5. R-SPK-23: the amplifier choice reaches the phone through its Setup
