@@ -20710,9 +20710,11 @@ void RadioModel::wireRadioSpeakerState()
     // The hold keys off the transmit state, not isMox(): a Tune ended by a
     // path that drops MOX first (a PA trip, a MOX click during Tune) is
     // still walking to receive when Tune clears, with MOX off not yet sent.
+    // Never on a remote window: its Tune and transmit state are the Core's,
+    // its own controller never keys, so no hardwareFlipped would clear it.
     connect(&m_transmitModel, &TransmitModel::tuneChanged, this, [this](bool on) {
-        m_tuneSidetoneHold = !on && m_moxController != nullptr
-                             && isTransmitting();
+        m_tuneSidetoneHold = !on && m_role != Role::Remote
+                             && m_moxController != nullptr && isTransmitting();
         refreshSidetoneExpected();
     });
     if (m_moxController != nullptr) {

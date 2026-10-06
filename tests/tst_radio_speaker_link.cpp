@@ -25,11 +25,14 @@
 #include <QScopeGuard>
 #include <QSignalSpy>
 
+#include "core/HpsdrModel.h"
 #include "core/RadioConnection.h"
 #include "core/session/IStationLink.h"
 #include "core/session/MirrorPolicy.h"
 #include "core/session/StationClient.h"
 #include "core/settings/SettingsProxy.h"
+#include "models/SliceModel.h"
+#include "models/TransmitModel.h"
 
 namespace {
 
@@ -54,7 +57,9 @@ public:
         setState(ConnectionState::Connected);
     }
 
-    int protocolVersion() const override { return 1; }
+    int protocol{1};
+
+    int protocolVersion() const override { return protocol; }
     bool carriesRadioAudio() const noexcept override { return true; }
 
     void init() override {}
@@ -410,6 +415,62 @@ private slots:
         QTRY_COMPARE(remote.radioSpeakerAvailability(), int(RadioModel::kRadioSpeakerNoRadio));
         QCOMPARE(remote.radioSpeakerUnavailableReason(), QStringLiteral("No radio connected"));
         QCOMPARE(remote.radioSpeakerToolTip(), QStringLiteral("No radio connected"));
+    }
+
+    // R-SPK-15 on a remote window: the window's Tune is the Core's, and the
+    // Core clears it while it is still walking to receive. The window's own
+    // controller never keys, so it must not hold the CW or Tune flag after
+    // Tune: the next voice transmission shows the amplifier off there too.
+    void remoteWindow_voiceAfterTune_showsAmplifierOff()
+    {
+        Core core(/*upgradedWithToken=*/true);
+        // The harness Core is receive-only by default; the Core keys here.
+        core.server->setRemoteTransmitAllowed(true);
+        SpeakerConnection conn;
+        conn.protocol = 2;
+        core.model->setCapsForTest(/*hasAlex=*/false);
+        core.model->setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+        core.model->injectConnectionForTest(&conn);
+        const auto detach = qScopeGuard([&core]() { core.model->injectConnectionForTest(nullptr); });
+        // The unkey walk dwells, so the window hears Tune clear while the
+        // Core still reports transmitting.
+        core.model->moxController()->setTimerIntervals(0, 500, 0, 500, 0, 0);
+        core.model->setTuneOffSettleMsForTest(0);
+        core.model->activeSlice()->setDspMode(DSPMode::USB);
+        core.model->setSpeakerAmplifierMode(1);  // Off while transmitting
+        QVERIFY(core.model->speakerAmplifierAvailable());
+
+        Window window;
+        QVERIFY(window.open(core, this));
+        RadioModel& remote = window.model;
+        QTRY_VERIFY(remote.speakerAmplifierAvailable());
+        QTRY_COMPARE(remote.speakerAmplifierMode(), 1);
+        QVERIFY(remote.speakerAmplifierStatus().isEmpty());
+
+        core.model->setTune(true);
+        QVERIFY(core.model->transmitModel().isTune());
+        QTRY_VERIFY(remote.transmitModel().isTune());
+        QTRY_VERIFY(remote.isTransmitting());
+        core.model->setTune(false);
+        QTRY_VERIFY(!remote.transmitModel().isTune());
+        QVERIFY(core.model->isTransmitting());
+        QTRY_VERIFY_WITH_TIMEOUT(!core.model->isTransmitting(), 3000);
+        QTRY_VERIFY(!remote.isTransmitting());
+
+        // Voice from the radio's microphone, so no PC microphone gates the
+        // key in this harness.
+        core.model->transmitModel().setMicSource(MicSource::Radio);
+        core.model->moxController()->setMox(true);
+        QVERIFY2(core.model->moxController()->isMox(),
+                 qPrintable(core.model->moxController()->lastRefusal().text));
+        QTRY_VERIFY(remote.isTransmitting());
+        QCOMPARE(core.model->speakerAmplifierStatus(),
+                 QStringLiteral("Amplifier is off now: transmitting."));
+        QTRY_COMPARE(remote.speakerAmplifierStatus(),
+                     QStringLiteral("Amplifier is off now: transmitting."));
+
+        core.model->moxController()->setMox(false);
+        QTRY_VERIFY_WITH_TIMEOUT(!core.model->isTransmitting(), 3000);
     }
 
     // A window of a Core without the capability: RADIO disabled with the
