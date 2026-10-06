@@ -1422,14 +1422,16 @@ void TstStationSession::remoteWindowSeesNoSchemaSkewFromTheCurrentCore()
     // the Core's transmit is held; alexLpf: the Alex-1 tab's low-pass
     // lamps; paTransmitBand: the PA row the Core holds on the air;
     // levelCalibration: Setup's calibration run; rxFilterLowPass: why the
-    // receive low-pass is set for another slice) arrive.
+    // receive low-pass is set for another slice; radioSpeaker: the
+    // header's RADIO group and Setup's radio speaker) arrive.
     const QSet<QByteArray> declaredGatedFeatures{QByteArrayLiteral("radeStatus"),
                                                  QByteArrayLiteral("txInhibitReason"),
                                                  QByteArrayLiteral("alexLpf"),
                                                  QByteArrayLiteral("paTransmitBand"),
                                                  QByteArrayLiteral("levelCalibration"),
                                                  QByteArrayLiteral("rxFilterLowPass"),
-                                                 QByteArrayLiteral("radeReason")};
+                                                 QByteArrayLiteral("radeReason"),
+                                                 QByteArrayLiteral("radioSpeaker")};
     QSet<QByteArray> arrivedGatedFeatures;
     bool sawTransmitSchema = false;
     for (const QByteArray& wire : peer->received()) {
