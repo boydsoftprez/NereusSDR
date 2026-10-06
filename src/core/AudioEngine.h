@@ -21,6 +21,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-06 : Radio speaker plan Task 1 (R-SPK-01 to R-SPK-04) by J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//                 The radio's speaker out takes its own RADIO level and
+//                 mute (m_radioSpeakerVolume, m_radioSpeakerMuted); the
+//                 speakers keep the PC level and mute. NereusSDR-original.
 //   2026-09-30 : Radio codec (JJ's ruling): m_radioOutScratch, the radio's
 //                 speaker out, every receiving slice as Thetis's mixer 0,
 //                 by J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -914,6 +919,23 @@ public:
     void setMasterMuted(bool muted);
     bool masterMuted() const { return m_masterMuted.load(std::memory_order_acquire); }
 
+    // R-SPK-01 to R-SPK-03: the RADIO level (0.0 to 1.0, percent / 100,
+    // the same mapping as the PC level) and mute for the radio's own
+    // speaker out (setRadioOutputTap). Independent of the PC level and
+    // mute above, which stay on the speakers. Read on the DSP thread,
+    // written on the main thread. The mute zero-fills the radio's blocks
+    // so its stream never stops; it flushes nothing.
+    void setRadioSpeakerVolume(float linear);
+    float radioSpeakerVolume() const
+    {
+        return m_radioSpeakerVolume.load(std::memory_order_acquire);
+    }
+    void setRadioSpeakerMuted(bool muted);
+    bool radioSpeakerMuted() const
+    {
+        return m_radioSpeakerMuted.load(std::memory_order_acquire);
+    }
+
     /// Update the cross-thread MOX-state mirror used by rxBlockReady.
     /// Wired by RadioModel (Phase L) to MoxController::moxStateChanged via
     /// signal/slot (Qt::DirectConnection, audio thread).
@@ -1105,6 +1127,9 @@ signals:
 
     void volumeChanged(float volume);
     void masterMutedChanged(bool muted);
+    // R-SPK-01, R-SPK-02: emitted on a change only.
+    void radioSpeakerVolumeChanged(float volume);
+    void radioSpeakerMutedChanged(bool muted);
     // Plan: 3M-1b E.2. Pre-code review §4.4.
     void txMonitorEnabledChanged(bool enabled);
     void txMonitorVolumeChanged(float volume);
@@ -1436,6 +1461,13 @@ private:
     // rxBlockReady() on the DSP thread. Same acq_rel / acquire pairing
     // as m_masterVolume above.
     std::atomic<bool> m_masterMuted{false};
+
+    // R-SPK-01, R-SPK-02: the RADIO level and mute. Written by
+    // setRadioSpeakerVolume() / setRadioSpeakerMuted() on the main thread,
+    // each loaded once per block in rxBlockReady() on the DSP thread. Same
+    // acq_rel / acquire pairing as m_masterVolume above.
+    std::atomic<float> m_radioSpeakerVolume{0.5f};
+    std::atomic<bool> m_radioSpeakerMuted{false};
 
     // Plan: 3M-1b E.4. Pre-code review §10.3 + §10.4.
     // Cross-thread MOX-state mirror. Written by main-thread setMoxState()

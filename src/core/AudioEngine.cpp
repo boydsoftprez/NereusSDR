@@ -19,6 +19,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-06  J.J. Boyd / KG4VCF  Radio speaker plan Task 1 (R-SPK-01 to
+//                                    R-SPK-04): the radio tap takes the
+//                                    RADIO level and mute, the speakers
+//                                    keep the PC level and mute.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-09-30  J.J. Boyd / KG4VCF  Fix wave RD-I10: the VAX tee try-locks
 //                                    the channel's bus lock and skips the
 //                                    push while another thread holds it.
@@ -2691,14 +2696,18 @@ void AudioEngine::drainMixes(int frames, bool monitorOnly)
     // slice whichever device owns it, both routes, and MON exactly while
     // this computer's outputs carry it: while a remote device holds
     // transmit MON stays off the radio's speaker as off the local ones
-    // (Task 32). At the master volume, or silence while the master is
-    // muted, so the radio's stream never stops.
+    // (Task 32). At the RADIO level, or silence while the RADIO is muted,
+    // so the radio's stream never stops (R-SPK-01, R-SPK-02). The PC level
+    // and mute stay on the speakers below; Thetis has one AF volume for
+    // both (cmaster.cs:954-957 above), NereusSDR splits it.
     if (radioTapped) {
-        if (m_masterMuted.load(std::memory_order_acquire)) {
+        const bool radioMuted = m_radioSpeakerMuted.load(std::memory_order_acquire);
+        const float radioVol = m_radioSpeakerVolume.load(std::memory_order_acquire);
+        if (radioMuted) {
             std::fill(radioSum.begin(), radioSum.begin() + stereoFloats, 0.0f);
-        } else if (vol != 1.0f) {
+        } else if (radioVol != 1.0f) {
             for (int i = 0; i < stereoFloats; ++i) {
-                radioSum[static_cast<size_t>(i)] *= vol;
+                radioSum[static_cast<size_t>(i)] *= radioVol;
             }
         }
         invokeMixTap(m_radioOutputTap, radioSum.data(), mixed);
@@ -2928,6 +2937,28 @@ void AudioEngine::setVolume(float volume)
     const float prev = m_masterVolume.exchange(volume, std::memory_order_acq_rel);
     if (prev != volume) {
         emit volumeChanged(volume);
+    }
+}
+
+void AudioEngine::setRadioSpeakerVolume(float linear)
+{
+    // R-SPK-03: percent / 100, clamped as setVolume. Same acq_rel pairing
+    // as setVolume with the once-per-block acquire load in rxBlockReady.
+    linear = std::clamp(linear, 0.0f, 1.0f);
+    const float prev = m_radioSpeakerVolume.exchange(linear, std::memory_order_acq_rel);
+    if (prev != linear) {
+        emit radioSpeakerVolumeChanged(linear);
+    }
+}
+
+void AudioEngine::setRadioSpeakerMuted(bool muted)
+{
+    // R-SPK-02: no flush. rxBlockReady zero-fills the radio's blocks while
+    // muted; the radio's ring keeps its cushion and its stream keeps
+    // running.
+    const bool prev = m_radioSpeakerMuted.exchange(muted, std::memory_order_acq_rel);
+    if (prev != muted) {
+        emit radioSpeakerMutedChanged(muted);
     }
 }
 
