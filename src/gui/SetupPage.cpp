@@ -45,6 +45,10 @@
 //                 before the trailing stretch so every page starts at the
 //                 top. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code.
+//   2026-10-06 - R-SPK-21 (Microphone): the gates save a control's own
+//                 enabled state, not its parent's, so a control in a greyed
+//                 section is not left disabled when the gate lifts.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "SetupPage.h"
@@ -165,7 +169,12 @@ void gateControlsWith(const QList<QWidget*>& controls, bool allowed, const QStri
             if (!control->property(savedTooltip).isValid()) {
                 control->setProperty(savedTooltip, control->toolTip());
                 control->setProperty(savedDescription, control->accessibleDescription());
-                control->setProperty(savedEnabled, control->isEnabled());
+                // The control's own state, not the one its parent imposes:
+                // a control inside a greyed section (Audio > Microphone's
+                // radio mic groups, R-SPK-21) comes back live when the
+                // section is picked, instead of staying disabled for good.
+                control->setProperty(savedEnabled,
+                                     !control->testAttribute(Qt::WA_ForceDisabled));
             }
             control->setEnabled(false);
             control->setToolTip(reason);

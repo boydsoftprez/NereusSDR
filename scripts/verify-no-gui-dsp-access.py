@@ -115,10 +115,8 @@ LOCAL_AUDIO_ALLOWLIST = {
     # volume and mute, headphones, the Sound system line and Rescan
     # devices. Its Radio speaker controls go through RadioModel.
     "src/gui/setup/AudioOutputsPage.cpp": 1,
-    # Setup > Audio > Devices: the Microphone card.
-    "src/gui/setup/AudioDevicesPage.cpp": 1,
-    # Setup > Audio > TX Input: PC microphone device, backend, buffer and
-    # Test Mic.
+    # Setup > Audio > Microphone (R-SPK-21): the PC microphone card, Test
+    # Mic and the capture status with Retry.
     "src/gui/setup/AudioTxInputPage.cpp": 1,
     # Setup > Audio > VAX: this computer's VAX outputs, which a remote
     # window feeds from the Core's receiver streams (R-R3-44).

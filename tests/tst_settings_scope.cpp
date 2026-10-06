@@ -635,8 +635,8 @@ private slots:
         QTest::newRow("tx/preconnect/Mic_Source is OperatorLocal (local mic device)")
             << QStringLiteral("tx/preconnect/Mic_Source") << int(SettingsScope::OperatorLocal);
 
-        // R-R3-23 / R-R3-36: Setup > Audio > Devices (a ThisComputer page)
-        // and the PC Mic half of TX Input save these in a remote window.
+        // R-R3-23 / R-R3-36 / R-SPK-21: Setup > Audio > Outputs' cards and
+        // Microphone's PC microphone card save these in a remote window.
         // Every field AudioDeviceConfig::saveToSettings writes under the
         // three card prefixes, plus the Headphones enable, must stay on
         // this computer: were one Station, picking a sound card in a
@@ -658,7 +658,7 @@ private slots:
         // R-R3-45: where MON plays is this computer's choice too.
         QTest::newRow("audio/TxMonitor/Output is OperatorLocal (this computer's output)")
             << QStringLiteral("audio/TxMonitor/Output") << int(SettingsScope::OperatorLocal);
-        // The radio's own microphone input stays with the radio: TX Input's
+        // The radio's own microphone input stays with the radio: Microphone's
         // mic source selector is a Core control in a remote window.
         QTest::newRow("hardware/<mac>/tx/Mic_Source is Station (the radio's mic input)")
             << QStringLiteral("hardware/00:1C:2D:05:37:2A/tx/Mic_Source")
@@ -893,7 +893,7 @@ private slots:
         QStringList seen(keysSeen.cbegin(), keysSeen.cend());
         seen.sort();
         // Most ThisComputer leaves are placeholders or build their keys at
-        // run time (the Devices cards, "audio/<card>/..."), so the literal
+        // run time (the audio device cards, "audio/<card>/..."), so the literal
         // population is small: 4 when this was written. The canary is a key
         // Appearance > Meter Styles writes directly; losing it means the
         // class-body extraction broke, not that the page changed.

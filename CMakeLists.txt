@@ -1910,7 +1910,6 @@ set(GUI_SOURCES
     src/gui/setup/hardware/BandwidthMonitorTab.cpp
     src/gui/setup/AudioAdvancedPage.cpp
     src/gui/setup/AudioBackendStrip.cpp
-    src/gui/setup/AudioDevicesPage.cpp
     src/gui/setup/AudioOutputsPage.cpp
     src/gui/setup/AudioTxInputPage.cpp
     src/gui/setup/SoundSystemLine.cpp

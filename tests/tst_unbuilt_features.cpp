@@ -68,6 +68,9 @@
 //                                    feature for marking one built, and
 //                                    four ctest entries (main()).
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-06  J.J. Boyd / KG4VCF  R-SPK-21: the microphone card's rows
+//                                    are on Setup > Audio > Microphone.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -814,13 +817,13 @@ QMap<F, QList<Surface>> surfaces()
                 }},
         Surface{QStringLiteral("container Click Box Add"), Host::Container,
                 [](Hosts& h) { return actionShown(h.containerDialog(), QStringLiteral("Click Box")); }}};
-    map[F::AudioBitDepth] = {onPage(QStringLiteral("Devices"), QStringLiteral("bit depth"),
+    map[F::AudioBitDepth] = {onPage(QStringLiteral("Microphone"), QStringLiteral("bit depth"),
                                    text(QStringLiteral("Bit depth:")))};
-    map[F::AudioAutoMatch] = {onPage(QStringLiteral("Devices"), QStringLiteral("auto match"),
+    map[F::AudioAutoMatch] = {onPage(QStringLiteral("Microphone"), QStringLiteral("auto match"),
                                     text(QStringLiteral("Auto-match")))};
-    map[F::AudioMonitorTxInput] = {onPage(QStringLiteral("Devices"), QStringLiteral("monitor TX input"),
+    map[F::AudioMonitorTxInput] = {onPage(QStringLiteral("Microphone"), QStringLiteral("monitor TX input"),
                                          text(QStringLiteral("Monitor TX input during transmit")))};
-    map[F::AudioToneCheck] = {onPage(QStringLiteral("Devices"), QStringLiteral("tone check"),
+    map[F::AudioToneCheck] = {onPage(QStringLiteral("Microphone"), QStringLiteral("tone check"),
                                     text(QStringLiteral("Enable tone check (A-440 Hz burst on PTT)")))};
     map[F::WaterfallLowColor] = {onPage(QStringLiteral("Colors & Theme"), QStringLiteral("low color"),
                                       text(QStringLiteral("Low Level Color:")))};

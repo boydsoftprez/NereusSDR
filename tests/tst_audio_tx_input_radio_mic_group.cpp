@@ -9,8 +9,11 @@
 //   2.  Saturn G2 + Radio Mic — only Saturn group visible; Hermes + Orion hidden.
 //   3.  OrionMKII + Radio Mic — only Orion group visible; Hermes + Saturn hidden.
 //   4.  HermesII + Radio Mic — only Hermes group visible; Orion + Saturn hidden.
-//   5.  Switch from PC Mic to Radio Mic (Saturn) — Saturn group becomes visible.
-//   6.  Switch from Radio Mic back to PC Mic (Saturn) — all groups hidden.
+//   5.  Switch from PC Mic to Radio Mic (Saturn): the Saturn group, in view
+//       and greyed while PC Mic is picked, becomes live (R-SPK-21: sources
+//       not picked stay visible and greyed).
+//   6.  Switch from Radio Mic back to PC Mic (Saturn): the Saturn group stays
+//       in view, greyed; the other families stay hidden.
 //
 // Bidirectional round-trip tests (representative sample across all families):
 //   7.  Hermes: Mic In/Line In radio (UI→Model) — click Line In → lineIn=true.
@@ -36,6 +39,10 @@
 //  21.  Saturn G2 Mic Tip-Ring both ways, shared with the Orion group.
 //  22.  Red Pitaya: the Orion group is disabled with its reason; another
 //       Orion-MkII radio's is enabled.
+//
+// Microphone page (2026-10-06, R-SPK-21, J.J. Boyd KG4VCF, AI-assisted via
+// Anthropic Claude Code): the board's group stays in view while another
+// source is picked, greyed by its section; 5, 6 and 22 follow that.
 
 #include <QtTest/QtTest>
 #include <QApplication>
@@ -187,9 +194,13 @@ private slots:
         model.setCapsHwForTest(HPSDRHW::Saturn);
         AudioTxInputPage page(&model);
 
-        // Initially PC Mic → all Radio Mic groups hidden.
-        QVERIFY2(page.saturnRadioMicGroup()->isHidden(),
-                 "Saturn group must be hidden initially (PC Mic selected)");
+        // Initially PC Mic → the Saturn group in view, greyed.
+        QVERIFY2(!page.saturnRadioMicGroup()->isHidden(),
+                 "Saturn group must stay in view while PC Mic is selected");
+        QVERIFY2(!page.saturnRadioMicGroup()->isEnabled(),
+                 "Saturn group must be greyed while PC Mic is selected");
+        QVERIFY(page.hermesRadioMicGroup()->isHidden());
+        QVERIFY(page.orionRadioMicGroup()->isHidden());
 
         // Switch to Radio Mic.
         QRadioButton* radioBtn = findRadioButton(&page, QStringLiteral("Radio Mic"));
@@ -198,7 +209,9 @@ private slots:
         QApplication::processEvents();
 
         QVERIFY2(!page.saturnRadioMicGroup()->isHidden(),
-                 "Saturn group must appear after switching to Radio Mic");
+                 "Saturn group must be in view after switching to Radio Mic");
+        QVERIFY2(page.saturnRadioMicGroup()->isEnabled(),
+                 "Saturn group must be live after switching to Radio Mic");
     }
 
     // ── 6. Radio Mic → PC Mic (Saturn) — all groups hidden again ─────────────
@@ -222,12 +235,14 @@ private slots:
         pcBtn->setChecked(true);
         QApplication::processEvents();
 
-        QVERIFY2(page.saturnRadioMicGroup()->isHidden(),
-                 "Saturn group must be hidden after switching back to PC Mic");
+        QVERIFY2(!page.saturnRadioMicGroup()->isHidden(),
+                 "Saturn group must stay in view after switching back to PC Mic");
+        QVERIFY2(!page.saturnRadioMicGroup()->isEnabled(),
+                 "Saturn group must be greyed after switching back to PC Mic");
         QVERIFY2(page.hermesRadioMicGroup()->isHidden(),
-                 "Hermes group must be hidden after switching back to PC Mic");
+                 "Hermes group must be hidden on a Saturn board");
         QVERIFY2(page.orionRadioMicGroup()->isHidden(),
-                 "Orion group must be hidden after switching back to PC Mic");
+                 "Orion group must be hidden on a Saturn board");
     }
 
     // ── 7. Hermes: click Line In → lineIn=true (UI→Model) ────────────────────
@@ -609,6 +624,10 @@ private slots:
         RadioModel anan;
         anan.setHpsdrModelForTest(HPSDRModel::ANAN7000D);
         AudioTxInputPage ananPage(&anan);
+        QRadioButton* ananRadioBtn = findRadioButton(&ananPage, QStringLiteral("Radio Mic"));
+        QVERIFY(ananRadioBtn && ananRadioBtn->isEnabled());
+        ananRadioBtn->setChecked(true);
+        QApplication::processEvents();
         QVERIFY(ananPage.orionRadioMicGroup()->isEnabled());
         QVERIFY(ananPage.orionRadioMicGroup()->toolTip().isEmpty());
     }

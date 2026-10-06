@@ -6,7 +6,7 @@
 // =================================================================
 //
 // Setup > Audio > Outputs (R-SPK-21 Outputs, R-SPK-22, R-SPK-24, D13 to
-// D15).
+// D15) and Setup > Audio > Microphone (R-SPK-21 Microphone, R-SPK-22).
 //
 //   1. Outputs is the first Audio page, Mixed; no Setup page carries the
 //      old backend strip, and the Sound system line is on Outputs only.
@@ -27,11 +27,24 @@
 //   9. One "Rescan devices" that reports what it found.
 //  10. With NEREUS_AUDIO_SETUP_CAPTURE_DIR set, captures of the page in its
 //      states (run once plain and once with QT_SCALE_FACTOR=2).
+//  11. Microphone follows Outputs, Mixed; Devices and TX Input are gone.
+//  12. The PC microphone card, its status, its one Retry and its Device
+//      details appear once across Setup, on Microphone.
+//  13. All 13 audio.txInput nereusSetupIds are present exactly once.
+//  14. The card writes the same audio/TxInput keys as both former places.
+//  15. Sources not picked stay in view, greyed.
+//  16. Radio mic follows radioMicSelectable() and its reasons, with the
+//      board's group or the placeholder in view.
+//  17. Mic gain is its own group, outside both sources.
+//  18. Captures of the Microphone page (as 10).
 //
 // Modification history (NereusSDR):
 //   2026-10-06 - Written for the radio speaker and Audio Setup plan, Task 9.
 //                J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                Anthropic Claude Code.
+//   2026-10-06 - The Microphone page (Task 10): cases 11 to 18; case 2 no
+//                longer looks for a Devices page. J.J. Boyd (KG4VCF), with
+//                AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -41,6 +54,8 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDir>
+#include <QFormLayout>
+#include <QGroupBox>
 #include <QLabel>
 #include <QPushButton>
 #include <QRadioButton>
@@ -48,6 +63,7 @@
 #include <QSignalSpy>
 #include <QSlider>
 #include <QStackedWidget>
+#include <QStyleFactory>
 #include <QToolButton>
 #include <QTreeWidget>
 
@@ -56,13 +72,17 @@
 #include "core/RadioConnection.h"
 #include "core/RadioDiscovery.h"
 #include "core/session/IStationLink.h"
+#include "gui/HGauge.h"
 #include "gui/SetupDialog.h"
 #include "gui/setup/AudioOutputsPage.h"
+#include "gui/setup/AudioTxInputPage.h"
 #include "gui/setup/DeviceCard.h"
 #include "gui/setup/SoundSystemLine.h"
+#include "gui/styles/AppTheme.h"
 #include "gui/widgets/AppIcon.h"
 #include "gui/widgets/MasterOutputWidget.h"
 #include "models/RadioModel.h"
+#include "models/TransmitModel.h"
 
 using namespace NereusSDR;
 
@@ -210,6 +230,44 @@ int countSetupId(QWidget* root, const QString& id)
     return n;
 }
 
+// Counts objects, not only widgets: two ids sit on QButtonGroups.
+int countSetupIdObjects(QObject* root, const QString& id)
+{
+    int n = 0;
+    for (QObject* o : root->findChildren<QObject*>()) {
+        if (o->property("nereusSetupId").toString() == id) {
+            ++n;
+        }
+    }
+    return n;
+}
+
+const QStringList kTxInputSetupIds{
+    QStringLiteral("audio.txInput.micGain"),
+    QStringLiteral("audio.txInput.hermesLineIn"),
+    QStringLiteral("audio.txInput.hermesMicBoost"),
+    QStringLiteral("audio.txInput.hermesLineInGain"),
+    QStringLiteral("audio.txInput.orionMicTipRing"),
+    QStringLiteral("audio.txInput.orionMicBias"),
+    QStringLiteral("audio.txInput.orionMicPttDisabled"),
+    QStringLiteral("audio.txInput.orionMicBoost"),
+    QStringLiteral("audio.txInput.saturnMicXlr"),
+    QStringLiteral("audio.txInput.saturnMicTipRing"),
+    QStringLiteral("audio.txInput.saturnMicPttDisabled"),
+    QStringLiteral("audio.txInput.saturnMicBias"),
+    QStringLiteral("audio.txInput.saturnMicBoost"),
+};
+
+QRadioButton* sourceButton(QWidget* page, const QString& text)
+{
+    for (QRadioButton* b : page->findChildren<QRadioButton*>()) {
+        if (b->text() == text) {
+            return b;
+        }
+    }
+    return nullptr;
+}
+
 void saveCapture(QWidget* w, const QString& stem)
 {
     const QString dir = qEnvironmentVariable("NEREUS_AUDIO_SETUP_CAPTURE_DIR");
@@ -291,8 +349,8 @@ private slots:
         }
         QCOMPARE(dialog.pageLabelsForTest().count(QStringLiteral("Outputs")), 1);
 
-        // The speakers and headphones cards are on Outputs only; Devices
-        // keeps the microphone card.
+        // The speakers and headphones cards are on Outputs only; the
+        // microphone card is on Microphone (R-SPK-21, case 12).
         int speakers = 0;
         int headphones = 0;
         for (DeviceCard* card : dialog.findChildren<DeviceCard*>()) {
@@ -302,12 +360,8 @@ private slots:
         }
         QCOMPARE(speakers, 1);
         QCOMPARE(headphones, 1);
-        QWidget* devices = dialog.realizedPageForTest(QStringLiteral("Devices"));
-        QVERIFY(devices != nullptr);
-        QCOMPARE(devices->findChildren<DeviceCard*>().size(), 1);
-        QCOMPARE(devices->findChildren<DeviceCard*>().first()->title(),
-                 QStringLiteral("TX Input (Microphone)"));
-        QVERIFY(devices->findChild<QLabel*>(QStringLiteral("radioSpeakerExplanation")) == nullptr);
+        QVERIFY(!dialog.pageLabelsForTest().contains(QStringLiteral("Devices")));
+        QCOMPARE(countNamed(&dialog, QStringLiteral("radioSpeakerExplanation")), 0);
     }
 
     // 3 and 4. The PC control: header and page are one control, saved keys
@@ -644,6 +698,264 @@ private slots:
             QStringLiteral("Found ")));
     }
 
+    // 11. Microphone follows Outputs, Mixed; Devices and TX Input are gone.
+    void microphoneFollowsOutputsAndIsMixed()
+    {
+        RadioModel model;
+        SetupDialog dialog(&model);
+        QTreeWidgetItem* audio = audioCategory(dialog);
+        QVERIFY(audio != nullptr);
+        QCOMPARE(audio->child(0)->text(0), QStringLiteral("Outputs"));
+        QCOMPARE(audio->child(1)->text(0), QStringLiteral("Microphone"));
+
+        const QStringList labels = dialog.pageLabelsForTest();
+        QCOMPARE(labels.count(QStringLiteral("Microphone")), 1);
+        QVERIFY(!labels.contains(QStringLiteral("Devices")));
+        QVERIFY(!labels.contains(QStringLiteral("TX Input")));
+        const int mic = static_cast<int>(labels.indexOf(QStringLiteral("Microphone")));
+        QCOMPARE(dialog.pageScopeAtForTest(mic), SetupScope::Mixed);
+
+        // Audio factories return the page itself.
+        dialog.selectPage(QStringLiteral("Microphone"));
+        auto* page = qobject_cast<AudioTxInputPage*>(
+            dialog.realizedPageForTest(QStringLiteral("Microphone")));
+        QVERIFY(page != nullptr);
+        QCOMPARE(page->pageTitle(), QStringLiteral("Microphone"));
+    }
+
+    // 12. The PC microphone card, its status, Retry and Device details,
+    // once across Setup, on Microphone.
+    void pcMicrophoneIsOnceAcrossSetup()
+    {
+        RadioModel model;
+        SetupDialog dialog(&model);
+        dialog.realizeAllPagesForTest();
+        auto* page = qobject_cast<AudioTxInputPage*>(
+            dialog.realizedPageForTest(QStringLiteral("Microphone")));
+        QVERIFY(page != nullptr);
+
+        for (const char* name : {"pcMicrophoneGroup", "captureStatus", "retryCapture",
+                                 "micSourceNote", "radioMicSection", "radioMicPlaceholder",
+                                 "micGainGroup"}) {
+            QVERIFY2(countNamed(&dialog, QLatin1String(name)) == 1, name);
+            QVERIFY2(countNamed(page, QLatin1String(name)) == 1, name);
+        }
+        int micCards = 0;
+        for (DeviceCard* card : dialog.findChildren<DeviceCard*>()) {
+            micCards += card->title() == QStringLiteral("PC microphone")
+                || card->title() == QStringLiteral("TX Input (Microphone)");
+        }
+        QCOMPARE(micCards, 1);
+        DeviceCard* card = page->pcMicCard();
+        QVERIFY(card != nullptr);
+        QCOMPARE(card->title(), QStringLiteral("PC microphone"));
+        QCOMPARE(page->pcMicGroupBox(), static_cast<QGroupBox*>(card));
+        QCOMPARE(countNamed(card, QStringLiteral("deviceDetailsToggle")), 1);
+        QVERIFY(!card->detailsExpanded());
+
+        // Everything the section holds is inside the one card.
+        QVERIFY(card->isAncestorOf(page->deviceCombo()));
+        QVERIFY(card->isAncestorOf(page->driverApiCombo()));
+        QVERIFY(card->isAncestorOf(page->bufferSizeCombo()));
+        QVERIFY(card->isAncestorOf(page->testMicButton()));
+        QVERIFY(card->isAncestorOf(page->vuBar()));
+        QVERIFY(card->isAncestorOf(page->captureStatusLabel()));
+        QVERIFY(card->isAncestorOf(page->retryCaptureButton()));
+        QCOMPARE(page->retryCaptureButton()->text(), QStringLiteral("Retry microphone"));
+        int retries = 0;
+        int monitors = 0;
+        int tones = 0;
+        for (QAbstractButton* b : dialog.findChildren<QAbstractButton*>()) {
+            retries += b->text() == QStringLiteral("Retry microphone");
+            monitors += b->text() == QStringLiteral("Monitor TX input during transmit");
+            tones += b->text().startsWith(QStringLiteral("Enable tone check"));
+        }
+        QCOMPARE(retries, 1);
+        QCOMPARE(monitors, 1);
+        QCOMPARE(tones, 1);
+        for (QAbstractButton* b : card->findChildren<QAbstractButton*>()) {
+            if (b->text() == QStringLiteral("Monitor TX input during transmit")
+                || b->text().startsWith(QStringLiteral("Enable tone check"))) {
+                --monitors;
+            }
+        }
+        QCOMPARE(monitors, -1);  // both rows are the card's own
+    }
+
+    // 13. All 13 existing audio.txInput ids, exactly once.
+    void txInputSetupIdsArePresentOnce()
+    {
+        RadioModel model;
+        SetupDialog dialog(&model);
+        dialog.realizeAllPagesForTest();
+        auto* page = dialog.realizedPageForTest(QStringLiteral("Microphone"));
+        QVERIFY(page != nullptr);
+        QCOMPARE(kTxInputSetupIds.size(), 13);
+        for (const QString& id : kTxInputSetupIds) {
+            QVERIFY2(countSetupIdObjects(&dialog, id) == 1, qPrintable(id));
+            QVERIFY2(countSetupIdObjects(page, id) == 1, qPrintable(id));
+        }
+        // And no other audio.txInput id appeared.
+        QSet<QString> seen;
+        for (QObject* o : dialog.findChildren<QObject*>()) {
+            const QString id = o->property("nereusSetupId").toString();
+            if (id.startsWith(QStringLiteral("audio.txInput."))) {
+                seen.insert(id);
+            }
+        }
+        QCOMPARE(seen, QSet<QString>(kTxInputSetupIds.cbegin(), kTxInputSetupIds.cend()));
+
+        // On every board family the ids stay on the same control.
+        for (HPSDRModel board : {HPSDRModel::HERMES, HPSDRModel::ANAN7000D, HPSDRModel::ANAN_G2,
+                                 HPSDRModel::HERMESLITE}) {
+            RadioModel boardModel;
+            boardModel.setHpsdrModelForTest(board);
+            AudioTxInputPage boardPage(&boardModel);
+            for (const QString& id : kTxInputSetupIds) {
+                QVERIFY2(countSetupIdObjects(&boardPage, id) == 1, qPrintable(id));
+            }
+            QCOMPARE(boardPage.micGainSlider()->property("nereusSetupId").toString(),
+                     QStringLiteral("audio.txInput.micGain"));
+        }
+    }
+
+    // 14. The card writes the audio/TxInput keys both former places wrote.
+    void pcMicrophoneKeepsItsKeys()
+    {
+        RadioModel model;
+        AudioTxInputPage page(&model);
+        QComboBox* buffer = page.bufferSizeCombo();
+        QVERIFY(buffer != nullptr);
+        const int next = buffer->findData(2048);
+        QVERIFY(next >= 0);
+        buffer->setCurrentIndex(next);  // debounced 200 ms
+        QTRY_COMPARE(AppSettings::instance().value(QStringLiteral("audio/TxInput/BufferSamples"))
+                         .toString(),
+                     QStringLiteral("2048"));
+        QCOMPARE(model.transmitModel().pcMicBufferSamples(), 2048);
+        QCOMPARE(model.localAudioDevices()->txInputConfig().bufferSamples, 2048);
+        QVERIFY(AppSettings::instance().contains(QStringLiteral("audio/TxInput/DriverApi")));
+        QVERIFY(AppSettings::instance().contains(QStringLiteral("audio/TxInput/DeviceName")));
+        for (const QString& k : AppSettings::instance().allKeys()) {
+            if (k.startsWith(QStringLiteral("audio/"))) {
+                QVERIFY2(k.startsWith(QStringLiteral("audio/TxInput/")), qPrintable(k));
+            }
+        }
+        // The model's setter reaches the same card.
+        model.transmitModel().setPcMicBufferSamples(512);
+        QCOMPARE(buffer->currentData().toInt(), 512);
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("audio/TxInput/BufferSamples"))
+                     .toString(),
+                 QStringLiteral("512"));
+    }
+
+    // 15. Sources not picked stay in view, greyed.
+    void sourcesNotPickedStayInViewGreyed()
+    {
+        RadioModel model;
+        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+        AudioTxInputPage page(&model);
+        QWidget* card = page.pcMicGroupBox();
+        QWidget* radio = page.radioMicSection();
+        QWidget* gain = page.micGainGroup();
+        QVERIFY(card && radio && gain);
+        QVERIFY(!page.saturnRadioMicGroup()->isHidden());
+        QVERIFY(page.radioMicPlaceholder()->isHidden());
+
+        struct Row { const char* button; bool pc; bool radio; MicSource source; };
+        for (const Row& row : {Row{"Radio Mic", false, true, MicSource::Radio},
+                               Row{"VAX TX (virtual device)", false, false, MicSource::Vax},
+                               Row{"PC Mic", true, false, MicSource::Pc}}) {
+            QRadioButton* b = sourceButton(&page, QLatin1String(row.button));
+            QVERIFY2(b != nullptr && b->isEnabled(), row.button);
+            b->click();
+            QCOMPARE(model.transmitModel().micSource(), row.source);
+            QVERIFY2(!card->isHidden() && !radio->isHidden() && !gain->isHidden(), row.button);
+            QVERIFY2(!page.saturnRadioMicGroup()->isHidden(), row.button);
+            QCOMPARE(card->isEnabled(), row.pc);
+            QCOMPARE(radio->isEnabled(), row.radio);
+            QCOMPARE(page.saturnRadioMicGroup()->isEnabled(), row.radio);
+            QVERIFY2(gain->isEnabled(), row.button);
+        }
+
+        // A source set elsewhere (the Phone/CW applet) greys the same way.
+        model.transmitModel().setMicSource(MicSource::Radio);
+        QVERIFY(!card->isEnabled());
+        QVERIFY(radio->isEnabled());
+    }
+
+    // 16. Radio mic follows radioMicSelectable() and its reasons.
+    void radioMicFollowsSelectableAndReasons()
+    {
+        {
+            // A stock board without a mic jack (the HL2 caps without the
+            // add-on): Radio Mic disabled with its reason, the placeholder
+            // in view.
+            RadioModel model;
+            model.setCapsHasMicJackForTest(false);
+            model.setCapsHwForTest(HPSDRHW::HermesLite);
+            AudioTxInputPage page(&model);
+            QVERIFY(!model.boardCapabilities().radioMicSelectable());
+            QRadioButton* radio = sourceButton(&page, QStringLiteral("Radio Mic"));
+            QVERIFY(radio != nullptr);
+            QVERIFY(!radio->isEnabled());
+            QVERIFY(!radio->isHidden());
+            QCOMPARE(radio->toolTip(), QStringLiteral("Radio mic jack not present on Hermes Lite 2"));
+            QVERIFY(!page.radioMicPlaceholder()->isHidden());
+            QCOMPARE(child<QLabel>(&page, "radioMicPlaceholderNote")->text(),
+                     QStringLiteral("This radio has no mic jack."));
+            QVERIFY(page.hermesRadioMicGroup()->isHidden());
+        }
+        {
+            // The real HL2 row: selectable with the add-on note; its group
+            // in view.
+            RadioModel model;
+            model.setHpsdrModelForTest(HPSDRModel::HERMESLITE);
+            AudioTxInputPage page(&model);
+            QVERIFY(model.boardCapabilities().radioMicSelectable());
+            QRadioButton* radio = sourceButton(&page, QStringLiteral("Radio Mic"));
+            QVERIFY(radio != nullptr && radio->isEnabled());
+            QCOMPARE(radio->toolTip(), RadioModel::radioMicAddOnNote());
+            QVERIFY(!page.hermesRadioMicGroup()->isHidden());
+            QVERIFY(page.radioMicPlaceholder()->isHidden());
+        }
+        for (HPSDRModel board : {HPSDRModel::HERMES, HPSDRModel::ANAN7000D, HPSDRModel::ANAN_G2}) {
+            RadioModel model;
+            model.setHpsdrModelForTest(board);
+            AudioTxInputPage page(&model);
+            QRadioButton* radio = sourceButton(&page, QStringLiteral("Radio Mic"));
+            QCOMPARE(radio->isEnabled(), model.boardCapabilities().radioMicSelectable());
+            const int groups = int(!page.hermesRadioMicGroup()->isHidden())
+                + int(!page.orionRadioMicGroup()->isHidden())
+                + int(!page.saturnRadioMicGroup()->isHidden());
+            QCOMPARE(groups, 1);
+            QVERIFY(page.radioMicPlaceholder()->isHidden());
+        }
+    }
+
+    // 17. Mic gain is its own group, outside both sources.
+    void micGainIsItsOwnGroup()
+    {
+        RadioModel model;
+        AudioTxInputPage page(&model);
+        QGroupBox* gain = page.micGainGroup();
+        QVERIFY(gain != nullptr);
+        QCOMPARE(gain->title(), QStringLiteral("Mic gain"));
+        QVERIFY(gain->isAncestorOf(page.micGainSlider()));
+        QVERIFY(!page.pcMicGroupBox()->isAncestorOf(page.micGainSlider()));
+        QVERIFY(!page.radioMicSection()->isAncestorOf(page.micGainSlider()));
+        QVERIFY(qobject_cast<QFormLayout*>(gain->layout()) != nullptr);
+        int gainLabels = 0;
+        for (QLabel* l : gain->findChildren<QLabel*>()) {
+            gainLabels += l->text() == QStringLiteral("Mic Gain:");
+        }
+        QCOMPARE(gainLabels, 1);  // the row label the Setup description names
+        // Live whichever source is picked.
+        sourceButton(&page, QStringLiteral("VAX TX (virtual device)"))->click();
+        QVERIFY(gain->isEnabled());
+        QVERIFY(page.micGainSlider()->isEnabled());
+    }
+
     // 10. Captures (NEREUS_AUDIO_SETUP_CAPTURE_DIR).
     void captures()
     {
@@ -705,6 +1017,56 @@ private slots:
             QVERIFY(remote.applyStationRadioSpeakerValue("speakerAmplifierAvailable", true));
             shoot(remote, QStringLiteral("outputs-remote-folded"), false);
             shoot(remote, QStringLiteral("outputs-remote-unfolded"), true);
+        }
+
+        // 18. The Microphone page, under the app's own style, palette and
+        // baseline QSS (main.cpp), so greyed and live text read as they do
+        // in the app.
+        QApplication::setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
+        applyDarkPalette(*qApp);
+        applyAppBaselineQss(*qApp);
+        auto shootMic = [](RadioModel& model, const QString& stem, bool unfold,
+                           const QString& source) {
+            AudioTxInputPage page(&model);
+            page.resize(760, unfold ? 1400 : 1100);
+            if (!source.isEmpty()) {
+                if (QRadioButton* b = sourceButton(&page, source)) {
+                    b->click();
+                }
+            }
+            if (unfold) {
+                page.pcMicCard()->setDetailsExpanded(true);
+            }
+            page.show();
+            QApplication::processEvents();
+            saveCapture(&page, stem);
+        };
+        {
+            RadioModel model;
+            model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+            shootMic(model, QStringLiteral("microphone-g2-pc-folded"), false, QString());
+            shootMic(model, QStringLiteral("microphone-g2-pc-unfolded"), true, QString());
+            shootMic(model, QStringLiteral("microphone-g2-radio-picked"), false,
+                     QStringLiteral("Radio Mic"));
+            model.transmitModel().setMicSource(MicSource::Pc);
+        }
+        {
+            RadioModel model;
+            model.setHpsdrModelForTest(HPSDRModel::HERMESLITE);
+            shootMic(model, QStringLiteral("microphone-hl2-addon"), false, QString());
+        }
+        {
+            RadioModel model;
+            shootMic(model, QStringLiteral("microphone-no-radio"), false, QString());
+        }
+        {
+            RadioModel remote(RadioModel::Role::Remote);
+            SpeakerLink link;
+            remote.attachStation(&link);
+            const auto detach = qScopeGuard([&remote]() { remote.attachStation(nullptr); });
+            remote.setStationConnectionState(ConnectionState::Connected);
+            shootMic(remote, QStringLiteral("microphone-remote-folded"), false, QString());
+            shootMic(remote, QStringLiteral("microphone-remote-unfolded"), true, QString());
         }
     }
 };

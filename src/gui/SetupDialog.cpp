@@ -189,6 +189,11 @@
 //                backend strip any more; the Sound system line on Outputs
 //                replaces it. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-06 - R-SPK-21, R-SPK-22 (radio speaker plan Task 10): TX Input
+//                is now "Microphone" and holds the one PC microphone
+//                section; the Devices page, whose microphone card moved
+//                there, is gone. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 #include "SetupDialog.h"
@@ -216,7 +221,6 @@
 // Phase 8 of #167: per-SKU PA visibility wiring needs RadioInfo
 #include "core/RadioDiscovery.h"
 // Audio
-#include "setup/AudioDevicesPage.h"
 #include "setup/AudioOutputsPage.h"
 #include "setup/AudioTxInputPage.h"
 #include "setup/AudioVaxPage.h"
@@ -1592,11 +1596,9 @@ void SetupDialog::buildTree()
     // line and Rescan devices replace it.
     registerPage(audio, "Outputs", SetupScope::Mixed,
                  [this] { return new AudioOutputsPage(m_model); });
-    // R-R3-23: Devices picks this computer's microphone, which a remote
-    // window uses too (Test Mic), so it works in every window, connected or
-    // not. R-SPK-21: the speakers and headphones moved to Outputs.
-    registerPage(audio, "Devices", SetupScope::ThisComputer,
-                 [this] { return new AudioDevicesPage(m_model); });
+    // R-SPK-21 (Microphone): the Devices page is gone; its microphone card
+    // is Microphone's PC microphone section and the speakers and headphones
+    // are on Outputs.
     // R-R3-36: the PC microphone device, backend, buffer and Test Mic are
     // this computer's; the mic source, mic gain and radio microphone
     // hardware controls follow the transmit permission inside the page
@@ -1609,7 +1611,7 @@ void SetupDialog::buildTree()
     // (setup.designer.cs:46443 [v2.10.3.15]). It is not a transmit page, so a
     // remote window without transmit keeps it live (R-R3-36).
     markReceiveOnlyGated(
-        registerPage(audio, "TX Input", SetupScope::Mixed,  // I.1
+        registerPage(audio, "Microphone", SetupScope::Mixed,  // I.1
                      [this] { return new AudioTxInputPage(m_model); }),
         /*nonTransmitPage=*/true);
     // R-R3-44: the VAX channels are this computer's in a remote window as in

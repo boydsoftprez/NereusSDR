@@ -27,6 +27,10 @@
 //               "Device details"; the WASAPI options are greyed unless the
 //               driver API is WASAPI; rows above and below Device, greying
 //               until Enabled, and a device rescan for the Outputs page.
+//   2026-10-06: R-SPK-21 (Microphone) by J.J. Boyd (KG4VCF), with
+//               AI-assisted implementation via Anthropic Claude Code. The
+//               Device, Driver API and Buffer size combos are reachable
+//               for the Microphone page's PC microphone card.
 // =================================================================
 
 #include "core/AudioDeviceConfig.h"
@@ -126,6 +130,12 @@ public:
     // Devices the list offers, without "(platform default)" or a kept
     // "(not available)" entry.
     int deviceCount() const;
+
+    // R-SPK-21: the Microphone page and its tests reach the card's own
+    // Device, Driver API and Buffer size controls.
+    QComboBox* deviceCombo() const { return m_deviceCombo; }
+    QComboBox* driverApiCombo() const { return m_driverApiCombo; }
+    QComboBox* bufferSizeCombo() const { return m_bufferSizeCombo; }
 
     // ── R-SPK-24: Exclusive / Event-driven / Bypass mixer ───────────────
     // Live only when the card's driver API is WASAPI; otherwise disabled
