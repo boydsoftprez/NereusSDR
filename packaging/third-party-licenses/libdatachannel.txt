@@ -11,8 +11,8 @@ The complete license is supplied in MPLv2.txt. Corresponding source for the
 unmodified pinned version and its exact transitive revisions is available
 through the source URL and NereusSDR's written source offer.
 
-Modification (MPL-2.0 section 3.1): NereusSDR compiles the covered file
-src/peerconnection.cpp with a change of its own. PeerConnection::
+Modification (MPL-2.0 section 3.1): the desktop/Core build compiles the
+covered file src/peerconnection.cpp with a change of its own. PeerConnection::
 setRemoteDescription() keeps the remote description (and with it the
 fingerprint the DTLS handshake is checked against) before it gives the ICE
 agent the description, instead of after, so a handshake that completes at
@@ -40,7 +40,15 @@ src/impl/icetransport.hpp and src/impl/icetransport.cpp to retain an optional
 application ICE resource until the retiring agent destroys its socket.
 The agent is released before that resource and its initialization token.
 
-Both numbered patches are applied by cmake/NereusRemoteMedia.cmake to
+Modification (MPL-2.0 section 3.1): NereusSDR applies
+cmake/patches/libdatachannel-0005-defer-dtls-startup.patch to
+src/impl/peerconnection.cpp. When ICE connects, DTLS initialization is
+queued on the peer connection's existing processor instead of starting
+inside libjuice's Connected callback, which holds the ICE registry lock;
+starting it there could wait on the SSL mutex while a receive worker held
+that mutex and sent a relayed handshake record through the registry.
+
+The three numbered patches are applied by cmake/NereusRemoteMedia.cmake to
 build-owned copies of the pinned source. Their changes are licensed under
 MPL-2.0, like the covered files they modify; those files retain their
 upstream notices. The exact patches are supplied with NereusSDR's source
@@ -59,3 +67,14 @@ part of a covered file, the change is licensed under the Mozilla Public
 License 2.0, like the rest of dtlstransport.cpp, and carries that file's
 MPL-2.0 notice at the top; it is not under NereusSDR's GPLv3. Its source is
 offered with NereusSDR's (SOURCE-OFFER.txt).
+
+The NereusSDR for iPhone and iPad app builds the same v0.24.5 source with
+five patches: the Mbed TLS DTLS fingerprint check; C API deferred gathering
+and peer-fingerprint access; bounded libjuice agent retirement; retained
+candidate resources through actual ICE destruction; and the deferred DTLS
+startup described above. These modify src/impl/dtlstransport.cpp,
+src/impl/icetransport.cpp, src/impl/icetransport.hpp,
+src/impl/peerconnection.cpp, src/capi.cpp, include/rtc/rtc.h and
+include/rtc/configuration.hpp. The patches and modified files remain
+MPL-2.0 and are published with NereusSDR's source under
+ios/patches/libdatachannel/ and ios/NereusKit/Sources/CDataChannel/.
