@@ -2008,6 +2008,8 @@ private slots:
         // The tooltips are a remote window's (the speaker at the Core).
         const QString kAtTheCore = QStringLiteral(
             "Radio speaker at the Core (shared with every window and the phone)");
+        const QString kAmplifierTip = QStringLiteral(
+            "The radio's built-in amplifier for its speaker jacks. Muting the radio speaker also switches it off. Off while transmitting keeps it on for CW and Tune, so you still hear the sidetone. Switching it can make a pop. Greyed out when the radio has no switchable speaker amplifier.");
         const auto radio = [](const char* name) {
             return QJsonObject{{"property", QJsonObject{{"object", "radio"}, {"name", name}}}};
         };
@@ -2020,7 +2022,7 @@ private slots:
                         {"tooltip", kAtTheCore}, {"kind", "toggle"}, {"binding", radio("radioSpeakerMuted")},
                         {"applies", "live"}, {"requiresDescriptionVersion", 25}, {"gate", gate}},
             QJsonObject{{"id", "audio.outputs.speakerAmplifierMode"}, {"label", "Speaker amplifier:"},
-                        {"tooltip", ""},
+                        {"tooltip", kAmplifierTip},
                         {"kind", "choice"}, {"binding", radio("speakerAmplifierMode")},
                         {"applies", "live"}, {"requiresDescriptionVersion", 25}, {"gate", gate},
                         {"options", QJsonArray{QJsonObject{{"value", 0}, {"label", "Normal"}},

@@ -369,7 +369,7 @@
             {
               "id": "audio.outputs.speakerAmplifierMode",
               "label": "Speaker amplifier:",
-              "tooltip": "",
+              "tooltip": "The radio's built-in amplifier for its speaker jacks. Muting the radio speaker also switches it off. Off while transmitting keeps it on for CW and Tune, so you still hear the sidetone. Switching it can make a pop. Greyed out when the radio has no switchable speaker amplifier.",
               "kind": "choice",
               "binding": {
                 "property": {

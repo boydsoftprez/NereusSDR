@@ -81,6 +81,11 @@ public:
     // The status line text under the Radio speaker title.
     QString radioSpeakerStatusText() const;
 
+    // The amplifier choice's tooltip while it can be switched: the
+    // explanation and when it is greyed (R-SPK-10, D9). The same words as
+    // audio.outputs.speakerAmplifierMode's described tooltip.
+    static QString speakerAmplifierToolTip();
+
 private:
     void buildThisComputer();
     void buildHeadphones();

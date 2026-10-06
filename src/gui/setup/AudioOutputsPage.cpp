@@ -520,6 +520,14 @@ void AudioOutputsPage::wireModel()
     connect(m, &RadioModel::currentRadioChanged, this, sync);
 }
 
+QString AudioOutputsPage::speakerAmplifierToolTip()
+{
+    return tr("The radio's built-in amplifier for its speaker jacks. Muting the radio "
+              "speaker also switches it off. Off while transmitting keeps it on for CW "
+              "and Tune, so you still hear the sidetone. Switching it can make a pop. "
+              "Greyed out when the radio has no switchable speaker amplifier.");
+}
+
 QString AudioOutputsPage::radioSpeakerStatusText() const
 {
     return m_radioStatus->text();
@@ -546,11 +554,14 @@ void AudioOutputsPage::syncRadioSpeaker()
                     "board; the radio cannot report whether it has one.");
     } else {
         const HPSDRModel hpsdr = m->hardwareProfile().model;
-        // A board not known yet (a remote window before the Core's caps)
-        // is "the radio".
-        const QString board = (hpsdr == HPSDRModel::FIRST || hpsdr == HPSDRModel::LAST)
-            ? tr("radio")
-            : QString::fromLatin1(displayName(hpsdr));
+        // A board not known yet is "the radio". A remote window's profile
+        // holds a default model until the Core's capabilities name its
+        // radio, so there the board counts only once they have.
+        const bool boardKnown = m->connectionState() == ConnectionState::Connected
+            && hpsdr != HPSDRModel::FIRST && hpsdr != HPSDRModel::LAST
+            && (!remote || m->currentRadioInfo().boardType != HPSDRHW::Unknown);
+        const QString board = boardKnown ? QString::fromLatin1(displayName(hpsdr))
+                                         : tr("radio");
         status = remote ? tr("Speaker output on the %1 at the Core.").arg(board)
                         : tr("Speaker output on the %1.").arg(board);
     }
@@ -578,7 +589,7 @@ void AudioOutputsPage::syncRadioSpeaker()
     m_radioSlider->setEnabled(speakerLive);
     m_radioMute->setEnabled(speakerLive);
     m_radioButton->setEnabled(speakerLive);
-    m_radioReadout->setEnabled(available);
+    m_radioReadout->setEnabled(speakerLive);
     m_radioReadout->setText(available ? QString::number(volume) : QStringLiteral("--"));
     m_ampChoice->setEnabled(ampLive);
     applyIcon(m_radioButton,
@@ -602,7 +613,10 @@ void AudioOutputsPage::syncRadioSpeaker()
         setTipAndDescription(m_radioSlider, speakerTip, tr("Radio speaker volume, 0 to 100"));
         setTipAndDescription(m_radioMute, speakerTip, QString());
         setTipAndDescription(m_radioButton, speakerTip, QString());
-        setTipAndDescription(m_ampChoice, ampReason, ampReason);
+        // R-SPK-10 / D9: the described tooltip (audio.json) while it can
+        // be switched; the reason while it is greyed.
+        const QString ampTip = ampReason.isEmpty() ? speakerAmplifierToolTip() : ampReason;
+        setTipAndDescription(m_ampChoice, ampTip, ampTip);
     }
 
     m_ampReason->setText(ampReason);

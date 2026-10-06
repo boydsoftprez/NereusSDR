@@ -678,14 +678,18 @@ private slots:
         link.offers = true;
         QVERIFY(remote.applyStationRadioSpeakerValue("radioSpeakerAvailability",
                                                      RadioModel::kRadioSpeakerAvailable));
-        QVERIFY(r.status->text().endsWith(QStringLiteral(" at the Core.")));
+        // The Core's capabilities have not named its radio: "the radio",
+        // never the remote profile's default board.
+        QCOMPARE(r.status->text(), QStringLiteral("Speaker output on the radio at the Core."));
         QVERIFY(r.volume->isEnabled());
+        QVERIFY(r.readout->isEnabled());
         QCOMPARE(r.volume->toolTip(),
                  QStringLiteral("Radio speaker at the Core (shared with every window and the phone)"));
         r.volume->setValue(33);
         QCOMPARE(remote.radioSpeakerVolume(), 33);
         QVERIFY(remote.applyStationRadioSpeakerValue("speakerAmplifierAvailable", true));
         QVERIFY(r.amp->isEnabled());
+        QCOMPARE(r.amp->toolTip(), AudioOutputsPage::speakerAmplifierToolTip());
 
         page.setStationSettingsAvailable(false, kStationReason);
         int gated = 0;
@@ -697,6 +701,8 @@ private slots:
             }
         }
         QCOMPARE(gated, 4);
+        // The readout follows the slider.
+        QVERIFY(!r.readout->isEnabled());
         QVERIFY(child<QSlider>(&page, "pcVolume")->isEnabled());
         QVERIFY(child<QPushButton>(&page, "rescanDevices")->isEnabled());
 
@@ -992,6 +998,32 @@ private slots:
             QCOMPARE(groups, 1);
             QVERIFY(page.radioMicPlaceholder()->isHidden());
         }
+    }
+
+    // 16b. A page opened before the radio connected follows the radio when
+    // it changes: the placeholder's note and the family group in view.
+    void radioMicPlaceholderFollowsTheRadio()
+    {
+        RadioModel model;
+        model.setCapsHwForTest(HPSDRHW::Unknown);
+        AudioTxInputPage page(&model);
+        QLabel* note = child<QLabel>(&page, "radioMicPlaceholderNote");
+        QVERIFY(note != nullptr);
+        QVERIFY(!page.radioMicPlaceholder()->isHidden());
+        QCOMPARE(note->text(), QStringLiteral("Connect a radio to set up its mic jack."));
+
+        model.setCapsHwForTest(HPSDRHW::Saturn);
+        model.emitCurrentRadioChangedForTest();
+        QVERIFY(page.radioMicPlaceholder()->isHidden());
+        QVERIFY(!page.saturnRadioMicGroup()->isHidden());
+        QVERIFY(page.hermesRadioMicGroup()->isHidden());
+
+        model.setCapsHwForTest(HPSDRHW::HermesLite);
+        model.setCapsHasMicJackForTest(false);
+        model.emitCurrentRadioChangedForTest();
+        QVERIFY(!page.radioMicPlaceholder()->isHidden());
+        QVERIFY(page.saturnRadioMicGroup()->isHidden());
+        QCOMPARE(note->text(), QStringLiteral("This radio has no mic jack."));
     }
 
     // 17. Mic gain is its own group, outside both sources.
