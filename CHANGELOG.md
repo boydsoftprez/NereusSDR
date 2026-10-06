@@ -1,5 +1,31 @@
 # Changelog
 
+## [Unreleased]
+
+### CAT control
+
+Logging, contest and digital-mode programs can now control NereusSDR with
+Thetis-compatible CAT commands.
+
+- Up to four CAT channels. Each one controls the slices you assign to it, not
+  whichever pan has focus.
+- A channel can listen on TCP, on a serial port, or on macOS and Linux on a
+  virtual serial port (PTY) that programs open like a real one.
+- Programs that speak Hamlib's rigctld protocol connect to a separate rigctld
+  port on the same channel.
+- Configure the channels in Setup > CAT & Network. The CAT applet and the
+  status bar show what is listening and how many programs are connected. The
+  CAT log shows every command and reply, and the tester sends one command at a
+  time without a program.
+- CAT keys the radio (PTT, Tune and two-tone) under the same transmit rules as
+  every other source. Opening a channel or loading settings never keys.
+- Every listener stays off until you turn it on. CAT runs with the Core, so
+  from a remote console, set it up on the computer running the Core.
+- Serial CAT and serial-pin PTT need serial-port support, which is in the
+  Windows packages for now.
+- Thetis commands for features NereusSDR does not have yet (recording, CWX,
+  VAC and memories among them) answer `?;`.
+
 ## [2026.10.0] - 2026-10-05
 
 **Your station. Wherever you operate.**

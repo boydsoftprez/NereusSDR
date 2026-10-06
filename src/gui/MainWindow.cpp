@@ -601,6 +601,8 @@
 //                first wiring names its own pan; slice add and remove are
 //                logged. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-06 - CAT status count includes rigctld clients. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -12096,7 +12098,7 @@ void MainWindow::buildStatusBar()
         const bool local=m_radioModel->ownsLocalDsp(); CatService* service=m_radioModel->catService();
         bool listening=false; bool error=false; int clients=0; QStringList details;
         for (int channel=1;channel<=4;++channel) {
-            listening=listening || service->isListening(channel); clients+=service->clientCount(channel);
+            listening=listening || service->isListening(channel); clients+=service->clientCount(channel)+service->rigctldClientCount(channel);
             const QString state=service->channelState(channel); error=error || state.contains("error",Qt::CaseInsensitive) || state.contains("unavailable",Qt::CaseInsensitive);
             details.append(tr("CAT%1: %2").arg(channel).arg(state));
         }
@@ -12106,6 +12108,7 @@ void MainWindow::buildStatusBar()
     };
     connect(m_radioModel->catService(),&CatService::channelStateChanged,this,refreshCat);
     connect(m_radioModel->catService(),&CatService::clientCountChanged,this,refreshCat);
+    connect(m_radioModel->catService(),&CatService::rigctldClientCountChanged,this,refreshCat);
     refreshCat();
     m_catSep = makeSep();
     hbox->addWidget(m_catSep);
