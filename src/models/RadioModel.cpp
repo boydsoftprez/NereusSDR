@@ -1007,6 +1007,11 @@
 //                call sends SpotSourceHost::reporterVersion(); a remote
 //                identity edit had sent "NereusSDR/<version>". J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-06 - CAT review X1/X2: a CAT TUNE already turning off is finished
+//                when another source's request arrives, not dropped; a TCI
+//                trx:true while MOX is on is not passed on again, as
+//                TCIServer.cs:3671-3672 [v2.10.3.15] does. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -2621,10 +2626,27 @@ RadioModel::RadioModel(Role role, QObject* parent)
     // The deferred completion prevents the gen1-off transient from reaching
     // the radio while the WDSP TX channel is still pumping (issue #177).
     connect(m_moxController, &MoxController::requestAccepted, this,
-            [this](const KeyerIdentity& requester, quint64 generation, bool) {
+            [this](const KeyerIdentity& requester, quint64 generation, bool requestedOn) {
         if (!m_isTuning && !m_pendingTuneOff) { return; }
         if (requester.requestTag == m_tuneCycleKeyer.requestTag) {
             m_tuneAcceptedGeneration = generation;
+        } else if (m_tuneCycleGuarded && m_pendingTuneOff && !m_tuneStartObserving) {
+            // A CAT TUNE already turning off is finished, not dropped: the
+            // newer intent is not a TUNE, so nothing else would turn the
+            // tone off, put the mode and power back or release the manual
+            // key. The rest of the off is the station's, as before CAT,
+            // and the CAT request no longer owns it.
+            m_tuneCycleGuarded = false;
+            m_tuneAcceptedGeneration = 0;
+            if (requestedOn) {
+                // A new key stops the TX-to-RX walk, so the rxReady the off
+                // waits for never comes. Finish it now, as a MOX press does
+                // (setMoxFromButton, Task 7 fix wave M9), once the key that
+                // brought us here has returned.
+                QMetaObject::invokeMethod(this, [this, serial = m_tuneCycleSerial]() {
+                    if (tuneCycleCurrent(serial)) { completeTuneOff(); }
+                }, Qt::QueuedConnection);
+            }
         } else if (m_tuneCycleGuarded) {
             // A newer intent owns all later effects; preserve live snapshots for adoption.
             ++m_tuneCycleSerial;
@@ -26496,10 +26518,15 @@ void RadioModel::setTune(bool on)
             if (!lifetime) { return; }
             if (!refusal.isEmpty()) { emit tuneRefused(refusal.text); return; }
         }
-        const quint64 generation = m_moxController->observeAcceptedRequest(requester, true);
-        if (!lifetime || generation != m_moxController->acceptedRequestGeneration()) { return; }
-        const bool repeat = m_isTuning;
+        // Read before the start is reported: a guarded cycle's handler clears
+        // the off for any other requester, this start included.
         const bool pendingOff = m_pendingTuneOff;
+        m_tuneStartObserving = true;
+        const quint64 generation = m_moxController->observeAcceptedRequest(requester, true);
+        if (!lifetime) { return; }
+        m_tuneStartObserving = false;
+        if (generation != m_moxController->acceptedRequestGeneration()) { return; }
+        const bool repeat = m_isTuning;
         m_tuneCycleKeyer = requester;
         m_tuneCycleGuarded = requester.requestTag != 0;
         m_tuneAcceptedGeneration = generation;
@@ -27103,9 +27130,14 @@ void RadioModel::setMox(bool on)
     // manual key clears keys the radio for an app that has let go. Passing
     // the release on clears the level; it can only unkey a TCI key, never
     // key anything.
+    //
+    // A trx:N,true while MOX is already on is not passed on, as in Thetis:
+    // it would re-key as a TCI request and take a CAT TUNE or two-tone out
+    // of the CAT client's hands, leaving neither CAT nor TCI able to end it.
     if (m_moxController) {
-        // Explicit accepted repeats carry intent even when no MOX edge occurs.
-        m_moxController->onTciPtt(on);
+        if (!on || m_moxController->isMox() != on) {
+            m_moxController->onTciPtt(on);
+        }
     } else {
         m_transmitModel.setMox(on);
     }

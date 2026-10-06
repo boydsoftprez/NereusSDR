@@ -85,6 +85,9 @@
 //                 the FIXED restore lands before the connection's saves and
 //                 before the held transmit band is cleared (console.cs:27473,
 //                 27492 [v2.10.3.15]).
+//   2026-10-06 : CAT review X1, by J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code. m_startObserving, so a start adopts
+//                 a stop still settling and any other request lets it finish.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived activation
@@ -436,6 +439,9 @@ private:
     quint64 m_cycleSerial{0};
     quint64 m_acceptedGeneration{0};
     bool m_cycleGuarded{false};
+    // True while setActive(true) reports its own start, which adopts a stop
+    // still settling rather than leaving it to finish.
+    bool m_startObserving{false};
     bool cycleCurrent(quint64 serial) const;
     QMetaObject::Connection m_acceptedConnection;
     quint64 m_moxReleaseSerial{0};

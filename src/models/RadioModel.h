@@ -554,6 +554,9 @@
 //   2026-10-01 - Diversity lane: diversityTargetSlice(), the slice diversity
 //                runs for, for the Diversity dialog. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-06 - CAT review X1: m_tuneStartObserving, so a TUNE start adopts
+//                a TUNE turning off and any other request lets the off finish.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -7843,6 +7846,9 @@ private:
     quint64 m_tuneCycleSerial{0};
     quint64 m_tuneAcceptedGeneration{0};
     bool m_tuneCycleGuarded{false};
+    // True while setTune(true) reports its own start, which adopts a TUNE
+    // still turning off rather than leaving its off to finish.
+    bool m_tuneStartObserving{false};
     bool tuneCycleCurrent(quint64 serial) const;
 
     // m_tuneOffSettleMs: explicit 100 ms wait between MoxController::rxReady

@@ -858,12 +858,12 @@ private slots:
         QCOMPARE(mox->pttMode(), PttMode::Tci);
         QCOMPARE(keyRequests, 1);
 
-        // CAT ownership observes an explicit accepted TCI repeat even without a MOX edge.
+        // handleTrxMessage writes TCIPTT only when it changes MOX.
         const quint64 stamp = mox->acceptedRequestGeneration();
         core.setMox(true);
         drain();
-        QCOMPARE(keyRequests, 2);
-        QVERIFY(mox->acceptedRequestGeneration() > stamp);
+        QCOMPARE(keyRequests, 1);
+        QCOMPARE(mox->acceptedRequestGeneration(), stamp);
 
         core.setMox(false);
         drain();

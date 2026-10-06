@@ -182,8 +182,42 @@ private slots:
         else { model.setTune(true); }
         const int driveCount = conn.txDriveLog.size();
         tx.releaseTransmit(1); pumpCat();
+        if (tci) {
+            // Thetis TCIServer.cs:3671-3672 [v2.10.3.15]: a trx:true while MOX
+            // is on is not passed on, so the CAT client still owns its cycle
+            // and its release ends it.
+            QTRY_VERIFY(!model.moxController()->isMox());
+            QTRY_VERIFY(twoTone ? !model.twoToneController()->isActive() : !model.isTune());
+            QVERIFY(!model.moxController()->isManualKey());
+            return;
+        }
         QVERIFY(model.moxController()->isMox());
         QCOMPARE(conn.txDriveLog.size(), driveCount);
+    }
+    void catTuneOffFinishesUnderAnotherKey_data()
+    {
+        QTest::addColumn<bool>("walkDone");
+        QTest::newRow("during the TX-to-RX walk") << false;
+        QTest::newRow("during the settle") << true;
+    }
+    void catTuneOffFinishesUnderAnotherKey()
+    {
+        // Review X1: a key from another source while a CAT TUNE is turning off
+        // must not leave the tone, the mode, the power or the manual key behind.
+        QFETCH(bool, walkDone);
+        CatMockConnection conn; TxChannel tc(1); RadioModel model; setup(model, conn);
+        model.injectTxChannelForTest(&tc);
+        CatTxCoordinator tx(model);
+        QVERIFY(tx.requestTransmit(1, 0, CatTransmitKind::Tune)); pumpCat();
+        QVERIFY(model.isTune()); QVERIFY(model.moxController()->isMox());
+        model.setTuneOffSettleMsForTest(walkDone ? 200 : 0);
+        tx.releaseTransmit(1);
+        if (walkDone) { pumpCat(); QVERIFY(!model.moxController()->isMox()); }
+        QVERIFY(model.isTune());
+        model.moxController()->setMox(true);
+        QTRY_VERIFY(!model.isTune());
+        QVERIFY(!model.moxController()->isManualKey());
+        QVERIFY(!model.transmitModel().isTune());
     }
     void cancellationBeforeTonePreparation_data()
     {
@@ -269,7 +303,14 @@ private slots:
         if (tci) { model.setMox(true); } else { model.moxController()->setMox(true); }
         tx.releasePtt(1);
         model.moxController()->onVoxActive(false); model.moxController()->onMicPttFromRadio(false);
-        pumpCat(); QVERIFY(model.moxController()->isMox());
+        pumpCat();
+        if (tci) {
+            // Thetis TCIServer.cs:3671-3672 [v2.10.3.15]: trx:true while MOX is
+            // on is not passed on, so the CAT release still unkeys.
+            QVERIFY(!model.moxController()->isMox());
+            return;
+        }
+        QVERIFY(model.moxController()->isMox());
         QVERIFY(!tx.requestPtt(2, 0));
     }
     void rejectionRetainsClaimsAndForeignOwnershipRefuses()

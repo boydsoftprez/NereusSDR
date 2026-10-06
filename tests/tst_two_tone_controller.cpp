@@ -231,6 +231,32 @@ private slots:
     }
 
 
+    void catStopSettlingFinishesUnderAnotherKey()
+    {
+        // Review X1: a key from another source inside a CAT stop's 200 ms
+        // settle must not strand the tones, the power or the manual key.
+        TransmitModel tx; RecordingTxChannel tc(kTxChannelId); MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        TwoToneController ctrl; ctrl.setTransmitModel(&tx); ctrl.setTxChannel(&tc);
+        ctrl.setMoxController(&mox); ctrl.setSettleDelaysMs(0, 0);
+        KeyerIdentity cat = KeyerIdentity::station(PttMode::Manual); cat.program = true; cat.requestTag = 65;
+        ctrl.setActive(true, cat); QVERIFY(ctrl.isActive());
+        ctrl.setSettleDelaysMs(50, 0);
+        QVERIFY(ctrl.endIfRequest(65, mox.acceptedRequestGeneration()));
+        QVERIFY(ctrl.isDeactivationInFlight());
+        const int calls = tc.calls.size();
+        mox.setMox(true);
+        QVERIFY(ctrl.isDeactivationInFlight());
+        QTRY_VERIFY(!ctrl.isActive());
+        QVERIFY(!ctrl.isDeactivationInFlight());
+        QVERIFY(!mox.isManualKey());
+        bool toneOff = false;
+        for (int i = calls; i < tc.calls.size(); ++i) {
+            if (tc.calls[i].method == QStringLiteral("setTxPostGenRun") && tc.calls[i].arg1 == 0.0) { toneOff = true; }
+        }
+        QVERIFY(toneOff);
+    }
+
     void taggedRepeatAdoptsCycleAndStaleEndDoesNothing()
     {
         TransmitModel tx;

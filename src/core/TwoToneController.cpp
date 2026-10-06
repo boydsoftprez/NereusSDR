@@ -60,6 +60,10 @@
 //   2026-09-30 : Fix round 1 (minor 3), by J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code. An abandoned start
 //                under another device's key clears its manual key.
+//   2026-10-06 : CAT review X1, by J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code. A CAT stop already settling runs out
+//                its 200 ms settle when another source's request arrives
+//                (setup.cs:11151-11152 [v2.10.3.15]) instead of being dropped.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived activation flow
@@ -141,7 +145,16 @@ void TwoToneController::setMoxController(MoxController* mox)
         m_acceptedConnection = connect(m_moxController, &MoxController::requestAccepted, this,
             [this](const KeyerIdentity& requester, quint64 generation, bool) {
                 if (requester.requestTag == m_keyer.requestTag) { m_acceptedGeneration = generation; }
-                else if (m_cycleGuarded) {
+                else if (m_cycleGuarded && m_deactivationSettleTimer.isActive() && !m_startObserving) {
+                    // A CAT stop already settling is finished, not dropped: the
+                    // newer intent is not a two-tone start, so nothing else would
+                    // turn the tones off, put the power back or release the manual
+                    // key. The settle runs out as it did before CAT
+                    // (setup.cs:11151-11152 [v2.10.3.15], console.MOX = false;
+                    // await Task.Delay(200)), and the stop is the station's now.
+                    m_cycleGuarded = false;
+                    m_acceptedGeneration = 0;
+                } else if (m_cycleGuarded) {
                     ++m_cycleSerial;
                     m_acceptedGeneration = 0;
                     m_moxReleaseSettleTimer.stop(); m_tuneReleaseSettleTimer.stop();
@@ -284,10 +297,15 @@ void TwoToneController::setActive(bool on)
             if (!lifetime) { return; }
             if (!refusal.isEmpty()) { qCWarning(lcDsp) << refusal.text; return; }
         }
-        const quint64 generation = m_moxController->observeAcceptedRequest(requester, true);
-        if (!lifetime || generation != m_moxController->acceptedRequestGeneration()) { return; }
-        const bool repeat = m_active || m_activationInFlight;
+        // Read before the start is reported: a guarded cycle's handler stops
+        // the settle for any other requester, this start included.
         const bool pendingOff = m_deactivationSettleTimer.isActive();
+        m_startObserving = true;
+        const quint64 generation = m_moxController->observeAcceptedRequest(requester, true);
+        if (!lifetime) { return; }
+        m_startObserving = false;
+        if (generation != m_moxController->acceptedRequestGeneration()) { return; }
+        const bool repeat = m_active || m_activationInFlight;
         m_keyer = requester;
         m_cycleGuarded = requester.requestTag != 0;
         m_acceptedGeneration = generation;
