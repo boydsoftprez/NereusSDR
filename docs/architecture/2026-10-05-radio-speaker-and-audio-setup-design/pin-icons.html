@@ -1,0 +1,35 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pin Icons</title><style>
+:root{--bar:#0a0a14;--border:#203040;--accent:#00b4d8;--page:#05050c;--txt:#8aa8c0;--fg:#c8d8e8}
+body{background:var(--page);color:var(--fg);font:13px -apple-system,system-ui,sans-serif;margin:0;padding:24px 16px}
+h1{font-size:18px;color:var(--accent);margin:0 0 4px}h2{font-size:15px;margin:24px 0 6px;color:#e0eef8}p{margin:2px 0 10px;color:#9ab;max-width:980px;line-height:1.45}
+.row{display:flex;gap:10px;flex-wrap:wrap}.cell{background:var(--bar);border:1px solid var(--border);border-radius:6px;padding:10px 6px;text-align:center;font-size:11px;color:var(--txt);width:150px}
+.cell.new{border-color:#e0a030}
+.pair{display:flex;justify-content:center;align-items:center;gap:8px;height:68px;margin-bottom:6px}.big{width:64px;height:64px}.ebig{font-size:54px;line-height:1}
+.sm{display:flex;gap:8px;justify-content:center;align-items:center;margin-top:6px}.sm img{width:16px;height:16px}.e{font-size:13px}
+.set img{width:32px;height:32px}.set{display:flex;gap:10px;align-items:center;background:var(--bar);border:1px solid var(--border);border-radius:6px;padding:8px 12px;width:max-content;max-width:100%;flex-wrap:wrap}
+.zoom{transform:scale(2.5);transform-origin:left top;width:300px}
+.cbar{height:22px;background:#1a2a3a;border-bottom:1px solid #203040;display:flex;align-items:center;padding-left:4px;gap:2px;width:300px;font-size:11px}
+.cbar .t{flex:1;color:#c8d8e8}.cb{width:22px;height:22px;display:flex;align-items:center;justify-content:center;color:#8090a0;cursor:pointer;border-radius:2px}.cb:hover{background:#2a3a4a}.cb img{width:16px;height:16px}
+.meter{width:300px;height:60px;background:#0a0a14;border:1px solid #203040;border-top:none}
+.opts{display:flex;flex-direction:column;gap:6px}.opts>div{width:750px;max-width:100%;height:240px;overflow:hidden}
+</style></head><body>
+<h1>Pin icons for the container title bar</h1>
+<p><b>Chosen 2026-10-06: choice A.</b> Choice B is kept here only as the comparison JJ saw; its file is not shipped.</p>
+<p>The pin button on a floating meter or applet container ("Pin on top") uses the 📌 and 📍 emoji today, which don't render on Linux. These are drawn in the same Mac emoji style as the approved set: a glossy red pushpin with a chrome needle. Each card shows ours on the left and today's emoji on the right, then both at the button's real size (16 px).</p>
+<h2>Not pinned, and two choices for pinned</h2>
+<div class="row">
+<div class="cell new"><div class="pair"><img class="big" src="icons/pin.svg"><span class="ebig">📌</span></div>Not pinned<div class="sm"><img src="icons/pin.svg"><span class="e">📌</span></div></div>
+<div class="cell new"><div class="pair"><img class="big" src="icons/pinned.svg"><span class="ebig">📍</span></div>Pinned, choice A:<br>same pin, pushed in<div class="sm"><img src="icons/pinned.svg"><span class="e">📍</span></div></div>
+<div class="cell new"><div class="pair"><img class="big" src="pin-choice-b.svg"><span class="ebig">📍</span></div>Pinned, choice B:<br>round pin, like today<div class="sm"><img src="pin-choice-b.svg"><span class="e">📍</span></div></div>
+</div>
+<h2>Next to the approved set</h2>
+<div class="set"><img src="icons/pc-on.svg"><img src="icons/pc-muted.svg"><img src="icons/radio-on.svg"><img src="icons/radio-muted.svg"><img src="icons/radio-none.svg"><img src="icons/lock.svg"><img src="icons/unlock.svg"><img src="icons/bulb.svg"><span style="width:14px"></span><img src="icons/pin.svg"><img src="icons/pinned.svg"><img src="pin-choice-b.svg"></div>
+<h2>In a floating container's title bar (2.5x). Click the pin to toggle</h2>
+<div class="opts">
+<div><p>Choice A</p><div class="zoom"><div class="cbar"><span class="t">RX1</span><span class="cb">&#x2196;</span><span class="cb pin" data-off="pin" data-on="pinned"><img src="icons/pin.svg"></span><span class="cb">&#x2197;</span><span class="cb">&#x2699;</span><span class="cb">&#x2715;</span></div><div class="meter"></div></div></div>
+<div><p>Choice B</p><div class="zoom"><div class="cbar"><span class="t">RX1</span><span class="cb">&#x2196;</span><span class="cb pin" data-off="pin" data-on="../pin-choice-b"><img src="icons/pin.svg"></span><span class="cb">&#x2197;</span><span class="cb">&#x2699;</span><span class="cb">&#x2715;</span></div><div class="meter"></div></div></div>
+</div>
+
+<h2>Proof: drawn by Qt, the app's own renderer</h2><p>96 px, then 32 px (a retina 16 px button), then 16 px. Qt draws them the same on Mac, Windows and Linux.</p><img src="icons-qt-render-pins.png" style="max-width:100%;border:1px solid #203040;border-radius:6px">
+<script>document.querySelectorAll(".pin").forEach(b=>{let on=false;b.onclick=()=>{on=!on;b.firstChild.src="icons/"+(on?b.dataset.on:b.dataset.off)+".svg"}})</script>
+</body></html>

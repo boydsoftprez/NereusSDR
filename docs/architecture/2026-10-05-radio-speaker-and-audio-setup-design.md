@@ -1,6 +1,6 @@
 # Radio speaker control and Audio Setup redesign
 
-Status: approved by JJ on October 6, 2026. JJ settled the decisions below in a brainstorm on
+Status: approved by JJ on October 6, 2026; amended the same day with the pin icons and the corrections found while planning. JJ settled the decisions below in a brainstorm on
 October 5, 2026, by looking at the mockups in
 `2026-10-05-radio-speaker-and-audio-setup-design/`, and called for this spec
 the same day. Nothing in it is built yet. Requirement IDs R-SPK-01 to R-SPK-24
@@ -62,7 +62,7 @@ are listed again under "Design choices confirmed".
 | D4 | Upgrade default: RADIO starts at the current master level, unmuted. | Nobody hears a change on the day they upgrade. |
 | D5 | Clicking the PC or RADIO icon toggles that mute. | Kept from today's header. |
 | D6 | The VFO flag's speaker tab icon follows the slice's mute. | Today it is always the playing speaker, even on a muted slice. |
-| D7 | Our own SVG icons replace every desktop emoji: speaker on and muted, radio on, muted and unavailable, locked and unlocked padlock, and the feature-request bulb. They are drawn in the Mac emoji style: a chrome speaker with cyan waves, an amber vintage receiver, a brass padlock with a chrome shackle and a glowing bulb (`icons.html`, `icons-qt-render.png`). | Emoji come from the system font, so they look different on Windows and Linux. JJ rejected flat, embossed and outline styles, and approved this set. |
+| D7 | Our own SVG icons replace every desktop emoji: speaker on and muted, radio on, muted and unavailable, locked and unlocked padlock, the feature-request bulb, and the container's pin and pushed-in pin. They are drawn in the Mac emoji style: a chrome speaker with cyan waves, an amber vintage receiver, a brass padlock with a chrome shackle, a glowing bulb, and a red pushpin with a chrome needle (`icons.html`, `icons-qt-render.png`, `pin-icons.html`, `icons-qt-render-pins.png`). | Emoji come from the system font, so they look different on Windows and don't render on Linux (JJ saw the pins missing there). JJ rejected flat, embossed and outline styles, and approved this set; on 2026-10-06 he added the pins and chose the same pin pushed in for "pinned" over a round map pin. |
 | D8 | On boards with the speaker amplifier switch, muting RADIO also switches the amplifier off. | A muted speaker should be silent, not hissing. |
 | D9 | Setup gets the three-way amplifier choice: Normal / Off while transmitting / Always off. The default is Normal. It is greyed out, with the reason, on boards without the switch. | JJ chose this over a single "disable the amplifier" box. It is piHPSDR's set of choices (see "Source facts"). |
 | D10 | When there is no radio speaker to control, the RADIO group is disabled with a tooltip, never hidden. | Disabled-not-hidden rule. See D11 for when that is. |
@@ -143,6 +143,11 @@ they do today.
 
 R-SPK-05. Upgrade: when a radio has no saved RADIO level, it starts at this
 station's current `audio/Master/Volume`, unmuted, amplifier Normal.
+Precisely: the level the radio is fed at just before the upgrade, which is
+`AudioEngine`'s master level when the radio connects. On a desktop that is
+the saved `audio/Master/Volume` (the header seeds it at start). On a
+headless Core nothing seeds it, so it is the engine's default 0.5 and RADIO
+starts at 50, which is what that radio plays at today (D4).
 
 ### Availability
 
@@ -218,17 +223,31 @@ changes the Core's value, and every other window and phone follows it.
 
 R-SPK-14. The five properties go only to a peer that declared the new
 feature `radioSpeaker` 1, through a `MirrorPolicy::featureGates()` entry
-for each, as `paTransmitBand` and `txInhibitReason` do. A client connected
-to a Core without the feature shows RADIO disabled (R-SPK-06). A Core never
-sends them to an older client, which keeps working as today.
+for each, as `paTransmitBand` and `txInhibitReason` do. The Core also
+advertises a new capability `radioSpeakerVersion` 1, as `paTransmitBand`
+pairs with `paTransmitBandVersion`: a client reads it to tell "this Core
+can't" from "not available", and the Setup description gates on it
+(`{"capability":"radioSpeakerVersion","min":1}`). A client connected to a
+Core without the capability shows RADIO disabled (R-SPK-06). A Core never
+sends them to an older client, which keeps working as today. The three
+settable properties are the first writable, Bidirectional `RadioModel`
+properties; they are declared after the last existing mirrored property so
+no existing ordinal moves.
 
 R-SPK-15. Threads: the GUI writes `RadioModel` on the main thread. The
 level and mute reach the audio thread as `std::atomic` values in
 `AudioEngine`, read once per block, with no lock in the audio callback.
-The amplifier bit is worked out on the connection thread, from the
-amplifier choice and mute (given through a queued setter, like the
-connection's other settings) and the transmit, mode and Tune state it
-already sends.
+The amplifier bit is worked out on the connection thread from four
+inputs: the amplifier choice and RADIO mute, and a "CW or Tune" flag, all
+given through queued setters like the connection's other settings, and the
+transmit state it already holds. The connection knows nothing of the mode
+or Tune today, so `RadioModel` sends the flag: true while the transmitting
+mode is CWL or CWU, or while Tune is on (Tune swaps CW to LSB or USB while
+it runs, so the mode alone is not enough). The flag reaches the connection
+before Tune keys, so the amplifier never blinks off at the start of a CW
+or Tune transmission.
+
+TCI's AF level (`RadioModel::setAfLinear`) keeps setting PC, as today.
 
 R-SPK-16. On a remote window, PC is this computer and RADIO is the
 speaker at the Core. The RADIO tooltip says so ("Radio speaker at the Core
@@ -250,7 +269,9 @@ R-SPK-18. The flag's speaker tab (`VfoWidget.cpp:1250`, today the fixed
 speaker emoji) shows the speaker icon while the slice plays and the muted
 speaker icon while it is muted, and follows the slice's mute from any
 source (the flag's own mute button, the RX applet, a remote window or the
-phone). The tab opens the audio controls as it does today.
+phone). On a listened flag the tab follows the same mute the flag's mute
+button shows there (its listen mute). The tab opens the audio controls as
+it does today.
 
 ### Icons
 
@@ -262,11 +283,16 @@ because Qt SVG renders SVG Tiny and has no filters):
 |---|---|
 | `pc-on.svg`, `pc-muted.svg` | the speaker emoji in `MasterOutputWidget.cpp:68-69` and `VfoWidget.cpp:1250` |
 | `radio-on.svg`, `radio-muted.svg`, `radio-none.svg` | new, for RADIO |
-| `lock.svg`, `unlock.svg` | the padlock emoji in `RxApplet.cpp:672-683`, `2009-2010` and `2125-2126` |
+| `lock.svg`, `unlock.svg` | the padlock emoji in `RxApplet.cpp:672-683`, `2009-2010` and `2125-2126`, and the VFO flag's lock button (`VfoWidget.cpp:3216`, `3282`) |
 | `bulb.svg` | the bulb `TitleBar.cpp` paints with QPainter today, for one consistent set |
+| `pin.svg`, `pinned.svg` | the pushpin emoji on the container's "Pin on top" button (`ContainerWidget.cpp:182`, `499`) |
+
+The plain symbols drawn from ordinary fonts (arrows, the gear, warning and
+check marks) are not emoji and stay as they are.
 
 They render through `QSvgRenderer` at the button's size and device pixel
-ratio (`icons-qt-render.png` shows Qt's own render at 96, 32 and 18 px).
+ratio (`icons-qt-render.png` and `icons-qt-render-pins.png` show Qt's own
+render).
 
 ### iPhone
 
@@ -323,8 +349,10 @@ same mistake, by inserting before the spacer as `SetupPage` intends).
   (through pactl, used when PipeWire is not found), or "None found" in red
   with what to start (from `LinuxAudioBackend`: PipeWire, Pactl, None).
 - **This computer** (cyan): Volume with Mute (the same control as PC in the
-  header), Device, then Device details folded: Driver API, Sample rate,
-  Channels, Buffer size with its milliseconds, Options, Negotiated.
+  header), Device, then Device details folded: Driver API, Sample rate
+  (with its auto-match box), Bit depth, Channels, Buffer size with its
+  milliseconds, Options, Negotiated. Device details holds every field the
+  device card has today; the mockup draws a subset.
 - **Headphones**: Enabled, Device, Device details. Greyed until Enabled.
   The note says the PC volume does not affect headphones.
 - **Radio speaker** (amber): a status line naming what the radio has, then
@@ -342,7 +370,8 @@ same mistake, by inserting before the spacer as `SetupPage` intends).
   visible but greyed out. Radio mic follows `radioMicSelectable()` and its
   existing reasons.
 - **PC microphone**: Device, Test Mic with its meter, capture status with
-  one "Retry microphone", and Device details folded.
+  one "Retry microphone", "Monitor TX input during transmit" and the tone
+  check, and Device details folded (the same fields as on Outputs).
 - **Radio microphone (board name)**: the existing per-board group
   (Hermes / Atlas, Orion-MkII, Saturn G2, HL2), unchanged.
 - **Mic gain**, which applies to whichever source is picked.
@@ -361,9 +390,13 @@ same mistake, by inserting before the spacer as `SetupPage` intends).
 
 **TX Profile**: unchanged.
 
-**Advanced**: Logs ("Open logs folder", moved from the strip) and Reset.
-The DSP group stays hidden until it is built, as today (`UnbuiltFeatures`).
-Feature Flags stays as today.
+**Advanced**: Logs ("Open logs folder", moved from the strip), Feature
+Flags as today, and Reset. The DSP group stays hidden until it is built, as
+today (`UnbuiltFeatures`). The mockup leaves Feature Flags out; this text
+wins.
+
+Code and tests that open an Audio page by its old label ("Devices", "TX
+Input", "VAX", "TCI") are moved to the new labels.
 
 R-SPK-22. Every existing setting keeps its saved key and its
 `nereusSetupId`, so nothing a user has set is lost and nothing the phone
@@ -429,8 +462,9 @@ Software tests (this machine, offscreen):
   the R-SPK-08 board list for every `HPSDRModel` on P1 and P2, and the
   G2E reports unavailable with "Not yet tested on the ANAN-G2E.".
   (R-SPK-06 to R-SPK-08, D17)
-- V-SW-6. Setup pages: each control id from today's pages appears exactly
-  once across the new pages; every page's first group is at the top on a
+- V-SW-6. Setup pages: each control from today's pages (found by its
+  `nereusSetupId` where it has one, otherwise by object name, which the
+  change adds where missing) appears exactly once across the new pages; every page's first group is at the top on a
   tall window; the Outputs status line and VAX rows match each platform's
   build. (R-SPK-21, R-SPK-22, R-SPK-24)
 - V-SW-7. Setup description version 25 validates, keeps `audio.txInput`,
@@ -444,7 +478,8 @@ UI checks (rendered pixels, by the repository's UI gate):
   icon states, disabled RADIO, matching `header-layouts.html` layout A and
   `icons.html`.
 - V-UI-2. VFO flag tab while playing and muted, muted from each source.
-- V-UI-3. RX applet padlocks and the bulb with the new icons.
+- V-UI-3. RX applet and VFO flag padlocks, the bulb, and the container
+  pin and pushed-in pin with the new icons, including on Linux.
 - V-UI-4. Each Audio page against `audio-setup.html`, folded and unfolded,
   local and remote.
 - V-UI-5. iPhone Sound panel against `phone-sound-panel.html`, available
@@ -495,6 +530,8 @@ In `2026-10-05-radio-speaker-and-audio-setup-design/`:
 - `audio-setup.html`: the interactive Setup > Audio redesign with the header,
   switchable by radio, window, transmit state and platform.
 - `audio-setup-today.png`: today's five pages, rendered from the code.
+- `pin-icons.html` and `icons-qt-render-pins.png`: the pin icons, chosen
+  2026-10-06 (choice A; `pin-choice-b.svg` is only the comparison).
 
 The mockups were updated for D11: the "Hermes Lite 2, no audio board" state
 became "No radio connected".

@@ -91,6 +91,33 @@ bulb_body=('<circle cx="32" cy="24" r="23" fill="#ffd860" fill-opacity=".12"/><c
  '<path d="M24.5 47.5h15M24.5 51h15M24.5 54.5h15" stroke="#3a4148" stroke-opacity=".7" stroke-width="1.1"/>'
  '<path d="M27 57.5 Q32 62 37 57.5" fill="#3a4148"/>')
 
+# ---------- pushpin (container "pin on top") ----------
+pin_defs=(lg('pinRed',0,0,1,0,[(0,'#7a0c0c'),(.28,'#ff6a5a'),(.5,'#e42424'),(1,'#7a0a0a')])+
+ lg('pinTop',0,0,0,1,[(0,'#ffb4a8'),(.5,'#f03a32'),(1,'#a81414')])+
+ lg('needle',0,0,1,0,[(0,'#5a636c'),(.4,'#ffffff'),(.7,'#aeb8c2'),(1,'#48505a')])+
+ rg('hole',.5,.5,.5,[(0,'#000000'),(1,'#000000')]))
+def pin_shape(needle_len):
+    # upright pin centred on x=32: needle, bottom flange, waist, top disc
+    return ('<path d="M30.6 33 L33.4 33 L32.4 %s L31.6 %s Z" fill="url(#needle)" stroke="#3a4148" stroke-width=".5"/>' % (33+needle_len, 33+needle_len) +
+     '<ellipse cx="32" cy="32.5" rx="12.5" ry="4.2" fill="#6a0808"/>'
+     '<ellipse cx="32" cy="31" rx="12.5" ry="4.2" fill="url(#pinRed)"/>'
+     '<path d="M25 13 L27 30 L37 30 L39 13 Z" fill="url(#pinRed)"/>'
+     '<ellipse cx="32" cy="13.5" rx="11" ry="4.6" fill="#8a1010"/>'
+     '<ellipse cx="32" cy="12" rx="11" ry="4.6" fill="url(#pinTop)"/>'
+     '<ellipse cx="28.5" cy="11" rx="4.2" ry="1.6" fill="#ffffff" fill-opacity=".7"/>'
+     '<path d="M28 15.5 L29.4 28.6" stroke="#ffffff" stroke-opacity=".55" stroke-width="1.6" stroke-linecap="round"/>')
+pin_off=f'<g transform="rotate(38 32 34) translate(0 -4)">{pin_shape(24)}</g>'
+pin_on=('<ellipse cx="32" cy="59.5" rx="12" ry="3" fill="#000000" fill-opacity=".3"/>'
+ '<ellipse cx="32" cy="59" rx="2.4" ry="1" fill="#1a1d20"/>'
+ f'<g transform="translate(32 -3) scale(1.4) translate(-32 0)">{pin_shape(9)}</g>')
+# round map pin, for comparison (the shape of the emoji the pinned state uses today)
+mappin_defs=(rg('mapHead',.5,.5,.5,[(0,'#ffffff'),(.2,'#ff9a8a'),(.6,'#e42424'),(1,'#7a0a0a')],.36,.3))
+pin_map=('<ellipse cx="32" cy="57" rx="7" ry="2.2" fill="#000000" fill-opacity=".28"/>'
+ '<path d="M31.2 26 L32.8 26 L32.3 57 L31.7 57 Z" fill="url(#needle)" stroke="#3a4148" stroke-width=".5"/>'
+ '<circle cx="32" cy="19.5" r="13.5" fill="#6a0808"/>'
+ '<circle cx="32" cy="18.5" r="13.5" fill="url(#mapHead)"/>'
+ '<ellipse cx="27" cy="13" rx="4.5" ry="3" fill="#ffffff" fill-opacity=".7" transform="rotate(-30 27 13)"/>')
+
 def dim(inner,o=.5): return f'<g opacity="{o}">{inner}</g>'
 icons={
  'pc-on':  spk_defs, 'pc-muted':spk_defs+mute_defs,
@@ -104,6 +131,8 @@ files={
  'lock':       (lock_defs, lock_body(False)),
  'unlock':     (lock_defs, lock_body(True)),
  'bulb':       (bulb_defs, bulb_body),
+ 'pin':        (pin_defs, pin_off),
+ 'pinned':     (pin_defs, pin_on),
 }
 for n,(d,b) in files.items():
     open(os.path.join(os.path.dirname(os.path.abspath(__file__)),f'{n}.svg'),'w').write(f'{H}<defs>{d}</defs>{b}</svg>')
