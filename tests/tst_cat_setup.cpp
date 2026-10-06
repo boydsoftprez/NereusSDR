@@ -224,6 +224,14 @@ private slots:
         QVERIFY(displayed.contains("in bytes=8  unknown;  [hex 75 6e 6b 6e 6f 77 6e 3b]"));
         QVERIFY(displayed.contains("out bytes=2  ?;  [hex 3f 3b]")); QVERIFY(service.sessionIds(1).isEmpty());
     }
+    void logWindowGeometryIsStoredAsTextAndRestored() {
+        RadioModel model; CatService& service=*model.catService();
+        { CatLogWindow log(&service); log.resize(612,383); log.show(); QVERIFY(QTest::qWaitForWindowExposed(&log)); log.close(); }
+        const QVariant stored=AppSettings::instance().value("CatLogWindowGeometry");
+        QCOMPARE(stored.typeId(),QMetaType::QString); const QString text=stored.toString(); QVERIFY(!text.isEmpty());
+        QVERIFY(!QByteArray::fromBase64(text.toLatin1()).isEmpty());
+        CatLogWindow restored(&service); QCOMPARE(restored.size(),QSize(612,383));
+    }
     void logSeparatesExactBytesDiagnosticsPauseAndBound() {
         RadioModel model; CatService& service=*model.catService(); service.startConfigured(); CatLogWindow log(&service);
         auto* text=control<QPlainTextEdit>(log,"catLogText"); QVERIFY(text); QCOMPARE(service.testCommand(1,"id;"),QByteArray("ID019;"));

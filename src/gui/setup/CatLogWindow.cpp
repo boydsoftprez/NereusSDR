@@ -29,7 +29,8 @@ QString escaped(const QByteArray& bytes) {
 CatLogWindow::CatLogWindow(CatService* service,QWidget* parent) : QDialog(parent) {
     setWindowTitle(tr("CAT Log")); setObjectName("CatLogWindow"); setModal(false); setAttribute(Qt::WA_DeleteOnClose,false);
     setStyleSheet(QString::fromLatin1(Style::kPageStyle)); resize(720,480);
-    const QByteArray geometry=AppSettings::instance().value("CatLogWindowGeometry").toByteArray(); if (!geometry.isEmpty()) { restoreGeometry(geometry); }
+    // Settings store the geometry as a base64 latin1 string, as TciLogWindow does (XML-safe).
+    const QByteArray geometry=QByteArray::fromBase64(AppSettings::instance().value("CatLogWindowGeometry",QString{}).toString().toLatin1()); if (!geometry.isEmpty()) { restoreGeometry(geometry); }
     auto* root=new QVBoxLayout(this); auto* toolbar=new QHBoxLayout;
     m_scroll=new QCheckBox(tr("Auto-scroll"),this); m_scroll->setChecked(true); toolbar->addWidget(m_scroll);
     m_pause=new QPushButton(tr("Pause"),this); m_pause->setObjectName("catLogPause"); m_pause->setCheckable(true); m_pause->setAutoDefault(false);
@@ -62,5 +63,5 @@ void CatLogWindow::append(int direction,const QString& line) {
 void CatLogWindow::refresh() {
     m_view->clear(); for (const Entry& entry:m_entries) { if (m_filter->currentIndex()==0 || entry.direction==m_filter->currentIndex()) { m_view->appendPlainText(entry.line); } }
 }
-void CatLogWindow::closeEvent(QCloseEvent* event) { AppSettings::instance().setValue("CatLogWindowGeometry",saveGeometry()); QDialog::closeEvent(event); }
+void CatLogWindow::closeEvent(QCloseEvent* event) { AppSettings::instance().setValue("CatLogWindowGeometry",QString::fromLatin1(saveGeometry().toBase64())); QDialog::closeEvent(event); }
 }
