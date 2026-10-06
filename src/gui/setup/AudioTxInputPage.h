@@ -302,6 +302,8 @@ private:
     // stay in view; the one for a source not picked is greyed out.
     void updateSourceSections(MicSource source);
     void updateRadioMicGroupVisibility(HPSDRHW hw);
+    void refreshRadioMicPlaceholderNote(HPSDRHW hw);
+    void onCurrentRadioChanged();
     static QString lineInBoostLabel(double dB);
     void showLineInBoost(double dB);
 
@@ -370,6 +372,7 @@ private:
     // group shown when this board has no radio mic group.
     QWidget*   m_radioMicSection{nullptr};
     QGroupBox* m_radioMicPlaceholder{nullptr};
+    QLabel*    m_radioMicPlaceholderNote{nullptr};
     QGroupBox* m_hermesGroup{nullptr};
     QGroupBox* m_orionGroup{nullptr};
     QGroupBox* m_saturnGroup{nullptr};

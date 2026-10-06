@@ -32,7 +32,8 @@
 // microphone card (the Devices page's DeviceCard on audio/TxInput, with
 // Test Mic, the capture status and Retry), a Mic gain group, and the
 // sections for sources not picked greyed out, never hidden. Keys and
-// nereusSetupIds unchanged. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+// nereusSetupIds unchanged. The radio mic placeholder and family groups
+// follow currentRadioChanged. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 // Claude Code.
 // =================================================================
 
@@ -114,6 +115,11 @@ AudioTxInputPage::AudioTxInputPage(RadioModel* model, QWidget* parent)
         // Model → UI: reflect external setMicGainDb() calls into the slider.
         connect(tx, &TransmitModel::micGainDbChanged,
                 this, &AudioTxInputPage::onModelMicGainDbChanged);
+
+        // R-SPK-21: the radio mic placeholder and family groups follow the
+        // board when the radio changes.
+        connect(model, &RadioModel::currentRadioChanged,
+                this, [this]() { onCurrentRadioChanged(); });
 
         // Apply the current model state at construction.
         syncButtonsFromModel(tx->micSource());
@@ -672,14 +678,36 @@ void AudioTxInputPage::buildRadioMicPlaceholder(QVBoxLayout* parentLayout)
     m_radioMicPlaceholder = new QGroupBox(QStringLiteral("Radio microphone"), this);
     m_radioMicPlaceholder->setObjectName(QStringLiteral("radioMicPlaceholder"));
     auto* layout = new QVBoxLayout(m_radioMicPlaceholder);
-    auto* note = new QLabel(m_hw == HPSDRHW::Unknown
-                                ? QStringLiteral("Connect a radio to set up its mic jack.")
-                                : QStringLiteral("This radio has no mic jack."),
-                            m_radioMicPlaceholder);
-    note->setObjectName(QStringLiteral("radioMicPlaceholderNote"));
-    note->setWordWrap(true);
-    layout->addWidget(note);
+    m_radioMicPlaceholderNote = new QLabel(m_radioMicPlaceholder);
+    m_radioMicPlaceholderNote->setObjectName(QStringLiteral("radioMicPlaceholderNote"));
+    m_radioMicPlaceholderNote->setWordWrap(true);
+    refreshRadioMicPlaceholderNote(m_hw);
+    layout->addWidget(m_radioMicPlaceholderNote);
     parentLayout->addWidget(m_radioMicPlaceholder);
+}
+
+void AudioTxInputPage::refreshRadioMicPlaceholderNote(HPSDRHW hw)
+{
+    if (m_radioMicPlaceholderNote) {
+        m_radioMicPlaceholderNote->setText(hw == HPSDRHW::Unknown
+            ? QStringLiteral("Connect a radio to set up its mic jack.")
+            : QStringLiteral("This radio has no mic jack."));
+    }
+}
+
+// R-SPK-21: the radio changed (connect, disconnect, another board). The
+// placeholder's note and which family group is in view follow its board,
+// so a page opened before the radio connected does not keep saying to
+// connect one.
+void AudioTxInputPage::onCurrentRadioChanged()
+{
+    if (!model()) {
+        return;
+    }
+    const HPSDRHW hw = model()->boardCapabilities().board;
+    m_radioMicNeedsAddOn = model()->boardCapabilities().radioMicNeedsAddOn;
+    refreshRadioMicPlaceholderNote(hw);
+    updateRadioMicGroupVisibility(hw);
 }
 
 // ---------------------------------------------------------------------------
