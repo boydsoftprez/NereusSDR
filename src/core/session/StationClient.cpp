@@ -2084,6 +2084,8 @@ void StationClient::attachTransport(SessionTransport* transport, const QString& 
     m_capabilities.displayBudget.reset();
     m_capabilities.displayBudgetReason.reset();
     m_capabilities.remotePs3DisplaySubscribed = false;
+    m_capabilitiesThisSession = false;
+    m_capabilities.radioSpeakerVersion = 0;
 
     // These three describe THIS session. Carrying them across a reconnect
     // would let a difference the station has since fixed keep showing up
@@ -2284,6 +2286,7 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
 
     m_capabilities.coreBuildInfo.reset();
     m_signedInWithDeviceKey = false;
+    m_capabilitiesThisSession = false;
     m_capabilities.radioAntennaRowsVersion = 0;
     m_capabilities.band2mVersion = 0;
     m_enrolledDeviceKey = false;
@@ -3526,6 +3529,7 @@ void StationClient::handleCapabilities(const SessionMessage& message)
         }
     }
     m_capabilities = incoming;
+    m_capabilitiesThisSession = true;
     if (m_settingsBackupExport && m_capabilities.settingsBackupVersion < 1) {
         finishSettingsBackupExport(false, QStringLiteral("The Core stopped offering settings export."),
                                    {}, true);
@@ -5817,6 +5821,12 @@ bool StationClient::radioSpeakerAvailable() const
     // Not stationLinkReady(): the snapshot applies the Core's values through
     // the setters before the handshake completes, and they must land.
     return m_sessionActive && m_authenticated && m_capabilities.radioSpeakerVersion >= 1;
+}
+
+bool StationClient::radioSpeakerNeedsNewerCore() const
+{
+    return m_sessionActive && m_authenticated && m_capabilitiesThisSession
+           && m_capabilities.radioSpeakerVersion < 1;
 }
 
 StationClient::CommandOutcome StationClient::requestStartLevelCalibration(float levelDbm,

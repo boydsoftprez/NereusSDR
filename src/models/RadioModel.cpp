@@ -20536,8 +20536,11 @@ QString RadioModel::radioSpeakerUnavailableReason() const
     if (m_radioSpeakerAvailability != kRadioSpeakerNoRadio) {
         return QString();
     }
-    // R-SPK-06 / R-SPK-14: a remote window of an older Core.
-    if (m_role == Role::Remote && !stationOffersRadioSpeaker()) {
+    // R-SPK-06 / R-SPK-14: a remote window of an older Core. Only a link
+    // that is signed in and has the Core's capabilities can tell; while it
+    // is down or signing in the window says no radio, as the phone does.
+    if (m_role == Role::Remote && m_station != nullptr
+        && m_station->radioSpeakerNeedsNewerCore()) {
         return IStationLink::radioSpeakerUnavailableReason();
     }
     return tr("No radio connected");

@@ -46,7 +46,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-10-06  J.J. Boyd / KG4VCF  Radio speaker: radioSpeakerAvailable
+//   2026-10-06  J.J. Boyd / KG4VCF  Radio speaker: radioSpeakerAvailable,
+//                                    radioSpeakerNeedsNewerCore
 //                                    and radioSpeakerUnavailableReason
 //                                    (radioSpeakerVersion 1, R-SPK-06,
 //                                    R-SPK-14). AI-assisted via Anthropic
@@ -707,6 +708,12 @@ public:
     // to this link, and takes this window's changes to the three. The
     // default says no, and the window shows RADIO disabled with the reason.
     virtual bool radioSpeakerAvailable() const { return false; }
+    // True only when the link knows the Core is older: it is signed in,
+    // has the Core's capabilities for this session, and they do not carry
+    // radioSpeakerVersion 1. A link that is down, authenticating or still
+    // waiting for capabilities says no radio instead. The default treats a
+    // link that offers nothing as an older Core.
+    virtual bool radioSpeakerNeedsNewerCore() const { return !radioSpeakerAvailable(); }
     static QString radioSpeakerUnavailableReason()
     { return QStringLiteral("This Core can't set the radio speaker. Update the Core."); }
 

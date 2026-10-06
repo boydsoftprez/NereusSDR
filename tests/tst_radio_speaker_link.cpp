@@ -504,6 +504,36 @@ private slots:
         remote.attachStation(nullptr);
     }
 
+    // A remote window whose link is not up (never opened, signing in, or
+    // dropped after a Core restart) says no radio, not that the Core is
+    // older: only a signed-in link with the Core's capabilities can tell.
+    void remoteWindow_linkNotConnected_saysNoRadio()
+    {
+        Core core(/*upgradedWithToken=*/true);
+        Window window;
+        RadioModel& remote = window.model;
+        QVERIFY(!window.client.radioSpeakerNeedsNewerCore());
+        QCOMPARE(remote.radioSpeakerAvailability(), int(RadioModel::kRadioSpeakerNoRadio));
+        QCOMPARE(remote.radioSpeakerUnavailableReason(), QStringLiteral("No radio connected"));
+        QCOMPARE(remote.radioSpeakerToolTip(), QStringLiteral("No radio connected"));
+        QCOMPARE(remote.speakerAmplifierUnavailableReason(),
+                 QStringLiteral("No radio connected"));
+
+        QVERIFY(window.open(core, this));
+        QVERIFY(window.client.radioSpeakerAvailable());
+        QVERIFY(!window.client.radioSpeakerNeedsNewerCore());
+
+        // The link drops: still no radio, never the update reason.
+        QSignalSpy ended(&window.client, &StationClient::sessionEnded);
+        window.stationEnd->closeLink(QStringLiteral("Core restarting"));
+        QTRY_VERIFY(ended.count() >= 1);
+        QVERIFY(!window.client.radioSpeakerAvailable());
+        QVERIFY(!window.client.radioSpeakerNeedsNewerCore());
+        QCOMPARE(remote.radioSpeakerAvailability(), int(RadioModel::kRadioSpeakerNoRadio));
+        QCOMPARE(remote.radioSpeakerUnavailableReason(), QStringLiteral("No radio connected"));
+        QCOMPARE(remote.radioSpeakerToolTip(), QStringLiteral("No radio connected"));
+    }
+
     // The same over the wire: a Core whose capabilities do not carry
     // radioSpeakerVersion turns RADIO off in the window, and the window's
     // change reaches neither the wire nor the Core.
