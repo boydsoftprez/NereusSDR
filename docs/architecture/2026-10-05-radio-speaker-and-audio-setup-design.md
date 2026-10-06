@@ -1,6 +1,6 @@
 # Radio speaker control and Audio Setup redesign
 
-Status: design for review. JJ settled the decisions below in a brainstorm on
+Status: approved by JJ on October 6, 2026. JJ settled the decisions below in a brainstorm on
 October 5, 2026, by looking at the mockups in
 `2026-10-05-radio-speaker-and-audio-setup-design/`, and called for this spec
 the same day. Nothing in it is built yet. Requirement IDs R-SPK-01 to R-SPK-24
