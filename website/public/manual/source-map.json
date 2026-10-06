@@ -32,20 +32,20 @@
     },
     {
       "output": "manual/06-iphone-connect.md",
-      "output_sha256": "d803648379bfb8b692269facf689ac8a2ae80330b00e9f215862dc304733b3c6",
-      "sha256": "d803648379bfb8b692269facf689ac8a2ae80330b00e9f215862dc304733b3c6",
+      "output_sha256": "f4b1eed5d3d22714b6628028818cb14442c1c2396d0b3fe6c2cd48c9e963c828",
+      "sha256": "f4b1eed5d3d22714b6628028818cb14442c1c2396d0b3fe6c2cd48c9e963c828",
       "source": "docs/manual/06-iphone-connect.md"
     },
     {
       "output": "manual/07-iphone-operate.md",
-      "output_sha256": "985df9987bc913fa3c3635073050124f23156320fbb16b5127b81f8945b02dc2",
-      "sha256": "985df9987bc913fa3c3635073050124f23156320fbb16b5127b81f8945b02dc2",
+      "output_sha256": "b708228e668e2a7f8b22951d56f384a399385507c570e6d27a452a2c714ee8cc",
+      "sha256": "b708228e668e2a7f8b22951d56f384a399385507c570e6d27a452a2c714ee8cc",
       "source": "docs/manual/07-iphone-operate.md"
     },
     {
       "output": "manual/08-shared-core.md",
-      "output_sha256": "248efa6b6509034bc16c042f1da2bf68a7e6b8afe796927414d32d79837673ab",
-      "sha256": "248efa6b6509034bc16c042f1da2bf68a7e6b8afe796927414d32d79837673ab",
+      "output_sha256": "1cb374937783d66d86cc237484800273a246c1c546cd98d6c519ec14a9a84595",
+      "sha256": "1cb374937783d66d86cc237484800273a246c1c546cd98d6c519ec14a9a84595",
       "source": "docs/manual/08-shared-core.md"
     },
     {
@@ -116,14 +116,14 @@
     },
     {
       "output": "manual/20-phone-preferences.md",
-      "output_sha256": "b2d0f1833266d096fecc423229addee919e5d09507c3f7c8629a1286b2428522",
-      "sha256": "b2d0f1833266d096fecc423229addee919e5d09507c3f7c8629a1286b2428522",
+      "output_sha256": "800ccb19f589db0f5d7accc9902b3ea6b3132820e6e2b1a7ef769a49051419cc",
+      "sha256": "800ccb19f589db0f5d7accc9902b3ea6b3132820e6e2b1a7ef769a49051419cc",
       "source": "docs/manual/20-phone-preferences.md"
     },
     {
       "output": "manual/README.md",
-      "output_sha256": "7df87d08e5eb2b2706d159605ad1c3b138c830b3ccbb9214c903b23863c5a4c0",
-      "sha256": "7df87d08e5eb2b2706d159605ad1c3b138c830b3ccbb9214c903b23863c5a4c0",
+      "output_sha256": "8e5a783559c98177426bc7cda1d3c00a12b0b6f002fdf17f092f5e76cd60c121",
+      "sha256": "8e5a783559c98177426bc7cda1d3c00a12b0b6f002fdf17f092f5e76cd60c121",
       "source": "docs/manual/README.md"
     },
     {
@@ -146,8 +146,8 @@
     },
     {
       "output": "manual/verification.md",
-      "output_sha256": "4647fbec88c5c77668f3820378995d68b36548b25a577abccecb6feb766505a9",
-      "sha256": "4647fbec88c5c77668f3820378995d68b36548b25a577abccecb6feb766505a9",
+      "output_sha256": "c3c61d83dd87209d69d3f5c313d99f3ee5fe68039e488e83ce1a11a73e805049",
+      "sha256": "c3c61d83dd87209d69d3f5c313d99f3ee5fe68039e488e83ce1a11a73e805049",
       "source": "docs/manual/verification.md"
     }
   ],
@@ -342,8 +342,8 @@
   "pages": [
     {
       "output": "manual/index.html",
-      "output_sha256": "a15c7323559a0f4ff51b1b63c68ed4e68c50efe5989fa6a740bde75c49360d84",
-      "sha256": "7df87d08e5eb2b2706d159605ad1c3b138c830b3ccbb9214c903b23863c5a4c0",
+      "output_sha256": "f040e228b88c41f6ea0f19b94bab17ad482572e40d1b1ef510bd2b7f68ff121b",
+      "sha256": "8e5a783559c98177426bc7cda1d3c00a12b0b6f002fdf17f092f5e76cd60c121",
       "source": "docs/manual/README.md"
     },
     {
@@ -378,20 +378,20 @@
     },
     {
       "output": "manual/06-iphone-connect.html",
-      "output_sha256": "ac830dd349364d8e84a814f4c2738ef468129adcd4d59110fb633da9788d05de",
-      "sha256": "d803648379bfb8b692269facf689ac8a2ae80330b00e9f215862dc304733b3c6",
+      "output_sha256": "788d9a8d2be642729a011ae47f76227e64eb3a6175526e6692a4f1887aa26dfb",
+      "sha256": "f4b1eed5d3d22714b6628028818cb14442c1c2396d0b3fe6c2cd48c9e963c828",
       "source": "docs/manual/06-iphone-connect.md"
     },
     {
       "output": "manual/07-iphone-operate.html",
-      "output_sha256": "c02f6a1797b124e177e6c65208cce96c27d04b22fc8572e3794bedeb8d69655e",
-      "sha256": "985df9987bc913fa3c3635073050124f23156320fbb16b5127b81f8945b02dc2",
+      "output_sha256": "beea3b5a79c2e9e0ed54a32a011f046f8d4bb6efd6f7d444881a9ef06cc9fb03",
+      "sha256": "b708228e668e2a7f8b22951d56f384a399385507c570e6d27a452a2c714ee8cc",
       "source": "docs/manual/07-iphone-operate.md"
     },
     {
       "output": "manual/08-shared-core.html",
-      "output_sha256": "1933eb47ee9bb8bfcfdcb9e3b9c6e15d32b19771ec952677d4557922d0e7c04a",
-      "sha256": "248efa6b6509034bc16c042f1da2bf68a7e6b8afe796927414d32d79837673ab",
+      "output_sha256": "e81b61cb0a13bd2cec9e1ed961ba3738184cf524d2136d7091270e37d6ce5794",
+      "sha256": "1cb374937783d66d86cc237484800273a246c1c546cd98d6c519ec14a9a84595",
       "source": "docs/manual/08-shared-core.md"
     },
     {
@@ -462,14 +462,14 @@
     },
     {
       "output": "manual/20-phone-preferences.html",
-      "output_sha256": "bf278128e20f1b3c69000b9c23f6c2b001765fa14f3de47dc4b5fc1e78eaeb57",
-      "sha256": "b2d0f1833266d096fecc423229addee919e5d09507c3f7c8629a1286b2428522",
+      "output_sha256": "fb7f1c64d39250a318d82d82805759f27d884a4b6763416756ae1607f9df9abe",
+      "sha256": "800ccb19f589db0f5d7accc9902b3ea6b3132820e6e2b1a7ef769a49051419cc",
       "source": "docs/manual/20-phone-preferences.md"
     },
     {
       "output": "guides/install-core-sbc.html",
-      "output_sha256": "5b7dcbb52de413646ca04e9900e9253f3d10b21f89fb84cc942450917bb74de9",
-      "sha256": "530bb03c2b4b616edfe67bec72c6d52b81fea51c3d74ea8c5dea6fe21bb3f531",
+      "output_sha256": "520d33bfbbe4fa94d241beaf976c2afab202ccd080a048e0d1a3721e482f7c44",
+      "sha256": "428e866917697fc32e8ed9654f5b1490760adebaa50e4549eeaad6960c4fc338",
       "source": "docs/guides/install-core-sbc.md"
     },
     {
@@ -480,8 +480,8 @@
     },
     {
       "output": "guides/upgrading-to-2026.10.0.html",
-      "output_sha256": "42ac848843f01dc0c9df0bb11f4e1eefdb3d3efec930117090381f6b5078d973",
-      "sha256": "6352200a60ab960350299e2d22718de7feb5eaf23eccc625557b92aaccae1c63",
+      "output_sha256": "711aec66aa8e72ebcbbd779645681d41d7ceae307fdb4280b24d3696b37c5516",
+      "sha256": "47f32454c35f64f344500e286a8bf4aec918779d961ba15612a6d65bbf3998f6",
       "source": "docs/guides/upgrading-to-2026.10.0.md"
     },
     {

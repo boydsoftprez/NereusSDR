@@ -159,11 +159,11 @@
   }
 
   /* ------------------------------------------------------------------ */
-  /* Latest release from GitHub. The page ships with v0.5.2 baked in and */
+  /* Latest release from GitHub. The page ships with v2026.10.0 baked in and */
   /* only switches when every download link can be matched.              */
   /* ------------------------------------------------------------------ */
 
-  var CACHE_KEY = 'nereussdr-latest-release-v1';
+  var CACHE_KEY = 'nereussdr-latest-release-v2';
 
   // A download link may only ever point at this repository's release files.
   var DOWNLOAD_PATH = '/' + REPO + '/releases/download/';

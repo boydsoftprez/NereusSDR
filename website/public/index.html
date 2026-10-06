@@ -69,7 +69,7 @@
     <section class="hero" aria-labelledby="hero-title">
       <div class="wrap hero__grid">
         <div class="hero__copy">
-          <p class="eyebrow">Coming in 2026.10.0 · Free and open source</p>
+          <p class="eyebrow">2026.10.0 is here · Free and open source</p>
           <h1 id="hero-title">
             <span class="line">Your station.</span>
             <span class="line line--lit">Wherever you operate.</span>
@@ -83,12 +83,12 @@
           <div class="hero__cta">
             <a class="btn btn--primary" href="#download" data-os-cta>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0l-5-5m5 5l5-5M4 19h16"/></svg>
-              <span data-os-cta-label>Download <span data-release-version>v0.5.2</span></span>
+              <span data-os-cta-label>Download <span data-release-version>v2026.10.0</span></span>
             </a>
-            <a class="btn" href="#iphone">Explore the iPhone app</a>
+            <a class="btn" href="https://testflight.apple.com/join/61K3p3xn">Join the iPhone &amp; iPad preview</a>
           </div>
           <p class="hero__meta">
-            <span><i class="led led--green" aria-hidden="true"></i><span>Latest <span data-release-version>v0.5.2</span>, <time data-release-date datetime="2026-05-24">24 May 2026</time></span></span>
+            <span><i class="led led--green" aria-hidden="true"></i><span>Latest <span data-release-version>v2026.10.0</span>, <time data-release-date datetime="2026-10-06T00:46:30Z">6 October 2026</time></span></span>
             <span>GPLv3</span>
             <span>Built for real stations</span>
           </p>
@@ -151,7 +151,7 @@
         </div>
         <figure class="screen screen--wide" data-reveal><a href="/assets/img/iphone-landscape.png" aria-label="Open the full landscape screenshot"><img src="/assets/img/iphone-landscape.png" width="2622" height="1206" alt="NereusSDR in landscape on iPhone, with two VFO flags across a wide spectrum and waterfall" loading="lazy"></a><figcaption><b>Turn for a wider view.</b><span>Portrait and landscape on iPhone; a dedicated iPad layout adds room for controls and an analog S-meter.</span></figcaption></figure>
         <p class="capture-note">Screenshots from the native iOS simulator with simulated station data. Controls available depend on your radio and Core.</p>
-        <div class="availability" data-reveal><span class="tag tag--p1">NATIVE APP</span><p>The iPhone and iPad app requires your own NereusCore station and iOS 17.4 or later. App Store availability will be announced here.</p></div>
+        <div class="availability" data-reveal><span class="tag tag--p1">PUBLIC PREVIEW</span><p>The native iPhone and iPad app is now available through TestFlight. It requires your own NereusCore station and iOS or iPadOS 17.4 or later. <a href="https://testflight.apple.com/join/61K3p3xn">Join the public preview →</a> · <a href="/manual/06-iphone-connect.html">Install and pair your app →</a></p></div>
       </div>
     </section>
 
@@ -172,7 +172,7 @@
           <li><span class="feature-index">03 / CONSOLE</span><h3>Your choice of screen</h3><p>macOS, Windows or Linux.<br>Native iPhone and iPad.</p></li>
         </ol>
         <div class="core__cards" data-reveal>
-          <article class="panel"><div class="titlebar"><h3>Single-board computers</h3></div><div class="panel__body"><h4>Keep the processing beside the radio.</h4><p>Development used a <strong>Raspberry Pi 4</strong> and a <strong>Radxa Rock 5C with 2 GB RAM</strong>. A station Core needs no local screen or GUI. Receiver count, DSP choices and display load depend on the radio and the computer's capacity.</p><p>The fresh-board guide covers 64-bit <strong>Raspberry Pi OS Lite</strong> and compatible <strong>Armbian Debian Trixie</strong>, using the matching ARM64 Core package once its release assets are published.</p><a href="/guides/install-core-sbc.html">Install a station Core →</a></div></article>
+          <article class="panel"><div class="titlebar"><h3>Single-board computers</h3></div><div class="panel__body"><h4>Keep the processing beside the radio.</h4><p>Development used a <strong>Raspberry Pi 4</strong> and a <strong>Radxa Rock 5C with 2 GB RAM</strong>. A station Core needs no local screen or GUI. Receiver count, DSP choices and display load depend on the radio and the computer's capacity.</p><p>The fresh-board guide covers 64-bit <strong>Raspberry Pi OS Lite</strong> and compatible <strong>Armbian Debian Trixie</strong>, using the published 2026.10.0 ARM64 Core package that matches your operating system.</p><a href="/guides/install-core-sbc.html">Install a station Core →</a></div></article>
           <article class="panel"><div class="titlebar"><h3>Local and remote operation</h3></div><div class="panel__body"><h4>Connect from home or away.</h4><p>Find and pair with your Core on the LAN, choose an address on a VPN, or use the <strong>rendezvous (RV) service</strong> for an introduction across networks.</p><p>The station session connects directly where possible, through <strong>TURN</strong>, or through a separate <strong>WebSocket relay</strong> when needed. RV signalling handles the introduction; the Core runs the radio and DSP on every path.</p><p>Core Settings shows the selected Core and its control, audio and display paths.</p><a href="/manual/01-desktop-connect.html#connect-to-another-computers-core">Connect to a remote Core →</a></div></article>
           <article class="panel"><div class="titlebar"><h3>One station, several devices</h3></div><div class="panel__body"><h4>Up to four devices share a Core.</h4><p>Desktop and mobile clients use the same station, each with its own pans and slices. Receiver access is coordinated, other devices' slices are visible as markers, and one device holds transmit at a time.</p><p>The radio's available receivers and the Core's processing capacity set what the station can run together.</p><a href="/manual/08-shared-core.html">Operate with several devices →</a></div></article>
         </div>
@@ -583,6 +583,10 @@
         <div class="status">
           <ol class="releases" reversed data-reveal aria-label="Release history">
             <li class="is-latest">
+              <div><span class="ver">v2026.10.0</span><time datetime="2026-10-06T00:46:30Z">6 Oct 2026</time></div>
+              <p>A shared station Core, remote desktop operation, independent receivers, Canvas and containers, WDSP 2.10, and native mobile controls. <a href="https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.10.0">Read the release notes →</a></p>
+            </li>
+            <li>
               <div><span class="ver">v0.5.2</span><time datetime="2026-05-24">24 May 2026</time></div>
               <p>4O3A Power Genius XL and Tuner Genius XL support, an analog S-meter, and the ANAN-G2E.</p>
             </li>
@@ -614,10 +618,10 @@
 
           <div data-reveal>
             <div class="next">
-              <div class="titlebar"><h3>Coming in 2026.10.0</h3></div>
+              <div class="titlebar"><h3>New in 2026.10.0</h3></div>
               <div class="next__body"><ol>
                 <li><b>Your station, across devices</b><span>A headless Core, desktop remote operation, shared receiver access and IPv4/IPv6 paths with RV, TURN and WebSocket alternatives.</span></li>
-                <li><b>A native mobile console</b><span>Touch tuning, filters, receive audio, voice PTT, TX profiles, EQ/CFC, station tools and an iPad layout. Mobile delivery remains separate from desktop/Core downloads.</span></li>
+                <li><b>A native mobile console</b><span>Touch tuning, filters, receive audio, voice PTT, TX profiles, EQ/CFC, station tools and an iPad layout. <a href="https://testflight.apple.com/join/61K3p3xn">Join the public TestFlight preview.</a></span></li>
                 <li><b>A workspace of your own</b><span>Independent receivers, 3D, TNF, diversity, WDSP NNR and PureSignal 3, Canvas and containers, configurable meters and native voice editors.</span></li>
               </ol></div>
             </div>
@@ -634,12 +638,12 @@
         <header class="section__head" data-reveal>
           <p class="eyebrow">Download</p>
           <h2 id="download-title">Get <strong>NereusSDR.</strong></h2>
-          <p>Desktop releases are free, with no account and no telemetry. Download the current release below; the Core and mobile update described above is being prepared for the next major release.</p>
+          <p>Desktop releases are free, with no account and no telemetry. Download 2026.10.0 for your desktop, install a headless Core at the station, or join the native iPhone and iPad public preview through TestFlight.</p>
         </header>
 
         <p class="dl-meta" data-reveal>
-          <span>Latest <b data-release-version>v0.5.2</b>, released <time data-release-date datetime="2026-05-24">24 May 2026</time></span>
-          <a href="https://github.com/boydsoftprez/NereusSDR/releases/tag/v0.5.2" data-release-notes>Release notes</a>
+          <span>Latest <b data-release-version>v2026.10.0</b>, released <time data-release-date datetime="2026-10-06T00:46:30Z">6 October 2026</time></span>
+          <a href="https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.10.0" data-release-notes>Release notes</a>
           <a href="https://github.com/boydsoftprez/NereusSDR/releases">All releases</a>
         </p>
 
@@ -654,14 +658,14 @@
               <span class="tag tag--p2 dl__yours">YOUR SYSTEM</span>
             </div>
             <ul class="dl__files">
-              <li><a data-asset="macOS-apple-silicon.dmg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v0.5.2/NereusSDR-0.5.2-macOS-apple-silicon.dmg">
-                <b>Apple Silicon · DMG</b><small>NereusSDR-0.5.2-macOS-apple-silicon.dmg</small><span class="dl__size">84.6 MB</span></a></li>
-              <li><a data-asset="macOS-apple-silicon.pkg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v0.5.2/NereusSDR-0.5.2-macOS-apple-silicon.pkg">
-                <b>Apple Silicon · Installer</b><small>NereusSDR-0.5.2-macOS-apple-silicon.pkg</small><span class="dl__size">81.5 MB</span></a></li>
-              <li><a data-asset="macOS-intel.dmg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v0.5.2/NereusSDR-0.5.2-macOS-intel.dmg">
-                <b>Intel · DMG</b><small>NereusSDR-0.5.2-macOS-intel.dmg</small><span class="dl__size">82.2 MB</span></a></li>
-              <li><a data-asset="macOS-intel.pkg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v0.5.2/NereusSDR-0.5.2-macOS-intel.pkg">
-                <b>Intel · Installer</b><small>NereusSDR-0.5.2-macOS-intel.pkg</small><span class="dl__size">79.1 MB</span></a></li>
+              <li><a data-asset="macOS-apple-silicon.dmg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.0/NereusSDR-2026.10.0-macOS-apple-silicon.dmg">
+                <b>Apple Silicon · DMG</b><small>NereusSDR-2026.10.0-macOS-apple-silicon.dmg</small><span class="dl__size">114.5 MB</span></a></li>
+              <li><a data-asset="macOS-apple-silicon.pkg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.0/NereusSDR-2026.10.0-macOS-apple-silicon.pkg">
+                <b>Apple Silicon · Installer</b><small>NereusSDR-2026.10.0-macOS-apple-silicon.pkg</small><span class="dl__size">111.4 MB</span></a></li>
+              <li><a data-asset="macOS-intel.dmg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.0/NereusSDR-2026.10.0-macOS-intel.dmg">
+                <b>Intel · DMG</b><small>NereusSDR-2026.10.0-macOS-intel.dmg</small><span class="dl__size">110.4 MB</span></a></li>
+              <li><a data-asset="macOS-intel.pkg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.0/NereusSDR-2026.10.0-macOS-intel.pkg">
+                <b>Intel · Installer</b><small>NereusSDR-2026.10.0-macOS-intel.pkg</small><span class="dl__size">107.4 MB</span></a></li>
             </ul>
             <p class="dl__note"><i class="led led--green" aria-hidden="true"></i>Signed with an Apple Developer ID and notarized, so it opens normally.</p>
           </article>
@@ -678,10 +682,10 @@
               <span class="tag tag--p2 dl__yours">YOUR SYSTEM</span>
             </div>
             <ul class="dl__files">
-              <li><a data-asset="Windows-x64-setup.exe" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v0.5.2/NereusSDR-0.5.2-Windows-x64-setup.exe">
-                <b>Installer</b><small>NereusSDR-0.5.2-Windows-x64-setup.exe</small><span class="dl__size">86.3 MB</span></a></li>
-              <li><a data-asset="Windows-x64-portable.zip" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v0.5.2/NereusSDR-0.5.2-Windows-x64-portable.zip">
-                <b>Portable ZIP</b><small>NereusSDR-0.5.2-Windows-x64-portable.zip</small><span class="dl__size">86.3 MB</span></a></li>
+              <li><a data-asset="Windows-x64-setup.exe" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.0/NereusSDR-2026.10.0-Windows-x64-setup.exe">
+                <b>Installer</b><small>NereusSDR-2026.10.0-Windows-x64-setup.exe</small><span class="dl__size">110.5 MB</span></a></li>
+              <li><a data-asset="Windows-x64-portable.zip" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.0/NereusSDR-2026.10.0-Windows-x64-portable.zip">
+                <b>Portable ZIP</b><small>NereusSDR-2026.10.0-Windows-x64-portable.zip</small><span class="dl__size">112.3 MB</span></a></li>
             </ul>
             <p class="dl__note"><i class="led led--amber" aria-hidden="true"></i>Not code-signed yet, so SmartScreen will warn you. Choose More info, then Run anyway.</p>
           </article>
@@ -696,14 +700,16 @@
               <span class="tag tag--p2 dl__yours">YOUR SYSTEM</span>
             </div>
             <ul class="dl__files">
-              <li><a data-asset="x86_64.AppImage" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v0.5.2/NereusSDR-0.5.2-x86_64.AppImage">
-                <b>AppImage · x86_64</b><small>NereusSDR-0.5.2-x86_64.AppImage</small><span class="dl__size">92.6 MB</span></a></li>
-              <li><a data-asset="aarch64.AppImage" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v0.5.2/NereusSDR-0.5.2-aarch64.AppImage">
-                <b>AppImage · ARM64</b><small>NereusSDR-0.5.2-aarch64.AppImage</small><span class="dl__size">116.0 MB</span></a></li>
+              <li><a data-asset="x86_64.AppImage" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.0/NereusSDR-2026.10.0-x86_64.AppImage">
+                <b>AppImage · x86_64</b><small>NereusSDR-2026.10.0-x86_64.AppImage</small><span class="dl__size">112.2 MB</span></a></li>
+              <li><a data-asset="aarch64.AppImage" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.0/NereusSDR-2026.10.0-aarch64.AppImage">
+                <b>AppImage · ARM64</b><small>NereusSDR-2026.10.0-aarch64.AppImage</small><span class="dl__size">133.1 MB</span></a></li>
             </ul>
             <p class="dl__note"><i class="led led--green" aria-hidden="true"></i>Built on Ubuntu 22.04 (x86_64) and 24.04 (ARM64). Mark the file executable, then run it.</p>
           </article>
         </div>
+
+        <p class="capture-note" data-reveal><strong>Headless Core packages:</strong> <a href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.0/nereusd_2026.10.0_arm64_trixie.deb">Debian Trixie · ARM64</a> for Pi OS Lite and compatible Armbian, <a href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.0/nereusd_2026.10.0_arm64.deb">Ubuntu · ARM64</a>, and <a href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.0/nereusd_2026.10.0_amd64.deb">Ubuntu · AMD64</a>. Follow the <a href="/guides/install-core-sbc.html">Core installation guide</a> for setup and signature verification. For iPhone and iPad, <a href="https://testflight.apple.com/join/61K3p3xn">join the public TestFlight preview</a>; mobile installation is separate from desktop and Core packages.</p>
 
         <p class="radios__note" data-reveal>
           On first launch NereusSDR measures the fastest FFT plans for your processor. That can take up to
@@ -729,21 +735,21 @@
 <pre><code><span class="c"># macOS</span>
 curl -fsSLO https://nereussdr.com/nereussdr-signing-key.asc
 gpg --import nereussdr-signing-key.asc
-gpg --verify <span data-version-swap>NereusSDR-0.5.2</span>-macOS-apple-silicon.dmg.asc</code></pre>
+gpg --verify <span data-version-swap>NereusSDR-2026.10.0</span>-macOS-apple-silicon.dmg.asc</code></pre>
               </div>
               <div class="code" role="tabpanel" id="v-linux" aria-labelledby="tab-v-linux">
                 <button class="copy" type="button" data-copy>Copy</button>
 <pre><code><span class="c"># Linux</span>
 curl -fsSLO https://nereussdr.com/nereussdr-signing-key.asc
 gpg --import nereussdr-signing-key.asc
-gpg --verify <span data-version-swap>NereusSDR-0.5.2</span>-x86_64.AppImage.asc</code></pre>
+gpg --verify <span data-version-swap>NereusSDR-2026.10.0</span>-x86_64.AppImage.asc</code></pre>
               </div>
               <div class="code" role="tabpanel" id="v-win" aria-labelledby="tab-v-win">
                 <button class="copy" type="button" data-copy>Copy</button>
 <pre><code><span class="c"># Windows: PowerShell, with Gpg4win installed</span>
 curl.exe -fsSLO https://nereussdr.com/nereussdr-signing-key.asc
 gpg --import nereussdr-signing-key.asc
-gpg --verify <span data-version-swap>NereusSDR-0.5.2</span>-Windows-x64-setup.exe.asc</code></pre>
+gpg --verify <span data-version-swap>NereusSDR-2026.10.0</span>-Windows-x64-setup.exe.asc</code></pre>
               </div>
             </div>
           </div>
@@ -765,7 +771,7 @@ cmake --build build
               </div>
               <p class="panel__foot">
                 Or take the signed source tarball from the release:
-                <a data-asset="source.tar.gz" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v0.5.2/NereusSDR-0.5.2-source.tar.gz"><span data-version-swap>NereusSDR-0.5.2</span>-source.tar.gz</a>
+                <a data-asset="source.tar.gz" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.0/NereusSDR-2026.10.0-source.tar.gz"><span data-version-swap>NereusSDR-2026.10.0</span>-source.tar.gz</a>
               </p>
             </div>
           </div>
