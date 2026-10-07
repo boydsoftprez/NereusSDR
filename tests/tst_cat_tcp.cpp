@@ -46,7 +46,15 @@ private slots:
         QCOMPARE(framer.bufferedBytes(), 0);
         QCOMPARE(framer.feed(";ID;"), QList<QByteArray>{"ID;"});
         QCOMPARE(framer.feed("\r\nfa;\nZZMN  MiXeD Payload ;"), (QList<QByteArray>{"fa;", "ZZMN  MiXeD Payload ;"}));
-        QCOMPARE(framer.feed("ZZMNab\r\ncd;"), QList<QByteArray>{"ZZMNab\r\ncd;"});
+        // Thetis TCPIPcatServer.cs:280 [v2.10.3.15] removes every CR+LF pair,
+        // payloads included, even split across reads; a lone CR or LF stays.
+        QCOMPARE(framer.feed("ZZMNab\r\ncd;"), QList<QByteArray>{"ZZMNabcd;"});
+        QCOMPARE(framer.feed("FA\r"), QList<QByteArray>());
+        QCOMPARE(framer.feed("\n;"), QList<QByteArray>{"FA;"});
+        QCOMPARE(framer.feed("FA\r;FA\n;"), (QList<QByteArray>{"FA\r;", "FA\n;"}));
+        // TCPIPcatServer.cs:306 [v2.10.3.15] trims each command: leading
+        // white space goes, a frame's inner spaces stay.
+        QCOMPARE(framer.feed(" \t\vFA;\f ZZMN a b;"), (QList<QByteArray>{"FA;", "ZZMN a b;"}));
         QCOMPARE(framer.feed("FA"), QList<QByteArray>()); framer.reset();
         QCOMPARE(framer.feed("ID;"), QList<QByteArray>{"ID;"});
         QByteArray many;

@@ -179,6 +179,9 @@ mw0lge@grange-lane.co.uk
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-04 - TX/global CAT compatibility by J.J. Boyd (KG4VCF),
 //              AI-assisted via OpenAI Codex.
+// 2026-10-06 - CAT review: suffix patterns anchored at the true end, so a
+//              trailing LF is not taken as part of a valid value. J.J. Boyd
+//              (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "CatGlobalCommands.h"
 #include "CatModelAdapter.h"
 #include "CatService.h"
@@ -1324,7 +1327,9 @@ CatCommandResult CatGlobalCommands::execute(const CatRequest& request,CatSession
         return request.suffix == "0" || request.suffix == "1" ? silence() : error();
     }
     if (code == "ZZFV" || code == "ZZFW" || code == "ZZFX" || code == "ZZFY") {
-        static const QRegularExpression kHex(QStringLiteral("^[a-fA-F0-9]+$"));
+        // Anchored at the true end: '$' also matches before a final LF.
+        static const QRegularExpression kHex(
+            QRegularExpression::anchoredPattern(QStringLiteral("[a-fA-F0-9]+")));
         if (!kHex.match(QString::fromLatin1(request.suffix)).hasMatch()) { return error(); }
         if (code == "ZZFV" || code == "ZZFW") { return get ? payload(code == "ZZFV" ? "00":"0000") : error(); }
         return !get ? silence() : error();

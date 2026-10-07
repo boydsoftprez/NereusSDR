@@ -25,6 +25,9 @@
 // Modification history (NereusSDR):
 // 2026-10-04 - C++20/Qt6 parser/session dispatch by J.J. Boyd,
 //              with AI-assisted transformation via Codex.
+// 2026-10-06 - CAT review: suffix patterns anchored at the true end, so a
+//              trailing LF is not taken as part of a valid value. J.J. Boyd
+//              (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "CatParser.h"
 #include <QRegularExpression>
@@ -104,7 +107,12 @@ CatValidation CatParser::validate(const QByteArray& frame) const
     // Normalize only the prefix; source text/EQ/GUID bytes retain case/spaces.
     if (descriptor->suffixKind == CatSuffixKind::Numeric) {
         // From Thetis CAT/CATParser.cs:550-571 [v2.10.3.15].
-        static const QRegularExpression kNumericPattern(QStringLiteral("^[+-]?[Vv0-9]*$"));
+        //   Regex sfxpattern = new Regex("^[+-]?[Vv0-9]*$");
+        // Shared upstream bug, fixed here: '$' also matches before a final
+        // LF, in .NET as in PCRE, so a suffix of "\n" passed as numeric
+        // (and "AI\n;" was a set). anchoredPattern ends at the true end.
+        static const QRegularExpression kNumericPattern(
+            QRegularExpression::anchoredPattern(QStringLiteral("[+-]?[Vv0-9]*")));
     //modified 3/17/07 BT to correct bug in reading parameters with plus or minus sign
     // [original inline comment from CATParser.cs:560]
     // Check the suffix for illegal characters

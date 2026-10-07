@@ -10,6 +10,9 @@
 // Modification history (NereusSDR):
 // 2026-10-04 - Native event-loop CAT adaptation by J.J. Boyd (KG4VCF),
 //              AI-assisted via OpenAI Codex.
+// 2026-10-06 - CAT review: take() and m_pendingCr for the CR+LF removal and
+//              leading trim. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//              Claude Code.
 
 #pragma once
 #include <QByteArray>
@@ -23,8 +26,10 @@ public:
     void reset();
     qsizetype bufferedBytes() const { return m_buffer.size(); }
 private:
+    void take(char byte, QList<QByteArray>& frames);
     qsizetype m_maximumRequestBytes;
     QByteArray m_buffer;
     bool m_discarding{false};
+    bool m_pendingCr{false};
 };
 } // namespace NereusSDR

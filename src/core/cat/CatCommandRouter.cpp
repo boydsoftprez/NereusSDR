@@ -30,6 +30,9 @@ Added extended CAT commands for APF funtions - May 2017.
 // Modification history (NereusSDR):
 // 2026-10-04 - C++20/Qt6 parser/session dispatch by J.J. Boyd,
 //              with AI-assisted transformation via Codex.
+// 2026-10-06 - CAT review: suffix patterns anchored at the true end, so a
+//              trailing LF is not taken as part of a valid value. J.J. Boyd
+//              (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "CatCommandRouter.h"
 #include <QUuid>
@@ -64,8 +67,9 @@ CatCommandRouter::CatCommandRouter()
     // TCPIPcatserver will use the response to remove an id from the client
     // [original inline comment from CATCommands.cs:3119-3120]
     const Handler guidHandler = [](const CatRequest& request, CatSessionContext&) {
-        static const QRegularExpression kGuidPattern(QStringLiteral(
-            "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"));
+        // Anchored at the true end: '$' also matches before a final LF.
+        static const QRegularExpression kGuidPattern(QRegularExpression::anchoredPattern(QStringLiteral(
+            "[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}")));
         if (request.form != CatForm::Set || !kGuidPattern.match(QString::fromLatin1(request.suffix)).hasMatch()) {
             return CatCommandResult{CatResultKind::Error, "?;"};
         }

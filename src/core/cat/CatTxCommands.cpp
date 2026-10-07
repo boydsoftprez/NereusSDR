@@ -181,6 +181,9 @@ mw0lge@grange-lane.co.uk
 //              by J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-04 - TX/global CAT compatibility by J.J. Boyd (KG4VCF),
 //              AI-assisted via OpenAI Codex.
+// 2026-10-06 - CAT review: suffix patterns anchored at the true end, so a
+//              trailing LF is not taken as part of a valid value. J.J. Boyd
+//              (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "CatTxCommands.h"
 #include "CatModelAdapter.h"
 #include "CatService.h"
@@ -384,7 +387,9 @@ CatCommandResult CatTxCommands::execute(const CatRequest& request,CatSessionCont
         }
         if (!valid() || request.suffix.size()!=kEqWidth || request.suffix.left(3)!="010") { return error(); }
         std::array<int,kEqBands+1> values{};
-        static const QRegularExpression kGain(QStringLiteral("^[+-]?[0-9]+$"));
+        // Anchored at the true end: '$' also matches before a final LF.
+        static const QRegularExpression kGain(
+            QRegularExpression::anchoredPattern(QStringLiteral("[+-]?[0-9]+")));
         for(int i=0;i<=kEqBands;++i) {
             const QByteArray field=request.suffix.mid(3+3*i,3); bool ok=false;
             const int gain=field.toInt(&ok);

@@ -23,6 +23,10 @@ private slots:
             QCOMPARE(parser.formatValidationError(result, {1, 1}), QByteArray("?;"));
         }
         QVERIFY(parser.validate("FA00014Vv4000;").request);
+        // Shared upstream bug fixed (CATParser.cs:553 [v2.10.3.15]): '$'
+        // matched before a final LF, so "\n" passed as a numeric suffix.
+        QVERIFY(!parser.validate("AI\n;").request);
+        QVERIFY(!parser.validate("FA0001407400\n;").request);
         const QByteArray equalizer="zzEA01+001-002+003-004+005-006+007-00800;";
         const CatValidation eq=parser.validate(equalizer);
         QVERIFY(eq.request);
