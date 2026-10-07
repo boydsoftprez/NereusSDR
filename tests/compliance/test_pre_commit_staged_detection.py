@@ -93,7 +93,7 @@ class HookRepo:
             missing_upstreams: tuple[str, ...] = ()
             ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
         env = os.environ.copy()
-        for name in ("THETIS", "MI0BOT", "DESKHPSDR", "FREEDV"):
+        for name in ("THETIS", "THETIS_V21015", "MI0BOT", "DESKHPSDR", "FREEDV"):
             env[f"NEREUS_{name}_DIR"] = str(self.upstream)
             if name in missing_upstreams:
                 env[f"NEREUS_{name}_DIR"] = str(self.path / "missing-upstream")
