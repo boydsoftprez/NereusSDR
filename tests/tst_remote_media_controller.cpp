@@ -2051,7 +2051,11 @@ private slots:
             QVERIFY(update.name != "phase" || update.value.toString() != "needsConfirmation");
         }
         QCOMPARE(station.streamCentreHz(stream), centre);
-        QVERIFY(std::abs(widget->centerFrequency() - centre) < 1.0);
+        // The refusal returns the view to the Core's source. A context still
+        // settling from before the drag may land after that and move the view
+        // to its bin-aligned crop, as the check before the drag allows; the
+        // refused drag itself was 300 px away.
+        QVERIFY(std::abs(widget->centerFrequency() - centre) <= sourceBinHz);
         record("first-final-refusal", 0);
         for (int step = 1; step <= 5; ++step) {
             const int beforeFinishes = finishes.size();
