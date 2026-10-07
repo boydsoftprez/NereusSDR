@@ -1956,7 +1956,7 @@ private:
     class CwxApplet*        m_cwxApplet{nullptr};
     class DvkApplet*        m_dvkApplet{nullptr};
     class CatApplet*        m_catApplet{nullptr};
-    class CatLogWindow* m_catLogWindow{nullptr};
+    QPointer<class CatLogWindow> m_catLogWindow;
     class TunerApplet*      m_tunerApplet{nullptr};
 
     // Phase 3P-III Task 14: RF-Kit RF2K-S applet.

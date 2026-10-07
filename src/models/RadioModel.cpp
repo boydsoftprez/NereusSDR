@@ -1022,6 +1022,8 @@
 //   2026-10-07 - CAT setup from a connected desktop: the `stationCat` object,
 //                and on the Core (Local role) its publisher over CatService.
 //                J.J. Boyd (KG4VCF). AI tooling: Claude Code.
+//   2026-10-07 - catControl() for the role, and the `catLog` records to it.
+//                J.J. Boyd (KG4VCF). AI tooling: Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1407,6 +1409,7 @@ mw0lge@grange-lane.co.uk
 #include "core/StationRfKitController.h"
 #include "core/StationTciController.h"
 #include "core/cat/StationCatController.h"
+#include "core/cat/CatControl.h"
 #include "core/SliceOwnership.h"
 #include "core/session/SliceAccessPolicy.h"
 #include "core/session/StationServer.h"
@@ -3147,6 +3150,11 @@ RadioModel::RadioModel(Role role, QObject* parent)
     if (m_role == Role::Local) {
         m_stationCat = std::make_unique<StationCatController>(this, m_catService,
                                                               m_stationCatModel);
+    }
+    if (m_role == Role::Remote) {
+        m_catControl = new RemoteCatControl(this, this);
+    } else {
+        m_catControl = new LocalCatControl(this, m_catService, this);
     }
     if (m_role == Role::Local) {
         m_amplifierModel->bindConnection(m_pgxlConnection);
@@ -4977,6 +4985,14 @@ StationSpotLook stationSpotLook(const QString& source)
 
 void RadioModel::applyStationRecordBatch(const RecordBatch& batch)
 {
+    // CAT setup from a connected desktop: the Core's CAT log lines, for the
+    // CAT log window.
+    if (batch.stream == QLatin1String("catLog")) {
+        if (auto* remote = qobject_cast<RemoteCatControl*>(m_catControl)) {
+            remote->applyLogBatch(batch);
+        }
+        return;
+    }
     // Remote-window parity Task 22 (R-R3-49): the Core's log, newest last.
     // A reset (each subscribe) replaces it.
     if (batch.stream == QLatin1String("coreLog")) {

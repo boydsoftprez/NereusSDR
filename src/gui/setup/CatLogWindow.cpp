@@ -1,8 +1,10 @@
 // no-port-check: NereusSDR-original native log mechanics; follows existing TciLogWindow pattern.
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-07 Reads CatControl: the bytes from logged(), the diagnostics from
+//            each change of state, so a connected desktop shows the Core's
+//            CAT log. J.J. Boyd (KG4VCF), AI tooling: Claude Code.
 #include "CatLogWindow.h"
 #include "core/AppSettings.h"
-#include "core/cat/CatService.h"
 #include "gui/StyleConstants.h"
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -26,7 +28,7 @@ QString escaped(const QByteArray& bytes) {
     return text;
 }
 }
-CatLogWindow::CatLogWindow(CatService* service,QWidget* parent) : QDialog(parent) {
+CatLogWindow::CatLogWindow(CatControl* control,QWidget* parent) : QDialog(parent), m_control(control) {
     setWindowTitle(tr("CAT Log")); setObjectName("CatLogWindow"); setModal(false); setAttribute(Qt::WA_DeleteOnClose,false);
     setStyleSheet(QString::fromLatin1(Style::kPageStyle)); resize(720,480);
     // Settings store the geometry as a base64 latin1 string, as TciLogWindow does (XML-safe).
@@ -41,17 +43,29 @@ CatLogWindow::CatLogWindow(CatService* service,QWidget* parent) : QDialog(parent
     QFont font("Menlo"); font.setStyleHint(QFont::TypeWriter); font.setPointSize(10); m_view->setFont(font);
     m_view->setStyleSheet("QPlainTextEdit { background: #1a1a1a; color: #d0d0d0; border: 1px solid #3a3a3a; }"); root->addWidget(m_view,1);
     connect(clear,&QPushButton::clicked,this,[this] { m_entries.clear(); m_view->clear(); }); connect(m_filter,&QComboBox::currentIndexChanged,this,[this] { refresh(); });
-    if (service) {
-        connect(service,&CatService::messageLogged,this,[this](int channel,bool inbound,const QByteArray& bytes) {
+    if (control) {
+        // A connected desktop follows the Core's CAT log while this listens.
+        m_logged=connect(control,&CatControl::logged,this,[this](int channel,bool inbound,const QByteArray& bytes) {
             append(inbound ? 1:2,tr("CAT%1 %2 bytes=%3  %4  [hex %5]").arg(channel).arg(inbound ? "in":"out").arg(bytes.size()).arg(escaped(bytes),QString::fromLatin1(bytes.toHex(' '))));
         });
-        connect(service,&CatService::transportStateChanged,this,[this](int channel,CatTransportKind kind,const QString& state) {
-            const QString transport=kind==CatTransportKind::Tcp ? tr("TCP") : kind==CatTransportKind::Serial ? tr("Serial") : kind==CatTransportKind::Pty ? tr("PTY") : tr("Rigctld"); append(3,tr("CAT%1 %2: %3").arg(channel).arg(transport,state));
-        });
-        connect(service,&CatService::channelStateChanged,this,[this](int channel,const QString& state) { append(3,tr("CAT%1 state: %2").arg(channel).arg(state)); });
-        connect(service,&CatService::clientCountChanged,this,[this](int channel,int count) { append(3,tr("CAT%1 TCP clients: %2").arg(channel).arg(count)); });
-        connect(service,&CatService::pttStateChanged,this,[this](const QString& state) { append(3,tr("PTT: %1").arg(state)); });
+        for (int channel=1;channel<=4;++channel) { m_lastStatus.append(control->channelStatus(channel)); }
+        m_lastPtt=control->pttState();
+        connect(control,&CatControl::changed,this,&CatLogWindow::noteChanges);
     }
+}
+CatLogWindow::~CatLogWindow() { disconnect(m_logged); }
+void CatLogWindow::noteChanges() {
+    if (!m_control) { return; }
+    for (int channel=1;channel<=m_lastStatus.size();++channel) {
+        const CatChannelStatus now=m_control->channelStatus(channel); CatChannelStatus& was=m_lastStatus[channel-1];
+        const auto transport=[&](const QString& name,const QString& state,const QString& before) { if (state!=before) { append(3,tr("CAT%1 %2: %3").arg(channel).arg(name,state)); } };
+        transport(tr("TCP"),now.tcp,was.tcp); transport(tr("Serial"),now.serial,was.serial); transport(tr("PTY"),now.pty,was.pty); transport(tr("Rigctld"),now.rigctld,was.rigctld);
+        if (now.state!=was.state) { append(3,tr("CAT%1 state: %2").arg(channel).arg(now.state)); }
+        if (now.tcpClients!=was.tcpClients) { append(3,tr("CAT%1 TCP clients: %2").arg(channel).arg(now.tcpClients)); }
+        was=now;
+    }
+    const QString ptt=m_control->pttState();
+    if (ptt!=m_lastPtt) { m_lastPtt=ptt; append(3,tr("PTT: %1").arg(ptt)); }
 }
 void CatLogWindow::append(int direction,const QString& line) {
     if (m_pause->isChecked()) { return; }

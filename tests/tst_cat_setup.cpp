@@ -4,6 +4,8 @@
 //            J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-06 rigctld starts on its default port. J.J. Boyd (KG4VCF),
 //            AI-assisted via Anthropic Claude Code.
+// 2026-10-07 Remote reasons and the log window follow CatControl.
+//            J.J. Boyd / KG4VCF, AI tooling: Claude Code.
 #include <QtTest>
 #include <memory>
 #include <QCheckBox>
@@ -88,7 +90,7 @@ private slots:
         RadioModel remote(RadioModel::Role::Remote); CatTcpIpPage remotePage(&remote); remotePage.syncFromModel();
         for (int channel=1;channel<=4;++channel) {
             auto* pty=remotePage.findChild<QCheckBox*>(QStringLiteral("cat%1Pty").arg(channel)); QVERIFY(pty);
-            QVERIFY(!pty->isEnabled()); QVERIFY(pty->toolTip().contains("computer running the Core"));
+            QVERIFY(!pty->isEnabled()); QVERIFY(pty->toolTip().contains("Connect to the Core"));
         }
     }
     void synchronousRigctldCallbackMayDeletePage() {
@@ -165,7 +167,7 @@ private slots:
 #endif
         RadioModel remote(RadioModel::Role::Remote); CatTcpIpPage network(&remote); CatOptionsSetupPage options(&remote); CatPttSetupPage ptt(&remote);
         QVERIFY(!control<QCheckBox>(network,"cat1Enabled")->isEnabled()); QVERIFY(!control<QCheckBox>(options,"catWelcome")->isEnabled()); QVERIFY(!control<QCheckBox>(ptt,"catPttEnabled")->isEnabled());
-        bool explained=false; for (QLabel* label:network.findChildren<QLabel*>()) { explained=explained || label->text().contains("computer running the Core"); } QVERIFY(explained); QVERIFY(!remote.catService()->isStarted());
+        bool explained=false; for (QLabel* label:network.findChildren<QLabel*>()) { explained=explained || label->text().contains("Connect to the Core"); } QVERIFY(explained); QVERIFY(!remote.catService()->isStarted());
     }
     void restoredNativeFormatsRemainExact() {
         RadioModel model; CatService& service=*model.catService();
@@ -236,7 +238,7 @@ private slots:
         control<QPushButton>(options,"catShowLog")->click(); QCOMPARE(requested.size(),1);
     }
     void malformedTesterTrafficIsLoggedExactly() {
-        RadioModel model; CatService& service=*model.catService(); CatLogWindow log(&service);
+        RadioModel model; CatService& service=*model.catService(); CatLogWindow log(model.catControl());
         QCOMPARE(service.testCommand(1,"unknown;"),QByteArray("?;"));
         const QString displayed=control<QPlainTextEdit>(log,"catLogText")->toPlainText();
         QVERIFY(displayed.contains("in bytes=8  unknown;  [hex 75 6e 6b 6e 6f 77 6e 3b]"));
@@ -244,14 +246,14 @@ private slots:
     }
     void logWindowGeometryIsStoredAsTextAndRestored() {
         RadioModel model; CatService& service=*model.catService();
-        { CatLogWindow log(&service); log.resize(612,383); log.show(); QVERIFY(QTest::qWaitForWindowExposed(&log)); log.close(); }
+        { CatLogWindow log(model.catControl()); log.resize(612,383); log.show(); QVERIFY(QTest::qWaitForWindowExposed(&log)); log.close(); }
         const QVariant stored=AppSettings::instance().value("CatLogWindowGeometry");
         QCOMPARE(stored.typeId(),QMetaType::QString); const QString text=stored.toString(); QVERIFY(!text.isEmpty());
         QVERIFY(!QByteArray::fromBase64(text.toLatin1()).isEmpty());
-        CatLogWindow restored(&service); QCOMPARE(restored.size(),QSize(612,383));
+        CatLogWindow restored(model.catControl()); QCOMPARE(restored.size(),QSize(612,383));
     }
     void logSeparatesExactBytesDiagnosticsPauseAndBound() {
-        RadioModel model; CatService& service=*model.catService(); service.startConfigured(); CatLogWindow log(&service);
+        RadioModel model; CatService& service=*model.catService(); service.startConfigured(); CatLogWindow log(model.catControl());
         auto* text=control<QPlainTextEdit>(log,"catLogText"); QVERIFY(text); QCOMPARE(service.testCommand(1,"id;"),QByteArray("ID019;"));
         const QString first=text->toPlainText(); QVERIFY(first.contains("in bytes=3  id;  [hex 69 64 3b]")); QVERIFY(first.contains("out bytes=6  ID019;  [hex 49 44 30 31 39 3b]"));
         auto* pause=control<QPushButton>(log,"catLogPause"); pause->setChecked(true); service.testCommand(1,"FA;"); QCOMPARE(text->toPlainText(),first); pause->setChecked(false);
@@ -289,7 +291,7 @@ private slots:
         QCoreApplication::processEvents(); QVERIFY(setup.grab().save(directory+"/task-11-setup-tester.png"));
         SetupDialog remoteSetup(&remote); remoteSetup.resize(1280,800); remoteSetup.selectPage("TCP/IP CAT"); remoteSetup.show(); QVERIFY(QTest::qWaitForWindowExposed(&remoteSetup));
         QCoreApplication::processEvents(); QVERIFY(remoteSetup.grab().save(directory+"/task-11-setup-remote.png"));
-        CatLogWindow log(&service); log.resize(1280,800); log.show(); service.testCommand(1,"id;"); service.testCommand(1,"TX;"); first.tcpEnabled=false; QVERIFY(service.reconfigureChannel(1,first)); QCoreApplication::processEvents(); QVERIFY(log.grab().save(directory+"/task-11-log.png"));
+        CatLogWindow log(model.catControl()); log.resize(1280,800); log.show(); service.testCommand(1,"id;"); service.testCommand(1,"TX;"); first.tcpEnabled=false; QVERIFY(service.reconfigureChannel(1,first)); QCoreApplication::processEvents(); QVERIFY(log.grab().save(directory+"/task-11-log.png"));
     }
 };
 QTEST_MAIN(TstCatSetup)

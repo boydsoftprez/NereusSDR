@@ -265,6 +265,9 @@
 //                                    StationCatModel's reasons are scanned;
 //                                    stationCatUnavailableReason is the
 //                                    window's own. AI tooling: Claude Code.
+//   2026-10-07  J.J. Boyd / KG4VCF  CatControl's notConnectedReason is
+//                                    scanned; its unavailableReason is the
+//                                    window's own. AI tooling: Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -1480,6 +1483,9 @@ const QList<ReasonSource>& reasonSources()
         {"src/core/cat/StationCatController.cpp", {}, {}, 4, {},
          {// Each refuse() helper's argument, this file's own literals.
           QStringLiteral("why")}},
+        // CAT setup from a connected desktop: a remote window's own words
+        // while it is not connected to the Core.
+        {"src/core/cat/CatControl.cpp", {QStringLiteral("notConnectedReason")}, {}, 1},
         // Parity Task 19 (R-IOS-25): the spots.* refusals and the
         // `spotSources` object's read-only reason.
         // Parity Task 21 (R-IOS-18): the station radio verbs' refusals and
@@ -1840,6 +1846,9 @@ const QList<AppSideReason>& appSideReasons()
          "a window's own reason Disable HF PA is disabled on this radio"},
         {"src/core/session/IStationLink.h", "stationCatUnavailableReason",
          "a remote window's own reason when its Core cannot take the request"},
+        {"src/core/cat/CatControl.cpp", "unavailableReason",
+         "a window's own reason its CAT pages are disabled: none for its own "
+         "CAT, otherwise notConnectedReason or stationCatUnavailableReason"},
         {"src/core/session/IStationLink.h", "pgxlDeviceSettingsUnavailableReason",
          "a remote window's own reason when its Core cannot take the request"},
         {"src/core/session/IStationLink.h", "tgxlDeviceSettingsUnavailableReason",

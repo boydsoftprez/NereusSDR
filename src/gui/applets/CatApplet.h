@@ -22,10 +22,14 @@
 //                 All controls NYI — wired in later phase.
 //   2026-05-10 — Phase 24 (Task 24.1): stripped TCI button row; TCI
 //                 controls now live in TciApplet (Phase 21, 0b615a7).
+//   2026-10-07 — Reads and switches CAT1 through RadioModel::catControl(),
+//                 the Core's CAT in a connected desktop. J.J. Boyd
+//                 (KG4VCF), AI tooling: Claude Code.
 // =================================================================
 
 #pragma once
 #include "AppletWidget.h"
+#include "core/cat/CatConfiguration.h"
 #include <QPointer>
 
 class QPushButton;
@@ -34,7 +38,7 @@ class QComboBox;
 
 namespace NereusSDR {
 
-class CatService;
+class CatControl;
 
 // CAT / rigctld control interfaces.
 // Live Thetis CAT; rigctld and VAX/IQ retain their separate delivery boundaries.
@@ -56,8 +60,8 @@ public:
 
 private:
     void buildUI();
-    QPointer<CatService> m_service;
-    bool m_localHost{false};
+    QPointer<CatControl> m_control;
+    void setCatOne(bool CatEndpointConfig::* field, bool enabled);
 
     // Control 1 — CAT TCP: enable button + 4 status LEDs (A/B/C/D)
     QPushButton* m_tcpBtn        = nullptr;

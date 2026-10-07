@@ -483,6 +483,9 @@
 //   2026-10-07: CAT setup from a connected desktop: declares stationCat 1,
 //               registers `stationCat` when offered and sends the four CAT
 //               commands. J.J. Boyd (KG4VCF). AI tooling: Claude Code.
+//   2026-10-07: requestCatLog follows the Core's `catLog` stream (again
+//               after each snapshot) and hands its records to RadioModel.
+//               J.J. Boyd (KG4VCF). AI tooling: Claude Code.
 // =================================================================
 
 // 2026-10-01: Authenticated Core address inventory and reconnect learning.
@@ -2933,6 +2936,16 @@ void StationClient::onTransportText(const QByteArray& wire)
                 subscribe(QStringLiteral("tciClients"), StationTciModel::kClientsCapacity);
             }
         }
+        // CAT setup from a connected desktop: the CAT log window's lines,
+        // from now on (dropped traffic is not replayed, as when paused).
+        if (m_sessionPurpose == SessionPurpose::Ordinary && m_catLogWanted
+            && stationCatAvailable()) {
+            invokeCommand("records.subscribe",
+                          {MirrorUpdate{0, "stream", MirrorWireKind::Utf8,
+                                        QVariant(QStringLiteral("catLog"))},
+                           MirrorUpdate{0, "backlog", MirrorWireKind::Int64,
+                                        QVariant(static_cast<qlonglong>(0))}});
+        }
         // Parity Task 22 (R-R3-49): the Core's log follows again for the
         // viewers that hold it, and the support controls learn the session.
         if (!m_radioModel.isNull()) {
@@ -3054,6 +3067,13 @@ void StationClient::onTransportText(const QByteArray& wire)
                     emit cfcCompressionReceived(
                         bins, static_cast<qint64>(u.fields.value(QStringLiteral("atMs")).toDouble()));
                 }
+            }
+            break;
+        }
+        // CAT setup from a connected desktop: the CAT log window's lines.
+        if (message.recordBatch.stream == QLatin1String("catLog")) {
+            if (stationCatAvailable() && !m_radioModel.isNull()) {
+                m_radioModel->applyStationRecordBatch(message.recordBatch);
             }
             break;
         }
@@ -6682,6 +6702,24 @@ StationClient::CommandOutcome StationClient::requestStationCatTest(qint64 reques
                                        QVariant(static_cast<qlonglong>(requestId)) },
                          intArgument("channel", channel), stringArgument("command", command) },
                        QStringLiteral("the Core's CAT test command"));
+}
+
+void StationClient::requestCatLog(bool follow)
+{
+    // Kept across sessions: each snapshot subscribes again while wanted.
+    const bool was = m_catLogWanted;
+    m_catLogWanted = follow;
+    if (!stationCatAvailable() || (!follow && !was)) {
+        return;
+    }
+    QList<MirrorUpdate> arguments{
+        MirrorUpdate{0, "stream", MirrorWireKind::Utf8, QVariant(QStringLiteral("catLog"))}};
+    if (follow) {
+        // From now on: the window shows what happens while it is open.
+        arguments.append(MirrorUpdate{0, "backlog", MirrorWireKind::Int64,
+                                      QVariant(static_cast<qlonglong>(0))});
+    }
+    invokeCommand(follow ? "records.subscribe" : "records.unsubscribe", arguments);
 }
 
 StationClient::CommandOutcome StationClient::requestStationCatRefreshDevices()

@@ -2,6 +2,8 @@
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-06 Remote and tester wording follows the operator text.
 //            J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-07 Remote reasons and the log window follow CatControl.
+//            J.J. Boyd / KG4VCF, AI tooling: Claude Code.
 #include <QtTest>
 #include <memory>
 #include <QPushButton>
@@ -32,7 +34,7 @@ private slots:
         QVERIFY(!service.ptySlavePath(1).isEmpty()); QCOMPARE(applet.findChild<QLabel*>("catPtyPath1")->text(),service.ptySlavePath(1));
 #endif
         RadioModel remote(RadioModel::Role::Remote); CatApplet remoteApplet(&remote); auto* remoteTcp=remoteApplet.findChild<QPushButton*>("catTcpButton");
-        QVERIFY(!remoteTcp->isEnabled()); QVERIFY(remoteTcp->toolTip().contains("computer running the Core"));
+        QVERIFY(!remoteTcp->isEnabled()); QVERIFY(remoteTcp->toolTip().contains("Connect to the Core"));
         bool vax=false,iq=false; for (QPushButton* button:applet.findChildren<QPushButton*>()) { vax=vax || button->text()=="VAX"; iq=iq || button->text()=="IQ"; } QVERIFY(vax && iq);
     }
     void unavailableAudioControlsKeepTheirReasons() {
@@ -60,7 +62,7 @@ private slots:
 #endif
         RadioModel remote(RadioModel::Role::Remote); CatApplet remoteApplet(&remote);
         auto* remotePty=remoteApplet.findChild<QPushButton*>("catPtyButton"); QVERIFY(remotePty);
-        QVERIFY(!remotePty->isEnabled()); QVERIFY(remotePty->toolTip().contains("computer running the Core"));
+        QVERIFY(!remotePty->isEnabled()); QVERIFY(remotePty->toolTip().contains("Connect to the Core"));
     }
     void configurationCallbackMayDeleteApplet() {
         AppSettings::instance().clear(); RadioModel model; CatService& service=*model.catService();

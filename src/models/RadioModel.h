@@ -566,6 +566,9 @@
 //   2026-10-07 - CAT setup from a connected desktop: stationCatModel() and
 //                stationCatController(), the Core's `stationCat` object and
 //                its publisher. J.J. Boyd (KG4VCF). AI tooling: Claude Code.
+//   2026-10-07 - catControl(): what the CAT pages, applet, log window and
+//                status bar use, local or the Core's. J.J. Boyd (KG4VCF).
+//                AI tooling: Claude Code.
 // =================================================================
 
 //=================================================================
@@ -830,6 +833,7 @@ class StationTciController;
 class StationTciModel;
 class StationCatController;
 class StationCatModel;
+class CatControl;
 class SliceOwnership;
 class RfKitBandFollow;
 class AmplifierModel;
@@ -3528,6 +3532,10 @@ public:
     StationCatModel* stationCatModel() const { return m_stationCatModel; }
     // The Core's CAT publisher and commands (nullptr outside the Local role).
     StationCatController* stationCatController() const { return m_stationCat.get(); }
+    // What the CAT pages, the CAT applet, the CAT log window and the status
+    // bar read and change: this window's own CatService (Local) or the
+    // Core's CAT (Remote). Non-null from construction.
+    CatControl* catControl() const { return m_catControl; }
     // R-R3-47: the Core's RF-Kit controller (nullptr outside the Core).
     StationRfKitController* stationRfKitController() const { return m_stationRfKit; }
     // SmartSDR API server on TCP 4992. Owned by RadioModel; lifetime matches.
@@ -8293,6 +8301,7 @@ private:
     // the Core, its publisher (destroyed first in ~RadioModel).
     StationCatModel*                      m_stationCatModel{nullptr};
     std::unique_ptr<StationCatController> m_stationCat;
+    CatControl*                           m_catControl{nullptr};
     // Follow-up 3: accessory requests whose refusal their page shows.
     QHash<quint32, QPointer<QObject>> m_pageShownAccessoryRequests;
 

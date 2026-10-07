@@ -9,8 +9,11 @@
 //              typing finishes. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-06 - Notes, tooltips and section names in operator words.
 //              J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-07 - Read and change CAT through RadioModel::catControl(), so a
+//              connected desktop sets up the Core's CAT; the platform choices
+//              are the Core's there. J.J. Boyd (KG4VCF), AI tooling: Claude Code.
 #include "CatNetworkSetupPages.h"
-#include "core/cat/CatService.h"
+#include "core/cat/CatControl.h"
 #include "gui/StyleConstants.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -24,16 +27,12 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStandardItemModel>
-#ifdef HAVE_SERIALPORT
-#include <QSerialPortInfo>
-#endif
 namespace NereusSDR {
 namespace {
-QString localReason() { return QObject::tr("CAT runs on the computer running the Core. Set it up there."); }
-bool local(RadioModel* model) { return model && model->ownsLocalDsp(); }
 // rigctld(1) warns the protocol has no authentication; the Thetis TCP CAT has none either.
 QString openToNetwork(bool enabled, const QString& address) {
     const QHostAddress bind(address);
@@ -53,23 +52,27 @@ void setChoice(QComboBox* widget, const QString& text) {
     if (widget->findText(text) < 0) { widget->addItem(text); }
     widget->setCurrentText(text);
 }
-void unavailableChoice(QComboBox* widget, const QString& value, const QString& reason) {
+void choiceAvailable(QComboBox* widget, const QString& value, bool available, const QString& reason) {
     const int index = widget->findText(value);
     if (index < 0) { return; }
     if (auto* items = qobject_cast<QStandardItemModel*>(widget->model())) {
-        items->item(index)->setEnabled(false); items->item(index)->setToolTip(reason);
+        items->item(index)->setEnabled(available); items->item(index)->setToolTip(available ? QString() : reason);
     }
 }
-void serialPlatformChoices(QComboBox* parity, QComboBox* stops) {
+void unavailableChoice(QComboBox* widget, const QString& value, const QString& reason) { choiceAvailable(widget,value,false,reason); }
+void serialPlatformChoices(QComboBox* parity, QComboBox* stops, const CatPlatform& platform, bool remote) {
     // Native Qt capability facts: https://doc.qt.io/qt-6/qserialport.html#parity-prop
     // and https://doc.qt.io/qt-6/qserialport.html#StopBits-enum
-#ifdef Q_OS_MAC
-    unavailableChoice(parity,"Mark",QObject::tr("Mark parity is unavailable in QtSerialPort on macOS."));
-    unavailableChoice(parity,"Space",QObject::tr("Space parity is unavailable in QtSerialPort on macOS."));
-#endif
-#ifndef Q_OS_WIN
-    unavailableChoice(stops,"1.5",QObject::tr("1.5 stop bits are available only on Windows."));
-#endif
+    // The computer running CAT says which it offers (the Core's, from a connected desktop).
+    choiceAvailable(parity,"Mark",platform.markSpaceParity,remote ? QObject::tr("The Core's computer cannot use mark parity.") : QObject::tr("Mark parity is unavailable in QtSerialPort on macOS."));
+    choiceAvailable(parity,"Space",platform.markSpaceParity,remote ? QObject::tr("The Core's computer cannot use space parity.") : QObject::tr("Space parity is unavailable in QtSerialPort on macOS."));
+    choiceAvailable(stops,"1.5",platform.oneAndHalfStop,remote ? QObject::tr("The Core's computer cannot use 1.5 stop bits.") : QObject::tr("1.5 stop bits are available only on Windows."));
+}
+QString noSerialReason(bool remote) {
+    return remote ? QObject::tr("The Core was built without serial port support.") : QObject::tr("This copy of NereusSDR was built without serial port support.");
+}
+QString noPtyReason(bool remote) {
+    return remote ? QObject::tr("The Core's computer has no native PTYs: they are available only on macOS and Linux.") : QObject::tr("Native PTYs are available only on macOS and Linux; use a supplied virtual COM device here.");
 }
 QFormLayout* sectionForm(QGroupBox* group) {
     auto* form=new QFormLayout; form->setVerticalSpacing(6);
@@ -80,7 +83,15 @@ QLabel* note(QWidget* parent, const QString& text) {
     auto* label = new QLabel(text,parent); label->setWordWrap(true);
     label->setStyleSheet(QString::fromLatin1(Style::kSecondaryLabelStyle)); return label;
 }
-void fillSlices(QComboBox* widget, RadioModel* model, int selected, quint64 incarnation) {
+// The page's note while CAT cannot be set up from this window, with the reason.
+void showUnavailable(QLabel* label, CatControl* control) {
+    const bool available = control && control->available();
+    label->setText(available || !control ? QString() : control->unavailableReason());
+    label->setVisible(!label->text().isEmpty());
+}
+// `valid`: the binding still names the slice it was bound to (the Core's
+// own test, from a connected desktop).
+void fillSlices(QComboBox* widget, RadioModel* model, int selected, quint64 incarnation, bool valid) {
     const QSignalBlocker blocked(widget); widget->clear(); widget->addItem(QObject::tr("None"),-1);
     widget->setItemData(0,QVariant::fromValue(quint64(0)),Qt::UserRole+1);
     int index=selected<0 ? 0:-1;
@@ -89,8 +100,13 @@ void fillSlices(QComboBox* widget, RadioModel* model, int selected, quint64 inca
             const int id=slice->sliceIndex(); const quint64 live=model->sliceOwnership()->incarnation(id);
             widget->addItem(QObject::tr("Slice ID %1").arg(id),id);
             widget->setItemData(widget->count()-1,QVariant::fromValue(live),Qt::UserRole+1);
-            if (id==selected && live==incarnation) { index=widget->count()-1; }
+            if (id==selected && valid) { index=widget->count()-1; }
         }
+    }
+    if (index<0 && valid) {
+        // A live slice this window does not show (a connected desktop's slices arrive later).
+        widget->addItem(QObject::tr("Slice ID %1").arg(selected),selected); index=widget->count()-1;
+        widget->setItemData(index,QVariant::fromValue(incarnation),Qt::UserRole+1);
     }
     if (index<0) {
         widget->addItem(QObject::tr("Invalid binding — ID %1").arg(selected),selected); index=widget->count()-1;
@@ -105,15 +121,14 @@ void fillSlices(QComboBox* widget, RadioModel* model, int selected, quint64 inca
 CatSerialPortsPage::CatSerialPortsPage(RadioModel* model, QWidget* parent) : CatChannelSetupPage(model,true,parent) {}
 CatTcpIpPage::CatTcpIpPage(RadioModel* model, QWidget* parent) : CatChannelSetupPage(model,false,parent) {}
 CatChannelSetupPage::CatChannelSetupPage(RadioModel* model, bool serial, QWidget* parent)
-    : SetupPage(serial ? tr("Serial Ports") : tr("TCP/IP CAT"),model,parent), m_service(model ? model->catService() : nullptr), m_serial(serial)
+    : SetupPage(serial ? tr("Serial Ports") : tr("TCP/IP CAT"),model,parent), m_control(model ? model->catControl() : nullptr), m_serial(serial)
 {
     setStyleSheet(QString::fromLatin1(Style::kPageStyle));
-    if (!local(model)) { contentLayout()->insertWidget(contentLayout()->count()-1,note(this,localReason())); }
+    m_unavailable=note(this,{}); m_unavailable->setObjectName("catUnavailable"); contentLayout()->insertWidget(contentLayout()->count()-1,m_unavailable);
     for (int i=0;i<4;++i) {
         const QString prefix=QStringLiteral("cat%1").arg(i+1);
-        auto* group=new QGroupBox(tr("CAT %1").arg(i+1),this);
-        group->setStyleSheet(QString::fromLatin1(Style::kGroupBoxStyle)); group->setEnabled(local(model));
-        if (!local(model)) { group->setToolTip(localReason()); }
+        auto* group=new QGroupBox(tr("CAT %1").arg(i+1),this); m_groups[i]=group;
+        group->setStyleSheet(QString::fromLatin1(Style::kGroupBoxStyle));
         auto* grid=new QGridLayout(group); grid->setSpacing(6); Row& row=m_rows[i];
         row.enabled=new QCheckBox(serial ? tr("Enable serial CAT") : tr("Enable TCP CAT"),group); row.enabled->setObjectName(prefix+"Enabled");
         row.enabled->setStyleSheet(QString::fromLatin1(Style::kCheckBoxStyle)); grid->addWidget(row.enabled,0,0);
@@ -121,18 +136,13 @@ CatChannelSetupPage::CatChannelSetupPage(RadioModel* model, bool serial, QWidget
         grid->addWidget(new QLabel(tr("VFO A:"),group),0,1); grid->addWidget(row.primary,0,2);
         grid->addWidget(new QLabel(tr("VFO B:"),group),0,3); grid->addWidget(row.secondary,0,4);
         if (serial) {
+            // The devices are those of the computer running CAT (the Core's, from a connected desktop).
             row.device=combo(group,{},prefix+"Device"); row.device->setEditable(true);
-#ifdef HAVE_SERIALPORT
-            for (const QSerialPortInfo& port:QSerialPortInfo::availablePorts()) { row.device->addItem(port.systemLocation()); }
-#else
-            group->setEnabled(false); group->setToolTip(tr("This copy of NereusSDR was built without serial port support."));
-#endif
             grid->addWidget(new QLabel(tr("Device:"),group),1,0); grid->addWidget(row.device,1,1,1,4);
             row.baud=combo(group,baudChoices(),prefix+"Baud");
             // From Thetis setup.Designer.cs:58053-58058,58069-58072,58083-58086 [v2.10.3.15]. Choice facts.
             row.parity=combo(group,{"None","Odd","Even","Mark","Space"},prefix+"Parity");
             row.bits=combo(group,{"8","7","6"},prefix+"Bits"); row.stops=combo(group,{"1","1.5","2"},prefix+"Stops");
-            serialPlatformChoices(row.parity,row.stops);
             auto* format=new QHBoxLayout; format->addWidget(new QLabel(tr("Baud:"),group)); format->addWidget(row.baud);
             format->addWidget(new QLabel(tr("Parity:"),group)); format->addWidget(row.parity);
             format->addWidget(new QLabel(tr("Bits:"),group)); format->addWidget(row.bits);
@@ -143,9 +153,6 @@ CatChannelSetupPage::CatChannelSetupPage(RadioModel* model, bool serial, QWidget
             grid->addWidget(new QLabel(tr("Listen on:"),group),1,0); grid->addWidget(row.address,1,1,1,2);
             grid->addWidget(new QLabel(tr("Port:"),group),1,3); grid->addWidget(row.port,1,4);
             row.pty=new QCheckBox(tr("Enable PTY"),group); row.pty->setObjectName(prefix+"Pty"); row.pty->setStyleSheet(QString::fromLatin1(Style::kCheckBoxStyle)); grid->addWidget(row.pty,2,0,1,2);
-#if !defined(Q_OS_MAC) && !defined(Q_OS_LINUX)
-            row.pty->setEnabled(false); row.pty->setToolTip(tr("Native PTYs are available only on macOS and Linux; use a supplied virtual COM device here."));
-#endif
             row.dialect=combo(group,{"Thetis","Rigctld"},prefix+"PtyDialect");
             grid->addWidget(row.dialect,3,0,1,2);
             row.rigctld=new QCheckBox(tr("Enable Hamlib rigctld"),group); row.rigctld->setObjectName(prefix+"RigctldEnabled");
@@ -175,23 +182,21 @@ CatChannelSetupPage::CatChannelSetupPage(RadioModel* model, bool serial, QWidget
     if (!serial) {
         contentLayout()->insertWidget(contentLayout()->count()-1,note(this,tr("Each channel controls the slices assigned to it, whichever slice is selected on screen. A virtual serial port exists only while its channel is on.")));
     }
-    if (m_service) {
-        connect(m_service,&CatService::configurationChanged,this,[this] { syncFromModel(); });
-        connect(m_service,&CatService::channelStateChanged,this,[this] { syncFromModel(); });
-        connect(m_service,&CatService::clientCountChanged,this,[this] { syncFromModel(); });
-        connect(m_service,&CatService::rigctldClientCountChanged,this,[this] { syncFromModel(); });
-        connect(m_service,&CatService::ptyPathChanged,this,[this] { syncFromModel(); });
-        connect(m_service,&CatService::transportStateChanged,this,[this] { syncFromModel(); });
-    }
+    if (m_control) { connect(m_control,&CatControl::changed,this,[this] { syncFromModel(); }); }
     if (model) { connect(model,&RadioModel::sliceAdded,this,[this] { syncFromModel(); }); connect(model,&RadioModel::sliceRemoved,this,[this] { syncFromModel(); }); }
     syncFromModel();
 }
 bool CatChannelSetupPage::eventFilter(QObject* watched,QEvent* event) {
     if (event->type()==QEvent::Wheel) { return true; } return SetupPage::eventFilter(watched,event);
 }
+void CatChannelSetupPage::showEvent(QShowEvent* event) {
+    // The device box lists the serial devices there are now.
+    if (m_serial && m_control) { m_control->refreshDevices(); }
+    SetupPage::showEvent(event);
+}
 void CatChannelSetupPage::apply(int channel) {
-    if (m_syncing || !m_service || !local(model())) { return; }
-    const Row& row=m_rows[channel-1]; CatEndpointConfig config=m_service->channelConfig(channel);
+    if (m_syncing || !m_control || !m_control->available()) { return; }
+    const Row& row=m_rows[channel-1]; CatEndpointConfig config=m_control->channelConfig(channel);
     config.binding.primarySliceId=row.primary->currentData().toInt(); const int secondary=row.secondary->currentData().toInt();
     config.binding.secondarySliceId=secondary<0 ? std::nullopt : std::optional<int>(secondary);
     config.binding.primaryIncarnation=row.primary->currentData(Qt::UserRole+1).toULongLong();
@@ -199,71 +204,111 @@ void CatChannelSetupPage::apply(int channel) {
     if (m_serial) { config.serialEnabled=row.enabled->isChecked(); config.serialDevice=row.device->currentText().trimmed(); config.serialBaud=row.baud->currentText().toInt(); config.serialParity=row.parity->currentText(); config.serialDataBits=row.bits->currentText().toInt(); config.serialStopBits=row.stops->currentText(); }
     else { config.tcpEnabled=row.enabled->isChecked(); config.tcpBindAddress=row.address->text().trimmed(); config.tcpPort=row.port->value(); config.ptyEnabled=row.pty->isChecked(); config.ptyDialect=row.dialect->currentText();
         config.rigctldEnabled=row.rigctld->isChecked(); config.rigctldBindAddress=row.rigAddress->text().trimmed(); config.rigctldPort=row.rigPort->value(); }
-    const QPointer<CatChannelSetupPage> lifetime(this);
-    const bool accepted=m_service->reconfigureChannel(channel,config);
-    if (!lifetime) { return; }
-    syncFromModel();
-    if (!accepted) { m_rows[channel-1].status->setText(tr("Configuration refused: check address, port, format and exclusive device assignment.")); }
+    const QPointer<CatChannelSetupPage> lifetime(this); const bool remote=m_control->remote();
+    m_control->reconfigureChannel(channel,config,[lifetime,channel,remote](bool accepted,const QString& reason) {
+        if (!lifetime) { return; }
+        // The Core's new settings follow its answer; until then the page keeps what was chosen.
+        if (!accepted || !remote) { lifetime->syncFromModel(); }
+        if (lifetime && !accepted) { lifetime->m_rows[channel-1].status->setText(reason); }
+    },this);
 }
 void CatChannelSetupPage::syncFromModel() {
-    if (!m_service) { return; } m_syncing=true;
+    if (!m_control) { return; } m_syncing=true;
+    const bool available=m_control->available(); const bool remote=m_control->remote(); const QString reason=m_control->unavailableReason();
+    const CatPlatform platform=m_control->platform();
+    showUnavailable(m_unavailable,m_control);
     for (int i=0;i<4;++i) {
-        Row& row=m_rows[i]; const CatEndpointConfig config=m_service->channelConfig(i+1);
-        fillSlices(row.primary,model(),config.binding.primarySliceId,config.binding.primaryIncarnation); fillSlices(row.secondary,model(),config.binding.secondarySliceId.value_or(-1),config.binding.secondaryIncarnation.value_or(0));
+        Row& row=m_rows[i]; const CatEndpointConfig config=m_control->channelConfig(i+1); const CatChannelStatus status=m_control->channelStatus(i+1);
+        const bool serialMissing=m_serial && available && !platform.serial;
+        m_groups[i]->setEnabled(available && !serialMissing);
+        m_groups[i]->setToolTip(!available ? reason : serialMissing ? noSerialReason(remote) : QString());
+        row.enabled->setToolTip(!available ? reason : QString());
+        fillSlices(row.primary,model(),config.binding.primarySliceId,config.binding.primaryIncarnation,status.primaryValid); fillSlices(row.secondary,model(),config.binding.secondarySliceId.value_or(-1),config.binding.secondaryIncarnation.value_or(0),status.secondaryValid);
         { const QSignalBlocker block(row.enabled); row.enabled->setChecked(m_serial ? config.serialEnabled : config.tcpEnabled); }
-        if (m_serial) { setChoice(row.device,config.serialDevice); setChoice(row.baud,QString::number(config.serialBaud)); setChoice(row.parity,config.serialParity); setChoice(row.bits,QString::number(config.serialDataBits)); setChoice(row.stops,config.serialStopBits); row.status->setText(tr("Serial: %1").arg(m_service->transportState(i+1,CatTransportKind::Serial))); }
+        if (m_serial) {
+            if (row.device->property("devices").toStringList()!=platform.serialDevices) {
+                const QSignalBlocker blocked(row.device); row.device->clear(); row.device->addItems(platform.serialDevices); row.device->setProperty("devices",platform.serialDevices);
+            }
+            serialPlatformChoices(row.parity,row.stops,platform,remote);
+            setChoice(row.device,config.serialDevice); setChoice(row.baud,QString::number(config.serialBaud)); setChoice(row.parity,config.serialParity); setChoice(row.bits,QString::number(config.serialDataBits)); setChoice(row.stops,config.serialStopBits); row.status->setText(tr("Serial: %1").arg(status.serial));
+        }
         else {
             const QSignalBlocker address(row.address), port(row.port), pty(row.pty);
             const QSignalBlocker rigEnabled(row.rigctld), rigAddress(row.rigAddress), rigPort(row.rigPort);
             row.rigctld->setChecked(config.rigctldEnabled); row.rigAddress->setText(config.rigctldBindAddress); row.rigPort->setValue(config.rigctldPort); setChoice(row.dialect,config.ptyDialect);
-            if (!local(model())) { row.pty->setToolTip(localReason()); }
-#if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
-            else { row.pty->setToolTip(tr("CAT %1 PTY uses %2 commands on this computer.").arg(i+1).arg(config.ptyDialect)); }
-#endif
-            row.rigStatus->setText(tr("Rigctld: %1 · Bound: %2:%3 · Clients: %4").arg(m_service->transportState(i+1,CatTransportKind::Rigctld),m_service->rigctldBoundAddress(i+1).toString()).arg(m_service->rigctldBoundPort(i+1)).arg(m_service->rigctldClientCount(i+1))+openToNetwork(config.rigctldEnabled,config.rigctldBindAddress));
+            // PTYs are the computer running CAT's (the Core's, from a connected desktop).
+            if (available && !platform.pty) { row.pty->setEnabled(false); row.pty->setToolTip(noPtyReason(remote)); }
+            else {
+                row.pty->setEnabled(true);
+                row.pty->setToolTip(!available ? reason : remote ? tr("CAT %1 PTY uses %2 commands on the Core's computer.").arg(i+1).arg(config.ptyDialect) : tr("CAT %1 PTY uses %2 commands on this computer.").arg(i+1).arg(config.ptyDialect));
+            }
+            row.rigStatus->setText(tr("Rigctld: %1 · Bound: %2:%3 · Clients: %4").arg(status.rigctld,status.rigctldBoundAddress).arg(status.rigctldBoundPort).arg(status.rigctldClients)+openToNetwork(config.rigctldEnabled,config.rigctldBindAddress));
             row.address->setText(config.tcpBindAddress); row.port->setValue(config.tcpPort); row.pty->setChecked(config.ptyEnabled);
-            row.path->setText(m_service->ptySlavePath(i+1).isEmpty() ? tr("PTY: %1").arg(m_service->transportState(i+1,CatTransportKind::Pty)) : m_service->ptySlavePath(i+1));
-            row.status->setText(tr("TCP: %1 · Bound: %2:%3 · Clients: %4").arg(m_service->transportState(i+1,CatTransportKind::Tcp),m_service->boundAddress(i+1).toString()).arg(m_service->boundPort(i+1)).arg(m_service->clientCount(i+1))+openToNetwork(config.tcpEnabled,config.tcpBindAddress));
+            row.path->setText(status.ptyPath.isEmpty() ? tr("PTY: %1").arg(status.pty) : status.ptyPath);
+            row.status->setText(tr("TCP: %1 · Bound: %2:%3 · Clients: %4").arg(status.tcp,status.tcpBoundAddress).arg(status.tcpBoundPort).arg(status.tcpClients)+openToNetwork(config.tcpEnabled,config.tcpBindAddress));
         }
     }
     m_syncing=false;
 }
 CatGlobalSetupPage::CatGlobalSetupPage(const QString& title,RadioModel* model,QWidget* parent)
-    : SetupPage(title,model,parent),m_service(model ? model->catService() : nullptr) {
+    : SetupPage(title,model,parent),m_control(model ? model->catControl() : nullptr) {
     setStyleSheet(QString::fromLatin1(Style::kPageStyle));
-    if (!local(model)) { contentLayout()->insertWidget(contentLayout()->count()-1,note(this,localReason())); }
-    if (m_service) { connect(m_service,&CatService::globalConfigurationChanged,this,[this] { syncFromModel(); }); }
+    m_unavailable=note(this,{}); m_unavailable->setObjectName("catUnavailable"); contentLayout()->insertWidget(contentLayout()->count()-1,m_unavailable);
+    m_refused=note(this,{}); m_refused->setObjectName("catRefused"); m_refused->setVisible(false); contentLayout()->insertWidget(contentLayout()->count()-1,m_refused);
+    if (m_control) { connect(m_control,&CatControl::changed,this,[this] { syncFromModel(); }); }
 }
 bool CatGlobalSetupPage::eventFilter(QObject* watched,QEvent* event) { if (event->type()==QEvent::Wheel) { return true; } return SetupPage::eventFilter(watched,event); }
 QCheckBox* CatGlobalSetupPage::addCheck(QFormLayout* form,const QString& label,const QString& name,bool CatGlobalConfig::* field) {
-    auto* widget=new QCheckBox(label,this); widget->setMinimumHeight(Style::kButtonH); widget->setObjectName(name); widget->setStyleSheet(QString::fromLatin1(Style::kCheckBoxStyle)); widget->setEnabled(local(model())); form->addRow(widget);
+    auto* widget=new QCheckBox(label,this); widget->setMinimumHeight(Style::kButtonH); widget->setObjectName(name); widget->setStyleSheet(QString::fromLatin1(Style::kCheckBoxStyle)); m_controls.push_back(widget); form->addRow(widget);
     m_updates.emplace_back([widget,field](const CatGlobalConfig& config) { const QSignalBlocker blocked(widget); widget->setChecked(config.*field); });
-    connect(widget,&QCheckBox::toggled,this,[this,field](bool value) { if (m_syncing || !m_service) { return; } CatGlobalConfig config=m_service->globalConfig(); config.*field=value; applyConfiguration(config); }); return widget;
+    connect(widget,&QCheckBox::toggled,this,[this,field](bool value) { if (m_syncing || !m_control) { return; } CatGlobalConfig config=m_control->globalConfig(); config.*field=value; applyConfiguration(config); }); return widget;
 }
 QComboBox* CatGlobalSetupPage::addChoice(QFormLayout* form,const QString& label,const QString& name,const QStringList& items,QString CatGlobalConfig::* field) {
-    auto* widget=combo(this,items,name); widget->setEnabled(local(model())); widget->installEventFilter(this); form->addRow(label,widget);
+    auto* widget=combo(this,items,name); m_controls.push_back(widget); widget->installEventFilter(this); form->addRow(label,widget);
     m_updates.emplace_back([widget,field](const CatGlobalConfig& config) { setChoice(widget,config.*field); });
-    connect(widget,&QComboBox::currentTextChanged,this,[this,field](const QString& value) { if (m_syncing || !m_service) { return; } CatGlobalConfig config=m_service->globalConfig(); config.*field=value; applyConfiguration(config); }); return widget;
+    connect(widget,&QComboBox::currentTextChanged,this,[this,field](const QString& value) { if (m_syncing || !m_control) { return; } CatGlobalConfig config=m_control->globalConfig(); config.*field=value; applyConfiguration(config); }); return widget;
 }
 QLineEdit* CatGlobalSetupPage::addText(QFormLayout* form,const QString& label,const QString& name,QString CatGlobalConfig::* field) {
-    auto* widget=new QLineEdit(this); widget->setObjectName(name); widget->setStyleSheet(QString::fromLatin1(Style::kLineEditStyle)); widget->setEnabled(local(model())); form->addRow(label,widget);
+    auto* widget=new QLineEdit(this); widget->setObjectName(name); widget->setStyleSheet(QString::fromLatin1(Style::kLineEditStyle)); m_controls.push_back(widget); form->addRow(label,widget);
     m_updates.emplace_back([widget,field](const CatGlobalConfig& config) { const QSignalBlocker blocked(widget); widget->setText(config.*field); });
-    connect(widget,&QLineEdit::editingFinished,this,[this,widget,field] { if (m_syncing || !m_service) { return; } CatGlobalConfig config=m_service->globalConfig(); config.*field=widget->text(); applyConfiguration(config); }); return widget;
+    connect(widget,&QLineEdit::editingFinished,this,[this,widget,field] { if (m_syncing || !m_control) { return; } CatGlobalConfig config=m_control->globalConfig(); config.*field=widget->text(); applyConfiguration(config); }); return widget;
 }
 QSpinBox* CatGlobalSetupPage::addNumber(QFormLayout* form,const QString& label,const QString& name,int low,int high,int CatGlobalConfig::* field) {
-    auto* widget=new QSpinBox(this); widget->setObjectName(name); widget->setRange(low,high); widget->setStyleSheet(QString::fromLatin1(Style::kSpinBoxStyle)); widget->setEnabled(local(model())); widget->installEventFilter(this); form->addRow(label,widget);
+    auto* widget=new QSpinBox(this); widget->setObjectName(name); widget->setRange(low,high); widget->setStyleSheet(QString::fromLatin1(Style::kSpinBoxStyle)); m_controls.push_back(widget); widget->installEventFilter(this); form->addRow(label,widget);
     m_updates.emplace_back([widget,field](const CatGlobalConfig& config) { const QSignalBlocker blocked(widget); widget->setValue(config.*field); });
-    connect(widget,&QSpinBox::valueChanged,this,[this,field](int value) { if (m_syncing || !m_service) { return; } CatGlobalConfig config=m_service->globalConfig(); config.*field=value; applyConfiguration(config); }); return widget;
+    connect(widget,&QSpinBox::valueChanged,this,[this,field](int value) { if (m_syncing || !m_control) { return; } CatGlobalConfig config=m_control->globalConfig(); config.*field=value; applyConfiguration(config); }); return widget;
 }
 void CatGlobalSetupPage::applyConfiguration(const CatGlobalConfig& config) {
-    if (!m_service) { return; }
-    const QPointer<CatGlobalSetupPage> lifetime(this);
-    const bool accepted=m_service->reconfigureGlobal(config);
-    if (!lifetime) { return; }
-    syncFromModel();
-    if (!accepted && m_status) { m_status->setText(tr("Configuration refused: check PTT source, sampled inputs and device assignment.")); }
+    if (!m_control || !m_control->available()) { return; }
+    const QPointer<CatGlobalSetupPage> lifetime(this); const bool remote=m_control->remote();
+    m_control->reconfigureGlobal(config,[lifetime,remote](bool accepted,const QString& reason) {
+        if (!lifetime) { return; }
+        // The Core's new settings follow its answer; until then the page keeps what was chosen.
+        if (!accepted || !remote) { lifetime->syncFromModel(); }
+        if (!lifetime) { return; }
+        if (!accepted && lifetime->m_status) { lifetime->m_status->setText(reason); }
+        else if (lifetime->m_refused && remote) { lifetime->m_refused->setText(accepted ? QString() : reason); lifetime->m_refused->setVisible(!accepted); }
+    },this);
 }
-void CatGlobalSetupPage::syncFromModel() { if (!m_service) { return; } m_syncing=true; const CatGlobalConfig config=m_service->globalConfig(); for (const auto& update:m_updates) { update(config); } if (m_status) { m_status->setText(tr("PTT: %1").arg(m_service->pttState())); } m_syncing=false; }
+void CatGlobalSetupPage::syncFromModel() {
+    if (!m_control) { return; } m_syncing=true;
+    const bool available=m_control->available(); const bool remote=m_control->remote(); const QString reason=m_control->unavailableReason();
+    const CatPlatform platform=m_control->platform();
+    showUnavailable(m_unavailable,m_control);
+    for (QWidget* widget:m_controls) { widget->setEnabled(available); widget->setToolTip(available ? QString() : reason); }
+    if (m_serialGroup) {
+        const bool serialMissing=available && !platform.serial;
+        m_serialGroup->setEnabled(available && !serialMissing); m_serialGroup->setToolTip(!available ? reason : serialMissing ? noSerialReason(remote) : QString());
+        if (m_noSerialNote) {
+            m_noSerialNote->setText(remote ? tr("Input PTT is not available: the Core was built without serial port support.") : tr("Input PTT is not available: this copy of NereusSDR was built without serial port support."));
+            m_noSerialNote->setVisible(serialMissing);
+        }
+    }
+    if (m_parity && m_stops) { serialPlatformChoices(m_parity,m_stops,platform,remote); }
+    const CatGlobalConfig config=m_control->globalConfig(); for (const auto& update:m_updates) { update(config); }
+    if (m_status) { m_status->setText(tr("PTT: %1").arg(m_control->pttState())); }
+    m_syncing=false;
+}
 CatOptionsSetupPage::CatOptionsSetupPage(RadioModel* model,QWidget* parent) : CatGlobalSetupPage(tr("CAT Options"),model,parent) {
     auto* options=addSection(tr("Compatibility and automatic information")); auto* form=sectionForm(options);
     // From Thetis setup.Designer.cs:59524-59528 [v2.10.3.15]. Rig identity choice facts.
@@ -289,19 +334,20 @@ CatOptionsSetupPage::CatOptionsSetupPage(RadioModel* model,QWidget* parent) : Ca
     auto* channel=combo(testing,{"1","2","3","4"},"catTesterChannel"); channel->installEventFilter(this); testForm->addRow(tr("Channel:"),channel);
     auto* command=new QLineEdit("ID;",testing); command->setStyleSheet(QString::fromLatin1(Style::kLineEditStyle)); command->setObjectName("catTesterCommand"); testForm->addRow(tr("Command:"),command);
     auto* reply=note(testing,{}); reply->setMinimumWidth(200); reply->setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Preferred); reply->setObjectName("catTesterReply"); reply->setTextInteractionFlags(Qt::TextSelectableByMouse); testForm->addRow(tr("Reply:"),reply);
-    auto* send=new QPushButton(tr("Test command"),testing); send->setAutoDefault(false); send->setStyleSheet(QString::fromLatin1(Style::kButtonStyle)); send->setObjectName("catTesterSend"); send->setEnabled(local(model)); testForm->addRow(send);
+    auto* send=new QPushButton(tr("Test command"),testing); send->setAutoDefault(false); send->setStyleSheet(QString::fromLatin1(Style::kButtonStyle)); send->setObjectName("catTesterSend"); m_controls.push_back(send); testForm->addRow(send);
     connect(send,&QPushButton::clicked,this,[this,channel,command,reply] {
-        if (!m_service) { return; }
+        if (!m_control) { return; }
         const QPointer<CatOptionsSetupPage> lifetime(this); const QPointer<QLabel> output(reply);
-        const QByteArray bytes=m_service->testCommand(channel->currentText().toInt(),command->text().toLatin1());
-        if (lifetime && output) { output->setText(bytes.isEmpty() ? tr("Accepted (no reply)") : QString::fromLatin1(bytes)); }
+        m_control->testCommand(channel->currentText().toInt(),command->text().toLatin1(),[lifetime,output](bool ran,const QByteArray& bytes,const QString& reason) {
+            if (lifetime && output) { output->setText(!ran ? reason : bytes.isEmpty() ? tr("Accepted (no reply)") : QString::fromLatin1(bytes)); }
+        });
     });
     testForm->addRow(note(testing,tr("Test commands act on the radio: receive and setting changes take effect. Commands that transmit (TX, Tune, Two Tone, VOX on, PureSignal single shot and calibration) are refused here.")));
-    auto* log=new QPushButton(tr("Show CAT Log…"),testing); log->setObjectName("catShowLog"); log->setAutoDefault(false); log->setStyleSheet(QString::fromLatin1(Style::kButtonStyle)); log->setEnabled(local(model)); connect(log,&QPushButton::clicked,this,&CatOptionsSetupPage::showLogRequested); testForm->addRow(log);
+    auto* log=new QPushButton(tr("Show CAT Log…"),testing); log->setObjectName("catShowLog"); log->setAutoDefault(false); log->setStyleSheet(QString::fromLatin1(Style::kButtonStyle)); m_controls.push_back(log); connect(log,&QPushButton::clicked,this,&CatOptionsSetupPage::showLogRequested); testForm->addRow(log);
     syncFromModel();
 }
 CatPttSetupPage::CatPttSetupPage(RadioModel* model,QWidget* parent) : CatGlobalSetupPage(tr("CAT PTT"),model,parent) {
-    auto* group=addSection(tr("Input PTT")); auto* form=sectionForm(group);
+    auto* group=addSection(tr("Input PTT")); auto* form=sectionForm(group); m_serialGroup=group;
     addCheck(form,tr("Enable input PTT"),"catPttEnabled",&CatGlobalConfig::pttEnabled);
     addChoice(form,tr("Input source:"),"catPttSource",{"None","CAT1","CAT2","CAT3","CAT4","Physical"},&CatGlobalConfig::pttDeviceSource);
     addCheck(form,tr("Legacy RTS wiring — samples CTS input"),"catPttCts",&CatGlobalConfig::pttUseCts);
@@ -309,19 +355,16 @@ CatPttSetupPage::CatPttSetupPage(RadioModel* model,QWidget* parent) : CatGlobalS
     addText(form,tr("Separate physical device:"),"catPttDevice",&CatGlobalConfig::pttSerialDevice);
     addNumber(form,tr("Physical device's CAT channel:"),"catPttChannel",1,4,&CatGlobalConfig::pttChannel);
     // Source serial choices are the same as the ordinary CAT ports, cited above.
-    auto* baud=combo(group,baudChoices(),"catPttBaud"); baud->installEventFilter(this); form->addRow(tr("Baud:"),baud); m_updates.emplace_back([baud](const CatGlobalConfig& c) { setChoice(baud,QString::number(c.pttSerialBaud)); });
-    connect(baud,&QComboBox::currentTextChanged,this,[this](const QString& text) { if (!m_syncing && m_service) { CatGlobalConfig c=m_service->globalConfig(); c.pttSerialBaud=text.toInt(); applyConfiguration(c); } });
-    auto* parity=addChoice(form,tr("Parity:"),"catPttParity",{"None","Odd","Even","Mark","Space"},&CatGlobalConfig::pttSerialParity);
+    auto* baud=combo(group,baudChoices(),"catPttBaud"); baud->installEventFilter(this); m_controls.push_back(baud); form->addRow(tr("Baud:"),baud); m_updates.emplace_back([baud](const CatGlobalConfig& c) { setChoice(baud,QString::number(c.pttSerialBaud)); });
+    connect(baud,&QComboBox::currentTextChanged,this,[this](const QString& text) { if (!m_syncing && m_control) { CatGlobalConfig c=m_control->globalConfig(); c.pttSerialBaud=text.toInt(); applyConfiguration(c); } });
+    m_parity=addChoice(form,tr("Parity:"),"catPttParity",{"None","Odd","Even","Mark","Space"},&CatGlobalConfig::pttSerialParity);
     // Qt Data5–Data8: https://doc.qt.io/qt-6/qserialport.html#DataBits-enum
     addNumber(form,tr("Data bits:"),"catPttBits",5,8,&CatGlobalConfig::pttSerialDataBits);
-    auto* stops=addChoice(form,tr("Stop bits:"),"catPttStops",{"1","1.5","2"},&CatGlobalConfig::pttSerialStopBits); serialPlatformChoices(parity,stops);
+    m_stops=addChoice(form,tr("Stop bits:"),"catPttStops",{"1","1.5","2"},&CatGlobalConfig::pttSerialStopBits);
     m_status=note(group,{}); m_status->setObjectName("catPttStatus"); form->addRow(m_status);
     form->addRow(note(group,tr("CAT1–4 read the pins of a serial CAT port that is already open. Physical opens a serial device of its own. After a press, every selected input must be released before the next press can key the radio. Opening this page or restoring settings never keys the radio. These controls never drive the RTS or DTR pins.")));
-#ifndef HAVE_SERIALPORT
-    group->setEnabled(false); group->setToolTip(tr("This copy of NereusSDR was built without serial port support.")); contentLayout()->insertWidget(contentLayout()->count()-1,note(this,tr("Input PTT is not available: this copy of NereusSDR was built without serial port support.")));
-#endif
-    if (!local(model)) { group->setEnabled(false); }
-    if (m_service) { connect(m_service,&CatService::pttStateChanged,this,[this] { syncFromModel(); }); }
+    // Shown while the computer running CAT has no serial port support.
+    m_noSerialNote=note(this,{}); m_noSerialNote->setVisible(false); contentLayout()->insertWidget(contentLayout()->count()-1,m_noSerialNote);
     syncFromModel();
 }
 } // namespace NereusSDR

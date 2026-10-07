@@ -6787,6 +6787,11 @@ endif()
 # Loopback only.
 nereus_add_test(tst_station_cat fakes/LoopbackTransport.cpp)
 target_link_libraries(tst_station_cat PRIVATE Qt6::Network)
+# CAT setup from a connected desktop, the client side: a remote window's CAT
+# pages, applet and log window read and change a real Core's CAT through
+# RadioModel::catControl(). Loopback only.
+nereus_add_test(tst_cat_remote_setup fakes/LoopbackTransport.cpp)
+target_link_libraries(tst_cat_remote_setup PRIVATE Qt6::Network)
 
 # R-R3-22 / R-R3-47: the Core's station listeners (the SmartSDR API listener
 # on 4992, the accessory discovery filter, the station TCI server) accept

@@ -606,6 +606,9 @@
 //   2026-10-06 - CAT status count includes rigctld clients; a remote
 //                window's CAT status reads "On the Core". J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - The CAT status and the CAT log read catControl(): a remote
+//                window shows the Core's CAT state, counts and log. J.J.
+//                Boyd (KG4VCF), AI tooling: Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -984,6 +987,7 @@ warren@wpratt.com
 #include "applets/DvkApplet.h"
 #include "applets/CatApplet.h"
 #include "core/cat/CatService.h"
+#include "core/cat/CatControl.h"
 #include "setup/CatLogWindow.h"
 #include "applets/TunerApplet.h"
 // Phase 23: TCI server + applets (guarded so non-WebSocket builds still compile)
@@ -12023,21 +12027,24 @@ void MainWindow::buildStatusBar()
     m_catIndicator->setObjectName(QStringLiteral("statusCatIndicator"));
     hbox->addWidget(m_catIndicator);
     m_catIndicator->installEventFilter(this);
+    // A remote window shows the Core's CAT state and counts.
     const auto refreshCat = [this] {
-        const bool local=m_radioModel->ownsLocalDsp(); CatService* service=m_radioModel->catService();
+        CatControl* control=m_radioModel->catControl();
+        const bool available=control && control->available();
         bool listening=false; bool error=false; int clients=0; QStringList details;
-        for (int channel=1;channel<=4;++channel) {
-            listening=listening || service->isListening(channel); clients+=service->clientCount(channel)+service->rigctldClientCount(channel);
-            const QString state=service->channelState(channel); error=error || state.contains("error",Qt::CaseInsensitive) || state.contains("unavailable",Qt::CaseInsensitive);
+        if (control && control->remote()) { details.append(tr("CAT on the Core's computer:")); }
+        for (int channel=1;channel<=4 && available;++channel) {
+            const CatChannelStatus status=control->channelStatus(channel);
+            listening=listening || status.listening; clients+=status.tcpClients+status.rigctldClients;
+            const QString state=status.state; error=error || state.contains("error",Qt::CaseInsensitive) || state.contains("unavailable",Qt::CaseInsensitive);
             details.append(tr("CAT%1: %2").arg(channel).arg(state));
         }
+        if (!available && control) { details.append(control->unavailableReason()); }
         const auto labels=m_catIndicator->findChildren<QLabel*>();
-        if (labels.size()>1) { labels.last()->setText(!local ? tr("On the Core") : error ? tr("Error") : listening ? tr("On (%1)").arg(clients) : tr("Off")); }
-        m_catIndicator->setToolTip(local ? details.join('\n') : tr("CAT listeners are configured on the computer running the Core."));
+        if (labels.size()>1) { labels.last()->setText(error ? tr("Error") : listening ? tr("On (%1)").arg(clients) : tr("Off")); }
+        m_catIndicator->setToolTip(details.join('\n'));
     };
-    connect(m_radioModel->catService(),&CatService::channelStateChanged,this,refreshCat);
-    connect(m_radioModel->catService(),&CatService::clientCountChanged,this,refreshCat);
-    connect(m_radioModel->catService(),&CatService::rigctldClientCountChanged,this,refreshCat);
+    connect(m_radioModel->catControl(),&CatControl::changed,this,refreshCat);
     refreshCat();
     m_catSep = makeSep();
     hbox->addWidget(m_catSep);
@@ -12824,8 +12831,11 @@ void MainWindow::openCatSetupPage()
 }
 void MainWindow::showCatLog()
 {
-    if (!m_radioModel->ownsLocalDsp()) { return; }
-    if (!m_catLogWindow) { m_catLogWindow=new CatLogWindow(m_radioModel->catService(),this); }
+    if (!m_catLogWindow) {
+        m_catLogWindow=new CatLogWindow(m_radioModel->catControl(),this);
+        // A remote window follows the Core's CAT log only while it is open.
+        if (!m_radioModel->ownsLocalDsp()) { m_catLogWindow->setAttribute(Qt::WA_DeleteOnClose); }
+    }
     m_catLogWindow->show(); m_catLogWindow->raise(); m_catLogWindow->activateWindow();
 }
 void MainWindow::openTciSetupPage()

@@ -23,7 +23,7 @@ class QFormLayout;
 #include <QWidget>
 
 namespace NereusSDR { class TciServer; }
-namespace NereusSDR { class RadioModel; class CatService; }
+namespace NereusSDR { class RadioModel; class CatControl; }
 
 namespace NereusSDR {
 
@@ -39,6 +39,7 @@ public:
 protected:
     CatChannelSetupPage(RadioModel*, bool serial, QWidget*);
     bool eventFilter(QObject*, QEvent*) override;
+    void showEvent(QShowEvent*) override;
 private:
     struct Row {
         QCheckBox* enabled{}; QComboBox* device{}; QComboBox* baud{};
@@ -50,7 +51,9 @@ private:
         QComboBox* dialect{}; QLabel* rigStatus{};
     };
     Row m_rows[4];
-    QPointer<CatService> m_service;
+    QGroupBox* m_groups[4]{};
+    QPointer<CatControl> m_control;
+    QLabel* m_unavailable{};
     bool m_serial{false}; bool m_syncing{false};
     void apply(int);
 };
@@ -232,8 +235,15 @@ protected:
     QComboBox* addChoice(QFormLayout*, const QString&, const QString&, const QStringList&, QString CatGlobalConfig::*);
     QLineEdit* addText(QFormLayout*, const QString&, const QString&, QString CatGlobalConfig::*);
     QSpinBox* addNumber(QFormLayout*, const QString&, const QString&, int, int, int CatGlobalConfig::*);
-    QPointer<CatService> m_service;
+    QPointer<CatControl> m_control;
     QLabel* m_status{};
+    QLabel* m_unavailable{};
+    QLabel* m_refused{};
+    QLabel* m_noSerialNote{};
+    QGroupBox* m_serialGroup{};
+    QComboBox* m_parity{};
+    QComboBox* m_stops{};
+    std::vector<QWidget*> m_controls;
     std::vector<std::function<void(const CatGlobalConfig&)>> m_updates;
     void applyConfiguration(const CatGlobalConfig&);
     bool m_syncing{false};

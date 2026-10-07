@@ -29,12 +29,15 @@
 //                 controls now live in TciApplet (Phase 21, 0b615a7).
 //   2026-10-06 — Remote-window reason in operator words. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-07 — Reads and switches CAT1 through RadioModel::catControl(),
+//                 the Core's CAT in a connected desktop. J.J. Boyd
+//                 (KG4VCF), AI tooling: Claude Code.
 // =================================================================
 
 #include "CatApplet.h"
 #include "NyiOverlay.h"
 #include "models/RadioModel.h"
-#include "core/cat/CatService.h"
+#include "core/cat/CatControl.h"
 #include <QSignalBlocker>
 #include "gui/ComboStyle.h"
 #include "gui/StyleConstants.h"
@@ -69,30 +72,25 @@ static QLabel* makePathLabel(const QString& text, QWidget* parent)
 CatApplet::CatApplet(RadioModel* model, QWidget* parent)
     : AppletWidget(model, parent)
 {
-    m_service=model ? model->catService() : nullptr;
-    m_localHost=model && model->ownsLocalDsp();
+    m_control=model ? model->catControl() : nullptr;
     buildUI();
-    if (model && model->catService()) {
-        const QPointer<CatService> service=m_service;
-        connect(service,&CatService::configurationChanged,this,[this] { syncFromModel(); });
-        connect(service,&CatService::channelStateChanged,this,[this] { syncFromModel(); });
-        connect(service,&CatService::clientCountChanged,this,[this] { syncFromModel(); });
-        connect(service,&CatService::ptyPathChanged,this,[this] { syncFromModel(); });
-        connect(service,&CatService::transportStateChanged,this,[this] { syncFromModel(); });
-        connect(m_tcpBtn,&QPushButton::toggled,this,[this,service](bool enabled) {
-            if (!service) { return; }
-            CatEndpointConfig config=service->channelConfig(1); config.tcpEnabled=enabled;
-            const QPointer<CatApplet> lifetime(this);
-            service->reconfigureChannel(1,config); if (lifetime) { syncFromModel(); }
-        });
-        connect(m_ptyBtn,&QPushButton::toggled,this,[this,service](bool enabled) {
-            if (!service) { return; }
-            CatEndpointConfig config=service->channelConfig(1); config.ptyEnabled=enabled;
-            const QPointer<CatApplet> lifetime(this);
-            service->reconfigureChannel(1,config); if (lifetime) { syncFromModel(); }
-        });
+    if (m_control) {
+        connect(m_control,&CatControl::changed,this,[this] { syncFromModel(); });
+        connect(m_tcpBtn,&QPushButton::toggled,this,[this](bool enabled) { setCatOne(&CatEndpointConfig::tcpEnabled,enabled); });
+        connect(m_ptyBtn,&QPushButton::toggled,this,[this](bool enabled) { setCatOne(&CatEndpointConfig::ptyEnabled,enabled); });
     }
     syncFromModel();
+}
+
+void CatApplet::setCatOne(bool CatEndpointConfig::* field, bool enabled)
+{
+    if (!m_control || !m_control->available()) { return; }
+    CatEndpointConfig config=m_control->channelConfig(1); config.*field=enabled;
+    const QPointer<CatApplet> lifetime(this); const bool remote=m_control->remote();
+    // The Core's new settings follow its answer; a refusal is said by the window.
+    m_control->reconfigureChannel(1,config,[lifetime,remote](bool accepted,const QString&) {
+        if (lifetime && (!accepted || !remote)) { lifetime->syncFromModel(); }
+    });
 }
 
 void CatApplet::buildUI()
@@ -209,32 +207,34 @@ void CatApplet::buildUI()
 
 void CatApplet::syncFromModel()
 {
-    CatService* service=m_service;
-    const bool available=m_localHost && service;
-    m_tcpBtn->setEnabled(available); m_ptyBtn->setEnabled(available);
-#if !defined(Q_OS_MAC) && !defined(Q_OS_LINUX)
-    m_ptyBtn->setEnabled(false); m_ptyBtn->setToolTip(tr("Native PTYs are available only on macOS and Linux."));
-#endif
+    CatControl* control=m_control;
+    const bool available=control && control->available();
+    const bool remote=control && control->remote();
+    const CatPlatform platform=control ? control->platform() : CatPlatform{};
+    m_tcpBtn->setEnabled(available); m_ptyBtn->setEnabled(available && platform.pty);
     if (!available) {
-        const QString reason=tr("CAT runs on the computer running the Core. Set it up there.");
+        const QString reason=control ? control->unavailableReason() : QString();
         m_tcpBtn->setToolTip(reason); m_ptyBtn->setToolTip(reason);
+    } else {
+        m_tcpBtn->setToolTip(tr("Enable TCP for CAT1. Configure all four channels individually in Setup → CAT & Network."));
+        // PTYs are the computer running CAT's (the Core's, from a connected desktop).
+        if (!platform.pty) { m_ptyBtn->setToolTip(remote ? tr("The Core's computer has no native PTYs: they are available only on macOS and Linux.") : tr("Native PTYs are available only on macOS and Linux.")); }
+        else { m_ptyBtn->setToolTip(tr("Enable %1 PTY for CAT1. Configure all four channels individually in Setup → CAT & Network.").arg(control->channelConfig(1).ptyDialect)); }
     }
-    if (!service) { return; }
+    if (!control) { return; }
     const QSignalBlocker tcp(m_tcpBtn),pty(m_ptyBtn);
-#if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
-    if (available) { m_ptyBtn->setToolTip(tr("Enable %1 PTY for CAT1. Configure all four channels individually in Setup → CAT & Network.").arg(service->channelConfig(1).ptyDialect)); }
-#endif
-    m_tcpBtn->setChecked(service->channelConfig(1).tcpEnabled); m_ptyBtn->setChecked(service->channelConfig(1).ptyEnabled);
+    m_tcpBtn->setChecked(control->channelConfig(1).tcpEnabled); m_ptyBtn->setChecked(control->channelConfig(1).ptyEnabled);
     for (int i=0;i<4;++i) {
-        const QString state=service->transportState(i+1,CatTransportKind::Tcp);
+        const CatChannelStatus status=control->channelStatus(i+1);
+        const QString state=status.tcp;
         const bool listening=state=="Listening";
         m_tcpLed[i]->setObjectName(QStringLiteral("catTcpLed%1").arg(i+1));
         m_tcpLed[i]->setStyleSheet(QStringLiteral("QLabel { background: %1; color: #c8d8e8; border-radius: 2px; font-size: 8px; font-weight: bold; }").arg(listening ? "#208040" : state.contains("error",Qt::CaseInsensitive) ? "#a04040" : "#405060"));
-        m_tcpLed[i]->setToolTip(tr("CAT%1 TCP: %2 · %3:%4 · %5 clients").arg(i+1).arg(state,service->boundAddress(i+1).toString()).arg(service->boundPort(i+1)).arg(service->clientCount(i+1)));
-        const QString path=service->ptySlavePath(i+1);
+        m_tcpLed[i]->setToolTip(tr("CAT%1 TCP: %2 · %3:%4 · %5 clients").arg(i+1).arg(state,status.tcpBoundAddress).arg(status.tcpBoundPort).arg(status.tcpClients));
+        const QString path=status.ptyPath;
         m_ptyPath[i]->setObjectName(QStringLiteral("catPtyPath%1").arg(i+1));
         m_ptyPath[i]->setText(path.isEmpty() ? QStringLiteral("—") : path);
-        m_ptyPath[i]->setToolTip(tr("CAT%1 %2 PTY: %3").arg(i+1).arg(service->channelConfig(i+1).ptyDialect,service->transportState(i+1,CatTransportKind::Pty)));
+        m_ptyPath[i]->setToolTip(tr("CAT%1 %2 PTY: %3").arg(i+1).arg(control->channelConfig(i+1).ptyDialect,status.pty));
         m_ptyPath[i]->setTextInteractionFlags(Qt::TextSelectableByMouse);
     }
 }

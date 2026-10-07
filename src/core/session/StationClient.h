@@ -464,6 +464,8 @@
 //   2026-10-07: CAT setup from a connected desktop: the stationCat feature
 //               and the four CAT requests. J.J. Boyd (KG4VCF). AI tooling:
 //               Claude Code.
+//   2026-10-07: requestCatLog and the `catLog` records for the CAT log
+//               window. J.J. Boyd (KG4VCF). AI tooling: Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -1399,6 +1401,7 @@ public:
     CommandOutcome requestStationCatTest(qint64 requestId, int channel,
                                          const QString& command) override;
     CommandOutcome requestStationCatRefreshDevices() override;
+    void requestCatLog(bool follow) override;
     CommandOutcome requestStationTciSetting(const QByteArray& name,
                                             const QVariant& value) override;
     CommandOutcome requestTxInterlockPolicy(int mode, int graceMs, bool swrGateEnabled,
@@ -1952,6 +1955,9 @@ private:
     quint16 m_agreedMinor = 0;
     // Parity Task 33: this window shows the CFC bar chart.
     bool m_cfcCompressionWanted = false;
+    // CAT setup from a connected desktop: the CAT log window follows the
+    // Core's `catLog` stream, subscribed again after each snapshot.
+    bool m_catLogWanted = false;
     void sendCfcCompressionSubscription(bool subscribe);
 
     /// iPhone app Task 4: this client's link majors (oldest first) and
