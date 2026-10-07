@@ -33,6 +33,9 @@
 //   2026-09-26: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
+//   2026-10-06: the model-list cell check runs only while the platform's
+//               accessibility is on, which Qt 6.8 never sets under xvfb.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -235,11 +238,19 @@ private slots:
         QCOMPARE(combo->currentData().toInt(), radio.model);
         QCOMPARE(removed.count(), 0);
         QVERIFY(resets.count() > 0);
-        QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(combo->view());
-        QVERIFY(accessible && accessible->tableInterface());
-        QAccessibleInterface* selected = accessible->tableInterface()->cellAt(0, 0);
-        QVERIFY(selected && selected->isValid());
-        QCOMPARE(selected->text(QAccessible::Name), combo->currentText());
+        // Qt drops a popup's cached cells on a model reset only while the
+        // platform's accessibility is on (QAccessible::updateAccessibility,
+        // qaccessible.cpp). Qt 6.11's QAccessible::setActive turns it on;
+        // Qt 6.8's only tells activation observers, so under Linux CI's xvfb,
+        // with no screen reader listening, the old cell stays cached. The
+        // new list's cell is checked wherever the platform is listening.
+        if (QAccessible::isActive()) {
+            QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(combo->view());
+            QVERIFY(accessible && accessible->tableInterface());
+            QAccessibleInterface* selected = accessible->tableInterface()->cellAt(0, 0);
+            QVERIFY(selected && selected->isValid());
+            QCOMPARE(selected->text(QAccessible::Name), combo->currentText());
+        }
     }
 
     void theCoresRadioFromTheWindow()
