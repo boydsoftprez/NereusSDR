@@ -607,8 +607,10 @@
 //                window's CAT status reads "On the Core". J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - The CAT status and the CAT log read catControl(): a remote
-//                window shows the Core's CAT state, counts and log. J.J.
-//                Boyd (KG4VCF), AI tooling: Claude Code.
+//                window shows the Core's CAT state, counts and log; the
+//                status bar's text from CatControl::indicator(), refreshed
+//                on the channels' live state. J.J. Boyd (KG4VCF), AI
+//                tooling: Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -12030,21 +12032,15 @@ void MainWindow::buildStatusBar()
     // A remote window shows the Core's CAT state and counts.
     const auto refreshCat = [this] {
         CatControl* control=m_radioModel->catControl();
-        const bool available=control && control->available();
-        bool listening=false; bool error=false; int clients=0; QStringList details;
-        if (control && control->remote()) { details.append(tr("CAT on the Core's computer:")); }
-        for (int channel=1;channel<=4 && available;++channel) {
-            const CatChannelStatus status=control->channelStatus(channel);
-            listening=listening || status.listening; clients+=status.tcpClients+status.rigctldClients;
-            const QString state=status.state; error=error || state.contains("error",Qt::CaseInsensitive) || state.contains("unavailable",Qt::CaseInsensitive);
-            details.append(tr("CAT%1: %2").arg(channel).arg(state));
-        }
-        if (!available && control) { details.append(control->unavailableReason()); }
+        if (!control) { return; }
+        const CatIndicator indicator=control->indicator();
         const auto labels=m_catIndicator->findChildren<QLabel*>();
-        if (labels.size()>1) { labels.last()->setText(error ? tr("Error") : listening ? tr("On (%1)").arg(clients) : tr("Off")); }
-        m_catIndicator->setToolTip(details.join('\n'));
+        if (labels.size()>1) { labels.last()->setText(indicator.text); }
+        m_catIndicator->setToolTip(indicator.details.join('\n'));
     };
-    connect(m_radioModel->catControl(),&CatControl::changed,this,refreshCat);
+    // The channels' live state and whether CAT can be read here.
+    connect(m_radioModel->catControl(),&CatControl::channelStatusChanged,this,refreshCat);
+    connect(m_radioModel->catControl(),&CatControl::availabilityChanged,this,refreshCat);
     refreshCat();
     m_catSep = makeSep();
     hbox->addWidget(m_catSep);

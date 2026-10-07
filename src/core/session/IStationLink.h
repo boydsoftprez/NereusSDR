@@ -234,7 +234,8 @@
 //                                    stationCatUnavailableReason. AI tooling:
 //                                    Claude Code.
 //   2026-10-07  J.J. Boyd / KG4VCF  requestCatLog: follow the Core's
-//                                    `catLog` stream for the CAT log window.
+//                                    `catLog` stream for the CAT log window,
+//                                    with its recent lines.
 //                                    AI tooling: Claude Code.
 // =================================================================
 
@@ -482,8 +483,9 @@ public:
     { return { false, stationCatUnavailableReason() }; }
     /// Subscribes to (true) or leaves (false) the Core's `catLog` record
     /// stream, and subscribes again after each new session while it is
-    /// wanted. The records arrive through RadioModel::applyStationRecordBatch.
-    virtual void requestCatLog(bool /*follow*/) {}
+    /// wanted, each time asking for the `backlog` newest records first.
+    /// The records arrive through RadioModel::applyStationRecordBatch.
+    virtual void requestCatLog(bool /*follow*/, int /*backlog*/ = 0) {}
     static QString stationCatUnavailableReason()
     { return QStringLiteral("This Core does not let this app set up its CAT. Updating the Core may help."); }
 

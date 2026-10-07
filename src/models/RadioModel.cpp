@@ -1022,8 +1022,9 @@
 //   2026-10-07 - CAT setup from a connected desktop: the `stationCat` object,
 //                and on the Core (Local role) its publisher over CatService.
 //                J.J. Boyd (KG4VCF). AI tooling: Claude Code.
-//   2026-10-07 - catControl() for the role, and the `catLog` records to it.
-//                J.J. Boyd (KG4VCF). AI tooling: Claude Code.
+//   2026-10-07 - catControl() for the role, and the `catLog` records and
+//                the CAT tester's replies to it. J.J. Boyd (KG4VCF).
+//                AI tooling: Claude Code.
 // =================================================================
 
 //=================================================================
@@ -10146,6 +10147,13 @@ void RadioModel::applyPanGridSetting(const QString& key)
         if (pan != nullptr) {
             pan->applyStationGridSetting(key);
         }
+    }
+}
+
+void RadioModel::reportStationCatTestReply(quint32 commandId, const QString& reply)
+{
+    if (auto* remote = qobject_cast<RemoteCatControl*>(m_catControl)) {
+        remote->applyTestReply(commandId, reply);
     }
 }
 

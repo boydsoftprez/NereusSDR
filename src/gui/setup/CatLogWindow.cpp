@@ -2,7 +2,9 @@
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-07 Reads CatControl: the bytes from logged(), the diagnostics from
 //            each change of state, so a connected desktop shows the Core's
-//            CAT log. J.J. Boyd (KG4VCF), AI tooling: Claude Code.
+//            CAT log; review fixes: the Core's recent lines when it opens,
+//            each line at the time CAT saw it, diagnostics from the state
+//            changes only. J.J. Boyd (KG4VCF), AI tooling: Claude Code.
 #include "CatLogWindow.h"
 #include "core/AppSettings.h"
 #include "gui/StyleConstants.h"
@@ -17,7 +19,8 @@
 #include <QVBoxLayout>
 namespace NereusSDR {
 namespace {
-constexpr int kMaximumEntries=10000;
+// A connected desktop is sent as many of the Core's recent lines.
+constexpr int kMaximumEntries=CatControl::kLogLines;
 QString escaped(const QByteArray& bytes) {
     QString text;
     for (const char byte:bytes) {
@@ -45,12 +48,13 @@ CatLogWindow::CatLogWindow(CatControl* control,QWidget* parent) : QDialog(parent
     connect(clear,&QPushButton::clicked,this,[this] { m_entries.clear(); m_view->clear(); }); connect(m_filter,&QComboBox::currentIndexChanged,this,[this] { refresh(); });
     if (control) {
         // A connected desktop follows the Core's CAT log while this listens.
-        m_logged=connect(control,&CatControl::logged,this,[this](int channel,bool inbound,const QByteArray& bytes) {
-            append(inbound ? 1:2,tr("CAT%1 %2 bytes=%3  %4  [hex %5]").arg(channel).arg(inbound ? "in":"out").arg(bytes.size()).arg(escaped(bytes),QString::fromLatin1(bytes.toHex(' '))));
+        m_logged=connect(control,&CatControl::logged,this,[this](int channel,bool inbound,const QByteArray& bytes,qint64 timeMs) {
+            append(inbound ? 1:2,tr("CAT%1 %2 bytes=%3  %4  [hex %5]").arg(channel).arg(inbound ? "in":"out").arg(bytes.size()).arg(escaped(bytes),QString::fromLatin1(bytes.toHex(' '))),timeMs);
         });
         for (int channel=1;channel<=4;++channel) { m_lastStatus.append(control->channelStatus(channel)); }
         m_lastPtt=control->pttState();
-        connect(control,&CatControl::changed,this,&CatLogWindow::noteChanges);
+        connect(control,&CatControl::channelStatusChanged,this,&CatLogWindow::noteChanges);
+        connect(control,&CatControl::pttStateChanged,this,&CatLogWindow::noteChanges);
     }
 }
 CatLogWindow::~CatLogWindow() { disconnect(m_logged); }
@@ -67,9 +71,10 @@ void CatLogWindow::noteChanges() {
     const QString ptt=m_control->pttState();
     if (ptt!=m_lastPtt) { m_lastPtt=ptt; append(3,tr("PTT: %1").arg(ptt)); }
 }
-void CatLogWindow::append(int direction,const QString& line) {
+void CatLogWindow::append(int direction,const QString& line,qint64 timeMs) {
     if (m_pause->isChecked()) { return; }
-    const QString dated=QDateTime::currentDateTime().toString("HH:mm:ss.zzz")+"  "+line;
+    const QDateTime when=timeMs>0 ? QDateTime::fromMSecsSinceEpoch(timeMs) : QDateTime::currentDateTime();
+    const QString dated=when.toString("HH:mm:ss.zzz")+"  "+line;
     m_entries.append({direction,dated}); if (m_entries.size()>kMaximumEntries) { m_entries.removeFirst(); }
     if (m_filter->currentIndex()==0 || m_filter->currentIndex()==direction) { m_view->appendPlainText(dated); }
     if (m_scroll->isChecked()) { m_view->verticalScrollBar()->setValue(m_view->verticalScrollBar()->maximum()); }

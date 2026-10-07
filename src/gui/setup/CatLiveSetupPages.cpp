@@ -11,7 +11,10 @@
 //              J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-07 - Read and change CAT through RadioModel::catControl(), so a
 //              connected desktop sets up the Core's CAT; the platform choices
-//              are the Core's there. J.J. Boyd (KG4VCF), AI tooling: Claude Code.
+//              are the Core's there. Review fixes: each page syncs on the
+//              changes it shows, a slice picked rebinds, a typed device path
+//              survives a refresh, the tester's refusal is the page's.
+//              J.J. Boyd (KG4VCF), AI tooling: Claude Code.
 #include "CatNetworkSetupPages.h"
 #include "core/cat/CatControl.h"
 #include "gui/StyleConstants.h"
@@ -89,6 +92,12 @@ void showUnavailable(QLabel* label, CatControl* control) {
     label->setText(available || !control ? QString() : control->unavailableReason());
     label->setVisible(!label->text().isEmpty());
 }
+// Marks the "Invalid binding" entry: picking it binds nothing anew.
+constexpr int kInvalidRole=Qt::UserRole+2;
+// The selector's entry names a slice to bind now (not None, not the closed one).
+bool pickedSlice(const QComboBox* widget) {
+    return widget->currentData().toInt()>=0 && !widget->currentData(kInvalidRole).toBool();
+}
 // `valid`: the binding still names the slice it was bound to (the Core's
 // own test, from a connected desktop).
 void fillSlices(QComboBox* widget, RadioModel* model, int selected, quint64 incarnation, bool valid) {
@@ -110,7 +119,7 @@ void fillSlices(QComboBox* widget, RadioModel* model, int selected, quint64 inca
     }
     if (index<0) {
         widget->addItem(QObject::tr("Invalid binding — ID %1").arg(selected),selected); index=widget->count()-1;
-        widget->setItemData(index,QVariant::fromValue(incarnation),Qt::UserRole+1);
+        widget->setItemData(index,QVariant::fromValue(incarnation),Qt::UserRole+1); widget->setItemData(index,true,kInvalidRole);
         unavailableChoice(widget,widget->itemText(index),QObject::tr("The slice this channel controlled was closed. Pick another slice."));
     }
     widget->setCurrentIndex(index);
@@ -168,10 +177,14 @@ CatChannelSetupPage::CatChannelSetupPage(RadioModel* model, bool serial, QWidget
         contentLayout()->insertWidget(contentLayout()->count()-1,group);
         connect(row.enabled,&QCheckBox::toggled,this,[this,i] { apply(i+1); });
         if (row.pty) { connect(row.pty,&QCheckBox::toggled,this,[this,i] { apply(i+1); }); }
-        for (QComboBox* widget:{row.primary,row.secondary,row.baud,row.parity,row.bits,row.stops,row.dialect}) {
+        for (QComboBox* widget:{row.baud,row.parity,row.bits,row.stops,row.dialect}) {
             if (!widget) { continue; } widget->installEventFilter(this);
             connect(widget,&QComboBox::currentIndexChanged,this,[this,i] { apply(i+1); });
         }
+        // A slice picked in a selector binds to that slice now, even one closed and opened again with its id.
+        row.primary->installEventFilter(this); row.secondary->installEventFilter(this);
+        connect(row.primary,&QComboBox::currentIndexChanged,this,[this,i] { apply(i+1,CatRebind{pickedSlice(m_rows[i].primary),false}); });
+        connect(row.secondary,&QComboBox::currentIndexChanged,this,[this,i] { apply(i+1,CatRebind{false,pickedSlice(m_rows[i].secondary)}); });
         if (row.device) { row.device->installEventFilter(this); connect(row.device->lineEdit(),&QLineEdit::editingFinished,this,[this,i] { apply(i+1); }); connect(row.device,&QComboBox::activated,this,[this,i] { apply(i+1); }); }
         if (row.rigctld) { connect(row.rigctld,&QCheckBox::toggled,this,[this,i] { apply(i+1); }); }
         if (row.rigAddress) { connect(row.rigAddress,&QLineEdit::editingFinished,this,[this,i] { apply(i+1); }); }
@@ -182,7 +195,13 @@ CatChannelSetupPage::CatChannelSetupPage(RadioModel* model, bool serial, QWidget
     if (!serial) {
         contentLayout()->insertWidget(contentLayout()->count()-1,note(this,tr("Each channel controls the slices assigned to it, whichever slice is selected on screen. A virtual serial port exists only while its channel is on.")));
     }
-    if (m_control) { connect(m_control,&CatControl::changed,this,[this] { syncFromModel(); }); }
+    if (m_control) {
+        // The changes this page shows: a channel's settings and live state, and whether CAT can be set up here.
+        connect(m_control,&CatControl::channelConfigChanged,this,[this] { syncFromModel(); });
+        connect(m_control,&CatControl::channelStatusChanged,this,[this] { syncFromModel(); });
+        connect(m_control,&CatControl::availabilityChanged,this,[this] { syncFromModel(); });
+        connect(m_control,&CatControl::platformChanged,this,[this] { syncPlatform(true); });
+    }
     if (model) { connect(model,&RadioModel::sliceAdded,this,[this] { syncFromModel(); }); connect(model,&RadioModel::sliceRemoved,this,[this] { syncFromModel(); }); }
     syncFromModel();
 }
@@ -194,7 +213,7 @@ void CatChannelSetupPage::showEvent(QShowEvent* event) {
     if (m_serial && m_control) { m_control->refreshDevices(); }
     SetupPage::showEvent(event);
 }
-void CatChannelSetupPage::apply(int channel) {
+void CatChannelSetupPage::apply(int channel, CatRebind rebind) {
     if (m_syncing || !m_control || !m_control->available()) { return; }
     const Row& row=m_rows[channel-1]; CatEndpointConfig config=m_control->channelConfig(channel);
     config.binding.primarySliceId=row.primary->currentData().toInt(); const int secondary=row.secondary->currentData().toInt();
@@ -210,38 +229,24 @@ void CatChannelSetupPage::apply(int channel) {
         // The Core's new settings follow its answer; until then the page keeps what was chosen.
         if (!accepted || !remote) { lifetime->syncFromModel(); }
         if (lifetime && !accepted) { lifetime->m_rows[channel-1].status->setText(reason); }
-    },this);
+    },this,rebind);
 }
 void CatChannelSetupPage::syncFromModel() {
     if (!m_control) { return; } m_syncing=true;
-    const bool available=m_control->available(); const bool remote=m_control->remote(); const QString reason=m_control->unavailableReason();
-    const CatPlatform platform=m_control->platform();
+    const bool available=m_control->available(); const QString reason=m_control->unavailableReason();
     showUnavailable(m_unavailable,m_control);
     for (int i=0;i<4;++i) {
         Row& row=m_rows[i]; const CatEndpointConfig config=m_control->channelConfig(i+1); const CatChannelStatus status=m_control->channelStatus(i+1);
-        const bool serialMissing=m_serial && available && !platform.serial;
-        m_groups[i]->setEnabled(available && !serialMissing);
-        m_groups[i]->setToolTip(!available ? reason : serialMissing ? noSerialReason(remote) : QString());
         row.enabled->setToolTip(!available ? reason : QString());
         fillSlices(row.primary,model(),config.binding.primarySliceId,config.binding.primaryIncarnation,status.primaryValid); fillSlices(row.secondary,model(),config.binding.secondarySliceId.value_or(-1),config.binding.secondaryIncarnation.value_or(0),status.secondaryValid);
         { const QSignalBlocker block(row.enabled); row.enabled->setChecked(m_serial ? config.serialEnabled : config.tcpEnabled); }
         if (m_serial) {
-            if (row.device->property("devices").toStringList()!=platform.serialDevices) {
-                const QSignalBlocker blocked(row.device); row.device->clear(); row.device->addItems(platform.serialDevices); row.device->setProperty("devices",platform.serialDevices);
-            }
-            serialPlatformChoices(row.parity,row.stops,platform,remote);
             setChoice(row.device,config.serialDevice); setChoice(row.baud,QString::number(config.serialBaud)); setChoice(row.parity,config.serialParity); setChoice(row.bits,QString::number(config.serialDataBits)); setChoice(row.stops,config.serialStopBits); row.status->setText(tr("Serial: %1").arg(status.serial));
         }
         else {
             const QSignalBlocker address(row.address), port(row.port), pty(row.pty);
             const QSignalBlocker rigEnabled(row.rigctld), rigAddress(row.rigAddress), rigPort(row.rigPort);
             row.rigctld->setChecked(config.rigctldEnabled); row.rigAddress->setText(config.rigctldBindAddress); row.rigPort->setValue(config.rigctldPort); setChoice(row.dialect,config.ptyDialect);
-            // PTYs are the computer running CAT's (the Core's, from a connected desktop).
-            if (available && !platform.pty) { row.pty->setEnabled(false); row.pty->setToolTip(noPtyReason(remote)); }
-            else {
-                row.pty->setEnabled(true);
-                row.pty->setToolTip(!available ? reason : remote ? tr("CAT %1 PTY uses %2 commands on the Core's computer.").arg(i+1).arg(config.ptyDialect) : tr("CAT %1 PTY uses %2 commands on this computer.").arg(i+1).arg(config.ptyDialect));
-            }
             row.rigStatus->setText(tr("Rigctld: %1 · Bound: %2:%3 · Clients: %4").arg(status.rigctld,status.rigctldBoundAddress).arg(status.rigctldBoundPort).arg(status.rigctldClients)+openToNetwork(config.rigctldEnabled,config.rigctldBindAddress));
             row.address->setText(config.tcpBindAddress); row.port->setValue(config.tcpPort); row.pty->setChecked(config.ptyEnabled);
             row.path->setText(status.ptyPath.isEmpty() ? tr("PTY: %1").arg(status.pty) : status.ptyPath);
@@ -249,13 +254,49 @@ void CatChannelSetupPage::syncFromModel() {
         }
     }
     m_syncing=false;
+    syncPlatform(false);
+}
+void CatChannelSetupPage::syncPlatform(bool keepTyped) {
+    if (!m_control) { return; }
+    const bool wasSyncing=m_syncing; m_syncing=true;
+    const bool available=m_control->available(); const bool remote=m_control->remote(); const QString reason=m_control->unavailableReason();
+    const CatPlatform platform=m_control->platform();
+    for (int i=0;i<4;++i) {
+        Row& row=m_rows[i]; const CatEndpointConfig config=m_control->channelConfig(i+1);
+        const bool serialMissing=m_serial && available && !platform.serial;
+        m_groups[i]->setEnabled(available && !serialMissing);
+        m_groups[i]->setToolTip(!available ? reason : serialMissing ? noSerialReason(remote) : QString());
+        if (m_serial) {
+            // The devices are those of the computer running CAT; the path in the box, typed or picked, stays.
+            if (row.device->property("devices").toStringList()!=platform.serialDevices) {
+                const QString shown=keepTyped ? row.device->currentText() : config.serialDevice;
+                const QSignalBlocker blocked(row.device); row.device->clear(); row.device->addItems(platform.serialDevices); row.device->setProperty("devices",platform.serialDevices);
+                if (keepTyped) { row.device->setCurrentText(shown); } else { setChoice(row.device,shown); }
+            }
+            serialPlatformChoices(row.parity,row.stops,platform,remote);
+        } else {
+            // PTYs are the computer running CAT's (the Core's, from a connected desktop).
+            if (available && !platform.pty) { row.pty->setEnabled(false); row.pty->setToolTip(noPtyReason(remote)); }
+            else {
+                row.pty->setEnabled(true);
+                row.pty->setToolTip(!available ? reason : remote ? tr("CAT %1 PTY uses %2 commands on the Core's computer.").arg(i+1).arg(config.ptyDialect) : tr("CAT %1 PTY uses %2 commands on this computer.").arg(i+1).arg(config.ptyDialect));
+            }
+        }
+    }
+    m_syncing=wasSyncing;
 }
 CatGlobalSetupPage::CatGlobalSetupPage(const QString& title,RadioModel* model,QWidget* parent)
     : SetupPage(title,model,parent),m_control(model ? model->catControl() : nullptr) {
     setStyleSheet(QString::fromLatin1(Style::kPageStyle));
     m_unavailable=note(this,{}); m_unavailable->setObjectName("catUnavailable"); contentLayout()->insertWidget(contentLayout()->count()-1,m_unavailable);
     m_refused=note(this,{}); m_refused->setObjectName("catRefused"); m_refused->setVisible(false); contentLayout()->insertWidget(contentLayout()->count()-1,m_refused);
-    if (m_control) { connect(m_control,&CatControl::changed,this,[this] { syncFromModel(); }); }
+    if (m_control) {
+        // The global settings and whether CAT can be set up here; the PTT state and the platform only touch their own controls.
+        connect(m_control,&CatControl::globalConfigChanged,this,[this] { syncFromModel(); });
+        connect(m_control,&CatControl::availabilityChanged,this,[this] { syncFromModel(); });
+        connect(m_control,&CatControl::pttStateChanged,this,[this] { syncPtt(); });
+        connect(m_control,&CatControl::platformChanged,this,[this] { syncPlatform(); });
+    }
 }
 bool CatGlobalSetupPage::eventFilter(QObject* watched,QEvent* event) { if (event->type()==QEvent::Wheel) { return true; } return SetupPage::eventFilter(watched,event); }
 QCheckBox* CatGlobalSetupPage::addCheck(QFormLayout* form,const QString& label,const QString& name,bool CatGlobalConfig::* field) {
@@ -292,10 +333,18 @@ void CatGlobalSetupPage::applyConfiguration(const CatGlobalConfig& config) {
 }
 void CatGlobalSetupPage::syncFromModel() {
     if (!m_control) { return; } m_syncing=true;
-    const bool available=m_control->available(); const bool remote=m_control->remote(); const QString reason=m_control->unavailableReason();
-    const CatPlatform platform=m_control->platform();
+    const bool available=m_control->available(); const QString reason=m_control->unavailableReason();
     showUnavailable(m_unavailable,m_control);
     for (QWidget* widget:m_controls) { widget->setEnabled(available); widget->setToolTip(available ? QString() : reason); }
+    const CatGlobalConfig config=m_control->globalConfig(); for (const auto& update:m_updates) { update(config); }
+    m_syncing=false;
+    syncPlatform(); syncPtt();
+}
+void CatGlobalSetupPage::syncPlatform() {
+    if (!m_control) { return; }
+    const bool wasSyncing=m_syncing; m_syncing=true;
+    const bool available=m_control->available(); const bool remote=m_control->remote(); const QString reason=m_control->unavailableReason();
+    const CatPlatform platform=m_control->platform();
     if (m_serialGroup) {
         const bool serialMissing=available && !platform.serial;
         m_serialGroup->setEnabled(available && !serialMissing); m_serialGroup->setToolTip(!available ? reason : serialMissing ? noSerialReason(remote) : QString());
@@ -305,9 +354,10 @@ void CatGlobalSetupPage::syncFromModel() {
         }
     }
     if (m_parity && m_stops) { serialPlatformChoices(m_parity,m_stops,platform,remote); }
-    const CatGlobalConfig config=m_control->globalConfig(); for (const auto& update:m_updates) { update(config); }
-    if (m_status) { m_status->setText(tr("PTT: %1").arg(m_control->pttState())); }
-    m_syncing=false;
+    m_syncing=wasSyncing;
+}
+void CatGlobalSetupPage::syncPtt() {
+    if (m_control && m_status) { m_status->setText(tr("PTT: %1").arg(m_control->pttState())); }
 }
 CatOptionsSetupPage::CatOptionsSetupPage(RadioModel* model,QWidget* parent) : CatGlobalSetupPage(tr("CAT Options"),model,parent) {
     auto* options=addSection(tr("Compatibility and automatic information")); auto* form=sectionForm(options);
@@ -338,9 +388,10 @@ CatOptionsSetupPage::CatOptionsSetupPage(RadioModel* model,QWidget* parent) : Ca
     connect(send,&QPushButton::clicked,this,[this,channel,command,reply] {
         if (!m_control) { return; }
         const QPointer<CatOptionsSetupPage> lifetime(this); const QPointer<QLabel> output(reply);
+        // A refusal is said here, so the window does not also say it.
         m_control->testCommand(channel->currentText().toInt(),command->text().toLatin1(),[lifetime,output](bool ran,const QByteArray& bytes,const QString& reason) {
             if (lifetime && output) { output->setText(!ran ? reason : bytes.isEmpty() ? tr("Accepted (no reply)") : QString::fromLatin1(bytes)); }
-        });
+        },this);
     });
     testForm->addRow(note(testing,tr("Test commands act on the radio: receive and setting changes take effect. Commands that transmit (TX, Tune, Two Tone, VOX on, PureSignal single shot and calibration) are refused here.")));
     auto* log=new QPushButton(tr("Show CAT Log…"),testing); log->setObjectName("catShowLog"); log->setAutoDefault(false); log->setStyleSheet(QString::fromLatin1(Style::kButtonStyle)); m_controls.push_back(log); connect(log,&QPushButton::clicked,this,&CatOptionsSetupPage::showLogRequested); testForm->addRow(log);

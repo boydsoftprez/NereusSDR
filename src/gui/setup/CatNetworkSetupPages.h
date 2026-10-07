@@ -1,5 +1,6 @@
 #pragma once
 #include "core/cat/CatConfiguration.h"
+#include "core/cat/CatControl.h"
 #include <functional>
 #include <vector>
 class QFormLayout;
@@ -55,7 +56,11 @@ private:
     QPointer<CatControl> m_control;
     QLabel* m_unavailable{};
     bool m_serial{false}; bool m_syncing{false};
-    void apply(int);
+    /// `rebind`: the slice bindings the operator just picked.
+    void apply(int, CatRebind rebind = {});
+    /// What the computer running CAT offers; a device path typed and not
+    /// finished stays (`keepTyped`).
+    void syncPlatform(bool keepTyped);
 };
 class CatSerialPortsPage : public CatChannelSetupPage {
     Q_OBJECT
@@ -246,6 +251,10 @@ protected:
     std::vector<QWidget*> m_controls;
     std::vector<std::function<void(const CatGlobalConfig&)>> m_updates;
     void applyConfiguration(const CatGlobalConfig&);
+    /// What the computer running CAT offers, and the PTT state: each
+    /// leaves the other controls (and text typed in them) alone.
+    void syncPlatform();
+    void syncPtt();
     bool m_syncing{false};
 };
 class CatOptionsSetupPage : public CatGlobalSetupPage {

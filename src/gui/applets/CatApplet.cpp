@@ -30,8 +30,9 @@
 //   2026-10-06 — Remote-window reason in operator words. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07 — Reads and switches CAT1 through RadioModel::catControl(),
-//                 the Core's CAT in a connected desktop. J.J. Boyd
-//                 (KG4VCF), AI tooling: Claude Code.
+//                 the Core's CAT in a connected desktop; syncs on the
+//                 channel, availability and platform changes it shows.
+//                 J.J. Boyd (KG4VCF), AI tooling: Claude Code.
 // =================================================================
 
 #include "CatApplet.h"
@@ -75,7 +76,11 @@ CatApplet::CatApplet(RadioModel* model, QWidget* parent)
     m_control=model ? model->catControl() : nullptr;
     buildUI();
     if (m_control) {
-        connect(m_control,&CatControl::changed,this,[this] { syncFromModel(); });
+        const auto sync=[this] { syncFromModel(); };
+        connect(m_control,&CatControl::channelConfigChanged,this,sync);
+        connect(m_control,&CatControl::channelStatusChanged,this,sync);
+        connect(m_control,&CatControl::availabilityChanged,this,sync);
+        connect(m_control,&CatControl::platformChanged,this,sync);
         connect(m_tcpBtn,&QPushButton::toggled,this,[this](bool enabled) { setCatOne(&CatEndpointConfig::tcpEnabled,enabled); });
         connect(m_ptyBtn,&QPushButton::toggled,this,[this](bool enabled) { setCatOne(&CatEndpointConfig::ptyEnabled,enabled); });
     }

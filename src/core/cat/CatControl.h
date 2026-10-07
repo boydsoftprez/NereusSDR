@@ -28,7 +28,11 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-07  J.J. Boyd / KG4VCF  Created (CAT setup from a connected
-//                                    desktop, the client side).
+//                                    desktop, the client side). Review
+//                                    fixes: one signal per kind of change,
+//                                    explicit rebinds, the tester's reply
+//                                    by command, the log's backlog, the
+//                                    status bar's indicator.
 //                                    AI tooling: Claude Code.
 // =================================================================
 
@@ -37,6 +41,7 @@
 
 #include <QByteArray>
 #include <QHash>
+#include <QJsonObject>
 #include <QObject>
 #include <QPointer>
 #include <QString>
@@ -75,6 +80,22 @@ struct CatChannelStatus {
     bool secondaryValid{true};
 };
 
+/// Which of a channel's slice bindings the operator just picked in a
+/// selector: that slice id binds to its live slice now, even when it is the
+/// id the channel already holds (a slice closed and opened again with the
+/// same id). The local page carries the same choice in the live incarnation
+/// it supplies; the Core is told it explicitly.
+struct CatRebind {
+    bool primary{false};
+    bool secondary{false};
+};
+
+/// The status bar's CAT indicator: its text and its tooltip's lines.
+struct CatIndicator {
+    QString text;
+    QStringList details;
+};
+
 /// What the computer running CAT offers.
 struct CatPlatform {
     bool serial{false};
@@ -94,6 +115,10 @@ public:
     using ReplyCallback =
         std::function<void(bool ran, const QByteArray& reply, const QString& reason)>;
 
+    /// The lines the CAT log window keeps; a connected desktop's window is
+    /// sent as many of the Core's recent lines when it opens.
+    static constexpr int kLogLines = 10000;
+
     explicit CatControl(QObject* parent = nullptr) : QObject(parent) {}
 
     /// Channels 1 to 4.
@@ -110,18 +135,37 @@ public:
     virtual bool remote() const = 0;
 
     /// `shownOn`: the page that shows a refusal itself, so the window does
-    /// not also say it.
+    /// not also say it. `rebind`: the bindings the operator just picked.
     virtual void reconfigureChannel(int channel, const CatEndpointConfig& config,
-                                    ResultCallback done, QObject* shownOn = nullptr) = 0;
+                                    ResultCallback done, QObject* shownOn = nullptr,
+                                    CatRebind rebind = {}) = 0;
     virtual void reconfigureGlobal(const CatGlobalConfig& config, ResultCallback done,
                                    QObject* shownOn = nullptr) = 0;
-    virtual void testCommand(int channel, const QByteArray& command, ReplyCallback done) = 0;
-    /// Reads the serial devices again; changed() follows.
+    virtual void testCommand(int channel, const QByteArray& command, ReplyCallback done,
+                             QObject* shownOn = nullptr) = 0;
+    /// Reads the serial devices again; platformChanged() follows when they
+    /// changed.
     virtual void refreshDevices() = 0;
 
+    /// The status bar's CAT indicator now.
+    CatIndicator indicator() const;
+
 signals:
-    void changed();
-    void logged(int channel, bool inbound, QByteArray bytes);
+    /// The global settings changed.
+    void globalConfigChanged();
+    /// A channel's settings changed.
+    void channelConfigChanged(int channel);
+    /// A channel's live state changed: a transport's state, where its
+    /// listeners are bound, their clients, the PTY path, or whether its
+    /// bindings still name live slices.
+    void channelStatusChanged(int channel);
+    void pttStateChanged();
+    /// What the computer running CAT offers changed (its serial devices).
+    void platformChanged();
+    /// Whether CAT can be read and changed from this window changed.
+    void availabilityChanged();
+    /// One CAT exchange, at `timeMs` (milliseconds since the epoch).
+    void logged(int channel, bool inbound, QByteArray bytes, qint64 timeMs);
 };
 
 /// The window's own CatService, answered at once.
@@ -138,11 +182,13 @@ public:
     bool available() const override;
     QString unavailableReason() const override;
     bool remote() const override { return false; }
+    /// `rebind` is carried by the live incarnation the page supplies.
     void reconfigureChannel(int channel, const CatEndpointConfig& config, ResultCallback done,
-                            QObject* shownOn = nullptr) override;
+                            QObject* shownOn = nullptr, CatRebind rebind = {}) override;
     void reconfigureGlobal(const CatGlobalConfig& config, ResultCallback done,
                            QObject* shownOn = nullptr) override;
-    void testCommand(int channel, const QByteArray& command, ReplyCallback done) override;
+    void testCommand(int channel, const QByteArray& command, ReplyCallback done,
+                     QObject* shownOn = nullptr) override;
     void refreshDevices() override;
 
 private:
@@ -169,32 +215,27 @@ public:
     QString unavailableReason() const override;
     bool remote() const override { return true; }
     void reconfigureChannel(int channel, const CatEndpointConfig& config, ResultCallback done,
-                            QObject* shownOn = nullptr) override;
+                            QObject* shownOn = nullptr, CatRebind rebind = {}) override;
     void reconfigureGlobal(const CatGlobalConfig& config, ResultCallback done,
                            QObject* shownOn = nullptr) override;
-    void testCommand(int channel, const QByteArray& command, ReplyCallback done) override;
+    void testCommand(int channel, const QByteArray& command, ReplyCallback done,
+                     QObject* shownOn = nullptr) override;
     void refreshDevices() override;
 
-    /// The `catLog` records the Core sent: each one is logged().
+    /// The `catLog` records the Core sent: each one not shown before is
+    /// logged().
     void applyLogBatch(const RecordBatch& batch);
+    /// The Core's answer to a test command this window sent: its reply.
+    void applyTestReply(quint32 commandId, const QString& reply);
+    /// Settings sent and still kept until the Core's answer and change
+    /// arrive (0 once each is settled).
+    int unconfirmedCount() const;
 
 protected:
     void connectNotify(const QMetaMethod& signal) override;
     void disconnectNotify(const QMetaMethod& signal) override;
 
 private:
-    IStationLink* link() const;
-    /// A command's outcome: refused now, or its answer awaited by id.
-    void track(bool sent, const QString& reason, quint32 commandId, ResultCallback done,
-               QObject* shownOn);
-    void onStateChanged();
-    void onLinkChanged();
-    void onCommandFinished(quint32 commandId, bool accepted, const QString& reason);
-    void followLog();
-    void followLogLater();
-    /// The Core answered a sent setting.
-    void settle(quint32 commandId, bool accepted);
-
     /// A setting sent and not in the mirror: the Core's answer and the
     /// change it makes come later, and a second change made meanwhile must
     /// build on the first, not on the older mirror.
@@ -202,18 +243,53 @@ private:
         quint32 commandId{0};
         bool accepted{false};
     };
+    /// The kept settings: channels 1 to 4 at 0 to 3, the global ones at 4.
+    static constexpr int kGlobalSlot = 4;
+
+    IStationLink* link() const;
+    /// A command's outcome: refused now, or its answer awaited by id.
+    void track(bool sent, const QString& reason, quint32 commandId, ResultCallback done,
+               QObject* shownOn);
+    /// The mirror changed: told once the whole delta is in (each property
+    /// of a delta arrives on its own).
+    void onStateChanged();
+    void applyState();
+    void onLinkChanged();
+    void onCommandFinished(quint32 commandId, bool accepted, const QString& reason);
+    void followLog();
+    void followLogLater();
+    /// The mirror's config for a slot equals the setting kept for it.
+    bool mirrorHolds(int slot) const;
+    void drop(int slot);
+    void dropAll();
+    /// The Core answered a sent setting: the slot dropped, or -1.
+    int settle(quint32 commandId, bool accepted);
+    /// A delta for the slot's property arrived: true when its kept setting
+    /// was dropped.
+    bool settleOnDelta(int slot);
+    void emitConfigChanged(int slot);
 
     QPointer<RadioModel> m_model;
     std::array<std::optional<CatEndpointConfig>, 4> m_sentChannel;
-    std::array<Unconfirmed, 4> m_sentChannelState;
     std::optional<CatGlobalConfig> m_sentGlobal;
-    Unconfirmed m_sentGlobalState;
+    std::array<Unconfirmed, 5> m_sentState;
+    /// The mirror's objects last seen, so each change is told once, by kind.
+    QJsonObject m_seenGlobal;
+    std::array<QJsonObject, 4> m_seenChannel;
+    QJsonObject m_seenPlatform;
+    bool m_stateQueued{false};
     QHash<quint32, ResultCallback> m_pending;
-    QHash<qint64, ReplyCallback> m_tests;
+    /// Test commands awaiting the Core's answer, by command id.
+    QHash<quint32, ReplyCallback> m_tests;
     qint64 m_nextTestId{0};
     /// The link last told to follow (or leave) the `catLog` stream.
     IStationLink* m_logLink{nullptr};
     bool m_logFollowed{false};
+    /// The newest `catLog` record shown, so a backlog sent again (after a
+    /// new session) is not shown twice; a window opened again is sent the
+    /// backlog afresh.
+    quint64 m_logGeneration{0};
+    qint64 m_lastLogId{0};
 };
 
 } // namespace NereusSDR

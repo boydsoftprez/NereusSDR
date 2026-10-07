@@ -484,8 +484,9 @@
 //               registers `stationCat` when offered and sends the four CAT
 //               commands. J.J. Boyd (KG4VCF). AI tooling: Claude Code.
 //   2026-10-07: requestCatLog follows the Core's `catLog` stream (again
-//               after each snapshot) and hands its records to RadioModel.
-//               J.J. Boyd (KG4VCF). AI tooling: Claude Code.
+//               after each snapshot) and hands its records to RadioModel;
+//               the window's line limit as backlog; the CAT tester's reply
+//               from its result. J.J. Boyd (KG4VCF). AI tooling: Claude Code.
 // =================================================================
 
 // 2026-10-01: Authenticated Core address inventory and reconnect learning.
@@ -2937,14 +2938,14 @@ void StationClient::onTransportText(const QByteArray& wire)
             }
         }
         // CAT setup from a connected desktop: the CAT log window's lines,
-        // from now on (dropped traffic is not replayed, as when paused).
+        // with the Core's recent ones (the window shows each line once).
         if (m_sessionPurpose == SessionPurpose::Ordinary && m_catLogWanted
             && stationCatAvailable()) {
             invokeCommand("records.subscribe",
                           {MirrorUpdate{0, "stream", MirrorWireKind::Utf8,
                                         QVariant(QStringLiteral("catLog"))},
                            MirrorUpdate{0, "backlog", MirrorWireKind::Int64,
-                                        QVariant(static_cast<qlonglong>(0))}});
+                                        QVariant(static_cast<qlonglong>(m_catLogBacklog))}});
         }
         // Parity Task 22 (R-R3-49): the Core's log follows again for the
         // viewers that hold it, and the support controls learn the session.
@@ -6704,20 +6705,21 @@ StationClient::CommandOutcome StationClient::requestStationCatTest(qint64 reques
                        QStringLiteral("the Core's CAT test command"));
 }
 
-void StationClient::requestCatLog(bool follow)
+void StationClient::requestCatLog(bool follow, int backlog)
 {
     // Kept across sessions: each snapshot subscribes again while wanted.
     const bool was = m_catLogWanted;
     m_catLogWanted = follow;
+    m_catLogBacklog = follow ? qMax(0, backlog) : 0;
     if (!stationCatAvailable() || (!follow && !was)) {
         return;
     }
     QList<MirrorUpdate> arguments{
         MirrorUpdate{0, "stream", MirrorWireKind::Utf8, QVariant(QStringLiteral("catLog"))}};
     if (follow) {
-        // From now on: the window shows what happens while it is open.
+        // The Core's recent lines, then what happens while it is open.
         arguments.append(MirrorUpdate{0, "backlog", MirrorWireKind::Int64,
-                                      QVariant(static_cast<qlonglong>(0))});
+                                      QVariant(static_cast<qlonglong>(m_catLogBacklog))});
     }
     invokeCommand(follow ? "records.subscribe" : "records.unsubscribe", arguments);
 }
@@ -7953,6 +7955,20 @@ void StationClient::handleCommandResult(const SessionMessage& message)
             m_radioModel->reportStationPgxlLanScan(message.commandId, message.accepted,
                                                    message.reason, devicesJson);
         }
+        if (!self) { return; }
+    }
+    // CAT setup from a connected desktop: the tester's reply comes in its
+    // result, to the window that sent it, before the result itself.
+    if (pending.verb == "testStationCatCommand" && message.accepted
+        && !m_radioModel.isNull()) {
+        QString reply;
+        for (const MirrorUpdate& value : message.updates) {
+            if (value.name == "reply" && value.kind == MirrorWireKind::Utf8) {
+                reply = value.value.toString();
+            }
+        }
+        const QPointer<StationClient> self(this);
+        m_radioModel->reportStationCatTestReply(message.commandId, reply);
         if (!self) { return; }
     }
     // R-R3-22 fix wave: every result by its id, so a sender (the amp

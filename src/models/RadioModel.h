@@ -567,8 +567,9 @@
 //                stationCatController(), the Core's `stationCat` object and
 //                its publisher. J.J. Boyd (KG4VCF). AI tooling: Claude Code.
 //   2026-10-07 - catControl(): what the CAT pages, applet, log window and
-//                status bar use, local or the Core's. J.J. Boyd (KG4VCF).
-//                AI tooling: Claude Code.
+//                status bar use, local or the Core's; the CAT tester's
+//                reply by command (reportStationCatTestReply). J.J. Boyd
+//                (KG4VCF). AI tooling: Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1221,6 +1222,10 @@ public:
     /// stationCommandFinished for a sender that waits on its own command.
     /// Ends any page's claim on the command (noteAccessoryRequestShownOnPage).
     void reportStationCommandFinished(quint32 commandId, bool accepted, const QString& reason);
+    /// Remote role: the Core's reply to CAT test command `commandId`
+    /// (testStationCatCommand), handed to catControl() before the
+    /// command's result is reported.
+    void reportStationCatTestReply(quint32 commandId, const QString& reply);
     /// Remote role only: a paired Core settings export completed or failed.
     /// coreXml is populated only after length, digest and XML validation.
     void reportStationSettingsBackupExportFinished(quint32 operationId, bool accepted,

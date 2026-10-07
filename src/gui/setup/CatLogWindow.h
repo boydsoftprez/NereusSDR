@@ -1,7 +1,8 @@
 // no-port-check: NereusSDR-original bounded native CAT log viewer.
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-07 Reads CatControl, so a connected desktop shows the Core's CAT
-//            log. J.J. Boyd (KG4VCF), AI tooling: Claude Code.
+//            log, with its recent lines and their times. J.J. Boyd (KG4VCF),
+//            AI tooling: Claude Code.
 #pragma once
 #include "core/cat/CatControl.h"
 #include <QDialog>
@@ -25,7 +26,8 @@ private:
     // The state last shown, so each change is one diagnostic line.
     QVector<CatChannelStatus> m_lastStatus;
     QString m_lastPtt;
-    void append(int,const QString&);
+    // `timeMs`: when CAT saw it (0: now).
+    void append(int,const QString&,qint64 timeMs=0);
     void refresh();
     void noteChanges();
 };
