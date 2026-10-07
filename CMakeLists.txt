@@ -173,8 +173,14 @@ find_package(Qt6 REQUIRED COMPONENTS
 
 # Optional Qt components
 find_package(Qt6 QUIET COMPONENTS SerialPort)
+# Release builds ship serial CAT, PTT and CW on every platform, so they set
+# NEREUS_REQUIRE_SERIALPORT and refuse to configure without the module, as
+# WebSockets does above. Developer builds may leave it out.
+option(NEREUS_REQUIRE_SERIALPORT "Fail configure when Qt6::SerialPort is missing" OFF)
 if(Qt6SerialPort_FOUND)
     message(STATUS "Qt6::SerialPort found — serial PTT/CW support enabled")
+elseif(NEREUS_REQUIRE_SERIALPORT)
+    message(FATAL_ERROR "Qt6::SerialPort not found and NEREUS_REQUIRE_SERIALPORT is ON")
 else()
     message(STATUS "Qt6::SerialPort not found — serial PTT/CW support disabled")
 endif()

@@ -15,7 +15,7 @@ apt-get update
 apt-get install -y --no-install-recommends \
     ca-certificates cmake ninja-build pkg-config build-essential \
     qt6-base-dev qt6-multimedia-dev qt6-base-private-dev \
-    qt6-shadertools-dev qt6-svg-dev qt6-websockets-dev \
+    qt6-shadertools-dev qt6-svg-dev qt6-websockets-dev qt6-serialport-dev \
     libfftw3-dev libssl-dev libasound2-dev libjack-jackd2-dev \
     libpipewire-0.3-dev libgl1-mesa-dev libxkbcommon-dev \
     autoconf automake libtool wget git python3
@@ -29,7 +29,7 @@ test -s station-output/dfnr-provenance.json
 # DFNR's locked source build used generic AArch64; require CMake to use it.
 cmake -S . -B /tmp/nereus-build -G Ninja -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/usr -DNEREUS_GPU_SPECTRUM=OFF \
-    -DENABLE_DFNR=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+    -DENABLE_DFNR=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DNEREUS_REQUIRE_SERIALPORT=ON \
     -DCMAKE_C_FLAGS='-march=armv8-a' \
     -DCMAKE_CXX_FLAGS='-march=armv8-a'
 python3 - <<'PY'
