@@ -556,11 +556,13 @@ private slots:
         lineIn->setChecked(true);
         QVERIFY(model.transmitModel().lineIn());
 
-        // A Hermes has no note.
+        // A Hermes has no note: the label is built on every board (so a
+        // page follows an HL2 connecting later) and stays hidden here.
         RadioModel hermes;
         hermes.setHpsdrModelForTest(HPSDRModel::HERMES);
         AudioTxInputPage hermesPage(&hermes);
-        QVERIFY(hermesPage.radioMicNoteLabel() == nullptr);
+        QVERIFY(hermesPage.radioMicNoteLabel() == nullptr
+                || hermesPage.radioMicNoteLabel()->isHidden());
         QVERIFY(hermesPage.radioMicButton()->toolTip().isEmpty());
         QCOMPARE(hermesPage.hermesRadioMicGroup()->title(),
                  QStringLiteral("Radio Mic (Hermes / Atlas)"));
