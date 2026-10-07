@@ -57,6 +57,11 @@
 //   2026-09-30 : Fix round 1 (minor 3), by J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code. An abandoned start
 //                under another device's key clears its manual key.
+//   2026-10-07 : Start inside the stop's settle, by J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code. A fast off/on
+//                supersedes the settling stop: its FIXED power restored
+//                first, then keyed after the release settle (Thetis drops
+//                the new test and loses PreviousPWR here).
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived activation flow
@@ -208,10 +213,16 @@ void TwoToneController::setActive(bool on)
     // Task 35: a start from setActive(true) alone is the station device's.
     const bool keyerFromCaller = m_keyerFromCaller;
     m_keyerFromCaller = false;
-    if (on && !keyerFromCaller && !m_activationInFlight && !m_active) {
+    // m_active stays true through the stop's MOX settle (see
+    // isDeactivationInFlight), so a start asked for inside it is a new
+    // request, not a duplicate: it supersedes the stop below. Dropping it
+    // here let the stop finish and leave two-tone off after a fast off/on.
+    const bool stopping = isDeactivationInFlight();
+    if (on && !keyerFromCaller
+        && (stopping || (!m_activationInFlight && !m_active))) {
         m_keyer = KeyerIdentity::station(PttMode::None);
     }
-    if (on == m_active && !m_activationInFlight) {
+    if (on == m_active && !m_activationInFlight && !stopping) {
         // Idempotent: already in the requested state and not mid-walk.
         return;
     }
@@ -257,6 +268,27 @@ void TwoToneController::setActive(bool on)
         // Task 7 fix wave, M2: a new start owns the manual key from here.
         m_rejectSettleTimer.stop();
 
+        // A start inside the stop's settle cancels the rest of that stop,
+        // which would otherwise tear this start down when it elapsed. The
+        // stop has released MOX; the power it would restore is restored
+        // now, so Stage 7 below snapshots the operator's power rather than
+        // the two-tone power still applied. m_active stays true: the test
+        // goes from stopping straight back to running.
+        //
+        // Thetis shares the bug this avoids: a re-check inside the off
+        // branch's wait (setup.cs:11190-11191 [v2.10.3.15]):
+        //   console.MOX = false;
+        //   await Task.Delay(200); //MW0LGE_21a
+        // runs the on branch alongside it, whose
+        //   console.PreviousPWR = console.PWR;   [setup.cs:11151 [v2.10.3.15]]
+        // reads the two-tone power, and the off branch's continuation then
+        // restores that power and sets TXPostGenRun = 0 under the new test
+        // (setup.cs:11192-11205 [v2.10.3.15]).
+        if (stopping) {
+            m_deactivationSettleTimer.stop();
+            restoreSavedPower();
+        }
+
         // ── Stage 2a: if TUN is on, turn it off first.  Porting from Thetis
         //     console.cs:44805-44813 [v2.10.3.15], chk2TONE_CheckedChanged,
         //     original C# logic:
@@ -299,6 +331,14 @@ void TwoToneController::setActive(bool on)
         //   await Task.Delay(300);
         if (m_tuneOffPending && m_tuneOffPending()) {
             m_tuneReleaseSettleTimer.start();
+            return;
+        }
+
+        // The superseded stop's MOX release is Stage 2's release: wait out
+        // its 200 ms settle before keying again, as Stage 2 does after a
+        // release of its own (setup.cs:11111-11116 [v2.10.3.15]).
+        if (stopping && !m_moxController->isMox()) {
+            m_moxReleaseSettleTimer.start();
             return;
         }
 

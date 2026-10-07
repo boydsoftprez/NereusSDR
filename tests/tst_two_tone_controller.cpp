@@ -1182,6 +1182,108 @@ private slots:
         QCOMPARE(tc.calls.size(), callCount1);  // no new calls
         QCOMPARE(activeSpy.count(), 1);          // no re-emit
     }
+
+    // ── A start inside the stop's MOX settle supersedes the stop ─────────
+    // m_active stays true until the settle ends, so the idempotency check
+    // used to drop a fast off/on's start, and the stop then left two-tone
+    // off. The start must take over, wait the settle out before keying
+    // (the stop's release is Stage 2's), and not be torn down after.
+    void setActive_startDuringStopSettle_restartsTheTest()
+    {
+        TransmitModel tx;
+        RecordingTxChannel tc(kTxChannelId);
+        MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        SliceModel slice;
+
+        TwoToneController ctrl;
+        ctrl.setTransmitModel(&tx);
+        ctrl.setTxChannel(&tc);
+        ctrl.setMoxController(&mox);
+        ctrl.setSliceModel(&slice);
+        ctrl.setSettleDelaysMs(0, 0);
+
+        QSignalSpy activeSpy(&ctrl, &TwoToneController::twoToneActiveChanged);
+        ctrl.setActive(true);
+        QCoreApplication::processEvents();
+        QVERIFY(ctrl.isActive());
+        QVERIFY(mox.isMox());
+
+        ctrl.setActive(false);
+        QVERIFY(ctrl.isDeactivationInFlight());
+        QVERIFY(!mox.isMox());
+        tc.calls.clear();
+
+        ctrl.setActive(true);
+        QVERIFY(!ctrl.isDeactivationInFlight());
+        // Waiting out the release settle, not keyed inside it.
+        QVERIFY(ctrl.isActivationInFlight());
+        QVERIFY(!mox.isMox());
+        for (int i = 0; i < 10; ++i) {
+            QCoreApplication::processEvents();
+        }
+
+        QVERIFY(ctrl.isActive());
+        QVERIFY(!ctrl.isActivationInFlight());
+        QVERIFY(mox.isMox());
+        QVERIFY(mox.isManualKey());
+        QVERIFY(tx.isTwoToneActive());
+        // Running, never stopped: one on, and no off from the old stop.
+        QCOMPARE(activeSpy.count(), 1);
+        QCOMPARE(activeSpy[0][0].toBool(), true);
+        bool lastRunOn = false;
+        for (const auto& c : tc.calls) {
+            if (c.method == QStringLiteral("setTxPostGenRun")) {
+                lastRunOn = c.arg1 > 0.5;
+            }
+        }
+        QVERIFY(lastRunOn);
+    }
+
+    // The superseded stop never restored the FIXED power, so a start that
+    // snapshotted PWR then took the two-tone power as the operator's, and
+    // the next stop "restored" it (Thetis does the same: setup.cs:11151
+    // [v2.10.3.15]).
+    void setActive_startDuringStopSettle_keepsTheOperatorsPower()
+    {
+        TransmitModel tx;
+        tx.setTwoTonePulsed(false);
+        tx.setTwoToneFreq2Delay(0);
+        tx.setPower(75);
+        tx.setTwoTonePower(40);
+        tx.setTwoToneDrivePowerSource(DrivePowerSource::Fixed);
+
+        RecordingTxChannel tc(kTxChannelId);
+        MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        SliceModel slice;
+
+        TwoToneController ctrl;
+        ctrl.setTransmitModel(&tx);
+        ctrl.setTxChannel(&tc);
+        ctrl.setMoxController(&mox);
+        ctrl.setSliceModel(&slice);
+        ctrl.setSettleDelaysMs(0, 0);
+
+        ctrl.setActive(true);
+        QCoreApplication::processEvents();
+        QCOMPARE(tx.power(), 40);
+
+        ctrl.setActive(false);
+        ctrl.setActive(true);
+        for (int i = 0; i < 10; ++i) {
+            QCoreApplication::processEvents();
+        }
+        QVERIFY(ctrl.isActive());
+        QCOMPARE(tx.power(), 40);
+
+        ctrl.setActive(false);
+        for (int i = 0; i < 10; ++i) {
+            QCoreApplication::processEvents();
+        }
+        QVERIFY(!ctrl.isActive());
+        QCOMPARE(tx.power(), 75);
+    }
 };
 
 QTEST_MAIN(TestTwoToneController)

@@ -82,6 +82,9 @@
 //                 the FIXED restore lands before the connection's saves and
 //                 before the held transmit band is cleared (console.cs:27473,
 //                 27492 [v2.10.3.15]).
+//   2026-10-07 : Start inside the stop's settle, by J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code. It supersedes the
+//                 stop rather than being dropped as a duplicate.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived activation
@@ -299,6 +302,7 @@ public:
     bool isActivationInFlight() const noexcept { return m_activationInFlight; }
     // The active flag remains true until the stop's MOX settle finishes.
     // Action acknowledgments must wait for this timer before reporting off.
+    // A start asked for inside it supersedes the stop (setActive).
     bool isDeactivationInFlight() const noexcept { return m_deactivationSettleTimer.isActive(); }
     // R-R3-36: true only while the activation walk's own setMox(true) call
     // runs, so the MOX pre-check can tell two-tone's key from any other
