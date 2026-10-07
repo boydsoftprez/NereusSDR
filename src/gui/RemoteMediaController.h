@@ -3,6 +3,8 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 //
 // Modification history (NereusSDR):
+//   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
+//                 AI-assisted via OpenAI Codex.
 //   2026-09-29: startReplacement takes whether the replace carries a
 //               folded session move, recorded before it is sent. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -108,6 +110,7 @@ namespace NereusSDR {
 class RemoteTciAudioStage;
 class StationClient;
 class RadioModel;
+class PanClarityRegistry;
 class PanadapterStack;
 class SpectrumWidget;
 
@@ -202,6 +205,7 @@ public:
     int activeEndpointCount() const;
     // One remote mini analyzer endpoint per wanted receiver slice. Callers
     // fan accepted frames to every visible container that owns the slice.
+    void setClarityRegistry(PanClarityRegistry* registry);
     void setMiniDisplaySlices(const QSet<int>& sliceIds);
     std::optional<MediaPeerTelemetry> trafficTelemetry() const;
     /// Display updates this computer received but discarded, oldest first,

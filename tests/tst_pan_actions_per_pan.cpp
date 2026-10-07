@@ -20,6 +20,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-03  J.J. Boyd / KG4VCF. STEP propagation, pan wheel and stale
 //                slice lifetime regressions. AI-assisted via OpenAI Codex.
 //   2026-10-02  J.J. Boyd / KG4VCF. Real window/fake Core TX-letter Take
@@ -40,6 +42,7 @@
 #include <QtTest/QtTest>
 
 #include <QAction>
+#include <QCloseEvent>
 #include <QLabel>
 #include <QLoggingCategory>
 #include <QPushButton>
@@ -57,6 +60,8 @@
 #include "core/session/StationClient.h"
 #include "fakes/RemoteWindowHarness.h"
 #include "gui/MainWindow.h"
+#include "gui/PanClarityRegistry.h"
+#include "gui/MoxDisplayController.h"
 #include "gui/PanadapterApplet.h"
 #include "gui/PanadapterStack.h"
 #include "gui/SpectrumOverlayPanel.h"
@@ -73,6 +78,7 @@
 #include "gui/meters/presets/BarPresetItem.h"
 #include "gui/containers/ContainerPreviewWidget.h"
 #include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/ContainerManager.h"
 #include "models/Band.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -135,6 +141,34 @@ class TestPanActionsPerPan final : public QObject {
     Q_OBJECT
 
 private slots:
+    void shutdownRetiresBeforeContainerDestruction()
+    {
+        auto window = openLocalWindow(QStringLiteral("vertical-2"));
+        QPointer<PanClarityRegistry> registry(window->findChild<PanClarityRegistry*>());
+        auto* containers = window->findChild<ContainerManager*>();
+        QVERIFY(registry); QVERIFY(containers);
+        QVERIFY(registry->controllerForPan(QStringLiteral("pan-0")));
+        bool observed = false;
+        bool retired = false;
+        connect(containers, &QObject::destroyed, this, [&] {
+            observed = true;
+            retired = registry && !registry->controllerForPan(QStringLiteral("pan-0"));
+        });
+        window.reset();
+        QVERIFY(observed); QVERIFY(retired);
+    }
+    void closeEntryRetiresClarityImmediately()
+    {
+        auto window = openLocalWindow(QStringLiteral("vertical-2"));
+        auto* registry = window->findChild<PanClarityRegistry*>();
+        QVERIFY(registry);
+        QVERIFY(registry->controllerForPan(QStringLiteral("pan-0")));
+        QCloseEvent event;
+        QCoreApplication::sendEvent(window.get(), &event);
+        QVERIFY(!registry->controllerForPan(QStringLiteral("pan-0")));
+        QVERIFY(!registry->controllerForPan(QStringLiteral("pan-1")));
+        registry->retireAll(); // every shutdown entry can repeat retirement
+    }
     void initTestCase()
     {
         QLoggingCategory::setFilterRules(QStringLiteral("nereus.*.debug=false"));
@@ -737,10 +771,71 @@ private slots:
     // Clarity tunes the active pan. Re-tune on the second pan's strip makes
     // it the pan Clarity tunes; its badge shows, the first pan's does not,
     // and the first pan goes back to its own waterfall levels.
+    void everyPanAndNewPanObserveExistingKeyedTruth()
+    {
+        auto window = openLocalWindow(QStringLiteral("2v"));
+        QTRY_VERIFY(sliceOnPan(window.get(), QStringLiteral("pan-0"))
+            && sliceOnPan(window.get(), QStringLiteral("pan-1")));
+        auto* registry = window->findChild<PanClarityRegistry*>();
+        auto* display = window->findChild<MoxDisplayController*>();
+        auto* stack = window->findChild<PanadapterStack*>();
+        QVERIFY(registry && display && stack);
+        // Display truth is read-only: this invokes no MOX/radio command.
+        display->setKeyed(true, -1);
+        for (const QString& id : {QStringLiteral("pan-0"), QStringLiteral("pan-1")}) {
+            ClarityController* owner = registry->controllerForPan(id);
+            QVERIFY(owner && owner->isTransmitting());
+            const float before = stack->spectrum(id)->wfActiveLowThreshold();
+            owner->feedNoiseFloor(-50, 1000);
+            owner->snapToFloor(-70);
+            emit owner->noiseFloorChanged(-50);
+            emit owner->waterfallThresholdsChanged(-55, 5);
+            QVERIFY(!stack->spectrum(id)->clarityActive());
+            QCOMPARE(stack->spectrum(id)->wfActiveLowThreshold(), before);
+        }
+        QVERIFY(stack->addPanadapter(QStringLiteral("pan-2")));
+        ClarityController* created = registry->controllerForPan(QStringLiteral("pan-2"));
+        QVERIFY(created && created->isTransmitting());
+        emit created->waterfallThresholdsChanged(-55, 5);
+        QVERIFY(!stack->spectrum(QStringLiteral("pan-2"))->clarityActive());
+        display->setKeyed(false, -1);
+        QVERIFY(!created->isTransmitting());
+    }
+
+    void eachPanKeepsClarityWhenAnotherIsSelected()
+    {
+        auto window = openLocalWindow(QStringLiteral("2v"));
+        QTRY_VERIFY(stripFor(window.get(), QStringLiteral("pan-1")));
+        QTRY_VERIFY(sliceOnPan(window.get(), QStringLiteral("pan-0"))
+            && sliceOnPan(window.get(), QStringLiteral("pan-1")));
+        for (SliceModel* slice : window->radioModel()->slices()) {
+            QVERIFY(window->radioModel()->bindSliceToStream(slice, slice->frequency()));
+        }
+        auto* stack = window->findChild<PanadapterStack*>();
+        QVERIFY(stack);
+        stack->setActivePan(QStringLiteral("pan-0"));
+        ClarityController* const owner = window->radioModel()->clarityController();
+        QVERIFY(owner && owner->isEnabled());
+        SpectrumWidget* const sw0 = stack->spectrum(QStringLiteral("pan-0"));
+        owner->setPollIntervalMs(0);
+        owner->feedNoiseFloor(-125.0f, 1000);
+        QVERIFY(sw0->clarityActive());
+        QCOMPARE(sw0->wfActiveLowThreshold(), owner->lastLow());
+        const float low = sw0->wfActiveLowThreshold();
+        stack->setActivePan(QStringLiteral("pan-1"));
+        QVERIFY(sw0->clarityActive());
+        QCOMPARE(sw0->wfActiveLowThreshold(), low);
+    }
+
     void clarityBadgeAndRetuneActOnTheirOwnPan()
     {
         std::unique_ptr<MainWindow> window = openLocalWindow(QStringLiteral("2v"));
         QTRY_VERIFY(stripFor(window.get(), QStringLiteral("pan-1")));
+        QTRY_VERIFY(sliceOnPan(window.get(), QStringLiteral("pan-0"))
+            && sliceOnPan(window.get(), QStringLiteral("pan-1")));
+        for (SliceModel* slice : window->radioModel()->slices()) {
+            QVERIFY(window->radioModel()->bindSliceToStream(slice, slice->frequency()));
+        }
         ClarityController* const clarity = window->radioModel()->clarityController();
         QVERIFY(clarity && clarity->isEnabled());
         SpectrumWidget* const sw0 = appletFor(window.get(), QStringLiteral("pan-0"))->spectrumWidget();
@@ -767,11 +862,13 @@ private slots:
 
         emit stripFor(window.get(), QStringLiteral("pan-1"))->clarityRetuneRequested();
         QCOMPARE(stack->activePanId(), QStringLiteral("pan-1"));
-        QVERIFY(!sw0->clarityActive());
-        emit clarity->waterfallThresholdsChanged(-120.0f, -80.0f);
+        QVERIFY(sw0->clarityActive());
+        ClarityController* second = window->radioModel()->clarityController();
+        QVERIFY(second && second != clarity);
+        emit second->waterfallThresholdsChanged(-120.0f, -80.0f);
         QVERIFY(sw1->clarityActive());
-        QVERIFY(!sw0->clarityActive());
-        QVERIFY(badge(QStringLiteral("pan-0"))->isHidden());
+        QVERIFY(sw0->clarityActive());
+        QVERIFY(!badge(QStringLiteral("pan-0"))->isHidden());
         QVERIFY(!badge(QStringLiteral("pan-1"))->isHidden());
     }
 
@@ -781,6 +878,11 @@ private slots:
     {
         std::unique_ptr<MainWindow> window = openLocalWindow(QStringLiteral("2v"));
         QTRY_VERIFY(stripFor(window.get(), QStringLiteral("pan-1")));
+        QTRY_VERIFY(sliceOnPan(window.get(), QStringLiteral("pan-0"))
+            && sliceOnPan(window.get(), QStringLiteral("pan-1")));
+        for (SliceModel* slice : window->radioModel()->slices()) {
+            QVERIFY(window->radioModel()->bindSliceToStream(slice, slice->frequency()));
+        }
         auto* stack = window->findChild<PanadapterStack*>();
         QVERIFY(stack);
         SpectrumWidget* const sw0 = stack->spectrum(QStringLiteral("pan-0"));
@@ -800,8 +902,11 @@ private slots:
         sw1->setDbmRange(-140.0f, -40.0f);
 
         stack->setActivePan(QStringLiteral("pan-1"));
-        clarity->retuneNow();
-        clarity->feedBins(QVector<float>(1024, -100.0f), 1000);
+        ClarityController* second = window->radioModel()->clarityController();
+        QVERIFY(second && second != clarity);
+        second->setPollIntervalMs(0); second->setSmoothingTauSec(0.0f);
+        second->retuneNow();
+        second->feedBins(QVector<float>(1024, -100.0f), 1000);
         QCOMPARE(sw1->gridMin(), -110);
         QCOMPARE(sw1->gridMax(), -10);
         QCOMPARE(sw0->gridMin(), -150);
@@ -816,7 +921,7 @@ private slots:
         QCOMPARE(sw1->gridMin(), -110);
         QCOMPARE(sw1->gridMax(), -10);
         QVERIFY(sw0->clarityActive());
-        QVERIFY(!sw1->clarityActive());
+        QVERIFY(sw1->clarityActive());
     }
 
     // Destroying the original pane must not disconnect the surviving
@@ -825,12 +930,19 @@ private slots:
     {
         std::unique_ptr<MainWindow> window = openLocalWindow(QStringLiteral("2v"));
         QTRY_VERIFY(stripFor(window.get(), QStringLiteral("pan-1")));
+        QTRY_VERIFY(sliceOnPan(window.get(), QStringLiteral("pan-0"))
+            && sliceOnPan(window.get(), QStringLiteral("pan-1")));
+        for (SliceModel* slice : window->radioModel()->slices()) {
+            QVERIFY(window->radioModel()->bindSliceToStream(slice, slice->frequency()));
+        }
         auto* stack = window->findChild<PanadapterStack*>();
         QVERIFY(stack);
         QPointer<SpectrumWidget> retired = stack->spectrum(QStringLiteral("pan-0"));
         SpectrumWidget* const survivor = stack->spectrum(QStringLiteral("pan-1"));
         QVERIFY(retired && survivor);
-        ClarityController* const clarity = window->radioModel()->clarityController();
+        auto* registry = window->findChild<PanClarityRegistry*>();
+        QVERIFY(registry);
+        ClarityController* const clarity = registry->controllerForPan(QStringLiteral("pan-1"));
         QVERIFY(clarity);
         clarity->setEnabled(true);
         clarity->setPollIntervalMs(0);
@@ -868,8 +980,7 @@ private slots:
         QVERIFY(lastOwner.isNull());
         QVERIFY(stack->activePanId().isEmpty());
         QVERIFY(window->activeSpectrumWidget() == nullptr);
-        clarity->feedBins(QVector<float>(1024, -100.0f), 2000);
-        QCOMPARE(clarity->smoothedFloor(), -100.0f);
+        QVERIFY(registry->controllerForPan(QStringLiteral("pan-1")) == nullptr);
     }
 
     // A left-click on a spot: the widget tunes the pan's slice, and the

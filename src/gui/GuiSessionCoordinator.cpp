@@ -34,6 +34,15 @@ GuiSessionCoordinator::GuiSessionCoordinator(QObject* parent) : QObject(parent)
             m_window->radioModel()->discovery()->startDiscovery();
         }
     });
+    m_hostedInPlaceDeadline.setSingleShot(true);
+    connect(&m_hostedInPlaceDeadline, &QTimer::timeout, this, [this] {
+        // Issue #351: the link did not come back in place; rebuild it.
+        if (!m_window) { return; }
+        RadioModel* model = m_window->radioModel();
+        if (model->connection() && model->connectionState() != ConnectionState::Connected) {
+            retryHostedRadio(m_generation);
+        }
+    });
     // Register before MainWindow's aboutToQuit handler disconnects its model.
     connect(qApp, &QCoreApplication::aboutToQuit, this, [this] {
         QString error;
@@ -191,6 +200,7 @@ void GuiSessionCoordinator::retireWindow()
     m_hostedRadioRecovery = false;
     m_hostedRadioAttempted = false;
     m_hostedDiscoveryRetry.stop();
+    m_hostedInPlaceDeadline.stop();
     if (m_window && m_desktopRuntime) {
         m_window->setDesktopStationController(nullptr);
     }
@@ -254,14 +264,30 @@ void GuiSessionCoordinator::installDesktopStation()
         m_hostedRadioRecovery = false;
         m_hostedStartupPending = false;
         m_hostedDiscoveryRetry.stop();
+        m_hostedInPlaceDeadline.stop();
     });
     connect(model, &RadioModel::connectionStateChanged, this,
             [this, generation](ConnectionState state) {
         if (generation != m_generation || !m_window) { return; }
         RadioModel* current = m_window->radioModel();
         if (state != current->connectionState()) { return; }
-        if (state == ConnectionState::LinkLost
-            || (state == ConnectionState::Disconnected && current->connection())) {
+        if (state == ConnectionState::Connected) {
+            m_hostedInPlaceDeadline.stop();
+        } else if (state == ConnectionState::LinkLost
+                   || (state == ConnectionState::Disconnected && current->connection())) {
+            // Issue #351: a link that recovers in place keeps its
+            // connection and DSP while it tries, as the Core does
+            // (DaemonApp::onRadioStateForRecovery). The first LinkLost
+            // starts the wait; a radio change under way ends as before.
+            RadioConnection* const connection = current->connection();
+            const int inPlaceMs = state == ConnectionState::LinkLost && connection
+                ? connection->inPlaceRecoveryMs() : 0;
+            if (inPlaceMs > 0 && !(m_stationRadios && m_stationRadios->switching())) {
+                if (!m_hostedInPlaceDeadline.isActive()) {
+                    m_hostedInPlaceDeadline.start(inPlaceMs);
+                }
+                return;
+            }
             retryHostedRadio(generation);
         }
     }, Qt::QueuedConnection);
@@ -359,6 +385,7 @@ void GuiSessionCoordinator::retryHostedRadio(quint64 generation)
     // Retire failed I/O/DSP while retaining receiver objects and edits. This
     // internal disconnect is distinct from the operator's Disconnect intent.
     const QScopedValueRollback<bool> retiring(m_retiringHostedRadio, true);
+    m_hostedInPlaceDeadline.stop();
     const QString attempted = model->currentRadioInfo().macAddress;
     if (!attempted.isEmpty()) { m_stationRadios->setTarget(attempted); }
     // TX safety fix round 2 (2026-09-30): the recovery retire keeps a

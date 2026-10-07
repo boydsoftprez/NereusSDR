@@ -22,6 +22,8 @@
 // receive-only pre-check lifted, against no hardware.
 //
 // Modification history (NereusSDR):
+//   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
+//                 AI-assisted via OpenAI Codex.
 //   2026-09-26 : Created for remote-window parity Task 29 by J.J. Boyd
 //                 (KG4VCF). AI-assisted implementation via Anthropic
 //                 Claude Code.
@@ -411,6 +413,19 @@ class TstMoxDisplayController : public QObject {
     Q_OBJECT
 
 private slots:
+    void keyedNotificationIsAnEdgeAndInitialTruth()
+    {
+        RadioModel model(RadioModel::Role::Remote);
+        PanadapterStack stack;
+        MoxDisplayController display(&stack, &model, nullptr);
+        QSignalSpy edges(&display, &MoxDisplayController::keyedChanged);
+        bool observed = false;
+        connect(&display, &MoxDisplayController::keyedChanged, &display,
+                [&](bool keyed) { observed = display.isKeyed() == keyed; });
+        display.setKeyed(true, -1); QVERIFY(observed); QCOMPARE(edges.size(), 1);
+        display.setKeyed(true, -1); QCOMPARE(edges.size(), 1);
+        display.setKeyed(false, -1); QCOMPARE(edges.size(), 2); QVERIFY(observed);
+    }
     void waterfallWindowChangeDuringResizeKeepsRfAlignment_data()
     {
         QTest::addColumn<int>("newWidth");

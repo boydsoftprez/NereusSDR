@@ -17,6 +17,7 @@
 
 #pragma once
 #include <QByteArray>
+#include <QElapsedTimer>
 #include <QHostAddress>
 #include <QList>
 #include <QMutex>
@@ -56,6 +57,10 @@ public:
     void goSilent();
     // Resume handling packets and restart auto-streaming.
     void resume();
+    // Issue #351: auto-streaming starts this long after each metis-start,
+    // as a radio that takes a while to answer one. 0 (the default) streams
+    // from the next 10 ms tick.
+    void setStartAnswerDelayMs(int ms);
 
     // Disable (or re-enable) the 10 ms auto-stream timer so a test has full
     // control over when ep6 frames arrive at the receiver.  Must be called
@@ -122,6 +127,8 @@ private:
     bool         m_running{false};
     bool         m_silent{false};
     bool         m_autoStreamEnabled{true};
+    int          m_startAnswerDelayMs{0};
+    QElapsedTimer m_sinceStart;
     int          m_ep2Count{0};
     QList<QByteArray> m_ep2Cc;
     int          m_stopCount{0};

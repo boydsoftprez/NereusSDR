@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-04 — Selected RX source identity and RX-only presentation reset by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
@@ -244,6 +246,7 @@ class PanadapterModel;
 // migrates m_spectrumWidget references.
 class PanadapterStack;
 class ClarityController;
+class PanClarityRegistry;
 class ContainerManager;
 class MeterWidget;
 class MeterPoller;
@@ -588,12 +591,7 @@ private slots:
     /// pan-0's strip only).
     void wirePanDisplayFlyout(class SpectrumOverlayPanel* panel,
                               class SpectrumWidget* sw, const QString& panId);
-    /// Parity Task 18: Clarity tunes the active pan (Setup's display pages
-    /// follow the same pan). Each strip's badge shows Clarity's state on
-    /// the pan it is tuning and nothing on the others.
-    void refreshClarityBadges();
-    /// The stream the pan Clarity tunes is fed from; -1 when it has none.
-    int clarityStreamIndex() const;
+    void reconcileClarityBindings();
 
     /// TNF: push the global notch list at EVERY pan (design section 8.1).
     ///
@@ -1591,7 +1589,7 @@ private:
         int    sampleRateHz{0};
     };
     QHash<int, StreamWindow> m_streamWindows;
-    ClarityController*  m_clarityController{nullptr};
+    PanClarityRegistry* m_clarityRegistry{nullptr};
     class StepAttenuatorController* m_stepAttController{nullptr};
     /// Phase 3F Sub-Epic D Task 11: CH 1 stacked-indicator widget in the
     /// bottom status bar. Shown only on 2-ADC SKUs. Registered with
@@ -2036,11 +2034,7 @@ private:
     /// switch retires the pan.
     QHash<QString, QPointer<class SpectrumOverlayPanel>> m_overlayPanels;
 
-    // Parity Task 18: Clarity's badge state, shown on the strip of the pan
-    // Clarity tunes, and that pan (the active pan when it last moved).
-    bool m_clarityBadgeActive{false};
-    bool m_clarityBadgePaused{false};
-    QString m_clarityPanId;
+
 
     // Applet panel — scrollable content widget inside Container #0
     class AppletPanelWidget* m_appletPanel{nullptr};

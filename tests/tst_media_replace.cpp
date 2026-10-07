@@ -1065,6 +1065,57 @@ private slots:
         g.core.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
+    // Issue #351: the Core's radio dropped for 16 s, and the window heard
+    // the radio was back 18 ms before its first audio. The silence while
+    // the radio was down is not the path's: the silence clock starts again
+    // at the radio's return, as it does at the return to receive.
+    void theRadioComingBackRestartsTheSilenceClock()
+    {
+        GuiHarness g;
+        QVERIFY(g.connect(tunnelShimPath()));
+        MediaIcePath hostPath;
+        hostPath.remoteAddress = QStringLiteral("127.0.0.1");
+        g.feeding = false;
+        g.guiTransports.first()->path = hostPath;
+        g.audioOn(0);
+        g.core.remote.setConnectionStateForTest(ConnectionState::Disconnected);
+        g.now += 3 * RemoteMediaController::kDirectMediaSilenceFallbackMs;
+        g.gui->checkMediaSilence();
+        QCOMPARE(g.guiTransports.size(), 1);
+        g.core.remote.setConnectionStateForTest(ConnectionState::Connected);
+        g.gui->checkMediaSilence();
+        QCOMPARE(g.guiTransports.size(), 1);
+        g.now += RemoteMediaController::kDirectMediaSilenceFallbackMs - 1;
+        g.gui->checkMediaSilence();
+        QCOMPARE(g.guiTransports.size(), 1);
+        g.now += 1;
+        g.gui->checkMediaSilence();
+        QCOMPARE(g.guiTransports.size(), 2);
+        g.core.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // Issue #351, on the tunnel: the stall rule does not start media over
+    // while the Core's radio is down, and counts from the radio's return.
+    // The stall tick runs on its own 500 ms timer and wall clock.
+    void theStallRuleWaitsForTheRadio()
+    {
+        GuiHarness g;
+        QVERIFY(g.connect(tunnelShimPath()));
+        QSignalSpy recovery(g.gui.get(), &RemoteMediaController::recoveryRequested);
+        g.feeding = false;
+        g.audioOn(0);
+        g.core.remote.setConnectionStateForTest(ConnectionState::Disconnected);
+        QTest::qWait(RemoteMediaController::kMediaStallMs + 600);
+        QVERIFY(recovery.isEmpty());
+        QElapsedTimer back;
+        g.core.remote.setConnectionStateForTest(ConnectionState::Connected);
+        back.start();
+        QTRY_COMPARE_WITH_TIMEOUT(recovery.size(), 1,
+                                  RemoteMediaController::kMediaStallMs + 1500);
+        QVERIFY(back.elapsed() >= RemoteMediaController::kMediaStallMs - 50);
+        g.core.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
     // Silence while the Core is keyed is expected: back on receive, the
     // silence clock starts again rather than counting the keyed time.
     void theReturnToReceiveRestartsTheSilenceClock()

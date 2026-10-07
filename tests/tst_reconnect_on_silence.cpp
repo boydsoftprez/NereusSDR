@@ -28,8 +28,8 @@ using NereusSDR::Test::P1FakeRadio;
 class TestReconnectOnSilence : public QObject {
     Q_OBJECT
 private:
-    // Compress the reconnect timeline ~13x: watchdog 2000ms -> 150ms,
-    // reconnect interval 5000ms -> 300ms. Without this the second test
+    // Compress the reconnect timeline: watchdog 3000ms -> 150ms,
+    // reconnect interval 1000ms -> 300ms. Without this the second test
     // method sleeps 42 real seconds and sets the parallel floor for
     // the entire suite.
     //
@@ -163,6 +163,43 @@ private slots:
         fake.stop();
     }
 
+    // Issue #351: a radio that stops streaming and answers only a new
+    // start, a while after it, as the ANAN-10E on the reporter's Core did.
+    // Each attempt waits the silence window from the attempt itself: timed
+    // from the last frame before the loss, the window had long passed, the
+    // watchdog's next tick (25 ms) called the link lost again before the
+    // answer came, and every attempt failed the same way.
+    void aRadioThatAnswersTheStartLateComesBackOnTheFirstAttempt() {
+        P1FakeRadio fake;
+        fake.start();
+
+        std::unique_ptr<P1RadioConnection> connPtr = bringLinkUp(fake);
+        QVERIFY2(connPtr != nullptr,
+                 "link never reached Connected in any connect attempt");
+        P1RadioConnection& conn = *connPtr;
+        QTRY_VERIFY_WITH_TIMEOUT(fake.isRunning(), 2000);
+
+        // Longer than the watchdog's 25 ms tick, inside the 150 ms window.
+        fake.setStartAnswerDelayMs(100);
+        int linkLost = 0;
+        QObject::connect(&conn, &P1RadioConnection::connectionStateChanged,
+                         &conn, [&fake, &linkLost](ConnectionState s) {
+                             if (s == ConnectionState::LinkLost && ++linkLost == 1) {
+                                 fake.resume();
+                             }
+                         });
+        fake.goSilent();
+
+        QTRY_VERIFY_WITH_TIMEOUT(linkLost >= 1, 2000);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            conn.state() == ConnectionState::Connected, 3000);
+        QCOMPARE(linkLost, 1);
+        QVERIFY(conn.inPlaceRecoveryMs() > 0);
+
+        conn.disconnect();
+        fake.stop();
+    }
+
     void boundedRetriesExhaustStayInLinkLost() {
         P1FakeRadio fake;
         fake.start();
@@ -186,9 +223,9 @@ private slots:
         fake.stop();
 
         // Timeline is driven by two P1RadioConnection timing values that
-        // the test compresses ~13x via setReconnectTimingForTest():
-        //   watchdog silence  2000ms -> 150ms
-        //   reconnect interval 5000ms -> 300ms
+        // the test compresses via setReconnectTimingForTest():
+        //   watchdog silence  3000ms -> 150ms
+        //   reconnect interval 1000ms -> 300ms
         //
         // kMaxReconnectAttempts is 3, so the bounded chain produces exactly
         // 7 transitions after fake.stop() — LinkLost, then (Connecting,
@@ -200,10 +237,10 @@ private slots:
         // The next reconnect timeout finds attempts == kMaxReconnectAttempts
         // and returns without a transition, so the chain terminates here.
         //
-        // Expected wall time for those 7 transitions is ~1.9s: each cycle is
+        // Expected wall time for those 7 transitions is ~1.5s: each cycle is
         // the 300ms reconnect interval plus the watchdog re-trip, which costs
-        // 150ms plus a few 25ms kWatchdogTickMs ticks because
-        // onReconnectTimeout does not reset m_lastEp6At. The 10000ms ceiling
+        // the 150ms silence window counted from the attempt (issue #351:
+        // onReconnectTimeout restarts m_lastEp6At). The 10000ms ceiling
         // is a generous upper bound only — QTRY returns as soon as the count
         // is reached, so a healthy run still finishes in ~2s. The headroom is
         // for loaded CI, where every timer in the chain stretches.

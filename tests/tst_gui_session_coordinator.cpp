@@ -19,6 +19,7 @@
 #include "core/AppSettings.h"
 #include "core/cat/CatService.h"
 #include "core/SliceOwnership.h"
+#include "core/RadioConnection.h"
 #include "core/RadioDiscovery.h"
 #include "core/WdspEngine.h"
 #include "core/MoxController.h"
@@ -43,6 +44,7 @@
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "fakes/MainWindowTestSettings.h"
+#include "fakes/P1FakeRadio.h"
 #include "fakes/UpgradedCoreToken.h"
 
 using namespace NereusSDR;
@@ -290,6 +292,83 @@ private slots:
         QVERIFY(!model->connection());
         // Merely attempting a radio must not replace the last confirmed choice.
         QCOMPARE(sessions.stationRadios()->savedChoice(), saved);
+    }
+
+    // Issue #351: the desktop's own Core waits for a lost P1 link to come
+    // back on the same connection, as nereusd does, and rebuilds the link
+    // only when that wait runs out.
+    void hostedLostP1LinkComesBackInPlace()
+    {
+        AppSettings& settings = AppSettings::instance();
+        StationHandover ownership(AppSettings::profileOverride());
+        QString error;
+        QVERIFY2(ownership.acquire(0, &error), qPrintable(error));
+        Test::P1FakeRadio fake;
+        fake.start();
+        RadioInfo radio;
+        radio.address = fake.localAddress();
+        radio.port = fake.localPort();
+        radio.boardType = HPSDRHW::HermesLite;
+        radio.protocol = ProtocolVersion::Protocol1;
+        radio.macAddress = QStringLiteral("AA:BB:CC:11:22:33");
+        radio.firmwareVersion = 72;
+        QTcpServer port;
+        QVERIFY(port.listen(QHostAddress::LocalHost, 0));
+        const quint16 selectedPort = port.serverPort();
+        port.close();
+        QFile config(QFileInfo(settings.filePath()).absolutePath() + QStringLiteral("/station.conf"));
+        QVERIFY(config.open(QIODevice::WriteOnly));
+        const QByteArray bytes = QStringLiteral("remote_bind = 127.0.0.1\nremote_port = %1\n"
+            "status_page = off\nrendezvous_servers =\nradio_mac = %2\n")
+            .arg(selectedPort).arg(radio.macAddress).toUtf8();
+        QCOMPARE(config.write(bytes), bytes.size());
+        config.close();
+        settings.saveRadio(radio, false, true);
+        settings.setLastConnected(radio.macAddress);
+        settings.setValue(QStringLiteral("DesktopCore/Run"), true);
+        GuiSessionCoordinator sessions;
+        QVERIFY(sessions.configureDesktopStation(AppSettings::profileOverride(), true));
+        QVERIFY2(sessions.replace({}, false, &error), qPrintable(error));
+        RadioModel* model = sessions.window()->radioModel();
+        RadioDiscovery* discovery = model->discovery();
+        discovery->injectLastSeenForTest(radio.macAddress, radio, 0);
+        sessions.window()->startInitialConnection();
+        emit discovery->discoveryFinished();
+        QTRY_VERIFY_WITH_TIMEOUT(model->isConnected(), 15000);
+        const QPointer<RadioConnection> connection(model->connection());
+        QVERIFY(connection);
+
+        bool sawLinkLost = false;
+        QObject watchScope;
+        connect(model, &RadioModel::connectionStateChanged, &watchScope,
+                [&](ConnectionState state) {
+            if (state == ConnectionState::LinkLost && !sawLinkLost) {
+                sawLinkLost = true;
+                // The cable is back: the radio answers the next start.
+                fake.resume();
+            }
+        });
+        fake.goSilent();
+        QTRY_VERIFY_WITH_TIMEOUT(sawLinkLost, 8000);
+        QTRY_VERIFY(sessions.hostedInPlaceWaitActiveForTest());
+        QCOMPARE(model->connection(), connection.data());
+        QVERIFY(model->wdspEngine()->isInitialized());
+        QTRY_VERIFY_WITH_TIMEOUT(model->isConnected(), 6000);
+        QCOMPARE(model->connection(), connection.data());
+        // The coordinator hears Connected through a queued connection, so
+        // the wait ends one event-loop turn after the model reports it.
+        QTRY_VERIFY(!sessions.hostedInPlaceWaitActiveForTest());
+        QVERIFY(!model->isRadioLinkDown());
+
+        // A link that stays down past the wait is rebuilt as before.
+        model->onConnectionStateChangedForTest(ConnectionState::LinkLost);
+        QTRY_VERIFY(sessions.hostedInPlaceWaitActiveForTest());
+        QCOMPARE(model->connection(), connection.data());
+        sessions.endHostedInPlaceWaitForTest();
+        QTRY_VERIFY(!connection);
+        QVERIFY(model->isRadioLinkDown());
+        model->disconnectFromRadio();
+        QVERIFY(!model->isRadioLinkDown());
     }
 
     void desktopHostRetiresBeforeModelWithoutStartingBackgroundOnReplacement()
