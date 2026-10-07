@@ -177,6 +177,15 @@ function(nereus_add_test name)
     cmake_parse_arguments(_nat "NATIVE_WINDOW;CORE_ONLY;REALTIME" "" "EXTRA_LABELS" ${ARGN})
     set(_extra_sources ${_nat_UNPARSED_ARGUMENTS})
 
+    # all_tests and the per-label targets are built from the list once,
+    # near the bottom of this file. A test registered after that is in
+    # ctest but in no build target, so CI reports it Not Run (PR #340's
+    # CAT suites). Stop the configure instead.
+    get_property(_sealed GLOBAL PROPERTY NEREUS_ALL_TESTS_SEALED)
+    if(_sealed)
+        message(FATAL_ERROR "nereus_add_test(${name}) comes after the all_tests aggregate; register it above that block")
+    endif()
+
     # Sharding gate — when this test's hash bucket doesn't match the
     # active shard, register a stub OBJECT library (EXCLUDE_FROM_ALL,
     # backed by the shared stub source set up at the top of this file)
@@ -9854,50 +9863,6 @@ target_compile_definitions(tst_core_connection_candidates PRIVATE
 nereus_add_test(tst_diversity_control fakes/LoopbackTransport.cpp EXTRA_LABELS session)
 nereus_add_test(tst_diversity_local_admission fakes/LoopbackTransport.cpp EXTRA_LABELS models session)
 
-# --------------------------------------------------------------------------
-# Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
-# --------------------------------------------------------------------------
-# All individual tst_* executables are EXCLUDE_FROM_ALL so a routine
-# `cmake --build build` builds only the main NereusSDR app (seconds,
-# not minutes).  When the operator -- or CI, or pre-merge -- needs to
-# build the full test suite, they invoke:
-#
-#   cmake --build build --target all_tests
-#   ctest
-#
-# The GLOBAL property NEREUS_ALL_TESTS is appended to by every
-# nereus_add_test() call above.  add_custom_target then bundles them
-# into a single buildable target.
-nereus_add_test(tst_container_content_host)
-nereus_add_test(tst_container_content_host_native NATIVE_WINDOW)
-
-get_property(_all_tests GLOBAL PROPERTY NEREUS_ALL_TESTS)
-add_custom_target(all_tests DEPENDS ${_all_tests})
-
-# --------------------------------------------------------------------------
-# Per-label build aggregates: tests_core / tests_models / tests_gui / ...
-# --------------------------------------------------------------------------
-# One buildable target per derived ctest label, so the documented subset
-# workflow builds what it runs:
-#
-#   cmake --build build --target tests_core && ctest -L core
-#
-# Without these, `ctest -L core` after a routine `cmake --build build`
-# either reports Not Run (clean tree) or silently executes STALE test
-# binaries and returns a false green (populated tree), because every
-# tst_* target is EXCLUDE_FROM_ALL.  Raised by Codex review on PR #305.
-get_property(_label_names GLOBAL PROPERTY NEREUS_TEST_LABEL_NAMES)
-if(_label_names)
-    list(REMOVE_DUPLICATES _label_names)
-    foreach(_label IN LISTS _label_names)
-        get_property(_label_tests GLOBAL PROPERTY NEREUS_TESTS_LABEL_${_label})
-        if(_label_tests)
-            add_custom_target(tests_${_label} DEPENDS ${_label_tests})
-        endif()
-    endforeach()
-    message(STATUS "NereusSDR: per-label test targets: ${_label_names}")
-endif()
-
 # Thetis CAT catalogue, also available to the headless Core.
 nereus_add_test(tst_cat_catalog CORE_ONLY)
 
@@ -9931,3 +9896,48 @@ nereus_add_test(tst_cat_applet)
 nereus_add_test(tst_cat_integration CORE_ONLY)
 
 nereus_add_test(tst_cat_rigctld CORE_ONLY)
+
+# --------------------------------------------------------------------------
+# Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
+# --------------------------------------------------------------------------
+# All individual tst_* executables are EXCLUDE_FROM_ALL so a routine
+# `cmake --build build` builds only the main NereusSDR app (seconds,
+# not minutes).  When the operator -- or CI, or pre-merge -- needs to
+# build the full test suite, they invoke:
+#
+#   cmake --build build --target all_tests
+#   ctest
+#
+# The GLOBAL property NEREUS_ALL_TESTS is appended to by every
+# nereus_add_test() call above.  add_custom_target then bundles them
+# into a single buildable target.
+nereus_add_test(tst_container_content_host)
+nereus_add_test(tst_container_content_host_native NATIVE_WINDOW)
+
+get_property(_all_tests GLOBAL PROPERTY NEREUS_ALL_TESTS)
+add_custom_target(all_tests DEPENDS ${_all_tests})
+set_property(GLOBAL PROPERTY NEREUS_ALL_TESTS_SEALED TRUE)
+
+# --------------------------------------------------------------------------
+# Per-label build aggregates: tests_core / tests_models / tests_gui / ...
+# --------------------------------------------------------------------------
+# One buildable target per derived ctest label, so the documented subset
+# workflow builds what it runs:
+#
+#   cmake --build build --target tests_core && ctest -L core
+#
+# Without these, `ctest -L core` after a routine `cmake --build build`
+# either reports Not Run (clean tree) or silently executes STALE test
+# binaries and returns a false green (populated tree), because every
+# tst_* target is EXCLUDE_FROM_ALL.  Raised by Codex review on PR #305.
+get_property(_label_names GLOBAL PROPERTY NEREUS_TEST_LABEL_NAMES)
+if(_label_names)
+    list(REMOVE_DUPLICATES _label_names)
+    foreach(_label IN LISTS _label_names)
+        get_property(_label_tests GLOBAL PROPERTY NEREUS_TESTS_LABEL_${_label})
+        if(_label_tests)
+            add_custom_target(tests_${_label} DEPENDS ${_label_tests})
+        endif()
+    endforeach()
+    message(STATUS "NereusSDR: per-label test targets: ${_label_names}")
+endif()

@@ -23,11 +23,18 @@ import Testing
 struct ToolsPagesTests {
     private let platform = TestPlatform()
 
-    /// Every tool the suite's ANAN-G2 catalogue lists on the phone, in the
-    /// desktop's order: all it offers, and TCI Server, which a Core without
-    /// its own TCI server does not offer and the phone shows greyed.
+    /// Every tool this app has a page for that the suite's ANAN-G2
+    /// catalogue lists, in the desktop's order: all it offers, and TCI
+    /// Server, which a Core without its own TCI server does not offer and
+    /// the phone shows greyed.
     static let offeredIds = ["spotHub", "freedvReporter", "txEqualizer", "pureSignal", "diversity", "tciServer",
                              "vaxAudio", "networkDiagnostics", "supportBundle"]
+
+    /// The phone's list from that catalogue: those tools, and CAT Control,
+    /// which the Core offers and this app has no page for, greyed with its
+    /// reason.
+    static let listedIds = ["spotHub", "freedvReporter", "txEqualizer", "pureSignal", "diversity", "catControl",
+                            "tciServer", "vaxAudio", "networkDiagnostics", "supportBundle"]
 
     // MARK: The list
 
@@ -42,20 +49,23 @@ struct ToolsPagesTests {
         // and every Core tool greyed, so wait for TCI Server's reason, which
         // only this catalogue's read gives it.
         #expect(await settle {
-            model.main.catalogFeed.revision == 2 && list.entries.map(\.id) == Self.offeredIds
+            model.main.catalogFeed.revision == 2 && list.entries.map(\.id) == Self.listedIds
                 && list.entries.first { $0.id == "tciServer" }?.reason == StationToolList.noTciServerReason
         })
         #expect(list.entries.map(\.title) == ["Spot Hub", "FreeDV Reporter", "TX Equalizer", "PureSignal",
-                                              "Diversity", "TCI Server", "VAX Audio", "Connection and performance",
-                                              "Support Bundle"])
-        #expect(list.entries.map(\.tag) == [.both, .core, .core, .core, .core, .core, .core, .both, .both])
-        #expect(list.entries.allSatisfy { $0.page != nil })
+                                              "Diversity", "CAT Control", "TCI Server", "VAX Audio",
+                                              "Connection and performance", "Support Bundle"])
+        #expect(list.entries.map(\.tag) == [.both, .core, .core, .core, .core, .core, .core, .core, .both, .both])
+        #expect(list.entries.filter { $0.id != "catControl" }.allSatisfy { $0.page != nil })
         // This Core runs no TCI server of its own: TCI Server is greyed with the reason; the rest open.
         let tci = try #require(list.entries.first { $0.id == "tciServer" })
         #expect(!tci.enabled && tci.reason == StationToolList.noTciServerReason && tci.detail == tci.reason)
-        #expect(list.entries.filter { $0.id != "tciServer" }.allSatisfy { $0.enabled })
-        // CWX, the Memory Manager and CAT Control are not built on the desktop: not listed (D41).
-        #expect(!list.entries.contains { ["cwx", "memoryManager", "catControl"].contains($0.id) })
+        #expect(list.entries.filter { !["tciServer", "catControl"].contains($0.id) }.allSatisfy { $0.enabled })
+        // CAT Control runs on the Core, and this app has no page for it: greyed with the reason (D41).
+        let cat = try #require(list.entries.first { $0.id == "catControl" })
+        #expect(cat.page == nil && !cat.enabled && cat.reason == StationToolList.unknownToolReason)
+        // CWX and the Memory Manager are not built on the desktop: not listed (D41).
+        #expect(!list.entries.contains { ["cwx", "memoryManager"].contains($0.id) })
         await model.disconnect()
     }
 
@@ -64,7 +74,7 @@ struct ToolsPagesTests {
         let (model, station) = try await connected()
         let list = ToolListModel(mirror: model.mirror, catalogFeed: model.main.catalogFeed)
         try await deliverCatalogue(station, revision: 2)
-        #expect(await settle { model.main.catalogFeed.revision == 2 && list.entries.map(\.id) == Self.offeredIds })
+        #expect(await settle { model.main.catalogFeed.revision == 2 && list.entries.map(\.id) == Self.listedIds })
         // The desktop builds CWX, and the Core stops offering PureSignal.
         try await deliverCatalogue(station, revision: 3) { tools in
             tools.map { tool in
@@ -80,7 +90,8 @@ struct ToolsPagesTests {
         }
         #expect(await settle { list.entries.contains { $0.id == "cwx" } })
         #expect(list.entries.map(\.id) == ["spotHub", "freedvReporter", "txEqualizer", "diversity", "cwx",
-                                           "tciServer", "vaxAudio", "networkDiagnostics", "supportBundle"])
+                                           "catControl", "tciServer", "vaxAudio", "networkDiagnostics",
+                                           "supportBundle"])
         let cwx = try #require(list.entries.first { $0.id == "cwx" })
         #expect(cwx.title == "CWX" && cwx.tag == .core && cwx.page == nil)
         #expect(cwx.reason == StationToolList.unknownToolReason && !cwx.enabled)
@@ -105,8 +116,8 @@ struct ToolsPagesTests {
         // The Hermes Lite 2's catalogue: no diversity receiver, no TCI server of the Core's own.
         try await deliverCatalogue(station, revision: 2, fixture: "catalog-hermes-lite-2")
         #expect(await settle { list.entries.map(\.id) == ["spotHub", "freedvReporter", "txEqualizer", "pureSignal",
-                                                          "tciServer", "vaxAudio", "networkDiagnostics",
-                                                          "supportBundle"] })
+                                                          "catControl", "tciServer", "vaxAudio",
+                                                          "networkDiagnostics", "supportBundle"] })
         #expect(list.entries.first { $0.id == "tciServer" }?.reason == StationToolList.noTciServerReason)
         // A headless Core with its own TCI server: VAX Audio greyed, TCI Server opens; no PureSignal on this radio.
         try await deliverCatalogue(station, revision: 3) { tools in
@@ -121,8 +132,8 @@ struct ToolsPagesTests {
             }
         }
         #expect(await settle { list.entries.map(\.id) == ["spotHub", "freedvReporter", "txEqualizer", "diversity",
-                                                          "tciServer", "vaxAudio", "networkDiagnostics",
-                                                          "supportBundle"] })
+                                                          "catControl", "tciServer", "vaxAudio",
+                                                          "networkDiagnostics", "supportBundle"] })
         let vax = try #require(list.entries.first { $0.id == "vaxAudio" })
         #expect(!vax.enabled && vax.reason == StationToolList.noVaxReason && vax.page == .vaxAudio)
         #expect(list.entries.first { $0.id == "tciServer" }?.enabled == true)
