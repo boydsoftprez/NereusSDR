@@ -55,10 +55,24 @@ never shown as live), strict heading input (empty, NaN, negative and over
 tape shapes, and phone control over TCI-style commands. Its rotor
 connection belongs to a window; ours belongs to the Core.
 
-Taken (2026-10-07): the dial's design, ported with Longpath's header and
-credit (plan Task 6). Proposed, waiting on JJ: the fresh-position flag, the
-strict input checks, the ERC's own Hamlib model, and the Core starting
-`rotctld` for the operator.
+Taken (JJ, 2026-10-07), with Longpath's header and credit wherever code is
+ported:
+
+* The dial's design (plan Task 6).
+* The fresh-position rule: no position reply for 1500 ms marks the heading
+  stale (Longpath `RotctldClient.h:76`); windows show it muted with its age.
+* Strict heading checks (Longpath `RotorPeilung.h`): not-a-number refused,
+  out of range refused rather than wrapped, 360 sent as 0.
+* Hamlib's own ERC driver, model 404, offered in the rotctld model list.
+* The Core starting `rotctld` itself (Longpath `RotctldProcess`): it finds
+  the binary (including Homebrew paths a GUI-launched process does not see),
+  runs `rotctld -m <model> -r <port> -s <baud> -T 127.0.0.1 -t <listen>`
+  (`RotctldProcess.cpp:138-161`), takes a free port when 4533 is held, and
+  stops it on exit.
+
+Kept from our design: the native GS-232 driver, so the ERC in GS-232 mode
+needs no Hamlib install on the Core. A local reference copy is at
+`../Longpath/` (pinned `551576e`, v0.6.7-1).
 
 ## Facts (sourced)
 
@@ -116,8 +130,9 @@ to in its Service Tool, and its reply to `C2` and to
 
 New files, following the PGXL/TGXL/RF2K-S pattern:
 
-* `RotorConnection` (`src/core/RotorConnection.*`): one class, three
-  drivers behind it (GS-232A, GS-232B, rotctld). Serial through
+* `RotorConnection` (`src/core/RotorConnection.*`): one class, four
+  drivers behind it (GS-232A, GS-232B, a running rotctld, and rotctld
+  started by the Core). Serial through
   `QSerialPort` (already used by `src/core/mmio/SerialEndpointWorker`), TCP
   through `QTcpSocket`. It reads the position on a timer (about once a
   second when still, faster while turning), reports heading, elevation,
@@ -128,6 +143,13 @@ New files, following the PGXL/TGXL/RF2K-S pattern:
 
 Behaviour:
 
+* **Fresh or stale.** Every position reply stamps the time; 1500 ms without
+  one marks the heading stale until the next reply.
+* **Strict headings.** Every target is checked before it is sent (see
+  Prior art).
+* **rotctld started by the Core** (driver 4): a `RotctldProcess` beside the
+  connection; "Hamlib's rotctld is not installed on the Core's computer."
+  when the binary is missing.
 * **Target and arrival.** A set command records the target; the rotor is
   "turning" until the read heading is within a tolerance of the target or
   stops changing, then "stopped".

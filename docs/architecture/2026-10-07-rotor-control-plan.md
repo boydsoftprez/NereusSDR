@@ -38,7 +38,9 @@ auto-turn setting off by default, turning allowed on the air). Mockup:
   Samphire dual-licence block byte for byte (already on `RotatorItem`), a modification-history
   line, `// From Thetis MeterManager.cs:NNNN [v2.10.3.15]` cites, every inline comment kept,
   `scripts/verify-inline-tag-preservation.py` clean.
-- The Longpath dial port (Task 6) follows HOW-TO-PORT.md as for any upstream: Longpath's
+- Longpath reference: `../Longpath/`, pinned `551576e` (v0.6.7-1); cite it as
+  `// From Longpath <file>:<line> [@551576e]`. Never pull it mid-task.
+- The Longpath ports (Tasks 3 and 6) follows HOW-TO-PORT.md as for any upstream: Longpath's
   file header byte for byte with its modification history, a NereusSDR modification-history
   line, `// From Longpath src/gui/widgets/RotorDialWidget.cpp:NNNN [@shortsha]` cites, inline
   comments kept verbatim (they are German; keep them), a new
@@ -88,6 +90,12 @@ it.
 - Create: `src/core/RotorConnection.{h,cpp}` (GS-232A, GS-232B over `QSerialPort`; `rotctld`
   over `QTcpSocket`; position polling about once a second when still and faster while turning;
   set, stop, move)
+- Create: `src/core/RotctldProcess.{h,cpp}` (ported from Longpath `RotctldProcess`: find the
+  binary including Homebrew paths, the `-m -r -s -T 127.0.0.1 -t` arguments, a free port when
+  4533 is held, restart, stop on exit)
+- Create: `src/core/RotorModels.h` (the curated Hamlib model list, ERC 404 among them; model
+  numbers checked against Hamlib's `rotlist.h`, not copied on trust)
+- Create: `src/core/RotorHeading.h` (strict heading checks, after Longpath `RotorPeilung.h`)
 - Create: `src/core/StationRotorController.{h,cpp}` (settings under `Rotor/*`, presets,
   target and arrival, stop priority, the hold dead man of 250 ms repeats and a 750 ms lapse,
   reconnect as the other accessories do, the Core's serial port list)
@@ -96,6 +104,10 @@ it.
   Hamlib's invalid replies and the Task 2 capture), `tst_station_rotor_controller`
 
 **Acceptance:**
+- No position reply for 1500 ms sets `positionFresh` false; the next reply sets it true.
+- Not-a-number and out-of-range headings are refused, never wrapped; 360 is sent as 0.
+- Driver 4 starts `rotctld` with the chosen model, port and baud, and stops it on disconnect and
+  on exit; with no `rotctld` installed it refuses with the document's reason.
 - Each driver reads azimuth (and elevation on az/el) and sends set, stop and move in exactly the
   cited formats.
 - Stop jumps the queue. A lapsed hold, or its window's session ending, sends stop.
@@ -140,8 +152,8 @@ it.
 **Files:**
 - Create: `src/gui/widgets/RotorDialWidget.{h,cpp}` (ported from Longpath, see Global
   Constraints: rose and tape shapes, amber heading needle, dashed target arrow, travel sector,
-  arrival tolerance and green on arrival, elevation in the corner, click to aim; shape choice
-  saved with `AppSettings`)
+  arrival tolerance and green on arrival, elevation in the corner, click to aim, a stale
+  heading drawn muted with its age; shape choice saved with `AppSettings`)
 - Create: `src/gui/applets/RotorApplet.{h,cpp}` (status line, the dial, heading readout and "to
   go" under it, CCW / STOP / CW, Down / Up on az/el, short and long path, presets, "Turn to"
   callsign box; as in the mockup)
