@@ -95,6 +95,10 @@ Added extended CAT commands for APF funtions - May 2017.
 //              slice; ZZSW sets TX absolutely; IF falls back to USB as Thetis does;
 //              RT/ZZRT/XT/ZZXS sets other than 0 or 1 answer nothing.
 //              J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-06 - BD/BU/ZZBD/ZZBU step the main receiver's band list (6 m, 2 m,
+//              then GEN, with WWV left out) and ZZBA/ZZBB the sub receiver's
+//              (6 m, WWV, then GEN), as Thetis does.
+//              J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 #include "CatRxCommands.h"
 #include "CatService.h"
 #include "core/TxSliceArbiter.h"
@@ -334,6 +338,28 @@ constexpr int kOffsetStep = 10;
 // From Thetis CAT/CATCommands.cs:10076-10324 [v2.10.3.15]. Supported native bands, absent transverter slots omitted.
 constexpr std::array<Band,14> kBands{Band::GEN,Band::Band160m,Band::Band80m,Band::Band60m,Band::Band40m,Band::Band30m,Band::Band20m,Band::Band17m,Band::Band15m,Band::Band12m,Band::Band10m,Band::Band6m,Band::Band2m,Band::WWV};
 constexpr std::array<const char*,14> kBandTokens{"888","160","080","060","040","030","020","017","015","012","010","006","002","999"};
+//Construct an array of the PowerSDR.Band enums.
+//If the 2m xverter is present, set the last index to B2M
+//otherwise, set it to B6M.
+// [original inline comment from CATCommands.cs:10047-10049]
+// From Thetis CAT/CATCommands.cs:10046-10061,10100-10124 [v2.10.3.15]. BandUp/BandDown walk BandList (GEN
+// first, WWV after B2M) and wrap at LastBandIndex. NereusSDR's 2 m is a native band, always on the band
+// grid, so it stands for Thetis with the transverter present: the main receiver wraps after 2 m and never
+// steps into WWV. From WWV, up is the first VHF slot (no transverter here, so refused) and down is 2 m.
+constexpr int kRx1LastBandIndex = 12;
+static_assert(kBands[kRx1LastBandIndex] == Band::Band2m && kBands[kRx1LastBandIndex + 1] == Band::WWV);
+// case "6m": next = "WWV"/*"2m"*/; previous = "10m"; break;
+//case "2m": next = "WWV"; previous = "6m"; break; //MW0LGE remove 2m and this //MW0LGE21_h
+//case "VHF0"/*"VU 2m"*/: ... // remove these VU 2m/70cm MW0LGE_21h
+//see if the next vhf entry is enabled
+//if not, go back to GEN
+//find the last enabled VHF entry
+//or default to the value just below the VHF selections
+// [original inline comments from console.cs:16398-16441]
+// From Thetis console.cs:16381-16447 [v2.10.3.15]. CATRX2BandUpDown: GEN, 160 m to 6 m, WWV, then the
+// enabled VHF slots (none here), wrapping to GEN; 2 m is not in the sub receiver's list, so a sub receiver
+// on 2 m is refused. Thetis's table gives 15 m a previous of "15m"; ours steps down to 17 m.
+constexpr std::array<Band,13> kRx2Bands{Band::GEN,Band::Band160m,Band::Band80m,Band::Band60m,Band::Band40m,Band::Band30m,Band::Band20m,Band::Band17m,Band::Band15m,Band::Band12m,Band::Band10m,Band::Band6m,Band::WWV};
 QByteArray kenwoodMode(DSPMode mode, bool digitalSideband) {
     // From Thetis CAT/CATCommands.cs:9953-10050 [v2.10.3.15].
     switch(mode) {
@@ -1585,8 +1611,18 @@ CatCommandResult CatRxCommands::execute(const CatRequest& request, CatSessionCon
             if (name == kBandTokens.end()) { return error(); } desired=kBands[name-kBandTokens.begin()];
         } else {
             const bool down=code == "BD" || code == "ZZBD" || code == "ZZBA";
-            const int index=found == kBands.end() ? 0 : int(found-kBands.begin());
-            desired=kBands[(index+int(kBands.size())+(down ? -1 : 1))%int(kBands.size())];
+            if (code == "ZZBA" || code == "ZZBB") {
+                const auto at=std::find(kRx2Bands.begin(),kRx2Bands.end(),current);
+                if (at == kRx2Bands.end()) { return error(); }
+                const int size=int(kRx2Bands.size());
+                desired=kRx2Bands[(int(at-kRx2Bands.begin())+size+(down ? -1 : 1))%size];
+            } else {
+                if (found == kBands.end()) { return error(); }
+                const int index=int(found-kBands.begin());
+                if (!down && index > kRx1LastBandIndex) { return error(); }
+                desired=down ? kBands[index > 0 ? index-1 : kRx1LastBandIndex]
+                             : kBands[index == kRx1LastBandIndex ? 0 : index+1];
+            }
         }
         const CatWriteToken write=token("band"); if (!stillValid(write) || slice->locked()) { return error(); }
         model->onBandButtonClicked(slice,desired);

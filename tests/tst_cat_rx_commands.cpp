@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original CAT model integration regressions.
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-06 Band up and down follow each receiver's Thetis band list.
+//            J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 #include <QtTest>
 #define private public
 #include "core/MoxController.h"
@@ -200,6 +202,33 @@ private slots:
     QCOMPARE(service.processFrame(id,"ZZCN;"),QByteArray("ZZCN1;"));
     QVERIFY(model.requestStreamCtunPinned(0,false)); QCOMPARE(service.processFrame(id,"ZZCO;"),QByteArray("ZZCO0;"));
     const double original=model.sliceById(0)->frequency(); QCOMPARE(service.processFrame(id,"ZZBT017;"),QByteArray()); QCOMPARE(bandFromFrequency(model.sliceById(2)->frequency()),Band::Band17m); QCOMPARE(model.sliceById(0)->frequency(),original); QCOMPARE(model.activeSlice(),model.sliceById(0));
+ }
+ void bandStepsFollowEachReceiversList() {
+    RadioModel model; slices(model); model.configureStreamPool(2,3,192000);
+    const quint64 id=start(model); QVERIFY(id); CatService& service=*model.catService();
+    const auto primary=[&] { return bandFromFrequency(model.sliceById(0)->frequency()); };
+    const auto secondary=[&] { return bandFromFrequency(model.sliceById(2)->frequency()); };
+    // Main receiver: 6 m, 2 m, then GEN; WWV is not on the way.
+    QCOMPARE(service.processFrame(id,"ZZBS006;"),QByteArray()); QCOMPARE(primary(),Band::Band6m);
+    QCOMPARE(service.processFrame(id,"BU;"),QByteArray()); QCOMPARE(primary(),Band::Band2m);
+    QCOMPARE(service.processFrame(id,"ZZBU;"),QByteArray()); QCOMPARE(primary(),Band::GEN);
+    QCOMPARE(service.processFrame(id,"BD;"),QByteArray()); QCOMPARE(primary(),Band::Band2m);
+    QCOMPARE(service.processFrame(id,"ZZBD;"),QByteArray()); QCOMPARE(primary(),Band::Band6m);
+    QCOMPARE(service.processFrame(id,"ZZBS160;"),QByteArray()); QCOMPARE(service.processFrame(id,"BD;"),QByteArray()); QCOMPARE(primary(),Band::GEN);
+    // From WWV, up is a transverter slot (none here) and down is 2 m.
+    QCOMPARE(service.processFrame(id,"ZZBS999;"),QByteArray()); QCOMPARE(primary(),Band::WWV);
+    QCOMPARE(service.processFrame(id,"BU;"),QByteArray("?;")); QCOMPARE(primary(),Band::WWV);
+    QCOMPARE(service.processFrame(id,"BD;"),QByteArray()); QCOMPARE(primary(),Band::Band2m);
+    // Sub receiver: 6 m, WWV, then GEN; 2 m is not on its list.
+    QCOMPARE(service.processFrame(id,"ZZBT006;"),QByteArray()); QCOMPARE(secondary(),Band::Band6m);
+    QCOMPARE(service.processFrame(id,"ZZBB;"),QByteArray()); QCOMPARE(secondary(),Band::WWV);
+    QCOMPARE(service.processFrame(id,"ZZBB;"),QByteArray()); QCOMPARE(secondary(),Band::GEN);
+    QCOMPARE(service.processFrame(id,"ZZBA;"),QByteArray()); QCOMPARE(secondary(),Band::WWV);
+    QCOMPARE(service.processFrame(id,"ZZBA;"),QByteArray()); QCOMPARE(secondary(),Band::Band6m);
+    QCOMPARE(service.processFrame(id,"ZZBT015;"),QByteArray()); QCOMPARE(service.processFrame(id,"ZZBA;"),QByteArray()); QCOMPARE(secondary(),Band::Band17m);
+    QCOMPARE(service.processFrame(id,"ZZBT002;"),QByteArray()); QCOMPARE(secondary(),Band::Band2m);
+    QCOMPARE(service.processFrame(id,"ZZBB;"),QByteArray("?;")); QCOMPARE(secondary(),Band::Band2m);
+    QCOMPARE(primary(),Band::Band2m);
  }
  void clampsLookupExtremesAndSteps() {
     RadioModel model; slices(model); const quint64 id=start(model); CatService& service=*model.catService();
