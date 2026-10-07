@@ -219,6 +219,50 @@ private slots:
         QVERIFY(!model.moxController()->isManualKey());
         QVERIFY(!model.transmitModel().isTune());
     }
+    void catTuneStartCutShortFinishesAsOff_data()
+    {
+        QTest::addColumn<bool>("atPower"); QTest::addColumn<bool>("keyed");
+        QTest::newRow("mode swap/release") << false << false;
+        QTest::newRow("mode swap/another key") << false << true;
+        QTest::newRow("tune power/release") << true << false;
+        QTest::newRow("tune power/another key") << true << true;
+    }
+    void catTuneStartCutShortFinishesAsOff()
+    {
+        // Review X5: a request from another source accepted while a CAT TUNE
+        // is still setting up must not leave the tune, the CW-to-SSB swap,
+        // the power or the power limit behind; another source's key stays.
+        QFETCH(bool, atPower); QFETCH(bool, keyed);
+        CatMockConnection conn; TxChannel tc(1); RadioModel model; setup(model, conn);
+        model.injectTxChannelForTest(&tc);
+        TransmitModel& txm = model.transmitModel();
+        txm.setTuneDrivePowerSource(DrivePowerSource::Fixed);
+        txm.setTunePower(10); txm.setPower(40);
+        SliceModel* const slice = model.sliceById(0);
+        slice->setDspMode(DSPMode::CWU);
+        bool cut = false;
+        const auto cutShort = [&model, &cut, keyed] {
+            if (cut) { return; }
+            cut = true;
+            model.moxController()->setMox(keyed);
+        };
+        if (atPower) {
+            connect(&txm, &TransmitModel::powerChanged, &model,
+                    [cutShort](int watts) { if (watts == 10) { cutShort(); } });
+        } else {
+            connect(slice, &SliceModel::dspModeChanged, &model,
+                    [cutShort](DSPMode mode) { if (mode == DSPMode::USB) { cutShort(); } });
+        }
+        CatTxCoordinator tx(model);
+        tx.requestTransmit(1, 0, CatTransmitKind::Tune); pumpCat();
+        QVERIFY(cut);
+        QTRY_VERIFY(!model.isTune());
+        QVERIFY(!txm.isTune());
+        QCOMPARE(slice->dspMode(), DSPMode::CWU);
+        QVERIFY(txm.powerSliderLimitEnabled());
+        QCOMPARE(txm.power(), 40);
+        QCOMPARE(model.moxController()->isMox(), keyed);
+    }
     void cancellationBeforeTonePreparation_data()
     {
         QTest::addColumn<bool>("twoTone"); QTest::newRow("tune") << false; QTest::newRow("two-tone") << true;

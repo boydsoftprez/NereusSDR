@@ -1012,6 +1012,11 @@
 //                trx:true while MOX is on is not passed on again, as
 //                TCIServer.cs:3671-3672 [v2.10.3.15] does. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-06 - CAT review X5: a CAT TUNE start cut short by another
+//                source's request is finished as an off, not left with the
+//                tone, the mode swap or the power limit off; the fixed-power
+//                latch is set before the limit drops. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -2649,9 +2654,20 @@ RadioModel::RadioModel(Role role, QObject* parent)
             }
         } else if (m_tuneCycleGuarded) {
             // A newer intent owns all later effects; preserve live snapshots for adoption.
+            const bool starting = m_tuneStartingSerial != 0
+                && m_tuneStartingSerial == m_tuneCycleSerial;
             ++m_tuneCycleSerial;
             m_tuneAcceptedGeneration = 0;
             m_pendingTuneOff = false;
+            if (starting) {
+                // CAT review X5: a CAT TUNE still setting up stops at its
+                // next step, part done: nothing would adopt the tone, the
+                // mode swap or the power. Finish it as an off once the
+                // request that cut it short has returned.
+                QMetaObject::invokeMethod(this, [this, tag = m_tuneCycleKeyer.requestTag]() {
+                    finishCutShortTuneStart(tag);
+                }, Qt::QueuedConnection);
+            }
         }
     });
     connect(m_moxController, &MoxController::rxReady, this, [this]() {
@@ -26389,6 +26405,31 @@ bool RadioModel::tuneCycleCurrent(quint64 serial) const
             && m_tuneAcceptedGeneration == m_moxController->acceptedRequestGeneration()));
 }
 
+// CAT review X5: a guarded TUNE start cut short by another source's
+// accepted request (the requestAccepted handler) stops part done, with the
+// tone, the CW-to-SSB swap or the power limit possibly in place and no key.
+// Unless a TUNE start or stop has adopted the cycle since, the off is the
+// station's, as for a CAT TUNE already turning off (X1).
+void RadioModel::finishCutShortTuneStart(quint64 tag)
+{
+    if (!m_isTuning || m_pendingTuneOff || !m_tuneCycleGuarded
+        || m_tuneAcceptedGeneration != 0 || m_tuneCycleKeyer.requestTag != tag) { return; }
+    m_tuneCycleGuarded = false;
+    const bool keyed = m_moxController && m_moxController->isMox();
+    if (!keyed || m_moxController->currentKeyer().requestTag == tag) {
+        // No other key holds the radio: the TUN-off path, completed at once
+        // when no TX-to-RX walk follows, as a refused key does in setTune.
+        setTune(false);
+        if (!keyed) { completeTuneOff(); }
+        return;
+    }
+    // Another source's key holds the radio: put the tone, the mode and the
+    // power back without releasing that key, as setMoxFromButton does.
+    m_pendingTuneOff = true;
+    m_transmitModel.setTune(false);
+    completeTuneOff();
+}
+
 bool RadioModel::endTuneIfRequest(quint64 tag, quint64 expectedAcceptedGeneration)
 {
     if (tag == 0 || m_tuneCycleKeyer.requestTag != tag
@@ -26531,6 +26572,13 @@ void RadioModel::setTune(bool on)
         m_tuneCycleGuarded = requester.requestTag != 0;
         m_tuneAcceptedGeneration = generation;
         const quint64 serial = ++m_tuneCycleSerial;
+        // CAT review X5: marks this start as setting up, so the
+        // requestAccepted handler finishes it if a newer request cuts it short.
+        const quint64 previousStarting = m_tuneStartingSerial;
+        m_tuneStartingSerial = serial;
+        const auto startingEnd = qScopeGuard([lifetime, previousStarting] {
+            if (lifetime) { lifetime->m_tuneStartingSerial = previousStarting; }
+        });
         if (repeat) {
             m_pendingTuneOff = false;
             m_transmitModel.setTune(true);
@@ -26792,11 +26840,13 @@ void RadioModel::setTune(bool on)
         // not move: TUN is on, so the PWR change takes the tune path, whose
         // FIXED case drives tune_power unconstrained, the value just pushed.
         if (tuneFixedSource) {
+            // CAT review X5: latched before the limit drops, so a start cut
+            // short from here on still puts the limit and the power back.
+            m_tuneSetFixedPwr = true;
             m_transmitModel.setPowerSliderLimitEnabled(false);
             if (!lifetime || !tuneCycleCurrent(serial)) { return; }
             m_transmitModel.setPower(tuneNewPwr);
             if (!lifetime || !tuneCycleCurrent(serial)) { return; }
-            m_tuneSetFixedPwr = true;
             // NereusSDR divergence (console.cs:30180-30185 [v2.10.3.15] re-reads the source at TUN-off): latched so a mid-TUNE source change cannot leave the limit off or restore a stale PreviousPWR.
         }
 

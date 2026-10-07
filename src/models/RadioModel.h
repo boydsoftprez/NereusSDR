@@ -557,6 +557,10 @@
 //   2026-10-06 - CAT review X1: m_tuneStartObserving, so a TUNE start adopts
 //                a TUNE turning off and any other request lets the off finish.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-06 - CAT review X5: m_tuneStartingSerial and
+//                finishCutShortTuneStart, so a CAT TUNE start cut short by
+//                another request is finished as an off. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -7849,6 +7853,10 @@ private:
     // True while setTune(true) reports its own start, which adopts a TUNE
     // still turning off rather than leaving its off to finish.
     bool m_tuneStartObserving{false};
+    // CAT review X5: the serial of a setTune(true) still setting up (0 when
+    // none), so a newer request that cuts it short gets its off finished.
+    quint64 m_tuneStartingSerial{0};
+    void finishCutShortTuneStart(quint64 tag);
     bool tuneCycleCurrent(quint64 serial) const;
 
     // m_tuneOffSettleMs: explicit 100 ms wait between MoxController::rxReady
