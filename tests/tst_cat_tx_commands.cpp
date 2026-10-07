@@ -110,6 +110,25 @@ private slots:
   engine->destroyRxChannel(0); engine->destroyRxChannel(2); model.setStepAttController(nullptr); model.injectConnectionForTest(nullptr);
 #endif
  }
+ void alexIndicatorAndMeterDuringTransmit() {
+  // CAT review: ZZFM on HPSDR and HERMES follows the Alex filter state, as
+  // Thetis answers AlexPresent (CATCommands.cs:2923-2927 [v2.10.3.15]); SM and
+  // ZZSM answer during TX, as Thetis has no MOX check (CATCommands.cs:896-935,
+  // 6290-6340 [v2.10.3.15]).
+  RadioModel model; const quint64 id=start(model); QVERIFY(id); CatService& service=*model.catService();
+  model.setConnectionStateForTest(ConnectionState::Connected);
+  model.setBoardForTest(HPSDRHW::Hermes); QCOMPARE(model.hardwareProfile().model,HPSDRModel::HERMES);
+  QCOMPARE(service.processFrame(id,"ZZFM;"),QByteArray("ZZFM1;"));
+  model.setBoardForTest(HPSDRHW::Atlas); QCOMPARE(model.hardwareProfile().model,HPSDRModel::HPSDR);
+  QCOMPARE(service.processFrame(id,"ZZFM;"),QByteArray("ZZFM0;"));
+  MoxController* mox=model.moxController(); mox->setMoxCheck([] {return safety::BandPlanGuard::MoxCheckResult{true,{}};});
+  mox->setTimerIntervals(0,0,0,0,0,0); mox->setMox(true); QVERIFY(mox->isMox());
+  QCOMPARE(service.processFrame(id,"SM0;"),QByteArray("SM00000;"));
+  QCOMPARE(service.processFrame(id,"ZZSM0;"),QByteArray("ZZSM0000;"));
+  QCOMPARE(service.processFrame(id,"ZZSM1;"),QByteArray("ZZSM1000;"));
+  QCOMPARE(service.processFrame(id,"SM1;"),QByteArray("?;"));
+  mox->setMox(false);
+ }
  void stationHolderAuthorityAndReentrantEq() {
   RadioModel model; const quint64 id=start(model); CatService& service=*model.catService(); TransmitModel& tx=model.transmitModel();
   tx.setPower(50); model.setOtherDeviceHoldsRefusal([] { return QStringLiteral("foreign device holds transmit"); });

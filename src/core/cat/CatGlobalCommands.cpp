@@ -182,6 +182,10 @@ mw0lge@grange-lane.co.uk
 // 2026-10-06 - CAT review: suffix patterns anchored at the true end, so a
 //              trailing LF is not taken as part of a valid value. J.J. Boyd
 //              (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-06 - CAT review: ZZFM answers HPSDR and HERMES from the Alex
+//              filter state the radio is driven with; SM and ZZSM answer
+//              during TX, as Thetis has no MOX check. J.J. Boyd (KG4VCF),
+//              AI-assisted via Anthropic Claude Code.
 #include "CatGlobalCommands.h"
 #include "CatModelAdapter.h"
 #include "CatService.h"
@@ -1385,6 +1389,13 @@ CatCommandResult CatGlobalCommands::execute(const CatRequest& request,CatSession
         }
         if (code == "ZZFM") {
             switch(hardware) {
+            // From Thetis CAT/CATCommands.cs:2923-2927 [v2.10.3.15]: HPSDR and
+            // HERMES answer console.AlexPresent. NereusSDR has no Alex Present
+            // setting; its alexpresent is the board's Alex filter capability
+            // (P1RadioConnection::alexLpfPresent, LevelCalibrationService),
+            // the state the Alex filter bits are driven with.
+            case HPSDRModel::HPSDR: case HPSDRModel::HERMES:
+                return payload(model->boardCapabilities().hasAlexFilters ? "1" : "0");
             case HPSDRModel::ANAN10: case HPSDRModel::ANAN10E: return payload("0");
             case HPSDRModel::ANAN100: case HPSDRModel::ANAN100B: case HPSDRModel::ANAN100D: case HPSDRModel::ANAN200D: case HPSDRModel::ANAN7000D: case HPSDRModel::ANAN8000D: case HPSDRModel::ANVELINAPRO3: case HPSDRModel::ANAN_G2: case HPSDRModel::ANAN_G2_1K: return payload("1");
             default: return error();
@@ -1517,10 +1528,15 @@ CatCommandResult CatGlobalCommands::execute(const CatRequest& request,CatSession
         if (!get || !model->isConnected()) { return error(); }
         const bool transmitting=model->moxController()->isMox();
         if (code == "SM" || code == "ZZSM") {
-            if (transmitting || (code == "SM" && request.suffix != "0" && request.suffix != "2") || (code == "ZZSM" && request.suffix != "0" && request.suffix != "1")) { return error(); }
-            double reading=0; if (!m_adapter.readRxMeter(binding,vfo,RxMeterType::SignalPeak,reading)) { return error(); }
+            if ((code == "SM" && request.suffix != "0" && request.suffix != "2") || (code == "ZZSM" && request.suffix != "0" && request.suffix != "1")) { return error(); }
             // From Thetis CAT/CATCommands.cs:896-935,6290-6340 [v2.10.3.15].
             constexpr double kFloor=-140;
+            // Thetis has no MOX check here, so a logger polling during TX
+            // gets a reading, from an RX meter that holds while its channel
+            // is off. NereusSDR reads a channel that is not running as
+            // -140 dBm (RxChannel::getMeter), so TX answers that floor.
+            double reading=kFloor;
+            if (!transmitting && !m_adapter.readRxMeter(binding,vfo,RxMeterType::SignalPeak,reading)) { return error(); }
             constexpr double kCeiling=-10;
             constexpr double kSUnitOffset=127;
             constexpr double kSUnitWidth=6;
