@@ -64,6 +64,9 @@
 //                Anthropic Claude Code. A CAT stop already settling runs out
 //                its 200 ms settle when another source's request arrives
 //                (setup.cs:11151-11152 [v2.10.3.15]) instead of being dropped.
+//   2026-10-06 : CAT review, by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code. A start refused for power off while a cycle is
+//                live stops it (setup.cs:11063-11071 [v2.10.3.15]).
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived activation flow
@@ -266,10 +269,12 @@ void TwoToneController::setActive(bool on)
             qCWarning(lcDsp).noquote()
                 << "TwoToneController: power must be on to run two-tone test "
                    "— ignoring activation request.";
-            // Emit a transition to false so any optimistic UI highlight
-            // gets reverted.  setActive(false) on inactive is harmless,
-            // but skip the timer walk by emitting directly.
-            // A refused repeat retains its existing cycle and snapshots.
+            // chkTestIMD.Checked = false re-enters CheckedChanged as the
+            // stop, so a start refused while a cycle is live (a repeat that
+            // now reaches here) ends it through the normal walk: tones off,
+            // power and the manual key restored, then the false transition.
+            // Nothing is live otherwise, and no transition is emitted.
+            if (m_active || m_activationInFlight) { setActive(false); }
             return;
         }
 

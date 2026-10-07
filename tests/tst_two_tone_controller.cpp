@@ -310,6 +310,50 @@ private slots:
         QCOMPARE(activeSpy.count(), 0);
     }
 
+    // setup.cs:11063-11071: a start refused for power off unchecks
+    // chkTestIMD, which runs the stop; a live cycle is torn down, not kept.
+    void setActive_powerOffRepeat_stopsLiveCycle()
+    {
+        TransmitModel tx;
+        RecordingTxChannel tc(kTxChannelId);
+        MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        SliceModel slice;
+
+        TwoToneController ctrl;
+        ctrl.setTransmitModel(&tx);
+        ctrl.setTxChannel(&tc);
+        ctrl.setMoxController(&mox);
+        ctrl.setSliceModel(&slice);
+        ctrl.setSettleDelaysMs(0, 0);
+
+        ctrl.setActive(true);
+        QCoreApplication::processEvents();
+        QVERIFY(ctrl.isActive());
+        QVERIFY(mox.isMox());
+        tc.calls.clear();
+        QSignalSpy activeSpy(&ctrl, &TwoToneController::twoToneActiveChanged);
+
+        ctrl.setPowerOn(false);
+        ctrl.setActive(true);
+        for (int i = 0; i < 10; ++i) {
+            QCoreApplication::processEvents();
+        }
+
+        QVERIFY(!ctrl.isActive());
+        QVERIFY(!mox.isMox());
+        QVERIFY(!mox.isManualKey());
+        QCOMPARE(activeSpy.count(), 1);
+        QCOMPARE(activeSpy[0][0].toBool(), false);
+        bool sawRunOff = false;
+        for (const auto& c : tc.calls) {
+            if (c.method == QStringLiteral("setTxPostGenRun") && c.arg1 == 0.0) {
+                sawRunOff = true;
+            }
+        }
+        QVERIFY(sawRunOff);
+    }
+
     // ── I.1.B: MOX-on first → cycle off + settle + continue ───────────────
     void setActive_moxOnFirst_cyclesOffThenContinues()
     {
