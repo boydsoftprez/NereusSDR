@@ -107,6 +107,9 @@
 // Modification history (NereusSDR):
 // 2026-10-04 - CAT preference defaults adapted for native service by J.J. Boyd
 //              (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-06 - Default rigctld port from Hamlib; channels 2-4 count up from
+//              the TCP and rigctld defaults. J.J. Boyd (KG4VCF), AI-assisted via
+//              Anthropic Claude Code.
 
 #pragma once
 #include "CatTypes.h"
@@ -117,6 +120,9 @@ namespace CatDefaults {
 // TCPIPCat
 // [original inline comment from console.cs:2334]
 constexpr int kFirstTcpPort = 13013;
+// Hamlib rigctld's default port (rigctld -t), which AetherSDR also defaults to
+// (AetherSDR src/gui/MainWindow.cpp:5434 [v26.8.1-30-g1e0718ad]).
+constexpr int kFirstRigctldPort = 4532;
 // From Thetis setup.cs:351-354 [v2.10.3.15].
 constexpr int kSerialBaud = 115200;
 constexpr int kSerialDataBits = 8;

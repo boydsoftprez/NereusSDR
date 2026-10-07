@@ -2,6 +2,8 @@
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-06 Remote and tester wording follows the operator text.
 //            J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-06 rigctld starts on its default port. J.J. Boyd (KG4VCF),
+//            AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <memory>
 #include <QCheckBox>
@@ -43,7 +45,8 @@ private slots:
         RadioModel model; model.addSlice(); CatService& service=*model.catService(); service.startConfigured(); CatTcpIpPage page(&model);
         auto* enabled=control<QCheckBox>(page,"cat1RigctldEnabled"); auto* port=control<QSpinBox>(page,"cat1RigctldPort");
         auto* address=control<QLineEdit>(page,"cat1RigctldAddress"); auto* dialect=control<QComboBox>(page,"cat1PtyDialect");
-        QVERIFY(enabled && port && address && dialect); QVERIFY(enabled->isEnabled()); QVERIFY(!enabled->isChecked()); QCOMPARE(port->value(),0);
+        QVERIFY(enabled && port && address && dialect); QVERIFY(enabled->isEnabled()); QVERIFY(!enabled->isChecked()); QCOMPARE(port->value(),4532);
+        port->setValue(0); QCOMPARE(service.channelConfig(1).rigctldPort,0);
         enabled->setChecked(true); QVERIFY(!enabled->isChecked()); QVERIFY(!service.channelConfig(1).rigctldEnabled);
         const int chosen=unusedPort(); QVERIFY(chosen>0); port->setValue(chosen); enabled->setChecked(true);
         QVERIFY(service.isListening(1)); QCOMPARE(service.rigctldBoundPort(1),chosen); QCOMPARE(service.boundPort(1),0);

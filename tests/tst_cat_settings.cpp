@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original CAT policy/lifecycle regression tests.
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-06 Default ports for all four channels. J.J. Boyd (KG4VCF),
+//            AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QTemporaryDir>
 #include <QTcpServer>
@@ -41,13 +43,16 @@ private slots:
         QCOMPARE(configs.size(), 4);
         QCOMPARE(configs[0].binding.primarySliceId, 0);
         QCOMPARE(configs[0].binding.secondarySliceId.value(), 1);
-        QCOMPARE(configs[0].tcpPort, 13013);
+        for (int i = 0; i < 4; ++i) {
+            QCOMPARE(configs[i].tcpPort, 13013 + i); QCOMPARE(configs[i].rigctldPort, 4532 + i);
+            QCOMPARE(configs[i].tcpBindAddress, QString("127.0.0.1")); QCOMPARE(configs[i].rigctldBindAddress, QString("127.0.0.1"));
+        }
         for (const CatEndpointConfig& config : configs) {
             QVERIFY(!config.tcpEnabled && !config.serialEnabled && !config.ptyEnabled && !config.rigctldEnabled);
             QCOMPARE(config.serialBaud, 115200); QCOMPARE(config.serialParity, QString("None"));
             QCOMPARE(config.serialDataBits, 8); QCOMPARE(config.serialStopBits, QString("1"));
         }
-        QCOMPARE(configs[1].binding.primarySliceId, -1); QCOMPARE(configs[1].tcpPort, 0);
+        QCOMPARE(configs[1].binding.primarySliceId, -1);
         CatSettings settings(store);
         CatGlobalConfig global = settings.global();
         QVERIFY(!global.sendWelcome && !global.allowKenwoodAi && !global.aiEnabled);

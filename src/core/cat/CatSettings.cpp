@@ -51,6 +51,9 @@
 //              (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-04 - Use operator slice-selection wording in validation by
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-06 - Every channel starts with a TCP and a rigctld port, counting up
+//              from 13013 and 4532. J.J. Boyd (KG4VCF), AI-assisted via
+//              Anthropic Claude Code.
 // Serialization is Nereus-original; source constants retain their contract.
 
 #include "CatSettings.h"
@@ -72,8 +75,11 @@ QList<CatEndpointConfig> CatSettings::load(AppSettings& settings, const RadioMod
     QList<CatEndpointConfig> result;
     for (int channel = 1; channel <= 4; ++channel) {
         CatEndpointConfig config; config.channel = channel;
+        // Each channel gets its own port so all four can listen at once; the
+        // listeners stay off until the operator turns them on.
+        config.tcpPort = CatDefaults::kFirstTcpPort + channel - 1;
+        config.rigctldPort = CatDefaults::kFirstRigctldPort + channel - 1;
         if (channel == 1) {
-            config.tcpPort = CatDefaults::kFirstTcpPort;
             if (model.sliceById(0)) { config.binding.primarySliceId = 0; }
             if (model.sliceById(1)) { config.binding.secondarySliceId = 1; }
         }
