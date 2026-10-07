@@ -2,6 +2,8 @@
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-06 Framing follows Thetis TCP: CR+LF, trim, 255-character limit.
 //            J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-06 Over-long input gets no reply. J.J. Boyd (KG4VCF), AI-assisted
+//            via Anthropic Claude Code.
 #include <QtTest>
 #include <QElapsedTimer>
 #include <algorithm>
@@ -45,7 +47,8 @@ private slots:
         // Thetis TCPIPcatServer.cs:295 keeps up to 255 characters before ';'.
         QCOMPARE(framer.feed(QByteArray(255, 'x')), QList<QByteArray>());
         QCOMPARE(framer.feed(";"), QList<QByteArray>{QByteArray(255, 'x') + ';'});
-        QCOMPARE(framer.feed(QByteArray(256, 'x')), QList<QByteArray>{QByteArray()});
+        // Past it Thetis clears with no reply; the tail up to ';' goes too.
+        QCOMPARE(framer.feed(QByteArray(256, 'x')), QList<QByteArray>());
         QCOMPARE(framer.bufferedBytes(), 0);
         QCOMPARE(framer.feed(QByteArray(1'000'000, 'x')), QList<QByteArray>());
         QCOMPARE(framer.bufferedBytes(), 0);
@@ -99,7 +102,7 @@ private slots:
         first.write(";fa;ID;"); QTRY_VERIFY(first.bytesAvailable() >= 34);
         QCOMPARE(first.readAll(), QByteArray("FA00014074000;FA00014074000;ID019;"));
         first.write(QByteArray(41, 'x') + QByteArray(100'000, 'x') + ";ID;");
-        QTRY_VERIFY(first.bytesAvailable() >= 8); QCOMPARE(first.readAll(), QByteArray("?;ID019;"));
+        QTRY_VERIFY(first.bytesAvailable() >= 6); QCOMPARE(first.readAll(), QByteArray("ID019;"));
         // A long command reaches the parser, so verbose errors name it.
         const QByteArray longSet = "ZZFA" + QByteArray(37, '1');
         first.write("ZZEM1;" + longSet + ";ZZEM0;" + longSet + ";ID;");

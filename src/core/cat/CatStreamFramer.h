@@ -13,6 +13,8 @@
 // 2026-10-06 - CAT review: take() and m_pendingCr for the CR+LF removal and
 //              leading trim. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //              Claude Code.
+// 2026-10-06 - Over-long input is dropped silently, as Thetis does.
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #pragma once
 #include <QByteArray>
@@ -21,7 +23,7 @@ namespace NereusSDR {
 class CatStreamFramer {
 public:
     explicit CatStreamFramer(qsizetype maximumRequestBytes = 0);
-    // Empty entries are oversize error events, never parsed requests.
+    // A command over 255 characters is dropped silently through its ';'.
     QList<QByteArray> feed(const QByteArray&);
     void reset();
     qsizetype bufferedBytes() const { return m_buffer.size(); }

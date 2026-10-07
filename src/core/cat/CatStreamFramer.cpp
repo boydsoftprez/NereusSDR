@@ -17,6 +17,9 @@
 //              (:295), so a long command reaches the parser and gets its
 //              own (verbose) error. J.J. Boyd (KG4VCF), AI-assisted via
 //              Anthropic Claude Code.
+// 2026-10-06 - Past the limit the command is dropped silently, as Thetis
+//              clears its buffer with no reply. J.J. Boyd (KG4VCF),
+//              AI-assisted via Anthropic Claude Code.
 
 #include "CatStreamFramer.h"
 namespace NereusSDR {
@@ -71,9 +74,10 @@ void CatStreamFramer::take(char byte, QList<QByteArray>& frames)
     if (byte != ';' && m_buffer.size() >= m_maximumRequestBytes - 1) {
         // not likely to be a cat message if it got this long
         // [original inline comment from TCPIPcatServer.cs:295]
-        // The limit includes ';'. Thetis clears silently and parses what
-        // follows; NereusSDR answers one error and discards to the next ';'.
-        m_buffer.clear(); m_discarding = true; frames.append(QByteArray());
+        // The limit includes ';'. Thetis clears silently; the rest of the
+        // command up to its ';' is dropped too, so the client gets no reply
+        // it never asked for.
+        m_buffer.clear(); m_discarding = true;
         return;
     }
     m_buffer.append(byte);
