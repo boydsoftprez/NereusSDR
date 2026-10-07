@@ -109,7 +109,14 @@ public:
 class SpeakerLink : public IStationLink {
 public:
     bool offers{false};
+    // -1: IStationLink's default (an older Core when it offers nothing);
+    // 0 or 1: what StationClient knows once signed in.
+    int needsNewer{-1};
     bool radioSpeakerAvailable() const override { return offers; }
+    bool radioSpeakerNeedsNewerCore() const override
+    {
+        return needsNewer < 0 ? !offers : needsNewer == 1;
+    }
     CommandOutcome requestAddSlice(const QString&) override { return {}; }
     CommandOutcome requestAddSliceOnPan(const QString&) override { return {}; }
     CommandOutcome requestRemoveSlice(int) override { return {}; }
@@ -441,6 +448,33 @@ private slots:
         QVERIFY(remote.applyStationRadioSpeakerValue("radioSpeakerAvailability",
                                                      RadioModel::kRadioSpeakerNoRadio));
         QVERIFY(!p.slider->isEnabled());
+        QCOMPARE(p.slider->toolTip(), kNoRadio);
+    }
+
+    // An older Core with no radio: the link alone changes the reason
+    // (signed in, capabilities without radioSpeakerVersion) while the
+    // availability and the connection stay put. The tooltip follows
+    // stationLinkStateChanged.
+    void reasonFollowsTheLinkAlone()
+    {
+        RadioModel remote(RadioModel::Role::Remote);
+        SpeakerLink link;
+        link.needsNewer = 0;
+        remote.attachStation(&link);
+        const auto detach = qScopeGuard([&remote]() { remote.attachStation(nullptr); });
+        remote.setStationConnectionState(ConnectionState::Connected);
+        RadioSpeakerWidget w(&remote);
+        const Parts p = partsOf(&w);
+        QCOMPARE(p.slider->toolTip(), kNoRadio);
+
+        link.needsNewer = 1;
+        remote.reportStationLinkStateChanged();
+        QCOMPARE(remote.radioSpeakerAvailability(), int(RadioModel::kRadioSpeakerNoRadio));
+        QCOMPARE(p.slider->toolTip(), kOlderCore);
+        QCOMPARE(p.button->toolTip(), kOlderCore);
+
+        link.needsNewer = 0;
+        remote.reportStationLinkStateChanged();
         QCOMPARE(p.slider->toolTip(), kNoRadio);
     }
 

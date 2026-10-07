@@ -132,6 +132,11 @@ void RadioSpeakerWidget::setRadioModel(RadioModel* model)
         // stays 0 (a remote window's Core link coming or going).
         connect(m_model, &RadioModel::connectionStateChanged,
                 this, &RadioSpeakerWidget::syncFromModel);
+        // ...or with the Core link alone: an older Core with no radio
+        // turns "No radio connected" into the update reason once it has
+        // signed in, with availability and the connection unchanged.
+        connect(m_model, &RadioModel::stationLinkStateChanged,
+                this, &RadioSpeakerWidget::syncFromModel);
         // Destroyed before this widget: drop back to no radio.
         connect(m_model, &QObject::destroyed, this, [this]() {
             m_model = nullptr;

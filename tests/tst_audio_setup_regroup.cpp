@@ -165,7 +165,14 @@ public:
 class SpeakerLink : public IStationLink {
 public:
     bool offers{false};
+    // -1: IStationLink's default (an older Core when it offers nothing);
+    // 0 or 1: what StationClient knows once signed in.
+    int needsNewer{-1};
     bool radioSpeakerAvailable() const override { return offers; }
+    bool radioSpeakerNeedsNewerCore() const override
+    {
+        return needsNewer < 0 ? !offers : needsNewer == 1;
+    }
     CommandOutcome requestAddSlice(const QString&) override { return {}; }
     CommandOutcome requestAddSliceOnPan(const QString&) override { return {}; }
     CommandOutcome requestRemoveSlice(int) override { return {}; }
@@ -712,6 +719,27 @@ private slots:
         QVERIFY(r.volume->accessibleDescription() != kStationReason);
     }
 
+    // 7b. The Outputs status follows the link alone: an older Core with
+    // no radio signing in changes the reason, nothing else.
+    void outputsReasonFollowsTheLinkAlone()
+    {
+        RadioModel remote(RadioModel::Role::Remote);
+        SpeakerLink link;
+        link.needsNewer = 0;
+        remote.attachStation(&link);
+        const auto detach = qScopeGuard([&remote]() { remote.attachStation(nullptr); });
+        remote.setStationConnectionState(ConnectionState::Connected);
+        AudioOutputsPage page(&remote);
+        const Radio r = radioOf(&page);
+        QCOMPARE(r.status->text(), kNoRadio);
+
+        link.needsNewer = 1;
+        remote.reportStationLinkStateChanged();
+        QCOMPARE(r.status->text(), kOlderCore);
+        QCOMPARE(r.volume->toolTip(), kOlderCore);
+        QCOMPARE(r.ampReason->text(), kOlderCore);
+    }
+
     // 8. Sound system line texts on every system.
     void soundSystemTexts()
     {
@@ -1024,6 +1052,50 @@ private slots:
         QVERIFY(!page.radioMicPlaceholder()->isHidden());
         QVERIFY(page.saturnRadioMicGroup()->isHidden());
         QCOMPARE(note->text(), QStringLiteral("This radio has no mic jack."));
+    }
+
+    // 16c. A page opened before an HL2 connects takes the HL2's title, the
+    // add-on notes on Radio Mic and the Hermes rows, and Radio Mic open.
+    void microphonePageFollowsAnHl2Connecting()
+    {
+        RadioModel model;  // no radio: the Unknown board
+        QCOMPARE(model.boardCapabilities().board, HPSDRHW::Unknown);
+        AudioTxInputPage page(&model);
+        QCOMPARE(page.hermesRadioMicGroup()->title(), QStringLiteral("Radio Mic (Hermes / Atlas)"));
+        QLabel* addOn = child<QLabel>(&page, "radioMicAddOnNote");
+        QVERIFY(addOn != nullptr);
+        QVERIFY(addOn->isHidden());
+        QRadioButton* radio = sourceButton(&page, QStringLiteral("Radio Mic"));
+        QVERIFY(radio != nullptr);
+        QVERIFY(radio->toolTip() != RadioModel::radioMicAddOnNote());
+
+        // The real HL2 row: its add-on board takes the radio mic.
+        model.setHpsdrModelForTest(HPSDRModel::HERMESLITE);
+        QVERIFY(model.boardCapabilities().radioMicNeedsAddOn);
+        model.emitCurrentRadioChangedForTest();
+        const QString note = RadioModel::radioMicAddOnNote();
+        QCOMPARE(page.hermesRadioMicGroup()->title(), QStringLiteral("Radio Mic (Hermes Lite 2)"));
+        QVERIFY(!page.hermesRadioMicGroup()->isHidden());
+        QVERIFY(!addOn->isHidden());
+        QCOMPARE(addOn->text(), note);
+        QVERIFY(radio->isEnabled());
+        QCOMPARE(radio->toolTip(), note);
+        const QList<QAbstractButton*> rows =
+            page.hermesRadioMicGroup()->findChildren<QAbstractButton*>();
+        QVERIFY(!rows.isEmpty());
+        for (QAbstractButton* b : rows) {
+            QCOMPARE(b->toolTip(), note);
+        }
+        QSlider* gain = page.hermesRadioMicGroup()->findChild<QSlider*>();
+        QVERIFY(gain != nullptr);
+        QCOMPARE(gain->toolTip(), note);
+
+        // Back to no radio: the notes go.
+        model.setCapsHwForTest(HPSDRHW::Unknown);
+        model.emitCurrentRadioChangedForTest();
+        QCOMPARE(page.hermesRadioMicGroup()->title(), QStringLiteral("Radio Mic (Hermes / Atlas)"));
+        QVERIFY(addOn->isHidden());
+        QVERIFY(gain->toolTip().isEmpty());
     }
 
     // 17. Mic gain is its own group, outside both sources.

@@ -517,6 +517,9 @@ void AudioOutputsPage::wireModel()
     // The reasons and the board can change with the connection while the
     // reports stay the same.
     connect(m, &RadioModel::connectionStateChanged, this, sync);
+    // The Core link alone can change the reason (an older Core signing in
+    // with no radio).
+    connect(m, &RadioModel::stationLinkStateChanged, this, sync);
     connect(m, &RadioModel::currentRadioChanged, this, sync);
 }
 

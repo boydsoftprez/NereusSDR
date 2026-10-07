@@ -304,6 +304,8 @@ private:
     void updateRadioMicGroupVisibility(HPSDRHW hw);
     void refreshRadioMicPlaceholderNote(HPSDRHW hw);
     void onCurrentRadioChanged();
+    static QString hermesGroupTitle(HPSDRHW hw);
+    void applyHermesAddOnNotes(HPSDRHW hw);
     static QString lineInBoostLabel(double dB);
     void showLineInBoost(double dB);
 

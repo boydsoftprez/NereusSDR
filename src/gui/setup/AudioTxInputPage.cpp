@@ -455,12 +455,16 @@ void AudioTxInputPage::buildPage(bool radioMicSelectable, HPSDRHW hw)
     // add-on board, so Radio Mic stays open with a plain note, as mi0bot
     // leaves Mic In / Line In open on every model (mi0bot setup.cs:14566-14589
     // [@c26a8a4]).
+    // Built on every board and shown only on one that needs the add-on, so
+    // onCurrentRadioChanged can show it when an HL2 connects later.
     if (m_radioMicNeedsAddOn) {
         m_radioMicBtn->setToolTip(RadioModel::radioMicAddOnNote());
-        m_radioMicNoteLabel = new QLabel(RadioModel::radioMicAddOnNote(), srcGrp);
-        m_radioMicNoteLabel->setWordWrap(true);
-        srcLayout->addWidget(m_radioMicNoteLabel);
     }
+    m_radioMicNoteLabel = new QLabel(RadioModel::radioMicAddOnNote(), srcGrp);
+    m_radioMicNoteLabel->setObjectName(QStringLiteral("radioMicAddOnNote"));
+    m_radioMicNoteLabel->setWordWrap(true);
+    m_radioMicNoteLabel->setVisible(m_radioMicNeedsAddOn);
+    srcLayout->addWidget(m_radioMicNoteLabel);
     srcLayout->addWidget(m_vaxMicBtn);
     m_micSelectionStatusLabel = new QLabel(srcGrp);
     m_micSelectionStatusLabel->setObjectName(QStringLiteral("remoteMicSelectionStatus"));
@@ -695,19 +699,39 @@ void AudioTxInputPage::refreshRadioMicPlaceholderNote(HPSDRHW hw)
     }
 }
 
-// R-SPK-21: the radio changed (connect, disconnect, another board). The
-// placeholder's note and which family group is in view follow its board,
-// so a page opened before the radio connected does not keep saying to
-// connect one.
+// R-SPK-21: the radio changed (connect, disconnect, another board).
+// Everything the constructor built from the board follows it: Radio Mic's
+// state, tooltip and add-on note, the Hermes group's title and add-on
+// notes, the placeholder's note and which family group is in view, so a
+// page opened before the radio connected does not keep the old board.
 void AudioTxInputPage::onCurrentRadioChanged()
 {
     if (!model()) {
         return;
     }
-    const HPSDRHW hw = model()->boardCapabilities().board;
-    m_radioMicNeedsAddOn = model()->boardCapabilities().radioMicNeedsAddOn;
+    const BoardCapabilities& caps = model()->boardCapabilities();
+    const HPSDRHW hw = caps.board;
+    m_hw = hw;
+    m_radioMicNeedsAddOn = caps.radioMicNeedsAddOn;
+    if (m_radioMicNoteLabel) {
+        m_radioMicNoteLabel->setVisible(m_radioMicNeedsAddOn);
+    }
+    if (m_hermesGroup) {
+        m_hermesGroup->setTitle(hermesGroupTitle(hw));
+    }
+    applyHermesAddOnNotes(hw);
     refreshRadioMicPlaceholderNote(hw);
     updateRadioMicGroupVisibility(hw);
+    if (model()->ownsLocalDsp()) {
+        const bool selectable = caps.radioMicSelectable();
+        m_radioMicBtn->setEnabled(selectable);
+        m_radioMicBtn->setToolTip(!selectable
+            ? QStringLiteral("Radio mic jack not present on Hermes Lite 2")
+            : (m_radioMicNeedsAddOn ? RadioModel::radioMicAddOnNote() : QString()));
+    } else {
+        // A remote window's Radio Mic follows the Core's reasons too.
+        applyHeldControlGate();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -867,10 +891,7 @@ void AudioTxInputPage::onModelMicGainDbChanged(int dB)
 
 void AudioTxInputPage::buildHermesRadioMicGroup(QVBoxLayout* parentLayout)
 {
-    m_hermesGroup = new QGroupBox(m_hw == HPSDRHW::HermesLite
-                                      ? QStringLiteral("Radio Mic (Hermes Lite 2)")
-                                      : QStringLiteral("Radio Mic (Hermes / Atlas)"),
-                                  this);
+    m_hermesGroup = new QGroupBox(hermesGroupTitle(m_hw), this);
     auto* grpLayout = new QVBoxLayout(m_hermesGroup);
 
     // ── Row 1: Mic In / Line In radio buttons ─────────────────────────────────
@@ -934,15 +955,30 @@ void AudioTxInputPage::buildHermesRadioMicGroup(QVBoxLayout* parentLayout)
     // On the Hermes Lite 2 these settings reach the AK4951 on its audio
     // add-on board, which the gateware cannot report, so each row carries
     // the same note as Radio Mic (the Setup description's tooltip).
-    if (m_hw == HPSDRHW::HermesLite && m_radioMicNeedsAddOn) {
-        const QString note = RadioModel::radioMicAddOnNote();
-        micInBtn->setToolTip(note);
-        lineInBtn->setToolTip(note);
-        m_hermesMicBoostChk->setToolTip(note);
-        m_hermesLineInGainSlider->setToolTip(note);
-    }
+    applyHermesAddOnNotes(m_hw);
 
     parentLayout->addWidget(m_hermesGroup);
+}
+
+/*static*/ QString AudioTxInputPage::hermesGroupTitle(HPSDRHW hw)
+{
+    return hw == HPSDRHW::HermesLite ? QStringLiteral("Radio Mic (Hermes Lite 2)")
+                                     : QStringLiteral("Radio Mic (Hermes / Atlas)");
+}
+
+void AudioTxInputPage::applyHermesAddOnNotes(HPSDRHW hw)
+{
+    const QString note = (hw == HPSDRHW::HermesLite && m_radioMicNeedsAddOn)
+        ? RadioModel::radioMicAddOnNote() : QString();
+    QList<QWidget*> rows{m_hermesMicBoostChk, m_hermesLineInGainSlider};
+    if (m_hermesMicInputGroup) {
+        rows << m_hermesMicInputGroup->button(0) << m_hermesMicInputGroup->button(1);
+    }
+    for (QWidget* w : rows) {
+        if (w) {
+            w->setToolTip(note);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
