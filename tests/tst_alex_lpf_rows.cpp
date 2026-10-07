@@ -647,16 +647,22 @@ private slots:
         const QMetaProperty property = meta.property(index);
         QVERIFY(!property.isWritable());
         QVERIFY(property.hasNotifySignal());
-        // Only paTransmitBand (paTransmitBandVersion, appended after it),
-        // the four Level Cal run properties and the shared-input low-pass
-        // reason and slice (rxFilterLowPassVersion), then diversityState follow it.
-        QCOMPARE(index, meta.propertyCount() - 9);
-        QCOMPARE(meta.indexOfProperty("paTransmitBand"), meta.propertyCount() - 8);
-        QCOMPARE(meta.indexOfProperty("levelCalSucceeded"), meta.propertyCount() - 4);
-        QCOMPARE(meta.indexOfProperty("rxFilter0LowPassReason"), meta.propertyCount() - 3);
-        QCOMPARE(meta.indexOfProperty("rxFilter0LowPassSlice"), meta.propertyCount() - 2);
-        QCOMPARE(meta.indexOfProperty("diversityState"), meta.propertyCount() - 1);
-        QCOMPARE(meta.indexOfProperty("diversityState") - meta.propertyOffset(), 37);
+        // Between it and diversityState (ordinal 37) only paTransmitBand
+        // (paTransmitBandVersion, appended after it), the four Level Cal run
+        // properties and the shared-input low-pass reason and slice
+        // (rxFilterLowPassVersion). Anchored on diversityState rather than
+        // the end: later features (the radio speaker's ordinals 38 to 42)
+        // append after it without moving any of these.
+        const int diversity = meta.indexOfProperty("diversityState");
+        QCOMPARE(diversity - meta.propertyOffset(), 37);
+        QCOMPARE(index, diversity - 8);
+        QCOMPARE(meta.indexOfProperty("paTransmitBand"), diversity - 7);
+        QCOMPARE(meta.indexOfProperty("levelCalSucceeded"), diversity - 3);
+        QCOMPARE(meta.indexOfProperty("rxFilter0LowPassReason"), diversity - 2);
+        QCOMPARE(meta.indexOfProperty("rxFilter0LowPassSlice"), diversity - 1);
+        // Everything declared after diversityState is later than every
+        // property above.
+        QCOMPARE(meta.indexOfProperty("radioSpeakerVolume") - meta.propertyOffset(), 38);
         QCOMPARE(MirrorPolicy::directionFor(QByteArrayLiteral("RadioModel"), "alexLpfBits"),
                  MirrorDirection::Outbound);
         const MirrorPolicy::FeatureGate* gate =

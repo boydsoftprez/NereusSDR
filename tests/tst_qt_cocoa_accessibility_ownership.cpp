@@ -525,13 +525,21 @@ private slots:
         QVERIFY(QStandardPaths::isTestModeEnabled());
         QVERIFY(NereusSDR::PortAudioBus::portAudioBarredForTestRun());
         QAccessible::setActive(true);
+        // R-SPK-21: the page's PC microphone is the shared DeviceCard on
+        // audio/TxInput now, so an earlier case's saved device would carry
+        // over; start from the default configuration.
+        NereusSDR::AudioDeviceConfig{}.saveToSettings(QStringLiteral("audio/TxInput"));
         NereusSDR::AudioTxInputPage page(nullptr);
-        const QList<QComboBox*> combos = page.findChildren<QComboBox*>();
-        QVERIFY(combos.size() >= 2);
-        QComboBox* backend = combos.at(0);
-        QComboBox* device = combos.at(1);
+        // Its Device details hold more combos (sample rate among them), so
+        // the two are taken by name rather than by child order.
+        QComboBox* backend = page.driverApiCombo();
+        QComboBox* device = page.deviceCombo();
+        QVERIFY(backend && device);
         QCOMPARE(backend->currentData().toInt(), -1);
-        QCOMPARE(device->currentText(), QStringLiteral("(default)"));
+        // The card's default entry (DeviceCard's "(platform default)").
+        const QString defaultText = device->currentText();
+        const int defaultCount = device->count();
+        QCOMPARE(defaultText, QStringLiteral("(platform default)"));
         {
             QSignalBlocker blocker(backend);
             backend->addItem(QStringLiteral("Test capture API"), 0);
@@ -545,9 +553,8 @@ private slots:
             qInfo() << "Expired TX input popup cell before backend refresh:" << expired;
             backend->setCurrentIndex(backend->currentIndex() == 0 ? 1 : 0);
             QCOMPARE(deviceChanges.count(), 0);
-            QCOMPARE(device->count(), 1);
-            QCOMPARE(device->currentText(), iteration % 2 == 0
-                ? QStringLiteral("(no input devices)") : QStringLiteral("(default)"));
+            QCOMPARE(device->count(), defaultCount);
+            QCOMPARE(device->currentText(), defaultText);
             QAccessibleInterface* table = QAccessible::queryAccessibleInterface(device->view());
             QVERIFY(table && table->tableInterface());
             QAccessibleInterface* selected = table->tableInterface()->cellAt(0, 0);
