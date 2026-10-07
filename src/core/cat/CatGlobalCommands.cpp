@@ -186,6 +186,9 @@ mw0lge@grange-lane.co.uk
 //              filter state the radio is driven with; SM and ZZSM answer
 //              during TX, as Thetis has no MOX check. J.J. Boyd (KG4VCF),
 //              AI-assisted via Anthropic Claude Code.
+// 2026-10-06 - AI and ZZAI change automatic information for this run only and
+//              are never saved, as Thetis does. J.J. Boyd (KG4VCF),
+//              AI-assisted via Anthropic Claude Code.
 #include "CatGlobalCommands.h"
 #include "CatModelAdapter.h"
 #include "CatService.h"
@@ -1195,10 +1198,13 @@ CatCommandResult CatGlobalCommands::execute(const CatRequest& request,CatSession
         if (code == "ZZID") { config.rigIdentity="PowerSDR"; }
         else {
             if (!config.allowKenwoodAi) { return error(); }
-            if (get) { return payload(config.aiEnabled ? "1":"0"); }
+            // Thetis writes the runtime console.KWAutoInformation here and never
+            // saves it; the next start uses the Setup checkbox again.
+            if (get) { return payload(service->autoInformationActive() ? "1":"0"); }
             bool ok=false; const int value=request.suffix.toInt(&ok);
             if (!ok || value<0) { return error(); }
-            config.aiEnabled=value != 0;
+            service->setAutoInformation(value != 0);
+            return silence();
         }
         return service->applyGlobalConfig(config) ? silence() : error();
     }

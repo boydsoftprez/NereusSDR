@@ -62,6 +62,8 @@
 
 // 2026-10-04 - Native separate Hamlib dialect and guarded lifecycle integration,
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex; no new Thetis port.
+// 2026-10-06 - Follow the run-only AI/ZZAI state instead of the saved setting.
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "CatReporter.h"
 #include "CatService.h"
 #include "models/RadioModel.h"
@@ -96,6 +98,7 @@ CatReporter::CatReporter(CatService& service, RadioModel& model)
     connect(model.txSliceArbiter(), &TxSliceArbiter::txBoundSliceChanged, this, [this](int, int id) { markChanged(id, true); });
     for (SliceModel* slice : model.slices()) { watchSlice(slice); }
     connect(&service, &CatService::globalConfigurationChanged, this, &CatReporter::configurationChanged);
+    connect(&service, &CatService::autoInformationChanged, this, &CatReporter::configurationChanged);
     configurationChanged();
 }
 void CatReporter::watchSlice(SliceModel* slice)
@@ -109,7 +112,7 @@ void CatReporter::configurationChanged()
     // Global source enablement remains service-owned; this observer never writes settings.
     if (!m_service) { return; }
     const CatGlobalConfig config = m_service->globalConfig();
-    setAiEnabled(config.allowKenwoodAi && config.aiEnabled);
+    setAiEnabled(config.allowKenwoodAi && m_service->autoInformationActive());
     for (int channel = 1; channel <= 4; ++channel) { sessionsChanged(channel); }
 }
 void CatReporter::setAiEnabled(bool enabled)
@@ -134,7 +137,7 @@ bool CatReporter::eligible(quint64 id) const
     const CatSession* session = m_service->session(id);
     if (!session || session->dialect() != CatWireDialect::Thetis) { return false; }
     const CatGlobalConfig config = m_service->globalConfig();
-    if (!config.allowKenwoodAi || !config.aiEnabled || !m_aiEnabled) { return false; }
+    if (!config.allowKenwoodAi || !m_service->autoInformationActive() || !m_aiEnabled) { return false; }
     if (session->transport() == CatTransportKind::Tcp) { return config.aiTcp; }
     if (session->transport() != CatTransportKind::Serial && session->transport() != CatTransportKind::Pty) { return false; }
     const std::array<bool, 4> serialRoutes{config.aiSerial1, config.aiSerial2, config.aiSerial3, config.aiSerial4};

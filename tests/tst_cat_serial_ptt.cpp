@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original release-armed physical PTT ownership tests.
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-06 A nested AI1 is run-only and leaves the outer change applied.
+//            J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include "CatFixtureHarness.h"
 #include "CatSerialTestDevice.h"
@@ -92,7 +94,8 @@ private slots:
         desired.rttyOffsetAEnabled=true; desired.rttyOffsetBEnabled=true; desired.rttyDiguHz=123; desired.rttyDiglHz=-321;
         desired.limitReportedPower=false;
         CatGlobalConfig newest=desired;
-        if (setter=="AI1;") { newest.aiEnabled=true; }
+        // AI1 changes reports for this run only, so it never replaces the saved tuple.
+        if (setter=="AI1;") { }
         else if (setter=="ZZID;") { newest.rigIdentity="PowerSDR"; }
         else if (setter=="ZZRH+0999;") { newest.rttyDiguHz=999; }
         else { newest.rttyOffsetBEnabled=false; }
@@ -111,7 +114,8 @@ private slots:
         QVERIFY(observed);
         QCOMPARE(snapshot,QByteArray("ID020;ZZSN1111-2222;AI0;ZZRA1;ZZRB1;ZZRH+0123;ZZRL-0321;PC090;ZZPC090;ZZTO080;"));
         QCOMPARE(reply,QByteArray("ZZGA12345678-1234-1234-1234-123456789abc;"));
-        QVERIFY(!accepted); QCOMPARE(service.globalConfig(),newest); QCOMPARE(CatSettings(AppSettings::instance()).global(),newest);
+        QCOMPARE(accepted,setter=="AI1;"); QCOMPARE(service.globalConfig(),newest); QCOMPARE(CatSettings(AppSettings::instance()).global(),newest);
+        QCOMPARE(service.autoInformationActive(),setter=="AI1;");
         QVERIFY(service.session(session)); QCOMPARE(device->opens,opens); QVERIFY(!model.moxController()->isMox());
         QCOMPARE(service.pttState(),QString("Waiting for release"));
         const int before=device->pinReads; device->cts=false; device->dsr=false;

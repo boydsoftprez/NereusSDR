@@ -65,6 +65,9 @@ Added extended CAT commands for APF funtions - May 2017.
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex; no new Thetis port.
 // 2026-10-06 - Drop a TCP CAT client after 30 s with no traffic, as Thetis does.
 //              J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-06 - AI and ZZAI change automatic information for this run only;
+//              the saved Setup checkbox sets it at start, as Thetis does.
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "CatService.h"
 #include "RigctlProtocol.h"
 #include "core/AppSettings.h"
@@ -562,6 +565,15 @@ QList<quint64> CatService::sessionIds(int channel) const
 }
 QString CatService::channelState(int channel) const { return validChannel(channel) ? m_channels[channel - 1].state : QStringLiteral("Invalid channel"); }
 CatGlobalConfig CatService::globalConfig() const { return m_desiredGlobal.value_or(m_settings.global()); }
+// From Thetis console.cs:17707-17711 [v2.10.3.15]. KWAutoInformation is a
+// runtime console property that AI and ZZAI write and nothing saves.
+bool CatService::autoInformationActive() const { return m_aiOverride.value_or(globalConfig().aiEnabled); }
+void CatService::setAutoInformation(bool on)
+{
+    const bool before = autoInformationActive();
+    m_aiOverride = on; ++m_aiOverrideRevision;
+    if (before != on) { emit autoInformationChanged(on); }
+}
 namespace {
 bool samePttIngress(const CatGlobalConfig& a, const CatGlobalConfig& b)
 {
@@ -589,6 +601,11 @@ bool CatService::reconfigureGlobal(const CatGlobalConfig& supplied)
     const CatGlobalConfig previous = globalConfig();
     if (config == previous) { return true; }
     const bool pttChanged = !samePttIngress(config, previous);
+    // From Thetis setup.cs:5875-5878 [v2.10.3.15]. Changing the Setup checkbox
+    // sets KWAutoInformation, replacing an earlier AI/ZZAI for this run; an
+    // AI/ZZAI that arrives while this change applies is newer and stays.
+    const bool aiSetupChanged = config.aiEnabled != previous.aiEnabled || config.allowKenwoodAi != previous.allowKenwoodAi;
+    const quint64 aiRevision = m_aiOverrideRevision;
     const quint64 revision = ++m_globalRevision;
     const quint64 run = m_lifecycleGeneration;
     const bool started = m_started;
@@ -612,6 +629,7 @@ bool CatService::reconfigureGlobal(const CatGlobalConfig& supplied)
     if (!current()) { discardOwnDesired(); return false; }
     if (!m_settings.setGlobal(config, current) || !current()) { discardOwnDesired(); return false; }
     m_desiredGlobal.reset();
+    if (aiSetupChanged && m_aiOverrideRevision == aiRevision) { m_aiOverride.reset(); }
     emit globalConfigurationChanged();
     if (!current()) { return false; }
     if (restartPtt && started && m_started && run == m_lifecycleGeneration && !m_ptt) {

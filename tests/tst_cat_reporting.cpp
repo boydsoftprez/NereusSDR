@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original native CAT AI reporting integration tests.
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-06 AI and ZZAI last for this run only. J.J. Boyd (KG4VCF),
+//            AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -102,15 +104,47 @@ private slots:
         global.allowKenwoodAi=true; QVERIFY(f.service.applyGlobalConfig(global));
         f.model.sliceById(0)->setFrequency(14'080'000); f.flush(); QCOMPARE(f.output.size(),2);
     }
+    void aiCommandLastsForThisRunOnly()
+    {
+        // Thetis keeps KWAutoInformation only while running (console.cs:17707-17711)
+        // and the Setup checkbox sets it (setup.cs:5875-5878).
+        {
+            CatReportingFixture f; QVERIFY(f.configure(1)); QVERIFY(f.enable());
+            const quint64 tester=f.service.openSession(1,CatTransportKind::Tester);
+            QCOMPARE(f.service.processFrame(tester,"AI0;"),QByteArray());
+            QCOMPARE(f.service.processFrame(tester,"AI;"),QByteArray("AI0;"));
+            QVERIFY(f.service.globalConfig().aiEnabled); QVERIFY(CatSettings(AppSettings::instance()).global().aiEnabled);
+            CatGlobalConfig global=f.service.globalConfig(); global.sendWelcome=true; QVERIFY(f.service.applyGlobalConfig(global));
+            QCOMPARE(f.service.processFrame(tester,"ZZAI;"),QByteArray("ZZAI0;"));
+            global.aiEnabled=false; QVERIFY(f.service.applyGlobalConfig(global));
+            QCOMPARE(f.service.processFrame(tester,"AI;"),QByteArray("AI0;"));
+            global.aiEnabled=true; QVERIFY(f.service.applyGlobalConfig(global));
+            QCOMPARE(f.service.processFrame(tester,"AI;"),QByteArray("AI1;"));
+            QCOMPARE(f.service.processFrame(tester,"ZZAI0;"),QByteArray());
+            global.allowKenwoodAi=false; QVERIFY(f.service.applyGlobalConfig(global));
+            QCOMPARE(f.service.processFrame(tester,"AI;"),QByteArray("?;"));
+            global.allowKenwoodAi=true; QVERIFY(f.service.applyGlobalConfig(global));
+            QCOMPARE(f.service.processFrame(tester,"AI;"),QByteArray("AI1;"));
+            QCOMPARE(f.service.processFrame(tester,"AI0;"),QByteArray()); f.service.stopAll();
+        }
+        CatReportingFixture next; QVERIFY(next.configure(1)); QVERIFY(next.enable());
+        const quint64 tester=next.service.openSession(1,CatTransportKind::Tester);
+        QCOMPARE(next.service.processFrame(tester,"AI;"),QByteArray("AI1;"));
+        next.connectClient(next.first); QTRY_COMPARE(next.service.clientCount(1),1); next.output.clear();
+        next.model.sliceById(0)->setFrequency(14'075'000); next.flush();
+        QCOMPARE(next.output,(QList<QPair<int,QByteArray>>{{1,"FA00014075000;"}}));
+    }
     void globalAiCommandsAndTesterIsolation()
     {
         CatReportingFixture f; QVERIFY(f.configure(1)); QVERIFY(f.enable()); f.connectClient(f.first);
         QTRY_COMPARE(f.service.clientCount(1),1);
         const quint64 tester=f.service.openSession(1,CatTransportKind::Tester);
         QSignalSpy config(&f.service,&CatService::globalConfigurationChanged);
-        QCOMPARE(f.service.processFrame(tester,"AI0;"),QByteArray()); QCOMPARE(config.size(),1);
+        QSignalSpy ai(&f.service,&CatService::autoInformationChanged);
+        QCOMPARE(f.service.processFrame(tester,"AI0;"),QByteArray()); QCOMPARE(ai.size(),1); QVERIFY(config.isEmpty());
+        QVERIFY(f.service.globalConfig().aiEnabled);
         f.model.sliceById(0)->setFrequency(14'075'000); f.flush(); QVERIFY(f.output.isEmpty());
-        QCOMPARE(f.service.processFrame(tester,"ZZAI1;"),QByteArray()); QCOMPARE(config.size(),2);
+        QCOMPARE(f.service.processFrame(tester,"ZZAI1;"),QByteArray()); QCOMPARE(ai.size(),2); QVERIFY(config.isEmpty());
         f.model.sliceById(0)->setFrequency(14'076'000); f.flush(); QCOMPARE(f.output.size(),1);
         QCOMPARE(f.output.first().second,QByteArray("FA00014076000;"));
         QVERIFY(!f.service.session(tester)->context().transmitAllowed);

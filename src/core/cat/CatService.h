@@ -62,6 +62,9 @@ Added extended CAT commands for APF funtions - May 2017.
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex; no new Thetis port.
 // 2026-10-06 - Export the class from the Windows Core DLL so the GUI and tests
 //              can use its signals. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-06 - AI and ZZAI change automatic information for this run only;
+//              the saved Setup checkbox sets it at start, as Thetis does.
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #pragma once
 #include "core/NereusCoreExport.h"
 #include "CatModelAdapter.h"
@@ -106,6 +109,8 @@ public:
     QString transportState(int channel, CatTransportKind kind) const;
     CatGlobalConfig globalConfig() const;
     bool applyGlobalConfig(const CatGlobalConfig&);
+    bool autoInformationActive() const;
+    void setAutoInformation(bool on);
     quint64 openSession(int channel, CatTransportKind);
     void closeSession(quint64);
     CatSession* session(quint64);
@@ -135,6 +140,7 @@ signals:
     void ptyPathChanged(int channel, QString path);
     void transportStateChanged(int channel, CatTransportKind kind, QString state);
     void globalConfigurationChanged();
+    void autoInformationChanged(bool on);
     void sessionClosed(quint64 sessionId);
     void radioDisconnected();
     void clientCountChanged(int channel, int count);
@@ -198,6 +204,9 @@ private:
     quint64 m_lifecycleGeneration{0};
     quint64 m_globalRevision{0};
     std::optional<CatGlobalConfig> m_desiredGlobal;
+    // Run-only AI/ZZAI state; cleared when the operator changes the Setup checkboxes.
+    std::optional<bool> m_aiOverride;
+    quint64 m_aiOverrideRevision{0};
     // Only nested callbacks of an explicit ingress change inherit its restart.
     struct PttRestart { quint64 generation; quint64 revision; };
     std::optional<PttRestart> m_pendingPttRestart;
