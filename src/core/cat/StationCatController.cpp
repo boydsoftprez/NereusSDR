@@ -12,6 +12,7 @@
 //                                    Review fixes: explicit rebinds, the
 //                                    tester's reply in its result, device
 //                                    reads at most once a second.
+//                                    Phone client: platform's ptyDialects.
 //                                    AI tooling: Claude Code.
 // =================================================================
 
@@ -335,6 +336,16 @@ void StationCatController::publishPlatform()
         {QStringLiteral("markSpaceParity"), kMarkSpaceParity},
         {QStringLiteral("oneAndHalfStop"), kOneAndHalfStop},
         {QStringLiteral("serialDevices"), QJsonArray::fromStringList(m_serialDevices)},
+        // The dialects a virtual serial port takes: the values the local
+        // page offers (CatPtyTransport accepts exactly these), each with
+        // plain words for a client that cannot show the value itself.
+        {QStringLiteral("ptyDialects"),
+         QJsonArray{
+             QJsonObject{{QStringLiteral("value"), QStringLiteral("Thetis")},
+                         {QStringLiteral("label"), QStringLiteral("Kenwood and ZZ commands")}},
+             QJsonObject{{QStringLiteral("value"), QStringLiteral("Rigctld")},
+                         {QStringLiteral("label"), QStringLiteral("Hamlib rigctld")}},
+         }},
     }));
 }
 

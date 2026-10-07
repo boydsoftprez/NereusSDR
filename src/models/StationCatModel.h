@@ -30,7 +30,7 @@
 //                rigctldBoundAddress, rigctldBoundPort, tcpClients,
 //                rigctldClients, ptyPath}}
 //   platform   {serial, pty, markSpaceParity, oneAndHalfStop: bool,
-//               serialDevices: [text]}
+//               serialDevices: [text], ptyDialects: [{value, label: text}]}
 //   lastTest   {requestId, channel, command, reply, accepted}
 //
 // The design: docs/architecture/2026-10-07-remote-cat-setup-plan.md. The

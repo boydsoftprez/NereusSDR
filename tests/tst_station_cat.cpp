@@ -180,6 +180,18 @@ private slots:
         QVERIFY(platform.value(QStringLiteral("markSpaceParity")).isBool());
         QVERIFY(platform.value(QStringLiteral("oneAndHalfStop")).isBool());
         QVERIFY(platform.value(QStringLiteral("serialDevices")).isArray());
+        // The dialects a virtual serial port takes, the values the local
+        // page offers, each with plain words a phone can show.
+        const QJsonArray dialects = platform.value(QStringLiteral("ptyDialects")).toArray();
+        QCOMPARE(dialects.size(), 2);
+        QCOMPARE(dialects.at(0).toObject().value(QStringLiteral("value")).toString(),
+                 QStringLiteral("Thetis"));
+        QCOMPARE(dialects.at(0).toObject().value(QStringLiteral("label")).toString(),
+                 QStringLiteral("Kenwood and ZZ commands"));
+        QCOMPARE(dialects.at(1).toObject().value(QStringLiteral("value")).toString(),
+                 QStringLiteral("Rigctld"));
+        QCOMPARE(dialects.at(1).toObject().value(QStringLiteral("label")).toString(),
+                 QStringLiteral("Hamlib rigctld"));
 
         // A channel's settings.
         const quint16 port = freePort();
