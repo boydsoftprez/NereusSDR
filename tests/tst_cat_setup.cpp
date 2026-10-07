@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original functional CAT setup, diagnostics and sandbox visual tests.
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-06 Remote and tester wording follows the operator text.
+//            J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 #include <QtTest>
 #include <memory>
 #include <QCheckBox>
@@ -83,7 +85,7 @@ private slots:
         RadioModel remote(RadioModel::Role::Remote); CatTcpIpPage remotePage(&remote); remotePage.syncFromModel();
         for (int channel=1;channel<=4;++channel) {
             auto* pty=remotePage.findChild<QCheckBox*>(QStringLiteral("cat%1Pty").arg(channel)); QVERIFY(pty);
-            QVERIFY(!pty->isEnabled()); QVERIFY(pty->toolTip().contains("local host"));
+            QVERIFY(!pty->isEnabled()); QVERIFY(pty->toolTip().contains("computer running the Core"));
         }
     }
     void synchronousRigctldCallbackMayDeletePage() {
@@ -160,7 +162,7 @@ private slots:
 #endif
         RadioModel remote(RadioModel::Role::Remote); CatTcpIpPage network(&remote); CatOptionsSetupPage options(&remote); CatPttSetupPage ptt(&remote);
         QVERIFY(!control<QCheckBox>(network,"cat1Enabled")->isEnabled()); QVERIFY(!control<QCheckBox>(options,"catWelcome")->isEnabled()); QVERIFY(!control<QCheckBox>(ptt,"catPttEnabled")->isEnabled());
-        bool explained=false; for (QLabel* label:network.findChildren<QLabel*>()) { explained=explained || label->text().contains("local host"); } QVERIFY(explained); QVERIFY(!remote.catService()->isStarted());
+        bool explained=false; for (QLabel* label:network.findChildren<QLabel*>()) { explained=explained || label->text().contains("computer running the Core"); } QVERIFY(explained); QVERIFY(!remote.catService()->isStarted());
     }
     void restoredNativeFormatsRemainExact() {
         RadioModel model; CatService& service=*model.catService();
@@ -223,7 +225,7 @@ private slots:
         CatService& service=*model.catService(); service.startConfigured(); CatOptionsSetupPage options(&model);
         auto* command=control<QLineEdit>(options,"catTesterCommand"); auto* send=control<QPushButton>(options,"catTesterSend");
         command->setText("FA00014074000;"); send->click(); QCOMPARE(model.sliceById(0)->frequency(),14074000.0);
-        QVERIFY(control<QLabel>(options,"catTesterReply")->text().contains("no wire reply"));
+        QVERIFY(control<QLabel>(options,"catTesterReply")->text().contains("no reply"));
         command->setText("ID;"); send->click(); QCOMPARE(control<QLabel>(options,"catTesterReply")->text(),QString("ID019;"));
         command->setText("TX;"); send->click(); QCOMPARE(control<QLabel>(options,"catTesterReply")->text(),QString("?;"));
         QVERIFY(!model.transmitModel().isMox()); QVERIFY(service.sessionIds(1).isEmpty());

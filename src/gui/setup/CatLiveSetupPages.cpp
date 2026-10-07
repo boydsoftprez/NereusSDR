@@ -7,6 +7,8 @@
 // 2026-10-04 - J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-06 - Warn when a listener is open beyond this computer; ports apply when
 //              typing finishes. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-06 - Notes, tooltips and section names in operator words.
+//              J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 #include "CatNetworkSetupPages.h"
 #include "core/cat/CatService.h"
 #include "gui/StyleConstants.h"
@@ -30,7 +32,7 @@
 #endif
 namespace NereusSDR {
 namespace {
-QString localReason() { return QObject::tr("CAT listeners and setup belong to the local host. Configure CAT on the computer running the Core."); }
+QString localReason() { return QObject::tr("CAT runs on the computer running the Core. Set it up there."); }
 bool local(RadioModel* model) { return model && model->ownsLocalDsp(); }
 // rigctld(1) warns the protocol has no authentication; the Thetis TCP CAT has none either.
 QString openToNetwork(bool enabled, const QString& address) {
@@ -93,11 +95,11 @@ void fillSlices(QComboBox* widget, RadioModel* model, int selected, quint64 inca
     if (index<0) {
         widget->addItem(QObject::tr("Invalid binding — ID %1").arg(selected),selected); index=widget->count()-1;
         widget->setItemData(index,QVariant::fromValue(incarnation),Qt::UserRole+1);
-        unavailableChoice(widget,widget->itemText(index),QObject::tr("The bound slice was removed. Select a current slice explicitly to rebind."));
+        unavailableChoice(widget,widget->itemText(index),QObject::tr("The slice this channel controlled was closed. Pick another slice."));
     }
     widget->setCurrentIndex(index);
     widget->setToolTip(index>0 && widget->itemText(index).startsWith(QObject::tr("Invalid binding"))
-        ? QObject::tr("The bound slice was removed. Select a current slice explicitly to rebind.") : QObject::tr("Stable slice identity; independent of GUI focus."));
+        ? QObject::tr("The slice this channel controlled was closed. Pick another slice.") : QObject::tr("This channel keeps controlling this slice, whichever slice is selected on screen."));
 }
 }
 CatSerialPortsPage::CatSerialPortsPage(RadioModel* model, QWidget* parent) : CatChannelSetupPage(model,true,parent) {}
@@ -123,7 +125,7 @@ CatChannelSetupPage::CatChannelSetupPage(RadioModel* model, bool serial, QWidget
 #ifdef HAVE_SERIALPORT
             for (const QSerialPortInfo& port:QSerialPortInfo::availablePorts()) { row.device->addItem(port.systemLocation()); }
 #else
-            group->setEnabled(false); group->setToolTip(tr("QtSerialPort dependency unavailable in this build."));
+            group->setEnabled(false); group->setToolTip(tr("This copy of NereusSDR was built without serial port support."));
 #endif
             grid->addWidget(new QLabel(tr("Device:"),group),1,0); grid->addWidget(row.device,1,1,1,4);
             row.baud=combo(group,baudChoices(),prefix+"Baud");
@@ -171,7 +173,7 @@ CatChannelSetupPage::CatChannelSetupPage(RadioModel* model, bool serial, QWidget
         if (row.port) { row.port->installEventFilter(this); connect(row.port,&QSpinBox::valueChanged,this,[this,i] { apply(i+1); }); }
     }
     if (!serial) {
-        contentLayout()->insertWidget(contentLayout()->count()-1,note(this,tr("Each channel controls its assigned slice IDs independently of GUI focus. PTY paths are created only while the transport is open.")));
+        contentLayout()->insertWidget(contentLayout()->count()-1,note(this,tr("Each channel controls the slices assigned to it, whichever slice is selected on screen. A virtual serial port exists only while its channel is on.")));
     }
     if (m_service) {
         connect(m_service,&CatService::configurationChanged,this,[this] { syncFromModel(); });
@@ -277,7 +279,7 @@ CatOptionsSetupPage::CatOptionsSetupPage(RadioModel* model,QWidget* parent) : Ca
     addCheck(form,tr("AI to serial CAT 4"),"catAiSerial4",&CatGlobalConfig::aiSerial4);
     addCheck(form,tr("Report DIGL / DIGU as LSB / USB"),"catDigitalSideband",&CatGlobalConfig::digitalReportsSideband);
     addCheck(form,tr("Apply power limits to CAT power queries"),"catLimitPower",&CatGlobalConfig::limitReportedPower);
-    auto* recenter=new QCheckBox(tr("Always recenter VFOs"),options); recenter->setEnabled(false); recenter->setToolTip(tr("CAT recentering of panadapters is not available in this delivery.")); form->addRow(recenter);
+    auto* recenter=new QCheckBox(tr("Always recenter VFOs"),options); recenter->setEnabled(false); recenter->setToolTip(tr("Recentering the panadapter from CAT is not available yet.")); form->addRow(recenter);
     auto* rtty=addSection(tr("RTTY frequency reporting")); auto* offsets=sectionForm(rtty);
     addCheck(offsets,tr("Apply offset to VFO A"),"catRttyA",&CatGlobalConfig::rttyOffsetAEnabled);
     addCheck(offsets,tr("Apply offset to VFO B"),"catRttyB",&CatGlobalConfig::rttyOffsetBEnabled);
@@ -292,14 +294,14 @@ CatOptionsSetupPage::CatOptionsSetupPage(RadioModel* model,QWidget* parent) : Ca
         if (!m_service) { return; }
         const QPointer<CatOptionsSetupPage> lifetime(this); const QPointer<QLabel> output(reply);
         const QByteArray bytes=m_service->testCommand(channel->currentText().toInt(),command->text().toLatin1());
-        if (lifetime && output) { output->setText(bytes.isEmpty() ? tr("Accepted setter: no wire reply") : QString::fromLatin1(bytes)); }
+        if (lifetime && output) { output->setText(bytes.isEmpty() ? tr("Accepted (no reply)") : QString::fromLatin1(bytes)); }
     });
-    testForm->addRow(note(testing,tr("Tests use the real parser and model. RX and parameter changes take effect. TX, Tune, Two Tone, VOX enable and PureSignal single/calibration are refused.")));
+    testForm->addRow(note(testing,tr("Test commands act on the radio: receive and setting changes take effect. Commands that transmit (TX, Tune, Two Tone, VOX on, PureSignal single shot and calibration) are refused here.")));
     auto* log=new QPushButton(tr("Show CAT Log…"),testing); log->setObjectName("catShowLog"); log->setAutoDefault(false); log->setStyleSheet(QString::fromLatin1(Style::kButtonStyle)); log->setEnabled(local(model)); connect(log,&QPushButton::clicked,this,&CatOptionsSetupPage::showLogRequested); testForm->addRow(log);
     syncFromModel();
 }
 CatPttSetupPage::CatPttSetupPage(RadioModel* model,QWidget* parent) : CatGlobalSetupPage(tr("CAT PTT"),model,parent) {
-    auto* group=addSection(tr("Release-armed input PTT")); auto* form=sectionForm(group);
+    auto* group=addSection(tr("Input PTT")); auto* form=sectionForm(group);
     addCheck(form,tr("Enable input PTT"),"catPttEnabled",&CatGlobalConfig::pttEnabled);
     addChoice(form,tr("Input source:"),"catPttSource",{"None","CAT1","CAT2","CAT3","CAT4","Physical"},&CatGlobalConfig::pttDeviceSource);
     addCheck(form,tr("Legacy RTS wiring — samples CTS input"),"catPttCts",&CatGlobalConfig::pttUseCts);
@@ -314,9 +316,9 @@ CatPttSetupPage::CatPttSetupPage(RadioModel* model,QWidget* parent) : CatGlobalS
     addNumber(form,tr("Data bits:"),"catPttBits",5,8,&CatGlobalConfig::pttSerialDataBits);
     auto* stops=addChoice(form,tr("Stop bits:"),"catPttStops",{"1","1.5","2"},&CatGlobalConfig::pttSerialStopBits); serialPlatformChoices(parity,stops);
     m_status=note(group,{}); m_status->setObjectName("catPttStatus"); form->addRow(m_status);
-    form->addRow(note(group,tr("CAT1–4 share an already open serial CAT device. Physical uses one exclusive device. All selected inputs must release before a fresh assertion can request TX. Opening/restoring configuration never keys. RTS/DTR outputs are not asserted by these controls.")));
+    form->addRow(note(group,tr("CAT1–4 read the pins of a serial CAT port that is already open. Physical opens a serial device of its own. After a press, every selected input must be released before the next press can key the radio. Opening this page or restoring settings never keys the radio. These controls never drive the RTS or DTR pins.")));
 #ifndef HAVE_SERIALPORT
-    group->setEnabled(false); group->setToolTip(tr("QtSerialPort dependency unavailable in this build.")); contentLayout()->insertWidget(contentLayout()->count()-1,note(this,tr("Input PTT unavailable: QtSerialPort dependency is absent.")));
+    group->setEnabled(false); group->setToolTip(tr("This copy of NereusSDR was built without serial port support.")); contentLayout()->insertWidget(contentLayout()->count()-1,note(this,tr("Input PTT is not available: this copy of NereusSDR was built without serial port support.")));
 #endif
     if (!local(model)) { group->setEnabled(false); }
     if (m_service) { connect(m_service,&CatService::pttStateChanged,this,[this] { syncFromModel(); }); }

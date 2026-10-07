@@ -601,7 +601,8 @@
 //                first wiring names its own pan; slice add and remove are
 //                logged. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
-//   2026-10-06 - CAT status count includes rigctld clients. J.J. Boyd
+//   2026-10-06 - CAT status count includes rigctld clients; a remote
+//                window's CAT status reads "On the Core". J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -12103,7 +12104,7 @@ void MainWindow::buildStatusBar()
             details.append(tr("CAT%1: %2").arg(channel).arg(state));
         }
         const auto labels=m_catIndicator->findChildren<QLabel*>();
-        if (labels.size()>1) { labels.last()->setText(!local ? tr("Local host") : error ? tr("Error") : listening ? tr("On (%1)").arg(clients) : tr("Off")); }
+        if (labels.size()>1) { labels.last()->setText(!local ? tr("On the Core") : error ? tr("Error") : listening ? tr("On (%1)").arg(clients) : tr("Off")); }
         m_catIndicator->setToolTip(local ? details.join('\n') : tr("CAT listeners are configured on the computer running the Core."));
     };
     connect(m_radioModel->catService(),&CatService::channelStateChanged,this,refreshCat);

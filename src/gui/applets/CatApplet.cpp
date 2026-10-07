@@ -27,6 +27,8 @@
 //                 All controls NYI — wired in later phase.
 //   2026-05-10 — Phase 24 (Task 24.1): stripped TCI button row; TCI
 //                 controls now live in TciApplet (Phase 21, 0b615a7).
+//   2026-10-06 — Remote-window reason in operator words. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "CatApplet.h"
@@ -214,7 +216,7 @@ void CatApplet::syncFromModel()
     m_ptyBtn->setEnabled(false); m_ptyBtn->setToolTip(tr("Native PTYs are available only on macOS and Linux."));
 #endif
     if (!available) {
-        const QString reason=tr("CAT setup belongs to the local host. Configure it on the computer running the Core.");
+        const QString reason=tr("CAT runs on the computer running the Core. Set it up there.");
         m_tcpBtn->setToolTip(reason); m_ptyBtn->setToolTip(reason);
     }
     if (!service) { return; }
