@@ -3,6 +3,9 @@
 // 2026-10-06 q and Q close the client after RPRT 0; Linux CI runs the real
 //            Hamlib client. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //            Claude Code.
+// 2026-10-07 A level read through rigctl compares as a number, whatever
+//            Hamlib's float format. J.J. Boyd (KG4VCF), AI-assisted via
+//            Anthropic Claude Code.
 #include <QtTest>
 #include <limits>
 #include <QTcpServer>
@@ -193,7 +196,11 @@ private slots:
         QCOMPARE(invoke({"S","VFOA","1","VFOB","I","VFOA","7101000","i","VFOA","X","VFOA","CW","500","x","VFOA","s","VFOA"}),QByteArray("7101000\nCW\n500\n1\nVFOB\n"));
         QCOMPARE(f.model.sliceById(2)->frequency(),7101000.0); QCOMPARE(f.model.txBoundSlice(),f.model.sliceById(2));
         QCOMPARE(f.model.sliceById(2)->dspMode(),DSPMode::CWU); QCOMPARE(f.model.sliceById(2)->filterHigh()-f.model.sliceById(2)->filterLow(),500);
-        QCOMPARE(invoke({"S","VFOA","0","VFOA","L","VFOA","AF","0.64","l","VFOA","AF","J","VFOA","234","j","VFOA"}),QByteArray("0.64\n234\n"));
+        // rigctl prints a level in its own Hamlib's float format: 4.7 prints
+        // "0.64", Ubuntu's packaged Hamlib "0.640000". The value is what counts.
+        const QByteArray levels=invoke({"S","VFOA","0","VFOA","L","VFOA","AF","0.64","l","VFOA","AF","J","VFOA","234","j","VFOA"});
+        const QList<QByteArray> levelLines=levels.split('\n');
+        QVERIFY2(levelLines.size()==3 && qFuzzyCompare(levelLines.at(0).toDouble(),0.64) && levelLines.at(1)=="234" && levelLines.at(2).isEmpty(),levels.constData());
         QCOMPARE(f.model.sliceById(0)->afGain(),64); QCOMPARE(f.model.sliceById(0)->ritHz(),234);
         QTRY_COMPARE(f.service.rigctldClientCount(1),0);
         bool sawNativeMox=false;

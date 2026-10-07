@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original production CAT transport/model integration.
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-07 A VFO A retune checks what reaches the transmitter, not how many
+//            pushes land. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//            Claude Code.
 #include <QtTest>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -119,7 +122,12 @@ private slots:
         QVERIFY(f.connection.txFreqLog.contains(7101000)); QVERIFY(!txState.isEmpty());
         const qsizetype pushes = f.connection.txFreqLog.size();
         QCOMPARE(exchange(client, "FA00014202000;FA;", 14), QByteArray("FA00014202000;"));
-        QCOMPARE(f.connection.txFreqLog.size(), pushes);
+        // Deferred mode and filter work may push the transmit frequency again
+        // while VFO A tunes (on Linux it lands here); every push carries VFO B's.
+        for (qsizetype i = pushes; i < f.connection.txFreqLog.size(); ++i) {
+            QCOMPARE(f.connection.txFreqLog.at(i), quint64(7101000));
+        }
+        QVERIFY(!f.connection.txFreqLog.contains(14202000));
         QCOMPARE(exchange(client, "FB00007102000;FB;", 14), QByteArray("FB00007102000;"));
         QCOMPARE(f.connection.txFreqLog.last(), quint64(7102000));
         QCOMPARE(f.model.slices().size(), 2);
