@@ -21,7 +21,7 @@ Yaesu GS-232 commands or that Hamlib's `rotctld` can drive.
 | Where it lives on the iPhone | A Rotor page under Accessories, and a Rotor row in the Tools tab that opens the same page |
 | Elevation | Supported; azimuth or azimuth + elevation is set in rotor setup |
 | Turn to a spot | Its own action everywhere (pan menu, Spot Hub, iPhone spot sheet), plus a "turn the beam when I tune to a spot" setting, off by default |
-| Look | As in the mockup: the Longpath-style dial in NereusSDR colours (amber heading needle, dashed cyan target arrow, the travel sector, "73° to go", green on arrival, elevation in the corner, rose or tape shape), Stop the only red button |
+| Look | As in the mockup: the Longpath-style dial in NereusSDR colours (amber heading needle, dashed cyan target arrow, the travel sector, "73° to go", green on arrival, an elevation quarter gauge beside the rose on az/el rotors, rose or tape shape), Stop the only red button |
 
 ## What exists today
 
@@ -204,7 +204,10 @@ In short:
 * **Rotor dial** (`src/gui/widgets/RotorDialWidget.*`): ported from
   Longpath's `RotorDialWidget` with its header and credit, recoloured to
   NereusSDR's palette and with English operator words. Rose (default) or
-  tape, switched from the dial's right-click menu.
+  tape, switched from the dial's right-click menu. Our addition: on an
+  az/el rotor, an elevation quarter gauge (0 to 90) beside the rose in the
+  same style (amber needle, dashed cyan target, travel sector); Longpath
+  shows elevation only as a corner readout.
 * **Rotor applet** (`src/gui/applets/RotorApplet.*`, registered as
   `applet:rotor` in `ContainerContentRegistry`): status line, the dial, the
   heading readout and "to go" under it, CCW / STOP / CW, Down / Up for

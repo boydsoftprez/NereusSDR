@@ -124,9 +124,9 @@ th.new,td.new{color:var(--amberT)}
     <div class="container">
       <div class="ctitle"><span>Rotor</span><span>Az + El</span></div>
       <div class="cbody">
-        <div class="status"><span class="dot"></span>rotctld 192.168.1.40:4533 · Stopped</div>
+        <div class="status"><span class="dot amber"></span>rotctld 192.168.1.40:4533 · Turning</div>
         <div id="dCompass2"></div>
-        <div class="readout"><span class="big">212°</span><span class="tgt">no target</span></div>
+        <div class="readout"><span class="big">212° <span style="font-size:16px">el 34°</span></span><span class="tgt">el 45° · 11° to go</span></div>
         <div class="grid3">
           <div class="btn">◀ CCW</div><div class="btn stop">STOP</div><div class="btn">CW ▶</div>
         </div>
@@ -301,7 +301,8 @@ function pt(cx,cy,r,deg){const a=(deg-90)*Math.PI/180;return[cx+r*Math.cos(a),cy
 function compass(host,size,opts){
   // Longpath-style control dial (after Longpath RotorDialWidget), in NereusSDR colours
   const AMBER="#ffb800", TGT="#00b4d8", GREEN="#5fff8a", RING="#7e8a96", INNER="#2c3a48", MUTED="#a6b0bc";
-  const s=el("svg",{class:"compass",width:size,height:size,viewBox:"0 0 200 200"});
+  const W=opts.el!=null?300:200;
+  const s=el("svg",{class:"compass",width:size*W/200,height:size,viewBox:`0 0 ${W} 200`});
   host.appendChild(s);
   const cx=100,cy=100,R=88;
   const defs=el("defs",{},s);
@@ -314,7 +315,25 @@ function compass(host,size,opts){
     const[a,b]=pt(cx,cy,r0,d),[c2,d2]=pt(cx,cy,R,d);el("line",{x1:a,y1:b,x2:c2,y2:d2,stroke:card?MUTED:RING,"stroke-width":card?1.5:maj?1.1:.6},s);}
   for(let d=30;d<360;d+=30){if(d%90===0)continue;const[x,y]=pt(cx,cy,R*.755,d);const t=el("text",{x,y:y+3,fill:RING,"fill-opacity":.7,"font-size":8,"text-anchor":"middle","font-family":"Menlo,monospace"},s);t.textContent=d;}
   [["N",0],["E",90],["S",180],["W",270]].forEach(([c,d])=>{const[x,y]=pt(cx,cy,R*.745,d);const t=el("text",{x,y:y+4,fill:MUTED,"font-size":10,"text-anchor":"middle","font-family":"Menlo,monospace"},s);t.textContent=c;});
-  if(opts.el!=null){const t=el("text",{x:196,y:12,fill:MUTED,"font-size":9,"text-anchor":"end","font-family":"Menlo,monospace"},s);t.textContent="EL "+opts.el+"°";}
+  if(opts.el!=null){
+    // elevation quarter gauge beside the rose, same language: rings, ticks, amber needle, cyan dashed target
+    const ex=208,ey=178,er=84,E=(r,d)=>[ex+r*Math.cos(d*Math.PI/180),ey-r*Math.sin(d*Math.PI/180)];
+    const glow=el("path",{d:`M${ex},${ey} L${ex+er},${ey} A${er},${er} 0 0 0 ${ex},${ey-er} Z`,fill:AMBER,"fill-opacity":.05},s);
+    el("path",{d:`M${ex+er},${ey} A${er},${er} 0 0 0 ${ex},${ey-er}`,fill:"none",stroke:RING,"stroke-width":.9},s);
+    el("path",{d:`M${ex+er*.83},${ey} A${er*.83},${er*.83} 0 0 0 ${ex},${ey-er*.83}`,fill:"none",stroke:INNER,"stroke-width":.9},s);
+    el("line",{x1:ex,y1:ey,x2:ex+er,y2:ey,stroke:INNER},s);el("line",{x1:ex,y1:ey,x2:ex,y2:ey-er,stroke:INNER},s);
+    for(let d=0;d<=90;d+=5){const maj=d%30===0,mid=d%10===0;const[a,b]=E(er*(maj?.86:mid?.90:.94),d),[c2,d2]=E(er,d);
+      el("line",{x1:a,y1:b,x2:c2,y2:d2,stroke:maj?MUTED:RING,"stroke-width":maj?1.4:mid?1:.6},s);}
+    for(const d of [30,60]){const[x,y]=E(er*.72,d);const t=el("text",{x,y:y+3,fill:RING,"fill-opacity":.7,"font-size":8,"text-anchor":"middle","font-family":"Menlo,monospace"},s);t.textContent=d;}
+    {const t=el("text",{x:ex+er,y:ey+11,fill:RING,"font-size":8,"text-anchor":"middle","font-family":"Menlo,monospace"},s);t.textContent="0";}
+    {const t=el("text",{x:ex,y:ey-er-4,fill:RING,"font-size":8,"text-anchor":"middle","font-family":"Menlo,monospace"},s);t.textContent="90";}
+    if(opts.elTgt!=null){const[tx,ty]=E(er*.97,opts.elTgt);el("line",{x1:ex,y1:ey,x2:tx,y2:ty,stroke:TGT,"stroke-width":1.6,"stroke-dasharray":"5 3"},s);
+      const lo=Math.min(opts.el,opts.elTgt),hi=Math.max(opts.el,opts.elTgt),[p1x,p1y]=E(er*.83,lo),[p2x,p2y]=E(er*.83,hi);
+      el("path",{d:`M${ex},${ey} L${p1x},${p1y} A${er*.83},${er*.83} 0 0 0 ${p2x},${p2y} Z`,fill:AMBER,"fill-opacity":.10},s);}
+    const[nx,ny]=E(er*.9,opts.el);el("line",{x1:ex,y1:ey,x2:nx,y2:ny,stroke:AMBER,"stroke-width":2.6,"stroke-linecap":"round"},s);
+    el("circle",{cx:ex,cy:ey,r:3,fill:AMBER},s);
+    const t=el("text",{x:ex+er*.5,y:ey-6,fill:MUTED,"font-size":9,"text-anchor":"middle","font-family":"Menlo,monospace"},s);t.textContent="EL "+opts.el+"°";
+  }
   const travel=el("path",{fill:AMBER,"fill-opacity":.10},s);
   const beam=el("path",{fill:AMBER,"fill-opacity":.10},s);
   const tgtLine=el("line",{stroke:TGT,"stroke-width":1.8,"stroke-dasharray":"5 3"},s);
@@ -359,7 +378,7 @@ function tape(host,w,head,tgt){
 const pad=n=>String(n).padStart(3,"0")+"°";
 const togo=(h,t)=>{const d=((t-h+540)%360)-180;return Math.abs(d)<1?"on target":Math.round(Math.abs(d))+"° to go";};
 compass(document.getElementById("dCompass"),230,{head:47,tgt:120,drag:true,onState:(h,t)=>{dHead.textContent=pad(h);dTgt.textContent=t+"° · "+togo(h,t);}});
-compass(document.getElementById("dCompass2"),210,{head:212,tgt:null,el:34});
+compass(document.getElementById("dCompass2"),200,{head:212,tgt:null,el:34,elTgt:45});
 compass(document.getElementById("dCompass3"),170,{head:0,tgt:null});
 compass(document.getElementById("pCompass"),250,{head:47,tgt:120,drag:true,onState:(h,t)=>{pHead.textContent=pad(h);pTgt.textContent=t+"° short path · "+togo(h,t);}});
 tape(document.getElementById("dTape"),400,47,120);

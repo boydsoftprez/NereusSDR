@@ -152,7 +152,8 @@ it.
 **Files:**
 - Create: `src/gui/widgets/RotorDialWidget.{h,cpp}` (ported from Longpath, see Global
   Constraints: rose and tape shapes, amber heading needle, dashed target arrow, travel sector,
-  arrival tolerance and green on arrival, elevation in the corner, click to aim, a stale
+  arrival tolerance and green on arrival, an elevation quarter gauge beside the rose on az/el
+  rotors (our addition, see the design), click to aim, a stale
   heading drawn muted with its age; shape choice saved with `AppSettings`)
 - Create: `src/gui/applets/RotorApplet.{h,cpp}` (status line, the dial, heading readout and "to
   go" under it, CCW / STOP / CW, Down / Up on az/el, short and long path, presets, "Turn to"
