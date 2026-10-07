@@ -1,8 +1,8 @@
 // no-port-check: NereusSDR-original production CAT transport/model integration.
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
-// 2026-10-07 A VFO A retune checks what reaches the transmitter, not how many
-//            pushes land. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
-//            Claude Code.
+// 2026-10-07 A VFO A retune and the commands refused while keyed check what
+//            reaches the transmitter, not how many pushes land. J.J. Boyd
+//            (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -145,9 +145,16 @@ private slots:
         QCOMPARE(exchange(client, "TX;ID;", 8), QByteArray("?;ID019;")); QVERIFY(!f.model.moxController()->isMox());
         f.model.setRxOnly(false);
         QCOMPARE(exchange(client, "TX;ID;", 6), QByteArray("ID019;")); QTRY_VERIFY(f.model.moxController()->isMox());
-        const QList<quint64> before = f.connection.txFreqLog;
+        const qsizetype before = f.connection.txFreqLog.size();
         QCOMPARE(exchange(client, "FA00014201000;MD1;ZZFH+3200;FT1;ID;", 14), QByteArray("?;?;?;?;ID019;"));
-        QCOMPARE(f.connection.txFreqLog, before);
+        // Work the earlier changes queued may push the transmit frequency again
+        // while these are refused (on Linux it lands here); every push carries
+        // slice 0's unchanged frequency and none a refused command's.
+        for (qsizetype i = before; i < f.connection.txFreqLog.size(); ++i) {
+            QCOMPARE(f.connection.txFreqLog.at(i), quint64(14074000));
+        }
+        QVERIFY(!f.connection.txFreqLog.contains(14201000));
+        QCOMPARE(f.model.sliceById(0)->frequency(), 14074000.0);
         QCOMPARE(exchange(client, "FB00007101000;FB;RX;ID;", 20), QByteArray("FB00007101000;ID019;"));
         QTRY_VERIFY(!f.model.moxController()->isMox());
         f.model.removeSlice(2); QCOMPARE(f.model.addSlice(), 1); QCOMPARE(f.model.addSlice(), 2);
