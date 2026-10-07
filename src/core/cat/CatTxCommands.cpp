@@ -184,6 +184,9 @@ mw0lge@grange-lane.co.uk
 // 2026-10-06 - CAT review: suffix patterns anchored at the true end, so a
 //              trailing LF is not taken as part of a valid value. J.J. Boyd
 //              (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-06 - ZZTI applies whatever is keying and with no slice bound, as
+//              Thetis does. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//              Claude Code.
 #include "CatTxCommands.h"
 #include "CatModelAdapter.h"
 #include "CatService.h"
@@ -234,6 +237,17 @@ CatCommandResult CatTxCommands::execute(const CatRequest& request,CatSessionCont
             : code == "ZZUT" ? CatTransmitKind::TwoTone : CatTransmitKind::Ptt;
         m_coordinator.releaseTransmit(context.sessionId,kind);
         return model && service ? silence() : error();
+    }
+    // From Thetis CAT/CATCommands.cs:6727-6745 [v2.10.3.15].
+    //Inhibits power output when using external antennas, tuners, etc.
+    // [original inline comment from CATCommands.cs:6726]
+    // Thetis sets console.RXOnly and then console.MOX = false whatever is
+    // keying, with no slice involved, so ZZTI is taken before the channel's
+    // slice binding and the key holder are checked. MoxController::setRxOnly
+    // drops MOX as the RXOnly setter does.
+    if (code == "ZZTI") {
+        if (get || (request.suffix != "0" && request.suffix != "1") || !model) { return error(); }
+        model->setRxOnly(request.suffix == "1"); return silence();
     }
     const CatBinding binding=service->session(context.sessionId)->binding();
     const QPointer<SliceModel> primary(m_adapter.resolveSlice(binding,CatVfo::Primary));
@@ -334,13 +348,6 @@ CatCommandResult CatTxCommands::execute(const CatRequest& request,CatSessionCont
             ps->setAutoCalEnabled(request.suffix == "1");
         }
         return result();
-    }
-    // From Thetis CAT/CATCommands.cs:6727-6745 [v2.10.3.15].
-    //Inhibits power output when using external antennas, tuners, etc.
-    // [original inline comment from CATCommands.cs:6726]
-    if (code == "ZZTI") {
-        if (get || (request.suffix != "0" && request.suffix != "1") || !valid()) { return error(); }
-        model->setRxOnly(request.suffix == "1"); return result();
     }
     // From Thetis CAT/CATCommands.cs:2549-2587 [v2.10.3.15].
     //Sets or reads the TX EQ settings

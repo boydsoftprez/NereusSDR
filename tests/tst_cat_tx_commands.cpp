@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original production CAT TX/global regressions.
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-06 ZZTI under a foreign key and with no slice. J.J. Boyd (KG4VCF),
+//            AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include "CatFixtureHarness.h"
 #include <QSemaphore>
@@ -154,6 +156,22 @@ private slots:
   mox->onX2Ptt(true); QVERIFY(!mox->isMox()); mox->onX2Ptt(false);
   model.setMox(true); QVERIFY(!mox->isMox());
   for(const QByteArray& frame:QList<QByteArray>{"TX;","ZZTX1;","ZZTU1;","ZZUT1;"}) { QCOMPARE(service.processFrame(id,frame),QByteArray("?;")); QVERIFY(!mox->isMox()); }
+  QCOMPARE(service.processFrame(id,"ZZTI0;"),QByteArray()); QVERIFY(!model.isRxOnly());
+ }
+ void receiveOnlyAppliesUnderAForeignKeyAndWithNoSlice() {
+  // Thetis ZZTI sets RXOnly and drops MOX whatever is keying, with no slice
+  // involved (CATCommands.cs:6727-6745).
+  RadioModel model; const quint64 id=start(model); CatService& service=*model.catService();
+  MoxController* mox=model.moxController(); mox->setMoxCheck([] {return safety::BandPlanGuard::MoxCheckResult{true,{}};});
+  KeyerIdentity foreign; foreign.deviceId="foreign"; mox->setMox(true,foreign); QVERIFY(mox->isMox());
+  model.setOtherDeviceHoldsRefusal([] { return QStringLiteral("foreign device holds transmit"); });
+  QCOMPARE(service.processFrame(id,"ZZTI1;"),QByteArray()); QVERIFY(model.isRxOnly()); QVERIFY(!mox->isMox());
+  QCOMPARE(service.processFrame(id,"ZZTI0;"),QByteArray()); QVERIFY(!model.isRxOnly());
+  model.setOtherDeviceHoldsRefusal({});
+  model.removeSlice(0);
+  QCOMPARE(service.processFrame(id,"ZZTI1;"),QByteArray()); QVERIFY(model.isRxOnly());
+  QCOMPARE(service.processFrame(id,"FA;"),QByteArray("?;"));
+  QCOMPARE(service.processFrame(id,"ZZTI2;"),QByteArray("?;")); QVERIFY(model.isRxOnly());
   QCOMPARE(service.processFrame(id,"ZZTI0;"),QByteArray()); QVERIFY(!model.isRxOnly());
  }
  void literalToggleNoOpsAndTesterVoxRefusal() {
