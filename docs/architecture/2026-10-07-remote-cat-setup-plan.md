@@ -59,6 +59,10 @@ setting.
     `oneAndHalfStop` (Windows only), `serialDevices` (the Core computer's
     `QSerialPortInfo::availablePorts()` system locations, refreshed when the
     page asks, see `refreshStationCatDevices`).
+    `ptyDialects` lists the commands a virtual serial port can speak on the
+    Core's computer, each `{value, label}` (the value a channel's
+    `ptyDialect` carries, the label in the Core's words), so a phone or
+    remote window offers the Core's list rather than its own.
   * `lastTest`: `{requestId, channel, command, reply, accepted}` of the most
     recent tester command, so the window that sent it can show the reply.
 * **Controller**: on the Core (Local role, which is both `nereusd` and a
@@ -152,5 +156,46 @@ setting.
      `tst_station_reason_wording` and `tst_core_has_no_gui_includes`.
 3. **Phone and conformance.**
    * Work: the regenerated link fixtures must keep the iOS NereusKit package
-     tests passing (`swift test` in `ios/NereusKit`, offline). The phone keeps
-     CAT Control greyed until it has a page.
+     tests passing (`swift test` in `ios/NereusKit`, offline). The phone
+     gets its own CAT Control page (below).
+
+### On the phone
+
+* **NereusKit**: `StationCat` reads the `stationCat` object (channels,
+  global, platform with `ptyDialects`, `lastTest`) and the `catLog` records,
+  and writes through the four verbs; the fake station plays a board Core with
+  its CAT and log.
+* **Tools list**: CAT Control is a Known tool tagged Core. It opens once the
+  Core offers `stationCat` 1 (session minor and `stationCatVersion`); an
+  older Core greys it with "This Core cannot set up its CAT from this app.
+  Updating the Core may help."
+* **Pages** (`ios/NereusApp/Tools/CatControlModel.swift`,
+  `CatControlPages.swift`), one model shared while any of them is open:
+  * CAT Control: CAT 1 to 4 with a state dot and their state, client counts
+    and serial or PTY state, then CAT Options, CAT PTT and Test and log.
+  * A channel: VFO A and VFO B slices (picking a slice sends the rebind flag;
+    a binding the Core marks invalid shows as a closed slice with its
+    reason), TCP and Hamlib rigctld (on, address, port, the desktop's status
+    line and its open-to-network warning), the serial port (device from the
+    Core's list or typed, baud, parity, data bits, stop bits; what the Core's
+    computer cannot do is greyed with the reason), and the PTY (on, the
+    Core's `ptyDialects`, its path, or why there is none).
+  * CAT Options and CAT PTT: every field of the desktop's pages; Always
+    recenter VFOs shows greyed with why, as on the desktop; PTT shows the
+    Core's PTT state.
+  * Test and log: the tester on a chosen channel, each reply matched to its
+    request; the log subscribes only while the page is open, with All,
+    Received or Sent, Pause (lines arriving while paused are dropped, as on
+    the desktop) and Follow newest.
+  * Opening a channel page or CAT PTT sends `refreshStationCatDevices`.
+  * Every change sends the whole config with the change over it, shows the
+    chosen value until the Core settles it, and shows the Core's own words
+    when it refuses. Nothing is blocked on the air, as on the desktop.
+
+## As built
+
+* Task 3 (phone): NereusKit `StationCat` and its fake, the Core's
+  `ptyDialects` in `platform`, and the phone's CAT Control pages above, with
+  ToolsPagesTests for reasons, writes, rebinding, refusals, the tester, the
+  log, platform limits and wording, and ToolsPagesShotTests pictures of each
+  page upright and the main page sideways.
