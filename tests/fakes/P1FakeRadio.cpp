@@ -127,6 +127,12 @@ void P1FakeRadio::resume()
     // attempt sends a fresh metis-start.
 }
 
+void P1FakeRadio::setStartAnswerDelayMs(int ms)
+{
+    QMutexLocker lock(&m_mutex);
+    m_startAnswerDelayMs = ms;
+}
+
 void P1FakeRadio::setAutoStreamEnabled(bool enabled)
 {
     {
@@ -291,6 +297,7 @@ void P1FakeRadio::handleMetisCommand(const QByteArray& pkt,
         m_running       = true;
         m_clientAddress = from;
         m_clientPort    = port;
+        m_sinceStart.start();
     } else if (cmd == 0x00) {
         m_running = false;
         ++m_stopCount;
@@ -423,6 +430,10 @@ void P1FakeRadio::onAutoStreamTick()
     {
         QMutexLocker lock(&m_mutex);
         if (!m_running || m_silent) { return; }
+        if (m_startAnswerDelayMs > 0 && m_sinceStart.isValid()
+            && m_sinceStart.elapsed() < m_startAnswerDelayMs) {
+            return;
+        }
     }
     writeEp6Frames(1);
 }

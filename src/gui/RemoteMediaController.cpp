@@ -140,6 +140,10 @@
 //               pending replacement until the media connection is ready and
 //               the radio is on receive. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-06: Issue #351: the silence rules wait while the Core's radio
+//               is down and count from its return, so a radio dropout no
+//               longer moves media back to the tunnel or starts it over.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "gui/RemoteMediaController.h"
 #include "core/AppSettings.h"
@@ -1460,6 +1464,11 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         updateDirectUpgrade(viaTunnel);
         if (!self || !d->peer) { return; }
         if (d->coreTransmitting()) { return; }
+        // Issue #351: the Core sends no audio or display while its radio
+        // is down, so that silence says nothing about this path. Both
+        // silence rules wait for the radio's return, which restarts their
+        // clocks (connectionStateChanged below).
+        if (!d->model->isConnected()) { return; }
         if (slowPath && d->lastAudio.elapsed() > kMediaStallMs) {
             qCInfo(lcRemoteMedia) << "No audio from the Core for" << d->lastAudio.elapsed()
                                   << "ms on a relayed path; starting audio and display again";
@@ -1904,6 +1913,14 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
             if (!retireSubscriptions(endpoints)) { return; }
             requestAudio();
         } else {
+            // Issue #351: the Core sent no audio or display while its radio
+            // was down, and the radio's first audio can come after this
+            // news does. The silence rules count from the radio's return,
+            // as they do from the return to receive.
+            const qint64 now = d->allocationClock();
+            if (d->lastAudio.isValid()) { d->lastAudio.restart(); }
+            if (d->lastMediaMs >= 0) { d->lastMediaMs = now; }
+            if (d->fallbackFinishedMs >= 0) { d->fallbackFinishedMs = now; }
             refreshSubscriptions();
             requestAudio();
         }
