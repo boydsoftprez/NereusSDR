@@ -13,17 +13,25 @@
 // 2026-10-06 - CAT review: CR+LF pairs removed anywhere and leading white
 //              space trimmed, as TCPIPcatServer.cs:280,306 do. J.J. Boyd
 //              (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-06 - The frame limit is Thetis's 255-character line buffer
+//              (:295), so a long command reaches the parser and gets its
+//              own (verbose) error. J.J. Boyd (KG4VCF), AI-assisted via
+//              Anthropic Claude Code.
 
 #include "CatStreamFramer.h"
-#include "CatCommandCatalog.h"
 namespace NereusSDR {
 namespace {
 // The leading white space .NET String.Trim() removes from an ASCII-decoded
 // frame: TAB, LF, VT, FF, CR and space.
 bool isTrimmed(char byte) { return byte == ' ' || (byte >= '\t' && byte <= '\r'); }
+// From Thetis CAT/TCPIPcatServer.cs:295 [v2.10.3.15]:
+//   if (m_oneLineBuf.Length > 255) m_oneLineBuf.Clear();
+// The buffer holds up to 255 characters before ';', so the longest frame
+// the parser sees is 256 bytes with its terminator.
+constexpr qsizetype kThetisLineLimit = 255;
 }
 CatStreamFramer::CatStreamFramer(qsizetype maximumRequestBytes)
-    : m_maximumRequestBytes(maximumRequestBytes > 0 ? maximumRequestBytes : CatCommandCatalog().maximumRequestBytes())
+    : m_maximumRequestBytes(maximumRequestBytes > 0 ? maximumRequestBytes : kThetisLineLimit + 1)
 {
 }
 QList<QByteArray> CatStreamFramer::feed(const QByteArray& bytes)
@@ -63,7 +71,8 @@ void CatStreamFramer::take(char byte, QList<QByteArray>& frames)
     if (byte != ';' && m_buffer.size() >= m_maximumRequestBytes - 1) {
         // not likely to be a cat message if it got this long
         // [original inline comment from TCPIPcatServer.cs:295]
-        // Catalogue limit includes ';': one error then discard to boundary.
+        // The limit includes ';'. Thetis clears silently and parses what
+        // follows; NereusSDR answers one error and discards to the next ';'.
         m_buffer.clear(); m_discarding = true; frames.append(QByteArray());
         return;
     }

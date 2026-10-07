@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original native CAT loopback integration tests.
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-06 Framing follows Thetis TCP: CR+LF, trim, 255-character limit.
+//            J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 #include <QtTest>
 #include <QElapsedTimer>
 #include <algorithm>
@@ -40,7 +42,10 @@ private slots:
         QCOMPARE(framer.feed(QByteArray(40, 'x')), QList<QByteArray>());
         QCOMPARE(framer.bufferedBytes(), 40);
         QCOMPARE(framer.feed(";"), QList<QByteArray>{QByteArray(40, 'x') + ';'});
-        QCOMPARE(framer.feed(QByteArray(41, 'x')), QList<QByteArray>{QByteArray()});
+        // Thetis TCPIPcatServer.cs:295 keeps up to 255 characters before ';'.
+        QCOMPARE(framer.feed(QByteArray(255, 'x')), QList<QByteArray>());
+        QCOMPARE(framer.feed(";"), QList<QByteArray>{QByteArray(255, 'x') + ';'});
+        QCOMPARE(framer.feed(QByteArray(256, 'x')), QList<QByteArray>{QByteArray()});
         QCOMPARE(framer.bufferedBytes(), 0);
         QCOMPARE(framer.feed(QByteArray(1'000'000, 'x')), QList<QByteArray>());
         QCOMPARE(framer.bufferedBytes(), 0);
@@ -95,6 +100,12 @@ private slots:
         QCOMPARE(first.readAll(), QByteArray("FA00014074000;FA00014074000;ID019;"));
         first.write(QByteArray(41, 'x') + QByteArray(100'000, 'x') + ";ID;");
         QTRY_VERIFY(first.bytesAvailable() >= 8); QCOMPARE(first.readAll(), QByteArray("?;ID019;"));
+        // A long command reaches the parser, so verbose errors name it.
+        const QByteArray longSet = "ZZFA" + QByteArray(37, '1');
+        first.write("ZZEM1;" + longSet + ";ZZEM0;" + longSet + ";ID;");
+        const QByteArray verbose = "ZZEM:" + longSet + ":Suffix Length Error;";
+        QTRY_VERIFY(first.bytesAvailable() >= verbose.size() + 8);
+        QCOMPARE(first.readAll(), verbose + "?;ID019;");
         const QByteArray guid = "00112233-4455-6677-8899-aabbccddeeff";
         const QByteArray other = "11223344-5566-7788-99aa-bbccddeeff00";
         first.write("zzga" + guid.toUpper() + ";ZZGA" + guid + ";ZZGA" + other + ';');
