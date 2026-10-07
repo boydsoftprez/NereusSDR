@@ -318,7 +318,9 @@ private slots:
         QVERIFY(model->wdspEngine()->isInitialized());
         QTRY_VERIFY_WITH_TIMEOUT(model->isConnected(), 6000);
         QCOMPARE(model->connection(), connection.data());
-        QVERIFY(!sessions.hostedInPlaceWaitActiveForTest());
+        // The coordinator hears Connected through a queued connection, so
+        // the wait ends one event-loop turn after the model reports it.
+        QTRY_VERIFY(!sessions.hostedInPlaceWaitActiveForTest());
         QVERIFY(!model->isRadioLinkDown());
 
         // A link that stays down past the wait is rebuilt as before.
