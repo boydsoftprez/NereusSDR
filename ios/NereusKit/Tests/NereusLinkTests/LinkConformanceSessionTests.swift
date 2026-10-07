@@ -27,7 +27,7 @@ import Testing
 
     @Test func theAppRunsTheFixturesMarkedForIt() throws {
         let fixtures = try Self.appFixtures()
-        #expect(fixtures.count == 85)
+        #expect(fixtures.count == 86)
         #expect(Set(fixtures.map(\.id)).count == fixtures.count)
         for id in Self.diversityProducerSessions {
             #expect(fixtures.contains { $0.id == id }, "\(id)")
@@ -150,8 +150,7 @@ import Testing
     /// app does not: each needs phone behaviour or a control the app does
     /// not have.
     // radioMic 1 reads the board; version 2 requires the phone's source-selection work.
-    // stationCat 1 sets up the Core's CAT, which the app has no page for.
-    static let waitingOnNewPhoneWork = ["session-radio-mic-source", "session-verbs-station-cat"]
+    static let waitingOnNewPhoneWork = ["session-radio-mic-source"]
 
     /// Every fixture marked for the app runs: the several-devices ones
     /// (`sessionHolder`, Task 56c) and the remote transmit ones (`remoteTx`,
@@ -169,7 +168,7 @@ import Testing
                                   "radeStatus": 1, "stationTciSettings": 1, "txInhibitReason": 1, "alexLpf": 1, "mediaDirect": 1,
                                   "sliceAccess": 3, "cfcProfile": 1, "paProfiles": 1,
                                   "levelCalibration": 1, "adcAttenuators": 1, "rx2Attenuator": 1, "radioMic": 1,
-                                  "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1])
+                                  "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1, "stationCat": 1])
     }
 
     /// JSON inside a string (section 16.1): an app's runner sends the

@@ -284,6 +284,8 @@ public final class FakeStation: @unchecked Sendable {
     let freedvState = FreeDVState()
     /// The TCI server and its apps (``Additions/stationTci``, FakeStation+StationTools.swift).
     let stationToolsState = StationToolsState()
+    /// The Core's CAT (``Additions/stationCat``, FakeStation+StationCat.swift).
+    let stationCatState = StationCatState()
     /// The VAX channels' scene and whether a device follows their meters.
     let vaxState = VaxState()
     /// The radios the Core can see (``Additions/stationRadios``, FakeStation+StationRadios.swift).
@@ -826,6 +828,12 @@ public final class FakeStation: @unchecked Sendable {
             }
             set(name, value)
         }
+        for (name, value) in Self.stationCatCapabilityVersions(additions) where !removed.contains(name) {
+            // The CAT log rides the record streams (at least version 1).
+            let streams = properties.first { $0["name"] as? String == "recordStreamVersion" }?["value"] as? Int
+            set("recordStreamVersion", max(1, streams ?? 0))
+            set(name, value)
+        }
         // The suite's Core now advertises FreeDV Reporter at 2 (its stations'
         // bands); without ``Additions/freedvBand`` the fake plays one at 1.
         if additions.contains(.freedvBand), !removed.contains(freedvCapability) {
@@ -967,6 +975,9 @@ public final class FakeStation: @unchecked Sendable {
             return replies
         }
         if let replies = stationToolReplies(invoke) {
+            return replies
+        }
+        if let replies = stationCatReplies(invoke) {
             return replies
         }
         if let replies = modMonitorReplies(invoke) {
