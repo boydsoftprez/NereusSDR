@@ -12,6 +12,8 @@
 //              AI-assisted via OpenAI Codex.
 // 2026-10-06 - Port the 30 s quiet-client drop (checkClientCommInterval).
 //              J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-06 - finishSession closes a client after its queued reply is sent.
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "CatTcpTransport.h"
 #include "core/LogCategories.h"
@@ -141,6 +143,22 @@ void CatTcpTransport::closeSession(quint64 id)
     socket->disconnect(this);
     // abort emits synchronously: parent destruction must not delete its active socket.
     socket->setParent(nullptr); socket->deleteLater(); socket->abort();
+    if (!self) { return; }
+    emit clientCountChanged(m_sockets.size());
+}
+void CatTcpTransport::finishSession(quint64 id)
+{
+    // A client that never reads its reply is aborted after this long.
+    constexpr int kFinishTimeoutMs = 1000;
+    stopIdleWatch(id);
+    const QPointer<QTcpSocket> socket = m_sockets.take(id);
+    if (!socket) { return; }
+    const QPointer<CatTcpTransport> self(this);
+    socket->disconnect(this); socket->setParent(nullptr);
+    connect(socket, &QAbstractSocket::disconnected, socket, &QObject::deleteLater);
+    QTimer::singleShot(kFinishTimeoutMs, socket, [socket] { if (socket) { socket->abort(); socket->deleteLater(); } });
+    socket->disconnectFromHost();
+    if (socket && socket->state() == QAbstractSocket::UnconnectedState) { socket->deleteLater(); }
     if (!self) { return; }
     emit clientCountChanged(m_sockets.size());
 }

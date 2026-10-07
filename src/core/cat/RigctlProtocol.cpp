@@ -12,6 +12,9 @@
 //              frozen bindings and shared claims replace Flex command strings.
 // 2026-10-06 - rigctld T accepts 2 (TX mic) and 3 (TX data), as Hamlib
 //              documents. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-06 - q and Q answer RPRT 0 and close the rigctld client, as Hamlib
+//              4.7.2 rigctld does. J.J. Boyd (KG4VCF), AI-assisted via
+//              Anthropic Claude Code.
 #include "RigctlProtocol.h"
 #include "CatModelAdapter.h"
 #include "CatTxCoordinator.h"
@@ -131,6 +134,10 @@ QString RigctlProtocol::handleLine(const QString& line)
     // [original inline comment from RigctlProtocol.cpp:381-382]
     // Nereus correction: pipe is a response separator, never a command splitter;
     // ERP state is command-local, so a subsequent bare command stays bare.
+    // Hamlib 4.7.2 tests/rigctl_parse.c:895-902 answers short q or Q with
+    // "RPRT 0" alone, prefix or not, and rigctld then closes the client;
+    // rigs/dummy/netrigctl.c:938 sends "q\n" on close and reads that reply.
+    if (command.front() == 'q' || command.front() == 'Q') { m_quit = true; return rprt(0); }
     QString name, args;
     // Long form: \command_name [args]
     // [original inline comment from RigctlProtocol.cpp:419]

@@ -5,10 +5,14 @@
 // Modification history (NereusSDR):
 // 2026-10-04 - Slice-bound wire contracts adapted by J.J. Boyd (KG4VCF),
 //              AI-assisted via OpenAI Codex. Native lifecycle/authority guards.
+// 2026-10-06 - q and Q answer RPRT 0 and close the rigctld client, as Hamlib
+//              4.7.2 rigctld does. J.J. Boyd (KG4VCF), AI-assisted via
+//              Anthropic Claude Code.
 #pragma once
 #include "CatTypes.h"
 #include <QPointer>
 #include <QStringList>
+#include <utility>
 namespace NereusSDR {
 class CatModelAdapter; class CatTxCoordinator; class CatService; class RadioModel;
 // Pure protocol handler for Hamlib rigctld emulation.
@@ -20,6 +24,8 @@ public:
     RigctlProtocol(CatModelAdapter&, CatTxCoordinator&, int channel, quint64 sessionId);
     QString handleLine(const QString&);
     void reset() { m_vfo = CatVfo::Primary; }
+    // True once after q or Q; the TCP listener then closes this client.
+    bool takeQuit() { return std::exchange(m_quit, false); }
 private:
     bool live() const;
     int writeError(CatVfo, const QByteArray&) const;
@@ -30,5 +36,6 @@ private:
     CatBinding m_binding;
     quint64 m_sessionId;
     CatVfo m_vfo{CatVfo::Primary};
+    bool m_quit{false};
 };
 } // namespace NereusSDR

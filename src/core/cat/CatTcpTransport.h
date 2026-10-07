@@ -14,6 +14,8 @@
 //              can use its signals. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-06 - Port the 30 s quiet-client drop (checkClientCommInterval).
 //              J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-06 - finishSession closes a client after its queued reply is sent.
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #pragma once
 #include "core/NereusCoreExport.h"
@@ -34,6 +36,8 @@ public:
     bool attachSession(quint64, QTcpSocket*);
     bool writeBytes(quint64, const QByteArray&);
     void closeSession(quint64);
+    // Like closeSession, but bytes already queued are sent before the close.
+    void finishSession(quint64);
     bool isListening() const { return m_server.isListening(); }
     QHostAddress boundAddress() const { return m_server.serverAddress(); }
     quint16 boundPort() const { return m_server.serverPort(); }

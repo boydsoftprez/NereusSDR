@@ -68,6 +68,8 @@ Added extended CAT commands for APF funtions - May 2017.
 // 2026-10-06 - AI and ZZAI change automatic information for this run only;
 //              the saved Setup checkbox sets it at start, as Thetis does.
 //              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-06 - A rigctld client that sends q gets RPRT 0 and is then closed.
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "CatService.h"
 #include "RigctlProtocol.h"
 #include "core/AppSettings.h"
@@ -763,6 +765,14 @@ void CatService::processBytes(quint64 id, const QByteArray& bytes)
         if (!self || generation != m_lifecycleGeneration || !m_started || m_sessions.value(id) != current) { return; }
         if (!result.isEmpty()) { sendToSession(id, result); }
         if (!self) { return; }
+        // Hamlib rigctld closes the client after answering q; the rest of its
+        // input is not read. A PTY has no connection to close and stays open.
+        if (rigctld && protocol->takeQuit() && current->transport() == CatTransportKind::Rigctld) {
+            if (m_sessions.value(id) != current) { return; }
+            if (const auto tcp = m_channels[current->context().channel - 1].rigctld) { tcp->finishSession(id); }
+            if (self) { closeSession(id); }
+            return;
+        }
     }
 }
 void CatService::sendToSession(quint64 id, const QByteArray& bytes)

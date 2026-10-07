@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original Hamlib wire/authority integration tests.
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-06 q and Q close the client after RPRT 0; Linux CI runs the real
+//            Hamlib client. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//            Claude Code.
 #include <QtTest>
 #include <limits>
 #include <QTcpServer>
@@ -170,7 +173,7 @@ private slots:
     }
     void officialRigctlExecutableInterop() {
         const QString binary=qEnvironmentVariable("NEREUS_HAMLIB_RIGCTL");
-        if (binary.isEmpty()) { QSKIP("Official rigctl executable lane runs in the owned Linux sandbox."); }
+        if (binary.isEmpty()) { QSKIP("Set NEREUS_HAMLIB_RIGCTL to a Hamlib rigctl to run this; Linux CI does."); }
         QProcess version; version.start(binary,{"--version"}); QTRY_COMPARE(version.state(),QProcess::NotRunning);
         QCOMPARE(version.exitCode(),0); qInfo().noquote()<<"Official client:"<<binary<<version.readAllStandardOutput();
         RigFixture f; QVERIFY(f.configure()); f.service.startConfigured(); QVERIFY(f.model.setActiveSliceById(2));
@@ -244,6 +247,20 @@ private slots:
         rig.write("F 14223"); QCoreApplication::processEvents(); QCOMPARE(f.model.sliceById(0)->frequency(),14222000.0);
         QCOMPARE(exchange(rig,"000\nf\n","RPRT 0\n14223000\n"),QByteArray("RPRT 0\n14223000\n"));
         QCOMPARE(exchange(rig,QByteArray(5000,'q')+"\nf\n","RPRT -1\n14223000\n"),QByteArray("RPRT -1\n14223000\n"));
+    }
+    void quitAnswersThenClosesTheClient() {
+        // Hamlib 4.7.2 rigctld answers q or Q with RPRT 0 alone and closes the
+        // client (tests/rigctl_parse.c:895-902); netrigctl_close sends "q\n".
+        RigFixture f; QVERIFY(f.configure()); f.service.startConfigured();
+        QTcpSocket socket; connectRig(f,socket); QTRY_COMPARE(f.service.rigctldClientCount(1),1);
+        QCOMPARE(exchange(socket,"T 1\n","RPRT 0\n"),QByteArray("RPRT 0\n")); QTRY_VERIFY(f.model.moxController()->isMox());
+        socket.write("q\nF 7101000\n"); QTRY_COMPARE(socket.state(),QAbstractSocket::UnconnectedState);
+        QCOMPARE(socket.readAll(),QByteArray("RPRT 0\n")); QCOMPARE(f.model.sliceById(0)->frequency(),14074000.0);
+        QTRY_COMPARE(f.service.rigctldClientCount(1),0); QVERIFY(f.service.sessionIds(1).isEmpty()); QTRY_VERIFY(!f.model.moxController()->isMox());
+        QTcpSocket extended; connectRig(f,extended); QTRY_COMPARE(f.service.rigctldClientCount(1),1);
+        extended.write("+Q\n"); QTRY_COMPARE(extended.state(),QAbstractSocket::UnconnectedState);
+        QCOMPARE(extended.readAll(),QByteArray("RPRT 0\n")); QTRY_COMPARE(f.service.rigctldClientCount(1),0);
+        QVERIFY(f.service.isListening(1));
     }
     void pttAcceptsEveryHamlibTxValue_data() {
         QTest::addColumn<QByteArray>("value"); QTest::newRow("TX")<<QByteArray("1"); QTest::newRow("TX mic")<<QByteArray("2"); QTest::newRow("TX data")<<QByteArray("3");
@@ -383,6 +400,10 @@ private slots:
         QCOMPARE(f.service.ptySlavePath(1),path); QVERIFY(peer.open(path)); QTRY_COMPARE(f.service.sessionIds(1).size(),1);
         QVERIFY(f.service.sessionIds(1).first()>first); bytes.clear(); QVERIFY(peer.send("f\nv\n"));
         QTRY_VERIFY(([&] { bytes+=peer.take(); return bytes.endsWith("VFOA\n"); })()); QCOMPARE(bytes,QByteArray("14222000\nVFOA\n"));
+        // A PTY has no connection to close, so q answers and the port stays open.
+        const quint64 reopened=f.service.sessionIds(1).first(); bytes.clear(); QVERIFY(peer.send("q\nf\n"));
+        QTRY_VERIFY(([&] { bytes+=peer.take(); return bytes.endsWith("14222000\n"); })()); QCOMPARE(bytes,QByteArray("RPRT 0\n14222000\n"));
+        QCOMPARE(f.service.sessionIds(1),QList<quint64>{reopened});
         peer.close(); QTRY_VERIFY(f.service.sessionIds(1).isEmpty()); f.service.stopAll(); QVERIFY(f.service.ptySlavePath(1).isEmpty());
     }
 #endif
