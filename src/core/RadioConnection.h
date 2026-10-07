@@ -7,6 +7,8 @@
 // reproduced in this header.
 //
 // Modification history (NereusSDR):
+//   2026-10-04: Carry the same longest wake interval's worker/acquire split.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-01: TX diagnostics lane: TxSendStats places a key's padded
 //               silence (start, mid-key, tail), its first radio ran dry and
 //               its catch-up bursts in time. Measurement only. J.J. Boyd
@@ -781,6 +783,11 @@ public:
         double longestWakeGapMs{-1.0};
         double longestWakeGapAtMs{0.0};
         qint64 wakeGapSequenceStep{-1};
+        /// Components of that same longest interval; -1 when unknown.
+        /// Worker processing/scheduling between waits, then input
+        /// wait/scheduling from acquire entry to successful return.
+        double wakeGapWorkerMs{-1.0};
+        double wakeGapAcquireMs{-1.0};
     };
     virtual TxSendStats txSendStats() const { return {}; }
     /// R-IOS-13 (2026-09-27): what the transmit I/Q send ring holds now,

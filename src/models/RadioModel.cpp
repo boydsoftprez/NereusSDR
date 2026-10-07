@@ -997,6 +997,10 @@
 //                console.cs:8215-8216, 8544 [v2.10.3.15]) to the
 //                connection, which had no writer for it. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-06 - FreeDV Reporter / PSK Reporter identity: every setIdentity
+//                call sends SpotSourceHost::reporterVersion(); a remote
+//                identity edit had sent "NereusSDR/<version>". J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-06 - Radio speaker: RADIO level, mute and the amplifier choice
 //                saved per radio and loaded on connect before the radio
 //                tap starts (seeded from the engine's master level when
@@ -3928,7 +3932,7 @@ RadioModel::RadioModel(Role role, QObject* parent)
                 QString()).toString(),
         s.value(QStringLiteral("FreeDvReporter/Message"),
                 QString()).toString(),
-        QStringLiteral("NereusSDR ") + QStringLiteral(NEREUSSDR_VERSION));
+        SpotSourceHost::reporterVersion());
     {
         const QString serverUrl = s.value(
             QStringLiteral("FreeDvReporter/ServerUrl"),
@@ -3963,7 +3967,7 @@ RadioModel::RadioModel(Role role, QObject* parent)
                 QString()).toString(),
         s.value(QStringLiteral("PskReporter/GridSquare"),
                 QString()).toString(),
-        QStringLiteral("NereusSDR ") + QStringLiteral(NEREUSSDR_VERSION));
+        SpotSourceHost::reporterVersion());
 
     // Per-source adapter slots. Auto-connection (sender + receiver both on
     // the main thread) gives DirectConnection, so the spot lands in
@@ -5962,8 +5966,7 @@ void RadioModel::applyRemoteFreedvSetting(const QString& key, AppSettings& setti
         settings.save();
         // The same existing clients the local Startup and Spot Hub pages
         // update must see a remote settings edit without a restart.
-        const QString version = QStringLiteral("NereusSDR/")
-            + QStringLiteral(NEREUSSDR_VERSION);
+        const QString version = SpotSourceHost::reporterVersion();
         if (m_freeDvReporter) {
             m_freeDvReporter->setIdentity(call, grid, message, version);
         }

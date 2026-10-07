@@ -4,6 +4,9 @@
 // no-port-check: NereusSDR-original. See DaemonMediaController.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-04: Name the microphone-block wake interval accurately and
+//               report its worker/acquire split. J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
 //   2026-10-04: Send scalar/blob NSDX extras under the same display pacing
 //               budget without requiring a peak-hold sample plane.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -2703,20 +2706,28 @@ QString DaemonMediaController::unkeyStatsLine(const QByteArray& deviceId,
                          << oneDecimal(static_cast<double>(send.longestMidPadSamples) / 192.0)
                          << " ms at +" << oneDecimal(send.longestMidPadAtMs) << " ms";
                 }
-                // The TX pump's longest wait for the radio's microphone
-                // block, and the radio's frame sequence step across it.
+                // The TX pump's longest successful wake interval, its
+                // stages, and the radio's frame sequence step across it.
                 if (send.longestWakeGapMs >= 0.0) {
                     const double at = send.longestWakeGapAtMs;
-                    line << ", longest wait for a microphone block "
+                    line << ", longest microphone-block wake interval "
                          << oneDecimal(send.longestWakeGapMs) << " ms at "
-                         << (at >= 0.0 ? "+" : "") << oneDecimal(at) << " ms of the key, ";
+                         << (at >= 0.0 ? "+" : "") << oneDecimal(at) << " ms of the key";
+                    if (send.wakeGapWorkerMs >= 0.0 && send.wakeGapAcquireMs >= 0.0) {
+                        line << ", worker between waits " << oneDecimal(send.wakeGapWorkerMs)
+                             << " ms (processing/scheduling), acquire to wake "
+                             << oneDecimal(send.wakeGapAcquireMs) << " ms (input wait/scheduling)";
+                    } else {
+                        line << ", worker/acquire split unknown";
+                    }
+                    line << ", ";
                     if (send.wakeGapSequenceStep >= 0) {
                         line << "radio frame sequence step " << send.wakeGapSequenceStep;
                     } else {
                         line << "no radio frame sequence seen";
                     }
                 } else {
-                    line << ", no wait for a microphone block measured";
+                    line << ", no microphone-block wake interval measured";
                 }
             }
         } else {

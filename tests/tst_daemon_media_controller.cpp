@@ -6,6 +6,9 @@
 // production reaches the source exclusively through RadioModel's tagged tap.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04: Verify accurate wake-interval wording, same-event stage
+//               timing, and unknown split in the runtime unkey summary.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-01: Control logging lane: the media connection's selected pair
 //               is logged when first known and on a change, with its rtt.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -37,6 +40,7 @@
 #include "core/session/SliceAccessController.h"
 #include "core/FFTEngine.h"
 #include "core/P2RadioConnection.h"
+#include "core/audio/TxMicSource.h"
 #include "core/DdcAssignment.h"
 #include "core/WidebandFrameAccumulator.h"
 #include "core/HpsdrModel.h"
@@ -5060,6 +5064,27 @@ void TstDaemonMediaController::unkeyEventLinesPlaceTheOversDropouts()
     send.longestWakeGapMs = 512.0;
     send.longestWakeGapAtMs = 2005.5;
     send.wakeGapSequenceStep = 1;
+    send.wakeGapWorkerMs = 12.0;
+    send.wakeGapAcquireMs = 500.0;
+
+    // Cover the complete measurement-to-summary path with actual P2 stats.
+    TxMicSource source;
+    P2RadioConnection p2;
+    p2.setTxMicSource(&source);
+    source.wakeWatch().begin();
+    source.wakeWatch().noteSequence(41);
+    source.wakeWatch().noteWake(1'000'000'000);
+    source.wakeWatch().noteSequence(42);
+    source.wakeWatch().noteWake(1'512'000'000, 1'012'000'000);
+    source.wakeWatch().end();
+    const QString measuredLine = DaemonMediaController::unkeyStatsLine(
+        "ab12", rx, &feed, p2.txSendStats());
+    QVERIFY2(measuredLine.contains(QStringLiteral(
+                 "longest microphone-block wake interval 512.0 ms")), qPrintable(measuredLine));
+    QVERIFY2(measuredLine.endsWith(QStringLiteral(
+                 "worker between waits 12.0 ms (processing/scheduling), acquire to wake "
+                 "500.0 ms (input wait/scheduling), radio frame sequence step 1")), qPrintable(measuredLine));
+    p2.setTxMicSource(nullptr);
 
     const QString line = DaemonMediaController::unkeyStatsLine("ab12", rx, &feed, send);
     QVERIFY2(line.contains(QStringLiteral(
@@ -5068,25 +5093,32 @@ void TstDaemonMediaController::unkeyEventLinesPlaceTheOversDropouts()
              qPrintable(line));
     QVERIFY2(line.endsWith(QStringLiteral(
                  ", first I/Q block at +69.0 ms of the key, longest mid-key silence 540.0 ms at "
-                 "+2010.3 ms, longest wait for a microphone block 512.0 ms at +2005.5 ms of the "
-                 "key, radio frame sequence step 1")),
+                 "+2010.3 ms, longest microphone-block wake interval 512.0 ms at +2005.5 ms of the "
+                 "key, worker between waits 12.0 ms (processing/scheduling), acquire to wake "
+                 "500.0 ms (input wait/scheduling), radio frame sequence step 1")),
              qPrintable(line));
-    // Frames lost on the way: the step is the frames missed; a gap that
-    // began just before the send thread's first keyed pass reads negative;
-    // no sequence seen, and no wait measured, say so.
+    // The decoded radio sequence advanced across the wake interval;
+    // this is not a loss counter. An interval that began just before the
+    // send thread's first keyed pass reads negative;
+    // no sequence seen, and no wake interval measured, say so.
     RadioConnection::TxSendStats lost = send;
     lost.wakeGapSequenceStep = 385;
     lost.longestWakeGapAtMs = -2.5;
     QVERIFY2(DaemonMediaController::unkeyStatsLine("ab12", rx, &feed, lost)
-                 .endsWith(QStringLiteral("512.0 ms at -2.5 ms of the key, radio frame sequence "
-                                          "step 385")),
+                 .endsWith(QStringLiteral("512.0 ms at -2.5 ms of the key, worker between waits "
+                                          "12.0 ms (processing/scheduling), acquire to wake "
+                                          "500.0 ms (input wait/scheduling), radio frame sequence step 385")),
              qPrintable(DaemonMediaController::unkeyStatsLine("ab12", rx, &feed, lost)));
     lost.wakeGapSequenceStep = -1;
     QVERIFY(DaemonMediaController::unkeyStatsLine("ab12", rx, &feed, lost)
-                .endsWith(QStringLiteral("of the key, no radio frame sequence seen")));
+                .endsWith(QStringLiteral("ms (input wait/scheduling), no radio frame sequence seen")));
+    lost.wakeGapWorkerMs = -1.0;
+    lost.wakeGapAcquireMs = -1.0;
+    QVERIFY(DaemonMediaController::unkeyStatsLine("ab12", rx, &feed, lost)
+                .endsWith(QStringLiteral("worker/acquire split unknown, no radio frame sequence seen")));
     lost.longestWakeGapMs = -1.0;
     QVERIFY(DaemonMediaController::unkeyStatsLine("ab12", rx, &feed, lost)
-                .endsWith(QStringLiteral(", no wait for a microphone block measured")));
+                .endsWith(QStringLiteral(", no microphone-block wake interval measured")));
 
     const QStringList events = DaemonMediaController::unkeyEventLines("ab12", &feed, send);
     QCOMPARE(events.size(), 5);

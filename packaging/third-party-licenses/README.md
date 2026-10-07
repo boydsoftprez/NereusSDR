@@ -23,13 +23,14 @@ directory alongside NereusSDR's own `LICENSE`.
 | nlohmann json 55f93686 | JSON parsing for libdatachannel | MIT | `nlohmann-json.txt` | `nlohmann-json.txt` |
 | zlib v1.3.1 (Windows builds) | compression for stored equaliser settings | Zlib | `zlib.txt` | `zlib.txt` |
 | libASPL v3.1.2 (macOS audio driver) | the NereusSDR VAX audio driver installed by the macOS package | MIT | `libaspl.txt` | `libaspl.txt` |
-| libdatachannel 0.24.5 | direct DTLS/SCTP and SRTP media transport; four MPL-2.0 changes preserve remote-description/DTLS ordering and retain ICE resources through bounded retirement (exact source paths in `libdatachannel.txt`) | MPL-2.0 | `libdatachannel.txt`, `libdatachannel-notices.txt` | `MPLv2.txt` |
-| libjuice | direct ICE backend for libdatachannel; two MPL-2.0 patches release TURN allocations and retain closing agents through bounded release/resolver completion (exact source paths in `libjuice.txt`) | MPL-2.0 | `libjuice.txt`, `libjuice-notices.txt` | `MPLv2.txt` |
-| plog | libdatachannel logging dependency | MIT | `plog.txt` | `plog.txt` |
-| usrsctp | SCTP implementation for libdatachannel | BSD-3-Clause | `usrsctp.txt`, `usrsctp-notices.txt` | `usrsctp.txt` |
-| libsrtp | SRTP implementation for libdatachannel | BSD-3-Clause | `libsrtp.txt`, `libsrtp-notices.txt` | `libsrtp.txt` |
+| libdatachannel 0.24.5 | direct DTLS/SCTP and SRTP media transport (desktop/Core with OpenSSL; iPhone/iPad with Mbed TLS); each build applies five MPL-2.0 changes, listed with exact source paths in `libdatachannel.txt` | MPL-2.0 | `libdatachannel.txt`, `libdatachannel-notices.txt` | `MPLv2.txt` |
+| libjuice | direct ICE backend for libdatachannel (desktop/Core and app); each build applies three MPL-2.0 patches to release TURN allocations, retain closing agents through bounded release/resolver completion, and retain the poll worker while finished agents own its registry (exact source paths in `libjuice.txt`) | MPL-2.0 | `libjuice.txt`, `libjuice-notices.txt` | `MPLv2.txt` |
+| plog | libdatachannel logging dependency (desktop and app) | MIT | `plog.txt` | `plog.txt` |
+| usrsctp | SCTP implementation for libdatachannel (desktop and app) | BSD-3-Clause | `usrsctp.txt`, `usrsctp-notices.txt` | `usrsctp.txt` |
+| libsrtp | SRTP implementation for libdatachannel (desktop and app) | BSD-3-Clause | `libsrtp.txt`, `libsrtp-notices.txt` | `libsrtp.txt` |
 | OpenSSL 3 | certificate, DTLS, and application cryptography | Apache-2.0 | `openssl.txt` | `Apache-2.0.txt` |
 | Opus | audio codec (RADE on the desktop; receive audio and the microphone in the iPhone and iPad app) | BSD-3-Clause | `opus.txt` | `opus.txt` |
+| Mbed TLS 3.6.7 | DTLS and SRTP cryptography for the media connection in the iPhone and iPad app (not in the desktop) | Apache-2.0 (dual Apache-2.0 OR GPL-2.0-or-later, taken under Apache-2.0) | `mbedtls.txt` | `Apache-2.0.txt` |
 | libsodium 1.0.22 | the cryptography under the pairing code's key exchange (password hashing, the exchange's curve arithmetic, the confirmation boxes), in the desktop, the Core, and the iPhone and iPad app | ISC | `libsodium.txt`, `libsodium-notices.txt` | `libsodium.txt` |
 | SPAKE2+EE (spake2-ee fd3ea61f) | the pairing code's key exchange, in the desktop, the Core, and the iPhone and iPad app | BSD-2-Clause | `spake2-ee.txt` | `spake2-ee.txt` |
 
@@ -61,8 +62,8 @@ directory, or when a text file here is named by no row.
 | DeepFilterNet | `third_party/deepfilter`, built or downloaded by `setup-deepfilter.sh` and `setup-deepfilter.ps1` | d375b2d8309e0935d165700c91da9de862a99c31 | desktop packages, and the Core when its build has the library | `deepfilternet.txt`, `deepfilternet-crates.txt` |
 | PortAudio | FetchContent `portaudio` | v19.7.0 | desktop packages and the Core | `portaudio.txt`, `portaudio-notices.txt` |
 | zlib | FetchContent `zlib` on Windows; the system library elsewhere | v1.3.1 on Windows | Windows packages | `zlib.txt` |
-| libdatachannel | FetchContent `nereus_libdatachannel`, with build-owned source copies changed by `cmake/patches/libdatachannel-keep-remote-description-first.cpp`, `libdatachannel-set-dtls-mtu-before-incoming.cpp`, `libdatachannel-0003-retain-juice-agent-through-turn-release.patch` and `libdatachannel-0004-retain-ice-lifetime-anchor.patch` in the same directory | v0.24.5 | desktop packages and the Core | `libdatachannel.txt`, `libdatachannel-notices.txt` |
-| libjuice | FetchContent `nereus_libjuice`, with build-owned source copies changed by `cmake/patches/libjuice-0001-give-turn-allocations-back.patch` and `libjuice-0002-bounded-turn-release-lifecycle.patch` in the same directory | 3c40a3545b6b1b62c7adee7f8f2bd58aa290afd6 | desktop packages and the Core | `libjuice.txt`, `libjuice-notices.txt` |
+| libdatachannel | FetchContent `nereus_libdatachannel`, with build-owned source copies changed by `cmake/patches/libdatachannel-keep-remote-description-first.cpp`, `libdatachannel-set-dtls-mtu-before-incoming.cpp`, `libdatachannel-0003-retain-juice-agent-through-turn-release.patch`, `libdatachannel-0004-retain-ice-lifetime-anchor.patch` and `libdatachannel-0005-defer-dtls-startup.patch` in the same directory | v0.24.5 | desktop packages and the Core | `libdatachannel.txt`, `libdatachannel-notices.txt` |
+| libjuice | FetchContent `nereus_libjuice`, with build-owned source copies changed by `cmake/patches/libjuice-0001-give-turn-allocations-back.patch`, `libjuice-0002-bounded-turn-release-lifecycle.patch` and `libjuice-0003-keep-poll-worker-with-retained-agents.patch` in the same directory | 3c40a3545b6b1b62c7adee7f8f2bd58aa290afd6 | desktop packages and the Core | `libjuice.txt`, `libjuice-notices.txt` |
 | plog | FetchContent `nereus_plog` | 94899e0b926ac1b0f4750bfbd495167b4a6ae9ef | desktop packages and the Core | `plog.txt` |
 | usrsctp | FetchContent `nereus_usrsctp` | fec583d54493f879d2ae44a743423bf8a04371ab | desktop packages and the Core | `usrsctp.txt`, `usrsctp-notices.txt` |
 | libsrtp | FetchContent `nereus_libsrtp` | 24b3bf8f19b6f5ab4cd2bcceb4f4064efca86fd5 | desktop packages and the Core | `libsrtp.txt`, `libsrtp-notices.txt` |
@@ -71,6 +72,13 @@ directory, or when a text file here is named by no row.
 | SPAKE2+EE (spake2-ee) | FetchContent `nereus_spake2ee` in `cmake/NereusPairing.cmake`, the commit's archive pinned by SHA-256; the iPhone and iPad app vendors the same commit | fd3ea61f27a75ff63b0f192c9e619b5a494d048e | desktop packages, the Core, and the iPhone and iPad app | `spake2-ee.txt` |
 | OpenSSL 3 | vcpkg on Windows; Homebrew, or 3.0.21 built from source for Intel, on macOS; system package on Linux | the release workflow's OpenSSL | desktop packages and the Core | `openssl.txt` |
 | libASPL | FetchContent `libASPL` in `hal-plugin/CMakeLists.txt` | v3.1.2 | the macOS audio driver package | `libaspl.txt` |
+| Opus (iPhone and iPad app) | `ios/NereusKit/Sources/COpus`, written by `ios/scripts/vendor-sources.sh opus` | 940d4e5af64351ca8ba8390df3f555484c567fbb | the iPhone and iPad app | `opus.txt`, `opus-notices.txt` |
+| libdatachannel (iPhone and iPad app) | `ios/NereusKit/Sources/CDataChannel`, written by `ios/scripts/vendor-sources.sh libdatachannel`, patched by the five numbered patches in `ios/patches/libdatachannel/` (Mbed TLS fingerprint checks, C API gathering/fingerprint access, bounded agent retirement, candidate-resource lifetime, and deferred DTLS startup) | v0.24.5 | the iPhone and iPad app | `libdatachannel.txt`, `libdatachannel-notices.txt` |
+| libjuice (iPhone and iPad app) | `ios/NereusKit/Sources/CJuice`, written by `ios/scripts/vendor-sources.sh libjuice`, patched by `0001-give-turn-allocations-back.patch`, `0002-bounded-turn-release-lifecycle.patch` and `0003-keep-poll-worker-with-retained-agents.patch` in `ios/patches/libjuice/` | 3c40a3545b6b1b62c7adee7f8f2bd58aa290afd6 | the iPhone and iPad app | `libjuice.txt`, `libjuice-notices.txt` |
+| libsrtp (iPhone and iPad app) | `ios/NereusKit/Sources/CSrtp`, written by `ios/scripts/vendor-sources.sh libsrtp` | 24b3bf8f19b6f5ab4cd2bcceb4f4064efca86fd5 | the iPhone and iPad app | `libsrtp.txt`, `libsrtp-notices.txt` |
+| usrsctp (iPhone and iPad app) | `ios/NereusKit/Sources/CUsrsctp`, written by `ios/scripts/vendor-sources.sh usrsctp` | fec583d54493f879d2ae44a743423bf8a04371ab | the iPhone and iPad app | `usrsctp.txt`, `usrsctp-notices.txt` |
+| plog (iPhone and iPad app) | `ios/NereusKit/Sources/CPlog`, written by `ios/scripts/vendor-sources.sh plog` | 94899e0b926ac1b0f4750bfbd495167b4a6ae9ef | the iPhone and iPad app | `plog.txt` |
+| Mbed TLS (iPhone and iPad app) | `ios/NereusKit/Sources/CMbedTLS`, written by `ios/scripts/vendor-sources.sh mbedtls` | v3.6.7 | the iPhone and iPad app | `mbedtls.txt` |
 
 ## Libraries a release step copies in
 
@@ -188,23 +196,35 @@ the §6(b) fallback.
   `SOURCE-OFFER.txt` §3).
 - libdatachannel and libjuice: MPL-2.0 covered files, without an applied
   Exhibit B incompatible-secondary-license notice in the pinned sources.
-  libdatachannel carries two NereusSDR changes: `src/peerconnection.cpp` is
+  In the desktop/Core build, libdatachannel carries five NereusSDR changes.
+  `src/peerconnection.cpp` is
   compiled with `cmake/patches/libdatachannel-keep-remote-description-first.cpp`
   in place of two of its lines (a remote description is kept before the ICE
   agent takes it), and `src/impl/dtlstransport.cpp` with
   `cmake/patches/libdatachannel-set-dtls-mtu-before-incoming.cpp` in place
   of the first lines of the OpenSSL `DtlsTransport::start()` (the DTLS MTU
-  is set before incoming records are taken). Each change is part of its
+  is set before incoming records are taken). Three numbered patches retain
+  a closing ICE agent through bounded release, keep its application
+  resource alive until the agent destroys its socket, and start DTLS on the
+  peer's processor instead of inside the ICE Connected callback. Each
+  change is part of its
   covered file and is licensed under MPL-2.0 (section 3.1), with that
   file's notice at its top; `libdatachannel.txt` describes them.
-  libjuice carries one NereusSDR change: `src/agent.c` is compiled with
-  `cmake/patches/libjuice-release-turn-allocations.c` inserted (each TURN
-  allocation given back when an ICE agent ends). The change is part of that
-  covered file and is licensed under MPL-2.0 (section 3.1), with agent.c's
-  notice at its top; `libjuice.txt` describes it.
+  Both the desktop/Core and phone builds apply three libjuice patches for
+  TURN allocation release, bounded closing/resolver completion, and retention
+  of the poll worker while finished agents own its registry. The
+  phone also applies five libdatachannel patches for Mbed TLS fingerprint
+  checks, C API access, agent retirement, resource lifetime and deferred
+  DTLS startup. These
+  changes remain MPL-2.0 with their covered files' upstream notices;
+  `libdatachannel.txt` and `libjuice.txt` list the exact patches and paths
+  for each build.
 - plog, usrsctp and libsrtp: permissive MIT or BSD dependencies whose full
   notices are reproduced here.
 - OpenSSL 3: Apache-2.0, compatible with this GPLv3 combined work.
+- Mbed TLS: dual Apache-2.0 OR GPL-2.0-or-later, used under Apache-2.0,
+  compatible with this GPLv3 combined work and with the App Store
+  permission of the iPhone and iPad app (`ios/LICENSE`).
 - libsodium (ISC) and SPAKE2+EE (BSD-2-Clause): permissive dependencies
   whose full notices are reproduced here; both are also licences the
   iPhone and iPad app may bundle.
@@ -226,6 +246,7 @@ the §6(b) fallback.
 - `usrsctp.txt`         — usrsctp full BSD-3-Clause notice
 - `libsrtp.txt`         — libsrtp full BSD-3-Clause notice
 - `openssl.txt`         — OpenSSL dependency notice
+- `mbedtls.txt`         Mbed TLS dependency notice
 - `libsodium.txt`       libsodium full ISC notice
 - `spake2-ee.txt`       SPAKE2+EE (spake2-ee) full BSD-2-Clause notice
 - `thetis.txt`          — Thetis upstream-port notice

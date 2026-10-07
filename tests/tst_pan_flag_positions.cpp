@@ -47,6 +47,10 @@
 // =================================================================
 #include <QtTest/QtTest>
 #include <QApplication>
+#include <QDir>
+#include <QPointer>
+#include <QStandardPaths>
+#include <QUuid>
 #include <QImage>
 #include <QLabel>
 #include <QPainter>
@@ -54,6 +58,7 @@
 #include <QToolButton>
 #include <cmath>
 
+#include "core/AppSettings.h"
 #include "core/BoardCapabilities.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/applets/RxApplet.h"
@@ -138,6 +143,184 @@ class TestPanFlagPositions : public QObject
     Q_OBJECT
 
 private slots:
+    void initTestCase()
+    {
+        QStandardPaths::setTestModeEnabled(true);
+        const QString profile = QStringLiteral("pan-flag-")
+            + QUuid::createUuid().toString(QUuid::WithoutBraces);
+        AppSettings::setProfileOverride(profile);
+        m_privateConfigDir = AppSettings::resolveConfigDir(profile);
+        QVERIFY(!QDir(m_privateConfigDir).exists());
+        QCOMPARE(AppSettings::instance().filePath(),
+                 m_privateConfigDir + QStringLiteral("/NereusSDR.settings"));
+    }
+
+    void cleanupTestCase()
+    {
+        if (QDir(m_privateConfigDir).exists()) {
+            QVERIFY(QDir(m_privateConfigDir).removeRecursively());
+        }
+    }
+
+    // A flag leaving the visible frequency range must retire its sibling
+    // controls too: otherwise its old X can close an invisible slice.
+    void off_window_flag_hides_its_already_visible_floating_buttons()
+    {
+        SpectrumWidget w;
+        placePan(w);
+        VfoWidget* flagA = w.addVfoWidget(0);
+        VfoWidget* flagB = w.addVfoWidget(1);
+        VfoWidget::SliceAccess controlled;
+        controlled.state = VfoWidget::SliceAccess::State::Controlled;
+        controlled.line = QStringLiteral("You control");
+        flagA->setSliceAccess(controlled);
+        flagB->setSliceAccess(controlled);
+        flagA->setMode(DSPMode::LSB);
+        flagB->setMode(DSPMode::LSB);
+        flagA->setFrequency(kSliceAHz);
+        flagB->setFrequency(kSliceBHz);
+        w.show();
+        QCoreApplication::processEvents();
+        w.updateVfoPositions();
+        QVERIFY(flagA->isVisible());
+        QVERIFY(flagB->isVisible());
+        QPushButton* close = flagB->closeButtonForTest();
+        QPushButton* lock = flagB->lockButtonForTest();
+        QVERIFY(close && lock);
+        QVERIFY(flagA->closeButtonForTest()->isHidden());
+        QVERIFY(close->isVisible());
+        QVERIFY(lock->isVisible());
+        QCOMPARE(close->parentWidget(), &w);
+        const QPoint oldClosePoint = close->geometry().center();
+        QCOMPARE(w.childAt(oldClosePoint), close);
+        QSignalSpy closes(flagB, &VfoWidget::closeRequested);
+
+        flagB->setFrequency(kOffWindowHz);
+        w.updateVfoPositions();
+        QVERIFY(flagB->isHidden());
+        QVERIFY(flagA->isVisible());
+
+        // Diagnostic before the invariant: exercise the real hit target if
+        // an X remains at the old coordinate. This proves the RED failure
+        // can act on B, rather than merely finding an inert painted glyph.
+        QWidget* hit = w.childAt(oldClosePoint);
+        if (hit == close) {
+            QTest::mouseClick(hit, Qt::LeftButton, Qt::NoModifier,
+                              hit->mapFrom(&w, oldClosePoint));
+            QCOMPARE(closes.count(), 1);
+            QCOMPARE(closes.at(0).at(0).toInt(), 1);
+            qInfo("Hidden B retained a hit-testable X emitting stable slice ID 1");
+        } else {
+            QCOMPARE(closes.count(), 0);
+        }
+        QVERIFY2(close->isHidden(), "off-window B retained its visible sibling X");
+        QVERIFY(lock->isHidden());
+        QCOMPARE(closes.count(), 0);
+
+        // Returning to the window restores controls, with A's X policy intact.
+        flagB->setFrequency(kSliceBHz);
+        w.updateVfoPositions();
+        QVERIFY(flagB->isVisible());
+        QVERIFY(close->isVisible());
+        QVERIFY(lock->isVisible());
+        QVERIFY(flagA->closeButtonForTest()->isHidden());
+
+        flagB->setStationPresentationAllowed(false);
+        QVERIFY(flagB->isHidden());
+        QVERIFY(close->isHidden());
+        QVERIFY(lock->isHidden());
+        flagB->setStationPresentationAllowed(true);
+        w.updateVfoPositions();
+        QVERIFY(close->isVisible());
+
+        flagB->setFrequency(kOffWindowHz);
+        w.updateVfoPositions();
+        VfoWidget::SliceAccess listening;
+        listening.state = VfoWidget::SliceAccess::State::Listening;
+        listening.line = QStringLiteral("Listening");
+        flagB->setSliceAccess(listening);
+        QVERIFY(close->isHidden());
+        QVERIFY(lock->isHidden());
+        flagB->setFrequency(kSliceBHz);
+        w.updateVfoPositions();
+        QVERIFY(close->isVisible());
+        // A top-level hide also delivers hide events to visible flags.
+        // Same-size parent re-show must restore eligible sibling controls
+        // without an unrelated tuning, layout, or access update.
+        w.hide();
+        QVERIFY(close->isHidden());
+        QVERIFY(lock->isHidden());
+        w.show();
+        QCoreApplication::processEvents();
+        QVERIFY(flagA->isVisible());
+        QVERIFY(flagB->isVisible());
+        QVERIFY2(close->isVisible(), "parent re-show stranded eligible B X without repositioning");
+        QVERIFY(lock->isVisible());
+        QVERIFY(flagA->closeButtonForTest()->isHidden());
+        QSignalSpy stops(flagB, &VfoWidget::stopListeningRequested);
+        QTest::mouseClick(close, Qt::LeftButton);
+        QCOMPARE(stops.count(), 1);
+        QCOMPARE(stops.at(0).at(0).toInt(), 1);
+        QCOMPARE(closes.count(), 0);
+
+        QPointer<VfoWidget> retiredFlag(flagB);
+        QPointer<QPushButton> retiredClose(close);
+        QPointer<QPushButton> retiredLock(lock);
+        w.removeVfoWidget(1);
+        QVERIFY(retiredFlag.isNull());
+        QVERIFY(retiredClose.isNull());
+        QVERIFY(retiredLock.isNull());
+        VfoWidget* replacement = w.addVfoWidget(1);
+        replacement->setFrequency(kSliceBHz);
+        w.updateVfoPositions();
+        QVERIFY(replacement->isVisible());
+        QVERIFY(replacement->closeButtonForTest()->isVisible());
+    }
+
+    // Explicit flag hiding survives parent re-show. Off-window and denied
+    // presentation flags must not gain controls from the restoration hook.
+    void parent_reshow_keeps_explicitly_hidden_flags_and_controls_hidden()
+    {
+        SpectrumWidget w;
+        placePan(w);
+        VfoWidget* offWindow = w.addVfoWidget(1);
+        VfoWidget* notPresented = w.addVfoWidget(2);
+        offWindow->setFrequency(kSliceAHz);
+        notPresented->setFrequency(kSliceBHz);
+        w.show();
+        QCoreApplication::processEvents();
+        w.updateVfoPositions();
+        QVERIFY(offWindow->closeButtonForTest()->isVisible());
+        QVERIFY(notPresented->closeButtonForTest()->isVisible());
+        offWindow->setFrequency(kOffWindowHz);
+        w.updateVfoPositions();
+        notPresented->setStationPresentationAllowed(false);
+        QVERIFY(offWindow->isHidden());
+        QVERIFY(notPresented->isHidden());
+        w.hide();
+        w.show();
+        QCoreApplication::processEvents();
+        QVERIFY(offWindow->isHidden());
+        QVERIFY(notPresented->isHidden());
+        QVERIFY(offWindow->closeButtonForTest()->isHidden());
+        QVERIFY(offWindow->lockButtonForTest()->isHidden());
+        QVERIFY(notPresented->closeButtonForTest()->isHidden());
+        QVERIFY(notPresented->lockButtonForTest()->isHidden());
+    }
+
+    void never_shown_off_window_flag_has_no_floating_hit_targets()
+    {
+        SpectrumWidget w;
+        placePan(w);
+        VfoWidget* flag = w.addVfoWidget(1);
+        flag->setFrequency(kOffWindowHz);
+        w.show();
+        QCoreApplication::processEvents();
+        w.updateVfoPositions();
+        QVERIFY(flag->isHidden());
+        QVERIFY(!flag->closeButtonForTest());
+        QVERIFY(!flag->lockButtonForTest());
+    }
     void slice_letter_and_color_follow_stable_id_through_d_e_b()
     {
         SliceModel d(3), e(4), b(1);
@@ -956,6 +1139,8 @@ private slots:
         QSKIP("no cached overlay texture on the CPU-only spectrum path");
 #endif
     }
+private:
+    QString m_privateConfigDir;
 };
 
 QTEST_MAIN(TestPanFlagPositions)

@@ -824,6 +824,8 @@ private slots:
     void onTxBadgeClicked();
 
 protected:
+    void hideEvent(QHideEvent* event) override;
+    void showEvent(QShowEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;

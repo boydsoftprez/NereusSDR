@@ -3490,6 +3490,28 @@ void VfoWidget::updatePosition(int vfoX, int specTop, FlagDir dir)
     positionFloatingButtons();
 }
 
+// Floating controls are siblings on the spectrum, so hiding this flag
+// (including when its frequency leaves the visible window) must hide them
+// explicitly. Showing the flag restores its eligible sibling controls.
+void VfoWidget::hideEvent(QHideEvent* event)
+{
+    for (QPushButton* button : {m_closeBtn, m_lockBtn, m_recBtn, m_playBtn}) {
+        if (button) {
+            button->hide();
+        }
+    }
+    QWidget::hideEvent(event);
+}
+
+// A parent re-show can restore the flag without a position pass (GPU
+// painting does not reposition flags). Reapply visibility using the current
+// access and presentation policy; explicitly hidden flags stay hidden.
+void VfoWidget::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    positionFloatingButtons();
+}
+
 // ---- Painting ----
 
 void VfoWidget::paintEvent(QPaintEvent* event)

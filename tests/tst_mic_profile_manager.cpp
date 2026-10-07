@@ -249,7 +249,7 @@ private slots:
         QCOMPARE(s.value(profileKey(kMacA, "Default", "TwoToneFreq2")).toString(),
                  QStringLiteral("1900"));
         QCOMPARE(s.value(profileKey(kMacA, "Default", "TwoToneLevel")).toString(),
-                 QStringLiteral("-6"));
+                 QStringLiteral("0"));
         QCOMPARE(s.value(profileKey(kMacA, "Default", "TwoTonePower")).toString(),
                  QStringLiteral("50"));
         QCOMPARE(s.value(profileKey(kMacA, "Default", "TwoToneFreq2Delay")).toString(),
@@ -767,6 +767,25 @@ private slots:
         QVERIFY(mgr.setActiveProfile("Profile15", &txA));
         QCOMPARE(txA.micGainDb(), 15);
         QCOMPARE(txA.voxHangTimeMs(), 800);
+    }
+
+    void twoToneLevel_missingFieldUsesFullEnvelopeAndCustomLevelSurvives()
+    {
+        TransmitModel tx;
+        MicProfileManager mgr;
+        mgr.setMacAddress(kMacA);
+        mgr.load();
+        tx.setTwoToneLevel(-12.5);
+        mgr.saveProfile("CustomTone", &tx);
+        tx.setTwoToneLevel(0.0);
+        QVERIFY(mgr.setActiveProfile("CustomTone", &tx));
+        QCOMPARE(tx.twoToneLevel(), -12.5);
+
+        AppSettings::instance().remove(profileKey(kMacA, "CustomTone", "TwoToneLevel"));
+        QVERIFY(mgr.setActiveProfile("Default", &tx));
+        tx.setTwoToneLevel(-12.5);
+        QVERIFY(mgr.setActiveProfile("CustomTone", &tx));
+        QCOMPARE(tx.twoToneLevel(), 0.0);
     }
 
     void setActiveProfile_unknownProfileReturnsFalse()
