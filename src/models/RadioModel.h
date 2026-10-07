@@ -561,6 +561,9 @@
 //                finishCutShortTuneStart, so a CAT TUNE start cut short by
 //                another request is finished as an off. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - CAT setup from a connected desktop: stationCatModel() and
+//                stationCatController(), the Core's `stationCat` object and
+//                its publisher. J.J. Boyd (KG4VCF). AI tooling: Claude Code.
 // =================================================================
 
 //=================================================================
@@ -823,6 +826,8 @@ class StationPgxlController;
 class StationRfKitController;
 class StationTciController;
 class StationTciModel;
+class StationCatController;
+class StationCatModel;
 class SliceOwnership;
 class RfKitBandFollow;
 class AmplifierModel;
@@ -3512,6 +3517,12 @@ public:
     StationTciModel* stationTciModel() const { return m_stationTciModel; }
     // R-R3-48: the Core's station TCI server (nullptr outside the Core).
     StationTciController* stationTciController() const { return m_stationTci.get(); }
+    // CAT setup from a connected desktop (stationCatVersion 1): the Core's
+    // CAT as the `stationCat` object. Non-null from construction; filled by
+    // the Core's publisher, and from the Core's values in a remote window.
+    StationCatModel* stationCatModel() const { return m_stationCatModel; }
+    // The Core's CAT publisher and commands (nullptr outside the Local role).
+    StationCatController* stationCatController() const { return m_stationCat.get(); }
     // R-R3-47: the Core's RF-Kit controller (nullptr outside the Core).
     StationRfKitController* stationRfKitController() const { return m_stationRfKit; }
     // SmartSDR API server on TCP 4992. Owned by RadioModel; lifetime matches.
@@ -8272,6 +8283,10 @@ private:
     // model's slices and receivers), not through Qt parenting.
     std::unique_ptr<StationTciController> m_stationTci;
     std::unique_ptr<RfKitBandFollow>      m_rfKitBandFollow;
+    // CAT setup from a connected desktop: the `stationCat` object and, on
+    // the Core, its publisher (destroyed first in ~RadioModel).
+    StationCatModel*                      m_stationCatModel{nullptr};
+    std::unique_ptr<StationCatController> m_stationCat;
     // Follow-up 3: accessory requests whose refusal their page shows.
     QHash<quint32, QPointer<QObject>> m_pageShownAccessoryRequests;
 

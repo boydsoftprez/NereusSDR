@@ -6779,6 +6779,13 @@ if(Qt6WebSockets_FOUND)
     nereus_add_test(tst_station_tci_server fakes/LoopbackTransport.cpp)
     target_link_libraries(tst_station_tci_server PRIVATE Qt6::WebSockets Qt6::Network)
 endif()
+# CAT setup from a connected desktop (stationCatVersion 1): the Core's
+# `stationCat` object follows CatService, its four commands apply and refuse,
+# a binding resolves to the live slice, only a peer that declared stationCat
+# gets it, the `catLog` stream, and a window changing a channel on a Core.
+# Loopback only.
+nereus_add_test(tst_station_cat fakes/LoopbackTransport.cpp)
+target_link_libraries(tst_station_cat PRIVATE Qt6::Network)
 
 # R-R3-22 / R-R3-47: the Core's station listeners (the SmartSDR API listener
 # on 4992, the accessory discovery filter, the station TCI server) accept

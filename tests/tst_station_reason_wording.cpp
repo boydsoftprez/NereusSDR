@@ -260,6 +260,11 @@
 //   2026-10-01  J.J. Boyd / KG4VCF  DaemonApp's radioChangeStoppedReason
 //                                    is scanned.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-07  J.J. Boyd / KG4VCF  CAT setup from a connected desktop:
+//                                    StationCatController's and
+//                                    StationCatModel's reasons are scanned;
+//                                    stationCatUnavailableReason is the
+//                                    window's own. AI tooling: Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -911,6 +916,7 @@ const QList<ReasonSource>& reasonSources()
           QStringLiteral("AmplifierModel::readOnlyReason()"),
           QStringLiteral("RfKitModel::readOnlyReason()"),
           QStringLiteral("StationTciModel::readOnlyReason()"),
+          QStringLiteral("StationCatModel::readOnlyReason()"),
           // Parity Task 19: the `spotSources` object's, scanned below.
           QStringLiteral("SpotSourceHost::readOnlyReason()"),
           // Fix wave after parity Tasks 19 and 21 (I5): the radio verbs'
@@ -1465,6 +1471,15 @@ const QList<ReasonSource>& reasonSources()
          {QStringLiteral("readOnlyReason"), QStringLiteral("receiveOnlyOperateReason")}, {}, 2},
         {"src/models/RfKitModel.cpp", {QStringLiteral("readOnlyReason")}, {}, 1},
         {"src/models/StationTciModel.cpp", {QStringLiteral("readOnlyReason")}, {}, 1},
+        // CAT setup from a connected desktop: the `stationCat` object's
+        // read-only reason.
+        {"src/models/StationCatModel.cpp", {QStringLiteral("readOnlyReason")}, {}, 1},
+        // CAT setup from a connected desktop: the four CAT commands'
+        // refusals (the local CAT page's own words for a configuration the
+        // Core did not take).
+        {"src/core/cat/StationCatController.cpp", {}, {}, 4, {},
+         {// Each refuse() helper's argument, this file's own literals.
+          QStringLiteral("why")}},
         // Parity Task 19 (R-IOS-25): the spots.* refusals and the
         // `spotSources` object's read-only reason.
         // Parity Task 21 (R-IOS-18): the station radio verbs' refusals and
@@ -1823,6 +1838,8 @@ const QList<AppSideReason>& appSideReasons()
         // radio without the switch, the window's own words.
         {"src/models/RadioModel.cpp", "hfPaSwitchUnavailableReason",
          "a window's own reason Disable HF PA is disabled on this radio"},
+        {"src/core/session/IStationLink.h", "stationCatUnavailableReason",
+         "a remote window's own reason when its Core cannot take the request"},
         {"src/core/session/IStationLink.h", "pgxlDeviceSettingsUnavailableReason",
          "a remote window's own reason when its Core cannot take the request"},
         {"src/core/session/IStationLink.h", "tgxlDeviceSettingsUnavailableReason",

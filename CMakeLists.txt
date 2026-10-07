@@ -970,6 +970,7 @@ set(CORE_SOURCES
     src/core/cat/CatTxCommands.cpp
     src/core/cat/CatGlobalCommands.cpp
     src/core/cat/CatService.cpp
+    src/core/cat/StationCatController.cpp
     src/core/cat/CatStreamFramer.cpp
     src/core/cat/CatTcpTransport.cpp
     src/core/cat/CatSerialTransport.cpp
@@ -1187,6 +1188,7 @@ set(CORE_SOURCES
     src/models/AmplifierModel.cpp
     src/models/RfKitModel.cpp
     src/models/StationTciModel.cpp
+    src/models/StationCatModel.cpp
     # Phase 3P-II Phase 4 (Advanced UI + helpers)
     src/core/FaultLog.cpp
     src/core/TuneMemoryStore.cpp

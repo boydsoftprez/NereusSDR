@@ -966,6 +966,10 @@
 //               watchdog's stop, the heartbeat and a connection's end.
 //               Logging only. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-07: CAT setup from a connected desktop: the `stationCat` object,
+//               stationCatVersion, the four CAT commands' gate and the
+//               `catLog` stream, only for a peer that declared stationCat.
+//               J.J. Boyd (KG4VCF). AI tooling: Claude Code.
 // =================================================================
 
 #include "core/session/StationServer.h"
@@ -1069,6 +1073,9 @@
 #include "models/RfKitModel.h"
 #include "models/SpotModel.h"
 #include "models/StationTciModel.h"
+#include "models/StationCatModel.h"
+#include "core/cat/CatService.h"
+#include "core/cat/StationCatController.h"
 #include "models/AccessoryDataModel.h"
 #include "models/AccessorySettingsModel.h"
 #include "models/TunerModel.h"
@@ -1288,6 +1295,20 @@ bool isStationTciMessage(const SessionMessage& message)
     return message.objectKey == kStationTciKey
         || (message.kind == SessionMessageKind::Schema
             && message.className == "StationTciModel");
+}
+
+// CAT setup from a connected desktop (stationCatVersion 1): the Core's CAT,
+// read-only, only for a peer at kRadioIdentitySessionProtocolMinor whose
+// hello declared stationCat 1, on a Core that runs CAT. Its log is the
+// `catLog` record stream, under the same gate.
+constexpr const char* kStationCatKey = "stationCat";
+constexpr const char* kCatLogStream = "catLog";
+
+bool isStationCatMessage(const SessionMessage& message)
+{
+    return message.objectKey == kStationCatKey
+        || (message.kind == SessionMessageKind::Schema
+            && message.className == "StationCatModel");
 }
 
 // R-IOS-25 / R-R3-49 (parity Task 19, recordStreamVersion 1): the Core's
@@ -5604,6 +5625,20 @@ void StationServer::onTransportText(SessionTransport* transport, const QByteArra
                                      "apps from here."), {}));
             break;
         }
+        // CAT setup from a connected desktop: the Core's CAT, for a peer
+        // that declared stationCat (worded as the TCI server's settings).
+        if ((message.commandVerb == "setStationCatChannel"
+             || message.commandVerb == "setStationCatGlobal"
+             || message.commandVerb == "testStationCatCommand"
+             || message.commandVerb == "refreshStationCatDevices")
+            && !peerGetsStationCat(transport)) {
+            send(transport, SessionMessages::commandResult(
+                message.commandVerb, message.commandId, false,
+                it->agreedMinor < kRadioIdentitySessionProtocolMinor
+                    ? QStringLiteral("Update this app to set up CAT on this Core.")
+                    : QStringLiteral("This Core cannot set up its CAT from here."), {}));
+            break;
+        }
         // Parity Task 23: the station TCI server's options and apps came
         // with stationTciVersion 2.
         if ((message.commandVerb == "setStationTciOptions"
@@ -7469,6 +7504,14 @@ void StationServer::buildMirror()
     // R-R3-48 (stationTciVersion 1): the Core's station TCI server.
     // Sent only to a peer at minor 11 on a Core that runs one.
     m_mirror->watch(QByteArray(kStationTciKey), m_radioModel->stationTciModel());
+    // CAT setup from a connected desktop (stationCatVersion 1): the Core's
+    // CAT. Sent only to a peer that declared stationCat (sendToPeer). The
+    // Core's serial ports are read once here; a window reads them again
+    // with refreshStationCatDevices.
+    m_mirror->watch(QByteArray(kStationCatKey), m_radioModel->stationCatModel());
+    if (StationCatController* cat = m_radioModel->stationCatController()) {
+        cat->refreshDevices();
+    }
     // R-R3-47 / R-R3-22 (accessoryDataVersion 1): the Core's accessory
     // records and settings. Sent only to a peer at minor 11 on a Core that
     // owns its accessories.
@@ -7749,6 +7792,9 @@ QList<SessionPropertyResult> StationServer::applyPropertyWrite(
     } else if (message.objectKey == kStationTciKey) {
         // R-R3-48: the switch changes only through setStationTci.
         stepAttRefusal = StationTciModel::readOnlyReason();
+    } else if (message.objectKey == kStationCatKey) {
+        // The Core's CAT changes only through its four commands.
+        stepAttRefusal = StationCatModel::readOnlyReason();
     } else if (message.objectKey == kSpotSourcesKey) {
         // Parity Task 19: the spot sources change only through spots.*.
         stepAttRefusal = SpotSourceHost::readOnlyReason();
@@ -9167,6 +9213,11 @@ void StationServer::sendToPeer(SessionTransport* transport, const SessionMessage
             && (minor < kRadioIdentitySessionProtocolMinor || stationTciVersion() < 1)) {
             return;
         }
+        // CAT setup from a connected desktop: nor the Core's CAT to a peer
+        // that did not declare stationCat.
+        if (isStationCatMessage(message) && !peerGetsStationCat(transport)) {
+            return;
+        }
         // R-R3-47 / R-R3-22: nor the accessory records to an older app, or
         // from a Core that does not own its accessories.
         if (isAccessoryDataMessage(message)
@@ -9643,6 +9694,16 @@ bool StationServer::peerGetsStationTciSettings(SessionTransport* transport) cons
     return peer != m_peers.cend() && stationTciVersion() >= 2
         && peer->agreedMinor >= kRadioIdentitySessionProtocolMinor
         && peerDeclares(transport, QByteArrayLiteral("stationTciSettings"), 1);
+}
+
+// ── The Core's CAT (CAT setup from a connected desktop) ────────────────
+
+bool StationServer::peerGetsStationCat(SessionTransport* transport) const
+{
+    const auto peer = m_peers.constFind(transport);
+    return peer != m_peers.cend() && stationCatVersion() >= 1
+        && peer->agreedMinor >= kRadioIdentitySessionProtocolMinor
+        && peerDeclares(transport, QByteArrayLiteral("stationCat"), 1);
 }
 
 bool StationServer::fitStationTciSettingsToPeer(SessionTransport* transport,
@@ -12787,6 +12848,17 @@ int StationServer::stationTciVersion() const
     return m_recordStreams.find(QStringLiteral("tciClients")) != m_recordStreams.end() ? 2 : 1;
 }
 
+int StationServer::stationCatVersion() const
+{
+    // CAT setup from a connected desktop: 1 on a Core that runs CAT (its
+    // publisher) and keeps record streams, which carry the `catLog`.
+    if (m_radioModel.isNull() || m_radioModel->stationCatController() == nullptr) {
+        return 0;
+    }
+    return m_recordStreams.find(QString::fromLatin1(kCatLogStream)) != m_recordStreams.end()
+        ? 1 : 0;
+}
+
 int StationServer::accessoryDataVersion() const
 {
     return accessoryStatusVersion() >= 1 && !m_radioModel.isNull()
@@ -13103,6 +13175,10 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
             // property (fitPeerOnlyProperties).
             caps.radeReasonVersion =
                 peerGetsFeatureProperties(transport, QByteArrayLiteral("radeReason")) ? 1 : 0;
+            // CAT setup from a connected desktop: the Core's CAT, for a peer
+            // that declared stationCat 1 (after radeReasonVersion and before
+            // coreBuildInfo on the wire).
+            caps.stationCatVersion = peerGetsStationCat(transport) ? 1 : 0;
             // R-IOS-13 / R-R3-49: the AM Mod Monitor's readings, appended
             // after remoteIqVersion by StationCapabilities::toUpdates().
             caps.txModMonitorVersion = txModMonitorVersion();
@@ -13387,6 +13463,24 @@ void StationServer::setUpRecordStreams()
                 &StationServer::publishStationTciClients);
         publishStationTciClients();
     }
+    // CAT setup from a connected desktop (stationCatVersion 1): every CAT
+    // exchange the Core logs, newest kept up to the log window's own limit.
+    if (m_radioModel->stationCatController() != nullptr && m_radioModel->catService() != nullptr) {
+        const QString name = QString::fromLatin1(kCatLogStream);
+        auto stream = std::make_unique<RecordStream>(name, StationCatModel::kLogCapacity);
+        RecordStream* catLog = stream.get();
+        m_recordStreams.emplace(name, std::move(stream));
+        connect(m_radioModel->catService(), &CatService::messageLogged, this,
+                [this, catLog](int channel, bool inbound, const QByteArray& bytes) {
+            catLog->upsert(QString::number(++m_catLogLineId),
+                           QJsonObject{{QStringLiteral("channel"), channel},
+                                       {QStringLiteral("inbound"), inbound},
+                                       {QStringLiteral("text"), QString::fromLatin1(bytes)},
+                                       {QStringLiteral("time"),
+                                        QDateTime::currentMSecsSinceEpoch()}});
+            scheduleRecordFlush();
+        });
+    }
     connect(m_radioModel->spotSourceHost(), &SpotSourceHost::consoleLine, this,
             [this](const QString& source, const QString& line) {
         const auto it = m_recordStreams.find(SpotSourceHost::consoleStream(source));
@@ -13494,6 +13588,12 @@ void StationServer::handleRecordsCommand(SessionTransport* transport, const Sess
         answer(false, coreLog
                    ? IStationLink::supportBundleUnavailableReason()
                    : QStringLiteral("This Core does not send its spots or console lines."));
+        return;
+    }
+    // CAT setup from a connected desktop: the Core's CAT log only to a peer
+    // that declared stationCat, worded as its CAT commands' refusal.
+    if (streamName == QLatin1String(kCatLogStream) && !peerGetsStationCat(transport)) {
+        answer(false, QStringLiteral("This Core cannot set up its CAT from here."));
         return;
     }
     const auto it = m_recordStreams.find(streamName);

@@ -461,6 +461,9 @@
 //   2026-09-30: inbound sibling fix round 4: unresolvedDeltaCancelRuleNames()
 //               checks the rule table against the schemas. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-07: CAT setup from a connected desktop: the stationCat feature
+//               and the four CAT requests. J.J. Boyd (KG4VCF). AI tooling:
+//               Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -1389,6 +1392,13 @@ public:
     CommandOutcome requestDisconnectStationTciClient(const QString& id) override;
     // JJ's ruling of 2026-09-28 (stationTciSettingsVersion 1).
     bool stationTciSettingsAvailable() const override;
+    // CAT setup from a connected desktop (stationCatVersion 1).
+    bool stationCatAvailable() const override;
+    CommandOutcome requestStationCatChannel(int channel, const QString& configJson) override;
+    CommandOutcome requestStationCatGlobal(const QString& configJson) override;
+    CommandOutcome requestStationCatTest(qint64 requestId, int channel,
+                                         const QString& command) override;
+    CommandOutcome requestStationCatRefreshDevices() override;
     CommandOutcome requestStationTciSetting(const QByteArray& name,
                                             const QVariant& value) override;
     CommandOutcome requestTxInterlockPolicy(int mode, int graceMs, bool swrGateEnabled,

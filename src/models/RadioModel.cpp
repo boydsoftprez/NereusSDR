@@ -1017,6 +1017,9 @@
 //                tone, the mode swap or the power limit off; the fixed-power
 //                latch is set before the limit drops. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - CAT setup from a connected desktop: the `stationCat` object,
+//                and on the Core (Local role) its publisher over CatService.
+//                J.J. Boyd (KG4VCF). AI tooling: Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1400,6 +1403,7 @@ mw0lge@grange-lane.co.uk
 #include "core/StationPgxlController.h"
 #include "core/StationRfKitController.h"
 #include "core/StationTciController.h"
+#include "core/cat/StationCatController.h"
 #include "core/SliceOwnership.h"
 #include "core/session/SliceAccessPolicy.h"
 #include "core/session/StationServer.h"
@@ -1412,6 +1416,7 @@ mw0lge@grange-lane.co.uk
 #include "models/AmplifierModel.h"
 #include "models/RfKitModel.h"
 #include "models/StationTciModel.h"
+#include "models/StationCatModel.h"
 #include "models/AccessoryDataModel.h"
 #include "models/AccessorySettingsModel.h"
 #include "core/StationAccessoryData.h"
@@ -3127,6 +3132,13 @@ RadioModel::RadioModel(Role role, QObject* parent)
     m_rfKitModel = new RfKitModel(this);
     // R-R3-48: the Core's station TCI server state (`stationTci`).
     m_stationTciModel = new StationTciModel(this);
+    // CAT setup from a connected desktop (stationCatVersion 1): the Core's
+    // CAT as the `stationCat` object, filled from CatService on the Core.
+    m_stationCatModel = new StationCatModel(this);
+    if (m_role == Role::Local) {
+        m_stationCat = std::make_unique<StationCatController>(this, m_catService,
+                                                              m_stationCatModel);
+    }
     if (m_role == Role::Local) {
         m_amplifierModel->bindConnection(m_pgxlConnection);
         m_rfKitModel->bindConnection(m_rfKitConnection.get());
@@ -4533,6 +4545,8 @@ RadioModel::RadioModel(Role role, QObject* parent)
 
 RadioModel::~RadioModel()
 {
+    // The CAT publisher reads this model and CatService; it goes first.
+    m_stationCat.reset();
     if (m_catService) { m_catService->beginRetirement(); }
     // R-R3-48: the station TCI server holds this model's slices and
     // receivers; stop it while they still exist.
