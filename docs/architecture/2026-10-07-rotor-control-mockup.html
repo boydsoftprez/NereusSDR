@@ -70,6 +70,7 @@ th.new,td.new{color:var(--amberT)}
 .pbtns{display:grid;grid-template-columns:1fr 1.4fr 1fr;gap:8px;margin-top:10px}
 .pbtns .btn{padding:12px 0;font-size:14px;border-radius:8px}
 .chips{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px}
+.btn.turn{background:#00b4d822;border-color:#00b4d8;color:#00b4d8;font-weight:600;padding:9px 0;border-radius:8px;margin-top:8px}
 .chips .btn{border-radius:14px;white-space:nowrap;padding:5px 0;font-size:11px}
 .tabbar{position:absolute;bottom:0;left:0;right:0;height:56px;background:var(--bar);border-top:1px solid #203040;display:flex;justify-content:space-around;align-items:center;font-size:10px;color:var(--faint)}
 .tabbar .on{color:var(--accent)}
@@ -91,7 +92,7 @@ th.new,td.new{color:var(--amberT)}
 <body>
 <h1>Rotor control mockup</h1>
 <div style="color:var(--faint);margin-bottom:4px">Dial: Longpath style (after OE5SOS's RotorDialWidget) in NereusSDR colours. The Thetis compass stays as the meter item in custom layouts.</div>
-<div style="color:var(--faint)">Drag on any compass to set a target.</div>
+<div style="color:var(--faint)">Desktop: drag the dial and let go to turn. iPhone: drag to select, then tap Turn (the selection drops after 15 s).</div>
 
 <h2>Desktop: Rotor applet in a container</h2>
 <div class="row">
@@ -230,6 +231,7 @@ th.new,td.new{color:var(--amberT)}
         <div id="pCompass" style="margin-top:4px"></div>
         <div class="pbig" id="pHead">047°</div>
         <div class="psub" id="pTgt">120° short path · 73° to go</div>
+        <div class="btn turn" id="pTurn" style="display:none">Turn to 120°</div>
         <div class="pbtns">
           <div class="btn">◀</div><div class="btn stop">STOP</div><div class="btn">▶</div>
         </div>
@@ -360,7 +362,7 @@ function compass(host,size,opts){
     path.setAttribute("d",`M${cx},${cy} L${x1},${y1} A${r},${r} 0 ${Math.abs(span)>180?1:0} ${span>=0?1:0} ${x2},${y2} Z`);}
   function draw(head,tgt){
     const d=tgt==null?0:((tgt-head+540)%360)-180, arrived=tgt!=null&&Math.abs(d)<1.5;
-    const turning=tgt!=null&&!arrived;
+    const turning=tgt!=null&&!arrived&&moving; // a target not yet sent draws in the target colour (Longpath "targeted")
     const col=arrived?GREEN:AMBER;
     needle.setAttribute("points",needlePts(head,.90,2.6));needle.setAttribute("fill",col);
     needleHalo.setAttribute("points",needlePts(head,.90,2.6));needleHalo.setAttribute("stroke",col);
@@ -371,20 +373,27 @@ function compass(host,size,opts){
     const[dx,dy]=dirv(tgt),nx=-dy,ny=dx,on=[cx+R*dx,cy+R*dy],inn=[cx+(R-9)*dx,cy+(R-9)*dy];
     rim.setAttribute("points",[on,[inn[0]+nx*4.5,inn[1]+ny*4.5],[inn[0]-nx*4.5,inn[1]-ny*4.5]].map(p=>p.join(",")).join(" "));
     rim.setAttribute("fill",arrived?GREEN:TGT);
-    travel.style.display="";travel.setAttribute("fill",arrived?GREEN:turning?AMBER:TGT);pie(travel,R,head,d);
+    travel.style.display="";travel.setAttribute("fill",arrived?GREEN:turning?AMBER:TGT);travel.setAttribute("fill-opacity",(turning||arrived?30:26)/255);pie(travel,R,head,d);
     if(arrived){tgtHalo.style.display=tgtLine.style.display="none";return;}
     tgtHalo.style.display=tgtLine.style.display="";
     const tip=[cx+R*.9*dx,cy+R*.9*dy];[tgtHalo,tgtLine].forEach(e=>{e.setAttribute("x1",cx);e.setAttribute("y1",cy);e.setAttribute("x2",tip[0]);e.setAttribute("y2",tip[1]);});
   }
-  let head=opts.head,tgt=opts.tgt;draw(head,tgt);
-  const report=()=>{opts.onState&&opts.onState(head,tgt);};report();
+  let head=opts.head,tgt=opts.tgt,moving=tgt!=null,expiry=null;draw(head,tgt);
+  const report=()=>{opts.onState&&opts.onState(head,tgt,moving);};report();
+  // Touch rule (JJ, 2026-10-07): the desktop turns on release; the iPhone (opts.confirm) only
+  // selects, and a second press on Turn sends it. An unsent selection is dropped after 15 s.
+  const api={go(){if(tgt==null)return;moving=true;clearTimeout(expiry);draw(head,tgt);report();},
+             drop(){if(moving)return;tgt=null;draw(head,tgt);report();}};
   if(opts.drag){
     const set=e=>{const r=s.getBoundingClientRect();const x=(e.clientX-r.left)/r.width*200-cx,y=(e.clientY-r.top)/r.height*200-cy;
-      tgt=Math.round((Math.atan2(y,x)*180/Math.PI+90+360)%360);draw(head,tgt);report();};
+      tgt=Math.round((Math.atan2(y,x)*180/Math.PI+90+360)%360);moving=false;draw(head,tgt);report();};
     let down=false;s.addEventListener("pointerdown",e=>{down=true;s.setPointerCapture(e.pointerId);set(e);});
-    s.addEventListener("pointermove",e=>{if(down)set(e);});s.addEventListener("pointerup",()=>down=false);
-    setInterval(()=>{if(tgt==null)return;let d=((tgt-head+540)%360)-180;if(Math.abs(d)<1){head=tgt;}else{head=(head+Math.sign(d)+360)%360;}draw(head,tgt);report();},60);
+    s.addEventListener("pointermove",e=>{if(down)set(e);});
+    s.addEventListener("pointerup",()=>{if(!down)return;down=false;
+      if(opts.confirm){clearTimeout(expiry);expiry=setTimeout(api.drop,15000);report();}else{api.go();}});
+    setInterval(()=>{if(tgt==null||!moving)return;let d=((tgt-head+540)%360)-180;if(Math.abs(d)<1){head=tgt;}else{head=(head+Math.sign(d)+360)%360;}draw(head,tgt);report();},60);
   }
+  return api;
 }
 function tape(host,w,head,tgt){
   const AMBER="#ffb800",TGT="#00b4d8",RING="#7e8a96",MUTED="#a6b0bc";
@@ -402,7 +411,10 @@ const togo=(h,t)=>{const d=((t-h+540)%360)-180;return Math.abs(d)<1?"on target":
 compass(document.getElementById("dCompass"),230,{head:47,tgt:120,drag:true,onState:(h,t)=>{dHead.textContent=pad(h);dTgt.textContent=t+"° · "+togo(h,t);}});
 compass(document.getElementById("dCompass2"),200,{head:212,tgt:null,el:34,elTgt:45});
 compass(document.getElementById("dCompass3"),170,{head:0,tgt:null});
-compass(document.getElementById("pCompass"),250,{head:47,tgt:120,drag:true,onState:(h,t)=>{pHead.textContent=pad(h);pTgt.textContent=t+"° short path · "+togo(h,t);}});
+const pDial=compass(document.getElementById("pCompass"),250,{head:47,tgt:120,drag:true,confirm:true,onState:(h,t,m)=>{pHead.textContent=pad(h);
+  pTurn.style.display=t!=null&&!m?"":"none";pTurn.textContent="Turn to "+t+"°";
+  pTgt.textContent=t==null?"no target":!m?"selected · tap Turn within 15 s":t+"° short path · "+togo(h,t);}});
+pTurn.addEventListener("click",()=>pDial.go());
 tape(document.getElementById("dTape"),400,47,120);
 </script>
 </body>

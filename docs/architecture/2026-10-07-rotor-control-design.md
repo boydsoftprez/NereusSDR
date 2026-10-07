@@ -22,6 +22,7 @@ Yaesu GS-232 commands or that Hamlib's `rotctld` can drive.
 | Elevation | Supported; azimuth or azimuth + elevation is set in rotor setup |
 | Turn to a spot | Its own action everywhere (pan menu, Spot Hub, iPhone spot sheet), plus a "turn the beam when I tune to a spot" setting, off by default |
 | Look | As in the mockup: the Longpath-style dial in NereusSDR colours (amber heading needle, dashed cyan target arrow, the travel sector, "73° to go", green on arrival, an elevation quarter gauge beside the rose on az/el rotors, rose or tape shape), Stop the only red button |
+| Touch safety | The desktop turns on release: drag the dial or the meter item to a heading and let go. The iPhone selects, then confirms: a drag on the dial only selects (target colour, no turning) and a Turn button sends it; an unsent selection is dropped after 15 s (after Longpath's select-then-press). Presets, Stop, the nudge holds and "Turn beam" on a spot are one tap everywhere |
 
 ## What exists today
 
@@ -207,7 +208,8 @@ In short:
   tape, switched from the dial's right-click menu. Our addition: on an
   az/el rotor, an elevation quarter gauge (0 to 90) beside the rose in the
   same style (amber needle, dashed cyan target, travel sector); Longpath
-  shows elevation only as a corner readout.
+  shows elevation only as a corner readout. Dragging the dial sets the
+  target and the rotor turns when the mouse is released.
 * **Rotor applet** (`src/gui/applets/RotorApplet.*`, registered as
   `applet:rotor` in `ContainerContentRegistry`): status line, the dial, the
   heading readout and "to go" under it, CCW / STOP / CW, Down / Up for
@@ -236,7 +238,7 @@ In short:
 
 * `Accessories/RotorPage.swift`: the page in the mockup: status, the
   Longpath-style dial drawn in SwiftUI (the same design as the desktop
-  dial), the heading readout and "to go", a touch dial (drag to set, release to go), large STOP between
+  dial), the heading readout and "to go", a touch dial (drag to select; a "Turn to N°" button under the readout sends it; a selection not sent within 15 s is dropped), large STOP between
   the nudge buttons, short / long path, preset chips, Up / Down for az/el.
   Uses `AccessoryChrome` and `AccessoryStatusLine` like the amp and tuner
   pages.

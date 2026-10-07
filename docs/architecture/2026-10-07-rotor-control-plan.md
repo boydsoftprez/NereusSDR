@@ -153,7 +153,7 @@ it.
 - Create: `src/gui/widgets/RotorDialWidget.{h,cpp}` (ported from Longpath, see Global
   Constraints: rose and tape shapes, amber heading needle, dashed target arrow, travel sector,
   arrival tolerance and green on arrival, an elevation quarter gauge beside the rose on az/el
-  rotors (our addition, see the design), click to aim, a stale
+  rotors (our addition, see the design), drag to aim and turn on release, a stale
   heading drawn muted with its age; shape choice saved with `AppSettings`)
 - Create: `src/gui/applets/RotorApplet.{h,cpp}` (status line, the dial, heading readout and "to
   go" under it, CCW / STOP / CW, Down / Up on az/el, short and long path, presets, "Turn to"
@@ -197,12 +197,15 @@ it.
 
 **Files:**
 - Create: `ios/NereusApp/Accessories/RotorPage.swift` and its model (the Longpath-style dial in
-  SwiftUI, matching the desktop dial: drag to set, release to go; STOP between the nudge buttons; short and long path; preset chips; Up and
+  SwiftUI, matching the desktop dial; a drag only selects, drawn in the target colour, and a "Turn to N°"
+  button sends it, with an unsent selection dropped after 15 s; presets, Stop and the nudge holds
+  are one tap; STOP between the nudge buttons; short and long path; preset chips; Up and
   Down on az/el; the rotor setup card with the Core's serial ports)
 - Modify: the Accessories screen (a Rotor row), `StationToolList` (`rotor` page entry and its
   greyed reason), `NereusKit` (the `rotor` object and commands)
-- Test: page model unit tests; a UI test that the Tools row and the Accessories row open the
-  same page
+- Test: page model unit tests (a drag sends nothing; Turn sends `setRotorTarget` once; a
+  selection lapses at 15 s; a sent target never lapses); a UI test that the Tools row and the
+  Accessories row open the same page
 
 **Acceptance:**
 - Matches the mockup. A held nudge sends the dead-man repeats; leaving the page or the app going
