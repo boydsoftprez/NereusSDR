@@ -4,13 +4,13 @@
 > test order follows the risk-based policy. A whole-branch review closes the plan before it
 > reaches the operator's rotor.
 
-**Goal:** The operator turns his antenna rotor from NereusSDR: a Rotor applet in a desktop
+**Goal:** The operator turns the station's antenna rotor from NereusSDR: a Rotor applet in a desktop
 container, a Rotor page on the iPhone (under Accessories and in the Tools tab), and "Turn beam"
-from a spot on the pan, in Spot Hub and in the iPhone's spot sheet. First rotor: his Yaesu on
-an Easy Rotor Control (ERC). Any GS-232A, GS-232B or Hamlib `rotctld` rotor works the same way.
+from a spot on the pan, in Spot Hub and in the iPhone's spot sheet. First rotor: the operator's
+Yaesu on an Easy Rotor Control (ERC). Any GS-232A, GS-232B or Hamlib `rotctld` rotor works the same way.
 
 **Architecture:** The Core owns the rotor, as it owns the PGXL, TGXL and RF2K-S
-(`RotorConnection` for the three drivers, `StationRotorController` for state, settings, presets
+(`RotorConnection` for the four drivers, `StationRotorController` for state, settings, presets
 and the hold dead man). Every window is a thin client on the `rotor` object and commands of
 [remote rotor control version 1](2026-10-07-remote-rotor-control-v1.md). Bearings are the
 Core's: cty.dat positions and the station's grid square, served on each spot.
@@ -19,9 +19,12 @@ Core's: cty.dat positions and the station's grid square, served on each spot.
 `StationClient`), the meter and applet system, SwiftUI and `NereusKit` on the iPhone.
 
 **Design and decisions:** [2026-10-07-rotor-control-design.md](2026-10-07-rotor-control-design.md)
-(agreed 2026-10-07: both protocol families, applet around the existing compass, Accessories plus
-Tools on the iPhone, elevation as a setup option, turn-to-spot as its own action with an
-auto-turn setting off by default, turning allowed on the air). Mockup:
+(agreed 2026-10-07: both protocol families; a Rotor applet and iPhone page built on a
+Longpath-style dial in NereusSDR colours, with the Thetis compass kept as the meter item and
+gaining drag-to-turn; Accessories plus Tools on the iPhone; elevation as a setup option, with an
+elevation gauge beside the rose; turn-to-spot as its own action with an auto-turn setting off
+by default; turning allowed on the air; the desktop turns on release, the iPhone selects then
+confirms with a 15 s expiry). Mockup:
 [2026-10-07-rotor-control-mockup.html](2026-10-07-rotor-control-mockup.html).
 
 ## Global Constraints
@@ -40,7 +43,7 @@ auto-turn setting off by default, turning allowed on the air). Mockup:
   `scripts/verify-inline-tag-preservation.py` clean.
 - Longpath reference: `../Longpath/`, pinned `551576e` (v0.6.7-1); cite it as
   `// From Longpath <file>:<line> [@551576e]`. Never pull it mid-task.
-- The Longpath ports (Tasks 3 and 6) follows HOW-TO-PORT.md as for any upstream: Longpath's
+- The Longpath ports (Tasks 3 and 6) follow HOW-TO-PORT.md as for any upstream: Longpath's
   file header byte for byte with its modification history, a NereusSDR modification-history
   line, `// From Longpath src/gui/widgets/RotorDialWidget.cpp:NNNN [@shortsha]` cites, inline
   comments kept verbatim (they are German; keep them), a new
@@ -79,8 +82,8 @@ auto-turn setting off by default, turning allowed on the air). Mockup:
 **Owner:** the operator, with the controller. No code.
 
 Record, with a serial logger on the ERC's port: the protocol and baud the ERC's Service Tool
-shows, and the replies to `C`, `C2`, `Maaa`, `Waaa eee`, `S`, `L`, `R` on his azimuth-only
-rotor. Save the log under `tests/data/rotor/` as a fixture with the date and ERC firmware
+shows, and the replies to `C`, `C2`, `Maaa`, `Waaa eee`, `S`, `L`, `R` on the operator's
+azimuth-only rotor. Save the log under `tests/data/rotor/` as a fixture with the date and ERC firmware
 version, and record the findings in the design's "Facts" section. Task 3's driver tests replay
 it.
 
@@ -143,8 +146,8 @@ it.
   stop circle stops; elevation shows the value set
 
 **Acceptance:**
-- In a user meter layout, dragging the compass turns the rotor; with no rotor it does nothing
-  and shows no target.
+- In a user meter layout, dragging the compass and letting go turns the rotor (nothing is sent
+  while dragging, as in Thetis); with no rotor it does nothing and shows no target.
 - Attribution and inline comments as the Global Constraints say.
 
 ## Task 6: The rotor dial and the Rotor applet
@@ -165,6 +168,7 @@ it.
 **Acceptance:**
 - Matches the mockup. Stop is the only red control. The hold buttons send the dead-man repeats
   and stop on release.
+- Dragging the dial sends nothing until the mouse is released, then one `setRotorTarget`.
 
 ## Task 7: Rotor setup on the desktop
 
@@ -224,7 +228,8 @@ it.
 **Owner:** the operator. The controller deploys the Core and the desktop build and installs the
 phone build.
 
-The operator turns his Yaesu from the applet, the compass in a meter layout, the iPhone page,
-the pan menu, Spot Hub and the spot sheet; holds and releases the nudge buttons; drops the
+The operator turns the Yaesu from the applet, the compass in a meter layout, the iPhone page,
+the pan menu, Spot Hub and the spot sheet; holds and releases the nudge buttons; checks that an iPhone drag does nothing until Turn is
+tapped and that an unsent selection lapses after 15 s; drops the
 phone's Wi-Fi mid-hold and confirms the rotor stops; and checks the heading against the
 controller's dial.

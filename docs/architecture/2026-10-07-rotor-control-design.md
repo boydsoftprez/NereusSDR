@@ -2,7 +2,8 @@
 
 Status: design, agreed with JJ (KG4VCF) on 2026-10-07. Mockup:
 [2026-10-07-rotor-control-mockup.html](2026-10-07-rotor-control-mockup.html)
-(open it in a browser; the azimuth compasses can be dragged).
+(open it in a browser; drag the desktop dial and let go to turn, or drag
+the iPhone dial to select and tap Turn).
 
 ## Goal
 
@@ -152,8 +153,9 @@ Behaviour:
   connection; "Hamlib's rotctld is not installed on the Core's computer."
   when the binary is missing.
 * **Target and arrival.** A set command records the target; the rotor is
-  "turning" until the read heading is within a tolerance of the target or
-  stops changing, then "stopped".
+  "turning" until the read heading is within 1.5 degrees of the target
+  (Longpath `kArrivedDeg`, `RotctldClient.cpp:30`) or stops changing, then
+  "stopped".
 * **Hold to nudge has a dead man.** A window's CCW or CW (or Up/Down) hold
   sends start, then repeats it while held; the Core sends stop if the repeat
   lapses or that window disconnects. A dropped phone never leaves the
@@ -175,14 +177,15 @@ the same style as the accessory contract, so the iPhone builds against it.
 The build plan is [2026-10-07-rotor-control-plan.md](2026-10-07-rotor-control-plan.md).
 In short:
 
-* `rotor` object: `connected`, `driver`, `label` ("Easy Rotor Control on
-  COM4"), `axes` (`az` or `azel`), `azimuth`, `elevation`, `targetAzimuth`,
-  `targetElevation`, `moving`, `fault`, `range`, `presets` (name and
-  heading), and a `reason` when control is unavailable.
-* Commands: `setRotorTarget` (azimuth, optional elevation), `stopRotor`,
-  `nudgeRotor` (direction, start or keep-alive), `configureRotor` (driver,
-  port and baud or host and port, axes, range, offset), `disconnectRotor`,
-  `setRotorPresets`.
+* `rotor` object: the connection phase and error, the driver and its
+  settings (serial port and baud, or host and port, or Hamlib model), the
+  Core's serial ports, whether `rotctld` is installed, a `label` ("Easy
+  Rotor Control on COM4"), axes, range, offset, the heading and elevation
+  with `positionFresh`, the targets, `motion` (stopped, turning, nudging),
+  presets and the last fault. The contract has the exact names and kinds.
+* Commands: `setRotorTarget`, `turnRotorToCall` (the Core works out the
+  bearing), `stopRotor`, `nudgeRotor` (direction, held or released),
+  `configureRotor`, `disconnectRotor`, `setRotorPresets`.
 * Tools catalogue (`StationCatalog`): a `rotor` entry, offered when a rotor
   is configured on this Core.
 * Spots: the Core adds the short-path bearing to each spot it serves, so
@@ -218,8 +221,9 @@ In short:
 * **Drag to turn on `RotatorItem`.** Port Thetis's drag handling and
   `SendRotatorMessage` behaviour (MeterManager.cs:16475 and around
   36722-37217) with full attribution and inline comments, but send through
-  the rotor commands instead of an MMIO template. This is the meter item
-  in user layouts. The port shows no elevation in "Both" mode: it draws
+  the rotor commands instead of an MMIO template. Thetis already sends on
+  mouse release, not while dragging (MeterManager.cs:37207-37217), which
+  matches the desktop touch rule. This is the meter item in user layouts. The port shows no elevation in "Both" mode: it draws
   `m_smoothedEle`, which nothing updates (`RotatorItem.cpp:492`); trace how
   Thetis feeds elevation and fix it in the same task.
 * **No rotor:** the applet stays, controls greyed, with the reason.
@@ -251,13 +255,18 @@ In short:
 ## Tests
 
 * Driver tests against a fake serial port and a fake `rotctld`: each
-  protocol's replies, including the ones Hamlib treats as invalid.
+  protocol's replies, including the ones Hamlib treats as invalid, and the
+  bench capture from JJ's ERC.
 * Controller tests: arrival, stop priority, the nudge dead man, a window
-  disconnecting mid-nudge, reconnect.
+  disconnecting mid-nudge, reconnect, the stale heading after 1500 ms,
+  strict heading refusals, and the Core starting and stopping `rotctld`.
+* Desktop tests: the dial sends nothing while dragging and one target on
+  release.
 * Bearing tests: grid to position, known bearings, cty.dat overrides.
 * Session contract tests for the `rotor` object and commands.
-* iPhone unit tests for the page model; a UI test for the spot sheet's
-  Turn beam button.
+* iPhone unit tests for the page model (a drag sends nothing, Turn sends
+  once, a selection lapses at 15 s); a UI test for the spot sheet's Turn
+  beam button.
 * Bench: JJ's Yaesu with the ERC, before release.
 
 ## Open questions
