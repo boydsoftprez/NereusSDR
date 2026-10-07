@@ -92,7 +92,8 @@ Added extended CAT commands for APF funtions - May 2017.
 // 2026-10-04 - Stable slice CAT RX commands adapted by J.J. Boyd (KG4VCF),
 //              AI-assisted via OpenAI Codex.
 // 2026-10-06 - IF/ZZIF and the split and XIT reads answer when TX is on another
-//              slice; ZZSW sets TX absolutely; IF falls back to USB as Thetis does.
+//              slice; ZZSW sets TX absolutely; IF falls back to USB as Thetis does;
+//              RT/ZZRT/XT/ZZXS sets other than 0 or 1 answer nothing.
 //              J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 #include "CatRxCommands.h"
 #include "CatService.h"
@@ -1363,7 +1364,9 @@ CatCommandResult CatRxCommands::execute(const CatRequest& request, CatSessionCon
     const bool xitEnable=code == "XT" || code == "ZZXS";
     if (ritEnable || xitEnable) {
         if (get) { return readable() ? payload((ritEnable ? slice->ritEnabled() : slice->xitEnabled()) ? "1" : "0") : error(); }
-        if (request.suffix != "0" && request.suffix != "1") { return error(); }
+        // From Thetis CAT/CATCommands.cs:6084-6091,8344-8351 [v2.10.3.15]: a set other
+        // than 0 or 1 changes nothing and still returns "".
+        if (request.suffix != "0" && request.suffix != "1") { return silence(); }
         const CatWriteToken write=token(ritEnable ? "ritEnabled" : "xitEnabled"); if (!stillValid(write)) { return error(); }
         if (ritEnable) { slice->setRitEnabled(input == 1); } else { slice->setXitEnabled(input == 1); }
         return stillValid(write) ? silence() : error();

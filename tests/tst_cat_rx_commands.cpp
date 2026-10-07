@@ -175,6 +175,13 @@ private slots:
     QCOMPARE(service.processFrame(id,"FT;"),QByteArray("FT0;")); QCOMPARE(service.processFrame(id,"ZZSP;"),QByteArray("ZZSP0;"));
     QCOMPARE(service.processFrame(id,"ZZXS;"),QByteArray("ZZXS1;")); QCOMPARE(service.processFrame(id,"ZZXF;"),QByteArray("ZZXF+0456;"));
     QCOMPARE(service.processFrame(id,"ZZXS0;"),QByteArray("?;")); QVERIFY(model.sliceById(0)->xitEnabled()); QVERIFY(model.sliceById(1)->xitEnabled());
+    // Thetis ZZRT/ZZXS: a set other than 0 or 1 changes nothing and answers "".
+    model.sliceById(0)->setRitEnabled(true);
+    QCOMPARE(service.processFrame(id,"RT2;"),QByteArray()); QCOMPARE(service.processFrame(id,"ZZRT7;"),QByteArray()); QVERIFY(model.sliceById(0)->ritEnabled());
+    QVERIFY(model.txSliceArbiter()->requestHandoff(0,SliceOwnership::stationDevice())); QTRY_COMPARE(model.txBoundSlice(),model.sliceById(0));
+    QCOMPARE(service.processFrame(id,"XT9;"),QByteArray()); QCOMPARE(service.processFrame(id,"ZZXS2;"),QByteArray()); QVERIFY(model.sliceById(0)->xitEnabled());
+    model.sliceById(0)->setRitEnabled(false);
+    QVERIFY(model.txSliceArbiter()->requestHandoff(1,SliceOwnership::stationDevice())); QTRY_COMPARE(model.txBoundSlice(),model.sliceById(1));
     // From Thetis CATCommands.cs:380-383: a mode IF cannot name reports USB.
     model.sliceById(0)->setXitEnabled(false); model.sliceById(0)->setDspMode(DSPMode::SAM);
     QCOMPARE(service.processFrame(id,"IF;"),QByteArray("IF000140740000010+0000000000020000000;"));
