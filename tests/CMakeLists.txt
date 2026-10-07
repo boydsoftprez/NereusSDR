@@ -6116,6 +6116,14 @@ nereus_add_test(tst_cty_dat_parser)
 target_compile_definitions(tst_cty_dat_parser PRIVATE
     NEREUS_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 
+# ── Rotor control: GreatCircle (grid square, bearing, long path) ───────────
+# Pins Maidenhead to the centre of the square or subsquare (4 or 6
+# characters, case-insensitive, anything else gives no position), the
+# initial great-circle bearing against published worked examples (Aviation
+# Formulary LAX to JFK, Movable Type Scripts Baghdad to Osaka), long path
+# as short + 180, and "no bearing" for a bad or empty grid.
+nereus_add_test(tst_great_circle)
+
 # ── Phase 3J-2 Task C2: AdifParser (.adi / .adif log parser) ───────────────
 # Pins the contract that AdifParser parses ADIF (Amateur Data
 # Interchange Format) log files into QVector<QsoRecord> (callsign

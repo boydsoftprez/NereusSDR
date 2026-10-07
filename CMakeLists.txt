@@ -1137,6 +1137,7 @@ set(CORE_SOURCES
     # and on the Core, and is the mirrored `spotSources` object.
     src/core/SpotSourceHost.cpp
     src/core/CtyDatParser.cpp
+    src/core/GreatCircle.cpp
     src/core/AdifParser.cpp
     src/core/DxccWorkedStatus.cpp
     src/core/DxccColorProvider.cpp
