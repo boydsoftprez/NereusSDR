@@ -210,10 +210,13 @@ private slots:
   RadioModel model; const quint64 id=start(model); CatService& service=*model.catService();
   model.sliceOwnership()->setOwner(0,"foreign"); QCOMPARE(service.processFrame(id,"ZZNT1;"),QByteArray("?;")); QVERIFY(!model.sliceById(0)->anfEnabled()); model.sliceOwnership()->setOwner(0,SliceOwnership::stationDevice());
   model.sliceById(0)->setLocked(true); QSignalSpy second(model.sliceById(2),&SliceModel::lockedChanged);
-  connect(model.sliceById(0),&SliceModel::lockedChanged,&service,[&] { QVERIFY(!model.sliceById(2)->locked()); model.removeSlice(2); });
+  const QMetaObject::Connection reentry=connect(model.sliceById(0),&SliceModel::lockedChanged,&service,[&] { QVERIFY(!model.sliceById(2)->locked()); model.removeSlice(2); });
   model.sliceById(2)->setLocked(true); second.clear(); QCOMPARE(service.processFrame(id,"ZZVL0;"),QByteArray("?;")); QCOMPARE(second.count(),0); QVERIFY(!model.sliceById(0)->locked());
   QCOMPARE(model.addSlice(),1); QCOMPARE(model.addSlice(),2); QCOMPARE(service.processFrame(id,"ZZGU4;"),QByteArray("?;"));
-  model.sliceById(0)->setLocked(true); QCOMPARE(service.processFrame(id,"ZZVL1;"),QByteArray("?;")); QVERIFY(model.sliceById(0)->locked());
+  // The rebuilt slice 2 is a new incarnation, so no secondary resolves: ZZVL cycles the primary alone.
+  disconnect(reentry); model.sliceById(0)->setLocked(true); QCOMPARE(service.processFrame(id,"ZZVL1;"),QByteArray()); QVERIFY(!model.sliceById(0)->locked());
+  QCOMPARE(service.processFrame(id,"ZZVL0;"),QByteArray()); QVERIFY(model.sliceById(0)->locked()); QCOMPARE(service.processFrame(id,"ZZVL;"),QByteArray("ZZVL1;"));
+  QCOMPARE(service.processFrame(id,"ZZVL1;"),QByteArray()); QVERIFY(!model.sliceById(0)->locked()); QVERIFY(!model.sliceById(2)->locked());
  }
  void nativeRxParameterWiring() {
 #ifdef HAVE_WDSP

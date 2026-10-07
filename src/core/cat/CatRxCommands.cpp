@@ -91,6 +91,9 @@ Added extended CAT commands for APF funtions - May 2017.
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-04 - Stable slice CAT RX commands adapted by J.J. Boyd (KG4VCF),
 //              AI-assisted via OpenAI Codex.
+// 2026-10-06 - IF/ZZIF and the split and XIT reads answer when TX is on another
+//              slice; ZZSW sets TX absolutely; IF falls back to USB as Thetis does.
+//              J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 #include "CatRxCommands.h"
 #include "CatService.h"
 #include "core/TxSliceArbiter.h"
@@ -771,11 +774,16 @@ CatCommandResult CatRxCommands::execute(const CatRequest& request, CatSessionCon
     // From Thetis CAT/CATCommands.cs:6353-6383,6507-6534 [v2.10.3.15]. Actual confirmed TX binding.
     if (code == "FT" || code == "ZZSP" || code == "ZZSW") {
         const std::optional<CatVfo> selection=selectedVfo();
-        if (get) { return selection && m_adapter.mayRead(binding,*selection) ? payload(*selection == CatVfo::Primary ? "0" : "1") : error(); }
+        // Thetis always answers (console.VFOSplit, SwapVFOA_BTX): TX on neither bound
+        // slice, or a handoff still pending, reads as split off.
+        const CatVfo shown=selection.value_or(CatVfo::Primary);
+        if (get) { return m_adapter.mayRead(binding,shown) ? payload(shown == CatVfo::Primary ? "0" : "1") : error(); }
         if (request.suffix != "0" && request.suffix != "1") { return error(); }
-        if (code == "ZZSW" && request.suffix == "0") { return silence(); }
-        if (code == "ZZSW" && !selection) { return error(); }
-        const CatVfo target = code == "ZZSW" ? (*selection == CatVfo::Primary ? CatVfo::Secondary : CatVfo::Primary) : (input == 1 ? CatVfo::Secondary : CatVfo::Primary);
+        //Swaps VFO A/B TX buttons
+        // [original inline comment from CATCommands.cs:6506]
+        // SwapVFOA_BTX (console.cs:11393-11406) checks VFO B TX for 1 and VFO A TX for 0:
+        // an absolute set like ZZSP, not a toggle.
+        const CatVfo target=input == 1 ? CatVfo::Secondary : CatVfo::Primary;
         const QPointer<SliceModel> slice(m_adapter.resolveSlice(binding,target));
         if (!context.transmitAllowed || !slice || !m_adapter.mayChange(binding,target,"txSelection")) { return error(); }
         const bool accepted=m_txCoordinator.requestTxSelection(context.sessionId,slice->sliceIndex());
@@ -783,7 +791,10 @@ CatCommandResult CatRxCommands::execute(const CatRequest& request, CatSessionCon
         return accepted && selectedVfo() == target ? silence() : error();
     }
     const bool txCommand=code == "XT" || code == "ZZXS" || code == "ZZXF" || code == "ZZXC" || code == "ZZXD" || code == "ZZXU" || code == "ZZFT";
-    if (txCommand) { const auto selection=selectedVfo(); if (!selection) { return error(); } vfo=*selection; }
+    // Reads answer from the primary when TX is on neither bound slice, as IF does;
+    // a write there still needs TX on a bound slice.
+    const bool txRead=get && (code == "XT" || code == "ZZXS" || code == "ZZXF" || code == "ZZFT");
+    if (txCommand) { const auto selection=selectedVfo(); if (selection) { vfo=*selection; } else if (!txRead) { return error(); } }
     const QPointer<SliceModel> slice(m_adapter.resolveSlice(binding,vfo));
     if (!slice) { return error(); }
     const auto readable=[&]() { return m_adapter.mayRead(binding,vfo); };
@@ -1133,18 +1144,23 @@ CatCommandResult CatRxCommands::execute(const CatRequest& request, CatSessionCon
 // [original inline comment from CATCommands.cs:3439]
     // From Thetis CAT/CATCommands.cs:317-468,3386-3444 [v2.10.3.15]. No first500 blocking pacing sleeps.
     if (code == "IF" || code == "ZZIF") {
-        const auto selection=selectedVfo();
-        if (!selection || !primary || !m_adapter.mayRead(binding,CatVfo::Primary) || !m_adapter.mayRead(binding,*selection)) { return error(); }
-        const SliceModel* tx=model->txBoundSlice(); const bool rit=primary->ritEnabled(); const bool xit=!rit && tx->xitEnabled();
+        // Thetis IF has no error path: TX on neither bound slice reports split off and
+        // the primary's XIT, so a polling logger keeps the rig.
+        const CatVfo selection=selectedVfo().value_or(CatVfo::Primary);
+        const QPointer<SliceModel> tx(selection == CatVfo::Secondary ? second : primary);
+        if (!primary || !tx || !m_adapter.mayRead(binding,CatVfo::Primary) || !m_adapter.mayRead(binding,selection)) { return error(); }
+        const bool rit=primary->ritEnabled(); const bool xit=!rit && tx->xitEnabled();
         const int incremental=rit ? primary->ritHz() : (xit ? tx->xitHz() : 0);
         const int step=tuneStepIndexForHz(primary->stepHz());
         const int mode=modeIndex(primary->dspMode());
-        const QByteArray modeString=code == "IF" ? kenwoodMode(primary->dspMode(),global.digitalReportsSideband) : (mode < 0 ? QByteArray() : number(mode,kCodeWidth));
-        if (modeString.isEmpty() || step < 0 || step >= int(kStepStrings.size())) { return error(); }
+        // From Thetis CAT/CATCommands.cs:380-383 [v2.10.3.15]: a mode IF cannot name reports USB.
+        // ZZIF does the same for the NereusSDR-only modes Thetis has no number for.
+        const QByteArray modeString=code == "IF" ? kenwoodMode(primary->dspMode(),global.digitalReportsSideband) : (mode < 0 ? number(modeIndex(DSPMode::USB),kCodeWidth) : number(mode,kCodeWidth));
+        if (step < 0 || step >= int(kStepStrings.size())) { return error(); }
         return payload(number(qint64(std::nearbyint(primary->frequency()+rttyOffset(*primary,CatVfo::Primary,global))),kFrequencyWidth)
             + kStepStrings[step] + signedNumber(incremental,kStatusOffsetWidth) + (rit ? "1" : "0") + (xit ? "1" : "0")
-            + "000" + (model->moxController()->isMox() ? "1" : "0") + modeString + "00"
-            + (*selection == CatVfo::Secondary ? "1" : "0") + "0000");
+            + "000" + (model->moxController()->isMox() ? "1" : "0") + (modeString.isEmpty() ? QByteArray("2") : modeString) + "00"
+            + (selection == CatVfo::Secondary ? "1" : "0") + "0000");
     }
 // && console.RITOn)  //-W2PA Want to be able to change RIT value even if it's off
 // [original inline comment from CATCommands.cs:5883]

@@ -177,6 +177,8 @@ mw0lge@grange-lane.co.uk
 // Modification history (NereusSDR):
 // 2026-10-04 - Slice-bound CAT DSP commands adapted by J.J. Boyd (KG4VCF),
 //              AI-assisted via OpenAI Codex.
+// 2026-10-06 - ZZVL with no secondary bound cycles the primary lock on and off.
+//              J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 #include "CatDspCommands.h"
 #include "CatModelAdapter.h"
 #include "CatService.h"
@@ -628,9 +630,10 @@ CatCommandResult CatDspCommands::execute(const CatRequest& request,CatSessionCon
         if (second && !m_adapter.mayRead(binding,CatVfo::Secondary)) { return error(); }
         if (get) { return payload(slice->locked() || (second && second->locked()) ? "1" : "0"); }
         if (request.suffix != "0" && request.suffix != "1") { return error(); }
-        const bool nextPrimary=!(second && second->locked());
-        const bool nextSecond=slice->locked() && !(second && second->locked());
-        if (nextSecond && !second) { return error(); }
+        // With no secondary bound, Thetis's Checked -> Indeterminate step (lock VFO B too)
+        // has nothing to lock: skip it, so the cycle is unlocked -> locked -> unlocked.
+        const bool nextPrimary=second ? !second->locked() : !slice->locked();
+        const bool nextSecond=second && slice->locked() && !second->locked();
         const CatWriteToken secondWrite=m_adapter.prepareWrite(binding,CatVfo::Secondary,"locked");
         if (second && !m_adapter.revalidateWrite(secondWrite)) { return error(); }
         const bool hadSecond=bool(second);

@@ -153,11 +153,35 @@ private slots:
  void actualTxSelectionAndStatus() {
     RxCatMockConnection connection; RadioModel model; model.injectConnectionForTest(&connection); slices(model); const quint64 id=start(model); CatService& service=*model.catService();
     QCOMPARE(service.processFrame(id,"FT1;"),QByteArray()); QCOMPARE(model.txBoundSlice(),model.sliceById(2)); QVERIFY(!model.moxController()->isMox());
-    QCOMPARE(service.processFrame(id,"ZZSP;"),QByteArray("ZZSP1;")); QCOMPARE(service.processFrame(id,"ZZSW1;"),QByteArray()); QCOMPARE(model.txBoundSlice(),model.sliceById(0));
+    QCOMPARE(service.processFrame(id,"ZZSP;"),QByteArray("ZZSP1;"));
+    // Thetis ZZSW sets SwapVFOA_BTX absolutely: 1 keeps TX on B, 0 moves it to A.
+    QCOMPARE(service.processFrame(id,"ZZSW1;"),QByteArray()); QCOMPARE(model.txBoundSlice(),model.sliceById(2)); QCOMPARE(service.processFrame(id,"ZZSW;"),QByteArray("ZZSW1;"));
+    QCOMPARE(service.processFrame(id,"ZZSW0;"),QByteArray()); QCOMPARE(model.txBoundSlice(),model.sliceById(0)); QCOMPARE(service.processFrame(id,"ZZSW0;"),QByteArray()); QCOMPARE(model.txBoundSlice(),model.sliceById(0));
     model.sliceById(0)->setRitEnabled(true); model.sliceById(0)->setXitEnabled(true);
     QCOMPARE(service.processFrame(id,"IF;"),QByteArray("IF000140740000010-0012310000020000000;"));
     model.sliceById(0)->setRitEnabled(false); QCOMPARE(service.processFrame(id,"ZZIF;"),QByteArray("ZZIF000140740000010+00456010000010000000;"));
     service.session(id)->context().transmitAllowed=false; QCOMPARE(service.processFrame(id,"FT1;"),QByteArray("?;")); QCOMPARE(model.txBoundSlice(),model.sliceById(0));
+    model.injectConnectionForTest(nullptr);
+ }
+ void txOnAnotherSliceStillAnswers() {
+    // Thetis IF/ZZIF and ZZSP always answer. TX on a slice this channel does not bind reads
+    // as split off with the primary's XIT; XIT writes still need TX on a bound slice.
+    RxCatMockConnection connection; RadioModel model; model.injectConnectionForTest(&connection); slices(model); const quint64 id=start(model); CatService& service=*model.catService();
+    QCOMPARE(model.addSlice(),1); model.sliceOwnership()->setOwner(1,SliceOwnership::stationDevice()); model.sliceById(1)->setXitHz(-789); model.sliceById(1)->setXitEnabled(true);
+    model.sliceById(0)->setXitEnabled(true);
+    QVERIFY(model.txSliceArbiter()->requestHandoff(1,SliceOwnership::stationDevice())); QTRY_COMPARE(model.txBoundSlice(),model.sliceById(1));
+    QCOMPARE(service.processFrame(id,"IF;"),QByteArray("IF000140740000010+0045601000020000000;"));
+    QCOMPARE(service.processFrame(id,"ZZIF;"),QByteArray("ZZIF000140740000010+00456010000010000000;"));
+    QCOMPARE(service.processFrame(id,"FT;"),QByteArray("FT0;")); QCOMPARE(service.processFrame(id,"ZZSP;"),QByteArray("ZZSP0;"));
+    QCOMPARE(service.processFrame(id,"ZZXS;"),QByteArray("ZZXS1;")); QCOMPARE(service.processFrame(id,"ZZXF;"),QByteArray("ZZXF+0456;"));
+    QCOMPARE(service.processFrame(id,"ZZXS0;"),QByteArray("?;")); QVERIFY(model.sliceById(0)->xitEnabled()); QVERIFY(model.sliceById(1)->xitEnabled());
+    // From Thetis CATCommands.cs:380-383: a mode IF cannot name reports USB.
+    model.sliceById(0)->setXitEnabled(false); model.sliceById(0)->setDspMode(DSPMode::SAM);
+    QCOMPARE(service.processFrame(id,"IF;"),QByteArray("IF000140740000010+0000000000020000000;"));
+    QCOMPARE(service.processFrame(id,"ZZIF;"),QByteArray("ZZIF000140740000010+00000000000100000000;"));
+    model.sliceById(0)->setDspMode(DSPMode::RADE_U);
+    QCOMPARE(service.processFrame(id,"IF;"),QByteArray("IF000140740000010+0000000000020000000;"));
+    QCOMPARE(service.processFrame(id,"ZZIF;"),QByteArray("ZZIF000140740000010+00000000000010000000;"));
     model.injectConnectionForTest(nullptr);
  }
  void boundBandAndSharedCtun() {
