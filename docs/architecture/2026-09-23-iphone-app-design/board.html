@@ -5727,17 +5727,496 @@
   .is-airheld .pan__pass {
     background: transparent;
   }
+
+  /* ---------- Entering an address: the address grows to a second line rather than hiding its end; the port narrow below ---------- */
+  .code--addr textarea {
+    box-sizing: border-box;
+    padding: 12px 14px;
+    background: #0a0a18;
+    border: 1px solid #00b4d8;
+    border-radius: 4px;
+    font-family: Consolas, Menlo, monospace;
+    font-size: 21px;
+    font-weight: 700;
+    line-height: 1.3;
+    letter-spacing: 0.02em;
+    color: #00e5ff;
+    outline: none;
+    resize: none;
+    overflow: hidden;
+    word-break: break-all;
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  .scr .code--addr textarea:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(0, 180, 216, 0.35);
+  }
+
+  .code--port {
+    width: 44%;
+  }
+
+  /* ---------- Pairing and connecting: the states in between ---------- */
+  .pstarget {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 12px;
+    background: #0d1b28;
+    border: 1px solid #203040;
+    border-radius: 4px;
+  }
+
+  .pstarget span {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #708090;
+  }
+
+  .pstarget b {
+    font-family: Consolas, Menlo, monospace;
+    font-size: 14px;
+    color: #e4eef8;
+    word-break: break-all;
+  }
+
+  .pstarget small {
+    font-size: 12px;
+    color: #8090a0;
+  }
+
+  .code--name input {
+    height: 46px;
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: 17px;
+    letter-spacing: 0;
+    color: #e4eef8;
+    border-color: #2a3a4a;
+  }
+
+  .warnbox--bad {
+    background: rgba(255, 80, 80, 0.08);
+    border-color: rgba(255, 80, 80, 0.45);
+  }
+
+  .warnbox--bad b {
+    color: #ff6b6b;
+  }
+
+  .code--bad input {
+    border-color: #ff5050;
+    color: #ff8a8a;
+  }
+
+  .scr .pscores__note {
+    margin: 12px 12px 4px;
+  }
+
+  .scr .pscores__closed .row__text {
+    opacity: 0.6;
+  }
+
+  /* ---------- D68: the paused-sound notice is itself the tap target ---------- */
+  .toast--tap {
+    cursor: pointer;
+  }
+
+  /* ---------- The toolbar's Pan and Display sheets ---------- */
+  .dropsheet {
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    top: 92px;
+    z-index: 30;
+    background: #0f1a26;
+    border: 1px solid #203040;
+    border-radius: 6px;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+    overflow: hidden;
+  }
+
+  .dropsheet .atitle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .dropsheet__for {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: #8090a0;
+  }
+
+  .dropsheet__note {
+    margin: 2px 2px 6px;
+    font-size: 11px;
+    line-height: 1.35;
+    color: #8090a0;
+  }
+
+  .dropsheet__link {
+    padding: 0;
+    background: none;
+    border: 0;
+    font-size: 11px;
+    font-weight: 700;
+    color: #00b4d8;
+  }
+
+  .dropsheet__row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 6px 0;
+  }
+
+  .dropsheet__row span {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 13px;
+    color: #c8d8e8;
+  }
+
+  .dropsheet__row small {
+    font-size: 11px;
+    color: #8090a0;
+  }
+
+  .dropsheet__row .nbtn {
+    min-width: 88px;
+  }
+
+  .dropsheet__more {
+    margin-top: 8px;
+    padding: 8px 0 2px;
+    width: 100%;
+    background: none;
+    border: 0;
+    border-top: 1px solid #203040;
+    text-align: left;
+    font-size: 12px;
+    font-weight: 700;
+    color: #00b4d8;
+  }
+
+  .agrid--4 {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  .agrid--2 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .tbtn.is-open {
+    color: #00e5ff;
+    background: rgba(0, 180, 216, 0.14);
+    border-radius: 4px;
+  }
+
+  /* ---------- Tuning on the band ---------- */
+  .tuhint {
+    position: absolute;
+    z-index: 25;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 12px;
+    background: rgba(8, 14, 22, 0.82);
+    border: 1px solid #2a4a60;
+    border-radius: 8px;
+    color: #c8d8e8;
+    pointer-events: none;
+  }
+
+  .tuhint--band {
+    left: 50%;
+    top: 58%;
+    transform: translateX(-50%);
+  }
+
+  .tuhint--flag {
+    left: 22px;
+    top: 250px;
+  }
+
+  .tuhint__arrows {
+    font-size: 18px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    color: #00b4d8;
+  }
+
+  .tuhint__cap {
+    font-size: 11px;
+    color: #a0b4c4;
+    white-space: nowrap;
+  }
+
+  .tuhint__dot {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: rgba(0, 180, 216, 0.35);
+    border: 2px solid #00b4d8;
+  }
+
+  .vfo__step {
+    flex: none;
+    margin-right: 4px;
+    padding: 0 4px;
+    white-space: nowrap;
+    line-height: 14px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #00b4d8;
+    background: #0d1b28;
+    border: 1px solid #2a4a60;
+    border-radius: 3px;
+  }
+
+  .tustep {
+    position: absolute;
+    z-index: 30;
+    right: 44px;
+    top: 118px;
+    min-width: 132px;
+    padding: 6px;
+    background: #0f1a26;
+    border: 1px solid #203040;
+    border-radius: 6px;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+  }
+
+  .tustep__title {
+    padding: 2px 6px 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #8090a0;
+  }
+
+  .tustep__item {
+    display: block;
+    width: 100%;
+    padding: 7px 8px;
+    text-align: left;
+    font-size: 13px;
+    color: #c8d8e8;
+    background: none;
+    border: 0;
+    border-radius: 4px;
+  }
+
+  .tustep__item.is-on {
+    color: #fff;
+    background: #1a5ca8;
+  }
+
+  .tupad {
+    position: absolute;
+    z-index: 30;
+    left: 8px;
+    right: 8px;
+    bottom: 62px;
+    padding: 10px;
+    background: #0f1a26;
+    border: 1px solid #203040;
+    border-radius: 8px;
+    box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.55);
+  }
+
+  .tupad__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    color: #a0b4c4;
+  }
+
+  .tupad__x {
+    background: none;
+    border: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: #00b4d8;
+  }
+
+  .tupad__entry {
+    display: block;
+    margin: 8px 0;
+    padding: 6px 10px;
+    font: 700 28px/1.1 ui-monospace, "SF Mono", Menlo, monospace;
+    text-align: right;
+    color: #e4eef8;
+    background: #070c14;
+    border: 1px solid #2a4a60;
+    border-radius: 4px;
+  }
+
+  .tupad__caret {
+    display: inline-block;
+    width: 2px;
+    height: 26px;
+    margin-left: 2px;
+    vertical-align: -4px;
+    background: #00b4d8;
+  }
+
+  .tupad__units {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+
+  .tupad__keys {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+
+  .tupad__keys button {
+    padding: 9px 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: #e4eef8;
+    background: #1a2636;
+    border: 1px solid #2a3a4c;
+    border-radius: 6px;
+  }
+
+  .tupad__go {
+    display: block;
+    width: 100%;
+    margin-top: 8px;
+    padding: 10px 0;
+    font-size: 14px;
+    font-weight: 700;
+    color: #fff;
+    background: #1a5ca8;
+    border: 1px solid #3a7cc8;
+    border-radius: 6px;
+  }
 </style>
 
 <header class="head">
   <div>
     <p class="eyebrow">NereusSDR on iPhone and iPad</p>
     <h1>The whole app</h1>
-    <p class="lede">New this round, and kept: the notices and the states in between for several devices, first below. Then several devices on one Core at once, from your calls. Before them, the transmit time-out and your mic level on the band while keyed, then long sessions. Everything after that is agreed with your calls applied: a hardware PTT button that keys a locked phone through Apple's Push to Talk, audio and data use with cellular at Balanced, when things aren't right with the app keeping the older link too, FreeDV Reporter where a tap tunes, Spot Hub as one page, the iPad held upright with the applets below the band, spots on the band that never start behind a flag, the station's side with a switch in the desktop app, first launch with a station required, the tuning dial you pick in Setup, the same layout turned sideways, a lock screen that never transmits from its screen, and before them your layout with NereusSDR's flags and one flag rule for both devices, the tap-to-toggle PTT, the desktop's Setup tree, the front end in the Modes tab, and the amp and tuner in the TX panel.</p>
+    <p class="lede">New this round, first below: pairing and connecting, the states in between; under Audio, the sound paused when headphones disconnect (your D68); and every on-screen "station" that means the Core now says "Core" (your rule). Kept: entering a Core's address with the port in a field of its own, under Connecting; the notices and the states in between for several devices, first below. Then several devices on one Core at once, from your calls. Before them, the transmit time-out and your mic level on the band while keyed, then long sessions. Everything after that is agreed with your calls applied: a hardware PTT button that keys a locked phone through Apple's Push to Talk, audio and data use with cellular at Balanced, when things aren't right with the app keeping the older link too, FreeDV Reporter where a tap tunes, Spot Hub as one page, the iPad held upright with the applets below the band, spots on the band that never start behind a flag, the station's side with a switch in the desktop app, first launch with a station required, the tuning dial you pick in Setup, the same layout turned sideways, a lock screen that never transmits from its screen, and before them your layout with NereusSDR's flags and one flag rule for both devices, the tap-to-toggle PTT, the desktop's Setup tree, the front end in the Modes tab, and the amp and tuner in the TX panel.</p>
     <p class="note">Signals, station names, addresses and readings are examples. Each screen is its own phone; the tab bars don't switch screens. The iOS parts around NereusSDR's card (clock, status bar, the app behind the island) are drawn generic.</p>
   </div>
 </header>
 
+<section class="sect" aria-label="Tuning on the band">
+  <h2 class="sect__title">Tuning on the band</h2>
+  <p class="sect__note">New, for your approval, from your first test on the Pi: a drag on the band moves the band, a drag on a flag or its passband tunes that slice, each slice has a tuning step you can pick, and a tap on the flag's frequency lets you type one. All four use what the Core already sends: the slice's step and the radio's list of steps.</p>
+  <div class="board board--four">
+    <section class="opt" aria-labelledby="w-tu-pan">
+      <div class="opt__head">
+        <h2 id="w-tu-pan">Drag the band</h2>
+        <p>The band slides left and right, as on the desktop. Slice A stays where it is; its flag moves with the band and comes back into view when the band does.</p>
+      </div>
+      <div class="slot"><div class="phone" data-placement="fit" data-scene="tune-pan"></div></div>
+    </section>
+    <section class="opt" aria-labelledby="w-tu-flag">
+      <div class="opt__head">
+        <h2 id="w-tu-flag">Drag a flag or its passband</h2>
+        <p>Slice A tunes, in its step, while your finger moves. A tap on empty band still tunes there at once.</p>
+      </div>
+      <div class="slot"><div class="phone" data-placement="fit" data-scene="tune-flag"></div></div>
+    </section>
+    <section class="opt" aria-labelledby="w-tu-step">
+      <div class="opt__head">
+        <h2 id="w-tu-step">The tuning step</h2>
+        <p>The step sits on the flag. A tap lists the radio's steps; the one you pick is slice A's, used by drags, taps (when snap is on) and the dial.</p>
+      </div>
+      <div class="slot"><div class="phone" data-placement="fit" data-scene="tune-step"></div></div>
+    </section>
+    <section class="opt" aria-labelledby="w-tu-type">
+      <div class="opt__head">
+        <h2 id="w-tu-type">Type a frequency</h2>
+        <p>A tap on the flag's frequency opens a number pad. Type it in MHz or kHz; Enter tunes slice A there.</p>
+      </div>
+      <div class="slot"><div class="phone" data-placement="fit" data-scene="tune-type"></div></div>
+    </section>
+  </div>
+</section>
+<section class="sect" aria-label="The Pan and Display buttons">
+  <h2 class="sect__title">The Pan and Display buttons</h2>
+  <p class="sect__note">New, for your approval: the toolbar's Pan 1 and Display had nothing to open. Pan 1 takes the desktop's pan-level controls (its BAND grid, +RX, +TNF, the extended view); Display takes the pan's display settings, which are this phone's own.</p>
+  <div class="board board--four">
+    <section class="opt" aria-labelledby="w-ps-pan">
+      <div class="opt__head">
+        <h2 id="w-ps-pan">Pan 1</h2>
+        <p>The band grid (a band opens where the slice last was on it), a slice or a notch added here, and the extended view.</p>
+      </div>
+      <div class="slot"><div class="phone" data-placement="fit" data-scene="pan-sheet"></div></div>
+    </section>
+    <section class="opt" aria-labelledby="w-ps-display">
+      <div class="opt__head">
+        <h2 id="w-ps-display">Display</h2>
+        <p>This pan's look on this phone: the waterfall's palette and levels, the fill, the scale, and the Core's extras on the band.</p>
+      </div>
+      <div class="slot"><div class="phone" data-placement="fit" data-scene="display-sheet"></div></div>
+    </section>
+  </div>
+</section>
+<section class="sect" aria-label="Pairing and connecting: the states in between">
+  <h2 class="sect__title">Pairing and connecting: the states in between</h2>
+  <p class="sect__note">New this round, for your approval, before the listening build is built. The Core's own words appear as it sends them.</p>
+  <div class="board board--four">
+    <section class="opt" aria-labelledby="w-ps-code">
+      <div class="opt__head">
+        <h2 id="w-ps-code">Pair with a code, after an address</h2>
+        <p>The Core it pairs with, where to find the code, and this phone's name as the Core will list it (D65: "iPhone" until Apple grants the phone's own name).</p>
+      </div>
+      <div class="slot"><div class="phone" data-screen="ps-code"></div></div>
+    </section>
+    <section class="opt" aria-labelledby="w-ps-wrong">
+      <div class="opt__head">
+        <h2 id="w-ps-wrong">A wrong code</h2>
+        <p>The Core's words, and its wait before the new code (5, 10, 20, then 40 seconds).</p>
+      </div>
+      <div class="slot"><div class="phone" data-screen="ps-wrong"></div></div>
+    </section>
+    <section class="opt" aria-labelledby="w-ps-closed">
+      <div class="opt__head">
+        <h2 id="w-ps-closed">Pairing closed</h2>
+        <p>After the fifth wrong code in a row the Core closes pairing, and only the Core can open it again.</p>
+      </div>
+      <div class="slot"><div class="phone" data-screen="ps-closed"></div></div>
+    </section>
+    <section class="opt" aria-labelledby="w-ps-cores">
+      <div class="opt__head">
+        <h2 id="w-ps-cores">Your Cores: every case</h2>
+        <p>A Core that removed or forgot this phone stays in the list with Pair. On this network: Pair is one tap; Use code opens the code with the address filled in (new: a Core already paired with others that opened pairing for one more device lists this way); a closed one says so.</p>
+      </div>
+      <div class="slot"><div class="phone" data-screen="ps-cores"></div></div>
+    </section>
+    <section class="opt" aria-labelledby="w-ps-lan">
+      <div class="opt__head">
+        <h2 id="w-ps-lan">Local network not allowed</h2>
+        <p>iOS asked and the answer was no, so this Wi-Fi couldn't be tried. The phone says where to allow it.</p>
+      </div>
+      <div class="slot"><div class="phone" data-screen="ps-lan"></div></div>
+    </section>
+    <section class="opt" aria-labelledby="w-ps-key">
+      <div class="opt__head">
+        <h2 id="w-ps-key">The phone's key can't be read</h2>
+        <p>New: after an erase and restore the phone may no longer read the key it signs in with. It says so, makes a new key when asked, and every Core then needs pairing again.</p>
+      </div>
+      <div class="slot"><div class="phone" data-screen="ps-key"></div></div>
+    </section>
+  </div>
+</section>
 <section class="sect" aria-label="Several devices: states and notices">
   <h2 class="sect__title">Several devices: states and notices</h2>
   <p class="sect__note">What the screens in the next section don't show: the messages that appear over the band when something happens involving another device, and the states in between (a device that's away, transmit on its way, a slice held by the radio's mic). The same cast as the next section: this phone has slice A on 40 m, the MacBook has slices B and D and has transmit, the iPad has slice C on 20 m.</p>
@@ -6059,6 +6538,13 @@
       </div>
       <div class="slot"><div class="phone" data-placement="fit" data-scene="route"></div></div>
     </section>
+    <section class="opt" aria-labelledby="w-au-paused">
+      <div class="opt__head">
+        <h2 id="w-au-paused">Headphones disconnected</h2>
+        <p>Your call (D68): when headphones or AirPods go away, the sound pauses and the band keeps showing. It plays on the speaker only after a tap.</p>
+      </div>
+      <div class="slot"><div class="phone" data-placement="fit" data-scene="hp-paused"></div></div>
+    </section>
     <section class="opt" aria-labelledby="w-au-data">
       <div class="opt__head">
         <h2 id="w-au-data">Data use</h2>
@@ -6088,21 +6574,21 @@
     </section>
     <section class="opt" aria-labelledby="w-tr-noanswer">
       <div class="opt__head">
-        <h2 id="w-tr-noanswer">The station isn't answering</h2>
+        <h2 id="w-tr-noanswer">The Core isn't answering</h2>
         <p>The station computer is off, asleep or offline. The phone says what it tried and what to check.</p>
       </div>
       <div class="slot"><div class="phone" data-trouble="noanswer"></div></div>
     </section>
     <section class="opt" aria-labelledby="w-tr-update">
       <div class="opt__head">
-        <h2 id="w-tr-update">The station needs updating</h2>
+        <h2 id="w-tr-update">The Core needs updating</h2>
         <p>Only when the station is two versions behind this app. The phone names both versions instead of failing without a reason.</p>
       </div>
       <div class="slot"><div class="phone" data-trouble="update"></div></div>
     </section>
     <section class="opt" aria-labelledby="w-tr-older">
       <div class="opt__head">
-        <h2 id="w-tr-older">An older station</h2>
+        <h2 id="w-tr-older">An older Core</h2>
         <p>One version behind, or less: the phone connects and greys only what the station can't do yet.</p>
       </div>
       <div class="slot"><div class="phone" data-trouble="older"></div></div>
@@ -6110,7 +6596,7 @@
     <section class="opt" aria-labelledby="w-tr-offline">
       <div class="opt__head">
         <h2 id="w-tr-offline">This phone is offline</h2>
-        <p>Not the station's fault. The phone waits for a network, and says the station has already unkeyed.</p>
+        <p>Not the station's fault. The phone waits for a network, and says the Core has already unkeyed.</p>
       </div>
       <div class="slot"><div class="phone" data-placement="fit" data-scene="offline"></div></div>
     </section>
@@ -6235,12 +6721,12 @@
 </section>
 <section class="sect" aria-label="The station's side">
   <h2 class="sect__title">The station's side</h2>
-  <p class="sect__note">The station is NereusSDR's daemon, running beside the radio. The remote design gives it three places to show its pairing code: on a computer, a Setup page; on a small box, a status page any browser on the network can open, and its console. Only the console or an already-paired device can reopen pairing.</p>
+  <p class="sect__note">The station is NereusSDR's daemon, running beside the radio. The remote design gives it three places to show its pairing code: on a computer, a Setup page; on a small box, a status page any browser on its own network can open while it is unclaimed, and nereusd pairing show over SSH. The code never goes to its log. Only the console or an already-paired device can reopen pairing.</p>
   <div class="board board--wins">
     <section class="opt" aria-labelledby="w-st-wait">
       <div class="opt__head">
         <h2 id="w-st-wait">On a computer: waiting</h2>
-        <p>Your call: a switch in the desktop app, on a new Remote Station page under CAT &amp; Network. The station keeps running after the app closes, so the phone can still reach the radio. Until a device pairs, the code shows here.</p>
+        <p>Your call: a switch in the desktop app, on a new Remote Access page under CAT &amp; Network. The station keeps running after the app closes, so the phone can still reach the radio. Until a device pairs, the code shows here.</p>
       </div>
       <div class="slot"><div data-station="waiting"></div></div>
     </section>
@@ -6261,7 +6747,7 @@
     <section class="opt" aria-labelledby="w-st-log">
       <div class="opt__head">
         <h2 id="w-st-log">On a small box: its console</h2>
-        <p>The code is in the log too, so a station out of reach can be claimed over SSH.</p>
+        <p>Over SSH, nereusd pairing show gives the code and nereusd status the state. The log never carries the code.</p>
       </div>
       <div class="slot"><div data-station="console"></div></div>
     </section>
@@ -6301,7 +6787,7 @@
     </section>
     <section class="opt" aria-labelledby="w-fl-setup">
       <div class="opt__head">
-        <h2 id="w-fl-setup">Set up a station</h2>
+        <h2 id="w-fl-setup">Set up a Core</h2>
         <p>What a station is, the two ways to run one, and what it does on its own.</p>
       </div>
       <div class="slot"><div class="phone" data-first="setup"></div></div>
@@ -6539,7 +7025,7 @@
   <div class="board board--four">
     <section class="opt" aria-labelledby="w-c-st">
       <div class="opt__head">
-        <h2 id="w-c-st">Your stations</h2>
+        <h2 id="w-c-st">Your Cores</h2>
         <p>Paired stations, then any unclaimed ones on this network.</p>
       </div>
       <div class="slot"><div class="phone" data-screen="stations"></div></div>
@@ -6550,6 +7036,13 @@
         <p>A number and two words, typed once.</p>
       </div>
       <div class="slot"><div class="phone" data-screen="pair"></div></div>
+    </section>
+    <section class="opt" aria-labelledby="w-c-addr">
+      <div class="opt__head">
+        <h2 id="w-c-addr">Enter an address</h2>
+        <p>The address alone, IPv6 without brackets, and the port in a field of its own.</p>
+      </div>
+      <div class="slot"><div class="phone" data-screen="addr"></div></div>
     </section>
     <section class="opt" aria-labelledby="w-c-lost">
       <div class="opt__head">
@@ -6628,7 +7121,7 @@
         <button class="tbtn" type="button" data-slice-btn aria-label="Active slice, tap to switch">Slice <span class="vfo__slice" data-slice-letter>A</span></button>
         <button class="tbtn" type="button">Pan 1</button>
         <button class="tbtn" type="button">Display</button>
-        <button class="tbtn tbtn--conn" type="button" aria-label="Station KG4VCF/shack, direct link, 38 milliseconds" data-conn-btn><span class="conn" data-conn><i class="conn__dot"></i><span class="conn__rtt" data-conn-text>38 ms</span></span></button>
+        <button class="tbtn tbtn--conn" type="button" aria-label="Core KG4VCF/shack, direct link, 38 milliseconds" data-conn-btn><span class="conn" data-conn><i class="conn__dot"></i><span class="conn__rtt" data-conn-text>38 ms</span></span></button>
         <button class="ibtn" type="button" aria-label="TX panel" aria-expanded="false" data-drawer-toggle="tx">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>
         </button>
@@ -6661,7 +7154,7 @@
     <div class="lost" data-lost hidden>
       <p class="lost__word">LINK LOST</p>
       <p class="lost__lead">You were transmitting when the link dropped.</p>
-      <p class="lost__body">The station stops transmitting on its own when the link goes. Your frequency and settings stay on the station.</p>
+      <p class="lost__body">The Core stops transmitting on its own when the link goes. Your frequency and settings stay on the Core.</p>
       <div class="strip" role="status">
         <i class="strip__pill"></i>
         <span class="strip__text" data-retry-text>Reconnecting</span>
@@ -7020,19 +7513,19 @@
     <div class="spage">
       <div class="sgroup">
         <button class="srow" type="button"><span class="srow__text"><b>Spot Hub</b><span>DX cluster, RBN, WSJT-X, POTA and PSK Reporter spots</span></span><span class="tag tag--both">Both</span><i class="chev" aria-hidden="true"></i></button>
-        <button class="srow" type="button"><span class="srow__text"><b>FreeDV Reporter</b><span>Live map of FreeDV stations, with QSY</span></span><span class="tag tag--station">Station</span><i class="chev" aria-hidden="true"></i></button>
-        <button class="srow" type="button"><span class="srow__text"><b>TX Equalizer</b><span>Ten-band transmit equalizer and profiles</span></span><span class="tag tag--station">Station</span><i class="chev" aria-hidden="true"></i></button>
-        <button class="srow" type="button"><span class="srow__text"><b>PureSignal</b><span>On, off and status; calibration stays at the station</span></span><span class="tag tag--station">Station</span><i class="chev" aria-hidden="true"></i></button>
-        <button class="srow" type="button"><span class="srow__text"><b>Diversity</b><span>Two-receiver diversity and phasing</span></span><span class="tag tag--station">Station</span><i class="chev" aria-hidden="true"></i></button>
-        <button class="srow" type="button"><span class="srow__text"><b>CWX</b><span>Send CW from text and memories</span></span><span class="tag tag--station">Station</span><i class="chev" aria-hidden="true"></i></button>
-        <button class="srow" type="button"><span class="srow__text"><b>Memory Manager</b><span>Stored frequencies, modes and filters</span></span><span class="tag tag--station">Station</span><i class="chev" aria-hidden="true"></i></button>
-        <button class="srow" type="button"><span class="srow__text"><b>CAT Control</b><span>Serial and network CAT at the station</span></span><span class="tag tag--station">Station</span><i class="chev" aria-hidden="true"></i></button>
-        <button class="srow" type="button"><span class="srow__text"><b>TCI Server</b><span>TCI clients connected to the station</span></span><span class="tag tag--station">Station</span><i class="chev" aria-hidden="true"></i></button>
-        <button class="srow" type="button"><span class="srow__text"><b>VAX Audio</b><span>Audio for digital-mode apps on the station computer</span></span><span class="tag tag--station">Station</span><i class="chev" aria-hidden="true"></i></button>
+        <button class="srow" type="button"><span class="srow__text"><b>FreeDV Reporter</b><span>Live map of FreeDV stations, with QSY</span></span><span class="tag tag--station">Core</span><i class="chev" aria-hidden="true"></i></button>
+        <button class="srow" type="button"><span class="srow__text"><b>TX Equalizer</b><span>Ten-band transmit equalizer and profiles</span></span><span class="tag tag--station">Core</span><i class="chev" aria-hidden="true"></i></button>
+        <button class="srow" type="button"><span class="srow__text"><b>PureSignal</b><span>On, off and status; calibration stays at the Core</span></span><span class="tag tag--station">Core</span><i class="chev" aria-hidden="true"></i></button>
+        <button class="srow" type="button"><span class="srow__text"><b>Diversity</b><span>Two-receiver diversity and phasing</span></span><span class="tag tag--station">Core</span><i class="chev" aria-hidden="true"></i></button>
+        <button class="srow" type="button"><span class="srow__text"><b>CWX</b><span>Send CW from text and memories</span></span><span class="tag tag--station">Core</span><i class="chev" aria-hidden="true"></i></button>
+        <button class="srow" type="button"><span class="srow__text"><b>Memory Manager</b><span>Stored frequencies, modes and filters</span></span><span class="tag tag--station">Core</span><i class="chev" aria-hidden="true"></i></button>
+        <button class="srow" type="button"><span class="srow__text"><b>CAT Control</b><span>Serial and network CAT at the Core</span></span><span class="tag tag--station">Core</span><i class="chev" aria-hidden="true"></i></button>
+        <button class="srow" type="button"><span class="srow__text"><b>TCI Server</b><span>TCI clients connected to the Core</span></span><span class="tag tag--station">Core</span><i class="chev" aria-hidden="true"></i></button>
+        <button class="srow" type="button"><span class="srow__text"><b>VAX Audio</b><span>Audio for digital-mode apps on the Core’s computer</span></span><span class="tag tag--station">Core</span><i class="chev" aria-hidden="true"></i></button>
         <button class="srow" type="button"><span class="srow__text"><b>MIDI Mapping</b><span>Bluetooth MIDI controllers paired with this phone</span></span><span class="tag tag--phone">This phone</span><i class="chev" aria-hidden="true"></i></button>
         <button class="srow" type="button"><span class="srow__text"><b>Macro Buttons</b><span>Your one-tap macros</span></span><span class="tag tag--phone">This phone</span><i class="chev" aria-hidden="true"></i></button>
-        <button class="srow" type="button"><span class="srow__text"><b>Network Diagnostics</b><span>The path to your station, round trip, loss and relay</span></span><span class="tag tag--both">Both</span><i class="chev" aria-hidden="true"></i></button>
-        <button class="srow" type="button"><span class="srow__text"><b>Support Bundle</b><span>Logs from this phone and the station for a bug report</span></span><span class="tag tag--both">Both</span><i class="chev" aria-hidden="true"></i></button>
+        <button class="srow" type="button"><span class="srow__text"><b>Network Diagnostics</b><span>The path to your Core, round trip, loss and relay</span></span><span class="tag tag--both">Both</span><i class="chev" aria-hidden="true"></i></button>
+        <button class="srow" type="button"><span class="srow__text"><b>Support Bundle</b><span>Logs from this phone and the Core for a bug report</span></span><span class="tag tag--both">Both</span><i class="chev" aria-hidden="true"></i></button>
       </div>
     </div>
     <nav class="tabbar" aria-label="Sections">
@@ -7085,7 +7578,7 @@
         <span>Slices</span><b>2 of 5</b>
         <span>PA</span><b>13.8 V</b>
         <span>ADC</span><b class="kv__ok">No overload</b>
-        <span>Station CPU</span><b>31%</b>
+        <span>Core CPU</span><b>31%</b>
       </div>
 
       <p class="shead">Accessories</p>
@@ -7099,7 +7592,7 @@
       <div class="sgroup">
         <button class="srow" type="button"><span class="srow__text"><b>Antenna Setup</b><span>Per-band RX and TX antennas</span></span><i class="chev" aria-hidden="true"></i></button>
         <button class="srow" type="button"><span class="srow__text"><b>Transverters</b><span>Offsets and bands</span></span><i class="chev" aria-hidden="true"></i></button>
-        <button class="srow" type="button"><span class="srow__text"><b>Manage Radios</b><span>Which radio the station connects to</span></span><i class="chev" aria-hidden="true"></i></button>
+        <button class="srow" type="button"><span class="srow__text"><b>Manage Radios</b><span>Which radio the Core connects to</span></span><i class="chev" aria-hidden="true"></i></button>
         <button class="srow" type="button"><span class="srow__text"><b>Protocol Info</b><span>Board, protocol and link details</span></span><i class="chev" aria-hidden="true"></i></button>
       </div>
     </div>
@@ -7140,22 +7633,22 @@
     </div>
     <div class="spage">
       <div class="sgroup">
-        <button class="srow" type="button"><span class="srow__text"><b>Devices</b><span>Paired phones and computers · Add a device</span></span><span class="tag tag--station">Station</span><i class="chev" aria-hidden="true"></i></button>
+        <button class="srow" type="button"><span class="srow__text"><b>Devices</b><span>Paired phones and computers · Add a device</span></span><span class="tag tag--station">Core</span><i class="chev" aria-hidden="true"></i></button>
       </div>
       <div class="sgroup">
         <button class="srow" type="button"><span class="srow__text"><b>General</b><span>Startup &amp; Preferences · UI Scale &amp; Theme · Navigation · Battery and sessions · Options</span></span><span class="tag tag--both">Both</span><i class="chev" aria-hidden="true"></i></button>
-        <button class="srow" type="button"><span class="srow__text"><b>Hardware</b><span>Hardware Config · DDC Routing</span></span><span class="tag tag--station">Station</span><i class="chev" aria-hidden="true"></i></button>
-        <button class="srow" type="button"><span class="srow__text"><b>PA</b><span>PA Gain · Watt Meter · PA Values</span></span><span class="tag tag--station">Station</span><i class="chev" aria-hidden="true"></i></button>
+        <button class="srow" type="button"><span class="srow__text"><b>Hardware</b><span>Hardware Config · DDC Routing</span></span><span class="tag tag--station">Core</span><i class="chev" aria-hidden="true"></i></button>
+        <button class="srow" type="button"><span class="srow__text"><b>PA</b><span>PA Gain · Watt Meter · PA Values</span></span><span class="tag tag--station">Core</span><i class="chev" aria-hidden="true"></i></button>
         <button class="srow" type="button"><span class="srow__text"><b>Audio</b><span>On this phone · Devices · TX Input · VAX · TCI · Advanced · TX Profile</span></span><span class="tag tag--both">Both</span><i class="chev" aria-hidden="true"></i></button>
-        <button class="srow" type="button"><span class="srow__text"><b>DSP</b><span>AGC/ALC · NR/ANF · NB/SNB · CW · AM/SAM · FM · CFC · TNF · Filter Presets · Options</span></span><span class="tag tag--station">Station</span><i class="chev" aria-hidden="true"></i></button>
+        <button class="srow" type="button"><span class="srow__text"><b>DSP</b><span>AGC/ALC · NR/ANF · NB/SNB · CW · AM/SAM · FM · CFC · TNF · Filter Presets · Options</span></span><span class="tag tag--station">Core</span><i class="chev" aria-hidden="true"></i></button>
         <button class="srow" type="button"><span class="srow__text"><b>Display</b><span>Spectrum Defaults · Spectrum Peaks · Waterfall Defaults · Grid &amp; Scales · Multimeter · TX Display</span></span><span class="tag tag--both">Both</span><i class="chev" aria-hidden="true"></i></button>
         <button class="srow" type="button"><span class="srow__text"><b>Transmit</b><span>Power · TX Profiles · Speech Processor · DEXP/VOX · PTT buttons</span></span><span class="tag tag--both">Both</span><i class="chev" aria-hidden="true"></i></button>
         <button class="srow" type="button"><span class="srow__text"><b>Appearance</b><span>Colors &amp; Theme · Meter Styles · Gradients</span></span><span class="tag tag--phone">This phone</span><i class="chev" aria-hidden="true"></i></button>
         <button class="srow" type="button"><span class="srow__text"><b>CAT &amp; Network</b><span>Serial Ports · TCI Server · Peripherals · 4O3A · RF-Kit · TCP/IP CAT · MIDI Control · Data use</span></span><span class="tag tag--both">Both</span><i class="chev" aria-hidden="true"></i></button>
-        <button class="srow" type="button"><span class="srow__text"><b>Test</b><span>Two-Tone IMD</span></span><span class="tag tag--station">Station</span><i class="chev" aria-hidden="true"></i></button>
+        <button class="srow" type="button"><span class="srow__text"><b>Test</b><span>Two-Tone IMD</span></span><span class="tag tag--station">Core</span><i class="chev" aria-hidden="true"></i></button>
         <button class="srow" type="button"><span class="srow__text"><b>Diagnostics</b><span>Radio Status · Connection Quality · Settings Validation · Logs · Export / Import</span></span><span class="tag tag--both">Both</span><i class="chev" aria-hidden="true"></i></button>
       </div>
-      <p class="snote">Station settings are shared by every device paired with KG4VCF/shack. Settings marked This phone stay on this phone.</p>
+      <p class="snote">Core settings are shared by every device paired with KG4VCF/shack. Settings marked This phone stay on this phone.</p>
     </div>
     <nav class="tabbar" aria-label="Sections">
       <button class="tab" type="button">
@@ -7198,8 +7691,8 @@
       </div>
 
       <div class="warnbox" role="note">
-        <b>Back up the station key.</b>
-        <span>The key is the station. If its card fails without a backup, every device has to pair again.</span>
+        <b>Back up the Core’s key.</b>
+        <span>The key is the Core’s identity. If its card fails without a backup, every device has to pair again.</span>
         <button class="rbtn" type="button">Show me how</button>
       </div>
 
@@ -7269,11 +7762,11 @@
     <div class="island"></div>
     <div class="nav">
       <span></span>
-      <h3 class="nav__title">Stations</h3>
-      <button class="nav__btn" type="button" aria-label="Add a station">+</button>
+      <h3 class="nav__title">Cores</h3>
+      <button class="nav__btn" type="button" aria-label="Add a Core">+</button>
     </div>
     <div class="list">
-      <p class="list__head">Your stations</p>
+      <p class="list__head">Your Cores</p>
       <div class="row">
         <i class="pill pill--on" aria-hidden="true"></i>
         <div class="row__text"><b>KG4VCF/shack</b><span>ANAN-G2 · Saturn · seen just now</span></div>
@@ -7292,14 +7785,14 @@
       <p class="list__head">On this network</p>
       <div class="row">
         <i class="pill pill--on" aria-hidden="true"></i>
-        <div class="row__text"><b>Unclaimed station</b><span>ANAN-G2E · 192.168.1.40</span></div>
+        <div class="row__text"><b>Unclaimed Core</b><span>ANAN-G2E · 192.168.1.40</span></div>
         <button class="rbtn rbtn--go" type="button" data-pair>Pair</button>
       </div>
       <div class="list__actions">
         <button class="wide" type="button">Pair with a code</button>
         <button class="wide" type="button">Enter an address</button>
       </div>
-      <p class="list__note">This phone connects to a NereusSDR station, not straight to a radio.</p>
+      <p class="list__note">This phone connects to a NereusSDR Core, not straight to a radio.</p>
     </div>
     <div class="homebar"></div>
   </div>
@@ -7309,17 +7802,17 @@
   <div class="scr">
     <div class="island"></div>
     <div class="nav">
-      <button class="nav__back" type="button">‹ Stations</button>
+      <button class="nav__back" type="button">‹ Cores</button>
       <h3 class="nav__title">Pair with a code</h3>
       <span></span>
     </div>
     <div class="form">
-      <p>Type the code your station shows, or the one under <b>Add a device</b> on a phone or computer that's already paired.</p>
+      <p>Type the code your Core shows, or the one under <b>Add a device</b> on a phone or computer that's already paired.</p>
       <label class="code" for="pair-code"><span>Pairing code</span><input id="pair-code" type="text" value="7-anvil-harbor" autocomplete="off" autocapitalize="none" spellcheck="false" data-code></label>
       <p class="hint">A number and two words, like 7-anvil-harbor.</p>
       <button class="primary" type="button" data-pair-btn>Pair</button>
-      <p class="fine">A code works once. A wrong guess uses it up, and the station shows a new one.</p>
-      <p class="fine">The station will list this phone as JJ's iPhone.</p>
+      <p class="fine">A code works once. A wrong guess uses it up, and the Core shows a new one.</p>
+      <p class="fine">The Core will list this phone as JJ's iPhone.</p>
     </div>
     <div class="homebar"></div>
   </div>
@@ -7414,7 +7907,7 @@
     <div class="spage">
       <div class="stn">
         <i class="pill pill--on" aria-hidden="true"></i>
-        <div class="stn__text"><b>RF2K-S</b><span>Polled by the station · band from the radio</span></div>
+        <div class="stn__text"><b>RF2K-S</b><span>Polled by the Core · band from the radio</span></div>
         <button class="opbtn" type="button" data-opbtn data-cycle="STANDBY,OPERATE">STANDBY</button>
       </div>
       <div class="abody abody--box">
@@ -7458,7 +7951,7 @@
         </div>
         <span class="itbar__station"><b>KG4VCF/shack</b><i>ANAN-G2 · Saturn</i></span>
         <div class="itbar__grp itbar__grp--end">
-          <button class="tbtn tbtn--conn" type="button" aria-label="Station KG4VCF/shack, direct link, 38 milliseconds" data-conn-btn><span class="conn" data-conn><i class="conn__dot"></i><span>Direct</span><span class="conn__rtt" data-conn-text>38 ms</span></span></button>
+          <button class="tbtn tbtn--conn" type="button" aria-label="Core KG4VCF/shack, direct link, 38 milliseconds" data-conn-btn><span class="conn" data-conn><i class="conn__dot"></i><span>Direct</span><span class="conn__rtt" data-conn-text>38 ms</span></span></button>
           <button class="ibtn" type="button" aria-label="Applet column" aria-expanded="true" data-col-toggle><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
         </div>
       </div>
@@ -7626,7 +8119,7 @@
       <div class="tbar__row tbar__row--land">
         <div class="itbar__grp"><button class="ibtn" type="button" aria-label="RX panel" aria-expanded="false" data-drawer-toggle="rx"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button><button class="ibtn" type="button" aria-label="Mute audio" aria-pressed="false" data-toggle><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg></button><button class="tbtn" type="button" data-slice-btn aria-label="Active slice, tap to switch">Slice <span class="vfo__slice" data-slice-letter>A</span></button><button class="tbtn" type="button">Pan 1</button><button class="tbtn" type="button">Display</button></div>
         <span class="itbar__station"><b>KG4VCF/shack</b><i>ANAN-G2 · Saturn</i></span>
-        <div class="itbar__grp itbar__grp--end"><button class="tbtn tbtn--conn" type="button" aria-label="Station KG4VCF/shack, direct link, 38 milliseconds" data-conn-btn><span class="conn" data-conn><i class="conn__dot"></i><span>Direct</span><span class="conn__rtt" data-conn-text>38 ms</span></span></button><button class="ibtn" type="button" aria-label="TX panel" aria-expanded="false" data-drawer-toggle="tx"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button></div>
+        <div class="itbar__grp itbar__grp--end"><button class="tbtn tbtn--conn" type="button" aria-label="Core KG4VCF/shack, direct link, 38 milliseconds" data-conn-btn><span class="conn" data-conn><i class="conn__dot"></i><span>Direct</span><span class="conn__rtt" data-conn-text>38 ms</span></span></button><button class="ibtn" type="button" aria-label="TX panel" aria-expanded="false" data-drawer-toggle="tx"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button></div>
       </div>
     </div>
 
@@ -7656,7 +8149,7 @@
     <div class="lost" data-lost hidden>
       <p class="lost__word">LINK LOST</p>
       <p class="lost__lead">You were transmitting when the link dropped.</p>
-      <p class="lost__body">The station stops transmitting on its own when the link goes. Your frequency and settings stay on the station.</p>
+      <p class="lost__body">The Core stops transmitting on its own when the link goes. Your frequency and settings stay on the Core.</p>
       <div class="strip" role="status">
         <i class="strip__pill"></i>
         <span class="strip__text" data-retry-text>Reconnecting</span>
@@ -7784,7 +8277,7 @@
       <div class="tbar__row tbar__row--land">
         <div class="itbar__grp"><button class="ibtn" type="button" aria-label="Mute audio" aria-pressed="false" data-toggle><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg></button><button class="tbtn" type="button" data-slice-btn aria-label="Active slice, tap to switch">Slice <span class="vfo__slice" data-slice-letter>A</span></button><button class="tbtn" type="button">Pan 1</button><button class="tbtn" type="button">Display</button></div>
         <span class="itbar__station"><b>KG4VCF/shack</b><i>ANAN-G2 · Saturn</i></span>
-        <div class="itbar__grp itbar__grp--end"><button class="tbtn tbtn--conn" type="button" aria-label="Station KG4VCF/shack, direct link, 38 milliseconds" data-conn-btn><span class="conn" data-conn><i class="conn__dot"></i><span>Direct</span><span class="conn__rtt" data-conn-text>38 ms</span></span></button><button class="ibtn" type="button" aria-label="Applet column" aria-expanded="true" data-col-toggle><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button></div>
+        <div class="itbar__grp itbar__grp--end"><button class="tbtn tbtn--conn" type="button" aria-label="Core KG4VCF/shack, direct link, 38 milliseconds" data-conn-btn><span class="conn" data-conn><i class="conn__dot"></i><span>Direct</span><span class="conn__rtt" data-conn-text>38 ms</span></span></button><button class="ibtn" type="button" aria-label="Applet column" aria-expanded="true" data-col-toggle><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button></div>
       </div>
     </div>
 
@@ -7809,7 +8302,7 @@
     <div class="lost" data-lost hidden>
       <p class="lost__word">LINK LOST</p>
       <p class="lost__lead">You were transmitting when the link dropped.</p>
-      <p class="lost__body">The station stops transmitting on its own when the link goes. Your frequency and settings stay on the station.</p>
+      <p class="lost__body">The Core stops transmitting on its own when the link goes. Your frequency and settings stay on the Core.</p>
       <div class="strip" role="status">
         <i class="strip__pill"></i>
         <span class="strip__text" data-retry-text>Reconnecting</span>
@@ -8058,8 +8551,8 @@
       <h3 class="fl__title">NereusSDR</h3>
       <p class="fl__tag">Your station, from anywhere.</p>
     </div>
-    <p class="fl__lead">This app runs your radio through a NereusSDR station: a computer or a small box connected to the radio at home.</p>
-    <svg class="fl__chain" viewBox="0 0 330 92" role="img" aria-label="Your radio connects to the NereusSDR station, which connects to this phone over Wi-Fi or the internet">
+    <p class="fl__lead">This app runs your radio through a NereusSDR Core: a computer or a small box connected to the radio at home.</p>
+    <svg class="fl__chain" viewBox="0 0 330 92" role="img" aria-label="Your radio connects to the NereusSDR Core, which connects to this phone over Wi-Fi or the internet">
       <g fill="none" stroke-linecap="round" stroke-linejoin="round">
         <rect x="8" y="16" width="70" height="40" rx="5" stroke="#6888a0" stroke-width="1.6"/>
         <rect x="15" y="23" width="30" height="11" rx="1.5" stroke="#00b4d8" stroke-width="1.3"/>
@@ -8076,12 +8569,12 @@
         <path d="M267 42l4-6 4 3 4-9 4 7 4-4 4 8" stroke="#00e5ff" stroke-width="1.3"/>
       </g>
       <text x="43" y="80" text-anchor="middle">Your radio</text>
-      <text x="165" y="80" text-anchor="middle">The station</text>
+      <text x="165" y="80" text-anchor="middle">The Core</text>
       <text x="279" y="84" text-anchor="middle">This phone</text>
     </svg>
     <div class="fl__actions">
-      <button class="wide wide--go" type="button">Find my station</button>
-      <button class="wide" type="button">Set up a station</button>
+      <button class="wide wide--go" type="button">Find my Core</button>
+      <button class="wide" type="button">Set up a Core</button>
     </div>
     <div class="homebar"></div>
   </div>
@@ -8093,7 +8586,7 @@
     <div class="island"></div>
     <div class="nav">
       <button class="nav__back" type="button">‹ Back</button>
-      <h3 class="nav__title">Find my station</h3>
+      <h3 class="nav__title">Find my Core</h3>
       <span class="nav__end"></span>
     </div>
     <div class="list">
@@ -8104,7 +8597,7 @@
       <div class="ios-alert" role="alertdialog" aria-label="Local network permission">
         <div class="ios-alert__body">
           <b>“NereusSDR” would like to find and connect to devices on your local network.</b>
-          <span>NereusSDR looks for your station on this Wi-Fi so it can connect straight to it.</span>
+          <span>NereusSDR looks for your Core on this Wi-Fi so it can connect straight to it.</span>
         </div>
         <div class="ios-alert__btns">
           <button type="button" data-ios-dismiss>Don’t Allow</button>
@@ -8122,24 +8615,24 @@
     <div class="island"></div>
     <div class="nav">
       <button class="nav__back" type="button">‹ Back</button>
-      <h3 class="nav__title">Find my station</h3>
+      <h3 class="nav__title">Find my Core</h3>
       <span class="nav__end"></span>
     </div>
     <div class="list">
-      <p class="list__head">Your stations</p>
+      <p class="list__head">Your Cores</p>
       <p class="fl__empty">None yet. Pairing adds one here, and it stays reachable from anywhere.</p>
       <p class="list__head">On this network</p>
       <div class="row">
         <i class="pill pill--on" aria-hidden="true"></i>
-        <div class="row__text"><b>Unclaimed station</b><span>ANAN-G2 · 192.168.1.40</span></div>
+        <div class="row__text"><b>Unclaimed Core</b><span>ANAN-G2 · 192.168.1.40</span></div>
         <button class="rbtn rbtn--go" type="button" data-pair>Pair</button>
       </div>
-      <p class="list__note">A new station waits for its first device. Pairing claims it, and after that only a paired device can add another.</p>
+      <p class="list__note">A new Core waits for its first device. Pairing claims it, and after that only a paired device can add another.</p>
       <div class="list__actions">
         <button class="wide" type="button">Pair with a code</button>
         <button class="wide" type="button">Enter an address</button>
       </div>
-      <p class="list__note">Not on the station's Wi-Fi? The station shows a code until it's claimed. Type it here from anywhere.</p>
+      <p class="list__note">Not on the station's Wi-Fi? The Core shows a code until it's claimed. Type it here from anywhere.</p>
     </div>
     <div class="homebar"></div>
   </div>
@@ -8171,26 +8664,26 @@
     <div class="island"></div>
     <div class="nav">
       <button class="nav__back" type="button">‹ Back</button>
-      <h3 class="nav__title">Set up a station</h3>
+      <h3 class="nav__title">Set up a Core</h3>
       <span class="nav__end"></span>
     </div>
     <div class="spage">
-      <p class="fl__intro">The station is the part that talks to the radio. It sits next to it, stays on, and does all the signal processing, so the phone only shows and controls.</p>
+      <p class="fl__intro">The Core is the part that talks to the radio. It sits next to it, stays on, and does all the signal processing, so the phone only shows and controls.</p>
       <div class="sgroup">
         <div class="fl__way">
           <svg viewBox="0 0 40 40" aria-hidden="true"><rect x="5" y="7" width="30" height="20" rx="2"/><path d="M15 33h10M20 27v6"/></svg>
-          <span class="fl__waytext"><b>On a computer</b><span>Install NereusSDR on the Windows, Mac or Linux computer connected to your radio, and run it as a station.</span></span>
+          <span class="fl__waytext"><b>On a computer</b><span>Install NereusSDR on the Windows, Mac or Linux computer connected to your radio, and turn on its Core.</span></span>
         </div>
         <div class="fl__way">
           <svg viewBox="0 0 40 40" aria-hidden="true"><rect x="7" y="11" width="26" height="18" rx="2"/><circle cx="13" cy="20" r="2"/><path d="M19 17h9M19 23h6"/></svg>
-          <span class="fl__waytext"><b>On a small box</b><span>Flash the NereusSDR station card for a small single-board computer, plug it into your network next to the radio, and power it.</span></span>
+          <span class="fl__waytext"><b>On a small box</b><span>Flash the NereusSDR Core card for a small single-board computer, plug it into your network next to the radio, and power it.</span></span>
         </div>
       </div>
       <p class="shead">Then</p>
       <div class="sgroup">
         <div class="fl__way fl__way--step"><i>1</i><span class="fl__waytext"><b>It finds the radio by itself</b><span>on the same network, as the desktop does today.</span></span></div>
         <div class="fl__way fl__way--step"><i>2</i><span class="fl__waytext"><b>It waits for its first device</b><span>showing a code, with no time limit.</span></span></div>
-        <div class="fl__way fl__way--step"><i>3</i><span class="fl__waytext"><b>Come back and tap Find my station</b><span>or type its code from anywhere.</span></span></div>
+        <div class="fl__way fl__way--step"><i>3</i><span class="fl__waytext"><b>Come back and tap Find my Core</b><span>or type its code from anywhere.</span></span></div>
       </div>
       <p class="snote">The full guide is at <b class="fl__url">nereussdr.com</b></p>
     </div>
@@ -8215,7 +8708,7 @@
     <span class="dt dt--kid">RF-Kit</span>
     <span class="dt dt--kid">TCP/IP CAT</span>
     <span class="dt dt--kid">MIDI Control</span>
-    <span class="dt dt--kid dt--sel">Remote Station</span>
+    <span class="dt dt--kid dt--sel">Remote Access</span>
     <span class="dt">Keyboard</span>
     <span class="dt">Test</span>
     <span class="dt">Diagnostics</span>
@@ -8224,8 +8717,8 @@
 
 <template id="tpl-st-host">
   <fieldset class="dgroup">
-    <legend>This computer as a station</legend>
-    <div class="drow2"><span>Run a station on this computer</span><button class="dtog is-on" type="button" data-dtog>On</button></div>
+    <legend>This computer as a Core</legend>
+    <div class="drow2"><span>Run a Core on this computer</span><button class="dtog is-on" type="button" data-dtog>On</button></div>
     <div class="drow2"><span>Keep it running when NereusSDR is closed</span><button class="dtog is-on" type="button" data-dtog>On</button></div>
     <div class="drow2"><span>Start it with the computer</span><button class="dtog is-on" type="button" data-dtog>On</button></div>
     <p class="dstatus"><i class="pill pill--on" aria-hidden="true"></i><span>Running: <b>KG4VCF/shack</b>, ANAN-G2 (Saturn) at 192.168.1.20</span></p>
@@ -8238,10 +8731,10 @@
     <div class="dsk">
       <div data-tree-slot></div>
       <div class="dsk__page">
-        <h4 class="dsk__h">Remote Station</h4>
+        <h4 class="dsk__h">Remote Access</h4>
         <div data-host-slot></div>
         <fieldset class="dgroup">
-          <legend>Station name</legend>
+          <legend>Core name</legend>
           <div class="drow2"><span class="dfield">KG4VCF/shack</span><button class="dbtn" type="button">Rename</button></div>
           <p class="dnote">Your callsign, a slash, and any name you like. Only you see it.</p>
         </fieldset>
@@ -8249,7 +8742,7 @@
           <legend>Pairing</legend>
           <p class="dpair__lead">Waiting for its first device.</p>
           <output class="dpair__code">7-anvil-harbor</output>
-          <p class="dnote">On the phone, tap <b>Find my station</b> on this Wi-Fi, or type this code from anywhere. There's no time limit; it closes when the first device pairs.</p>
+          <p class="dnote">On the phone, tap <b>Find my Core</b> on this Wi-Fi, or type this code from anywhere. There's no time limit; it closes when the first device pairs.</p>
         </fieldset>
       </div>
     </div>
@@ -8262,7 +8755,7 @@
     <div class="dsk">
       <div data-tree-slot></div>
       <div class="dsk__page">
-        <h4 class="dsk__h">Remote Station</h4>
+        <h4 class="dsk__h">Remote Access</h4>
         <div data-host-slot></div>
         <fieldset class="dgroup">
           <legend>Paired devices</legend>
@@ -8289,18 +8782,18 @@
   <div class="win win--web" data-win>
     <div class="win__bar"><span class="win__dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="win__addr">http://192.168.1.40</span></div>
     <div class="sweb">
-      <div class="sweb__head"><i class="appicon" aria-hidden="true"></i><span><b>NereusSDR station</b><small>KG4VCF/shack</small></span></div>
+      <div class="sweb__head"><i class="appicon" aria-hidden="true"></i><span><b>NereusSDR Core</b><small>KG4VCF/shack</small></span></div>
       <div class="sweb__grid">
         <span>Radio</span><b><i class="pill pill--on" aria-hidden="true"></i>ANAN-G2 (Saturn), 192.168.1.20, Protocol 2</b>
-        <span>Station</span><b>Running for 12 minutes</b>
+        <span>Core</span><b>Running for 12 minutes</b>
         <span>Devices</span><b>None paired yet</b>
       </div>
       <div class="sweb__pair">
         <span class="sweb__label">Waiting for its first device</span>
         <output class="dpair__code">7-anvil-harbor</output>
-        <p>Pair from the NereusSDR app. On this Wi-Fi the station appears by itself; from anywhere, type this code.</p>
+        <p>Pair from the NereusSDR app. On this Wi-Fi the Core appears by itself; from anywhere, type this code.</p>
       </div>
-      <p class="sweb__foot">This page only shows the station. Changes are made in the app, or at the station's console.</p>
+      <p class="sweb__foot">This page only shows the Core. Changes are made in the app, or at the Core's console.</p>
     </div>
   </div>
 </template>
@@ -8308,15 +8801,19 @@
 <!-- The station's side, on a small box: its console log, over SSH. -->
 <template id="tpl-st-console">
   <div class="win win--term" data-win>
-    <div class="win__bar"><span class="win__dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="win__title">nereusd log on 192.168.1.40</span></div>
-    <pre class="term">19:42:07  NereusSDR station starting
-19:42:08  Radio found: ANAN-G2 (Saturn) at 192.168.1.20, Protocol 2
-19:42:08  Station key created. Name: KG4VCF/shack
-19:42:08  Status page at http://192.168.1.40
-<span class="term__hi">19:42:08  Waiting for its first device. Pairing code: 7-anvil-harbor</span>
-19:51:33  Paired: JJ's iPhone. Pairing is now closed.
-19:51:34  JJ's iPhone connected, direct, 38 ms
-<span class="term__dim">Reopening pairing and resetting to unclaimed are console commands; their names are still to be decided.</span></pre>
+    <div class="win__bar"><span class="win__dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="win__title">ssh nereus@192.168.1.40</span></div>
+    <pre class="term">$ sudo nereusd status
+This Core: KG4VCF/shack
+Radio: ANAN-G2, Saturn, connected
+Remote access: on
+Paired devices: 0
+Pairing: open until the first device pairs (nereusd pairing show gives the code)
+Status page: http://192.168.1.40:47911
+$ sudo nereusd pairing show
+Pairing is open: no device has paired with this Core yet.
+<span class="term__hi">Pairing code: 7-anvil-harbor</span>
+Type it into the NereusSDR app to pair a device with this Core.
+<span class="term__dim">The code never goes to the log. Once a device has paired, nereusd pairing open lets one more pair.</span></pre>
   </div>
 </template>
 
@@ -8326,11 +8823,11 @@
     <div class="island"></div>
     <div class="nav">
       <span></span>
-      <h3 class="nav__title">Stations</h3>
-      <button class="nav__btn" type="button" aria-label="Add a station">+</button>
+      <h3 class="nav__title">Cores</h3>
+      <button class="nav__btn" type="button" aria-label="Add a Core">+</button>
     </div>
     <div class="list">
-      <p class="list__head">Your stations</p>
+      <p class="list__head">Your Cores</p>
       <div class="row">
         <i class="pill pill--on" aria-hidden="true"></i>
         <div class="row__text"><b>KG4VCF/shack</b><span>ANAN-G2 · Saturn · in use</span></div>
@@ -8348,12 +8845,12 @@
       </div>
     </div>
     <div class="tdim" aria-hidden="true"></div>
-    <div class="tsheet" role="dialog" aria-label="Station in use">
+    <div class="tsheet" role="dialog" aria-label="Core in use">
       <i class="dsheet__grab" aria-hidden="true"></i>
       <p class="tsheet__kicker">KG4VCF/shack is in use</p>
       <div class="tsheet__who"><svg class="tsheet__dev" viewBox="0 0 40 40" aria-hidden="true"><rect x="7" y="4" width="26" height="32" rx="3.5"/><path d="M17 32h6"/></svg><span><b>iPad Pro</b><small>Connected 40 minutes · last active 2 minutes ago · at home</small></span></div>
       <div class="tsheet__what"><span class="vfo__slice">A</span><span>Listening on <b>7.236.400</b> LSB</span></div>
-      <p class="tsheet__note">Taking over moves the session to this phone. The iPad is told who took it, and your frequency and settings stay on the station.</p>
+      <p class="tsheet__note">Taking over moves the session to this phone. The iPad is told who took it, and your frequency and settings stay on the Core.</p>
       <button class="wide wide--go" type="button" data-takeover>Take over</button>
       <button class="wide" type="button" data-to-cancel>Cancel</button>
     </div>
@@ -8366,11 +8863,11 @@
     <div class="island"></div>
     <div class="nav">
       <span></span>
-      <h3 class="nav__title">Stations</h3>
-      <button class="nav__btn" type="button" aria-label="Add a station">+</button>
+      <h3 class="nav__title">Cores</h3>
+      <button class="nav__btn" type="button" aria-label="Add a Core">+</button>
     </div>
     <div class="list">
-      <p class="list__head">Your stations</p>
+      <p class="list__head">Your Cores</p>
       <div class="row">
         <i class="pill pill--on" aria-hidden="true"></i>
         <div class="row__text"><b>KG4VCF/shack</b><span>ANAN-G2 · Saturn · in use</span></div>
@@ -8388,7 +8885,7 @@
       </div>
     </div>
     <div class="tdim" aria-hidden="true"></div>
-    <div class="tsheet" role="dialog" aria-label="Station in use">
+    <div class="tsheet" role="dialog" aria-label="Core in use">
       <i class="dsheet__grab" aria-hidden="true"></i>
       <p class="tsheet__kicker">KG4VCF/shack is in use</p>
       <div class="tsheet__who"><svg class="tsheet__dev" viewBox="0 0 40 40" aria-hidden="true"><rect x="7" y="4" width="26" height="32" rx="3.5"/><path d="M17 32h6"/></svg><span><b>iPad Pro</b><small>Connected 40 minutes · last active just now · at home</small></span></div>
@@ -8423,10 +8920,10 @@
     <div class="spage">
       <p class="shead">Spots</p>
       <div class="sgroup">
-        <button class="srow" type="button"><span class="srow__text"><b>Spot List</b><span>13 on 40m · 212 in all · newest 19:43</span></span><span class="tag tag--station">Station</span><i class="chev" aria-hidden="true"></i></button>
+        <button class="srow" type="button"><span class="srow__text"><b>Spot List</b><span>13 on 40m · 212 in all · newest 19:43</span></span><span class="tag tag--station">Core</span><i class="chev" aria-hidden="true"></i></button>
         <button class="srow" type="button"><span class="srow__text"><b>Display</b><span>On · 3 levels · halfway · 16 pt</span></span><span class="tag tag--phone">This phone</span><i class="chev" aria-hidden="true"></i></button>
       </div>
-      <p class="shead">Sources, at the station</p>
+      <p class="shead">Sources, at the Core</p>
       <div class="sgroup">
         <button class="srow" type="button"><i class="pill pill--on" aria-hidden="true"></i><span class="srow__text"><b>Cluster</b><span>dxc.nc7j.com:7300 · connected</span></span><i class="chev" aria-hidden="true"></i></button>
         <button class="srow" type="button"><i class="pill pill--idle" aria-hidden="true"></i><span class="srow__text"><b>RBN</b><span>Off</span></span><i class="chev" aria-hidden="true"></i></button>
@@ -8438,9 +8935,9 @@
       </div>
       <p class="shead">Identity</p>
       <div class="sgroup">
-        <button class="srow" type="button"><span class="srow__text"><b>Settings</b><span>KG4VCF · grid not set · used by every source</span></span><span class="tag tag--station">Station</span><i class="chev" aria-hidden="true"></i></button>
+        <button class="srow" type="button"><span class="srow__text"><b>Settings</b><span>KG4VCF · grid not set · used by every source</span></span><span class="tag tag--station">Core</span><i class="chev" aria-hidden="true"></i></button>
       </div>
-      <p class="snote">The station keeps the source connections, so spots keep arriving while the phone is away. How they look on the band is set on each phone.</p>
+      <p class="snote">The Core keeps the source connections, so spots keep arriving while the phone is away. How they look on the band is set on each phone.</p>
     </div>
     <nav class="tabbar" aria-label="Sections">
       <button class="tab" type="button">
@@ -8480,7 +8977,7 @@
       <div class="shpills" role="group" aria-label="Sources"><button class="nbtn is-blue" type="button" aria-pressed="true" data-toggle>DX</button><button class="nbtn is-blue" type="button" aria-pressed="true" data-toggle>RBN</button><button class="nbtn is-blue" type="button" aria-pressed="true" data-toggle>JT</button><button class="nbtn is-blue" type="button" aria-pressed="true" data-toggle>COL</button><button class="nbtn is-blue" type="button" aria-pressed="true" data-toggle>POT</button><button class="nbtn is-blue" type="button" aria-pressed="true" data-toggle>FDR</button><button class="nbtn is-blue" type="button" aria-pressed="true" data-toggle>PSK</button></div>
       <div class="shbands" role="group" aria-label="Band"><button class="nbtn is-blue" type="button" aria-pressed="true" data-shband>40m</button><button class="nbtn is-blue" type="button" aria-pressed="false" data-shband>All bands</button></div>
       <div class="sgroup" data-sh-rows></div>
-      <p class="snote">Tap a spot to tune to it. The list is the station's, the same one the desktop shows.</p>
+      <p class="snote">Tap a spot to tune to it. The list is the Core's, the same one the desktop shows.</p>
     </div>
     <nav class="tabbar" aria-label="Sections">
       <button class="tab" type="button">
@@ -8529,10 +9026,10 @@
       <p class="snote">On the phone, spots never start behind a flag, whatever the position.</p>
       <p class="shead">Show on the band <span class="tag tag--phone">This phone</span></p>
       <div class="shpills" role="group" aria-label="Sources shown on the band"><button class="nbtn is-blue" type="button" aria-pressed="true" data-toggle>DX</button><button class="nbtn is-blue" type="button" aria-pressed="true" data-toggle>RBN</button><button class="nbtn is-blue" type="button" aria-pressed="true" data-toggle>JT</button><button class="nbtn is-blue" type="button" aria-pressed="true" data-toggle>COL</button><button class="nbtn is-blue" type="button" aria-pressed="true" data-toggle>POT</button><button class="nbtn is-blue" type="button" aria-pressed="true" data-toggle>FDR</button><button class="nbtn is-blue" type="button" aria-pressed="true" data-toggle>PSK</button></div>
-      <p class="shead">At the station <span class="tag tag--station">Station</span></p>
+      <p class="shead">At the Core <span class="tag tag--station">Core</span></p>
       <div class="sgroup">
         <div class="trow"><label class="af shslider"><span>Lifetime</span><input type="range" min="0" max="44" value="15" aria-label="Lifetime" data-sh-slider><output class="inset">30 mins</output></label></div>
-        <div class="trow"><span class="trow__text"><span class="trow__label">Clear all spots</span><small>For every device on this station</small></span><button class="revoke" type="button">Clear</button></div>
+        <div class="trow"><span class="trow__text"><span class="trow__label">Clear all spots</span><small>For every device on this Core</small></span><button class="revoke" type="button">Clear</button></div>
       </div>
       <p class="shead">Statistics</p>
       <div class="shstats">
@@ -8575,7 +9072,7 @@
     <div class="nav">
       <button class="nav__back" type="button">‹ Spot Hub</button>
       <h3 class="nav__title">Cluster</h3>
-      <span class="nav__end"><span class="tag tag--station">Station</span></span>
+      <span class="nav__end"><span class="tag tag--station">Core</span></span>
     </div>
     <div class="spage">
       <div class="stn">
@@ -8588,7 +9085,7 @@
         <div class="trow"><span class="trow__text"><span class="trow__label">Server</span></span><span class="shfield">dxc.nc7j.com</span></div>
         <div class="trow"><span class="trow__text"><span class="trow__label">Port</span></span><span class="shfield shfield--short">7300</span></div>
         <div class="trow"><span class="trow__text"><span class="trow__label">Callsign</span></span><span class="shfield shfield--short">KG4VCF</span></div>
-        <div class="trow"><span class="trow__text"><span class="trow__label">Auto-connect</span><small>When the station starts</small></span><button class="stog" type="button" aria-pressed="false" data-stog>Off</button></div>
+        <div class="trow"><span class="trow__text"><span class="trow__label">Auto-connect</span><small>When the Core starts</small></span><button class="stog" type="button" aria-pressed="false" data-stog>Off</button></div>
       </div>
       <p class="shead">Console</p>
       <pre class="shcon">DX de W2ABC:     7233.0  VK2XYZ       CQ DX, 5/9           1942Z
@@ -8596,7 +9093,7 @@ DX de N2ABC:     7245.5  KP4XYZ       working split?       1941Z
 DX de K6ABC:     7258.5  ZL2ABC       grey line            1943Z
 DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       <div class="shcmd"><span class="shfield shfield--grow">sh/dx 40</span><button class="rbtn rbtn--go" type="button">Send</button></div>
-      <p class="snote">The station holds this connection, so spots keep coming while the phone is off.</p>
+      <p class="snote">The Core holds this connection, so spots keep coming while the phone is off.</p>
     </div>
     <nav class="tabbar" aria-label="Sections">
       <button class="tab" type="button">
@@ -8776,7 +9273,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
     <div class="nav">
       <button class="nav__back" type="button">‹ Spot Hub</button>
       <h3 class="nav__title">FreeDV</h3>
-      <span class="nav__end"><span class="tag tag--station">Station</span></span>
+      <span class="nav__end"><span class="tag tag--station">Core</span></span>
     </div>
     <div class="spage">
       <div class="stn">
@@ -8784,7 +9281,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
         <div class="stn__text stn__text--plain"><b>Connected</b><span>qso.freedv.org · 38 stations on the air</span></div>
         <button class="rbtn" type="button">Disconnect</button>
       </div>
-      <p class="shead">At the station <span class="tag tag--station">Station</span></p>
+      <p class="shead">At the Core <span class="tag tag--station">Core</span></p>
       <div class="sgroup">
         <div class="trow"><span class="trow__text"><span class="trow__label">Report decodes to PSK Reporter</span></span><button class="stog is-on" type="button" aria-pressed="true" data-stog>On</button></div>
         <div class="trow"><span class="trow__text"><span class="trow__label">Hide my station from the dashboard</span><small>Others won’t see KG4VCF</small></span><button class="stog" type="button" aria-pressed="false" data-stog>Off</button></div>
@@ -8828,11 +9325,11 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
     <div class="island"></div>
     <div class="nav">
       <span></span>
-      <h3 class="nav__title">Stations</h3>
-      <button class="nav__btn" type="button" aria-label="Add a station">+</button>
+      <h3 class="nav__title">Cores</h3>
+      <button class="nav__btn" type="button" aria-label="Add a Core">+</button>
     </div>
     <div class="list">
-      <p class="list__head">Your stations</p>
+      <p class="list__head">Your Cores</p>
       <div class="row">
         <i class="pill pill--off" aria-hidden="true"></i>
         <div class="row__text"><b>KG4VCF/shack</b><span>ANAN-G2 · Saturn · last seen 3 hours ago</span></div>
@@ -8851,9 +9348,9 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       <div class="trtried">
         <span><i class="pill pill--off" aria-hidden="true"></i>This Wi-Fi</span><b>Not here</b>
         <span><i class="pill pill--off" aria-hidden="true"></i>Direct, over the internet</span><b>No reply</b>
-        <span><i class="pill pill--off" aria-hidden="true"></i>By relay</span><b>Station not checked in since 16:42</b>
+        <span><i class="pill pill--off" aria-hidden="true"></i>By relay</span><b>Core not checked in since 16:42</b>
       </div>
-      <p class="tsheet__note">Worth checking at home: is the station computer on and awake, is NereusSDR’s station switch on, and is the home internet up?</p>
+      <p class="tsheet__note">Worth checking at home: is the Core’s computer on and awake, is NereusSDR’s Core switch on, and is the home internet up?</p>
       <button class="wide wide--go" type="button" data-tr-retry>Try again</button>
       <button class="wide" type="button">Cancel</button>
     </div>
@@ -8866,11 +9363,11 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
     <div class="island"></div>
     <div class="nav">
       <span></span>
-      <h3 class="nav__title">Stations</h3>
-      <button class="nav__btn" type="button" aria-label="Add a station">+</button>
+      <h3 class="nav__title">Cores</h3>
+      <button class="nav__btn" type="button" aria-label="Add a Core">+</button>
     </div>
     <div class="list">
-      <p class="list__head">Your stations</p>
+      <p class="list__head">Your Cores</p>
       <div class="row">
         <i class="pill pill--on" aria-hidden="true"></i>
         <div class="row__text"><b>KG4VCF/shack</b><span>ANAN-G2 · Saturn · seen just now</span></div>
@@ -8886,13 +9383,13 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
     <div class="tsheet" role="dialog">
       <i class="dsheet__grab" aria-hidden="true"></i>
       <p class="tsheet__kicker">KG4VCF/shack needs updating</p>
-      <p class="tsheet__note">The station’s NereusSDR is two versions behind this app, too far apart to talk. Nothing has changed on the station.</p>
+      <p class="tsheet__note">The Core’s NereusSDR is two versions behind this app, too far apart to talk. Nothing has changed on the Core.</p>
       <div class="trtried">
-        <span>The station speaks</span><b>Remote link 1.4 (NereusSDR 0.6)</b>
-        <span>This app speaks</span><b>Remote link 3.x, and 2.x for older stations</b>
+        <span>The Core speaks</span><b>Remote link 1.4 (NereusSDR 0.6)</b>
+        <span>This app speaks</span><b>Remote link 3.x, and 2.x for older Cores</b>
       </div>
-      <p class="tsheet__note">Update NereusSDR on the station computer, or on the small box, then connect again. Your settings stay on the station.</p>
-      <button class="wide wide--go" type="button">How to update the station</button>
+      <p class="tsheet__note">Update NereusSDR on the Core’s computer, or on the small box, then connect again. Your settings stay on the Core.</p>
+      <button class="wide wide--go" type="button">How to update the Core</button>
       <button class="wide" type="button">OK</button>
     </div>
     <div class="homebar"></div>
@@ -8927,7 +9424,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       </div>
       <p class="shead">Your voice</p>
       <div class="sgroup">
-        <div class="trow"><span class="trow__text"><span class="trow__label">iPhone voice processing</span><small>Off: the station’s PROC, EQ and leveler shape your audio</small></span><button class="stog" type="button" aria-pressed="false" data-stog>Off</button></div>
+        <div class="trow"><span class="trow__text"><span class="trow__label">iPhone voice processing</span><small>Off: the Core’s PROC, EQ and leveler shape your audio</small></span><button class="stog" type="button" aria-pressed="false" data-stog>Off</button></div>
       </div>
       <p class="shead">Audio quality</p>
       <div class="sgroup" role="radiogroup" aria-label="Audio quality">
@@ -9047,12 +9544,12 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       <div class="sgroup">
         <div class="trow"><span class="trow__text"><span class="trow__label">Buttons key a locked phone</span><small>Through Apple’s Push to Talk; locking still ends an on-screen transmission</small></span><button class="stog is-on" type="button" aria-pressed="true" data-stog>On</button></div>
       </div>
-      <p class="shead" data-tot-group>Transmit time-out <span class="tag tag--station">Station</span></p>
+      <p class="shead" data-tot-group>Transmit time-out <span class="tag tag--station">Core</span></p>
       <div class="sgroup">
-        <div class="trow"><span class="trow__text"><span class="trow__label">Stop transmitting after</span><small>Every transmission from a phone or iPad. The station ends it and tells you why.</small></span><button class="scombo" type="button" data-cycle-combo="3 minutes,5 minutes,10 minutes,30 minutes,Off,30 seconds,1 minute,2 minutes">3 minutes</button></div>
+        <div class="trow"><span class="trow__text"><span class="trow__label">Stop transmitting after</span><small>Every transmission from a phone or iPad. The Core ends it and tells you why.</small></span><button class="scombo" type="button" data-cycle-combo="3 minutes,5 minutes,10 minutes,30 minutes,Off,30 seconds,1 minute,2 minutes">3 minutes</button></div>
       </div>
       <div class="warnbox warnbox--info" role="note"><b>What Apple’s Push to Talk brings with it</b><span>While you’re connected, iOS shows its blue Push to Talk pill and its own panel on the lock screen. Only one Push to Talk app can be active at a time.</span></div>
-      <p class="snote">The time-out and the station’s watchdog apply to every transmission, however it was keyed. The desktop at the station keeps its own time-out, off as in Thetis.</p>
+      <p class="snote">The time-out and the Core’s watchdog apply to every transmission, however it was keyed. The desktop at the station keeps its own time-out, off by default.</p>
     </div>
     <nav class="tabbar" aria-label="Sections">
       <button class="tab" type="button">
@@ -9099,7 +9596,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
     <div class="spage">
       <p class="shead">Locked or in another app</p>
       <div class="sgroup">
-        <div class="trow"><span class="trow__text"><span class="trow__label">Sound only</span><small>The station stops sending the band · about 13 MB an hour</small></span><button class="stog is-on" type="button" aria-pressed="true" data-stog>On</button></div>
+        <div class="trow"><span class="trow__text"><span class="trow__label">Sound only</span><small>The Core stops sending the band · about 13 MB an hour</small></span><button class="stog is-on" type="button" aria-pressed="true" data-stog>On</button></div>
       </div>
       <p class="shead">Keep the screen on</p>
       <div class="sgroup" role="radiogroup" aria-label="Keep the screen on">
@@ -9249,11 +9746,11 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
     <div class="island"></div>
     <div class="nav">
       <span></span>
-      <h3 class="nav__title">Stations</h3>
-      <button class="nav__btn" type="button" aria-label="Add a station">+</button>
+      <h3 class="nav__title">Cores</h3>
+      <button class="nav__btn" type="button" aria-label="Add a Core">+</button>
     </div>
     <div class="list">
-      <p class="list__head">Your stations</p>
+      <p class="list__head">Your Cores</p>
       <div class="row">
         <i class="pill pill--on" aria-hidden="true"></i>
         <div class="row__text"><b>KG4VCF/shack</b><span>ANAN-G2 · Saturn · 4 devices on it</span></div>
@@ -9300,6 +9797,275 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
     <p class="tsheet__note">The Core keeps transmit for a device that drops, for up to 3 minutes. Taking it now makes you the control operator; the MacBook is told when it comes back, with Take it back.</p>
     <button class="wide wide--go" type="button" data-mc-go data-mc-busy="Taking transmit…">Take transmit</button>
     <button class="wide" type="button" data-mc-cancel>Cancel</button>
+  </div>
+</template>
+
+<!-- Entering a Core's address: the address alone, and the port in a field of its own. -->
+<template id="tpl-addr">
+  <div class="scr">
+    <div class="island"></div>
+    <div class="nav">
+      <button class="nav__back" type="button">‹ Cores</button>
+      <h3 class="nav__title">Enter an address</h3>
+      <span></span>
+    </div>
+    <div class="form">
+      <p>Type your Core's address: its name, or its IPv4 or IPv6 address. No brackets needed.</p>
+      <label class="code code--addr" for="addr-host"><span>Address</span><textarea id="addr-host" rows="2" autocomplete="off" autocapitalize="none" spellcheck="false" inputmode="url" data-addr-host>2001:db8:5a1:e8f0:dea6:32ff:fe12:3456</textarea></label>
+      <label class="code code--port" for="addr-port"><span>Port</span><input id="addr-port" type="text" value="47910" autocomplete="off" inputmode="numeric" data-addr-port></label>
+      <p class="hint">47910 is the Core's standard port. Change it only if your Core uses another.</p>
+      <button class="primary" type="button" data-addr-btn>Connect</button>
+      <p class="fine">If this phone isn't paired with the Core yet, the next step asks for the pairing code the Core shows.</p>
+    </div>
+    <div class="homebar"></div>
+  </div>
+</template>
+
+<!-- Pairing and connecting: the states in between. -->
+<template id="tpl-ps-code">
+  <div class="scr">
+    <div class="island"></div>
+    <div class="nav">
+      <button class="nav__back" type="button">‹ Address</button>
+      <h3 class="nav__title">Pair with a code</h3>
+      <span></span>
+    </div>
+    <div class="form">
+      <div class="pstarget"><span>Pairing with</span><b>2001:db8:5a1:e8f0:dea6:32ff:fe12:3456</b><small>Port 47910</small></div>
+      <label class="code" for="ps-code-1"><span>Pairing code</span><input id="ps-code-1" type="text" value="7-anvil-harbor" autocomplete="off" autocapitalize="none" spellcheck="false"></label>
+      <p class="hint">A number and two words. The code is on the Core's status page, or run nereusd pairing show on the computer the Core runs on.</p>
+      <label class="code code--name" for="ps-name-1"><span>This phone's name on the Core</span><input id="ps-name-1" type="text" value="iPhone" autocomplete="off"></label>
+      <button class="primary" type="button">Pair</button>
+      <p class="fine">A code works once. A wrong guess uses it up, and the Core shows a new one.</p>
+    </div>
+    <div class="homebar"></div>
+  </div>
+</template>
+
+<template id="tpl-ps-wrong">
+  <div class="scr">
+    <div class="island"></div>
+    <div class="nav">
+      <button class="nav__back" type="button">‹ Address</button>
+      <h3 class="nav__title">Pair with a code</h3>
+      <span></span>
+    </div>
+    <div class="form">
+      <div class="pstarget"><span>Pairing with</span><b>2001:db8:5a1:e8f0:dea6:32ff:fe12:3456</b><small>Port 47910</small></div>
+      <div class="warnbox warnbox--bad" role="status"><b>The pairing code was not right. A new code will appear on the Core.</b><span data-ps-wait>Its new code appears in 10 s. Type that one.</span></div>
+      <label class="code code--bad" for="ps-code-2"><span>Pairing code</span><input id="ps-code-2" type="text" value="8-anvil-harbor" autocomplete="off" autocapitalize="none" spellcheck="false"></label>
+      <label class="code code--name" for="ps-name-2"><span>This phone's name on the Core</span><input id="ps-name-2" type="text" value="iPhone" autocomplete="off"></label>
+      <button class="primary" type="button" disabled data-ps-pair>Pair</button>
+      <p class="fine">A code works once. A wrong guess uses it up, and the Core shows a new one.</p>
+    </div>
+    <div class="homebar"></div>
+  </div>
+</template>
+
+<template id="tpl-ps-closed">
+  <div class="scr">
+    <div class="island"></div>
+    <div class="nav">
+      <button class="nav__back" type="button">‹ Address</button>
+      <h3 class="nav__title">Pair with a code</h3>
+      <span></span>
+    </div>
+    <div class="form">
+      <div class="pstarget"><span>Pairing with</span><b>2001:db8:5a1:e8f0:dea6:32ff:fe12:3456</b><small>Port 47910</small></div>
+      <div class="warnbox" role="status"><b>Pairing is closed on this Core.</b><span>That was the fifth wrong code in a row, so the Core closed pairing. To pair, open it again at the Core: run sudo nereusd pairing open on its computer, or use Add a device on a phone or computer already paired with it.</span></div>
+      <button class="primary" type="button">Try again</button>
+      <button class="wide" type="button">Back to Cores</button>
+      <p class="fine">A Core that is already closed answers the same way when a pairing starts: "This Core is not taking new devices. Open pairing on the Core or on a paired device first."</p>
+    </div>
+    <div class="homebar"></div>
+  </div>
+</template>
+
+<template id="tpl-ps-cores">
+  <div class="scr">
+    <div class="island"></div>
+    <div class="nav">
+      <span></span>
+      <h3 class="nav__title">Cores</h3>
+      <button class="nav__btn" type="button" aria-label="Add a Core">+</button>
+    </div>
+    <div class="list">
+      <div class="warnbox pscores__note" role="status"><b>KG4VCF/attic removed this phone.</b><span>Pair with it again to use it.</span></div>
+      <p class="list__head">Your Cores</p>
+      <div class="row">
+        <i class="pill pill--on" aria-hidden="true"></i>
+        <div class="row__text"><b>KG4VCF/shack</b><span>ANAN-G2 · Saturn · seen just now</span></div>
+        <button class="rbtn rbtn--go" type="button">Connect</button>
+      </div>
+      <div class="row">
+        <i class="pill pill--stale" aria-hidden="true"></i>
+        <div class="row__text"><b>KG4VCF/attic</b><span>ANAN-G2E · pair again</span></div>
+        <button class="rbtn" type="button">Pair</button>
+      </div>
+      <p class="list__head">On this network</p>
+      <div class="row">
+        <i class="pill pill--on" aria-hidden="true"></i>
+        <div class="row__text"><b>Unclaimed Core</b><span>ANAN-G2E · 192.168.1.40</span></div>
+        <button class="rbtn rbtn--go" type="button">Pair</button>
+      </div>
+      <div class="row">
+        <i class="pill pill--on" aria-hidden="true"></i>
+        <div class="row__text"><b>KG4VCF/remote</b><span>Hermes Lite 2 · 192.168.1.61</span></div>
+        <button class="rbtn" type="button">Use code</button>
+      </div>
+      <div class="row pscores__closed">
+        <i class="pill pill--off" aria-hidden="true"></i>
+        <div class="row__text"><b>Unclaimed Core</b><span>Hermes Lite 2 · pairing closed</span></div>
+      </div>
+      <p class="list__note">Pairing closed on a Core that has no devices yet: it opens again only on that Core's own computer.</p>
+    </div>
+    <div class="homebar"></div>
+  </div>
+</template>
+
+<template id="tpl-ps-lan">
+  <div class="scr">
+    <div class="island"></div>
+    <div class="nav">
+      <span></span>
+      <h3 class="nav__title">Cores</h3>
+      <button class="nav__btn" type="button" aria-label="Add a Core">+</button>
+    </div>
+    <div class="list">
+      <p class="list__head">Your Cores</p>
+      <div class="row">
+        <i class="pill pill--off" aria-hidden="true"></i>
+        <div class="row__text"><b>KG4VCF/shack</b><span>ANAN-G2 · Saturn · last seen 3 hours ago</span></div>
+        <button class="rbtn rbtn--go" type="button">Connect</button>
+      </div>
+    </div>
+    <div class="tdim" aria-hidden="true"></div>
+    <div class="tsheet" role="dialog">
+      <i class="dsheet__grab" aria-hidden="true"></i>
+      <p class="tsheet__kicker">KG4VCF/shack isn’t answering</p>
+      <div class="trtried">
+        <span><i class="pill pill--off" aria-hidden="true"></i>This Wi-Fi</span><b>Not allowed to look</b>
+        <span><i class="pill pill--off" aria-hidden="true"></i>Direct, over the internet</span><b>No reply</b>
+      </div>
+      <p class="tsheet__note">NereusSDR isn’t allowed to reach devices on this Wi-Fi, so it couldn’t try your Core here. Turn on Local Network for NereusSDR in Settings, Privacy &amp; Security.</p>
+      <button class="wide wide--go" type="button">Open Settings</button>
+      <button class="wide" type="button">Cancel</button>
+    </div>
+    <div class="homebar"></div>
+  </div>
+</template>
+
+<template id="tpl-ps-key">
+  <div class="scr">
+    <div class="island"></div>
+    <div class="nav">
+      <span></span>
+      <h3 class="nav__title">Cores</h3>
+      <button class="nav__btn" type="button" aria-label="Add a Core">+</button>
+    </div>
+    <div class="list">
+      <div class="warnbox pscores__note" role="alert"><b>This phone can't read its key any more.</b><span>It happens after a phone is erased and restored. Without its key the phone can't sign in to your Cores. Make a new key, then pair with each Core again.</span><button class="rbtn rbtn--go" type="button">Make a new key</button></div>
+      <p class="list__head">Your Cores</p>
+      <div class="row pscores__closed">
+        <i class="pill pill--stale" aria-hidden="true"></i>
+        <div class="row__text"><b>KG4VCF/shack</b><span>ANAN-G2 · needs pairing again</span></div>
+      </div>
+      <div class="row pscores__closed">
+        <i class="pill pill--stale" aria-hidden="true"></i>
+        <div class="row__text"><b>KG4VCF/attic</b><span>ANAN-G2E · needs pairing again</span></div>
+      </div>
+      <p class="list__note">Each Core still lists this phone under its old key. Remove that entry from Devices on another paired device, or on the Core.</p>
+    </div>
+    <div class="homebar"></div>
+  </div>
+</template>
+
+<!-- The toolbar's Pan and Display buttons: each drops a sheet under the toolbar. -->
+<template id="tpl-pan-sheet">
+  <div class="dropsheet" role="dialog" aria-label="Pan 1">
+    <div class="atitle">Pan 1 <span class="dropsheet__for">Slice <span class="vfo__slice">A</span></span></div>
+    <div class="abody">
+      <div class="acap">Band:</div>
+      <div class="agrid agrid--4" data-group>
+        <button class="nbtn is-blue" type="button" aria-pressed="false">160</button>
+        <button class="nbtn is-blue" type="button" aria-pressed="false">80</button>
+        <button class="nbtn is-blue" type="button" aria-pressed="false">60</button>
+        <button class="nbtn is-blue" type="button" aria-pressed="true">40</button>
+        <button class="nbtn is-blue" type="button" aria-pressed="false">30</button>
+        <button class="nbtn is-blue" type="button" aria-pressed="false">20</button>
+        <button class="nbtn is-blue" type="button" aria-pressed="false">17</button>
+        <button class="nbtn is-blue" type="button" aria-pressed="false">15</button>
+        <button class="nbtn is-blue" type="button" aria-pressed="false">12</button>
+        <button class="nbtn is-blue" type="button" aria-pressed="false">10</button>
+        <button class="nbtn is-blue" type="button" aria-pressed="false">6</button>
+        <button class="nbtn is-blue" type="button" aria-pressed="false">WWV</button>
+      </div>
+      <p class="dropsheet__note">A band opens where slice A last was on it: its frequency, mode and filter.</p>
+      <div class="agrid agrid--2">
+        <button class="nbtn" type="button">Add a slice here</button>
+        <button class="nbtn" type="button">Add a notch at A</button>
+      </div>
+      <label class="dropsheet__row"><span><b>Extended view</b><small>Show the radio's full width either side of the band.</small></span><button class="nbtn is-blue" type="button" aria-pressed="true">On</button></label>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-display-sheet">
+  <div class="dropsheet" role="dialog" aria-label="Display">
+    <div class="atitle">Display <span class="dropsheet__for">Pan 1 · this phone</span></div>
+    <div class="abody">
+      <div class="acap">Waterfall:</div>
+      <label class="dropsheet__row"><span><b>Palette</b></span><button class="nbtn" type="button">Default ▾</button></label>
+      <div class="agrid agrid--3" data-group>
+        <button class="nbtn is-blue" type="button" aria-pressed="true">Clarity</button>
+        <button class="nbtn is-blue" type="button" aria-pressed="false">Auto</button>
+        <button class="nbtn is-blue" type="button" aria-pressed="false">Manual</button>
+      </div>
+      <p class="dropsheet__note">Clarity sets the waterfall's levels from the noise floor. <button class="dropsheet__link" type="button">Re-tune</button></p>
+      <div class="acap">Spectrum:</div>
+      <label class="af"><span>Fill</span><input type="range" min="0" max="100" value="70" aria-label="Fill strength"><output class="inset">70</output></label>
+      <label class="af"><span>Top</span><input type="range" min="-160" max="20" value="-40" aria-label="Reference level"><output class="inset">-40</output></label>
+      <label class="af"><span>Range</span><input type="range" min="20" max="160" value="100" aria-label="Dynamic range"><output class="inset">100</output></label>
+      <div class="acap">On the band:</div>
+      <div class="agrid agrid--3">
+        <button class="nbtn is-dsp" type="button" aria-pressed="false">Peak hold</button>
+        <button class="nbtn is-dsp" type="button" aria-pressed="false">Peaks</button>
+        <button class="nbtn is-dsp" type="button" aria-pressed="false">Noise floor</button>
+      </div>
+      <button class="dropsheet__more" type="button">More display options in Setup ›</button>
+    </div>
+  </div>
+</template>
+<!-- Tuning on the band: gesture hints, the step list, the number pad. -->
+<template id="tpl-tune-pan">
+  <div class="tuhint tuhint--band" aria-hidden="true"><span class="tuhint__arrows">⟵ &nbsp; drag &nbsp; ⟶</span><span class="tuhint__cap">The band moves. Slice A stays on 7.236.400.</span></div>
+</template>
+<template id="tpl-tune-flag">
+  <div class="tuhint tuhint--flag" aria-hidden="true"><span class="tuhint__dot"></span><span class="tuhint__arrows">⟵ ⟶</span><span class="tuhint__cap">Slice A tunes in 100 Hz steps</span></div>
+</template>
+<template id="tpl-tune-step">
+  <div class="tustep" role="menu" aria-label="Tuning step for slice A">
+    <div class="tustep__title">Step for slice A</div>
+    <button class="tustep__item" type="button" role="menuitemradio" aria-checked="false">1 Hz</button>
+    <button class="tustep__item" type="button" role="menuitemradio" aria-checked="false">10 Hz</button>
+    <button class="tustep__item is-on" type="button" role="menuitemradio" aria-checked="true">100 Hz</button>
+    <button class="tustep__item" type="button" role="menuitemradio" aria-checked="false">500 Hz</button>
+    <button class="tustep__item" type="button" role="menuitemradio" aria-checked="false">1 kHz</button>
+    <button class="tustep__item" type="button" role="menuitemradio" aria-checked="false">10 kHz</button>
+  </div>
+</template>
+<template id="tpl-tune-type">
+  <div class="tupad" role="dialog" aria-label="Type a frequency for slice A">
+    <div class="tupad__head"><span>Frequency for slice <b class="vfo__slice">A</b></span><button class="tupad__x" type="button">Cancel</button></div>
+    <output class="tupad__entry">14.074<i class="tupad__caret"></i></output>
+    <div class="tupad__units" role="group" aria-label="Units"><button class="nbtn is-blue" type="button" aria-pressed="true">MHz</button><button class="nbtn is-blue" type="button" aria-pressed="false">kHz</button></div>
+    <div class="tupad__keys">
+      <button type="button">1</button><button type="button">2</button><button type="button">3</button>
+      <button type="button">4</button><button type="button">5</button><button type="button">6</button>
+      <button type="button">7</button><button type="button">8</button><button type="button">9</button>
+      <button type="button">.</button><button type="button">0</button><button type="button" aria-label="Delete">⌫</button>
+    </div>
+    <button class="tupad__go" type="button">Tune to 14.074.000</button>
   </div>
 </template>
 
@@ -10887,7 +11653,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       root.classList.add('is-lost');
       conn.classList.add('is-lost-conn');
       connText.textContent = 'Lost';
-      connBtn.setAttribute('aria-label', 'Station KG4VCF/shack, link lost');
+      connBtn.setAttribute('aria-label', 'Core KG4VCF/shack, link lost');
       this.ptt.disabled = true;
       root.querySelector('[data-lost]').hidden = false;
       this.startRetry();
@@ -10907,7 +11673,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       });
     } else if (scene === 'back') {
       connText.textContent = 'Relay 71 ms';
-      connBtn.setAttribute('aria-label', 'Station KG4VCF/shack, relay link, 71 milliseconds');
+      connBtn.setAttribute('aria-label', 'Core KG4VCF/shack, relay link, 71 milliseconds');
       root.querySelector('[data-toast]').hidden = false;
     }
   };
@@ -11515,7 +12281,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
     keyed: { mode: 'tx', link: '38 ms', clock: 42 },
     hold: { mode: 'tx', link: '38 ms', clock: 42, tot: 138, open: true },
     left: { mode: 'rx', link: '38 ms', open: true, note: 'Unkeyed when you left the app. TX ran 0:42.' },
-    lost: { mode: 'lost', lead: 'The station unkeyed itself.', open: true }
+    lost: { mode: 'lost', lead: 'The Core unkeyed itself.', open: true }
   };
 
   all(document, '.phone[data-lock]').forEach(function (frame) {
@@ -11566,7 +12332,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
           t.textContent = 'Time-out in ' + fmtSecs(st.tot);
         }
         if (st.tot === 0) {
-          g.set({ mode: 'rx', note: "The station's time-out unkeyed you at 3:00.", good: false });
+          g.set({ mode: 'rx', note: "The Core's time-out unkeyed you at 3:00.", good: false });
         }
       }
     });
@@ -12544,14 +13310,14 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       var note = document.createElement('div');
       note.className = 'warnbox';
       note.setAttribute('role', 'note');
-      note.innerHTML = '<b>KG4VCF/shack runs an older NereusSDR.</b><span>Everything works except the items marked here. Update the station to get them.</span>';
+      note.innerHTML = '<b>KG4VCF/shack runs an older NereusSDR.</b><span>Everything works except the items marked here. Update the Core to get them.</span>';
       pageEl.insertBefore(note, pageEl.firstChild);
       all(frame, '.srow').forEach(function (r) {
         var name = r.querySelector('b').textContent;
         if (name === 'Diversity' || name === 'Support Bundle') {
           r.classList.add('is-off');
           r.disabled = true;
-          r.querySelector('.srow__text span').textContent = 'Needs a newer station';
+          r.querySelector('.srow__text span').textContent = 'Needs a newer Core';
         }
       });
       return;
@@ -12585,8 +13351,8 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
     if (scene === 'noradio') {
       // The station link is fine (green pill); the radio link at the station is lost.
       lost.querySelector('.lost__word').textContent = 'DISCONNECTED';
-      lost.querySelector('.lost__lead').textContent = 'The station can’t reach the radio.';
-      lost.querySelector('.lost__body').textContent = 'The last frame from the ANAN-G2 at 192.168.1.20 came 2 minutes ago. The station tries again every 5 seconds. Is the radio on?';
+      lost.querySelector('.lost__lead').textContent = 'The Core can’t reach the radio.';
+      lost.querySelector('.lost__body').textContent = 'The last frame from the ANAN-G2 at 192.168.1.20 came 2 minutes ago. The Core tries again every 5 seconds. Is the radio on?';
       btn.hidden = true;
       var left = 5;
       setInterval(function () {
@@ -12598,7 +13364,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       lost.classList.add('is-quiet');
       lost.querySelector('.lost__word').textContent = 'NO NETWORK';
       lost.querySelector('.lost__lead').textContent = 'This phone is offline.';
-      lost.querySelector('.lost__body').textContent = 'Nothing is wrong at the station. The phone reconnects as soon as Wi-Fi or cellular is back. If you were transmitting, the station has already unkeyed.';
+      lost.querySelector('.lost__body').textContent = 'Nothing is wrong at the Core. The phone reconnects as soon as Wi-Fi or cellular is back. If you were transmitting, the Core has already unkeyed.';
       text.textContent = 'Waiting for Wi-Fi or cellular';
       btn.hidden = true;
       lost.querySelector('.strip__pill').style.background = '#404858';
@@ -13219,6 +13985,120 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
   all(document, '.phone[data-mc-fifth="late"]').forEach(function (frame) {
     frame.querySelector('.tsheet__kicker').textContent = 'Your place went to another device';
     frame.querySelector('.tsheet__note--lead').textContent = 'You were away more than 3 minutes, so your place went to another device. To connect, pick one to take the place of.';
+  });
+
+  // Entering an address: Connect enables for a name, an IPv4 or an IPv6
+  // address (brackets optional) and a port from 1 to 65535.
+  all(document, '.phone[data-screen="addr"]').forEach(function (frame) {
+    frame.appendChild(document.getElementById('tpl-addr').content.cloneNode(true));
+    var host = frame.querySelector('[data-addr-host]');
+    var port = frame.querySelector('[data-addr-port]');
+    var btn = frame.querySelector('[data-addr-btn]');
+    function looksLikeHost(v) {
+      v = v.trim().replace(/^\[(.*)\]$/, '$1');
+      if (/^[0-9a-f:.]+$/i.test(v) && v.indexOf(':') >= 0) return true;
+      if (/^\d{1,3}(\.\d{1,3}){3}$/.test(v)) return true;
+      return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/i.test(v);
+    }
+    function check() {
+      var p = parseInt(port.value, 10);
+      btn.classList.remove('is-done');
+      btn.textContent = 'Connect';
+      btn.disabled = !(looksLikeHost(host.value) && /^\d+$/.test(port.value.trim()) && p >= 1 && p <= 65535);
+    }
+    host.addEventListener('input', check);
+    port.addEventListener('input', check);
+    check();
+    btn.addEventListener('click', function () {
+      btn.textContent = 'Connecting…';
+      btn.disabled = true;
+      setTimeout(function () {
+        btn.textContent = 'Not paired yet: next, the code';
+        btn.classList.add('is-done');
+      }, 1400);
+    });
+  });
+
+  // Pairing and connecting, the states in between: each frame shows its template.
+  all(document, '.phone[data-screen^="ps-"]').forEach(function (frame) {
+    frame.appendChild(document.getElementById('tpl-' + frame.getAttribute('data-screen')).content.cloneNode(true));
+  });
+  // A wrong code: the wait counts down, then Pair comes back for the new code.
+  all(document, '.phone[data-screen="ps-wrong"]').forEach(function (frame) {
+    var wait = frame.querySelector('[data-ps-wait]');
+    var pair = frame.querySelector('[data-ps-pair]');
+    if (REDUCED) { return; }
+    var left = 10;
+    var timer = setInterval(function () {
+      left -= 1;
+      if (left <= 0) {
+        clearInterval(timer);
+        wait.textContent = 'The Core shows its new code now. Type that one.';
+        pair.disabled = false;
+        return;
+      }
+      wait.textContent = 'Its new code appears in ' + left + ' s. Type that one.';
+    }, 1000);
+  });
+
+  // D68: the headphones or AirPods went away, so the band's sound paused;
+  // a tap on the notice plays it on the speaker.
+  phones.forEach(function (p) {
+    if ((p.root.parentElement.getAttribute('data-scene') || '') !== 'hp-paused') {
+      return;
+    }
+    var toast = mcToast(p, 'warn', '<b>Sound paused: your headphones disconnected.</b> Tap to play on the speaker.');
+    toast.classList.add('toast--tap');
+    toast.addEventListener('click', function () {
+      toast.classList.remove('toast--warn');
+      toast.classList.add('toast--info');
+      toast.querySelector('span').innerHTML = '<b>Playing on the speaker.</b>';
+      setTimeout(function () {
+        toast.hidden = true;
+      }, 1800);
+    });
+  });
+
+  // The toolbar's Pan and Display buttons open their sheets under the toolbar.
+  phones.forEach(function (p) {
+    var scene = p.root.parentElement.getAttribute('data-scene') || '';
+    var which = { 'pan-sheet': ['tpl-pan-sheet', 'Pan 1'], 'display-sheet': ['tpl-display-sheet', 'Display'] }[scene];
+    if (!which) {
+      return;
+    }
+    p.root.appendChild(document.getElementById(which[0]).content.cloneNode(true));
+    all(p.root, '.tbtn').forEach(function (b) {
+      if (b.textContent.trim() === which[1]) {
+        b.classList.add('is-open');
+        b.setAttribute('aria-expanded', 'true');
+      }
+    });
+  });
+
+  // Tuning on the band: a hint for each drag, the flag's step and its list,
+  // and the number pad a tap on the frequency opens.
+  phones.forEach(function (p) {
+    var scene = p.root.parentElement.getAttribute('data-scene') || '';
+    if (scene.indexOf('tune-') !== 0) {
+      return;
+    }
+    var flag = p.root.querySelector('[data-flag]');
+    if (flag) {
+      var hdr = flag.querySelector('.vfo__hdr');
+      var sp = hdr && hdr.querySelector('.vfo__sp');
+      if (sp) {
+        var step = document.createElement('button');
+        step.className = 'vfo__step';
+        step.type = 'button';
+        step.textContent = '100 Hz';
+        step.setAttribute('aria-label', 'Tuning step, 100 Hz');
+        hdr.insertBefore(step, sp);
+      }
+    }
+    var tpl = document.getElementById('tpl-' + scene);
+    if (tpl) {
+      p.root.appendChild(tpl.content.cloneNode(true));
+    }
   });
 
   // A link ending in #<screen id> (the ids on each screen's heading) opens the
