@@ -328,10 +328,15 @@ function compass(host,size,opts){
     {const t=el("text",{x:ex+er,y:ey+11,fill:RING,"font-size":8,"text-anchor":"middle","font-family":"Menlo,monospace"},s);t.textContent="0";}
     {const t=el("text",{x:ex,y:ey-er-4,fill:RING,"font-size":8,"text-anchor":"middle","font-family":"Menlo,monospace"},s);t.textContent="90";}
     if(opts.elTgt!=null){const[tx,ty]=E(er*.97,opts.elTgt);el("line",{x1:ex,y1:ey,x2:tx,y2:ty,stroke:TGT,"stroke-width":1.6,"stroke-dasharray":"5 3"},s);
-      const lo=Math.min(opts.el,opts.elTgt),hi=Math.max(opts.el,opts.elTgt),[p1x,p1y]=E(er*.83,lo),[p2x,p2y]=E(er*.83,hi);
-      el("path",{d:`M${ex},${ey} L${p1x},${p1y} A${er*.83},${er*.83} 0 0 0 ${p2x},${p2y} Z`,fill:AMBER,"fill-opacity":.10},s);}
-    const[nx,ny]=E(er*.9,opts.el);el("line",{x1:ex,y1:ey,x2:nx,y2:ny,stroke:AMBER,"stroke-width":2.6,"stroke-linecap":"round"},s);
-    el("circle",{cx:ex,cy:ey,r:3,fill:AMBER},s);
+      const lo=Math.min(opts.el,opts.elTgt),hi=Math.max(opts.el,opts.elTgt),[p1x,p1y]=E(er,lo),[p2x,p2y]=E(er,hi);
+      el("path",{d:`M${ex},${ey} L${p1x},${p1y} A${er},${er} 0 0 0 ${p2x},${p2y} Z`,fill:AMBER,"fill-opacity":30/255},s);}
+    { // same tapered needle as the rose (Longpath drawNeedle), pivoting at the gauge corner
+      const a=opts.el*Math.PI/180,dx=Math.cos(a),dy=-Math.sin(a),nx=-dy,ny=dx,hw=2.6*.9,tl=er*.10;
+      const P=[[ex+er*.9*dx,ey+er*.9*dy],[ex+nx*hw,ey+ny*hw],[ex-tl*dx+nx*hw*.7,ey-tl*dy+ny*hw*.7],[ex-tl*dx-nx*hw*.7,ey-tl*dy-ny*hw*.7],[ex-nx*hw,ey-ny*hw]].map(p=>p.join(",")).join(" ");
+      el("polygon",{points:P,fill:"none",stroke:AMBER,"stroke-opacity":60/255,"stroke-width":3,"stroke-linejoin":"round"},s);
+      el("polygon",{points:P,fill:AMBER},s);
+      el("circle",{cx:ex,cy:ey,r:7,fill:AMBER,"fill-opacity":.25},s);el("circle",{cx:ex,cy:ey,r:3.6,fill:AMBER},s);
+    }
     const t=el("text",{x:ex+er*.5,y:ey-6,fill:MUTED,"font-size":9,"text-anchor":"middle","font-family":"Menlo,monospace"},s);t.textContent="EL "+opts.el+"°";
   }
   // Geometry follows Longpath RotorDialWidget.cpp paintFace() [@551576e]:
