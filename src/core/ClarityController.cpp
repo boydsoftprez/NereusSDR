@@ -46,6 +46,19 @@ void ClarityController::setTransmitting(bool tx)
     if (m_enabled) {
         emit pausedChanged(tx);
     }
+    if (tx) { return; }
+    // Un-key re-anchors, as setEnabled() does on an off→on cycle and
+    // retuneNow() does for Re-tune. PanClarityRegistry clears the pan's
+    // clarityActive on the key edge and sets it again only from
+    // waterfallThresholdsChanged. Frames were rejected while keyed, so the
+    // deadband still holds the pre-key floor, and the receive floor after
+    // un-key is that same floor: the emit was suppressed, the pan stayed on
+    // the persisted user sliders (a hot waterfall), and Clarity stayed off
+    // until Re-tune or a band change (bench 2026-10-06). Clearing
+    // m_hasSmoothed also takes the first post-key sample whole, rather than
+    // lerping it over a dt that spans the whole key-down.
+    m_hasSmoothed = false;
+    m_hasEmitted  = false;
 }
 
 void ClarityController::notifyManualOverride()
