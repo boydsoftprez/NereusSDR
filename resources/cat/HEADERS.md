@@ -6,12 +6,16 @@ Ported from Thetis v2.10.3.15, commit 3759d096.
 `CATStructs.xml`: Upstream source has no top-of-file GPL header — project-level
 LICENSE applies. Thetis is distributed under the GNU General Public License
 (version 2 or later); NereusSDR is GPL-3.0-or-later. The XML is an exact byte copy.
+Thetis also carries `LICENSE-DUAL-LICENSING`, Richard Samphire MW0LGE's
+dual-licensing statement for his own contributions; NereusSDR mirrors it
+verbatim at the repository root, and it covers any of his work in these files.
 
 `CommandContracts.json`: suffix validation categories reference CATParser.cs:
 550-565. Its source header is preserved verbatim below. Other fields are the
 approved NereusSDR mapping decisions.
 
 Modification history (NereusSDR): 2026-10-04 — J.J. Boyd with Codex.
+2026-10-06 — J.J. Boyd with Claude Code: `LICENSE-DUAL-LICENSING` note.
 
 ```cpp
 //=================================================================
