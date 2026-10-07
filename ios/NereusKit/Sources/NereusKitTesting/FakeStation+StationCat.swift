@@ -12,8 +12,17 @@ import NereusLink
 /// `testStationCatCommand` answers with a `reply` value, logs both lines and
 /// sends `lastTest`; `refreshStationCatDevices` sends `platform` again; and
 /// `records.subscribe` for `catLog` answers with a reset of the newest lines.
-/// A refusal queued with ``refuseNext(_:reason:)`` answers any of these verbs.
+/// A refusal queued with ``refuseNext(_:reason:)`` answers any of these
+/// verbs; after it, an answer queued with ``answerNextCat(_:with:)``.
 extension FakeStation {
+    /// How the fake Core answers one CAT verb, other than as the Core does.
+    public enum CatAnswer: Sendable {
+        /// No answer at all, as from a Core that stopped answering.
+        case unanswered
+        /// Accepted, with nothing changed and no delta sent.
+        case acceptedUnchanged
+    }
+
     /// The fake Core's CAT, each property as the Core's JSON.
     public struct SceneCat: Sendable, Equatable {
         public var global: [String: LinkJSON]
@@ -89,9 +98,18 @@ extension FakeStation {
         private let lock = NSLock()
         private var scene = SceneCat.board
         private var following = false
+        private var answers: [String: CatAnswer] = [:]
 
         func read<Result>(_ body: (inout SceneCat, inout Bool) -> Result) -> Result {
             lock.withLock { body(&scene, &following) }
+        }
+
+        func setAnswer(_ verb: String, _ answer: CatAnswer) {
+            lock.withLock { answers[verb] = answer }
+        }
+
+        func takeAnswer(_ verb: String) -> CatAnswer? {
+            lock.withLock { answers.removeValue(forKey: verb) }
         }
     }
 
@@ -175,6 +193,12 @@ extension FakeStation {
         }
     }
 
+    /// The next `verb` of the four CAT verbs that is not refused is answered
+    /// as `answer` says.
+    public func answerNextCat(_ verb: String, with answer: CatAnswer) {
+        stationCatState.setAnswer(verb, answer)
+    }
+
     /// The CAT scene as the fake Core holds it now.
     public var catScene: SceneCat {
         stationCatState.read { scene, _ in scene }
@@ -206,6 +230,14 @@ extension FakeStation {
         }
         if let reason = takeRefusal(invoke.verb) {
             return [result(false, reason)]
+        }
+        switch logVerb ? nil : stationCatState.takeAnswer(invoke.verb) {
+        case .unanswered?:
+            return []
+        case .acceptedUnchanged?:
+            return [result(true)]
+        case nil:
+            break
         }
         return stationCatState.read { scene, following -> [LinkMessage] in
             switch invoke.verb {
