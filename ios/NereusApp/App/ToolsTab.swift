@@ -36,7 +36,7 @@ struct ToolsTab: View {
     @State private var route: [Page]
     @State private var askingToClear = false
     /// CAT Control's model, shared by its pages while one is open.
-    @State private var cat: CatControlModel?
+    @StateObject private var cat: CatControlHolder
 
     enum Page: Hashable {
         case spotHub
@@ -105,18 +105,16 @@ struct ToolsTab: View {
         _list = StateObject(wrappedValue: ToolListModel(mirror: app.mirror, catalogFeed: app.main.catalogFeed))
         self.isActive = isActive
         _route = State(initialValue: route)
-        _cat = State(initialValue: route.contains(where: \.isCat) ? Self.catModel(app) : nil)
-    }
-
-    private static func catModel(_ app: AppModel) -> CatControlModel {
-        CatControlModel(mirror: app.mirror, commands: app.commands, records: app.records)
+        // Made once for the tab, however often SwiftUI makes the view
+        // again: a StateObject's value is built only when first installed.
+        _cat = StateObject(wrappedValue: CatControlHolder(route: route) {
+            CatControlModel(mirror: app.mirror, commands: app.commands, records: app.records)
+        })
     }
 
     /// Opens a page; CAT Control's model is made as its first page opens.
     private func open(_ page: Page) {
-        if page.isCat, cat == nil {
-            cat = Self.catModel(app)
-        }
+        cat.follow(route + [page])
         route.append(page)
     }
 
@@ -146,8 +144,8 @@ struct ToolsTab: View {
                 FreeDVReporterPage(freedv: freedv)
             } else if let page = route.last, Self.stationPages.contains(page) {
                 stationPage(page)
-            } else if let page = route.last, page.isCat, let cat {
-                CatControlScreen(model: cat, page: page) { open(.catControlPage($0)) }
+            } else if let page = route.last, page.isCat, let model = cat.model {
+                CatControlScreen(model: model, page: page) { open(.catControlPage($0)) }
             } else {
                 ScrollView {
                     content
@@ -171,10 +169,7 @@ struct ToolsTab: View {
         }
         .onChange(of: flow.attempt) { _, next in performance.setAttempt(next) }
         .onChange(of: route) { _, next in
-            // CAT Control's model lives while one of its pages is open.
-            if !next.contains(where: \.isCat) {
-                cat = nil
-            }
+            cat.follow(next)
         }
         .confirmationDialog("Clear all spots?", isPresented: $askingToClear, titleVisibility: .visible) {
             Button("Clear all spots", role: .destructive) {
@@ -305,6 +300,30 @@ struct ToolsTab: View {
         case .spotHub, .spotHubPage(.display), .performance, .txEqualizer, .pureSignal, .diversity, .catControl,
              .catControlPage, .tciServer, .vaxAudio, .supportBundle:
             LinkChip(link: link, core: core)
+        }
+    }
+}
+
+/// CAT Control's model while one of its pages is open: made as the first
+/// opens, once, and let go when the last of them closes.
+@MainActor
+final class CatControlHolder: ObservableObject {
+    @Published private(set) var model: CatControlModel?
+    private let make: () -> CatControlModel
+
+    init(route: [ToolsTab.Page] = [], make: @escaping () -> CatControlModel) {
+        self.make = make
+        follow(route)
+    }
+
+    /// Follows the pages open over the tab.
+    func follow(_ route: [ToolsTab.Page]) {
+        if !route.contains(where: \.isCat) {
+            if model != nil {
+                model = nil
+            }
+        } else if model == nil {
+            model = make()
         }
     }
 }

@@ -184,13 +184,25 @@ setting.
     recenter VFOs shows greyed with why, as on the desktop; PTT shows the
     Core's PTT state.
   * Test and log: the tester on a chosen channel, each reply matched to its
-    request; the log subscribes only while the page is open, with All,
-    Received or Sent, Pause (lines arriving while paused are dropped, as on
-    the desktop) and Follow newest.
-  * Opening a channel page or CAT PTT sends `refreshStationCatDevices`.
-  * Every change sends the whole config with the change over it, shows the
-    chosen value until the Core settles it, and shows the Core's own words
-    when it refuses. Nothing is blocked on the air, as on the desktop.
+    request (request ids seeded from the clock, as the desktop seeds its
+    own); the log subscribes only while the page is open, with All,
+    Received, Sent or Diagnostics (channel, transport, TCP client and PTT
+    changes, written as the desktop's window writes them), Pause (lines
+    arriving while paused are dropped, as on the desktop), Clear, Follow
+    newest, and a Bytes and hex switch for the desktop's byte count and hex.
+    It keeps the desktop's 10000 lines, drawn lazily, and only appends the
+    Core's new lines as its stream changes.
+  * Opening a channel page or CAT PTT sends `refreshStationCatDevices`
+    while connected.
+  * Every change sends the whole config with the change over it, in the
+    order made, and shows the chosen value as the desktop's remote window
+    holds it (CatControl.cpp:630-655, 705-719): a refusal of, or no answer
+    to, the latest send shows the Core's value again with its words; an
+    accepted one gives way when the Core holds it or at that channel's next
+    change, status included. Losing the Core drops what is held and the
+    words. Picking what is already chosen sends nothing. Nothing is blocked
+    on the air, as on the desktop. `aiActive` is not shown, as the desktop
+    shows it nowhere.
 
 ## As built
 

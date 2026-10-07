@@ -14,17 +14,24 @@ import os
 /// four channels, their shared settings, the limits of the Core's computer
 /// and the last test; it changes a channel with `setStationCatChannel` and
 /// the shared settings with `setStationCatGlobal`, each carrying the whole
-/// config as the page shows it with the change over it. The change stays
-/// shown until the Core answers and its new value arrives; a refusal shows
-/// the Core's words and its own value again. The Core does not refuse CAT
-/// changes on the air, so the page does not either. The tester runs a
-/// command on a channel (`testStationCatCommand`) and shows each reply by
-/// its request; the Core's CAT log (`catLog`) is asked for only while the
-/// Test and log page is open. A channel page or the PTT page asks the Core
-/// to read its serial devices again when it opens.
+/// config as the page shows it with the change over it. As the desktop's
+/// remote window keeps a setting it sent: the change stays shown until the
+/// Core answers the latest send; a refusal or no answer shows the Core's
+/// value again with the words; an accepted change gives way once the Core
+/// holds it, or at the Core's next change to that channel (or to the
+/// shared settings). The Core does not refuse CAT changes on the air, so
+/// the page does not either. The tester runs a command on a channel
+/// (`testStationCatCommand`) and shows each reply by its request; the
+/// Core's CAT log (`catLog`) is asked for only while the Test and log page
+/// is open, and the lines shown grow as the Core sends new ones, with this
+/// phone's own lines for each change of a channel's state and of PTT, as
+/// the desktop's CAT log window writes them. A channel page or the PTT
+/// page asks the Core to read its serial devices again when it opens.
 @MainActor
 final class CatControlModel: ObservableObject {
     static let timeout: Duration = .seconds(10)
+    /// How long a change, a test or a device read waits for the Core's answer.
+    let timeout: Duration
     /// The tests the page keeps, newest first.
     static let testsKept = 6
 
@@ -63,19 +70,56 @@ final class CatControlModel: ObservableObject {
         case b
     }
 
-    /// Which lines of the log show.
+    /// Which lines of the log show, as the desktop's window filters them.
     enum LogFilter: Int64, CaseIterable {
         case all
         case received
         case sent
+        case diagnostics
 
         var label: String {
             switch self {
             case .all: return "All"
             case .received: return "Received"
             case .sent: return "Sent"
+            case .diagnostics: return "Diagnostics"
             }
         }
+
+        func shows(_ entry: LogEntry) -> Bool {
+            switch self {
+            case .all: return true
+            case .received: return entry.kind == .received
+            case .sent: return entry.kind == .sent
+            case .diagnostics: return entry.kind == .diagnostic
+            }
+        }
+    }
+
+    /// One line of the log as the page shows it: the Core's bytes for a CAT
+    /// program, or this phone's words for a change of state.
+    struct LogEntry: Identifiable, Equatable {
+        enum Kind: Equatable {
+            /// From the CAT program.
+            case received
+            /// To the CAT program.
+            case sent
+            /// A channel's or PTT's change of state.
+            case diagnostic
+        }
+
+        /// Rising in the order the page took the lines.
+        let id: Int
+        let kind: Kind
+        /// When the Core logged it, or when it arrived here.
+        let time: String
+        /// "CAT1 in " before bytes; nil for a diagnostic.
+        let head: String?
+        /// The bytes as text, each outside printable text as `\xNN`; a diagnostic's words.
+        let text: String
+        let byteCount: Int
+        /// Each byte as two hex digits, space between.
+        let hex: String
     }
 
     /// One entry of a choice: the value sent, its name, and why it cannot be chosen, if it cannot.
@@ -90,12 +134,24 @@ final class CatControlModel: ObservableObject {
 
     /// One test sent to the Core, and its answer once it came.
     struct TestRun: Identifiable, Equatable {
+        /// How the Core answered a test.
+        enum Answer: Equatable {
+            /// The radio's reply, as text.
+            case reply
+            /// This phone's words: accepted with nothing back, or no answer.
+            case note
+            /// The Core's words for a refusal.
+            case refused
+        }
+
         let id: Int64
         let channel: Int
         let command: String
         /// The reply, or the words for no reply or a refusal; nil while waiting.
         var answer: String?
-        var refused = false
+        var kind: Answer = .reply
+
+        var refused: Bool { kind == .refused }
     }
 
     // MARK: Words
@@ -124,6 +180,7 @@ final class CatControlModel: ObservableObject {
     static let noReplyText = "Accepted (no reply)"
     static let unansweredText = "The Core did not answer this test."
     static let pausedNote = "Paused: new lines are dropped, and are not shown on Resume."
+    static let showBytesTitle = "Bytes and hex"
     static let noLinesText = "No CAT traffic."
     static let refusedText = BandSlicesModel.refusedText
 
@@ -152,7 +209,6 @@ final class CatControlModel: ObservableObject {
     /// The shared settings as the pages show them; nil until the Core sends them.
     @Published private(set) var global: StationCat.GlobalConfig?
     @Published private(set) var pttState = ""
-    @Published private(set) var aiActive = false
     @Published private(set) var platform = StationCat.Platform(text: nil)
     /// The slices on the Core, every device's, by id.
     @Published private(set) var sliceIds: [Int64] = []
@@ -164,12 +220,27 @@ final class CatControlModel: ObservableObject {
     @Published private(set) var tests: [TestRun] = []
     /// The channel the tester sends to.
     @Published var testChannel = 1
-    /// The log's lines as shown: filtered, and held while paused.
-    @Published private(set) var logLines: [StationCat.LogLine] = []
+    /// The log's lines as shown, oldest first: filtered, and none that came while paused.
+    @Published private(set) var logLines: [LogEntry] = []
     @Published private(set) var logReason: String?
     @Published private(set) var logFilter: LogFilter = .all
     @Published private(set) var paused = false
-    @Published var followNewest = true
+    /// Each line of CAT traffic with its byte count and its bytes in hex, as the desktop's window writes them.
+    @Published var showBytes = false
+    @Published var followNewest = true {
+        didSet {
+            if followNewest {
+                follow()
+            }
+        }
+    }
+    /// The line the log keeps in view: the newest while Follow newest is on.
+    @Published private(set) var scrollTarget: Int?
+    /// How many times the log's lines were made again from the start
+    /// (a filter change, Clear), and how many times the Core's lines were
+    /// read; neither happens for a change that is not the log's.
+    private(set) var logRebuilds = 0
+    private(set) var logReads = 0
 
     private static let logger = Logger(subsystem: "NereusSDR", category: "tools.cat")
 
@@ -177,33 +248,63 @@ final class CatControlModel: ObservableObject {
     private let commands: CommandClient?
     private let records: RecordStreamClient?
     private var watch: ToolMirrorWatch?
+    private var logWatch: AnyCancellable?
     /// The pages open now; the log is asked for only while Test and log is.
     private var openPages: [Route: Int] = [:]
     private var wanting = false
-    private var channelPending: [Int: PendingChoice<StationCat.ChannelConfig>] = [:]
-    private let globalPending = PendingChoice<StationCat.GlobalConfig>()
-    /// Each slot's sends go one after another, in the order chosen.
-    private var chains: [Slot: Task<Void, Never>] = [:]
-    private var inFlight: [Slot: Int] = [:]
-    private var nextTestId: Int64 = 0
-    /// The log's newest line when Pause was pressed.
-    private var pausedAt: Int?
-    /// Lines that arrived while paused, never shown, as the desktop's window drops them.
-    private var dropped: [ClosedRange<Int>] = []
 
-    init(mirror: MirrorStore, commands: CommandClient?, records: RecordStreamClient?) {
+    /// A change sent to the Core, shown over its value until the Core's
+    /// answer settles it (the desktop's unconfirmed setting).
+    private struct Held<Value: Equatable> {
+        var value: Value
+        /// The latest send of it; only that send's answer settles it.
+        var send: Int
+        /// The Core accepted the latest send: its next change gives way.
+        var accepted = false
+    }
+    private var heldChannels: [Int: Held<StationCat.ChannelConfig>] = [:]
+    private var heldGlobal: Held<StationCat.GlobalConfig>?
+    /// Counts sends, in the order the changes were made.
+    private var sends = 0
+    /// Each slot's property as last read, so a change of it is seen.
+    private var seen: [Slot: String] = [:]
+    /// Each slot's sends go one after another, in the order the changes were made.
+    private var chains: [Slot: Task<PropertyWriteOutcome, Never>] = [:]
+    /// Rising from a start no other device's tester is likely to share, as
+    /// the desktop's remote window seeds its own, since the Core's
+    /// `lastTest` names a test by this id for every device.
+    private var nextTestId = Int64(Date().timeIntervalSince1970 * 1000) * 1000
+
+    /// Every line taken, oldest first, at most the log's capacity.
+    private var logEntries: [LogEntry] = []
+    private var nextLogId = 0
+    /// The newest of the Core's lines read, and the stream's generation:
+    /// the lines after it are new. Lines that come while paused are read
+    /// and dropped, as the desktop's window drops them.
+    private var lastLogId: Int64 = 0
+    private var logGeneration: Int64?
+    /// Each channel's state and the PTT state as last seen while the log
+    /// was open, for its diagnostics; nil while it is not.
+    private var seenStatus: [Int: StationCat.ChannelStatus]?
+    private var seenPtt = ""
+
+    init(mirror: MirrorStore, commands: CommandClient?, records: RecordStreamClient?,
+         timeout: Duration = CatControlModel.timeout) {
         self.mirror = mirror
+        self.timeout = timeout
         self.commands = commands
         self.records = records
-        for number in StationCat.channels {
-            channelPending[number] = PendingChoice<StationCat.ChannelConfig>()
-        }
         let watch = ToolMirrorWatch(mirror: mirror) { [weak self] in self?.refresh() }
         self.watch = watch
         if let records {
-            watch.watch(records.$streams)
             watch.watch(records.$available)
             watch.watch(records.$refusals)
+            // The log alone follows its stream, and only when that stream
+            // changes: the newest line, the count, or the generation.
+            logWatch = records.$streams
+                .map { $0[StationCat.logStream] }
+                .removeDuplicates { Self.logStamp($0) == Self.logStamp($1) }
+                .sink { [weak self] stream in self?.readLog(stream) }
         }
         refresh()
     }
@@ -228,34 +329,42 @@ final class CatControlModel: ObservableObject {
             : object == nil || !cat.global.received || cat.channels.contains(where: { !$0.received }) ? Self.waitingReason
             : nil
         set(\.reason, why)
+        if why != nil {
+            // Gone, or not set up here: nothing sent will be answered, and
+            // the words for what was refused belong to that session.
+            heldChannels = [:]
+            heldGlobal = nil
+            seen = [:]
+            set(\.notes, [:])
+        } else {
+            // The Core's change to what a kept setting covers lets it go,
+            // once the Core has accepted it (CatControl.cpp:705-719).
+            let texts = Self.slotTexts(object)
+            for (slot, text) in texts where seen[slot] != text {
+                seen[slot] = text
+                switch slot {
+                case .channel(let number):
+                    if heldChannels[number]?.accepted == true {
+                        heldChannels[number] = nil
+                    }
+                case .global:
+                    if heldGlobal?.accepted == true {
+                        heldGlobal = nil
+                    }
+                }
+            }
+        }
         var shown: [StationCat.Channel] = []
         for number in StationCat.channels {
             var channel = cat.channel(number)
-            guard let pending = channelPending[number] else {
-                shown.append(channel)
-                continue
-            }
-            pending.follow(object) { values in StationCat(values: values).channel(number).config }
-            if why != nil {
-                pending.drop()
-            } else {
-                pending.settle(mirrored: channel.config, sending: (inFlight[.channel(number)] ?? 0) > 0)
-            }
-            if let value = pending.value {
-                channel.config = value
+            if let held = heldChannels[number] {
+                channel.config = held.value
             }
             shown.append(channel)
         }
         set(\.channels, shown)
-        globalPending.follow(object) { values in StationCat(values: values).global.config }
-        if why != nil {
-            globalPending.drop()
-        } else {
-            globalPending.settle(mirrored: cat.global.config, sending: (inFlight[.global] ?? 0) > 0)
-        }
-        set(\.global, why == nil ? (globalPending.value ?? cat.global.config) : nil)
+        set(\.global, why == nil ? (heldGlobal?.value ?? cat.global.config) : nil)
         set(\.pttState, cat.global.pttState)
-        set(\.aiActive, cat.global.aiActive)
         set(\.platform, cat.platform)
         var ids = Set<Int64>()
         for key in mirror.objectKeys {
@@ -267,8 +376,22 @@ final class CatControlModel: ObservableObject {
         }
         set(\.sliceIds, ids.sorted())
         refreshLog(connected: connected)
+        noteChanges(cat, live: wanting && why == nil)
     }
 
+    /// Each slot's property text in the Core's object: its JSON, or "" when absent.
+    private static func slotTexts(_ object: MirrorObject?) -> [(Slot, String)] {
+        func text(_ name: String) -> String {
+            if case .text(let value)? = object?.values[name] {
+                return value
+            }
+            return ""
+        }
+        return StationCat.channels.map { (Slot.channel($0), text(StationCat.channelProperty($0))) }
+            + [(Slot.global, text(StationCat.globalProperty))]
+    }
+
+    /// Asks for the log while Test and log is open and the Core sends it.
     private func refreshLog(connected: Bool) {
         let logs = connected && version >= 1 && records?.available == true
         let why: String? = !connected ? Self.notConnectedReason
@@ -279,34 +402,15 @@ final class CatControlModel: ObservableObject {
             logReason = why
         }
         if logs && (openPages[.test] ?? 0) > 0 {
-            wanting = true
-            records?.want(StationCat.logStream, backlog: StationCat.logCapacity, by: self)
+            if !wanting {
+                wanting = true
+                records?.want(StationCat.logStream, backlog: StationCat.logCapacity, by: self)
+                // Its lines may already be here for another reader.
+                readLog(records?.streams[StationCat.logStream])
+            }
         } else if wanting {
             wanting = false
             records?.unwant(StationCat.logStream, by: self)
-        }
-        let all = logs ? (records?.records(StationCat.logStream) ?? []).map(StationCat.LogLine.init(record:)) : []
-        let newest = all.compactMap { Int($0.id) }.max() ?? 0
-        if let upper = dropped.map(\.upperBound).max(), newest < upper {
-            // The Core's log started again: what was dropped is gone with it.
-            dropped = []
-        }
-        let lines = all.filter { line in
-            let number = Int(line.id) ?? 0
-            if let pausedAt, number > pausedAt {
-                return false
-            }
-            if dropped.contains(where: { $0.contains(number) }) {
-                return false
-            }
-            switch logFilter {
-            case .all: return true
-            case .received: return line.inbound
-            case .sent: return !line.inbound
-            }
-        }
-        if logLines != lines {
-            logLines = lines
         }
     }
 
@@ -328,22 +432,24 @@ final class CatControlModel: ObservableObject {
     func setOpen(_ route: Route, _ shown: Bool) {
         let count = max(0, (openPages[route] ?? 0) + (shown ? 1 : -1))
         openPages[route] = count == 0 ? nil : count
+        // Read first, so a Core that has just gone is not asked.
+        refresh()
         if shown {
             switch route {
             case .channel, .ptt: refreshDevices()
             case .options, .test: break
             }
         }
-        refresh()
     }
 
     private func refreshDevices() {
         guard reason == nil, let commands else {
             return
         }
+        let timeout = timeout
         Task {
             do {
-                _ = try await commands.invoke(StationCat.refreshDevicesVerb, arguments: [], timeout: Self.timeout)
+                _ = try await commands.invoke(StationCat.refreshDevicesVerb, arguments: [], timeout: timeout)
             } catch {
                 Self.logger.info("The Core did not answer a request to read its serial devices")
             }
@@ -532,8 +638,11 @@ final class CatControlModel: ObservableObject {
 
     /// Picks a slice for a channel's VFO A or VFO B, as the desktop's
     /// selector does: a slice binds again (the rebind flag), None unbinds,
-    /// the closed one does nothing.
+    /// the closed one does nothing, and the one already shown sends nothing.
     func pickSlice(_ number: Int, _ vfo: Vfo, _ choice: String) {
+        guard choice != sliceSelected(number, vfo) else {
+            return
+        }
         let id: Int64
         let rebind: Bool
         if choice == "none" {
@@ -557,13 +666,11 @@ final class CatControlModel: ObservableObject {
     // MARK: Changing a channel
 
     /// Changes one channel: the whole config as shown, with `edit` over it.
+    /// A change that changes nothing sends nothing, as the desktop's
+    /// controls send only on a change.
     func change(_ number: Int, primaryRebind: Bool = false, secondaryRebind: Bool = false,
                 _ edit: (inout StationCat.ChannelConfig) -> Void) {
-        guard let arguments = prepare(number, primaryRebind: primaryRebind, secondaryRebind: secondaryRebind, edit)
-        else {
-            return
-        }
-        Task { _ = await send(.channel(number), StationCat.setChannelVerb, arguments) }
+        _ = sendChannel(number, primaryRebind: primaryRebind, secondaryRebind: secondaryRebind, edit)
     }
 
     /// Sets a listener's address, as typed.
@@ -588,50 +695,45 @@ final class CatControlModel: ObservableObject {
                             unit: "", range: Self.portRange,
                             current: listener == .tcp ? config.tcpPort : config.rigctldPort,
                             send: { [weak self] next in
-                                guard let self, let arguments = self.prepare(number, primaryRebind: false,
-                                                                             secondaryRebind: false, { config in
+                                let sent = self?.sendChannel(number, primaryRebind: false, secondaryRebind: false) {
                                     switch listener {
-                                    case .tcp: config.tcpPort = next
-                                    case .rigctld: config.rigctldPort = next
+                                    case .tcp: $0.tcpPort = next
+                                    case .rigctld: $0.rigctldPort = next
                                     }
-                                }) else {
-                                    return nil
                                 }
-                                return await self.send(.channel(number), StationCat.setChannelVerb, arguments)
+                                return await sent?.value
                             }, close: { [weak self] in self?.pad = nil })
     }
 
-    private func prepare(_ number: Int, primaryRebind: Bool, secondaryRebind: Bool,
-                         _ edit: (inout StationCat.ChannelConfig) -> Void) -> [CommandArgument]? {
-        guard reason == nil, StationCat.channels.contains(number), let pending = channelPending[number] else {
+    /// Shows the change and puts its send after the channel's earlier ones,
+    /// now, so the sends go in the order the changes were made.
+    private func sendChannel(_ number: Int, primaryRebind: Bool, secondaryRebind: Bool,
+                             _ edit: (inout StationCat.ChannelConfig) -> Void) -> Task<PropertyWriteOutcome, Never>? {
+        guard reason == nil, StationCat.channels.contains(number),
+              let index = channels.firstIndex(where: { $0.number == number }) else {
             return nil
         }
-        var next = channel(number).config
+        var next = channels[index].config
         edit(&next)
-        pending.choose(next)
-        publish(number, next)
-        return [
+        guard next != channels[index].config || primaryRebind || secondaryRebind else {
+            return nil
+        }
+        sends += 1
+        heldChannels[number] = Held(value: next, send: sends)
+        channels[index].config = next
+        return enqueue(.channel(number), StationCat.setChannelVerb, send: sends, [
             CommandArgument(name: "channel", value: .int(Int64(number))),
             CommandArgument(name: "config", value: .text(next.commandText(primaryRebind: primaryRebind,
                                                                            secondaryRebind: secondaryRebind))),
-        ]
-    }
-
-    private func publish(_ number: Int, _ config: StationCat.ChannelConfig) {
-        guard let index = channels.firstIndex(where: { $0.number == number }), channels[index].config != config else {
-            return
-        }
-        channels[index].config = config
+        ])
     }
 
     // MARK: Changing the shared settings
 
-    /// Changes the settings every channel shares: the whole config as shown, with `edit` over it.
+    /// Changes the settings every channel shares: the whole config as
+    /// shown, with `edit` over it. A change that changes nothing sends nothing.
     func changeGlobal(_ edit: (inout StationCat.GlobalConfig) -> Void) {
-        guard let arguments = prepareGlobal(edit) else {
-            return
-        }
-        Task { _ = await send(.global, StationCat.setGlobalVerb, arguments) }
+        _ = sendGlobal(edit)
     }
 
     /// Opens the number pad for an RTTY offset: DIGU's, or DIGL's.
@@ -643,75 +745,102 @@ final class CatControlModel: ObservableObject {
         pad = ValuePadModel(title: digu ? "DIGU offset" : "DIGL offset", unit: "Hz", range: Self.rttyRange,
                             current: digu ? global.rttyDiguHz : global.rttyDiglHz,
                             send: { [weak self] next in
-                                guard let self, let arguments = self.prepareGlobal({ config in
+                                let sent = self?.sendGlobal { config in
                                     if digu {
                                         config.rttyDiguHz = next
                                     } else {
                                         config.rttyDiglHz = next
                                     }
-                                }) else {
-                                    return nil
                                 }
-                                return await self.send(.global, StationCat.setGlobalVerb, arguments)
+                                return await sent?.value
                             }, close: { [weak self] in self?.pad = nil })
     }
 
-    private func prepareGlobal(_ edit: (inout StationCat.GlobalConfig) -> Void) -> [CommandArgument]? {
-        guard reason == nil, var next = global else {
+    private func sendGlobal(_ edit: (inout StationCat.GlobalConfig) -> Void) -> Task<PropertyWriteOutcome, Never>? {
+        guard reason == nil, let shown = global else {
             return nil
         }
+        var next = shown
         edit(&next)
-        globalPending.choose(next)
-        if global != next {
-            global = next
+        guard next != shown else {
+            return nil
         }
-        return [CommandArgument(name: "config", value: .text(next.text))]
+        sends += 1
+        heldGlobal = Held(value: next, send: sends)
+        global = next
+        return enqueue(.global, StationCat.setGlobalVerb, send: sends,
+                       [CommandArgument(name: "config", value: .text(next.text))])
     }
 
     // MARK: Sending
 
-    /// Sends one change after the slot's earlier ones, and notes the Core's answer.
-    private func send(_ slot: Slot, _ verb: String, _ arguments: [CommandArgument]) async -> PropertyWriteOutcome {
-        guard let commands else {
-            drop(slot)
-            refresh()
-            return .notSent
-        }
+    /// Puts one send after the slot's earlier ones and returns it; the
+    /// Core's answer is noted as it comes.
+    private func enqueue(_ slot: Slot, _ verb: String, send: Int,
+                         _ arguments: [CommandArgument]) -> Task<PropertyWriteOutcome, Never> {
         let previous = chains[slot]
-        inFlight[slot, default: 0] += 1
-        let job = Task { @MainActor () -> PropertyWriteOutcome in
-            await previous?.value
-            do {
-                let result = try await commands.invoke(verb, arguments: arguments, timeout: Self.timeout)
-                return PropertyWriteOutcome(.success(result))
-            } catch let error as CommandError {
-                Self.logger.info("A CAT change had no answer from the Core")
-                return PropertyWriteOutcome(.failure(error))
-            } catch {
-                return .notSent
+        let commands = commands
+        let timeout = timeout
+        let job = Task { @MainActor [weak self] () -> PropertyWriteOutcome in
+            _ = await previous?.value
+            var outcome = PropertyWriteOutcome.notSent
+            if let commands {
+                do {
+                    outcome = PropertyWriteOutcome(.success(try await commands.invoke(verb, arguments: arguments,
+                                                                                      timeout: timeout)))
+                } catch let error as CommandError {
+                    Self.logger.info("A CAT change had no answer from the Core")
+                    outcome = PropertyWriteOutcome(.failure(error))
+                } catch {
+                    outcome = .notSent
+                }
             }
+            self?.answered(slot, send: send, outcome)
+            return outcome
         }
-        chains[slot] = Task { _ = await job.value }
-        let outcome = await job.value
-        inFlight[slot, default: 1] -= 1
+        chains[slot] = job
+        return job
+    }
+
+    /// The Core's answer to one send, as the desktop's remote window
+    /// settles it (CatControl.cpp:630-655): a refusal or no answer to the
+    /// latest send shows the Core's value again; the latest accepted gives
+    /// way now if the Core already holds it, else at the Core's next change.
+    /// An earlier send's answer changes only the words.
+    private func answered(_ slot: Slot, send: Int, _ outcome: PropertyWriteOutcome) {
+        guard reason == nil else {
+            // Gone: the page already shows why, and holds nothing.
+            return
+        }
         if outcome.accepted {
             notes[slot] = nil
         } else if let text = outcome.noteText(refused: Self.refusedText) {
             notes[slot] = text
         }
-        if !outcome.accepted && (inFlight[slot] ?? 0) == 0 {
-            // Refused or unanswered: show the Core's value again.
-            drop(slot)
+        let cat = StationCat(values: watch?.object(StationCat.objectKey)?.values ?? [:])
+        switch slot {
+        case .channel(let number):
+            guard var held = heldChannels[number], held.send == send else {
+                break
+            }
+            if !outcome.accepted || held.value == cat.channel(number).config {
+                heldChannels[number] = nil
+            } else {
+                held.accepted = true
+                heldChannels[number] = held
+            }
+        case .global:
+            guard var held = heldGlobal, held.send == send else {
+                break
+            }
+            if !outcome.accepted || held.value == cat.global.config {
+                heldGlobal = nil
+            } else {
+                held.accepted = true
+                heldGlobal = held
+            }
         }
         refresh()
-        return outcome
-    }
-
-    private func drop(_ slot: Slot) {
-        switch slot {
-        case .channel(let number): channelPending[number]?.drop()
-        case .global: globalPending.drop()
-        }
     }
 
     // MARK: The tester
@@ -729,24 +858,26 @@ final class CatControlModel: ObservableObject {
         if tests.count > Self.testsKept {
             tests.removeLast(tests.count - Self.testsKept)
         }
+        let timeout = timeout
         Task { [weak self] in
             var answer = Self.unansweredText
-            var refused = false
+            var kind = TestRun.Answer.note
             do {
                 let result = try await commands.invoke(StationCat.testVerb, arguments: [
                     CommandArgument(name: "requestId", value: .int(id)),
                     CommandArgument(name: "channel", value: .int(Int64(channel))),
                     CommandArgument(name: "command", value: .text(text)),
-                ], timeout: Self.timeout)
+                ], timeout: timeout)
                 if result.accepted {
                     var reply = ""
                     if case .text(let value)? = result.values["reply"] {
                         reply = value
                     }
                     answer = reply.isEmpty ? Self.noReplyText : Self.escaped(reply)
+                    kind = reply.isEmpty ? .note : .reply
                 } else {
                     answer = result.reason.isEmpty ? Self.refusedText : result.reason
-                    refused = true
+                    kind = .refused
                 }
             } catch {
                 Self.logger.info("A CAT test had no answer from the Core")
@@ -755,7 +886,7 @@ final class CatControlModel: ObservableObject {
                 return
             }
             self.tests[index].answer = answer
-            self.tests[index].refused = refused
+            self.tests[index].kind = kind
         }
     }
 
@@ -766,7 +897,7 @@ final class CatControlModel: ObservableObject {
             return
         }
         logFilter = filter
-        refresh()
+        rebuildLog()
     }
 
     /// Pauses the log or resumes it. As the desktop's window does, lines that
@@ -775,32 +906,163 @@ final class CatControlModel: ObservableObject {
         guard paused != on else {
             return
         }
-        let newest = (records?.records(StationCat.logStream) ?? []).compactMap { Int($0.id) }.max() ?? 0
-        if on {
-            pausedAt = newest
-        } else {
-            if let pausedAt, newest > pausedAt {
-                dropped.append((pausedAt + 1)...newest)
-            }
-            pausedAt = nil
-        }
         paused = on
-        refresh()
     }
 
-    /// A log line as the page shows it: when, which channel, which way, and
-    /// its bytes, each one outside printable text written as `\xNN`.
-    static func lineText(_ line: StationCat.LogLine) -> String {
-        let way = line.inbound ? "in " : "out"
-        return "CAT\(line.channel) \(way)  \(escaped(line.text))"
+    /// Empties the log, as the desktop's window's Clear does; the Core's
+    /// lines already read do not come back.
+    func clearLog() {
+        logEntries = []
+        rebuildLog()
     }
 
-    /// The time the Core logged a line, on this phone's clock face.
-    static func timeText(_ line: StationCat.LogLine) -> String {
-        guard let ms = line.timeMs else {
-            return ""
+    /// What a stream's change is told by: the generation, the count and the
+    /// newest line. The Core never changes a line it logged.
+    private static func logStamp(_ stream: RecordStreamClient.Stream?) -> [String]? {
+        stream.map { ["\($0.generation)", "\($0.records.count)", $0.records.last?.id ?? ""] }
+    }
+
+    /// Takes the Core's lines that are new since the last read, as the
+    /// desktop's remote window does (CatControl.cpp:507-545): by their
+    /// rising ids, counting again in a new generation or when the Core
+    /// numbers from the start again.
+    private func readLog(_ stream: RecordStreamClient.Stream?) {
+        guard wanting, let stream else {
+            return
         }
-        return timeFormatter.string(from: Date(timeIntervalSince1970: Double(ms) / 1000))
+        logReads += 1
+        if stream.generation != logGeneration {
+            logGeneration = stream.generation
+            lastLogId = 0
+        }
+        let newest = stream.records.last.flatMap { Int64($0.id) } ?? 0
+        if newest < lastLogId {
+            lastLogId = 0
+        }
+        var first = stream.records.endIndex
+        while first > stream.records.startIndex, let id = Int64(stream.records[first - 1].id), id > lastLogId {
+            first -= 1
+        }
+        lastLogId = max(lastLogId, newest)
+        guard !paused, first < stream.records.endIndex else {
+            return
+        }
+        let arrived = Self.nowMs()
+        append(stream.records[first...].map { record in
+            let line = StationCat.LogLine(record: record)
+            return entry(kind: line.inbound ? .received : .sent, channel: line.channel, text: line.text,
+                         timeMs: line.timeMs.flatMap { $0 > 0 ? $0 : nil } ?? arrived)
+        })
+    }
+
+    /// The desktop window's diagnostics (CatLogWindow.cpp:61-73): each
+    /// change of a channel's state, of its TCP, serial, PTY and rigctld,
+    /// of its TCP client count, and of PTT, while the log is open.
+    private func noteChanges(_ cat: StationCat, live: Bool) {
+        guard live else {
+            seenStatus = nil
+            return
+        }
+        let now = Dictionary(uniqueKeysWithValues: StationCat.channels.map { ($0, cat.channel($0).status) })
+        guard let was = seenStatus else {
+            seenStatus = now
+            seenPtt = cat.global.pttState
+            return
+        }
+        var words: [(channel: Int64, text: String)] = []
+        for number in StationCat.channels {
+            guard let status = now[number], let before = was[number], status != before else {
+                continue
+            }
+            let channel = Int64(number)
+            for (name, state, old) in [("TCP", status.tcp, before.tcp), ("Serial", status.serial, before.serial),
+                                       ("PTY", status.pty, before.pty), ("Rigctld", status.rigctld, before.rigctld)]
+                where state != old {
+                words.append((channel, "CAT\(number) \(name): \(state)"))
+            }
+            if status.state != before.state {
+                words.append((channel, "CAT\(number) state: \(status.state)"))
+            }
+            if status.tcpClients != before.tcpClients {
+                words.append((channel, "CAT\(number) TCP clients: \(status.tcpClients)"))
+            }
+        }
+        if cat.global.pttState != seenPtt {
+            words.append((0, "PTT: \(cat.global.pttState)"))
+        }
+        seenStatus = now
+        seenPtt = cat.global.pttState
+        guard !paused, !words.isEmpty else {
+            return
+        }
+        let time = Self.nowMs()
+        append(words.map { entry(kind: .diagnostic, channel: $0.channel, text: $0.text, timeMs: time) })
+    }
+
+    private func entry(kind: LogEntry.Kind, channel: Int64, text: String, timeMs: Int64) -> LogEntry {
+        nextLogId += 1
+        let time = Self.timeFormatter.string(from: Date(timeIntervalSince1970: Double(timeMs) / 1000))
+        guard kind != .diagnostic else {
+            return LogEntry(id: nextLogId, kind: kind, time: time, head: nil, text: text, byteCount: 0, hex: "")
+        }
+        let bytes = text.unicodeScalars.map { $0.value & 0xFF }
+        return LogEntry(id: nextLogId, kind: kind, time: time, head: "CAT\(channel) \(kind == .received ? "in " : "out")",
+                        text: Self.escaped(text), byteCount: bytes.count,
+                        hex: bytes.map { String(format: "%02x", $0) }.joined(separator: " "))
+    }
+
+    /// New lines go last, the oldest going once the log holds its capacity.
+    private func append(_ entries: [LogEntry]) {
+        logEntries.append(contentsOf: entries)
+        if logEntries.count > StationCat.logCapacity {
+            logEntries.removeFirst(logEntries.count - StationCat.logCapacity)
+        }
+        let shown = entries.filter(logFilter.shows)
+        guard !shown.isEmpty else {
+            return
+        }
+        var lines = logLines
+        lines.append(contentsOf: shown.suffix(StationCat.logCapacity))
+        if lines.count > StationCat.logCapacity {
+            lines.removeFirst(lines.count - StationCat.logCapacity)
+        }
+        logLines = lines
+        follow()
+    }
+
+    /// The shown lines made again from every line taken: a filter change, or Clear.
+    private func rebuildLog() {
+        logRebuilds += 1
+        let lines = logEntries.filter(logFilter.shows)
+        if logLines != lines {
+            logLines = lines
+        }
+        follow()
+    }
+
+    private func follow() {
+        if followNewest, scrollTarget != logLines.last?.id {
+            scrollTarget = logLines.last?.id
+        }
+    }
+
+    private static func nowMs() -> Int64 {
+        Int64(Date().timeIntervalSince1970 * 1000)
+    }
+
+    /// A log line as the page shows it: which channel, which way, and its
+    /// bytes, each one outside printable text written as `\xNN`; with
+    /// `bytes`, the byte count and the bytes in hex as well, as the
+    /// desktop's window writes each line.
+    static func lineText(_ line: LogEntry, bytes: Bool = false) -> String {
+        guard let head = line.head else {
+            return line.text
+        }
+        guard bytes else {
+            return "\(head)  \(line.text)"
+        }
+        let way = head.trimmingCharacters(in: .whitespaces)
+        return "\(way) bytes=\(line.byteCount)  \(line.text)  [hex \(line.hex)]"
     }
 
     private static let timeFormatter: DateFormatter = {

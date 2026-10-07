@@ -710,10 +710,13 @@ struct CatTestPage: View {
             Image(systemName: "arrow.right")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(ChromeColours.textFaint)
+            // The radio's reply in its own type; this phone's words, and
+            // the Core's for a refusal, as notes.
             Text(run.answer ?? "Waiting for the Core")
-                .font(.system(size: 12, design: run.refused || run.answer == nil ? .default : .monospaced))
-                .foregroundStyle(run.refused ? ChromeColours.buttonOnAmberText
-                                 : run.answer == nil ? ChromeColours.textFaint : ChromeColours.textBright)
+                .font(.system(size: 12, design: run.answer != nil && run.kind == .reply ? .monospaced : .default))
+                .foregroundStyle(run.answer == nil ? ChromeColours.textFaint
+                                 : run.kind == .refused ? ChromeColours.buttonOnAmberText
+                                 : run.kind == .note ? ChromeColours.textDim : ChromeColours.textBright)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
@@ -737,6 +740,10 @@ struct CatTestPage: View {
                     model.setPaused(!model.paused)
                 }
                 .accessibilityIdentifier("cat.log.pause")
+                AccessoryFields.SmallButton(title: "Clear", enabled: true) {
+                    model.clearLog()
+                }
+                .accessibilityIdentifier("cat.log.clear")
                 Spacer(minLength: 8)
                 Text("Follow newest")
                     .font(.system(size: 12))
@@ -745,33 +752,40 @@ struct CatTestPage: View {
                     model.followNewest.toggle()
                 }
             }
+            HStack(spacing: 8) {
+                Spacer(minLength: 8)
+                Text(CatControlModel.showBytesTitle)
+                    .font(.system(size: 12))
+                    .foregroundStyle(ChromeColours.textDim)
+                SpotHubPage.OnOff(isOn: model.showBytes, identifier: "cat.log.bytes") {
+                    model.showBytes.toggle()
+                }
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
     }
 
+    /// The log as the desktop's window shows it, each line wrapped to the
+    /// width; only the lines in view are drawn, so a full log of the
+    /// Core's lines scrolls as easily as a short one.
     private var console: some View {
         let lines = model.logLines
+        let bytes = model.showBytes
         return ScrollViewReader { reader in
-            ScrollView([.vertical, .horizontal]) {
-                VStack(alignment: .leading, spacing: 0) {
+            ScrollView(.vertical) {
+                LazyVStack(alignment: .leading, spacing: 3) {
                     if lines.isEmpty {
                         Text(CatControlModel.noLinesText)
                             .foregroundStyle(ChromeColours.textFaint)
                     }
                     ForEach(lines) { line in
-                        HStack(spacing: 8) {
-                            Text(CatControlModel.timeText(line))
-                                .foregroundStyle(ChromeColours.textFaint)
-                            Text(CatControlModel.lineText(line))
-                                .foregroundStyle(line.inbound ? SpotColours.consoleText : ChromeColours.textBright)
-                        }
-                        .id(line.id)
+                        LogRow(line: line, bytes: bytes)
+                            .id(line.id)
                     }
                 }
                 .font(.system(size: 10.5, design: .monospaced))
                 .foregroundStyle(SpotColours.consoleText)
-                .lineSpacing(3)
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -779,16 +793,35 @@ struct CatTestPage: View {
             .background(SpotColours.console, in: RoundedRectangle(cornerRadius: 4))
             .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(SpotColours.consoleBorder, lineWidth: 1))
             .onAppear {
-                if model.followNewest, let last = lines.last {
-                    reader.scrollTo(last.id, anchor: .bottomLeading)
+                if let target = model.scrollTarget {
+                    reader.scrollTo(target, anchor: .bottomLeading)
                 }
             }
-            .onChange(of: lines.last?.id) { _, last in
-                if model.followNewest, let last {
-                    reader.scrollTo(last, anchor: .bottomLeading)
+            .onChange(of: model.scrollTarget) { _, target in
+                if let target {
+                    reader.scrollTo(target, anchor: .bottomLeading)
                 }
             }
             .accessibilityIdentifier("cat.log.console")
+        }
+    }
+
+    /// One line of the log: when, then the line; the Core's traffic in its
+    /// colours by way, this phone's diagnostics dimmer.
+    private struct LogRow: View {
+        let line: CatControlModel.LogEntry
+        let bytes: Bool
+
+        var body: some View {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(line.time)
+                    .foregroundStyle(ChromeColours.textFaint)
+                Text(CatControlModel.lineText(line, bytes: bytes))
+                    .foregroundStyle(line.kind == .received ? SpotColours.consoleText
+                                     : line.kind == .sent ? ChromeColours.textBright : ChromeColours.textDim)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 }
