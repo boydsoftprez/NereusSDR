@@ -123,6 +123,8 @@
 //   2026-10-01: stopRadioRecovery cancels a restart still pending, and
 //               radioChangeStoppedReason. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-06: Issue #351: m_radioInPlaceDeadline. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/RadioDiscovery.h"       // RadioInfo, RadioDiscovery, HPSDRHW
@@ -566,6 +568,11 @@ private:
     bool m_radioChangeRestarting {false};
     std::unique_ptr<QThread> m_radioDiscoveryThread;
     QTimer* m_radioRetryTimer {nullptr};
+    // Issue #351: while a lost link recovers in place (the connection's
+    // inPlaceRecoveryMs, P1), the Core keeps the connection, its DSP and
+    // the radio's place; when this runs out with no Connected, it retires
+    // the link and finds the radio again (retireRadioAndRetry).
+    QTimer* m_radioInPlaceDeadline {nullptr};
     quint64 m_radioRecoveryGeneration {0};
     quint64 m_radioRunGeneration {0};
     bool m_radioRecoveryEnabled {false};

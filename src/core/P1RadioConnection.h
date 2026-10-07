@@ -96,6 +96,9 @@
 //                never had, for the VFO lock bit (bank 0 C4 bit 7,
 //                networkproto1.c:471 [v2.10.3.15]). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-06 - Issue #351: inPlaceRecoveryMs, and reconnect attempts 1 s
+//                apart (was 5 s). J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 /*
@@ -158,6 +161,11 @@ public:
 
     // Radio codec (2026-09-30): the EP2 L/R bytes carry the receive audio.
     bool carriesRadioAudio() const noexcept override { return true; }
+
+    // Issue #351: a lost link sends stop, priming and start again
+    // kMaxReconnectAttempts times, each after kReconnectIntervalMs and each
+    // waiting the silence window for its first frame.
+    int inPlaceRecoveryMs() const noexcept override;
 
     int getAdcForDdc(int ddc) const override;
 
@@ -780,7 +788,11 @@ private:
     //   //added similar timout code from ReadThreadMainLoop
     //   DWORD retVal = WSAWaitForMultipleEvents(1, &prn->hDataEvent, FALSE, prn->wdt ? 3000 : WSA_INFINITE, FALSE);
     static constexpr int kWatchdogSilenceMs    = 3000;          // silence → LinkLost threshold
-    static constexpr int kReconnectIntervalMs  = 5000;          // delay between retry attempts
+    // Issue #351: 1 s apart (was 5000, a NereusSDR value; Thetis does not
+    // reconnect, it powers off on loss of sync). A radio whose cable or
+    // switch blinked answers the next start, so the wait is mostly this
+    // interval.
+    static constexpr int kReconnectIntervalMs  = 1000;          // delay between retry attempts
     static constexpr int kMaxReconnectAttempts = 3;             // max retries before staying in Error
 
     int m_watchdogSilenceMs{kWatchdogSilenceMs};

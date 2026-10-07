@@ -20,6 +20,9 @@
 //   2026-10-06: Radio speaker (R-SPK-09, R-SPK-15): the speaker amplifier
 //               inputs (mode, radio speaker mute, side tone expected).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-06: Issue #351: inPlaceRecoveryMs, how long a lost link keeps
+//               trying to come back on the same connection. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "core/NereusCoreExport.h"
 #include "ConnectionState.h"
@@ -814,6 +817,11 @@ public:
     static constexpr int kRadioAudioRateHz = 48000;
     /// True for a connection that sends the radio's audio out.
     virtual bool carriesRadioAudio() const noexcept { return false; }
+    /// Issue #351: how long a lost link (LinkLost) keeps trying to come back
+    /// by itself on this connection before its owner should rebuild it. Zero
+    /// for a connection that does not recover in place (P2 stops on silence
+    /// and waits for a new connectToRadio).
+    virtual int inPlaceRecoveryMs() const noexcept { return 0; }
     /// DSP thread only. `stereo` holds `frames` L/R pairs.
     void pushRadioAudio(const float* stereo, int frames) noexcept
     {

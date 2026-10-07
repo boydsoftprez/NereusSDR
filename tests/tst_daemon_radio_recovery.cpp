@@ -1143,6 +1143,11 @@ private slots:
 
         offerDead = true;
         model->onConnectionStateChangedForTest(ConnectionState::LinkLost);
+        // Issue #351: a P1 link first gets its in-place budget; this test is
+        // about the rebuild that follows when that runs out.
+        QTRY_VERIFY(app.m_radioInPlaceDeadline->isActive());
+        QVERIFY(model->connection());
+        app.m_radioInPlaceDeadline->start(0);
         QTRY_VERIFY(!model->connection());
         QVERIFY(model->isRadioLinkDown());
         QCOMPARE(downChanged.count(), 1);
@@ -1273,6 +1278,56 @@ private slots:
         QVERIFY(!app.m_radioDiscoveryThread);
     }
 
+    // Issue #351: an ANAN-10E on the Rock's own Ethernet port stopped
+    // streaming for a moment, and every blip cost about 16 s: the Core
+    // retired the link (WDSP down and up again), found the radio again and
+    // connected afresh. A P1 link now comes back on the same connection:
+    // the next start brings the stream back, and the connection, its DSP
+    // and the radio's place stay, with no discovery.
+    void aLostP1LinkComesBackInPlace()
+    {
+        P1FakeRadio fake;
+        fake.start();
+        const RadioInfo info = infoFor(fake);
+        std::atomic<int> scans {0};
+        DaemonApp app;
+        prepare(app);
+        app.m_discoveryProviderForTest = [&]() {
+            ++scans;
+            return QList<RadioInfo>{info};
+        };
+        QVERIFY(app.start(testCoreConfig()));
+        QTRY_VERIFY_WITH_TIMEOUT(app.m_radioModel->isConnected(), 10000);
+        RadioModel* const model = app.m_radioModel.get();
+        const QPointer<RadioConnection> connection(model->connection());
+        QVERIFY(connection);
+        const int scansBefore = scans.load();
+        bool sawLinkLost = false;
+        QObject watchScope;
+        connect(model, &RadioModel::connectionStateChanged, &watchScope,
+                [&](ConnectionState state) {
+            if (state == ConnectionState::LinkLost && !sawLinkLost) {
+                sawLinkLost = true;
+                // The cable is back: the radio answers the next start.
+                fake.resume();
+            }
+        });
+        fake.goSilent();
+        // The connection's watchdog (3 s of silence) calls the link lost.
+        QTRY_VERIFY_WITH_TIMEOUT(sawLinkLost, 8000);
+        QTRY_VERIFY(app.m_radioInPlaceDeadline->isActive());
+        QCOMPARE(model->connection(), connection.data());
+        QVERIFY(model->wdspEngine()->isInitialized());
+        // The first attempt, a second later, brings the stream back.
+        QTRY_VERIFY_WITH_TIMEOUT(model->isConnected(), 6000);
+        QCOMPARE(model->connection(), connection.data());
+        QVERIFY(model->wdspEngine()->isInitialized());
+        QVERIFY(!app.m_radioInPlaceDeadline->isActive());
+        QVERIFY(!model->isRadioLinkDown());
+        QCOMPARE(scans.load(), scansBefore);
+        app.stop();
+    }
+
     void lossRetiresPipelinePreservesSlicesAndPinnedIdentity()
     {
         P1FakeRadio fake;
@@ -1306,6 +1361,10 @@ private slots:
         // P2 UDP loss detection has its own real-wire regression. Here inject
         // its model-state boundary to exercise actual daemon/DSP retirement.
         model->onConnectionStateChangedForTest(ConnectionState::LinkLost);
+        // Issue #351: a P1 link first gets its in-place budget; this test is
+        // about the retire that follows when that runs out.
+        QTRY_VERIFY(app.m_radioInPlaceDeadline->isActive());
+        app.m_radioInPlaceDeadline->start(0);
         QTRY_VERIFY(!model->connection());
         QCOMPARE(model->connectionState(), ConnectionState::Disconnected);
         // TX safety fix round 3: the Core's retire is a recovery, not the

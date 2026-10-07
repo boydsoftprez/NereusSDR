@@ -349,6 +349,14 @@ ScanResult scanTree(const QString& absoluteDir)
 //   are cosmetic/bookkeeping for one client's own rendering, unrelated to
 //   the four FftPoolConfig knobs pinned Station in knownExamples() above.
 //
+//   ClarityEnabled -- RadioModel.cpp:1604 reads and :25269 persists the
+//   existing client-display master toggle; PanClarityRegistry.cpp:58-60
+//   relays the model value/signal to this client's per-pan controllers.
+//   Model ownership avoids GUI includes under Rule R1; it does not make
+//   the preference a radio/DSP or station-synchronized setting. Setup's
+//   DisplaySetupPages.cpp:503-505 uses the model API, so this literal is
+//   absent from the Setup AppSettings scan and assertion (b) stays intact.
+//
 //   LogCategory_*  -- src/core/LogCategories.cpp persists per-category
 //   qCDebug/qCInfo/qCWarning verbosity for whichever PROCESS is running:
 //   the daemon and the GUI each have their own log file (see
@@ -390,6 +398,7 @@ const QSet<QString> kCoreExemptExact = {
     QStringLiteral("tx/OwnerSlot"),
     QStringLiteral("DisplayGridStep"),
     QStringLiteral("DisplayProfileApplied"),
+    QStringLiteral("ClarityEnabled"),
     QStringLiteral("SettingsSchemaVersion"),
 };
 
@@ -577,6 +586,8 @@ private slots:
             << QStringLiteral("DisplayFftSize") << int(SettingsScope::Station);
         QTest::newRow("DisplayNoiseFloorColor is OperatorLocal (rendering)")
             << QStringLiteral("DisplayNoiseFloorColor") << int(SettingsScope::OperatorLocal);
+        QTest::newRow("ClarityEnabled is OperatorLocal (client-display master toggle)")
+            << QStringLiteral("ClarityEnabled") << int(SettingsScope::OperatorLocal);
         // R-R3-42: the TCI server runs on this computer, in a remote window
         // as in a local one, so its settings are this computer's.
         QTest::newRow("TciServerPort is OperatorLocal (this computer's TCI server)")

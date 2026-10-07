@@ -4,6 +4,8 @@
 // no-port-check: NereusSDR-original. See MoxDisplayController.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
+//                 AI-assisted via OpenAI Codex.
 //   2026-09-26 : Created for remote-window parity Task 29 (A11, R-R3-49,
 //                 R-R3-12, verification row 16) by J.J. Boyd (KG4VCF). The
 //                 rise and fall, and their comments, moved here from
@@ -209,6 +211,9 @@ void MoxDisplayController::setKeyed(bool keyed, int txSliceId)
         return;
     }
     m_keyed = keyed;
+    const QPointer<MoxDisplayController> self(this);
+    emit keyedChanged(keyed);
+    if (!self) { return; }
     // A MOX edge resets every receiver's peaks, not only the transmitting
     // one's. From Thetis display.cs:1582-1593 [v2.10.3.15] (Display.MOX):
     //   if (value != _old_mox)

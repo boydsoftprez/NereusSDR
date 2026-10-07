@@ -45,6 +45,7 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QPushButton>
+#include <QStandardItemModel>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -476,25 +477,45 @@ void ThisCorePage::refreshControls()
     // sent them. The model alone does not name the board (Red Pitaya runs on
     // a Hermes or an Orion MkII board), so without the Core's list the
     // choice shows the model the Core runs it as and waits.
-    m_fillingModels = true;
-    m_modelCombo->clear();
     bool haveModelList = false;
+    QList<int> choices;
+    int model = -1;
     if (QTreeWidgetItem* item = m_list->currentItem()) {
-        const int model = item->data(1, kMacRole).toInt();
+        model = item->data(1, kMacRole).toInt();
         const QVariantList models = item->data(2, kModelsRole).toList();
         haveModelList = !models.isEmpty();
         if (haveModelList) {
             for (const QVariant& candidate : models) {
-                m_modelCombo->addItem(
-                    QString::fromLatin1(displayName(static_cast<HPSDRModel>(candidate.toInt()))),
-                    candidate.toInt());
+                choices.append(candidate.toInt());
             }
         } else {
-            m_modelCombo->addItem(QString::fromLatin1(displayName(static_cast<HPSDRModel>(model))),
-                                  model);
+            choices.append(model);
         }
-        m_modelCombo->setCurrentIndex(m_modelCombo->findData(model));
     }
+    bool choicesChanged = m_modelCombo->count() != choices.size();
+    for (int i = 0; !choicesChanged && i < choices.size(); ++i) {
+        choicesChanged = m_modelCombo->itemData(i).toInt() != choices.at(i);
+    }
+    m_fillingModels = true;
+    if (choicesChanged) {
+        // Qt 6.11 Cocoa can expire popup cell interfaces while the table
+        // retains their IDs (qcocoaaccessibilityelement.mm:219-267;
+        // itemviews.cpp:645-741). Keep unchanged rows on availability updates.
+        // For a real list change, reset the default combo model to invalidate
+        // persistent cell indexes before accessibility clears its cache
+        // (qstandarditemmodel.cpp:2264-2275; qabstractitemview.cpp:1159-1185).
+        auto* choiceModel = qobject_cast<QStandardItemModel*>(m_modelCombo->model());
+        if (choiceModel != nullptr) {
+            choiceModel->clear();
+        } else {
+            m_modelCombo->clear();
+        }
+        for (int choice : choices) {
+            m_modelCombo->addItem(
+                QString::fromLatin1(displayName(static_cast<HPSDRModel>(choice))), choice);
+        }
+    }
+    m_modelCombo->setCurrentIndex(m_modelCombo->findData(model));
     m_fillingModels = false;
 
     const auto gate = [](QWidget* w, bool enabled, const QString& reason,

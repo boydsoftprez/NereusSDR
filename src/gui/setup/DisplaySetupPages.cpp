@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
+//                 AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -497,22 +499,17 @@ void SpectrumDefaultsPage::buildUI()
         "noise floor as band conditions and tuning change. Uses a 30th-"
         "percentile estimator with 3-second EWMA smoothing and a ±2 dB "
         "deadband. When off, thresholds are fixed at their last values."));
-    if (auto* cc = model() ? model()->clarityController() : nullptr) {
-        clarityToggle->setChecked(cc->isEnabled());
-        connect(clarityToggle, &QCheckBox::toggled, this, [this](bool on) {
-            if (auto* cc2 = model() ? model()->clarityController() : nullptr) {
-                cc2->setEnabled(on);
-                AppSettings::instance().setValue(
-                    QStringLiteral("ClarityEnabled"),
-                    on ? QStringLiteral("True") : QStringLiteral("False"));
-            }
-            // Sync the clarityActive flag so legacy AGC knows whether
-            // to stand down. Off = AGC free to run, On = AGC yields
-            // once Clarity emits its first threshold update.
-            if (auto* sw2 = model() ? model()->spectrumWidget() : nullptr) {
-                if (!on) { sw2->setClarityActive(false); }
-            }
+    if (model()) {
+        clarityToggle->setChecked(model()->clarityEnabled());
+        connect(clarityToggle, &QCheckBox::toggled, model(), &RadioModel::setClarityEnabled);
+        connect(model(), &RadioModel::clarityEnabledChanged, clarityToggle,
+                [clarityToggle](bool enabled) {
+            const QSignalBlocker blocker(clarityToggle);
+            clarityToggle->setChecked(enabled);
         });
+        // Sync the clarityActive flag so legacy AGC knows whether
+        // to stand down. Off = AGC free to run, On = AGC yields
+        // once Clarity emits its first threshold update.
     }
     addContent(clarityToggle);
 

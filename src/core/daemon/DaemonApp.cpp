@@ -151,6 +151,10 @@
 //   2026-10-01: radioChangeStoppedReason's words match the Core's other
 //               radio change message. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-06: Issue #351: a lost link that recovers in place (P1) is
+//               given its in-place budget before the Core retires it and
+//               finds the radio again. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/daemon/DaemonApp.h"
@@ -210,6 +214,15 @@ DaemonApp::DaemonApp(QObject* parent)
     m_radioSwitchDeadline = new QTimer(this);
     m_radioSwitchDeadline->setSingleShot(true);
     connect(m_radioSwitchDeadline, &QTimer::timeout, this, &DaemonApp::endRadioSwitch);
+    m_radioInPlaceDeadline = new QTimer(this);
+    m_radioInPlaceDeadline->setSingleShot(true);
+    connect(m_radioInPlaceDeadline, &QTimer::timeout, this, [this] {
+        // Issue #351: the link did not come back in place; rebuild it.
+        if (m_radioRecoveryEnabled && m_radioModel && m_radioModel->connection()
+            && m_radioModel->connectionState() != ConnectionState::Connected) {
+            retireRadioAndRetry();
+        }
+    });
 }
 
 DaemonApp::~DaemonApp()
@@ -936,6 +949,7 @@ void DaemonApp::cancelRadioDiscovery()
 {
     ++m_radioRecoveryGeneration;
     m_radioRetryTimer->stop();
+    m_radioInPlaceDeadline->stop();
     if (m_radioDiscoveryThread) {
         m_radioDiscoveryThread->requestInterruption();
         m_radioDiscoveryThread->wait();
@@ -1093,6 +1107,7 @@ void DaemonApp::onRadioStateForRecovery(ConnectionState state)
         return;
     }
     if (state == ConnectionState::Connected) {
+        m_radioInPlaceDeadline->stop();
         // Parity Task 21: a radio change has finished. Fix wave, I6: a
         // pending choice becomes the saved one now that it connected.
         if (m_stationRadios && m_radioModel->connection()) {
@@ -1112,6 +1127,23 @@ void DaemonApp::onRadioStateForRecovery(ConnectionState state)
     } else if ((state == ConnectionState::LinkLost
                 || state == ConnectionState::Disconnected) && m_radioAttempted
                && m_radioModel->connection()) {
+        // Issue #351: a link that recovers in place (P1 sends stop, priming
+        // and start again) keeps its connection, its DSP and the radio's
+        // place while it tries. Retiring at once cost about 16 s per blip:
+        // WDSP down and up again, a discovery pass and a fresh connect. Each
+        // failed attempt reports LinkLost again; the first one starts the
+        // wait. A radio change under way ends as before.
+        const int inPlaceMs = m_radioModel->connection()->inPlaceRecoveryMs();
+        if (state == ConnectionState::LinkLost && inPlaceMs > 0
+            && !(m_stationRadios && m_stationRadios->switching())) {
+            if (!m_radioInPlaceDeadline->isActive()) {
+                // No display while the radio is down, as the retire does;
+                // Connected mints and publishes it again.
+                clearFftTopology();
+                m_radioInPlaceDeadline->start(inPlaceMs);
+            }
+            return;
+        }
         retireRadioAndRetry();
     }
 }

@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-04: Hold accepted Core waterfall levels in the remote codec window.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04: Genuine delayed allocation results across peer promotion,
@@ -101,7 +103,9 @@
 #include "core/AudioDeviceConfig.h"
 #include "core/AudioEngine.h"
 #include "core/ClarityController.h"
+#include "gui/PanClarityRegistry.h"
 #include "core/session/SliceAccessMirror.h"
+#include "core/session/DeviceSessionRegistry.h"
 #include "core/session/StationClient.h"
 #include "core/session/StationServer.h"
 #include "core/settings/SettingsProxy.h"
@@ -125,6 +129,9 @@
 #include "core/session/PathRacer.h"
 #include "gui/RemoteAudioStatus.h"
 #include "gui/RemoteConnectionController.h"
+#include "core/SliceOwnership.h"
+#include "core/security/ClientDeviceIdentity.h"
+#include "core/security/DeviceStore.h"
 #include "gui/RemoteMediaController.h"
 #include "gui/PanFloatingWindow.h"
 #include "gui/PanadapterStack.h"
@@ -1720,6 +1727,346 @@ private slots:
     // refuses to move a shared window there, and each refusal used to snap
     // the view back and blank the trace, at wheel rate. A pan drag still asks
     // the Core; one refusal stops that drag's requests and keeps the picture.
+    void refusedDragWithAwayCohostStopsGesture_data()
+    {
+        QTest::addColumn<bool>("scale");
+        QTest::newRow("frequency-scale") << true;
+        QTest::newRow("pan-body") << false;
+    }
+
+    void refusedDragWithAwayCohostStopsGesture()
+    {
+        QFETCH(bool, scale);
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5, 5, 192000);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        const int sliceId = station.addSlice();
+        auto* sourceSlice = station.sliceById(sliceId);
+        QVERIFY(sourceSlice);
+        const int stream = sourceSlice->streamIndex();
+        QVERIFY(stream >= 0);
+        const double centre = station.streamCentreHz(stream);
+        const int hiddenId = station.addSlice();
+        SliceModel* hidden = station.sliceById(hiddenId);
+        QVERIFY(hidden);
+        hidden->setFrequency(centre + 80000);
+        QCOMPARE(hidden->streamIndex(), stream);
+        StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        QVERIFY(server.setDisplayBudgetLimits({10'000'000, 10'000'000, 1}));
+        QPointer<DisplayTransport> sourceMedia;
+        DaemonMediaController daemon(&server, &station, nullptr,
+            [&sourceMedia](QObject* owner) -> IMediaTransport* {
+                sourceMedia = new DisplayTransport(owner);
+                return sourceMedia;
+            });
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true);
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        QTemporaryDir keyDir;
+        const auto identity = std::make_shared<const ClientDeviceIdentity>(
+            ClientDeviceIdentity::loadOrCreate(keyDir.path()));
+        QVERIFY(identity->isValid());
+        PairedDevice paired;
+        paired.id = identity->fingerprint();
+        paired.publicKeySpki = identity->publicKeySpki();
+        paired.name = QStringLiteral("Pan drag fixture");
+        paired.kind = QStringLiteral("computer");
+        QVERIFY(server.deviceStore()->add(paired));
+        client.setDeviceIdentity(identity, paired.name, QStringLiteral("Fixture"));
+        PanadapterStack stack;
+        auto* first = stack.addPanadapter(QStringLiteral("first"));
+        stack.setActivePan(QStringLiteral("first"));
+        first->setActiveSliceIndex(sliceId);
+        auto* widget = first->spectrumWidget();
+        widget->setDisplayWindowPreservingHistory(centre, 48000);
+        widget->setVfoFrequency(centre);
+        widget->setCtunEnabled(true);
+        // MainWindow's connection wiring; a disconnected pan swallows clicks.
+        widget->setConnectionState(ConnectionState::Connected);
+        stack.resize(600, 700);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        QPointer<DisplayTransport> sinkMedia;
+        RemoteMediaController gui(&client, &remote, &stack, nullptr,
+            [&sinkMedia](QObject* owner) -> IMediaTransport* {
+                sinkMedia = new DisplayTransport(owner);
+                return sinkMedia;
+            });
+        QJsonObject latestContext;
+        connect(&client, &StationClient::mediaControlReceived, this,
+            [&latestContext](const QJsonObject& payload, quint32 epoch) {
+                if (payload.value(QStringLiteral("op")) == QLatin1String("context")) {
+                    latestContext = payload;
+                    qInfo() << "AWAY_CONTEXT epoch=" << epoch << payload;
+                }
+            });
+        QStringList centreVerdicts;
+        QList<SessionMessage> centreAnswers;
+        connect(&client, &StationClient::commandResponse, this,
+            [&centreVerdicts, &centreAnswers](const NereusSDR::SessionMessage& message) {
+                if (message.commandVerb == "requestStreamCentre") {
+                    centreAnswers.append(message);
+                    qInfo() << "AWAY_CENTRE_RESULT id=" << message.commandId << "reason=" << message.reason;
+                    centreVerdicts.append(message.accepted ? QStringLiteral("accepted")
+                                                           : QStringLiteral("refused"));
+                }
+            });
+        auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
+        auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        QString certificatePin = server.certificateFingerprint();
+        certificatePin.remove(QLatin1Char(':'));
+        clientLink->setPeerCertificateSha256(QByteArray::fromHex(certificatePin.toLatin1()));
+        stationLink->setPeerAddress(QStringLiteral("192.0.2.30"));
+        stationLink->linkTo(clientLink);
+        connect(stationLink, &SessionTransport::textReceived, this, [](const QByteArray& wire) {
+            SessionMessage message;
+            if (SessionMessages::decode(wire, &message)
+                && message.commandVerb == "requestStreamCentre") {
+                qInfo() << "AWAY_CENTRE_INVOKE id=" << message.commandId
+                        << "arguments=" << wire;
+            }
+        });
+        connect(widget, &SpectrumWidget::centerChanged, this, [widget](double wantedHz) {
+            qInfo() << "AWAY_CENTRE_INTENT wanted=" << wantedHz
+                    << "zoomGesture=" << widget->isZoomRecentring()
+                    << "view=" << widget->centerFrequency() << "span=" << widget->bandwidth();
+        });
+        client.startSession(clientLink, QString(), QString(),
+                            server.stationIdentity().fingerprint());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(sourceMedia && sinkMedia);
+        sourceMedia->other = sinkMedia;
+        sourceMedia->activate();
+        sinkMedia->activate();
+        QVector<float> iq(2048, 0.001f);
+        const auto feed = [&] {
+            QMetaObject::invokeMethod(&station, "rawIqDataForStream", Qt::DirectConnection,
+                Q_ARG(int, stream), Q_ARG(QVector<float>, iq));
+            return !widget->renderedPixels().isEmpty();
+        };
+        QTRY_VERIFY_WITH_TIMEOUT(feed(), 5000);
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), sourceSlice->streamCtunPinned()
+            && widget->ctunEnabled()), 5000);
+
+        QTRY_VERIFY(client.stationLinkReady());
+        QCOMPARE(station.sliceOwnership()->mark(sliceId).owner, identity->fingerprint());
+        QCOMPARE(station.sliceOwnership()->mark(hiddenId).owner, identity->fingerprint());
+        QCOMPARE(station.sliceOwnership()->anchorOf(stream), identity->fingerprint());
+        QTRY_VERIFY(remote.sliceById(hiddenId));
+        QCOMPARE(remote.slicesOnStream(stream).size(), 2);
+        RadioModel remoteB(RadioModel::Role::Remote);
+        remoteB.audioEngine()->setMasterMuted(true);
+        SettingsProxy proxyB;
+        StationClient clientB(&remoteB, &proxyB);
+        QTemporaryDir keyDirB;
+        const auto identityB = std::make_shared<const ClientDeviceIdentity>(
+            ClientDeviceIdentity::loadOrCreate(keyDirB.path()));
+        QVERIFY(identityB->isValid());
+        PairedDevice pairedB;
+        pairedB.id = identityB->fingerprint();
+        pairedB.publicKeySpki = identityB->publicKeySpki();
+        pairedB.name = QStringLiteral("Away cohost B");
+        pairedB.kind = QStringLiteral("computer");
+        QVERIFY(server.deviceStore()->add(pairedB));
+        clientB.setDeviceIdentity(identityB, pairedB.name, QStringLiteral("B"));
+        auto* stationLinkB = new Test::LoopbackTransport(QStringLiteral("station B"));
+        auto* clientLinkB = new Test::LoopbackTransport(QStringLiteral("client B"));
+        clientLinkB->setPeerCertificateSha256(QByteArray::fromHex(certificatePin.toLatin1()));
+        stationLinkB->setPeerAddress(QStringLiteral("192.0.2.31"));
+        stationLinkB->linkTo(clientLinkB);
+        clientB.startSession(clientLinkB, QString(), QString(), server.stationIdentity().fingerprint());
+        server.acceptTransport(stationLinkB);
+        QTRY_VERIFY(clientB.stationLinkReady());
+        // B's default admission slice is closed by B's ordinary authenticated
+        // command, after checking its actual ownership and mirrored identity.
+        QList<int> extras;
+        for (int member : station.slicesOnStream(stream)) {
+            if (member != sliceId && member != hiddenId) {
+                extras.append(member);
+            }
+        }
+        QCOMPARE(extras.size(), 1);
+        const int extraId = extras.first();
+        QCOMPARE(station.sliceOwnership()->mark(extraId).owner, identityB->fingerprint());
+        QTRY_VERIFY(remoteB.sliceById(extraId));
+        QTRY_VERIFY(clientB.sliceAccess()->entry(extraId).has_value());
+        const auto extraAccess = *clientB.sliceAccess()->entry(extraId);
+        QVERIFY(extraAccess.incarnation > 0);
+        QVERIFY(extraAccess.controlRevision > 0);
+        QVERIFY(clientB.sliceAccess()->controlledHere(extraId));
+        QList<SessionMessage> closeAnswers;
+        const auto closeConnection = connect(&clientB, &StationClient::commandResponse, this,
+            [&closeAnswers](const SessionMessage& message) {
+                if (message.commandVerb == "removeSlice") {
+                    closeAnswers.append(message);
+                }
+            });
+        const auto close = clientB.requestRemoveSlice(extraId);
+        QVERIFY2(close.sent, qPrintable(close.reason));
+        QTRY_COMPARE(closeAnswers.size(), 1);
+        QCOMPARE(closeAnswers.first().commandId, qint64(close.commandId));
+        QVERIFY2(closeAnswers.first().accepted, qPrintable(closeAnswers.first().reason));
+        QTRY_VERIFY(!station.sliceById(extraId));
+        QTRY_VERIFY(!remoteB.sliceById(extraId));
+        disconnect(closeConnection);
+        QCOMPARE(station.slicesOnStream(stream).size(), 2);
+        QCOMPARE(station.streamCentreHz(stream), centre);
+        QCOMPARE(station.streamSampleRateHz(stream), 192000);
+        QCOMPARE(sourceSlice->streamIndex(), stream);
+        QCOMPARE(hidden->streamIndex(), stream);
+        QCOMPARE(sourceSlice->streamEpoch(), hidden->streamEpoch());
+        QCOMPARE(hidden->frequency(), centre + 80000);
+        QCOMPARE(station.sliceOwnership()->anchorOf(stream), identity->fingerprint());
+        qInfo() << "AWAY_NORMALIZED extra=" << extraId << "incarnation=" << extraAccess.incarnation
+                << "revision=" << extraAccess.controlRevision << "closeCommand=" << close.commandId;
+        QTRY_VERIFY(clientB.sliceAccess()->entry(hiddenId).has_value());
+        const auto accessB = *clientB.sliceAccess()->entry(hiddenId);
+        QSignalSpy accessAnswersB(&clientB, &StationClient::deviceCommandFinished);
+        const auto take = clientB.requestTakeControl(hiddenId, accessB.incarnation,
+                                                    accessB.controlRevision);
+        QVERIFY2(take.sent, qPrintable(take.reason));
+        QTRY_COMPARE(accessAnswersB.size(), 1);
+        QCOMPARE(accessAnswersB.first().at(1).toUInt(), take.commandId);
+        QVERIFY(accessAnswersB.first().at(2).toBool());
+        QTRY_COMPARE(station.sliceOwnership()->mark(hiddenId).owner, identityB->fingerprint());
+        QCOMPARE(station.sliceOwnership()->mark(sliceId).owner, identity->fingerprint());
+        QCOMPARE(station.sliceOwnership()->anchorOf(stream), identity->fingerprint());
+        QTRY_VERIFY(client.sliceAccess()->entry(hiddenId).has_value());
+        QSignalSpy accessAnswersA(&client, &StationClient::deviceCommandFinished);
+        const auto stop = client.requestStopListening(hiddenId,
+            client.sliceAccess()->entry(hiddenId)->incarnation);
+        QVERIFY2(stop.sent, qPrintable(stop.reason));
+        QTRY_COMPARE(accessAnswersA.size(), 1);
+        QCOMPARE(accessAnswersA.first().at(1).toUInt(), stop.commandId);
+        QVERIFY(accessAnswersA.first().at(2).toBool());
+        QTRY_VERIFY(!remote.sliceById(hiddenId));
+        QCOMPARE(remote.slicesOnStream(stream).size(), 1);
+        QCOMPARE(station.slicesOnStream(stream).size(), 2);
+        clientLinkB->closeLink(QStringLiteral("lost"));
+        QTRY_VERIFY(server.deviceSessions()->entry(identityB->fingerprint()).has_value());
+        QTRY_COMPARE(server.deviceSessions()->entry(identityB->fingerprint())->state,
+                     DeviceSessionRegistry::State::Away);
+        const auto away = *server.deviceSessions()->entry(identityB->fingerprint());
+        QVERIFY(away.awayGeneration > 0);
+        QVERIFY(!away.session);
+        QVERIFY(station.sliceOwnership()->isAwaySlice(hiddenId));
+        QCOMPARE(station.sliceOwnership()->mark(hiddenId).owner, identityB->fingerprint());
+        QCOMPARE(hidden->streamIndex(), stream);
+        QCOMPARE(hidden->frequency(), centre + 80000);
+        QVERIFY(server.deviceSessions()->now() - away.awaySinceMs < DeviceSessionRegistry::kGraceMs);
+        qInfo() << "AWAY_SETUP generation=" << away.awayGeneration << "since=" << away.awaySinceMs
+                << "now=" << server.deviceSessions()->now() << "owner=" << identityB->fingerprint().toHex();
+        sourceSlice->setFrequency(centre - 30000);
+        QTRY_COMPARE(remote.sliceById(sliceId)->frequency(), centre - 30000);
+        widget->setVfoFrequency(remote.sliceById(sliceId)->frequency());
+        widget->setDisplayWindowPreservingHistory(centre, 48000);
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), widget->waterfallHistoryRowsForTest() >= 5), 10000);
+        QCOMPARE(station.streamSampleRateHz(stream), 192000);
+        QCOMPARE(station.streamCentreHz(stream), centre);
+        QCOMPARE(widget->ddcCenterFrequency(), centre);
+        const int grantedFftSize = latestContext.value(QStringLiteral("grantedFftSize")).toInt();
+        QVERIFY(grantedFftSize > 0);
+        const double sourceBinHz = 192000.0 / grantedFftSize;
+        // The accepted crop is rounded to source-bin boundaries; source/DDC
+        // stay exact while the view centre/span may differ by those bins.
+        QVERIFY(std::abs(widget->centerFrequency() - centre) <= sourceBinHz);
+        QVERIFY(std::abs(widget->bandwidth() - 48000.0) <= 2 * sourceBinHz);
+        QVERIFY(widget->ctunEnabled());
+        QVERIFY(!latestContext.isEmpty());
+        QCOMPARE(latestContext.value(QStringLiteral("sourceCentreHz")).toDouble(), centre);
+        const int historyBefore = widget->waterfallHistoryRowsForTest();
+        const quint64 streamEpoch = remote.sliceById(sliceId)->streamEpoch();
+        QSignalSpy centres(widget, &SpectrumWidget::centerChanged);
+        QSignalSpy finishes(&client, &StationClient::streamCentreFinished);
+        QSignalSpy notices(&remote, &RadioModel::sliceAddRejected);
+        const int gpuDivider = static_cast<int>((widget->height() - 32) * 0.40);
+        const int cpuDivider = static_cast<int>(widget->height() * 0.40);
+        const int scaleTop = std::max(gpuDivider, cpuDivider) + 4 + 6;
+        const int scaleBottom = std::min(gpuDivider, cpuDivider) + 4 + 28;
+        QVERIFY(scaleTop < scaleBottom);
+        const QPointF onScale(widget->width() * 0.5, (scaleTop + scaleBottom) / 2);
+        const auto sendMouse = [&](QEvent::Type type, QPointF at, Qt::MouseButtons held) {
+            QMouseEvent mouse(type, at, widget->mapToGlobal(at),
+                type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+                held, Qt::NoModifier);
+            QCoreApplication::sendEvent(widget, &mouse);
+        };
+        const QPointF grab = scale ? onScale
+            : QPointF(widget->width() * 0.2, widget->height() * 0.2);
+        const QPointF firstMove = scale ? grab - QPointF(30, 0) : grab + QPointF(300, 0);
+        const QString hardReason = QStringLiteral(
+            "C-Tune cannot centre there while other receivers share this spectrum.");
+        const auto record = [&](const char* phase, int step) {
+            const double captureCentre = latestContext.value(QStringLiteral("centreHz")).toDouble();
+            const double captureSpan = latestContext.value(QStringLiteral("spanHz")).toDouble();
+            const double overlap = std::max(0.0,
+                std::min(captureCentre + captureSpan / 2, widget->centerFrequency() + widget->bandwidth() / 2)
+                - std::max(captureCentre - captureSpan / 2, widget->centerFrequency() - widget->bandwidth() / 2));
+            qInfo() << "AWAY_OBSERVATION phase=" << phase << "step=" << step << "scale=" << scale
+                    << "zoomGesture=" << widget->isZoomRecentring() << "finishes=" << finishes.size()
+                    << "centres=" << centres.size() << "answers=" << centreAnswers.size()
+                    << "view=" << widget->centerFrequency() << "span=" << widget->bandwidth()
+                    << "ddc=" << widget->ddcCenterFrequency() << "source=" << stream << "epoch=" << streamEpoch
+                    << "context=" << latestContext << "contextOverlapHz=" << overlap
+                    << "pixels=" << widget->renderedPixels().size()
+                    << "history=" << widget->waterfallHistoryRowsForTest();
+        };
+        sendMouse(QEvent::MouseButtonPress, grab, Qt::LeftButton);
+        QCOMPARE(widget->isZoomRecentring(), scale);
+        sendMouse(QEvent::MouseMove, firstMove, Qt::LeftButton);
+        QTRY_COMPARE(finishes.size(), 1);
+        QTRY_COMPARE(centreAnswers.size(), 1);
+        QCOMPARE(finishes.first().at(0).toInt(), sliceId);
+        QCOMPARE(finishes.first().at(1).toULongLong(), streamEpoch);
+        QCOMPARE(finishes.first().at(2).toBool(), false);
+        QCOMPARE(centreAnswers.first().reason, hardReason);
+        for (const auto& update : centreAnswers.first().updates) {
+            QVERIFY(update.name != "phase" || update.value.toString() != "needsConfirmation");
+        }
+        QCOMPARE(station.streamCentreHz(stream), centre);
+        QVERIFY(std::abs(widget->centerFrequency() - centre) < 1.0);
+        record("first-final-refusal", 0);
+        for (int step = 1; step <= 5; ++step) {
+            const int beforeFinishes = finishes.size();
+            const int beforeCentres = centres.size();
+            sendMouse(QEvent::MouseMove, scale ? grab - QPointF(30 + step * 10, 0)
+                                               : grab + QPointF(300 + step * 10, 0), Qt::LeftButton);
+            if (centres.size() > beforeCentres) {
+                QTRY_COMPARE(finishes.size(), beforeFinishes + 1);
+                QTRY_COMPARE(centreAnswers.size(), finishes.size());
+            }
+            feed();
+            QTest::qWait(40);
+            record("same-held-move", step);
+        }
+        const int heldFinishes = finishes.size();
+        sendMouse(QEvent::MouseButtonRelease, scale ? grab - QPointF(80, 0) : grab + QPointF(350, 0), Qt::NoButton);
+        QVERIFY(server.deviceSessions()->now() - away.awaySinceMs < DeviceSessionRegistry::kGraceMs);
+        QCOMPARE(station.streamCentreHz(stream), centre);
+        QCOMPARE(hidden->streamEpoch(), streamEpoch);
+        QCOMPARE(sourceSlice->streamEpoch(), streamEpoch);
+        QCOMPARE(hidden->frequency(), centre + 80000);
+        QCOMPARE(sourceSlice->frequency(), centre - 30000);
+        QVERIFY(widget->waterfallHistoryRowsForTest() >= historyBefore);
+        // A new safe pan gesture must still send and be accepted.
+        widget->setDisplayWindowPreservingHistory(centre, 48000);
+        const QPointF safeGrab(widget->width() * 0.2, widget->height() * 0.2);
+        sendMouse(QEvent::MouseButtonPress, safeGrab, Qt::LeftButton);
+        sendMouse(QEvent::MouseMove, safeGrab - QPointF(50, 0), Qt::LeftButton);
+        sendMouse(QEvent::MouseButtonRelease, safeGrab - QPointF(50, 0), Qt::NoButton);
+        QTRY_COMPARE(finishes.size(), heldFinishes + 1);
+        QTRY_COMPARE(centreAnswers.size(), finishes.size());
+        QVERIFY(centreAnswers.last().accepted);
+        record("fresh-safe-gesture", 0);
+        QCOMPARE(heldFinishes, 1);
+        client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
     void ctunZoomOnSharedStreamKeepsCoreCentreAndRefusalKeepsPicture()
     {
         QTemporaryDir dir;
@@ -1963,6 +2310,11 @@ private slots:
         pan->addSlice(secondId);
         pan->setActiveSliceIndex(firstId);
         auto* widget = pan->spectrumWidget();
+        remote.setClarityEnabled(true);
+        PanClarityRegistry registry(&remote);
+        registry.registerPan(QStringLiteral("pan"),widget,nullptr);
+        ClarityController* clarity=registry.controllerForPan(QStringLiteral("pan"));
+        QSignalSpy floors(clarity,&ClarityController::noiseFloorChanged);
         widget->setDisplayWindowPreservingHistory(centre, 96000);
         widget->setVfoFrequency(centre);
         widget->setConnectionState(ConnectionState::Connected);
@@ -1978,6 +2330,7 @@ private slots:
                 sinkMedia = new DisplayTransport(owner);
                 return sinkMedia;
             });
+        gui.setClarityRegistry(&registry);
         auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
         auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
         stationLink->linkTo(clientLink);
@@ -2001,6 +2354,9 @@ private slots:
         };
         QTRY_VERIFY_WITH_TIMEOUT((feed(), drawn() >= 5), 10000);
         const int before = drawn();
+        QTRY_VERIFY(!floors.isEmpty());
+        clarity->notifyManualOverride();
+        const float retainedLow=clarity->lastLow(), retainedFloor=clarity->smoothedFloor();
 
         // The operator selects the other slice's flag on this pan.
         pan->setActiveSliceIndex(secondId);
@@ -2018,6 +2374,8 @@ private slots:
         // is drawn at its time on the audio's clock, a little after rows
         // captured before the switch.
         QTRY_VERIFY_WITH_TIMEOUT((feed(), !widget->renderedPixels().isEmpty()), 10000);
+        QVERIFY(clarity->isPaused());
+        QCOMPARE(clarity->lastLow(),retainedLow); QCOMPARE(clarity->smoothedFloor(),retainedFloor);
         client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
@@ -2304,17 +2662,17 @@ private slots:
             });
         RadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
-        ClarityController clarity;
-        remote.setClarityController(&clarity);
-        const auto detachClarity = qScopeGuard([&] { remote.setClarityController(nullptr); });
-        clarity.setEnabled(true);
-        QSignalSpy liveFloors(&clarity, &ClarityController::noiseFloorChanged);
+        PanClarityRegistry registry(&remote);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
         PanadapterStack stack;
         auto* first = stack.addPanadapter(QStringLiteral("first"));
         auto* second = stack.addPanadapter(QStringLiteral("second"));
         stack.setActivePan(QStringLiteral("first"));
+        registry.registerPan(QStringLiteral("first"), first->spectrumWidget(), nullptr);
+        registry.registerPan(QStringLiteral("second"), second->spectrumWidget(), nullptr);
+        QSignalSpy liveFloors(registry.controllerForPan(QStringLiteral("first")), &ClarityController::noiseFloorChanged);
+        QSignalSpy otherFloors(registry.controllerForPan(QStringLiteral("second")), &ClarityController::noiseFloorChanged);
         for (auto* applet : {first, second}) {
             applet->setActiveSliceIndex(sliceId);
             applet->spectrumWidget()->setDisplayWindowPreservingHistory(centre, 48000);
@@ -2334,6 +2692,7 @@ private slots:
                 sinkMedia = new DisplayTransport(owner);
                 return sinkMedia;
             });
+        gui.setClarityRegistry(&registry);
         QSignalSpy outbound(&server, &StationServer::mediaControlReceived);
         QSignalSpy inbound(&client, &StationClient::mediaControlReceived);
         auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
@@ -2362,7 +2721,7 @@ private slots:
                 && !second->spectrumWidget()->renderedPixels().isEmpty();
         };
         QTRY_VERIFY_WITH_TIMEOUT(bothHaveFrames(), 5000);
-        QTRY_VERIFY_WITH_TIMEOUT(!liveFloors.isEmpty(), 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(!liveFloors.isEmpty() && !otherFloors.isEmpty(), 5000);
         QCOMPARE(countControl(inbound, QStringLiteral("rejected")), 0);
 
         // DaemonMediaController applies the station offset before reducing
@@ -4639,6 +4998,102 @@ private slots:
         QCOMPARE(finished.size(), 1);
     }
 
+    void fourAcceptedPanFloorsOwnIndependentPlannerWindows()
+    {
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5,5,192000);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        QList<int> sliceIds;
+        for(int n=0;n<4;++n) {
+            const int sliceId=station.addSlice(QStringLiteral("pan-%1").arg(n));
+            SliceModel* source=station.sliceById(sliceId);
+            QVERIFY(source); source->setStreamIndex(0); source->setFrequency(14225000);
+            sliceIds.append(sliceId);
+        }
+        StationServer server(&station, settings, Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true);
+        remote.setClarityEnabled(true);
+        PanClarityRegistry registry(&remote);
+        SettingsProxy proxy; StationClient client(&remote, &proxy); PanadapterStack stack;
+        for (int n=0; n<4; ++n) {
+            const QString id = QStringLiteral("pan-%1").arg(n);
+            auto* pan=stack.addPanadapter(id); pan->setActiveSliceIndex(sliceIds[n]);
+            auto* widget=pan->spectrumWidget();
+            widget->setDisplayWindowPreservingHistory(14225000,24000);
+            widget->setDbmRange(-100,-60); widget->setWfAgcEnabled(false);
+            widget->setWaterfallNFAGCEnabled(false); widget->setDispNormalize(false);
+            widget->setWfUseSpectrumMinMax(false); widget->setWfLowThreshold(-110); widget->setWfHighThreshold(-70);
+            registry.registerPan(id,widget,nullptr);
+            registry.controllerForPan(id)->setPollIntervalMs(0);
+        }
+        stack.setActivePan(QStringLiteral("pan-0")); stack.resize(600,800); stack.show();
+        QPointer<DisplayTransport> media;
+        RemoteMediaController controller(&client,&remote,&stack,nullptr,
+            [&media](QObject* owner)->IMediaTransport* { media=new DisplayTransport(owner); return media; });
+        controller.setClarityRegistry(&registry);
+        QSignalSpy controls(&server,&StationServer::mediaControlReceived);
+        QSignalSpy inbound(&client,&StationClient::mediaControlReceived);
+        auto* stationLink=new Test::LoopbackTransport(QStringLiteral("station"));
+        auto* clientLink=new Test::LoopbackTransport(QStringLiteral("client"));
+        stationLink->linkTo(clientLink); client.startSession(clientLink,server.token()); server.acceptTransport(stationLink);
+        QTRY_VERIFY(media); media->activate();
+        QTRY_COMPARE(countControl(controls,QStringLiteral("subscribe")),4);
+        QList<QJsonObject> requests;
+        for (const auto& event : controls) {
+            const QJsonObject payload=event.first().toJsonObject();
+            if (payload.value(QStringLiteral("op"))==QStringLiteral("subscribe")) { requests.append(payload); }
+        }
+        QCOMPARE(requests.size(),4);
+        for (int n=0;n<4;++n) {
+            const auto request=requests[n];
+            const int hosted=sliceIds.indexOf(request.value(QStringLiteral("sliceId")).toInt());
+            QVERIFY(hosted>=0);
+            const QString id=QStringLiteral("pan-%1").arg(hosted);
+            // The request identifies its real widget, including inactive panes.
+            QVERIFY(stack.spectrum(id));
+            SpectrumContextMessage message;
+            message.connectionId=request.value(QStringLiteral("connectionId")).toString();
+            message.endpointId=quint32(request.value(QStringLiteral("endpointId")).toDouble());
+            message.revision=quint32(request.value(QStringLiteral("revision")).toDouble());
+            message.contextGeneration=1; message.sourceStream=0; message.sourceCentreHz=14225000; message.sampleRateHz=192000;
+            message.centreHz=14225023.4375; message.spanHz=24046.875;
+            message.traceSamples=128; message.waterfallSamples=128; message.minDbm=-180; message.maxDbm=0;
+            message.fps=30; message.framesPerLine=1; message.wideband=WidebandDisplayContext{};
+            SpectrumContextGrant grant; grant.grantedFftSize=4096; grant.requestedPixels=128; grant.grantedPixels=128;
+            message.grant=grant;
+            QVERIFY(server.sendMediaControl(encodeRemoteSpectrumContext(message,true),server.mediaSessionEpoch()));
+            const float floor=-150.0f+hosted*15.0f;
+            QJsonObject event{{QStringLiteral("op"),QStringLiteral("noise-floor")},
+                {QStringLiteral("connectionId"),message.connectionId},{QStringLiteral("endpointId"),double(message.endpointId)},
+                {QStringLiteral("revision"),double(message.revision)},{QStringLiteral("contextGeneration"),1},{QStringLiteral("floorDbm"),floor}};
+            QVERIFY(server.sendMediaControl(event,server.mediaSessionEpoch()));
+            QTRY_VERIFY(stack.spectrum(id)->clarityActive()
+                && stack.spectrum(id)->wfActiveLowThreshold()==floor-5
+                && stack.spectrum(id)->wfActiveHighThreshold()==floor+55);
+            QCOMPARE(stack.spectrum(id)->wfActiveHighThreshold(),floor+55);
+        }
+        QTRY_VERIFY(countControl(controls,QStringLiteral("subscribe"))>=8);
+        for(int n=0;n<4;++n) {
+            const QString id=QStringLiteral("pan-%1").arg(n);
+            QJsonObject latest;
+            for(const auto& event:controls) { const auto payload=event.first().toJsonObject();
+                if(payload.value(QStringLiteral("op"))==QStringLiteral("subscribe") && payload.value(QStringLiteral("sliceId")).toInt()==sliceIds[n]) { latest=payload; } }
+            QVERIFY(!latest.isEmpty());
+            QVERIFY(latest.value(QStringLiteral("minDbm")).toDouble() <= stack.spectrum(id)->wfActiveLowThreshold()-10);
+            QVERIFY(latest.value(QStringLiteral("maxDbm")).toDouble() >= stack.spectrum(id)->wfActiveHighThreshold()+10);
+        }
+        const int settled=countControl(controls,QStringLiteral("subscribe"));
+        stack.setActivePan(QStringLiteral("pan-2"));
+        for(int n=0;n<4;++n) { const QString id=QStringLiteral("pan-%1").arg(n); QCOMPARE(stack.spectrum(id)->wfActiveLowThreshold(),-155.0f+n*15); }
+        QVERIFY(countControl(controls,QStringLiteral("subscribe"))>=settled);
+        client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
     void contextMediaAndRetirementStayInAuthenticatedSession()
     {
         QTemporaryDir dir;
@@ -4655,25 +5110,17 @@ private slots:
         server.setMediaEnabled(true);
         RadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
-        ClarityController clarity;
-        remote.setClarityController(&clarity);
-        const auto detachClarity = qScopeGuard([&] { remote.setClarityController(nullptr); });
-        clarity.setEnabled(true);
-        clarity.setPollIntervalMs(0);
-        clarity.setSmoothingTauSec(0);
-        clarity.setDeadbandDb(0);
-        QSignalSpy floors(&clarity, &ClarityController::noiseFloorChanged);
+        PanClarityRegistry registry(&remote);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
         PanadapterStack stack;
         auto* applet = stack.addPanadapter(QStringLiteral("pan-0"));
         applet->setActiveSliceIndex(stationSlice->sliceIndex());
         auto* widget = applet->spectrumWidget();
-        connect(&clarity, &ClarityController::waterfallThresholdsChanged,
-                widget, [widget](float low, float high) {
-            widget->setClarityActive(true);
-            widget->setClarityWaterfallThresholds(low, high);
-        });
+        registry.registerPan(QStringLiteral("pan-0"), widget, nullptr);
+        ClarityController& clarity = *registry.controllerForPan(QStringLiteral("pan-0"));
+        clarity.setPollIntervalMs(0); clarity.setSmoothingTauSec(0); clarity.setDeadbandDb(0);
+        QSignalSpy floors(&clarity, &ClarityController::noiseFloorChanged);
         // Parity Task 17 follow-up: the dBm window holds the run-time
         // waterfall levels with headroom. Levels that already take in the
         // ones Clarity sets below (-137.375 to -77.375) keep this test's
@@ -4702,6 +5149,7 @@ private slots:
                 media = new DisplayTransport(owner);
                 return media;
             });
+        controller.setClarityRegistry(&registry);
         QSignalSpy controls(&server, &StationServer::mediaControlReceived);
         QSignalSpy receivedControls(&client, &StationClient::mediaControlReceived);
         QSignalSpy frames(&controller, &RemoteMediaController::displayFrameReceived);
@@ -4866,6 +5314,15 @@ private slots:
         deliverFloor(noiseFloor);
         QCOMPARE(floors.size(), 1);
         widget->show();
+        // A valid accepted recipient keeps adapting when another full pan is selected.
+        auto* other = stack.addPanadapter(QStringLiteral("pan-1"));
+        QVERIFY(other);
+        stack.setActivePan(QStringLiteral("pan-1"));
+        deliverFloor(noiseFloor);
+        QCOMPARE(floors.size(), 2);
+        floors.removeLast();
+        stack.setActivePan(QStringLiteral("pan-0"));
+        stack.removePanadapter(QStringLiteral("pan-1"));
         QCOMPARE(clarity.smoothedFloor(), -132.375f);
         QCOMPARE(widget->wfActiveLowThreshold(), -137.375f);
         QCOMPARE(widget->wfActiveHighThreshold(), -77.375f);
@@ -5860,9 +6317,13 @@ private slots:
         widget->setDbmRange(-100.0f, -60.0f);
         widget->setWfLowThreshold(-110.0f);
         widget->setWfHighThreshold(-70.0f);
+        remote.setClarityEnabled(true);
+        PanClarityRegistry registry(&remote);
+        registry.registerPan(QStringLiteral("pan-0"),widget,nullptr);
+        registry.bindRemote(QStringLiteral("pan-0"),widget,stationSlice,{0,stationSlice->streamEpoch(),14225000,192000},1,1,1);
+        ClarityController* clarity=registry.controllerForPan(QStringLiteral("pan-0"));
         // Clarity drives the levels, below and above what the pan shows.
-        widget->setClarityActive(true);
-        widget->setClarityWaterfallThresholds(-150.0f, -40.0f);
+        emit clarity->waterfallThresholdsChanged(-150.0f, -40.0f);
         stack.resize(600, 400);
         stack.show();
         QVERIFY(QTest::qWaitForWindowExposed(&stack));
@@ -5897,14 +6358,14 @@ private slots:
         };
 
         // A few dB of movement inside the window asks nothing.
-        widget->setClarityWaterfallThresholds(-147.0f, -44.0f);
+        emit clarity->waterfallThresholdsChanged(-147.0f, -44.0f);
         settle();
-        widget->setClarityWaterfallThresholds(-153.0f, -37.0f);
+        emit clarity->waterfallThresholdsChanged(-153.0f, -37.0f);
         settle();
         QCOMPARE(countControl(controls, QStringLiteral("subscribe")), 1);
 
         // The low level leaves the window: asked again, with headroom.
-        widget->setClarityWaterfallThresholds(-175.0f, -37.0f);
+        emit clarity->waterfallThresholdsChanged(-175.0f, -37.0f);
         settle();
         QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), 2);
         asked = lastControl(controls, QStringLiteral("subscribe"));
@@ -5913,7 +6374,7 @@ private slots:
 
         // The levels close in far inside the window: it narrows to them,
         // never inside what the pan shows.
-        widget->setClarityWaterfallThresholds(-120.0f, -90.0f);
+        emit clarity->waterfallThresholdsChanged(-120.0f, -90.0f);
         settle();
         QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), 3);
         asked = lastControl(controls, QStringLiteral("subscribe"));
@@ -5923,7 +6384,7 @@ private slots:
         // Back to the stored levels: the window is the pan and those levels.
         // (Waterfall AGC's levels come from a Core that offers display
         // extras, as this one does: coreWaterfallAgcAsksNothingAsItSettles.)
-        widget->setClarityActive(false);
+        registry.setEnabled(false);
         settle();
         QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), 4);
         asked = lastControl(controls, QStringLiteral("subscribe"));

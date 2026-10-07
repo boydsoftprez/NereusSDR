@@ -392,8 +392,10 @@ private slots:
             QCOMPARE(card.currentConfig().bufferSamples, config.bufferSamples);
             QCOMPARE(device->currentText(), config.deviceName + QStringLiteral(" (not available)"));
             QCOMPARE(device->count(), 2);
-            // The accepted DeviceCard model reset runs twice for driver
-            // rebuild + retained device selection, once for a retained-entry reload.
+            // Accepted DeviceCard repair 8711bc7b2 resets the real model to
+            // invalidate old cell indexes before accessibility cache teardown.
+            // Driver population and retained-entry selection each reset the
+            // device model; a settings reload resets each retained-entry model once.
             const int resetsPerRefresh = refresh == QStringLiteral("driver") ? 2 : 1;
             QCOMPARE(modelResets.count(), (iteration + 1) * resetsPerRefresh);
             QAccessibleInterface* table = QAccessible::queryAccessibleInterface(refreshed->view());
