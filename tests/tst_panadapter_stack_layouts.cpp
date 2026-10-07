@@ -16,6 +16,7 @@
 #include <cmath>
 #include "core/session/StationClient.h"
 #include "core/session/StationServer.h"
+#include "core/session/media/RemoteSpectrumContext.h"
 #include "core/settings/SettingsProxy.h"
 #include "core/HpsdrModel.h"
 #include "core/SliceOwnership.h"
@@ -54,6 +55,178 @@ private slots:
             AppSettings::instance().setRemoteBackend(nullptr);
             AppSettings::instance().clear();
         }
+    }
+
+    // A provisional slice's frequency must not move the pan it borrows
+    // before its authoritative pan key arrives in the same Core record.
+    void savedRemoteLayoutKeepsEachOwnedSliceOnItsOwnWindow_data()
+    {
+        QTest::addColumn<bool>("lateA");
+        QTest::addColumn<int>("viewPolicy");
+        QTest::newRow("A-first-on-pan-0") << false << 0;
+        QTest::newRow("A-late-on-pan-2") << true << 0;
+        QTest::newRow("primary-visible-CTUN-centre-is-retained") << false << 1;
+        QTest::newRow("operator-primary-view-before-arrival-is-retained") << false << 2;
+        QTest::newRow("accepted-secondary-crop-before-ownership-is-retained") << false << 3;
+        QTest::newRow("complete-record-with-no-pan-key-keeps-fallback") << false << 4;
+        QTest::newRow("nonctun-primary-prearrival-authoritative-frequency") << false << 5;
+        QTest::newRow("keyless-unchanged-default-frequency-completes-presentation") << false << 6;
+    }
+
+    void savedRemoteLayoutKeepsEachOwnedSliceOnItsOwnWindow()
+    {
+        QFETCH(bool, lateA);
+        QFETCH(int, viewPolicy);
+        const int stationSlices = (viewPolicy == 1 || viewPolicy == 2 || viewPolicy == 4
+                                   || viewPolicy == 5 || viewPolicy == 6) ? 1 : 5;
+        AppSettings& settings = AppSettings::instance();
+        settings.setValue(QStringLiteral("PanLayoutId"), QStringLiteral("2x2"));
+        Test::markAudioFirstRunDone();
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings stationSettings(directory.filePath(QStringLiteral("station.settings")));
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5, 5, 192000);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        for (int id = 0; id < stationSlices; ++id) {
+            QCOMPARE(station.addSlice(), id);
+        }
+        if (lateA) {
+            station.removeSlice(0);
+            QCOMPARE(station.addSlice(), 0);
+        }
+        if (stationSlices > 1) {
+            station.removeSlice(1);
+            QCOMPARE(station.addSlice(), 1);
+        }
+        const double frequencies[] = {viewPolicy == 5 ? 5'350'000.0
+            : viewPolicy == 6 ? 14'225'000.0
+            : viewPolicy == 1 ? 14'236'200.0 : 3'881'200.0, 7'184'500.0, 14'225'100.0,
+                                      28'405'100.0, 28'420'000.0};
+        const QStringList pans = lateA
+            ? QStringList{QStringLiteral("pan-2"), QStringLiteral("pan-1"),
+                          QStringLiteral("pan-0"), QStringLiteral("pan-3"), QStringLiteral("pan-3")}
+            : QStringList{QStringLiteral("pan-0"), QStringLiteral("pan-1"),
+                          QStringLiteral("pan-2"), QStringLiteral("pan-3"), QStringLiteral("pan-3")};
+        for (int id = 0; id < stationSlices; ++id) {
+            SliceModel* slice = station.sliceById(id);
+            QVERIFY(slice);
+            slice->setPanKey((viewPolicy == 4 || viewPolicy == 6) ? QString() : pans[id]);
+            slice->setFrequency(frequencies[id]);
+            station.sliceOwnership()->setOwner(id, viewPolicy == 3 && id == 1
+                ? QByteArrayLiteral("phone-test") : QByteArrayLiteral("token:1"));
+            if (viewPolicy == 3 && id == 1) {
+                station.sliceOwnership()->join(QByteArrayLiteral("token:1"), id);
+            }
+        }
+        station.flushPendingSettingsSave();
+        StationServer server(&station, stationSettings,
+                             Test::seedUpgradedCoreToken(directory.path()));
+        server.setHeartbeatIntervalMs(0);
+        server.setMediaEnabled(false);
+        SettingsProxy proxy;
+        settings.setRemoteBackend(&proxy);
+        const auto detach = qScopeGuard([&settings] { settings.setRemoteBackend(nullptr); });
+        const RemoteStationOptions options{QStringLiteral("ws://offline.invalid"),
+                                          server.token(), {}, true};
+        MainWindow window(options, nullptr, MainWindow::ConnectionStartup::Deferred);
+        window.resize(1280, 800);
+        window.show();
+        PanadapterStack* stack = window.findChild<PanadapterStack*>();
+        StationClient* client = window.findChild<StationClient*>();
+        QVERIFY(stack);
+        QVERIFY(client);
+        QCOMPARE(stack->allApplets().size(), 4);
+        QVERIFY(!client->isHandshakeComplete());
+        SpectrumWidget* primary = stack->spectrum(QStringLiteral("pan-0"));
+        QVERIFY(primary);
+        if (viewPolicy == 5) { primary->applyRemoteCtunState(true, false); }
+        if (viewPolicy == 2 || viewPolicy == 5) {
+            primary->setDisplayWindowPreservingHistory(3'870'000.0, 192'000.0);
+        }
+        const double primaryCentre = primary->centerFrequency();
+        const double primarySpan = primary->bandwidth();
+        client->setTokenSessionHolderForTest(QStringLiteral("token:1"));
+        client->setTokenSliceAccessForTest(true);
+        auto coreLink = std::make_unique<Test::LoopbackTransport>(QStringLiteral("station"));
+        auto clientLink = std::make_unique<Test::LoopbackTransport>(QStringLiteral("client"));
+        QStringList createCommands;
+        QStringList tuneCommands;
+        connect(clientLink.get(), &Test::LoopbackTransport::outboundText, &window,
+                [&createCommands, &tuneCommands](const QByteArray& wire) {
+            if (wire.contains("addSlice")) { createCommands.append(QString::fromUtf8(wire)); }
+            if (wire.contains("requestStreamCentre") || wire.contains("setFrequency")
+                || wire.contains("setPtt") || wire.contains("setMox")) {
+                tuneCommands.append(QString::fromUtf8(wire));
+            }
+        });
+        QSignalSpy stationAdds(&station, &RadioModel::sliceAdded);
+        coreLink->linkTo(clientLink.get());
+        client->startSession(clientLink.release(), server.token());
+        server.acceptTransport(coreLink.release());
+        QTRY_VERIFY(client->isHandshakeComplete());
+        RadioModel* remote = window.radioModel();
+        QCOMPARE(remote->slices().size(), stationSlices);
+        for (int id = 0; id < stationSlices; ++id) {
+            SliceModel* slice = remote->sliceById(id);
+            QVERIFY(slice);
+            QCOMPARE(slice->frequency(), frequencies[id]);
+            QCOMPARE(slice->panKey(), (viewPolicy == 4 || viewPolicy == 6) ? QString() : pans[id]);
+            PanadapterApplet* applet = stack->panadapter(pans[id]);
+            QVERIFY(applet);
+            QVERIFY(applet->associatedSlices().contains(id));
+            VfoWidget* flag = applet->spectrumWidget()->vfoWidget(id);
+            QVERIFY(flag);
+            QCOMPARE(flag->parentWidget(), applet->spectrumWidget());
+            QCOMPARE(flag->frequency(), frequencies[id]);
+            QVERIFY(flag->stationPresentationAllowed());
+        }
+        QVERIFY(createCommands.isEmpty());
+        QCOMPARE(stationAdds.size(), 0);
+        QVERIFY(tuneCommands.isEmpty());
+        if (viewPolicy == 5 || viewPolicy == 6) {
+            QTRY_COMPARE(primary->vfoFrequencyForTest(), frequencies[0]);
+            QCOMPARE(station.sliceById(0)->frequency(), frequencies[0]);
+        }
+        if (viewPolicy == 1 || viewPolicy == 2) {
+            QCOMPARE(primary->centerFrequency(), primaryCentre);
+            QCOMPARE(primary->bandwidth(), primarySpan);
+        }
+        if (viewPolicy == 3) {
+            SpectrumWidget* secondary = stack->spectrum(QStringLiteral("pan-1"));
+            QVERIFY(secondary->vfoWidget(1)->isListening());
+            SpectrumEndpointContext context;
+            context.exactCentreHz = 7'200'000.0;
+            context.exactSpanHz = 96'000.0;
+            secondary->setRemoteSpectrumContext(context, 7'184'500.0, 192'000.0, 65536);
+            station.sliceOwnership()->setOwner(1, QByteArrayLiteral("token:1"));
+            QTRY_COMPARE(secondary->vfoWidget(1)->sliceAccess().state,
+                         VfoWidget::SliceAccess::State::Controlled);
+            QCOMPARE(secondary->centerFrequency(), 7'200'000.0);
+            QCOMPARE(secondary->bandwidth(), 96'000.0);
+        }
+        // Every owned slice is on its correctly resolved initial pan; neither
+        // bootstrap ordering nor Slice A's special wiring may leave it hidden.
+        for (int id = 0; id < stationSlices; ++id) {
+            SpectrumWidget* host = stack->spectrum(pans[id]);
+            QTRY_VERIFY(frequencies[id] >= host->centerFrequency() - host->bandwidth() / 2.0);
+            QTRY_VERIFY(frequencies[id] <= host->centerFrequency() + host->bandwidth() / 2.0);
+            QTRY_VERIFY(!host->vfoWidget(id)->isHidden());
+        }
+        SpectrumWidget* aHost = stack->spectrum(pans[0]);
+        const double span = aHost->bandwidth();
+        const double nextFrequency = viewPolicy == 5 ? 7'100'000.0 : 5'350'000.0;
+        station.sliceById(0)->setFrequency(nextFrequency);
+        QTRY_COMPARE(remote->sliceById(0)->frequency(), nextFrequency);
+        QTRY_COMPARE(aHost->centerFrequency(), nextFrequency);
+        QCOMPARE(aHost->vfoWidget(0)->frequency(), nextFrequency);
+        QCOMPARE(aHost->vfoFrequencyForTest(), nextFrequency);
+        QCOMPARE(station.sliceById(0)->frequency(), nextFrequency);
+        QCOMPARE(aHost->bandwidth(), span);
+        QVERIFY(!aHost->vfoWidget(0)->isHidden());
+        QVERIFY(createCommands.isEmpty());
+        QVERIFY(tuneCommands.isEmpty());
     }
 
     void remoteLayoutShowsSeededSecondaryFlagBeforeFirstTune_data()

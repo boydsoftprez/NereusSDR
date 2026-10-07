@@ -1,3 +1,7 @@
+// Modification history (NereusSDR):
+//   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
+//                 AI-assisted via OpenAI Codex.
+//
 // tests/tst_display_setup_binding.cpp
 //
 // no-port-check: NereusSDR-original test infrastructure for the 3D
@@ -45,6 +49,31 @@ class TestDisplaySetupBinding : public QObject {
     Q_OBJECT
 
 private slots:
+    void clarityMasterEchoAndSavedState()
+    {
+        AppSettings::instance().setValue(QStringLiteral("ClarityEnabled"), QStringLiteral("False"));
+        int writes = 0;
+        AppSettings::instance().setChangeHook([&](const QString& key) {
+            if (key == QStringLiteral("ClarityEnabled")) { ++writes; }
+        });
+        const auto clearHook = qScopeGuard([] { AppSettings::instance().setChangeHook({}); });
+        RadioModel model(RadioModel::Role::Remote);
+        QCOMPARE(writes, 0);
+        QVERIFY(!model.clarityEnabled());
+        SpectrumDefaultsPage page(&model);
+        QCheckBox* toggle = nullptr;
+        for (QCheckBox* box : page.findChildren<QCheckBox*>()) {
+            if (box->property("nereusSetupId").toString() == QStringLiteral("display.spectrumDefaults.clarity")) { toggle = box; }
+        }
+        QVERIFY(toggle); QVERIFY(!toggle->isChecked());
+        QSignalSpy changes(&model, &RadioModel::clarityEnabledChanged);
+        QSignalSpy echoes(toggle, &QCheckBox::toggled);
+        model.setClarityEnabled(true); QCOMPARE(changes.size(), 1); QCOMPARE(echoes.size(), 0);
+        QVERIFY(toggle->isChecked()); QCOMPARE(writes, 1);
+        toggle->setChecked(false); QCOMPARE(changes.size(), 2); QCOMPARE(echoes.size(), 1);
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("ClarityEnabled")).toString(), QStringLiteral("False"));
+        model.setClarityEnabled(false); QCOMPARE(changes.size(), 2); QCOMPARE(writes, 2);
+    }
     // ---- Display3DSetupPage: model -> page, one field at a time ----
     void modelChange_reflectsOnPage_perField();
 

@@ -30,6 +30,8 @@
 //     only; here, the pan hosting the transmit slice.
 //
 // Modification history (NereusSDR):
+//   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
+//                 AI-assisted via OpenAI Codex.
 //   2026-09-26 : Created for remote-window parity Task 29 (A11, R-R3-49,
 //                 R-R3-12, verification row 16) by J.J. Boyd (KG4VCF): the
 //                 rise and fall MainWindow's MOX lambda made, moved here so
@@ -132,6 +134,7 @@ public:
     void clearCallLog() { m_callLog.clear(); }
 
 signals:
+    void keyedChanged(bool keyed);
     /// displayDuplex() changed (the setting, or its availability).
     void displayDuplexChanged(bool on);
 

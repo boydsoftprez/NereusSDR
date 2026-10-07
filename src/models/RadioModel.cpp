@@ -17,6 +17,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-04 - Two-tone sideband follows the transmit-bound slice at
 //                 connect and handoff. J.J. Boyd (KG4VCF), AI-assisted
 //                 via OpenAI Codex. NereusSDR-original binding fix.
@@ -1253,6 +1255,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "RadioModel.h"
+#include "core/ClarityController.h"
 #include "core/session/RemoteDevicesState.h"
 #include "core/AmModulationAnalyzer.h"
 #include "core/session/ModMonitorRecord.h"
@@ -1598,6 +1601,12 @@ RadioModel::RadioModel(Role role, QObject* parent)
     , m_wdspEngine(new WdspEngine(this))
 {
     m_role = role;
+    // Ship default 2026-04-30: Clarity ON for fresh installs. Auto-tuning
+    // the noise floor is the better first-launch experience than asking
+    // the user to find and toggle the setting themselves.
+    m_clarityEnabled = AppSettings::instance().value(
+        QStringLiteral("ClarityEnabled"), QStringLiteral("True")).toString()
+        == QStringLiteral("True");
     // The lane is a Qt thread fed through Qt's event queue, which needs an
     // application object: a model made without one (an app-less unit test)
     // runs its WDSP calls at once, as before.
@@ -25258,6 +25267,17 @@ void RadioModel::teardownConnection()
 }
 
 // Phase 3G-9b — 7 smooth-default recipe values. See docs/architecture/waterfall-tuning.md.
+ClarityController* RadioModel::clarityController() const { return m_clarityController.data(); }
+void RadioModel::setClarityController(ClarityController* controller) { m_clarityController = controller; }
+void RadioModel::setClarityEnabled(bool enabled)
+{
+    if (m_clarityEnabled == enabled) { return; }
+    m_clarityEnabled = enabled;
+    AppSettings::instance().setValue(QStringLiteral("ClarityEnabled"),
+        enabled ? QStringLiteral("True") : QStringLiteral("False"));
+    emit clarityEnabledChanged(enabled);
+}
+
 void RadioModel::applyClaritySmoothDefaults()
 {
     NereusSDR::ISpectrumSink* sw = spectrumSink();

@@ -60,6 +60,7 @@
 
 #include "core/AppSettings.h"
 #include "core/BoardCapabilities.h"
+#include "core/session/media/SpectrumEndpoint.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/applets/RxApplet.h"
 #include <QSet>
@@ -160,6 +161,106 @@ private slots:
         if (QDir(m_privateConfigDir).exists()) {
             QVERIFY(QDir(m_privateConfigDir).removeRecursively());
         }
+    }
+
+    // Context installation must update child widgets synchronously. Painting
+    // is disabled throughout so the CPU painter cannot repair a missed trigger.
+    void accepted_context_hides_and_restores_flags_and_controls()
+    {
+        SpectrumWidget w;
+        w.setUpdatesEnabled(false);
+        w.setWaterfallTickerPausedForTest(true);
+        placePan(w);
+        w.applyRemoteCtunState(true, true);
+        VfoWidget* flag = w.addVfoWidget(1);
+        flag->setMode(DSPMode::CWL); // flag extends right from its frequency
+        flag->setFrequency(kSliceAHz);
+        w.setVfoFrequency(kSliceAHz);
+        w.show();
+        w.updateVfoPositions(); // seed the pre-context presentation only
+        QVERIFY(flag->isVisible());
+        QPushButton* close = flag->closeButtonForTest();
+        QPushButton* lock = flag->lockButtonForTest();
+        QVERIFY(close && lock);
+        QVERIFY(close->isVisible());
+        QVERIFY(lock->isVisible());
+        w.pushWaterfallRowForTest(QVector<float>(w.width(), -100.0f));
+        const int historyRows = w.waterfallHistoryRowsForTest();
+        QVERIFY(historyRows > 0);
+        QSignalSpy tunes(&w, &SpectrumWidget::frequencyClicked);
+        QSignalSpy txWindows(&w, &SpectrumWidget::txViewWindowChanged);
+        QSignalSpy closes(flag, &VfoWidget::closeRequested);
+
+        SpectrumEndpointContext context;
+        context.exactCentreHz = 3'870'000.0;
+        context.exactSpanHz = 80'000.0;
+        w.setRemoteSpectrumContext(context, context.exactCentreHz, kSpanHz);
+        QVERIFY2(flag->isHidden(), "accepted off-window context retained the old flag");
+        QVERIFY(close->isHidden());
+        QVERIFY(lock->isHidden());
+        QCOMPARE(w.waterfallHistoryRowsForTest(), historyRows);
+        QVERIFY(w.ctunEnabled());
+
+        context.exactCentreHz = kSliceAHz;
+        context.exactSpanHz = kSpanHz;
+        w.setRemoteSpectrumContext(context, context.exactCentreHz, kSpanHz);
+        QVERIFY(flag->isVisible());
+        QVERIFY(close->isVisible());
+        QVERIFY(lock->isVisible());
+        // The frequency is exactly the centre of the spectrum plot, away
+        // from the flag's edge clamps and independent of its earlier x.
+        QCOMPARE(flag->x(), (w.width() - w.reservedRightEdgeWidth()) / 2);
+        QCOMPARE(w.waterfallHistoryRowsForTest(), historyRows);
+        QCOMPARE(flag->frequency(), kSliceAHz);
+        QCOMPARE(tunes.count(), 0);
+        QCOMPARE(txWindows.count(), 0);
+        QCOMPARE(closes.count(), 0);
+
+        // A denied station flag stays denied even when its RF is in view.
+        flag->setStationPresentationAllowed(false);
+        context.exactCentreHz += 10'000.0;
+        w.setRemoteSpectrumContext(context, context.exactCentreHz, kSpanHz);
+        QVERIFY(flag->isHidden());
+        QVERIFY(close->isHidden());
+        QVERIFY(lock->isHidden());
+    }
+
+    void accepted_crop_repositions_both_on_window_flags()
+    {
+        SpectrumWidget w;
+        w.setUpdatesEnabled(false);
+        placePan(w);
+        w.applyRemoteCtunState(true, true);
+        VfoWidget* flagA = w.addVfoWidget(0);
+        VfoWidget* flagB = w.addVfoWidget(1);
+        flagA->setMode(DSPMode::CWL);
+        flagB->setMode(DSPMode::CWL);
+        flagA->setFrequency(kCentreHz - 20'000.0);
+        flagB->setFrequency(kCentreHz + 20'000.0);
+        w.show();
+        w.updateVfoPositions(); // seed; never called after the tested crop
+        const int oldA = flagA->x();
+        const int oldB = flagB->x();
+
+        SpectrumEndpointContext context;
+        context.exactCentreHz = kCentreHz + 10'000.0;
+        context.exactSpanHz = 100'000.0;
+        w.setRemoteSpectrumContext(context, kCentreHz, kSpanHz);
+        QVERIFY(flagA->isVisible());
+        QVERIFY(flagB->isVisible());
+        QCOMPARE(flagA->x(), static_cast<int>(0.2 * (w.width() - w.reservedRightEdgeWidth())));
+        QCOMPARE(flagB->x(), static_cast<int>(0.6 * (w.width() - w.reservedRightEdgeWidth())));
+        QVERIFY(flagA->x() != oldA);
+        QVERIFY(flagB->x() != oldB);
+        QVERIFY(flagA->x() < flagB->x());
+        QVERIFY(flagA->closeButtonForTest()->isHidden());
+        QVERIFY(flagB->closeButtonForTest()->isVisible());
+
+        // Reinstalling identical geometry is a no-op for child placement.
+        const QPoint position = flagB->pos();
+        w.setRemoteSpectrumContext(context, kCentreHz, kSpanHz);
+        QCOMPARE(flagB->pos(), position);
+        QVERIFY(flagB->closeButtonForTest()->isVisible());
     }
 
     // A flag leaving the visible frequency range must retire its sibling
