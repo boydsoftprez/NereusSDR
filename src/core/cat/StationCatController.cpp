@@ -9,6 +9,9 @@
 // Modification history (NereusSDR):
 //   2026-10-07  J.J. Boyd / KG4VCF  Created (CAT setup from a connected
 //                                    desktop, stationCatVersion 1).
+//                                    Review fixes: explicit rebinds, the
+//                                    tester's reply in its result, device
+//                                    reads at most once a second.
 //                                    AI tooling: Claude Code.
 // =================================================================
 
@@ -23,6 +26,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QTimer>
 
 #ifdef HAVE_SERIALPORT
 #include <QSerialPortInfo>
@@ -57,7 +61,10 @@ StationCatController::StationCatController(RadioModel* model, CatService* servic
     , m_model(model)
     , m_service(service)
     , m_station(station)
+    , m_deviceRefresh(new QTimer(this))
 {
+    m_deviceRefresh->setSingleShot(true);
+    connect(m_deviceRefresh, &QTimer::timeout, this, &StationCatController::readDevices);
     if (m_service) {
         // Every change CatService reports republishes; each property only
         // changes (and is sent) when its text does.
@@ -96,27 +103,33 @@ bool StationCatController::setChannel(int channel, const QString& configJson, QS
     const std::optional<CatEndpointConfig> parsed = document.isObject()
         ? StationCatModel::channelConfigFromJson(document.object(), current)
         : std::nullopt;
-    if (!parsed) {
+    bool primaryRebind = false;
+    bool secondaryRebind = false;
+    if (!parsed
+        || !StationCatModel::channelRebindFromJson(document.object(), &primaryRebind,
+                                                   &secondaryRebind)) {
         return refuse(QStringLiteral("The CAT channel's settings were not understood."));
     }
     CatEndpointConfig config = *parsed;
     config.channel = channel;
-    // The binding arrives as slice ids. A different slice binds to its live
-    // incarnation on the Core now; the slice the channel already holds
-    // keeps the incarnation it was bound with (CatService's transport-only
-    // edit), so a closed slice's id is never silently rebound.
+    // The binding arrives as slice ids. A different slice, or one the
+    // window says was just picked, binds to its live incarnation on the
+    // Core now; the slice the channel already holds otherwise keeps the
+    // incarnation it was bound with (CatService's transport-only edit), so
+    // a closed slice's id is never silently rebound by an unrelated edit.
     const SliceOwnership* ownership = m_model->sliceOwnership();
     const auto live = [ownership](int sliceId) -> quint64 {
         return ownership != nullptr && sliceId >= 0 ? ownership->incarnation(sliceId) : 0;
     };
-    if (config.binding.primarySliceId != current.binding.primarySliceId) {
+    if (primaryRebind || config.binding.primarySliceId != current.binding.primarySliceId) {
         config.binding.primaryIncarnation = live(config.binding.primarySliceId);
     } else {
         config.binding.primaryIncarnation = current.binding.primaryIncarnation;
     }
     if (!config.binding.secondarySliceId) {
         config.binding.secondaryIncarnation.reset();
-    } else if (config.binding.secondarySliceId != current.binding.secondarySliceId) {
+    } else if (secondaryRebind
+               || config.binding.secondarySliceId != current.binding.secondarySliceId) {
         config.binding.secondaryIncarnation = live(*config.binding.secondarySliceId);
     } else {
         config.binding.secondaryIncarnation = current.binding.secondaryIncarnation;
@@ -158,7 +171,7 @@ bool StationCatController::setGlobal(const QString& configJson, QString* reason)
 }
 
 bool StationCatController::testCommand(qint64 requestId, int channel, const QString& command,
-                                       QString* reason)
+                                       QString* reply, QString* reason)
 {
     if (!m_service || channel < 1 || channel > StationCatModel::kChannels) {
         if (reason) {
@@ -168,28 +181,57 @@ bool StationCatController::testCommand(qint64 requestId, int channel, const QStr
     }
     // The local tester sends the typed text as Latin-1 bytes.
     const QPointer<StationCatController> self(this);
-    const QByteArray reply = m_service->testCommand(channel, command.toLatin1());
+    const QByteArray answer = m_service->testCommand(channel, command.toLatin1());
     if (!self || !m_station) {
         return false;
     }
+    if (reply) {
+        *reply = QString::fromLatin1(answer);
+    }
+    // Other windows see the last test; the one that sent it reads its
+    // reply from the command's result.
     m_station->setLastTest(StationCatModel::toText(QJsonObject{
         {QStringLiteral("requestId"), requestId},
         {QStringLiteral("channel"), channel},
         {QStringLiteral("command"), command},
-        {QStringLiteral("reply"), QString::fromLatin1(reply)},
-        {QStringLiteral("accepted"), !reply.startsWith('?')},
+        {QStringLiteral("reply"), QString::fromLatin1(answer)},
+        {QStringLiteral("accepted"), !answer.startsWith('?')},
     }));
     return true;
 }
 
 void StationCatController::refreshDevices()
 {
-    QStringList devices;
-#ifdef HAVE_SERIALPORT
-    for (const QSerialPortInfo& port : QSerialPortInfo::availablePorts()) {
-        devices.append(port.systemLocation());
+    // Every window's page asks when it is shown: the devices are read at
+    // most once a second, and a request sooner is answered when it is up.
+    if (m_deviceRefresh->isActive()) {
+        return;
     }
+    if (!m_deviceClock.isValid() || m_deviceClock.elapsed() >= kDeviceRefreshMinimumMs) {
+        readDevices();
+        return;
+    }
+    m_deviceRefresh->start(int(kDeviceRefreshMinimumMs - m_deviceClock.elapsed()));
+}
+
+void StationCatController::setSerialDeviceListerForTest(std::function<QStringList()> lister)
+{
+    m_deviceLister = std::move(lister);
+}
+
+void StationCatController::readDevices()
+{
+    m_deviceClock.start();
+    QStringList devices;
+    if (m_deviceLister) {
+        devices = m_deviceLister();
+    } else {
+#ifdef HAVE_SERIALPORT
+        for (const QSerialPortInfo& port : QSerialPortInfo::availablePorts()) {
+            devices.append(port.systemLocation());
+        }
 #endif
+    }
     m_serialDevices = devices;
     publishPlatform();
 }

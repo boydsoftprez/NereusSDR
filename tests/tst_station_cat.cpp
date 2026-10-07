@@ -21,7 +21,10 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-07  J.J. Boyd / KG4VCF  Created (CAT setup from a connected
-//                                    desktop, stationCatVersion 1).
+//                                    desktop, stationCatVersion 1). Review
+//                                    fixes: explicit rebinds, the reply in
+//                                    the result, device reads at most once
+//                                    a second.
 //                                    AI tooling: Claude Code.
 // =================================================================
 
@@ -422,6 +425,128 @@ private slots:
         QCOMPARE(service.channelConfig(1).binding.primaryIncarnation, ownership->incarnation(0));
         QVERIFY(!service.channelConfig(1).binding.secondarySliceId.has_value());
         QVERIFY(station->channelObject(1).value(QStringLiteral("primaryValid")).toBool());
+    }
+
+    // Finding 1: a slice closed and opened again with the same id binds
+    // again only when the window says it was picked (primaryRebind,
+    // secondaryRebind); a flag of the wrong kind is not understood.
+    void rebindFlagBindsTheSameIdAgain()
+    {
+        RadioModel model;
+        model.addSlice();
+        model.addSlice();
+        StationCatModel* station = model.stationCatModel();
+        CatService& service = *model.catService();
+        SliceOwnership* ownership = model.sliceOwnership();
+        SessionCommandDispatcher dispatcher(&model);
+        const auto valid = [station](const char* key) {
+            return station->channelObject(1).value(QLatin1String(key)).toBool();
+        };
+
+        QJsonObject channel = StationCatModel::channelConfigToJson(service.channelConfig(1));
+        channel.insert(QStringLiteral("primarySliceId"), 1);
+        channel.insert(QStringLiteral("secondarySliceId"), 1);
+        SessionMessage result = run(dispatcher, "setStationCatChannel",
+                                    {intArg("channel", 1), textArg("config", text(channel))});
+        QVERIFY2(result.accepted, qPrintable(result.reason));
+        QVERIFY(valid("primaryValid") && valid("secondaryValid"));
+
+        model.removeSlice(1);
+        NEREUS_TRY_VERIFY(!valid("primaryValid") && !valid("secondaryValid"));
+        QCOMPARE(model.addSlice(), 1);
+        QVERIFY(!valid("primaryValid") && !valid("secondaryValid"));
+
+        // Not picked: the old binding is kept.
+        channel.insert(QStringLiteral("primaryRebind"), false);
+        channel.insert(QStringLiteral("secondaryRebind"), false);
+        result = run(dispatcher, "setStationCatChannel",
+                     {intArg("channel", 1), textArg("config", text(channel))});
+        QVERIFY2(result.accepted, qPrintable(result.reason));
+        QVERIFY(!valid("primaryValid") && !valid("secondaryValid"));
+
+        // A flag of the wrong kind.
+        QJsonObject wrong = channel;
+        wrong.insert(QStringLiteral("primaryRebind"), QStringLiteral("yes"));
+        result = run(dispatcher, "setStationCatChannel",
+                     {intArg("channel", 1), textArg("config", text(wrong))});
+        QVERIFY(!result.accepted);
+        QVERIFY2(OperatorWording::isPlain(result.reason), qPrintable(result.reason));
+        QVERIFY(!valid("primaryValid"));
+
+        // The primary picked: bound to the live slice now.
+        channel.insert(QStringLiteral("primaryRebind"), true);
+        result = run(dispatcher, "setStationCatChannel",
+                     {intArg("channel", 1), textArg("config", text(channel))});
+        QVERIFY2(result.accepted, qPrintable(result.reason));
+        QCOMPARE(service.channelConfig(1).binding.primaryIncarnation, ownership->incarnation(1));
+        QVERIFY(valid("primaryValid"));
+        QVERIFY(!valid("secondaryValid"));
+
+        // Then the secondary.
+        channel.insert(QStringLiteral("primaryRebind"), false);
+        channel.insert(QStringLiteral("secondaryRebind"), true);
+        result = run(dispatcher, "setStationCatChannel",
+                     {intArg("channel", 1), textArg("config", text(channel))});
+        QVERIFY2(result.accepted, qPrintable(result.reason));
+        QCOMPARE(service.channelConfig(1).binding.secondaryIncarnation,
+                 std::optional<quint64>(ownership->incarnation(1)));
+        QVERIFY(valid("primaryValid") && valid("secondaryValid"));
+    }
+
+    // Finding 2: the tester's reply comes in the command's result.
+    void testReplyComesInTheResult()
+    {
+        RadioModel model;
+        model.addSlice();
+        SessionCommandDispatcher dispatcher(&model);
+        const SessionMessage result = run(dispatcher, "testStationCatCommand",
+                                          {intArg("requestId", 3), intArg("channel", 1),
+                                           textArg("command", QStringLiteral("ID;"))});
+        QVERIFY2(result.accepted, qPrintable(result.reason));
+        QString reply;
+        for (const MirrorUpdate& update : result.updates) {
+            if (update.name == "reply") {
+                QCOMPARE(update.kind, MirrorWireKind::Utf8);
+                reply = update.value.toString();
+            }
+        }
+        QCOMPARE(reply, QStringLiteral("ID019;"));
+    }
+
+    // Finding 8: every window's page asks for the devices when shown; the
+    // Core reads them at most once a second, answering a request sooner
+    // when the second is up.
+    void deviceReadsAreAtMostOnceASecond()
+    {
+        RadioModel model;
+        StationCatController* cat = model.stationCatController();
+        QVERIFY(cat);
+        int reads = 0;
+        cat->setSerialDeviceListerForTest([&reads]() {
+            ++reads;
+            return QStringList{QStringLiteral("/dev/cat%1").arg(reads)};
+        });
+        const auto devices = [&model]() {
+            return model.stationCatModel()->platformObject().value(QStringLiteral("serialDevices"))
+                .toArray();
+        };
+        cat->refreshDevices();
+        QCOMPARE(reads, 1);
+        QCOMPARE(devices(), QJsonArray{QStringLiteral("/dev/cat1")});
+        cat->refreshDevices();
+        cat->refreshDevices();
+        QCOMPARE(reads, 1);
+        QTest::qWait(StationCatController::kDeviceRefreshMinimumMs / 2);
+        QCOMPARE(reads, 1);
+        QTRY_COMPARE_WITH_TIMEOUT(reads, 2, 3 * StationCatController::kDeviceRefreshMinimumMs);
+        QCOMPARE(devices(), QJsonArray{QStringLiteral("/dev/cat2")});
+        // The requests waiting were answered by that one read.
+        QTest::qWait(StationCatController::kDeviceRefreshMinimumMs + 200);
+        QCOMPARE(reads, 2);
+        // A second later a request is answered at once.
+        cat->refreshDevices();
+        QCOMPARE(reads, 3);
+        cat->setSerialDeviceListerForTest({});
     }
 
     // Only a peer that declared stationCat is told stationCatVersion, sent

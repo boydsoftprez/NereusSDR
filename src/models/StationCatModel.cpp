@@ -9,6 +9,8 @@
 // Modification history (NereusSDR):
 //   2026-10-07  J.J. Boyd / KG4VCF  Created (CAT setup from a connected
 //                                    desktop, stationCatVersion 1).
+//                                    Review fix: explicit rebinds
+//                                    (primaryRebind, secondaryRebind).
 //                                    AI tooling: Claude Code.
 // =================================================================
 
@@ -98,6 +100,32 @@ QJsonObject StationCatModel::channelConfigToJson(const CatEndpointConfig& config
         {QStringLiteral("serialStopBits"), config.serialStopBits},
         {QStringLiteral("ptyDialect"), config.ptyDialect},
     };
+}
+
+QJsonObject StationCatModel::channelCommandToJson(const CatEndpointConfig& config,
+                                                  bool primaryRebind, bool secondaryRebind)
+{
+    QJsonObject json = channelConfigToJson(config);
+    json.insert(QStringLiteral("primaryRebind"), primaryRebind);
+    json.insert(QStringLiteral("secondaryRebind"), secondaryRebind);
+    return json;
+}
+
+bool StationCatModel::channelRebindFromJson(const QJsonObject& json, bool* primaryRebind,
+                                            bool* secondaryRebind)
+{
+    bool primary = false;
+    bool secondary = false;
+    if (!readBool(json, "primaryRebind", primary) || !readBool(json, "secondaryRebind", secondary)) {
+        return false;
+    }
+    if (primaryRebind) {
+        *primaryRebind = primary;
+    }
+    if (secondaryRebind) {
+        *secondaryRebind = secondary;
+    }
+    return true;
 }
 
 std::optional<CatEndpointConfig> StationCatModel::channelConfigFromJson(

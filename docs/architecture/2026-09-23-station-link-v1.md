@@ -1568,7 +1568,11 @@ When a feature is off, its version is 0:
   stream, and takes `setStationCatChannel`, `setStationCatGlobal`,
   `testStationCatCommand` and `refreshStationCatDevices` (section 9.1;
   the JSON shapes are in `src/models/StationCatModel.h` and the remote CAT
-  setup plan, `2026-10-07-remote-cat-setup-plan.md`). A peer that did not
+  setup plan, `2026-10-07-remote-cat-setup-plan.md`). A channel config
+  may carry `primaryRebind` and `secondaryRebind` (bool): the binding was
+  just picked, so its slice id binds to the live slice even when the
+  channel holds that id. An accepted `testStationCatCommand` result
+  carries the CAT reply as its `reply` value (utf8). A peer that did not
   declare the feature is sent neither this entry, the object nor the
   stream, and its four commands and a `catLog` subscription are refused.
   A window never writes `stationCat`.
@@ -2245,7 +2249,9 @@ Core that runs CAT. At 1 the `stationCat` object (section 7), the `catLog`
 record stream (capacity 10000; each record `{channel, inbound, text,
 time}`, the exchanged bytes as Latin-1 text and the time in milliseconds
 since the epoch) and the four CAT commands (section 9.1) are that peer's.
-A peer that did not declare the feature is sent none of them.
+A window's CAT log subscribes with a backlog of 10000, the lines it keeps,
+and shows each record once by its rising id across a new session's
+backlog. A peer that did not declare the feature is sent none of them.
 
 **Core executable identity.** A client at agreed minor 11 may declare
 `coreBuildInfo` 1. After authentication, a Core with a known product version

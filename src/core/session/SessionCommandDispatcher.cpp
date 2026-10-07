@@ -306,7 +306,8 @@
 //                                    setStationCatGlobal,
 //                                    testStationCatCommand and
 //                                    refreshStationCatDevices
-//                                    (stationCatVersion 1). AI tooling:
+//                                    (stationCatVersion 1); the tester's
+//                                    reply in its result. AI tooling:
 //                                    Claude Code.
 // =================================================================
 
@@ -3366,7 +3367,16 @@ void SessionCommandDispatcher::handleStationCat(const SessionMessage& invoke)
             notUnderstood();
             return;
         }
-        accepted = cat->testCommand(requestId.toLongLong(), channel, command, &reason);
+        // The reply goes back in the result, to the window that sent it.
+        QString reply;
+        accepted = cat->testCommand(requestId.toLongLong(), channel, command, &reply, &reason);
+        if (accepted) {
+            emit commandResultReady(SessionMessages::commandResult(
+                verb, invoke.commandId, true, QString(), {},
+                {MirrorUpdate{0, QByteArrayLiteral("reply"), MirrorWireKind::Utf8,
+                              QVariant(reply)}}));
+            return;
+        }
     } else {
         if (!invoke.arguments.isEmpty()) {
             notUnderstood();

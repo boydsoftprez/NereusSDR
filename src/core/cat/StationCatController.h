@@ -29,15 +29,23 @@
 // Modification history (NereusSDR):
 //   2026-10-07  J.J. Boyd / KG4VCF  Created (CAT setup from a connected
 //                                    desktop, stationCatVersion 1).
+//                                    Review fixes: explicit rebinds, the
+//                                    tester's reply in its result, device
+//                                    reads at most once a second.
 //                                    AI tooling: Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
 
+#include <QElapsedTimer>
 #include <QObject>
 #include <QPointer>
 #include <QString>
 #include <QStringList>
+
+#include <functional>
+
+class QTimer;
 
 namespace NereusSDR {
 
@@ -53,21 +61,33 @@ public:
     static QString channelRefusedReason();
     /// The same for the global settings.
     static QString globalRefusedReason();
+    /// refreshStationCatDevices reads the serial devices at most this
+    /// often; a request sooner is answered when the time is up.
+    static constexpr int kDeviceRefreshMinimumMs = 1000;
 
     StationCatController(RadioModel* model, CatService* service, StationCatModel* station,
                          QObject* parent = nullptr);
 
     /// setStationCatChannel: `configJson` is a StationCatModel channel
-    /// config object; fields it leaves out keep the channel's values.
+    /// config object; fields it leaves out keep the channel's values. A
+    /// slice id that differs from the channel's, or one flagged
+    /// primaryRebind / secondaryRebind, binds to its live slice; any other
+    /// keeps the binding the channel holds.
     bool setChannel(int channel, const QString& configJson, QString* reason);
     /// setStationCatGlobal: `configJson` is a StationCatModel global config
     /// object; fields it leaves out keep the Core's values.
     bool setGlobal(const QString& configJson, QString* reason);
     /// testStationCatCommand: runs `command` on `channel` as the local
-    /// tester does; the reply lands in the object's lastTest.
-    bool testCommand(qint64 requestId, int channel, const QString& command, QString* reason);
-    /// refreshStationCatDevices: reads this computer's serial ports again.
+    /// tester does; the reply is `reply` (the command's result) and lands
+    /// in the object's lastTest for other windows.
+    bool testCommand(qint64 requestId, int channel, const QString& command, QString* reply,
+                     QString* reason);
+    /// refreshStationCatDevices: reads this computer's serial ports again,
+    /// at most once each kDeviceRefreshMinimumMs.
     void refreshDevices();
+
+    /// Tests: what reads the serial devices (QSerialPortInfo otherwise).
+    void setSerialDeviceListerForTest(std::function<QStringList()> lister);
 
     /// Fills every property from CatService now.
     void publishAll();
@@ -76,11 +96,17 @@ private:
     void publishGlobal();
     void publishChannel(int channel);
     void publishPlatform();
+    void readDevices();
 
     QPointer<RadioModel> m_model;
     QPointer<CatService> m_service;
     QPointer<StationCatModel> m_station;
     QStringList m_serialDevices;
+    std::function<QStringList()> m_deviceLister;
+    /// Since the devices were last read; a request within the minimum
+    /// waits on m_deviceRefresh.
+    QElapsedTimer m_deviceClock;
+    QTimer* m_deviceRefresh{nullptr};
 };
 
 } // namespace NereusSDR

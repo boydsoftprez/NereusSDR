@@ -40,6 +40,8 @@
 // Modification history (NereusSDR):
 //   2026-10-07  J.J. Boyd / KG4VCF  Created (CAT setup from a connected
 //                                    desktop, stationCatVersion 1).
+//                                    Review fix: explicit rebinds
+//                                    (primaryRebind, secondaryRebind).
 //                                    AI tooling: Claude Code.
 // =================================================================
 
@@ -85,6 +87,16 @@ public:
     /// has them: the Core resolves them.
     static std::optional<CatEndpointConfig> channelConfigFromJson(const QJsonObject& json,
                                                                   const CatEndpointConfig& base);
+    /// A setStationCatChannel config: the settings, and whether each
+    /// binding was just picked in a selector (primaryRebind,
+    /// secondaryRebind): the Core then binds that slice id to its live
+    /// slice, even when the channel already holds that id.
+    static QJsonObject channelCommandToJson(const CatEndpointConfig& config, bool primaryRebind,
+                                            bool secondaryRebind);
+    /// The rebind flags a config carries (false when left out); false when
+    /// a flag has the wrong type.
+    static bool channelRebindFromJson(const QJsonObject& json, bool* primaryRebind,
+                                      bool* secondaryRebind);
     static QJsonObject globalConfigToJson(const CatGlobalConfig& config);
     static std::optional<CatGlobalConfig> globalConfigFromJson(const QJsonObject& json,
                                                                const CatGlobalConfig& base);

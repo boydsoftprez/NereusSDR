@@ -70,7 +70,9 @@ setting.
 * **Verbs** (CommandInvoke, answered by CommandResult):
   * `setStationCatChannel {channel: Int64, config: utf8 JSON}`: the Core
     resolves each bound slice id to its live incarnation at apply time, then
-    calls `CatService::reconfigureChannel`. Refusal reason: the page's text,
+    calls `CatService::reconfigureChannel`. An id the channel already holds
+    keeps its incarnation unless the config carries `primaryRebind` or
+    `secondaryRebind` true (the operator picked that slice in the selector). Refusal reason: the page's text,
     "Configuration refused: check address, port, format and exclusive device
     assignment."
   * `setStationCatGlobal {config: utf8 JSON}`: `CatService::reconfigureGlobal`.
@@ -78,13 +80,15 @@ setting.
     device assignment."
   * `testStationCatCommand {requestId: Int64, channel: Int64, command: utf8}`:
     `CatService::testCommand`, the same refusals for keying and calibration as
-    the local tester; the reply lands in `lastTest`.
+    the local tester; the reply comes back as the result's `reply` value
+    and lands in `lastTest` for other windows.
   * `refreshStationCatDevices {}`: re-reads the Core computer's serial ports
-    into `platform`.
+    into `platform`, at most once a second.
 * **Log**: record stream `catLog`, capacity 10000 (the log window's own
   `kMaximumEntries`, `CatLogWindow.cpp:18`), entries `{channel, inbound,
   text, time}` from `CatService::messageLogged`. A window subscribes when its
-  CAT Log window opens and unsubscribes when it closes.
+  CAT Log window opens, with a backlog of 10000 so earlier lines show, and
+  unsubscribes when it closes.
 * **Gates**: capability `stationCatVersion` 1 and the hello feature
   `stationCat` 1; the Core sends the object and the stream only to a peer that
   declared it and refuses the verbs from one that did not, with the reason
