@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original. R-R3-38 complete station-session ownership.
 // 2026-10-04 - Include the setup signal type for Qt 6.4; JJ Boyd, OpenAI Codex.
+// 2026-10-06 - Start CAT when the window owns the station even if the Remote
+//              Access listener failed. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 #include "core/cat/CatService.h"
 #include "gui/GuiSessionCoordinator.h"
 
@@ -279,7 +281,9 @@ void GuiSessionCoordinator::installDesktopStation()
         || m_window->radioModel() != localModel) { return; }
     // Initial host ownership adoption is part of the startup seed. Every
     // subsequent edit must be accounted for before handing this model away.
-    if (restored) { model->catService()->startConfigured(); }
+    // CAT belongs to the local station, not to the Remote Access listener: a
+    // busy Core port or Core configuration error must not leave CAT stopped.
+    if (restored || m_desktopRuntime->stationOwnershipActive()) { model->catService()->startConfigured(); }
     if (!self || !localModel || generation != m_generation || !m_window
         || m_window->radioModel() != localModel) { return; }
     model->beginStationHandoverEditTracking();

@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original desktop Remote Access runtime.
 // SPDX-License-Identifier: GPL-3.0-or-later
+// 2026-10-06 - Report local station ownership apart from the listener result,
+//              so CAT starts without Remote Access. J.J. Boyd (KG4VCF),
+//              AI-assisted via Claude Code.
 #include "core/cat/CatService.h"
 #include "gui/GuiDesktopStationRuntime.h"
 #include "core/station/StationSliceOwnershipPolicy.h"
@@ -248,6 +251,7 @@ bool GuiDesktopStationRuntime::restore()
             && self->ownershipAvailable();
     });
     if (!self || !model) { return false; }
+    m_stationOwnershipActive = true;
     if (!available(&reason)) { fail(reason); return false; }
     m_keepRunning = m_settings->value(QLatin1String(kKeep), false).toBool();
     if (!m_settings->value(QLatin1String(kRun), false).toBool()) {
