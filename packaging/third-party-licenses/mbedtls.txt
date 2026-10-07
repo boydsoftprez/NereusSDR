@@ -1,0 +1,13 @@
+Mbed TLS 3.6.7
+Copyright The Mbed TLS Contributors
+
+NereusSDR for iPhone and iPad uses Mbed TLS for DTLS and for the SRTP
+cryptography of its media connection to the Core (libdatachannel and
+libsrtp are built with it). The pinned release is:
+
+  https://github.com/Mbed-TLS/mbedtls/releases/tag/mbedtls-3.6.7
+
+Mbed TLS files are provided under a dual Apache-2.0 OR GPL-2.0-or-later
+license; NereusSDR takes them under the Apache License 2.0. The complete
+license is supplied in Apache-2.0.txt. The files are used unmodified, and
+their source is the pinned release above.

@@ -5,9 +5,11 @@ were added while planning, each his call; he changed D38 later that day and set
 D43's wording rule on 2026-09-24. On 2026-09-24 he also replaced one device at a
 time with several devices at once (§3.9, D44 to D67; D58 to D67 answer the station
 design's questions the same evening), which replaces D21 and carries D22 forward.
-Every decision in §3 is JJ's.
+Every decision in §3 is JJ's except D137, D138 and D139, which are the phone
+controller's calls from 2026-10-01 and wait for JJ to confirm them at the pull
+request review (D137 and D138 change what the app does; D139 is a test rule).
 Plan: [2026-09-23-iphone-app-plan.md](2026-09-23-iphone-app-plan.md)
-Branch: `claude/nereussdr-iphone-app-5fb988`
+Branch: `claude/nereussdr-iphone-app-5fb988` (these documents); the app itself is built on `claude/iphone-app`.
 
 This app is a client of the remote station, `nereusd`. That work is not on
 `main` yet. Its documents live on the branch `codex/integrate-r2-main` (read at
@@ -99,7 +101,7 @@ Every row is a call JJ made, one question at a time, on a rendered mockup.
 | --- | --- | --- | --- |
 | D15 | Controls live in both places: the Modes tab has the active slice's full set; the RX and TX panels on the band keep a quick subset. | Everything is reachable, and the common things are one tap away. | |
 | D16 | Setup is the desktop's whole Setup tree (same categories, order and page names), each category marked Core, This phone or Both, with Devices added first. | One mental model on both. | |
-| D17 | The front end (preamp, step attenuator, RX and TX antennas, RX-only inputs) lives in the Modes tab with the slice, as the desktop's RX applet has it, not on Radio. | It is set with the slice. | |
+| D17 | The front end (preamp, step attenuator, RX and TX antennas, RX-only inputs) lives in the Modes tab with the slice, as the desktop's RX applet has it, not on Radio. The RX2 attenuator sits in the Step att row (D131). | It is set with the slice. | |
 | D18 | The amp's OPERATE and the tuner's TUNE live in the TX panel, beside RF power, TUNE and MOX. | They are part of getting on the air. | |
 
 ### 3.4 Connecting
@@ -116,7 +118,7 @@ Every row is a call JJ made, one question at a time, on a rendered mockup.
 
 | # | Decision | Why | Rejected |
 | --- | --- | --- | --- |
-| D24 | **Locking the phone while keyed unkeys it.** The screen stays awake while keyed, so it only locks when the operator locks it. A locked phone never transmits from its screen; the lock-screen card only reports. | iOS can't start the microphone while locked, and lock-screen buttons wait for Face ID. | Transmitting while locked with a Face ID UNKEY. |
+| D24 | **Locking the phone while keyed unkeys it.** The screen stays awake while keyed, so it only locks when the operator locks it. iOS tells an app about a lock only as protected data becomes unavailable, about 10 s after the lock and only on a phone with a passcode, so a locked phone stops within about 10 s; without a passcode the Core's transmit time-out is the backstop (JJ accepted this limit on 2026-09-26 to keep D25, over unkeying whenever the app leaves the screen or using a private lock signal). A locked phone never transmits from its screen; the lock-screen card only reports. | iOS can't start the microphone while locked. On the lock screen UNKEY, Mute and Cancel run with one tap, and Reconnect asks for Face ID (JJ, 2026-09-26). | Transmitting while locked with a Face ID UNKEY. |
 | D25 | **Switching apps while keyed keeps transmitting.** TX and its clock stay red in the Dynamic Island over every app, with the orange microphone dot, and the opened island unkeys in one tap. | Reading a net script in another app while talking. | Leaving the app unkeys. |
 | D26 | **A hardware button keys a locked phone through Apple's Push to Talk**: a headset button, a paired Bluetooth PTT button or the Action button. While connected, iOS shows its blue Push to Talk pill and its own lock-screen panel; only one Push to Talk app can be active at a time. | A button in a pocket is the one way to key a locked phone, and only Apple's system can do it. This is the one exception to D24. | Buttons only while unlocked. |
 | D27 | The screen stays on while the band is showing, on battery too. "Never" and "While charging" remain as choices. | Operating is looking at the band. | "While charging" as the default. |
@@ -151,7 +153,7 @@ session on 2026-09-24.
 | D35 | **The desktop's station switch hands over.** While NereusSDR is open it runs the station itself and serves the phone; when it closes, a background station (`nereusd`) takes over the radio and keeps serving; when it opens again it takes the radio back. While the app is open, the operator at the desktop and a phone can both operate, as when standing at the radio with the phone in hand. With §3.9 the desktop's own window takes part as one of the devices on its Core, owning its own slices and taking transmit by the same rules; the Core/GUI session's design for several devices says how it counts toward the four. | The desktop keeps working exactly as it does today, which remote design §5 requires; the loopback end state needs every control mirrored first. | The desktop as a client of a background station whenever the switch is on. |
 | D36 | **The station also advertises itself over Bonjour (DNS-SD)**, alongside its existing announcement, and the phone finds stations that way. | iOS only lets an app receive custom multicast with a special permission Apple grants on request, and a refusal would block the release. Amends pairing design §6. | Asking Apple for the multicast permission. |
 | D37 | **The pairing code's key exchange uses a published library on both ends:** SPAKE2+EE (BSD-2-Clause) on libsodium (ISC). | Homemade cryptography is how security bugs get in. | Writing the exchange on the cryptography already shipped (OpenSSL, Mbed TLS). |
-| D38 | **The rendezvous and relay run on the website's server**, the one that serves nereussdr.com, at `rv.nereussdr.com`. The rendezvous's WebSocket rides behind the website's web server by host name; coturn takes UDP 3478 and 443; a web-only fallback that needs its own TLS listener on TCP 443 needs a splitter by TLS name or a second address, which the fallback measurement weighs. | No new machine to run, and `rv.nereussdr.com` and the R5 bench already point there. JJ's call on 2026-09-23, matching his 2026-09-22 answer to the Core/GUI session. | A second small server of its own (recommended, for keeping relay traffic and the website apart). |
+| D38 | **The rendezvous and relay run on a dedicated server of their own**, at `rv.nereussdr.com` (with `rv4` and `rv6` for the relay), not on the website's server. The rendezvous's WebSocket rides behind that server's own Caddy by host name; coturn takes UDP 3478 and 443; the website's server and its files are untouched. | JJ, 2026-09-26, reversing his 2026-09-23 call after a review showed a flood through the rendezvous could take nereussdr.com down on the shared server. | The website's server (JJ's 2026-09-23 call: no new machine to run). |
 | D39 | **The station also accepts the app one major version back**, just as the app accepts the station one back. | Neither update order can lock the operator out while an App Store update waits in review. Amends §4.4 and remote design §7.0. | Changing only the app's side. |
 | D40 | **Filter presets live on the station**, and every device shows the same ones. | One station, one set of presets, like the radio's own memories. A desktop connected remotely starts sharing the station's presets; a desktop running the radio locally is unchanged. | Each device keeping its own. |
 | D41 | **An item the desktop has not built appears on the phone once it exists.** The phone keeps the desktop's order and names for tools, Radio tab items and Setup pages, and leaves out any the station does not offer yet; each appears by itself, in its place, when it is built. VAX and antenna selection are built and working, so VAX Audio and Antenna Setup are on the phone from the start even though their desktop menu entries are not finished. | App Review rejects apps that show placeholder or "coming soon" items. JJ: "show each once it exists however vax, antenna selection are there and working". | Greyed items as on the desktop; building every missing desktop feature in this plan. |
@@ -176,7 +178,7 @@ needs from it, and that design's sections 10.2 to 10.9 give the wire.
 | --- | --- | --- | --- |
 | D44 | **Up to four devices on one Core at the same time**, each with its own session. | JJ's call. | As many as the radio has slices (recommended); two at a time. |
 | D45 | **Each device owns its slices and pans.** The Core hands receivers out from the radio's pool; only the owning device tunes, changes or closes its slices. | Two operators never fight over one VFO. | Everyone shares every slice. |
-| D46 | **Other devices' slices show on the band as labelled, read-only markers:** a dashed line in that slice's colour, a label at the foot of the spectrum with the owning device's name, and no flag. A tap on the label says whose slice it is and that only that device can tune it. | You see who is where before you tune onto them. | Only your own slices. |
+| D46 | **Other devices' slices show on the band as labelled, read-only markers:** a dashed line in that slice's colour, a label at the foot of the spectrum with the owning device's name, and no flag. A tap on the label says whose slice it is and that it can be changed only there (D115). | You see who is where before you tune onto them. | Only your own slices. |
 | D47 | **Slice letters are shared across the Core.** A slice has one letter on every device, handed out from one pool as receivers are. | Two operators can say "slice B" and mean the same one. A drawn detail. | |
 | D48 | **Two devices may share one receiver when their slices fit its window.** | JJ's call: the radio's receivers go further. | Each device gets its own receiver (recommended). |
 | D49 | **When no receiver is free, a device takes one after confirming.** It sees which device has each receiver and what it is doing, and picks one; that device's slice on it closes, and that device is told who took the receiver and when, with Take it back, which asks the same question the other way. | D21's rule, per receiver. | Asking the other device first; never taking, only naming who holds them. |
@@ -203,7 +205,111 @@ needs from it, and that design's sections 10.2 to 10.9 give the wire.
 
 | # | Decision | Why | Rejected |
 | --- | --- | --- | --- |
-| D68 | **When headphones or AirPods disconnect, the band's sound pauses** with "Sound paused: your headphones disconnected. Tap to play on the speaker.", and plays on the speaker only after that tap. The band keeps showing. | Apple's convention for audio apps: the radio never suddenly plays out loud wherever the operator is. JJ, 2026-09-24. | Keeping on playing through the speaker. |
+| D68 | **When headphones or AirPods disconnect, the band's sound pauses** with "Sound paused: your headphones disconnected. Tap to play on the speaker.", and plays on the speaker only after that tap. The band keeps showing. | Apple's convention for audio apps: the radio never suddenly plays out loud wherever the operator is. JJ, 2026-09-24; drawn on the band in picture 12 (board v54). | Keeping on playing through the speaker. |
+| D69 | **Entering an address takes the address alone, with the port in a field of its own:** a name, an IPv4 address, or an IPv6 address with or without brackets, growing to a second line so a whole IPv6 address stays readable; below it the port, filled in with the Core's standard port (47910). Pasting an address with its port fills both fields. | Square brackets are awkward to type on a phone, and a port kept apart leaves a bare IPv6 address unambiguous. JJ, 2026-09-24, from the board's Enter an address screen. | Brackets and a typed port in one field, as the desktop reads an address. |
+| D70 | **A Core that removed or forgot this phone stays in Your Cores with Pair**, in place of Connect, under a notice ("KG4VCF/attic removed this phone. Pair with it again to use it."); pairing again replaces what the phone kept for it. | Its address is already known, so pairing again goes straight to the code instead of a retyped address. JJ, 2026-09-24, from the board's pairing states. | Dropping the Core from the list. |
+| D71 | **Under On this network, the phone lists every Core that takes a new device:** an unclaimed one (Pair, one tap where the Core allows it, or Use code), and one already paired with other devices that opened pairing for one more (Use code, with its address filled in); an unclaimed Core with pairing closed is listed greyed, saying so. A claimed Core with pairing closed isn't listed. | Adding a second device, an iPad after the iPhone, is the common case, and the address is already on the network. JJ, 2026-09-24. | Unclaimed Cores only. |
+| D72 | **A phone that can't read its own key any more says so, and makes a new key when asked;** every Core then needs pairing again, and each Core keeps listing this phone's old entry until it is removed from Devices on another paired device or on the Core. | A Secure Enclave key doesn't survive an erase and restore, and a phone that silently fails every sign-in leaves the operator stuck. JJ, 2026-09-25, from board v55. | Asking each Core to drop the old entry at the next pairing. |
+| D73 | **The toolbar's Pan 1 and Display each open a sheet under the toolbar.** Pan 1: the band grid (the Core's band list, 160 to 6 and WWV), which moves the pan's active slice to that band where it last was on it (its frequency, mode and filter, from the Core's own band memory); Add a slice here; Add a notch at A (the desktop's +TNF, placed by the Core); and Extended view. Display: this pan's look on this phone: the waterfall's palette and its levels (Clarity with Re-tune, Auto or Manual), the spectrum's fill, top and range, the Core's extras on the band (peak hold, peaks, the noise-floor line), and More display options in Setup. A control the Core can't do yet is greyed with "Needs a newer Core". | The two toolbar buttons opened nothing, and a control is never silently dead. They take the desktop's pan-level controls (its BAND grid, +RX, +TNF and the extended view) and the display settings each device keeps for itself. JJ, 2026-09-25, from board v56: "Keep, build before install". | Leaving the two buttons out of the listening build, or building them after the first install. |
+| D74 | **Tuning on the band works as on the desktop:** a drag on the band moves the band (the view pans, the slices stay on their frequencies); a drag that starts on a flag or its passband tunes that slice, in its step; a tap on empty band still tunes the active slice there at once. Each slice's tuning step shows on its flag, and a tap lists the radio's steps. A tap on the flag's frequency opens a number pad to type one, in MHz or kHz. | JJ's first test on his iPhone (2026-09-25): a drag that always tuned made the band hard to move and a precise frequency almost impossible to reach. JJ approved the four drawings (picture 26) the same day: "build the tuning as drawn". | Every drag tuning the active slice (the first build's rule); the step only on the tuning dial. |
+| D75 | **The spectrum trace's line width is set on the phone**, a Line slider on the Display sheet from one screen pixel (a hairline) to 3 points, starting at 0.5 points (the desktop's 1.5, and even 1, read heavy on a phone's screen). | JJ, 2026-09-25, from the device: "would be nice if the trace line on the spectrum wasn't so thick or configurable with a display slider", then "one may even be too thick". The desktop has the same setting (Line Width, 1 to 3 px). | A fixed width. |
+| D76 | **A Core is renamed from Your Cores:** press and hold its row, Rename, and the name goes to the Core (`station.rename`), so every device shows it. The name keeps the Core's own form (a callsign, then optionally `/` and up to 32 letters, digits, `-` or `_`, as `KG4VCF/shack`); the Core refuses any other and says why. Until a Core has a name, its row shows its address. | JJ, 2026-09-25, from his first test: the Pi showed only its address. He chose the Core's own name, reached from Your Cores, over a name kept on one phone. | A name kept only on this phone; renaming only from Setup's Devices page. |
+| D77 | **One tap on the speaker button opens a small Sound panel:** a Mute switch, then where the band plays (Speaker, Earpiece, AirPods when connected) with a tick on the current one. | Press and hold felt hidden (JJ, 2026-09-26: "long presses ... always feel hidden"); one visible place for everything about sound. | A tap mutes and press and hold opens the routes (the first build); the routes in the RX panel. |
+| D78 | **Nothing depends on press and hold.** Every action reached by press and hold also has a visible way in: each Core row in Your Cores has a "⋯" button for its actions (Rename, and Remove when it arrives); each FreeDV Reporter row has an ⓘ details button; a spot's details on the band are also in the Spot List. Press and hold stays only as a shortcut. **Reworded by D114 (JJ, 2026-09-29):** gestures and long presses are fine as extra ways in; one that is the only way to an action needs JJ's explicit approval; anything visible on screen is not a hidden touch surface. | JJ, 2026-09-26: "long presses ... always feel hidden". | Press and hold as the only way to rename a Core or see a station's details. |
+| D79 | **The band plan is the station's, drawn as the desktop draws it.** Setup's Display page (This phone and Core, laid out like the desktop's settings; JJ 2026-09-26 moved it out of the Display sheet, where it split the spectrum controls) has a Band plan group: a picker listing the Core's plans with a tick on the station's current one; picking one changes the station's plan (the desktop's Band Plan setting), so the desktop and every device follow, as a desktop remote window does. The same group has the plan's size, Off, Small, Medium, Large or Huge as on the desktop's View menu, kept on this phone and starting at Small. The strip is drawn like the desktop's: each segment's colour dimmed by its licence class and blended into the band's background, a thin separator at each segment's left edge, a bold label at the chosen size, the strip's height following the size, stopping at the dBm scale, and the plan's spot dots when the Core sends them. | JJ, 2026-09-26, from TestFlight: "the bandplan is not the same as the desktop, we want parity there and somewhere the ability to select the bandplan like in the desktop app or even disable the bandplan"; he chose the Display sheet for its controls and the whole station for the plan choice ("the whole station"). | A plan kept only on this phone; the strip on or off only; the phone's own drawing. |
+| D80 | **MON plays your transmitted audio, as it sounds on the air, in this phone's headphones.** It follows the desktop control: MON toggles the Core's `monEnabled` setting and requests the Core's transmit monitor for this holder (`monitor-audio {route: headphones}`), at the Core's monitor volume. For a remote transmit holder, the Core's speakers stay quiet; monitor audio goes to the phone's headphones only. With no wired or Bluetooth headphones MON is greyed with its reason, so the loudspeaker cannot feed back into the microphone. A Core that does not send the monitor greys MON with its reason. The TX panel and the Modes tab behave the same. | JJ, 2026-09-26: "mon should play back in your headphone if no head phones greyed out may be best so you do not have feedback it is for hearing your txed audio as it sound on the air". JJ, 2026-09-27: settled that the phone follows the desktop `monEnabled` control while routing the remote monitor to headphones only; remote playback uses the Core/GUI session's parity Task 32 (`txMonitorAudioVersion` 1, media op `monitor-audio {route}`). | MON on the loudspeaker; omitting the desktop `monEnabled` control. |
+| D81 | **A visible Match RX button sets the TX filter to the RX filter**, beside the TX filter in the Modes tab's Transmit section and in the TX panel: one tap sets the transmit passband to the active slice's receive filter, converted to audio frequencies as the desktop converts it (the LSB family flips the edges, the USB family keeps them, AM, SAM, DSB, FM and DRM use 0 to the filter's upper edge, |high|). It is a transmit setting: where the phone may not change transmit settings the button is greyed with the Core's reason. No press and hold or other shortcut. | JJ, 2026-09-26: the desktop's Shift+click on a filter preset matches TX to RX; on the phone he chose "a visible match rx". | A press and hold on a filter preset or on the passband. |
+| D82 | **The split between the spectrum and the waterfall starts at the desktop's 40% spectrum and moves by dragging the frequency scale**, marked by a small ≡ at its left end, taking no extra height; the Display sheet's Spectrum height slider (20% to 80%) sets the same value, kept per pan. The dBm scale gets the desktop's ▲ and ▼ (10 dB a tap), and a drag on the scale shifts it smoothly. A drag elsewhere on the band still pans; a drag on a flag still tunes. | JJ, 2026-09-26: approved both drags, then chose the frequency-scale handle from the board ("yes i like the split from an icon on the left like you have") over a grip bar that took too much room. | A grip bar across the band; a fixed half-and-half split. |
+| D83 | **The phone draws the band with the desktop's exact colours and sizes**: the trace colour and fill strength, the noise-floor line, the peak markers, peak hold and the grid's colours, even where the desktop took those values from AetherSDR or Thetis. D4 keeps their code out of the app; a colour, a width or a size is a value, not code, so the phone uses the same value and writes its own drawing code. | JJ, 2026-09-26: "Yes" to matching the desktop's colours and sizes. | The phone's own paler values. |
+| D84 | **Sideways the band starts at 55% spectrum; upright it starts at the desktop's 40%.** Either can be moved as D82 says. **No latency added that can be avoided:** the phone sends its microphone at a steady 20 ms with no cushion of its own, the band player queues only what the audio callback needs, and any cushion at the Core adapts to measured jitter rather than sitting at a fixed size. | JJ, 2026-09-27: "Yes on 55%" (a sideways phone is too short for a flag and a spot row at 40%), and "we want to not add latency unnecessarily ideally removing latency from the path when we reasonably can". | 40% sideways with spots only as badges; a fixed 100 to 200 ms cushion. |
+| D85 | **The Core's question before a change that affects another device's listening appears over the screen where the operator tapped**, on any tab or page (the Tuner Genius page, the TX panel, Modes, Setup, Radio, the band), never only on the band. It keeps asking (the Core's rule); one tap answers it there. The TX panel's tuner row carries the Tuner Genius's antenna buttons (ANT 1 to 3 with the operator's names), as the desktop's tuner controls do. | JJ, 2026-09-27, from TestFlight build 5: the question for a tuner antenna change sat on the band while he was on the Tuner Genius page ("make it so we can ack that from the same screen not hidden"); and the tuner's antennas belong on the TX panel. | The question only on the band; no question for accessory changes. |
+| D86 | **The S-meter has the desktop's meter menu**: a visible ☰ on its title bar opens RX Mode (Signal, Sig Avg, Signal Peak, Max Bin), TX Mode (Power, SWR, Level, Compression), Peak Hold (on or off, Decay Fast 20, Medium 10 or Slow 5 dB/s, Reset) and Meter Face (Classic and the six vintage faces), wherever the analog S-meter shows (the iPad, and the iPhone where it draws one); a press and hold on the meter opens the same menu as a shortcut (approved). Choices are kept on this device. Signal, Sig Avg and Signal Peak use the active slice's Core readings. Max Bin is measured by the phone from that slice's own pan's displayed calibrated trace in the slice passband, before any visual notch dent; it is not a Core field and gets no extra calibration offset. If the pan has no valid display data, show no reading and disable Max Bin with a reason telling the operator to open that pan's display. TX modes use the current Core readings and are disabled with an explanatory reason when the Core lacks the required reading or version. The phone draws its own faces with the desktop's values (D83). | JJ, 2026-09-27: the iPad lane left the ☰ off; the desktop's right-click menu has four parts (PR #320 added the faces); "A long press and the menu button sounds good to me". | The ☰ left off; the meter fixed on Signal Peak. |
+| D87 | **A phone connects by Core identity across changing routes:** direct/LAN/manual pairing remains available without rendezvous; initial direct and fresh rendezvous routes race before authentication, and only the first verified Core identity signs in. Existing-device code pairing completes the full SPAKE exchange while preserving and rechecking the existing device record. Later better-path switching, fallback and media replacement retain manual routes as backup; transient ICE addresses are not saved as WebSocket endpoints, and paths never switch while keyed or VOX is armed. An authenticated `controlChannelVersion = 0` is cached with its observation time for five minutes; stale, legacy untimestamped, rollback, or unparseable observations become unknown for connection discovery. Each real network-generation change invalidates the negative cache once; duplicate callbacks do not repeat invalidation or reset backoff. Once unknown, ordinary bounded rendezvous races and backoff retries remain eligible. Failed probes do not renew a negative result. Authenticated version 1 or full same-identity code pairing clears it. A cached relay-deny policy remains in force. | JJ, 2026-09-27: build 7 failed; "correct right away"; then approved "Yes, prioritize complete behavior" before remaining screens. Keep the complete Task 29a behavior; an initial race alone is not completion. | Re-pairing a known key, stale private routes delaying rendezvous, identity inferred from an error or mailbox, or treating the first race as complete path management. |
+| D88 | **Stop cannot sustain transmission or act on a replacement connection.** At local off intent the phone suppresses every heartbeat path until each pending off has its own matching accepted Core result. Failed or refused off stays suppressed until logical-session reset, and new on intents receive a visible reconnect reason. Command IDs and send returns are not delivery proof. Ordinary queued commands, copies and late key results stay bound to the logical session that admitted them; OLD work cannot key, unkey or clear safety state in NEW. Valid route upgrades within one logical session remain supported. The existing 100 ms heartbeat cadence and 400 ms Core watchdog are unchanged. | JJ, 2026-09-28: "yes fix those bugs", approving the reproduced transmit-release and stale-command repairs. JJ later uploaded the earlier build 8 archive while repair was in progress; the independently reviewed correction was uploaded in build 9 at 07:39 CDT on September 28. | Independent keepalives continuing while off is unresolved; clearing a failed off with an unrelated result; old queued commands or compensation reaching a replacement session. |
+| D89 | **All desktop Network Diagnostics features belong in Tools, adapted for the phone.** A visible **Connection and performance** entry includes all four remote diagnostics tabs, every chart and detailed reading, history ranges and series selection, plus the local desktop window's additional readings and session-stat reset. It also shows active control and media routes, actual selected addresses and IPv4/IPv6 families, transport and direct/relay status, and how rendezvous contributed. Saved or advertised addresses are not presented as the selected peer. Preserve measurement sources, units and meaning, with explicit unavailable/stale states and visible controls. The approved September 28 board stacks charts vertically in portrait and uses two columns in landscape where space permits. Tools and the existing dot/ms control open this same destination. The existing licences/build page becomes **About this app**, separate from live diagnostics. | JJ, 2026-09-28, reports RV working in build 8, asks for actual IP/IPv6 details and desktop charts, prefers Tools, then explicitly selects **All Network Diagnostics features**. This covers Network Diagnostics, not every desktop Tools feature as a new addition; existing Tools scope remains. | A hidden tap on Direct, only porting two charts, one ambiguous address for different control/media routes, duplicate diagnostics pages, or invented readings. |
+| D90 | **About this app carries all the desktop About information, accurately adapted to the phone.** Include project history, the full credited contributor roster, copyright and licence information, no-warranty notice, AI-authoring disclosure, upstream/project/community/protocol links and releases. Identify the phone with its actual app version, build and source tag, and list its actual bundled libraries and notices. Explain desktop/Core lineage and dependencies separately rather than claiming the phone embeds them. Preserve the phone's own licence and App Store permission clause, and include Corresponding Source. | JJ, 2026-09-28: "under the about page it should also bring in all the about info from thedesktop app too". | Merely renaming Diagnostics, omitting credits, presenting desktop build/library versions as phone versions, or replacing the phone's licence with the desktop's terms. |
+
+| D91 | **Remove Core disconnects first, then removes the saved entry from this phone.** Reach it through the visible actions button in Your Cores or the Core section of Radio while connected. One Remove action cancels any connection or reconnect for that Core, completes the normal safe disconnect, then deletes its saved identity, addresses and per-Core connection hints. It does not revoke this phone on the Core or affect other devices. A failed local save leaves the entry visible with an explanation; no automatic retry or late callback restores it. Existing transmit safety gates remain in force. | JJ, 2026-09-28: "remove should disconnect then remove". | Requiring a separate Disconnect tap first, forgetting a still-active connection, a hidden gesture, or treating local removal as Core-side device revocation. |
+
+### 3.11 Decided on the night of 2026-09-28
+
+JJ's rulings for the phone, relayed by the Core/GUI lead that night (items 1 to 8 of
+`rulings-2026-09-28-night-for-phone.md` in the phone crew folder), and his answers to the
+phone controller the same day. Where a decision waits on the Core, the Core/GUI session's
+note for the phone names the wire; the plan marks each part that waits.
+
+| # | Decision | Why | Rejected |
+| --- | --- | --- | --- |
+| D92 | **The TX EQ curve can be edited from the phone, including while transmitting.** The TX Equalizer shows the Core's parametric curve (`txEqCurve`) drawn as the Core sends it, never reordered, says which EQ is on the air (the parametric curve or the ten-band legacy EQ), and says "unavailable" instead of drawing a flat line when the Core cannot read the saved curve. An edit sends the whole curve through the Core's `txEq.setCurve`, which rounds, orders and stores it as a desktop edit does; the active TX profile then shows as changed, and saving it stays with the profile's Save. Edits follow the same permission rules as the other transmit settings: allowed on or off the air where the phone may change transmit settings, greyed with the Core's reason where it may not, and an edit never keys. The page is drawn as a board section first and built after JJ approves it, as every new screen is (plan Part J). | JJ, 2026-09-28 night (ruling 3): "build it", allowed while transmitting like the desktop, same permission rules as other transmit settings. The read-only curve is `txeq-curve-for-phone.md`; the write verb is the proposal in the Core/GUI lead's TX EQ curve report, and its wire note follows. | Read-only on the phone; the phone writing the gzip-wrapped `txEqParaEqData` itself; refusing edits while keyed. |
+| D93 | **(Deferred by D107; not built.)** **The phone saves a settings backup holding the Core's settings and this phone's settings in one file**, the combined format the desktop remote window writes (`SettingsBackup`, named `NereusSDR.nereus-settings`): the Core's part from the Core's settings export, and this phone's settings in the part where the desktop remote window puts its own. It is saved through the Share sheet, wherever the operator chooses. Pairing keys are never in it: not this phone's device key, not its saved Cores' identity keys, not the Core's identity key or pairing records. The page is drawn as a board section first and built after JJ approves it. | JJ, 2026-09-28 night (ruling 7b): "BUILD a phone settings backup", in the same combined file format, pairing keys never included. The Core's export already exists (`settingsBackupVersion` 1). | A file format of the phone's own; phone settings only; keys in the file so a restore pairs again. |
+| D94 | **(Deferred by D107; not built.)** **Restoring a backup from the phone asks first and then lets the Core apply it.** The operator opens a backup file through the Share sheet. Before anything changes, the phone names the other devices connected to the Core and asks for confirmation; the Core then applies its part with a radio reconnect, the other devices reconnect by themselves, and this phone applies its own part. A restore is refused while any device transmits, and the phone shows the Core's reason as sent. | JJ, 2026-09-28 night (ruling 4): name the other connected devices, confirm, the Core applies with a radio reconnect, other devices reconnect automatically, refused while anyone transmits. The Core's restore wire note follows. | A restore that does not name the other devices; one that interrupts a transmission; applying the Core's part without a radio reconnect. |
+| D95 | **Setup's Diagnostics has a Logs page for the Core's log as it happens:** the Core's live log stream (`coreLog`) with switches for the Core's log categories, labelled with the Core's own labels. Clear clears the view on this phone only and never the Core's log. The phone's own log is not on this page; it stays in the Support Bundle. The Tools parity lane builds the page with a category list held on the phone behind a seam until the Core sends its labels (`log-categories-for-phone.md` names the wire). | JJ, 2026-09-28 night (ruling 7c): "BUILD a phone Logs page", Clear clears the view only, the phone's own log stays in the support bundle. | The phone's own log on this page; Clear erasing the Core's log; category names chosen by the phone once the Core sends its own. |
+| D96 | **The phone runs no TCI server of its own.** Where the desktop shows its own local TCI server's settings, the phone shows them disabled with a plain reason in the style of "This runs on the desktop computer.". The Core publishes all its own TCI server's settings (IQ stream, audio block, TX channel, sensor intervals, VFO quirks, CW above 10 MHz and the rest) for the phone and the remote windows; the phone shows and edits them once that wire note lands. | JJ, 2026-09-28 night (ruling 7a). | A TCI server on the phone; hiding the local server's settings. |
+| D97 | **Reset to Smooth Defaults on the phone applies a spectrum average time of 650 ms**, as the Core describes it: the March tuning is kept exactly, and spectrum averaging becomes a stored average time of 650 ms (alpha 0.05 at 30 frames a second) with no threshold gap. If the Core's description changes the setting's wire name, a later note names it. | JJ, 2026-09-28 night (ruling 2); the Core and desktop fix is queued. | An averaging value of the phone's own. |
+| D98 | **Diagnostics' "Reset to defaults" becomes "Repair invalid settings", and works from the phone.** It keeps the same repair behaviour and runs on a remote Core, where the phone showed Reset to defaults disabled with "Reset to defaults is not available on this Core.". The phone shows the action with the Core's label wherever it shows it. | JJ, 2026-09-28 night (ruling 5). | Keeping Reset to defaults, disabled, on a remote Core. |
+| D99 | **Setup > Display's defaults stay NereusSDR's own:** the zero line, the grid's dB step, the grid's noise-floor offset, Normalize, the waterfall's high and low levels and the signal history. The phone's defaults do not change. | JJ, 2026-09-28 night (ruling 1). | Changing any of these defaults. |
+| D100 | **Audio Reset turns headphones off**, as it already does. No phone change. | JJ, 2026-09-28 night (ruling 6). | Leaving headphones on after an Audio Reset. |
+| D101 | **"Waiting for a radio"** is accepted as the wording on the desktop's LAN row, matching the phone. No phone change. | JJ, 2026-09-28 night (ruling 8). | Different wording on the desktop's row. |
+| D102 | **The AM Mod Monitor is built as the board draws it**, on the TX panel only (not the Modes tab), below the panel's usual controls. Its settings open in a sheet from the monitor's Settings button and from nowhere else; the sheet edits the Core's PA feedback receiver, which every device shares, and marks it shared; the sheet has the Bars or Meters style switch. | JJ, 2026-09-28, approving the AM Mod Monitor board section as drawn with these five choices. | The monitor on the Modes tab too; its settings on the TX panel itself; the feedback receiver shown as if it were this phone's own. |
+| D103 | **The App Store encryption question is answered YES:** the app uses standard encryption in addition to what iOS provides (TLS for control, DTLS and SRTP for media, the pairing exchange, the device keys). | JJ to the phone controller, 2026-09-28. `ios/AppStore/export-compliance.md` already says so; Task 69 records it. | Answering that the app uses only the encryption built into iOS. |
+
+### 3.12 Decided from 2026-09-28 to 2026-09-29
+
+JJ's later rulings for the phone, taken from the phone controller's ledger. Items marked
+"board approved" were drawn as a board section first, as Part J requires. Where a decision
+waits on the Core, the Core/GUI session's note for the phone names the wire.
+
+| # | Decision | Why | Rejected |
+| --- | --- | --- | --- |
+| D104 | **The transmit stage meters are built as the board draws them:** a strip under Mic level and above PROC, VOX and MON on the TX panel; the peak mark kept; dimmed last readings off the air with one line; on an older Core that does not send the readings, the single line "This Core does not send these readings. Updating the Core may help."; short CFC labels; the bars kept in large type. | JJ, 2026-09-28, approving the stage meter board section as drawn. | A strip elsewhere on the panel; no peak mark; blank meters off the air. |
+| D105 | **Mic mute matches the desktop:** the phone has no mute button. Mic level greys with a plain reason while the Core's mic is muted (`transmit.micMuted`, from `transmitSettingsVersion` 10). | JJ, 2026-09-28: mic mute matches the desktop. | A mute button on the phone. |
+| D106 | **Your Cores shows "Waiting for a radio"** as the row's subtitle, after the address and the device count. It states the condition only and names no radio. | JJ, 2026-09-28, answering whether the phone should show what the desktop's LAN row shows. | Leaving the state off the phone's row; a radio name in the subtitle. |
+| D107 | **Settings backup and restore on the phone is deferred** (amends D93 and D94). JJ: "way too complex"; come back to it later. Task 58a is not built, the backup and restore board section stays a draft, and R-IOS-35 waits with it. The Core was told. D133 moves it to a later release and keeps it on the roadmap. | JJ, 2026-09-28. | Building Back up alone first; building it now. |
+| D108 | **The RADE row on the VFO flag follows the Core's note where it differs from the board.** Six differences: (1) the older-Core reason reads "This Core does not send RADE sync. Updating the Core may help." (the board said "RADE reception"); (2) the older-Core row's prefix is the decoded callsign, else "RADE"; (3) locked on with no SNR number shows the hollow dot and "---" (the board drew the filled dot); (4) the offset sign comes from the uncut value, so -0.4 Hz shows "0Hz"; (5) the row's text uses the note's spaced form, `K1ABC ● 12dB +38Hz`; (6) a synced row from a Core that sends the gate always shows the offset ("+0Hz" until the first report), and a synced row with no offset draws without it. | JJ, on the RADE flag report's section 3: "Yes", follow the Core's note. | The board's drawing where it differs from the Core's note. |
+| D109 | **Taking over a slice takes it as it is:** every setting kept, no slice made or removed. The device that had it is told ("<device> took control of slice <letter>. You are still listening.") and can take it back. | JJ, 2026-09-29. | Closing and remaking the slice; resetting its settings. |
+| D110 | **The take-over screens are approved as drawn, with all eight of the board report's recommendations, minus the listen-only disabled state.** The Core has no listen-only control tier (receive-only refuses only the key and transmit requests), so Take control stays live on a receive-only connection and shows the Core's refusal in its own words if refused; the placeholder listen-only words are dropped. The first-key notice follows the Core's rule: the taker's mark is set on the take, cleared by choosing a transmit slice, by the slice closing or by control moving; it shows only on a key from that device that would land on the taken slice while the device owns no other slice that can transmit; transmit never jumps. (The prompt and refusal parts are amended by D123.) | JJ, 2026-09-29, approving the board; the Core lead's answers to the board's open questions the same day. | A disabled Take control on receive-only; phone-worded listen-only text; transmit moving to the taken slice. |
+| D111 | **The direct media path falls back after 5000 ms with no packets.** | JJ, 2026-09-29 (he had answered it earlier; the Core's `kDirectMediaSilenceFallbackMs` is 5000). | 3000 ms. |
+| D112 | **Alex low-pass filters on the phone match the desktop:** one dot per row, filled for the filter in use, outline otherwise, display only, spoken as "In use"; no dot when `alexLpfBits` is -1 or absent. | JJ, 2026-09-29. | Filters shown without a dot; a dot that can be tapped. |
+| D113 | **The phone's flag icons become real buttons, as on the desktop, and the active flag is finger-sized all the time:** two rows, the antenna controls merged, the tab panels full width. The look was chosen on 2026-09-30 (D118). | JJ, 2026-09-29. | Flag icons that are not buttons; a small flag that grows only while touched. |
+| D114 | **The touch rule (amends D78):** gestures and long presses are fine as extra ways in. A gesture or long press that is the only way to an action needs JJ's explicit approval. Anything visible on screen is not a hidden touch surface and needs no button chrome. | JJ, 2026-09-29. | Forbidding gestures outright; treating a visible icon as hidden. |
+| D115 | **A slice another device controls is worded as the Core words it:** "That slice belongs to <holder>. It can be changed only there." (older windows); "Slice <letter> is controlled by <holder>. Take control to change it." (listening); "Nobody controls slice <letter>. Take control to change it." The holder words are the device's own name as-is, "the Core" for an empty device or the station device, "a <kind>" (lowercase) when it has no name, and "another device" when neither is known. This replaces "Only <owner> can tune it or close it." (The "needs an update" refusal was dropped by D123.) | Follows the Core lead's owner words (`owner-words-from-core.md`, 2026-09-29); JJ's D109 and D110. | The phone's own owner wording. |
+| D116 | **The phone declares Setup description 17.** Version 18 and above wait on JJ's decision about the HL2 clock rows. (Superseded by D117, 2026-09-30.) | JJ, 2026-09-29: the phone stays at 17 until that decision. | Declaring 18 or 19 before the decision. |
+
+### 3.13 Decided on 2026-09-30 and 2026-10-01
+
+JJ's rulings for the phone on 2026-09-30, taken from the phone controller's ledger. Items
+marked "board approved" were drawn as a board section first, as Part J requires. Where a
+decision waits on the Core, the Core/GUI session's note for the phone names the wire.
+
+| # | Decision | Why | Rejected |
+| --- | --- | --- | --- |
+| D117 | **The phone moves to the latest Setup description the Core offers, with the HL2 clock rows live as on the desktop** (supersedes D116). The phone builds each new version as it lands: 22 first, then the later versions the Core added the same day. | JJ, 2026-09-30, in this session, confirming the Core lead's relay: "your latest version". The earlier hold at 17 (D116) waited on this decision. | Staying at 17; stopping at 19. |
+| D118 | **The flag buttons take look 2** (completes D113): plain words, thin dividers, the open tab underlined in the slice colour, bare side icons. The flag is then redrawn in the desktop's row order: the meter on its own row, the step control next to X and RIT, one fixed layout with the tab type capped at 14 points (at least 6.2 points of clearance at the cap), and approved as drawn on the board. | JJ, 2026-09-30: look 2, then approval of the redraw ("approved the redrawn flag as drawn"). | The other round-2 looks; a layout that changes with the type size. |
+| D119 | **The flag board's remaining recommendations are accepted:** the flag folds sideways at about 13.3 kHz of band width; the iPad folds flags at the same threshold as the phone (242 points, 246 in large type), so nothing changes there; Close on slice A is greyed with its reason; the placeholder sentences are "This radio has no BYPS switch." and "Slice A always stays open."; receive-only transmit uses the phone's existing listen-only transmit presentation, with no new sentence; VAX has its own panel. | JJ, 2026-09-30, accepting the board's recommendations; the iPad threshold in answer to a separate question the same day. | A different iPad threshold; a new receive-only sentence; VAX inside another panel. |
+| D120 | **The slice list, the jump and the slim flag are approved as drawn (board approved).** The Slice button opens a list of every slice instead of stepping (a tap on a flag still makes that slice active); rows stay in letter order and are never regrouped; the pills read "This pan" and "Another pan". Listen on a slice in another pan jumps to that slice's band and shows its flag with one tap back; a listened slice is always visible (its flag in view, an edge marker otherwise, and its list row), and the edge marker and list row count as showing it. The controls follow the band you look at: a jump to A makes A the active slice (Slice button, Modes, RX panel and meter show A, greyed while you only listen, with Take control there and your own volume and Stop listening live), and Back makes your own slice active again. Pressing PTT while viewing a listened slice's band switches back to the transmit slice's band and stays there; the marker for A returns in one tap. Listening continues after going back to your own band until Stop listening, Release or the slice closing. The list rows keep their volume, the AF Gain label is kept, and the hosting desktop gets the took-control notice with Take it back. | JJ, 2026-09-30: "board look good", with his rulings on the list, the jump and listening the same day (answering the open questions of the slice list and jump reports). | An edge tag instead of a jump; stepping through slices; rows grouped by pan; listening that ends when the band changes. |
+| D121 | **On a listening flag, Take control is one slim row, and the volume lives in the speaker tab.** The owner block is a single header-height row (44 points) with a compact outline Take control. AF Gain, Mute and Stop listening sit in the existing speaker tab panel, not a new row. The Modes page block is unchanged. | JJ, 2026-09-30: Take control was too big and broke the flag's flow; volume belongs in the existing speaker tab, not a new row. | A tall owner block; a new volume row on the flag. |
+| D122 | **After Take control, a tap on the band tunes the taken slice** like any slice you own. | JJ, 2026-09-30. | A taken slice that ignores band taps. |
+| D123 | **Take control never prompts anyone, the desktop included** (amends D110 and D115): it takes at once and the former holder stays a listener. Every slice can be taken; the only refusal kept is "transmitting, take once it stops", and the "needs an update" refusal is dropped. A device may take the Core's own slice when nobody is at the Core's desktop; the desktop-asked frames are gone. When the take came from the hosting desktop, the listener is named by that desktop's own device name, not "the Core" (the phone finds it as the connected device that hosts the Core and never matches by id). On an older Core that answers below `sliceAccess` 3, the Core's own slice on a headless Core stays greyed with "Slice <letter> is run by the Core itself, so control of it cannot pass to this device." | JJ, 2026-09-30 (three rulings: a device may take the Core's own slice with nobody at the desktop; every slice up for grabs; no prompt for anyone), the Core lead's `sliceAccess` 3 shape (`takeover-final-shape-from-core.md` and the same-day notes). | Asking the desktop; the phrase "the Core" for a desktop-hosted take; a separate refusal for older Cores. |
+| D124 | **Take control is greyed ahead of time while the slice is on the air** (the Core's `access:<id>.onAir`), with the Core's words under it ("Slice <letter> is transmitting. Take control once it stops."), and live again when the transmission ends. | JJ, 2026-09-30: yes, grey it ahead of time. | Leaving it live and refusing after the tap. |
+| D125 | **If the Core refuses to serve a listened slice's band display** (no capacity, or the receiver is not on the Core), the phone stays on its own band, shows the Core's words, and keeps hearing the slice with the edge marker. | JJ, 2026-09-30. | Jumping anyway; dropping the listening. |
+| D126 | **Slices on one input share the radio's filters, and the phone shows the Core's words** (ruling (c) and (d)). One counted set of slices and one away rule cover both filters; the receive low-pass follows the highest slice on the input as the desktop does; the band-pass bypass is kept. Where the desktop would say why a filter is off or wide, the phone shows the Core's reason in the flag's Filter policy menu (the filter reason and the low-pass reason, the low-pass reason possibly alone). The WIDE chip on the band was drawn for review and is approved as drawn (D136). Using the radio's second receiver input for a slice on another band waits for a separate feed on that input (D131). | JJ, 2026-09-30: option (c) and (d) of the shared-filter options report, which the bench confirmed the same day (slice A on 80 m darkened the phone's 20 m; A on 20 m was normal). | Option (b); giving the phone its own filter rule. |
+| D127 | **While another slice's band is shown (a jump), the split between the spectrum and the waterfall moves down by just the points the flag needs to clear the frequency scale.** The moved split is never saved and returns to its saved place on Back. | JJ, 2026-09-30: option (a) of the jumped-flag question for small phones. | Shrinking the flag; saving the moved split. |
+| D128 | **Mic Gain sits in the TX panel directly under the mic level meter,** as on the desktop's Phone/CW applet. The Modes row stays. It greys with the Core's words (for example "The Core's mic is muted.") while the Core's mic is muted. | JJ, 2026-09-30. | Mic Gain only in Modes. |
+| D129 | **The TX badge on a flag starts the take-over,** so one tap can end with that flag transmitting. In order, per the Core's signals (`txbadge-core-signals.md`, Core trunk 01d797e56): (1) my slice and I hold transmit: the slice becomes the transmit slice; (2) my slice and another device holds transmit: ask once, "Take transmit from <device>?", take transmit, then make the slice the transmit slice (with nobody holding, take transmit at once); (3) another device's slice: take control of the slice first, wait for the holder to change (about 1 s) before deciding whether to ask, then case 2. The slice step comes only after this device sees itself as the holder; each reply is matched by its command id; a failed take, a cancel or a link drop ends the badge take with nothing pending. Nothing keys: the badge only takes. Refusals are unchanged (a slice on the air; the radio transmitting on that frequency), and a badge that cannot start a take is disabled with the Core's reason, never asked. | JJ, 2026-09-30, relayed by the Core lead (phone parity with the desktop badge). | Keying on the badge; a take that sends a stale slice change after a later grant. |
+| D130 | **The Level Cal preamp line reads "Preamp: none on this receiver input."** "Level calibration is running." stays as it is. | JJ, 2026-09-30. | A longer preamp sentence. |
+| D131 | **The RX2 attenuator sits in the Step att row of the front end,** keyed to the Core's RX2 slice mask so it follows the real receiver input, and written to the Core's `rx2AttenuationDb` (0 to 31 dB; above that the Core refuses with "RX2's attenuator goes from 0 to 31 dB."). The RX2 preamp list comes from the Core's catalog (the HPSDR radios only) and is greyed with the Core's reason on a radio without one; the phone keeps no table of its own. On the ANAN G2 the RX2 input (ADC1) is not on the antenna switch: ANT1 TX/RX feeds ADC0 only (JJ, from the codec comment and the G2 results, row 15), so a separate feed on the RX2 jack is what would make a second input useful. | JJ, 2026-09-30 (placement on Modes, Front end; the Core's catalog rule; the G2 fact). | A phone-side RX2 preamp table; an RX2 attenuator outside the Step att row. |
+| D132 | **The build number is the commit count.** `CFBundleVersion` is set from the number of commits (`ios/scripts/build-number.sh`) in the device install and in archives, so About no longer shows build 1. TestFlight archives are made from phone main (`claude/iphone-app`) only. | JJ, 2026-09-30, after About showed build 1. | A build number fixed at 1; archives from lane branches. |
+| D133 | **Settings backup and restore (Task 58a) is out of this release and stays on the roadmap** (restates D107 as a release call). It is deferred to a later release: not built now, the board section stays a draft, R-IOS-35 waits, and the project roadmap (`docs/MASTER-PLAN.md`, the deferred features table) lists it so it is not lost. | JJ, 2026-09-30: "Option 1 but keep on roadmap". | Building Back up alone first; dropping it from the roadmap. |
+| D134 | **The website's privacy page (`iphone-privacy.html`) and source-code page (`iphone-source.html`) go live when the phone's pull request merges to main,** deployed from main with `website/deploy.sh`, not before. The pull request text carries this as a checklist item (plan Task 69). | JJ, 2026-09-30. | Deploying the pages ahead of the merge; deploying from a lane branch. |
+| D135 | **Taking transmit from the TX panel matches the flag's TX badge (D129):** when nobody holds transmit, the tap takes it at once; when another device holds it, the usual ask ("Take transmit from <device>?") comes first. No code change was needed: the panel's take already does this. | JJ, 2026-09-30, closing the open question on the TX panel take. | A different rule in the panel than on the flag. |
+| D136 | **The WIDE chip is approved as drawn** (JJ: "Yes wide chip looks correct") and is built: amber, on the band, shown only while the first receiver input is not Filtered, a tap opens the flag's more menu with the Core's reasons. It moves below the frames-per-second readout when that readout shows. This replaces the "pending board review" record of D126. | JJ, 2026-09-30, on the WIDE chip board. | Leaving the chip over the readout; no chip. |
+| D137 | **When headphones go away while MON is on, the phone sends `monitor-audio {route: none}` and also writes `monEnabled` off,** because MON shows the Core's `monEnabled`; leaving it on would show MON on while nothing is sent. This is the controller's implementation call on Task 55b's consistency question, for JJ to confirm at the pull request review. | The phone controller, 2026-10-01 (not yet confirmed by JJ). | Sending the route change without writing `monEnabled` off. |
+| D138 | **Take transmit greys while a question about the take is on screen,** so a second tap cannot start a second take under the first. It is live again when the question is answered or dismissed. | Controller call, for JJ to confirm at the pull request review: the phone controller's cleanup lane, 2026-10-01 (not yet confirmed by JJ). | Leaving the control live under the question. |
+| D139 | **Tests may keep one private accessibility call,** because no public replacement exists. It lives in the test target only, is isolated in one place and restored after each use, and never ships in the app. | Controller call, for JJ to confirm at the pull request review: the phone controller's ruling on the cleanup lane, 2026-10-01 (not yet confirmed by JJ). | A public API that does not cover the case; no such check. |
+| D140 | **Core settings respond at the touch in every tab, panel, flag and Setup.** The phone shows the operator's chosen value while that edit is unanswered; a newer edit replaces an older pending one. The matching Core answer settles the edit, and a refusal restores the Core's value with its reason beside the control. After five seconds without confirmation, the responsible control snaps back to the latest Core value and retains an unconfirmed notice. An older timeout or reply cannot overwrite a newer current-session adjustment. A current submitted typed entry follows the rollback; unsubmitted or newer input remains an editable draft. A lost or replaced session discards unanswered edits and restores the last Core values; it never re-sends automatically. The common lost-link wording is "The connection to the Core dropped before it confirmed this change.", including Setup. Tools sliders send at most once every 50 milliseconds while dragging, with the final value on release. Disconnected command controls say "This app is not connected to the Core, so nothing was changed." PTT, TUNE, MOX, 2-Tone, VOX arm and take keep their ordered keying path. | JJ, 2026-10-01: ordinary controls must work in real time; the explicit timeout follow-up is "what no i do not want drift, snapping back is better than drift". JJ approved common lost-link wording, drag sends and the disconnected message. | Keeping an unconfirmed value after the deadline; overwriting a newer adjustment with an older result; replaying unanswered edits after reconnecting. |
+| D141 | **Saver and Audio only keep the chosen audio quality.** They reduce display traffic; they do not silently cap High, Save data or Lossless. Lossless stays available for digital modes. The cellular choices and audio-quality page warn that Lossless can use about 720 MB an hour while carried. Costs remain estimates until measured, and microphone cost depends on its actually negotiated format. | JJ, 2026-10-01: "Keep audio quality with a warning". | Silently changing audio quality when a display mode changes; presenting High's estimate as Lossless's cost. |
+| D142 | **Diversity belongs to one live slice and can move on a Core offering movable Diversity.** Its DIV badge sits under that flag's filter width, leaving TX finger-sized; listening devices see the badge even without joining the slice. Tapping it opens that slice's Diversity page. The larger menu title matches its neighbours. The flag's More menu and the page keep their switches; the page's On/Off stays beside Use, and no DSP-panel button is added. A move requires control of both source and target slices and uses one guarded Core command. The common notice is "Diversity moved from B to C. Both slices paused briefly." with the actual slice letters; bench timing remains unmeasured. Closing its slice turns Diversity off without moving it; the blend goes with that slice and saved memories remain. After a Core restart, restore the same slice's phase and gain if the slice is restored, otherwise leave Diversity off. Keep Diversity running during PureSignal where supported; otherwise pause with the Core's reason. Summary, blend and memory controls remain read-only for a listener without control. Legacy Cores keep their supported slice-A behavior and disable moves with a reason. | JJ, 2026-10-01: approved layout with larger menu text and all nine recorded behavior choices. | Automatic moves on close; interrupting another operator's slice without control; hiding the live owner from listeners; an additional DSP button. |
+| D143 | **The reviewed TX drawer keeps a pinned header and key controls, then RF, configured amp/tuner/antenna controls, Audio, Voice and Processing.** Settings opens Modes, Transmit; Back preserves the open drawer and scroll position. TUNE, MOX, 2-Tone and PS-A stay reachable. RF keeps RF/SWR meters and RF/Tune power. Audio keeps Mic level, Mic Gain and all transmit-stage meters with their peaks. Voice provides quick VOX level and AntiVOX gain, with detailed timing below. Processing keeps PROC, LEV, EQ, CFC, DEXP and MON, followed by the profile. Configured but unavailable controls show their reasons; unconfigured optional equipment is omitted. Existing AM carrier and Mod Monitor remain. High SWR uses a conditional text pill or onset toast only while a fresh transmitting reading exceeds the known limit; it does not claim that the Core cut power. Detailed settings remain in Modes, with optional long-press routes as shortcuts. Full and folded DIV routes, TX, Settings and other interactive controls require actual 44-point targets and viewport containment. | JJ, 2026-10-01: approved TX board after restoring audio readings and ordering pinned, RF, amp/tuner/antenna, Audio, Voice and Processing. | A permanent SWR icon or explanation; removing useful audio levels; obscuring pinned controls after navigation. |
 
 ---
 
@@ -233,9 +339,10 @@ The phone uses the station's link as the desktop does in remote mode:
   proxy, and the connect sequence of remote design §7.0 (hello with versions,
   authentication, capabilities, snapshot, snapshot-complete, then the TX gate).
 * **R3:** display endpoints the client sizes itself (media control: 1 to 4096
-  pixels, 1 to 60 frames a second, per endpoint) and Opus audio (the R3 plan:
-  48 kHz stereo, 40 ms frames, 24 kbit/s constrained VBR, explicit wideband, so
-  audio up to 8 kHz).
+  pixels, 1 to 60 frames a second, per endpoint) and audio. Opus receive audio
+  uses 48 kHz stereo, 40 ms frames and constrained VBR. The release's High,
+  Save data and negotiated Lossless choices are specified in §5.4 item 9;
+  the original 24 kbit/s R3 profile is not the release's default.
 * **R4:** transmit and its safety harness: the microphone uplink, the
   unkey-confirmed handoff gate, the TX watchdog (§12.1), uplink starvation
   (§12.3), the PTT time-out, and TX disabled until the snapshot is complete
@@ -359,7 +466,9 @@ is new except the time-out's default.
   a Live Activity is active for up to 8 hours, then leaves the Dynamic Island
   and stays on the lock screen for up to 4 more; starting one needs the app in
   the foreground (or a Live Activity intent); its data is limited to 4 KB; on a
-  locked device its buttons run only after the operator authenticates; the lock
+  locked device a button runs after the operator authenticates unless the app
+  allows it without (UNKEY, Mute and Cancel run with one tap; Reconnect asks,
+  JJ 2026-09-26); the lock
   screen card is at most 160 points tall; StandBy shows it at twice the size.
 * **Sound only.** While the phone is locked or another app is in front, the
   phone asks the station to stop sending the band. Audio and the card's readings
@@ -413,6 +522,13 @@ once the desktop ports it; today the desktop's STEP cycles a six-entry stand-in.
   of its copyright holders must agree to the clause.
 * A provenance check covers the app's sources in CI (R-IOS-29).
 
+Study the actual NereusSDR desktop, Thetis and OpenHPSDR sources to understand
+behavior and protocol details before writing the phone implementation. The
+phone keeps its own identity and implementation; a reference study is not a
+default instruction to port code. Any authorized source reuse retains its
+copyright notices, licence and attribution and must satisfy D4 before it can
+ship in the app. Studying a meter or control does not change these conditions.
+
 ### 4.12 The app's structure
 
 **Proposed here, not yet discussed with JJ.**
@@ -430,7 +546,7 @@ once the desktop ports it; today the desktop's STEP cycles a six-entry stand-in.
 
 ### 4.13 Building and shipping
 
-* Building needs Xcode; this Mac has only the command line tools today.
+* Building needs Xcode (Xcode 27 is installed on this Mac, and the app builds and runs on it).
 * JJ's Apple developer account, which already signs the macOS DMG, covers
   TestFlight and the App Store.
 * The first build goes to a TestFlight beta round (D2).
@@ -439,6 +555,8 @@ once the desktop ports it; today the desktop's STEP cycles a six-entry stand-in.
 * The export-compliance answers (the app uses TLS, SRTP and the pairing key
   exchange) and the privacy label are prepared with the first TestFlight build.
   The app ID carries the Push to Talk capability.
+* The encryption question is answered YES: standard encryption in addition to
+  what iOS provides (D103, JJ, 2026-09-28).
 
 ---
 
@@ -453,17 +571,24 @@ the pass (D34). Pictures are in `2026-09-23-iphone-app-design/`.
 ![Turned sideways](2026-09-23-iphone-app-design/02-sideways.jpg)
 ![Tuning dial](2026-09-23-iphone-app-design/03-tuning-dial.jpg)
 ![Spots on the band](2026-09-23-iphone-app-design/04-spots.jpg)
+![The Pan and Display buttons](2026-09-23-iphone-app-design/25-pan-and-display-sheets.jpg)
+![Tuning on the band](2026-09-23-iphone-app-design/26-tuning-on-the-band.jpg)
 
-1. The toolbar, left to right: RX panel, speaker mute, Slice A, Pan 1,
-   Display, the link dot with its round-trip time, and TX panel.
+1. The toolbar, left to right: RX panel, the Sound panel (D77), Slice A, Pan 1,
+   Display, the link dot with its round-trip time (a tap opens the Radio tab, JJ
+   2026-09-26), and TX panel.
 2. The tab bar: Panadapter, Modes, Tools, Radio, Setup.
-3. Tap or drag the band to tune the active slice. Zoom minus and plus sit at
-   the bottom right of the waterfall; PTT at the bottom left.
+3. Tap the band to tune the active slice there; drag the band to move it;
+   drag a flag or its passband to tune that slice in its step (D74). Zoom
+   minus and plus sit at the bottom right of the waterfall; PTT at the bottom
+   left.
 4. The flag uses the desktop's text size, narrowed to fit. The dBm scale is a
-   little larger for fingers, and the band plan strip is on, ARRL by default.
+   little larger for fingers, and the band plan strip shows the station's plan
+   at Small (D79).
 5. The RX panel holds AF gain, AGC, filter presets, the noise buttons and
-   squelch. The TX panel holds RF and tune power, TUNE, MOX, the amp's OPERATE,
-   the tuner's TUNE, the mic level, PROC, VOX and MON.
+   squelch. The TX panel follows D143: pinned Settings and key controls,
+   RF, configured amp/tuner/antenna controls, Audio, Voice and Processing,
+   then the profile, keeping AM carrier and Mod Monitor.
 6. Keyed: a timer on the PTT, the orange TX filter, the passband shading hidden
    (as on the desktop), and RF power, SWR and the mic level on the waterfall.
 7. Sideways, the panels slide in from the sides. On a charger on its side, iOS
@@ -485,6 +610,38 @@ the pass (D34). Pictures are in `2026-09-23-iphone-app-design/`.
     yellow from -10, red from 0.
 13. As on the desktop, each meter's title sits inside its bar, so a healthy mic
     level covers the words.
+14. Pan 1 opens the pan's sheet under the toolbar, titled with the pan and its
+    active slice (D73). The band grid's buttons are the Core's band list in its
+    order, and the slice's band is lit. A tap moves the active slice to that band
+    where it last was on it: its frequency, mode and filter, from the Core's band
+    memory. Below the grid, Add a slice here opens a new slice on this pan, Add a
+    notch at A puts a notch where slice A is listening, as the desktop's +TNF
+    does, and Extended view shows the radio's full width either side of the band.
+15. Display opens this pan's display sheet, kept on this phone (D73): the
+    waterfall's palette and its levels (Clarity, which sets them from the noise
+    floor and can be re-tuned; Auto, which follows each line's weakest and
+    strongest signals; Manual, the levels set in Setup), the spectrum's fill, top
+    and range, and the Core's extras on the band: peak hold, peaks and the
+    noise-floor line. More display options in Setup goes to the Setup tab.
+16. A control on either sheet that the Core can't do yet stays in place, greyed,
+    with "Needs a newer Core" (D23).
+17. Each flag shows its slice's tuning step; a tap lists the radio's steps
+    and the one picked is that slice's, used by drags, taps (with snap on) and
+    the dial. A tap on the flag's frequency opens a number pad: the frequency
+    in MHz or kHz, Enter tunes the slice there (D74). With the pop-up knob
+    chosen, that tap raises the knob instead, and a tap on the frequency above
+    it opens the number pad (JJ, 2026-09-26; the setting's name "Pop-up knob").
+18. The Display sheet's Line slider sets the trace's width on this phone, from
+    one screen pixel to 3 points, starting at 0.5 points (D75).
+19. Setup's Display page holds the band plan: its picker changes the station's
+    band plan, and its size (Off, Small, Medium, Large, Huge) is kept on this
+    phone (D79). The Display sheet keeps only waterfall and spectrum controls.
+
+Core settings in this view and every other tab follow D140: show the operator's
+edit at the touch, resolve it from its matching Core answer and keep newer edits
+ahead of older replies. After five seconds without confirmation the responsible
+control returns to the latest Core value with a notice; a session change discards
+pending edits without re-sending. Keying controls retain their ordered safety path.
 
 ### 5.2 Tabs
 
@@ -493,14 +650,18 @@ the pass (D34). Pictures are in `2026-09-23-iphone-app-design/`.
 1. **Modes** is one scrolling page for the active slice, top to bottom: slice
    switch, mode (the 14 modes), filter (the mode's presets plus the low and high
    edges), front end, AGC with AGC-T and AUTO, noise, audio, RIT and XIT, then
-   transmit (TX filter, mic gain, PROC, LEV, EQ, CFC, VOX, MON).
+   transmit (TX filter, mic gain, PROC, LEV, EQ, CFC, VOX, MON). Mic Gain also sits
+   directly under the mic level meter in the TX panel (D128).
 2. While transmitting, every tab's title bar shows a red TX pill with the clock
    and Stop; one tap unkeys.
 3. **Tools** lists the desktop's tools in its order, each marked Core, This
    phone or Both, showing each once the Core offers it (D41). On the phone,
    PureSignal is on, off and status only; calibration stays at the Core.
-4. MIDI Mapping and Macro Buttons are dropped for now (D42). Network Diagnostics
-   and Support Bundle cover both ends.
+4. MIDI Mapping and Macro Buttons are dropped for now (D42). **Connection and
+   performance** in Tools covers active connection details and all desktop Network
+   Diagnostics features (D89); Support Bundle covers both ends. The current
+   Setup page containing only Licences and the build identifier becomes **About this
+   app**, expanded with the desktop's full About information adapted to the phone (D90).
 5. **Radio** opens with the Core and link (name, direct or relay, round-trip
    time) and Disconnect; then the radio at a glance (model, firmware, protocol,
    sample rate, slices in use, PA volts, ADC overload, the station computer's
@@ -537,6 +698,27 @@ the pass (D34). Pictures are in `2026-09-23-iphone-app-design/`.
    was paired and last seen; one-tap Revoke, which drops that device at once,
    even mid-session; Add a device, which shows a one-time code; a note that up to
    four devices can be connected at once (D57, §5.8 item 13).
+9. **TX Equalizer** in Tools draws the Core's TX EQ curve as sent, says which EQ
+   is on the air, and edits the curve on the Core, on or off the air, under the
+   rules of the other transmit settings (D92). Its layout is a board section
+   JJ approves before it is built.
+10. **Diagnostics > Export / Import** (deferred to a later release by D107 and D133; Task 58a is not built) saves a backup of the Core's settings and
+    this phone's settings in one file through the Share sheet, never with any
+    pairing key (D93), and restores one after naming the other connected devices
+    and asking; the Core applies its part with a radio reconnect and refuses while
+    anyone transmits (D94). Its layout is a board section JJ approves before it is
+    built.
+11. **Diagnostics > Logs** shows the Core's log as it happens with the Core's log
+    category switches; Clear clears only this phone's view; the phone's own log
+    stays in the Support Bundle (D95).
+12. **TCI**: the desktop's own local TCI server's settings show disabled with a
+    plain reason, since the phone runs no TCI server; the Core's TCI server
+    settings are shown and edited once the Core publishes them (D96).
+13. **Display > Spectrum Defaults**: Reset to Smooth Defaults applies the Core's
+    650 ms spectrum average time (D97). The Display defaults themselves stay
+    NereusSDR's own (D99).
+14. **Diagnostics > Settings Validation**: "Repair invalid settings" in place of
+    "Reset to defaults", working on a remote Core (D98).
 
 ### 5.3 Getting connected
 
@@ -544,6 +726,7 @@ the pass (D34). Pictures are in `2026-09-23-iphone-app-design/`.
 ![Connecting](2026-09-23-iphone-app-design/07-connecting.jpg)
 ![The station's side](2026-09-23-iphone-app-design/08-station-side.jpg)
 ![When things aren't right](2026-09-23-iphone-app-design/10-trouble.jpg)
+![Pairing and connecting: the states in between](2026-09-23-iphone-app-design/24-pairing-and-connecting-states.jpg)
 
 1. **Welcome:** one picture of radio, Core and phone ("Your station, from
    anywhere."), with two ways on: Find my Core and Set up a Core.
@@ -557,10 +740,26 @@ the pass (D34). Pictures are in `2026-09-23-iphone-app-design/`.
    a small box from a flashed card). It finds the radio and waits for its first
    device, showing a code with no time limit until five wrong codes in a row
    close pairing, which only the Core's own computer then reopens.
-6. **Your Cores** lists paired Cores first, then unclaimed ones on this
-   network. The phone lists Cores only, never radios directly.
+6. **Your Cores** lists paired Cores first, then the Cores on this network
+   that take a new device (D71). A Core that removed or forgot this phone
+   stays listed with Pair (D70). The phone lists Cores only, never radios
+   directly. Its visible actions menu includes Remove Core: disconnect first, then
+   remove this phone's saved entry (D91).
 7. A pairing code is a number and two words (for example `7-anvil-harbor`),
    typed once.
+   **Enter an address** takes the Core's name, IPv4 address or IPv6 address
+   (no brackets needed) and, in a field of its own below it, the port, filled in
+   with the Core's standard port (D69). Connect goes on to the code when this
+   phone isn't paired with the Core yet.
+   **Pairing, the states in between** (picture 24): the code screen names the
+   Core it pairs with, says where the code is (the Core's status page, or
+   `nereusd pairing show` on its computer) and holds this phone's name for the
+   Core (D65); a wrong code shows the Core's words and the wait before its new
+   code; after the fifth wrong code in a row, pairing is closed and opens again
+   only at the Core; when iOS isn't allowed to reach this network, the
+   Core-not-answering sheet says so and where to allow it; a phone that can't
+   read its own key any more (after an erase and restore) says so and offers a
+   new key, after which each Core needs pairing again (D72).
 8. **Link lost while keyed:** the phone says the Core stops transmitting on
    its own when the link goes. That is the Core's promise, since the phone
    can't see it happen. The phone keeps retrying, with Cancel.
@@ -623,11 +822,28 @@ the pass (D34). Pictures are in `2026-09-23-iphone-app-design/`.
    microphone, and MON plays in headphones only. Both are on by default.
 8. iPhone voice processing is off, so the station's PROC, EQ and leveler shape
    the voice.
-9. Audio quality is Standard (Opus at 24 kbit/s, audio up to 8 kHz) or High
-   (48 kbit/s). High appears only when the station advertises a measured profile
-   (R-R3-23, R-IOS-09).
-10. Pressing and holding the speaker button on the band moves the sound without
-    leaving the band.
+9. Audio quality is **High** by default (Opus at 48 kbit/s, audio up to 20 kHz),
+   **Save data** (24 kbit/s, audio up to 8 kHz), or **Lossless** (48 kHz stereo
+   16-bit L16, unchanged Core audio for digital modes). Explicit Opus bitrate
+   requests use only the Core's advertised measured profiles and require
+   `audioQualityVersion` 1. High remains selectable on an older Core without
+   that offer, using its supported Opus profile without a bitrate request;
+   the phone does not claim it negotiated 48 kbit/s in that case. Save data
+   waits for the catalogue and stays disabled with a reason when not offered.
+   Lossless requires a negotiated line and falls back to High Opus when the
+   line or network cannot carry it. The Core's actual context and refusal
+   determine the displayed result (R-R3-23, R-IOS-09).
+
+   The microphone uses 48 kbit/s Opus, or 24 kbit/s under Save data, in mono
+   48 kHz 20 ms frames. Negotiated Lossless carries each microphone frame as
+   five 4 ms L16 packets, with mono repeated in the two channels. A quality
+   change while keyed applies at a frame boundary without restarting capture,
+   the key, encoder history or the RTP clock. Lossless fallback uses High.
+   Receive queues are bounded at 64 Opus packets or 640 L16 packets, each
+   representing at most 2.56 seconds; this is a burst limit, not a playback
+   target or a reason to add that much latency (D84).
+10. One tap on the speaker button on the band opens the Sound panel: Mute, then
+    Speaker, Earpiece or AirPods (D77), without leaving the band.
 11. **Data use:** one choice for Wi-Fi (Full or Balanced) and one for cellular
     (Full, Balanced, Saver or Audio only), each with its cost per hour;
     counters for this session and this month; a warning past 5 GB a month on
@@ -635,14 +851,32 @@ the pass (D34). Pictures are in `2026-09-23-iphone-app-design/`.
 
     | Mode | What it asks for | Estimated |
     | --- | --- | --- |
-    | Full | 30 frames a second, full detail | about 60 MB an hour |
-    | Balanced | 15 frames a second | about 35 MB an hour |
-    | Saver | 5 frames a second, half the detail | about 20 MB an hour |
-    | Audio only | No band, just the sound | about 13 MB an hour |
+    | Full | 30 frames a second, full detail | about 70 MB an hour |
+    | Balanced | 15 frames a second | about 45 MB an hour |
+    | Saver | 5 frames a second, half the detail | about 30 MB an hour |
+    | Audio only | No band, just the sound | about 24 MB an hour |
 
-    Transmitting adds about 13 MB for each hour of talking.
-12. The first time on cellular, the phone says it is at Balanced and what that
-    costs; a "Balanced · 15 fps" chip stays up while off Wi-Fi.
+    These totals include High audio. Save data audio is about 13 MB an hour;
+    Lossless is about 720 MB an hour while the connection carries it.
+    Transmitting adds about 24 MB for each hour of talking at High, 13 MB at
+    Save data, or 720 MB while the microphone line carries Lossless. If it
+    cannot, the microphone uses High. The L16 payload calculation is
+    48000 × 2 × 16 × 3600 / 8 = 691.2 MB per hour; about 720 MB includes
+    estimated transport overhead. These are estimates, not measured app
+    traffic or a cellular cap. Incoming and outgoing counters remain separate.
+    Saver and Audio only reduce display traffic while keeping the selected audio
+    quality (D141). A cellular Lossless warning shows its estimated cost on the
+    audio-quality page and under the cellular data choices; quality is never
+    silently changed by the display mode.
+12. The first time on cellular, the phone names the selected mode and its
+    estimated cost. Cellular starts at Balanced; the operator can keep Full
+    selected for cellular independently of the Wi-Fi choice. The September 28
+    board revision replaces the floating chip with one slim passive information
+    row below the toolbar, above the slice labels. Show the phone's network,
+    actual active path and measured app traffic; incoming and outgoing rates
+    each carry their own independently scaled unit, such as Mbps or kbps.
+    Do not add a Details button or a second row. The existing dot/ms control
+    is the visible entry to Connection and performance under Tools (D89).
 13. The data figures are estimates until the bench measures them (R-IOS-23).
 
 ### 5.5 Away from the app
@@ -674,24 +908,31 @@ the pass (D34). Pictures are in `2026-09-23-iphone-app-design/`.
    panel, and only one Push to Talk app can be active at a time. Apple's rule;
    it comes with D26.
 8. **Keyed from a pocket:** the card turns red and says to press the button
-   again to unkey; the card's own UNKEY still waits for Face ID. On the band,
+   again to unkey; the card's own UNKEY also works with one tap, no Face ID
+   (JJ, 2026-09-26). On the band,
    the PTT follows the button and says what keyed it ("Keyed by headset").
 9. **Battery and sessions** (Setup, General, this phone): sound only while
    locked or in another app, on by default.
 10. Keep the screen on: Never, While charging, or Always, with Always the
     default (D27). It always stays on while keyed.
-11. A sleep timer (off, 30 minutes, 1 hour or 2 hours, then disconnect). Low
-    Power Mode drops the band to Saver, and a hot phone slows the band until it
-    cools; both are on by default.
+11. A sleep timer (off, 30 minutes, 1 hour or 2 hours, then disconnect).
+    JJ's September 28 decision: if VOX is armed but the phone is not
+    transmitting when the timer expires, turn off VOX and disconnect. If
+    actively transmitting, wait until transmission ends, then turn off VOX
+    and disconnect. Bind this work to the expiring session so a delayed
+    completion cannot affect its replacement (D88). Low Power Mode drops the
+    band to Saver, and a hot phone slows the band until it cools; both are on
+    by default.
 12. After a while locked, the waterfall marks the stretch that was sound only
     ("Locked 19:42 to 20:15 · sound only"), so nothing looks lost.
 13. Just before iOS ends the card at eight hours, the app leaves a last message
     on it. The sound carries on, and opening NereusSDR starts a fresh card.
 14. **Transmit time-out** (D29): on the PTT buttons page, a Transmit time-out
     group marked Core with "Stop transmitting after: 3 minutes" (30 seconds
-    to 30 minutes, or off). When it fires, the band shows an amber notice,
-    "Transmit stopped after 3:00. That's the time-out for phone and iPad. Tap
-    PTT to go again.", and PTT is back to Tap.
+    to 30 minutes, or off). When it fires, the band shows an amber notice in the
+    Core's words (for a phone: "Transmit stopped after 3:00, the Core's time-out
+    for phones and tablets.", from `src/core/session/TransmitStateFacade.cpp`),
+    and PTT is back to Tap.
 
 ### 5.6 iPad
 
@@ -749,7 +990,7 @@ slice C on 20 m.
 1. **Another device's slice** on the band: a dashed line in its colour, a label
    at the foot of the spectrum with the device's name, and TX on the label while
    it has transmit; no flag. A tap on the label opens a note: whose slice, where,
-   and that only that device can tune it or close it.
+   and that it can be changed only there (D115).
 2. **PTT names the holder** while another device has transmit ("PTT" over
    "MacBook", in muted red), and this phone's own TX badges are off.
 3. **Taking transmit:** a tap on PTT asks first, naming the device and what it is
@@ -862,7 +1103,7 @@ Hardware evidence stays **pending** until a device or the bench shows it.
 | R-IOS-06 | The station advertises the values it owns and the phone shows (§4.10): the mode list, filter presets per mode, the tune-step list, AGC ranges, meter ranges and the board's capabilities. | Station, R3 follow-on | Software: the snapshot carries them; the phone builds its controls from them for an ANAN-G2 and a Hermes Lite 2. |
 | R-IOS-07 | The desktop's Remote Access page of §5.3 (items 10 and 11 describe it and the small box). | Desktop, R6 | Software, and screenshots of the running page per the ui-verification skill. |
 | R-IOS-08 | Pairing, devices and revocation per the pairing design: one tap on the LAN, the code from anywhere, the window open while unclaimed with no timer, reopening from the console or a paired device, revoke dropping a live session, the station-key backup prompt, and the code on a small box's status page and console. | Station, R5 and R6 | Software. Integration: pair on the LAN, pair by code through the relay, revoke mid-session. |
-| R-IOS-09 | The higher audio quality is offered only when the station advertises a measured profile for it (R-R3-23); otherwise the phone greys it. | Station, R3 | Integration. |
+| R-IOS-09 | High by default, Save data and negotiated Lossless, as §5.4 item 9. Explicit Opus bitrate requests use the Core's measured offer (R-R3-23); unsupported choices stay visible with reasons. High can use a legacy Core's supported Opus without claiming a negotiated bitrate. The microphone follows quality changes and Lossless fallback at frame boundaries without restarting the key or RTP clock. | Station, R3; phone media | Integration, including actual encoder configuration, Lossless negotiation/fallback and continuous RTP across changes. |
 | R-IOS-10 | Sound only: with every display endpoint disabled, audio and the card's readings keep flowing (R-R3-08, R-R3-13). | Station, R3 | Integration: traffic drops to audio and telemetry, and the card's reading keeps moving. |
 | R-IOS-30 | Asked changes and notices (§4.5 items 4 to 6, D49, D50, D53): taking a receiver, moving a shared receiver, and a shared setting that would disturb another device's slices are confirmed requests; the Core says beforehand which devices and slices they reach and what happens to them; every affected device is told who, what and when, with Take it back where §3.9 gives one. | Station, R4, per the Core/GUI session's design for several devices | Software: each request confirmed and cancelled, and each notice. Integration: two devices. |
 | R-IOS-31 | Capacity (D54): when the sessions together ask for more display and audio than the Core can send, the transmit holder keeps its full display and audio, the others' frame rates drop first, and each slowed session is told the rate it gets. | Station, R3 follow-on | Software: the allocation with four sessions. Measurement: four devices over a constrained uplink. |
@@ -890,6 +1131,23 @@ Hardware evidence stays **pending** until a device or the bench shows it.
 | R-IOS-27 | The app draws each radio's controls from the values the station advertises (R-IOS-06) and has no radio tables of its own. | Software: the same build shows an ANAN-G2's and a Hermes Lite 2's presets and ranges correctly. |
 | R-IOS-28 | Store readiness (§4.13): the TestFlight round, the App Review video on a real station, the export-compliance and privacy answers, the Push to Talk capability. | The App Store Connect record, checked by JJ. |
 | R-IOS-29 | Licence (§4.11): no Thetis, WDSP or AetherSDR code in the app; the App Store permission clause in its licence; shared code cleared with its copyright holders. | Software: the repository's provenance check extended to the app's sources, run in CI. |
+| R-IOS-32 | Connection and performance (D89): active control/media addresses and IPv4/IPv6 families, transport and direct/relay path, rendezvous involvement, and the complete desktop Network Diagnostics feature set, reached through a visible Tools entry. | Software: actual selected-route changes, every chart/detail/control in the Task 59 parity inventory, measurement fixtures, history and reset boundaries; screenshots and desktop comparison; device verification on direct IPv4, direct IPv6 and RV/relay routes. |
+| R-IOS-33 | About this app (D90): the complete desktop About information adapted to the phone, with accurate app identity, credits, project links, phone library notices and Corresponding Source. | Software: item-by-item comparison with desktop About; bundle-version/build checks, reachable links and complete notices; phone portrait/landscape screenshots and offline access to bundled information. |
+| R-IOS-34 | The TX EQ curve (D92): the Core's `txEqCurve` drawn as sent on a -24 to 24 dB scale, with which EQ is on the air, the unavailable state, and an older Core's disabled reason; editing through `txEq.setCurve` under the transmit-settings rules, on or off the air, never keying. The editing half waits on the Core's `txEq.setCurve` wire note. | Software: the drawing against the link document's worked example to 0.01 dB; the `tx-eq-curve` conformance session; the permission gate and the Core's refusal words; an edit's message against `FakeStation`. Integration: an edit on the phone shows in the desktop's TX EQ dialog. Bench: an edit while keyed on air (pending). |
+| R-IOS-35 | (Deferred to a later release by D107 and D133; Task 58a is not built, and the item stays on the project roadmap.) Settings backup and restore (D93, D94): one `NereusSDR.nereus-settings` file in the desktop remote window's combined format with the Core's part and this phone's part, saved and opened through the Share sheet, holding no pairing key; a restore that names the other connected devices, asks, and lets the Core apply its part with a radio reconnect; refused while anyone transmits. The restore half waits on the Core's restore wire note. | Software: the file decodes as the desktop's `SettingsBackup` does; a test finds no key material in it; the restore flow's naming, confirmation, refusal and failure (existing settings kept). Integration: a backup from the phone opened by a desktop remote window; a restore with a second device connected, which reconnects by itself. |
+| R-IOS-36 | The Core's Logs page (D95): the live `coreLog` stream, the Core's log category switches with the Core's labels, Clear on this phone only; the phone's own log only in the Support Bundle. The labels wait on `log-categories-for-phone.md`. | Software: the stream, the backlog, Clear leaving the Core untouched, the categories through the seam and then from the Core. Integration: the live log of a real Core on the phone. |
+| R-IOS-37 | TCI on the phone (D96): the desktop's local TCI server settings shown disabled with a plain reason; the Core's own TCI server settings shown and edited once published. The Core's settings wait on its TCI wire note. | Software: the disabled rows and their reason; each published setting written to the Core. Integration: a TCI setting changed on the phone shows on the desktop. |
+| R-IOS-38 | Reset to Smooth Defaults (D97): the Core's 650 ms spectrum average time with the rest of the March tuning. | Software: the values the action writes, against the Core's description. Integration: the same values after the desktop's Reset to Smooth Defaults. |
+| R-IOS-39 | Repair invalid settings (D98): shown with the Core's label and run on a remote Core. It waits on the Core's description of the renamed action. | Software: the action rendered from the description and its message against `FakeStation`. Integration: a repair run from the phone on a real Core. |
+| R-IOS-40 | Transmit stage meters and the muted mic (D104, D105): the strip under Mic level with the peak mark, dimmed readings off the air, the older-Core line, short CFC labels; Mic level greyed with a plain reason while the Core's mic is muted, and no mute button. | Software: each state's words against `FakeStation`, large type keeping the bars. Integration and bench: the readings keyed and idle against a real Core (idle values not yet observed). |
+| R-IOS-41 | The RADE row on the VFO flag (D108): callsign or RADE, the lock dot, SNR and offset in the note's spaced form, the six differences from the board. | Software: the words, dot, offset sign and older-Core gate cases (`RadeRowWordsTests`, `RadeRowMirrorTests`). Integration: against a Core that sends `radeStatus`. |
+| R-IOS-42 | Taking control of a slice (D109, D110, D115, D123, D124): the slice kept as it is, no prompt for anyone, the old owner told and able to take it back, the hosting desktop named by its own device name, the Core's refusals shown as sent, Take control greyed ahead of time while the slice is on the air, the first-key notice, and the owner words as the Core sends them. | Software: each refusal string and holder word against the Core's text; Take control live on receive-only. Integration: a take-over between two devices on a real Core. |
+| R-IOS-43 | Alex low-pass rows (D112): a dot per row, filled for the filter in use, display only, no dot when `alexLpfBits` is -1 or absent. | Software: the rows against fixtures with and without `alexLpfBits`. |
+| R-IOS-44 | Flag buttons (D113): flag icons are real buttons and the active flag is finger-sized at all times, with targets of at least 40 by 40 points. The look is look 2 (D118). | Software: target sizes and overlaps at large type. Board: JJ sees the looks before anything is built. |
+| R-IOS-45 | The slice list, the jump and the slim flag (D119 to D122, D125, D127): the Slice button opens the list in letter order; Listen jumps to the slice's band with its flag, one tap back; the controls follow the band viewed; PTT returns to the transmit slice's band; the slim owner row with AF Gain, Mute and Stop listening in the speaker tab; a tap on the band tunes a taken slice; the Core's refusal of a band display keeps the phone on its own band; the split moves down by just what the flag needs, unsaved, restored on Back. | Software: list order, the active slice per viewed band, the refusal words, the split floor and its restore, large type. Board: the approved frames. Integration: a listen, jump and take against a real Core. |
+| R-IOS-46 | The TX badge take-over (D129): the three cases in order, one ask at most for transmit, nothing keys, refusals shown with the Core's reason, a badge that cannot start a take disabled. | Software: each case, the command-id matching, the stale-grant guard and the holder wait against `FakeStation`. Integration: a badge tap on another device's slice on a real Core (the Core's trunk 01d797e56). |
+| R-IOS-47 | Shared-input filter words (D126): the filter reason and the low-pass reason from the Core shown in the flag's Filter policy menu as the desktop shows them; the WIDE chip on the band is approved as drawn and sits below the frames-per-second readout when that shows (D136). | Software: the words against the Core's fields with and without the low-pass reason. Bench: slice A on 80 m with the phone on 20 m against a real radio. |
+| R-IOS-48 | The RX2 attenuator and preamp rows and the Level Cal preamp line (D130, D131): the attenuator in the Step att row 0 to 31 dB through the Core's field, the preamp list from the Core's catalog and greyed with its reason, "Preamp: none on this receiver input." | Software: each row against catalog fixtures with and without RX2. Bench: an HPSDR radio and a G2. |
 
 ### 6.3 How this becomes a plan
 
@@ -930,7 +1188,7 @@ the air as R3, R4 and R5 land.
 | Transmit refused (interlock, amp in STANDBY, PA protection) | Refuses with a reason | Red explanation, with the fix where there is one |
 | The time-out fires | Drops MOX, gives the reason | Amber notice; PTT back to Tap |
 | A call or Siri interrupts | Unkeyed by the phone's request | Unkeys; audio resumes afterwards |
-| The device is revoked | Drops the session at once (pairing design §7) | Back to the list of Cores; the Core must be paired again |
+| The device is revoked | Drops the session at once (pairing design §7) | Back to the list of Cores, where it stays with Pair (D70) |
 | Low Power Mode or a hot phone | Honours the smaller display request | Saver, or a slower band until it cools |
 
 ---
@@ -1007,6 +1265,13 @@ The pictures, one per board section, in `2026-09-23-iphone-app-design/`:
 | `21-freedv-reporter.jpg` | FreeDV Reporter | §5.7 |
 | `22-several-devices.jpg` | Several devices at once | §5.8 |
 | `23-several-devices-states-and-notices.jpg` | Several devices: states and notices | §5.9 |
+| `24-pairing-and-connecting-states.jpg` | Pairing and connecting: the states in between | §5.3 |
+| `25-pan-and-display-sheets.jpg` | The Pan and Display buttons | §5.1 |
+| `26-tuning-on-the-band.jpg` | Tuning on the band | §5.1 |
 
 `board.html` in the same folder is the whole interactive board: the knobs
 turn, the PTT keys, the flags fold, and the lock-screen states step through.
+
+On 2026-09-24 the board's on-screen words were brought to D43 (board v53):
+"the Core" for the NereusSDR computer, "station" only in its ham sense. The
+pictures were taken again from that board, `09-takeover.jpg` excepted.

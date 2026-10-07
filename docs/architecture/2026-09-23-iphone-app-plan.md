@@ -5,6 +5,11 @@
 > the risk-based policy; UI evidence follows `ui-verification`. Two sessions run this
 > one plan, each only its own tasks (Global Constraints, "Who runs which task"). No
 > review between tasks; each session ends with one whole-branch review of its branch.
+>
+> **Status record:** the crew ledger kept outside this repository (`progress.md` in the
+> crew workspace) was the working record while this plan ran. The boxes below are ticked
+> only for steps that ledger shows finished; the bench and device status of every row is in
+> `2026-09-23-iphone-app-verification/README.md`.
 
 **Goal:** Ship the NereusSDR iPhone and iPad app, with receive and transmit in the first
 App Store release, together with every station, desktop and service change it needs, as
@@ -31,13 +36,16 @@ PushToTalk, CoreBluetooth, CryptoKit, swift-testing, XcodeGen; vendored C source
 Opus, libdatachannel, libjuice, libsrtp, usrsctp, Mbed TLS, libsodium and SPAKE2+EE.
 
 **Spec:** [2026-09-23-iphone-app-design.md](2026-09-23-iphone-app-design.md). Every
-decision is settled there (D1 to D42, requirements R-IOS-01 to R-IOS-29); this is how it
-gets built. The station documents it cites (the remote design, the pairing design, the
+decision is settled there (D1 to D143, requirements R-IOS-01 to R-IOS-48; D137 to D139
+are the controller's calls and wait for JJ at review); this is how it gets built. The station documents it cites (the remote design, the pairing design, the
 R3 plan, media control, the display codec, notch control) are on `codex/integrate-r2-main`,
 read for this plan at `4bb89b5d`.
 
 ## Global Constraints
 
+* **On-screen words** in the app are the board's (v53 or later, the spec's pictures and
+  `board.html`), which follow D43: "the Core" for the NereusSDR computer, "station" only in
+  its ham sense. Where an older text disagrees with D43, D43 wins.
 * **Design authority** is the spec, plus, for the station, the remote design
   (`2026-07-28-remote-daemon-architecture-design.md`), the pairing design
   (`2026-08-02-remote-station-identity-and-pairing-design.md`) and the R3 plan
@@ -65,8 +73,12 @@ read for this plan at `4bb89b5d`.
     lanes. Before a station task changes anything a phone task reads (the
     `tests/data/link/v1/` layout, `surface.json`'s top-level keys, `hello`'s `majors`
     and `features`, the version rule), the Core/GUI session tells the phone session.
-* **The other agent.** Another agent works in `/Users/j.j.boyd/.codex/`; never open or
-  change anything there.
+* **The other agent (phone tasks only).** This rule binds a phone task: a phone task's
+  implementer works outside `/Users/j.j.boyd/.codex/`, where another agent works, and never
+  opens or changes anything there. It does not bind a station task: "Who runs which task"
+  above dispatches station tasks into lanes that are themselves worktrees under
+  `/Users/j.j.boyd/.codex/worktrees/`, by design; a station implementer working there is not
+  the other agent and is not this rule's target.
 * **Tracing.** Every commit names the requirement IDs it implements at the end of the
   subject line, in the remote branch's style: `(R-IOS-04)`, or `(R-IOS-12, R-IOS-08)`.
   Where a task also touches an R3 requirement, name it too (`R-R3-39`).
@@ -103,6 +115,12 @@ read for this plan at `4bb89b5d`.
   links NereusCore only). Cross-thread work uses queued signals; no mutex in an audio
   callback; no network or codec work on the DSP callback (R-R3-06); once Tasks 31 and 32
   land, no WDSP call on an event loop (R-R3-39).
+* **No hidden touch surfaces (JJ, 2026-09-26; D78; reworded by D114, 2026-09-29).**
+  Gestures and long presses are fine as extra ways in. A gesture or long press that is
+  the only way to an action needs JJ's explicit approval: the board or a spec decision
+  names it, and an unapproved one goes to the controller, who asks JJ, before it is
+  built. Anything visible on screen is not a hidden touch surface and needs no button
+  chrome. A control that can't run is shown disabled with its reason, never hidden.
 * **Operator wording.** Every string a user reads is plain operator English with no
   protocol, grant, budget, capability, session or snapshot jargon, and no source cites
   inside strings (a cite goes in a comment beside the string). Station-side strings pass
@@ -150,7 +168,7 @@ read for this plan at `4bb89b5d`.
   command-line-tools flags when `xcode-select -p` points at the command line tools; the
   cross-implementation tests run with `ios/scripts/interop-test.sh` (Task 10). From Task 51
   on, app targets also build and test with
-  `xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR -destination 'platform=iOS Simulator,name=iPhone 17' test`
+  `xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR -derivedDataPath ios/.build/sim -destination 'platform=iOS Simulator,name=iPhone 17' test`
   after `ios/scripts/generate-project.sh`.
 * **Secrets** never appear in the plan, the source, test fixtures, logs or support
   bundles: no tokens, private keys, pairing codes or device keys. Keys and codes in tests
@@ -161,7 +179,8 @@ read for this plan at `4bb89b5d`.
   §4.3 and §4.5; spec §5.3 items 10 and 11). It never goes to a session signed in with
   the older access token, never into a log line or through the logging categories, and
   never literally into a fixture (write `"$string"`).
-* **Devices** (the radios, the station computers, iPhones and iPads, the website's server)
+* **Devices** (the radios, the station computers, iPhones and iPads, the website's server,
+  the rendezvous server)
   are touched only by the controller or JJ, never by an implementer on its own
   initiative. Confirm which device answers before writing to it; never restart or reflash
   a box that could drop off its network without asking. Hardware and device evidence
@@ -220,6 +239,41 @@ Each follows from the spec, the designs or the code; none reopens a decision of 
   appears once it exists, using the same single list of unbuilt features the desktop
   hides by (R-R3-49); VAX Audio and Antenna Setup are offered from the start; MIDI
   Mapping and Macro Buttons are not built.
+* **JJ's rulings of the night of 2026-09-28** (spec §3.11, D92 to D103) are carried by
+  Tasks 54e (Step 3), 57a (Step 2), 58 (Step 3), 58a, 59 (Step 4), 59a, 59b and 69.
+  Task 58a is deferred (D107): it is not built and R-IOS-35 waits with it.
+  Three change nothing on the phone and need no task: Setup > Display's defaults stay
+  NereusSDR's own (D99), Audio Reset turns headphones off (D100), and "Waiting for a
+  radio" is the desktop LAN row's wording too (D101).
+* **Later rulings, 2026-09-28 to 2026-09-29** (spec §3.12, D104 to D116; R-IOS-40 to
+  R-IOS-44) are carried by the phone lanes that build the stage meter strip and the muted
+  mic, "Waiting for a radio" in Your Cores, the RADE row, slice take-over with the
+  Core's owner words, the Alex low-pass dots, the 5000 ms direct-media fallback and the
+  flag buttons. The phone declared Setup description 17 (D116) until JJ's HL2 clock
+  decision; D117 moved it to the latest description.
+* **Rulings of 2026-09-30** (spec §3.13, D117 to D132; R-IOS-45 to R-IOS-48) are carried
+  by the phone lanes that build the flag buttons (look 2, desktop row order, the fold
+  rule and the board's remaining recommendations), the every-slice list with the jump and
+  the slim owner row, take-over for everyone (no prompt, greyed ahead of time while the
+  slice is on the air), the refused-display case, the Filter policy words from the Core,
+  the jumped split, Mic Gain under the mic level meter, the TX badge take-over, the
+  RX2 attenuator and the Level Cal wording. The WIDE chip is approved as drawn and built (D136).
+  The build number is the commit count, and TestFlight archives come from phone
+  main only (D132).
+* **Rulings of 2026-09-30 and 2026-10-01** (spec §3.13, D133 to D143): Task 58a is out of
+  this release and stays on the project roadmap (D133); the website's privacy and source
+  pages go live when the phone's pull request merges to main (D134, Task 69's checklist);
+  the TX panel take matches the flag (D135); the WIDE chip sits below the
+  frames-per-second readout (D136); Task 55b's headphones-lost call is D137; Take transmit greys under a take question (D138); tests may keep one
+  private accessibility call (D139). D137 to D139 are controller calls, for JJ to confirm at
+  review. D140 records JJ's ordinary controls rule: settings act at the touch, hold
+  the newest unanswered edit, snap back to the latest Core value after five seconds
+  without confirmation, show refusal or unconfirmed reasons, and never replay
+  unanswered edits after reconnecting. Transmit keying retains its ordered path.
+  D141 keeps chosen audio quality in cellular Saver/Audio only with a Lossless
+  cost warning. D142 settles movable Diversity, control of both slices, close/restart
+  and PureSignal behavior. D143 records the reviewed TX drawer order, preserved
+  audio readings, quick VOX/AntiVOX controls and conditional High SWR indication.
 
 ## What already exists
 
@@ -334,7 +388,7 @@ not, the controller stops and asks JJ.
 | `src/core/daemon/{StationStatusPage,StationControlSocket,StationControlCommands}.*` | The status page and console commands |
 | `src/gui/StationServiceManager.*`, `src/gui/setup/RemoteStationPage.*`, `src/gui/setup/ThisCorePage.*` | Starting the background station; the Remote Access page; managing a remote Core |
 | `resources/pairing-words-v1.txt`, `cmake/NereusPairing.cmake` | The pairing word list; libsodium and SPAKE2+EE |
-| `rendezvous/` | The rendezvous service (Python), its conformance vectors, coturn configuration and deployment on the website's server (D38) |
+| `rendezvous/` | The rendezvous service (Python), its conformance vectors, coturn configuration and deployment on its own server (D38) |
 | `packaging/deb/`, `packaging/station-image/` | The station's Debian packages and the card image |
 | `ios/` | The app: `LICENSE`, `README.md`, `THIRD-PARTY.md`, `project.yml`, `NereusKit/`, `NereusApp/`, `NereusActivity/`, `Shared/`, `AppStore/`, `scripts/` |
 | `scripts/verify-ios-provenance.py`, `scripts/render-link-tables.py` | The app's provenance check; the link document's generated tables |
@@ -384,11 +438,10 @@ The phone session's controller:
 
 The Core/GUI session's controller:
 
-- [ ] Before Task 26's deployment step, the controller confirms `rv.nereussdr.com` (A and
-      AAAA records) points at the website's server (D38), and asks JJ before the R5 bench's
-      `netbench` server gives up UDP 443 and 3478 there. That server also runs the website
-      and the bench: nothing touches its firewall or the `netbench` account, and Caddy
-      changes go through the website's own server-config flow.
+- [ ] Before Task 26's deployment step, the controller confirms `rv.nereussdr.com`, `rv4`
+      and `rv6` (A and AAAA records as each needs) point at the rendezvous's own server
+      (D38, JJ 2026-09-26), and asks JJ at each live step. The website's server, its
+      firewall, its Caddy and the `netbench` account are not touched.
 
 **Order and parts.** A (Tasks 1 to 4, station): the written link. B (5 to 11, phone):
 the app's foundation. C (12 to 18): identity and pairing (15 and 16a phone, the rest
@@ -406,7 +459,7 @@ order as the station tasks they consume land, except for the first usable build 
 iPhone connects to the Pi 4 Core with the Hermes Lite 2 over the Pi's public IPv6
 address, pairs by code, shows the band and plays the sound. The phone tasks on that path
 run first, in this order, as the station tasks they need land: 51, 55a (which needs no
-station work), 15, 15b, 11a, 52, 53, 54a, 56a, then the check on his iPhone, 56b. Their station path is Part C (12 to 16) in
+station work), 15, 15b, 11a, 52, 53, 54a, 54b, 56a, then the check on his iPhone, 56b. Their station path is Part C (12 to 16) in
 integration, then 19 and 20 with their follow-up; the Core/GUI session puts the build on the Pi 4 with JJ's
 go-ahead, and JJ reads the pairing code there himself. Finding Cores by Bonjour (16a)
 joins the path when its station half is in. Several devices on the phone (56c) follows
@@ -511,9 +564,9 @@ and review the diff before committing it; the file is never accepted unread.
 **Execution note (advisory):** opus. No networking, no device. First task; nothing
 before it.
 
-- [ ] **Step 1:** Add `allKinds()` and `verbSpecs()` with the source-scan and routing
+- [x] **Step 1:** Add `allKinds()` and `verbSpecs()` with the source-scan and routing
       tests; routing code unchanged.
-- [ ] **Step 2:** Write `LinkSurface::capture()` and the regen target; generate
+- [x] **Step 2:** Write `LinkSurface::capture()` and the regen target; generate
       `surface.json`, read it whole, commit it with the guard test.
 
 ## Task 2: The link specification
@@ -579,8 +632,8 @@ exits 0; a deliberate one-line edit to a copy of `surface.json` in the scratchpa
 conformance suite will pin, so it is read from the source, not summarised. Requires
 Task 1.
 
-- [ ] **Step 1:** Write the renderer with `--check` and `--surface`.
-- [ ] **Step 2:** Write the document; render its tables; add the CI check and the
+- [x] **Step 1:** Write the renderer with `--check` and `--surface`.
+- [x] **Step 2:** Write the document; render its tables; add the CI check and the
       `CLAUDE.md` row.
 
 ## Task 3: The conformance suite on the station
@@ -647,8 +700,8 @@ Task 1.
 **Execution note (advisory):** opus. Requires Tasks 1 and 2. Session work touches
 authentication behaviour only in tests; no production change.
 
-- [ ] **Step 1:** The format, loader and matcher, with the control fixtures.
-- [ ] **Step 2:** The session player and fixtures; the media vectors and their runner;
+- [x] **Step 1:** The format, loader and matcher, with the control fixtures.
+- [x] **Step 2:** The session player and fixtures; the media vectors and their runner;
       the document's Conformance section.
 
 ## Task 4: Versions both ways, and declared features
@@ -718,9 +771,9 @@ offscreen:
 **Execution note (advisory):** opus. Touches the connect path (flag for earlier review
 with the other authorisation tasks). Requires Task 3.
 
-- [ ] **Step 1:** `LinkVersion` and its table test; `hello` encode and decode with the
+- [x] **Step 1:** `LinkVersion` and its table test; `hello` encode and decode with the
       lenient defaults.
-- [ ] **Step 2:** Station and desktop client negotiation, feature declaration queries,
+- [x] **Step 2:** Station and desktop client negotiation, feature declaration queries,
       fixtures, surface and document.
 
 ---
@@ -816,9 +869,9 @@ and its test run on this Mac's Python 3.9 as well as CI's 3.12);
 **Execution note (advisory):** opus. No networking, no device. Requires nothing; can
 run in a worktree in parallel with Part A.
 
-- [ ] **Step 1:** Licence, README, THIRD-PARTY table, package skeleton and the test
+- [x] **Step 1:** Licence, README, THIRD-PARTY table, package skeleton and the test
       script, with `FrequencyTests`.
-- [ ] **Step 2:** The provenance checker with its tests; the CI steps.
+- [x] **Step 2:** The provenance checker with its tests; the CI steps.
 
 ## Task 6: Opus in the app
 
@@ -876,8 +929,8 @@ uplink), R-IOS-01 (the app runs the Opus conformance vectors).
 
 **Execution note (advisory):** opus. Requires Tasks 3 and 5.
 
-- [ ] **Step 1:** The vendoring script, the vendored Opus and the shim.
-- [ ] **Step 2:** Decoder and encoder with the fixture and round-trip tests.
+- [x] **Step 1:** The vendoring script, the vendored Opus and the shim.
+- [x] **Step 2:** Decoder and encoder with the fixture and round-trip tests.
 
 ## Task 7: Display frames in the app
 
@@ -937,8 +990,8 @@ draws them), R-IOS-01.
 
 **Execution note (advisory):** opus. Requires Tasks 3 and 5; can run beside Task 6.
 
-- [ ] **Step 1:** Header parsing and reconstruction with the fixture tests.
-- [ ] **Step 2:** Loss handling and the malformed-input cases.
+- [x] **Step 1:** Header parsing and reconstruction with the fixture tests.
+- [x] **Step 2:** Loss handling and the malformed-input cases.
 
 ## Task 8: The control session in the app
 
@@ -1065,8 +1118,8 @@ tests first. `ios/scripts/swift-test.sh --filter NereusLinkTests`.
 **Execution note (advisory):** opus. Networking (loopback only in tests). Requires
 Tasks 3, 4 and 5.
 
-- [ ] **Step 1:** Addresses, messages and codec with the control conformance test.
-- [ ] **Step 2:** The session: TLS pin, WebSocket, hello and versions, authentication,
+- [x] **Step 1:** Addresses, messages and codec with the control conformance test.
+- [x] **Step 2:** The session: TLS pin, WebSocket, hello and versions, authentication,
       heartbeat, reconnect; the session conformance and loopback tests.
 
 ## Task 9: The station's state in the app
@@ -1161,8 +1214,8 @@ Tasks 3, 4 and 5.
 
 **Execution note (advisory):** opus. Requires Task 8.
 
-- [ ] **Step 1:** Values, objects and the store with the replay tests.
-- [ ] **Step 2:** Writes, settings, commands, telemetry and staleness.
+- [x] **Step 1:** Values, objects and the store with the replay tests.
+- [x] **Step 2:** Writes, settings, commands, telemetry and staleness.
 
 ## Task 10: WebRTC in the app
 
@@ -1214,9 +1267,12 @@ media peer), R-IOS-01 (the media plane interoperates with the station's).
   - Audio arrives on the `audio` media line, send-only from the station.
     `func setExpectedAudioSsrc(_ ssrc: UInt32?)`: when set, RTP with any other SSRC is
     dropped (Task 11 sets it from each `audio-context`; the media document gives how the
-    station derives it). The receive queue holds 64 packets per stream and the display
-    channel keeps at most 8 messages or 256 KiB between drains, each dropping the
-    oldest.
+    station derives it). The receive queue holds at most 64 Opus packets or 640
+    negotiated L16 packets per stream: 40 ms versus 4 ms packets, both bounded
+    to 2.56 seconds between drains. This capacity is not the playback target;
+    the phone adds no fixed cushion (D84). On a format change the applicable
+    bound follows that stream. The display channel keeps at most 8 messages or
+    256 KiB between drains, each dropping the oldest.
   - `struct RtpPacket { var payloadType: UInt8; var sequence: UInt16; var timestamp: UInt32; var ssrc: UInt32; var payload: Data }`.
   - libdatachannel built with Mbed TLS for DTLS (`USE_MBEDTLS=1`, `USE_NICE=0`,
     `RTC_ENABLE_MEDIA=1`, `RTC_ENABLE_WEBSOCKET=0`, `RTC_STATIC`).
@@ -1250,8 +1306,8 @@ media peer), R-IOS-01 (the media plane interoperates with the station's).
 **Execution note (advisory):** opus. The riskiest build task in Part B; it may need
 more than one attempt. Requires Tasks 6 and 7, and a configured station build.
 
-- [ ] **Step 1:** Vendor the six libraries and get the C targets building on macOS.
-- [ ] **Step 2:** `MediaPeer` over the C API, the station helper and the interop tests.
+- [x] **Step 1:** Vendor the six libraries and get the C targets building on macOS.
+- [x] **Step 2:** `MediaPeer` over the C API, the station helper and the interop tests.
 
 ## Task 11: Media control and playback in the app
 
@@ -1344,8 +1400,8 @@ and `ios/scripts/interop-test.sh`.
 
 **Execution note (advisory):** opus. Requires Task 10.
 
-- [ ] **Step 1:** The media control client and endpoint validation with tests.
-- [ ] **Step 2:** Jitter buffer, resampler and playback core with tests; the sound-only
+- [x] **Step 1:** The media control client and endpoint validation with tests.
+- [x] **Step 2:** Jitter buffer, resampler and playback core with tests; the sound-only
       interop case.
 
 ## Task 11a: The Core's catalogue and display extras in the app
@@ -1489,9 +1545,9 @@ computations the desktop ports; the Core runs them), link sections 6.3 and 7.4 a
 **Execution note (advisory):** opus. Requires Tasks 7, 9 and 11, and station Tasks 19 and
 20 with their follow-up in the integration branch. On the listening path, before Task 52.
 
-- [ ] **Step 0:** Merge the integration branch with Tasks 19 and 20; recount.
-- [ ] **Step 1:** `StationCatalog` and `CatalogFeed` with their tests.
-- [ ] **Step 2:** The extras request and gate, the NSDX decoder and its runner, and the
+- [x] **Step 0:** Merge the integration branch with Tasks 19 and 20; recount.
+- [x] **Step 1:** `StationCatalog` and `CatalogFeed` with their tests.
+- [x] **Step 2:** The extras request and gate, the NSDX decoder and its runner, and the
       client's routing.
 
 ---
@@ -1759,7 +1815,7 @@ pairing design §4.
     its sources compiled from the pinned archive by a small CMake list, or an external
     build. It must build on macOS (arm64 and x86_64), Linux (x86_64, and arm64 through
     the Rock and Pi Docker builder), Windows (MSVC) and in CI.
-  - The iPhone app's Task 15 vendors the same two pins.
+  - The iPhone app's Task 15b vendors the same two pins.
 - Create: `docs/attribution/LIBSODIUM-PROVENANCE.md`, `docs/attribution/SPAKE2EE-PROVENANCE.md`
 - Create: `packaging/third-party-licenses/libsodium.txt` and
   `packaging/third-party-licenses/spake2-ee.txt`, byte for byte from the pinned archives;
@@ -1934,8 +1990,8 @@ C leaves them.
     ignores keys it doesn't know; the several-devices station tasks add some to
     `session.end` and to the `devices` entries later, and Task 56c reads them.
   - `StationSession` never holds more than one connection to a Core that is still
-    connecting: one address may have at most 2 (`kMaxHandshakesPerAddress`, link section
-    12.3), and the Core ends a third with `session.end` `retryable` true.
+    connecting: one address may have at most 2 (`maxHandshakesPerAddress` in `surface.json`,
+    link section 12.3), and the Core ends a third with `session.end` `retryable` true.
   - `StationTrust.identity(publicKey:)` holds the Core's 91-byte SubjectPublicKeyInfo DER.
     Under it the transport accepts any certificate and reports its SHA-256; the session
     checks that `hello.identity.publicKey` is the trusted key and that `certBinding`
@@ -1981,8 +2037,8 @@ C leaves them.
   from the station, 11 client kinds and 20 station kinds; 44 session fixtures, 28 of them
   the app's; 7 NSDC vectors; integration adds `verbs-tgxl-control`, which the app runs
   too, and lane D, if it comes in the same merge, two catalogue sessions and five `nsdx1`
-  vectors). `surface.json` then lists 15 limits, `shortNameMaxBytes` and
-  `kMaxHandshakesPerAddress` among them. Every control fixture round-trips, the new ones
+  vectors). `surface.json` then lists 15 limits, `shortNameMaxBytes` (32) and
+  `maxHandshakesPerAddress` (2, the station's `kMaxHandshakesPerAddress`) among them. Every control fixture round-trips, the new ones
   included.
 - The runners (the session player, FakeStation and the mirror support share one fill):
   every station `hello` carries a run-time P-256 test identity whose `certBinding` signs
@@ -2006,15 +2062,15 @@ C leaves them.
 **Verification:** authorisation and cryptography: tests first. `ios/scripts/swift-test.sh`
 with no filter on both toolchains, `ios/scripts/interop-test.sh`,
 `python3 scripts/verify-ios-provenance.py`, `python3 -m pytest -q tests/compliance`, and the
-simulator test run (`ios/scripts/generate-project.sh && xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR -destination 'platform=iOS Simulator,name=iPhone 17' test`).
+simulator test run (`ios/scripts/generate-project.sh && xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR -derivedDataPath ios/.build/sim -destination 'platform=iOS Simulator,name=iPhone 17' test`).
 Device (Task 56b): the Secure Enclave key on a real iPhone.
 
 **Execution note (advisory):** opus. Secrets: the device key never leaves its store, and
 nothing logs it or the pairing code. Requires Part C (Tasks 12, 13, 14 and 16, with its fix
 round) in the integration branch. On the listening path.
 
-- [ ] **Step 0:** Merge the integration branch with Part C.
-- [ ] **Step 1:** The codec, the trust modes and the end codes, with the suites green.
+- [x] **Step 0:** Merge the integration branch with Part C.
+- [x] **Step 1:** The codec, the trust modes and the end codes, with the suites green.
 - [ ] **Step 2:** The device key, its stores, the authenticator and the runners.
 
 ## Task 15b: Pairing in the app
@@ -2202,9 +2258,9 @@ simulator test run.
 test message. Requires Task 15, and station Task 17 (`nereusd pairing show`, which the
 Part C carry brings). On the listening path.
 
-- [ ] **Step 1:** Vendor libsodium and spake2-ee; the word list and the code text.
-- [ ] **Step 2:** The exchange, the boxes, the pairing client and FakeStation's pairing.
-- [ ] **Step 3:** The interop cases, the real-`nereusd` test and the licences.
+- [x] **Step 1:** Vendor libsodium and spake2-ee; the word list and the code text.
+- [x] **Step 2:** The exchange, the boxes, the pairing client and FakeStation's pairing.
+- [x] **Step 3:** The interop cases, the real-`nereusd` test and the licences.
 
 ## Task 16: Finding stations: the announcement and Bonjour
 
@@ -2287,22 +2343,25 @@ shows the station. Commands:
 
 **Runs in:** the phone session, on `claude/iphone-app` (a phone task).
 
-**Requirements:** D36 (the phone finds stations over Bonjour), R-IOS-16 (the Local
-Network question, "Found it", the station list), pairing design §6.
+**Requirements:** D36 (the phone finds stations over Bonjour), D71 (every Core that takes
+a new device is listed), R-IOS-16 (the Local Network question, "Found it", the station
+list), pairing design §6.
 
 **Files:**
 - Create: `ios/NereusKit/Sources/NereusLink/StationBrowser.swift`,
   `ios/NereusKit/Tests/NereusLinkTests/StationBrowserTests.swift`
 - Create: `ios/NereusApp/Connect/FindStationScreen.swift`, `FoundItScreen.swift`
 - Modify: `ios/NereusApp/Connect/ConnectionFlow.swift`, `YourStationsScreen.swift` (Task
-  56a's), `ios/NereusApp/Tests/ConnectionFlowTests.swift`
+  56a's), `ios/NereusApp/Tests/ConnectionFlowTests.swift`, `ios/NereusApp/Info.plist` (the
+  Local Network reason in the board's words)
 
 **Interfaces:**
 - Consumes: the Bonjour service and TXT record (Task 16; link section 14.2 is the
   authority), `StationEndpoint` and `ManualAddress` (Task 8), `PairedStation` (Task 15),
   `PairingClient.pairOnThisNetwork` and `PairingError` (Task 15b).
 - The record, exactly (link section 14.2): service type `_nereus-station._tcp`, domain
-  `local.`, on the listener's own port (not always 47910: the Pi 4's is 50055), so the
+  `local.`, on the listener's own port (not always 47910: a Core's configured port can
+  differ), so the
   browser resolves the service for its host and port; a TXT record of five entries in
   this order: `v` (`1`), `id` (the first 22 characters of the identity fingerprint,
   SHA-256 of the identity key's SubjectPublicKeyInfo DER, in base64url without
@@ -2324,8 +2383,12 @@ Network question, "Found it", the station list), pairing design §6.
     row offers Pair, not Connect, as the desktop's does since the Part C fix round.
   - In `ConnectionFlow`: the Local Network question (asked once, by starting the
     browser; when the operator declines, a typed address and a code still work, spec
-    §5.3 item 3), and your Cores listing the Cores found on this network after the
-    paired ones (Cores only, never radios). Found it offers one tap only when
+    §5.3 item 3), and Your Cores listing, after the paired ones and under On this
+    network, each found Core that isn't paired with this phone and takes a new device
+    (D71, picture 24): unclaimed with `pair=click` (Pair), unclaimed or claimed with
+    `pair=code` (Use code, the address filled in), and unclaimed with `pair=closed`
+    (greyed, "pairing closed"); a claimed Core with `pair=closed` isn't listed (Cores
+    only, never radios). Found it offers one tap only when
     `claimed=0` and `pair=click`, then goes straight on to the band as Task 56a's
     pairing does; with `pair=code` it opens code entry with the found address filled in;
     with `claimed=0` and `pair=closed` it says pairing is closed on the Core and opens
@@ -2336,7 +2399,10 @@ Network question, "Found it", the station list), pairing design §6.
     the pairing code the Core shows." (link section 3.6; one tap succeeds only from an
     address on one of the Core's own networks, link-local included).
   - The Info.plist keys are already there from Task 51 (`NSBonjourServices`
-    `_nereus-station._tcp` and `NSLocalNetworkUsageDescription`); this task adds none.
+    `_nereus-station._tcp` and `NSLocalNetworkUsageDescription`); this task adds none,
+    and sets the Local Network reason to the board's words: "NereusSDR looks for your
+    Core on this Wi-Fi so it can connect straight to it." (Task 51 wrote "on this
+    network").
 
 **Acceptance:**
 - `StationBrowserTests` runs the `media-dnssd-txt` vector through
@@ -2364,7 +2430,7 @@ the Core first.
 **Execution note (advisory):** opus. Networking (local browse only). Requires Tasks 8,
 15b, 16 and 56a. On the listening path, joining it when Task 16's station half is in.
 
-- [ ] **Step 1:** The browser and its tests.
+- [x] **Step 1:** The browser and its tests.
 
 ## Task 17: The status page and console commands
 
@@ -3016,20 +3082,19 @@ review (it can leave a station without a radio). Requires Tasks 19, 21 and 75
 Per the pairing design §5 and §8, the R5 bench close-out and JJ's direction of
 2026-09-22 (rendezvous and relay on `rv.nereussdr.com`; IPv6 direct first, then IPv4
 hole punching, then relay on UDP and TCP 443; acceptance is a phone on a cellular
-carrier reaching the station), and D38 (the website's server). This comes before
+carrier reaching the station), and D38 (a dedicated server, JJ 2026-09-26). This comes before
 remote transmit in JJ's saved order (R3, R5, R4, R6).
 
 **Settled here, with reasons** (these match JJ's R5 answers to the Core/GUI session on
 2026-09-22 and 2026-09-23: device keys and pairing before remote access goes live, TURN
 over UDP first, the web-only fallback required, a separate control connection):
 
-* **A small signalling service plus coturn, on the website's server (D38).** The Python
+* **A small signalling service plus coturn, on a dedicated server (D38).** The Python
   service in `rendezvous/` (Task 26) handles registration, introductions and pairing
-  mailboxes over a TLS WebSocket on TCP 443, behind the website's Caddy by host name, so
-  the website keeps its port and nothing splits it; coturn serves STUN and TURN on UDP
+  mailboxes over a TLS WebSocket on TCP 443, behind that server's own Caddy by host name; coturn serves STUN and TURN on UDP
   3478 and UDP 443 (Caddy's HTTP/3 stays off). The web-only fallback over TCP 443 is
   chosen by measurement (Task 29) among the options the App Store app can use, including
-  what each needs on the shared server; libnice is excluded because it needs GLib, which
+  what each needs on the rendezvous server; libnice is excluded because it needs GLib, which
   is LGPL.
 * **The control session crosses NAT on its own small ICE connection**, carrying the
   unchanged session protocol over a reliable data channel, so media restarts never cut
@@ -3046,7 +3111,7 @@ over UDP first, the web-only fallback required, a separate control connection):
   (Task 29); whether coturn keeps refreshing an allocation past its credential's expiry
   is recorded by Task 26's Docker check.
 
-## Task 26: The rendezvous service on the website's server
+## Task 26: The rendezvous service on its own server
 
 **Runs in:** the Core/GUI session's lanes (a station task).
 
@@ -3061,10 +3126,10 @@ relay), D38, pairing design §5.1 to §5.5.
   `turnserver.conf`), `deploy.sh`, `README.md` (the self-hosting recipe: DNS with A and
   AAAA records, certificates from Let's Encrypt, firewall rules, limits, and running
   beside a website on the same server)
-- Modify: `website/deploy/Caddyfile` (an `rv.nereussdr.com` site whose `reverse_proxy`
-  sends the WebSocket to the service on a loopback port), `website/README.md` (the
-  shared server's port map: Caddy on TCP 80 and 443, coturn on UDP 3478 and 443 and its
-  relay range, the service on loopback)
+- Create: `rendezvous/deploy/Caddyfile` (an `rv.nereussdr.com` site whose `reverse_proxy`
+  sends the WebSocket to the service on a loopback port) and the server's port map in
+  `rendezvous/README.md` (Caddy on TCP 80 and 443, coturn on UDP 3478 and 443 and its
+  relay range, the service on loopback); `website/` is untouched (D38, JJ 2026-09-26)
 - Create: `docs/architecture/2026-09-23-rendezvous-v1.md` (the rendezvous wire), a
   section in the link document pointing to it
 - Modify: `.github/workflows/ci.yml` (a job running the service's pytest suite)
@@ -3105,7 +3170,8 @@ relay), D38, pairing design §5.1 to §5.5.
     configuration or the `netbench` account, and leaves Caddy's TLS to Caddy (the
     service itself listens on loopback only).
   - Service limits (configurable, these defaults): introductions 30 a minute per source
-    address and 60 per station id; mailbox opens 10 a minute per source address; message
+    address and 60 a minute per Core per network (an IPv4 address or an IPv6 /56; JJ,
+    2026-09-25); mailbox opens 10 a minute per source address; message
     and size caps sized for real SDP (at most 64 KiB, candidates at most 4 KiB each, up to
     64 per introduction); handshake and idle timeouts; logs in journald only, with ids
     truncated and never a label, secret, minted password, SDP or candidate.
@@ -3132,17 +3198,15 @@ relay), D38, pairing design §5.1 to §5.5.
 **Verification:** networking and authorisation: invariant tests first.
 `python3 -m pytest rendezvous/tests -q`; coturn checks in Docker by
 `rendezvous/tests/coturn-check.sh` and `rendezvous/tests/caddy-check.sh`. Deployment is
-a controller and JJ step on the website's server (D38), never the implementer's: the
-controller confirms `rv.nereussdr.com` resolves to it in both address families, checks
-`ss -lntup` and asks JJ before `netbench` gives up UDP 443 and 3478, deploys the Caddy
-site through the website's own flow (`website/deploy/setup-server.sh`, which validates
-before installing), runs `rendezvous/deploy.sh`, then checks that nereussdr.com still
-serves, putting the previous Caddyfile back at once if it does not. Then it checks the
-WebSocket, STUN on 3478 and 443, a test TURN allocation and certificate expiry from this
-Mac and from the Rock, in both address families (pending until observed).
+a controller and JJ step on the rendezvous's own server (D38), never the implementer's:
+the controller confirms `rv.nereussdr.com`, `rv4` and `rv6` resolve to it as each needs,
+checks `ss -lntup`, installs its Caddy site from `rendezvous/deploy/Caddyfile` and runs
+`rendezvous/deploy.sh`, each live step with JJ's yes; then checks that nereussdr.com is
+unaffected, the WebSocket, STUN on 3478 and 443, a test TURN allocation and certificate
+expiry from this Mac and from the Rock, in both address families (pending until observed).
 
 **Execution note (advisory):** opus. Networking, authorisation, an internet-facing
-service on the server that also runs the website: flag for earlier review. Requires
+service on its own server: flag for earlier review. Requires
 Part C.
 
 - [ ] **Step 1:** The protocol document and conformance vectors; registration with
@@ -3492,8 +3556,17 @@ signs in twice).
 **Runs in:** the phone session, on `claude/iphone-app` (a phone task).
 
 **Requirements:** R-IOS-16 (direct first, relay last, what the phone tried), R-IOS-08
-(pairing through the relay), pairing design §5.4 (both relay rungs, raced; path switches
-seamless; switchable off), remote design §12.1 (no path change while keyed).
+(pairing through the relay and preserving existing pairing), pairing design §5.4 (both
+relay rungs, raced; path switches seamless; switchable off), remote design §12.1 (no path
+change while keyed), D87.
+
+**Next corrective release gate (JJ approved, 2026-09-28):** finish the D88 transmit-release
+and command-session ownership correction under Task 54 before uploading the next
+phone build. Automatic connection, direct pairing and manual fallback keep their
+full D87 scope. This safety correction takes priority over the remaining screen work. JJ uploaded the
+earlier build 8 archive at `eba98db03` on September 28 while this repair was in progress.
+That upload predates D88 implementation. The accepted repair now ships in build 9; do not
+repeat the build 8 upload.
 
 **Files:**
 - Create: `ios/NereusKit/Sources/NereusLink/PathRacer.swift`
@@ -3516,14 +3589,56 @@ seamless; switchable off), remote design §12.1 (no path change while keyed).
   `RendezvousClient` and `ConnectionAttempt` (Task 27a); `DataChannelSessionTransport`
   (Task 28a); `AudioJitterBuffer` and `MediaControlClient` (Task 11).
 - Produces:
-  - `actor PathRacer` starts, at once and together: direct TLS to each cached and LAN
-    address (IPv6 first, IPv4 250 ms later), the rendezvous introduction with ICE, and,
-    when the station allows the relay, the chosen floor; the first session to reach
-    `snapshot.complete` wins and the others stop; `ConnectionAttempt` records what each
-    rung did. It signs in on one path only (the several-devices design's ruling 4.9, Task
-    71): `auth.request` goes only on the first path whose `hello` arrives, and the others
-    close before signing in on any of them, since two signed-in paths would replace each
-    other.
+  - `actor PathRacer` starts eligible direct TLS openings and one fresh rendezvous
+    introduction with ICE concurrently. A stale, unreachable private endpoint never
+    serializes or suppresses rendezvous. Direct attempts preserve IPv6 scope, deduplicate
+    resolved addresses, start IPv6 immediately and IPv4 250 ms later, and allow at most
+    two direct openings concurrently under the Core's per-source handshake limit. Each
+    rung reads only the Core hello and verifies the saved Core identity key's signature
+    binding to that rung's own TLS or DTLS certificate digest. Rungs send no phone hello,
+    device signature, or `auth.request`. The first verified hello atomically wins and
+    transfers its still-open transport, hello, digest, and route-specific media context to
+    the one `StationSession`; only that session proceeds through version agreement,
+    device-key sign-in, and the normal snapshot flow. Exactly one authentication is
+    permitted. Wrong identity closes that rung and cannot weaken checks on another. Every
+    loser is cancelled and cleaned up, and attempt-generation guards prevent late
+    callbacks from signing in after winner, cancellation, or Disconnect. Service route
+    rank comes from its selected ICE pair. Fresh ICE host, server-reflexive and TURN
+    candidates are per-attempt reachability data, never saved as reusable WebSocket
+    addresses; no new endpoint advertisement wire is required for IP-change recovery.
+    `ConnectionAttempt` records concurrent outcomes without presenting cancelled losers as
+    unexplained failures. Preserve the Core's 10-second post-`introduce` answer deadline
+    rather than waiting 79 seconds for an older silent-Core behavior.
+  - Use the authenticated `controlChannelVersion` observation for connection discovery.
+    A version 0 observed in an ordinary authenticated session is a negative cache entry
+    with its observation timestamp, fresh for five minutes. A persisted version 0 without
+    a timestamp is legacy and stale. At expiry, or once on each real network-generation
+    change, invalidate version 0 to unknown for connection discovery only. Duplicate
+    callbacks for that generation do not repeat the invalidation or reset backoff. Once
+    unknown, ordinary bounded rendezvous races and backoff retries remain eligible. A
+    freshly authenticated version 1 clears the negative timestamp. Clock rollback or an
+    unparseable timestamp makes version 0 stale. An unanswered or failed probe means
+    unavailable, not a new version 0, and never renews the negative entry. A full
+    same-identity authenticated code pairing also invalidates version 0. Keep this
+    invalidation scoped to route discovery: it does not alter Core identity or certificate
+    verification, the one-authentication winner, connection deadlines, or an already
+    cached `relayAllowed = deny` policy.
+  - Successful code pairing through rendezvous starts the following connection through
+    rendezvous immediately, retaining direct/LAN/manual endpoints as fallbacks. Explicit
+    Enter an address and Bonjour/direct pairing remain usable when rendezvous is offline;
+    an explicitly entered address remains the selected direct target. Existing paired
+    keys may complete a fresh full SPAKE code exchange with the Core, preserve the same
+    paired device record, and recheck that key and `pairedAt` still exist at completion.
+    Revocation during exchange refuses completion. Pairing finishes before a separate
+    device-key sign-in; mailbox state, mailbox number, and error text never prove
+    identity. This relies on the Core full-SPAKE change signed `1f3cc251b`, reported
+    landed but not deployed; it is a dependency, not phone implementation evidence.
+  - Initial racing is only the first connection. Retain the full Task 29 path-switch and
+    media-replacement floor/proxy requirements below, and add later better-path upgrade,
+    control switching, media replacement, graceful failed-path fallback and reconnect
+    while keeping manual routes as backup. Never change paths while keyed or while VOX is
+    armed under the existing contract. Initial-race completion alone does not complete
+    this later behavior.
   - Upgrades as Task 29 defines them: a second peer connection; control moved
     make-before-break beneath the session through the in-band barrier, with no close,
     re-authentication, snapshot or preemption; media received on both across the
@@ -3532,13 +3647,39 @@ seamless; switchable off), remote design §12.1 (no path change while keyed).
     keyed or while MOX's delay timers run.
 
 **Acceptance:**
-- With every path open the direct path wins; with only the floor, the floor wins and the
-  attempt record says what failed.
+- With direct and rendezvous available, both begin without waiting on stale private
+  endpoints; the first verified Core hello wins, and exactly one authentication follows.
+  Wrong Core identity on either route never sends a credential.
+- Existing paired phone plus valid code completes full SPAKE without an already-paired
+  dead end or duplicate Core record; the same record is rechecked at exchange completion.
+  New-device code pairing, direct/LAN/manual pairing with rendezvous offline, and explicit
+  manual-address selection continue to work.
+- A stale private endpoint does not delay service; wrong identity on direct or service,
+  revocation during code exchange, wrong code, closed pairing, and user cancellation all
+  end with their existing refusal or bounded-cancellation behavior. Band and audio work
+  after the one authenticated winner reaches its snapshot.
+- On IP change, a fresh rendezvous ICE attempt restores reachability without persisting
+  transient ICE candidates as manual WebSocket endpoints. Manual backup remains available;
+  later upgrade, failed-path fallback, reconnect, and media replacement satisfy the
+  complete contract recorded above and are not inferred from the initial race alone.
+- The authenticated negative-cache behavior covers all states: a fresh version 0 stays
+  cached; an expired version 0 and a legacy version 0 without timestamp are retried; a
+  clock rollback or unparseable timestamp makes version 0 stale; one real network
+  generation change invalidates the cache once despite duplicate callbacks, after which
+  ordinary bounded rendezvous races and backoff retries remain eligible; failed or
+  unanswered probes do not create or renew version 0; authenticated version 1 and
+  full same-identity authenticated code pairing clear the negative timestamp. A cached
+  relay-deny policy remains in force throughout.
+- With every path open the direct path wins when its verified hello arrives first; with
+  only the floor, the floor wins and the attempt record says what failed.
 - A relay-to-direct upgrade while listening leaves no audio gap over 40 ms and no
   repeated audio over 40 ms in the app's playback, with no new snapshot and no
   re-authentication.
-- While the phone is keyed, or while MOX's delay timers run, no upgrade starts until
-  unkey.
+- While the phone is keyed, while VOX is armed, or while MOX's delay timers run, no path
+  switch or upgrade starts; transmit safety follows the existing contract.
+- A path failure recovers through remaining rendezvous or manual routes without another
+  pairing or key exchange; cancellations close every rung and late results cannot start a
+  second authentication.
 - With the station's `relay = deny` the relay rungs are not tried, and the attempt
   record says the Core turned them off.
 - The floor's relayed traffic never contains the Opus or JSON plaintext (checked in the
@@ -3548,7 +3689,7 @@ seamless; switchable off), remote design §12.1 (no path change while keyed).
 `ios/scripts/swift-test.sh --filter PathRacerTests`,
 `ios/scripts/swift-test.sh --filter SessionTransportSwitchTests` and
 `ios/scripts/swift-test.sh --filter DualReceiveTests`. Bench (controller and JJ,
-pending until observed): the phone on a cellular hotspot connects through each rung
+pending until observed, including actual NAT-to-NAT): the phone on a cellular hotspot connects through each rung
 (forced by the station's settings and by blocking UDP on the phone's network), and an
 upgrade from relay to direct is heard without a glitch.
 
@@ -3557,6 +3698,16 @@ for earlier review. Requires Tasks 11, 27a, 28a and 29, and JJ's floor choice.
 
 - [ ] **Step 1:** The racer, the attempt record and the chosen floor's app side.
 - [ ] **Step 2:** The make-before-break switch, dual receive and `replace`.
+- [ ] **Step 3:** Restrictive networks, the layered plan JJ chose (2026-09-27; the Core/GUI
+  session's `rv-priority-for-phone.md` and, when written, `rv-relay-for-phone.md` in the crew
+  folder): the WebSocket relay on rv (`wss://rv.<domain>/v1/relay`, the grant minted at the
+  introduction, one leg per end with a one-byte stream tag, bounded drop-oldest queues)
+  offered to ICE as a low-priority candidate in the same agent; fast failure detection on
+  relayed paths; system proxy support (a PAC lookup plus iOS 17 `ProxyConfiguration` for the
+  WebSocket connections, where the phone ignores system proxies today); plain operator
+  messages for TLS inspection and captive portals; rv never pinned. Media over the direct
+  wss when UDP is blocked follows the Core's side. Not built: a TURN-over-TCP patch to
+  libjuice. Tests against the service's relay fixtures; the phone's words for each failure.
 
 ---
 
@@ -4422,24 +4573,118 @@ R-IOS-21 (the time left), spec §5.5 items 5 and 8.
 tune power, PROC, LEV, EQ, CFC, VOX, MON, mic gain, TX filter), spec §5.1 item 5 and §5.2
 item 1, the Tools tab's TX Equalizer.
 
+**Built already, on `codex/integrate-r2-main` (read at `cbecdc50` for this rewrite).** The
+remote window parity plan's Tasks 1 to 8 and 13 (worktree `nereus-parity`, capability
+`transmitSettingsVersion`) and the remote-transmit plan's Tasks 30 to 39 (worktree
+`nereus-tx`, capability `remoteTxVersion` and `txStateVersion`) built this task's ground
+before this plan named it. The names below are the trunk's; where this plan's original
+sketch guessed differently (`tunePowerWatts`, a single `activeTxProfile` write, a flat
+`voxEnabled`), the trunk's name is what Task 54 must read.
+
 **Files:**
-- Modify: `src/models/TransmitModel.{h,cpp}` (Q_PROPERTYs for the controls that have
-  setters without one: tune power, VOX, MON, CPDR on and level, leveler on, EQ on and its
-  bands, CFC on, mic gain, mic mute, TX filter low and high),
-  `src/core/MicProfileManager.{h,cpp}` (the active profile as a property and the profile
-  list), `src/core/session/MirrorPolicy.cpp`, `src/core/session/SessionCommandDispatcher.cpp`
-  (`txProfile.select {name}`)
-- Modify: `tests/data/link/v1/`, `surface.json`, the link document
-- Test: `tests/tst_transmit_model_properties.cpp`, `tests/tst_tx_profile_select.cpp`
+- `src/models/TransmitModel.{h,cpp}` (every property below), `src/core/StepAttenuatorFacade.{h,cpp}`
+  (`attOnTxEnabled`, `attOnTxValue`, `forceAttWhenPsOff`), `src/core/ParaEqCurve.{h,cpp}` (the
+  TX EQ parametric curve, moved out of the GUI so the Core can apply it), `src/core/MicProfileManager.{h,cpp}`
+  (the active profile and the profile list, `EQUseLegacy`), `src/core/session/MirrorPolicy.cpp`
+  (every mirror row below), `src/core/session/SessionCommandDispatcher.{h,cpp}`
+  (`setTunePowerForTxBand`, `txProfile.select {name}`, `tx.key`, `tx.unkey`, `tx.tune`,
+  `tx.twoTone`, `tx.keepalive`), `src/core/session/StationServer.{h,cpp}`
+  (`transmitSettingsVersion()` 8, `remoteTxVersion()` 1, `txStateVersion()` 2), `src/core/session/StationCapabilities.{h,cpp}`
+  (ordinals 53 and 58 to 62), `src/core/session/TransmitStateFacade.{h,cpp}` (the holder
+  fields, `stopEpoch`), `src/core/session/RemoteKeying.{h,cpp}` and `RemoteTransmitClient.{h,cpp}`
+  (the keying verbs and the copies rule), `src/core/safety/TxRefusal.{h,cpp}` (the refusal
+  codes and fixes), `src/core/safety/RemoteTxWatchdog.{h,cpp}` and `StarvationPolicy.{h,cpp}`
+  (the watchdog numbers), `src/core/meters/TxMeterPump.{h,cpp}`, `src/core/session/media/`
+  (the microphone line, mid `mic`)
+- `tests/data/link/v1/`, `surface.json`, the link document
+  (`docs/architecture/2026-09-23-station-link-v1.md`), `docs/architecture/2026-09-20-remote-media-control-v1.md`
+- Test: `tst_transmit_model_properties`, `tst_transmit_settings_gate`, `tst_remote_tx_eq_cfc`,
+  `tst_tx_profile_select`, `tst_remote_keying`, `tst_remote_tx_watchdog`, `tst_starvation_policy`,
+  `tst_transmit_state_facade`, `tst_link_conformance_session`
 
 **Interfaces:**
-- Consumes: Task 32 (setters post to the transmit lane).
-- Produces: each control above as a bidirectional mirrored property of `transmit`
-  (names in camelCase matching the setter, for example `tunePowerWatts`, `voxEnabled`,
-  `monEnabled`, `cpdrEnabled`, `cpdrLevelDb`, `levelerEnabled`, `eqEnabled`,
-  `eqBandGainsDb` (ten values as a JSON array string), `cfcEnabled`, `micGainDb`,
-  `micMuted`, `txFilterLowHz`, `txFilterHighHz`, `activeTxProfile`), the profile list as
-  `txProfilesJson`, and the verb `txProfile.select`.
+- Consumes: Task 32 (setters post to the transmit lane); Task 34's keying gate and
+  `TransmitHolder`; Task 37's watchdog.
+- Produces, off the air, under `transmitSettingsVersion` (a Core between versions still
+  offers each earlier version's controls):
+  - **1** -- the controls the Core already held (RF power, TX filter) become writable off
+    the air; the keying set (`mox`, `tune`, `twoToneActive`) stays refused everywhere but
+    through the keying verbs below.
+  - **2** -- the TX and Phone/CW applets: `monEnabled` (bool), `monitorVolume` (f64, 0.0 to
+    1.0), `txLevelerOn`, `txEqEnabled`, `cfcEnabled`, `cpdrOn`, `cpdrLevelDb` (i64, 0 to 20
+    dB), `amCarrierLevel` (i64, 0 to 100 percent), `dexpEnabled`, `micGainDb` (i64, -50 to
+    70 dB), `voxThresholdDb` (i64, -80 to 0 dB), `voxHangTimeMs`, and `tunePower` (Setup's
+    fixed tune power, used only when the drive source is Fixed, not the TX panel's slider).
+    Outbound: `tunePowerForTxBand` (i64, the Core's transmit band's tune power, what the
+    Tune Power slider shows) and `tuneDrivePowerSource` (enum: 0 the drive slider, 1 the
+    tune slider, 2 fixed). New command `setTunePowerForTxBand {watts: i64}`
+    (`transmitSettingsVersion` 2): the Tune Power slider's own write, which sets the
+    per-band tune power and the tune slider as the source in one call.
+  - **3** -- TX profiles picked and the radio's microphone set (`txProfile.select {name}`,
+    the profile list as `txProfilesJson`), and RADE's Reset Vocoder, off the air.
+  - **4** -- TX EQ, CFC, phase rotator, CESSB, leveler and ALC, all Bidirectional:
+    `txEqUseLegacy` (bool, default true; Thetis's `EQUseLegacy` -- true plays the ten-band
+    EQ, false the parametric curve in `txEqParaEqData`; it travels with the TX profile, and
+    the Core applies whichever curve is current, with no dialog open), `txEqPreamp`,
+    `txEqBandsJson`, `txEqFreqsJson`, `txEqNc`, `txEqMp`, `txEqCtfmode`, `txEqWintype`,
+    `txEqParaEqData`, `cfcCompressionJson`, `cfcEqFreqJson`, `cfcPostEqBandGainJson`,
+    `cfcPostEqEnabled`, `cfcPostEqGainDb`, `cfcPrecompDb`, `cfcParaEqData`,
+    `phaseRotatorEnabled`, `phaseRotatorFreqHz`, `phaseRotatorStages`, `phaseReverseEnabled`,
+    `cessbOn`, `txLevelerMaxGain`, `txLevelerDecay`, `txAlcMaxGain`, `txAlcDecay`. The CFC
+    dialog's compression bar chart stays empty in a remote window; see "Part F gains" below.
+  - **5** -- `stepAtt`'s `attOnTxEnabled` (bool), `attOnTxValue` (i64, from the Core's
+    attenuator minimum, 0 or -28 on an HL2, to 31) and `forceAttWhenPsOff` (bool); the five
+    SWR protection Station keys and External TX Inhibit, applied live off the air;
+    `tuneDrivePowerSource` gains WRITE here (Bidirectional; it was outbound at version 2).
+  - **6** -- Setup's PA page and PA telemetry, off the air; `radio.txInhibited`.
+  - **7** -- PureSignal armed off the air (`ps3.single`, `ps3.automatic`, `ps3.applyCurrent`,
+    `ps3.restoreCorrection`); `pureSignal.canActuate` means the Core's transmit permission
+    (`txPermitted`) is ready, not merely that a PureSignal radio is attached, so a
+    receive-only Core with a PS radio still reports it true; two-tone gates on `txPermitted`,
+    not on `canActuate`.
+  - **8** -- OC transmit pins, pin actions, TX Display Cal and Volts/Amps Calibration, each
+    on or off the air as its own control needs.
+- Produces, on the air, under `remoteTxVersion` (1 today), gated by the hello's `remoteTx`
+  1 and minor 11:
+  - `tx.key {trigger: utf8}`, `tx.unkey {epoch: i64}`, `tx.tune {on: bool}`,
+    `tx.twoTone {on: bool}`, `tx.keepalive {sequence: i64, epoch: i64}` (sent every 100 ms
+    while keyed, tuning, in two-tone, or with VOX armed). An accepted key, TUNE-on or
+    two-tone-on returns `values.epoch` (i64); an unkey or a stop returns none.
+  - **The copies rule:** the client sends each keying command three times as the same
+    command (one session, verb and id); the Core acts once, on the first, and answers
+    every copy, so only the first answer per id counts. A copy that arrives after the Core
+    has already ended that key is refused `keyEnded`, and keys nothing.
+  - `txRefusalCode` / `txRefusalReason` / `txRefusalFix` (utf8, sent right after
+    `remoteTxVersion` and only with it): the station transmit gate's current refusal for
+    this session, empty while permitted. The codes: `notReady`, `stationReceiveOnly`,
+    `bandPlan`, `interlock`, `ampStandby`, `paProtection`, `swr`, `otherDeviceHolds`,
+    `programNeedsTransmit`, `micNotReady`, `changingHands`, `stopNotConfirmed`,
+    `holderOnAir`, `notHolder`, `keyEnded`; the fixes are `takeTransmit` and `operateAmp`.
+  - `txStateVersion` is 2 (sent right after the three refusal entries): version 1's
+    `txState` object (`keyed`, `tuning`, `twoTone`, `txSliceId`, `keyedByName`,
+    `keyedByKind`, `keyedTrigger`, `keyedSinceMs`, `timeOutRemainingSeconds`,
+    `forwardPowerWatts`, `reflectedPowerWatts`, `swr`, `alcDb`, `micLevelDb`, `txEnding`,
+    `stopReason`, `stopText`, `stopSerial`), plus version 2's holder fields
+    (`holderDeviceId`, `holderName`, `holderShortName`, `holderKind`, `holderSource`,
+    `holderForSeconds`, `holderEpoch`, `holderAway`, `holderTransferring`, `keyed`,
+    `keyedForSeconds`) and `stopEpoch` (the keying epoch of the key a stop ended, so a
+    window never ends a newer key of its own on an older stop). Task 54 reads these under
+    the names above.
+  - The microphone line: mid `mic`, negotiated by `remoteTxVersion` on `start`. What the
+    client sends: the microphone, mono 48 kHz, as Opus 20 ms frames with in-band FEC
+    (payload type 111); or, from a desktop remote window whose operator chose lossless
+    audio and whose line agreed, L16 (`PcmAudioCodec`, payload type 96). A program keying
+    through a desktop window's TCI server is sent on the line in place of the microphone.
+  - The watchdog numbers: `tx.keepalive` every 100 ms; the Core drops transmit 400 ms after
+    the last one that counted; the microphone starvation deadline is 250 ms; the transmit
+    jitter buffer targets 60 ms and never exceeds 120 ms; a device that ends without
+    `session.leave` keeps its place, and any hold on transmit, for 180 s (the away grace)
+    before the Core lets it go.
+  - Capability ordinals 50 to 61, as the trunk's link document lists them: 50
+    `pairingVersion`, 51 `stationCatalogVersion`, 52 `displayExtrasVersion`, 53
+    `transmitSettingsVersion`, 54 `bandSelectVersion`, 55 `meterReadingsVersion`, 56
+    `dspInfoVersion`, 57 `sessionHolderVersion`, 58 `remoteTxVersion`, 59 `txRefusalCode`,
+    60 `txRefusalReason`, 61 `txRefusalFix` (62, just past this range, is `txStateVersion`).
 
 **Acceptance:**
 - Each property round-trips through a remote write and changes the TX chain on the lane
@@ -4447,14 +4692,43 @@ item 1, the Tools tab's TX Equalizer.
 - Ranges are enforced at the station (a write out of range gets `property.result`
   refused with the range in plain words).
 - Selecting a profile applies it exactly as the desktop's profile combo does.
+- A keying verb passes through Task 34's gate and `TransmitHolder`; nothing here keys
+  around them.
 
-**Verification:** unit and conformance.
-`cmake --build build --target tst_transmit_model_properties tst_tx_profile_select tst_link_conformance_session && QT_QPA_PLATFORM=offscreen ctest --test-dir build -R '^(tst_transmit_model_properties|tst_tx_profile_select|tst_link_conformance_session)$' --output-on-failure`.
+**Verification:** unit and conformance, as built.
+`cmake --build build --target tst_transmit_model_properties tst_transmit_settings_gate tst_remote_tx_eq_cfc tst_tx_profile_select tst_remote_keying tst_remote_tx_watchdog tst_starvation_policy tst_transmit_state_facade tst_link_conformance_session && QT_QPA_PLATFORM=offscreen ctest --test-dir build -R '^(tst_transmit_model_properties|tst_transmit_settings_gate|tst_remote_tx_eq_cfc|tst_tx_profile_select|tst_remote_keying|tst_remote_tx_watchdog|tst_starvation_policy|tst_transmit_state_facade|tst_link_conformance_session)$' --output-on-failure`.
 
-**Execution note (advisory):** opus. Requires Task 32.
+**Execution note (advisory):** opus. Requires Task 32. Built already on
+`codex/integrate-r2-main`; the phone's Task 54 reads the names above.
 
 - [ ] **Step 1:** The properties with range checks and tests.
 - [ ] **Step 2:** Profiles, fixtures and the document.
+
+**Part F gains, beyond keying and these settings.** Four features the spec's
+remote-transmit screens want are not carried by anything Part F has built so far, checked
+against the trunk (`codex/integrate-r2-main` at `cbecdc50`):
+
+1. **A remote window's TCI raw I/Q.** Not on the link. JJ decided (2026-09-24) it joins
+   remote transmit's scope, with its bandwidth charged to that window's display share
+   (Task 23 greys the IQ Stream setup options with the reason meanwhile). No task in this
+   plan owns it yet; the controller assigns one when Part F's scope is next revised.
+2. **TX monitor (MON) audio to a remote holder.** Task 55b owns the phone behavior: the
+   desktop-style `monEnabled` setting enables the Core monitor, and the media op
+   `monitor-audio {route: headphones}` carries it to the transmit holder at
+   `monitorVolume`. The Core speakers stay quiet for a remote transmit holder. The phone
+   greys MON when headphones are absent or the Core lacks monitor support.
+3. **A remote pan showing the transmit spectrum while keyed.** Not on the link. The
+   desktop's own spectrum TX overlay, `MeterPoller`'s TX meter set and the TX badge all
+   follow the window's own `MoxController`, which never keys in a remote window (Task 39's
+   report). This is Task 39's and Task 78's (the holder shown on the banner and pan);
+   neither has reached it yet.
+4. **The CFC bar chart and PA Values' transmit-only readings on the air.** Not on the link.
+   `meterReadingsVersion` (1) carries only receive-side ADC and AGC readings. `txState`
+   (`txStateVersion` 2, above) carries five TX meters (forward and reflected power, SWR,
+   ALC, mic level) but not the CFC compression bars or the PA page's transmit-only
+   readings; a local window shows those items disabled remotely today with "The Core does
+   not send this meter to a remote window yet." Task 39's report names this an amendment to
+   Task 39 or Task 40, or a new task, for the controller to place; none has landed.
 
 ---
 
@@ -5928,7 +6202,7 @@ D58, D64; the several-devices design section 12; design ID R-MC-20 (provisional)
      dashed centre line in the slice's colour with a hollow triangle, dashed grey passband
      edges with no fill, and a label at the foot of the spectrum with the slice letter and
      the device's short name, plus TX by ruling 5.4a; no flag, not draggable. A click on
-     the label says whose slice it is and that only that device can tune it or close it.
+     the label says whose slice it is and that it can be changed only there (D115).
      In a remote window they come from `SliceMarker` objects; on a hosting desktop, from
      `SliceOwnership`. The fifth letter, E, shares A's cyan (`VfoWidget.cpp:3403-3409`);
      the label's letter tells them apart, and a fifth colour is JJ's call, not built
@@ -6020,60 +6294,95 @@ Requires Tasks 48 and 49 (and so Tasks 41, 75 and 77) and Task 25.
 BYPASS and antenna; the RF2K-S's OPERATE, STANDBY and antenna; the interlock enforced at
 the station; every refusal with its reason), R-R3-25, D18, spec §4.8.
 
-**Before this task (controller):** the Core-owned accessories plan
-(`docs/architecture/2026-09-23-r3-core-owned-accessories-plan.md`, on
-`codex/integrate-r2-main`) builds the station's accessory controllers, their mirrored
-`amplifier`, `rfkit` and `tuner` objects, the live interlock-policy command and the
-accessory control document, and names these transmit-coupled actions as waiting for
-remote transmit. Confirm its Tasks 1 to 4 have merged into `codex/integrate-r2-main` and
-merge that branch into `claude/iphone-app`. If they have not merged when this task is
-reached, stop and ask JJ, since that plan belongs to the other agent's lane.
+**Built already, on `codex/integrate-r2-main` (read at `cbecdc50` for this rewrite).** The
+remote window parity plan's Tasks 8, 9 and 10 (worktree `nereus-parity`), and its group B
+fix wave, built the accessory switches this task planned before those verbs existed. Each
+accessory keeps its own capability and its own verb names; there is no single
+`accessoryTxVersion` and no `amp.*` / `tuner.*` / `rfkit.*` verb family. The names below are
+the trunk's.
 
 **Files:**
-- Modify: `src/core/session/SessionCommandDispatcher.{h,cpp}`, the accessory controllers
-  that plan creates (`src/core/StationPgxlController.{h,cpp}` and the RF-Kit
-  controller), `src/models/TunerModel.{h,cpp}` (`setOperate`, `setBypass`, `autoTune`,
-  `setAntennaA`, `TunerModel.cpp:487-536`), `src/models/RadioModel.{h,cpp}`
-  (`startTgxlAutotune`), `src/core/Rf2ksConnection.{h,cpp}` (`setOperateMode`,
-  `setActiveAntenna`), `src/gui/MainWindow.cpp` (the Power Genius OPERATE and STANDBY
-  buttons, `MainWindow.cpp:11117-11130`, call the Core's controller instead of the
-  window's own code)
-- Modify: `docs/architecture/2026-09-23-remote-accessory-control-v1.md` (the commands),
-  `tests/data/link/v1/`, `surface.json`, the link document
-- Test: `tests/tst_accessory_tx_commands.cpp`
+- `src/core/StationTgxlController.{h,cpp}`, `src/core/StationPgxlController.{h,cpp}`,
+  `src/core/StationRfKitController.{h,cpp}`, `src/models/TunerModel.{h,cpp}`
+  (`setOperate`, `setBypass`, `adjustRelay`, `setAntennaA`), `src/models/RadioModel.{h,cpp}`
+  (`moveTgxlRelayForStation`, `scanTgxlLanForStation`, `setTgxlAddressForStation`,
+  `setPgxlOperateForStation`, `scanPgxlLanForStation`, `setPgxlAddressForStation`,
+  `setRfKitOperateForStation`, `setRfKitAntennaForStation`, `setRfKitTciModeForStation`,
+  `setRfKitAddressForStation`, and each accessory's own `stationXxxControlAllowed` gate),
+  `src/core/Rf2ksConnection.{h,cpp}` (`setOperateMode`, `setActiveAntenna`,
+  `setOperationalInterface`), `src/core/StationAccessoryData.{h,cpp}` and
+  `src/models/AccessoryDataModel.{h,cpp}` (`rfkitRttAvgMs` and the connection counters),
+  `src/core/session/SessionCommandDispatcher.{h,cpp}`, `src/core/session/StationServer.{h,cpp}`,
+  `src/core/session/StationCapabilities.{h,cpp}` (`remoteTgxlControlVersion`,
+  `remotePgxlControlVersion`, `remoteRfKitControlVersion`, `accessoryDataVersion`),
+  `src/gui/{AmpApplet,Rf2ksApplet,TunerApplet}.cpp`, `src/gui/setup/{PgxlAdvancedPage,RfKitPage,CatNetworkSetupPages}.{h,cpp}`,
+  `src/gui/MainWindow.cpp` (the Power Genius, Tuner Genius and RF-Kit buttons call the
+  Core's controllers instead of the window's own code, in both roles)
+- `docs/architecture/2026-09-23-remote-accessory-control-v1.md` (the commands), `tests/data/link/v1/`,
+  `surface.json`, the link document
+- Test: `tst_tgxl_station_identity`, `tst_pgxl_station_control`, `tst_rfkit_station_control`,
+  `tst_station_accessory_state`, `tst_remote_peripherals`, `tst_station_reason_wording`,
+  `tst_link_conformance_session`
 
 **Interfaces:**
-- Consumes: `StationTxGate`, `TxRefusal` and `TransmitHolder`'s on-air refusal (Task 34:
-  while the holder is keyed, these verbs from another device are refused with the
-  on-air reason); the accessories plan's controllers and objects; and Task 77's rules
-  for these verbs (rulings 7.7, 7.8 and 8.3 of the several-devices design, Part G),
-  applied by whichever of this task and Task 77 lands second.
-- Produces verbs under capability `accessoryTxVersion = 1`: `amp.operate {}`,
-  `amp.standby {}`, `tuner.tune {}`, `tuner.operate {on}`, `tuner.bypass {on}`,
-  `tuner.antenna {port}` (1 to 3), `rfkit.operate {}`, `rfkit.standby {}`,
-  `rfkit.antenna {port}`. Each is permitted only for a session the transmit gate permits;
-  a refusal returns `code`, `text` and `fix` values. The RF2K-S tuner actions stay
-  refused with "Use the amplifier's front panel for its tuner until its firmware accepts
-  commands." (spec §5.4 item 4).
+- Consumes: `TransmitHolder`'s on-air refusal (Task 34: while the radio is on the air, a
+  verb that switches the amp's or tuner's relays is refused, in both windows, with the
+  on-air reason); each accessory's own `stationXxxControlAllowed` gate (ownership, then
+  on-air, then whether the Core is connected to that accessory); Task 77's rules for these
+  verbs (rulings 7.7, 7.8 and 8.3 of the several-devices design, Part G), applied by
+  whichever of this task and Task 77 lands second.
+- Produces, under `remoteTgxlControlVersion` (4): `setTgxlAntenna {port}`,
+  `setTgxlOperate {on}` (puts the tuner in OPERATE or BYPASS whole, since version 3's fix),
+  `setTgxlBypass {on}`, `moveTgxlRelay {relay: 0..2, direction: -1|1}`, `scanTgxlLan {}`,
+  `setTgxlAddress {host, port}`. This plan's `tuner.tune`, `tuner.operate`, `tuner.bypass`
+  and `tuner.antenna` are these names; TUNE itself stays on the keying gate (Task 35), not
+  this capability.
+- Produces, under `remotePgxlControlVersion` (4): `setPgxlOperate {on}`, `scanPgxlLan {}`,
+  `setPgxlAddress {host, port}`. This plan's `amp.operate` and `amp.standby` are the one
+  verb `setPgxlOperate {on: bool}`.
+- Produces, under `remoteRfKitControlVersion` (4): `setRfKitOperate {on}`,
+  `setRfKitAntenna {port: 1..4}`, `setRfKitTciMode {}`, `setRfKitAddress {host, port}`.
+  This plan's `rfkit.operate`, `rfkit.standby` and `rfkit.antenna` are `setRfKitOperate`
+  and `setRfKitAntenna`. The RF2K-S tuner actions stay refused with "Use the amplifier's
+  front panel for its tuner until its firmware accepts commands." (spec §5.4 item 4); it
+  has no TUNE or BYPASS verb.
+- The on-air rule, the same in both windows (JJ's ruling, 2026-09-25): a verb that
+  switches the amp's or tuner's relays waits for the radio to leave the air (OPERATE,
+  STANDBY, each antenna, the Tuner Genius relay nudges, RF-Kit's TCI mode); a verb that
+  only listens or saves does not (`scanTgxlLan`, `scanPgxlLan`, and the three
+  `set*Address` verbs), so an address can be typed or a LAN scanned while transmitting.
+  Each refusal on the air carries the holder's reason.
+- Blank Host means "do not dial": each `set*AddressForStation` accepts a trimmed empty
+  host with a port from 1 to 65535, saves it, and shows it blank on the accessory's
+  mirrored object; the Core's own connect step (`applyPeripheralsForCurrentMac`) dials
+  nothing while its saved host is empty, for the PGXL, the TGXL and the RF-Kit alike.
+- The RF-Kit response-time counter: `accessoryDataVersion` 3 adds `rfkitRttAvgMs` (i64,
+  outbound), read from `Rf2ksConnection::rttAvgLast10Ms` and published once a second;
+  `IStationLink::rfKitResponseTimeAvailable()` gates a remote window's "RTT n ms avg" the
+  way the local page already shows it (parity both ways, no separate question needed).
+  `accessoryDataVersion` 2 (below 3) already carries the RF-Kit's connection counters
+  (`rfkitConnectedSinceMs`, `rfkitPollsOk`, `rfkitPollsFailed`, `rfkitReconnectCount`,
+  `rfkitLastPollMs`).
 
 **Acceptance:**
-- With the amp in STANDBY and the interlock on Block, `tx.key` is refused with
-  `ampStandby` and fix `operateAmp`; `amp.operate` then succeeds and `tx.key` keys.
-- Each verb reaches its device call (checked against the accessories plan's fake
-  devices) and the mirrored state follows.
-- A session without transmit permission gets every verb refused with its reason and no
-  device command is sent.
-- The desktop's Power Genius buttons work as before in local mode and now also in a
-  remote window.
+- With the amp in STANDBY and the interlock on Block, a key is refused with `ampStandby`
+  and fix `operateAmp`; `setPgxlOperate` then succeeds and a key keys.
+- Each verb reaches its device call (checked against each accessory's fake device) and
+  the mirrored state follows.
+- A session below an accessory's control version gets every one of its verbs refused
+  with its reason and no device command is sent.
+- The desktop's Power Genius, Tuner Genius and RF-Kit buttons work as before in local
+  mode and now also in a remote window.
 
 **Verification:** commands that act on devices and the transmit boundary: invariant
 tests first.
-`cmake --build build --target tst_accessory_tx_commands tst_link_conformance_session && QT_QPA_PLATFORM=offscreen ctest --test-dir build -R '^(tst_accessory_tx_commands|tst_link_conformance_session)$' --output-on-failure`.
+`cmake --build build --target tst_tgxl_station_identity tst_pgxl_station_control tst_rfkit_station_control tst_station_accessory_state tst_remote_peripherals tst_station_reason_wording tst_link_conformance_session && QT_QPA_PLATFORM=offscreen ctest --test-dir build -R '^(tst_tgxl_station_identity|tst_pgxl_station_control|tst_rfkit_station_control|tst_station_accessory_state|tst_remote_peripherals|tst_station_reason_wording|tst_link_conformance_session)$' --output-on-failure`.
 Bench: Task 70 (the Power Genius XL and Tuner Genius XL; the RF2K-S when one is
 available).
 
 **Execution note (advisory):** opus. Commands to devices that key an amplifier: flag for
-earlier review. Requires Task 34 and the accessories plan.
+earlier review. Requires Task 34. Built already on `codex/integrate-r2-main`; the
+phone's reading is the per-accessory names above, not a single `accessoryTxVersion`.
 
 - [ ] **Step 1:** The verbs, gating and refusals with tests.
 - [ ] **Step 2:** The desktop buttons through the Core, the documents and fixtures.
@@ -6367,16 +6676,6 @@ network access: flag for earlier review. Requires Task 17.
 - [ ] **Step 1:** The binary in every package and the macOS helper bundle.
 - [ ] **Step 2:** The service manager with its per-platform start entries and tests.
 
-Implementation evidence: signed `67d9ebd5` integrates the binary packaging and
-service manager, with an app/Core/helper build, focused tests, strict macOS
-signature verification and bundled daemon help check. Signed `6ce88d4f` adds a
-verification-only workflow path that builds the selected immutable source commit
-without publishing or notarizing. Its integrated workflow checks and seven
-metadata-script cases pass. The release artifacts have not yet been built by
-that workflow, and the Mac background-radio hour remains unobserved; these
-checkboxes therefore remain open.
-
-
 ## Task 48: The station inside the desktop, and the radio handover
 
 **Runs in:** the Core/GUI session's lanes (a station task).
@@ -6512,42 +6811,12 @@ TCI keys only while the desktop holds transmit; a fifth device cannot pick the d
 radio connection and settings safety, and keying at the desktop: flag for earlier
 review. Requires Task 47, Parts C and F, and Tasks 41, 42 and 71 to 77.
 
-- [x] **Step 1:** `StationHost`, with the daemon moved onto it and its tests passing.
-      Signed implementation `dd425d69`; integrated app/Core build and fourteen
-      focused daemon, host and dependency-boundary tests passed (23.00 s).
-      Desktop hosting, profile locking and handover remain in the following steps.
+- [ ] **Step 1:** `StationHost`, with the daemon moved onto it and its tests passing.
 - [ ] **Step 2:** The desktop hosting it, the lock, `nereusd release` with its
       control-socket tests, and the two-way handover.
-      Profile ownership and daemon-to-desktop release are implemented in signed
-      `1bebe127`. The integrated app/Core build and twelve focused tests passed
-      (20.09 s), including checked saves, unchanged offline layouts, dirty offline
-      refusal, live/stale process locks and deferred control replies. Desktop
-      hosting and the reverse background handover are now wired through the
-      coordinator/runtime in the current desktop integration. Final saves and
-      window/model/MMIO destruction precede profile unlock and background launch;
-      failed saves preserve the lock and retry intent. The saved Core radio choice
-      survives reclaim, with same-radio failure recovery. The loopback round trip
-      is built in signed `b22029c58`: GUI owner, real daemon entry point and reopened
-      GUI owner, one identity/profile lock and one automatically reconnecting paired
-      client. Both transitions remain within 15 s; root integration's two rebuilt
-      handover suites pass (7.84 s at load 6.77/4.87/4.80). The fixture uses a logical
-      admitted board and an injected OS command runner; literal GUI main, actual
-      OS service startup and live radio/phone observation remain unverified. Its
-      separate offline-save refusal exposed G-82, now being fixed without losing
-      edits. No live radio or JJ window handover was performed.
 - [ ] **Step 3:** The window as the station device: its own slices, flags and audio, its
       MOX and TUNE through the take rules, and its TCI programs under the holder rule,
       with the hosting-desktop harness.
-      The reusable desktop controller is implemented in signed `fc58c3ad`,
-      `987eb996` and `f7fd0b0b`: hosting-device admission, ownership adoption,
-      holder confirmation and TX-first teardown. Integrated app/Core build and
-      six focused suites passed (27.62 s). MainWindow presentation/keying and TCI
-      program admission are now wired in signed `abeb6ca53`/`5dfb27690` and the
-      current coordinator integration. Actual-window ownership/menu/pan and
-      transmit-take regressions pass. Hosted Setup receiver selection is built
-      in `9650e167d`; the integrated app/Core and seven focused suites pass
-      (4.24 s), including edits under a foreign transmit holder. Full reverse
-      handover acceptance remains recorded above.
 
 ## Task 49: The Remote Access page
 
@@ -6595,15 +6864,6 @@ phone by one tap, revoke the phone from the page.
 - [ ] **Step 1:** The page with its functional tests.
 - [ ] **Step 2:** The screenshots.
 
-Presentation is implemented in signed `df86b7a5` with lead modal-permission
-corrections. The integrated app and page tests pass; off/on/pairing/two-device/
-backup-acknowledged states were rendered and inspected. These remain partial:
-the runtime/service bridge is now built in signed `25750342` and integrated with
-late-created Setup dialogs. Real temporary listeners, failed starts, pairing/revoke,
-checked preference saves, configured network policy, and fake OS service-runner
-checks pass. Final two-process handover acceptance remains with Task 48 before
-these steps are accepted as complete.
-
 ## Task 50: The card image for a small computer
 
 **Runs in:** the Core/GUI session's lanes (a station task).
@@ -6646,14 +6906,6 @@ a device check and touches first-boot security, so opus. Requires Tasks 16, 17 a
 - [ ] **Step 1:** The pi-gen stage, the Armbian script and the lint test.
 - [ ] **Step 2:** The workflow and the README.
 
-Implementation evidence: signed `7050acbf` and `043508ce` add the stage, Rock
-customization, manual artifact workflow, provenance and pinned Pi 4 DFNR source
-build. Six integrated stage checks pass, including real CMake component-install
-execution for the noise-reduction model; ShellCheck and workflow parsing pass.
-No image workflow has run and no card has been flashed or booted. Artifact and
-device acceptance remain pending.
-
-
 ---
 
 # Part J: The app
@@ -6689,7 +6941,8 @@ iOS 17.4) and §4.13, R-IOS-28 (the Push to Talk capability on the app ID), R-IO
   `aps-environment`), `ios/NereusApp/Info.plist` (`UIBackgroundModes`: `audio`,
   `push-to-talk`, `bluetooth-central`; `NSMicrophoneUsageDescription` "NereusSDR sends
   your voice to your station when you transmit."; `NSLocalNetworkUsageDescription`
-  "NereusSDR looks for your Core on this network."; `NSBonjourServices`
+  "NereusSDR looks for your Core on this Wi-Fi so it can connect straight to it." (the
+  board's words, set by Task 16a); `NSBonjourServices`
   `_nereus-station._tcp`; `NSBluetoothAlwaysUsageDescription` "NereusSDR connects to
   Bluetooth push-to-talk buttons."; `NSSupportsLiveActivities` YES)
 - Create: `ios/NereusApp/App/NereusSDRApp.swift`, `AppModel.swift` (owns the session,
@@ -6727,14 +6980,14 @@ iOS 17.4) and §4.13, R-IOS-28 (the Push to Talk capability on the app ID), R-IO
   (no Metal toolchain component needed at build).
 - The licences screen lists every vendored library with its notice.
 
-**Verification:** build and CI. `ios/scripts/generate-project.sh && xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR -destination 'platform=iOS Simulator,name=iPhone 17' test`;
+**Verification:** build and CI. `ios/scripts/generate-project.sh && xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR -derivedDataPath ios/.build/sim -destination 'platform=iOS Simulator,name=iPhone 17' test`;
 the `ios.yml` `app` job passes on a branch push. Device (controller, pending until
 observed): the app installs and launches on JJ's iPhone through a development profile.
 
 **Execution note (advisory):** opus. Requires Xcode 27 installed and Tasks 5 to 11.
 
-- [ ] **Step 1:** `project.yml`, configuration, entitlements, `Info.plist` and the icon.
-- [ ] **Step 2:** `AppModel`, the tab bar, `FakeStation`, the licences screen and CI.
+- [x] **Step 1:** `project.yml`, configuration, entitlements, `Info.plist` and the icon.
+- [x] **Step 2:** `AppModel`, the tab bar, `FakeStation`, the licences screen and CI.
 
 ## Task 51a: The test build names itself, and installing on an iPhone
 
@@ -6789,14 +7042,14 @@ builds carry no name), the desktop's own form of it (`NEREUSSDR_BUILD_TAG`,
   non-zero with a plain message naming what to connect.
 
 **Verification:** a script and a small view: `python3 -m pytest -q tests/compliance`,
-`ios/scripts/generate-project.sh && xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR -destination 'platform=iOS Simulator,name=iPhone 17' test`,
+`ios/scripts/generate-project.sh && xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR -derivedDataPath ios/.build/sim -destination 'platform=iOS Simulator,name=iPhone 17' test`,
 `ios/scripts/swift-test.sh` on both toolchains. Device (the controller with JJ): the
 first install on his iPhone, pending until observed.
 
 **Execution note (advisory):** opus. Requires Task 51. Touches no network code; the
 install script touches a device, so the implementer never runs it against one.
 
-- [ ] **Step 1:** `build-tag.sh` and its tests; the Info.plist key and the Setup rows.
+- [x] **Step 1:** `build-tag.sh` and its tests; the Info.plist key and the Setup rows.
 - [ ] **Step 2:** `device-install.sh`.
 
 ## Task 52: The band in Metal
@@ -6919,8 +7172,8 @@ both toolchains and the simulator test run.
 **Execution note (advisory):** opus. Requires Tasks 7, 11, 11a and 51 (and through Task
 11a, station Tasks 19 and 20). On the listening path (JJ, 2026-09-24).
 
-- [ ] **Step 1:** Geometry, history and the band-plan strip with tests.
-- [ ] **Step 2:** The Metal renderer, the display settings and the render tests.
+- [x] **Step 1:** Geometry, history and the band-plan strip with tests.
+- [x] **Step 2:** The Metal renderer, the display settings and the render tests.
 
 ## Task 53: Flags, markers, gestures and zoom
 
@@ -6957,8 +7210,10 @@ devices' slices on the band (D46, D47) are Task 56's.
     edges; the selected marker drawn on top; the shaded passband in the operator's
     colour.
   - Touch settings in `PhoneSettings`: drag to tune (on), tap to tune (on) with snap to
-    step (off), pinch to zoom (on), double-tap action (`.none`, `.zoomToFilter`,
-    `.centerOnSlice`), each as spec §5.1 item 9 lists them.
+    step (off), pinch to zoom (on), double-tap action (Tune, the default: tune to the
+    double-tapped frequency; Center: move the band so it is in the middle without
+    retuning; None), as the board's Navigation page and the desktop's Navigation combo
+    list them.
 
 **Acceptance:**
 - Two slices 2 kHz apart on a 390-point-wide phone band fold the inactive one; on a
@@ -6978,8 +7233,8 @@ devices' slices on the band (D46, D47) are Task 56's.
 
 **Execution note (advisory):** opus. Requires Task 52. On the listening path.
 
-- [ ] **Step 1:** The fold rule, markers and gesture arithmetic with tests.
-- [ ] **Step 2:** The views and the screenshots.
+- [x] **Step 1:** The fold rule, markers and gesture arithmetic with tests.
+- [x] **Step 2:** The views and the screenshots.
 
 ## Task 54a: The main screen for listening
 
@@ -7009,7 +7264,10 @@ D11), spec §5.2 item 2 (the tab bar as the board draws it), JJ's listening-firs
     Task 54); the band edge to edge with zoom at the bottom right of the waterfall; the
     RX panel with AF gain, AGC, filter presets, the noise buttons and squelch, each
     writing to its owner and showing the Core's value, with its range and choices from
-    the catalogue and none written into the app; the speaker button mutes on a tap
+    the catalogue and none written into the app; the sound-paused notice from Task 55a's
+    audio session on the band, as picture 12 draws it (D68: "Sound paused: your
+    headphones disconnected. Tap to play on the speaker.", the whole notice the tap
+    target); the speaker button mutes on a tap
     and opens Task 55a's `RouteMenu` on press and hold, without leaving the band.
   - The tab bar as the board draws it: NereusSDR's flat bar and its own glyphs (the
     panadapter trace, the RX/TX box, the wrench, the radio, the gear), in place of the
@@ -7018,7 +7276,9 @@ D11), spec §5.2 item 2 (the tab bar as the board draws it), JJ's listening-firs
 
 **Acceptance:**
 - The toolbar's order and the RX panel's controls are as listed; each control's write
-  arrives at `FakeStation` and the control shows the value the Core answers with.
+  arrives at `FakeStation`. The operator's edit appears at the touch and is resolved
+  by its matching Core answer as D140 requires, including refusal, timeout, newer
+  edits and session changes.
 - Sideways: the toolbar on top with the Core's name in the middle, the band edge to edge,
   the RX panel sliding in from the side.
 - No PTT, TX panel or transmit control appears yet, and nothing stands greyed in their
@@ -7027,13 +7287,449 @@ D11), spec §5.2 item 2 (the tab bar as the board draws it), JJ's listening-firs
   `02-sideways.jpg`, and the tab bar against `05-tabs.jpg`.
 
 **Verification:** UI: the simulator test run and screenshots.
-`ios/scripts/generate-project.sh && xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR -destination 'platform=iOS Simulator,name=iPhone 17' test`.
+`ios/scripts/generate-project.sh && xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR -derivedDataPath ios/.build/sim -destination 'platform=iOS Simulator,name=iPhone 17' test`.
 
 **Execution note (advisory):** opus. Requires Tasks 51, 52, 53 and 55a. On the listening
 path.
 
-- [ ] **Step 1:** The main screen, the toolbar and the RX panel with tests.
-- [ ] **Step 2:** The tab bar as drawn, and the screenshots.
+- [x] **Step 1:** The main screen, the toolbar and the RX panel with tests.
+- [x] **Step 2:** The tab bar as drawn, and the screenshots.
+
+## Task 54b: The Pan 1 and Display sheets
+
+**Runs in:** the phone session, on `claude/iphone-app` (a phone task).
+
+**Requirements:** D73 (spec §5.1 items 14 to 16; picture `25-pan-and-display-sheets.jpg`,
+board section "The Pan and Display buttons"), R-IOS-11, R-IOS-27 (every list comes from
+the Core's catalogue, every range from the phone's own display settings or the desktop's
+values cited below; no radio table in the app), D23 ("Needs a newer Core"), D4 (where the
+desktop computes a value with Thetis logic, the Core computes it and the phone sends only
+the slice), JJ's rule that a control that can't run is shown disabled with its reason,
+never hidden and never silently dead (2026-09-25).
+
+**Critical regression, reported by JJ on 2026-09-28:** deleting every slice must not
+strand the phone. Pan 1 > Add a slice here remains a visible, working explicit action
+with zero owned slices, including a fresh empty snapshot. Its target is the phone's
+pan under the Core's per-device mapping, independent of an active slice. Preserve Core
+capacity, ownership and confirmation rules; do not create slices on passive reconnect.
+Slice-dependent band/notch controls remain visible, disabled with the actual reason.
+Cover last-slice removal/recreation, cold zero slices, foreign-only snapshots and Core
+refusal. Record observed command failures rather than silently ignoring the action.
+
+**Files:**
+- Create: `ios/NereusApp/Main/PanSheet.swift`, `ios/NereusApp/Main/PanSheetModel.swift`,
+  `ios/NereusApp/Main/DisplaySheet.swift`, `ios/NereusApp/Main/DropSheet.swift` (the
+  sheet chrome both share: title row, dropped under the toolbar over the band)
+- Modify: `ios/NereusApp/Main/Toolbar.swift`, `MainScreen.swift`, `MainScreenModel.swift`,
+  `BandSubscriber.swift` (the pan's `extendedView`)
+- Modify: `ios/NereusKit/Sources/NereusModels/StationCatalog.swift` (parse `bands`),
+  `ios/NereusKit/Sources/NereusBand/BandDisplaySettings.swift` (a per-pan
+  `extendedView: Bool`, default off, if the store has nowhere else to keep it),
+  `ios/NereusKit/Sources/NereusKitTesting/FakeStation.swift` (the new verbs, operation
+  and catalogue key behind their capabilities)
+- Create: `ios/NereusApp/Tests/PanSheetTests.swift`, `ios/NereusApp/Tests/DisplaySheetTests.swift`;
+  extend `StationCatalog`'s and `FakeStation`'s tests
+
+**Interfaces:**
+- Consumes: `MainScreen`, `Toolbar`, `MainScreenModel` and `BandSubscriber` (Task 54a);
+  `BandModel.settings` and `BandDisplaySettingsStore` (Task 52); `MirrorStore`,
+  `CommandClient` (Task 9); `StationCatalog` and `CatalogFeed.needsNewerCoreText` (Task
+  11a); `DisplaySubscription.extendedView` with `MediaFeatureGates.wideband`, and
+  `MediaFeatureGates.displayExtras` (Task 11a); the Setup tab (Task 51).
+- From the Core (the Core/GUI session's lane on `codex/small-followups-2`, built from
+  integration `314869f6`, not on the Pi until its next install; names settled 2026-09-25,
+  refusal texts and fixtures follow when it lands):
+  - catalogue key `bands`: `[{id, label}]`, `id` the Core's Band value (the same values as
+    `SliceModel.band`), `label` the desktop grid's text, in the desktop grid's order (160,
+    80, 60, 40, 30, 20, 17, 15, 12, 10, 6, WWV); `stationCatalogVersion` 1.
+  - verb `slice.selectBand {sliceId i64, band}` running the Core's own band restore (the
+    band's last frequency, mode and filter for that slice), gated by capability
+    `bandSelectVersion` 1; refused with a plain reason (unknown slice or band, a band the
+    radio can't use, on the air where the desktop blocks it).
+  - verb `notch.addAtSlice {sliceId i64}`: the Core places the notch exactly as the
+    desktop's +TNF does (the slice's listening frequency shifted into the sideband, the
+    desktop's default width) and adds it by `notch.add`'s own rules and refusals (the
+    10 Hz duplicate window included), plus an unknown-slice refusal; gated by
+    `notchControlVersion` 2.
+  - media-control operation `clarity-retune {connectionId, endpointId}`: re-estimates the
+    noise floor now for that display endpoint's Clarity (the desktop's Re-tune); refused
+    for an unknown endpoint, another connection's, or one not in Clarity mode, in the
+    media control document's shape for a refused display operation; gated by
+    `displayExtrasVersion` 2.
+- Already on every Core: `addSliceOnPan {panId utf8}` (minor 0); `SliceModel.band`
+  (outbound enum); the catalogue's `palettes`.
+- Produces: `PanSheet` and `DisplaySheet`, opened by the toolbar's Pan 1 and Display.
+  One sheet at a time: a tap on its button or outside it closes it, opening one closes
+  the other and the RX panel, and the open sheet's button shows open as the board draws.
+  Upright and sideways the sheet drops under the toolbar over the band.
+
+**Acceptance:**
+- Pan sheet, as picture 25 draws it: the title "Pan 1" with "Slice" and the pan's
+  active slice letter at the right.
+- The band grid, four across: one button per catalogue `bands` entry, in its order, with
+  its label; none written into the app. The button whose `id` equals the active slice's
+  `band` is lit. With `bandSelectVersion` 1 a tap sends `slice.selectBand` with the active
+  slice's id and that `id`, and a refusal shows the Core's words on the sheet; the lit
+  button follows the slice's `band` as the Core reports it, never the tap. A catalogue
+  with `bands` and no `bandSelectVersion` shows the grid greyed with "Needs a newer Core"
+  and sends nothing; a catalogue without `bands` shows the Band caption with one greyed
+  row reading "Needs a newer Core" where the grid goes. Under the grid, the board's note
+  with the active slice's letter: "A band opens where slice A last was on it: its
+  frequency, mode and filter."
+- Add a slice here sends `addSliceOnPan` with this pan's id; a refusal (the radio's
+  slice limit, say) shows the Core's words on the sheet.
+- "Add a notch at A" (the active slice's letter) sends `notch.addAtSlice` with the active
+  slice's id when `notchControlVersion` is 2 or more; below that it is greyed with
+  "Needs a newer Core". The phone computes no notch frequency or width (D4). A refusal
+  shows the Core's words.
+- Extended view, "Show the radio's full width either side of the band.", On or Off, kept
+  per pan on this phone: On sends the pan's subscription with `extendedView` true through
+  `BandSubscriber`'s existing path; without `MediaFeatureGates.wideband` it is greyed with
+  "Needs a newer Core" and never sent.
+- Display sheet, as picture 25 draws it: the title "Display" with "Pan 1 · this phone".
+- Waterfall: Palette opens a menu of the catalogue's `palettes` by name and shows the
+  current one (`waterfallPaletteId`). Clarity, Auto and Manual set `waterfallLevelMode`
+  to `.clarity`, `.agc` and `.manual`; with `.noiseFloorAgc` (set only in Setup, Task
+  58) none of the three is lit. The note under them follows the choice: Clarity, the
+  board's "Clarity sets the waterfall's levels from the noise floor." with Re-tune;
+  Auto, "Auto follows each line's weakest and strongest signals."; Manual, "Manual uses
+  the levels set in Setup.". Re-tune sends `clarity-retune` for this pan's display
+  endpoint when `displayExtrasVersion` is 2 or more, and is greyed with "Needs a newer
+  Core" below that. Without `MediaFeatureGates.displayExtras`, Clarity and Auto are
+  greyed with "Needs a newer Core" and the waterfall uses the manual levels, as
+  `BandDisplaySettings` already does.
+- Spectrum: Fill 0 to 100 sets `traceFillOpacity` (0 to 1), the desktop's Fill Alpha
+  range (`DisplaySetupPages.cpp:782-792`); Top -200 to 0 sets `scaleTopDbm`, the
+  desktop's dB Max range (`DisplaySetupPages.cpp:2010`); Range, in whole decibels from 1
+  up to the value that puts the bottom at -200 dBm (the desktop's dB Min floor), sets
+  `scaleBottomDbm` to Top minus Range. Each shows its value beside it.
+- On the band: Peak hold (`activePeakHold`), Peaks (`peakBlobs`) and Noise floor
+  (`noiseFloorLine`), each on or off, reach the Core through the pan's extras request;
+  without `MediaFeatureGates.displayExtras` each is greyed with "Needs a newer Core".
+- "More display options in Setup ›" switches to the Setup tab (Task 58 makes it land on
+  Display on this phone).
+- Every display change is kept for this pan in `BandDisplaySettingsStore`, survives a
+  relaunch and redraws the band at once; a change to what the Core computes re-sends the
+  subscription, and nothing else does.
+- `FakeStation` serves `bands`, `slice.selectBand`, `notch.addAtSlice` and
+  `clarity-retune` only behind their capabilities, and each greyed state above has a
+  test against a fake Core without it.
+- Screenshots, into `task-54b-shots/`: both sheets upright against picture 25; the pan
+  sheet with the band grid greyed (no `bandSelectVersion`) and with no `bands` (the
+  listening build's Pi); the display sheet with the extras greyed; one sheet sideways.
+
+**Verification:** UI: the simulator test run and screenshots, plus
+`ios/scripts/swift-test.sh`, `python3 scripts/verify-ios-provenance.py` and
+`python3 -m pytest -q tests/compliance`.
+`ios/scripts/generate-project.sh && xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR -derivedDataPath ios/.build/sim -destination 'platform=iOS Simulator,name=iPhone 17' test`.
+The Core's fixtures for the four new names run once its lane reaches integration and a
+phone task merges it (carried in the ledger).
+
+**Execution note (advisory):** opus. Requires Tasks 11a, 52, 53 and 54a. On the listening
+path: JJ asked for both sheets before the first install (2026-09-25).
+
+- [x] **Step 1:** `bands` in `StationCatalog`, the fake Core's four additions, and the pan
+  sheet with tests.
+- [x] **Step 2:** The display sheet with tests, then the screenshots.
+
+## Task 54c: Tuning on the band, and the trace's width
+
+**Runs in:** the phone session, on `claude/iphone-app` (a phone task).
+
+**Requirements:** D74 and D75 (spec §5.1 items 3, 17 and 18; picture
+`26-tuning-on-the-band.jpg`, board section "Tuning on the band"), R-IOS-11, R-IOS-12,
+R-IOS-27 (the steps are the catalogue's `tuneSteps`, none written into the app), D4
+(nothing copied or translated from Thetis or AetherSDR: the desktop's behaviour is read
+and rebuilt in Swift), JJ's device findings of 2026-09-25 (Task 56b row 6).
+
+**Files:**
+- Modify: `ios/NereusApp/Band/BandGestureLayer.swift` (which drag does what),
+  `VfoFlagView.swift` (the step button, the frequency tap), `BandModel.swift`,
+  `BandSlicesModel.swift`; `ios/NereusKit/Sources/NereusBand/TuneGestures.swift`;
+  `ios/NereusKit/Sources/NereusBand/BandDisplaySettings.swift` (`traceWidthPoints`),
+  `BandRenderer.swift` (the trace drawn at that width); `ios/NereusApp/Main/DisplaySheet.swift`
+  and `DisplaySheetModel.swift` (the Line row)
+- Create: `ios/NereusApp/Band/TuneStepMenu.swift`, `ios/NereusApp/Band/FrequencyPad.swift`
+  (with its model), and tests beside the existing ones (`BandSlicesModelTests`,
+  `DisplaySheetTests`, `TuneGesturesTests` or new files)
+
+**Interfaces:**
+- Consumes: `SliceModel.stepHz` (mirrored, both ways), `SliceModel.frequency` writes
+  through `BandSlicesModel` (Task 53's one-at-a-time ordering), the catalogue's
+  `tuneSteps` [{hz, label}] (`StationCatalog.tuneSteps`), `BandModel.requestView` and the
+  span limits (Tasks 52, 54b), the verbs the desktop's remote window uses to move a pan's
+  receiver window when a pan drag goes past it (`requestStreamCentre`,
+  `requestStreamCtunPinned`; read the station link document and the desktop's remote
+  path first), `BandDisplaySettingsStore`.
+- The desktop's behaviour to rebuild (read, don't copy): the pan drag in
+  `src/gui/SpectrumWidget.cpp` (from line 8659, "Pan drag: click in spectrum/waterfall
+  area and drag to pan the view") and how a drag on a slice's filter or flag tunes it
+  there; the step ladder the flag's step button walks (`MainWindow.cpp:2250` and
+  `SliceModel.h:170`, which the catalogue's `tuneSteps` carries); the flag's typed
+  frequency (`VfoWidget.cpp:740-760`, `VfoWidget::parseUserFrequency` from line 3295).
+- Produces:
+  - A drag that starts on empty band pans the view (the slices keep their frequencies;
+    their flags move with the band and can leave the screen); it obeys the span limits
+    and, with Extended view, the wider ceiling; past the receiver's window it moves that
+    window the way the desktop's remote window does. A drag that starts on a flag or on
+    its passband tunes that slice (one this phone may change), snapped to its `stepHz`,
+    writes in order. A tap on empty band tunes the active slice at once (Task 53's rules
+    for snap and the double tap stay). Pinch zoom stays.
+  - The flag's header shows its slice's step as the catalogue label ("100 Hz"); a tap
+    opens "Step for slice A" listing the catalogue's `tuneSteps`, the current one lit;
+    picking one writes `stepHz`. Without `tuneSteps` in the catalogue the button is greyed
+    with "Needs a newer Core".
+  - A tap on the flag's frequency opens the number pad as picture 26 draws it: "Frequency
+    for slice A", the entry, MHz and kHz, digits, a point and delete, "Tune to <the
+    frequency as the flag writes it>", Cancel. Enter writes the slice's frequency; the
+    Core's refusal (outside the radio's range) shows its words on the pad, which stays
+    open; success closes it.
+  - `BandDisplaySettings.traceWidthPoints` (from one screen pixel, `1 / displayScale`
+    points, to 3 points; default 0.5; stored settings without it decode to 0.5); the
+    renderer draws the trace at that width, never thinner than one pixel; the Display
+    sheet gains a "Line" row with a slider (steps of one screen pixel) and its value in
+    points, between Fill and Top.
+
+**Acceptance:**
+- Tests: a drag from empty band changes the view's centre by the dragged distance and
+  sends no frequency write; a drag from the flag or its passband sends frequency writes
+  in the slice's step, the last write the final position; a tap still tunes at once; the
+  step menu lists the catalogue's steps and writes `stepHz`; the pad parses "7.074" MHz,
+  "7074" kHz and "14074.5" kHz, refuses an empty or non-number entry without sending, and
+  shows a refusal's words; the Line slider stores its value and the renderer's trace
+  vertices are that wide.
+- Screenshots into `task-54c-shots/`: the step menu open, the number pad, the Display
+  sheet with the Line row, a band at the thinnest Line, at 0.5 and at 3, each against picture 26 or 25.
+- Device (JJ, Task 56b row 6, pending until observed): landing on a precise frequency by
+  drag, by step and by typing.
+
+**Verification:** UI: the simulator test run and screenshots, plus `ios/scripts/swift-test.sh`,
+`python3 scripts/verify-ios-provenance.py` and `python3 -m pytest -q tests/compliance`.
+`ios/scripts/generate-project.sh && xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR -derivedDataPath ios/.build/sim -destination 'platform=iOS Simulator,name=iPhone 17' test`.
+
+**Execution note (advisory):** opus. Requires Tasks 52, 53, 54a and 54b. Before transmit
+(JJ, 2026-09-25).
+
+- [x] **Step 1:** The drags (pan, flag, passband) and the step menu, with tests.
+- [x] **Step 2:** The number pad and the Line slider, with tests, then the screenshots.
+
+## Task 54d: The band plan, as the desktop draws it and as the station chooses it
+
+**Runs in:** the phone session, on `claude/iphone-app` (a phone task).
+
+**Requirements:** D79 (spec §5.1 items 4 and 19), R-IOS-11, R-IOS-27 (plans, segments,
+colours and spots come from the Core's catalogue; none written into the app), D4 (nothing
+copied or translated from Thetis or AetherSDR: the desktop's drawing is read and rebuilt
+in Swift), JJ's device finding of 2026-09-26 (TestFlight 2026.9.0 (1)), the Core/GUI
+session's answers in the crew workspace `band-plan-for-phone.md` (2026-09-26).
+
+**Files:**
+- Modify: `ios/NereusKit/Sources/NereusBand/BandPlanStrip.swift` (the drawing),
+  `BandDisplaySettings.swift` (`bandPlanSize` replaces the stored on/off),
+  `BandRenderer.swift`, `BandOverlays.swift`; `ios/NereusApp/Main/DisplaySheet.swift` and
+  `DisplaySheetModel.swift` (the Band plan and Size rows); `ios/NereusApp/Band/BandModel.swift`
+  (which plan is showing); the station catalogue decoding in NereusLink or NereusMirror
+  where `bandPlans` is decoded (`active`, `spots`)
+- Create: `ios/NereusApp/Main/BandPlanPicker.swift`; tests beside the existing ones
+  (`BandDisplaySettingsTests`, `BandRendererTests`, `DisplaySheetTests`, a new
+  `BandPlanChoiceTests`); `FakeStation` additions in their own extension file
+
+**Interfaces:**
+- Consumes: the catalogue's `bandPlans` (each plan's `name`, `default`, segments and, from
+  the Core task "The Core follows its band plan", `active` and `spots: [{hz, label}]`);
+  the station setting `BandPlanName` through the settings mirror (`settings.snapshot`,
+  `settings.value`, `SettingsProxyClient`); `settings.write` of `BandPlanName` with the
+  plan's `name`; `settings.reject` (its reason shown as sent, e.g. "This Core does not
+  have that band plan.").
+- The desktop's drawing to rebuild (read, don't copy): `src/gui/SpectrumWidget.cpp` from
+  line 4932 (the strip, its segments, labels, separators and spot dots, and where it stops
+  at the dBm scale) and `src/gui/MainWindow.cpp:7819-7862` (View > Band Plan: the plans
+  and the sizes 0/6/10/12/16 pt, default 6).
+- Which plan shows: if any catalogue plan carries `active`, the plan with `active` true;
+  otherwise the plan whose `name` equals the station setting `BandPlanName`; otherwise
+  the plan with `default` (ARRL (US)).
+- Produces:
+  - `BandDisplaySettings.bandPlanSize`: `off`, `small`, `medium`, `large`, `huge` (the
+    desktop's 0, 6, 10, 12 and 16 pt), kept on this phone, default `small`; stored
+    settings with the old on/off decode to `small` (on) or `off`. `bandPlanStrip` stays
+    as a computed Bool (`bandPlanSize != .off`) so callers that read it keep working.
+  - The strip drawn like the desktop's: each segment's colour dimmed by its licence class
+    (E 0.20, E,G 0.40, T 0.60, none 0.50, anything else 0.60) and blended into the band's
+    background `#0A0A14`, opaque; a `#0F0F1A` separator at each segment's left edge; the
+    label bold at the chosen size; the strip's height the size plus 4 pt; the strip stops
+    at the dBm scale; labels fitted as the desktop fits them, never overflowing their
+    segment on the phone (a label that does not fit is left out); a white dot of radius 4
+    pt at each spot's frequency, mid-strip, when the plan carries `spots` and the size is
+    not Off (no spot labels, as on the desktop).
+  - The Display sheet gains, after Line: "Band plan", a row showing the current plan's
+    name that opens the picker (the catalogue's plans in its order, a tick on the showing
+    one; picking one sends `settings.write` `BandPlanName` and the tick moves when the
+    Core's echo or catalogue delta arrives; a refusal shows the Core's words in the
+    picker); and "Size", Off, Small, Medium, Large, Huge.
+
+**Acceptance:**
+- Tests: the plan choice rule (active, then setting, then default) on three fake
+  catalogues; picking a plan sends exactly one `settings.write` with the plan's name, the
+  tick follows the echo, a `settings.reject` shows its reason and leaves the tick; the
+  size stores and decodes the old on/off; the renderer's segment colour for each licence
+  class equals the dimmed blend into `#0A0A14`; separators at each segment's left edge;
+  the strip's height is size + 4 pt and its right end the dBm scale's left edge; spot
+  dots drawn only with `spots` and a size other than Off; Off draws no strip.
+- Fixtures: after the Core task lands, the regenerated `catalog-anan-g2` and
+  `catalog-hermes-lite-2` decode with `active` and `spots`, and the phone's runner plays
+  `settings-band-plan` (write echoed, catalogue delta, unknown name refused, removal back
+  to ARRL (US)).
+- Screenshots into `task-54d-shots/`: the Display sheet with Band plan and Size; the
+  picker open; the band at Small and at Huge; beside the desktop's strip at the same size
+  for the same span (a desktop capture from the controller or an offscreen render).
+- Device (JJ): the phone's strip matches the desktop's; picking a plan on the phone moves
+  the desktop's plan.
+
+**Verification:** UI: the simulator test run and screenshots, plus
+`ios/scripts/swift-test.sh`, the interop run, `python3 scripts/verify-ios-provenance.py`
+and `python3 -m pytest -q tests/compliance`.
+
+**Execution note (advisory):** opus. Requires Tasks 52, 54b and 54c. Steps 1 and 2 need
+nothing new from the Core (a Core without `active` works through the `BandPlanName`
+setting); Step 3 runs when the Core task "The Core follows its band plan" is in the trunk
+(its hash goes in `band-plan-for-phone.md`).
+
+- [ ] **Step 1:** The size setting and the desktop's drawing, with tests.
+- [ ] **Step 2:** The Band plan picker and the plan choice rule through the settings
+  mirror, with tests, then the screenshots.
+- [ ] **Step 3:** Merge the trunk with the Core task, decode `active` and `spots`, run the
+  regenerated catalogue fixtures and `settings-band-plan`.
+
+## Task 54e: The display at desktop parity
+
+**Runs in:** the phone session, on `claude/iphone-app` (a phone task).
+
+**Requirements:** R-IOS-11, R-IOS-27, D41, D73, D75, D78, D79; JJ, 2026-09-26: the phone's
+display should match the desktop's. The audit table
+`docs/architecture/2026-09-23-iphone-app-display-parity.md` (44 rows, desktop and phone
+file:line for each) is this task's list.
+
+**Files:** `ios/NereusKit/Sources/NereusBand/` (BandDisplaySettings, BandRenderer,
+WaterfallHistory, overlays), `ios/NereusApp/Main/DisplaySheet*`, `ios/NereusApp/Band/`, and
+tests beside them. Setup's Display page belongs to Task 58; this task adds the settings it
+shows.
+
+**Produces:** every row the table marks as phone-only (39 of 44), including:
+- waterfall Color Gain and Black Level;
+- the waterfall history kept across a width change;
+- the trace and fill looks and colours, with the fill switch and the gradient;
+- the noise-floor line drawn as the desktop draws it, with its value;
+- peak blobs with their dBm;
+- peak hold's look and its Fill and On TX options;
+- the per-band dB range;
+- the spectrum/waterfall split at the desktop's default.
+Cal Offset is shown disabled with the desktop remote window's reason (the Core
+calibrates), never applied twice (table row 17). Drags on the split or the dBm scale are
+built only as JJ approves them (D78); until then the dBm scale gets the desktop's visible
+arrows. Rows that need the Core (the display while keyed, noise-floor fast attack, peak
+hold while keyed) are listed for the Core/GUI session and are not built.
+
+**Acceptance:** each row fixed has a test that fails on the old code and a line in the
+report (desktop behaviour, phone behaviour now, test); side-by-side screenshots against
+the desktop at the same span for the waterfall, the trace and fill, the noise floor, peaks
+and peak hold.
+
+**Verification:** the simulator test run and screenshots, plus `ios/scripts/swift-test.sh`,
+`python3 scripts/verify-ios-provenance.py` and `python3 -m pytest -q tests/compliance`; the
+renderer's speed test holds.
+
+**Execution note (advisory):** opus. Requires Tasks 52, 54b, 54c and 54d, and the fix
+round that keeps the waterfall across a rotation (C-b).
+
+- [x] **Step 1:** The waterfall rows and the trace/fill rows, with tests.
+- [x] **Step 2:** The overlays (noise floor, peaks, peak hold), the per-band range, the
+  split and the dBm scale arrows, then the screenshots.
+- [x] **Step 3 (JJ, 2026-09-28 night; D97, D99, R-IOS-38):** Reset to Smooth Defaults
+  on Setup's Display page (Spectrum Defaults) applies the March tuning exactly, with the
+  spectrum average time at 650 ms (alpha 0.05 at 30 frames a second, no threshold gap),
+  written to the Core's stored average time as the Core describes it (today's field is
+  `averageTimeMs`); the phone holds no averaging value of its own. If the Core/GUI
+  session's fix changes the setting's wire name, its later note names it and this step
+  follows the note. The Display defaults themselves do not change (D99). Test: the values the action writes
+  against `FakeStation`'s description, and that no other Display default moved.
+
+## Task 54f: The transmit panadapter while keyed (desktop PR #317 parity)
+
+**Runs in:** the phone session, on `claude/iphone-app` (a phone task).
+
+**Requirements:** remote parity (JJ, 2026-09-27: carry the desktop's merged PRs to the remote
+clients), R-IOS-11, R-IOS-13, D82 to D84. The Core's side: the crew folder's
+`parity-317-321-for-phone.md` section 1 (MEDIA 461-563, LINK 1152-1190, 3342-3470).
+
+**Produces:**
+- The phone declares `txDisplayVersion` (1, or 3 where the Core offers DUP) in its media
+  `start`; while keyed, the pan of the transmitting slice shows the Core's transmit
+  display (the `transmit: true` context and its trace and waterfall rows), and returns to
+  receive at the fall. A Core without it: the band says plainly the Core does not send its
+  transmit display (as the desktop's pan status does).
+- The keyed view: centred on the carrier (following XIT), the device's own span within
+  plus or minus 48 kHz, the first key at plus or minus 4 kHz, a keyed zoom remembered; the
+  device's own TX dBm window sent as `txMinDbm`/`txMaxDbm` in `subscribe`, from this
+  device's TX grid and TX waterfall levels (per pan, kept on this phone); smoothing and
+  averaging cleared and waterfall AGC reset at the rise and fall.
+- Setup's Display page gains the transmit display's settings: this device's TX grid,
+  levels and palette, and the Core's nine DisplayTx* station keys (settings.write, version
+  2 or later; disabled with the Core-update reason below it).
+- DUP where the Core sends version 3: a visible switch (on the Display sheet and Setup)
+  that keeps receive on the band while keyed (`duplex: true`), greyed with its reason below
+  version 3.
+- The high-SWR border (`txState.highSwr`, `swrWindBackLatched`) and the shared-view `limit`
+  shown plainly; the phone's own orange TX filter on the keyed view.
+
+**Acceptance:** tests for the declaration, the keyed swap and the fall, the TX window in
+`subscribe`, DUP, the SWR border; screenshots keyed beside the desktop's remote window.
+
+**Execution note (advisory):** opus. Requires Tasks 54, 54e and trunk 7ac2e9f5 or later.
+
+- [x] **Step 1:** Declaration, the keyed view and the fall, the TX window, with tests.
+- [x] **Step 2:** Setup's transmit display settings, DUP, the SWR border, screenshots.
+
+## Task 57a: AM, SAM and DSB transmit, and the AM Mod Monitor (desktop PR #321 parity)
+
+**Runs in:** the phone session, on `claude/iphone-app` (a phone task).
+
+**Requirements:** remote parity (JJ, 2026-09-27), R-IOS-13, R-IOS-18. The Core's side:
+`parity-317-321-for-phone.md` section 2.
+
+**Produces:**
+- Keying in AM, SAM and DSB works from the phone (the Core allows them for a remote
+  holder); no phone-side mode rule; the Core's `bandPlan` refusal words shown for CW, FM,
+  DRM and the rest, as sent. AM Carrier (`amCarrierLevel`) stays where Task 57 put it.
+- The AM Mod Monitor on the TX panel while the transmitting slice is in the AM family:
+  positive and negative peak percent with holds, the carrier level and lamp, the envelope
+  scope and asymmetry, as the desktop's applet shows them; laid out as the board draws it
+  (a board section first, JJ approves). Until the Core sends the monitor's readings (the
+  Core/GUI session's station task, field names to follow in that file) it is shown
+  disabled with the reason.
+
+**Acceptance:** tests for keying in each mode against the fake Core and each refusal's
+words; the monitor's fields against a fixture once the Core's wire exists; screenshots
+beside the desktop's applet.
+
+**Execution note (advisory):** opus. Step 2 requires the Core's Mod Monitor wire and JJ's
+approval of the board section.
+
+**JJ's approval of the board section, 2026-09-28 (D102):** JJ approved the AM Mod Monitor
+board section as drawn, with five choices the monitor follows:
+1. It sits below the TX panel's usual controls.
+2. Its settings open in a sheet from the monitor's Settings button only, with no other
+   way in.
+3. The sheet edits the Core's PA feedback receiver, which every device shares, and marks
+   it shared.
+4. It is on the TX panel only, not the Modes tab.
+5. The sheet has the Bars or Meters style switch.
+
+The approval half of Step 2's requirement is met; the Core's Mod Monitor wire is still
+awaited (`parity-317-321-for-phone.md` section 2, field names to follow there).
+
+- [ ] **Step 1:** AM, SAM and DSB keying and the refusals, with tests.
+- [ ] **Step 2:** The board section for the AM Mod Monitor (approved by JJ on 2026-09-28
+  as drawn, with the five choices above), then the monitor.
 
 ## Task 54: The main screen's transmit: PTT, the TX panel and the keyed view
 
@@ -7056,7 +7752,11 @@ taking it, having it taken, the radio's own PTT, the "Sharing" chip).
 
 **Interfaces:**
 - Consumes: `CommandClient` (Task 9), the transmit verbs and `txState` (Tasks 35, 39),
-  the transmit controls (Task 40), the accessory verbs (Task 42).
+  the transmit controls (Task 40's `transmitSettingsVersion` 1 to 8 properties and
+  `setTunePowerForTxBand`), the accessory verbs (Task 42's per-accessory verbs:
+  `setPgxlOperate`, `setTgxlOperate` / `setTgxlBypass` / `setTgxlAntenna` /
+  `moveTgxlRelay`, `setRfKitOperate` / `setRfKitAntenna` / `setRfKitTciMode`, not a single
+  `accessoryTxVersion` family).
 - Produces:
   - `actor PttController` with states `.idle`, `.keying`, `.keyed(since:)`,
     `.ending`, `.unkeying`, `.refused(TxRefusalInfo)`, `.linkLost`; `func tap(trigger:)`
@@ -7111,10 +7811,14 @@ taking it, having it taken, the radio's own PTT, the "Sharing" chip).
   `amp.operate`); link loss while keyed shows "The Core stops transmitting on its own
   when the link goes." and, back on the air, PTT reads Tap.
 - When `txState.stopSerial` advances with `stopReason` `timeOut`, the band shows the amber
-  notice "Transmit stopped after 3:00. That's the time-out for phone and iPad. Tap PTT to
-  go again." (the station's limit filled in) and PTT reads Tap; `micStarved`,
+  notice in the Core's words (for a phone: "Transmit stopped after 3:00, the Core's time-out
+  for phones and tablets.", `src/core/session/TransmitStateFacade.cpp`; the station's limit
+  filled in) and PTT reads Tap; `micStarved`,
   `takenOver` and `revoked` show the station's `stopText` the same way.
-- The keepalive stops within one interval of unkey; none is sent while unkeyed.
+- At local off intent, every heartbeat path stops before command dispatch and follows
+  D88 below. An unkeyed phone with VOX disarmed sends none. Armed VOX may resume its
+  heartbeat only after every pending off has its matching accepted result; a failed or
+  refused off stays suppressed until the logical session resets.
 - With transmit held by another device, a tap on PTT sends nothing to key; it opens the
   sheet, and only a confirmed Take transmit sends the request; the red "Unkey and take
   over" appears exactly when the holder is on the air; after the Core moves transmit to
@@ -7135,8 +7839,84 @@ test run. Bench: Task 70 (keying on air from the phone).
 **Execution note (advisory):** opus. The phone's transmit control: flag for earlier
 review. Requires Tasks 34, 39, 40, 42, 53, 54a, 76 and 77.
 
-- [ ] **Step 1:** The PTT state machine and keepalive with tests.
-- [ ] **Step 2:** The TX panel, the keyed view and the pills with screenshots.
+- [x] **Step 1:** The PTT state machine and keepalive with tests.
+- [x] **Step 2:** The TX panel, the keyed view and the pills with screenshots.
+
+### Approved transmit correction: release safety and command ownership
+
+JJ approved adding and fixing the reproduced bugs on 2026-09-28: "yes fix those bugs".
+D88 is the contract. This correction belongs to the existing phone transmit and
+connection work and must be verified before corrective build 9. The original approval
+preceded build 8, but JJ subsequently uploaded the existing earlier archive from Xcode
+at 06:36 CDT on September 28. Build 8 contains D87 automatic connection work and does
+not contain this transmit repair. Its device checklist remains receive-only.
+
+**Files:** `ios/NereusKit/Sources/NereusLink/PttController.swift`,
+`ios/NereusKit/Sources/NereusMirror/CommandClient.swift`, `TransmitCommandClient.swift`,
+`ios/NereusApp/App/SessionRoute.swift`, `AppModel.swift`, and focused tests beside them.
+Change other phone call sites only where these ownership boundaries require it.
+The Core session owns Core changes; do not merge the original `fix(core)` 46f01fca.
+
+**Required behavior:**
+- Mark an off as unresolved before any sender or callback can reenter. Suppress all
+  heartbeat paths, including primary fallback and independent media, while any off is
+  unresolved. Keep the 100 ms cadence and Core's 400 ms watchdog unchanged.
+- A nonzero command ID or a returned send call is not evidence that Core received the
+  off. Only that off's matching accepted result retires it. Wrong-verb, duplicate,
+  unrelated-mode, older and previous-session results cannot retire another off.
+- Failed delivery or refusal remains unresolved until logical-session reset. Another
+  successful off, a new key request, or an old Core-state observation cannot clear it.
+  Reject new on intents with a visible plain-language reconnect reason while this
+  safety state prevents transmitting. Controls remain visible.
+- Capture logical-session ownership when every ordinary command is admitted, retain it
+  through queues and repeated copies, and enforce it at physical handoff. OLD commands
+  must never use NEW's connection. Valid transport upgrades within the same logical
+  session continue working. Session end retires pending work and late completions.
+- An accepted OLD key completion may compensate only within its own live logical
+  session. It must not send an unkey or clear safety state in a replacement session.
+  Recheck ownership after callbacks or suspension before using a different send path.
+
+**Acceptance and verification:**
+- Start from the seven preserved red assertions in the crew's
+  `phone-tx-release-reproducer.md`, plus the independent assessment
+  `phone-tx-release-fence-assessment.md`. Preserve their original logs.
+- Held primary off with independent media, parameterized across PTT/MOX, TUNE and
+  two-tone with VOX armed: no post-off heartbeats; production Core watchdog or a
+  source-checked faithful oracle stops the modeled key at its unchanged deadline.
+  A sender failure, refusal, missing answer and different-mode accepted no-op cannot
+  keep it alive. Each matching accepted off permits the intended VOX behavior again.
+- Held queued send, OLD loss, NEW ready and queue release: no OLD command or copy
+  reaches NEW. Cover cancellation and buffered OLD key answers, then prove NEW commands
+  still work. Include the actual AppModel/SessionRoute path, not only a mutable mock.
+- Test rapid retap, reentrant callbacks, wrong/duplicate/out-of-order results and session
+  reset. Preserve the existing hold-to-unkey behavior and direct/manual/RV recovery.
+- Run focused package tests, affected app integration tests, provenance checks and an
+  iOS build. An independent Astra review of the final frozen safety and concurrency
+  changes is required before the controller's signed merge. Record test scope and
+  skips accurately; modeled watchdog evidence is not physical RF acceptance.
+- Rebuild the next TestFlight archive from the accepted repair source. Preserve the old
+  uploaded build 8 archive as historical evidence; check App Store Connect before any
+  upload to avoid duplicate work. Physical NAT-to-NAT and controlled TX checks remain
+  separate acceptance rows with JJ.
+
+- [x] Repair transmit release and general command-session ownership; verify regressions.
+- [x] Independently review, integrate with a signed merge, and build/upload corrective build 9.
+
+**Verified September 28, 2026:** final signed repair `786f645f4` passed independent
+Astra review and was merged by the controller with signed merge `d316b7844`. Final
+focused evidence: 23 CommandClient and 40 PttController declarations, plus 42 actual
+AppModel/microphone declarations; the earlier 70-declaration affected-app run covers
+the unchanged AM, live-level and transmit-screen suites. Provenance and archive
+verification passed. Xcode confirmed **2026.9.0 (9) uploaded at 07:39 CDT**, source tag
+`claude/iphone-app@d316b7844`, after one preserved helper-application upload failure and
+successful retry of the same archive. The initial archive with an incorrect build
+number was rejected and preserved; corrected command-line build settings produced
+the verified build 9. Reports and logs are in the existing crew workspace, including
+`phone-tx-handoff-final-independent-review.md`, `build9-archive-report.md` and
+`build9-delivery.md`. This is focused software acceptance and upload evidence, not
+completed Apple processing, physical TX acceptance or deployment of the strict Core
+watchdog. The live Rock remained at `67d9ebd5`; its update and controlled bench checks
+are separate and must not interrupt JJ's active receive test.
 
 ## Task 55a: Sound on the phone
 
@@ -7184,8 +7964,8 @@ Task 56b): the speaker, the earpiece and AirPods, and sound while locked.
 **Execution note (advisory):** opus. Requires Tasks 11 and 51. On the listening path; it
 can run before Task 54a, which puts the route menu on the speaker button.
 
-- [ ] **Step 1:** The session controller, playback and interruptions with tests.
-- [ ] **Step 2:** The route menu.
+- [x] **Step 1:** The session controller, playback and interruptions with tests.
+- [x] **Step 2:** The route menu.
 
 ## Task 55: The microphone on the phone
 
@@ -7212,7 +7992,10 @@ the background), §5.4 items 6 to 10.
   armed, and
   `stop()` on unkey or when VOX is disarmed; the band's
   playback muted while keyed and MON routed only when the output is headphones (both
-  settings on by default); the quality choice sent as the audio control's `opusBitrate`.
+  settings on by default); High by default, Save data or negotiated Lossless,
+  with the quality choice sent as the audio control's `opusBitrate` only when
+  supported and offered, and `profile` for Lossless. Receive and transmit
+  estimates match spec §5.4, including negotiated Lossless and High fallback.
   From this task on the app declares `remoteTx: 1` in its `hello`, once it can send its
   microphone as well as key, so the station's transmit gate lets it key.
 
@@ -7221,7 +8004,17 @@ the background), §5.4 items 6 to 10.
   unkeys at once and stops capture; `.ended` resumes playback, not transmit.
 - While keyed on the speaker the band is silent and MON plays nowhere; on AirPods MON
   plays.
-- High appears only when the station's catalogue lists the 48 kbit/s profile as offered.
+- Explicit 48/24 kbit/s requests use the Core's measured catalogue and
+  `audioQualityVersion` gate. High remains selectable on a legacy Core using
+  its supported Opus profile without claiming a negotiated bitrate; Save data
+  is disabled with a reason unless offered. The displayed result follows the
+  Core's actual context and refusal.
+- While keyed, Save data to High, Save data to unnegotiated Lossless, and
+  negotiated L16 to High fallback change the actual libopus bitrate at the next
+  applicable frame boundary. Keep the same capture/key, codec history, SSRC,
+  sequence and timestamp continuity; a stale tick after unkey sends nothing.
+  Prove this using the running codec's bitrate and emitted/decoded samples,
+  not only the chosen profile field. No repeated buffered microphone audio.
 - The microphone permission is requested only by Task 56a's flow, never here.
 
 **Verification:** unit tests of the session policy on the simulator; device (JJ,
@@ -7230,8 +8023,73 @@ keyed, a call arriving mid-transmission unkeys on air (Task 70's bench row).
 
 **Execution note (advisory):** opus. Requires Tasks 11, 23, 36, 54 and 55a.
 
-- [ ] **Step 1:** Capture and the transmit interruption handling with tests.
-- [ ] **Step 2:** The page and the quality choice.
+- [x] **Step 1:** Capture and the transmit interruption handling with tests.
+- [x] **Step 2:** The page and the quality choice.
+
+## Task 55b: MON in the phone's headphones
+
+**Runs in:** the phone session, on `claude/iphone-app` (a phone task).
+
+**Requirements:** D80, R-IOS-20, D15 (the TX panel and the Modes tab write the same way),
+the "Disabled, never hidden" and "Operator wording" constraints.
+
+**Files:**
+- Modify: `ios/NereusApp/Main/TransmitModel.swift` (MON's state and reason),
+  the Modes tab's Transmit section (`ios/NereusApp/Modes/`), `AudioSessionController`
+  (whether the route is headphones), the media control client in NereusMedia (the
+  monitor-audio op) and the band audio player (the monitor mixed in)
+- Create: tests beside the existing ones (`TransmitScreenTests`, `ModesTabBindingTests`,
+  a new `MonitorAudioTests`); FakeStation additions in their own extension file
+
+**Interfaces:**
+- Consumes: the capability `txMonitorAudioVersion` (1); the Core's `monEnabled` setting
+  (written using the desktop behavior); the media op `monitor-audio`
+  `{route: speakers|headphones|none}` (holder only, at the Core's monitor volume), from
+  the Core/GUI session's parity Task 32 (read the station link document's section for it
+  in the merged trunk first); the phone's current audio route (Task 55a / fix round A).
+- Produces:
+  - MON is greyed with a reason unless all hold: the Core offers `txMonitorAudioVersion`
+    ("This Core does not send the transmit monitor. Updating the Core may help."), and the
+    route is wired or Bluetooth headphones ("Plug in headphones to hear your transmit.
+    The loudspeaker would feed back into the microphone."). The same state and words in
+    the TX panel and the Modes tab.
+  - MON on writes `monEnabled` on and sends `monitor-audio {route: headphones}`; MON off
+    writes `monEnabled` off and sends `{route: none}`. If the headphones go away, the
+    phone sends `{route: none}` and MON shows off. When used by a remote transmit holder,
+    the Core's speakers stay quiet and the monitor is sent to the phone's headphones only.
+  - While keyed with MON on, the monitor plays in the headphones; unkeyed, nothing extra.
+
+**Implementation consistency question (answered, D137):** when headphones go away, the
+route loss also writes `monEnabled` off, because MON shows the Core's `monEnabled`. The
+phone still sends `{route: none}` and shows MON off. This is the controller's
+implementation call, for JJ to confirm at the pull request review.
+
+**Status (2026-10-01):** Steps 1 and 2 are done and merged into phone main. The session
+fixture waits for the Core trunk's monitor-audio fixture (the Core lead's lane started
+2026-10-01).
+
+**Acceptance:**
+- Tests: MON greyed with the first reason on a Core without the capability; greyed with
+  the second on Speaker or Earpiece; enabled on headphones; on sends exactly one
+  `monEnabled` on write and `monitor-audio {route: headphones}`; off sends the `monEnabled`
+  off write and `monitor-audio {route: none}`; unplugging sends `{route: none}` and turns
+  MON off; the TX panel and the Modes tab agree.
+- Fixtures: the monitor-audio fixture from the Core task plays through the phone's runner.
+- Device (JJ, pending): keyed on the HL2 with AirPods, the voice heard as it goes out; no
+  feedback; MON greyed on the loudspeaker.
+
+**Verification:** UI: the simulator test run, plus `ios/scripts/swift-test.sh`, the interop
+run, `python3 scripts/verify-ios-provenance.py` and `python3 -m pytest -q tests/compliance`.
+
+**Execution note (advisory):** opus. Requires Tasks 54, 55, 57 and the Core/GUI
+session's parity Task 32 in the trunk (merged into `claude/iphone-app` first). Until
+then, MON in both places is greyed with the first reason (fix round B).
+
+- [x] **Step 1:** Merge the trunk with parity Task 32; MON's state rule and both places,
+  with tests.
+- [x] **Step 2:** The monitor-audio op and playback (done except the session fixture,
+  which waits for the Core trunk's monitor-audio fixture). The device check is pending:
+  no ledger line shows it seen (verification README, D1).
 
 ## Task 56a: Connecting for listening: an address, a code and the band
 
@@ -7239,14 +8097,22 @@ keyed, a call arriving mid-transmission unkeys on air (Task 70's bench row).
 
 **Requirements:** R-IOS-16 (§5.3 items 1, 2 as it applies, 4 and 6 to 9, and 14, for a
 direct connection; the version rules of §4.4), R-IOS-08 (the app's pairing screens),
-D19, D23, JJ's listening-first order and his first test target, the Pi 4 over its public
-IPv6 address (2026-09-24).
+D19, D23, D69 (the address alone and the port in a field of its own), D70 (a Core
+that removed or forgot this phone stays listed with Pair), D72 (a phone that can't read
+its key makes a new one when asked), JJ's
+listening-first order and his first test target, the Pi 4 over its public IPv6 address
+(2026-09-24).
 
 **Files:**
 - Create: `ios/NereusApp/Connect/ConnectionFlow.swift`, `WelcomeScreen.swift`,
   `TypeAddressScreen.swift`, `PairByCodeScreen.swift`, `YourStationsScreen.swift`,
   `LinkLostBanner.swift`, `TroubleScreens.swift` (five)
 - Create: `ios/NereusApp/Tests/ConnectionFlowTests.swift`
+- Modify: `ios/NereusKit/Sources/NereusLink/DeviceIdentity.swift` (Task 15's: the one
+  explicit way to replace an unreadable key, D72)
+- Modify: `ios/NereusKit/Sources/NereusLink/ManualAddress.swift` and
+  `ios/NereusKit/Tests/NereusLinkTests/ManualAddressTests.swift` (Task 8's: the address and
+  the port read apart, D69)
 
 **Interfaces:**
 - Consumes: `PairingClient` with `PairingCarrier.direct` and `PairingError` (Task 15b),
@@ -7257,10 +8123,24 @@ IPv6 address (2026-09-24).
   address, code entry (validated against the word list), the microphone question right
   after the first pairing, your Cores (the paired ones), connecting, connected (the
   band), link lost while listening (retrying, with Cancel), back on the air, and the five
-  trouble screens. The address field takes an IPv6 literal with or without brackets and
-  a port, an IPv4 address, or a host name; with no port typed it uses the Core's default
-  remote port (Task 12). Addresses are read by `ManualAddress.parse` (Task 8), never by a
-  second parser.
+  trouble screens.
+  - Enter an address, as drawn on the board (D69): an Address field that takes a host
+    name, an IPv4 address, or an IPv6 address with or without brackets, and grows to a
+    second line so a whole IPv6 address stays readable; below it a narrow Port field,
+    filled in with the Core's standard port (47910, Task 12) and taking 1 to 65535.
+    Pasting an address with its port into the Address field (`[2001:db8::10]:50055`,
+    `192.0.2.10:47910`, `core.example:50055`) moves the port into the Port field.
+    Connect goes on to the code when this phone isn't paired with the Core. The words
+    are the board's.
+  - `ManualAddress` (Task 8) gains `parse(host:port:)`, reading the two fields apart (a
+    bare IPv6 address is a whole address here, never an address and a port), and
+    `split(_:)`, which separates a pasted address from its port by the existing rules
+    (brackets around an IPv6 address that has a port). The existing `parse(_:)` stays
+    for the pasted form, so its tests still pass. Addresses are read by `ManualAddress`,
+    never by a second parser.
+  - The code screen, as picture 24 draws it: which Core it pairs with (the typed
+    address and port, or the found Core's label), the code field, where the code is, and
+    this phone's name for the Core (D65).
   - Code entry shows the Core's `pair.fail` reason as sent (link section 3.6's table),
     with its wait: a wrong code ("The pairing code was not right. A new code will appear
     on the Core.", then 5, 10, 20 or 40 s), another device pairing (5 s), no code shown
@@ -7278,14 +8158,20 @@ IPv6 address (2026-09-24).
     not read this device's details. Update this app.").
   - Sign-in ends, read by `code` and falling back to the reason text for an older Core:
     `deviceRemoved` ("This device was removed from the Core.") and `deviceNotPaired` (a
-    Core that forgot this phone) both return to the list, say the Core must be paired
-    again, and drop that Core's stored identity; `identityChanged` shows Task 15's words;
+    Core that forgot this phone) both return to Your Cores, where that Core stays listed
+    with Pair in place of Connect under the notice "<Core> removed this phone. Pair with
+    it again to use it." (D70, picture 24); pairing again replaces its stored identity; `identityChanged` shows Task 15's words;
     `takenOver` ("Another app at … connected to the Core and took over. Connect again to
     take it back.", not retryable: until the several-devices station tasks land, one
     session at a time holds the Core, so the desktop and the phone displace each other,
     and the phone never redials on its own); `deviceProofFailed`; and the rate limit (10
     failures in 60 s lock the address out for 60 s; retryable, so the flow waits and
     tries once more).
+  - A key the phone can't read (Task 15's `DeviceKeyError.unreadableKey`) shows Your Cores
+    with the notice picture 24 draws ("This phone can't read its key any more.") and Make
+    a new key, which is the only path that ever replaces the stored key
+    (`DeviceIdentity.makeNewKey(store:)`, run only on that tap); afterwards every paired
+    Core shows Pair (D70), and the note says the Cores still list the old entry (D72).
   - Attempts never overlap: the redial after a lost link and the connection straight
     after pairing each wait for the one before to end (the Core lets one address have at
     most 2 connections still connecting, link section 12.3).
@@ -7294,8 +8180,11 @@ IPv6 address (2026-09-24).
     was not allowed to reach its own network and where to allow it.
 
 **Acceptance:**
-- `2001:db8::10`, `[2001:db8::10]:50055`, `192.0.2.10:47910` and `core.example` become
-  endpoints; a malformed address is refused with a plain reason before anything is sent.
+- In the Address field with the Port field at 47910: `2001:db8::10`, `[2001:db8::10]`,
+  `192.0.2.10` and `core.example` become endpoints on port 47910; pasting
+  `[2001:db8::10]:50055` leaves `2001:db8::10` in Address and 50055 in Port; a port
+  outside 1 to 65535 or a malformed address is refused with a plain reason before
+  anything is sent.
 - Against `FakeStation`, a code pairs over the direct carrier, and the flow connects
   straight away, signs in with the device key and shows the band, with the microphone
   question first after the first pairing and no other tap.
@@ -7313,13 +8202,15 @@ IPv6 address (2026-09-24).
 - Link lost while listening shows the retry with Cancel, and back on the air the band
   resumes; no second attempt starts while one is still connecting.
 - When the Core removes this phone (`session.end` with `code` `deviceRemoved`) or no
-  longer knows it (`deviceNotPaired`), the phone returns to the list of Cores, says the
-  Core must be paired again, and drops that Core's stored identity (spec §7); `takenOver`
-  never redials.
+  longer knows it (`deviceNotPaired`), the phone returns to Your Cores with that Core
+  listed with Pair under the notice (D70); Pair opens the code screen for its address,
+  and pairing replaces the stored identity; `takenOver` never redials.
 - Each pairing refusal shows its words and wait; the fifth wrong code says pairing has to
   be opened again at the Core.
-- Screenshots of every screen against `06-first-launch.jpg`, `07-connecting.jpg` and
-  `10-trouble.jpg`.
+- With a stored key the store can't read, the flow shows the notice and never replaces the
+  key on its own; Make a new key replaces it, and every paired Core then offers Pair.
+- Screenshots of every screen against `06-first-launch.jpg`, `07-connecting.jpg`,
+  `10-trouble.jpg` and `24-pairing-and-connecting-states.jpg`.
 
 **Verification:** authorisation flows: the flow tests on the simulator first;
 screenshots. Device: Task 56b.
@@ -7329,13 +8220,95 @@ screenshots. Device: Task 56b.
 phone's own name when Apple has granted the entitlement, "iPhone" or "iPad" otherwise. Finding a Core on this network and the one-tap claim come with
 Task 16a; the relay and the several-devices screens with Task 56.
 
-- [ ] **Step 1:** `ConnectionFlow` with its tests.
-- [ ] **Step 2:** The screens and screenshots.
+- [x] **Step 1:** `ConnectionFlow` with its tests.
+- [x] **Step 2:** The screens and screenshots.
+
+## Task 56d: Renaming a Core from Your Cores
+
+**Runs in:** the phone session, on `claude/iphone-app` (a phone task).
+
+**Requirements:** D76, R-IOS-08 (Devices: rename), spec §5.2 item 8, D23 ("Needs a newer
+Core"), link section 8.2 (the label's form) and section 9 (`station.rename {label}`,
+`deviceAdminVersion` 1, minor 11; fixtures `devices.json`, `devices-not-offered.json`).
+
+**Files:**
+- Modify: `ios/NereusApp/Connect/YourStationsScreen.swift`, `ConnectionFlow.swift`; the
+  stored Core (`PairedStation` and its store, Task 15) keeps the name the Core reports
+- Create: `ios/NereusApp/Connect/RenameCoreSheet.swift`; tests in
+  `ios/NereusApp/Tests/ConnectionFlowTests.swift` (or a new file) and the app fixture runner
+
+**Interfaces:**
+- Consumes: `CommandClient` (Task 9) for `station.rename`, the `devices` object's
+  `stationLabel` (link section 9.1) and `pair.accept`'s `label` (Task 15b; `hello` carries
+  no name), the
+  Your Cores rows (Tasks 56a, 16a), `StationSession` (sign-in, Task 15).
+- Produces: pressing and holding a Core's row in Your Cores offers Rename (with the
+  row's other actions, if any); Rename opens a sheet titled "Rename this Core" with the
+  name field filled with the Core's current name (empty when it has none), the Core's
+  rule under it ("Your callsign, then / and a name, like KG4VCF/shack."), Save and
+  Cancel. Save sends `station.rename` over the session to that Core: the one already
+  connected, or a sign-in the phone makes for it (the not-answering and trouble screens
+  as for any connect). Accepted: the sheet closes, the row and the band's toolbar show
+  the new name at once and keep it (the stored Core updated from the Core's
+  `stationLabel`). Refused: the sheet stays open with the Core's words under the field.
+  A Core without `deviceAdminVersion` 1: Rename is shown greyed with "Needs a newer
+  Core". A Core that has no name shows its address as its row's title, as today.
+
+**Acceptance:**
+- Tests against the fake Core: rename accepted (row and stored Core updated); refused
+  with the Core's reason shown and nothing stored; greyed without `deviceAdminVersion`;
+  rename of a Core not connected signs in first; `devices.json`'s rename steps run in the
+  app fixture runner if they are app-runnable.
+- Screenshots into `task-56d-shots/`: the row's press-and-hold menu, the sheet empty and
+  filled, a refusal, the renamed row.
+- Device (JJ, pending until observed): the Pi renamed from his iPhone shows the new name
+  on the phone and on the desktop.
+
+**Verification:** UI: the simulator test run and screenshots, plus `ios/scripts/swift-test.sh`,
+`python3 scripts/verify-ios-provenance.py` and `python3 -m pytest -q tests/compliance`.
+`ios/scripts/generate-project.sh && xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR -derivedDataPath ios/.build/sim -destination 'platform=iOS Simulator,name=iPhone 17' test`.
+
+**Execution note (advisory):** opus. Requires Tasks 15, 16a and 56a. After Task 54c (JJ,
+2026-09-25).
+
+- [x] **Step 1:** The press-and-hold menu, the sheet and the command, with tests.
+- [x] **Step 2:** The screenshots.
+
+## Task 56e: Remove a saved Core
+
+**Runs in:** the phone session, on `claude/iphone-app`.
+
+**Requirements:** D91, D78, R-IOS-16. JJ, 2026-09-28: "remove should disconnect then remove".
+
+- Add Remove Core to the existing visible actions menu in Your Cores and to the Core
+  section of Radio while connected. Both reach the same operation, since the saved list
+  is not shown during an active session. A single action handles disconnect and removal.
+  Its confirmation explains that only this phone's saved entry is removed.
+- If this Core is connected, connecting or reconnecting, cancel its pending work and
+  complete the existing safe disconnect before deleting its saved record. Respect the
+  existing transmit gate and show its reason while removal is disabled. Removing an
+  unrelated saved Core must not disconnect the current one.
+- Remove local saved identity, all addresses, route hints and per-Core pairing/retry
+  flags. Keep this phone's own device key and every other Core record. This is not a
+  Core device-revocation command. Nearby discovery can still list a Core that offers
+  pairing; discovery and stale callbacks must not silently restore the saved entry.
+- If secure storage cannot save the removal, retain the row with a plain error and a
+  visible way to retry. Do not report successful removal from transient UI state alone.
+- Verify connected, connecting, reconnecting and disconnected cases; unrelated Core
+  isolation; delayed callbacks and replacement sessions; last-entry empty list; storage
+  failure; and deliberate re-pairing. Check the visible menu on the phone layout.
+
+- [x] Implement and verify the removal flow, then signed controller integration.
+      Accepted 2026-09-28 at signed lane `1870d90f`, controller merge `42a3c927`: 13
+      removal regressions plus the Radio screenshot case and one visible-menu
+      confirmation UI test passed. Independent review accepted the frozen change.
+      Simulator/fake-Core evidence only; physical phone use and TestFlight delivery
+      remain separate checks.
 
 ## Task 56b: The listening build on JJ's iPhone
 
-**Runs in:** the phone session's controller with JJ, once Tasks 15, 52, 53, 54a, 55a and
-56a have landed and the Core/GUI session has put their station half on the Pi 4.
+**Runs in:** the phone session's controller with JJ, once Tasks 15, 52, 53, 54a, 54b, 55a
+and 56a have landed and the Core/GUI session has put their station half on the Pi 4.
 
 **Requirements:** JJ's listening-first order and test target (2026-09-24); the Device
 evidence of R-IOS-11 (the band on a real iPhone), R-IOS-16 (connecting by a typed
@@ -7372,8 +8345,18 @@ never sent anywhere), spec §4.7 (sound while locked).
    band from the HL2.
 5. Sound on the speaker, the earpiece and AirPods; locking the phone keeps it playing.
 6. Tuning by drag and by tap, zoom, and the RX panel's controls change what he hears.
-7. Turning Wi-Fi and cellular off shows the link-lost screen; turning them on reconnects.
+7. Airplane Mode shows NO NETWORK ("This phone is offline.") and reconnects when it is
+   turned off; Wi-Fi off with cellular on shows LINK LOST with its retries and Cancel,
+   then back on the air (over cellular where the carrier gives IPv6, else when Wi-Fi
+   returns); Cancel shows Reconnect and Back to Cores; no band scale or strip shows
+   through a cover's words (spec section 7).
 8. The band's frame time on the iPhone (Task 52's device check).
+9. Deleting the app and installing it again keeps the pairing (D67): the phone signs in
+   to the Pi's Core again with no code, the key and the paired Core read back from the
+   Keychain (the unhosted tests can't reach the real Keychain, Task 15).
+10. The Pan 1 and Display sheets (Task 54b, D73) against the Pi's Core as installed: what
+    it can't do yet is greyed with "Needs a newer Core", the rest acts on the band, and
+    the display settings survive reopening the app.
 No address, code or key goes into the repository or a log.
 
 **Verification:** device, JJ with the controller; each row pending until observed.
@@ -7433,7 +8416,8 @@ that's away, transmit on its way, a slice held by the radio's mic) is Task 54's.
     edges with no fill, and a label at the foot of the spectrum with its letter and
     `ownerShortName`, TX while `txSlice` is true, and "away" (greyed) while `ownerAway`;
     a tap on the label opens a note with whose slice it is, its frequency and mode, and
-    "Only the <owner> can tune it or close it". It is never tuned from this device.
+    "That slice belongs to <holder>. It can be changed only there." (D115, the Core's
+    words, with the Core's holder words). It is never tuned from this device.
   - The fifth-device sheet from `session.held`: the devices idle longest first, the
     choice starting on the first replaceable one, a device that's away first and marked
     so; picking one on the air turns the button red ("Unkey and take <device>'s place");
@@ -7485,6 +8469,11 @@ pending until observed): the phone and the desktop on one Core (Task 70).
 **Execution note (advisory):** opus. Requires Tasks 41 and 71 to 75 (station), and 15,
 16a, 53, 54a and 56a. It runs once those station tasks are in the integration branch, before
 transmit and remote access.
+Built 2026-09-26 without the fifth device's question and the place-taken screen: Task 41
+(`session.held`, `session.takeover`, `session.end` `takenOver`) is not in the Core trunk
+yet; `FifthDeviceSheet` and `PlaceTakenScreen` are built in a follow-up when it is, and
+until then a full Core ends the connection with its retryable "The Core already has four
+devices connected."
 
 - [ ] **Step 1:** The reports, the declaration and the markers, with tests.
 - [ ] **Step 2:** The fifth device, the confirmations and the notices, with screenshots.
@@ -7495,7 +8484,8 @@ transmit and remote access.
 
 **Requirements:** R-IOS-16 (§5.3 items 5, 6 and 14 as they reach beyond one network: Set
 up a Core, the Core-not-answering screen listing this Wi-Fi, direct and relay; pairing by
-code through the relay), R-IOS-08 (pairing through the relay), D22.
+code through the relay), R-IOS-08 (pairing through the relay), D22 (takeover behavior only;
+route selection and path switching are Task 29a).
 
 **Files:**
 - Create: `ios/NereusApp/Connect/SetUpAStationScreen.swift`
@@ -7515,7 +8505,49 @@ code through the relay), R-IOS-08 (pairing through the relay), D22.
   to check; this phone offline also says the Core has already unkeyed when it was keyed.
 - Pairing by code through the rendezvous connects straight away through the normal path,
   as Task 56a's direct pairing does.
+- Existing-device code pairing uses full SPAKE and preserves its existing device record;
+  direct, Bonjour and manual-address pairing remain available while rendezvous is offline.
+- A saved manual route remains a fallback after rendezvous is used, a fresh rendezvous
+  attempt handles a changed IP without persisting ICE candidates as manual addresses, and
+  a later better direct route can upgrade with the Task 29a switch and media behavior.
+- Pairing never recurs during reconnect or route change. Core identity is checked on each
+  connection, and wrong identity, revocation, cancellation and offline service cannot
+  start another authentication.
 - Screenshots of every new screen against `07-connecting.jpg` and `10-trouble.jpg`.
+
+**Relay allocation cleanup verification, required before build7:** both libjuice
+integrations use a tracked, bounded cleanup transaction. Closing immediately stops
+application delivery and new allocations, permissions, gathering, and nonzero refreshes.
+Cleanup covers every known allocation and every entry for which an authenticated Allocate
+was sent, including pending and failed entries. The client retains the socket and cleanup
+state through the attempt; only a matching response from the intended server that passes
+transaction ID and TURN integrity validation can acknowledge release. Retries keep the
+release transaction ID, handle stale nonce within the original deadline, and never rearm
+Allocate. Use the existing 500 ms retry baseline with attempts at 0, 0.5, 1.5, and 3.5
+seconds and one shared 5 second maximum network release window; successful cleanup ends
+early. At expiry or network loss, stop release sends and report cleanup unconfirmed; server
+expiry remains the fallback. The five seconds bounds network retries, not OS DNS completion,
+scheduling delay, or memory retention. Retain the agent until its already-running resolver
+finishes, then free it exactly once. Use the existing libjuice poll scheduler and the
+libdatachannel `ThreadPool` plus `Init` token for the retained owner and final destruction;
+add no thread. No added wait blocks UI, public close, callbacks, registry locks, or the
+shared teardown worker. Keep the current admission policy and add no peer cap; inherited
+unbounded OS DNS retention remains an explicit limitation. No protocol change.
+
+The fake regression skips a relay socket invalidated earlier in the same selected-key
+batch, stays alive, and releases the other allocation. Its ready-key crash regression must
+retain stderr and process liveness diagnostics. Fake counters distinguish cumulative
+created and released allocations from current live allocations. Focused tests inject first
+release request loss, first response loss, delayed Allocate success while closing, failed
+known allocations, stale nonce and invalid acknowledgements, total loss, reconnect, and
+duplicate close. Assert no callback after free, no allocation recreation, prompt close, and
+continued service for another active agent. Do not describe the historical delay as proven
+packet loss; the fake crash or teardown timing may also explain it.
+
+The phone owner handles the iOS libjuice patch, vendored materialization, and Swift harness.
+The Core owner handles Core libjuice integration and its CMake/tests. Both implementations
+use the same cleanup behavior and test matrix. The coordinated phone and Core fixes and
+regressions must be complete before build7.
 
 **Verification:** the flow tests on the simulator; screenshots; device (JJ, pending until
 observed): pairing by code through the relay.
@@ -7568,8 +8600,8 @@ observed): a change on the phone shows on the desktop remote window.
 **Execution note (advisory):** opus. Requires Tasks 19, 40 and 51 and the remote radio
 hardware plan.
 
-- [ ] **Step 1:** The sections bound to the mirror, with the binding tests.
-- [ ] **Step 2:** The two-radio test and screenshots.
+- [x] **Step 1:** The sections bound to the mirror, with the binding tests.
+- [x] **Step 2:** The two-radio test and screenshots.
 
 ## Task 58: Setup and Devices
 
@@ -7613,11 +8645,16 @@ Touch section and the dial (R-IOS-12), PTT buttons and the transmit time-out gro
     (shows the code); "Up to four devices can be connected at once. TX marks the one
     with transmit. Revoking drops that device at once, even mid-session."
   - PTT buttons: the headset button, a paired Bluetooth PTT button, the Action button;
-    "Key a locked phone" on by default; a Transmit time-out group marked Core, "Stop
+    "Key a locked phone" on by default once Task 65 wires it (until then the app draws the
+    switch greyed and off, labelled "Buttons key a locked phone", with the reason "A locked
+    phone can't be keyed. Locking the phone ends a transmission."); a Transmit time-out group marked Core, "Stop
     transmitting after: 3 minutes" (30 seconds to 30 minutes, or off), writing
     `RemoteMoxTimeOutEnabled` and `RemoteMoxTimeOutSeconds`.
   - Battery and sessions, Navigation and Data use carry exactly the choices and defaults
     listed in spec §5.1 item 9, §5.4 item 11 and §5.5 items 9 to 11.
+  - Display on this phone: every `BandDisplaySettings` field, including the manual
+    waterfall levels and the noise-floor choice the Display sheet leaves out; the Display
+    sheet's "More display options in Setup" (Task 54b) lands here.
 
 **Acceptance:**
 - The rendered tree matches the spec's table, category by category, page by page, for
@@ -7644,21 +8681,132 @@ Connected now Tasks 34, 71, 73 and 77.
 
 - [ ] **Step 1:** The description model and the generic page renderer with tests.
 - [ ] **Step 2:** Devices and the This phone pages; screenshots.
+- [ ] **Step 3 (JJ, 2026-09-28 night; D98, R-IOS-39):** Diagnostics > Settings
+  Validation shows "Repair invalid settings" in place of "Reset to defaults", with the
+  same repair behaviour, and it runs on a remote Core. The phone takes the action's label,
+  state and confirmation from the Core's description and sends the Core's verb; the
+  phone's check of the Settings Validation actions
+  (`SetupDescription+ClosedMetadata.swift`, `hygieneActions`, which today accepts only a
+  disabled "Reset to Defaults" with "Reset to defaults is not available on this Core.")
+  accepts the renamed action as the Core describes it. Wherever else the phone shows this
+  action, it shows the Core's label. Waits on the Core/GUI session's description change
+  and its note; until then the action stays as today, disabled with the Core's reason.
+  Tests: the renamed action rendered from a description, its message against
+  `FakeStation`, and an older Core's description still accepted.
+
+## Task 58a: Settings backup and restore on the phone
+
+**Deferred (JJ, 2026-09-28; D107; out of this release and kept on the roadmap, D133):** JJ
+called the backup and restore "way too complex" and deferred it to a later plan; on
+2026-09-30 he moved it out of this release and said to keep it on the roadmap ("Option 1
+but keep on roadmap"). It is deferred to a later release. This task is not built, its
+board section stays a draft, and nothing below is dispatched until JJ brings it back. The
+Core was told.
+
+**Runs in:** the phone session, on `claude/iphone-app` (a phone task).
+
+**Requirements:** R-IOS-35, D93, D94 (JJ, 2026-09-28 night, rulings 7b and 4), spec §5.2
+item 10 (Diagnostics > Export / Import), R-IOS-17 (the other devices named before a
+restore), the transmit safety boundary (a restore never keys and is refused while anyone
+transmits).
+
+**Board first:** this is new UI, so, as Part J requires of every screen, the backup and
+restore pages (the save, the open, the question naming the other devices, the refusal
+and the progress through the radio reconnect) are drawn as a board section first and
+built only after JJ approves it.
+
+**Files:**
+- Create: `ios/NereusApp/Setup/SettingsBackupPage.swift`,
+  `ios/NereusKit/Sources/NereusMirror/SettingsBackupFile.swift` (reads and writes the
+  combined file), `ios/NereusKit/Sources/NereusMirror/SettingsExportClient.swift` (the
+  Core's export verbs)
+- Create: `ios/NereusApp/Tests/SettingsBackupPageTests.swift`,
+  `ios/NereusKit/Tests/NereusMirrorTests/SettingsBackupFileTests.swift`
+- Modify: `ios/NereusKit/Sources/NereusLink/LinkFeatures.swift` (`settingsBackup: 1`),
+  `ios/NereusApp/Info.plist` (the file type, so the Share sheet and Files open a
+  `.nereus-settings` file in the app)
+
+**Interfaces:**
+- Consumes: the Core's settings export (`settingsBackupVersion` 1:
+  `station.settingsExport.begin`, `.read`, `.cancel`, link document "Paired Core settings
+  export", with its limits, checksum and refusal while on the air); the desktop's
+  combined format (`src/core/settings/SettingsBackup.{h,cpp}`: a window part and a Core
+  part, each at most 16 MiB, the file at most 64 MiB); `connectedDevices` (Task 71) for
+  the names; `txState` (Task 39) for who transmits; `PhoneSettings` and
+  `BandDisplaySettings` (Tasks 51, 54b) for this phone's part.
+- Produces:
+  - **Back up:** fetches the Core's part through the export verbs, adds this phone's
+    settings in the part where the desktop remote window puts its own, and hands one
+    `NereusSDR.nereus-settings` file to the Share sheet. No pairing key goes in: not
+    this phone's device key, not its saved Cores' identity keys, not the Core's identity
+    key or pairing records. A Core that does not offer
+    `settingsBackupVersion` greys Back up with its reason; the Core's refusal while on the
+    air is shown as sent. Nothing partial is ever saved.
+  - **Restore:** opens a file handed to the app through the Share sheet or Files,
+    checks it whole before anything changes, then names the other devices connected to
+    the Core and asks. On yes the Core applies its part with a radio reconnect, the other
+    devices reconnect by themselves, and this phone applies its own part. Refused while
+    any device transmits, with the Core's reason as sent. A failed or refused restore
+    leaves every setting as it was, on the Core and on this phone. **Waits on the Core's
+    restore wire note** (the Core/GUI session's note to follow; the link document today
+    says restoring is not a version-1 command): until it lands, Restore is shown
+    disabled with a plain reason that this Core cannot restore a backup.
+
+**Acceptance:**
+- A backup from the phone decodes as the desktop's `SettingsBackup::decode` reads it
+  (a shared vector), with both parts present, and a test searching the file finds no
+  key, token, pairing code or pairing record.
+- The export follows the link document's rules (exact offsets, length and checksum;
+  cancel on leaving the page; the Core's busy and on-air refusals shown as sent).
+- The restore question names each other connected device as the Core lists it; no
+  restore starts without the yes; a restore while any device transmits is refused with
+  the Core's words; a failed restore changes nothing.
+- Screenshots of back up, the question, the refusal and the reconnect, against the
+  approved board section.
+
+**Verification:** `ios/scripts/swift-test.sh` and the simulator test run; integration
+with a real Core and a second device connected (JJ, pending until observed).
+
+**Execution note (advisory):** opus. Requires Tasks 58, 71 and 39, JJ's approval of the
+board section, and for Restore the Core's restore wire.
+
+- [ ] **Step 1:** The board section for backup and restore; JJ approves it.
+- [ ] **Step 2:** Back up: the export client, the combined file with this phone's part,
+  the Share sheet, with tests and screenshots.
+- [ ] **Step 3:** Restore, once the Core's restore wire note lands: open, check, name and
+  ask, the Core's apply and reconnect, this phone's part, the refusals, with tests and
+  screenshots.
 
 ## Task 59: The Tools and Radio tabs
 
 **Runs in:** the phone session, on `claude/iphone-app` (a phone task).
 
-**Requirements:** R-IOS-18, spec §5.2 items 3 to 5.
+**Requirements:** R-IOS-18, R-IOS-32, R-IOS-33, D89, D90, spec §5.2 items 3 to 5.
+
+**JJ addition, September 28, 2026:** build 8 now connects through RV in JJ's test,
+but Direct does not reveal the selected IP address or address family. Add actual
+connection details and **all desktop Network Diagnostics features**, as explicitly
+confirmed by JJ after the initial request for latency and Core charts. JJ prefers
+Tools for these live diagnostics. Use a visible **Connection and performance** entry; rename
+the current Setup page that only contains Licences and the build identifier to
+**About this app**, preserving those contents and adding the full desktop About
+information as JJ subsequently requested (D90). These are plan additions, not claims
+that the features have shipped. The D88/build 9 correction keeps its priority.
 
 **Files:**
 - Create: `ios/NereusApp/Tools/ToolsTab.swift`, `TxEqualizerPage.swift`,
   `PureSignalPage.swift`, `DiversityPage.swift`, `TciServerPage.swift`,
-  `VaxAudioPage.swift`, `NetworkDiagnosticsPage.swift`, `SupportBundlePage.swift`
+  `VaxAudioPage.swift`, `ConnectionPerformancePage.swift`, `ConnectionPerformanceModel.swift`,
+  `ConnectionChartsView.swift`, `SupportBundlePage.swift`
 - Create: `ios/NereusApp/Radio/RadioTab.swift`, `StationAndLinkSection.swift`,
   `RadioAtAGlanceSection.swift`, `AccessoriesSection.swift`, `ManageRadiosPage.swift`,
   `ProtocolInfoPage.swift`
-- Create: `ios/NereusApp/Tests/ToolsAndRadioTests.swift`
+- Modify: `ios/NereusApp/Setup/SetupTree.swift`, `DiagnosticsView.swift`,
+  `ios/NereusApp/UITests/BuildTagUITests.swift`, `TabBarUITests.swift`
+- Create: `ios/NereusApp/Setup/AboutAppPage.swift` and bundled About content/resources;
+  reuse `LicensesView.swift` and `Resources/Licenses.json` for actual phone notices
+- Create: `ios/NereusApp/Tests/ToolsAndRadioTests.swift`,
+  `ConnectionPerformanceTests.swift`, `ConnectionPerformanceShotTests.swift`
 
 **Interfaces:**
 - Consumes: the catalogue's tool list (Task 19), the transmit controls (Task 40), the
@@ -7670,8 +8818,7 @@ Connected now Tasks 34, 71, 73 and 77.
     TX Equalizer, PureSignal (on, off and status only; calibration stays at the Core),
     Diversity, TCI Server (the Core's switch and port, and its connected clients),
     VAX Audio (the Core's VAX channels from the `vax` object: the slices
-    feeding each, gain, mute, level), then the phone's Network Diagnostics and Support
-    Bundle. CWX, Memory Manager and CAT Control appear when the desktop builds them;
+    feeding each, gain, mute, level), then **Connection and performance** and Support Bundle. CWX, Memory Manager and CAT Control appear when the desktop builds them;
     MIDI Mapping and Macro Buttons are dropped for now (D42).
   - Radio: the Core and link (name, direct or relay, round-trip time) and Disconnect;
     the radio at a glance (model, firmware, protocol, sample rate, slices in use, PA
@@ -7684,19 +8831,292 @@ Connected now Tasks 34, 71, 73 and 77.
     to the share sheet; nothing is sent anywhere by the app itself.
 
 **Acceptance:**
-- Each Station tool page reads and writes through its owner; a tool or Radio item the
-  station does not offer is absent, and appears as soon as the catalogue offers it
-  (tested by changing `FakeStation`'s catalogue while the tab is open).
-- Network Diagnostics shows the path (direct or relay), round-trip time, loss and what
-  the last connection tried.
+- Each Station tool page reads and writes through its owner. A control that cannot
+  run remains visible, disabled with a plain reason, and enables when the catalogue
+  offers it (test changes while the tab is open). Only controls for physically absent
+  radio hardware are hidden under JJ's hardware-presence exception.
+- Diversity follows D142 on a Core negotiating `diversityControl` 1: complete
+  station-wide live-owner state, one revision/identity/control-guarded move, and
+  read-only access for listeners without control. Source and target must both be
+  controlled by the caller. Close turns it off without promotion; restart restores
+  only the named surviving slice and blend. PureSignal keeps it running where
+  supported and otherwise reports a pause. Legacy slice-A controls remain supported;
+  missing movable support greys transfer with a reason. Verify full and folded flag
+  badges, the exact destination page, page On/Off beside Use, and real 44-point
+  targets in phone/iPad portrait, landscape, light, dark and large text. Both-radio
+  benches must measure move interruption and verify unrelated slices, paired input
+  tuning/null and PureSignal coexistence/pause/recovery.
+- The September 28 diagnostics board layout is approved: charts stack vertically
+  in portrait and use two columns in landscape where space permits. The labelled
+  Tools entry and existing dot/ms control open this same Connection and performance
+  destination. Preserve the single passive information row without a Details button.
+- Connection and performance opens from a labelled Tools entry with no hidden touch
+  target. Show the actual selected control and media routes separately when different:
+  remote numeric address and port, IPv4 or IPv6 (including scope where applicable),
+  transport, direct or relay, and the role of rendezvous in finding the route. An RV
+  introduction followed by direct traffic must not be described as relayed traffic.
+  A saved manual address, DNS name or advertised candidate is not evidence of the
+  selected socket/ICE peer. If an active endpoint cannot be observed, say unavailable.
+- Route details follow real upgrades, fallback, network changes and reconnection.
+  Retired-session callbacks cannot overwrite NEW details. Preserve saved manual
+  fallback and code-only pairing. Show the latest attempt/failure information with
+  its age, and clear or mark old readings when disconnected rather than showing them
+  as current. An IPv6 address must wrap/read fully in both phone orientations.
+- Implement the complete diagnostics inventory below using native phone drawing,
+  retaining each series' source, units, scale, history length, cadence and gaps. Label
+  network round-trip time distinctly from measured audio or processing latency.
+  Core readings describe the Core, and radio readings describe its radio link. Compare
+  exact desktop sources and matching sample fixtures before implementing and before
+  TestFlight; store the comparison in the crew workspace. D4/D83 still forbid copying
+  Thetis, WDSP or AetherSDR implementation into iOS, including the desktop's attributed
+  graph/history implementation. Reproduce the specified behavior in original Swift.
+- Unsupported measurements stay visible with their reason; missing, stale or failed
+  samples are never plotted as zero or healthy. Keep controls visible and disabled
+  with reasons where unavailable. Bounded history and view lifecycle must not add
+  needless latency, duplicate collectors, extra traffic or battery load to receive
+  operation. Continue the bounded session history while its page is closed; stop chart
+  rendering when hidden and respect the phone's existing background lifecycle.
+- Tests cover direct IPv4, direct IPv6, RV-assisted direct and relay, distinct control
+  and media paths, a same-session upgrade, NEW replacing OLD, unavailable endpoints,
+  absent/older Core capabilities, stale/disconnected data, all graph/detail fixtures,
+  history compaction/gaps, series selection, and session-stat reset isolation.
+  Verify the Setup rename retains Licences and the actual build identifier, and that
+  there is one live connection/performance destination rather than duplicate pages.
 - Screenshots against `05-tabs.jpg`.
 
-**Verification:** tests against `FakeStation`; screenshots.
+**Complete diagnostics parity inventory (D89):**
+
+Desktop source authority: `MainWindow::openNetworkDiagnostics` chooses
+`src/gui/RemoteDiagnosticsDialog.cpp` for remote windows and
+`src/gui/NetworkDiagnosticsDialog.cpp` for local windows. Also read
+`RemoteTelemetryController.cpp`, `TelemetryHistory.{h,cpp}` and the header-only
+`TimeSeriesGraphWidget.h`. The remote chart/telemetry baseline is committed ancestor
+`7ac2e9f50dc59596ccfade1923fc38297c39b36f`, verified against phone `d316b7844` and
+Core `899e9b742`; recheck subsequent changes before implementation. The shared source
+map is `~/.config/nereus/work/core-gui-phone-chart-source-map.md`. The following is
+required content, not optional examples or a mandate to copy the wide desktop layout.
+
+| Desktop section | All graphs and readings to retain |
+| --- | --- |
+| Connection | Total Core-to-app, app-to-Core and combined application traffic; Core-radio RX/TX throughput; control received/sent traffic. Keep the traffic scopes and units distinct. Add the actual selected control/media addresses and path information specified above. |
+| Round trip / buffering | Radio RTT and Core RTT; speaker queue; time since last accepted audio packet; measured audio delay, delivery delay and accuracy bound. RTT/2 is never an audio-delay estimate; the accuracy bound is not a latency. |
+| Audio | Received packet versus content traffic; Core encoded, accepted and refused packets plus phone decoded, concealed and late packets per second; Core source frames per second; source-drop, underflow and overflow events per second. |
+| Core | System and Core-process CPU normalized across all processors; available and resident-process memory; hottest sensor temperature and name; per-slice receiver processing load with the 100% cannot-keep-up reference. |
+| Detailed readings | Connection/audio/radio status and measurement ages; PA voltage and separately named DC voltage; Core-radio packet loss over 5 seconds, jitter, longest packet gap over 1 second, sample rate and UDP packet count; Core audio rates; speaker queue and measured delay explanation; stream generation, accepted/start-discarded/decoded/concealed/late/invalid/duplicate/header-rejected packets; underflows/overflows, consumed frames, last-packet age and lifetime interruptions; arrival jitter, missing/expected packets, concealed 40 ms intervals, reorder and adaptive network buffers, link interruptions, burst-dropped/skipped audio and clock drift in ppm. Preserve each counter's actual reset boundary. |
+| Additional local-window features | Status, connection uptime, radio identity, protocol and firmware, radio IP and MAC; maximum observed RTT; audio backend and buffer; session underrun count; ADC overload; visible Reset session stats. Identify whether each value belongs to the phone, Core or radio. Reset only the documented diagnostics-session counters, not lifetime or billing/data-use totals, Core configuration or other clients' state. Missing remote fields are explicit Core dependencies, not grounds to omit the rows. |
+
+- Retain all history choices: 1 minute, 5 minutes, 15 minutes, 1 hour, 24 hours and
+  7 days. Use bounded one-second observations for the recent hour and minute history
+  for seven days, with weighted compaction and bounded plotted points. Do not invent
+  history for time when the phone could not collect it.
+- Retain selectable series, single-series focus, combined-series comparison, all-series
+  reset, legends with units/colors, live values, scales and reference lines. Adapt desktop
+  legend clicks and Ctrl-click to visibly labelled phone controls; no hidden gesture is
+  required. Explanations currently in tooltips must have a visible way to read them.
+  Details must be readable and copyable through an explicit control, not long-press alone.
+- Render at most once per second while visible and show current data immediately on
+  opening. Station samples expire after 3 seconds and RTT after 60 seconds; retain RTT
+  between pings with its age. Preserve gaps on session changes, stale/missing/nonfinite
+  samples and source gaps over 3 seconds. Measured zero remains a valid zero. Keep
+  historical sessions distinguishable from current readings and from another Core.
+- Use common units across a graph's selected range: traffic kbps/Mbps at the desktop's
+  1000 kbps boundary and memory MiB/GiB at 1024 MiB. Display missing values in words.
+  Do not describe submitted sends as delivered packets or concealment events as loss %.
+- Map every field to a versioned Core snapshot or a local phone measurement before
+  coding it. Baseline station telemetry is minor 3/version 1; host load needs minor
+  10/version 2; receiver load minor 11/version 3; radio-link status version 4 and HL2
+  link readings version 5 at minor 11. The present Core host sampler is Linux-only;
+  older, Mac and Windows Cores need honest unavailable reasons until supported.
+  Audio delay needs real Core clock replies and active playback. Producer elapsed time
+  cannot be compared directly to phone time. Actual selected endpoints come from the
+  phone's transport observations, not station telemetry or a saved candidate.
+- Maintain a row-by-row parity checklist in the crew workspace covering both desktop
+  dialogs, all 15 remote graphs, all detail fields and all actions. An unsupported row
+  remains open with its dependency and reason, not silently marked complete. Add phone
+  portraits/landscapes to the existing board for JJ's layout review before building the
+  new arrangement. The scope is all Network Diagnostics features, not a new request to
+  add every desktop Tools-menu tool beyond the existing plan.
+
+**About this app parity (D90):**
+
+- Audit `src/gui/AboutDialog.cpp:134-525` and the releases/What's New action in
+  `MainWindow.cpp` at the verified desktop baseline. Carry over every information
+  group: icon/name, app identity and creator; project lineage and full contributor
+  roster; all project, attribution, issue, release, upstream, protocol and community
+  links; Built With; copyright, warranty, licence/dual-licensing pointers,
+  AI-assisted authoring disclosure, repository and TAPR protocol credit.
+- Adapt identity to the iPhone/iPad app: read actual bundle version and build, retain
+  the optional branch/source tag, and use native phone platform/build information.
+  Desktop Qt/C++/FFTW/WDSP versions and build date must not be presented as phone
+  components. Retain their project-history information under clearly named
+  desktop/Core credits; the phone's Built With and Licences identify what it actually
+  ships, sourced from its manifest and full bundled notices.
+- Preserve the complete roster and legal information with readable native sections or
+  visible labelled subpages. Do not silently shorten credits. Present project lineage
+  without suggesting that Thetis, WDSP or AetherSDR code was copied into iOS. The
+  phone's own licence and App Store permission clause (D4, R-IOS-29) remain authoritative
+  for the app. Attribute desktop terms to their proper work and preserve legal links.
+- Link Corresponding Source and the privacy/source pages required by Task 69. The About
+  page is not complete until those destinations exist for the distributed build.
+  Source identity, licence notices and credits remain readable offline. External links
+  are visibly labelled and failures receive a plain explanation. Do not invent a build
+  date or hard-code the desktop release version as the phone's version.
+- Keep a visible About entry reachable without a live Core, preserve the existing
+  Licences destination, and update Setup wording, accessibility identifiers and tests
+  coherently. Verify every content group/link against the desktop audit, the complete
+  phone licence list and actual archived bundle values. Include small/large type,
+  portrait and landscape screenshots in the existing board review.
+
+**Verification:** tests against `FakeStation` and the selected-route adapters; chart
+fixtures checked against the desktop source; screenshots in both orientations;
+receive-only device observations of IPv4, IPv6 and RV/relay routes. Record missing
+Core fields and deployment/version requirements explicitly.
 
 **Execution note (advisory):** opus. Requires Tasks 19, 25, 40, 45, 51 and 58.
 
-- [ ] **Step 1:** The Tools tab and its pages.
-- [ ] **Step 2:** The Radio tab and Manage Radios; screenshots.
+- [ ] **Step 1:** Freeze both desktop diagnostics sources and the complete parity matrix with the
+      Core controller; map current phone route observations and resolve any missing
+      versioned Core contract before writing the affected chart.
+- [ ] **Step 2:** The Tools tab, complete Connection and performance pages/readings/actions
+      and other pages, with route-ownership, history, stale-data and desktop-fixture regressions.
+- [ ] **Step 3:** Expand the existing licences/build page into complete About this app
+      parity; finish Radio and Manage Radios; verify content/links, visible navigation,
+      screenshots and real routes.
+- [ ] **Step 4 (JJ, 2026-09-28 night; D96, R-IOS-37):** TCI. The phone runs no TCI
+      server of its own. Wherever the desktop shows its own local TCI server's settings
+      (the TCI Server tool, Setup's CAT & Network > TCI Server and Audio > TCI where the
+      Core's description carries them), the phone shows them disabled with a plain
+      reason in the style of "This runs on the desktop computer.", never hidden. The
+      Core's own TCI server switch, port and connected clients stay as this task already
+      builds them. **Waits on the Core's TCI wire note** (the Core/GUI session's note to
+      follow): the Core publishes all its TCI server's settings (IQ stream, audio block,
+      TX channel, sensor intervals, VFO quirks, CW above 10 MHz and the rest) for the
+      phone and remote windows, and the phone then shows and edits each one, writing it
+      to the Core. Tests: the disabled rows and their reason; each published setting
+      written to `FakeStation` once the note's fixture exists.
+
+## Task 59a: The TX EQ curve on the phone
+
+**Runs in:** the phone session, on `claude/iphone-app` (a phone task).
+
+**Requirements:** R-IOS-34, D92 (JJ, 2026-09-28 night, ruling 3), spec §5.2 item 9,
+R-IOS-18, D78 (no hidden touch surfaces), the transmit safety boundary (an edit never
+keys).
+
+**Board first:** this is new UI, so, as Part J requires of every screen, the curve and its
+editing are drawn as a board section first and built only after JJ approves it. Dragging
+a point on the curve is a gesture: it is built only if JJ approves it on the board, and
+every edit is also reachable through visible controls (each point's frequency, gain and
+Q, the preamp, the range, parametric on or off, adding and removing a point).
+
+**Files:**
+- Create: `ios/NereusApp/Tools/TxEqCurveView.swift` (the drawing),
+  `TxEqCurveEditor.swift`, `ios/NereusKit/Sources/NereusMirror/TxEqCurve.swift` (reads
+  the value, computes the drawn line)
+- Create: `ios/NereusKit/Tests/NereusMirrorTests/TxEqCurveTests.swift`,
+  `ios/NereusApp/Tests/TxEqCurveEditorTests.swift`
+- Modify: `ios/NereusApp/Tools/TxEqualizerPage.swift` (Task 59's),
+  `ios/NereusKit/Sources/NereusLink/LinkFeatures.swift` (`txEqCurve: 1`)
+
+**Interfaces:**
+- Consumes: the read-only curve, `transmit.txEqCurve` (crew folder
+  `txeq-curve-for-phone.md`; link document section 7.1, "The TX EQ curve (`txEqCurve`)"):
+  the hello declares `txEqCurve` 1, the Core answers with `txEqCurveVersion` 1, and the
+  value is compact JSON (`state` saved, default or unavailable; `parametric`; `preampDb`;
+  `minHz`; `maxHz`; `points` of `frequencyHz`, `gainDb`, `q`). Read by name, never by
+  ordinal. `txEqEnabled` and `txEqUseLegacy` say which EQ is on the air. The transmit
+  settings' permission rules (Task 40's `transmitSettingsVersion`), and Task 54's handling
+  while another device holds transmit.
+- Consumes, for editing: the Core's `txEq.setCurve {curveJson}` taking the `txEqCurve`
+  shape, proposed in the Core/GUI lead's TX EQ curve report and ruled on by JJ.
+  **Waits on the Core/GUI session's `txEq.setCurve` wire note** (to follow in the crew
+  folder); the verb, its gate and its refusal words come from that note and the link
+  document, not from this plan.
+- Produces:
+  - The curve drawn as sent, never reordered: from `minHz` to `maxHz` on a -24 to 24 dB
+    scale, the line at each frequency the response plus `preampDb`; straight lines
+    between points when `parametric` is false; the sum of bells as the link document
+    gives it when true. `unavailable` shows "unavailable", not a flat line. The page says
+    which EQ is on the air, and shows the curve either way. A Core with no
+    `txEqCurveVersion` shows the curve disabled with "This Core does not send the TX EQ
+    curve. Updating the Core may help."
+  - Editing, once the note lands: the whole curve sent through `txEq.setCurve`; the
+    curve then redrawn from the Core's next `txEqCurve`, never from the phone's own copy;
+    the active TX profile shown as changed, and saving left to the profile's Save.
+    Allowed on or off the air under the same permission rules as the other transmit
+    settings; where the phone may not change them, the controls are greyed with the
+    Core's reason. A refusal shows the Core's words. An edit never keys.
+
+**Acceptance:**
+- The drawing matches the link document's worked example to 0.01 dB (-7.04 at 50 Hz,
+  -3.51 at 300, -4.00 at 1200, 1.50 at 2400, -2.50 at 3000), the `default` flat curve
+  and the `unavailable` state; the app runs the `tx-eq-curve` conformance session.
+- An edit sends one `txEq.setCurve` with the whole curve against `FakeStation`, while
+  keyed and while not; where the transmit-settings rules refuse, the controls are greyed
+  with the Core's reason and nothing is sent.
+- Screenshots of the curve and the editor against the approved board section and beside
+  the desktop's TX EQ dialog showing the same curve.
+
+**Verification:** `ios/scripts/swift-test.sh`, the simulator test run and the app's
+conformance runner; integration: an edit on the phone shows in the desktop's TX EQ dialog
+(JJ, pending until observed); bench: an edit while keyed on air (pending).
+
+**Execution note (advisory):** opus. Requires Tasks 40, 54 and 59, JJ's approval of the
+board section, and for Step 3 the Core's `txEq.setCurve` wire.
+
+- [ ] **Step 1:** The board section for the curve and its editing; JJ approves it.
+- [ ] **Step 2:** The read-only curve: the declaration, the value, the drawing, which EQ
+  is on the air, the unavailable and older-Core states, with tests and screenshots.
+- [ ] **Step 3:** Editing through `txEq.setCurve`, once its wire note lands, with the
+  permission rules, refusals, tests and screenshots.
+
+## Task 59b: The Core's Logs page
+
+**Runs in:** the phone session, on `claude/iphone-app` (a phone task; the Tools parity
+lane builds it).
+
+**Requirements:** R-IOS-36, D95 (JJ, 2026-09-28 night, ruling 7c), spec §5.2 item 11
+(Diagnostics > Logs).
+
+**Files:**
+- Create: `ios/NereusApp/Setup/CoreLogsPage.swift`, `CoreLogsModel.swift`,
+  `ios/NereusApp/Setup/LogCategorySource.swift` (the seam)
+- Create: `ios/NereusApp/Tests/CoreLogsTests.swift`
+
+**Interfaces:**
+- Consumes: the `coreLog` record stream (with `supportBundleVersion` 1: one line of the
+  Core's log per record, secrets already removed, a backlog at the first subscribe; the
+  Core reads its log only while a peer follows the stream), `support.setLogCategories`
+  and the `radio` delta's `logCategories` (link document, record streams and section
+  9.1). The categories' labels **wait on `log-categories-for-phone.md`** (the Core/GUI
+  session's note to follow).
+- Produces:
+  - The page subscribes to `coreLog` only while it is open and unsubscribes on leaving,
+    and shows the Core's lines as they arrive.
+  - The log category switches with the Core's labels. The Tools parity lane builds them
+    behind `LogCategorySource`, a seam holding a category list on the phone until the
+    Core sends its labels; when the note lands the Core's labels replace the phone's
+    list with no page change.
+  - Clear clears this phone's view only; the Core's log is untouched.
+  - The phone's own log is not on this page; it stays in the Support Bundle (Task 59).
+  - A Core without `supportBundleVersion` 1 shows the page disabled with its reason.
+
+**Acceptance:**
+- Lines arrive in order from the backlog and then live; leaving the page unsubscribes.
+- Clear empties the view and sends nothing to the Core.
+- The switches send `support.setLogCategories` and follow the Core's `logCategories`;
+  the seam's list is replaced by the Core's labels in a test that supplies them.
+- Screenshots of the page with live lines.
+
+**Verification:** `ios/scripts/swift-test.sh` and the simulator test run; integration:
+a real Core's live log on the phone (JJ, pending until observed).
+
+**Execution note (advisory):** opus. Requires Tasks 25, 58 and 59.
+
+- [ ] **Step 1:** The stream, Clear and the category switches behind the seam, with tests
+  and screenshots.
+- [ ] **Step 2:** The Core's labels in place of the seam's list, once
+  `log-categories-for-phone.md` lands.
 
 ## Task 60: Accessories on the phone
 
@@ -7733,8 +9153,8 @@ refusal with "Operate amp"), D18, spec §5.4 items 1 to 5.
 
 **Execution note (advisory):** opus. Requires Tasks 42 and 54.
 
-- [ ] **Step 1:** The three pages with tests.
-- [ ] **Step 2:** The TX panel wiring and the refusal case; screenshots.
+- [x] **Step 1:** The three pages with tests.
+- [x] **Step 2:** The TX panel wiring and the refusal case; screenshots.
 
 ## Task 61: The tuning dial
 
@@ -7772,8 +9192,8 @@ haptics felt on a real iPhone.
 
 **Execution note (advisory):** opus. Requires Tasks 19 and 53.
 
-- [ ] **Step 1:** `DialModel` with tests.
-- [ ] **Step 2:** The three dials, haptics and screenshots.
+- [x] **Step 1:** `DialModel` with tests.
+- [x] **Step 2:** The three dials, haptics and screenshots.
 
 ## Task 62: Spots and Spot Hub on the phone
 
@@ -7818,8 +9238,15 @@ observed): the station's cluster feeding the phone.
 
 **Execution note (advisory):** opus. Requires Tasks 21 and 53.
 
-- [ ] **Step 1:** The record stream client and the layout with tests.
-- [ ] **Step 2:** The layer, sheets and Spot Hub pages; screenshots.
+- [x] **Step 1:** The record stream client and the layout with tests.
+- [x] **Step 2:** The layer, sheets and Spot Hub pages; screenshots.
+
+- [x] **Step 3 (parity gaps found building Task 62, 2026-09-27):** the desktop's Auto mode
+  (`SpotAutoSwitchMode`: a tap on a spot also sets the slice's mode), a visible switch in
+  Spot Hub's Display page; the spot override colour and background colour pickers, the
+  background opacity and the memories switch, as the desktop's Spot Hub Display page has
+  them; FreeDV Reporter's state row once the Core sends it (a Core gap sent to the Core/GUI
+  session). Tests and screenshots against the desktop.
 
 ## Task 63: FreeDV Reporter on the phone
 
@@ -7904,8 +9331,8 @@ locked while keyed (transmission stops on air), switched to another app while ke
 **Execution note (advisory):** opus. The transmit boundary on the phone: flag for
 earlier review. Requires Tasks 39 and 54.
 
-- [ ] **Step 1:** The controller and the unkey paths with tests.
-- [ ] **Step 2:** The widget's four presentations and screenshots.
+- [x] **Step 1:** The controller and the unkey paths with tests.
+- [x] **Step 2:** The widget's four presentations and screenshots.
 
 ## Task 65: Hardware PTT through Push to Talk
 
@@ -7919,8 +9346,10 @@ the Action button; the implementer writes the probe build and records the observ
 1. With the app joined to a Push to Talk channel, does station audio keep playing in the
    background as with the plain audio background mode?
 2. Which presses begin and end a Push to Talk transmission: a wired headset's button,
-   AirPods' stem press (undocumented by Apple), a Bluetooth PTT button through
-   CoreBluetooth, and the Action button through `PushToTalkTransmissionIntent`?
+   a Bluetooth PTT button through CoreBluetooth, and the Action button through
+   `PushToTalkTransmissionIntent`? (JJ, 2026-09-30: the AirPods stem press and the Camera
+   Control button are cut from this release, both undocumented by Apple; they have no rows
+   in `ptt-experiment.md`.)
 3. Can a press toggle: the first press begins a transmission that stays active (with the
    microphone capturing) until the second press, including on a locked phone?
 
@@ -7938,14 +9367,20 @@ on them.
 - Create: `ios/NereusApp/Tests/PushToTalkControllerTests.swift`
 
 **Interfaces:**
-- Consumes: `PttController` (Task 54), the "Key a locked phone" setting (Task 58).
+- Consumes: `PttController` (Task 54), the "Key a locked phone" setting (Task 58; the app's
+  label is "Buttons key a locked phone", greyed off until this task turns it on).
 - Produces: every hardware button toggles through `PttController.tap(trigger:)` with
   `"headset"`, `"bluetooth"` or `"actionButton"`; on the band the PTT says what keyed
   it ("Keyed by headset"); keyed from a pocket, the card turns red and says to press the
-  button again to unkey, while the card's own UNKEY still waits for Face ID.
+  button again to unkey, while the card's own UNKEY runs with one tap (UNKEY, Mute and
+  Cancel run with one tap; Reconnect asks, JJ 2026-09-26).
 
 **Acceptance:** the experiment's findings are recorded; each supported button keys and
 unkeys a locked phone; with "Key a locked phone" off, a locked phone ignores the buttons.
+- Camera Control (iPhone 16 and later; JJ, 2026-09-25 asked for it) is **cut from this
+  release** (JJ, 2026-09-30), because Apple does not document it for an app to receive
+  without a camera session. It stays out of the dial (Task 61) and PTT, and the AirPods
+  stem press stays out with it (both are recorded as out of scope in `ptt-experiment.md`).
 
 **Verification:** device and bench (JJ, pending until observed): each button, locked and
 unlocked, keying on air into a dummy load.
@@ -7985,8 +9420,22 @@ spec §5.4 items 11 to 13, §5.5 items 9 to 12.
 - Each circumstance yields the stated request (table test).
 - The data counters count bytes in and out for the session and the calendar month; past
   5 GB in a month on cellular the warning shows once (on by default).
-- The first time on cellular the note says the phone is at Balanced and what that costs;
-  the "Balanced · 15 fps" chip shows while off Wi-Fi.
+- The first time on cellular the note names the selected mode and its estimated cost.
+  Balanced is the default, not a forced cellular limit: a remembered Full choice
+  requests up to 30 fps and full detail, subject to the existing Core, power and
+  heat limits. Changing it while connected does not interrupt receive audio.
+- September 28 board revision: replace the overlapping floating chip with one
+  slim passive information row below the toolbar and above the slice labels.
+  Show the actual phone network, active path and measured app traffic, with a
+  separate independently scaled unit on each incoming/outgoing rate. No second
+  row or new Details button. Keep the existing dot/ms control as the visible
+  entry to D89's Connection and performance page under Tools.
+- September 28 sleep/VOX decision: when the timer expires with VOX armed but
+  not transmitting, turn off VOX and disconnect. If actively transmitting,
+  wait for transmission to end, then turn off VOX and disconnect. Use the D88
+  retirement path and prove that a delayed expiry or completion cannot touch a
+  replacement session or restart its microphone. This settles the open policy;
+  implementation and verification are still required before merging the lane.
 - The waterfall marks a locked stretch ("Locked 19:42 to 20:15 · sound only").
 - The published costs are the spec's estimates, marked as estimates, until Task 68
   replaces them.
@@ -8029,12 +9478,53 @@ two slices 2 kHz apart; screenshots on the 11-inch iPad simulator against
 
 **Execution note (advisory):** opus. Requires Tasks 54 and 58.
 
-- [ ] **Step 1:** The column and the S-meter.
-- [ ] **Step 2:** The three-column front panel; screenshots.
+- [x] **Step 1:** The column and the S-meter.
+- [x] **Step 2:** The three-column front panel; screenshots.
 
 ---
 
 # Part K: Proof and release
+
+## Task 67a: The S-meter's menu
+
+**Runs in:** the phone session, on `claude/iphone-app` (a phone task).
+
+**Requirements:** D86, D83, D78 (the press and hold is JJ-approved and only a shortcut to
+the visible ☰), R-IOS-24, R-IOS-27.
+
+**Files:** the analog S-meter (`ios/NereusApp/iPad/` and wherever the phone draws it), a new
+`SMeterMenu.swift` and the faces' drawing, the settings kept on this device, tests beside them.
+
+**Interfaces:** the desktop's menu to rebuild (read, don't copy): `src/gui/SMeterWidget.cpp`
+`buildContextMenu` (RX Mode, TX Mode, Peak Hold with Decay and Reset, Meter Face) and
+`src/gui/VintageMeterFace.cpp` for the six faces' look (values per D83; the phone's own
+drawing code). Signal reads the active slice's `signalPeakDbm`; Sig Avg reads
+`signalAverageDbm`; Signal Peak reads `signalPeakDbm` with the phone's own peak marker.
+Max Bin is measured on the phone from the active slice's own pan's displayed calibrated
+trace, after Core detector and averaging and before any visual notch dent, taking the
+maximum only within that slice's `frequency + filterLow` to `frequency + filterHigh`
+passband. It adds no calibration offset and does not require a new Core field. If that
+pan has no valid display data, show no reading and disable Max Bin with a reason telling
+the operator to open its display. TX modes read `txState.forwardPowerWatts` (Power),
+`txState.swr` (SWR), `txState.micLevelDb` (Level), and `txState.compressionDb`
+(Compression, with `txReadingsVersion` 1); apply the normal TX state gate and each
+reading's version gate. Where the Core lacks a required TX reading or version, show no
+reading and disable that mode with an explanatory Core-update reason.
+
+**Acceptance:** each menu item changes the meter as on the desktop (a test per group); the
+faces render (screenshots beside the desktop's); the press and hold opens the same menu;
+choices persist on this device; disabled items carry a reason. Verify Max Bin against the
+active slice's own pan only, and only across its current passband, including LSB and USB
+edge ordering; it must ignore display traces from other pans. Verify it has no reading
+when its own pan has no valid display data and gives the operator-facing open-display
+reason. A visual notch dent must not change the measured Max Bin value.
+
+**Verification:** swift-test, the simulator run, screenshots against the desktop.
+
+**Execution note (advisory):** opus. Requires Task 67.
+
+- [ ] **Step 1:** The menu, RX and TX modes, peak hold, with tests.
+- [ ] **Step 2:** The seven faces, screenshots.
 
 ## Task 68: Measurements, and the published figures
 
@@ -8095,14 +9585,29 @@ the export-compliance and privacy answers, the Push to Talk capability), D2, D19
   privacy label answers: no data collected by the developer)
 - Create: a privacy page and a source-code page on the website (`website/`), linked from
   the app's About screen and the store listing
-- Modify: `ios/NereusApp/Info.plist` (`ITSAppUsesNonExemptEncryption` set to match
-  `export-compliance.md`), the About screen (the source link)
+- Modify: the About screen (the source link). `ios/NereusApp/Info.plist` carries no
+  `ITSAppUsesNonExemptEncryption` key (JJ, 2026-09-28: take it out for now)
 - Create: `ios/AppStore/screenshots/` (from the simulator at the store's required
   sizes, per `ui-verification`)
 
 **Interfaces:**
 - Consumes: the finished app.
 - Produces: everything App Store Connect asks for, prepared for JJ to enter and submit.
+
+**JJ's encryption answer, 2026-09-28 (D103):** YES, the app uses standard encryption in
+addition to what iOS provides. `ios/AppStore/export-compliance.md` already says so. The
+answer lives in App Store Connect, through the App Encryption Documentation and the
+code from it, which is JJ's step; `Info.plist` no longer carries
+`ITSAppUsesNonExemptEncryption`, so the plist has no key that could disagree with the
+record.
+
+**Release and PR checklist (D134):** the website's `iphone-privacy.html` and
+`iphone-source.html` go live when the phone's pull request merges to main, deployed from
+main through `website/deploy.sh`, not before. The pull request text carries this line as
+a checklist item. Also carried in the pull request text for JJ, each marked "controller
+call, for JJ to confirm at review": D137 (MON writes `monEnabled` off when headphones go
+away), D138 (Take transmit greys while a take question is on screen) and D139 (tests keep
+one private accessibility call). The same three go on this task's release checklist.
 
 **Acceptance:**
 - The encryption answers name what the app uses (TLS for control, DTLS and SRTP for
