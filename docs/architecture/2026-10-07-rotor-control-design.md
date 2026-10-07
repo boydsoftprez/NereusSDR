@@ -17,11 +17,11 @@ Yaesu GS-232 commands or that Hamlib's `rotctld` can drive.
 | Question | Decision |
 | --- | --- |
 | How the Core talks to rotors | Both: GS-232 over a serial port, and Hamlib `rotctld` over the network |
-| Desktop shape | A Rotor applet built around the existing compass rose (`RotatorItem`); the plain meter item stays and gains drag-to-turn |
+| Desktop shape | A Rotor applet. Revised the same day after comparing dials: the applet and the iPhone page use a Longpath-style control dial (after OE5SOS's `RotorDialWidget`); the Thetis `RotatorItem` stays as the meter item in custom layouts and gains drag-to-turn |
 | Where it lives on the iPhone | A Rotor page under Accessories, and a Rotor row in the Tools tab that opens the same page |
 | Elevation | Supported; azimuth or azimuth + elevation is set in rotor setup |
 | Turn to a spot | Its own action everywhere (pan menu, Spot Hub, iPhone spot sheet), plus a "turn the beam when I tune to a spot" setting, off by default |
-| Look | As in the mockup: Thetis compass colours, target in amber, Stop the only red button |
+| Look | As in the mockup: the Longpath-style dial in NereusSDR colours (amber heading needle, dashed cyan target arrow, the travel sector, "73° to go", green on arrival, elevation in the corner, rose or tape shape), Stop the only red button |
 
 ## What exists today
 
@@ -43,6 +43,22 @@ Yaesu GS-232 commands or that Hamlib's `rotctld` can drive.
 * `CtyDatParser` resolves a callsign to a DXCC entity but drops the
   latitude and longitude columns. The station's grid square is
   `User/GridSquare` (read in `SpotSourceHost::freedvGridSquare`).
+
+## Prior art: Longpath
+
+Longpath (github.com/oe5sos/Longpath) is a GPL-3 fork of NereusSDR by
+Martin Fischer, OE5SOS, with rotor work since 2026-08-07: a `rotctld`
+client, a helper that starts `rotctld` for the operator, a curated list of
+Hamlib rotor models, a "fresh position" rule (a stale heading is marked,
+never shown as live), strict heading input (empty, NaN, negative and over
+360 refused, not converted), a two-needle `RotorDialWidget` with rose and
+tape shapes, and phone control over TCI-style commands. Its rotor
+connection belongs to a window; ours belongs to the Core.
+
+Taken (2026-10-07): the dial's design, ported with Longpath's header and
+credit (plan Task 6). Proposed, waiting on JJ: the fresh-position flag, the
+strict input checks, the ERC's own Hamlib model, and the Core starting
+`rotctld` for the operator.
 
 ## Facts (sourced)
 
@@ -73,6 +89,11 @@ commands end in CR; replies end in LF. Position read `C2`, reply
 in CR; replies end in CR LF. Position read `C2`, reply `AZ=aaa EL=eee`, or
 `AZ=aaa` from an azimuth-only rotor. Set `Waaa eee`. Stop `S`. Move `L`, `R`,
 `U`, `D`. Hamlib also skips bare CR LF and `>` prompts as invalid replies.
+
+**Hamlib's own ERC driver:** model 404, `ROT_MODEL_ERC =
+ROT_MAKE_MODEL(ROT_ROTOREZ, 4)`, "rotators that support the DCU command set
+by DF9GR" (Hamlib `include/hamlib/rotlist.h`, master). Found through
+Longpath's `RotorModels.h`, checked at the source.
 
 **rotctld,** from the Hamlib `rotctld(1)` manual: TCP, default port 4533,
 one command per line ending in LF. `p` returns azimuth and elevation on two
@@ -158,17 +179,22 @@ In short:
 
 ## Desktop
 
+* **Rotor dial** (`src/gui/widgets/RotorDialWidget.*`): ported from
+  Longpath's `RotorDialWidget` with its header and credit, recoloured to
+  NereusSDR's palette and with English operator words. Rose (default) or
+  tape, switched from the dial's right-click menu.
 * **Rotor applet** (`src/gui/applets/RotorApplet.*`, registered as
-  `applet:rotor` in `ContainerContentRegistry`): status line, heading
-  readout, the compass (a `MeterWidget` hosting a `RotatorItem`, so the
-  Thetis face is reused, not redrawn), CCW / STOP / CW, Down / Up for az/el,
-  short path / long path, presets, and a "Turn to" callsign box. Matches the
-  mockup.
+  `applet:rotor` in `ContainerContentRegistry`): status line, the dial, the
+  heading readout and "to go" under it, CCW / STOP / CW, Down / Up for
+  az/el, short path / long path, presets, and a "Turn to" callsign box.
+  Matches the mockup.
 * **Drag to turn on `RotatorItem`.** Port Thetis's drag handling and
   `SendRotatorMessage` behaviour (MeterManager.cs:16475 and around
   36722-37217) with full attribution and inline comments, but send through
-  the rotor commands instead of an MMIO template. The plain meter item in
-  user layouts gets it too.
+  the rotor commands instead of an MMIO template. This is the meter item
+  in user layouts. The port shows no elevation in "Both" mode: it draws
+  `m_smoothedEle`, which nothing updates (`RotatorItem.cpp:492`); trace how
+  Thetis feeds elevation and fix it in the same task.
 * **No rotor:** the applet stays, controls greyed, with the reason.
 * **Rotor setup** on the accessories Setup page beside the PGXL, TGXL and
   RF2K-S: driver, serial port and baud or host and port, axes, range,
@@ -183,8 +209,9 @@ In short:
 
 ## iPhone
 
-* `Accessories/RotorPage.swift`: the page in the mockup: status, heading
-  readout, a touch compass (drag to set, release to go), large STOP between
+* `Accessories/RotorPage.swift`: the page in the mockup: status, the
+  Longpath-style dial drawn in SwiftUI (the same design as the desktop
+  dial), the heading readout and "to go", a touch dial (drag to set, release to go), large STOP between
   the nudge buttons, short / long path, preset chips, Up / Down for az/el.
   Uses `AccessoryChrome` and `AccessoryStatusLine` like the amp and tuner
   pages.

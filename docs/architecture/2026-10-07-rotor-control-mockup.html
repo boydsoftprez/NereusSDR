@@ -31,8 +31,8 @@ h2{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--acce
 .dot{width:8px;height:8px;border-radius:50%;background:#5fff8a;box-shadow:0 0 6px #5fff8a}
 .dot.amber{background:var(--amberT);box-shadow:0 0 6px var(--amberT)}
 .readout{display:flex;justify-content:space-between;align-items:baseline;margin:4px 2px 6px}
-.readout .big{font:600 26px/1 ui-monospace,Menlo,monospace;color:var(--bright)}
-.readout .tgt{font:12px ui-monospace,Menlo,monospace;color:var(--amberT)}
+.readout .big{font:600 26px/1 ui-monospace,Menlo,monospace;color:#ffb800}
+.readout .tgt{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
 .grid3{display:grid;grid-template-columns:1fr 1.3fr 1fr;gap:6px;margin-top:6px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px}
 .presets{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}
@@ -65,8 +65,8 @@ th.new,td.new{color:var(--amberT)}
 .navbar .back{color:var(--accent);font-size:14px}
 .navbar .t{color:var(--bright);font-weight:600;font-size:15px}
 .pbody{padding:10px 14px}
-.pbig{font:600 34px/1 ui-monospace,Menlo,monospace;color:var(--bright);text-align:center}
-.psub{text-align:center;color:var(--amberT);font:12px ui-monospace,Menlo,monospace;margin-top:2px}
+.pbig{font:600 34px/1 ui-monospace,Menlo,monospace;color:#ffb800;text-align:center}
+.psub{text-align:center;color:var(--dim);font:12px ui-monospace,Menlo,monospace;margin-top:2px}
 .pbtns{display:grid;grid-template-columns:1fr 1.4fr 1fr;gap:8px;margin-top:10px}
 .pbtns .btn{padding:12px 0;font-size:14px;border-radius:8px}
 .chips{display:flex;gap:6px;overflow:hidden;margin-top:10px}
@@ -90,6 +90,7 @@ th.new,td.new{color:var(--amberT)}
 </head>
 <body>
 <h1>Rotor control mockup</h1>
+<div style="color:var(--faint);margin-bottom:4px">Dial: Longpath style (after OE5SOS's RotorDialWidget) in NereusSDR colours. The Thetis compass stays as the meter item in custom layouts.</div>
 <div style="color:var(--faint)">Drag on any compass to set a target.</div>
 
 <h2>Desktop: Rotor applet in a container</h2>
@@ -99,8 +100,8 @@ th.new,td.new{color:var(--amberT)}
       <div class="ctitle"><span>Rotor</span><span>Azimuth</span></div>
       <div class="cbody">
         <div class="status"><span class="dot amber"></span>Easy Rotor Control on COM4 · Turning</div>
-        <div class="readout"><span class="big" id="dHead">047°</span><span class="tgt" id="dTgt">→ 120° SP</span></div>
         <div id="dCompass"></div>
+        <div class="readout"><span class="big" id="dHead">047°</span><span class="tgt" id="dTgt">120° · 73° to go</span></div>
         <div class="grid3">
           <div class="btn">◀ CCW</div><div class="btn stop">STOP</div><div class="btn">CW ▶</div>
         </div>
@@ -124,8 +125,8 @@ th.new,td.new{color:var(--amberT)}
       <div class="ctitle"><span>Rotor</span><span>Az + El</span></div>
       <div class="cbody">
         <div class="status"><span class="dot"></span>rotctld 192.168.1.40:4533 · Stopped</div>
-        <div class="readout"><span class="big">212° <span style="font-size:18px;color:var(--dim)">el 34°</span></span><span class="tgt"></span></div>
         <div id="dCompass2"></div>
+        <div class="readout"><span class="big">212°</span><span class="tgt">no target</span></div>
         <div class="grid3">
           <div class="btn">◀ CCW</div><div class="btn stop">STOP</div><div class="btn">CW ▶</div>
         </div>
@@ -145,8 +146,8 @@ th.new,td.new{color:var(--amberT)}
       <div class="ctitle"><span>Rotor</span><span>Azimuth</span></div>
       <div class="cbody">
         <div class="status"><span class="dot" style="background:#404858;box-shadow:none"></span>Not connected</div>
-        <div class="readout"><span class="big" style="color:#506070">---°</span></div>
         <div id="dCompass3" style="opacity:.45"></div>
+        <div class="readout"><span class="big" style="color:#506070">---°</span></div>
         <div class="grid3">
           <div class="btn dis">◀ CCW</div><div class="btn dis">STOP</div><div class="btn dis">CW ▶</div>
         </div>
@@ -154,6 +155,19 @@ th.new,td.new{color:var(--amberT)}
       </div>
     </div>
     <div class="cap">No rotor: shown, greyed, with the reason</div>
+  </div>
+
+  <div>
+    <div class="container" style="width:420px">
+      <div class="ctitle"><span>Rotor</span><span>Tape</span></div>
+      <div class="cbody">
+        <div class="status"><span class="dot amber"></span>Easy Rotor Control on COM4 · Turning</div>
+        <div id="dTape"></div>
+        <div class="readout"><span class="big">047°</span><span class="tgt">120° · CW 73° to go</span></div>
+        <div class="grid3"><div class="btn">◀ CCW</div><div class="btn stop">STOP</div><div class="btn">CW ▶</div></div>
+      </div>
+    </div>
+    <div class="cap">Tape shape for a short, wide panel (right-click the dial to switch)</div>
   </div>
 </div>
 
@@ -213,9 +227,9 @@ th.new,td.new{color:var(--amberT)}
       <div class="navbar"><span class="back">‹ Accessories</span><span class="t">Rotor</span><span style="width:70px"></span></div>
       <div class="pbody">
         <div class="status" style="justify-content:center"><span class="dot amber"></span>Easy Rotor Control · Turning</div>
+        <div id="pCompass" style="margin-top:4px"></div>
         <div class="pbig" id="pHead">047°</div>
-        <div class="psub" id="pTgt">→ 120° short path</div>
-        <div id="pCompass" style="margin-top:6px"></div>
+        <div class="psub" id="pTgt">120° short path · 73° to go</div>
         <div class="pbtns">
           <div class="btn">◀</div><div class="btn stop">STOP</div><div class="btn">▶</div>
         </div>
@@ -285,57 +299,70 @@ const NS="http://www.w3.org/2000/svg";
 function el(t,a,p){const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e;}
 function pt(cx,cy,r,deg){const a=(deg-90)*Math.PI/180;return[cx+r*Math.cos(a),cy+r*Math.sin(a)];}
 function compass(host,size,opts){
-  const W=opts.el?300:200;
-  const s=el("svg",{class:"compass",width:size*W/200,height:size,viewBox:`0 0 ${W} 200`});
+  // Longpath-style control dial (after Longpath RotorDialWidget), in NereusSDR colours
+  const AMBER="#ffb800", TGT="#00b4d8", GREEN="#5fff8a", RING="#7e8a96", INNER="#2c3a48", MUTED="#a6b0bc";
+  const s=el("svg",{class:"compass",width:size,height:size,viewBox:"0 0 200 200"});
   host.appendChild(s);
-  const cx=100,cy=100,R=94;
-  el("circle",{cx,cy,r:R,fill:"#202020",stroke:"#3a3a3a"},s);
-  // beam width wedge
-  const wedge=el("path",{fill:"#404040",opacity:.85},s);
-  // dots (Thetis: red big every 30, white small every 10)
-  for(let d=0;d<360;d+=10){const big=d%30===0;const[x,y]=pt(cx,cy,R-24,d);el("circle",{cx:x,cy:y,r:big?3:1.4,fill:big?"#ff0000":"#ffffff"},s);}
-  for(let d=0;d<360;d+=30){const[x,y]=pt(cx,cy,R-10,d);const t=el("text",{x,y:y+3.5,fill:"#808080","font-size":9,"text-anchor":"middle","font-family":"Menlo,monospace"},s);t.textContent=d;}
-  [["N",0],["E",90],["S",180],["W",270]].forEach(([c,d])=>{const[x,y]=pt(cx,cy,R-38,d);const t=el("text",{x,y:y+4,fill:"#c8d8e8","font-size":11,"font-weight":700,"text-anchor":"middle"},s);t.textContent=c;});
-  // elevation arc (Both mode)
-  let elNeedle=null;
-  if(opts.el){
-    const ex=200,ey=180,er=82;
-    el("path",{d:`M ${ex+er} ${ey} A ${er} ${er} 0 0 0 ${ex} ${ey-er}`,fill:"none",stroke:"#606060","stroke-width":1.5},s);
-    el("line",{x1:ex,y1:ey,x2:ex+er,y2:ey,stroke:"#404040"},s);el("line",{x1:ex,y1:ey,x2:ex,y2:ey-er,stroke:"#404040"},s);
-    for(let e=0;e<=90;e+=10){const a=e*Math.PI/180,big=e%30===0;el("circle",{cx:ex+(er-8)*Math.cos(a),cy:ey-(er-8)*Math.sin(a),r:big?3:1.4,fill:big?"#ff0000":"#fff"},s);
-      if(big){const t=el("text",{x:ex+(er+8)*Math.cos(a),y:ey-(er+8)*Math.sin(a)+3,fill:"#808080","font-size":9,"text-anchor":"middle","font-family":"Menlo,monospace"},s);t.textContent=e;}}
-    const a=opts.el*Math.PI/180;
-    el("line",{x1:ex,y1:ey,x2:ex+(er-14)*Math.cos(a),y2:ey-(er-14)*Math.sin(a),stroke:"#ffffff","stroke-width":3,"stroke-linecap":"round"},s);
-    const t=el("text",{x:ex+30,y:ey-6,fill:"#c8d8e8","font-size":10,"font-weight":700},s);t.textContent="EL";
-  }
-  const tgtLine=el("line",{stroke:"#ffb800","stroke-width":1.5,"stroke-dasharray":"4 3"},s);
-  const tgtDot=el("circle",{r:5,fill:"none",stroke:"#ffb800","stroke-width":2},s);
-  const arrow=el("polygon",{fill:"#ffffff"},s);
-  el("circle",{cx,cy,r:5,fill:"#ffffff"},s);
+  const cx=100,cy=100,R=88;
+  const defs=el("defs",{},s);
+  const g=el("radialGradient",{id:"lamp"+host.id},defs);
+  el("stop",{offset:"0","stop-color":AMBER,"stop-opacity":.13},g);el("stop",{offset:"1","stop-color":AMBER,"stop-opacity":0},g);
+  el("circle",{cx,cy,r:R*1.05,fill:`url(#lamp${host.id})`},s);
+  el("circle",{cx,cy,r:R,fill:"none",stroke:RING,"stroke-width":.9},s);
+  el("circle",{cx,cy,r:R*.83,fill:"none",stroke:INNER,"stroke-width":.9},s);
+  for(let d=0;d<360;d+=10){const card=d%90===0,maj=d%30===0;const r0=R*(card?.86:maj?.90:.94);
+    const[a,b]=pt(cx,cy,r0,d),[c2,d2]=pt(cx,cy,R,d);el("line",{x1:a,y1:b,x2:c2,y2:d2,stroke:card?MUTED:RING,"stroke-width":card?1.5:maj?1.1:.6},s);}
+  for(let d=30;d<360;d+=30){if(d%90===0)continue;const[x,y]=pt(cx,cy,R*.755,d);const t=el("text",{x,y:y+3,fill:RING,"fill-opacity":.7,"font-size":8,"text-anchor":"middle","font-family":"Menlo,monospace"},s);t.textContent=d;}
+  [["N",0],["E",90],["S",180],["W",270]].forEach(([c,d])=>{const[x,y]=pt(cx,cy,R*.745,d);const t=el("text",{x,y:y+4,fill:MUTED,"font-size":10,"text-anchor":"middle","font-family":"Menlo,monospace"},s);t.textContent=c;});
+  if(opts.el!=null){const t=el("text",{x:196,y:12,fill:MUTED,"font-size":9,"text-anchor":"end","font-family":"Menlo,monospace"},s);t.textContent="EL "+opts.el+"°";}
+  const travel=el("path",{fill:AMBER,"fill-opacity":.10},s);
+  const beam=el("path",{fill:AMBER,"fill-opacity":.10},s);
+  const tgtLine=el("line",{stroke:TGT,"stroke-width":1.8,"stroke-dasharray":"5 3"},s);
+  const tgtHead=el("polygon",{fill:TGT},s);
+  const needle=el("line",{stroke:AMBER,"stroke-width":2.6,"stroke-linecap":"round"},s);
+  el("circle",{cx,cy,r:7,fill:AMBER,"fill-opacity":.18},s);el("circle",{cx,cy,r:3,fill:AMBER},s);
+  function sector(path,r,a1,a2){const[x1,y1]=pt(cx,cy,r,a1),[x2,y2]=pt(cx,cy,r,a2);let span=((a2-a1)%360+360)%360;
+    path.setAttribute("d",`M${cx},${cy} L${x1},${y1} A${r},${r} 0 ${span>180?1:0} 1 ${x2},${y2} Z`);}
   function draw(head,tgt){
-    const bw=60;const[a1x,a1y]=pt(cx,cy,R-2,head-bw/2),[a2x,a2y]=pt(cx,cy,R-2,head+bw/2);
-    wedge.setAttribute("d",`M${cx},${cy} L${a1x},${a1y} A${R-2},${R-2} 0 0 1 ${a2x},${a2y} Z`);
-    const[tx,ty]=pt(cx,cy,R-50,head),[l1x,l1y]=pt(cx,cy,7,head-90),[l2x,l2y]=pt(cx,cy,7,head+90);
-    arrow.setAttribute("points",`${tx},${ty} ${l1x},${l1y} ${l2x},${l2y}`);
-    if(tgt==null){tgtLine.style.display=tgtDot.style.display="none";return;}
-    tgtLine.style.display=tgtDot.style.display="";
-    const[gx,gy]=pt(cx,cy,R-24,tgt);tgtLine.setAttribute("x1",cx);tgtLine.setAttribute("y1",cy);tgtLine.setAttribute("x2",gx);tgtLine.setAttribute("y2",gy);
-    tgtDot.setAttribute("cx",gx);tgtDot.setAttribute("cy",gy);
+    const arrived=tgt!=null&&Math.abs(((tgt-head+540)%360)-180)<1;
+    const col=tgt==null?AMBER:arrived?GREEN:AMBER;
+    const[bx,by]=pt(cx,cy,-R*.12,head),[nx,ny]=pt(cx,cy,R*.9,head);
+    needle.setAttribute("x1",bx);needle.setAttribute("y1",by);needle.setAttribute("x2",nx);needle.setAttribute("y2",ny);needle.setAttribute("stroke",col);
+    sector(beam,R*.98,head-20,head+20);
+    if(tgt==null||arrived){travel.style.display=tgtLine.style.display=tgtHead.style.display="none";return;}
+    travel.style.display=tgtLine.style.display=tgtHead.style.display="";
+    const d=((tgt-head+540)%360)-180; if(d>=0)sector(travel,R*.83,head,tgt);else sector(travel,R*.83,tgt,head);
+    const[tx,ty]=pt(cx,cy,R*.97,tgt);tgtLine.setAttribute("x1",cx);tgtLine.setAttribute("y1",cy);tgtLine.setAttribute("x2",tx);tgtLine.setAttribute("y2",ty);
+    const[h1x,h1y]=pt(cx,cy,R*.86,tgt-3),[h2x,h2y]=pt(cx,cy,R*.86,tgt+3);tgtHead.setAttribute("points",`${tx},${ty} ${h1x},${h1y} ${h2x},${h2y}`);
   }
   let head=opts.head,tgt=opts.tgt;draw(head,tgt);
+  const report=()=>{opts.onState&&opts.onState(head,tgt);};report();
   if(opts.drag){
     const set=e=>{const r=s.getBoundingClientRect();const x=(e.clientX-r.left)/r.width*200-cx,y=(e.clientY-r.top)/r.height*200-cy;
-      tgt=Math.round((Math.atan2(y,x)*180/Math.PI+90+360)%360);draw(head,tgt);opts.onTarget&&opts.onTarget(tgt);};
+      tgt=Math.round((Math.atan2(y,x)*180/Math.PI+90+360)%360);draw(head,tgt);report();};
     let down=false;s.addEventListener("pointerdown",e=>{down=true;s.setPointerCapture(e.pointerId);set(e);});
     s.addEventListener("pointermove",e=>{if(down)set(e);});s.addEventListener("pointerup",()=>down=false);
-    setInterval(()=>{if(tgt==null)return;let d=((tgt-head+540)%360)-180;if(Math.abs(d)<1){head=tgt;}else{head=(head+Math.sign(d)*1+360)%360;}draw(head,tgt);opts.onHead&&opts.onHead(head);},60);
+    setInterval(()=>{if(tgt==null)return;let d=((tgt-head+540)%360)-180;if(Math.abs(d)<1){head=tgt;}else{head=(head+Math.sign(d)+360)%360;}draw(head,tgt);report();},60);
   }
 }
+function tape(host,w,head,tgt){
+  const AMBER="#ffb800",TGT="#00b4d8",RING="#7e8a96",MUTED="#a6b0bc";
+  const s=el("svg",{width:w,height:62,viewBox:`0 0 ${w} 62`},host);
+  const ppd=w/200, x0=w/2, X=d=>x0+(((d-head+540)%360)-180)*ppd;
+  el("rect",{x:x0-20*ppd,y:12,width:40*ppd,height:24,fill:AMBER,"fill-opacity":.12},s);
+  for(let d=0;d<360;d+=5){const x=X(d);if(x<0||x>w)continue;const card=d%90===0,maj=d%30===0;
+    el("line",{x1:x,y1:card?14:maj?20:30,x2:x,y2:36,stroke:card?MUTED:RING,"stroke-width":card?1.5:maj?1:.6},s);
+    if(maj){const t=el("text",{x,y:50,fill:card?"#dcdce1":RING,"font-size":card?11:10,"text-anchor":"middle","font-family":"Menlo,monospace"},s);t.textContent=card?"NESW"[d/90]:d;}}
+  el("polygon",{points:`${x0-7},4 ${x0+7},4 ${x0},14`,fill:AMBER},s);el("line",{x1:x0,y1:12,x2:x0,y2:40,stroke:AMBER,"stroke-width":2.4},s);
+  const tx=X(tgt);el("line",{x1:tx,y1:10,x2:tx,y2:36,stroke:TGT,"stroke-width":1.6,"stroke-dasharray":"4 3"},s);el("polygon",{points:`${tx-5},40 ${tx+5},40 ${tx},32`,fill:TGT},s);
+}
 const pad=n=>String(n).padStart(3,"0")+"°";
-compass(document.getElementById("dCompass"),230,{head:47,tgt:120,drag:true,onHead:h=>dHead.textContent=pad(h),onTarget:t=>dTgt.textContent="→ "+t+"° SP"});
-compass(document.getElementById("dCompass2"),200,{head:212,tgt:null,el:34});
+const togo=(h,t)=>{const d=((t-h+540)%360)-180;return Math.abs(d)<1?"on target":Math.round(Math.abs(d))+"° to go";};
+compass(document.getElementById("dCompass"),230,{head:47,tgt:120,drag:true,onState:(h,t)=>{dHead.textContent=pad(h);dTgt.textContent=t+"° · "+togo(h,t);}});
+compass(document.getElementById("dCompass2"),210,{head:212,tgt:null,el:34});
 compass(document.getElementById("dCompass3"),170,{head:0,tgt:null});
-compass(document.getElementById("pCompass"),250,{head:47,tgt:120,drag:true,onHead:h=>pHead.textContent=pad(h),onTarget:t=>pTgt.textContent="→ "+t+"° short path"});
+compass(document.getElementById("pCompass"),250,{head:47,tgt:120,drag:true,onState:(h,t)=>{pHead.textContent=pad(h);pTgt.textContent=t+"° short path · "+togo(h,t);}});
+tape(document.getElementById("dTape"),400,47,120);
 </script>
 </body>
 </html>

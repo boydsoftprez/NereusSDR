@@ -38,6 +38,12 @@ auto-turn setting off by default, turning allowed on the air). Mockup:
   Samphire dual-licence block byte for byte (already on `RotatorItem`), a modification-history
   line, `// From Thetis MeterManager.cs:NNNN [v2.10.3.15]` cites, every inline comment kept,
   `scripts/verify-inline-tag-preservation.py` clean.
+- The Longpath dial port (Task 6) follows HOW-TO-PORT.md as for any upstream: Longpath's
+  file header byte for byte with its modification history, a NereusSDR modification-history
+  line, `// From Longpath src/gui/widgets/RotorDialWidget.cpp:NNNN [@shortsha]` cites, inline
+  comments kept verbatim (they are German; keep them), a new
+  `docs/attribution/LONGPATH-PROVENANCE.md` row. User-facing strings are rewritten in English
+  operator words; NereusSDR's palette replaces Longpath's.
 - The link: every new object, command, capability and refusal goes in the remote rotor control
   document and the link document's tables; `tests/data/link/v1/surface.json` changes only with
   its regen target; `python3 scripts/render-link-tables.py --check` passes;
@@ -119,20 +125,26 @@ it.
   `SendRotatorMessage`'s behaviour, MeterManager.cs:16475 and the drag code around
   36722-37217, through `MeterItem::handleMouse*`; the target marker in amber; send through a
   rotor interface rather than an MMIO template)
+- Fix: elevation in "Both" mode (`m_smoothedEle` is never updated; trace Thetis's elevation
+  feed first, then match it)
 - Test: an offscreen `RotatorItem` test: a drag sets the expected target; a press in the centre
-  stop circle stops
+  stop circle stops; elevation shows the value set
 
 **Acceptance:**
 - In a user meter layout, dragging the compass turns the rotor; with no rotor it does nothing
   and shows no target.
 - Attribution and inline comments as the Global Constraints say.
 
-## Task 6: The Rotor applet
+## Task 6: The rotor dial and the Rotor applet
 
 **Files:**
-- Create: `src/gui/applets/RotorApplet.{h,cpp}` (status line, heading readout, the compass as a
-  `MeterWidget` hosting a `RotatorItem`, CCW / STOP / CW, Down / Up on az/el, short and long
-  path, presets, "Turn to" callsign box; as in the mockup)
+- Create: `src/gui/widgets/RotorDialWidget.{h,cpp}` (ported from Longpath, see Global
+  Constraints: rose and tape shapes, amber heading needle, dashed target arrow, travel sector,
+  arrival tolerance and green on arrival, elevation in the corner, click to aim; shape choice
+  saved with `AppSettings`)
+- Create: `src/gui/applets/RotorApplet.{h,cpp}` (status line, the dial, heading readout and "to
+  go" under it, CCW / STOP / CW, Down / Up on az/el, short and long path, presets, "Turn to"
+  callsign box; as in the mockup)
 - Modify: `ContainerContentRegistry` (`applet:rotor`, "Rotor")
 - Test: an offscreen applet test for each state in the mockup (azimuth turning, az/el stopped,
   no rotor greyed with its reason, a Core too old)
@@ -171,8 +183,8 @@ it.
 ## Task 9: The iPhone Rotor page
 
 **Files:**
-- Create: `ios/NereusApp/Accessories/RotorPage.swift` and its model (the touch compass: drag to
-  set, release to go; STOP between the nudge buttons; short and long path; preset chips; Up and
+- Create: `ios/NereusApp/Accessories/RotorPage.swift` and its model (the Longpath-style dial in
+  SwiftUI, matching the desktop dial: drag to set, release to go; STOP between the nudge buttons; short and long path; preset chips; Up and
   Down on az/el; the rotor setup card with the Core's serial ports)
 - Modify: the Accessories screen (a Rotor row), `StationToolList` (`rotor` page entry and its
   greyed reason), `NereusKit` (the `rotor` object and commands)
