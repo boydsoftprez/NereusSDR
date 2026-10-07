@@ -54,9 +54,12 @@
 // 2026-10-06 - Every channel starts with a TCP and a rigctld port, counting up
 //              from 13013 and 4532. J.J. Boyd (KG4VCF), AI-assisted via
 //              Anthropic Claude Code.
+// 2026-10-07 - The PTY dialects from the one list in CatPtyDialects.h.
+//              J.J. Boyd (KG4VCF), AI tooling: Claude Code.
 // Serialization is Nereus-original; source constants retain their contract.
 
 #include "CatSettings.h"
+#include "CatPtyDialects.h"
 #include "core/AppSettings.h"
 #include "models/RadioModel.h"
 #include <QHostAddress>
@@ -161,7 +164,7 @@ bool CatSettings::validate(const CatEndpointConfig& config, QString* reason)
         || !serialFormat(config.serialBaud, config.serialParity, config.serialDataBits, config.serialStopBits)) {
         return fail(QStringLiteral("Invalid CAT serial device or format."));
     }
-    if (config.ptyDialect != "Thetis" && config.ptyDialect != "Rigctld") { return fail(QStringLiteral("Invalid CAT PTY dialect.")); }
+    if (!isCatPtyDialect(config.ptyDialect)) { return fail(QStringLiteral("Invalid CAT PTY dialect.")); }
     if (reason) { reason->clear(); }
     return true;
 }

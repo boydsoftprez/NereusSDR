@@ -12,13 +12,15 @@
 //                                    Review fixes: explicit rebinds, the
 //                                    tester's reply in its result, device
 //                                    reads at most once a second.
-//                                    Phone client: platform's ptyDialects.
+//                                    Phone client: platform's ptyDialects,
+//                                    from the one list in CatPtyDialects.h.
 //                                    AI tooling: Claude Code.
 // =================================================================
 
 #include "core/cat/StationCatController.h"
 
 #include "core/SliceOwnership.h"
+#include "core/cat/CatPtyDialects.h"
 #include "core/cat/CatService.h"
 #include "models/RadioModel.h"
 #include "models/StationCatModel.h"
@@ -330,22 +332,21 @@ void StationCatController::publishPlatform()
 #else
     constexpr bool kOneAndHalfStop = false;
 #endif
+    // The dialects a virtual serial port takes: the values the local page
+    // offers (CatPtyTransport accepts exactly these), each with plain words
+    // for a client that cannot show the value itself.
+    QJsonArray dialects;
+    for (const CatPtyDialect& dialect : kCatPtyDialects) {
+        dialects.append(QJsonObject{{QStringLiteral("value"), QString::fromLatin1(dialect.value)},
+                                    {QStringLiteral("label"), QString::fromLatin1(dialect.label)}});
+    }
     m_station->setPlatform(StationCatModel::toText(QJsonObject{
         {QStringLiteral("serial"), kSerial},
         {QStringLiteral("pty"), kPty},
         {QStringLiteral("markSpaceParity"), kMarkSpaceParity},
         {QStringLiteral("oneAndHalfStop"), kOneAndHalfStop},
         {QStringLiteral("serialDevices"), QJsonArray::fromStringList(m_serialDevices)},
-        // The dialects a virtual serial port takes: the values the local
-        // page offers (CatPtyTransport accepts exactly these), each with
-        // plain words for a client that cannot show the value itself.
-        {QStringLiteral("ptyDialects"),
-         QJsonArray{
-             QJsonObject{{QStringLiteral("value"), QStringLiteral("Thetis")},
-                         {QStringLiteral("label"), QStringLiteral("Kenwood and ZZ commands")}},
-             QJsonObject{{QStringLiteral("value"), QStringLiteral("Rigctld")},
-                         {QStringLiteral("label"), QStringLiteral("Hamlib rigctld")}},
-         }},
+        {QStringLiteral("ptyDialects"), dialects},
     }));
 }
 

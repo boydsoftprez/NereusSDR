@@ -1,6 +1,9 @@
 // no-port-check: NereusSDR-original POSIX PTY mechanics; no upstream code port.
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-07 The PTY dialects from the one list in CatPtyDialects.h.
+//            J.J. Boyd (KG4VCF), AI tooling: Claude Code.
 #include "CatPtyTransport.h"
+#include "CatPtyDialects.h"
 #include "core/LogCategories.h"
 #include <QPointer>
 #include <utility>
@@ -60,7 +63,7 @@ bool CatPtyTransport::isOpen() const { return m_master && m_master->value >= 0; 
 bool CatPtyTransport::start(int channel, const CatEndpointConfig& config) {
     stop(); m_error.clear();
     if (channel < 1 || channel > 4) { fail("Invalid PTY channel"); return false; }
-    if (config.ptyDialect != "Thetis" && config.ptyDialect != "Rigctld") { fail("Invalid PTY dialect"); return false; }
+    if (!isCatPtyDialect(config.ptyDialect)) { fail("Invalid PTY dialect"); return false; }
 #if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
     auto master = std::make_unique<Descriptor>(::posix_openpt(O_RDWR | O_NOCTTY | O_NONBLOCK | O_CLOEXEC));
     if (master->value < 0) { fail(systemError("posix_openpt")); return false; }

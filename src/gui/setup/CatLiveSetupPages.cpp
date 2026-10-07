@@ -15,8 +15,11 @@
 //              changes it shows, a slice picked rebinds, a typed device path
 //              survives a refresh, the tester's refusal is the page's.
 //              J.J. Boyd (KG4VCF), AI tooling: Claude Code.
+// 2026-10-07 - The PTY dialects from the one list in core/cat/CatPtyDialects.h.
+//              J.J. Boyd (KG4VCF), AI tooling: Claude Code.
 #include "CatNetworkSetupPages.h"
 #include "core/cat/CatControl.h"
+#include "core/cat/CatPtyDialects.h"
 #include "gui/StyleConstants.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -162,7 +165,7 @@ CatChannelSetupPage::CatChannelSetupPage(RadioModel* model, bool serial, QWidget
             grid->addWidget(new QLabel(tr("Listen on:"),group),1,0); grid->addWidget(row.address,1,1,1,2);
             grid->addWidget(new QLabel(tr("Port:"),group),1,3); grid->addWidget(row.port,1,4);
             row.pty=new QCheckBox(tr("Enable PTY"),group); row.pty->setObjectName(prefix+"Pty"); row.pty->setStyleSheet(QString::fromLatin1(Style::kCheckBoxStyle)); grid->addWidget(row.pty,2,0,1,2);
-            row.dialect=combo(group,{"Thetis","Rigctld"},prefix+"PtyDialect");
+            row.dialect=combo(group,catPtyDialectValues(),prefix+"PtyDialect");
             grid->addWidget(row.dialect,3,0,1,2);
             row.rigctld=new QCheckBox(tr("Enable Hamlib rigctld"),group); row.rigctld->setObjectName(prefix+"RigctldEnabled");
             row.rigctld->setStyleSheet(QString::fromLatin1(Style::kCheckBoxStyle)); grid->addWidget(row.rigctld,5,0,1,5);
