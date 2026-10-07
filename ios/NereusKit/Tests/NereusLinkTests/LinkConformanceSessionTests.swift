@@ -150,7 +150,8 @@ import Testing
     /// app does not: each needs phone behaviour or a control the app does
     /// not have.
     // radioMic 1 reads the board; version 2 requires the phone's source-selection work.
-    static let waitingOnNewPhoneWork = ["session-radio-mic-source"]
+    // stationCat 1 sets up the Core's CAT, which the app has no page for.
+    static let waitingOnNewPhoneWork = ["session-radio-mic-source", "session-verbs-station-cat"]
 
     /// Every fixture marked for the app runs: the several-devices ones
     /// (`sessionHolder`, Task 56c) and the remote transmit ones (`remoteTx`,

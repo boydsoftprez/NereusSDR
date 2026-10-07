@@ -79,7 +79,7 @@ import Testing
     /// New verbs retain their exact minor, capability and typed argument contracts.
     @Test func integratedCommandsKeepTheirTypedMetadata() throws {
         let commands = try #require(try Self.surface()["commands"] as? [[String: Any]])
-        #expect(commands.count == 160)
+        #expect(commands.count == 164)
         #expect(Set(commands.compactMap { $0["verb"] as? String }).count == commands.count)
         let expected: [(verb: String, capability: String, version: Int, names: [String], kinds: [String])] = [
             ("diversity.setTarget", "diversityControlVersion", 1,
@@ -87,6 +87,11 @@ import Testing
               "targetSliceId", "targetIncarnation", "targetControlRevision"],
              ["bool", "i64", "i64", "i64", "i64", "i64", "i64", "i64"]),
             ("tx.setMicSource", "radioMicVersion", 2, ["source"], ["utf8"]),
+            ("setStationCatChannel", "stationCatVersion", 1, ["channel", "config"], ["i64", "utf8"]),
+            ("setStationCatGlobal", "stationCatVersion", 1, ["config"], ["utf8"]),
+            ("testStationCatCommand", "stationCatVersion", 1,
+             ["requestId", "channel", "command"], ["i64", "i64", "utf8"]),
+            ("refreshStationCatDevices", "stationCatVersion", 1, [], []),
         ]
         for entry in expected {
             let command = try #require(commands.first { $0["verb"] as? String == entry.verb })
