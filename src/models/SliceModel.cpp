@@ -100,6 +100,11 @@
 //   2026-09-23: Added changeTuneStepUp/Down, ported from Thetis
 //                 ChangeTuneStepUp/Down, by J.J. Boyd (KG4VCF), with
 //                 AI-assisted transformation via Anthropic Claude Code.
+//   2026-10-06 - restoreFromSettings: a mode handler that changes the
+//                mode or filter mid-restore skips only the saved filter;
+//                AGC, step, NB, sample rate and diversity still restore.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -3005,6 +3010,7 @@ void SliceModel::restoreFromSettings(Band band)
     if (s.contains(bp + QStringLiteral("AgcMaxGain"))) {
         setAgcMaxGain(s.value(bp + QStringLiteral("AgcMaxGain")).toInt());
     }
+    bool restoreFilter = true;
     if (s.contains(bp + QStringLiteral("DspMode"))) {
         // Set mode WITHOUT applying the default filter — filter follows below.
         // We must update m_dspMode before reading FilterLow/FilterHigh so
@@ -3027,9 +3033,16 @@ void SliceModel::restoreFromSettings(Band band)
             const quint64 revision = m_modeRevision;
             const quint64 filterRevision = m_modeFilterRevision;
             applyRadeModeChange(oldMode, mode);
-            if (!lifetime || revision != m_modeRevision) { return; }
-            emit dspModeChanged(mode);
-            if (!lifetime || filterRevision != m_modeFilterRevision) { return; }
+            if (!lifetime) { return; }
+            // A newer mode or filter change owns the filter; the rest of
+            // the band still restores.
+            if (revision != m_modeRevision) {
+                restoreFilter = false;
+            } else {
+                emit dspModeChanged(mode);
+                if (!lifetime) { return; }
+                restoreFilter = filterRevision == m_modeFilterRevision;
+            }
         }
     }
     // Phase 3J-1 closeout Item 4 (2026-05-12): prefer (band, currentMode)
@@ -3037,7 +3050,7 @@ void SliceModel::restoreFromSettings(Band band)
     // for pre-Item-4 settings files.  m_dspMode was set above (line ~1491)
     // before reaching this restore block, so it reflects the destination
     // mode for the band restore.
-    {
+    if (restoreFilter) {
         const QString bmp = bandModePrefix(m_sliceIndex, band, m_dspMode);
         if (s.contains(bmp + QStringLiteral("FilterLow")) &&
             s.contains(bmp + QStringLiteral("FilterHigh"))) {

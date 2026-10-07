@@ -197,6 +197,51 @@ private slots:
         QCOMPARE(slice.filterLow(),  300);
         QCOMPARE(slice.filterHigh(), 2700);
     }
+
+    // 2026-10-06: a mode handler that changes the mode or the filter in
+    // the middle of a band restore skips only the saved filter; the rest
+    // of the band (AGC, step) still restores.
+    void restore_mode_callback_keeps_rest_of_band_data() {
+        QTest::addColumn<int>("action");
+        QTest::newRow("newer-filter") << 0;
+        QTest::newRow("newer-mode") << 1;
+        QTest::newRow("mode-away-back") << 2;
+    }
+    void restore_mode_callback_keeps_rest_of_band() {
+        QFETCH(int, action);
+        AppSettings::instance().clear();
+        SliceModel slice(/*sliceIndex=*/6, nullptr);
+        slice.setFrequency(14200000.0);
+        slice.setDspMode(DSPMode::USB);
+        slice.setFilter(100, 3000);
+        slice.setAgcMode(AGCMode::Slow);
+        slice.setStepHz(500);
+        slice.saveToSettings(Band::Band20m);
+
+        slice.setDspMode(DSPMode::LSB);
+        slice.setAgcMode(AGCMode::Fast);
+        slice.setStepHz(100);
+
+        QObject observer;
+        bool entered = false;
+        QPair<int,int> expectedEdges;
+        DSPMode expectedMode = DSPMode::USB;
+        connect(&slice, &SliceModel::dspModeChanged, &observer, [&](DSPMode) {
+            if (entered) { return; }
+            entered = true;
+            if (action == 0) { slice.setFilter(-2400, -200); }
+            else if (action == 1) { slice.setDspMode(DSPMode::AM); }
+            else { slice.setDspMode(DSPMode::AM); slice.setDspMode(DSPMode::USB); }
+            expectedMode = slice.dspMode();
+            expectedEdges = {slice.filterLow(), slice.filterHigh()};
+        });
+        slice.restoreFromSettings(Band::Band20m);
+        QVERIFY(entered);
+        QCOMPARE(slice.dspMode(), expectedMode);
+        QCOMPARE(qMakePair(slice.filterLow(), slice.filterHigh()), expectedEdges);
+        QCOMPARE(slice.agcMode(), AGCMode::Slow);
+        QCOMPARE(slice.stepHz(), 500);
+    }
 };
 
 QTEST_MAIN(TestSliceFilterPerBandPerModePersistence)
