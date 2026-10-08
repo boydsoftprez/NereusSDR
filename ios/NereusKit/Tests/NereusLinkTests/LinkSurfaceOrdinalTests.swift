@@ -30,6 +30,7 @@ import Testing
         // moving every later entry one place.
         let expected: [(index: Int, name: String, kind: String)] = [
             (69, "txWatchPathVersion", "i64"),
+            (84, "remoteRotorControlVersion", "i64"),
             (90, "diversityControlVersion", "i64"),
             (97, "paProfileVersion", "i64"),
             (99, "txInhibitReasonVersion", "i64"),
@@ -52,6 +53,7 @@ import Testing
         #expect((capabilities[101]["value"] as? NSNumber)?.intValue == 3)
         #expect((capabilities[90]["value"] as? NSNumber)?.intValue == 1)
         #expect((capabilities[105]["value"] as? NSNumber)?.intValue == 2)
+        #expect((capabilities[84]["value"] as? NSNumber)?.intValue == 1)
         #expect((capabilities[108]["value"] as? NSNumber)?.intValue == 1)
         #expect(Set(capabilities.compactMap { $0["name"] as? String }).count == 111)
         for entry in expected {
