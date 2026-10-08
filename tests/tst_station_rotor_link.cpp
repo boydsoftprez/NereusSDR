@@ -62,6 +62,8 @@
 #include "SessionWait.h"
 #include "core/AppSettings.h"
 #include "core/ConnectionState.h"
+#include "core/MoxController.h"
+#include "core/RadioConnection.h"
 #include "core/RotctldProcess.h"
 #include "core/RotorConnection.h"
 #include "core/StationRotorController.h"
@@ -74,6 +76,7 @@
 #include "core/session/StationServer.h"
 #include "models/RadioModel.h"
 #include "models/RotorModel.h"
+#include "models/SliceModel.h"
 
 #include "fakes/LoopbackTransport.h"
 #include "fakes/UpgradedCoreToken.h"
@@ -130,6 +133,43 @@ public:
         written.clear();
         return out;
     }
+};
+
+// A radio that takes every command and does nothing: enough for the
+// Core's MOX to key (final review M6).
+class SilentRadio : public RadioConnection {
+    Q_OBJECT
+public:
+    explicit SilentRadio(QObject* parent = nullptr)
+        : RadioConnection(parent)
+    {
+        setState(ConnectionState::Connected);
+    }
+
+    void init() override {}
+    void connectToRadio(const NereusSDR::RadioInfo&) override {}
+    void disconnect() override {}
+    void setReceiverFrequency(int, quint64) override {}
+    void setTxFrequency(quint64) override {}
+    void setActiveReceiverCount(int) override {}
+    void setSampleRate(int) override {}
+    void setAttenuator(int) override {}
+    void setPreamp(bool) override {}
+    void setTxDrive(int) override {}
+    void sendTxIq(const float*, int) override {}
+    void setWatchdogEnabled(bool) override {}
+    void setAntennaRouting(AntennaRouting) override {}
+    void setMox(bool) override {}
+    void setTrxRelay(bool) override {}
+    void setMicBoost(bool) override {}
+    void setLineIn(bool) override {}
+    void setMicTipRing(bool) override {}
+    void setMicBias(bool) override {}
+    void setLineInGain(int) override {}
+    void setUserDigOut(quint8) override {}
+    void setPuresignalRun(bool) override {}
+    void setMicPTTDisabled(bool) override {}
+    void setMicXlr(bool) override {}
 };
 
 // Timers far in the future: the test steps every exchange itself.
@@ -499,6 +539,55 @@ private slots:
     }
 
     // ── Every command and refusal on the wire ──────────────────────
+
+    // Final review M6: the rotor turns while the radio is on the air. The
+    // controller has no transmit input at all (JJ, 2026-10-07: a rotor
+    // switches no RF path); here the Core's radio is keyed for real and a
+    // window's target and the Core's own both still turn it.
+    void turningIsAllowedWhileTheRadioIsOnTheAir()
+    {
+        Core core(true);
+        SilentRadio radio;
+        // A Core that may transmit (the test Core starts receive-only).
+        core.model.setReceiveOnlyStationPolicy(false);
+        core.model.setCapsForTest(/*hasAlex=*/false);
+        // The radio's own microphone: no PC capture to wait for.
+        core.model.transmitModel().setMicSource(MicSource::Radio);
+        core.model.injectConnectionForTest(&radio);
+        core.model.moxController()->setTimerIntervals(0, 0, 0, 0, 0, 0);
+        if (!core.model.activeSlice()) {
+            core.model.addSlice();
+        }
+        QVERIFY(core.model.activeSlice());
+        core.model.activeSlice()->setDspMode(DSPMode::USB);
+        core.model.activeSlice()->setFrequency(14'200'000.0);
+        LoopbackTransport* peer = core.connect(this, kRadioIdentitySessionProtocolMinor);
+        QTRY_VERIFY(snapshotDone(peer));
+        QVERIFY(core.connectRotorAt("090"));
+
+        QString refused;
+        connect(core.model.moxController(), &MoxController::moxRejected, this,
+                [&refused](const QString& reason) { refused = reason; });
+        core.model.moxController()->setMox(true);
+        QVERIFY2(core.model.moxController()->isMox(), qPrintable(refused));
+        QTRY_VERIFY(core.model.isTransmitting());
+
+        const SessionMessage answer =
+            invoke(peer, "setRotorTarget", {f64("azimuthDeg", 180.0), f64("elevationDeg", -1.0)});
+        QVERIFY2(answer.accepted, qPrintable(answer.reason));
+        QVERIFY(core.rotor->take().contains("W180 000\r"));
+        QVERIFY(core.model.isTransmitting());
+
+        RotorCommandSink& local = core.model;
+        QString why;
+        QVERIFY2(local.requestRotorTarget(200.0, -1.0, &why), qPrintable(why));
+        QVERIFY(core.rotor->take().contains("W200 000\r"));
+        QVERIFY(core.model.isTransmitting());
+
+        core.model.moxController()->setMox(false);
+        QTRY_VERIFY(!core.model.isTransmitting());
+        core.model.injectConnectionForTest(nullptr);
+    }
 
     void theCommandsTurnAndRefuseAsTheContractSays()
     {

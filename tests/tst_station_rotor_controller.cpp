@@ -509,17 +509,6 @@ private slots:
         QCOMPARE(m_ctl->targetAzimuthDeg(), -1.0);
     }
 
-    void turningIsAllowedWhileTheRadioIsOnTheAir()
-    {
-        // The controller has no transmit input at all (JJ, 2026-10-07: a
-        // rotor switches no RF path). A target is accepted and sent with
-        // nothing but a connected rotor.
-        connectAt("090");
-        QString why;
-        QVERIFY(m_ctl->setRotorTarget(180.0, -1.0, &why));
-        QCOMPARE(m_fake->take(), QByteArray("W180 000\r"));
-    }
-
     void spanAndTravelFollowTheEndStop()
     {
         // JJ's ERC: south stop, 450 degrees. 292 is span 112 (outside the

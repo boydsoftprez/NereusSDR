@@ -6243,6 +6243,8 @@ nereus_add_test(tst_station_rotor_controller)
 nereus_add_test(tst_station_rotor_link
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
+# The on-air test keys the Core's MOX on an injected radio.
+target_compile_definitions(tst_station_rotor_link PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Rotor control: cty.dat on the headless Core, bearings on spots (4a) ────
 # Linked to NereusCore alone, as nereusd is: the Core's own :/cty.dat places
