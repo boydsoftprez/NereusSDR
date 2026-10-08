@@ -35,6 +35,13 @@
 //                                    auto-reload) preserved
 //                                    verbatim. AI tooling: Anthropic
 //                                    Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 3c.
+//                                    NereusSDR addition:
+//                                    positionForCallsign, so the
+//                                    Core's rotor turns to a call
+//                                    from this one cty.dat table.
+//                                    AI tooling: Anthropic Claude
+//                                    Code.
 
 #pragma once
 
@@ -91,6 +98,14 @@ public:
 
     bool isEnabled()    const { return m_enabled; }
     void setEnabled(bool on) { m_enabled = on; }
+
+    // NereusSDR addition (rotor control plan Task 3c): a callsign's
+    // position from the loaded cty.dat (CtyDatParser::positionForCallsign);
+    // std::nullopt when it resolves to nothing or no table is loaded.
+    std::optional<GeoPosition> positionForCallsign(const QString& callsign) const
+    {
+        return m_ctyParser.positionForCallsign(callsign);
+    }
 
     int  qsoCount()    const { return m_workedStatus.totalQsos(); }
     int  entityCount() const { return m_workedStatus.entityCount(); }

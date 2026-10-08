@@ -1142,6 +1142,8 @@ set(CORE_SOURCES
     # Rotor control plan Task 3b: the Core's rotor link and rotctld starter
     src/core/RotorConnection.cpp
     src/core/RotctldProcess.cpp
+    # Rotor control plan Task 3c: the Core's rotor (settings, presets, hold)
+    src/core/StationRotorController.cpp
     src/core/AdifParser.cpp
     src/core/DxccWorkedStatus.cpp
     src/core/DxccColorProvider.cpp

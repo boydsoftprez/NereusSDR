@@ -6163,6 +6163,15 @@ target_compile_definitions(tst_rotor_connection PRIVATE
 # start, stop and restart of a stand-in script; never the real rotctld.
 nereus_add_test(tst_rotctld_process)
 
+# ── Rotor control: the Core's rotor controller (Task 3c) ──────────────────
+# Settings under Rotor/* with the contract's defaults, the refusals word for
+# word, arrival within 1.5 degrees or when the heading stops changing, Stop
+# ahead of anything queued, the hold dead man (750 ms lapse, release, the
+# holding window going away), turning to a callsign by its bearing, the
+# presets, and span and travel on a 450 degree south-stop rotor. A fake
+# byte stream; no real serial port or rotctld.
+nereus_add_test(tst_station_rotor_controller)
+
 # ── Phase 3J-2 Task C2: AdifParser (.adi / .adif log parser) ───────────────
 # Pins the contract that AdifParser parses ADIF (Amateur Data
 # Interchange Format) log files into QVector<QsoRecord> (callsign

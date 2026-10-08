@@ -52,7 +52,7 @@ Core's to report.
 | `hamlibModel` | i64 | Hamlib rotor model for driver 4 (404 is the ERC's own driver); 0 otherwise |
 | `rotctldAvailable` | bool | The Core's computer has Hamlib's `rotctld` (needed for driver 4) |
 | `positionFresh` | bool | The rotor answered a position read within the last 1500 ms. False means `azimuthDeg` and `elevationDeg` are the last heard values, not live |
-| `azimuthDeg` | f64 | Current heading after the offset, 0 to 360 (or to 450 within overlap); -1 when unknown |
+| `azimuthDeg` | f64 | Current compass heading after the offset, 0 to under 360 (north reads 0); -1 when unknown. Where the rotor is in the overlap is `spanPositionDeg` |
 | `elevationDeg` | f64 | Current elevation, 0 to 90; -1 on an azimuth rotor or when unknown |
 | `targetAzimuthDeg` | f64 | The target being turned to; -1 when none |
 | `targetElevationDeg` | f64 | The elevation target; -1 when none |

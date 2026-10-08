@@ -553,6 +553,10 @@
 //   2026-10-01 - Diversity lane: diversityTargetSlice(), the slice diversity
 //                runs for, for the Diversity dialog. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 3c: the Core's rotor
+//                (StationRotorController) made beside the other station
+//                accessories, placing callsigns with the spots' cty.dat.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -811,6 +815,7 @@ class Resampler;
 class StationTgxlController;
 class StationPgxlController;
 class StationRfKitController;
+class StationRotorController;
 class StationTciController;
 class StationTciModel;
 class SliceOwnership;
@@ -3505,6 +3510,8 @@ public:
     StationTciController* stationTciController() const { return m_stationTci.get(); }
     // R-R3-47: the Core's RF-Kit controller (nullptr outside the Core).
     StationRfKitController* stationRfKitController() const { return m_stationRfKit; }
+    // Rotor control plan Task 3c: the Core's rotor (nullptr outside the Core).
+    StationRotorController* stationRotorController() const { return m_stationRotor; }
     // SmartSDR API server on TCP 4992. Owned by RadioModel; lifetime matches.
     // Used by MainWindow to push slice/transmit state so PGXL/TGXL pull the
     // current band/freq via the SmartSDR API rather than from a stale cache.
@@ -8242,6 +8249,9 @@ private:
     // R-R3-47 / R-R3-48: the Core's RF-Kit controller, station TCI server
     // and its state, and the RF-Kit's band follow over that server.
     StationRfKitController* m_stationRfKit{nullptr};
+    // Rotor control plan Task 3c: the Core's rotor, made beside the other
+    // station accessories (enableStationAccessoryIdentity); Qt child.
+    StationRotorController* m_stationRotor{nullptr};
     StationTciModel*        m_stationTciModel{nullptr};
     // M6: owned here and destroyed first in ~RadioModel (they hold this
     // model's slices and receivers), not through Qt parenting.

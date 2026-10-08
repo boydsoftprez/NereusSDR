@@ -1003,6 +1003,10 @@
 //                call sends SpotSourceHost::reporterVersion(); a remote
 //                identity edit had sent "NereusSDR/<version>". J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 3c: the Core's rotor
+//                (StationRotorController) made beside the other station
+//                accessories, placing callsigns with the spots' cty.dat.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1385,6 +1389,7 @@ mw0lge@grange-lane.co.uk
 #include "core/LanDiscovery.h"
 #include "core/StationPgxlController.h"
 #include "core/StationRfKitController.h"
+#include "core/StationRotorController.h"
 #include "core/StationTciController.h"
 #include "core/SliceOwnership.h"
 #include "core/session/SliceAccessPolicy.h"
@@ -5759,6 +5764,19 @@ void RadioModel::enableStationAccessoryIdentity()
             }
         });
     }
+    // Rotor control plan Task 3c: the antenna rotor, set up from the Core's
+    // own Rotor/* settings; with no rotor set up it stays idle. Turning to a
+    // callsign places it with the one cty.dat table the spots use.
+    m_stationRotor = new StationRotorController(this);
+    {
+        QPointer<DxccColorProvider> dxcc(m_dxccColorProvider.get());
+        m_stationRotor->setCallsignLocator(
+            [dxcc](const QString& call) -> std::optional<GeoPosition> {
+                if (!dxcc) { return std::nullopt; }
+                return dxcc->positionForCallsign(call);
+            });
+    }
+    m_stationRotor->start();
     applyStationBind();
 }
 
