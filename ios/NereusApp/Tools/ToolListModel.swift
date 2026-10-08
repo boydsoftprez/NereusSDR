@@ -29,7 +29,9 @@ final class ToolListModel: ObservableObject {
     func refresh() {
         var next = StationToolList.entries(tools: catalogFeed.catalog?.tools,
                                            connected: mirror.isSnapshotComplete && !mirror.isStale,
-                                           olderCore: catalogFeed.needsNewerCore)
+                                           olderCore: catalogFeed.needsNewerCore,
+                                           stationCat: (mirror.agreedMinor ?? 0) >= StationCat.minor
+                                               && mirror.capabilityVersion(StationCat.capabilityName) >= 1)
         // A complete negotiated summary supplies this page before a delayed catalogue arrives.
         // A catalogue that explicitly lacks the radio hardware keeps its existing omission.
         if catalogFeed.catalog == nil, mirror.isSnapshotComplete, !mirror.isStale,

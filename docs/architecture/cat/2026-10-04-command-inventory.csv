@@ -1,0 +1,420 @@
+Command,Active,SetWidth,GetWidth,AnswerWidth,Description,DescriptorLine,HandlerLine,SourceVersion
+AC,False,3,0,3,antenna tuner status,3,,v2.10.3.15
+AG,True,4,1,4,af gain,10,84,v2.10.3.15
+AI,True,1,0,1,auto information,17,105,v2.10.3.15
+AL,False,3,0,3,auto notch level,24,,v2.10.3.15
+AM,False,1,0,1,auto mode on_off,31,,v2.10.3.15
+AN,False,1,0,1,select antenna connector,38,,v2.10.3.15
+AR,False,3,1,3,asc function on_off,45,,v2.10.3.15
+AS,False,15,3,15,auto mode function,52,,v2.10.3.15
+BC,False,1,0,1,beat canceller on_off,59,,v2.10.3.15
+BD,True,0,-1,-1,move down band,66,134,v2.10.3.15
+BP,False,3,0,3,beat canceller frequency,73,,v2.10.3.15
+BU,True,0,-1,-1,move up band,80,143,v2.10.3.15
+BY,False,-1,0,2,read busy signal status,87,,v2.10.3.15
+CA,False,1,0,1,cw autotune on_off,94,,v2.10.3.15
+CG,False,3,0,3,carrier gain,101,,v2.10.3.15
+CH,False,1,-1,-1,current freq to call channel,108,,v2.10.3.15
+CI,False,1,-1,-1,vfo_mem current freq to call channel,115,,v2.10.3.15
+CM,False,1,0,1,packet cluster tune on_off,122,,v2.10.3.15
+CN,True,2,0,2,ctcss function,129,151,v2.10.3.15
+CT,True,1,0,1,ctcss function status,136,157,v2.10.3.15
+DC,False,2,0,2,tx band status,143,,v2.10.3.15
+DN,True,0,-1,-1,mic down key,150,163,v2.10.3.15
+DQ,False,1,0,1,dcs function status,157,,v2.10.3.15
+EX,False,23,7,23,extension menu,164,,v2.10.3.15
+FA,True,11,0,11,vfo a frequency,171,189,v2.10.3.15
+FB,True,11,0,11,vfo b frequency,178,205,v2.10.3.15
+FC,False,11,0,11,subreceiver vfo freq,185,,v2.10.3.15
+FD,False,-1,0,8,filter display dot pattern,192,,v2.10.3.15
+FR,True,1,0,1,selects rx vfo mem or call,199,223,v2.10.3.15
+FS,False,1,0,1,fine function status,206,,v2.10.3.15
+FT,True,1,0,1,selects tx vfo mem or call,213,237,v2.10.3.15
+FW,False,4,0,4,dsp filter width,220,262,v2.10.3.15
+GT,True,3,0,3,agc constant status,227,281,v2.10.3.15
+ID,True,-1,0,3,transceiver id number,234,291,v2.10.3.15
+IF,True,-1,0,35,transceiver status,241,317,v2.10.3.15
+IS,False,5,0,5,if shift function,248,,v2.10.3.15
+KS,True,3,0,3,keyer speed,255,468,v2.10.3.15
+KY,True,25,0,1,convert to morse code,262,502,v2.10.3.15
+LK,False,2,0,2,key lock function,269,,v2.10.3.15
+LM,False,1,0,1,dru_3a recording status,276,,v2.10.3.15
+LT,False,1,0,1,alt function status,283,,v2.10.3.15
+MC,False,3,0,3,recall or read memory channel,290,,v2.10.3.15
+MD,True,1,0,1,operating mode,297,566,v2.10.3.15
+MF,False,1,0,1,menu a or b,304,,v2.10.3.15
+MG,True,3,0,3,microphone gain,311,594,v2.10.3.15
+ML,False,3,0,3,monitor function level,318,,v2.10.3.15
+MO,True,1,0,1,monitor on_off sky commander,325,619,v2.10.3.15
+MR,False,-1,4,47,read memory channel,332,,v2.10.3.15
+MU,False,8,0,8,set memory group,339,,v2.10.3.15
+MW,False,47,-1,-1,store memory channel,346,,v2.10.3.15
+NB,True,1,0,1,noise blanker function on_off,353,647,v2.10.3.15
+NL,False,3,0,3,noise blanker level,360,,v2.10.3.15
+NR,False,1,0,1,noise reduction status,367,,v2.10.3.15
+NT,True,1,0,1,auto notch function on_off,374,666,v2.10.3.15
+OF,True,9,0,9,offset frequency,381,685,v2.10.3.15
+OI,False,-1,0,35,read memory channel,388,,v2.10.3.15
+OS,True,1,0,1,offset function status,395,691,v2.10.3.15
+PA,False,1,0,2,preamp function status,402,,v2.10.3.15
+PB,False,1,0,1,dru_3a playback status,409,,v2.10.3.15
+PC,True,3,0,3,output power,416,698,v2.10.3.15
+PI,False,1,-1,-1,store progammable memory channel,423,,v2.10.3.15
+PK,False,-1,-1,48,read packet cluster data,430,,v2.10.3.15
+PL,False,6,0,6,speech processor io level,437,,v2.10.3.15
+PM,False,1,0,1,recall programmable memory,444,,v2.10.3.15
+PR,True,1,0,1,speech processor function on_off,451,721,v2.10.3.15
+PS,True,1,0,1,power on_off,458,734,v2.10.3.15
+QC,False,3,0,3,dcs code,465,,v2.10.3.15
+QI,True,0,-1,-1,store quick memory,472,760,v2.10.3.15
+QR,False,2,0,2,read quick memory,479,,v2.10.3.15
+RA,False,2,0,4,attenuator function status,486,,v2.10.3.15
+RC,True,0,-1,-1,clear rit frequency,493,773,v2.10.3.15
+RD,True,5,0,0,move rit offset down,500,781,v2.10.3.15
+RG,False,3,0,3,rf gain status,507,,v2.10.3.15
+RL,False,2,0,2,noise reduction level,514,,v2.10.3.15
+RM,False,1,0,5,meter function,521,,v2.10.3.15
+RT,True,1,0,1,rit function on_off,528,788,v2.10.3.15
+RU,True,5,0,0,move rit offset up,535,814,v2.10.3.15
+RX,True,0,-1,1,rx function status,542,822,v2.10.3.15
+SA,False,5,0,15,satellite mode status,549,,v2.10.3.15
+SB,False,1,0,1,sub or tf_w status,556,,v2.10.3.15
+SC,False,1,0,1,scan function status,563,,v2.10.3.15
+SD,False,4,0,4,cw break_in delay,570,,v2.10.3.15
+SH,True,2,0,2,dsp filter high setting,577,830,v2.10.3.15
+SI,False,9,-1,-1,input satellite memory name,584,,v2.10.3.15
+SL,True,2,0,2,dsp filter low setting,591,863,v2.10.3.15
+SM,True,-1,1,5,s_meter status,598,896,v2.10.3.15
+SQ,True,4,1,4,squelch level,605,935,v2.10.3.15
+SR,False,1,-1,-1,reset transceiver,612,,v2.10.3.15
+SS,False,1,0,1,program scan pause frequency,619,,v2.10.3.15
+ST,False,2,0,2,multi_ch control frequency step,626,,v2.10.3.15
+SU,False,11,1,11,program scan pause frequency,633,,v2.10.3.15
+SV,False,0,-1,-1,execute memory transfer,640,,v2.10.3.15
+TC,False,2,0,2,internal tnc mode,647,,v2.10.3.15
+TD,False,2,-1,-1,send dtmf memory channel data,654,,v2.10.3.15
+TI,False,-1,0,2,tnc led status,661,,v2.10.3.15
+TN,False,2,0,2,sub tone frequency,668,,v2.10.3.15
+TO,False,1,0,1,tone function on_off,675,,v2.10.3.15
+TS,False,1,0,1,tf_set function,682,,v2.10.3.15
+TX,True,0,-1,1,set tx mode,689,970,v2.10.3.15
+TY,False,-1,0,3,read microprocessor firmware type,696,,v2.10.3.15
+UL,False,-1,-1,1,pll unlock status,703,,v2.10.3.15
+UP,True,0,-1,-1,microphone up key,710,978,v2.10.3.15
+VD,False,4,0,4,vox time delay,717,,v2.10.3.15
+VG,False,3,0,3,vox gain,724,,v2.10.3.15
+VR,False,1,-1,-1,voice1 or voice2 key,731,,v2.10.3.15
+VX,False,1,0,1,vox function status,738,,v2.10.3.15
+XT,True,1,0,1,xit function status,745,1005,v2.10.3.15
+ZZAP,True,1,0,1,Audio peak filter on off,752,1250,v2.10.3.15
+ZZAT,True,4,0,4,APF tune,759,1346,v2.10.3.15
+ZZAB,True,4,0,4,APF bandwidth,766,1073,v2.10.3.15
+ZZAA,True,4,0,4,APF gain,773,1038,v2.10.3.15
+ZZMD,True,2,0,2,extended modes,780,3949,v2.10.3.15
+ZZSF,True,8,-1,-1,extended set filter,787,6247,v2.10.3.15
+ZZST,True,-1,0,4,extended step size,794,6477,v2.10.3.15
+ZZBS,True,3,0,3,extended band change,801,1603,v2.10.3.15
+ZZSP,True,1,0,1,extended vfo split,808,6353,v2.10.3.15
+ZZVS,True,1,-1,1,extended vfo swap,815,7679,v2.10.3.15
+ZZNE,True,1,0,1,Improved rx1 nr status,822,4983,v2.10.3.15
+ZZNF,True,1,0,1,Improved rx2 nr status,829,5007,v2.10.3.15
+ZZNG,True,3,0,3,Rx1 NR4 reduction amount,836,5031,v2.10.3.15
+ZZNH,True,3,0,3,Rx2 NR4 reduction amount,843,5093,v2.10.3.15
+ZZNR,True,1,0,1,extended rx1 nr status,850,4936,v2.10.3.15
+ZZNS,True,1,0,1,extended rx1 nr2 status,857,4959,v2.10.3.15
+ZZNL,True,3,0,3,extended nb1 threshold,864,4862,v2.10.3.15
+ZZNB,True,1,0,1,extended nb2 status,871,4804,v2.10.3.15
+ZZNM,True,4,0,4,extended nb2 threshold,878,4881,v2.10.3.15
+ZZNN,True,1,0,1,RX1 SNB Button,885,4900,v2.10.3.15
+ZZNO,True,1,0,1,RX2 SNB Button,892,4918,v2.10.3.15
+ZZNV,True,1,0,1,extended rx2 nr status,899,5191,v2.10.3.15
+ZZNW,True,1,0,1,extended rx2 nr2 status,906,5214,v2.10.3.15
+ZZPL,False,2,0,2,extended comp threshold,913,5671,v2.10.3.15
+ZZGT,True,1,0,1,extended AGC constant,920,3200,v2.10.3.15
+ZZGU,True,1,0,1,extended RX2 AGC constant,927,3222,v2.10.3.15
+ZZFI,True,2,0,2,extended current filter name,934,2796,v2.10.3.15
+ZZIS,True,5,0,5,extended IF shift,941,3450,v2.10.3.15
+ZZMA,True,1,0,1,extended MUT function,948,3892,v2.10.3.15
+ZZTU,True,1,0,1,extended TUN status,955,6908,v2.10.3.15
+ZZBI,True,1,0,1,extended BIN status,962,1517,v2.10.3.15
+ZZCP,True,1,0,1,extended Compander status,969,1858,v2.10.3.15
+ZZPA,True,1,0,1,extended Preamp status,976,5443,v2.10.3.15
+ZZDM,True,1,0,1,extended Display mode,983,2170,v2.10.3.15
+ZZVL,True,1,0,1,extended VFO Lock status,990,7473,v2.10.3.15
+ZZUP,True,1,0,1,External PA button,997,7014,v2.10.3.15
+ZZUS,True,-1,0,0,PS Single Cal activate ,1004,7043,v2.10.3.15
+ZZUT,True,1,0,1,extended Two-tone test status,1011,7049,v2.10.3.15
+ZZUX,True,1,0,1,extended VFOA Lock status,1018,7514,v2.10.3.15
+ZZUY,True,1,0,1,extended VFOB Lock status,1025,7545,v2.10.3.15
+ZZQR,True,0,-1,-1,Quick Memory Restore,1032,5801,v2.10.3.15
+ZZRF,True,5,0,5,extended RIT Value,1039,5904,v2.10.3.15
+ZZSO,True,1,0,1,extended Squelch status,1046,6388,v2.10.3.15
+ZZDA,True,1,0,1,extended Display Average,1053,1937,v2.10.3.15
+ZZXF,True,5,0,5,extended XIT Value,1060,8208,v2.10.3.15
+ZZXC,True,0,-1,-1,extended XIT Clear,1067,8174,v2.10.3.15
+ZZCS,True,2,0,2,extended CW Speed,1074,1879,v2.10.3.15
+ZZBG,True,1,0,1,extended Band Group,1081,1499,v2.10.3.15
+ZZCL,True,4,0,4,extended CW Pitch,1088,1753,v2.10.3.15
+ZZMG,True,3,0,3,extended TX Preamp Gain,1095,4177,v2.10.3.15
+ZZVN,True,-1,0,12,extended Get Version,1102,7595,v2.10.3.15
+ZZID,True,-1,0,-1,extended SetRigType,1109,3369,v2.10.3.15
+ZZAG,True,3,0,3,extended AF Gain,1116,1199,v2.10.3.15
+ZZSQ,True,3,0,3,extended Squelch Control,1123,6404,v2.10.3.15
+ZZCU,True,-1,0,6,extended CPU Usage,1130,1929,v2.10.3.15
+ZZIF,True,-1,0,36,extended Xcvr Status,1137,3386,v2.10.3.15
+ZZQM,True,-1,0,11,extended Quick Memory Value,1144,5795,v2.10.3.15
+ZZSM,True,-1,1,3,extended S Meter,1151,6290,v2.10.3.15
+ZZIT,True,5,0,5,extended Filter Shift,1158,3473,v2.10.3.15
+ZZIU,True,0,-1,0,extended Filter Shift Reset,1165,3503,v2.10.3.15
+ZZMR,True,1,0,1,extended RX Meter,1172,4276,v2.10.3.15
+ZZMT,True,2,0,2,extended TX Meter,1179,4319,v2.10.3.15
+ZZRM,True,-1,1,20,extended TX Meter Output,1186,6012,v2.10.3.15
+ZZTH,True,5,0,5,extended TX Filter High,1193,6704,v2.10.3.15
+ZZTL,True,4,0,4,extended TX Filter Low,1200,6748,v2.10.3.15
+ZZXT,True,1,0,1,X2TR,1207,8368,v2.10.3.15
+ZZAR,True,4,0,4,AGCRF,1214,1273,v2.10.3.15
+ZZBR,True,1,0,1,BCI Reject,1221,1573,v2.10.3.15
+ZZSR,True,1,0,1,Spur Reduction,1228,6447,v2.10.3.15
+ZZCT,True,2,0,2,CPDR Threshold,1235,1903,v2.10.3.15
+ZZVE,True,1,0,1,VOX Enable,1242,7249,v2.10.3.15
+ZZVG,True,4,0,4,VOX Gain,1249,7347,v2.10.3.15
+ZZXH,True,4,0,4,VOX Hang time,1256,8243,v2.10.3.15
+ZZXN,True,-1,0,4,RX1 Combined Status,1263,8272,v2.10.3.15
+ZZXO,True,-1,0,4,RX2 Combined Status,1270,8307,v2.10.3.15
+ZZXV,True,-1,0,4,VFO Combined Status,1277,8420,v2.10.3.15
+ZZGE,True,1,0,1,Noise Gate Enable,1284,3140,v2.10.3.15
+ZZGL,True,4,0,4,Noise Gate Level,1291,3165,v2.10.3.15
+ZZCI,True,1,0,1,CW Iambic Enable,1298,1728,v2.10.3.15
+ZZCM,True,1,0,1,CW Monitor,1305,1776,v2.10.3.15
+ZZCN,True,1,0,1,CTUN Enable,1312,1801,v2.10.3.15
+ZZCO,True,1,0,1,RX2 CTUN Enable,1319,1830,v2.10.3.15
+ZZCF,True,1,0,1,Show CW Freq,1326,1697,v2.10.3.15
+ZZCB,True,1,0,1,Enable Break In,1333,1651,v2.10.3.15
+ZZCD,True,4,0,4,CW Break In Delay,1340,1671,v2.10.3.15
+ZZVA,True,1,0,1,VAC Enable,1347,6991,v2.10.3.15
+ZZTF,True,1,0,1,Show TX Filter,1354,6674,v2.10.3.15
+ZZPS,True,1,0,1,extended Power Switch,1361,5706,v2.10.3.15
+ZZMO,True,1,0,1,Monitor button,1368,4253,v2.10.3.15
+ZZTX,True,1,0,1,MOX button,1375,6961,v2.10.3.15
+ZZPC,True,3,0,3,Drive Level,1382,5570,v2.10.3.15
+ZZFA,True,11,0,11,VFO A,1389,2653,v2.10.3.15
+ZZFB,True,11,0,11,VFO B,1396,2702,v2.10.3.15
+ZZFT,True,11,0,11,TX Freq,1403,2753,v2.10.3.15
+ZZSD,True,0,-1,-1,Tune Step Down,1410,6240,v2.10.3.15
+ZZSU,True,0,-1,-1,Tune Step Up,1417,6484,v2.10.3.15
+ZZQK,True,1,0,1,Enable QSK Break In,1424,5776,v2.10.3.15
+ZZQS,True,0,-1,-1,Quick Memory Save,1431,5808,v2.10.3.15
+ZZXS,True,1,0,1,XIT button status,1438,8342,v2.10.3.15
+ZZRC,True,0,-1,-1,RIT freq clear,1445,5870,v2.10.3.15
+ZZRT,True,1,0,1,RIT button status,1452,6082,v2.10.3.15
+ZZZB,True,0,-1,-1,Zero Beat,1468,8545,v2.10.3.15
+ZZNT,True,1,0,1,ANF status,1475,5156,v2.10.3.15
+ZZNU,True,1,0,1,RX2 ANF status,1482,5174,v2.10.3.15
+ZZPD,True,0,-1,-1,Center Display Pan,1489,5595,v2.10.3.15
+ZZPZ,True,1,0,1,Display Zoom buttons,1496,5757,v2.10.3.15
+ZZPO,True,1,0,1,Display Peak button status,1503,5690,v2.10.3.15
+ZZER,True,1,0,1,RXEQ button status,1510,2613,v2.10.3.15
+ZZET,True,1,0,1,TXEQ button status,1517,2632,v2.10.3.15
+ZZMU,True,1,0,1,MultiRX button status,1524,4342,v2.10.3.15
+ZZMS,True,1,0,1,MultiRX Swap checkbox status,1531,4300,v2.10.3.15
+ZZTP,True,2,0,2,TX ProfileCount,1538,6860,v2.10.3.15
+ZZNA,True,1,0,1,Noise Blanker 1 button status,1545,4786,v2.10.3.15
+ZZBD,True,0,-1,-1,Band Down,1552,1445,v2.10.3.15
+ZZBU,True,0,-1,-1,Band Up,1559,1629,v2.10.3.15
+ZZSA,True,0,-1,-1,Step Down,1566,6207,v2.10.3.15
+ZZSB,True,0,-1,-1,Step Up,1573,6223,v2.10.3.15
+ZZKS,True,3,0,3,CWX CW Speed,1580,3559,v2.10.3.15
+ZZKY,True,25,0,1,CWX Send,1587,3582,v2.10.3.15
+ZZPK,False,1,0,1,COMP status,1594,5627,v2.10.3.15
+ZZFL,True,5,0,5,DSP Filter Low,1601,2850,v2.10.3.15
+ZZFH,True,5,0,5,DSP Filter High,1608,2887,v2.10.3.15
+ZZFR,True,5,0,5,RX2 DSP Filter High,1615,2944,v2.10.3.15
+ZZFS,True,5,0,5,RX2 DSP Filter Low,1622,2980,v2.10.3.15
+ZZHA,True,1,0,1,Audio Buffer Size,1629,3243,v2.10.3.15
+ZZHR,True,1,0,1,Phone RX Buffer,1636,3260,v2.10.3.15
+ZZHT,True,1,0,1,Phone TX Buffer,1643,3278,v2.10.3.15
+ZZFM,True,-1,0,1,Flex Model Number,1650,2918,v2.10.3.15
+ZZEA,True,36,0,36,RXEQ Values,1657,2508,v2.10.3.15
+ZZEB,True,36,0,36,TXEQ Values,1664,2549,v2.10.3.15
+ZZVB,True,3,0,3,VAC RX Gain,1671,7085,v2.10.3.15
+ZZVC,True,3,0,3,VAC TX Gain,1678,7124,v2.10.3.15
+ZZVD,True,1,0,1,VAC Sample Rate,1685,7163,v2.10.3.15
+ZZVF,True,1,0,1,VAC Stereo,1692,7322,v2.10.3.15
+ZZUA,True,-1,0,70,XVTR Band Names,1699,6984,v2.10.3.15
+ZZOA,True,1,0,1,RXAnt1,1706,5237,v2.10.3.15
+ZZOB,True,1,0,1,RXAnt2,1713,5266,v2.10.3.15
+ZZOC,True,1,0,1,TXAnt,1720,5273,v2.10.3.15
+ZZOD,True,1,0,1,AntMode,1727,5302,v2.10.3.15
+ZZOE,True,1,0,1,RX1ExtAnt,1734,5309,v2.10.3.15
+ZZOF,True,3,0,3,TXRelays,1741,5316,v2.10.3.15
+ZZMN,True,-1,2,180,Filter Presets,1748,4242,v2.10.3.15
+ZZAI,True,1,0,1,Auto Info,1755,1223,v2.10.3.15
+ZZDX,True,1,0,1,Phone DX button,1762,2454,v2.10.3.15
+ZZWA,True,4,0,4,Mixer Mic Gain,1769,8016,v2.10.3.15
+ZZWB,True,4,0,4,Mixer LIne In RCA,1776,8023,v2.10.3.15
+ZZWC,True,4,0,4,Mixer Line In Phono,1783,8030,v2.10.3.15
+ZZWD,True,4,0,4,Mixer Line In DB9,1790,8037,v2.10.3.15
+ZZWE,True,1,0,1,Mixer Mic Select,1797,8045,v2.10.3.15
+ZZWF,True,1,0,1,Mixer Line In RCA Select,1804,8052,v2.10.3.15
+ZZWG,True,1,0,1,Mixer Line In Phono Select,1811,8059,v2.10.3.15
+ZZWH,True,1,0,1,Mixer Line In DB9 Select,1818,8066,v2.10.3.15
+ZZWJ,True,1,0,1,Mixer Input Mute All,1825,8074,v2.10.3.15
+ZZWK,True,3,0,3,Mixer Output Internal Spkr,1832,8081,v2.10.3.15
+ZZWL,True,3,0,3,Mixer Output Ext Spkr,1839,8088,v2.10.3.15
+ZZWM,True,3,0,3,Mixer Output Headphone,1846,8095,v2.10.3.15
+ZZWN,True,3,0,3,Mixer Line Out RCA,1853,8102,v2.10.3.15
+ZZWO,True,1,0,1,Mixer Output Int Spkr Select,1860,8109,v2.10.3.15
+ZZWP,True,1,0,1,Mixer Output Ext Spkr Select,1867,8116,v2.10.3.15
+ZZWQ,True,1,0,1,Mixer Output Headphone Select,1874,8123,v2.10.3.15
+ZZWR,True,1,0,1,Mixer Output Line Out RCA Select,1881,8130,v2.10.3.15
+ZZWS,True,1,0,1,Mixer Output Mute All,1888,8137,v2.10.3.15
+ZZZZ,True,0,-1,0,Close Serial Port,1895,8552,v2.10.3.15
+ZZTS,True,-1,0,5,Read F5K Temp Sensor,1902,6881,v2.10.3.15
+ZZRA,True,1,0,1,RTTY Offset Enable A,1909,5820,v2.10.3.15
+ZZRB,True,1,0,1,RTTY Offset Enable B,1916,5845,v2.10.3.15
+ZZRH,True,5,0,5,RTTY DIGH offset freq,1923,5940,v2.10.3.15
+ZZRL,True,5,0,5,RTTY DIGL offset freq,1930,5976,v2.10.3.15
+ZZTI,True,1,-1,-1,Transmit Inhibit,1937,6727,v2.10.3.15
+ZZHU,True,1,0,1,CW RX Buffer,1944,3296,v2.10.3.15
+ZZHV,True,1,0,1,CW TX Buffer,1951,3314,v2.10.3.15
+ZZHW,True,1,0,1,Digital RX Buffer,1958,3332,v2.10.3.15
+ZZHX,True,1,0,1,Digital TX Buffer,1965,3350,v2.10.3.15
+ZZRD,True,5,0,0,RIT Down,1972,5877,v2.10.3.15
+ZZRU,True,5,0,0,RIT Up,1979,6107,v2.10.3.15
+ZZXD,True,5,0,0,XIT Down,1986,8181,v2.10.3.15
+ZZXU,True,5,0,0,XIT Up,1993,8393,v2.10.3.15
+ZZRX,True,2,0,2,RX1 Atten,2000,6159,v2.10.3.15
+ZZRY,True,2,0,2,RX2 Atten,2007,6183,v2.10.3.15
+ZZTO,True,3,0,3,Tune Power,2014,6795,v2.10.3.15
+ZZVH,True,1,0,1,IQ2VAC,2021,7381,v2.10.3.15
+ZZRS,True,1,0,1,RX2 Enable,2028,6057,v2.10.3.15
+ZZOG,True,3,0,3,TXRelayEnable,2035,5324,v2.10.3.15
+ZZOH,True,5,1,5,TXRelayDelay,2042,5331,v2.10.3.15
+ZZFX,True,4,-1,-1,FlexWire single,2049,3054,v2.10.3.15
+ZZFY,True,6,-1,-1,FlexWire double,2056,3073,v2.10.3.15
+ZZOJ,True,1,0,1,Antenna Lock,2063,5337,v2.10.3.15
+ZZFV,True,-1,2,2,FlexWire single read,2070,3011,v2.10.3.15
+ZZFW,True,-1,2,4,FlexWire double read,2077,3031,v2.10.3.15
+ZZSW,True,1,0,1,Swap VFO A/B TX Buttons,2084,6507,v2.10.3.15
+ZZSG,True,0,-1,-1,Step Down,2091,6257,v2.10.3.15
+ZZSH,True,0,-1,-1,Step Up,2098,6274,v2.10.3.15
+ZZVI,True,2,0,2,VAC Input Cable,2105,7406,v2.10.3.15
+ZZVM,True,2,0,2,VAC Driver,2112,7577,v2.10.3.15
+ZZVO,True,2,0,2,VAC Output Cable,2119,7602,v2.10.3.15
+ZZRV,True,-1,0,4,Primary Input Voltage,2126,6134,v2.10.3.15
+ZZBY,True,0,-1,-1,Closes the console,2133,1636,v2.10.3.15
+ZZAC,True,2,0,2,Sets or reads the step size,2140,1109,v2.10.3.15
+ZZAD,True,2,-1,-1,Moves VFOA down nn Tune Steps,2147,1133,v2.10.3.15
+ZZAU,True,2,-1,-1,Moves VFOA up nn Tune Steps,2154,1382,v2.10.3.15
+ZZAY,True,1,0,1,APF type,2161,1400,v2.10.3.15
+ZZAE,True,2,-1,-1,Moves VFOA down nn Steps,2168,1152,v2.10.3.15
+ZZAF,True,2,-1,-1,Moves VFOA up nn Steps,2175,1176,v2.10.3.15
+ZZBE,True,2,-1,-1,Moves VFOB down nn Steps,2182,1452,v2.10.3.15
+ZZBF,True,2,-1,-1,Moves VFOB up nn Steps,2189,1476,v2.10.3.15
+ZZBM,True,2,-1,-1,Moves VFO B down nn Tune Steps,2196,1535,v2.10.3.15
+ZZBP,True,2,-1,-1,Moves VFO B up nn Tune Steps,2203,1554,v2.10.3.15
+ZZKM,True,1,-1,-1,Sends CWX macro,2210,3539,v2.10.3.15
+ZZBT,True,3,0,3,RX2Band,2217,1609,v2.10.3.15
+ZZME,True,2,0,2,RX2 DSP Mode,2224,3971,v2.10.3.15
+ZZMF,True,30,-1,-1,set multifunction encoder text,2231,4023,v2.10.3.15
+ZZFJ,True,2,0,2,RX2 DSP Filter,2238,2823,v2.10.3.15
+ZZDU,True,-1,0,126,DDUTil Status,2245,2387,v2.10.3.15
+ZZSN,True,-1,0,9,Radio serial number,2252,6343,v2.10.3.15
+ZZVJ,True,1,0,1,VAC Use RX2,2259,7423,v2.10.3.15
+ZZBA,True,0,-1,0,RX2 down one band,2266,1430,v2.10.3.15
+ZZBB,True,0,-1,0,RX2 up one band,2273,1437,v2.10.3.15
+ZZTV,True,11,0,11,Transmit VFO Freq,2280,6935,v2.10.3.15
+ZZTM,True,3,0,3,TX AF Monitor Gain,2287,6771,v2.10.3.15
+ZZWT,True,3,0,3,F1500 Mixer Mic Gain,2294,8145,v2.10.3.15
+ZZWU,True,3,0,3,F1500 Mixer FlexWire In Gain,2301,8152,v2.10.3.15
+ZZWV,True,3,0,3,F1500 Mixer Phones out Level,2308,8159,v2.10.3.15
+ZZWW,True,3,0,3,F1500 Mixer FlexWire Out Level,2315,8166,v2.10.3.15
+ZZOL,True,4,0,4,DigL Click Tune Offset,2322,5344,v2.10.3.15
+ZZOU,True,4,0,4,DigU Click Tune Offset,2329,5403,v2.10.3.15
+ZZSY,True,1,0,1,VFO Sync Button,2336,6579,v2.10.3.15
+ZZPB,True,1,0,1,RX2 Preamp Button,2343,5498,v2.10.3.15
+ZZNC,True,1,0,1,RX2 NB Button,2350,4823,v2.10.3.15
+ZZND,True,1,0,1,RX2 NB2 Button,2357,4841,v2.10.3.15
+ZZDB,True,1,0,1,Diversity RX reference,2364,1957,v2.10.3.15
+ZZDC,True,4,0,4,Diversity RX2 Gain,2371,1987,v2.10.3.15
+ZZDD,True,6,0,6,Diversity Phase,2378,2014,v2.10.3.15
+ZZDE,True,1,0,1,Diversity Form Enable,2385,2048,v2.10.3.15
+ZZDF,True,1,0,1,CAT Diversity Form,2392,2078,v2.10.3.15
+ZZDG,True,4,0,4,Diversity RX1 Gain,2399,2107,v2.10.3.15
+ZZDH,True,1,0,1,Diversity RX Source,2406,2133,v2.10.3.15
+ZZAS,True,4,0,4,RX2 AGCT,2413,1311,v2.10.3.15
+ZZPY,True,3,0,3,Disply Zoom,2420,5731,v2.10.3.15
+ZZLA,True,3,0,3,RX0 Gain,2427,3648,v2.10.3.15
+ZZLB,True,3,0,3,RX0 Stereo Bal,2434,3674,v2.10.3.15
+ZZLC,True,3,0,3,RX1 Gain,2441,3705,v2.10.3.15
+ZZLD,True,3,0,3,RX1 Stereo Bal,2448,3731,v2.10.3.15
+ZZPE,True,4,0,4,Display Pan Position,2464,5602,v2.10.3.15
+ZZKO,True,1,0,1,CWX Form Control,2471,3509,v2.10.3.15
+ZZLE,True,3,0,3,RX2 audio level,2478,3762,v2.10.3.15
+ZZLF,True,3,0,3,RX2 Stereo Balance,2485,3788,v2.10.3.15
+ZZIO,True,-1,0,3,Installed options,2492,3444,v2.10.3.15
+ZZEM,True,1,0,1,Verbose CAT Errors,2499,2590,v2.10.3.15
+ZZOS,True,1,0,1,Offset Direction,2506,5369,v2.10.3.15
+ZZOT,True,9,0,9,Repeater Freq Offset,2513,5384,v2.10.3.15
+ZZTA,True,1,0,1,CTCSS Enable,2520,6620,v2.10.3.15
+ZZTB,True,2,0,2,CTCSS Frequency,2527,6648,v2.10.3.15
+ZZFD,True,1,0,1,FM Deviation,2534,2771,v2.10.3.15
+ZZMV,True,-1,0,3,Get Memory Channel Count,2541,4362,v2.10.3.15
+ZZMW,True,-1,3,20,Get Memory Channel Name,2548,4376,v2.10.3.15
+ZZMX,True,-1,3,0,Memeory List,2555,4394,v2.10.3.15
+ZZMY,True,0,-1,-1,Save Memory Channel,2562,4418,v2.10.3.15
+ZZMZ,True,3,-1,0,Edit Memory Channel,2569,4448,v2.10.3.15
+ZZSV,True,1,0,1,RX2 Squelch Button,2576,6491,v2.10.3.15
+ZZSX,True,3,0,3,RX2 Squelch Threshold,2583,6534,v2.10.3.15
+ZZML,True,-1,0,83,Mode List,2590,4209,v2.10.3.15
+ZZSS,True,0,-1,-1,CWX Stop,2597,6470,v2.10.3.15
+ZZDP,True,4,0,4,Sprectrum Grid Max,2604,2305,v2.10.3.15
+ZZDQ,True,4,0,4,Spectrum Grid Min,2611,2336,v2.10.3.15
+ZZDR,True,2,0,2,Spectrum Grid Step,2618,2367,v2.10.3.15
+ZZDN,True,4,0,4,Waterfall Low Level,2625,2242,v2.10.3.15
+ZZDO,True,4,0,4,Waterfall High Level,2632,2273,v2.10.3.15
+ZZMB,True,1,0,1,RX2 Mute,2639,3919,v2.10.3.15
+ZZLG,True,1,0,1,AutoMute RX1 on VFOB TX,2646,3819,v2.10.3.15
+ZZLH,True,1,0,1,AutoMute RX2 on VFOA TX,2653,3842,v2.10.3.15
+ZZLI,True,1,0,1,PS-A Enable Button,2660,3865,v2.10.3.15
+ZZOV,True,1,0,1,ATU Enable Button,2667,5429,v2.10.3.15
+ZZOW,True,1,0,1,ATY Bypass Button,2674,5436,v2.10.3.15
+ZZVK,True,1,0,1,VAC2Enable,2681,7447,v2.10.3.15
+ZZVQ,True,2,0,2,VAC2Driver,2688,7644,v2.10.3.15
+ZZVR,True,2,0,2,VAC2InputCable,2695,7661,v2.10.3.15
+ZZVT,True,2,0,2,VAC2OutputCable,2702,7694,v2.10.3.15
+ZZVU,True,1,0,1,VAC2SampleRate,2709,7715,v2.10.3.15
+ZZVV,True,1,0,1,VAC2Stereo,2716,7810,v2.10.3.15
+ZZVW,True,3,0,3,VAC2RXGain,2723,7834,v2.10.3.15
+ZZVX,True,3,0,3,VAC2TXGain,2730,7873,v2.10.3.15
+ZZYA,True,1,0,1,VAC2DirectIQ,2737,8453,v2.10.3.15
+ZZYB,True,1,0,1,VAC2Calibrate,2744,8478,v2.10.3.15
+ZZVP,True,1,0,1,VAC1Calibrate,2751,7619,v2.10.3.15
+ZZVY,True,1,0,1,VAC1BufferSize,2758,7912,v2.10.3.15
+ZZVZ,True,1,0,1,VAC2BufferSize,2765,7966,v2.10.3.15
+ZZYC,True,2,0,2,FM Mic Gain,2772,8503,v2.10.3.15
+ZZYR,True,1,0,1,RX1/RX2 radio button,2779,8528,v2.10.3.15
+ZZOX,True,1,-1,-1,Aries ATU match state,2786,4143,v2.10.3.15
+ZZOZ,True,1,-1,-1,Aries ATU solution erase response,2793,4161,v2.10.3.15
+ZZZA,True,2,-1,-1,ganymede amplifier trip state,2800,4128,v2.10.3.15
+ZZZD,True,2,-1,-1,front panel VFO encoder Down,2807,4046,v2.10.3.15
+ZZZE,True,3,-1,-1,front panel encoder,2814,4088,v2.10.3.15
+ZZZS,True,7,-1,-1,front panel s/w version,2821,4074,v2.10.3.15
+ZZZP,True,3,-1,-1,front panel button press,2828,4107,v2.10.3.15
+ZZZU,True,2,-1,-1,front panel VFO encoder Up,2835,4060,v2.10.3.15
+ZZSZ,True,1,-1,-1,Zeros selected VFO to current step size,2842,6602,v2.10.3.15
+ZZZT,True,1,0,1,Zoom To Band Recall/Store,2849,8563,v2.10.3.15
+ZZZQ,True,1,0,1,RX1 Auto AGC compensation,2856,8589,v2.10.3.15
+ZZZR,True,1,0,1,RX2 Auto AGC compensation,2863,8615,v2.10.3.15
+ZZZN,True,1,0,1,Enable Quick Split,2870,8683,v2.10.3.15
+ZZZO,True,1,0,1,Enable Quick Split and VFO Split,2877,8705,v2.10.3.15
+ZZZM,True,0,0,0,Get Hardware Model,2884,8642,v2.10.3.15
+ZZZV,True,0,0,0,Get Software Version String,2891,8653,v2.10.3.15
+ZZZW,True,1,0,1,Get SwapVFOWheels state,2898,8664,v2.10.3.15
+ZZXA,True,1,0,1,Audio Amp,2905,8730,v2.10.3.15
+ZZGA,True,36,0,40,"Add guid - used by TCPIPcat internally, ignore",2912,3101,v2.10.3.15
+ZZGR,True,36,0,40,"Remove guid - used by TCPIPcat internally, ignore",2919,3121,v2.10.3.15
+ZZJP,True,9,0,1,Playback from slot N,2926,4614,v2.10.3.15
+ZZJQ,True,8,0,1,Playback/Record container item slot,2933,4714,v2.10.3.15
+ZZJR,True,6,0,1,Recording to slot N,2940,4506,v2.10.3.15
+ZZJS,True,0,0,0,Stop Wav Recording or Playback,2947,4495,v2.10.3.15

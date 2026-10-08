@@ -53,6 +53,9 @@ public:
 
     DesktopStationController* controller() const { return m_controller.get(); }
     bool restore();
+    /// True once restore() has put this window's slices under local station
+    /// ownership, even when the Core listener then failed to open.
+    bool stationOwnershipActive() const { return m_stationOwnershipActive && !m_retiring && !m_closed; }
     void bindSetupDialog(SetupDialog* dialog);
     const RemoteStationPage::State& state() const { return m_state; }
     /// iPhone app plan Task 78 item 8 (R-IOS-07): who is connected to the
@@ -113,6 +116,7 @@ private:
     QTimer m_refreshTimer;
     bool m_actionActive = false;
     bool m_retiring = false;
+    bool m_stationOwnershipActive = false;
     bool m_closed = false;
     bool m_retirementPrepared = false;
     bool m_pendingBackgroundRequest = false;

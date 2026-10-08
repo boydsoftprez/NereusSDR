@@ -62,7 +62,7 @@ from pathlib import Path
 from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from header_block import HEADER_WINDOW, header_text  # noqa: E402
+from header_block import HEADER_WINDOW, header_text, uses_exact_tcp_notice, CAT_TCP_PROJECT_LICENSE  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 PROVENANCE = REPO / "docs" / "attribution" / "THETIS-PROVENANCE.md"
@@ -234,15 +234,48 @@ def list_wdsp_sources():
     return out
 
 
-def check_required_markers(path: Path, markers):
+CAT_SHARED_HEADER_PATHS = {
+    "resources/cat/CATStructs.xml",
+    "resources/cat/CommandContracts.json",
+    "tests/data/cat/requests.json",
+    "tests/data/cat/compatibility.csv",
+}
+CAT_XML_NO_HEADER = (
+    "Upstream source has no top-of-file GPL header — project-level LICENSE applies"
+)
+
+
+def cat_shared_header_path(path: Path) -> Optional[str]:
+    try:
+        relative = path.relative_to(REPO).as_posix()
+    except ValueError:
+        return None
+    return relative if relative in CAT_SHARED_HEADER_PATHS else None
+
+
+
+def check_required_markers(path: Path, markers, source_cell: Optional[str] = None):
     head = attribution_header_text(path)
+    try:
+        relative = path.relative_to(REPO).as_posix()
+    except ValueError:
+        relative = ""
+    if markers == MARKERS_BY_KIND["thetis"] and uses_exact_tcp_notice(relative, head, source_cell):
+        markers = [m for m in markers if m != "Copyright (C)"] + [CAT_TCP_PROJECT_LICENSE]
+    if (cat_shared_header_path(path) == "resources/cat/CATStructs.xml"
+            and markers == MARKERS_BY_KIND["thetis"]):
+        # The exact upstream XML has no header. Never invent copyright:
+        # require the documented project licence notice in its named sidecar.
+        markers = [m for m in markers if m != "Copyright (C)"] + [CAT_XML_NO_HEADER]
+        head = " ".join(head.split())
     return [m for m in markers if m not in head]
 
 
 def attribution_header_text(path: Path) -> str:
-    """JSON Setup resources share a verbatim upstream header in HEADERS.md."""
-    if (path.suffix == ".json" and path.parent.name == "setup"
-            and path.parent.parent.name == "resources"):
+    """Setup JSON and explicitly allowlisted CAT data use named sidecars."""
+    if (cat_shared_header_path(path) or
+            (path.suffix == ".json" and path.parent.name == "setup"
+             and path.parent.parent.name == "resources")):
         headers = path.parent / "HEADERS.md"
         if not headers.is_file():
             return ""
@@ -318,7 +351,7 @@ def verify_thetis_kind():
     for rel, source_cell in rows:
         path = REPO / rel
         problems = []
-        missing = check_required_markers(path, markers)
+        missing = check_required_markers(path, markers, source_cell)
         if missing:
             problems.append(f"missing-markers: {', '.join(missing)}")
         orphan = check_orphan_pair(rel, listed)

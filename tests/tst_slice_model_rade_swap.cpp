@@ -79,6 +79,9 @@
 
 #include <QtTest/QtTest>
 #include <QSignalSpy>
+#include <QScopeGuard>
+
+#include "models/RxDspWorker.h"
 
 #include "core/RadeChannel.h"
 #include "core/RxChannel.h"
@@ -121,6 +124,81 @@ class TestSliceModelRadeSwap : public QObject {
     };
 
 private slots:
+    void earlyCallbackRetiresLiveRadeLifecycle_data()
+    {
+        QTest::addColumn<bool>("fromCallsign");
+        QTest::addColumn<DSPMode>("finalMode");
+        QTest::addColumn<bool>("awayAndBack");
+        for (bool callsign : {true,false}) {
+            for (DSPMode mode : {DSPMode::AM,DSPMode::RADE_U,DSPMode::RADE_L}) {
+                const QByteArray name=(callsign ? QByteArray("callsign-") : QByteArray("sync-"))+SliceModel::modeName(mode).toUtf8();
+                QTest::newRow(name.constData()) << callsign << mode << false;
+            }
+            const QByteArray name=callsign ? QByteArray("callsign-ABA") : QByteArray("sync-ABA");
+            QTest::newRow(name.constData()) << callsign << DSPMode::RADE_U << true;
+        }
+    }
+    void earlyCallbackRetiresLiveRadeLifecycle()
+    {
+        QFETCH(bool,fromCallsign); QFETCH(DSPMode,finalMode); QFETCH(bool,awayAndBack);
+        RxDspWorker worker;
+        RadioFixture fx;
+        fx.radio.attachDspWorkerForTest(&worker);
+        const auto detach=qScopeGuard([&] { fx.radio.attachDspWorkerForTest(nullptr); });
+        RxChannel* const originalRx=fx.engine->rxChannel(0);
+        fx.slice->setDspMode(DSPMode::RADE_U);
+        QPointer<RadeChannel> retired(fx.engine->radeChannel(0));
+        QVERIFY(retired && retired->isActive());
+        QCoreApplication::sendPostedEvents(&worker,QEvent::MetaCall);
+        QCOMPARE(worker.radeRxRouteCount(),1);
+        fx.slice->setLastRadeRxCallsign(QStringLiteral("KG4VCF"));
+        fx.slice->setRadeSynced(true);
+        QObject observations;
+        bool nested=false;
+        int acceptedFilterNotifications=0;
+        QSignalSpy filterSpy(fx.slice,&SliceModel::filterChanged);
+        const auto supersede=[&] {
+            if (!nested) {
+                nested=true;
+                if (awayAndBack) { fx.slice->setDspMode(DSPMode::AM); }
+                fx.slice->setDspMode(finalMode);
+                fx.slice->setFilter(431,2345);
+                acceptedFilterNotifications=filterSpy.count();
+            }
+        };
+        if (fromCallsign) {
+            connect(fx.slice,&SliceModel::lastRadeRxCallsignChanged,&observations,[&](const QString& callsign) {
+                if (callsign.isEmpty()) { supersede(); }
+            });
+        } else {
+            connect(fx.slice,&SliceModel::radeSyncedChanged,&observations,[&](bool synced) {
+                if (!synced) { supersede(); }
+            });
+        }
+        QSignalSpy modeSpy(fx.slice,&SliceModel::dspModeChanged);
+        fx.slice->setDspMode(DSPMode::LSB);
+        QVERIFY(nested);
+        QCOMPARE(fx.slice->dspMode(),finalMode);
+        QCOMPARE(modeSpy.count(),awayAndBack ? 2 : 1);
+        QCOMPARE(fx.slice->filterLow(),431);
+        QCOMPARE(fx.slice->filterHigh(),2345);
+        QCOMPARE(filterSpy.count(),acceptedFilterNotifications);
+        QVERIFY(fx.slice->lastRadeRxCallsign().isEmpty());
+        QVERIFY(!fx.slice->radeSynced());
+        QCOMPARE(fx.engine->rxChannel(0),originalRx);
+        QCoreApplication::sendPostedEvents(&worker,QEvent::MetaCall);
+        const bool finalRade=finalMode==DSPMode::RADE_U || finalMode==DSPMode::RADE_L;
+        QCOMPARE(worker.radeRxRouteCount(),finalRade ? 1 : 0);
+        QVERIFY2(!retired,"The superseded old RADE channel must retire its actual decoder and route.");
+        RadeChannel* const replacement=fx.engine->radeChannel(0);
+        if (finalRade) {
+            QVERIFY(replacement && replacement->isActive());
+            QCOMPARE(replacement->sidebandUpper(),finalMode==DSPMode::RADE_U);
+        } else {
+            QVERIFY(replacement==nullptr);
+        }
+    }
+
 
     // ── Test 1: switchToRadeUpperKeepsRxChannelAndAddsRadeChannel ──────
     //
@@ -321,5 +399,5 @@ private slots:
     }
 };
 
-QTEST_APPLESS_MAIN(TestSliceModelRadeSwap)
+QTEST_GUILESS_MAIN(TestSliceModelRadeSwap)
 #include "tst_slice_model_rade_swap.moc"

@@ -233,6 +233,9 @@
 //                                    handleSliceListenLevel for
 //                                    slice.setListenLevel. AI-assisted via
 //                                    Anthropic Claude Code.
+//   2026-10-07  J.J. Boyd / KG4VCF  CAT setup from a connected desktop:
+//                                    handleStationCat. AI tooling: Claude
+//                                    Code.
 // =================================================================
 
 #include <QByteArray>
@@ -562,6 +565,10 @@ private:
     void handleStationTciServer(const NereusSDR::SessionMessage& invoke);
     // JJ's ruling of 2026-09-28 (stationTciSettingsVersion 1).
     void handleSetStationTciSettings(const NereusSDR::SessionMessage& invoke);
+    // CAT setup from a connected desktop (stationCatVersion 1):
+    // setStationCatChannel, setStationCatGlobal, testStationCatCommand and
+    // refreshStationCatDevices.
+    void handleStationCat(const NereusSDR::SessionMessage& invoke);
     // R-R3-47 / R-R3-22 (accessoryDataVersion 1): the Core's accessory
     // records and settings.
     void handleSetTxInterlockPolicy(const NereusSDR::SessionMessage& invoke);

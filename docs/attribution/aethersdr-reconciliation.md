@@ -94,6 +94,33 @@ claim), or when 25a couldn't positively disprove the claim.
 | `src/models/BandPlanManager.h` | `src/models/BandPlanManager.h` | File header line 5: "Ported from AetherSDR src/models/BandPlanManager.h [@0cd4559]." Phase 3G RX Epic sub-epic D Task 3. BandPlanManager loader class verbatim port. | "Loader class ported verbatim from AetherSDR `src/models/BandPlanManager.{h,cpp}` [@0cd4559]. NereusSDR namespace; AppSettings key 'BandPlanName' kept for upstream parity; value types in BandPlan.h." |
 | `src/models/BandPlanManager.cpp` | `src/models/BandPlanManager.cpp` | File cites "See BandPlanManager.h for license, attribution, and modification history." Inline cites at loadPlans (line 30), setActivePlan (line 57), loadPlanFromJson (line 82). Phase 3G RX Epic sub-epic D Task 3. | Same as BandPlanManager.h above. |
 
+### 2026-10-04 CAT Task 13 additions (outside the historical 176-file scan)
+
+| NereusSDR file | AetherSDR counterpart | Evidence | Specific mod-history wording |
+|---|---|---|---|
+| `src/core/cat/RigctlProtocol.h` | `src/core/RigctlProtocol.h` [@1e0718ad] | Pure line handler contract and exact selected header comments; actual upstream file has no copyright/GPL header. Project README identifies Jeremy (KK7GWY); LICENSE is GPLv3. | Supported line protocol contract adapted for explicit frozen bindings and native shared transmit coordinator. |
+| `src/core/cat/RigctlProtocol.cpp` | `src/core/RigctlProtocol.cpp` [@1e0718ad] | Supported short/long command names and response field contracts, selected original inline comments at equivalents. | Corrected sticky ERP and pipe command splitting against primary Hamlib PROTOCOL; native model readbacks/writes, independent RIT/XIT enablement, no implicit B creation, no Flex identity/band/power or successful stubs. |
+
+This extends consumed Bucket A by two genuine derivative paths without changing
+historical scan counts. Aether files have no per-file notice; factual primary-author
+and project attribution is recorded without inventing copyright years/notices.
+Native bounded newline framing, dialect identity, TCP/service/UI lifecycle and the
+handshake serializer are original NereusSDR integration. The serializer follows
+[Hamlib 4.7.0 client schema](https://github.com/Hamlib/Hamlib/blob/4.7.0/rigs/dummy/netrigctl.c)
+and [server format](https://github.com/Hamlib/Hamlib/blob/4.7.0/tests/rigctl_parse.c)
+as facts: empty hardware range/power/preamp/attenuator lists, real native mode
+filters, integer offset representation and delivered function/AF masks. The wire
+[manual](https://hamlib.sourceforge.net/html/rigctld.1.html) governs command-local
+ERP and independent J/Z offsets. The native selected-slice LOCK getter uses the
+primary server/client special bare value + RPRT terminator contract
+(rigctl_parse.c:381–382,5815–5845; netrigctl.c:2790–2809), avoiding synthetic
+unlocked state and NET client mode-set stalls. Missing targets still return
+ENTARGET; Hamlib 4.7.0's client unconditionally waits for a second record on
+this getter after an error, an upstream timeout limitation rather than a reason
+to invent a value. Negative errors follow tagged rig.h, correcting
+Aether's mislabelled missing-slice -8 to ENTARGET -12; unsupported ENAVAIL -11,
+malformed EINVAL -1, authority EACCESS -22 and transition ERJCTED -9.
+
 ### VFO widget tree (AetherSDR floating-flag pattern)
 
 | NereusSDR file | AetherSDR counterpart | Evidence | Specific mod-history wording |

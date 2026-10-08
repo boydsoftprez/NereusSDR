@@ -611,7 +611,7 @@ QMap<F, QList<Surface>> surfaces()
     map[F::Memories] = {menu(QStringLiteral("&Memory Manager...")),
                         spot(QStringLiteral("displayMemoriesToggle"))};
     map[F::Cat] = {menu(QStringLiteral("&CAT Control...")), setupPage(QStringLiteral("Serial Ports")),
-                   setupPage(QStringLiteral("TCP/IP CAT")), status(QStringLiteral("statusCatIndicator"))};
+                   setupPage(QStringLiteral("TCP/IP CAT")), setupPage(QStringLiteral("CAT Options")), setupPage(QStringLiteral("CAT PTT")), status(QStringLiteral("statusCatIndicator"))};
     map[F::Midi] = {menu(QStringLiteral("&MIDI Mapping...")), setupPage(QStringLiteral("MIDI Control"))};
     map[F::Help] = {menu(QStringLiteral("&Getting Started")), menu(QStringLiteral("&NereusSDR Help")),
                     menu(QStringLiteral("Understanding &Data Modes"))};
@@ -895,7 +895,7 @@ private slots:
             QVERIFY2(!keys.contains(entry.key), qPrintable(entry.key));
             keys.insert(entry.key);
             QCOMPARE(UnbuiltFeatures::key(entry.feature), entry.key);
-            QVERIFY2(!UnbuiltFeatures::isBuilt(entry.feature), qPrintable(entry.key));
+            QCOMPARE(UnbuiltFeatures::isBuilt(entry.feature), entry.feature == F::Cat);
             QVERIFY2(map.contains(entry.feature) && !map.value(entry.feature).isEmpty(),
                      qPrintable(QStringLiteral("%1 has no surface checks").arg(entry.key)));
         }
@@ -971,8 +971,11 @@ private slots:
             Hosts hosts(sessions, remote);
             QVERIFY(hosts.window() != nullptr);
             QCOMPARE(hosts.window()->radioModel()->ownsLocalDsp(), !remote);
+            QCOMPARE(shownSurfaces(map.value(F::Cat),hosts).size(),map.value(F::Cat).size());
+            QAction* catAction=hosts.window()->findChild<QAction*>("catControlAction"); QVERIFY(catAction); QVERIFY(catAction->isEnabled());
             QStringList shown;
             for (const UnbuiltFeatures::Entry& entry : UnbuiltFeatures::all()) {
+                if (UnbuiltFeatures::isBuilt(entry.feature)) { continue; }
                 for (const QString& s : shownSurfaces(map.value(entry.feature), hosts)) {
                     shown << entry.key + QStringLiteral(": ") + s;
                 }
@@ -1019,7 +1022,7 @@ private slots:
 
             QStringList others;
             for (auto it = map.constBegin(); it != map.constEnd(); ++it) {
-                if (it.key() == entry.feature) { continue; }
+                if (it.key() == entry.feature || it.key() == F::Cat) { continue; }
                 for (const QString& s : shownSurfaces(it.value(), hosts, &used)) {
                     others << UnbuiltFeatures::key(it.key()) + QStringLiteral(": ") + s;
                 }

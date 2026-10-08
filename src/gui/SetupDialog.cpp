@@ -1873,7 +1873,7 @@ void SetupDialog::buildTree()
     QTreeWidgetItem* cat = addCategory("CAT & Network");
     if (UnbuiltFeatures::isBuilt(UnbuiltFeature::Cat)) {
         registerPage(cat, "Serial Ports", SetupScope::ThisComputer,
-                     [] { return new CatSerialPortsPage; });
+                     [this] { return new CatSerialPortsPage(m_model); });
     }
     // R-R3-42: this computer's TCI server and its own settings.
     registerPage(cat, "TCI Server", SetupScope::ThisComputer, [this]() -> QWidget* {
@@ -1938,7 +1938,13 @@ void SetupDialog::buildTree()
     // this computer); a Core that does not offer that says so on the page.
     registerPage(cat, "RF-Kit", SetupScope::Core, [this] { return new RfKitPage(m_model); });
     if (UnbuiltFeatures::isBuilt(UnbuiltFeature::Cat)) {
-        registerPage(cat, "TCP/IP CAT", SetupScope::ThisComputer, [] { return new CatTcpIpPage; });
+        registerPage(cat, "TCP/IP CAT", SetupScope::ThisComputer, [this] { return new CatTcpIpPage(m_model); });
+        registerPage(cat, "CAT Options", SetupScope::ThisComputer, [this] {
+            auto* page = new CatOptionsSetupPage(m_model);
+            connect(page,&CatOptionsSetupPage::showLogRequested,this,&SetupDialog::catLogRequested);
+            return page;
+        });
+        registerPage(cat, "CAT PTT", SetupScope::ThisComputer, [this] { return new CatPttSetupPage(m_model); });
     }
     if (UnbuiltFeatures::isBuilt(UnbuiltFeature::Midi)) {
         registerPage(cat, "MIDI Control", SetupScope::ThisComputer,

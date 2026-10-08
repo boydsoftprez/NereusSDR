@@ -224,6 +224,9 @@
 //                after radioAntennaRowsVersion, only for a peer that
 //                declared sliceAccess with sessionHolder. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - CAT setup from a connected desktop: stationCatVersion, after
+//                radeReasonVersion, only for a peer that declared stationCat.
+//                J.J. Boyd (KG4VCF). AI tooling: Claude Code.
 // =================================================================
 
 #include <QByteArray>
@@ -598,6 +601,14 @@ struct StationCapabilities {
     /// decodes). Sent after rxFilterLowPassVersion and before coreBuildInfo,
     /// only to a peer whose hello declared `radeReason` 1; 0 otherwise.
     int radeReasonVersion = 0;
+    /// CAT setup from a connected desktop: 1 means the Core sends its CAT
+    /// as the read-only `stationCat` object and the `catLog` record stream,
+    /// and takes setStationCatChannel, setStationCatGlobal,
+    /// testStationCatCommand and refreshStationCatDevices. Sent after
+    /// radeReasonVersion and before coreBuildInfo, only to a peer whose
+    /// hello declared `stationCat` 1, from a Core that runs CAT; 0
+    /// otherwise.
+    int stationCatVersion = 0;
     /// At most this many URLs are read, each at most kMaxMediaStunUrlBytes.
     static constexpr int kMaxMediaStunUrls = 8;
     static constexpr int kMaxMediaStunUrlBytes = 512;

@@ -30,7 +30,7 @@ struct ToolsPagesShotTests {
         let model = AppModel(phoneSettings: phone, displaySettings: BandDisplaySettingsStore(defaults: defaults),
                              platform: platform.platform)
         let station = try FakeStation(additions: [.spots, .stationTci, .supportBundle, .vax, .diversityPattern,
-                                                  .logCategoryList])
+                                                  .logCategoryList, .stationCat])
         await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
                             transportFactory: station.transportFactory)
         #expect(await station.waitUntilLive())
@@ -43,6 +43,8 @@ struct ToolsPagesShotTests {
         #expect(await settle { model.main.catalogFeed.revision == 2 })
         try await station.deliverStationTci(.board)
         try await station.deliverVax(.board)
+        try await station.deliverStationCat(.board)
+        #expect(await settle { model.mirror.object(StationCat.objectKey) != nil })
         #expect(await settle { model.mirror.object(StationVax.objectKey) != nil })
         model.records.want(StationTciClient.streamName, backlog: StationTciClient.capacity)
         #expect(await settle { model.records.records(StationTciClient.streamName).count == 2 })
@@ -76,8 +78,10 @@ struct ToolsPagesShotTests {
             microphone: ConnectionFlowTests.FakeMicrophone(), network: ConnectionFlowTests.FakeNetwork(),
             appMajors: [1], now: Date.init, browser: nil))
         // VAX Audio is ready once the Core's meters it asked for on opening are here.
+        // CAT Control's Test and log is ready once the Core's CAT log it asked for on opening is here.
         let vaxReady: ([ToolsTab.Page]) -> Bool = { route in
-            route.last != .vaxAudio || !model.records.records(StationVax.levelsStream).isEmpty
+            (route.last != .vaxAudio || !model.records.records(StationVax.levelsStream).isEmpty)
+                && (route.last != .catControlPage(.test) || !model.records.records(StationCat.logStream).isEmpty)
         }
         let pages: [(String, [ToolsTab.Page], CGFloat)] = [
             ("tools-tab", [], 874),
@@ -85,6 +89,11 @@ struct ToolsPagesShotTests {
             ("tools-puresignal", [.pureSignal], 874),
             ("tools-diversity", [.diversity], 1250),
             ("tools-tci-server", [.tciServer], 1250),
+            ("tools-cat-control", [.catControl], 874),
+            ("tools-cat-channel", [.catControl, .catControlPage(.channel(1))], 1700),
+            ("tools-cat-options", [.catControl, .catControlPage(.options)], 1300),
+            ("tools-cat-ptt", [.catControl, .catControlPage(.ptt)], 1250),
+            ("tools-cat-test", [.catControl, .catControlPage(.test)], 1250),
             ("tools-vax-audio", [.vaxAudio], 1500),
             ("tools-support-bundle", [.supportBundle], 1500),
         ]
@@ -102,6 +111,7 @@ struct ToolsPagesShotTests {
             ("tools-puresignal-landscape", [.pureSignal]),
             ("tools-diversity-landscape", [.diversity]),
             ("tools-tci-server-landscape", [.tciServer]),
+            ("tools-cat-control-landscape", [.catControl]),
             ("tools-vax-audio-landscape", [.vaxAudio]),
             ("tools-connection-performance-landscape", [.performance]),
             ("tools-support-bundle-landscape", [.supportBundle]),

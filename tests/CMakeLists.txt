@@ -177,6 +177,15 @@ function(nereus_add_test name)
     cmake_parse_arguments(_nat "NATIVE_WINDOW;CORE_ONLY;REALTIME" "" "EXTRA_LABELS" ${ARGN})
     set(_extra_sources ${_nat_UNPARSED_ARGUMENTS})
 
+    # all_tests and the per-label targets are built from the list once,
+    # near the bottom of this file. A test registered after that is in
+    # ctest but in no build target, so CI reports it Not Run (PR #340's
+    # CAT suites). Stop the configure instead.
+    get_property(_sealed GLOBAL PROPERTY NEREUS_ALL_TESTS_SEALED)
+    if(_sealed)
+        message(FATAL_ERROR "nereus_add_test(${name}) comes after the all_tests aggregate; register it above that block")
+    endif()
+
     # Sharding gate — when this test's hash bucket doesn't match the
     # active shard, register a stub OBJECT library (EXCLUDE_FROM_ALL,
     # backed by the shared stub source set up at the top of this file)
@@ -6771,6 +6780,18 @@ if(Qt6WebSockets_FOUND)
     nereus_add_test(tst_station_tci_server fakes/LoopbackTransport.cpp)
     target_link_libraries(tst_station_tci_server PRIVATE Qt6::WebSockets Qt6::Network)
 endif()
+# CAT setup from a connected desktop (stationCatVersion 1): the Core's
+# `stationCat` object follows CatService, its four commands apply and refuse,
+# a binding resolves to the live slice, only a peer that declared stationCat
+# gets it, the `catLog` stream, and a window changing a channel on a Core.
+# Loopback only.
+nereus_add_test(tst_station_cat fakes/LoopbackTransport.cpp)
+target_link_libraries(tst_station_cat PRIVATE Qt6::Network)
+# CAT setup from a connected desktop, the client side: a remote window's CAT
+# pages, applet and log window read and change a real Core's CAT through
+# RadioModel::catControl(). Loopback only.
+nereus_add_test(tst_cat_remote_setup fakes/LoopbackTransport.cpp)
+target_link_libraries(tst_cat_remote_setup PRIVATE Qt6::Network)
 
 # R-R3-22 / R-R3-47: the Core's station listeners (the SmartSDR API listener
 # on 4992, the accessory discovery filter, the station TCI server) accept
@@ -9855,6 +9876,40 @@ target_compile_definitions(tst_core_connection_candidates PRIVATE
 nereus_add_test(tst_diversity_control fakes/LoopbackTransport.cpp EXTRA_LABELS session)
 nereus_add_test(tst_diversity_local_admission fakes/LoopbackTransport.cpp EXTRA_LABELS models session)
 
+# Thetis CAT catalogue, also available to the headless Core.
+nereus_add_test(tst_cat_catalog CORE_ONLY)
+
+nereus_add_test(tst_cat_parser CORE_ONLY)
+
+nereus_add_test(tst_cat_bindings CORE_ONLY)
+nereus_add_test(tst_cat_settings CORE_ONLY)
+nereus_add_test(tst_cat_headless CORE_ONLY)
+
+nereus_add_test(tst_cat_tx_ownership CORE_ONLY)
+
+nereus_add_test(tst_cat_rx_commands CORE_ONLY)
+
+nereus_add_test(tst_cat_dsp_commands CORE_ONLY)
+nereus_add_test(tst_cat_tx_commands CORE_ONLY)
+nereus_add_test(tst_cat_coverage CORE_ONLY)
+
+nereus_add_test(tst_cat_tcp CORE_ONLY)
+nereus_add_test(tst_cat_reporting CORE_ONLY)
+
+nereus_add_test(tst_cat_serial CORE_ONLY)
+nereus_add_test(tst_cat_serial_ptt CORE_ONLY EXTRA_LABELS core models)
+
+nereus_add_test(tst_cat_pty CORE_ONLY)
+
+# Native CAT setup and applet controls.
+nereus_add_test(tst_cat_setup)
+nereus_add_test(tst_cat_applet)
+
+# Production TCP -> CAT parser -> model/connection intent and ownership gates.
+nereus_add_test(tst_cat_integration CORE_ONLY)
+
+nereus_add_test(tst_cat_rigctld CORE_ONLY)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------
@@ -9874,6 +9929,7 @@ nereus_add_test(tst_container_content_host_native NATIVE_WINDOW)
 
 get_property(_all_tests GLOBAL PROPERTY NEREUS_ALL_TESTS)
 add_custom_target(all_tests DEPENDS ${_all_tests})
+set_property(GLOBAL PROPERTY NEREUS_ALL_TESTS_SEALED TRUE)
 
 # --------------------------------------------------------------------------
 # Per-label build aggregates: tests_core / tests_models / tests_gui / ...
