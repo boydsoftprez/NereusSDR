@@ -9,6 +9,9 @@
 // Modification history (NereusSDR):
 //   2026-10-08: Created by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code. Rotor control plan, Task 3c.
+//   2026-10-08: Bench fix: the serial port list offers USB serial
+//               adapters first and leaves out console ports. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/StationRotorController.h"
@@ -20,7 +23,10 @@
 #include "core/RotorRoute.h"
 #include "core/SpotSourceHost.h"
 
+#include <QCollator>
+#include <QFile>
 #include <QLoggingCategory>
+#include <QRegularExpression>
 #include <QSignalBlocker>
 
 #ifdef HAVE_SERIALPORT
@@ -72,20 +78,39 @@ void setReason(QString* reason, const QString& text)
 
 QStringList systemSerialPorts()
 {
-    QStringList ports;
+    QList<StationRotorController::SerialPortCandidate> ports;
 #ifdef HAVE_SERIALPORT
     const auto infos = QSerialPortInfo::availablePorts();
     for (const QSerialPortInfo& info : infos) {
+        StationRotorController::SerialPortCandidate port;
 #ifdef Q_OS_WIN
         // "COM4": what QSerialPort and rotctld's -r take on Windows.
-        ports.append(info.portName());
+        port.name = info.portName();
 #else
         // "/dev/ttyUSB0": rotctld's -r needs the full path.
-        ports.append(info.systemLocation());
+        port.name = info.systemLocation();
 #endif
+        port.usbVendor = info.hasVendorIdentifier();
+        ports.append(port);
     }
 #endif
-    return ports;
+    QStringList consoles;
+#ifdef Q_OS_LINUX
+    // The kernel's own console (console= on its command line) is never a
+    // rotor; one small read of a pseudo-file.
+    QFile cmdline(QStringLiteral("/proc/cmdline"));
+    if (cmdline.open(QIODevice::ReadOnly)) {
+        consoles = StationRotorController::consoleDevicesFromCmdline(
+            QString::fromLocal8Bit(cmdline.readAll()));
+    }
+#endif
+    return StationRotorController::orderSerialPorts(ports, consoles);
+}
+
+QString baseName(const QString& port)
+{
+    const qsizetype slash = port.lastIndexOf(QLatin1Char('/'));
+    return slash < 0 ? port : port.mid(slash + 1);
 }
 
 } // namespace
@@ -337,10 +362,54 @@ QString StationRotorController::host() const
 
 QStringList StationRotorController::serialPorts() const
 {
+    // The lister's order is kept: the system's is orderSerialPorts().
     QStringList ports = m_portLister ? m_portLister() : QStringList{};
     ports.removeDuplicates();
-    ports.sort();
     return ports;
+}
+
+QStringList StationRotorController::orderSerialPorts(const QList<SerialPortCandidate>& ports,
+                                                     const QStringList& consoleDevices)
+{
+    static const QStringList kUsbPrefixes = {
+        QStringLiteral("ttyUSB"),      QStringLiteral("ttyACM"),
+        QStringLiteral("cu.usbserial"), QStringLiteral("cu.usbmodem"),
+        QStringLiteral("tty.usbserial"), QStringLiteral("tty.usbmodem")};
+    QStringList usb;
+    QStringList other;
+    for (const SerialPortCandidate& port : ports) {
+        const QString base = baseName(port.name);
+        if (base.isEmpty() || base.startsWith(QLatin1String("ttyFIQ"))
+            || consoleDevices.contains(base)) {
+            continue;
+        }
+        const bool isUsb = port.usbVendor
+            || std::any_of(kUsbPrefixes.cbegin(), kUsbPrefixes.cend(),
+                           [&base](const QString& prefix) { return base.startsWith(prefix); });
+        QStringList& group = isUsb ? usb : other;
+        if (!group.contains(port.name)) { group.append(port.name); }
+    }
+    QCollator collator;
+    collator.setNumericMode(true);
+    const auto byName = [&collator](const QString& a, const QString& b) {
+        return collator.compare(a, b) < 0;
+    };
+    std::sort(usb.begin(), usb.end(), byName);
+    std::sort(other.begin(), other.end(), byName);
+    return usb + other;
+}
+
+QStringList StationRotorController::consoleDevicesFromCmdline(const QString& cmdline)
+{
+    QStringList devices;
+    const QStringList words = cmdline.split(QRegularExpression(QStringLiteral("\\s+")),
+                                            Qt::SkipEmptyParts);
+    for (const QString& word : words) {
+        if (!word.startsWith(QLatin1String("console="))) { continue; }
+        const QString device = word.mid(8).section(QLatin1Char(','), 0, 0);
+        if (!device.isEmpty() && !devices.contains(device)) { devices.append(device); }
+    }
+    return devices;
 }
 
 bool StationRotorController::rotctldAvailable() const

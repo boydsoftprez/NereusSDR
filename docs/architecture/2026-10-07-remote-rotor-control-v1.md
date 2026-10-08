@@ -67,7 +67,7 @@ not a device fact.
 | `baud` | i64 | Its baud rate |
 | `host` | utf8 | rotctld host; empty for a GS-232 driver |
 | `port` | i64 | rotctld TCP port (4533 by default) |
-| `serialPorts` | utf8 | The serial ports the Core's computer has, one per line, so a phone can offer them in setup |
+| `serialPorts` | utf8 | The serial ports the Core's computer has that a rotor could be on, one per line, so a phone can offer them in setup: USB serial adapters first, then the rest, each in name order; console ports (Rockchip's `ttyFIQ*`, the Linux kernel's `console=`) are left out |
 | `axes` | enum | Axes table below |
 | `rangeDeg` | i64 | 360, or 450 for a rotor with overlap |
 | `endStop` | enum | End stop table below |

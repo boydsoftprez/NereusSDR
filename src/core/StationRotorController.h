@@ -75,8 +75,29 @@ public:
 
     // A callsign's position from the Core's cty.dat, or std::nullopt.
     using CallsignLocator = std::function<std::optional<GeoPosition>(const QString&)>;
-    // The serial ports the Core's computer has.
+    // The serial ports the Core's computer has, in the order offered.
     using SerialPortLister = std::function<QStringList()>;
+
+    // Bench fix: one serial port as the system reports it, for
+    // orderSerialPorts(). `name` is what QSerialPort and rotctld take
+    // ("/dev/ttyUSB0", "COM4"); `usbVendor` is true when the port has a
+    // USB vendor id (QSerialPortInfo::hasVendorIdentifier()).
+    struct SerialPortCandidate {
+        QString name;
+        bool    usbVendor{false};
+    };
+    // The ports a rotor could be on, USB serial adapters first: a port
+    // with a USB vendor id or named ttyUSB*, ttyACM*, cu.usbserial*,
+    // cu.usbmodem*, tty.usbserial* or tty.usbmodem*; then the rest. Each
+    // group in name order (ttyUSB2 before ttyUSB10). Left out: Rockchip's
+    // FIQ debug console (ttyFIQ*) and every port in `consoleDevices` (the
+    // kernel's console=, consoleDevicesFromCmdline()). Never a rotor; on
+    // JJ's Rock /dev/ttyFIQ0 came first and was chosen by mistake.
+    static QStringList orderSerialPorts(const QList<SerialPortCandidate>& ports,
+                                        const QStringList& consoleDevices);
+    // The device names in a Linux kernel command line's console= entries
+    // ("console=ttyFIQ0,1500000n8 console=tty1" gives ttyFIQ0 and tty1).
+    static QStringList consoleDevicesFromCmdline(const QString& cmdline);
 
     explicit StationRotorController(QObject* parent = nullptr);
     ~StationRotorController() override;
@@ -103,7 +124,8 @@ public:
     QString serialPort() const;
     // Driver 3; empty otherwise.
     QString host() const;
-    // The Core's serial ports, sorted.
+    // The Core's serial ports a rotor could be on, USB adapters first
+    // (orderSerialPorts()).
     QStringList serialPorts() const;
     // The same, one per line, as the property is sent.
     QString serialPortsText() const { return serialPorts().join(QLatin1Char('\n')); }

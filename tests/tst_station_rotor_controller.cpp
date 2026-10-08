@@ -337,6 +337,56 @@ private slots:
         QVERIFY(OperatorWording::isPlain(reason));
     }
 
+    // Bench fix: on JJ's Rock the Core's list put /dev/ttyFIQ0 (the debug
+    // console) above the ERC's /dev/ttyUSB0, and it was chosen by mistake.
+    void serialPortsOfferUsbAdaptersFirstAndNoConsoles()
+    {
+        using Port = StationRotorController::SerialPortCandidate;
+        const QStringList consoles = StationRotorController::consoleDevicesFromCmdline(
+            QStringLiteral("storagemedia=emmc androidboot.mode=normal "
+                           "console=ttyFIQ0,1500000n8 console=ttyS2,1500000n8 "
+                           "console=tty1 root=/dev/mmcblk0p2\n"));
+        QCOMPARE(consoles, QStringList({QStringLiteral("ttyFIQ0"), QStringLiteral("ttyS2"),
+                                        QStringLiteral("tty1")}));
+        QVERIFY(StationRotorController::consoleDevicesFromCmdline(QString()).isEmpty());
+
+        // The Rock: the FIQ console and the kernel's console are left out,
+        // the USB adapters lead in name order, the onboard UART follows.
+        const QList<Port> rock = {
+            {QStringLiteral("/dev/ttyFIQ0"), false}, {QStringLiteral("/dev/ttyS2"), false},
+            {QStringLiteral("/dev/ttyS4"), false},   {QStringLiteral("/dev/ttyUSB10"), true},
+            {QStringLiteral("/dev/ttyACM0"), true},  {QStringLiteral("/dev/ttyUSB0"), true},
+            {QStringLiteral("/dev/ttyUSB2"), false}};
+        QCOMPARE(StationRotorController::orderSerialPorts(rock, consoles),
+                 QStringList({QStringLiteral("/dev/ttyACM0"), QStringLiteral("/dev/ttyUSB0"),
+                              QStringLiteral("/dev/ttyUSB2"), QStringLiteral("/dev/ttyUSB10"),
+                              QStringLiteral("/dev/ttyS4")}));
+        // With no command line to read, ttyFIQ is still left out.
+        QCOMPARE(StationRotorController::orderSerialPorts(
+                     {{QStringLiteral("/dev/ttyFIQ0"), false},
+                      {QStringLiteral("/dev/ttyS0"), false},
+                      {QStringLiteral("/dev/ttyUSB0"), false}}, {}),
+                 QStringList({QStringLiteral("/dev/ttyUSB0"), QStringLiteral("/dev/ttyS0")}));
+
+        // macOS: the USB adapters' cu. and tty. nodes lead; Bluetooth follows.
+        const QList<Port> mac = {
+            {QStringLiteral("/dev/cu.Bluetooth-Incoming-Port"), false},
+            {QStringLiteral("/dev/cu.usbserial-A10K"), true},
+            {QStringLiteral("/dev/cu.usbmodem1101"), false}};
+        QCOMPARE(StationRotorController::orderSerialPorts(mac, {}),
+                 QStringList({QStringLiteral("/dev/cu.usbmodem1101"),
+                              QStringLiteral("/dev/cu.usbserial-A10K"),
+                              QStringLiteral("/dev/cu.Bluetooth-Incoming-Port")}));
+
+        // Windows: COM ports with a USB vendor id lead, COM10 after COM3.
+        const QList<Port> windows = {
+            {QStringLiteral("COM1"), false}, {QStringLiteral("COM10"), true},
+            {QStringLiteral("COM3"), true}, {QStringLiteral("COM3"), true}};
+        QCOMPARE(StationRotorController::orderSerialPorts(windows, {}),
+                 QStringList({QStringLiteral("COM3"), QStringLiteral("COM10"),
+                              QStringLiteral("COM1")}));
+    }
+
     // ── Refusals ────────────────────────────────────────────────────
 
     void turnCommandsRefusedWithNoRotor()
