@@ -216,11 +216,17 @@
 //                                    Lookup on QRZ); setSpotBeamTurner;
 //                                    spotTuned for auto-turn.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Final review fixes: spotTuned only
+//                                    when the tune happened
+//                                    (setTunedCheck).
+//                                    AI-assisted via Anthropic Claude Code.
 
 #pragma once
 
 #include <QDialog>
 #include <QPointer>
+
+#include <functional>
 
 class QTabWidget;
 class QLineEdit;
@@ -323,6 +329,11 @@ public:
     /// beam to CALL (330°)". Without one it is shown greyed with the
     /// reason. Not owned.
     void setSpotBeamTurner(SpotBeamTurner* turner);
+    /// Final review M7: whether the tune just asked by tuneRequested
+    /// happened (MainWindow: an active slice now at that frequency).
+    /// spotTuned, and so auto-turn, follows only a tune that did; with no
+    /// check set, none is taken as done.
+    void setTunedCheck(std::function<bool(double freqMhz)> tuned);
     /// The Spot List's right-click menu for the view row `viewRow`, filled
     /// into `menu` (a seam: QMenu::exec blocks).
     void buildSpotListMenu(int viewRow, QMenu& menu);
@@ -536,6 +547,9 @@ private:
     QPointer<SpotBeamTurner> m_spotBeamTurner;  // rotor control plan Task 8
     // Tune to the Spot List's source row and say so on spotTuned.
     void tuneToRow(int sourceRow);
+    // Ask for the tune; spotTuned follows only when it happened.
+    void tuneAndSay(double freqMhz, const QString& call, double bearingDeg);
+    std::function<bool(double)> m_tunedCheck;
 
     // Display tab (F4). LEFT-column stat blocks are NereusSDR-native
     // additions; RIGHT-column knobs port verbatim from AetherSDR

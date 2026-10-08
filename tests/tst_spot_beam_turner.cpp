@@ -191,7 +191,10 @@ struct Hub {
     {
         dialog = std::make_unique<SpotHubDialog>(&cluster, &rbn, &wsjtx, &spotCollector, &pota,
                                                  &freedv, &psk, &spots, &table, dxcc, nullptr);
+        dialog->setTunedCheck([this](double) { return tuneHappens; });
     }
+    // What the tuned check answers (MainWindow: an active slice now there).
+    bool tuneHappens = true;
     QTableView* view() const { return dialog->findChild<QTableView*>("spotListTable"); }
     // The Spot List's row for `call`, as the operator sees the list (the
     // proxy sorts and filters).
@@ -700,6 +703,41 @@ private slots:
         QCOMPARE(tunes.count(), 2);
         QCOMPARE(sink.targets.size(), 1);
         QCOMPARE(sink.targets.at(0).azimuth, 330.0);
+    }
+
+    // Final review M7: a tune that did not happen (no active slice) never
+    // turns the beam, from a double-click or the menu.
+    void aTuneThatDidNotHappenNeverTurns()
+    {
+        RotorModel rotor;
+        rotor.setState(connectedRotor());
+        FakeSink sink;
+        SpotBeamTurner turner(&sink, &rotor, &m_dxcc);
+        SpotBeamTurner::setTurnOnTune(true);
+        Hub hub(&m_dxcc);
+        hub.tuneHappens = false;
+        hub.dialog->setSpotBeamTurner(&turner);
+        connect(hub.dialog.get(), &SpotHubDialog::spotTuned, &turner, &SpotBeamTurner::spotTuned);
+        hub.table.addSpot(dxSpot(kCall, 330.0));
+        auto* proxy = hub.dialog->findChild<BandFilterProxy*>("spotListProxyModel");
+        QVERIFY(proxy);
+        QSignalSpy tunes(hub.dialog.get(), &SpotHubDialog::tuneRequested);
+        QSignalSpy tuned(hub.dialog.get(), &SpotHubDialog::spotTuned);
+
+        emit hub.view()->doubleClicked(proxy->index(0, SpotTableModel::ColFreq));
+        QMenu menu;
+        hub.dialog->buildSpotListMenu(0, menu);
+        actionStarting(menu, QStringLiteral("Tune to"))->trigger();
+        QCOMPARE(tunes.count(), 2);
+        QCOMPARE(tuned.count(), 0);
+        QCOMPARE(sink.sent(), 0);
+
+        // The same tune that happens turns.
+        hub.tuneHappens = true;
+        emit hub.view()->doubleClicked(proxy->index(0, SpotTableModel::ColFreq));
+        QCOMPARE(tuned.count(), 1);
+        QCOMPARE(sink.targets.size(), 1);
+        SpotBeamTurner::setTurnOnTune(false);
     }
 
     void everyStringIsPlain()

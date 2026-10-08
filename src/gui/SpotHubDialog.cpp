@@ -154,6 +154,10 @@
 //                                    Lookup on QRZ); double-click still
 //                                    tunes, and both say spotTuned.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Final review fixes: spotTuned only
+//                                    when the tune happened
+//                                    (setTunedCheck).
+//                                    AI-assisted via Anthropic Claude Code.
 
 #include "SpotHubDialog.h"
 
@@ -3508,10 +3512,24 @@ void SpotHubDialog::tuneToRow(int sourceRow)
     if (freq <= 0.0) {
         return;
     }
-    emit tuneRequested(freq);
     const QString call = m_spotTableModel->data(
         m_spotTableModel->index(sourceRow, SpotTableModel::ColDxCall), Qt::DisplayRole).toString();
-    emit spotTuned(call, m_spotTableModel->servedBearingAtRow(sourceRow));
+    tuneAndSay(freq, call, m_spotTableModel->servedBearingAtRow(sourceRow));
+}
+
+void SpotHubDialog::setTunedCheck(std::function<bool(double freqMhz)> tuned)
+{
+    m_tunedCheck = std::move(tuned);
+}
+
+void SpotHubDialog::tuneAndSay(double freqMhz, const QString& call, double bearingDeg)
+{
+    emit tuneRequested(freqMhz);
+    // A tune that did not happen (no active slice, a locked one) is not a
+    // tune to the spot, so auto-turn does not hear of it.
+    if (m_tunedCheck && m_tunedCheck(freqMhz)) {
+        emit spotTuned(call, bearingDeg);
+    }
 }
 
 // The Spot List's menu, the pan's spot menu less Remove Spot: Tune, Turn
@@ -3538,8 +3556,7 @@ void SpotHubDialog::buildSpotListMenu(int viewRow, QMenu& menu)
     // open moves every row down.
     menu.addAction(QStringLiteral("Tune to %1").arg(call), this, [this, freq, call, served]() {
         if (freq > 0.0) {
-            emit tuneRequested(freq);
-            emit spotTuned(call, served);
+            tuneAndSay(freq, call, served);
         }
     });
     QAction* turn = nullptr;

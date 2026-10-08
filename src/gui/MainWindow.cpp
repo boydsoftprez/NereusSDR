@@ -16477,6 +16477,12 @@ void MainWindow::openSpotHub()
         // auto-turn when the operator tunes to a row.
         if (SpotBeamTurner* turner = spotBeamTurner()) {
             m_spotHubDialog->setSpotBeamTurner(turner);
+            // Final review M7: auto-turn follows only a tune that happened,
+            // an active slice now at the spot's frequency.
+            m_spotHubDialog->setTunedCheck([this](double freqMhz) {
+                const SliceModel* slice = activeSliceForWindow();
+                return slice && std::abs(slice->frequency() - freqMhz * 1.0e6) < 1.0;
+            });
             connect(m_spotHubDialog.data(), &SpotHubDialog::spotTuned,
                     turner, &SpotBeamTurner::spotTuned);
         }
