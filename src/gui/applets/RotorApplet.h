@@ -69,6 +69,14 @@ public:
     QString appletTitle() const override { return QStringLiteral("Rotor"); }
     void syncFromModel() override;
 
+protected:
+    // A hold ends when the applet hides or its window loses activation:
+    // the release may never arrive there (final review M3).
+    void hideEvent(QHideEvent* event) override;
+    void changeEvent(QEvent* event) override;
+
+public:
+
     RotorDialWidget* dial() const { return m_dial; }
     /// Why the controls are greyed, or empty while they work.
     QString disabledReason() const { return m_disabledReason; }
@@ -83,7 +91,7 @@ private:
     void rebuildPresets();
     void updateMessage();
 
-    void startHold(RotorCommandSink::Nudge direction);
+    void startHold(QPushButton* button, RotorCommandSink::Nudge direction);
     void endHold();
     void repeatHold();
 
@@ -130,6 +138,8 @@ private:
     // The hold dead man.
     QTimer m_holdTimer;
     bool m_holding{false};
+    // The button the hold belongs to; each repeat checks it is still down.
+    QPointer<QPushButton> m_holdButton;
     RotorCommandSink::Nudge m_holdDirection{RotorCommandSink::Nudge::Cw};
 
     // A command waiting on a remote Core's verdict.

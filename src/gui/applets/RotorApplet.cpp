@@ -22,7 +22,11 @@
 //                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-08  J.J. Boyd / KG4VCF  Final review fixes: a selection's
 //                                    route is planned on the controller's
-//                                    span with the offset removed.
+//                                    span with the offset removed; a hold
+//                                    ends when its button is no longer
+//                                    down, the applet hides or its window
+//                                    loses activation; the long-way
+//                                    threshold is RotorRoute::kLongWayDeg.
 //                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -34,8 +38,10 @@
 #include "models/RotorModel.h"
 
 #include <QButtonGroup>
+#include <QEvent>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QHideEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
@@ -87,10 +93,6 @@ constexpr const char* kHeadingStaleColour = "#a6b0bc";
 constexpr const char* kDotGreen = "#5fff8a";
 constexpr const char* kDotAmber = "#ffb800";
 constexpr const char* kDotGrey = "#404858";
-
-// The readout calls a route this long the long way round, as the route
-// planner does (RotorRoute::kLongWayDeg).
-constexpr double kLongWayDeg = 270.0;
 
 QString degrees(double deg)
 {
@@ -263,7 +265,9 @@ void RotorApplet::buildUi()
     };
     for (const auto& hold : kHolds) {
         const RotorCommandSink::Nudge direction = hold.direction;
-        connect(hold.button, &QPushButton::pressed, this, [this, direction] { startHold(direction); });
+        QPushButton* holdButton = hold.button;
+        connect(hold.button, &QPushButton::pressed, this,
+                [this, holdButton, direction] { startHold(holdButton, direction); });
         connect(hold.button, &QPushButton::released, this, &RotorApplet::endHold);
     }
     connect(m_stop, &QPushButton::clicked, this, &RotorApplet::sendStop);
@@ -472,7 +476,7 @@ void RotorApplet::updateReadout()
                 target = QStringLiteral("%1 · %2%3 to go")
                              .arg(degrees(targetAz), direction(travel),
                                   plainDegrees(std::abs(travel)));
-                if (std::abs(travel) > kLongWayDeg) {
+                if (std::abs(travel) > RotorRoute::kLongWayDeg) {
                     target += QStringLiteral(" · long way round");
                 }
             }
@@ -560,13 +564,17 @@ void RotorApplet::updateMessage()
 // The contract's nudgeRotor: active true on press and every 250 ms while
 // held, active false on release. The Core stops a hold that goes quiet for
 // 750 ms, so a window that dies mid-hold cannot leave the rotor turning.
+// A window that lives but misses the release (a grab taken by a dialog,
+// the window deactivated mid-press) ends the hold itself: each repeat
+// checks the button is still down, and hiding or losing activation ends it.
 
-void RotorApplet::startHold(RotorCommandSink::Nudge direction)
+void RotorApplet::startHold(QPushButton* button, RotorCommandSink::Nudge direction)
 {
     if (!m_commands || !m_controlsEnabled) { return; }
     if (m_holding) { endHold(); }
     m_holding = true;
     m_holdDirection = direction;
+    m_holdButton = button;
     QString reason;
     const bool sent = m_commands->requestNudgeRotor(direction, true, &reason);
     noteSent(sent, reason, false);
@@ -583,6 +591,10 @@ void RotorApplet::repeatHold()
         m_holdTimer.stop();
         return;
     }
+    if (!m_holdButton || !m_holdButton->isDown()) {
+        endHold();
+        return;
+    }
     QString reason;
     if (!m_commands->requestNudgeRotor(m_holdDirection, true, &reason)) {
         m_holdTimer.stop();
@@ -594,12 +606,27 @@ void RotorApplet::repeatHold()
 void RotorApplet::endHold()
 {
     m_holdTimer.stop();
+    m_holdButton = nullptr;
     if (!m_holding) { return; }
     m_holding = false;
     if (!m_commands) { return; }
     QString reason;
     const bool sent = m_commands->requestNudgeRotor(m_holdDirection, false, &reason);
     if (!sent) { noteSent(false, reason, false); }
+}
+
+void RotorApplet::hideEvent(QHideEvent* event)
+{
+    if (m_holding) { endHold(); }
+    AppletWidget::hideEvent(event);
+}
+
+void RotorApplet::changeEvent(QEvent* event)
+{
+    if (event->type() == QEvent::ActivationChange && m_holding && !isActiveWindow()) {
+        endHold();
+    }
+    AppletWidget::changeEvent(event);
 }
 
 // ── One-shot commands ───────────────────────────────────────────────

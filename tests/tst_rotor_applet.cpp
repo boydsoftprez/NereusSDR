@@ -441,6 +441,72 @@ private slots:
         QCOMPARE(sink.nudges.size(), after);
     }
 
+    // Final review M3: a hold whose release never arrives still ends. The
+    // repeat finds the button no longer down; hiding or losing activation
+    // ends it at once.
+    void aHoldEndsWhenTheButtonIsNoLongerDown()
+    {
+        RotorModel rotor;
+        rotor.setState(azElStopped());
+        FakeSink sink;
+        RotorApplet applet(nullptr, &rotor, &sink);
+        applet.show();
+        QPushButton* cw = button(applet, "rotorCw");
+        QTest::mousePress(cw, Qt::LeftButton);
+        QCOMPARE(sink.nudges.size(), 1);
+        {
+            // The release is lost: the button comes up with no signal.
+            QSignalBlocker quiet(cw);
+            cw->setDown(false);
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(!sink.nudges.last().active, 2000);
+        QCOMPARE(sink.nudges.last().direction, RotorCommandSink::Nudge::Cw);
+        const qsizetype after = sink.nudges.size();
+        QTest::qWait(RotorApplet::kHoldRepeatMs * 2);
+        QCOMPARE(sink.nudges.size(), after);
+    }
+
+    void aHoldEndsWhenTheAppletHides()
+    {
+        RotorModel rotor;
+        rotor.setState(azElStopped());
+        FakeSink sink;
+        RotorApplet applet(nullptr, &rotor, &sink);
+        applet.show();
+        QTest::mousePress(button(applet, "rotorCcw"), Qt::LeftButton);
+        QCOMPARE(sink.nudges.size(), 1);
+        applet.hide();
+        QCOMPARE(sink.nudges.size(), 2);
+        QCOMPARE(sink.nudges.last().active, false);
+        QCOMPARE(sink.nudges.last().direction, RotorCommandSink::Nudge::Ccw);
+        QTest::qWait(RotorApplet::kHoldRepeatMs * 2);
+        QCOMPARE(sink.nudges.size(), 2);
+    }
+
+    void aHoldEndsWhenTheWindowLosesActivation()
+    {
+        RotorModel rotor;
+        rotor.setState(azElStopped());
+        FakeSink sink;
+        RotorApplet applet(nullptr, &rotor, &sink);
+        applet.show();
+        QTest::mousePress(button(applet, "rotorCw"), Qt::LeftButton);
+        QCOMPARE(sink.nudges.size(), 1);
+        QWidget other;
+        if (applet.isActiveWindow()) {
+            // Another window takes the activation.
+            other.show();
+            other.activateWindow();
+            QTRY_VERIFY(!applet.isActiveWindow());
+        } else {
+            // The window was never active here; say it changed.
+            QEvent deactivated(QEvent::ActivationChange);
+            QCoreApplication::sendEvent(&applet, &deactivated);
+        }
+        QTRY_COMPARE(sink.nudges.size(), 2);
+        QCOMPARE(sink.nudges.last().active, false);
+    }
+
     // Rotor control plan Task 8: a remote Core's refusal of the applet's
     // command comes the accessory way (device "rotor"). While the applet is
     // on screen it shows the refusal itself, so MainWindow adds no notice;
