@@ -133,6 +133,7 @@ RotorConnection::Timing steppedTiming()
     t.replyTimeoutMs = 3600000;
     t.settleMs = 3600000;
     t.staleMs = 3600000;
+    t.answerDeadlineMs = 3600000;
     t.reconnectUnitMs = 3600000;
     t.rotctldStartDelayMs = 0;
     return t;
@@ -1238,6 +1239,9 @@ private slots:
         QVERIFY2(window.requestConfigureRotor(setup, &why), qPrintable(why));
         NEREUS_TRY_COMPARE(core.controller()->config().rangeDeg, 450.0);
         QCOMPARE(core.controller()->config().endStop, RotorRoute::EndStop::South);
+        // The new setup reopened the port: connected once the rotor answers.
+        core.rotor->feed("AZ=090  EL=000\r\n");
+        QCOMPARE(core.controller()->connectionPhase(), RotorConnectionPhase::Connected);
 
         // Task 8: every rotor command takes the accessory route, the turns
         // as well as the setup, so a refused Turn beam from a spot (or the

@@ -89,6 +89,12 @@ not a device fact.
 Off `connected`, the Core sets the headings and targets to -1 and `motion`
 to stopped.
 
+A GS-232 rotor (drivers 1 and 2) is `connecting` while its serial port is
+open and no position reply has parsed, and `connected` from the first one.
+With no valid reply within 3 s the Core reports the fault "The rotor
+controller on <port> is not answering. Check the serial port and the baud
+rate." and dials again on the reconnect schedule (bench fix, 2026-10-08).
+
 ### Enum tables
 
 `driver`: 0 none, 1 GS-232A (serial), 2 GS-232B (serial), 3 Hamlib rotctld

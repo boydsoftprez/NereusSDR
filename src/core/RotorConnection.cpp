@@ -242,6 +242,9 @@ RotorConnection::RotorConnection(QObject* parent)
     connect(&m_reconnectTimer, &QTimer::timeout,
             this, &RotorConnection::onReconnectTimeout);
 
+    m_answerTimer.setSingleShot(true);
+    connect(&m_answerTimer, &QTimer::timeout, this, &RotorConnection::onAnswerDeadline);
+
     m_dialTimer.setSingleShot(true);
     connect(&m_dialTimer, &QTimer::timeout, this, [this]() {
         if (m_wantConnected) { openTransport(); }
@@ -507,6 +510,8 @@ void RotorConnection::closeTransport()
         t->deleteLater();
     }
     m_connected = false;
+    m_linkOpen = false;
+    m_answerTimer.stop();
     m_pollTimer.stop();
     m_replyTimer.stop();
     m_staleTimer.stop();
@@ -534,18 +539,44 @@ void RotorConnection::resetPosition()
 
 void RotorConnection::onOpened()
 {
-    m_connected = true;
-    m_reconnectAttempts = 0;
-    m_lastError.clear();
+    m_linkOpen = true;
     m_rx.clear();
     m_queue.clear();
     m_inFlight.clear();
-    qCInfo(lcRotor) << "connected, driver" << static_cast<int>(m_config.driver);
-    emit connected();
-    if (!m_connected) { return; }   // a slot disconnected us
+    if (isSerialDriver()) {
+        // Bench fix: an open serial port is not a rotor. JJ's Core said
+        // "connected" on /dev/ttyFIQ0 (the board's debug console), where
+        // no heading ever came. Poll, and call it connected on the first
+        // position reply (acceptPosition()); none within the deadline is a
+        // fault.
+        qCInfo(lcRotor) << "port open, waiting for the controller to answer";
+        m_answerTimer.start(m_timing.answerDeadlineMs);
+    } else {
+        m_connected = true;
+        m_reconnectAttempts = 0;
+        m_lastError.clear();
+        qCInfo(lcRotor) << "connected, driver" << static_cast<int>(m_config.driver);
+        emit connected();
+        if (!m_connected) { return; }   // a slot disconnected us
+    }
     updatePollInterval();
     m_pollTimer.start();
     onPollTick();
+}
+
+QString RotorConnection::notAnsweringReason(const QString& serialPort)
+{
+    return QStringLiteral("The rotor controller on %1 is not answering. "
+                          "Check the serial port and the baud rate.")
+        .arg(serialPort);
+}
+
+void RotorConnection::onAnswerDeadline()
+{
+    if (m_connected || !m_linkOpen) { return; }
+    closeTransport();
+    fail(notAnsweringReason(m_config.serialPort));
+    scheduleReconnect();
 }
 
 void RotorConnection::onTransportFailed(const QString& reason)
@@ -616,7 +647,7 @@ void RotorConnection::pump()
 {
     // One reply awaited at a time: a command waits behind an outstanding
     // poll (at most about 210 ms on the ERC) rather than interleave.
-    while (m_connected && !m_queue.empty() && m_inFlight.empty()) {
+    while (m_linkOpen && !m_queue.empty() && m_inFlight.empty()) {
         const Outgoing out = m_queue.front();
         m_queue.pop_front();
         writeNow(out);
@@ -733,7 +764,7 @@ void RotorConnection::updatePollInterval()
 
 void RotorConnection::onPollTick()
 {
-    if (!m_connected) { return; }
+    if (!m_linkOpen) { return; }
 
     // Stopped changing: arrived, at a stop, or coasted to rest.
     if (m_turning && !m_moveActive
@@ -901,6 +932,17 @@ void RotorConnection::acceptPosition(double reportedAz, double reportedEl, bool 
         || reportedAz > kMaxReportedAz) {
         qCDebug(lcRotor) << "azimuth out of range:" << reportedAz;
         return;
+    }
+
+    if (!m_connected && m_linkOpen) {
+        // The first position reply: the controller is there.
+        m_answerTimer.stop();
+        m_connected = true;
+        m_reconnectAttempts = 0;
+        m_lastError.clear();
+        qCInfo(lcRotor) << "connected, driver" << static_cast<int>(m_config.driver);
+        emit connected();
+        if (!m_connected) { return; }   // a slot disconnected us
     }
 
     const double heading = RotorRoute::applyOffset(reportedAz, m_config.offsetDeg);

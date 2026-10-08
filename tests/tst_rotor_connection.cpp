@@ -92,6 +92,7 @@ RotorConnection::Timing steppedTiming()
     t.replyTimeoutMs = 3600000;
     t.settleMs = 3600000;
     t.staleMs = 3600000;
+    t.answerDeadlineMs = 3600000;
     t.reconnectUnitMs = 3600000;
     t.rotctldStartDelayMs = 0;
     return t;
@@ -191,6 +192,8 @@ private slots:
     void rotctldStopIsWrittenAheadOfAnythingQueued();
     void staleAfter1500msThenFreshOnTheNextReply();
     void failedOpenIsRetried();
+    void aSilentPortIsNotConnectedAndFaultsAtTheDeadline();
+    void aPortAnsweringGarbageIsNotConnected();
 
     // Bench captures
     void replayErcCapture();
@@ -318,11 +321,13 @@ void TestRotorConnection::gs232bWritesTheCitedBytes()
     QVERIFY(m_target.serial);
     QCOMPARE(m_target.serialPort, QStringLiteral("/dev/ttyUSB0"));
     QCOMPARE(m_target.baud, 9600);
-    QVERIFY(m_conn->isConnected());
+    // Bench fix: an open port is still connecting until a reply parses.
+    QVERIFY(!m_conn->isConnected());
 
     // The first poll goes out on connect.
     QCOMPARE(m_fake->take(), QByteArray("C2\r"));
     m_fake->feed("AZ=302  EL=000\r\n");
+    QVERIFY(m_conn->isConnected());
 
     QVERIFY(m_conn->setTarget(292.0));
     QCOMPARE(m_fake->take(), QByteArray("W292 000\r"));
@@ -859,6 +864,58 @@ void TestRotorConnection::staleAfter1500msThenFreshOnTheNextReply()
     QCOMPARE(m_conn->spanPositionDeg(), 123.0);
 }
 
+// Bench fix: JJ chose /dev/ttyFIQ0 (the board's debug console). The port
+// opened, nothing answered, and the Core said "connected".
+void TestRotorConnection::aSilentPortIsNotConnectedAndFaultsAtTheDeadline()
+{
+    RotorConfig c;
+    c.driver = RotorDriver::Gs232b;
+    c.serialPort = QStringLiteral("/dev/ttyFIQ0");
+    RotorConnection::Timing t = steppedTiming();
+    t.answerDeadlineMs = 50;
+    QSignalSpy up(m_conn.get(), &RotorConnection::connected);
+    QSignalSpy failed(m_conn.get(), &RotorConnection::connectionFailed);
+    QSignalSpy scheduled(m_conn.get(), &RotorConnection::reconnectScheduled);
+    connectWith(c, t);
+    QCOMPARE(m_fake->take(), QByteArray("C2\r"));   // it polls
+    QVERIFY(!m_conn->isConnected());
+    QVERIFY(!m_conn->setTarget(100.0));
+    QCOMPARE(m_fake->take(), QByteArray());           // and sends no turn
+
+    const QString reason = QStringLiteral(
+        "The rotor controller on /dev/ttyFIQ0 is not answering. "
+        "Check the serial port and the baud rate.");
+    expectWarning("is not answering");
+    QTRY_COMPARE_WITH_TIMEOUT(failed.count(), 1, 2000);
+    QCOMPARE(failed.at(0).at(0).toString(), reason);
+    QCOMPARE(m_conn->lastError(), reason);
+    QCOMPARE(up.count(), 0);
+    QVERIFY(!m_conn->isConnected());
+    QCOMPARE(scheduled.count(), 1);   // dialled again on the schedule
+    QVERIFY(m_fake == nullptr || m_transportsMade == 1);
+}
+
+void TestRotorConnection::aPortAnsweringGarbageIsNotConnected()
+{
+    RotorConfig c;
+    c.driver = RotorDriver::Gs232b;
+    c.serialPort = QStringLiteral("/dev/ttyS2");
+    RotorConnection::Timing t = steppedTiming();
+    t.answerDeadlineMs = 50;
+    QSignalSpy up(m_conn.get(), &RotorConnection::connected);
+    QSignalSpy failed(m_conn.get(), &RotorConnection::connectionFailed);
+    connectWith(c, t);
+    // A console's chatter, and a heading out of range: neither is a rotor.
+    m_fake->feed("U-Boot 2017.09\r\nlogin: \r\n");
+    m_fake->feed("AZ=999\r\n");
+    QVERIFY(!m_conn->isConnected());
+    QCOMPARE(up.count(), 0);
+    expectWarning("is not answering");
+    QTRY_COMPARE_WITH_TIMEOUT(failed.count(), 1, 2000);
+    QVERIFY(!m_conn->isConnected());
+    QCOMPARE(up.count(), 0);
+}
+
 void TestRotorConnection::failedOpenIsRetried()
 {
     RotorConfig c;
@@ -883,21 +940,23 @@ void TestRotorConnection::failedOpenIsRetried()
     QCOMPARE(scheduled.count(), 1);
     QCOMPARE(scheduled.at(0).at(1).toInt(), 10);   // 1 s on the schedule
     QVERIFY(!m_conn->isConnected());
-    QTRY_VERIFY_WITH_TIMEOUT(m_conn->isConnected(), 2000);
-    QCOMPARE(up.count(), 1);
-    QCOMPARE(made, 2);
-
-    // A dropped link: disconnected, headings forgotten, dialled again.
+    QTRY_COMPARE_WITH_TIMEOUT(made, 2, 2000);
+    // Connected on the first answer.
     m_fake->take();
     m_fake->feed("AZ=302  EL=000\r\n");
+    QVERIFY(m_conn->isConnected());
+    QCOMPARE(up.count(), 1);
+
+    // A dropped link: disconnected, headings forgotten, dialled again.
     QSignalSpy down(m_conn.get(), &RotorConnection::disconnected);
     expectWarning("The serial port went away");
     emit m_fake->dropped(QStringLiteral("The serial port went away."));
     QCOMPARE(down.count(), 1);
     QCOMPARE(m_conn->azimuthDeg(), -1.0);
     QVERIFY(!m_conn->positionFresh());
-    QTRY_VERIFY_WITH_TIMEOUT(m_conn->isConnected(), 2000);
-    QCOMPARE(made, 3);
+    QTRY_COMPARE_WITH_TIMEOUT(made, 3, 2000);
+    m_fake->feed("AZ=302  EL=000\r\n");
+    QVERIFY(m_conn->isConnected());
 
     // An explicit disconnect stops retrying.
     m_conn->disconnectFromRotor();

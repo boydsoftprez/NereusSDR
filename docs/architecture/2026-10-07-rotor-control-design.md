@@ -184,6 +184,10 @@ Behaviour:
 
 * **Fresh or stale.** Every position reply stamps the time; 1500 ms without
   one marks the heading stale until the next reply.
+* **Connected means answering.** A GS-232 serial link is connected on its
+  first parsed position reply, not when the port opens; no reply in 3 s
+  (three polls) is a fault, then a retry (bench fix 2026-10-08: the Rock's
+  debug console opened and the Core said "connected").
 * **Strict headings.** Every target is checked before it is sent (see
   Prior art).
 * **rotctld started by the Core** (driver 4): a `RotctldProcess` beside the

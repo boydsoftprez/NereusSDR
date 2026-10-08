@@ -87,6 +87,7 @@ RotorConnection::Timing steppedTiming()
     t.replyTimeoutMs = 3600000;
     t.settleMs = 3600000;
     t.staleMs = 3600000;
+    t.answerDeadlineMs = 3600000;
     t.reconnectUnitMs = 3600000;
     t.rotctldStartDelayMs = 0;
     return t;
@@ -140,9 +141,11 @@ private:
         QString why;
         QVERIFY2(m_ctl->configureRotor(c, &why), qPrintable(why));
         QVERIFY(m_fake);
-        QCOMPARE(m_ctl->connectionPhase(), Phase::Connected);
+        // Bench fix: connected only once the first poll is answered.
+        QCOMPARE(m_ctl->connectionPhase(), Phase::Connecting);
         QCOMPARE(m_fake->take(), QByteArray("C2\r"));
         m_fake->feed("AZ=" + heading + "  EL=000\r\n");
+        QCOMPARE(m_ctl->connectionPhase(), Phase::Connected);
     }
 
 private slots:
@@ -204,6 +207,8 @@ private slots:
         QString why;
         QVERIFY(m_ctl->configureRotor(c, &why));
         QVERIFY(changed.count() > 0);
+        QCOMPARE(m_ctl->connectionPhase(), Phase::Connecting);
+        m_fake->feed("AZ=302  EL=000\r\n");
         QCOMPARE(m_ctl->connectionPhase(), Phase::Connected);
         QVERIFY(m_ctl->connectionError().isEmpty());
         QCOMPARE(m_ctl->label(), QStringLiteral("Yaesu GS-232B on /dev/ttyUSB0"));
@@ -231,6 +236,8 @@ private slots:
         QCOMPARE(m_ctl->config().endStop, EndStop::South);
         QCOMPARE(m_ctl->config().rangeDeg, 450.0);
         QCOMPARE(m_ctl->config().offsetDeg, -2.5);
+        QCOMPARE(m_ctl->connectionPhase(), Phase::Connecting);
+        m_fake->feed("AZ=302  EL=000\r\n");
         QCOMPARE(m_ctl->connectionPhase(), Phase::Connected);
     }
 
@@ -308,6 +315,26 @@ private slots:
         QCOMPARE(m_ctl->fault(), QStringLiteral("Could not open the fake port."));
         QVERIFY(!m_ctl->setRotorTarget(10.0, -1.0, &why));
         QCOMPARE(why, QStringLiteral("The rotor is not connected."));
+    }
+
+    // Bench fix: an open port with no rotor answering is connecting, then
+    // a fault in plain words, never "connected".
+    void aPortThatNeverAnswersIsConnectingThenAFault()
+    {
+        RotorConnection::Timing t = steppedTiming();
+        t.answerDeadlineMs = 50;
+        make(t);
+        QString why;
+        QVERIFY(m_ctl->configureRotor(gs232b(), &why));
+        QCOMPARE(m_ctl->connectionPhase(), Phase::Connecting);
+        expectWarning("is not answering");
+        QTRY_COMPARE_WITH_TIMEOUT(m_ctl->connectionPhase(), Phase::Retrying, 2000);
+        const QString reason = QStringLiteral(
+            "The rotor controller on /dev/ttyUSB0 is not answering. "
+            "Check the serial port and the baud rate.");
+        QCOMPARE(m_ctl->connectionError(), reason);
+        QCOMPARE(m_ctl->fault(), reason);
+        QVERIFY(OperatorWording::isPlain(reason));
     }
 
     // ── Refusals ────────────────────────────────────────────────────

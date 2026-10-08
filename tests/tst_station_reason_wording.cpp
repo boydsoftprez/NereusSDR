@@ -268,6 +268,8 @@
 //   2026-10-07  J.J. Boyd / KG4VCF  CatControl's notConnectedReason is
 //                                    scanned; its unavailableReason is the
 //                                    window's own. AI tooling: Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Rotor bench fix: RotorConnection's
+//                                    "not answering" fault is scanned.
 //   2026-10-08  J.J. Boyd / KG4VCF  Remote rotor control: the rotor's
 //                                    reasons are scanned (StationRotorController,
 //                                    RotctldProcess, RotorModel, the
@@ -1516,6 +1518,10 @@ const QList<ReasonSource>& reasonSources()
          {}, 8, {},
          {// setReason's parameter: the reasons above, this entry's own literals.
           QStringLiteral("text")}},
+        // Rotor bench fix: a GS-232 controller that never answers on its
+        // port, the rotor's fault (the port's name inserted).
+        {"src/core/RotorConnection.cpp", {QStringLiteral("notAnsweringReason")}, {}, 1,
+         {QStringLiteral("serialPort")}},
         // Remote rotor control: configureRotor's refusal when Hamlib's
         // rotctld is missing (StationRotorController::rotctldMissingReason).
         {"src/core/RotctldProcess.cpp", {QStringLiteral("notInstalledReason")}, {}, 1},

@@ -88,6 +88,7 @@ RotorConnection::Timing steppedTiming()
     t.replyTimeoutMs = 3600000;
     t.settleMs = 3600000;
     t.staleMs = 3600000;
+    t.answerDeadlineMs = 3600000;
     t.reconnectUnitMs = 3600000;
     t.rotctldStartDelayMs = 0;
     return t;

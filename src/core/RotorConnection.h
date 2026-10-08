@@ -35,6 +35,9 @@
 // Modification history (NereusSDR):
 //   2026-10-08: Created by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code. Rotor control plan, Task 3b.
+//   2026-10-08: Bench fix: a GS-232 link is connected only after its
+//               first position reply, and a fault when none comes. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -147,6 +150,11 @@ public:
     // has arrived, hit a stop, or coasted to rest after `S`). The ERC
     // started moving within a second of a command.
     static constexpr int kSettleMs = 2000;
+    // Bench fix: a GS-232 serial link is connected only once a position
+    // reply parses. An open port that has not answered one this long (three
+    // polls) is a fault (the wrong port, the wrong baud, or a controller
+    // that is off), and it is dialled again on the reconnect schedule.
+    static constexpr int kAnswerDeadlineMs = 3000;
     // rotctld(1) default port.
     static constexpr quint16 kRotctldDefaultPort = 4533;
     // rotctld `M` speed (rotctld(1): 1 to 100).
@@ -172,6 +180,8 @@ public:
     // Closes the link, stops retrying and stops a rotctld it started.
     void disconnectFromRotor();
 
+    // A GS-232 link is connected once a position reply has parsed; while
+    // its port is open with no reply yet it is still connecting.
     bool isConnected() const { return m_connected; }
     bool reconnectPending() const { return m_reconnectTimer.isActive(); }
     QString lastError() const { return m_lastError; }
@@ -232,6 +242,7 @@ public:
         int replyTimeoutMs{kReplyTimeoutMs};
         int settleMs{kSettleMs};
         int staleMs{kStaleMs};
+        int answerDeadlineMs{kAnswerDeadlineMs};
         int reconnectUnitMs{1000};
         int rotctldStartDelayMs{500};
     };
@@ -246,8 +257,8 @@ signals:
     void connected();
     // The link closed or dropped after connected().
     void disconnected();
-    // Opening failed, the link dropped, or a started rotctld exited; the
-    // reason in plain words.
+    // Opening failed, the link dropped, a started rotctld exited, or a
+    // GS-232 controller never answered; the reason in plain words.
     void connectionFailed(const QString& reason);
     void reconnectScheduled(int attempt, int delayMs);
     // Every accepted position reply.
@@ -283,6 +294,8 @@ private:
     void onPollTick();
     void onReplyTimeout();
     void onStale();
+    void onAnswerDeadline();
+    static QString notAnsweringReason(const QString& serialPort);
     void scheduleReconnect();
     void onReconnectTimeout();
     void setTurning(bool turning);
@@ -302,9 +315,11 @@ private:
     QTimer m_staleTimer;
     QTimer m_reconnectTimer;
     QTimer m_dialTimer;          // driver 4: rotctld's moment to bind
+    QTimer m_answerTimer;        // GS-232: the first reply's deadline
     int    m_reconnectAttempts{0};
     bool   m_wantConnected{false};
     bool   m_connected{false};
+    bool   m_linkOpen{false};    // transport open (polls go out)
     QString m_lastError;
 
     QByteArray m_rx;
