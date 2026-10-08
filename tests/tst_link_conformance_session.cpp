@@ -1631,19 +1631,6 @@ void TstLinkConformanceSession::exportDiversitySessionCorpus()
                 if (message.value("type") == "object.create" && message.value("class") != "RadioModel") {
                     message.insert("properties", "$any");
                 }
-                // The log categories are the process's, not this station's:
-                // an earlier fixture in the same run may have changed them.
-                if (message.value("type") == "object.create" && message.value("class") == "RadioModel") {
-                    QJsonArray properties = message.value("properties").toArray();
-                    for (qsizetype i = 0; i < properties.size(); ++i) {
-                        QJsonObject property = properties[i].toObject();
-                        if (property.value("name") == "logCategories") {
-                            property.insert("value", "$string");
-                            properties[i] = property;
-                        }
-                    }
-                    message.insert("properties", properties);
-                }
                 steps.append(QJsonObject{{"from", "station"}, {"message", message}});
             }
         };
