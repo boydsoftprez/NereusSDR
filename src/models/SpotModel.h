@@ -12,6 +12,11 @@
 // (see https://github.com/ten9876/AetherSDR/blob/main/LICENSE).
 //
 // Modification history (NereusSDR):
+//   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 4a: SpotData's
+//                                    bearingDeg and the bearing_deg key, the
+//                                    Core's short-path bearing to a spot
+//                                    (-1 none). AI tooling: Anthropic
+//                                    Claude Code.
 //   2026-09-26  J.J. Boyd / KG4VCF  Parity Task 19 (R-IOS-25): mintIndex().
 //                                    AI tooling: Anthropic Claude Code.
 //   2026-05-11  J.J. Boyd / KG4VCF  Phase 3J-2 Task D1. Initial port.
@@ -73,6 +78,12 @@ struct SpotData {
     // bounce the Spot List row).  Expiration checks against
     // lastSeenMs, not addedMs.
     qint64 lastSeenMs{0};
+    // NereusSDR addition (rotor control plan Task 4a): the short-path
+    // bearing from the station's grid square to the spot, degrees 0 to
+    // under 360, as the Core serves it in a spot record's bearingDeg; -1
+    // when not known (no grid square, a call cty.dat cannot place, or a
+    // spot from a local source). Never 0 for "not known".
+    double bearingDeg{-1.0};
 };
 
 // From AetherSDR src/models/SpotModel.h:27-49 [@0cd4559]

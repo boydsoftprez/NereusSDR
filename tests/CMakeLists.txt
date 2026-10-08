@@ -6172,6 +6172,14 @@ nereus_add_test(tst_rotctld_process)
 # byte stream; no real serial port or rotctld.
 nereus_add_test(tst_station_rotor_controller)
 
+# ── Rotor control: cty.dat on the headless Core, bearings on spots (4a) ────
+# Linked to NereusCore alone, as nereusd is: the Core's own :/cty.dat places
+# a callsign and is parsed once; the Core's start loads it so the rotor turns
+# to a call; a spot record's bearingDeg is GreatCircle's short-path bearing
+# from the station's grid square to one decimal, -1 with no grid square, an
+# unreadable one or a call cty.dat cannot place; the spot model keeps it.
+nereus_add_test(tst_core_spot_bearing CORE_ONLY)
+
 # ── Phase 3J-2 Task C2: AdifParser (.adi / .adif log parser) ───────────────
 # Pins the contract that AdifParser parses ADIF (Amateur Data
 # Interchange Format) log files into QVector<QsoRecord> (callsign

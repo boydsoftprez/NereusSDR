@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Rotor control plan Task 4a: cty.dat is the Core's resource,
+//                 loaded once per process (ensureCtyDatLoaded). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-04 — Selected RX source identity and RX-only presentation reset by
@@ -7732,8 +7735,11 @@ void MainWindow::buildUI()
     // cty.dat is bundled as the ":/cty.dat" resource (resources.qrc), as
     // AetherSDR loads it at startup (MainWindow.cpp:1469 [@1e0718ad]);
     // without it every spot resolved to no country.
+    // Rotor control plan Task 4a: the resource is now NereusCore's
+    // (resources/cty.qrc), and the window shares the one table the Core's
+    // rotor and spot bearings read; ensureCtyDatLoaded parses it only once.
     if (DxccColorProvider* dxcc = m_radioModel->dxccColorProvider()) {
-        if (!dxcc->loadCtyDat()) {
+        if (!dxcc->ensureCtyDatLoaded()) {
             qCWarning(lcSpots) << "DXCC country table (:/cty.dat) did not load;"
                                << "spots will not be colored by country";
         }

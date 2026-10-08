@@ -42,6 +42,16 @@
 //                                    from this one cty.dat table.
 //                                    AI tooling: Anthropic Claude
 //                                    Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 4a.
+//                                    NereusSDR addition:
+//                                    ensureCtyDatLoaded, the one
+//                                    load per process of the Core's
+//                                    :/cty.dat (now a NereusCore
+//                                    resource) that the rotor, the
+//                                    spot bearings and the window's
+//                                    spot colouring share.
+//                                    AI tooling: Anthropic Claude
+//                                    Code.
 
 #pragma once
 
@@ -79,6 +89,12 @@ public:
 
     // Load cty.dat from Qt resource (call once at startup).
     bool loadCtyDat(const QString& resourcePath = ":/cty.dat");
+
+    // NereusSDR addition (rotor control plan Task 4a): loads the Core's
+    // bundled :/cty.dat unless a table is already loaded, so every caller
+    // (the Core's start, the window's start) shares one parsed copy. True
+    // when a table is loaded.
+    bool ensureCtyDatLoaded();
 
     // Asynchronously parse an ADIF file; emits importFinished() when done.
     void importAdifFile(const QString& path);

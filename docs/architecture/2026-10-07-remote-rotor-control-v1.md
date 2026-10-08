@@ -126,11 +126,31 @@ RF path, unlike the amp and tuner controls that wait.
 
 With `remoteRotorControlVersion` 1, every spot the Core serves gains
 `bearingDeg` (f64): the short-path initial great-circle bearing from the
-station's grid square to the spot's cty.dat entity, 0 to 360, or -1 when
-the Core has no grid square or cannot place the callsign. Long path is
-`bearingDeg + 180` modulo 360, worked out by the window. Plan Task 4 fixes
-the exact field placement against the spot stream's existing shape and
-records it here.
+station's grid square to the spot's cty.dat entity, 0 to under 360, or -1
+when the Core has no grid square or cannot place the callsign. Long path is
+`bearingDeg + 180` modulo 360, worked out by the window.
+
+Placement (plan Task 4a): `bearingDeg` is one more field of each upsert in
+the `spots` record stream, beside `dxccColour` and `dxccPriority` (the `spots` row of the link
+document's record stream table), built by
+`SpotSourceHost::spotRecordFields`. It is present on every spot record a
+Core of this build serves, whatever the window's capabilities; a window
+reads it only when the Core advertises `remoteRotorControlVersion` 1 (plan
+Task 4b advertises the capability) and treats it as -1 otherwise.
+
+- The station's grid square is the one FreeDV Reporter uses
+  (`FreeDvReporter/GridSquare`, else `User/GridSquare`).
+- The callsign is placed with the Core's one cty.dat table, the same one
+  `turnRotorToCall` and the spot colouring use (`:/cty.dat`, a NereusCore
+  resource, loaded once when the Core starts).
+- The bearing is rounded to one decimal; a value that rounds to 360 is
+  sent as 0.
+- -1 means not known: no grid square, a grid square that cannot be read,
+  a callsign cty.dat cannot place, or no cty.dat. It is never 0, which is
+  north.
+
+A remote desktop window keeps the value in its spot model
+(`SpotData::bearingDeg`, -1 for its own local sources' spots).
 
 ## Tools catalogue
 

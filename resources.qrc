@@ -1,7 +1,4 @@
 <RCC>
-    <qresource prefix="/">
-        <file>cty.dat</file>
-    </qresource>
     <qresource prefix="/help">
         <file alias="getting-started.md">resources/help/getting-started.md</file>
     </qresource>

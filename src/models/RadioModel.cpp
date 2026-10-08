@@ -1007,6 +1007,11 @@
 //                (StationRotorController) made beside the other station
 //                accessories, placing callsigns with the spots' cty.dat.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 4a: the Core loads its cty.dat
+//                once (DxccColorProvider::ensureCtyDatLoaded) before the
+//                rotor, so nereusd places callsigns; a remote window keeps
+//                each Core spot's bearingDeg in the spot model. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -5078,6 +5083,11 @@ void RadioModel::applyStationRecordBatch(const RecordBatch& batch)
                 .toString();
         kvs[QStringLiteral("priority")] =
             QString::number(f.value(QStringLiteral("dxccPriority")).toInt());
+        // Rotor control plan Task 4a: the Core's short-path bearing to the
+        // spot, -1 when it has none (no grid square, a call it cannot place,
+        // or a Core that sends no bearingDeg).
+        kvs[QStringLiteral("bearing_deg")] = QString::number(
+            f.value(QStringLiteral("bearingDeg")).toDouble(-1.0), 'g', 10);
         const bool isNew = !m_stationSpotIndex.contains(u.id);
         if (isNew) {
             m_stationSpotIndex.insert(u.id, m_spotModel->mintIndex());
@@ -5767,6 +5777,13 @@ void RadioModel::enableStationAccessoryIdentity()
     // Rotor control plan Task 3c: the antenna rotor, set up from the Core's
     // own Rotor/* settings; with no rotor set up it stays idle. Turning to a
     // callsign places it with the one cty.dat table the spots use.
+    // Rotor control plan Task 4a: the Core loads that table here, once, from
+    // its own resources; nereusd has no window to load it (the window's
+    // start calls the same ensureCtyDatLoaded, which then parses nothing).
+    if (m_dxccColorProvider && !m_dxccColorProvider->ensureCtyDatLoaded()) {
+        qCWarning(lcSpots) << "DXCC country table (:/cty.dat) did not load;"
+                           << "the Core cannot place callsigns for the rotor or spot bearings";
+    }
     m_stationRotor = new StationRotorController(this);
     {
         QPointer<DxccColorProvider> dxcc(m_dxccColorProvider.get());

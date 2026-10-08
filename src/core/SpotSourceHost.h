@@ -57,6 +57,9 @@
 //                                    tag FreeDV Reporter and PSK Reporter
 //                                    get from every caller. AI-assisted via
 //                                    Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 4a: the spot
+//                                    record's bearingDeg. AI-assisted via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -147,8 +150,22 @@ public:
     /// not colour it) and dxccPriority (4 a new DXCC entity, 3 a new band,
     /// 2 a new mode, 1 worked before, 0 not known or colouring off), and
     /// resolvedMode (recordStreamVersion 2: the DSPMode number
-    /// SpotModeResolver::dspModeForSpot gives the spot, absent when none).
+    /// SpotModeResolver::dspModeForSpot gives the spot, absent when none),
+    /// and bearingDeg (rotor control: the short-path great-circle bearing
+    /// from the station's grid square, freedvGridSquare(), to the spot's
+    /// cty.dat position, 0 to under 360 to one decimal; -1 with no grid
+    /// square, one that cannot be read, no cty.dat or a call it cannot
+    /// place).
     static QJsonObject spotRecordFields(const SpotData& spot, const DxccColorProvider* dxcc);
+    /// The same with the station's grid square given (tests, and a caller
+    /// that has already read it).
+    static QJsonObject spotRecordFields(const SpotData& spot, const DxccColorProvider* dxcc,
+                                        const QString& stationGrid);
+    /// A spot's bearingDeg: the short-path bearing from stationGrid to the
+    /// call's cty.dat position, rounded to one decimal (360.0 reads 0), or
+    /// -1 when there is none.
+    static double spotBearingDeg(const QString& call, const DxccColorProvider* dxcc,
+                                 const QString& stationGrid);
 
     /// Why a window cannot write `spotSources`.
     static QString readOnlyReason();

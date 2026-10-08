@@ -7,6 +7,9 @@
 // (see https://github.com/ten9876/AetherSDR/blob/main/LICENSE).
 //
 // Modification history (NereusSDR):
+//   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 4a: the
+//                                    bearing_deg key sets bearingDeg.
+//                                    AI tooling: Anthropic Claude Code.
 //   2026-10-03  J.J. Boyd / KG4VCF  Keep UTC handling compatible with Qt 6.4.
 //                                    AI tooling: OpenAI Codex.
 //   2026-09-26  J.J. Boyd / KG4VCF  Parity Task 19 (R-IOS-25): mintIndex()
@@ -122,6 +125,13 @@ void SpotModel::applySpotStatus(int index, const QMap<QString, QString>& kvs)
             spot.lifetimeSeconds = val.toInt();
         else if (key == "priority")
             spot.priority = val.toInt();
+        // NereusSDR addition (rotor control plan Task 4a): the Core's
+        // bearing to the spot; anything not a number is "not known".
+        else if (key == "bearing_deg") {
+            bool ok = false;
+            const double deg = val.toDouble(&ok);
+            spot.bearingDeg = ok && std::isfinite(deg) ? deg : -1.0;
+        }
     }
 
     if (isNew)
