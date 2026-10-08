@@ -210,6 +210,12 @@
 //                                    Start / Stop, "Hide my station",
 //                                    refusals); setStationFreedvAvailable.
 //                                    AI tooling: Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 8: the Spot
+//                                    List's Bearing column and right-click
+//                                    menu (Tune, Turn beam, Copy Callsign,
+//                                    Lookup on QRZ); setSpotBeamTurner;
+//                                    spotTuned for auto-turn.
+//                                    AI-assisted via Anthropic Claude Code.
 
 #pragma once
 
@@ -224,6 +230,7 @@ class QLabel;
 class QCheckBox;
 class QPlainTextEdit;
 class QTableView;
+class QMenu;
 
 namespace NereusSDR {
 
@@ -238,6 +245,7 @@ class SpotTableModel;
 class BandFilterProxy;
 class DxccColorProvider;
 class SpotSourceHost;
+class SpotBeamTurner;
 
 // From AetherSDR src/gui/DxClusterDialog.h:79-215 [@0cd4559]
 //
@@ -311,6 +319,14 @@ public:
     /// run FreeDV Reporter for this app.
     void setStationFreedvAvailable(bool available, const QString& reason);
 
+    /// Rotor control plan Task 8: what answers the Spot List menu's "Turn
+    /// beam to CALL (330°)". Without one it is shown greyed with the
+    /// reason. Not owned.
+    void setSpotBeamTurner(SpotBeamTurner* turner);
+    /// The Spot List's right-click menu for the view row `viewRow`, filled
+    /// into `menu` (a seam: QMenu::exec blocks).
+    void buildSpotListMenu(int viewRow, QMenu& menu);
+
 public slots:
     void setHoveredPanadapterSpot(int spotIdx);
 
@@ -350,6 +366,11 @@ signals:
     void pskStopRequested();
     // Forwarded from the Spot List click-to-tune + the spot overlay.
     void tuneRequested(double freqMhz);
+    // Rotor control plan Task 8: the operator tuned to a Spot List row
+    // (double-click or the menu's Tune), with its call and its
+    // Core-served bearing (-1 when none), for auto-turn
+    // (SpotBeamTurner::spotTuned).
+    void spotTuned(const QString& call, double bearingDeg);
     // Forwarded from the Display tab's "Clear All Spots" button.
     void spotsClearedAll();
 
@@ -512,6 +533,9 @@ private:
     // the dialog-owned proxy + view here.
     BandFilterProxy* m_spotProxyModel{nullptr};
     QTableView*     m_spotTable{nullptr};
+    QPointer<SpotBeamTurner> m_spotBeamTurner;  // rotor control plan Task 8
+    // Tune to the Spot List's source row and say so on spotTuned.
+    void tuneToRow(int sourceRow);
 
     // Display tab (F4). LEFT-column stat blocks are NereusSDR-native
     // additions; RIGHT-column knobs port verbatim from AetherSDR

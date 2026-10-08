@@ -1031,6 +1031,10 @@
 //   2026-10-08 - Rotor control plan Task 7: requestConfigureRotor and
 //                requestRotorPresets for the Rotor Setup page. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 8: the Spot List's Bearing
+//                column (the Core's bearing on each row it serves, else
+//                worked out from this window's cty.dat and grid square).
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -3914,6 +3918,14 @@ RadioModel::RadioModel(Role role, QObject* parent)
     m_freeDvStationModel  = std::make_unique<FreeDVStationModel>(this);
     m_rxDecodeModel       = std::make_unique<RxDecodeModel>(/*maxSize*/ 200, this);
     m_dxccColorProvider   = std::make_unique<DxccColorProvider>(this);
+    // Rotor control plan Task 8: a Spot List row the Core did not give a
+    // bearing (this computer's own sources) gets one worked out here, from
+    // the window's cty.dat and the station's grid square, as the Core
+    // works out a spot record's bearingDeg.
+    m_spotTableModel->setBearingResolver([this](const QString& call) {
+        return SpotSourceHost::spotBearingDeg(call, m_dxccColorProvider.get(),
+                                              SpotSourceHost::freedvGridSquare());
+    });
 
     // 2026-05-12 bench fix: seed FreeDVStationModel::setOurGridSquare
     // from the User/GridSquare AppSettings key.  Without this the
@@ -5125,6 +5137,9 @@ void RadioModel::applyStationRecordBatch(const RecordBatch& batch)
             row.comment = kvs.value(QStringLiteral("comment"));
             row.utcTime = when.isValid() ? when.toUTC().time() : QDateTime::currentDateTimeUtc().time();
             row.source = source;
+            // Rotor control plan Task 8: the Core's bearing, for the Spot
+            // List's Bearing column and its Turn beam.
+            row.bearingDeg = f.value(QStringLiteral("bearingDeg")).toDouble(-1.0);
             m_spotTableModel->addSpot(row);
         }
     }

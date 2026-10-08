@@ -1171,6 +1171,7 @@ set(CORE_SOURCES
     src/models/RfKitModel.cpp
     src/models/StationTciModel.cpp
     src/models/RotorModel.cpp
+    src/models/SpotBeamTurner.cpp
     # Phase 3P-II Phase 4 (Advanced UI + helpers)
     src/core/FaultLog.cpp
     src/core/TuneMemoryStore.cpp

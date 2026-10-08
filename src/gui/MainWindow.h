@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - J.J. Boyd (KG4VCF). Turn the beam from a spot (rotor
+//                control plan Task 8): spotBeamTurner(), the window's one
+//                SpotBeamTurner for every pan's spot menu and the Spot Hub.
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - J.J. Boyd (KG4VCF). The Rotor applet (rotor control plan
 //                 Task 6). AI-assisted via Anthropic Claude Code.
 //   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
@@ -267,6 +271,7 @@ struct CoreSettingsContext;
 class RemoteMediaController;
 // Phase 3J-2 H1: Tools menu modeless singletons.
 class SpotHubDialog;
+class SpotBeamTurner;
 class FreeDVReporterDialog;
 
 class RxDashboard;
@@ -889,6 +894,10 @@ private slots:
     // both dialogs are single-instance for the lifetime of MainWindow.
     void openSpotHub();
     void openFreeDVReporter();
+    /// Rotor control plan Task 8: the window's one SpotBeamTurner (made on
+    /// first use), behind every pan's spot menu, the Spot Hub and
+    /// auto-turn. Its refusals are toasted.
+    SpotBeamTurner* spotBeamTurner();
     /// Task B4 (bottom-banner + pan-menu epic): +PAN icon click handler.
     /// Also the View > Pan Layout… (Ctrl+L) menu action's target. Gated on
     /// m_radioModel->isConnected(); opens PanLayoutDialog sized to
@@ -1462,6 +1471,7 @@ private:
     // preserves geometry / table state). Both members are accessed by
     // the H1 test seam below.
     QPointer<SpotHubDialog>        m_spotHubDialog;
+    SpotBeamTurner*                m_spotBeamTurner{nullptr};  // Qt child; rotor plan Task 8
     QPointer<FreeDVReporterDialog> m_freeDVReporterDialog;
 
     // Status bar widgets (double-height AetherSDR design, 46px)

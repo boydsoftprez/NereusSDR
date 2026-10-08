@@ -611,8 +611,13 @@
 //                logged. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
 //   2026-10-08 - Rotor control plan Task 6: the Rotor applet, always
-//                available, hidden until the operator shows it. J.J. Boyd
+//                available and shown by default (JJ, 2026-10-08). J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 8: Turn beam on every pan's spot
+//                menu and in the Spot Hub through one SpotBeamTurner
+//                (refusals toasted), each spot's bearing on its marker, and
+//                auto-turn from every spot tune. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -963,6 +968,7 @@ warren@wpratt.com
 #include "FreeDVReporterDialog.h"
 // Phase 3F Sub-Epic G T4: bench-minimum Diversity dialog (Tools menu).
 #include "DiversityDialog.h"
+#include "models/SpotBeamTurner.h"
 #include "models/SpotModel.h"
 #include "models/SpotModeResolver.h"
 #include "models/NotchModel.h"
@@ -5909,6 +5915,13 @@ void MainWindow::wireSpectrumForPan(SpectrumWidget* sw, const QString& panId)
 
     configureSpectrumForPanForTest(sw, panId);
 
+    // Rotor control plan Task 8: Turn beam on this pan's spot menu, and
+    // auto-turn when the operator tunes to one of its spots.
+    if (SpotBeamTurner* turner = spotBeamTurner()) {
+        sw->setSpotBeamTurner(turner);
+        connect(sw, &SpectrumWidget::spotTuned, turner, &SpotBeamTurner::spotTuned);
+    }
+
     if (!m_radioModel->ownsLocalDsp()) {
         // This transient Qt property is retired by its first owned flag or
         // by a user gesture; it is never persisted and dies with the pane.
@@ -7267,6 +7280,9 @@ void MainWindow::buildUI()
                 m.timestampMs      = s.timestamp.isValid()
                                          ? s.timestamp.toMSecsSinceEpoch()
                                          : QDateTime::currentMSecsSinceEpoch();
+                // Rotor control plan Task 8: the Core's bearing, for Turn
+                // beam on the spot menu.
+                m.bearingDeg       = s.bearingDeg;
                 if (dxccColor && dxccColor->isEnabled()
                     && !m.callsign.isEmpty() && m.freqMhz > 0.0) {
                     m.dxccColor = dxccColor->colorForSpot(
@@ -10089,10 +10105,10 @@ void MainWindow::populateDefaultMeter()
                                 QStringLiteral("Power Genius"), true);
     m_appletVis->registerApplet(QStringLiteral("Tuner"),
                                 QStringLiteral("Tuner Genius"), true);
-    // Rotor: not shown by default, so a station without a rotor sees no
-    // change; the operator shows it from the applet menu.
+    // Rotor: shown by default like the amp and tuner (JJ, 2026-10-08); with
+    // no rotor it stays, greyed with the reason (disabled, never hidden).
     m_appletVis->registerApplet(QStringLiteral("Rotor"),
-                                QStringLiteral("Rotor"),        false);
+                                QStringLiteral("Rotor"),        true);
     m_appletVis->registerApplet(QStringLiteral("RfKit"),
                                 QStringLiteral("RF-Kit RF2K-S"), true);
 #ifdef HAVE_WEBSOCKETS
@@ -16351,6 +16367,22 @@ void MainWindow::openPureSignalDialog()
 //
 // Mirrors the modeless-singleton pattern at AetherSDR
 // src/gui/MainWindow.cpp openDxClusterDialog() [@0cd4559].
+// Rotor control plan Task 8: one SpotBeamTurner for the window, made on
+// first use (the first pan's wiring). A turn this window refuses itself is
+// toasted; a remote Core's refusal arrives on accessoryRequestRefused
+// (device "rotor") and is toasted there.
+SpotBeamTurner* MainWindow::spotBeamTurner()
+{
+    if (!m_spotBeamTurner && m_radioModel) {
+        m_spotBeamTurner = new SpotBeamTurner(m_radioModel, this);
+        connect(m_spotBeamTurner, &SpotBeamTurner::turnRefused, this,
+                [this](const QString& reason) {
+            showToast(OperatorReasonText::forDisplay(reason), ToastSeverity::Warning, 4000);
+        });
+    }
+    return m_spotBeamTurner;
+}
+
 void MainWindow::openSpotHub()
 {
     if (!m_radioModel) { return; }
@@ -16383,6 +16415,13 @@ void MainWindow::openSpotHub()
                         slice->setFrequency(freqMhz * 1.0e6);
                     }
                 });
+        // Rotor control plan Task 8: Turn beam in the Spot List, and
+        // auto-turn when the operator tunes to a row.
+        if (SpotBeamTurner* turner = spotBeamTurner()) {
+            m_spotHubDialog->setSpotBeamTurner(turner);
+            connect(m_spotHubDialog.data(), &SpotHubDialog::spotTuned,
+                    turner, &SpotBeamTurner::spotTuned);
+        }
         // Phase 3J-2 + 3R M2: Display tab knob round-trip.
         // SpotHubDialog F4 writes every knob change to AppSettings and
         // emits settingsChanged. SpectrumWidget::loadSpotDisplaySettings

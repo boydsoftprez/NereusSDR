@@ -3,6 +3,9 @@
 //   2026-10-02  J.J. Boyd / KG4VCF. Real window/fake Core TX-letter Take
 //                regressions: cancellation, current refusal, unchanged RX
 //                history, and target lifetime. AI-assisted via OpenAI Codex.
+//   2026-10-08  J.J. Boyd / KG4VCF. Rotor control plan Task 8: the Rotor
+//                applet is shown by default. AI-assisted via Anthropic
+//                Claude Code.
 
 #include "gui/HostingSliceActions.h"
 #include "gui/MainWindow.h"
@@ -25,6 +28,7 @@
 #include "gui/meters/OtherButtonItem.h"
 #include "gui/applets/RxApplet.h"
 #include "gui/applets/TxApplet.h"
+#include "gui/applets/AppletVisibilityController.h"
 #include "gui/multidevice/NoticeCard.h"
 #include "gui/multidevice/TakeTransmitDialog.h"
 #include "core/session/SliceAccessController.h"
@@ -305,6 +309,20 @@ double ownStreamShift(RadioModel* model, SliceModel* slice)
 class TstDesktopStationWindow final : public QObject {
     Q_OBJECT
 private slots:
+    // Rotor control plan Task 8: the Rotor applet is shown by default, like
+    // the amplifier and tuner; with no rotor it stays, greyed with the
+    // reason.
+    void theRotorAppletIsShownByDefault()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("station.settings")));
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        auto* visibility = window.findChild<AppletVisibilityController*>();
+        QVERIFY(visibility);
+        QVERIFY(visibility->isVisible(QStringLiteral("Rotor")));
+    }
+
     void hostedDashboardClearsWhenDesktopLosesLastReceiver()
     {
         if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }

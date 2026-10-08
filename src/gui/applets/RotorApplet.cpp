@@ -14,6 +14,12 @@
 // Modification history (NereusSDR):
 //   2026-10-08  J.J. Boyd / KG4VCF  Created (rotor control plan, Task 6).
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 8: a remote
+//                                    Core's refusal of the applet's own
+//                                    command is the applet's to show while
+//                                    it is on screen (the accessory rule);
+//                                    otherwise a notice says it.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "RotorApplet.h"
@@ -624,6 +630,11 @@ void RotorApplet::noteSent(bool sent, const QString& reason, bool fromDial)
 {
     m_pendingCommandId = sent && m_commands ? m_commands->lastRotorCommandId() : 0;
     m_pendingFromDial = fromDial;
+    // Rotor control plan Task 8: the Core's refusal comes the accessory way
+    // (device "rotor"); the applet shows it itself while on screen.
+    if (m_pendingCommandId != 0 && m_model) {
+        m_model->noteAccessoryRequestShownOnPage(m_pendingCommandId, this);
+    }
     m_message = sent ? QString() : reason;
     if (!sent && fromDial) { m_dial->clearSelection(); }
     updateMessage();

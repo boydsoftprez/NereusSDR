@@ -146,6 +146,14 @@
 //                                    SpotSourceHost::reporterVersion(), not
 //                                    a "NereusSDR/<version>" variant.
 //                                    AI tooling: Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 8: the Spot
+//                                    List's Bearing column (shown after DX
+//                                    Call) and its right-click menu (Tune,
+//                                    Turn beam greyed with the reason with
+//                                    no rotor or no bearing, Copy Callsign,
+//                                    Lookup on QRZ); double-click still
+//                                    tunes, and both say spotTuned.
+//                                    AI-assisted via Anthropic Claude Code.
 
 #include "SpotHubDialog.h"
 
@@ -158,15 +166,22 @@
 #include "core/PskReporterClient.h"
 #include "core/SpotCollectorClient.h"
 #include "core/SpotSourceHost.h"
+#include "core/StationRotorController.h"
 #include "core/WsjtxClient.h"
 #include "gui/UnbuiltFeatures.h"
 #include "gui/widgets/GuardedSlider.h"
 #include "models/BandFilterProxy.h"
+#include "models/SpotBeamTurner.h"
 #include "models/SpotModel.h"
 #include "models/SpotTableModel.h"
 
+#include <QApplication>
 #include <QCheckBox>
+#include <QClipboard>
+#include <QDesktopServices>
+#include <QMenu>
 #include <QSignalBlocker>
+#include <QUrl>
 #include <QColor>
 #include <QColorDialog>
 #include <QComboBox>
@@ -2466,6 +2481,12 @@ void SpotHubDialog::buildSpotListTab(QTabWidget* tabs)
     m_spotTable->setColumnWidth(SpotTableModel::ColSpotter, 80);
     m_spotTable->setColumnWidth(SpotTableModel::ColBand, 45);
     m_spotTable->setColumnWidth(SpotTableModel::ColSource, 55);
+    // Rotor control plan Task 8: the Bearing column, shown after DX Call
+    // (appended to the model so the other columns keep their numbers).
+    m_spotTable->setColumnWidth(SpotTableModel::ColBearing, 60);
+    m_spotTable->horizontalHeader()->moveSection(
+        m_spotTable->horizontalHeader()->visualIndex(SpotTableModel::ColBearing),
+        m_spotTable->horizontalHeader()->visualIndex(SpotTableModel::ColDxCall) + 1);
 
     // No default sort - insertion order is newest-first.
     m_spotTable->horizontalHeader()->setSortIndicatorShown(false);
@@ -2473,9 +2494,26 @@ void SpotHubDialog::buildSpotListTab(QTabWidget* tabs)
     // Double-click to tune. From upstream DxClusterDialog.cpp:1688-1693.
     connect(m_spotTable, &QTableView::doubleClicked, this, [this](const QModelIndex& idx) {
         auto srcIdx = m_spotProxyModel->mapToSource(idx);
-        double freq = m_spotTableModel->freqAtRow(srcIdx.row());
-        if (freq > 0.0)
-            emit tuneRequested(freq);
+        // Rotor control plan Task 8: through tuneToRow, which also says
+        // spotTuned for auto-turn.
+        tuneToRow(srcIdx.row());
+    });
+
+    // Rotor control plan Task 8: a right-click menu on a row, as on the
+    // pan: Tune, Turn beam, Copy Callsign, Lookup on QRZ.
+    m_spotTable->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_spotTable, &QTableView::customContextMenuRequested, this,
+            [this](const QPoint& pos) {
+        const QModelIndex idx = m_spotTable->indexAt(pos);
+        if (!idx.isValid()) {
+            return;
+        }
+        m_spotTable->selectRow(idx.row());
+        QMenu menu(this);
+        buildSpotListMenu(idx.row(), menu);
+        if (!menu.isEmpty()) {
+            menu.exec(m_spotTable->viewport()->mapToGlobal(pos));
+        }
     });
 
     // 2026-05-12 bench fix (Gap #6 — list → panadapter hover sync).
@@ -3452,6 +3490,82 @@ void SpotHubDialog::setHoveredPanadapterSpot(int spotIdx)
         }
         return;
     }
+}
+
+// Rotor control plan Task 8 ───────────────────────────────────────────────
+
+void SpotHubDialog::setSpotBeamTurner(SpotBeamTurner* turner)
+{
+    m_spotBeamTurner = turner;
+}
+
+void SpotHubDialog::tuneToRow(int sourceRow)
+{
+    if (!m_spotTableModel) {
+        return;
+    }
+    const double freq = m_spotTableModel->freqAtRow(sourceRow);
+    if (freq <= 0.0) {
+        return;
+    }
+    emit tuneRequested(freq);
+    const QString call = m_spotTableModel->data(
+        m_spotTableModel->index(sourceRow, SpotTableModel::ColDxCall), Qt::DisplayRole).toString();
+    emit spotTuned(call, m_spotTableModel->servedBearingAtRow(sourceRow));
+}
+
+// The Spot List's menu, the pan's spot menu less Remove Spot: Tune, Turn
+// beam (greyed with the reason with no rotor or no bearing), then Copy
+// Callsign and Lookup on QRZ.
+void SpotHubDialog::buildSpotListMenu(int viewRow, QMenu& menu)
+{
+    if (!m_spotTable || !m_spotTableModel || !m_spotProxyModel) {
+        return;
+    }
+    const QModelIndex viewIdx = m_spotProxyModel->index(viewRow, SpotTableModel::ColDxCall);
+    if (!viewIdx.isValid()) {
+        return;
+    }
+    const int row = m_spotProxyModel->mapToSource(viewIdx).row();
+    const QString call = m_spotTableModel->data(
+        m_spotTableModel->index(row, SpotTableModel::ColDxCall), Qt::DisplayRole).toString();
+    const double served = m_spotTableModel->servedBearingAtRow(row);
+
+    const double freq = m_spotTableModel->freqAtRow(row);
+
+    menu.setToolTipsVisible(true);
+    // The row's values, not its number: a spot arriving while the menu is
+    // open moves every row down.
+    menu.addAction(QStringLiteral("Tune to %1").arg(call), this, [this, freq, call, served]() {
+        if (freq > 0.0) {
+            emit tuneRequested(freq);
+            emit spotTuned(call, served);
+        }
+    });
+    QAction* turn = nullptr;
+    if (m_spotBeamTurner) {
+        const SpotBeamTurner::Action a = m_spotBeamTurner->turnAction(call, served);
+        QPointer<SpotBeamTurner> turner = m_spotBeamTurner;
+        turn = menu.addAction(a.text, this, [turner, call, served]() {
+            if (turner) {
+                turner->turnBeam(call, served);
+            }
+        });
+        turn->setEnabled(a.enabled);
+        turn->setToolTip(a.reason);
+    } else {
+        turn = menu.addAction(QStringLiteral("Turn beam to %1").arg(call));
+        turn->setEnabled(false);
+        turn->setToolTip(StationRotorController::noRotorReason());
+    }
+    turn->setObjectName(QStringLiteral("spotListTurnBeamAction"));
+    menu.addSeparator();
+    menu.addAction(QStringLiteral("Copy Callsign"), this, [call]() {
+        QApplication::clipboard()->setText(call);
+    });
+    menu.addAction(QStringLiteral("Lookup on QRZ"), this, [call]() {
+        QDesktopServices::openUrl(QUrl(QStringLiteral("https://www.qrz.com/db/") + call));
+    });
 }
 
 } // namespace NereusSDR

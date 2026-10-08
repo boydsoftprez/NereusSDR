@@ -15,6 +15,11 @@
 // Modification history (NereusSDR):
 //   2026-10-08  J.J. Boyd / KG4VCF  Created (rotor control plan, Task 6).
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 8: a remote
+//                                    refusal of the applet's command is
+//                                    shown on the applet while it is on
+//                                    screen. AI-assisted via Anthropic
+//                                    Claude Code.
 // =================================================================
 
 #include <QLabel>
@@ -91,7 +96,8 @@ public:
     }
     bool requestConfigureRotor(const Setup&, QString*) override { return accept; }
     bool requestRotorPresets(const QString&, QString*) override { return accept; }
-    quint32 lastRotorCommandId() const override { return 0; }
+    quint32 lastId = 0;
+    quint32 lastRotorCommandId() const override { return lastId; }
 
 private:
     bool refuse(QString* reason) const
@@ -433,6 +439,37 @@ private slots:
         const qsizetype after = sink.nudges.size();
         QTest::qWait(RotorApplet::kHoldRepeatMs * 2);
         QCOMPARE(sink.nudges.size(), after);
+    }
+
+    // Rotor control plan Task 8: a remote Core's refusal of the applet's
+    // command comes the accessory way (device "rotor"). While the applet is
+    // on screen it shows the refusal itself, so MainWindow adds no notice;
+    // once hidden, the notice says it.
+    void aRefusalOfTheAppletsCommandIsShownOnThePage()
+    {
+        RadioModel window(RadioModel::Role::Remote);
+        RotorModel rotor;
+        rotor.setState(azimuthTurning());
+        FakeSink sink;
+        sink.lastId = 77;
+        RotorApplet applet(&window, &rotor, &sink);
+        applet.resize(330, 620);
+        applet.show();
+        QSignalSpy refused(&window, &RadioModel::accessoryRequestRefused);
+
+        applet.findChildren<QPushButton*>(QStringLiteral("rotorPreset")).at(0)->click();
+        QCOMPARE(sink.targets.size(), 1);
+        window.reportStationAccessoryRefusal(QStringLiteral("rotor"), kNotConnected, 77);
+        QCOMPARE(refused.count(), 1);
+        QCOMPARE(refused.at(0).at(0).toString(), QStringLiteral("rotor"));
+        QVERIFY(refused.at(0).at(2).toBool());
+
+        sink.lastId = 78;
+        applet.findChildren<QPushButton*>(QStringLiteral("rotorPreset")).at(1)->click();
+        applet.hide();
+        window.reportStationAccessoryRefusal(QStringLiteral("rotor"), kNotConnected, 78);
+        QCOMPARE(refused.count(), 2);
+        QVERIFY(!refused.at(1).at(2).toBool());
     }
 
     void stopSendsStop()

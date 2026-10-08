@@ -488,6 +488,10 @@
 //               or disconnect goes the accessory way ("rotor"), so the
 //               Rotor Setup page shows it and anywhere else a notice does.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08: Rotor control plan Task 8: the turn commands too
+//               (setRotorTarget, turnRotorToCall, stopRotor, nudgeRotor),
+//               so no rotor refusal reads as a slice error. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // 2026-10-01: Authenticated Core address inventory and reconnect learning.
@@ -5330,7 +5334,10 @@ QString accessoryRefusalDevice(const QByteArray& verb, const QString& faultsDevi
     if (verb == "setFourO3AEnabled") {
         return QStringLiteral("4o3a");
     }
-    if (verb == "configureRotor" || verb == "setRotorPresets" || verb == "disconnectRotor") {
+    // Rotor control plan Tasks 7 and 8: every rotor command.
+    if (verb == "configureRotor" || verb == "setRotorPresets" || verb == "disconnectRotor"
+        || verb == "setRotorTarget" || verb == "turnRotorToCall" || verb == "stopRotor"
+        || verb == "nudgeRotor") {
         return QStringLiteral("rotor");
     }
     if (verb == "clearAccessoryFaults") {

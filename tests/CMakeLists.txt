@@ -6441,6 +6441,12 @@ nereus_add_test(tst_mode_menu_rade)
 # (panadapter spot overlay).
 nereus_add_test(tst_spot_overlay_render)
 
+# ── Rotor control plan Task 8: Turn beam from spots, and auto-turn ─────────
+# The pan's spot menu and the Spot Hub offer Turn beam (greyed with the
+# reason when there is no rotor or no bearing), the Spot Hub shows a Bearing
+# column, and with auto-turn off tuning to a spot never moves the rotor.
+nereus_add_test(tst_spot_beam_turner)
+
 # ── Phase 3J-2 Task F1+F2+F3: SpotHubDialog tab-strip smoke ────────────────
 # Pins the contract that SpotHubDialog (the AetherSDR DxClusterDialog
 # port) constructs successfully when handed all 7 spot-ingest clients

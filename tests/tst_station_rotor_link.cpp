@@ -31,6 +31,9 @@
 //                                    a refused setup on the accessory route
 //                                    ("rotor"), not the slice one.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 8: refused
+//                                    turns take the accessory route too.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -1235,6 +1238,31 @@ private slots:
         QVERIFY2(window.requestConfigureRotor(setup, &why), qPrintable(why));
         NEREUS_TRY_COMPARE(core.controller()->config().rangeDeg, 450.0);
         QCOMPARE(core.controller()->config().endStop, RotorRoute::EndStop::South);
+
+        // Task 8: every rotor command takes the accessory route, the turns
+        // as well as the setup, so a refused Turn beam from a spot (or the
+        // applet's) is said by the page or a notice, never as a slice
+        // refusal. An elevation on an azimuth rotor is refused by the Core.
+        refused.clear();
+        finished.clear();
+        QVERIFY2(window.requestRotorTarget(10.0, 45.0, &why), qPrintable(why));
+        const quint32 turnId = window.lastRotorCommandId();
+        QVERIFY(turnId != 0);
+        NEREUS_TRY_VERIFY(!refused.isEmpty());
+        QCOMPARE(refused.at(0).at(0).toString(), QStringLiteral("rotor"));
+        QCOMPARE(refused.at(0).at(1).toString(), StationRotorController::azimuthOnlyReason());
+        QVERIFY(!refused.at(0).at(2).toBool());
+        NEREUS_TRY_VERIFY(!finished.isEmpty());
+        QCOMPARE(finished.constLast().at(0).toUInt(), turnId);
+        QVERIFY(!finished.constLast().at(1).toBool());
+        // A call the Core cannot turn to.
+        refused.clear();
+        QVERIFY2(window.requestTurnRotorToCall(QStringLiteral("QQ1ABC"), false, &why),
+                 qPrintable(why));
+        NEREUS_TRY_VERIFY(!refused.isEmpty());
+        QCOMPARE(refused.at(0).at(0).toString(), QStringLiteral("rotor"));
+        QVERIFY(!refused.at(0).at(1).toString().isEmpty());
+        QCOMPARE(sliceRefused.count(), 0);
         window.detachStation();
     }
 };

@@ -29,8 +29,16 @@
 //                                    #00B4D8 cyan, Freq #E0D060
 //                                    yellow-ish) preserved verbatim.
 //                                    AI tooling: Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 8: the Bearing
+//                                    column (whole degrees, "330°"; the long
+//                                    path in its tooltip; sorts by number),
+//                                    setBearingResolver, bearingAtRow.
+//                                    AI-assisted via Anthropic Claude Code.
 
 #include "SpotTableModel.h"
+
+#include "core/GreatCircle.h"
+#include "models/SpotBeamTurner.h"
 
 #include <QColor>
 #include <QSet>
@@ -38,7 +46,24 @@
 #include <QStringList>
 #include <QTime>
 
+#include <cmath>
+
 namespace NereusSDR {
+
+namespace {
+
+// Rotor control plan Task 8: 0 to under 360 is a bearing; -1 is none.
+bool isBearing(double deg)
+{
+    return std::isfinite(deg) && deg >= 0.0 && deg < 360.0;
+}
+
+QString wholeDegrees(double deg)
+{
+    return SpotBeamTurner::degreesText(deg);
+}
+
+} // namespace
 
 // From AetherSDR src/gui/DxClusterDialog.cpp:75-88 [@0cd4559]
 QString SpotTableModel::extractMode(const QString& comment)
@@ -74,13 +99,26 @@ QVariant SpotTableModel::data(const QModelIndex& index, int role) const
         case ColSpotter: return spot.spotterCall;
         case ColBand:    return bandForFreq(spot.freqMhz);
         case ColSource:  return spot.source;
+        case ColBearing: return wholeDegrees(bearingAtRow(index.row()));
         }
+    }
+    // Rotor control plan Task 8: the long path beside the short.
+    if (role == Qt::ToolTipRole && index.column() == ColBearing) {
+        const double deg = bearingAtRow(index.row());
+        if (!isBearing(deg)) {
+            return {};
+        }
+        return QStringLiteral("%1 short path, %2 long path")
+            .arg(wholeDegrees(deg), wholeDegrees(GreatCircle::longPathBearingDeg(deg)));
     }
     if (role == Qt::TextAlignmentRole) {
         if (index.column() == ColFreq)
             return QVariant(Qt::AlignRight | Qt::AlignVCenter);
         if (index.column() == ColTime)
             return QVariant(Qt::AlignCenter);
+        if (index.column() == ColBearing) {
+            return QVariant(Qt::AlignRight | Qt::AlignVCenter);
+        }
     }
     if (role == Qt::ForegroundRole) {
         if (index.column() == ColDxCall)
@@ -91,6 +129,9 @@ QVariant SpotTableModel::data(const QModelIndex& index, int role) const
     // Store freq in UserRole for sorting
     if (role == Qt::UserRole && index.column() == ColFreq)
         return spot.freqMhz;
+    if (role == Qt::UserRole && index.column() == ColBearing) {
+        return bearingAtRow(index.row());
+    }
 
     return {};
 }
@@ -109,6 +150,7 @@ QVariant SpotTableModel::headerData(int section, Qt::Orientation orientation, in
     case ColSpotter: return "Spotter";
     case ColBand:    return "Band";
     case ColSource:  return "Source";
+    case ColBearing: return "Bearing";
     }
     return {};
 }
@@ -154,6 +196,39 @@ double SpotTableModel::freqAtRow(int row) const
 }
 
 // From AetherSDR src/gui/DxClusterDialog.cpp:182-187 [@0cd4559]
+void SpotTableModel::setBearingResolver(BearingResolver resolver)
+{
+    m_bearingResolver = std::move(resolver);
+    if (!m_spots.isEmpty()) {
+        emit dataChanged(index(0, ColBearing), index(m_spots.size() - 1, ColBearing));
+    }
+}
+
+double SpotTableModel::servedBearingAtRow(int row) const
+{
+    if (row < 0 || row >= m_spots.size()) {
+        return -1.0;
+    }
+    const double served = m_spots[row].bearingDeg;
+    return isBearing(served) ? served : -1.0;
+}
+
+double SpotTableModel::bearingAtRow(int row) const
+{
+    if (row < 0 || row >= m_spots.size()) {
+        return -1.0;
+    }
+    const double served = servedBearingAtRow(row);
+    if (isBearing(served)) {
+        return served;
+    }
+    if (!m_bearingResolver) {
+        return -1.0;
+    }
+    const double local = m_bearingResolver(m_spots[row].dxCall);
+    return isBearing(local) ? local : -1.0;
+}
+
 void SpotTableModel::clear()
 {
     beginResetModel();

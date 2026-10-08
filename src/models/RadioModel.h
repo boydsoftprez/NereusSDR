@@ -577,6 +577,9 @@
 //                requestRotorPresets for the Rotor Setup page, routed the
 //                same way. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-08 - Rotor control plan Task 8: every rotor command's refusal
+//                from a remote Core goes the accessory way ("rotor").
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1203,8 +1206,8 @@ public:
 
     /// R-R3-47 / R-R3-22 / R-R3-48: the Core refused an accessory request,
     /// with its own reason. `device` says what it was about: "pgxl",
-    /// "tgxl", "rfkit", "interlock", "tci", "4o3a", "rotor" (its setup
-    /// and presets), or for a fault history
+    /// "tgxl", "rfkit", "interlock", "tci", "4o3a", "rotor" (every rotor
+    /// command), or for a fault history
     /// the device it names ("faults" for any other). Role::Remote only.
     /// Routed to accessoryRequestRefused, which MainWindow toasts and the
     /// pages that sent the request show, never to the slice toast.
