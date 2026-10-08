@@ -82,6 +82,10 @@
 //                                    falls to the unavailable default and a
 //                                    click changes nothing. AI-assisted via
 //                                    Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Issue #357: a local window's TUN
+//                                    lights from the transmit model's TUNE,
+//                                    which the release press clears.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/containers/ContainerButtonDispatcher.h"
@@ -259,7 +263,9 @@ ContainerButtonDispatcher::stateOf(Id id, int rxSource) const
             st.on = id == Id::Tun ? (m_hooks.desktopTuneOn && m_hooks.desktopTuneOn())
                                   : (m_hooks.desktopMoxOn && m_hooks.desktopMoxOn());
         } else if (id == Id::Tun) {
-            st.on = m_model->isTune();
+            // Issue #357: the TUNE the release press clears, not isTune(),
+            // which holds until the radio is back on receive.
+            st.on = m_model->transmitModel().isTune();
         } else if (id == Id::Mox) {
             st.on = m_model->moxController() && m_model->moxController()->isMox();
         } else {

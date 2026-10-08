@@ -14,6 +14,8 @@
 // from MoxController::manualMoxChanged and RadioModel::tuneRefused, and a
 // disconnect mid-Tune drops it back to "TUNE".
 //
+// Issue #357: a container's TUN goes out on the release press too.
+//
 // Drives a real TxApplet on a RadioModel with a mock connection; runs on
 // the offscreen platform.
 // =================================================================
@@ -28,6 +30,7 @@
 #include "core/MoxController.h"
 #include "core/RadioConnection.h"
 #include "gui/applets/TxApplet.h"
+#include "gui/containers/ContainerButtonDispatcher.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
@@ -217,6 +220,33 @@ private slots:
         pump();
         QVERIFY(!rig.tuneBtn->isChecked());
         QCOMPARE(rig.tuneBtn->text(), QStringLiteral("TUNE"));
+    }
+
+    // Issue #357: a container's TUN goes out on the press that stops TUNE,
+    // as the TX applet's button does, not when TUNE's end runs after the
+    // radio is back on receive.
+    void releasePressClearsContainerTun()
+    {
+        Rig rig;
+        QVERIFY(rig.tuneBtn != nullptr);
+        rig.model->setTuneOffSettleMsForTest(100);
+        ContainerButtonDispatcher dispatcher(rig.model.get(), {});
+        using Id = ContainerButtonDispatcher::Id;
+
+        rig.tuneBtn->click();
+        pump();
+        QVERIFY(rig.model->isTune());
+        QVERIFY(dispatcher.stateOf(Id::Tun, 0).on);
+
+        // The press that stops it. TUNE's end is still to come.
+        rig.tuneBtn->click();
+        QVERIFY(rig.model->isTune());
+        QVERIFY(!rig.tuneBtn->isChecked());
+        QVERIFY(!dispatcher.stateOf(Id::Tun, 0).on);
+
+        QTRY_VERIFY(!rig.model->isTune());
+        QVERIFY(!dispatcher.stateOf(Id::Tun, 0).on);
+        QVERIFY(!rig.tuneBtn->isChecked());
     }
 };
 
