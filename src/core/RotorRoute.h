@@ -109,9 +109,11 @@ constexpr double kLongWayDeg = 270.0;
 // Normalise any angle to 0..360.
 double wrap360(double deg);
 
-// The calibration offset is added to the heading the controller reports,
-// before anything else sees it, and removed from a target before it is
-// sent. Both give 0 to under 360; the controller's 360 (north) reads as 0.
+// The calibration offset is added to the heading the controller reports
+// for what is shown, and removed from a target before it is sent. The span
+// and the route are the controller's own and never carry it (SpanTracker
+// takes the reply as it came). Both give 0 to under 360; the controller's
+// 360 (north) reads as 0.
 double applyOffset(double reportedDeg, double offsetDeg);
 double removeOffset(double targetDeg, double offsetDeg);
 
@@ -188,8 +190,9 @@ public:
     // New end stop or range; forgets the position.
     void configure(EndStop stop, double rangeDeg);
 
-    // One reply, offset already applied (applyOffset). False, and nothing
-    // changes, for a heading that is not a number.
+    // One reply, the controller's own reading with no offset applied: the
+    // end stops and the overlap are where the controller's reading stops.
+    // False, and nothing changes, for a heading that is not a number.
     bool update(double headingDeg);
 
     // No fresh reply (a stale spell or a reconnect): the next reply

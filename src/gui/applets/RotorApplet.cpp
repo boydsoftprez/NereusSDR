@@ -20,6 +20,10 @@
 //                                    it is on screen (the accessory rule);
 //                                    otherwise a notice says it.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Final review fixes: a selection's
+//                                    route is planned on the controller's
+//                                    span with the offset removed.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "RotorApplet.h"
@@ -449,8 +453,12 @@ void RotorApplet::updateReadout()
                 const auto stop = static_cast<RotorRoute::EndStop>(m_rotor->endStop());
                 const RotorRoute::Move move = stop == RotorRoute::EndStop::None
                     ? RotorRoute::planFree(az, targetAz)
-                    : RotorRoute::planOnSpan(m_rotor->spanPositionDeg(), targetAz, stop,
-                                             m_rotor->rangeDeg());
+                    // The span is the controller's own reading; plan to
+                    // the target as it will be sent, the offset removed.
+                    : RotorRoute::planOnSpan(m_rotor->spanPositionDeg(),
+                                             RotorRoute::removeOffset(targetAz,
+                                                                      m_rotor->offsetDeg()),
+                                             stop, m_rotor->rangeDeg());
                 travel = move.travelDeg;
                 routeKnown = move.routeKnown;
             } else {

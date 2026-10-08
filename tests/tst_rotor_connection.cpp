@@ -172,6 +172,7 @@ private slots:
     void gs232bIgnoresWhatIsNotAPosition();
     void gs232bJoinsARepliesSplitAcrossReads();
     void offsetIsAddedToRepliesAndRemovedFromTargets();
+    void offsetLeavesTheSpanOnTheControllersReading();
     void strictHeadingsRefuseBeforeAnythingIsSent();
     void azimuthRotorRefusesElevation();
 
@@ -462,6 +463,28 @@ void TestRotorConnection::offsetIsAddedToRepliesAndRemovedFromTargets()
     QVERIFY(m_conn->setTarget(10.0));
     QCOMPARE(m_fake->take(), QByteArray("W000 000\r"));
     QCOMPARE(m_conn->targetAzimuthDeg(), 10.0);
+}
+
+void TestRotorConnection::offsetLeavesTheSpanOnTheControllersReading()
+{
+    // Final review I1: north stop, range 360, offset +5. The controller
+    // reads 358, 2 degrees from its own clockwise stop; shown as 003. A
+    // target of 010 is sent as 005, and the controller turns 353 degrees
+    // counter-clockwise to reach it.
+    RotorConfig c;
+    c.driver = RotorDriver::Gs232b;
+    c.endStop = EndStop::North;
+    c.offsetDeg = 5.0;
+    connectWith(c);
+    m_fake->take();
+    m_fake->feed("AZ=358  EL=000\r\n");
+    QCOMPARE(m_conn->azimuthDeg(), 3.0);
+    QCOMPARE(m_conn->spanPositionDeg(), 358.0);
+    QVERIFY(m_conn->setTarget(10.0));
+    QCOMPARE(m_fake->take(), QByteArray("W005 000\r"));
+    const RotorRoute::Move route = m_conn->routeToTarget();
+    QVERIFY(route.routeKnown);
+    QCOMPARE(route.travelDeg, -353.0);
 }
 
 void TestRotorConnection::strictHeadingsRefuseBeforeAnythingIsSent()

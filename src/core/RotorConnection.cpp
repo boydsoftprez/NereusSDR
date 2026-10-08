@@ -9,6 +9,9 @@
 // Modification history (NereusSDR):
 //   2026-10-08: Created by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code. Rotor control plan, Task 3b.
+//   2026-10-08: Final review fixes (span on the controller's reading, a
+//               stop before a link closes mid-turn, plain fault words).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/RotorConnection.h"
@@ -945,8 +948,11 @@ void RotorConnection::acceptPosition(double reportedAz, double reportedEl, bool 
         if (!m_connected) { return; }   // a slot disconnected us
     }
 
+    // The span is the controller's: its end stops and overlap are where
+    // its own reading stops, so the tracker follows the reply before the
+    // offset, and the offset is applied to the heading that is shown.
+    m_tracker.update(reportedAz);
     const double heading = RotorRoute::applyOffset(reportedAz, m_config.offsetDeg);
-    m_tracker.update(heading);
     m_azimuthDeg = heading;
     m_haveAzimuth = true;
 
@@ -984,6 +990,14 @@ void RotorConnection::acceptPosition(double reportedAz, double reportedEl, bool 
     }
 
     emit positionUpdated();
+}
+
+RotorRoute::Move RotorConnection::routeToTarget() const
+{
+    if (!m_hasTarget) { return RotorRoute::Move{}; }
+    // setTarget sends the target with the offset removed; the controller
+    // plans from there on its own span, and so does this.
+    return m_tracker.planTo(RotorRoute::removeOffset(m_targetAz, m_config.offsetDeg));
 }
 
 double RotorConnection::azimuthDeg() const

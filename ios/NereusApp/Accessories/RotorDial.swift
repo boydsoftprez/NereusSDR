@@ -65,9 +65,12 @@ struct RotorDialState: Equatable {
         travel = model.dialTravel
         arrived = model.arrived
         turning = model.selection == nil && state?.motion == .turning
+        // The stop is where the controller's own reading stops; the dial
+        // shows headings after the offset, so it sits the offset round.
+        let offset = state?.offsetDeg ?? 0
         switch state?.endStop {
-        case .north?: endStop = 0
-        case .south?: endStop = 180
+        case .north?: endStop = RotorModel.compass(0 + offset)
+        case .south?: endStop = RotorModel.compass(180 + offset)
         default: endStop = nil
         }
         if let state, state.axes == .azimuthElevation {

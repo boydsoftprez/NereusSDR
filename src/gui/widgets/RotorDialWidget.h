@@ -247,6 +247,8 @@ private:
     int    m_endStop{0};          // the wire's endStop enum
     double m_rangeDeg{360.0};
     double m_spanDeg{-1.0};
+    // The calibration offset: headings shown are the controller's plus it.
+    double m_offsetDeg{0.0};
 
     // The last target, kept once the Core drops it on arrival so the dial
     // can show the arrival in green.

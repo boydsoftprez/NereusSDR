@@ -114,6 +114,7 @@ private slots:
     void northStopRange360TakesTheLongWay();
     void unknownSpanHasNoRoute();
     void offsetAppliesToReplyAndIsRemovedFromTarget();
+    void offsetNearTheStopPredictsTheControllersDirection();
     void longWayNoteIsPlain();
     void modelListMatchesHamlib();
 };
@@ -390,12 +391,42 @@ void TestRotorRoute::offsetAppliesToReplyAndIsRemovedFromTarget()
         QCOMPARE(removeOffset(applyOffset(reported, 7.5), 7.5), reported);
     }
 
-    // The tracker sees the heading after the offset: with 5 added, the
-    // controller's 358 is 003 to the north-stop rotor.
+    // The tracker follows the controller's own reading, before the offset:
+    // the end stop is where that reading stops. A north-stop rotor whose
+    // controller reads 358 is at span 358, 2 degrees from its clockwise
+    // stop, whatever 5-degree offset turns its heading into 003 on screen.
     SpanTracker t(EndStop::North, kFullTurnDeg);
-    t.update(applyOffset(358.0, 5.0));
-    QCOMPARE(t.headingDeg(), 3.0);
-    QCOMPARE(t.spanPositionDeg(), 3.0);
+    t.update(358.0);
+    QCOMPARE(t.headingDeg(), 358.0);
+    QCOMPARE(t.spanPositionDeg(), 358.0);
+    QCOMPARE(applyOffset(358.0, 5.0), 3.0);
+}
+
+void TestRotorRoute::offsetNearTheStopPredictsTheControllersDirection()
+{
+    // Offset +5 on a north-stop 360 rotor. The controller reads 358 (shown
+    // as 003) and the operator asks for 010, sent as 005. The controller
+    // cannot pass its stop at its own 0, so it turns counter-clockwise
+    // 353 degrees: the prediction must say so, not "+7 clockwise".
+    constexpr double kOffset = 5.0;
+    SpanTracker t(EndStop::North, kFullTurnDeg);
+    t.update(358.0);
+    const Move m = t.planTo(removeOffset(10.0, kOffset));
+    QVERIFY(m.routeKnown);
+    QCOMPARE(m.travelDeg, -353.0);
+    QVERIFY(!m.note.isEmpty());   // the long way round
+
+    // And the other way: shown 350 (reads 345), asked for 355 (sent 350),
+    // is a plain 5 degrees clockwise.
+    SpanTracker u(EndStop::North, kFullTurnDeg);
+    u.update(345.0);
+    QCOMPARE(u.planTo(removeOffset(355.0, kOffset)).travelDeg, 5.0);
+
+    // A negative offset across the stop the other way: reads 3 (shown
+    // 358), asked for 350 (sent 355): 352 degrees clockwise, never -8.
+    SpanTracker v(EndStop::North, kFullTurnDeg);
+    v.update(3.0);
+    QCOMPARE(v.planTo(removeOffset(350.0, -5.0)).travelDeg, 352.0);
 }
 
 void TestRotorRoute::longWayNoteIsPlain()

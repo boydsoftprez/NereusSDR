@@ -24,6 +24,10 @@
 //               tape follow paintFace() and paintTape(); the face is laid
 //               out as the rotor mockup lays it out, with the readout in
 //               the applet.
+//   2026-10-08: Final review fixes: a drag's route is planned on the
+//               controller's span to the target with the offset removed,
+//               and the end stop is drawn the offset round. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 // --- From RotorDialWidget.cpp ---
@@ -207,6 +211,7 @@ void RotorDialWidget::refreshFromModel()
         ? static_cast<int>(m_model->endStop()) : 0;
     m_rangeDeg = have ? m_model->rangeDeg() : 360.0;
     m_spanDeg = have ? m_model->spanPositionDeg() : -1.0;
+    m_offsetDeg = have ? m_model->offsetDeg() : 0.0;
 
     // A target the Core reports replaces one sent on release.
     if (target >= 0.0 && target != m_target) {
@@ -398,7 +403,10 @@ bool RotorDialWidget::route(double* travelDeg) const
     const auto stop = static_cast<RotorRoute::EndStop>(m_endStop);
     const RotorRoute::Move move = stop == RotorRoute::EndStop::None
         ? RotorRoute::planFree(m_actual, aimed)
-        : RotorRoute::planOnSpan(m_spanDeg, aimed, stop, m_rangeDeg);
+        // The span is the controller's own reading: plan to the target as
+        // it will be sent, the offset removed.
+        : RotorRoute::planOnSpan(m_spanDeg, RotorRoute::removeOffset(aimed, m_offsetDeg),
+                                 stop, m_rangeDeg);
     *travelDeg = move.travelDeg;
     return move.routeKnown;
 }
@@ -845,8 +853,10 @@ void RotorDialWidget::paintFace(QPainter& p)
     // NereusSDR: the end stop on the rim, a short bar across it where the
     // rotor cannot turn through (Longpath setEndStop, drawn).
     if (m_endStop != static_cast<int>(RotorRoute::EndStop::None)) {
-        const double stopDeg =
-            RotorRoute::stopCompassDeg(static_cast<RotorRoute::EndStop>(m_endStop));
+        // The stop is where the controller's reading stops; on this dial,
+        // which shows headings after the offset, it sits the offset round.
+        const double stopDeg = RotorRoute::applyOffset(
+            RotorRoute::stopCompassDeg(static_cast<RotorRoute::EndStop>(m_endStop)), m_offsetDeg);
         const double a = bearingToRadians(stopDeg);
         const QPointF dir(std::cos(a), -std::sin(a));
         p.setPen(QPen(kMuted, 3.0, Qt::SolidLine, Qt::FlatCap));

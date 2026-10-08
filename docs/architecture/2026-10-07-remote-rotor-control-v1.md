@@ -71,10 +71,10 @@ not a device fact.
 | `axes` | enum | Axes table below |
 | `rangeDeg` | i64 | 360, or 450 for a rotor with overlap |
 | `endStop` | enum | End stop table below |
-| `spanPositionDeg` | f64 | Where the rotor is on its span, degrees clockwise from its counter-clockwise stop, 0 to `rangeDeg`; -1 when it is in the overlap band and the Core cannot yet tell which end, or with no end stop |
-| `travelDeg` | f64 | The signed turn still to make to the target along the route the controller will take (negative is counter-clockwise); 0 with no target |
+| `spanPositionDeg` | f64 | Where the rotor is on its span, degrees clockwise from its counter-clockwise stop, 0 to `rangeDeg`; -1 when it is in the overlap band and the Core cannot yet tell which end, or with no end stop. Measured on the controller's own reading, before `offsetDeg`: the end stop is where the controller's reading stops, so the span's compass is (stop + span) modulo 360 in the controller's frame, and adding `offsetDeg` gives the heading shown |
+| `travelDeg` | f64 | The signed turn still to make to the target along the route the controller will take (negative is counter-clockwise); 0 with no target. Planned on the controller's span to the target with `offsetDeg` removed (the heading the Core sends); a window planning a selection itself does the same |
 | `routeKnown` | bool | False while the span position is unknown with a target set; `travelDeg` is then 0 and a window draws no route |
-| `offsetDeg` | f64 | Calibration offset added to the read heading |
+| `offsetDeg` | f64 | Calibration offset added to the read heading for `azimuthDeg` and removed from a target before it is sent; never applied to `spanPositionDeg`, the end stop or the overlap |
 | `hamlibModel` | i64 | Hamlib rotor model for driver 4 (404 is the ERC's own driver); 0 otherwise |
 | `rotctldAvailable` | bool | The Core's computer has Hamlib's `rotctld` (needed for driver 4) |
 | `positionFresh` | bool | The rotor answered a position read within the last 1500 ms. False means `azimuthDeg` and `elevationDeg` are the last heard values, not live |

@@ -38,6 +38,10 @@
 //   2026-10-08: Bench fix: a GS-232 link is connected only after its
 //               first position reply, and a fault when none comes. J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08: Final review fixes: the span is tracked and planned on the
+//               controller's own reading, the offset applied only to what
+//               is shown. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #pragma once
@@ -194,10 +198,17 @@ public:
     // 0 to 90 on an az/el rotor; -1 on an azimuth rotor or when unknown.
     double elevationDeg() const;
     // Where the rotor is on its span (RotorRoute::SpanTracker); -1 when
-    // unknown or with no end stop.
+    // unknown or with no end stop. The span is the controller's own: it is
+    // tracked on the controller's replies before the offset, because the
+    // end stops and the overlap are where the controller's reading stops,
+    // not where the offset heading would put them.
     double spanPositionDeg() const { return m_tracker.spanPositionDeg(); }
     bool   spanKnown() const { return m_tracker.spanKnown(); }
     const RotorRoute::SpanTracker& tracker() const { return m_tracker; }
+    // The route to the current target as the controller will take it:
+    // planned on the controller's span to the target with the offset
+    // removed (what setTarget sends). routeKnown false with no target.
+    RotorRoute::Move routeToTarget() const;
 
     // The target being turned to, after the offset; -1 when none.
     double targetAzimuthDeg() const { return m_hasTarget ? m_targetAz : -1.0; }

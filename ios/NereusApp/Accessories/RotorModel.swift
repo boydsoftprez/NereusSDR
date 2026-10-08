@@ -302,7 +302,8 @@ final class RotorModel: ObservableObject {
         }
         if let local = selection ?? awaitingTarget {
             return RotorRoute.travel(heading: heading, spanDeg: state.spanPositionDeg, target: local,
-                                     endStop: state.endStop, rangeDeg: state.rangeDeg)
+                                     endStop: state.endStop, rangeDeg: state.rangeDeg,
+                                     offsetDeg: state.offsetDeg)
         }
         guard state.target != nil, state.routeKnown else {
             return nil
@@ -782,9 +783,12 @@ enum RotorRoute {
     }
 
     /// The signed travel to `target` from span position `spanDeg` (-1 when
-    /// not known); nil when the route cannot be known.
+    /// not known); nil when the route cannot be known. `heading` and
+    /// `target` are as shown, after the calibration offset; the span is the
+    /// controller's own reading (the Core's `spanPositionDeg`), so the
+    /// target is planned with the offset removed, as the Core sends it.
     static func travel(heading: Double, spanDeg: Double, target: Double, endStop: RotorModel.EndStop,
-                       rangeDeg: Int64) -> Double? {
+                       rangeDeg: Int64, offsetDeg: Double = 0) -> Double? {
         if endStop == .none {
             return shortest(from: heading, to: target)
         }
@@ -792,7 +796,7 @@ enum RotorRoute {
             return nil
         }
         let stop: Double = endStop == .north ? 0 : 180
-        let base = RotorModel.compass(target - stop)
+        let base = RotorModel.compass(target - offsetDeg - stop)
         let range = Double(rangeDeg)
         let candidates = [base, base + 360].filter { $0 <= range + 1e-9 }
         guard let best = candidates.min(by: { abs($0 - spanDeg) < abs($1 - spanDeg) }) else {

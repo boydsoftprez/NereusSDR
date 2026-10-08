@@ -203,7 +203,11 @@ Behaviour:
   rotor turning.
 * **Calibration offset and range** (rotor setup): an offset added to the
   read heading, the end stop (none, north or south) and the rotor's range
-  (360, or 450 for rotors with overlap).
+  (360, or 450 for rotors with overlap). The end stop and the overlap are
+  the controller's: they are where its own reading stops. The Core tracks
+  the span and plans the route on the reading before the offset, removes
+  the offset from a target before sending it, and adds it only to the
+  heading it shows (final review, I1).
 * **End stops and overlap.** The rotor lives on a span from its
   counter-clockwise stop: 0 to 360 or 0 to 450 span degrees, compass
   heading = (stop + span) modulo 360. A compass heading in the overlap has

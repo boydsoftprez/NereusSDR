@@ -450,17 +450,17 @@ double StationRotorController::targetElevationDeg() const
 
 double StationRotorController::travelDeg() const
 {
-    const double target = targetAzimuthDeg();
-    if (target < 0.0) { return 0.0; }
-    const RotorRoute::Move move = m_connection->tracker().planTo(target);
+    if (targetAzimuthDeg() < 0.0) { return 0.0; }
+    // On the controller's span, to the target as it was sent (the offset
+    // removed): the route the controller takes.
+    const RotorRoute::Move move = m_connection->routeToTarget();
     return move.routeKnown ? move.travelDeg : 0.0;
 }
 
 bool StationRotorController::routeKnown() const
 {
-    const double target = targetAzimuthDeg();
-    if (target < 0.0) { return true; }
-    return m_connection->tracker().planTo(target).routeKnown;
+    if (targetAzimuthDeg() < 0.0) { return true; }
+    return m_connection->routeToTarget().routeKnown;
 }
 
 RotorMotion StationRotorController::motion() const
