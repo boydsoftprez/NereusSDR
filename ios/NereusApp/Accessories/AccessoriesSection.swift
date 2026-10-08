@@ -55,7 +55,10 @@ struct AccessoriesSection: View {
                     }
                 }
                 if let rotor {
-                    AccessoryChrome.RowDivider()
+                    // A divider only between rows: none above the rotor when it is alone.
+                    if !model.listed.isEmpty {
+                        AccessoryChrome.RowDivider()
+                    }
                     RotorAccessoryRow(model: rotor) { open(.rotor) }
                 }
             }
