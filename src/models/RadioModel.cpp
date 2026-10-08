@@ -1020,6 +1020,10 @@
 //                enableStationAccessoryIdentity() as before and a desktop
 //                running its own radio calls alone. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 5: requestRotorTarget and
+//                requestStopRotor, the GUI's rotor commands, routed to the
+//                local controller or the remote Core. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -5819,6 +5823,38 @@ void RadioModel::enableStationRotor()
     m_stationRotor->start();
     // Rotor control plan Task 4b: what every window reads (`rotor`).
     m_rotorModel->bindController(m_stationRotor);
+}
+
+// Rotor control plan Task 5: a window's rotor commands, wherever the rotor
+// runs. The local controller first: a desktop running its own radio owns
+// the rotor (Task 4c) even when a phone or another window is signed in.
+bool RadioModel::requestRotorTarget(double azimuthDeg, double elevationDeg, QString* reason)
+{
+    if (m_stationRotor) {
+        return m_stationRotor->setRotorTarget(azimuthDeg, elevationDeg, reason);
+    }
+    if (m_station) {
+        const IStationLink::CommandOutcome sent =
+            m_station->requestRotorTarget(azimuthDeg, elevationDeg);
+        if (!sent.sent && reason) { *reason = sent.reason; }
+        return sent.sent;
+    }
+    if (reason) { *reason = IStationLink::rotorUnavailableReason(); }
+    return false;
+}
+
+bool RadioModel::requestStopRotor(QString* reason)
+{
+    if (m_stationRotor) {
+        return m_stationRotor->stopRotor(reason);
+    }
+    if (m_station) {
+        const IStationLink::CommandOutcome sent = m_station->requestStopRotor();
+        if (!sent.sent && reason) { *reason = sent.reason; }
+        return sent.sent;
+    }
+    if (reason) { *reason = IStationLink::rotorUnavailableReason(); }
+    return false;
 }
 
 void RadioModel::enableStationTci(const QString& bindOverride)

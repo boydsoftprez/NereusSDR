@@ -22,6 +22,10 @@
 //                                    running its own radio owns the rotor
 //                                    alone (enableStationRotor). AI-assisted
 //                                    via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 5: RadioModel
+//                                    routes a window's rotor commands to the
+//                                    local rotor or the remote Core.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -1149,6 +1153,54 @@ private slots:
         QVERIFY(client.requestDisconnectRotor().sent);
         NEREUS_TRY_COMPARE(window.rotorModel()->connectionPhase(),
                            TunerModel::ConnectionPhase::Disconnected);
+    }
+
+    // ── The GUI's one way to turn the rotor (Task 5) ───────────────
+
+    void theGuisRotorCommandsReachTheLocalRotor()
+    {
+        // A desktop running its own radio: its own controller.
+        Core desktop(Owns::RotorOnly);
+        QVERIFY(desktop.connectRotorAt("090"));
+        RotorCommandSink& local = desktop.model;
+        QString why;
+        QVERIFY2(local.requestRotorTarget(200.0, -1.0, &why), qPrintable(why));
+        QCOMPARE(desktop.controller()->targetAzimuthDeg(), 200.0);
+        QVERIFY2(local.requestStopRotor(&why), qPrintable(why));
+        NEREUS_TRY_COMPARE(desktop.controller()->motion(), RotorMotion::Stopped);
+        // The controller's own refusal comes back.
+        QVERIFY(!local.requestRotorTarget(400.0, -1.0, &why));
+        QVERIFY(!why.isEmpty());
+    }
+
+    // Its own function: the desktop above saved a rotor setup, and a second
+    // Core in the same test would open that port before its fake is in.
+    void theGuisRotorCommandsReachARemoteCoresRotor()
+    {
+        // A window on a remote Core: the Core's rotor, over the link.
+        Core core(true);
+        QVERIFY(core.connectRotorAt("090"));
+        RadioModel window(RadioModel::Role::Remote);
+        QString why;
+        // Not yet linked: refused with the reason.
+        QVERIFY(!window.requestRotorTarget(10.0, -1.0, &why));
+        QCOMPARE(why, kCoreHasNoRotor);
+        SettingsProxy proxy;
+        StationClient client(&window, &proxy);
+        window.attachStation(&client);
+        auto* stationEnd = new LoopbackTransport(QStringLiteral("station-end"), this);
+        auto* clientEnd = new LoopbackTransport(QStringLiteral("client-end"), this);
+        stationEnd->linkTo(clientEnd);
+        QSignalSpy completed(&client, &StationClient::handshakeComplete);
+        client.startSession(clientEnd, core.server->token());
+        core.server->acceptTransport(stationEnd);
+        QVERIFY(completed.wait(5000) || !completed.isEmpty());
+        NEREUS_TRY_VERIFY(client.rotorControlAvailable());
+        QVERIFY2(window.requestRotorTarget(250.0, -1.0, &why), qPrintable(why));
+        NEREUS_TRY_COMPARE(core.controller()->targetAzimuthDeg(), 250.0);
+        QVERIFY2(window.requestStopRotor(&why), qPrintable(why));
+        NEREUS_TRY_COMPARE(core.controller()->motion(), RotorMotion::Stopped);
+        window.detachStation();
     }
 };
 

@@ -564,6 +564,10 @@
 //   2026-10-08 - Rotor control plan Task 4c: enableStationRotor(), the
 //                rotor alone, for a desktop running its own radio.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 5: RadioModel is the GUI's
+//                RotorCommandSink (requestRotorTarget, requestStopRotor),
+//                routed to the local rotor or to the remote Core.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -637,6 +641,7 @@
 #include "core/spectrum/ISpectrumSink.h"
 #include "core/TxInterlockPolicy.h"
 #include "core/TuneMemoryStore.h"
+#include "models/RotorCommandSink.h"
 #include "models/TunerModel.h"
 #include "models/ReceiverDspLoadSampler.h"
 #include "core/dsp/NnrLoadGovernor.h"
@@ -847,7 +852,7 @@ class ConnectionDiagnostics;
 //                kept off main because WDSP fexchange2 with bfo=1 can
 //                block on Sem_OutReady and would otherwise freeze the
 //                Qt event loop, deadlocking against wdspmain.
-class NEREUS_CORE_EXPORT RadioModel : public QObject {
+class NEREUS_CORE_EXPORT RadioModel : public QObject, public RotorCommandSink {
     Q_OBJECT
 
     Q_PROPERTY(QString settingsSaveError READ settingsSaveError NOTIFY settingsSaveErrorChanged)
@@ -3564,6 +3569,13 @@ public:
     // makes nothing. The controller lives as long as this model: a switch to
     // a remote Core replaces the whole model, which closes the rotor's port.
     void enableStationRotor();
+    // Rotor control plan Task 5: the one way a window turns the rotor
+    // (RotorCommandSink). The local controller when this process runs the
+    // rotor; otherwise the remote Core over the station link; otherwise
+    // refused with the reason.
+    bool requestRotorTarget(double azimuthDeg, double elevationDeg,
+                            QString* reason) override;
+    bool requestStopRotor(QString* reason) override;
     bool configureTgxlForStation(const QString& host, quint16 port, QString* reason);
     bool disconnectTgxlForStation(QString* reason);
     // R-R3-47 / R-R3-22: the Core's Power Genius XL, as the tuner's above.

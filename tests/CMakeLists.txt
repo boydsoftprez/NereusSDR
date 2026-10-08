@@ -598,6 +598,10 @@ nereus_add_test(tst_meter_dynamics)
 nereus_add_test(tst_meter_item_bar)
 nereus_add_test(tst_reading_name)
 nereus_add_test(tst_meter_item_scale)
+# Rotor control plan Task 5: drag to turn on the compass meter item
+# (RotatorItem), its stop circle and its elevation face. A fake command sink;
+# no rotor.
+nereus_add_test(tst_rotator_item_drag)
 nereus_add_test(tst_meter_presets)
 
 # ── Phase 3M-1c G.1 / G.2: VfoDisplayItem TX-state badge + Phase L routing ──

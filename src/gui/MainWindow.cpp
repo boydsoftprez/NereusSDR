@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Rotor control plan Task 5: compass meter items get this
+//                 window's rotor (RadioModel::rotorModel()) and turn it
+//                 through RadioModel. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-08 - Rotor control plan Task 4a: cty.dat is the Core's resource,
 //                 loaded once per process (ensureCtyDatLoaded). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -928,6 +932,7 @@ warren@wpratt.com
 #include "meters/AntennaButtonItem.h"
 #include "meters/TuneStepButtonItem.h"
 #include "meters/BandButtonItem.h"
+#include "meters/RotatorItem.h"
 #include "meters/OtherButtonItem.h"
 #include "models/FilterPresetStore.h"
 #include "gui/styles/PopupMenuStyle.h"
@@ -13156,6 +13161,12 @@ void MainWindow::onContainerItemAdded(MeterItem* item)
     // a new item only when those Setup pages next opened.
     MultimeterPage::applyPersistedSettingsTo(item);
     DspOptionsPage::applyPersistedHighResFilterTo(m_radioModel, item);
+    // Rotor control plan Task 5: a compass meter item shows this window's
+    // rotor and turns it on release (RadioModel routes the command to the
+    // local rotor or the remote Core).
+    if (auto* rotator = qobject_cast<RotatorItem*>(item); rotator && m_radioModel) {
+        rotator->setRotor(m_radioModel->rotorModel(), m_radioModel);
+    }
     refreshContainerControls(item);
     reconcileMiniDisplays();
 }
