@@ -1168,6 +1168,7 @@ table.
 | `radioMicVersion` | 2 |
 | `rxFilterLowPassVersion` | 1 |
 | `radeReasonVersion` | 1 |
+| `stationCatVersion` | 1 |
 
 <!-- /surface -->
 
@@ -1558,6 +1559,23 @@ When a feature is off, its version is 0:
   properties, the `tciClients` record stream, `setStationTciOptions`, and
   `disconnectStationTciClient`. The Core keeps the options; a window does
   not write `stationTci` properties.
+- `stationCatVersion`: optional, sent only at agreed minor 11 to a peer
+  whose hello declared `stationCat` 1, on a Core that runs CAT (the Local
+  role: `nereusd`, or a desktop running its own radio) and keeps record
+  streams. 1: the Core sends the read-only `stationCat` object (section 7;
+  its seven properties are each one compact UTF-8 JSON text: `global`,
+  `channel1` to `channel4`, `platform`, `lastTest`), the `catLog` record
+  stream, and takes `setStationCatChannel`, `setStationCatGlobal`,
+  `testStationCatCommand` and `refreshStationCatDevices` (section 9.1;
+  the JSON shapes are in `src/models/StationCatModel.h` and the remote CAT
+  setup plan, `2026-10-07-remote-cat-setup-plan.md`). A channel config
+  may carry `primaryRebind` and `secondaryRebind` (bool): the binding was
+  just picked, so its slice id binds to the live slice even when the
+  channel holds that id. An accepted `testStationCatCommand` result
+  carries the CAT reply as its `reply` value (utf8). A peer that did not
+  declare the feature is sent neither this entry, the object nor the
+  stream, and its four commands and a `catLog` subscription are refused.
+  A window never writes `stationCat`.
 - `accessoryDataVersion`: sent only at agreed minor 11, and 0 unless the
   Core owns its accessories. At 1 the station sends the read-only
   `accessoryData` object (fault histories, connection counters, the
@@ -2224,6 +2242,17 @@ the last entry before it when that is absent) and before `coreBuildInfo`.
 At 1 each `slice:<id>` object carries `radeReason` (section 7). A peer
 that did not declare the feature is sent no entry and no `radeReason`.
 
+**The Core's CAT.** A client that declared `stationCat` 1 is sent
+`stationCatVersion`, an `i64`, 1, after `radeReasonVersion` (or after the
+last entry before it when that is absent) and before `coreBuildInfo`, on a
+Core that runs CAT. At 1 the `stationCat` object (section 7), the `catLog`
+record stream (capacity 10000; each record `{channel, inbound, text,
+time}`, the exchanged bytes as Latin-1 text and the time in milliseconds
+since the epoch) and the four CAT commands (section 9.1) are that peer's.
+A window's CAT log subscribes with a backlog of 10000, the lines it keeps,
+and shows each record once by its rising id across a new session's
+backlog. A peer that did not declare the feature is sent none of them.
+
 **Core executable identity.** A client at agreed minor 11 may declare
 `coreBuildInfo` 1. After authentication, a Core with a known product version
 appends one optional `coreBuildInfo` utf8 capability after all existing
@@ -2259,7 +2288,8 @@ peer that declared `paProfiles` (section 6.1); `radeStatusVersion` only
 for a peer that declared `radeStatus`; `txInhibitReasonVersion` only for a
 peer that declared `txInhibitReason` (section 6.1); `paTransmitBandVersion` only for a
 peer that declared `paTransmitBand`; `radeReasonVersion` only for a peer
-that declared `radeReason`. A client ignores a capability it does not know
+that declared `radeReason`; `stationCatVersion` only for a peer that
+declared `stationCat` on a Core that runs CAT. A client ignores a capability it does not know
 (`StationCapabilities::fromUpdates`).
 
 **Each device's share of the display budget** (iPhone app plan Task 76; the
@@ -2454,7 +2484,8 @@ older window sees only the values it was built for.
 | 105 | `radioMicVersion` | `i64` |
 | 106 | `rxFilterLowPassVersion` | `i64` |
 | 107 | `radeReasonVersion` | `i64` |
-| 108 | `coreBuildInfo` | `utf8` |
+| 108 | `stationCatVersion` | `i64` |
+| 109 | `coreBuildInfo` | `utf8` |
 
 <!-- /surface -->
 
@@ -2978,6 +3009,18 @@ An enum property lists the values its domain allows.
 | 9 | `freedvReporterText` | `utf8` | outbound |  |
 | 10 | `freedvReporterHidden` | `bool` | outbound |  |
 
+**StationCatModel** (7 properties)
+
+| Ordinal | Property | Wire kind | Direction | Enum values |
+| --- | --- | --- | --- | --- |
+| 0 | `global` | `utf8` | outbound |  |
+| 1 | `channel1` | `utf8` | outbound |  |
+| 2 | `channel2` | `utf8` | outbound |  |
+| 3 | `channel3` | `utf8` | outbound |  |
+| 4 | `channel4` | `utf8` | outbound |  |
+| 5 | `platform` | `utf8` | outbound |  |
+| 6 | `lastTest` | `utf8` | outbound |  |
+
 **StationCatalog** (2 properties)
 
 | Ordinal | Property | Wire kind | Direction | Enum values |
@@ -3270,6 +3313,7 @@ destroyed during the session.
 | `amplifier` | `AmplifierModel` |
 | `rfkit` | `RfKitModel` |
 | `stationTci` | `StationTciModel` |
+| `stationCat` | `StationCatModel` |
 | `accessoryData` | `AccessoryDataModel` |
 | `accessorySettings` | `AccessorySettingsModel` |
 | `devices` | `StationDevicesFacade` |
@@ -5766,6 +5810,10 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `setStationTciOptions` | `emulateExpertSdr3` bool, `emulateSunSdr2Pro` bool, `cwluBecomesCw` bool, `sendInitialState` bool | `stationTciVersion` | 2 | 11 |
 | `disconnectStationTciClient` | `id` utf8 | `stationTciVersion` | 2 | 11 |
 | `setStationTciSettings` | `rateLimitMs` i64 (optional), `cwBecomesCwuAbove10mhz` bool (optional), `iqSwap` bool (optional), `alwaysStreamIq` bool (optional), `audioBlockSamples` i64 (optional), `txChannel` i64 (optional), `rxSensorIntervalMs` i64 (optional), `txSensorIntervalMs` i64 (optional), `forgetRx2VfoBOnDisconnect` bool (optional), `useRx1VfoaForRx2Vfoa` bool (optional), `copyRx2VfobToVfoa` bool (optional) | `stationTciSettingsVersion` | 1 | 11 |
+| `setStationCatChannel` | `channel` i64, `config` utf8 | `stationCatVersion` | 1 | 11 |
+| `setStationCatGlobal` | `config` utf8 | `stationCatVersion` | 1 | 11 |
+| `testStationCatCommand` | `requestId` i64, `channel` i64, `command` utf8 | `stationCatVersion` | 1 | 11 |
+| `refreshStationCatDevices` | none | `stationCatVersion` | 1 | 11 |
 | `setTxInterlockPolicy` | `mode` i64, `graceMs` i64, `swrGateEnabled` bool, `swrGateMax` f64 | `accessoryDataVersion` | 1 | 11 |
 | `setPgxlPowerCap` | `enabled` bool, `watts` i64 | `accessoryDataVersion` | 1 | 11 |
 | `clearAccessoryFaults` | `device` utf8 | `accessoryDataVersion` | 1 | 11 |

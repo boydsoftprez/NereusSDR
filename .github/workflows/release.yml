@@ -154,7 +154,7 @@ jobs:
         run: |
           sudo apt-get install -y qt6-base-dev qt6-multimedia-dev \
             qt6-base-private-dev qt6-shadertools-dev qt6-svg-dev \
-            qt6-websockets-dev
+            qt6-websockets-dev qt6-serialport-dev
 
       - name: Install Qt 6.8 via aqtinstall (x86_64)
         if: matrix.use_aqt == true
@@ -162,7 +162,7 @@ jobs:
           pip3 install aqtinstall
           # Qt 6.8+ folds qtsvg/qttools/qttranslations into qtbase; not listable as -m modules.
           aqt install-qt linux desktop 6.8.3 linux_gcc_64 \
-            -m qtmultimedia qtshadertools qtwebsockets \
+            -m qtmultimedia qtshadertools qtwebsockets qtserialport \
             --outputdir ${{ github.workspace }}/Qt
           echo "Qt6_DIR=${{ github.workspace }}/Qt/6.8.3/gcc_64/lib/cmake/Qt6" >> $GITHUB_ENV
           echo "CMAKE_PREFIX_PATH=${{ github.workspace }}/Qt/6.8.3/gcc_64" >> $GITHUB_ENV
@@ -200,6 +200,7 @@ jobs:
             -DCMAKE_INSTALL_LIBDIR=lib \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DNEREUS_REQUIRE_SERIALPORT=ON \
             $CMAKE_EXTRA
 
       - name: Build
@@ -402,13 +403,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build pkg-config qt6-base-dev \
             qt6-multimedia-dev qt6-base-private-dev qt6-shadertools-dev \
-            qt6-svg-dev qt6-websockets-dev libfftw3-dev libssl-dev \
+            qt6-svg-dev qt6-websockets-dev qt6-serialport-dev libfftw3-dev libssl-dev \
             libasound2-dev libjack-jackd2-dev libpipewire-0.3-dev \
             libgl1-mesa-dev libxkbcommon-dev autoconf automake libtool wget
       - name: Configure and build headless station
         run: |
           cmake -B build-deb -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=/usr -DNEREUS_GPU_SPECTRUM=OFF
+            -DCMAKE_INSTALL_PREFIX=/usr -DNEREUS_GPU_SPECTRUM=OFF -DNEREUS_REQUIRE_SERIALPORT=ON
           cmake --build build-deb --target nereusd -j$(nproc)
           test -x build-deb/nereusd
       - name: Build and inspect Debian package
@@ -631,7 +632,7 @@ jobs:
           host: 'mac'
           target: 'desktop'
           arch: 'clang_64'
-          modules: 'qtmultimedia qtshadertools qtwebsockets'
+          modules: 'qtmultimedia qtshadertools qtwebsockets qtserialport'
           cache: true
 
       - name: Verify Qt SDK architecture
@@ -836,6 +837,7 @@ jobs:
             -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH_VAL" \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DNEREUS_REQUIRE_SERIALPORT=ON \
             $EXTRA_CMAKE_ARGS
 
       - name: Build
@@ -1248,6 +1250,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DNEREUS_GPU_SPECTRUM=ON \
+            -DNEREUS_REQUIRE_SERIALPORT=ON \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET=x64-windows-static-md \
             -DOPENSSL_ROOT_DIR="$(pwd)/build/vcpkg_installed/x64-windows-static-md"

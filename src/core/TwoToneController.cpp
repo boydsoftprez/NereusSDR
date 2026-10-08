@@ -8,6 +8,9 @@
 // =================================================================
 //
 // Modification history (NereusSDR):
+//   2026-10-04: CAT accepted-intent tags and guarded cycle lifetimes,
+//                NereusSDR-original, by J.J. Boyd (KG4VCF), AI-assisted
+//                via OpenAI Codex.
 //   2026-04-29 — Phase 3M-1c chunk I.1-I.5 — see header.
 //   2026-05-03 — Phase 4 Agent 4B of issue #167 PA-cal hotfix — wires
 //                start()/stop() through Phase 3C
@@ -57,11 +60,13 @@
 //   2026-09-30 : Fix round 1 (minor 3), by J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code. An abandoned start
 //                under another device's key clears its manual key.
-//   2026-10-07 : Start inside the stop's settle, by J.J. Boyd (KG4VCF),
-//                AI-assisted via Anthropic Claude Code. A fast off/on
-//                supersedes the settling stop: its FIXED power restored
-//                first, then keyed after the release settle (Thetis drops
-//                the new test and loses PreviousPWR here).
+//   2026-10-06 : CAT review X1, by J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code. A CAT stop already settling runs out
+//                its 200 ms settle when another source's request arrives
+//                (setup.cs:11151-11152 [v2.10.3.15]) instead of being dropped.
+//   2026-10-06 : CAT review, by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code. A start refused for power off while a cycle is
+//                live stops it (setup.cs:11063-11071 [v2.10.3.15]).
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived activation flow
@@ -79,7 +84,7 @@
 #include "models/TransmitModel.h"
 
 #include <QLoggingCategory>
-#include <QScopedValueRollback>
+#include <QScopeGuard>
 #include <QtMath>
 
 namespace NereusSDR {
@@ -137,8 +142,29 @@ void TwoToneController::setMoxController(MoxController* mox)
         disconnect(m_moxController, &MoxController::moxRejected,
                    this, &TwoToneController::onMoxRejected);
     }
+    disconnect(m_acceptedConnection);
     m_moxController = mox;
     if (m_moxController) {
+        m_acceptedConnection = connect(m_moxController, &MoxController::requestAccepted, this,
+            [this](const KeyerIdentity& requester, quint64 generation, bool) {
+                if (requester.requestTag == m_keyer.requestTag) { m_acceptedGeneration = generation; }
+                else if (m_cycleGuarded && m_deactivationSettleTimer.isActive() && !m_startObserving) {
+                    // A CAT stop already settling is finished, not dropped: the
+                    // newer intent is not a two-tone start, so nothing else would
+                    // turn the tones off, put the power back or release the manual
+                    // key. The settle runs out as it did before CAT
+                    // (setup.cs:11151-11152 [v2.10.3.15], console.MOX = false;
+                    // await Task.Delay(200)), and the stop is the station's now.
+                    m_cycleGuarded = false;
+                    m_acceptedGeneration = 0;
+                } else if (m_cycleGuarded) {
+                    ++m_cycleSerial;
+                    m_acceptedGeneration = 0;
+                    m_moxReleaseSettleTimer.stop(); m_tuneReleaseSettleTimer.stop();
+                    m_freq2DelayTimer.stop(); m_deactivationSettleTimer.stop(); m_rejectSettleTimer.stop();
+                    m_activationInFlight = false;
+                }
+            });
         connect(m_moxController, &MoxController::moxRejected,
                 this, &TwoToneController::onMoxRejected,
                 Qt::UniqueConnection);
@@ -199,12 +225,26 @@ void TwoToneController::setSettleDelaysMs(int moxReleaseMs, int tuneReleaseMs)
 //
 // From Thetis setup.cs:11040-11191 [v2.10.3.13] — chkTestIMD_CheckedChanged.
 // ---------------------------------------------------------------------------
+bool TwoToneController::cycleCurrent(quint64 serial) const
+{
+    return serial == m_cycleSerial && (!m_cycleGuarded || (m_moxController
+        && m_acceptedGeneration != 0
+        && m_acceptedGeneration == m_moxController->acceptedRequestGeneration()));
+}
+
+bool TwoToneController::endIfRequest(quint64 tag, quint64 expectedAcceptedGeneration)
+{
+    if (tag == 0 || m_keyer.requestTag != tag || !cycleCurrent(m_cycleSerial)
+        || m_acceptedGeneration != expectedAcceptedGeneration) { return false; }
+    const KeyerIdentity requester = m_keyer;
+    setActive(false, requester);
+    return true;
+}
+
 void TwoToneController::setActive(bool on, const KeyerIdentity& keyer)
 {
-    if (on) {
-        m_keyer = keyer;
-        m_keyerFromCaller = true;
-    }
+    m_requestedKeyer = keyer;
+    m_keyerFromCaller = true;
     setActive(on);
 }
 
@@ -213,19 +253,9 @@ void TwoToneController::setActive(bool on)
     // Task 35: a start from setActive(true) alone is the station device's.
     const bool keyerFromCaller = m_keyerFromCaller;
     m_keyerFromCaller = false;
-    // m_active stays true through the stop's MOX settle (see
-    // isDeactivationInFlight), so a start asked for inside it is a new
-    // request, not a duplicate: it supersedes the stop below. Dropping it
-    // here let the stop finish and leave two-tone off after a fast off/on.
-    const bool stopping = isDeactivationInFlight();
-    if (on && !keyerFromCaller
-        && (stopping || (!m_activationInFlight && !m_active))) {
-        m_keyer = KeyerIdentity::station(PttMode::None);
-    }
-    if (on == m_active && !m_activationInFlight && !stopping) {
-        // Idempotent: already in the requested state and not mid-walk.
-        return;
-    }
+    const KeyerIdentity requester = keyerFromCaller ? m_requestedKeyer
+        : KeyerIdentity::station(PttMode::None);
+    if (!on && !m_active && !m_activationInFlight) { return; }
 
     if (on) {
         // ── Stage 1: power-on precondition.  From Thetis setup.cs:11063-11071
@@ -239,13 +269,12 @@ void TwoToneController::setActive(bool on)
             qCWarning(lcDsp).noquote()
                 << "TwoToneController: power must be on to run two-tone test "
                    "— ignoring activation request.";
-            // Emit a transition to false so any optimistic UI highlight
-            // gets reverted.  setActive(false) on inactive is harmless,
-            // but skip the timer walk by emitting directly.
-            if (m_active) {
-                m_active = false;
-                emit twoToneActiveChanged(false);
-            }
+            // chkTestIMD.Checked = false re-enters CheckedChanged as the
+            // stop, so a start refused while a cycle is live (a repeat that
+            // now reaches here) ends it through the normal walk: tones off,
+            // power and the manual key restored, then the false transition.
+            // Nothing is live otherwise, and no transition is emitted.
+            if (m_active || m_activationInFlight) { setActive(false); }
             return;
         }
 
@@ -260,34 +289,45 @@ void TwoToneController::setActive(bool on)
         // Asked before anything releases MOX, so a refused start never
         // unkeys, or rides on, another device's key.
         // Task 35: a remote device's start asks for that device.
-        if (!m_moxController->admitKey(m_keyer)) {
+        const QPointer<TwoToneController> lifetime(this);
+        const bool admitted = m_moxController->admitKey(requester);
+        if (!lifetime || !admitted) { return; }
+        if (m_active || m_activationInFlight) {
+            const bool previous = m_keyingMox;
+            m_keyingMox = true;
+            const auto restore = qScopeGuard([lifetime, previous] {
+                if (lifetime) { lifetime->m_keyingMox = previous; }
+            });
+            const TxRefusal refusal = m_moxController->refusalBeforeTheGate();
+            if (!lifetime) { return; }
+            if (!refusal.isEmpty()) { qCWarning(lcDsp) << refusal.text; return; }
+        }
+        // Read before the start is reported: a guarded cycle's handler stops
+        // the settle for any other requester, this start included.
+        const bool pendingOff = m_deactivationSettleTimer.isActive();
+        m_startObserving = true;
+        const quint64 generation = m_moxController->observeAcceptedRequest(requester, true);
+        if (!lifetime) { return; }
+        m_startObserving = false;
+        if (generation != m_moxController->acceptedRequestGeneration()) { return; }
+        const bool repeat = m_active || m_activationInFlight;
+        m_keyer = requester;
+        m_cycleGuarded = requester.requestTag != 0;
+        m_acceptedGeneration = generation;
+        const quint64 serial = ++m_cycleSerial;
+        m_deactivationSettleTimer.stop();
+        if (repeat) {
+            // Adopt deferred tone parameters with the live cycle, without resaving power.
+            m_freq2Serial = serial; m_moxReleaseSerial = serial; m_tuneReleaseSerial = serial;
+            if (pendingOff) {
+                m_moxController->setMox(true, requester);
+                if (!lifetime || !cycleCurrent(serial)) { return; }
+            }
             return;
         }
-
         m_activationInFlight = true;
         // Task 7 fix wave, M2: a new start owns the manual key from here.
         m_rejectSettleTimer.stop();
-
-        // A start inside the stop's settle cancels the rest of that stop,
-        // which would otherwise tear this start down when it elapsed. The
-        // stop has released MOX; the power it would restore is restored
-        // now, so Stage 7 below snapshots the operator's power rather than
-        // the two-tone power still applied. m_active stays true: the test
-        // goes from stopping straight back to running.
-        //
-        // Thetis shares the bug this avoids: a re-check inside the off
-        // branch's wait (setup.cs:11190-11191 [v2.10.3.15]):
-        //   console.MOX = false;
-        //   await Task.Delay(200); //MW0LGE_21a
-        // runs the on branch alongside it, whose
-        //   console.PreviousPWR = console.PWR;   [setup.cs:11151 [v2.10.3.15]]
-        // reads the two-tone power, and the off branch's continuation then
-        // restores that power and sets TXPostGenRun = 0 under the new test
-        // (setup.cs:11192-11205 [v2.10.3.15]).
-        if (stopping) {
-            m_deactivationSettleTimer.stop();
-            restoreSavedPower();
-        }
 
         // ── Stage 2a: if TUN is on, turn it off first.  Porting from Thetis
         //     console.cs:44805-44813 [v2.10.3.15], chk2TONE_CheckedChanged,
@@ -316,7 +356,9 @@ void TwoToneController::setActive(bool on)
             && !(m_tuneOffPending && m_tuneOffPending()) && m_tuneOff) {
             // chkTUN.Checked = false; chkTUN_CheckedChanged(this, EventArgs.Empty); // it needs to happen here and now  [original inline comment from console.cs:44810]
             m_tuneOff();
+            if (!lifetime || !cycleCurrent(serial)) { return; }
             // await Task.Delay(300);  [console.cs:44812]
+            m_tuneReleaseSerial = m_cycleSerial;
             m_tuneReleaseSettleTimer.start();
             return;
         }
@@ -330,15 +372,8 @@ void TwoToneController::setActive(bool on)
         //   ...
         //   await Task.Delay(300);
         if (m_tuneOffPending && m_tuneOffPending()) {
+            m_tuneReleaseSerial = m_cycleSerial;
             m_tuneReleaseSettleTimer.start();
-            return;
-        }
-
-        // The superseded stop's MOX release is Stage 2's release: wait out
-        // its 200 ms settle before keying again, as Stage 2 does after a
-        // release of its own (setup.cs:11111-11116 [v2.10.3.15]).
-        if (stopping && !m_moxController->isMox()) {
-            m_moxReleaseSettleTimer.start();
             return;
         }
 
@@ -349,15 +384,26 @@ void TwoToneController::setActive(bool on)
             return;
         }
 
+        const QPointer<TwoToneController> lifetime(this);
+        const quint64 generation = m_moxController->observeAcceptedRequest(
+            keyerFromCaller ? m_requestedKeyer : KeyerIdentity::station(PttMode::None), false);
+        if (!lifetime || generation != m_moxController->acceptedRequestGeneration()) { return; }
+        m_keyer.requestTag = keyerFromCaller ? m_requestedKeyer.requestTag : 0;
+        m_cycleGuarded = m_keyer.requestTag != 0;
+        m_acceptedGeneration = generation;
+        const quint64 serial = ++m_cycleSerial;
+
         // Cancel any in-flight activation timers before starting teardown.
         m_moxReleaseSettleTimer.stop();
         m_tuneReleaseSettleTimer.stop();
         m_freq2DelayTimer.stop();
 
         releaseOwnKey();
+        if (!lifetime || !cycleCurrent(serial)) { return; }
         // From Thetis setup.cs:11151-11152 [v2.10.3.13]:
         //   console.MOX = false;
         //   await Task.Delay(200); // MW0LGE_21a
+        m_deactivationSerial = m_cycleSerial;
         m_deactivationSettleTimer.start();
     }
 }
@@ -376,8 +422,12 @@ void TwoToneController::setActive(bool on)
 // ---------------------------------------------------------------------------
 void TwoToneController::stopNow()
 {
+    // Global shutdown retains authority over a superseded cycle.
+    m_cycleGuarded = false;
+    ++m_cycleSerial;
     if (m_rejectSettleTimer.isActive()) {
         m_rejectSettleTimer.stop();
+        m_rejectSerial = m_cycleSerial;
         onRejectSettleElapsed();
     }
     if (!m_active && !m_activationInFlight) {
@@ -410,6 +460,9 @@ void TwoToneController::releaseOwnKey()
 // ---------------------------------------------------------------------------
 void TwoToneController::releaseMoxThenContinue()
 {
+    const quint64 serial = m_cycleSerial;
+    const QPointer<TwoToneController> lifetime(this);
+    if (!cycleCurrent(serial)) { return; }
     if (m_moxController == nullptr) {
         m_activationInFlight = false;
         return;
@@ -422,7 +475,9 @@ void TwoToneController::releaseMoxThenContinue()
     //           await Task.Delay(200); // MW0LGE_21a
     //       }
     if (m_moxController->isMox()) {
-        m_moxController->setMox(false);
+        m_moxController->setMox(false, m_keyer);
+        if (!lifetime || !cycleCurrent(serial)) { return; }
+        m_moxReleaseSerial = m_cycleSerial;
         m_moxReleaseSettleTimer.start();
         return;
     }
@@ -434,6 +489,9 @@ void TwoToneController::releaseMoxThenContinue()
 // ---------------------------------------------------------------------------
 void TwoToneController::onMoxReleaseSettleElapsed()
 {
+    const quint64 serial = m_moxReleaseSerial;
+    const QPointer<TwoToneController> lifetime(this);
+    if (!cycleCurrent(serial)) { return; }
     // After the 200 ms MOX-release settle, continue the activation walk.
     // (TUN, Stage 2a, is turned off before this stage; Task 7 follow-up.)
     continueActivation();
@@ -444,11 +502,15 @@ void TwoToneController::onMoxReleaseSettleElapsed()
 // ---------------------------------------------------------------------------
 void TwoToneController::onTuneReleaseSettleElapsed()
 {
+    const quint64 serial = m_tuneReleaseSerial;
+    const QPointer<TwoToneController> lifetime(this);
+    if (!cycleCurrent(serial)) { return; }
     // From Thetis console.cs:44740 [v2.10.3.13]:
     //   await Task.Delay(300);
     // Task 7 fix wave, M9: never key while the TUN-off is still completing
     // (it holds the manual key and the tune tone until then).
     if (m_tuneOffPending && m_tuneOffPending()) {
+        m_tuneReleaseSerial = m_cycleSerial;
         m_tuneReleaseSettleTimer.start();
         return;
     }
@@ -456,6 +518,8 @@ void TwoToneController::onTuneReleaseSettleElapsed()
     // turned off again (Stage 2a); two-tone never keys with TUN on.
     if (m_tuneActive && m_tuneActive() && m_tuneOff) {
         m_tuneOff();
+        if (!lifetime || !cycleCurrent(serial)) { return; }
+        m_tuneReleaseSerial = m_cycleSerial;
         m_tuneReleaseSettleTimer.start();
         return;
     }
@@ -469,6 +533,9 @@ void TwoToneController::onTuneReleaseSettleElapsed()
 // ---------------------------------------------------------------------------
 void TwoToneController::continueActivation()
 {
+    const quint64 serial = m_cycleSerial;
+    const QPointer<TwoToneController> lifetime(this);
+    if (!cycleCurrent(serial)) { return; }
     if (!m_tx || !m_txChannel || !m_moxController) {
         m_activationInFlight = false;
         return;
@@ -529,21 +596,31 @@ void TwoToneController::continueActivation()
         //   TXPostGenTTPulseDutyCycle  = (float)(percent.Value)/100f;            [line 34416]
         //   TXPostGenTTPulseTransition = (float)(ramp.Value)/1000f;              [line 34417]
         m_txChannel->setTxPostGenTTPulseIQOut(true);
+        if (!lifetime || !cycleCurrent(serial)) { return; }
         m_txChannel->setTxPostGenTTPulseFreq(kPulseWindowPpsDefault);
+        if (!lifetime || !cycleCurrent(serial)) { return; }
         m_txChannel->setTxPostGenTTPulseDutyCycle(
             static_cast<double>(kPulsePercentDefault) / 100.0);
+        if (!lifetime || !cycleCurrent(serial)) { return; }
         m_txChannel->setTxPostGenTTPulseTransition(
             static_cast<double>(kPulseRampMsDefault) / 1000.0);
+        if (!lifetime || !cycleCurrent(serial)) { return; }
 
         m_txChannel->setTxPostGenMode(7);
+        if (!lifetime || !cycleCurrent(serial)) { return; }
         m_txChannel->setTxPostGenTTPulseToneFreq1(ttfreq1);
+        if (!lifetime || !cycleCurrent(serial)) { return; }
         m_txChannel->setTxPostGenTTPulseToneFreq2(ttfreq2);
+        if (!lifetime || !cycleCurrent(serial)) { return; }
         m_txChannel->setTxPostGenTTPulseMag1(ttmag1);
+        if (!lifetime || !cycleCurrent(serial)) { return; }
 
         if (freq2DelayMs == 0) {
             m_txChannel->setTxPostGenTTPulseMag2(ttmag2);
+            if (!lifetime || !cycleCurrent(serial)) { return; }
         } else {
             m_txChannel->setTxPostGenTTPulseMag2(0.0);
+            if (!lifetime || !cycleCurrent(serial)) { return; }
         }
     } else {
         // From Thetis setup.cs:11096-11105 [v2.10.3.13]:
@@ -557,16 +634,22 @@ void TwoToneController::continueActivation()
         //   else
         //       console.radio.GetDSPTX(0).TXPostGenTTMag2 = 0.0;
         m_txChannel->setTxPostGenMode(1);
+        if (!lifetime || !cycleCurrent(serial)) { return; }
         m_txChannel->setTxPostGenTTFreq1(ttfreq1);
+        if (!lifetime || !cycleCurrent(serial)) { return; }
         m_txChannel->setTxPostGenTTFreq2(ttfreq2);
+        if (!lifetime || !cycleCurrent(serial)) { return; }
         m_txChannel->setTxPostGenTTMag1(ttmag1);
+        if (!lifetime || !cycleCurrent(serial)) { return; }
 
         // MW0LGE_21a change to delay Freq2 output. Fixes problems with
         // some Amps frequency counters  [from setup.cs:11101 [v2.10.3.13]]
         if (freq2DelayMs == 0) {
             m_txChannel->setTxPostGenTTMag2(ttmag2);
+            if (!lifetime || !cycleCurrent(serial)) { return; }
         } else {
             m_txChannel->setTxPostGenTTMag2(0.0);
+            if (!lifetime || !cycleCurrent(serial)) { return; }
         }
     }
 
@@ -574,6 +657,7 @@ void TwoToneController::continueActivation()
     //     [v2.10.3.13]:
     //       console.radio.GetDSPTX(0).TXPostGenRun = 1;
     m_txChannel->setTxPostGenRun(true);
+    if (!lifetime || !cycleCurrent(serial)) { return; }
 
     // ── Stage 7: DrivePowerSource handling.  From Thetis setup.cs:11148-
     //     11159 [v2.10.3.15]:
@@ -637,7 +721,9 @@ void TwoToneController::continueActivation()
         // RadioModel's powerChanged: txMode 0 here, so it drives new_pwr
         // past the band's PWR limit and saves it in power_by_band.
         m_tx->setPowerSliderLimitEnabled(false);
+        if (!lifetime || !cycleCurrent(serial)) { return; }
         m_tx->setPower(newPwr);
+        if (!lifetime || !cycleCurrent(serial)) { return; }
     }
 
     // ── Stage 8: engage MOX.  From Thetis setup.cs:11162-11170 [v2.10.3.15]:
@@ -662,19 +748,22 @@ void TwoToneController::continueActivation()
     // (setup.cs:11162 [v2.10.3.15]). While it is set no mic PTT, VOX, CAT or
     // TCI keys or releases (PollPTT, console.cs:25470 [v2.10.3.15]).
     m_moxController->setManualKey(true);
+    if (!lifetime || !cycleCurrent(serial)) { return; }
     // console.TwoTone (chk2TONE.Checked) is TransmitModel's two-tone mirror:
     // set before the key, whether or not a PA profile is loaded, so the
     // drive math takes txMode 2 while keyed and RadioModel's MOX-edge
     // restore leaves the two-tone drive on the air.
     m_tx->setTwoToneActive(true);
+    if (!lifetime || !cycleCurrent(serial)) { return; }
     {
-        const QScopedValueRollback<bool> keying(m_keyingMox, true);
+        const bool previousKeying = m_keyingMox;
+        m_keyingMox = true;
+        const auto keying = qScopeGuard([lifetime, previousKeying] {
+            if (lifetime) { lifetime->m_keyingMox = previousKeying; }
+        });
         // Task 35: a remote device's two-tone keys as that device.
-        if (m_keyer.isStation()) {
-            m_moxController->setMox(true);
-        } else {
-            m_moxController->setMox(true, m_keyer);
-        }
+        m_moxController->setMox(true, m_keyer);
+        if (!lifetime || !cycleCurrent(serial)) { return; }
     }
 
     // If the setMox call above resulted in immediate rejection (synchronous
@@ -718,6 +807,7 @@ void TwoToneController::continueActivation()
         m_pulsedAtMag2Defer = pulsed;
         m_deferredMag2 = ttmag2;
         m_freq2DelayTimer.setInterval(freq2DelayMs);
+        m_freq2Serial = m_cycleSerial;
         m_freq2DelayTimer.start();
     }
 
@@ -734,10 +824,14 @@ void TwoToneController::continueActivation()
 // ---------------------------------------------------------------------------
 void TwoToneController::onFreq2DelayElapsed()
 {
+    const quint64 serial = m_freq2Serial;
+    const QPointer<TwoToneController> lifetime(this);
+    if (!cycleCurrent(serial)) { return; }
     if (!m_active) {
         return; // raced with deactivation
     }
     applyMag2Now();
+    if (!lifetime || !cycleCurrent(serial)) { return; }
 }
 
 // ---------------------------------------------------------------------------
@@ -745,6 +839,9 @@ void TwoToneController::onFreq2DelayElapsed()
 // ---------------------------------------------------------------------------
 void TwoToneController::applyMag2Now()
 {
+    const quint64 serial = m_cycleSerial;
+    const QPointer<TwoToneController> lifetime(this);
+    if (!cycleCurrent(serial)) { return; }
     if (!m_txChannel) {
         return;
     }
@@ -755,8 +852,10 @@ void TwoToneController::applyMag2Now()
     //       console.radio.GetDSPTX(0).TXPostGenTTMag2 = ttmag2;
     if (m_pulsedAtMag2Defer) {
         m_txChannel->setTxPostGenTTPulseMag2(m_deferredMag2);
+        if (!lifetime || !cycleCurrent(serial)) { return; }
     } else {
         m_txChannel->setTxPostGenTTMag2(m_deferredMag2);
+        if (!lifetime || !cycleCurrent(serial)) { return; }
     }
 }
 
@@ -765,6 +864,9 @@ void TwoToneController::applyMag2Now()
 // ---------------------------------------------------------------------------
 void TwoToneController::onDeactivationSettleElapsed()
 {
+    const quint64 serial = m_deactivationSerial;
+    const QPointer<TwoToneController> lifetime(this);
+    if (!cycleCurrent(serial)) { return; }
     continueDeactivation();
 }
 
@@ -773,6 +875,9 @@ void TwoToneController::onDeactivationSettleElapsed()
 // ---------------------------------------------------------------------------
 void TwoToneController::continueDeactivation()
 {
+    const quint64 serial = m_cycleSerial;
+    const QPointer<TwoToneController> lifetime(this);
+    if (!cycleCurrent(serial)) { return; }
     // From Thetis setup.cs:11151-11177 [v2.10.3.13]:
     //   console.MOX = false;
     //   await Task.Delay(200); // MW0LGE_21a
@@ -794,6 +899,7 @@ void TwoToneController::continueDeactivation()
     // after the release settle (setup.cs:11193 [v2.10.3.15]).
     if (m_moxController) {
         m_moxController->setManualKey(false);
+        if (!lifetime || !cycleCurrent(serial)) { return; }
     }
 
     // console.TwoTone = false; // MW0LGE_21a (setup.cs:11194 [v2.10.3.15]),
@@ -802,6 +908,7 @@ void TwoToneController::continueDeactivation()
     // setPowerUsingTargetDbm on the stop, as Thetis's stop does not.
     if (m_tx) {
         m_tx->setTwoToneActive(false);
+        if (!lifetime || !cycleCurrent(serial)) { return; }
     }
 
     // //MW0LGE_22b (setup.cs:11196-11201 [v2.10.3.15]):
@@ -811,10 +918,12 @@ void TwoToneController::continueDeactivation()
     //       console.PWR = console.PreviousPWR;
     //   }
     restoreSavedPower();
+    if (!lifetime || !cycleCurrent(serial)) { return; }
 
     // console.radio.GetDSPTX(0).TXPostGenRun = 0; (setup.cs:11205)
     if (m_txChannel) {
         m_txChannel->setTxPostGenRun(false);
+        if (!lifetime || !cycleCurrent(serial)) { return; }
     }
 
     if (m_active) {
@@ -829,6 +938,9 @@ void TwoToneController::continueDeactivation()
 // ---------------------------------------------------------------------------
 void TwoToneController::onRejectSettleElapsed()
 {
+    const quint64 serial = m_rejectSerial;
+    const QPointer<TwoToneController> lifetime(this);
+    if (!cycleCurrent(serial)) { return; }
     if (m_active || m_activationInFlight || m_moxController == nullptr) {
         return;   // a new start owns the manual key now
     }
@@ -847,6 +959,7 @@ void TwoToneController::onRejectSettleElapsed()
         return;
     }
     m_moxController->setManualKey(false);
+    if (!lifetime || !cycleCurrent(serial)) { return; }
 }
 
 // ---------------------------------------------------------------------------
@@ -883,6 +996,9 @@ void TwoToneController::onMoxRejected(const QString& reason)
 
 void TwoToneController::abandonUnkeyedStart()
 {
+    const quint64 serial = m_cycleSerial;
+    const QPointer<TwoToneController> lifetime(this);
+    if (!cycleCurrent(serial)) { return; }
     // Stop any in-flight activation timers.
     m_moxReleaseSettleTimer.stop();
     m_tuneReleaseSettleTimer.stop();
@@ -891,6 +1007,7 @@ void TwoToneController::abandonUnkeyedStart()
     // Tear down the gen if it was started in continueActivation.
     if (m_txChannel) {
         m_txChannel->setTxPostGenRun(false);
+        if (!lifetime || !cycleCurrent(serial)) { return; }
     }
 
     // Receiver and transmit gaps plan, Task 7: a refused key unchecks
@@ -906,6 +1023,7 @@ void TwoToneController::abandonUnkeyedStart()
     // Clearing it inside this refused call ran a PollPTT pass while
     // m_keyingMox was still set: a held mic was tried at once, refused
     // again, re-entered here and raised a second message.
+    m_rejectSerial = m_cycleSerial;
     m_rejectSettleTimer.start();
 
     // chkTestIMD.Checked = false runs the stop branch (setup.cs:11194-11201
@@ -914,8 +1032,10 @@ void TwoToneController::abandonUnkeyedStart()
     // TwoTone before the key.
     if (m_tx) {
         m_tx->setTwoToneActive(false);
+        if (!lifetime || !cycleCurrent(serial)) { return; }
     }
     restoreSavedPower();
+    if (!lifetime || !cycleCurrent(serial)) { return; }
 
     m_activationInFlight = false;
 
@@ -941,11 +1061,16 @@ void TwoToneController::abandonUnkeyedStart()
 // ---------------------------------------------------------------------------
 void TwoToneController::restoreSavedPower()
 {
+    const quint64 serial = m_cycleSerial;
+    const QPointer<TwoToneController> lifetime(this);
+    if (!cycleCurrent(serial)) { return; }
     if (!m_savedPwrValid || !m_tx) {
         return;
     }
     m_tx->setPowerSliderLimitEnabled(true);
+    if (!lifetime || !cycleCurrent(serial)) { return; }
     m_tx->setPower(m_savedPwr);
+    if (!lifetime || !cycleCurrent(serial)) { return; }
     m_savedPwrValid = false;
 }
 

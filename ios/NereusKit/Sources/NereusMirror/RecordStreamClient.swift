@@ -70,6 +70,9 @@ public final class RecordStreamClient: ObservableObject {
         if stream == StationVax.levelsStream {
             return StationVax.levelsCapacity
         }
+        if stream == StationCat.logStream {
+            return StationCat.logCapacity
+        }
         return stream.hasPrefix("spotConsole:") ? 200 : 500
     }
 

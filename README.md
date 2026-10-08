@@ -264,13 +264,14 @@ on-air checks are recorded in the [feature verification documents](docs/architec
 # Ubuntu 24.04+ / Debian
 sudo apt install qt6-base-dev qt6-base-private-dev \
   qt6-multimedia-dev qt6-shadertools-dev qt6-svg-dev qt6-websockets-dev \
+  qt6-serialport-dev \
   cmake ninja-build pkg-config \
   libfftw3-dev libgl1-mesa-dev \
   libasound2-dev libjack-jackd2-dev \
   libpipewire-0.3-dev libssl-dev
 
 # Arch / CachyOS / Manjaro
-sudo pacman -S qt6-base qt6-multimedia qt6-svg qt6-websockets \
+sudo pacman -S qt6-base qt6-multimedia qt6-svg qt6-websockets qt6-serialport \
   cmake ninja pkgconf fftw \
   alsa-lib jack2 pipewire openssl
 

@@ -1,0 +1,6 @@
+<RCC>
+  <qresource prefix="/cat">
+    <file alias="CATStructs.xml">cat/CATStructs.xml</file>
+    <file alias="CommandContracts.json">cat/CommandContracts.json</file>
+  </qresource>
+</RCC>

@@ -45,8 +45,8 @@
 //               backstop), except when the device's own stop ended it; a
 //               take's end names the take. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
-//   2026-10-07: A device's tx.twoTone start inside its stop's settle starts
-//               the test again rather than answering "already on".
+//   2026-10-07: A device's tx.twoTone start inside its stop's settle keeps
+//               the test running rather than answering "already on".
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -773,7 +773,7 @@ RemoteKeying::Result RemoteKeying::twoTone(const Command& command)
         return refused(refusal);
     }
     // A test still settling its stop is ending, not running: a start now
-    // supersedes the stop (TwoToneController::setActive) rather than being
+    // adopts the live test (TwoToneController::setActive) rather than being
     // acknowledged as already on and then torn down when the settle ends.
     if (twoToneRunningFor(command.deviceId) && !tt->isDeactivationInFlight()) {
         return accepted(moxKeyedFor(command.deviceId) ? m_model->keyedBy().epoch

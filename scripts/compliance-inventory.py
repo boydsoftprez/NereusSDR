@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from header_block import header_text  # noqa: E402
+from header_block import header_text, uses_exact_tcp_notice, CAT_TCP_PROJECT_LICENSE  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -92,6 +92,18 @@ def _aethersdr_bucket_a_paths(md_path: Path) -> set[str]:
     return paths
 
 
+def _source_cells_from_table(md_path: Path) -> dict[str, str]:
+    if not md_path.exists():
+        return {}
+    sources = {}
+    for line in md_path.read_text(encoding="utf-8").splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) > 1 and cells[0].startswith(("src/", "tests/")):
+            sources[cells[0]] = cells[1]
+    return sources
+
+
+THETIS_SOURCE_CELLS = _source_cells_from_table(THETIS_PROVENANCE)
 THETIS_PORTS = _paths_from_table(THETIS_PROVENANCE)
 AETHER_PORTS = _aethersdr_bucket_a_paths(AETHER_RECONCILIATION)
 
@@ -177,6 +189,8 @@ def _verify_markers(path: str, classification: str) -> list[str]:
         )
     except (IsADirectoryError, FileNotFoundError):
         return []
+    if classification == "thetis-port" and uses_exact_tcp_notice(path, head, THETIS_SOURCE_CELLS.get(path, "")):
+        markers = [m for m in markers if m != "Copyright (C)"] + [CAT_TCP_PROJECT_LICENSE]
     return [m for m in markers if m not in head]
 
 

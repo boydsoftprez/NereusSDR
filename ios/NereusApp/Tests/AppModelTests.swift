@@ -152,7 +152,22 @@ struct AppModelTests {
 
     /// Waits, without sleeping, until `condition` holds. Each turn lets the
     /// main actor run what is queued on it, where the model is fed.
+    /// Waits up to 10 s of real time. A count of yields alone ran out
+    /// before a fake connection finished on a slow CI simulator.
     private func settle(_ condition: () -> Bool) async -> Bool {
+        let giveUp = ContinuousClock.now + .seconds(10)
+        while ContinuousClock.now < giveUp {
+            if condition() {
+                return true
+            }
+            await Task.yield()
+        }
+        return condition()
+    }
+
+    /// The old finite budget of yields, for probes that show something
+    /// does not happen without a step the test still holds.
+    private func settleByYields(_ condition: () -> Bool) async -> Bool {
         for _ in 0..<50_000 {
             if condition() {
                 return true
@@ -1117,7 +1132,7 @@ struct AppModelTests {
             let readiness = Task { await relayedHeartbeatReady(model) }
             // A control probe proves the old finite budget is insufficient
             // while the actual snapshot completion remains held.
-            #expect(!(await settle { model.connection == .connected && model.linkRelayed }))
+            #expect(!(await settleByYields { model.connection == .connected && model.linkRelayed }))
             #expect(clock.now == 0)
             #expect(clock.pendingDueTimes.contains(20_000))
             #expect(model.roundTripMs == nil)
@@ -1161,7 +1176,7 @@ struct AppModelTests {
             #expect(clock.now == 2_000)
             // The heartbeat was submitted, but the session has not yet
             // received its answer. Yield counts cannot complete that event.
-            #expect(!(await settle { model.roundTripMs != nil }))
+            #expect(!(await settleByYields { model.roundTripMs != nil }))
             #expect(model.roundTripMs == nil)
             let measured = Task { await heartbeatMeasured(model) }
             pong.release()

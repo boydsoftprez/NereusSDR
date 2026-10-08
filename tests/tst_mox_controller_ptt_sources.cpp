@@ -859,9 +859,11 @@ private slots:
         QCOMPARE(keyRequests, 1);
 
         // handleTrxMessage writes TCIPTT only when it changes MOX.
+        const quint64 stamp = mox->acceptedRequestGeneration();
         core.setMox(true);
         drain();
         QCOMPARE(keyRequests, 1);
+        QCOMPARE(mox->acceptedRequestGeneration(), stamp);
 
         core.setMox(false);
         drain();
