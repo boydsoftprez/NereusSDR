@@ -1322,7 +1322,9 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(model->isConnected(), 6000);
         QCOMPARE(model->connection(), connection.data());
         QVERIFY(model->wdspEngine()->isInitialized());
-        QVERIFY(!app.m_radioInPlaceDeadline->isActive());
+        // The Core hears Connected through a queued connection, so its
+        // deadline stops a moment after the model reports it.
+        QTRY_VERIFY(!app.m_radioInPlaceDeadline->isActive());
         QVERIFY(!model->isRadioLinkDown());
         QCOMPARE(scans.load(), scansBefore);
         app.stop();

@@ -86,10 +86,10 @@ private slots:
         QCOMPARE(tools.value(QStringLiteral("diversity")), caps.hasDiversityReceiver);
         QCOMPARE(tools.value(QStringLiteral("tciServer")), true);
         QCOMPARE(tools.value(QStringLiteral("vaxAudio")), true);
-        // Not built on the desktop, so not offered.
+        // CAT is built; the other two desktop tools remain unavailable.
         QCOMPARE(tools.value(QStringLiteral("cwx")), false);
         QCOMPARE(tools.value(QStringLiteral("memoryManager")), false);
-        QCOMPARE(tools.value(QStringLiteral("catControl")), false);
+        QCOMPARE(tools.value(QStringLiteral("catControl")), true);
 
         const QHash<QString, bool> radio = offeredById(catalog, QStringLiteral("radioItems"));
         QCOMPARE(radio.size(), 4);

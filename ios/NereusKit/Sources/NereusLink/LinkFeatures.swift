@@ -168,6 +168,14 @@
 /// `audioQualityVersion` 1 while it offers media; a Core that sends none
 /// plays its own bitrate and the phone's choice of quality stays greyed.
 ///
+/// `stationCat` 1: the app's CAT Control page sets up the Core's CAT, as a
+/// connected desktop's CAT pages do: it reads the `stationCat` object's four
+/// channels, global settings, the limits of the Core's computer and the
+/// last test, sends `setStationCatChannel`, `setStationCatGlobal`,
+/// `testStationCatCommand` and `refreshStationCatDevices`, and reads the
+/// `catLog` record stream. The Core then sends `stationCatVersion`; a Core
+/// that sends none leaves CAT Control greyed with its reason.
+///
 /// `radioSpeaker` 1: the app's Sound panel reads and sets the speaker at
 /// the radio (`radio`'s `radioSpeakerVolume` and `radioSpeakerMuted`, with
 /// `radioSpeakerAvailability` beside them), and its described Setup >
@@ -190,5 +198,6 @@ public enum LinkFeatures {
                                             "sliceAccess": 3, "cfcProfile": 1, "paProfiles": 1,
                                             "levelCalibration": 1, "adcAttenuators": 1, "rx2Attenuator": 1,
                                             "radioMic": 1, "rxFilterLowPass": 1, "radeReason": 1,
-                                            "audioQuality": 1, "radioSpeaker": 1]
+                                            "audioQuality": 1, "stationCat": 1,
+                                            "radioSpeaker": 1]
 }

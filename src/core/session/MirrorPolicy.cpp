@@ -212,6 +212,9 @@
 //   2026-09-28 - Slice control plan Task 4: SliceAccess, sliceId and
 //                 incarnation ConstantSnapshot, the rest Outbound. J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - CAT setup from a connected desktop: StationCatModel, every
+//                 property Outbound. J.J. Boyd (KG4VCF). AI tooling: Claude
+//                 Code.
 // =================================================================
 
 #include "core/session/MirrorPolicy.h"
@@ -835,6 +838,15 @@ const MirrorPolicy::Entry kEntries[] = {
     { "StationTciModel", "forgetRx2VfoBOnDisconnect", MirrorDirection::Outbound },
     { "StationTciModel", "useRx1VfoaForRx2Vfoa", MirrorDirection::Outbound },
     { "StationTciModel", "copyRx2VfobToVfoa", MirrorDirection::Outbound },
+    // CAT setup from a connected desktop (stationCatVersion 1): the Core's
+    // CAT, read-only; changed only through its four commands.
+    { "StationCatModel", "global", MirrorDirection::Outbound },
+    { "StationCatModel", "channel1", MirrorDirection::Outbound },
+    { "StationCatModel", "channel2", MirrorDirection::Outbound },
+    { "StationCatModel", "channel3", MirrorDirection::Outbound },
+    { "StationCatModel", "channel4", MirrorDirection::Outbound },
+    { "StationCatModel", "platform", MirrorDirection::Outbound },
+    { "StationCatModel", "lastTest", MirrorDirection::Outbound },
 
     // iPhone app plan Task 25 (vaxVersion 1): the station computer's VAX.
     // The slices, device names and transmit slice are the Core's; the

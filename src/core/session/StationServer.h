@@ -541,6 +541,9 @@
 //               a Core-wide cap, folded answers, the link, keepalive gaps
 //               per channel and watchdog stops). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-07: CAT setup from a connected desktop: peerGetsStationCat,
+//               stationCatVersion and the catLog line counter. J.J. Boyd
+//               (KG4VCF). AI tooling: Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -1069,6 +1072,11 @@ public:
     /// stationTciVersion 2, so it gets the `stationTci` object's other
     /// eleven settings and may send setStationTciSettings.
     bool peerGetsStationTciSettings(SessionTransport* transport) const;
+    // CAT setup from a connected desktop: whether `transport` gets the
+    // Core's CAT (the `stationCat` object, the `catLog` stream and the four
+    // commands): a peer at minor 11 that declared stationCat 1, on a Core
+    // that runs CAT.
+    bool peerGetsStationCat(SessionTransport* transport) const;
     /// ...and every other peer gets today's `stationTci`: those settings
     /// taken out of its schema, snapshot and deltas (a delta of only them is
     /// not sent: false).
@@ -1376,6 +1384,8 @@ public:
     // (parity Task 23) with the record streams: the tciClients stream,
     // setStationTciOptions and disconnectStationTciClient.
     int stationTciVersion() const;
+    // CAT setup from a connected desktop: 1 on a Core that runs CAT.
+    int stationCatVersion() const;
     // R-R3-47 / R-R3-22: accessoryDataVersion. 2 on a Core that owns its
     // accessories (the `accessoryData` object and the setTxInterlockPolicy,
     // setPgxlPowerCap and clearAccessoryFaults verbs; from 2 the RF-Kit's
@@ -2668,6 +2678,8 @@ private:
     // last console line, and the send that follows a change.
     std::map<QString, std::unique_ptr<RecordStream>> m_recordStreams;
     quint64 m_consoleLineId = 0;
+    // CAT setup from a connected desktop: the `catLog` records' ids.
+    quint64 m_catLogLineId = 0;
     QTimer* m_recordFlushTimer = nullptr;
     // Parity Task 22: the log sink's last line put in `coreLog`, the pull
     // that runs while it has a subscriber, the newest telemetry this Core

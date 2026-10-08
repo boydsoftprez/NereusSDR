@@ -25,6 +25,9 @@
 // =================================================================
 //
 // Modification history (NereusSDR):
+//   2026-10-04: CAT accepted-intent tags and guarded cycle lifetimes,
+//                NereusSDR-original, by J.J. Boyd (KG4VCF), AI-assisted
+//                via OpenAI Codex.
 //   2026-10-01 - #299: document direct anti-VOX replay to new workers while
 //                 keeping controller setters idempotent. J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
@@ -568,6 +571,8 @@ void MoxController::setOtherDeviceHolds(OtherDeviceHoldsFn probe)
 void MoxController::setMox(bool on, const KeyerIdentity& keyer)
 {
     const QPointer<MoxController> scopeOwner(this);
+    const quint64 beforeAdmission = m_acceptedRequestGeneration;
+    const quint64 pendingAdmission = m_pendingAdmissionSerial;
     const auto previousAttempt = m_keyAttemptIdentity;
     const bool previousAdmitted = m_keyAdmitted;
     const auto previousAdmittedKeyer = m_admittedKeyer;
@@ -585,8 +590,11 @@ void MoxController::setMox(bool on, const KeyerIdentity& keyer)
     if (!on) {
         // Ruling 8.5: a release unkeys only its keyer's key. Unkeying is
         // never asked of the gate.
-        if (m_mox && m_currentKeyer.deviceId == keyer.deviceId) {
-            setMox(false);
+        if ((m_mox && m_currentKeyer.deviceId == keyer.deviceId)
+            || (!m_mox && keyer.requestTag != 0 && m_lastAcceptedOn
+                && m_lastAcceptedRequester.requestTag == keyer.requestTag
+                && m_lastAcceptedRequester == keyer)) {
+            setMoxImpl(false);
         }
         return;
     }
@@ -598,12 +606,15 @@ void MoxController::setMox(bool on, const KeyerIdentity& keyer)
             m_keyAdmitted = true;
             m_admittedKeyer = keyer;
             setMoxImpl(true);
+            if (!scopeOwner) { return; }
             m_keyAdmitted = false;
             return;
         }
         KeyingAnswer answer;
         if (m_keyingGate) {
             answer = m_keyingGate(keyer.source, keyer);
+            if (!scopeOwner || beforeAdmission != m_acceptedRequestGeneration
+                || pendingAdmission != m_pendingAdmissionSerial) { return; }
         }
         const TxRefusal refusal = answer.verdict == KeyingVerdict::Refuse && !answer.refusal.isEmpty()
             ? answer.refusal
@@ -616,6 +627,8 @@ void MoxController::setMox(bool on, const KeyerIdentity& keyer)
     // takes nothing; setMox(true) refuses it with its own words below.
     if (m_keyingGate && refusalBeforeTheGate().isEmpty()) {
         const KeyingAnswer answer = m_keyingGate(keyer.source, keyer);
+        if (!scopeOwner || beforeAdmission != m_acceptedRequestGeneration
+            || pendingAdmission != m_pendingAdmissionSerial) { return; }
         if (answer.verdict != KeyingVerdict::Admit) {
             if (answer.verdict == KeyingVerdict::Refuse) {
                 reportRefusal(answer.refusal.text, answer.refusal, /*quiet=*/false);
@@ -626,6 +639,7 @@ void MoxController::setMox(bool on, const KeyerIdentity& keyer)
     m_keyAdmitted = true;
     m_admittedKeyer = keyer;
     setMoxImpl(true);
+    if (!scopeOwner) { return; }
     m_keyAdmitted = false;
 }
 
@@ -670,6 +684,14 @@ bool MoxController::admitStationKey(PttMode source)
 
 bool MoxController::admitKey(const KeyerIdentity& keyer)
 {
+    const QPointer<MoxController> lifetime(this);
+    const quint64 beforeAdmission = m_acceptedRequestGeneration;
+    const quint64 pendingAdmission = m_pendingAdmissionSerial;
+    const quint64 previousTag = m_pendingAdmissionTag;
+    m_pendingAdmissionTag = keyer.requestTag;
+    const auto restorePending = qScopeGuard([lifetime, previousTag] {
+        if (lifetime) { lifetime->m_pendingAdmissionTag = previousTag; }
+    });
     m_lastAdmitTook = false;
     if (!m_keyingGate) {
         return true;
@@ -699,6 +721,8 @@ bool MoxController::admitKey(const KeyerIdentity& keyer)
         return false;
     }
     const KeyingAnswer answer = m_keyingGate(keyer.source, keyer);
+    if (!lifetime || beforeAdmission != m_acceptedRequestGeneration
+        || pendingAdmission != m_pendingAdmissionSerial) { return false; }
     if (m_mox || answer.verdict != KeyingVerdict::Admit) {
         // Another device's key is on, or the gate refused or took.
         const TxRefusal refusal = answer.refusal.isEmpty() ? TxRefusals::changingHands()
@@ -1007,19 +1031,21 @@ void MoxController::onModeChanged(DSPMode mode)
 // ---------------------------------------------------------------------------
 void MoxController::setTune(bool on, const KeyerIdentity& keyer)
 {
-    // iPhone app plan Task 35: the TUN-on below, keyed as `keyer`.
-    if (!on) {
-        setTune(false);
-        return;
-    }
+    const QPointer<MoxController> lifetime(this);
+    const KeyerIdentity previous = m_tuneKeyer;
+    const bool previousTyped = m_tuneForKeyer;
+    const auto restore = qScopeGuard([lifetime, previous, previousTyped]() {
+        if (lifetime) { lifetime->m_tuneKeyer = previous; lifetime->m_tuneForKeyer = previousTyped; }
+    });
     m_tuneKeyer = keyer;
     m_tuneForKeyer = true;
-    setTune(true);
-    m_tuneForKeyer = false;
+    setTune(on);
 }
 
 void MoxController::setTune(bool on)
 {
+    const QPointer<MoxController> lifetime(this);
+    const quint64 generation = m_acceptedRequestGeneration;
     if (on) {
         // ── TUN-on: set flags BEFORE engaging MOX ────────────────────────
         // (Ordering deviation from Thetis documented above.)
@@ -1027,7 +1053,8 @@ void MoxController::setTune(bool on)
         // From Thetis console.cs:30093 [v2.10.3.13]:
         //   _current_ptt_mode = PTTMode.MANUAL;
         // MW0LGE_21k8 moved below mox  [original inline comment console.cs:30090]
-        setPttMode(PttMode::Manual);      // idempotent; emits pttModeChanged on transition
+        setPttMode(PttMode::Manual);  // idempotent; emits pttModeChanged on transition
+        if (!lifetime || generation != m_acceptedRequestGeneration) { return; }
 
         // From Thetis console.cs:30094 [v2.10.3.13]:
         //   _manual_mox = true;
@@ -1035,6 +1062,7 @@ void MoxController::setTune(bool on)
         m_manualMox = true;
         if (!wasManual) {
             emit manualMoxChanged(true);
+            if (!lifetime || generation != m_acceptedRequestGeneration) { return; }
         }
         // The same Thetis flag gates PollPTT (isManualKey()). Receiver and
         // transmit gaps plan, Task 7.
@@ -1054,7 +1082,10 @@ void MoxController::setTune(bool on)
     } else {
         // ── TUN-off: release MOX BEFORE clearing the flag ─────────────────
         // From Thetis console.cs:30106 [v2.10.3.13]: chkMOX.Checked = false;
-        setMox(false);
+        if (m_tuneForKeyer) { setMox(false, m_tuneKeyer); }
+        else { setMox(false); }
+        if (!lifetime || (m_acceptedRequestGeneration != generation
+            && m_acceptedRequestGeneration != generation + 1)) { return; }
 
         // From Thetis console.cs:30142 [v2.10.3.13]: _manual_mox = false;
         const bool wasManual = m_manualMox;
@@ -1120,8 +1151,23 @@ void MoxController::setMox(bool on)
     setMoxImpl(on);
 }
 
+quint64 MoxController::observeAcceptedRequest(const KeyerIdentity& requester, bool requestedOn)
+{
+    // NereusSDR-original observation of admitted intent, not an admission gate.
+    const KeyerIdentity accepted = requester;
+    m_lastAcceptedRequester = accepted;
+    m_lastAcceptedOn = requestedOn;
+    const quint64 generation = ++m_acceptedRequestGeneration;
+    emit requestAccepted(accepted, generation, requestedOn);
+    return generation;
+}
+
 void MoxController::setMoxImpl(bool on)
 {
+    const KeyerIdentity requester = m_keyAttemptIdentity.value_or(KeyerIdentity::station(m_pttMode));
+    const QPointer<MoxController> lifetime(this);
+    const quint64 beforeEffects = m_acceptedRequestGeneration;
+    const quint64 pendingAdmission = m_pendingAdmissionSerial;
     // ── Task 7 fix wave, I2: TX inhibit and the PA trip refuse every key ─────
     //
     // From Thetis chkMOX_CheckedChanged2, console.cs:29364-29371 [v2.10.3.15]:
@@ -1301,6 +1347,10 @@ void MoxController::setMoxImpl(bool on)
     //            StepAttenuatorController TX-path activation / RX restore
     //            RadioConnection::setMoxBit(isTx) + setTrxRelayBit(isTx)
     runMoxSafetyEffects(on);
+    if (!lifetime || beforeEffects != m_acceptedRequestGeneration
+        || pendingAdmission != m_pendingAdmissionSerial) { return; }
+    const quint64 generation = observeAcceptedRequest(requester, on);
+    if (!lifetime || generation != m_acceptedRequestGeneration) { return; }
 
     // ── Step 2: Idempotent guard ──────────────────────────────────────────────
     if (m_mox == on) {
@@ -1323,15 +1373,18 @@ void MoxController::setMoxImpl(bool on)
     // BETWEEN the idempotent guard and the m_mox commit is the most faithful
     // translation. By construction, m_mox != on here (idempotent guard passed).
     emit moxChanging(activeRxForTx(), m_mox, on);  // MW0LGE_21k8 — Pre
+    if (!lifetime || generation != m_acceptedRequestGeneration) { return; }
 
     // ── Task 7: an unkey clears the PTT state ─────────────────────────────────
     // chkMOX_CheckedChanged2 does this on every unkey, whichever source
     // unchecked chkMOX (see dropPttOnUnkey).
     if (!on) {
         dropPttOnUnkey();
+        if (!lifetime || generation != m_acceptedRequestGeneration) { return; }
     }
 
     // ── Step 3: Commit new MOX state ─────────────────────────────────────────
+    const quint64 transition = ++m_transitionSerial;
     m_mox = on;
     // Task 34: who this key is for (the gate admitted it for them, or the
     // station device's own key); an unkey leaves nobody's key on.
@@ -1359,9 +1412,12 @@ void MoxController::setMoxImpl(bool on)
         //   Walk: Rx → RxToTxRfDelay → (timer fires) → Tx
         //   Phase 3 of 3 — emit txReady() in onRfDelayElapsed()
         //   moxStateChanged(true) emitted after txReady() (diagnostic signal)
-        emit txAboutToBegin();                          // RX→TX phase 1 of 3
-        emit hardwareFlipped(true);                     // RX→TX phase 2 of 3 — before rfDelay
+        emit txAboutToBegin();  // RX→TX phase 1 of 3
+        if (!lifetime || transition != m_transitionSerial || m_mox != on) { return; }
+        emit hardwareFlipped(true);  // RX→TX phase 2 of 3 — before rfDelay
+        if (!lifetime || transition != m_transitionSerial || m_mox != on) { return; }
         advanceState(MoxState::RxToTxRfDelay);
+        if (!lifetime || transition != m_transitionSerial || m_mox != on) { return; }
         m_rfDelayTimer.start();
     } else {
         // TX→RX path (Task 33: Thetis's order, the drain first and the
@@ -1421,8 +1477,12 @@ void MoxController::setMoxImpl(bool on)
 // The TX→RX walk from phase 1 on (Task 33's order; see setMox above).
 void MoxController::beginTxToRxTeardown()
 {
+    const QPointer<MoxController> lifetime(this);
+    const quint64 transition = m_transitionSerial;
     emit txAboutToEnd();                            // TX→RX phase 1 of 5
+    if (!lifetime || transition != m_transitionSerial) { return; }
     advanceState(MoxState::TxToRxInFlight);
+    if (!lifetime || transition != m_transitionSerial) { return; }
     const bool awaitDrain = m_awaitTxDrain;
     if (awaitDrain) {
         // Thetis's SetChannelState(tx, 0, 1) returns before mox_delay
@@ -1433,6 +1493,7 @@ void MoxController::beginTxToRxTeardown()
         m_txDrainTimeoutTimer.start();
     }
     emit txDrainRequested();                        // TX→RX phase 2 of 5
+    if (!lifetime || transition != m_transitionSerial) { return; }
     if (!awaitDrain) {
         // G-05: without a drain to wait for, the send ring's wait (if
         // any) comes straight after the request.
@@ -1446,6 +1507,7 @@ void MoxController::beginTxToRxTeardown()
 // ---------------------------------------------------------------------------
 // setPttMode — idempotent PTT mode setter.
 // ---------------------------------------------------------------------------
+
 void MoxController::setPttMode(PttMode mode)
 {
     if (m_pttMode == mode) {
@@ -1480,6 +1542,7 @@ void MoxController::dropPttOnUnkey()
 {
     //[2.10.1.0]MW0LGE changed  [original inline comment from console.cs:29406]
     m_catPtt = false;
+    m_catRequester = KeyerIdentity::station(PttMode::Cat);
     m_tciPtt = false;
     clearHeldBits(kRefusedCat | kRefusedTci);
     setPttMode(PttMode::None);
@@ -1497,10 +1560,13 @@ void MoxController::dropPttOnUnkey()
 void MoxController::tryPollKey(PttMode mode, quint8 refusedBit)
 {
     const QPointer<MoxController> scopeOwner(this);
+    const quint64 beforeAdmission = m_acceptedRequestGeneration;
+    const quint64 pendingAdmission = m_pendingAdmissionSerial;
     const auto previousAttempt = m_keyAttemptIdentity;
     const bool previousAdmitted = m_keyAdmitted;
     const auto previousAdmittedKeyer = m_admittedKeyer;
-    m_keyAttemptIdentity = KeyerIdentity::station(PttMode::None);
+    const KeyerIdentity requester = mode == PttMode::Cat ? m_catRequester : KeyerIdentity::station(mode);
+    m_keyAttemptIdentity = requester;
     m_keyAdmitted = false;
     const auto restoreAdmission = qScopeGuard([scopeOwner, previousAttempt, previousAdmitted,
                                               previousAdmittedKeyer]() {
@@ -1529,8 +1595,10 @@ void MoxController::tryPollKey(PttMode mode, quint8 refusedBit)
     // plan or the interlock would refuse is not asked (setMox refuses it
     // below), so it takes nothing.
     if (m_keyingGate && refusalBeforeTheGate().isEmpty()) {
-        const KeyerIdentity keyer = KeyerIdentity::station(mode);
+        const KeyerIdentity keyer = requester;
         const KeyingAnswer answer = m_keyingGate(mode, keyer);
+        if (!scopeOwner || beforeAdmission != m_acceptedRequestGeneration
+            || pendingAdmission != m_pendingAdmissionSerial) { return; }
         if (answer.verdict == KeyingVerdict::Take && mode == PttMode::Mic) {
             // Task 77 fix round 2: this press took; it keys when the take
             // ends if it is still down (onTakeFinished).
@@ -1548,6 +1616,7 @@ void MoxController::tryPollKey(PttMode mode, quint8 refusedBit)
             if (answer.verdict == KeyingVerdict::Refuse) {
                 if (refusedBit == kRefusedCat) {
                     m_catPtt = false;
+                    m_catRequester = KeyerIdentity::station(PttMode::Cat);
                 } else if (refusedBit == kRefusedTci) {
                     m_tciPtt = false;
                 }
@@ -1559,12 +1628,20 @@ void MoxController::tryPollKey(PttMode mode, quint8 refusedBit)
         m_admittedKeyer = keyer;
         m_keyAdmitted = true;
     }
+    if (mode == PttMode::Cat && requester.requestTag != 0
+        && (!m_catPtt || m_catRequester.requestTag != requester.requestTag)) { return; }
+    m_admittedKeyer = requester;
+    m_keyAdmitted = true;
+    const quint64 beforeMode = m_acceptedRequestGeneration;
     setPttMode(mode);
+    if (!scopeOwner || beforeMode != m_acceptedRequestGeneration
+        || pendingAdmission != m_pendingAdmissionSerial) { return; }
     m_quietRefusal = (m_refusedHeld & refusedBit) != 0;
     m_lastRefusalNotQueued = false;
     // This poll already asked the gate. Keep its admitted station identity;
     // the public setter masks admission for independent/reentrant calls.
     setMoxImpl(true);
+    if (!scopeOwner) { return; }
     m_keyAdmitted = false;
     m_quietRefusal = false;
     if (m_mox) {
@@ -1788,7 +1865,7 @@ void MoxController::pollPtt()
     case PttMode::Cat:
         // From Thetis console.cs:25582-25588 [v2.10.3.15]
         if (!m_catPtt) {
-            setMox(false);
+            setMox(false, m_catRequester);
         }
         break;
     case PttMode::Mic:
@@ -1822,6 +1899,7 @@ void MoxController::clearPttSources()
 {
     m_micPtt = false;
     m_catPtt = false;
+    m_catRequester = KeyerIdentity::station(PttMode::Cat);
     m_voxPtt = false;
     m_tciPtt = false;
     m_refusedHeld = 0;
@@ -1950,6 +2028,7 @@ void MoxController::setTxInhibited(bool on, const QString& reason)
 void MoxController::dropAppLevelsUnderBlock()
 {
     m_catPtt = false;
+    m_catRequester = KeyerIdentity::station(PttMode::Cat);
     m_tciPtt = false;
     clearHeldBits(kRefusedCat | kRefusedTci);
 }
@@ -2230,22 +2309,29 @@ void MoxController::runMoxSafetyEffects(bool /*newMox*/)
 //   emit moxStateChanged(true) (diagnostic / integration signal)
 void MoxController::onRfDelayElapsed()
 {
+    const QPointer<MoxController> lifetime(this);
+    const quint64 transition = m_transitionSerial;
     // TODO [3M-1a F.1]: AudioMOXChanged(true) + WDSP TX channel on here.
     advanceState(MoxState::Tx);
+    if (!lifetime || transition != m_transitionSerial) { return; }
     emit txReady();                                     // RX→TX phase 3 of 3
+    if (!lifetime || transition != m_transitionSerial) { return; }
     emit moxStateChanged(true);                         // diagnostic signal
+    if (!lifetime || transition != m_transitionSerial) { return; }
     // ── C.3: Post signal (multicast, after timer walk completes) ─────────
     // From Thetis console.cs:29677 [v2.10.3.13]:
     //   if (bOldMox != tx) MoxChangeHandlers?.Invoke(rx2_enabled && VFOBTX ? 2 : 1, bOldMox, tx); // MW0LGE_21a
     // RX→TX direction: by construction we got here because setMox(true)
     // entered the walk past its idempotent guard, so bOldMox=false, tx=true.
     emit moxChanged(activeRxForTx(), false, true);      // MW0LGE_21a — Post
+    if (!lifetime || transition != m_transitionSerial) { return; }
 }
 
 // onMoxDelayElapsed — fires when m_moxDelayTimer elapses.
 //
 // Reserved for RX→TX mox_delay settle in future phases; not connected
 // to any 3M-1a path. Declared to complete the 6-timer API.
+
 void MoxController::onMoxDelayElapsed()
 {
     // Not started in 3M-1a. Placeholder for future RX→TX settle phase.
@@ -2277,17 +2363,22 @@ void MoxController::onSpaceDelayElapsed()
 //   Advance to TxToRxFlush state, then start ptt_out_delay timer
 void MoxController::onKeyUpDelayElapsed()
 {
+    const QPointer<MoxController> lifetime(this);
+    const quint64 transition = m_transitionSerial;
     // DONE_WITH_CONCERNS [anan-g2e F2/F3]: When UpdateAAudioMixerStates is ported,
     // ANAN_G2E must join the HERMES 4-DDC (USB) group at console.cs:27653-27664
     // [v2.10.3.15] (F2) AND the HERMES 2-DDC (ETH) group at console.cs:27669-27679
     // [v2.10.3.15] (F3). //N1GP G2E added tags are on both cite lines in Thetis.
     emit txaFlushed();                                  // TX→RX phase 3 of 5
+    if (!lifetime || transition != m_transitionSerial) { return; }
     // Task 33: UpdateDDCs + AudioMOXChanged(false) + HdwMOXChanged(false)
     // follow mox_delay in Thetis (console.cs:29670-29675 [v2.10.3.15]);
     // hardwareFlipped(false) carries them (ReceiverManager::setMox,
     // RadioModel::onMoxHardwareFlipped).
     emit hardwareFlipped(false);                        // TX→RX phase 4 of 5
+    if (!lifetime || transition != m_transitionSerial) { return; }
     advanceState(MoxState::TxToRxFlush);
+    if (!lifetime || transition != m_transitionSerial) { return; }
     m_pttOutDelayTimer.start();
 }
 
@@ -2302,18 +2393,25 @@ void MoxController::onKeyUpDelayElapsed()
 //   Advance to terminal Rx state
 //   TX→RX phase 4 of 4 — emit rxReady() — RX channel active from this point
 //   emit moxStateChanged(false) (diagnostic / integration signal)
+
 void MoxController::onPttOutElapsed()
 {
+    const QPointer<MoxController> lifetime(this);
+    const quint64 transition = m_transitionSerial;
     // TODO [3M-1a F.1]: WDSP.SetChannelState(WDSP.id(0, 0), 1, 0) (RX1 on) here.
     advanceState(MoxState::Rx);
+    if (!lifetime || transition != m_transitionSerial) { return; }
     emit rxReady();                                     // TX→RX phase 4 of 4
+    if (!lifetime || transition != m_transitionSerial) { return; }
     emit moxStateChanged(false);                        // diagnostic signal
+    if (!lifetime || transition != m_transitionSerial) { return; }
     // ── C.3: Post signal (multicast, after timer walk completes) ─────────
     // From Thetis console.cs:29677 [v2.10.3.13]:
     //   if (bOldMox != tx) MoxChangeHandlers?.Invoke(rx2_enabled && VFOBTX ? 2 : 1, bOldMox, tx); // MW0LGE_21a
     // TX→RX direction: by construction we got here via setMox(false) past
     // the idempotent guard, so bOldMox=true, tx=false.
     emit moxChanged(activeRxForTx(), true, false);      // MW0LGE_21a — Post
+    if (!lifetime || transition != m_transitionSerial) { return; }
 }
 
 // onBreakInDelayElapsed — fires when m_breakInDelayTimer elapses.
@@ -2323,6 +2421,7 @@ void MoxController::onPttOutElapsed()
 //
 // Reserved for 3M-2 CW QSK / break-in. NOT started from any 3M-1a path.
 // Declared here so the class is structured for 3M-2 from day one.
+
 void MoxController::onBreakInDelayElapsed()
 {
     // Not started in 3M-1a. Placeholder for 3M-2 CW QSK break-in.
@@ -2819,6 +2918,37 @@ void MoxController::holdOffHeldMic()
 // ---------------------------------------------------------------------------
 void MoxController::onCatPtt(bool pressed)
 {
+    onCatPtt(pressed, KeyerIdentity::station(PttMode::Cat));
+}
+
+bool MoxController::cancelPendingAdmissionIfRequest(quint64 tag)
+{
+    if (tag == 0 || (m_pendingAdmissionTag != tag
+        && (!m_keyAttemptIdentity || m_keyAttemptIdentity->requestTag != tag))) { return false; }
+    ++m_pendingAdmissionSerial;
+    return true;
+}
+
+bool MoxController::discardCatPttIfRequest(quint64 tag)
+{
+    const QPointer<MoxController> lifetime(this);
+    if (tag == 0 || m_catRequester.requestTag != tag) { return false; }
+    const quint64 generation = m_acceptedRequestGeneration;
+    m_catPtt = false;
+    m_catRequester = KeyerIdentity::station(PttMode::Cat);
+    // Retire old bookkeeping before any synchronous source-release observer.
+    m_refusedHeld &= static_cast<quint8>(~kRefusedCat);
+    m_notQueuedHeld &= static_cast<quint8>(~kRefusedCat);
+    // Retire the stale release association without PollPTT or a MOX write.
+    if (m_pttMode == PttMode::Cat) { setPttMode(PttMode::None); }
+    if (!lifetime || generation != m_acceptedRequestGeneration) { return true; }
+    reportIfSourcesReleased();
+    return true;
+}
+
+void MoxController::onCatPtt(bool pressed, const KeyerIdentity& requester)
+{
+    const QPointer<MoxController> lifetime(this);
     // From Thetis console.cs:25476-25477 [v2.10.3.15]:
     // (nearby: //[2.10.3.9]MW0LGE only want to do this on semi breakin  [original inline comment from console.cs:25473];
     //  //[2.10.3.6]MWLGE fixes #518  [original inline comment from console.cs:25481])
@@ -2840,8 +2970,25 @@ void MoxController::onCatPtt(bool pressed)
     if (!pressed || !m_catPtt) {
         clearHeldBits(kRefusedCat);   // M3 and R-R3-36: a new press
     }
+    if (!lifetime) { return; }
+    if (pressed && m_mox && (m_pttMode == PttMode::Cat
+        || (m_pttMode == PttMode::None && m_currentKeyer.source == PttMode::Cat))) {
+        const quint64 before = m_acceptedRequestGeneration;
+        setMox(true, requester);
+        if (!lifetime || m_acceptedRequestGeneration != before + 1) { return; }
+        if (!m_manualKey && m_pttMode == PttMode::None) {
+            setPttMode(PttMode::Cat);
+            if (!lifetime || m_acceptedRequestGeneration != before + 1) { return; }
+        }
+    }
+    const bool cancelPending = !pressed && !m_mox && requester.requestTag != 0
+        && m_catRequester.requestTag == requester.requestTag;
+    m_catRequester = requester;
     m_catPtt = pressed;
+    if (cancelPending) { setMox(false, requester); }
+    if (!lifetime) { return; }
     pollPtt();
+    if (!lifetime) { return; }
     if (!pressed) {
         // Task 77 fix round 3: clearHeldBits ran with the level still set,
         // so a release that never keyed is reported here.
@@ -2949,6 +3096,7 @@ void MoxController::onCwPtt(bool /*pressed*/)
 // ---------------------------------------------------------------------------
 void MoxController::onTciPtt(bool pressed)
 {
+    const QPointer<MoxController> lifetime(this);
     // Task 7 follow-up, N3: refused, not kept, while TX inhibit or a PA
     // trip holds (see dropAppLevelsUnderBlock); the app is answered
     // trx:N,false.
@@ -2961,8 +3109,23 @@ void MoxController::onTciPtt(bool pressed)
     if (!pressed || !m_tciPtt) {
         clearHeldBits(kRefusedTci);   // M3 and R-R3-36: a new press
     }
+    if (!lifetime) { return; }
+    if (pressed && m_mox) {
+        const quint64 before = m_acceptedRequestGeneration;
+        setMox(true, KeyerIdentity::station(PttMode::Tci));
+        if (!lifetime || m_acceptedRequestGeneration == before) { return; }
+        // A newer synchronous request may have superseded this explicit intent.
+        if (m_acceptedRequestGeneration != before + 1) { return; }
+    }
     m_tciPtt = pressed;
+    // Adopt a release association retired by tagged CAT supersession.
+    if (pressed && m_mox && !m_manualKey && m_pttMode == PttMode::None) {
+        const quint64 beforeMode = m_acceptedRequestGeneration;
+        setPttMode(PttMode::Tci);
+        if (!lifetime || beforeMode != m_acceptedRequestGeneration) { return; }
+    }
     pollPtt();
+    if (!lifetime) { return; }
     if (!pressed) {
         // Task 77 fix round 3: as onCatPtt.
         reportIfSourcesReleased();

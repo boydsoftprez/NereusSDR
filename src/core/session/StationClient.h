@@ -465,6 +465,12 @@
 //   2026-09-30: inbound sibling fix round 4: unresolvedDeltaCancelRuleNames()
 //               checks the rule table against the schemas. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-07: CAT setup from a connected desktop: the stationCat feature
+//               and the four CAT requests. J.J. Boyd (KG4VCF). AI tooling:
+//               Claude Code.
+//   2026-10-07: requestCatLog and the `catLog` records for the CAT log
+//               window, with a backlog. J.J. Boyd (KG4VCF). AI tooling:
+//               Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -1393,6 +1399,14 @@ public:
     CommandOutcome requestDisconnectStationTciClient(const QString& id) override;
     // JJ's ruling of 2026-09-28 (stationTciSettingsVersion 1).
     bool stationTciSettingsAvailable() const override;
+    // CAT setup from a connected desktop (stationCatVersion 1).
+    bool stationCatAvailable() const override;
+    CommandOutcome requestStationCatChannel(int channel, const QString& configJson) override;
+    CommandOutcome requestStationCatGlobal(const QString& configJson) override;
+    CommandOutcome requestStationCatTest(qint64 requestId, int channel,
+                                         const QString& command) override;
+    CommandOutcome requestStationCatRefreshDevices() override;
+    void requestCatLog(bool follow, int backlog = 0) override;
     CommandOutcome requestStationTciSetting(const QByteArray& name,
                                             const QVariant& value) override;
     CommandOutcome requestTxInterlockPolicy(int mode, int graceMs, bool swrGateEnabled,
@@ -1952,6 +1966,11 @@ private:
     quint16 m_agreedMinor = 0;
     // Parity Task 33: this window shows the CFC bar chart.
     bool m_cfcCompressionWanted = false;
+    // CAT setup from a connected desktop: the CAT log window follows the
+    // Core's `catLog` stream, subscribed again after each snapshot.
+    bool m_catLogWanted = false;
+    // The recent lines asked for with each subscription.
+    int m_catLogBacklog = 0;
     void sendCfcCompressionSubscription(bool subscribe);
 
     /// iPhone app Task 4: this client's link majors (oldest first) and

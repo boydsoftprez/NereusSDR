@@ -195,6 +195,11 @@
 //               sliceAccess 3, so sliceAccessVersion reads 3. J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
+//   2026-10-07  J.J. Boyd / KG4VCF  CAT setup from a connected desktop:
+//                                    the capture declares stationCat, so
+//                                    stationCatVersion and the
+//                                    `stationCat` object are captured.
+//                                    AI tooling: Claude Code.
 // =================================================================
 
 #include "LinkSurface.h"
@@ -277,6 +282,7 @@
 #include "models/RadioModel.h"
 #include "models/RfKitModel.h"
 #include "models/SliceModel.h"
+#include "models/StationCatModel.h"
 #include "models/StationTciModel.h"
 #include "models/TransmitModel.h"
 #include "models/TunerModel.h"
@@ -714,6 +720,9 @@ std::optional<QList<QByteArray>> liveSessionWire(
                                   // RADE reason: radeReasonVersion and
                                   // each slice's radeReason.
                                   {"radeReason", 1},
+                                  // CAT setup from a connected desktop:
+                                  // stationCatVersion and `stationCat`.
+                                  {"stationCat", 1},
                                   // Radio speaker: radioSpeakerVersion and
                                   // radio's five radio speaker properties.
                                   {"radioSpeaker", 1}})));
@@ -803,6 +812,9 @@ QJsonArray captureCapabilities()
     caps.rxFilterLowPassVersion = 1;
     // RADE reason: sent to a peer that declared radeReason.
     caps.radeReasonVersion = 1;
+    // CAT setup from a connected desktop: sent to a peer that declared
+    // stationCat.
+    caps.stationCatVersion = 1;
     // Radio speaker: sent to a peer that declared radioSpeaker.
     caps.radioSpeakerVersion = 1;
 
@@ -1936,6 +1948,7 @@ QList<const QMetaObject*> LinkSurface::mirroredMetaObjects()
             &AmplifierModel::staticMetaObject,
             &RfKitModel::staticMetaObject,
             &StationTciModel::staticMetaObject,
+            &StationCatModel::staticMetaObject,
             &AccessoryDataModel::staticMetaObject,
             &AccessorySettingsModel::staticMetaObject,
             &StationDevicesFacade::staticMetaObject,

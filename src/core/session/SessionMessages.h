@@ -150,6 +150,9 @@
 //   2026-09-28: slice control and shared listening plan Task 4: the
 //               notice kind controlTaken documented. J.J. Boyd (KG4VCF),
 //               with AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-07: CAT setup from a connected desktop: the four stationCat
+//               verbs documented. J.J. Boyd (KG4VCF). AI tooling: Claude
+//               Code.
 // =================================================================
 
 #include <QByteArray>
@@ -528,6 +531,14 @@ struct SessionMessage {
     ///                               "forgetRx2VfoBOnDisconnect": Bool,
     ///                               "useRx1VfoaForRx2Vfoa": Bool,
     ///                               "copyRx2VfobToVfoa": Bool}
+    ///   setStationCatChannel   -- {"channel": Int64 (1 to 4), "config": Utf8
+    ///                               (a stationCat channel config JSON
+    ///                               object)}
+    ///   setStationCatGlobal    -- {"config": Utf8 (a stationCat global
+    ///                               config JSON object)}
+    ///   testStationCatCommand  -- {"requestId": Int64, "channel": Int64,
+    ///                               "command": Utf8}
+    ///   refreshStationCatDevices -- {}
     ///   setTxInterlockPolicy   -- {"mode": Int64, "graceMs": Int64,
     ///                               "swrGateEnabled": Bool, "swrGateMax": Double}
     ///   setPgxlPowerCap        -- {"enabled": Bool, "watts": Int64}

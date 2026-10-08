@@ -528,13 +528,18 @@ void checkDesktopValues(const QJsonObject& catalog, HPSDRModel model, ProtocolVe
     // Tools and the Radio menu's items, in the desktop's order, without
     // MIDI Mapping and Macro Buttons (D42).
     QStringList tools;
+    bool catSeen=false;
     for (const QJsonValue& t : catalog.value(QStringLiteral("tools")).toArray()) {
         const QJsonObject tool = t.toObject();
         tools << tool.value(QStringLiteral("label")).toString();
         const QString where = tool.value(QStringLiteral("where")).toString();
+        if (tool.value(QStringLiteral("id")).toString() == "catControl") {
+            catSeen=true; QCOMPARE(where,QStringLiteral("station")); QVERIFY(tool.value(QStringLiteral("offered")).toBool());
+        }
         QVERIFY(where == QStringLiteral("station") || where == QStringLiteral("both"));
         QVERIFY(tool.value(QStringLiteral("offered")).isBool());
     }
+    QVERIFY(catSeen);
     QCOMPARE(tools, (QStringList{QStringLiteral("Spot Hub"), QStringLiteral("FreeDV Reporter"),
                                  QStringLiteral("TX Equalizer"), QStringLiteral("PureSignal"),
                                  QStringLiteral("Diversity"), QStringLiteral("CWX"),
@@ -810,6 +815,16 @@ private slots:
     }
 
     // The two fixtures hold the desktop's own values for their radio.
+    void builtCatToolRetainsStationScope() {
+        BandPlanManager plans; plans.loadPlans();
+        const QJsonObject catalog=StationCatalog::build(inputsFor(HPSDRModel::ANAN_G2,ProtocolVersion::Protocol2,plans));
+        bool found=false;
+        for (const QJsonValue& value:catalog.value("tools").toArray()) {
+            const QJsonObject tool=value.toObject();
+            if (tool.value("id").toString()=="catControl") { found=true; QCOMPARE(tool.value("where").toString(),QString("station")); QVERIFY(tool.value("offered").toBool()); }
+        }
+        QVERIFY(found);
+    }
     void fixturesHoldTheDesktopsValues()
     {
         const QJsonObject g2 = catalogInFixture(QStringLiteral("catalog-anan-g2.json"));

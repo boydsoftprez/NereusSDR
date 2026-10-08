@@ -11,6 +11,9 @@
 // Modification history (NereusSDR):
 //   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
 //                 AI-assisted via OpenAI Codex.
+//   2026-10-04: CAT accepted-intent tags and guarded cycle lifetimes,
+//                NereusSDR-original, by J.J. Boyd (KG4VCF), AI-assisted
+//                via OpenAI Codex.
 //   2026-10-03 - Diversity atomic reentry and slice-close/hydration lifetime
 //                 fences, J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-30 - Fix round 1 (minor 4): transmitLinkDownReason picks the
@@ -553,6 +556,20 @@
 //   2026-10-01 - Diversity lane: diversityTargetSlice(), the slice diversity
 //                runs for, for the Diversity dialog. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-06 - CAT review X1: m_tuneStartObserving, so a TUNE start adopts
+//                a TUNE turning off and any other request lets the off finish.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-06 - CAT review X5: m_tuneStartingSerial and
+//                finishCutShortTuneStart, so a CAT TUNE start cut short by
+//                another request is finished as an off. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - CAT setup from a connected desktop: stationCatModel() and
+//                stationCatController(), the Core's `stationCat` object and
+//                its publisher. J.J. Boyd (KG4VCF). AI tooling: Claude Code.
+//   2026-10-07 - catControl(): what the CAT pages, applet, log window and
+//                status bar use, local or the Core's; the CAT tester's
+//                reply by command (reportStationCatTestReply). J.J. Boyd
+//                (KG4VCF). AI tooling: Claude Code.
 //   2026-10-06 - Radio speaker: radioSpeakerVolume, radioSpeakerMuted,
 //                speakerAmplifierMode (saved per radio), the
 //                radioSpeakerAvailability and speakerAmplifierAvailable
@@ -620,6 +637,7 @@
 
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
+#include "core/MoxController.h"
 #include "core/NereusCoreExport.h"
 #include "core/ConnectionState.h"
 #include "core/audio/CaptureSupervisor.h"
@@ -736,6 +754,7 @@ class SliceMeterPump;
 // translation unit that touches RadioModel.h.
 class WidebandFftEngine;
 // 3M-1a G.1: forward declarations for TX-side components.
+class CatService;
 class MoxController;
 struct KeyerIdentity;
 class TxChannel;
@@ -827,6 +846,9 @@ class StationPgxlController;
 class StationRfKitController;
 class StationTciController;
 class StationTciModel;
+class StationCatController;
+class StationCatModel;
+class CatControl;
 class SliceOwnership;
 class RfKitBandFollow;
 class AmplifierModel;
@@ -1225,6 +1247,10 @@ public:
     /// stationCommandFinished for a sender that waits on its own command.
     /// Ends any page's claim on the command (noteAccessoryRequestShownOnPage).
     void reportStationCommandFinished(quint32 commandId, bool accepted, const QString& reason);
+    /// Remote role: the Core's reply to CAT test command `commandId`
+    /// (testStationCatCommand), handed to catControl() before the
+    /// command's result is reported.
+    void reportStationCatTestReply(quint32 commandId, const QString& reply);
     /// Remote role only: a paired Core settings export completed or failed.
     /// coreXml is populated only after length, digest and XML validation.
     void reportStationSettingsBackupExportFinished(quint32 operationId, bool accepted,
@@ -2038,6 +2064,8 @@ public:
 
     // Sub-models
     MeterModel&       meterModel()       { return m_meterModel; }
+    // Inert model-owned CAT service; policy-ready lifecycle callers start it.
+    CatService* catService() const { return m_catService; }
     TransmitModel&    transmitModel()    { return m_transmitModel; }
 
     // Slice management (client-side — radio has no slice concept)
@@ -3575,6 +3603,16 @@ public:
     StationTciModel* stationTciModel() const { return m_stationTciModel; }
     // R-R3-48: the Core's station TCI server (nullptr outside the Core).
     StationTciController* stationTciController() const { return m_stationTci.get(); }
+    // CAT setup from a connected desktop (stationCatVersion 1): the Core's
+    // CAT as the `stationCat` object. Non-null from construction; filled by
+    // the Core's publisher, and from the Core's values in a remote window.
+    StationCatModel* stationCatModel() const { return m_stationCatModel; }
+    // The Core's CAT publisher and commands (nullptr outside the Local role).
+    StationCatController* stationCatController() const { return m_stationCat.get(); }
+    // What the CAT pages, the CAT applet, the CAT log window and the status
+    // bar read and change: this window's own CatService (Local) or the
+    // Core's CAT (Remote). Non-null from construction.
+    CatControl* catControl() const { return m_catControl; }
     // R-R3-47: the Core's RF-Kit controller (nullptr outside the Core).
     StationRfKitController* stationRfKitController() const { return m_stationRfKit; }
     // SmartSDR API server on TCP 4992. Owned by RadioModel; lifetime matches.
@@ -5214,6 +5252,7 @@ public slots:
     // on unheld transmit takes it) and the tune's MOX key is that device's.
     // setTune(false) ends it as any TUNE ends.
     void setTune(bool on, const KeyerIdentity& keyer);
+    bool endTuneIfRequest(quint64 tag, quint64 expectedAcceptedGeneration);
 
     // TGXL autotune orchestration (NereusSDR-native, no Thetis source).
     //
@@ -7934,6 +7973,19 @@ private:
     //   (round-robin priority bank0 > bank10), this produced an RF spike past
     //   the radio's spec at high tune-slider settings.  Issue #177.
     bool m_pendingTuneOff{false};
+    // NereusSDR-original tune cycle lifetime; not a permission identity.
+    KeyerIdentity m_tuneCycleKeyer{KeyerIdentity::station(PttMode::Manual)};
+    quint64 m_tuneCycleSerial{0};
+    quint64 m_tuneAcceptedGeneration{0};
+    bool m_tuneCycleGuarded{false};
+    // True while setTune(true) reports its own start, which adopts a TUNE
+    // still turning off rather than leaving its off to finish.
+    bool m_tuneStartObserving{false};
+    // CAT review X5: the serial of a setTune(true) still setting up (0 when
+    // none), so a newer request that cuts it short gets its off finished.
+    quint64 m_tuneStartingSerial{0};
+    void finishCutShortTuneStart(quint64 tag);
+    bool tuneCycleCurrent(quint64 serial) const;
 
     // m_tuneOffSettleMs: explicit 100 ms wait between MoxController::rxReady
     //   and completeTuneOff().  Mirrors `await Task.Delay(100)` at Thetis
@@ -7977,6 +8029,9 @@ private:
     // accessor and docs/architecture/2026-05-26-phase3f-sub-epic-c-tx-arbiter-lifecycle-plan.md
     // Task 6.
     TxSliceArbiter* m_txSliceArbiter{nullptr};
+
+    // Qt child, stopped before transmit/model retirement.
+    CatService* m_catService{nullptr};
     UnkeyGate* m_unkeyGate{nullptr};   // Task 34, Qt-parented to this
 
     // Phase 3F Sub-Epic D Task 13: receiver -> pan FFT fan-out router.
@@ -8366,6 +8421,11 @@ private:
     // model's slices and receivers), not through Qt parenting.
     std::unique_ptr<StationTciController> m_stationTci;
     std::unique_ptr<RfKitBandFollow>      m_rfKitBandFollow;
+    // CAT setup from a connected desktop: the `stationCat` object and, on
+    // the Core, its publisher (destroyed first in ~RadioModel).
+    StationCatModel*                      m_stationCatModel{nullptr};
+    std::unique_ptr<StationCatController> m_stationCat;
+    CatControl*                           m_catControl{nullptr};
     // Follow-up 3: accessory requests whose refusal their page shows.
     QHash<quint32, QPointer<QObject>> m_pageShownAccessoryRequests;
 

@@ -66,7 +66,8 @@ import Testing
                                   "diversityPattern": 1, "diversityControl": 1, "logCategoryList": 1, "radioModels": 1, "band2m": 1, "coreAddresses": 1,
                                   "radeStatus": 1, "stationTciSettings": 1, "txInhibitReason": 1, "alexLpf": 1, "mediaDirect": 1, "sliceAccess": 3, "cfcProfile": 1, "paProfiles": 1,
                                   "levelCalibration": 1, "adcAttenuators": 1, "rx2Attenuator": 1, "radioMic": 1,
-                                  "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1, "radioSpeaker": 1])
+                                  "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1, "stationCat": 1,
+                                  "radioSpeaker": 1])
         #expect(request.token == rig.token)
         #expect(rig.recorder.states == [.connecting, .authenticating, .receivingSnapshot, .ready])
         #expect(rig.recorder.messages.contains(.snapshotComplete))

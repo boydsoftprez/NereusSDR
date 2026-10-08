@@ -234,6 +234,15 @@
 //                                    hl2SwapAudioUnavailableReason
 //                                    (radioHardwareVersion 13).
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-07  J.J. Boyd / KG4VCF  CAT setup from a connected desktop:
+//                                    stationCatAvailable, the four CAT
+//                                    requests and
+//                                    stationCatUnavailableReason. AI tooling:
+//                                    Claude Code.
+//   2026-10-07  J.J. Boyd / KG4VCF  requestCatLog: follow the Core's
+//                                    `catLog` stream for the CAT log window,
+//                                    with its recent lines.
+//                                    AI tooling: Claude Code.
 // =================================================================
 
 #include <QString>
@@ -459,6 +468,32 @@ public:
     { return { false, stationTciServerUnavailableReason() }; }
     static QString stationTciServerUnavailableReason()
     { return QStringLiteral("This Core does not let this app change its TCI server's settings or see its apps. Updating the Core may help."); }
+
+    /// CAT setup from a connected desktop (stationCatVersion 1): the Core
+    /// shares its CAT as the read-only `stationCat` object (and its log as
+    /// the `catLog` stream) and takes these four commands. `configJson` is
+    /// a StationCatModel channel or global config object; the binding goes
+    /// as slice ids only and the Core resolves them. Acceptance means the
+    /// Core applied it; `stationCat` says what it now holds, and a test's
+    /// reply lands in its lastTest under `requestId`.
+    virtual bool stationCatAvailable() const { return false; }
+    virtual CommandOutcome requestStationCatChannel(int /*channel*/,
+                                                    const QString& /*configJson*/)
+    { return { false, stationCatUnavailableReason() }; }
+    virtual CommandOutcome requestStationCatGlobal(const QString& /*configJson*/)
+    { return { false, stationCatUnavailableReason() }; }
+    virtual CommandOutcome requestStationCatTest(qint64 /*requestId*/, int /*channel*/,
+                                                 const QString& /*command*/)
+    { return { false, stationCatUnavailableReason() }; }
+    virtual CommandOutcome requestStationCatRefreshDevices()
+    { return { false, stationCatUnavailableReason() }; }
+    /// Subscribes to (true) or leaves (false) the Core's `catLog` record
+    /// stream, and subscribes again after each new session while it is
+    /// wanted, each time asking for the `backlog` newest records first.
+    /// The records arrive through RadioModel::applyStationRecordBatch.
+    virtual void requestCatLog(bool /*follow*/, int /*backlog*/ = 0) {}
+    static QString stationCatUnavailableReason()
+    { return QStringLiteral("This Core does not let this app set up its CAT. Updating the Core may help."); }
 
     /// R-R3-47 / R-R3-22 (accessoryDataVersion 1): the Core shares its
     /// accessory records and settings (`accessoryData`) and takes these

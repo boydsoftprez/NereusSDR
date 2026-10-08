@@ -174,6 +174,9 @@
 //   2026-09-28 - Slice control plan Task 4: sliceAccessVersion, after
 //                radioAntennaRowsVersion, only with sliceAccessEntry. J.J.
 //                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - CAT setup from a connected desktop: stationCatVersion, after
+//                radeReasonVersion and before coreBuildInfo. J.J. Boyd
+//                (KG4VCF). AI tooling: Claude Code.
 // =================================================================
 
 #include "core/session/StationCapabilities.h"
@@ -537,8 +540,15 @@ QList<MirrorUpdate> StationCapabilities::toUpdates() const
     if (radeReasonVersion > 0) {
         updates.append(intEntry("radeReasonVersion", radeReasonVersion));
     }
+    // CAT setup from a connected desktop: the Core's `stationCat` object,
+    // its four commands and the `catLog` stream, after radeReasonVersion
+    // and before coreBuildInfo (which stays last), only for a peer that
+    // declared stationCat.
+    if (stationCatVersion > 0) {
+        updates.append(intEntry("stationCatVersion", stationCatVersion));
+    }
     // Radio speaker (R-SPK-14): radio's RADIO level, mute, amplifier choice
-    // and reports, after radeReasonVersion and before coreBuildInfo (which
+    // and reports, after stationCatVersion and before coreBuildInfo (which
     // stays last), only for a peer that declared radioSpeaker.
     if (radioSpeakerVersion > 0) {
         updates.append(intEntry("radioSpeakerVersion", radioSpeakerVersion));
@@ -566,6 +576,7 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
     int radioMicEntries = 0;
     int rxFilterLowPassEntries = 0;
     int radeReasonEntries = 0;
+    int stationCatEntries = 0;
     int radioSpeakerEntries = 0;
     for (const MirrorUpdate& u : updates) {
         if (u.name == "mediaDirectVersion") {
@@ -593,6 +604,16 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                 && u.value.typeId() == QMetaType::LongLong) {
                 const qlonglong version = u.value.toLongLong();
                 caps.radeReasonVersion = version > 0 && version <= 65535
+                    ? static_cast<int>(version) : 0;
+            }
+        } else if (u.name == "stationCatVersion") {
+            // CAT setup from a connected desktop: one entry, an Int64 of 1
+            // or more.
+            if (++stationCatEntries == 1 && u.ordinal == 0
+                && u.kind == MirrorWireKind::Int64
+                && u.value.typeId() == QMetaType::LongLong) {
+                const qlonglong version = u.value.toLongLong();
+                caps.stationCatVersion = version > 0 && version <= 65535
                     ? static_cast<int>(version) : 0;
             }
         } else if (u.name == "radioSpeakerVersion") {

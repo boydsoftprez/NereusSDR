@@ -23,6 +23,8 @@ import Testing
         // diversityPatternVersion. Capture b20ad1186 also includes the existing
         // optional txWatchPathVersion after remoteTxVersion, shifting later indices.
         // Radio Mic 2 changes its value, without moving any other entry.
+        // Station CAT setup inserts stationCatVersion before coreBuildInfo,
+        // which stays last.
         let expected: [(index: Int, name: String, kind: String)] = [
             (69, "txWatchPathVersion", "i64"),
             (89, "diversityControlVersion", "i64"),
@@ -36,10 +38,11 @@ import Testing
             (104, "radioMicVersion", "i64"),
             (105, "rxFilterLowPassVersion", "i64"),
             (106, "radeReasonVersion", "i64"),
+            (107, "stationCatVersion", "i64"),
             // The radio speaker (feature `radioSpeaker` 1) goes before the
-            // build info, which is read by name and moves to 108.
-            (107, "radioSpeakerVersion", "i64"),
-            (108, "coreBuildInfo", "utf8"),
+            // build info, which is read by name and moves to 109.
+            (108, "radioSpeakerVersion", "i64"),
+            (109, "coreBuildInfo", "utf8"),
         ]
         // Core trunk b26112687: sliceAccessVersion reads 3 (the Core's own
         // slice can be taken); nothing moved.

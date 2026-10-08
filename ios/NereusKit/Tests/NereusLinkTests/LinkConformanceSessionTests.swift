@@ -27,7 +27,7 @@ import Testing
 
     @Test func theAppRunsTheFixturesMarkedForIt() throws {
         let fixtures = try Self.appFixtures()
-        #expect(fixtures.count == 85)
+        #expect(fixtures.count == 86)
         #expect(Set(fixtures.map(\.id)).count == fixtures.count)
         for id in Self.diversityProducerSessions {
             #expect(fixtures.contains { $0.id == id }, "\(id)")
@@ -168,7 +168,8 @@ import Testing
                                   "radeStatus": 1, "stationTciSettings": 1, "txInhibitReason": 1, "alexLpf": 1, "mediaDirect": 1,
                                   "sliceAccess": 3, "cfcProfile": 1, "paProfiles": 1,
                                   "levelCalibration": 1, "adcAttenuators": 1, "rx2Attenuator": 1, "radioMic": 1,
-                                  "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1, "radioSpeaker": 1])
+                                  "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1, "stationCat": 1,
+                                  "radioSpeaker": 1])
     }
 
     /// JSON inside a string (section 16.1): an app's runner sends the

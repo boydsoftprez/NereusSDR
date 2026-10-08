@@ -44,6 +44,8 @@
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-09-28: Slice control plan Task 4: SliceAccess joins it. J.J. Boyd
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-07: CAT setup from a connected desktop: StationCatModel joins it.
+// J.J. Boyd (KG4VCF). AI tooling: Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -71,6 +73,7 @@
 #include "models/TunerModel.h"
 #include "models/AmplifierModel.h"
 #include "models/RfKitModel.h"
+#include "models/StationCatModel.h"
 #include "models/StationTciModel.h"
 #include "models/AccessoryDataModel.h"
 #include "models/AccessorySettingsModel.h"
@@ -915,6 +918,8 @@ private:
                  &AmplifierModel::staticMetaObject,
                  &RfKitModel::staticMetaObject,
                  &StationTciModel::staticMetaObject,
+                 // CAT setup from a connected desktop: the Core's CAT.
+                 &StationCatModel::staticMetaObject,
                  // R-R3-47 / R-R3-22: the Core's accessory records.
                  &AccessoryDataModel::staticMetaObject,
                  // R-R3-47 / R-R3-22: the amp's and tuner's own settings.
