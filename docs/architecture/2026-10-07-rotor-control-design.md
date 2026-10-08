@@ -122,11 +122,23 @@ entity columns include latitude (+ north) and longitude (+ west), and a
 prefix line can override them with `<lat/long>`. Our copy agrees (Japan
 `36.40: -138.38`, United States `37.60: 91.87`).
 
-**To confirm on JJ's unit before coding the driver:** the azimuth-only set
-command for GS-232A/B (Hamlib uses `W` for both; the published GS-232
-command lists also have `Maaa`), which GS-232 mode and baud JJ's ERC is set
-to in its Service Tool, and its reply to `C2` and to
-`C` on an azimuth-only rotor. Capture it with a serial log; do not guess.
+**JJ's ERC, observed 2026-10-07** (serial capture on the Rock 5C Core,
+`tests/data/rotor/erc-gs232b-capture-2026-10-07.log`, plan Task 2). The ERC
+enumerates as an FTDI FT230X USB serial port (`/dev/ttyUSB0` on Linux).
+It answers at 9600 baud 8N1 and at no other rate tried (1200 to 115200), in
+GS-232B format:
+
+* `C2` replies `AZ=302  EL=000` + CR LF: two spaces before `EL`, and an
+  elevation of 000 even on this azimuth-only rotor. `C` replies `AZ=302` +
+  CR LF. `B` (elevation only) gets no reply.
+* `Maaa`, `Waaa eee`, `S`, `L` and `R` each answer a bare CR, about 25 ms
+  after the command, and all work on the azimuth-only rotor: `M312` from 302
+  stopped at 313, `W292 000` from 313 stopped at 292.
+* The rotor turns about 4 to 5 degrees a second. Position replies take about
+  90 ms when still and up to about 210 ms while turning.
+* After `S` during an `L` or `R` move the heading coasts on by 2 to 4
+  degrees, so arrival and stop logic reads the heading after it settles.
+* The ERC's firmware version and Service Tool settings were not read.
 
 ## Core
 

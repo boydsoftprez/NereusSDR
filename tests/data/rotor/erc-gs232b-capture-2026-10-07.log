@@ -1,0 +1,46 @@
+# Serial capture from JJ's (KG4VCF) Easy Rotor Control on a Yaesu azimuth rotor, 2026-10-07.
+# Host: the Rock 5C Core (Armbian), ERC on USB as FTDI FT230X (/dev/ttyUSB0), 8N1, no handshake.
+# Every command was sent as ASCII + CR. Replies are Python byte reprs, exactly as read.
+# first_byte_ms is the time from write to the first reply byte. Lines starting "#" are notes.
+# Captured by the controller with JJ watching the rotor; plan Task 2 of
+# docs/architecture/2026-10-07-rotor-control-plan.md. ERC firmware version: not read.
+23:15:09 baud=9600 sent='C2'+CR reply=b'AZ=302  EL=000\r\n' first_byte_ms=80 (no reply at 1200 2400 4800 19200 38400 57600 115200)
+23:15:29 baud=9600 sent='C'+CR reply=b'AZ=302\r\n' first_byte_ms=95
+23:15:30 baud=9600 sent='C2'+CR reply=b'AZ=302  EL=000\r\n' first_byte_ms=96
+23:15:31 baud=9600 sent='B'+CR reply=b'' first_byte_ms=None
+23:15:33 baud=9600 sent='C2'+CR reply=b'AZ=302  EL=000\r\n' first_byte_ms=93
+23:16:51 baud=9600 sent='C2'+CR reply=b'AZ=302  EL=000\r\n' first_byte_ms=94 
+# step 1: M312
+23:16:52 baud=9600 sent='M312'+CR reply=b'\r' first_byte_ms=26 
+23:16:52 baud=9600 sent='C2'+CR reply=b'AZ=302  EL=000\r\n' first_byte_ms=86 
+23:16:53 baud=9600 sent='C2'+CR reply=b'AZ=307  EL=000\r\n' first_byte_ms=187 
+23:16:54 baud=9600 sent='C2'+CR reply=b'AZ=311  EL=000\r\n' first_byte_ms=207 
+23:16:55 baud=9600 sent='C2'+CR reply=b'AZ=313  EL=000\r\n' first_byte_ms=95 
+23:16:56 baud=9600 sent='C2'+CR reply=b'AZ=313  EL=000\r\n' first_byte_ms=91 
+23:16:57 baud=9600 sent='C2'+CR reply=b'AZ=313  EL=000\r\n' first_byte_ms=91 
+23:16:58 baud=9600 sent='S'+CR reply=b'\r' first_byte_ms=27 
+23:16:59 baud=9600 sent='C2'+CR reply=b'AZ=313  EL=000\r\n' first_byte_ms=86 
+# step 2: W292 000
+23:17:00 baud=9600 sent='W292 000'+CR reply=b'\r' first_byte_ms=26 
+23:17:01 baud=9600 sent='C2'+CR reply=b'AZ=313  EL=000\r\n' first_byte_ms=86 
+23:17:02 baud=9600 sent='C2'+CR reply=b'AZ=308  EL=000\r\n' first_byte_ms=187 
+23:17:03 baud=9600 sent='C2'+CR reply=b'AZ=303  EL=000\r\n' first_byte_ms=207 
+23:17:04 baud=9600 sent='C2'+CR reply=b'AZ=299  EL=000\r\n' first_byte_ms=159 
+23:17:05 baud=9600 sent='C2'+CR reply=b'AZ=293  EL=000\r\n' first_byte_ms=173 
+23:17:06 baud=9600 sent='C2'+CR reply=b'AZ=292  EL=000\r\n' first_byte_ms=93 
+23:17:07 baud=9600 sent='C2'+CR reply=b'AZ=292  EL=000\r\n' first_byte_ms=91 
+23:17:08 baud=9600 sent='C2'+CR reply=b'AZ=292  EL=000\r\n' first_byte_ms=91 
+23:17:09 baud=9600 sent='S'+CR reply=b'\r' first_byte_ms=27 
+23:17:10 baud=9600 sent='C2'+CR reply=b'AZ=292  EL=000\r\n' first_byte_ms=86 
+# step 3: R for 2 s
+23:17:11 baud=9600 sent='R'+CR reply=b'\r' first_byte_ms=26 
+23:17:13 baud=9600 sent='C2'+CR reply=b'AZ=295  EL=000\r\n' first_byte_ms=176 
+23:17:14 baud=9600 sent='S'+CR reply=b'\r' first_byte_ms=133 
+23:17:16 baud=9600 sent='C2'+CR reply=b'AZ=299  EL=000\r\n' first_byte_ms=94 
+# step 4: L for 2 s
+23:17:17 baud=9600 sent='L'+CR reply=b'\r' first_byte_ms=26 
+23:17:19 baud=9600 sent='C2'+CR reply=b'AZ=294  EL=000\r\n' first_byte_ms=160 
+23:17:20 baud=9600 sent='S'+CR reply=b'\r' first_byte_ms=150 
+23:17:22 baud=9600 sent='C2'+CR reply=b'AZ=292  EL=000\r\n' first_byte_ms=81 
+23:17:23 baud=9600 sent='S'+CR reply=b'\r' first_byte_ms=24 
+# final stop sent
