@@ -4,8 +4,8 @@ Status: draft for JJ's review, October 8, 2026. JJ settled the decisions
 below in a brainstorm on October 7 and 8, 2026, partly by looking at the
 mockups in `2026-10-08-native-audio-engines-design/`, and called for this
 spec on October 8. Nothing in it is built. It builds on the radio speaker
-spec (`2026-10-05-radio-speaker-and-audio-setup-design.md`, PR 355), whose
-Setup > Audio pages it changes. Requirement IDs R-AUD-01 to R-AUD-34 are new
+spec (`2026-10-05-radio-speaker-and-audio-setup-design.md`, merged in PR
+355), whose Setup > Audio pages it changes. Requirement IDs R-AUD-01 to R-AUD-34 are new
 here.
 
 **This work touches the core receive audio path (I/Q → WDSP → audio).**
@@ -21,7 +21,7 @@ lists, not even after Rescan. That is how NereusSDR's audio layer works
 today, on every platform:
 
 - NereusSDR opens this computer's speakers, headphones and Windows VAX
-  cables through PortAudio v19.7.0 (`CMakeLists.txt:521-523`), which builds
+  cables through PortAudio v19.7.0 (`CMakeLists.txt:526-530`), which builds
   its device list once, in `Pa_Initialize`. Refreshing it needs
   `Pa_Terminate`, which closes every open stream (`pa_front.c:343-349`,
   `:398-415`). The upstream hotplug branch (2016) was never merged, and a
@@ -34,7 +34,7 @@ today, on every platform:
   reaches the stream (`AudioEngine.cpp:836-843`; no host-specific stream
   info, `PortAudioBus.cpp:344`).
 - On Linux the vendored PortAudio has only ALSA, JACK and OSS
-  (`CMakeLists.txt:543-546`), so a Bluetooth headset on a PipeWire desktop
+  (`CMakeLists.txt:549-552`), so a Bluetooth headset on a PipeWire desktop
   never shows as its own device.
 - Between the DSP and each device sits our own output ring, 10 to 40 ms
   in normal use with a 100 ms cap (`PortAudioBus.cpp:235-248`,
@@ -57,7 +57,7 @@ Found along the way, and fixed by this design:
 1. A saved WASAPI choice reopens on MME: the saved device is matched by
    name across every driver, first exact match wins, and MME comes first
    (`PortAudioBus.cpp:939-977`; callers `AudioEngine.cpp:401`, `:1135`,
-   `MainWindow.cpp:1410`).
+   `MainWindow.cpp:1421`).
 2. The Exclusive, Event-driven and Bypass mixer checkboxes do nothing
    (above).
 3. The VAX first-run dialog's "Rescan now" button is wired to nothing
@@ -70,7 +70,7 @@ Found along the way, and fixed by this design:
    `RxDspWorker.cpp:202-228`), so after a device switch it is tied to the
    wrong device.
 6. `#ifdef __APPLE__` at `PortAudioBus.cpp:119` breaks the `Q_OS_MAC` rule.
-7. `CMakeLists.txt:535` says the ASIO SDK is GPL-incompatible. That has
+7. `CMakeLists.txt:532-541` says the ASIO SDK is GPL-incompatible. That has
    been out of date since Steinberg released ASIO SDK 2.3.4 under
    GPL-3.0-only (October 29, 2025), and so is section 8.5 of
    `2026-04-19-vax-design.md`.
@@ -135,12 +135,13 @@ listed under "Design choices to confirm".
 | D30 | A device that is connected but held by another program is handled like an unplugged one, and shows "in use by another program". | Same rule, same recovery, one less state to learn. |
 | D31 | On a Core box that starts into a desktop, the Core leaves every sound card alone until a Core speaker is picked in a window. On a box without a desktop it uses its default card out of the box. | The desktop's own sound system uses the cards, and an ALSA card has one user at a time. |
 | D32 | Bench machines: a Mac, the Pis, AirPods, a Windows PC, an ASIO interface on it, and a PipeWire desktop (current Ubuntu). There is no PulseAudio desktop, so that engine and its pair check stay untested on hardware. | What JJ has. |
+| D33 | The ASIO driver runs in the mic helper process whenever any device uses ASIO, outputs included, over the same shared-memory hand-off as the mic. | Many ASIO drivers accept one program at a time, and the PC mic lives in the helper (D22), so ASIO in two processes would fail on those drivers. A hanging ASIO driver then cannot freeze the window either. The cost is one sub-millisecond hop on ASIO outputs, measured by V-HW-8. JJ, 2026-10-08: "1 in the helper", over ASIO in the window's process. |
 
 ## Source facts
 
 ### PortAudio, as pinned
 
-- v19.7.0 (`147dd722`, 2021-03-31) is the pin (`CMakeLists.txt:521-523`,
+- v19.7.0 (`147dd722`, 2021-03-31) is the pin (`CMakeLists.txt:526-530`,
   `cmake/NereusDependencyArchives.cmake:136-137`) and still the latest
   release; master at `873e3c8` (2026-10-02) has no refresh API either
   (`pa_mac_core.c:391` builds the list only at init).
@@ -243,19 +244,19 @@ listed under "Design choices to confirm".
   (`RemoteAudioRateMatcher.h:148-155`, `IAudioBus::outputPacing`). Thetis's
   cmASIO calls it inside the ASIO callback; ours does not, because the
   project rule bars locks in audio callbacks.
-- R-R3-36's keying rule: `RadioModel.cpp:21046-21066` refuses voice MOX
+- R-R3-36's keying rule: `RadioModel.cpp:21154-21162` refuses voice MOX
   while the PC mic is not ready; `RadioModel::onCaptureStatusChanged`
-  (`:21138`) releases MOX when it is lost; `RadioModel::updatePcCaptureDemand`
-  (`:25117`) holds the capture for the whole session while the mic source
+  (`:21237`) releases MOX when it is lost; `RadioModel::updatePcCaptureDemand`
+  (`:25216`) holds the capture for the whole session while the mic source
   is PC.
 - The Core: `audio_device` in `nereusd.conf` seeds `audio/Speakers/DeviceName`
-  only when nothing is saved (`DaemonApp.cpp:921-944`). Station images add
+  only when nothing is saved (`DaemonApp.cpp:947-970`). Station images add
   groups with drop-ins (`packaging/station-image/common/nereusd-serial.conf`,
   installed by `install-station.sh` and the pi-gen stage). The unit does
   not hide devices (no `PrivateDevices`), so the `audio` group is all it
   lacks. The Core exposes its radio speaker's level and mute
-  (`StationServer.cpp:1524-1525`, `:1720`; `MirrorPolicy.cpp:1198-1199`,
-  `:1318-1322`) but nothing about its own speaker.
+  (`StationServer.cpp:1545-1546`, `:1741`; `MirrorPolicy.cpp:1210-1211`,
+  `:1330-1334`) but nothing about its own speaker.
 
 ## Architecture
 
@@ -277,8 +278,9 @@ interface. `AudioEngine::makeBus` chooses the engine from the saved
 | ALSA direct | Core | `hw:` PCM, the card's own format | not part of this design | inotify on `/dev/snd` |
 | Older drivers | all | `PortAudioBus`, unchanged | unchanged | none; Rescan re-initializes PortAudio |
 
-Which process hosts the ASIO driver is design choice 1. Engine callbacks
-run at the platform's real-time audio priority, which
+The ASIO driver runs in the mic helper process whenever any device uses
+ASIO (D33), so the helper then runs even while the mic is not in use.
+Engine callbacks run at the platform's real-time audio priority, which
 `RealtimeAudioPriority` already provides for the DSP thread (Mac
 workgroups, Windows MMCSS, Linux `SCHED_FIFO`).
 
@@ -341,7 +343,9 @@ audio thread that feeds the device today, and refills a lock-free queue
 only reads that queue. The automatic size starts at the device callback
 plus the measured arrival jitter, and steps up one size on each dry run
 (`getRMatchDiags` underflows); it never steps down while the stream is
-open. The manual delay replaces the automatic size.
+open. The manual delay replaces the automatic size. Remote playback keeps
+its own matcher (`RemoteAudioRateMatcher`) and feeds the device's queue
+directly, so its audio never passes through a second one.
 
 "Now X ms from the radio to <device>" adds the rmatchV fill, the queue, the
 device buffer and the latency the system reports for the device
@@ -641,7 +645,7 @@ rule against PortAudio in tests extends to every native engine; the
 catalogue and each engine have test seams with fakes.
 
 R-AUD-33. `PortAudioBus.cpp:119` uses `Q_OS_MAC` (bug 6), and
-`CMakeLists.txt:535` and `2026-04-19-vax-design.md` section 8.5 say what
+`CMakeLists.txt:532-541` and `2026-04-19-vax-design.md` section 8.5 say what
 the ASIO licence is now (bug 7).
 
 R-AUD-34. The iPhone's own audio (AVAudioSession) is unchanged. Remote
@@ -750,41 +754,30 @@ Hardware (a person at the bench):
 These are this spec's own choices, made because each followed from a
 decision above or had one sensible answer. Each can be vetoed.
 
-1. **Where ASIO runs.** Many ASIO drivers accept one program at a time,
-   and the PC mic lives in the helper process (D22). If the speakers used
-   ASIO in the window's process and the mic used ASIO in the helper, the
-   second would fail on those drivers. This spec runs the ASIO driver in
-   the helper process whenever any device uses ASIO, outputs included,
-   over the same shared-memory hand-off, so the helper runs whenever an
-   ASIO device is in use, not only while the mic is. A hanging ASIO driver
-   then cannot freeze the window either. The cost is one sub-millisecond
-   hop on ASIO outputs, measured by V-HW-8. The alternative is ASIO in the window's
-   process, the ASIO mic included, which gives up R-R3-36's protection for
-   an ASIO mic only.
-2. Windows' "(platform default)" follows the default device, not the
+1. Windows' "(platform default)" follows the default device, not the
    default communications device.
-3. Device notices are debounced 500 ms, and a returning device is retried
+2. Device notices are debounced 500 ms, and a returning device is retried
    at 250 ms, 500 ms, 1 s, 2 s, then every 2 s.
-4. When another program changes a device's sample rate, the engine reopens
+3. When another program changes a device's sample rate, the engine reopens
    at the new rate and the clock matching absorbs it, with no prompt.
-5. ALSA cards are named as ALSA names them ("bcm2835 Headphones", "USB
+4. ALSA cards are named as ALSA names them ("bcm2835 Headphones", "USB
    Audio Device") and saved by card ID and device number.
-6. The Core watches cards with inotify on `/dev/snd`, adding no library.
-7. PipeWire and PulseAudio are both linked directly, as PipeWire is today;
+5. The Core watches cards with inotify on `/dev/snd`, adding no library.
+6. PipeWire and PulseAudio are both linked directly, as PipeWire is today;
    which runs is decided at start-up.
-8. A Core box "starts into a desktop" when systemd's default target is
+7. A Core box "starts into a desktop" when systemd's default target is
    `graphical.target`.
-9. The phone's Core speaker section shows only while the Core plays on a
+8. The phone's Core speaker section shows only while the Core plays on a
    card, so D31's waiting state counts as no card.
-10. The Core speaker's level and mute are the Core's existing master level
+9. The Core speaker's level and mute are the Core's existing master level
     and mute, so nothing changes in loudness on upgrade.
-11. The manual delay choices are 2, 3, 5, 10, 20 and 40 ms, and the
+10. The manual delay choices are 2, 3, 5, 10, 20 and 40 ms, and the
     automatic size never shrinks while a stream is open.
-12. The PipeWire buffer size in Device details is the requested
+11. The PipeWire buffer size in Device details is the requested
     `node.latency` (default 128 frames, as today's default buffer); the
     readout shows what the graph really runs at.
-13. Rescan affects only the older drivers.
-14. The new user-facing strings in R-AUD-06 to R-AUD-30 are this spec's
+12. Rescan affects only the older drivers.
+13. The new user-facing strings in R-AUD-06 to R-AUD-30 are this spec's
     wording, beyond those JJ saw in the mockups.
 
 ## Mockups
