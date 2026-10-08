@@ -463,11 +463,12 @@ private slots:
         QVERIFY(accepted(p.send(p.appA, "tx.setMicSource", {utf8("source", QStringLiteral("RadioMic"))})));
     }
 
-    void twoToneStartDuringItsStopSettleRestartsTheTest()
+    void twoToneStartDuringItsStopSettleKeepsTheTestRunning()
     {
         // A device's fast off/on: the start lands inside the stop's MOX
-        // settle, while the test still reads as running. It must start
-        // again, not be answered "already on" and torn down at the settle.
+        // settle, while the test still reads as running. It must keep the
+        // test running, not be answered "already on" and torn down at the
+        // settle.
         Pair p(true);
         TxChannel channel(1);
         auto* tt = p.core.model->twoToneController();
