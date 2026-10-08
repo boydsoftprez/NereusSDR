@@ -84,47 +84,73 @@ confirms with a 15 s expiry). Mockup:
 Record, with a serial logger on the ERC's port: the protocol and baud the ERC's Service Tool
 shows, and the replies to `C`, `C2`, `Maaa`, `Waaa eee`, `S`, `L`, `R` on the operator's
 azimuth-only rotor. Save the log under `tests/data/rotor/` as a fixture with the date and ERC firmware
-version, and record the findings in the design's "Facts" section. Task 3's driver tests replay
+version, and record the findings in the design's "Facts" section. Task 3b's driver tests replay
 it.
 
-## Task 3: `RotorConnection` and `StationRotorController`
+## Task 3a: Rotor rules: headings, routes and the overlap, model list
+
+Pure logic, no I/O. Starts the Longpath provenance file.
 
 **Files:**
-- Create: `src/core/RotorConnection.{h,cpp}` (GS-232A, GS-232B over `QSerialPort`; `rotctld`
-  over `QTcpSocket`; position polling about once a second when still and faster while turning;
-  set, stop, move)
-- Create: `src/core/RotctldProcess.{h,cpp}` (ported from Longpath `RotctldProcess`: find the
-  binary including Homebrew paths, the `-m -r -s -T 127.0.0.1 -t` arguments, a free port when
-  4533 is held, restart, stop on exit)
-- Create: `src/core/RotorModels.h` (the curated Hamlib model list, ERC 404 among them; model
-  numbers checked against Hamlib's `rotlist.h`, not copied on trust)
 - Create: `src/core/RotorHeading.h` (strict heading checks, after Longpath `RotorPeilung.h`)
 - Create: `src/core/RotorRoute.{h,cpp}` (ported from Longpath `BeamHeading::plan` and `Stop`,
   extended to the overlap: span position from the stop, the nearer of two span positions,
   signed travel; and the span tracker that follows modulo-360 replies by continuity, as the
   design's "End stops and overlap" says)
+- Create: `src/core/RotorModels.h` (the curated Hamlib model list, ERC 404 among them; model
+  numbers checked against Hamlib's `rotlist.h`, not copied on trust)
+- Create: `docs/attribution/LONGPATH-PROVENANCE.md` (one row per ported file; follow the shape
+  of the existing provenance files)
+- Test: `tst_rotor_heading`, `tst_rotor_route`
+
+**Acceptance:**
+- Not-a-number, infinite and out-of-range headings are refused, never wrapped; 360 is north and
+  is sent as 0; an empty text box is refused, never north.
+- Route and overlap, from the full-range capture with a south stop and range 450: 183 to 010
+  travels +187; 292 to 000 travels +68; 301 to 180 travels -121; replaying the capture's
+  clockwise run from 183 (span 3) to the stop gives span position 449 at the reply `AZ=269`,
+  446 degrees of travel. A first reply inside the overlap band gives span position -1 and
+  `routeKnown` false until a reply outside the band. With no end stop the route is the shorter
+  way. With a north stop and range 360, 350 to 010 travels -340.
+- The offset applies to the reported heading and is removed from a target.
+
+## Task 3b: `RotorConnection` and `RotctldProcess`
+
+**Files:**
+- Create: `src/core/RotorConnection.{h,cpp}` (GS-232A, GS-232B over `QSerialPort`; `rotctld`
+  over `QTcpSocket`; position polling about once a second when still and faster while turning;
+  set, stop, move; uses Task 3a's tracker for the span position)
+- Create: `src/core/RotctldProcess.{h,cpp}` (ported from Longpath `RotctldProcess`: find the
+  binary including Homebrew paths, the `-m -r -s -T 127.0.0.1 -t` arguments, a free port when
+  4533 is held, restart, stop on exit)
+- Modify: `docs/attribution/LONGPATH-PROVENANCE.md` (the `RotctldProcess` row)
+- Test: `tst_rotor_connection` (each driver against a fake port and a fake `rotctld`, including
+  Hamlib's invalid replies and both Task 2 captures replayed), `tst_rotctld_process`
+
+**Acceptance:**
+- Each driver reads azimuth (and elevation on az/el) and sends set, stop and move in exactly the
+  cited formats; GS-232B parses `AZ=302  EL=000` (two spaces) and `AZ=302`, and treats the bare
+  CR acknowledgement, a bare CR LF and `>` as no position.
+- No position reply for 1500 ms sets `positionFresh` false; the next reply sets it true.
+- Driver 4 starts `rotctld` with the chosen model, port and baud, and stops it on disconnect and
+  on exit; with no `rotctld` installed it refuses with the document's reason.
+- Stop is written ahead of anything queued.
+
+## Task 3c: `StationRotorController` in the Core
+
+**Files:**
 - Create: `src/core/StationRotorController.{h,cpp}` (settings under `Rotor/*`, presets,
   target and arrival, stop priority, the hold dead man of 250 ms repeats and a 750 ms lapse,
   reconnect as the other accessories do, the Core's serial port list)
 - Modify: the Core's accessory start-up, where the PGXL, TGXL and RF-Kit controllers are made
-- Test: `tst_rotor_connection` (each driver against a fake port and a fake `rotctld`, including
-  Hamlib's invalid replies and the Task 2 capture), `tst_station_rotor_controller`
+- Test: `tst_station_rotor_controller`
 
 **Acceptance:**
-- No position reply for 1500 ms sets `positionFresh` false; the next reply sets it true.
-- Not-a-number and out-of-range headings are refused, never wrapped; 360 is sent as 0.
-- Driver 4 starts `rotctld` with the chosen model, port and baud, and stops it on disconnect and
-  on exit; with no `rotctld` installed it refuses with the document's reason.
-- Each driver reads azimuth (and elevation on az/el) and sends set, stop and move in exactly the
-  cited formats.
+- Arrival within 1.5 degrees of the target, or when the heading stops changing, sets motion
+  stopped.
 - Stop jumps the queue. A lapsed hold, or its window's session ending, sends stop.
-- The offset applies to the reported heading and is removed from a target.
 - Turning works while the radio is on the air.
-- Route and overlap, from the full-range capture with a south stop and range 450: 183 to 010
-  travels +187; 292 to 000 travels +68; 301 to 180 travels -121; replaying the capture's
-  clockwise run from 183 (span 3) to the stop gives span position 449 at the reply `AZ=269`, 446 degrees of travel. A first
-  reply inside the overlap band gives span position -1 and `routeKnown` false until a reply
-  outside the band. With no end stop the route is the shorter way.
+- Settings persist with `AppSettings` under the contract's keys and defaults.
 
 ## Task 4: The link: `rotor` object, commands, spot bearings, tools catalogue
 
