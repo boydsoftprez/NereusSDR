@@ -134,8 +134,23 @@ GS-232B format:
 * `Maaa`, `Waaa eee`, `S`, `L` and `R` each answer a bare CR, about 25 ms
   after the command, and all work on the azimuth-only rotor: `M312` from 302
   stopped at 313, `W292 000` from 313 stopped at 292.
-* The rotor turns about 4 to 5 degrees a second. Position replies take about
-  90 ms when still and up to about 210 ms while turning.
+* The rotor turns about 8 to 9 degrees a second at full speed (169 degrees
+  in 20 s), slower over a short move (10 degrees took about 3 s). End to
+  end, 446 degrees, takes about 52 s. Position replies take about 90 ms
+  when still and up to about 210 ms while turning.
+* **Range** (full-range capture, `tests/data/rotor/erc-gs232b-range-2026-10-07.log`):
+  a 450-degree rotor whose counter-clockwise end stop is at south (reads
+  183) and whose clockwise end stop is 446 degrees later (reads 269, that
+  is 629). So 180 to 270 exist twice (once at each end), and 270 through
+  north to 180 exist once.
+* **Replies are modulo 360.** Past north the reply starts again at 001;
+  at the clockwise end it reads `AZ=269`, not 629. North reads 360, never
+  000. A reply alone cannot say which end of the overlap the rotor is in.
+* **The ERC picks the position.** `Waaa` goes to the one position in range
+  for that heading, or the nearer of two in the overlap: `W000` from 292
+  went clockwise to 360; `W010` from 183 went 187 degrees clockwise through
+  north (10 degrees counter-clockwise would cross the end stop); `W180`
+  from 301 went to 180, not 540. `M450` went into the overlap and read 090.
 * After `S` during an `L` or `R` move the heading coasts on by 2 to 4
   degrees, so arrival and stop logic reads the heading after it settles.
 * The ERC's firmware version and Service Tool settings were not read.

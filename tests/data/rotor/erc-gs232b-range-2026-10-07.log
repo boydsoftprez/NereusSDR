@@ -1,0 +1,289 @@
+# Full-range serial capture from JJ's (KG4VCF) Easy Rotor Control on a Yaesu 450-degree rotor, 2026-10-07.
+# Same host and settings as erc-gs232b-capture-2026-10-07.log (Rock 5C, FTDI FT230X, 9600 8N1, commands + CR).
+# Three runs back to back with JJ watching. Finding: counter-clockwise end stop near 180 (reads 183),
+# clockwise end stop 446 degrees later (reads 269, i.e. 629); headings past north start again at 001 (modulo 360),
+# north reads 360, never 000. A set command goes to the one position in range, or the nearer of two.
+# ---- run: erc-range
+23:20:03 baud=9600 sent='C2'+CR reply=b'AZ=292  EL=000\r\n' first_byte_ms=95
+# step 1: W000 000 (CCW end)
+23:20:04 baud=9600 sent='W000 000'+CR reply=b'\r' first_byte_ms=26
+23:20:04 baud=9600 sent='C2'+CR reply=b'AZ=292  EL=000\r\n' first_byte_ms=86
+23:20:06 baud=9600 sent='C2'+CR reply=b'AZ=298  EL=000\r\n' first_byte_ms=183
+23:20:07 baud=9600 sent='C2'+CR reply=b'AZ=307  EL=000\r\n' first_byte_ms=169
+23:20:09 baud=9600 sent='C2'+CR reply=b'AZ=314  EL=000\r\n' first_byte_ms=169
+23:20:10 baud=9600 sent='C2'+CR reply=b'AZ=322  EL=000\r\n' first_byte_ms=169
+23:20:12 baud=9600 sent='C2'+CR reply=b'AZ=333  EL=000\r\n' first_byte_ms=169
+23:20:14 baud=9600 sent='C2'+CR reply=b'AZ=339  EL=000\r\n' first_byte_ms=169
+23:20:15 baud=9600 sent='C2'+CR reply=b'AZ=348  EL=000\r\n' first_byte_ms=169
+23:20:17 baud=9600 sent='C2'+CR reply=b'AZ=354  EL=000\r\n' first_byte_ms=169
+23:20:18 baud=9600 sent='C2'+CR reply=b'AZ=360  EL=000\r\n' first_byte_ms=89
+23:20:20 baud=9600 sent='C2'+CR reply=b'AZ=360  EL=000\r\n' first_byte_ms=87
+23:20:21 baud=9600 sent='C2'+CR reply=b'AZ=360  EL=000\r\n' first_byte_ms=87
+23:20:22 baud=9600 sent='S'+CR reply=b'\r' first_byte_ms=27
+23:20:23 baud=9600 sent='C2'+CR reply=b'AZ=360  EL=000\r\n' first_byte_ms=86
+23:20:24 baud=9600 sent='C'+CR reply=b'AZ=360\r\n' first_byte_ms=90
+# step 2: M450 (CW end, overlap)
+23:20:25 baud=9600 sent='M450'+CR reply=b'\r' first_byte_ms=24
+23:20:26 baud=9600 sent='C2'+CR reply=b'AZ=360  EL=000\r\n' first_byte_ms=86
+23:20:27 baud=9600 sent='C2'+CR reply=b'AZ=006  EL=000\r\n' first_byte_ms=183
+23:20:29 baud=9600 sent='C2'+CR reply=b'AZ=014  EL=000\r\n' first_byte_ms=155
+23:20:30 baud=9600 sent='C2'+CR reply=b'AZ=021  EL=000\r\n' first_byte_ms=169
+23:20:32 baud=9600 sent='C2'+CR reply=b'AZ=030  EL=000\r\n' first_byte_ms=169
+23:20:33 baud=9600 sent='C2'+CR reply=b'AZ=043  EL=000\r\n' first_byte_ms=169
+23:20:35 baud=9600 sent='C2'+CR reply=b'AZ=057  EL=000\r\n' first_byte_ms=169
+23:20:37 baud=9600 sent='C2'+CR reply=b'AZ=066  EL=000\r\n' first_byte_ms=169
+23:20:38 baud=9600 sent='C2'+CR reply=b'AZ=073  EL=000\r\n' first_byte_ms=169
+23:20:40 baud=9600 sent='C2'+CR reply=b'AZ=081  EL=000\r\n' first_byte_ms=169
+23:20:41 baud=9600 sent='C2'+CR reply=b'AZ=090  EL=000\r\n' first_byte_ms=169
+23:20:43 baud=9600 sent='C2'+CR reply=b'AZ=090  EL=000\r\n' first_byte_ms=89
+23:20:44 baud=9600 sent='C2'+CR reply=b'AZ=090  EL=000\r\n' first_byte_ms=87
+23:20:45 baud=9600 sent='S'+CR reply=b'\r' first_byte_ms=27
+23:20:46 baud=9600 sent='C2'+CR reply=b'AZ=090  EL=000\r\n' first_byte_ms=86
+23:20:47 baud=9600 sent='C'+CR reply=b'AZ=090\r\n' first_byte_ms=90
+# step 3: W360 000 from 450
+23:20:48 baud=9600 sent='W360 000'+CR reply=b'\r' first_byte_ms=24
+23:20:49 baud=9600 sent='C2'+CR reply=b'AZ=090  EL=000\r\n' first_byte_ms=86
+23:20:50 baud=9600 sent='C2'+CR reply=b'AZ=083  EL=000\r\n' first_byte_ms=183
+23:20:52 baud=9600 sent='C2'+CR reply=b'AZ=076  EL=000\r\n' first_byte_ms=156
+23:20:53 baud=9600 sent='C2'+CR reply=b'AZ=068  EL=000\r\n' first_byte_ms=169
+23:20:55 baud=9600 sent='C2'+CR reply=b'AZ=060  EL=000\r\n' first_byte_ms=169
+23:20:56 baud=9600 sent='C2'+CR reply=b'AZ=048  EL=000\r\n' first_byte_ms=169
+23:20:58 baud=9600 sent='C2'+CR reply=b'AZ=033  EL=000\r\n' first_byte_ms=169
+23:21:00 baud=9600 sent='C2'+CR reply=b'AZ=025  EL=000\r\n' first_byte_ms=169
+23:21:01 baud=9600 sent='C2'+CR reply=b'AZ=017  EL=000\r\n' first_byte_ms=169
+23:21:03 baud=9600 sent='C2'+CR reply=b'AZ=010  EL=000\r\n' first_byte_ms=169
+23:21:04 baud=9600 sent='C2'+CR reply=b'AZ=001  EL=000\r\n' first_byte_ms=169
+23:21:06 baud=9600 sent='C2'+CR reply=b'AZ=360  EL=000\r\n' first_byte_ms=89
+23:21:07 baud=9600 sent='C2'+CR reply=b'AZ=360  EL=000\r\n' first_byte_ms=87
+23:21:09 baud=9600 sent='C2'+CR reply=b'AZ=360  EL=000\r\n' first_byte_ms=87
+23:21:10 baud=9600 sent='S'+CR reply=b'\r' first_byte_ms=27
+23:21:11 baud=9600 sent='C2'+CR reply=b'AZ=360  EL=000\r\n' first_byte_ms=86
+23:21:12 baud=9600 sent='C'+CR reply=b'AZ=360\r\n' first_byte_ms=90
+# step 4: W302 000 (back to start)
+23:21:13 baud=9600 sent='W302 000'+CR reply=b'\r' first_byte_ms=24
+23:21:13 baud=9600 sent='C2'+CR reply=b'AZ=360  EL=000\r\n' first_byte_ms=86
+23:21:15 baud=9600 sent='C2'+CR reply=b'AZ=353  EL=000\r\n' first_byte_ms=183
+23:21:16 baud=9600 sent='C2'+CR reply=b'AZ=346  EL=000\r\n' first_byte_ms=155
+23:21:18 baud=9600 sent='C2'+CR reply=b'AZ=338  EL=000\r\n' first_byte_ms=169
+23:21:19 baud=9600 sent='C2'+CR reply=b'AZ=331  EL=000\r\n' first_byte_ms=169
+23:21:21 baud=9600 sent='C2'+CR reply=b'AZ=323  EL=000\r\n' first_byte_ms=169
+23:21:23 baud=9600 sent='C2'+CR reply=b'AZ=316  EL=000\r\n' first_byte_ms=169
+23:21:24 baud=9600 sent='C2'+CR reply=b'AZ=308  EL=000\r\n' first_byte_ms=169
+23:21:26 baud=9600 sent='C2'+CR reply=b'AZ=301  EL=000\r\n' first_byte_ms=89
+23:21:27 baud=9600 sent='C2'+CR reply=b'AZ=301  EL=000\r\n' first_byte_ms=87
+23:21:29 baud=9600 sent='C2'+CR reply=b'AZ=301  EL=000\r\n' first_byte_ms=87
+23:21:30 baud=9600 sent='S'+CR reply=b'\r' first_byte_ms=27
+23:21:31 baud=9600 sent='C2'+CR reply=b'AZ=301  EL=000\r\n' first_byte_ms=86
+23:21:32 baud=9600 sent='C'+CR reply=b'AZ=301\r\n' first_byte_ms=90
+23:21:33 baud=9600 sent='S'+CR reply=b'\r' first_byte_ms=24
+# final stop sent
+# ---- run: erc-ccw
+23:22:04 baud=9600 sent='C2'+CR reply=b'AZ=301  EL=000\r\n' first_byte_ms=93
+# step 5: W180 000
+23:22:05 baud=9600 sent='W180 000'+CR reply=b'\r' first_byte_ms=26
+23:22:06 baud=9600 sent='C2'+CR reply=b'AZ=301  EL=000\r\n' first_byte_ms=86
+23:22:07 baud=9600 sent='C2'+CR reply=b'AZ=295  EL=000\r\n' first_byte_ms=183
+23:22:09 baud=9600 sent='C2'+CR reply=b'AZ=287  EL=000\r\n' first_byte_ms=155
+23:22:10 baud=9600 sent='C2'+CR reply=b'AZ=280  EL=000\r\n' first_byte_ms=169
+23:22:12 baud=9600 sent='C2'+CR reply=b'AZ=271  EL=000\r\n' first_byte_ms=169
+23:22:13 baud=9600 sent='C2'+CR reply=b'AZ=259  EL=000\r\n' first_byte_ms=169
+23:22:15 baud=9600 sent='C2'+CR reply=b'AZ=245  EL=000\r\n' first_byte_ms=169
+23:22:17 baud=9600 sent='C2'+CR reply=b'AZ=231  EL=000\r\n' first_byte_ms=169
+23:22:18 baud=9600 sent='C2'+CR reply=b'AZ=215  EL=000\r\n' first_byte_ms=169
+23:22:20 baud=9600 sent='C2'+CR reply=b'AZ=204  EL=000\r\n' first_byte_ms=169
+23:22:21 baud=9600 sent='C2'+CR reply=b'AZ=197  EL=000\r\n' first_byte_ms=169
+23:22:23 baud=9600 sent='C2'+CR reply=b'AZ=189  EL=000\r\n' first_byte_ms=169
+23:22:24 baud=9600 sent='C2'+CR reply=b'AZ=183  EL=000\r\n' first_byte_ms=169
+23:22:26 baud=9600 sent='C2'+CR reply=b'AZ=183  EL=000\r\n' first_byte_ms=169
+23:22:27 baud=9600 sent='C2'+CR reply=b'AZ=183  EL=000\r\n' first_byte_ms=169
+23:22:28 baud=9600 sent='S'+CR reply=b'\r' first_byte_ms=125
+23:22:29 baud=9600 sent='C2'+CR reply=b'AZ=183  EL=000\r\n' first_byte_ms=90
+23:22:30 baud=9600 sent='C'+CR reply=b'AZ=183\r\n' first_byte_ms=90
+# step 6: W010 000 (near way is CCW)
+23:22:31 baud=9600 sent='W010 000'+CR reply=b'\r' first_byte_ms=24
+23:22:32 baud=9600 sent='C2'+CR reply=b'AZ=183  EL=000\r\n' first_byte_ms=86
+23:22:34 baud=9600 sent='C2'+CR reply=b'AZ=190  EL=000\r\n' first_byte_ms=183
+23:22:35 baud=9600 sent='C2'+CR reply=b'AZ=197  EL=000\r\n' first_byte_ms=155
+23:22:37 baud=9600 sent='C2'+CR reply=b'AZ=206  EL=000\r\n' first_byte_ms=169
+23:22:38 baud=9600 sent='C2'+CR reply=b'AZ=214  EL=000\r\n' first_byte_ms=169
+23:22:40 baud=9600 sent='C2'+CR reply=b'AZ=229  EL=000\r\n' first_byte_ms=169
+23:22:41 baud=9600 sent='C2'+CR reply=b'AZ=243  EL=000\r\n' first_byte_ms=169
+23:22:43 baud=9600 sent='C2'+CR reply=b'AZ=259  EL=000\r\n' first_byte_ms=169
+23:22:44 baud=9600 sent='C2'+CR reply=b'AZ=275  EL=000\r\n' first_byte_ms=169
+23:22:46 baud=9600 sent='C2'+CR reply=b'AZ=288  EL=000\r\n' first_byte_ms=169
+23:22:47 baud=9600 sent='C2'+CR reply=b'AZ=304  EL=000\r\n' first_byte_ms=169
+23:22:49 baud=9600 sent='C2'+CR reply=b'AZ=319  EL=000\r\n' first_byte_ms=169
+23:22:50 baud=9600 sent='C2'+CR reply=b'AZ=335  EL=000\r\n' first_byte_ms=169
+23:22:52 baud=9600 sent='C2'+CR reply=b'AZ=345  EL=000\r\n' first_byte_ms=169
+23:22:53 baud=9600 sent='C2'+CR reply=b'AZ=353  EL=000\r\n' first_byte_ms=169
+23:22:55 baud=9600 sent='C2'+CR reply=b'AZ=360  EL=000\r\n' first_byte_ms=169
+23:22:57 baud=9600 sent='C2'+CR reply=b'AZ=008  EL=000\r\n' first_byte_ms=169
+23:22:58 baud=9600 sent='C2'+CR reply=b'AZ=010  EL=000\r\n' first_byte_ms=89
+23:23:00 baud=9600 sent='C2'+CR reply=b'AZ=010  EL=000\r\n' first_byte_ms=87
+23:23:01 baud=9600 sent='C2'+CR reply=b'AZ=010  EL=000\r\n' first_byte_ms=87
+23:23:02 baud=9600 sent='S'+CR reply=b'\r' first_byte_ms=27
+23:23:03 baud=9600 sent='C2'+CR reply=b'AZ=010  EL=000\r\n' first_byte_ms=86
+23:23:04 baud=9600 sent='C'+CR reply=b'AZ=010\r\n' first_byte_ms=90
+# step 7: L held 5 s into the CCW end
+23:23:04 baud=9600 sent='L'+CR reply=b'\r' first_byte_ms=24
+23:23:05 baud=9600 sent='C2'+CR reply=b'AZ=010  EL=000\r\n' first_byte_ms=92
+23:23:07 baud=9600 sent='C2'+CR reply=b'AZ=006  EL=000\r\n' first_byte_ms=171
+23:23:08 baud=9600 sent='C2'+CR reply=b'AZ=001  EL=000\r\n' first_byte_ms=174
+23:23:09 baud=9600 sent='C2'+CR reply=b'AZ=357  EL=000\r\n' first_byte_ms=174
+23:23:10 baud=9600 sent='C2'+CR reply=b'AZ=350  EL=000\r\n' first_byte_ms=158
+23:23:11 baud=9600 sent='S'+CR reply=b'\r' first_byte_ms=150
+23:23:13 baud=9600 sent='C2'+CR reply=b'AZ=348  EL=000\r\n' first_byte_ms=81
+23:23:14 baud=9600 sent='C'+CR reply=b'AZ=348\r\n' first_byte_ms=88
+# step 8: W302 000 (back to start)
+23:23:15 baud=9600 sent='W302 000'+CR reply=b'\r' first_byte_ms=24
+23:23:16 baud=9600 sent='C2'+CR reply=b'AZ=348  EL=000\r\n' first_byte_ms=86
+23:23:17 baud=9600 sent='C2'+CR reply=b'AZ=341  EL=000\r\n' first_byte_ms=183
+23:23:19 baud=9600 sent='C2'+CR reply=b'AZ=334  EL=000\r\n' first_byte_ms=155
+23:23:20 baud=9600 sent='C2'+CR reply=b'AZ=327  EL=000\r\n' first_byte_ms=169
+23:23:22 baud=9600 sent='C2'+CR reply=b'AZ=318  EL=000\r\n' first_byte_ms=169
+23:23:23 baud=9600 sent='C2'+CR reply=b'AZ=311  EL=000\r\n' first_byte_ms=169
+23:23:25 baud=9600 sent='C2'+CR reply=b'AZ=303  EL=000\r\n' first_byte_ms=169
+23:23:27 baud=9600 sent='C2'+CR reply=b'AZ=301  EL=000\r\n' first_byte_ms=89
+23:23:28 baud=9600 sent='C2'+CR reply=b'AZ=301  EL=000\r\n' first_byte_ms=87
+23:23:30 baud=9600 sent='C2'+CR reply=b'AZ=301  EL=000\r\n' first_byte_ms=87
+23:23:31 baud=9600 sent='S'+CR reply=b'\r' first_byte_ms=27
+23:23:32 baud=9600 sent='C2'+CR reply=b'AZ=301  EL=000\r\n' first_byte_ms=86
+23:23:33 baud=9600 sent='S'+CR reply=b'\r' first_byte_ms=26
+# final stop sent
+# ---- run: erc-ends
+23:24:02 baud=9600 sent='C2'+CR reply=b'AZ=301  EL=000\r\n' first_byte_ms=88
+# step 9: W180 000
+23:24:03 baud=9600 sent='W180 000'+CR reply=b'\r' first_byte_ms=26
+23:24:04 baud=9600 sent='C2'+CR reply=b'AZ=301  EL=000\r\n' first_byte_ms=86
+23:24:05 baud=9600 sent='C2'+CR reply=b'AZ=295  EL=000\r\n' first_byte_ms=183
+23:24:07 baud=9600 sent='C2'+CR reply=b'AZ=286  EL=000\r\n' first_byte_ms=155
+23:24:08 baud=9600 sent='C2'+CR reply=b'AZ=280  EL=000\r\n' first_byte_ms=169
+23:24:10 baud=9600 sent='C2'+CR reply=b'AZ=271  EL=000\r\n' first_byte_ms=169
+23:24:11 baud=9600 sent='C2'+CR reply=b'AZ=258  EL=000\r\n' first_byte_ms=169
+23:24:13 baud=9600 sent='C2'+CR reply=b'AZ=244  EL=000\r\n' first_byte_ms=169
+23:24:14 baud=9600 sent='C2'+CR reply=b'AZ=229  EL=000\r\n' first_byte_ms=169
+23:24:16 baud=9600 sent='C2'+CR reply=b'AZ=214  EL=000\r\n' first_byte_ms=169
+23:24:17 baud=9600 sent='C2'+CR reply=b'AZ=203  EL=000\r\n' first_byte_ms=169
+23:24:19 baud=9600 sent='C2'+CR reply=b'AZ=195  EL=000\r\n' first_byte_ms=169
+23:24:20 baud=9600 sent='C2'+CR reply=b'AZ=188  EL=000\r\n' first_byte_ms=169
+23:24:22 baud=9600 sent='C2'+CR reply=b'AZ=183  EL=000\r\n' first_byte_ms=169
+23:24:24 baud=9600 sent='C2'+CR reply=b'AZ=183  EL=000\r\n' first_byte_ms=169
+23:24:25 baud=9600 sent='C2'+CR reply=b'AZ=183  EL=000\r\n' first_byte_ms=169
+23:24:26 baud=9600 sent='S'+CR reply=b'\r' first_byte_ms=125
+23:24:27 baud=9600 sent='C2'+CR reply=b'AZ=183  EL=000\r\n' first_byte_ms=90
+# step 10: L held to the CCW end
+23:24:27 baud=9600 sent='L'+CR reply=b'\r' first_byte_ms=26
+23:24:28 baud=9600 sent='C2'+CR reply=b'AZ=183  EL=000\r\n' first_byte_ms=92
+23:24:29 baud=9600 sent='C2'+CR reply=b'AZ=183  EL=000\r\n' first_byte_ms=187
+23:24:30 baud=9600 sent='C2'+CR reply=b'AZ=183  EL=000\r\n' first_byte_ms=159
+23:24:32 baud=9600 sent='C2'+CR reply=b'AZ=183  EL=000\r\n' first_byte_ms=174
+# heading stopped changing: end stop
+23:24:33 baud=9600 sent='S'+CR reply=b'\r' first_byte_ms=134
+23:24:35 baud=9600 sent='C2'+CR reply=b'AZ=183  EL=000\r\n' first_byte_ms=95
+23:24:36 baud=9600 sent='C'+CR reply=b'AZ=183\r\n' first_byte_ms=90
+# step 11: R held to the CW end
+23:24:36 baud=9600 sent='R'+CR reply=b'\r' first_byte_ms=24
+23:24:37 baud=9600 sent='C2'+CR reply=b'AZ=183  EL=000\r\n' first_byte_ms=92
+23:24:38 baud=9600 sent='C2'+CR reply=b'AZ=187  EL=000\r\n' first_byte_ms=187
+23:24:39 baud=9600 sent='C2'+CR reply=b'AZ=191  EL=000\r\n' first_byte_ms=160
+23:24:40 baud=9600 sent='C2'+CR reply=b'AZ=197  EL=000\r\n' first_byte_ms=157
+23:24:42 baud=9600 sent='C2'+CR reply=b'AZ=203  EL=000\r\n' first_byte_ms=174
+23:24:43 baud=9600 sent='C2'+CR reply=b'AZ=209  EL=000\r\n' first_byte_ms=174
+23:24:44 baud=9600 sent='C2'+CR reply=b'AZ=215  EL=000\r\n' first_byte_ms=157
+23:24:45 baud=9600 sent='C2'+CR reply=b'AZ=226  EL=000\r\n' first_byte_ms=174
+23:24:46 baud=9600 sent='C2'+CR reply=b'AZ=235  EL=000\r\n' first_byte_ms=174
+23:24:47 baud=9600 sent='C2'+CR reply=b'AZ=245  EL=000\r\n' first_byte_ms=174
+23:24:48 baud=9600 sent='C2'+CR reply=b'AZ=255  EL=000\r\n' first_byte_ms=174
+23:24:49 baud=9600 sent='C2'+CR reply=b'AZ=264  EL=000\r\n' first_byte_ms=158
+23:24:50 baud=9600 sent='C2'+CR reply=b'AZ=275  EL=000\r\n' first_byte_ms=174
+23:24:51 baud=9600 sent='C2'+CR reply=b'AZ=286  EL=000\r\n' first_byte_ms=174
+23:24:52 baud=9600 sent='C2'+CR reply=b'AZ=296  EL=000\r\n' first_byte_ms=157
+23:24:53 baud=9600 sent='C2'+CR reply=b'AZ=307  EL=000\r\n' first_byte_ms=174
+23:24:54 baud=9600 sent='C2'+CR reply=b'AZ=316  EL=000\r\n' first_byte_ms=174
+23:24:55 baud=9600 sent='C2'+CR reply=b'AZ=327  EL=000\r\n' first_byte_ms=174
+23:24:56 baud=9600 sent='C2'+CR reply=b'AZ=337  EL=000\r\n' first_byte_ms=174
+23:24:57 baud=9600 sent='C2'+CR reply=b'AZ=346  EL=000\r\n' first_byte_ms=158
+23:24:58 baud=9600 sent='C2'+CR reply=b'AZ=356  EL=000\r\n' first_byte_ms=173
+23:24:59 baud=9600 sent='C2'+CR reply=b'AZ=006  EL=000\r\n' first_byte_ms=174
+23:25:00 baud=9600 sent='C2'+CR reply=b'AZ=017  EL=000\r\n' first_byte_ms=158
+23:25:01 baud=9600 sent='C2'+CR reply=b'AZ=026  EL=000\r\n' first_byte_ms=174
+23:25:02 baud=9600 sent='C2'+CR reply=b'AZ=037  EL=000\r\n' first_byte_ms=174
+23:25:03 baud=9600 sent='C2'+CR reply=b'AZ=046  EL=000\r\n' first_byte_ms=158
+23:25:04 baud=9600 sent='C2'+CR reply=b'AZ=057  EL=000\r\n' first_byte_ms=174
+23:25:05 baud=9600 sent='C2'+CR reply=b'AZ=066  EL=000\r\n' first_byte_ms=158
+23:25:06 baud=9600 sent='C2'+CR reply=b'AZ=076  EL=000\r\n' first_byte_ms=174
+23:25:07 baud=9600 sent='C2'+CR reply=b'AZ=087  EL=000\r\n' first_byte_ms=174
+23:25:08 baud=9600 sent='C2'+CR reply=b'AZ=098  EL=000\r\n' first_byte_ms=158
+23:25:09 baud=9600 sent='C2'+CR reply=b'AZ=108  EL=000\r\n' first_byte_ms=173
+23:25:11 baud=9600 sent='C2'+CR reply=b'AZ=118  EL=000\r\n' first_byte_ms=174
+23:25:12 baud=9600 sent='C2'+CR reply=b'AZ=127  EL=000\r\n' first_byte_ms=158
+23:25:13 baud=9600 sent='C2'+CR reply=b'AZ=137  EL=000\r\n' first_byte_ms=174
+23:25:14 baud=9600 sent='C2'+CR reply=b'AZ=148  EL=000\r\n' first_byte_ms=158
+23:25:15 baud=9600 sent='C2'+CR reply=b'AZ=158  EL=000\r\n' first_byte_ms=173
+23:25:16 baud=9600 sent='C2'+CR reply=b'AZ=168  EL=000\r\n' first_byte_ms=174
+23:25:17 baud=9600 sent='C2'+CR reply=b'AZ=177  EL=000\r\n' first_byte_ms=158
+23:25:18 baud=9600 sent='C2'+CR reply=b'AZ=187  EL=000\r\n' first_byte_ms=174
+23:25:19 baud=9600 sent='C2'+CR reply=b'AZ=197  EL=000\r\n' first_byte_ms=173
+23:25:20 baud=9600 sent='C2'+CR reply=b'AZ=207  EL=000\r\n' first_byte_ms=158
+23:25:21 baud=9600 sent='C2'+CR reply=b'AZ=217  EL=000\r\n' first_byte_ms=174
+23:25:22 baud=9600 sent='C2'+CR reply=b'AZ=227  EL=000\r\n' first_byte_ms=158
+23:25:23 baud=9600 sent='C2'+CR reply=b'AZ=237  EL=000\r\n' first_byte_ms=174
+23:25:24 baud=9600 sent='C2'+CR reply=b'AZ=245  EL=000\r\n' first_byte_ms=174
+23:25:25 baud=9600 sent='C2'+CR reply=b'AZ=249  EL=000\r\n' first_byte_ms=158
+23:25:26 baud=9600 sent='C2'+CR reply=b'AZ=255  EL=000\r\n' first_byte_ms=174
+23:25:27 baud=9600 sent='C2'+CR reply=b'AZ=261  EL=000\r\n' first_byte_ms=174
+23:25:28 baud=9600 sent='C2'+CR reply=b'AZ=266  EL=000\r\n' first_byte_ms=158
+23:25:29 baud=9600 sent='C2'+CR reply=b'AZ=269  EL=000\r\n' first_byte_ms=174
+23:25:30 baud=9600 sent='C2'+CR reply=b'AZ=269  EL=000\r\n' first_byte_ms=157
+23:25:31 baud=9600 sent='C2'+CR reply=b'AZ=269  EL=000\r\n' first_byte_ms=174
+23:25:32 baud=9600 sent='C2'+CR reply=b'AZ=268  EL=000\r\n' first_byte_ms=174
+23:25:33 baud=9600 sent='C2'+CR reply=b'AZ=269  EL=000\r\n' first_byte_ms=158
+23:25:34 baud=9600 sent='C2'+CR reply=b'AZ=269  EL=000\r\n' first_byte_ms=173
+23:25:35 baud=9600 sent='C2'+CR reply=b'AZ=269  EL=000\r\n' first_byte_ms=174
+23:25:36 baud=9600 sent='C2'+CR reply=b'AZ=268  EL=000\r\n' first_byte_ms=158
+23:25:37 baud=9600 sent='C2'+CR reply=b'AZ=269  EL=000\r\n' first_byte_ms=174
+23:25:38 baud=9600 sent='C2'+CR reply=b'AZ=269  EL=000\r\n' first_byte_ms=174
+23:25:39 baud=9600 sent='C2'+CR reply=b'AZ=268  EL=000\r\n' first_byte_ms=158
+23:25:40 baud=9600 sent='C2'+CR reply=b'AZ=269  EL=000\r\n' first_byte_ms=174
+23:25:42 baud=9600 sent='C2'+CR reply=b'AZ=269  EL=000\r\n' first_byte_ms=158
+23:25:43 baud=9600 sent='C2'+CR reply=b'AZ=269  EL=000\r\n' first_byte_ms=174
+23:25:44 baud=9600 sent='C2'+CR reply=b'AZ=269  EL=000\r\n' first_byte_ms=174
+# heading stopped changing: end stop
+23:25:45 baud=9600 sent='S'+CR reply=b'\r' first_byte_ms=133
+23:25:47 baud=9600 sent='C2'+CR reply=b'AZ=269  EL=000\r\n' first_byte_ms=95
+23:25:48 baud=9600 sent='C'+CR reply=b'AZ=269\r\n' first_byte_ms=90
+# step 12: W302 000 (back to start)
+23:25:49 baud=9600 sent='W302 000'+CR reply=b'\r' first_byte_ms=24
+23:25:50 baud=9600 sent='C2'+CR reply=b'AZ=269  EL=000\r\n' first_byte_ms=86
+23:25:51 baud=9600 sent='C2'+CR reply=b'AZ=262  EL=000\r\n' first_byte_ms=183
+23:25:53 baud=9600 sent='C2'+CR reply=b'AZ=254  EL=000\r\n' first_byte_ms=169
+23:25:54 baud=9600 sent='C2'+CR reply=b'AZ=246  EL=000\r\n' first_byte_ms=169
+23:25:56 baud=9600 sent='C2'+CR reply=b'AZ=237  EL=000\r\n' first_byte_ms=169
+23:25:58 baud=9600 sent='C2'+CR reply=b'AZ=223  EL=000\r\n' first_byte_ms=169
+23:25:59 baud=9600 sent='C2'+CR reply=b'AZ=207  EL=000\r\n' first_byte_ms=169
+23:26:01 baud=9600 sent='C2'+CR reply=b'AZ=193  EL=000\r\n' first_byte_ms=169
+23:26:02 baud=9600 sent='C2'+CR reply=b'AZ=179  EL=000\r\n' first_byte_ms=169
+23:26:04 baud=9600 sent='C2'+CR reply=b'AZ=164  EL=000\r\n' first_byte_ms=169
+23:26:05 baud=9600 sent='C2'+CR reply=b'AZ=149  EL=000\r\n' first_byte_ms=169
+23:26:07 baud=9600 sent='C2'+CR reply=b'AZ=134  EL=000\r\n' first_byte_ms=169
+23:26:08 baud=9600 sent='C2'+CR reply=b'AZ=119  EL=000\r\n' first_byte_ms=169
+23:26:10 baud=9600 sent='C2'+CR reply=b'AZ=104  EL=000\r\n' first_byte_ms=169
+23:26:11 baud=9600 sent='C2'+CR reply=b'AZ=090  EL=000\r\n' first_byte_ms=169
+23:26:13 baud=9600 sent='C2'+CR reply=b'AZ=075  EL=000\r\n' first_byte_ms=169
+23:26:14 baud=9600 sent='C2'+CR reply=b'AZ=060  EL=000\r\n' first_byte_ms=169
+23:26:16 baud=9600 sent='C2'+CR reply=b'AZ=044  EL=000\r\n' first_byte_ms=169
+23:26:17 baud=9600 sent='C2'+CR reply=b'AZ=029  EL=000\r\n' first_byte_ms=169
+23:26:19 baud=9600 sent='C2'+CR reply=b'AZ=015  EL=000\r\n' first_byte_ms=169
+23:26:21 baud=9600 sent='C2'+CR reply=b'AZ=360  EL=000\r\n' first_byte_ms=169
+23:26:22 baud=9600 sent='C2'+CR reply=b'AZ=345  EL=000\r\n' first_byte_ms=169
+23:26:24 baud=9600 sent='C2'+CR reply=b'AZ=331  EL=000\r\n' first_byte_ms=169
+23:26:25 baud=9600 sent='C2'+CR reply=b'AZ=323  EL=000\r\n' first_byte_ms=169
+23:26:27 baud=9600 sent='C2'+CR reply=b'AZ=315  EL=000\r\n' first_byte_ms=169
+23:26:28 baud=9600 sent='C2'+CR reply=b'AZ=308  EL=000\r\n' first_byte_ms=169
+23:26:30 baud=9600 sent='C2'+CR reply=b'AZ=301  EL=000\r\n' first_byte_ms=89
+23:26:31 baud=9600 sent='C2'+CR reply=b'AZ=301  EL=000\r\n' first_byte_ms=87
+23:26:33 baud=9600 sent='C2'+CR reply=b'AZ=301  EL=000\r\n' first_byte_ms=87
+23:26:34 baud=9600 sent='S'+CR reply=b'\r' first_byte_ms=27
+23:26:35 baud=9600 sent='C2'+CR reply=b'AZ=301  EL=000\r\n' first_byte_ms=86
+23:26:36 baud=9600 sent='S'+CR reply=b'\r' first_byte_ms=26
+# final stop sent
