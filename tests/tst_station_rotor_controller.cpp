@@ -609,6 +609,22 @@ private slots:
         QCOMPARE(m_ctl->motion(), RotorMotion::Stopped);
     }
 
+    void aReversedHoldStopsBeforeTheNewDirection()
+    {
+        connectAt("090");
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Cw, true, 3, nullptr));
+        QCOMPARE(m_fake->take(), QByteArray("R\r"));
+        // The other way: a stop only.
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Ccw, true, 4, nullptr));
+        QCOMPARE(m_fake->take(), QByteArray("S\r"));
+        QCOMPARE(m_ctl->holdSessionId(), quint64(0));
+        // The next repeat starts the new direction.
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Ccw, true, 4, nullptr));
+        QCOMPARE(m_fake->take(), QByteArray("L\r"));
+        QCOMPARE(m_ctl->holdSessionId(), quint64(4));
+        QCOMPARE(m_ctl->motion(), RotorMotion::Nudging);
+    }
+
     void theHoldingWindowGoingAwaySendsStop()
     {
         connectAt("090");

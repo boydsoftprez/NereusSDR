@@ -147,7 +147,9 @@ a live needle.
 **The hold dead man.** While a turn button is held, the window repeats
 `nudgeRotor` with `active` true every 250 ms. If no repeat arrives for
 750 ms, or that window's session ends, the Core sends stop. These two
-numbers are this design's choice, not a device fact.
+numbers are this design's choice, not a device fact. A hold in the other
+direction while one is under way (a reversal, or two windows holding
+opposite ways) sends stop only; the next repeat starts the new direction.
 
 **Who may turn the rotor.** Any window allowed to change station
 accessories (the same admission as the accessory settings commands: a

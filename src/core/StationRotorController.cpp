@@ -12,6 +12,9 @@
 //   2026-10-08: Bench fix: the serial port list offers USB serial
 //               adapters first and leaves out console ports. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08: Final review fixes: a reversed hold stops before the new
+//               direction. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/StationRotorController.h"
@@ -586,7 +589,18 @@ bool StationRotorController::nudgeRotor(RotorDirection direction, bool active,
         return true;
     }
 
-    if (!m_holdActive || m_holdDirection != direction) {
+    if (m_holdActive && m_holdDirection != direction) {
+        // A reversal (a quick change of mind, or two windows holding
+        // opposite ways): stop, and let the next repeat start the new
+        // direction a repeat later, rather than drive straight from one
+        // direction into the other (final review M2).
+        qCInfo(lcRotorController) << "hold reversed; stopping before the new direction";
+        endHold();
+        m_connection->stop();
+        emit stateChanged();
+        return true;
+    }
+    if (!m_holdActive) {
         if (!m_connection->startMove(direction)) {
             setReason(reason, notConnectedReason());
             return false;
