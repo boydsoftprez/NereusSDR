@@ -174,6 +174,18 @@ struct ToolsTab: View {
                         row(entry)
                     }
                 }
+                // This phone's auto-turn choice, off by default: with it off, tuning never moves the rotor.
+                SpotHubPage.Heading(text: "Rotor setting", tag: .thisPhone)
+                    .padding(.top, 12)
+                SpotHubPage.Card {
+                    SpotHubPage.SettingRow(title: SpotsModel.turnBeamOnTuneTitle,
+                                           detail: spots.turnBeamOnTune ? SpotsModel.turnBeamOnTuneOnDetail
+                                               : SpotsModel.turnBeamOnTuneOffDetail) {
+                        SpotHubPage.OnOff(isOn: spots.turnBeamOnTune, identifier: "tools.rotorTurnOnTune") {
+                            spots.setTurnBeamOnTune(!spots.turnBeamOnTune)
+                        }
+                    }
+                }
             }
         case .spotHub?:
             SpotHubPage(spots: spots) { route.append(.spotHubPage($0)) }

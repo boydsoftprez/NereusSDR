@@ -183,6 +183,10 @@ final class RotorModel: ObservableObject {
     static let notConnectedReason = "The rotor is not connected."
     static let azimuthOnlyReason = "This rotor turns in azimuth only."
     static let coreNotConnectedReason = StationToolList.notConnectedReason
+    /// A spot whose bearing the Core does not know (`bearingDeg` -1: no grid
+    /// square at the Core, or a callsign it cannot place). `turnRotorToCall`
+    /// would be refused for the same reasons, so Turn beam stays greyed.
+    static let noBearingReason = "The Core has no bearing for this spot. It needs your grid square and a callsign it can place."
 
     // MARK: Timing (this design's choices, not device facts)
 
@@ -264,6 +268,15 @@ final class RotorModel: ObservableObject {
         return state?.axes == .azimuthElevation ? nil : Self.azimuthOnlyReason
     }
 
+    /// Why Turn beam on a spot cannot act now, or nil: the rotor's reason
+    /// first, then a bearing the Core does not know.
+    func beamReason(bearing: Double?) -> String? {
+        if let reason = turnReason {
+            return reason
+        }
+        return bearing.flatMap(Self.strict) == nil ? Self.noBearingReason : nil
+    }
+
     /// Why the rotor setup cannot be changed now, or nil.
     var setupReason: String? {
         if !coreConnected {
@@ -338,6 +351,16 @@ final class RotorModel: ObservableObject {
         }
         dropSelection()
         sendTarget(longPath ? Self.compass(heading + 180) : heading)
+    }
+
+    /// Turn beam on a spot: turns to its bearing at once (one tap), sent as
+    /// `setRotorTarget` like a preset. An unsent selection on the dial goes.
+    func turnBeam(toBearing bearing: Double?) {
+        guard allowed(beamReason(bearing: bearing)), let heading = bearing.flatMap(Self.strict) else {
+            return
+        }
+        dropSelection()
+        sendTarget(heading)
     }
 
     /// Short path or long path. Changing it with a selection, or with a

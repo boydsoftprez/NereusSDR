@@ -20,6 +20,10 @@ enum UITestBand {
     static let argument = "-NereusFlagsOnBand"
     /// Beside ``argument``: a connected rotor on the Core, offered on Tools.
     static let rotorArgument = "-NereusRotorFixture"
+    /// Beside ``argument``: a Core that controls rotors with none set up.
+    static let noRotorArgument = "-NereusNoRotorFixture"
+    /// Beside ``argument``: two spots on the band, one the Core can place (330 degrees) and one it cannot.
+    static let spotsArgument = "-NereusSpotFixture"
     static let catalogueEnvironment = "NEREUS_UITEST_CATALOGUE"
     static let centreHz = 7_244_500.0
     static let spanHz = 48_000.0
@@ -34,6 +38,7 @@ enum UITestBand {
         }
         let mirror = app.mirror
         let rotor = arguments.contains(rotorArgument)
+        let noRotor = arguments.contains(noRotorArgument)
         app.useBandFixturePropertySender { [weak mirror] write in
             guard write.key == "slice:0", write.properties.count == 1,
                   let entry = write.properties.first, entry.name == "afGain" else {
@@ -56,7 +61,7 @@ enum UITestBand {
             .init(ordinal: 0, name: BandSlicesModel.remoteTxCapability, value: .i64(1)),
             .init(ordinal: 1, name: "propertyResultVersion", value: .i64(1)),
             .init(ordinal: 2, name: "stationCatalogVersion", value: .i64(1)),
-        ] + (rotor ? [.init(ordinal: 3, name: RotorModel.capability, value: .i64(1))] : []))))
+        ] + (rotor || noRotor ? [.init(ordinal: 3, name: RotorModel.capability, value: .i64(1))] : []))))
         if let path = environment[catalogueEnvironment], var json = catalogueJSON(path: path) {
             if rotor {
                 // The rotor set up, so the Core offers it.
@@ -88,9 +93,19 @@ enum UITestBand {
         if rotor {
             mirror.apply(.objectCreate(LinkMessage.ObjectCreate(key: RotorModel.objectKey, className: "RotorModel",
                                                                properties: rotorProperties)))
+        } else if noRotor {
+            mirror.apply(.objectCreate(LinkMessage.ObjectCreate(key: RotorModel.objectKey, className: "RotorModel",
+                                                               properties: [
+                .init(ordinal: 0, name: "connectionPhase", value: .enumeration(0)),
+                .init(ordinal: 1, name: "driver", value: .enumeration(0)),
+            ])))
         }
         mirror.apply(.snapshotComplete)
         mirror.handle(.stateChanged(.ready))
+        if arguments.contains(spotsArgument) {
+            app.records.apply(LinkMessage.RecordBatch(stream: RecordStreamClient.spotsStream, generation: 1, reset: true,
+                                                      upserts: spotRecords, removes: []))
+        }
         let band = app.main.band
         band.endpointId = 1
         let payload: [String: LinkJSON] = [
@@ -124,6 +139,20 @@ enum UITestBand {
             LinkMessage.PropertyEntry(ordinal: UInt16(index), name: entry.0, value: entry.1)
         }
     }()
+
+    /// Two cluster spots in the band's view: JA1ABC, which the Core places at
+    /// 330 degrees, and W1AW with no bearing (-1).
+    private static let spotRecords: [LinkMessage.RecordBatch.Record] = [
+        ("1", 7_250_000.0, "JA1ABC", 330.0),
+        ("2", 7_260_000.0, "W1AW", -1.0),
+    ].map { id, hz, call, bearing in
+        LinkMessage.RecordBatch.Record(id: id, fields: [
+            "timeUtc": .string("2026-10-07T14:02:00Z"), "frequencyHz": .number(hz), "call": .string(call),
+            "mode": .string("CW"), "source": .string("Cluster"), "spotter": .string("K1TTT"),
+            "comment": .string("599"), "band": .number(3), "dxccColour": .string(""), "dxccPriority": .number(0),
+            "bearingDeg": .number(bearing),
+        ])
+    }
 
     /// The catalogue's JSON from a conformance-suite session file: the
     /// `json` property of its `catalog` message.

@@ -19,6 +19,9 @@ enum RotorColours {
     static let stopBorder = rgb(0xC1, 0x48, 0x48)
     static let stopText = rgb(0xFF, 0xD0, 0xD0)
     static let staleHeading = rgb(0x50, 0x60, 0x70)
+    /// The spot sheet's Turn beam button: amber, as the mockup's.
+    static let beam = rgb(0x60, 0x40, 0x00)
+    static let beamBorder = rgb(0x90, 0x60, 0x00)
 
     private static func rgb(_ red: Int, _ green: Int, _ blue: Int) -> Color {
         Color(red: Double(red) / 255, green: Double(green) / 255, blue: Double(blue) / 255)
