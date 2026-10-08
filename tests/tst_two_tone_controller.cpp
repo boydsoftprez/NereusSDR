@@ -1336,6 +1336,105 @@ private slots:
         QCOMPARE(tc.calls.size(), callCount1);  // no new calls
         QCOMPARE(activeSpy.count(), 1);          // no re-emit
     }
+
+    // ── A start inside the stop's MOX settle adopts the live test ────────
+    // m_active stays true until the settle ends. A fast off/on's start
+    // keys again at once and keeps the running test, two-tone power
+    // included, and the settling stop never tears it down after.
+    void setActive_startDuringStopSettle_keepsTheTestRunning()
+    {
+        TransmitModel tx;
+        RecordingTxChannel tc(kTxChannelId);
+        MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        SliceModel slice;
+
+        TwoToneController ctrl;
+        ctrl.setTransmitModel(&tx);
+        ctrl.setTxChannel(&tc);
+        ctrl.setMoxController(&mox);
+        ctrl.setSliceModel(&slice);
+        ctrl.setSettleDelaysMs(0, 0);
+
+        QSignalSpy activeSpy(&ctrl, &TwoToneController::twoToneActiveChanged);
+        ctrl.setActive(true);
+        QCoreApplication::processEvents();
+        QVERIFY(ctrl.isActive());
+        QVERIFY(mox.isMox());
+
+        ctrl.setActive(false);
+        QVERIFY(ctrl.isDeactivationInFlight());
+        QVERIFY(!mox.isMox());
+        tc.calls.clear();
+
+        ctrl.setActive(true);
+        QVERIFY(!ctrl.isDeactivationInFlight());
+        // Keyed again at once, as the live test, not a fresh start.
+        QVERIFY(!ctrl.isActivationInFlight());
+        QVERIFY(mox.isMox());
+        for (int i = 0; i < 10; ++i) {
+            QCoreApplication::processEvents();
+        }
+
+        QVERIFY(ctrl.isActive());
+        QVERIFY(!ctrl.isActivationInFlight());
+        QVERIFY(mox.isMox());
+        QVERIFY(mox.isManualKey());
+        QVERIFY(tx.isTwoToneActive());
+        // Running, never stopped: one on, and no off from the old stop.
+        QCOMPARE(activeSpy.count(), 1);
+        QCOMPARE(activeSpy[0][0].toBool(), true);
+        for (const auto& c : tc.calls) {
+            if (c.method == QStringLiteral("setTxPostGenRun")) {
+                QVERIFY(c.arg1 > 0.5);
+            }
+        }
+    }
+
+    // The adopted test keeps the two-tone power without saving it again,
+    // so the next stop still restores the operator's power. Thetis takes
+    // the two-tone power as the operator's here (setup.cs:11151
+    // [v2.10.3.15]).
+    void setActive_startDuringStopSettle_keepsTheOperatorsPower()
+    {
+        TransmitModel tx;
+        tx.setTwoTonePulsed(false);
+        tx.setTwoToneFreq2Delay(0);
+        tx.setPower(75);
+        tx.setTwoTonePower(40);
+        tx.setTwoToneDrivePowerSource(DrivePowerSource::Fixed);
+
+        RecordingTxChannel tc(kTxChannelId);
+        MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        SliceModel slice;
+
+        TwoToneController ctrl;
+        ctrl.setTransmitModel(&tx);
+        ctrl.setTxChannel(&tc);
+        ctrl.setMoxController(&mox);
+        ctrl.setSliceModel(&slice);
+        ctrl.setSettleDelaysMs(0, 0);
+
+        ctrl.setActive(true);
+        QCoreApplication::processEvents();
+        QCOMPARE(tx.power(), 40);
+
+        ctrl.setActive(false);
+        ctrl.setActive(true);
+        for (int i = 0; i < 10; ++i) {
+            QCoreApplication::processEvents();
+        }
+        QVERIFY(ctrl.isActive());
+        QCOMPARE(tx.power(), 40);
+
+        ctrl.setActive(false);
+        for (int i = 0; i < 10; ++i) {
+            QCoreApplication::processEvents();
+        }
+        QVERIFY(!ctrl.isActive());
+        QCOMPARE(tx.power(), 75);
+    }
 };
 
 QTEST_MAIN(TestTwoToneController)

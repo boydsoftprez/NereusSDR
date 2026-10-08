@@ -45,7 +45,7 @@ private slots:
         controller->setMoxController(nullptr);
     }
 
-    void startDuringStopIsRefusedWithoutReplacingTheStop()
+    void startDuringStopKeepsTheTestRunning()
     {
         AppSettings::instance().clear();
         TxChannel tx(0);
@@ -67,14 +67,26 @@ private slots:
         const Ps3ActionResult stop = facade.executeAction(
             Ps3Action::SetTwoTone, {{"enabled", false}}, 1);
         QCOMPARE(stop.phase, Ps3ActionPhase::Pending);
+        QVERIFY(controller->isDeactivationInFlight());
         const Ps3ActionResult restart = facade.executeAction(
             Ps3Action::SetTwoTone, {{"enabled", true}}, 2);
-        QCOMPARE(restart.phase, Ps3ActionPhase::Failed);
-        QVERIFY(!restart.reason.isEmpty());
-        QTRY_VERIFY(!controller->isActive());
-        QTRY_COMPARE(results.size(), 1);
+        // The start adopts the live test: it replaces the stop's request
+        // and completes at once, keyed again with no fresh activation.
+        QCOMPARE(restart.phase, Ps3ActionPhase::Completed);
+        QCOMPARE(results.size(), 1);
         QCOMPARE(results.first()[0].toUInt(), 1U);
-        QCOMPARE(qvariant_cast<Ps3ActionPhase>(results.first()[1]), Ps3ActionPhase::Completed);
+        QCOMPARE(qvariant_cast<Ps3ActionPhase>(results.first()[1]), Ps3ActionPhase::Failed);
+        QVERIFY(!controller->isDeactivationInFlight());
+        QVERIFY(!controller->isActivationInFlight());
+        QVERIFY(controller->isActive());
+        QVERIFY(mox.isMox());
+        QTest::qWait(300); // past where the adopted stop's settle would have ended
+        QVERIFY(controller->isActive());
+        QVERIFY(mox.isMox());
+        QCOMPARE(results.size(), 1);
+        QVERIFY(facade.twoToneOn());
+        controller->setActive(false);
+        QTRY_VERIFY(!controller->isActive());
         controller->setTxChannel(nullptr);
         controller->setMoxController(nullptr);
     }

@@ -407,8 +407,9 @@ void MoxDisplayController::beginTransmitView(SpectrumWidget* sw)
     // noise floor (~-100 dBm range) and was leaving its RX-tuned thresholds
     // in place during TX, mapping every TX bin (which sits well above the RX
     // threshold band) to the colormap's red end. Clarity's next RX-side emit
-    // re-enables itself via MainWindow's Clarity lambda (MOX-gated to ignore
-    // TX emissions).
+    // re-enables itself via PanClarityRegistry (MOX-gated to ignore TX
+    // emissions); ClarityController::setTransmitting(false) makes that emit
+    // unconditional.
     sw->setClarityActive(false);
     note(QStringLiteral("setClarityActive(false)"));
 

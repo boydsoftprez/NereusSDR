@@ -164,6 +164,53 @@ private slots:
         QCOMPARE(spy.count(), 1);
     }
 
+    void transmitRelease_reEmitsAtTheUnchangedFloor()
+    {
+        // Bench 2026-10-06: Clarity emitted before the key, then the floor
+        // came back to the same value after un-key, so the deadband
+        // swallowed the first post-key tick. The pan's clarityActive is set
+        // again only by this signal, so the waterfall stayed on the persisted
+        // sliders until Re-tune or a band change. The un-key re-anchors.
+        ClarityController ctrl;
+        ctrl.setEnabled(true);
+        QSignalSpy spy(&ctrl, &ClarityController::waterfallThresholdsChanged);
+
+        QVector<float> bins(2048, -130.0f);
+        ctrl.feedBins(bins, 0);
+        QCOMPARE(spy.count(), 1);
+        const float lowBefore = ctrl.lastLow();
+        const float highBefore = ctrl.lastHigh();
+
+        ctrl.setTransmitting(true);
+        ctrl.feedBins(bins, 500);      // rejected while keyed
+        ctrl.feedBins(bins, 2500);
+        QCOMPARE(spy.count(), 1);
+        ctrl.setTransmitting(false);
+
+        ctrl.feedBins(bins, 3000);     // same floor, and it must emit
+        QCOMPARE(spy.count(), 2);
+        QCOMPARE(spy.at(1).at(0).toFloat(), lowBefore);
+        QCOMPARE(spy.at(1).at(1).toFloat(), highBefore);
+    }
+
+    void transmitRelease_takesTheFirstPostKeyFloorWhole()
+    {
+        // The first sample after un-key is taken verbatim, as after
+        // retuneNow() or an off→on cycle, instead of being lerped from the
+        // pre-key floor over a dt as long as the key-down (alpha only ~0.5
+        // for a 2 s two-tone at the default 3 s tau).
+        ClarityController ctrl;
+        ctrl.setEnabled(true);
+        ctrl.setSmoothingTauSec(3.0f);
+        ctrl.feedBins(QVector<float>(2048, -130.0f), 0);
+        QCOMPARE(ctrl.smoothedFloor(), -130.0f);
+
+        ctrl.setTransmitting(true);
+        ctrl.setTransmitting(false);
+        ctrl.feedBins(QVector<float>(2048, -110.0f), 2000);
+        QCOMPARE(ctrl.smoothedFloor(), -110.0f);
+    }
+
     void manualOverride_suppressesUntilRetune()
     {
         // User dragged the Low/High slider while Clarity was running.
