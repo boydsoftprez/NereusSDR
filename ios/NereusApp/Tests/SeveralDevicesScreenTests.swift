@@ -661,7 +661,9 @@ struct SeveralDevicesScreenTests {
         #expect(await settle(seconds: 30) { slices.entries.first { $0.id == 1 }?.control == .here })
         let b = try #require(slices.entries.first { $0.id == 1 })
         #expect(b.slice.frequencyHz == 7_249_000 && b.mode == 0)
-        #expect(slices.takenHere == [1])
+        // The accepted take is recorded by the take's own task, which can
+        // run after the mirror shows control here.
+        #expect(await settle(seconds: 30) { slices.takenHere == [1] })
         #expect(slices.refusal == nil)
         #expect(slices.entries.first { $0.id == 0 }?.slice.txSlice == true)
         #expect(invokes(station, BandSlicesModel.setTxSliceVerb).isEmpty)
@@ -865,7 +867,9 @@ struct SeveralDevicesScreenTests {
                          values: [.init(name: "controlRevision", value: .i64(14))])
         await station.deliver(Self.controller(1, Self.phoneId, revision: 14))
         #expect(await settle(seconds: 30) { slices.entries.first { $0.id == 1 }?.control == .here })
-        #expect(slices.refusal == nil && slices.takenHere == [1])
+        // The accepted take is recorded by the take's own task, which can
+        // run after the mirror shows control here.
+        #expect(await settle(seconds: 30) { slices.refusal == nil && slices.takenHere == [1] })
         await model.disconnect()
     }
 
