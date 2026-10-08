@@ -191,6 +191,40 @@ Pure logic, no I/O. Starts the Longpath provenance file.
   a window's session ending ends its hold.
 - `hamlibModel` is sent to the controller as 0 unless the driver is 4.
 
+## Task 4c: The rotor on a desktop that runs its own radio
+
+JJ, 2026-10-08: a desktop running a radio itself (no separate Core) controls a rotor too.
+Today only `RadioModel::enableStationAccessoryIdentity()` makes the `StationRotorController`,
+and only `nereusd` calls it (`src/core/daemon/DaemonApp.cpp:329`).
+
+**Files:**
+- Modify: `src/models/RadioModel.{h,cpp}`: move the rotor part of
+  `enableStationAccessoryIdentity()` (the cty.dat load, the controller, its callsign locator,
+  `start()`, `RotorModel::bindController`) into its own `enableStationRotor()`, which
+  `enableStationAccessoryIdentity()` calls. Idempotent; Local role only.
+- Modify: the desktop start-up that makes the local `RadioModel` (find where the GUI process
+  builds it, beside `DesktopStationController` / `GuiDesktopStationRuntime`), so a desktop in
+  the Local role calls `enableStationRotor()` once. The TGXL, PGXL and RF-Kit station
+  controllers are not made on the desktop; only the rotor.
+- Modify: if the same process's `RadioModel` leaves the Local role (a window connecting to a
+  remote Core), the local controller stops and closes its serial port or rotctld socket, and
+  `RotorModel` then follows the Core's object as Task 4b built it; returning to Local starts it
+  again from the saved `Rotor/*` settings. Read how the role switch works before choosing how.
+- Modify: `StationServer::remoteRotorControlVersion()`'s comment (a desktop-hosted Core now
+  also owns one); the contract `docs/architecture/2026-10-07-remote-rotor-control-v1.md` where
+  it says which Cores own a rotor.
+- Test: extend `tst_station_rotor_link` or add `tst_desktop_rotor`: a Local desktop
+  `RadioModel` without `enableStationAccessoryIdentity()` has a controller after
+  `enableStationRotor()`, and a `StationServer` on it reports `remoteRotorControlVersion` 1
+  and lists the rotor tool `offered:true` once a rotor is configured; calling it twice makes
+  one controller; a Remote-role model never makes one.
+
+**Acceptance:**
+- A desktop running its own radio, with a rotor set up, can turn it from its own windows and
+  from a phone it hosts, with no `nereusd`.
+- `nereusd` behaves exactly as before (same single controller, same start order).
+- One process never opens the rotor port twice; a window on a remote Core never holds the port.
+
 ## Task 5: Drag to turn on the compass (`RotatorItem`)
 
 **Files:**
