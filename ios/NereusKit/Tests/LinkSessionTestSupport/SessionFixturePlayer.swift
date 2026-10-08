@@ -117,6 +117,12 @@ public struct SessionFixturePlayer {
         var lastEndCode: String?
 
         for (index, step) in fixture.steps.enumerated() {
+            // The scripted transport and the manual clock answer at once, so
+            // a step's awaits never suspend. Without this a run of every
+            // fixture holds its cooperative thread for the whole run (40 s
+            // and more on a 3-core CI runner), and tests that wait in real
+            // time for another task get no thread until it ends.
+            await Task.yield()
             let label = "\(fixture.id) step \(index)"
             let fail = { (text: String) in failures.append("step \(index): \(text)") }
             let allowed: Set<String> = ["from", "role", "message", "advanceMs", "expectClosed", "client", "to",
