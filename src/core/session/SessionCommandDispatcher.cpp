@@ -529,7 +529,7 @@ QString rotorUnreadableReason()
 // with driver 4, or an offset that is NaN or infinite.
 QString rotorSetupInvalidReason()
 {
-    return QStringLiteral("That rotor setup is not valid.");
+    return StationRotorController::setupInvalidReason();
 }
 
 // A Core without a rotor controller (the server refuses these verbs first;
@@ -3858,20 +3858,15 @@ void SessionCommandDispatcher::handleConfigureRotor(const SessionMessage& invoke
         return;
     }
     // The wire's values against the contract's tables before anything
-    // reaches the controller (contract, "Refusals").
-    if (anyIs(ArgumentStatus::NotRepresentable)
-        || driver < static_cast<int>(RotorDriver::None)
-        || driver > static_cast<int>(RotorDriver::RotctldStarted)
-        || axes < static_cast<int>(RotorAxes::Azimuth)
-        || axes > static_cast<int>(RotorAxes::AzimuthElevation)
-        || endStop < static_cast<int>(RotorRoute::EndStop::None)
-        || endStop > static_cast<int>(RotorRoute::EndStop::South)
-        || port < 1 || port > 65535
-        || baud <= 0
-        || (static_cast<double>(rangeDeg) != RotorRoute::kFullTurnDeg
-            && static_cast<double>(rangeDeg) != RotorRoute::kOverlapRangeDeg)
-        || (driver == static_cast<int>(RotorDriver::RotctldStarted) && hamlibModel <= 0)
-        || !std::isfinite(offsetDeg)) {
+    // reaches the controller (contract, "Refusals"): an integer that does
+    // not fit an int here, the rest in the one check RadioModel shares.
+    const std::optional<RotorConfig> config =
+        anyIs(ArgumentStatus::NotRepresentable)
+            ? std::nullopt
+            : StationRotorController::configFromSetup(driver, serialPort, baud, host, port,
+                                                      hamlibModel, axes, endStop, rangeDeg,
+                                                      offsetDeg);
+    if (!config) {
         emitResult(invoke.commandVerb, invoke.commandId, false, rotorSetupInvalidReason(), {});
         return;
     }
@@ -3880,20 +3875,8 @@ void SessionCommandDispatcher::handleConfigureRotor(const SessionMessage& invoke
         emitResult(invoke.commandVerb, invoke.commandId, false, rotorUnavailableReason(), {});
         return;
     }
-    RotorConfig config;
-    config.driver = static_cast<RotorDriver>(driver);
-    config.serialPort = serialPort;
-    config.baud = baud;
-    config.host = host;
-    config.port = static_cast<quint16>(port);
-    // The contract: Hamlib's model belongs to driver 4 only.
-    config.hamlibModel = config.driver == RotorDriver::RotctldStarted ? hamlibModel : 0;
-    config.axes = static_cast<RotorAxes>(axes);
-    config.endStop = static_cast<RotorRoute::EndStop>(endStop);
-    config.rangeDeg = static_cast<double>(rangeDeg);
-    config.offsetDeg = offsetDeg;
     QString reason;
-    const bool accepted = rotor->configureRotor(config, &reason);
+    const bool accepted = rotor->configureRotor(*config, &reason);
     emitResult(invoke.commandVerb, invoke.commandId, accepted, accepted ? QString() : reason, {});
 }
 

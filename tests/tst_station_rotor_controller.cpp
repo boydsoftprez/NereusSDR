@@ -538,6 +538,45 @@ private slots:
 
     // ── Stop ────────────────────────────────────────────────────────
 
+    // Final review M11: the one setup check RadioModel and the dispatcher
+    // share, against the contract's tables.
+    void theSetupCheckKeepsToTheTables()
+    {
+        const QString port = QStringLiteral("COM3");
+        const QString host = QStringLiteral("127.0.0.1");
+        const auto check = [&](int driver, int baud, int tcpPort, int model, int axes,
+                               int endStop, int range, double offset) {
+            return StationRotorController::configFromSetup(driver, port, baud, host, tcpPort,
+                                                           model, axes, endStop, range, offset);
+        };
+        const std::optional<RotorConfig> good = check(2, 9600, 4533, 603, 1, 2, 450, 3.0);
+        QVERIFY(good);
+        QCOMPARE(good->driver, RotorDriver::Gs232b);
+        QCOMPARE(good->serialPort, port);
+        QCOMPARE(good->baud, 9600);
+        QCOMPARE(good->host, host);
+        QCOMPARE(good->port, quint16(4533));
+        QCOMPARE(good->hamlibModel, 0);   // Hamlib's model is driver 4's alone.
+        QCOMPARE(good->axes, RotorAxes::AzimuthElevation);
+        QCOMPARE(good->endStop, EndStop::South);
+        QCOMPARE(good->rangeDeg, 450.0);
+        QCOMPARE(good->offsetDeg, 3.0);
+        QCOMPARE(check(4, 9600, 4533, 603, 0, 0, 360, 0.0)->hamlibModel, 603);
+
+        QVERIFY(!check(-1, 9600, 4533, 0, 0, 0, 360, 0.0));    // driver
+        QVERIFY(!check(5, 9600, 4533, 0, 0, 0, 360, 0.0));
+        QVERIFY(!check(2, 0, 4533, 0, 0, 0, 360, 0.0));        // baud
+        QVERIFY(!check(2, 9600, 0, 0, 0, 0, 360, 0.0));        // port
+        QVERIFY(!check(2, 9600, 65536, 0, 0, 0, 360, 0.0));
+        QVERIFY(!check(4, 9600, 4533, 0, 0, 0, 360, 0.0));     // driver 4 needs a model
+        QVERIFY(!check(2, 9600, 4533, 0, 2, 0, 360, 0.0));     // axes
+        QVERIFY(!check(2, 9600, 4533, 0, 0, 3, 360, 0.0));     // end stop
+        QVERIFY(!check(2, 9600, 4533, 0, 0, 0, 400, 0.0));     // range
+        QVERIFY(!check(2, 9600, 4533, 0, 0, 0, 360, std::numeric_limits<double>::quiet_NaN()));
+        QCOMPARE(StationRotorController::setupInvalidReason(),
+                 QStringLiteral("That rotor setup is not valid."));
+    }
+
     void stopJumpsTheQueue()
     {
         connectAt("090");

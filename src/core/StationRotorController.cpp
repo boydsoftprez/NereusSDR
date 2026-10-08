@@ -13,8 +13,10 @@
 //               adapters first and leaves out console ports. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08: Final review fixes: a reversed hold stops before the new
-//               direction; the host scan runs on a worker thread. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
-//               Claude Code.
+//               direction; the host scan runs on a worker thread; one
+//               setup check for RadioModel and the dispatcher
+//               (configFromSetup). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/StationRotorController.h"
@@ -166,6 +168,49 @@ QString StationRotorController::rotctldMissingReason()
 QString StationRotorController::unknownSerialPortReason()
 {
     return QStringLiteral("That serial port is not on the Core's computer.");
+}
+
+// A configureRotor of the right kinds whose values cannot be used
+// (contract, "Refusals"): a driver, axes or end stop outside its table, a
+// port outside 1 to 65535, a baud of 0 or below, a range other than 360
+// or 450, a Hamlib model of 0 or below with driver 4, or an offset that is
+// NaN or infinite.
+QString StationRotorController::setupInvalidReason()
+{
+    return QStringLiteral("That rotor setup is not valid.");
+}
+
+std::optional<RotorConfig> StationRotorController::configFromSetup(
+    int driver, const QString& serialPort, int baud, const QString& host, int port,
+    int hamlibModel, int axes, int endStop, int rangeDeg, double offsetDeg)
+{
+    if (driver < static_cast<int>(RotorDriver::None)
+        || driver > static_cast<int>(RotorDriver::RotctldStarted)
+        || axes < static_cast<int>(RotorAxes::Azimuth)
+        || axes > static_cast<int>(RotorAxes::AzimuthElevation)
+        || endStop < static_cast<int>(RotorRoute::EndStop::None)
+        || endStop > static_cast<int>(RotorRoute::EndStop::South)
+        || port < 1 || port > 65535
+        || baud <= 0
+        || (static_cast<double>(rangeDeg) != RotorRoute::kFullTurnDeg
+            && static_cast<double>(rangeDeg) != RotorRoute::kOverlapRangeDeg)
+        || (driver == static_cast<int>(RotorDriver::RotctldStarted) && hamlibModel <= 0)
+        || !std::isfinite(offsetDeg)) {
+        return std::nullopt;
+    }
+    RotorConfig config;
+    config.driver = static_cast<RotorDriver>(driver);
+    config.serialPort = serialPort;
+    config.baud = baud;
+    config.host = host;
+    config.port = static_cast<quint16>(port);
+    // The contract: Hamlib's model belongs to driver 4 only.
+    config.hamlibModel = config.driver == RotorDriver::RotctldStarted ? hamlibModel : 0;
+    config.axes = static_cast<RotorAxes>(axes);
+    config.endStop = static_cast<RotorRoute::EndStop>(endStop);
+    config.rangeDeg = static_cast<double>(rangeDeg);
+    config.offsetDeg = offsetDeg;
+    return config;
 }
 
 // ── Life ─────────────────────────────────────────────────────────────

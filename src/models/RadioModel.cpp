@@ -6054,39 +6054,17 @@ bool RadioModel::requestConfigureRotor(const Setup& setup, QString* reason)
 {
     m_lastRotorCommandId = 0;
     if (m_stationRotor) {
-        // The contract's tables, checked as the Core checks a remote
+        // The contract's tables, the same check the Core makes on a remote
         // window's configureRotor before anything reaches the controller
         // (remote rotor control v1, "Refusals").
-        if (setup.driver < static_cast<int>(RotorDriver::None)
-            || setup.driver > static_cast<int>(RotorDriver::RotctldStarted)
-            || setup.axes < static_cast<int>(RotorAxes::Azimuth)
-            || setup.axes > static_cast<int>(RotorAxes::AzimuthElevation)
-            || setup.endStop < static_cast<int>(RotorRoute::EndStop::None)
-            || setup.endStop > static_cast<int>(RotorRoute::EndStop::South)
-            || setup.port < 1 || setup.port > 65535
-            || setup.baud <= 0
-            || (static_cast<double>(setup.rangeDeg) != RotorRoute::kFullTurnDeg
-                && static_cast<double>(setup.rangeDeg) != RotorRoute::kOverlapRangeDeg)
-            || (setup.driver == static_cast<int>(RotorDriver::RotctldStarted)
-                && setup.hamlibModel <= 0)
-            || !std::isfinite(setup.offsetDeg)) {
-            if (reason) { *reason = QStringLiteral("That rotor setup is not valid."); }
+        const std::optional<RotorConfig> config = StationRotorController::configFromSetup(
+            setup.driver, setup.serialPort, setup.baud, setup.host, setup.port,
+            setup.hamlibModel, setup.axes, setup.endStop, setup.rangeDeg, setup.offsetDeg);
+        if (!config) {
+            if (reason) { *reason = StationRotorController::setupInvalidReason(); }
             return false;
         }
-        RotorConfig config;
-        config.driver = static_cast<RotorDriver>(setup.driver);
-        config.serialPort = setup.serialPort;
-        config.baud = setup.baud;
-        config.host = setup.host;
-        config.port = static_cast<quint16>(setup.port);
-        // The contract: Hamlib's model belongs to driver 4 only.
-        config.hamlibModel =
-            config.driver == RotorDriver::RotctldStarted ? setup.hamlibModel : 0;
-        config.axes = static_cast<RotorAxes>(setup.axes);
-        config.endStop = static_cast<RotorRoute::EndStop>(setup.endStop);
-        config.rangeDeg = static_cast<double>(setup.rangeDeg);
-        config.offsetDeg = setup.offsetDeg;
-        return m_stationRotor->configureRotor(config, reason);
+        return m_stationRotor->configureRotor(*config, reason);
     }
     if (m_station) {
         const IStationLink::CommandOutcome sent = m_station->requestConfigureRotor(

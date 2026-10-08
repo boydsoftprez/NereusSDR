@@ -1511,7 +1511,7 @@ const QList<ReasonSource>& reasonSources()
           QStringLiteral("notANumberReason"), QStringLiteral("outOfRangeReason"),
           QStringLiteral("noGridReason"), QStringLiteral("callNotPlacedReason"),
           QStringLiteral("rotctldMissingReason"), QStringLiteral("unknownSerialPortReason"),
-          QStringLiteral("turnable"), QStringLiteral("acceptTarget"),
+          QStringLiteral("setupInvalidReason"), QStringLiteral("turnable"), QStringLiteral("acceptTarget"),
           QStringLiteral("setRotorTarget"), QStringLiteral("turnRotorToCall"),
           QStringLiteral("stopRotor"), QStringLiteral("nudgeRotor"),
           QStringLiteral("configureRotor"), QStringLiteral("setRotorPresets")},
@@ -1544,15 +1544,17 @@ const QList<ReasonSource>& reasonSources()
         {"src/core/session/IStationLink.h", {QStringLiteral("rotorUnavailableReason")}, {}, 1},
         // Remote rotor control: a window's rotor commands. They pass on the
         // controller's refusal (scanned above) or the Core's command.result
-        // through the link, or IStationLink's words; the setup check has
-        // the dispatcher's own sentence.
+        // through the link, or IStationLink's words; the setup check is
+        // the controller's, shared with the dispatcher (final review M11),
+        // and its sentence is scanned with the controller above.
         {"src/models/RadioModel.cpp",
          {QStringLiteral("requestRotorTarget"), QStringLiteral("requestStopRotor"),
           QStringLiteral("rotorControlAvailable"), QStringLiteral("requestTurnRotorToCall"),
           QStringLiteral("requestNudgeRotor"), QStringLiteral("requestConfigureRotor"),
           QStringLiteral("requestRotorPresets")},
          {}, 1, {},
-         {QStringLiteral("sent.reason"), QStringLiteral("IStationLink::rotorUnavailableReason()")}},
+         {QStringLiteral("sent.reason"), QStringLiteral("IStationLink::rotorUnavailableReason()"),
+          QStringLiteral("StationRotorController::setupInvalidReason()")}},
         // Parity Task 19 (R-IOS-25): the spots.* refusals and the
         // `spotSources` object's read-only reason.
         // Parity Task 21 (R-IOS-18): the station radio verbs' refusals and

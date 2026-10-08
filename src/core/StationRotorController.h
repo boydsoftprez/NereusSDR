@@ -21,6 +21,9 @@
 // Modification history (NereusSDR):
 //   2026-10-08: Created by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code. Rotor control plan, Task 3c.
+//   2026-10-08: Final review fixes: one setup check for RadioModel and
+//               the dispatcher (configFromSetup). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -37,6 +40,7 @@
 #include <QTimer>
 
 #include <functional>
+#include <optional>
 #include <optional>
 
 namespace NereusSDR {
@@ -73,6 +77,17 @@ public:
     static QString callNotPlacedReason();
     static QString rotctldMissingReason();
     static QString unknownSerialPortReason();
+    static QString setupInvalidReason();
+
+    // A setup as a window gives it (the configureRotor arguments, the
+    // GUI's RotorCommandSink::Setup), checked against the contract's
+    // tables; std::nullopt when a value is outside them (the refusal is
+    // setupInvalidReason). The one check for RadioModel and the
+    // dispatcher. Hamlib's model is kept for driver 4 only.
+    static std::optional<RotorConfig> configFromSetup(int driver, const QString& serialPort,
+                                                      int baud, const QString& host, int port,
+                                                      int hamlibModel, int axes, int endStop,
+                                                      int rangeDeg, double offsetDeg);
 
     // A callsign's position from the Core's cty.dat, or std::nullopt.
     using CallsignLocator = std::function<std::optional<GeoPosition>(const QString&)>;
