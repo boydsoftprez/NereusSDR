@@ -19,6 +19,9 @@
 // Modification history (NereusSDR):
 //   2026-10-08  J.J. Boyd / KG4VCF  Created (rotor control plan, Task 7).
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Bench fix: the page scrolls, so the
+//                                    Settings window no longer squeezes its
+//                                    rows. AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "RotorSetupPage.h"
@@ -40,6 +43,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QTableWidget>
@@ -93,7 +97,24 @@ RotorSetupPage::RotorSetupPage(RadioModel* model, QWidget* parent)
     , m_commands(model)
     , m_rotor(model ? model->rotorModel() : nullptr)
 {
-    auto* root = new QVBoxLayout(this);
+    // Bench fix: the page is taller than the Settings window, which gives a
+    // page only its own height. Without a scroll area the window squeezed
+    // every row (fields a few pixels tall, help text cut off); in one, each
+    // row keeps its natural height and long help text wraps in full.
+    auto* outer = new QVBoxLayout(this);
+    outer->setContentsMargins(0, 0, 0, 0);
+    auto* scroll = new QScrollArea(this);
+    scroll->setObjectName(QStringLiteral("rotorSetupScroll"));
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setStyleSheet(QStringLiteral("QScrollArea { background: transparent; border: none; }"));
+    scroll->viewport()->setAutoFillBackground(false);
+    auto* content = new QWidget(scroll);
+    content->setAutoFillBackground(false);
+    scroll->setWidget(content);
+    outer->addWidget(scroll);
+
+    auto* root = new QVBoxLayout(content);
     root->setContentsMargins(8, 8, 8, 8);
     root->setSpacing(10);
 

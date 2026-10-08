@@ -27,11 +27,13 @@
 #include <QPushButton>
 #include <QSpinBox>
 #include <QTableWidget>
+#include <QAbstractSpinBox>
 
 #include "core/AppSettings.h"
 #include "core/RotorConnection.h"
 #include "core/StationRotorController.h"
 #include "core/session/IStationLink.h"
+#include "gui/SetupDialog.h"
 #include "gui/setup/RotorSetupPage.h"
 #include "models/RadioModel.h"
 #include "models/RotorModel.h"
@@ -412,6 +414,54 @@ private slots:
         QCOMPARE(controller->config().driver, RotorDriver::None);
         QCOMPARE(page.statusTextForTesting(), QStringLiteral("No rotor is set up."));
         verifyPlain(page);
+    }
+
+    // Bench fix: in the Settings window at the size JJ uses, every field
+    // row has its natural height and every help label shows all its lines
+    // (the page scrolls; nothing is squeezed).
+    void pageLaysOutAtItsNaturalHeightInTheSettingsWindow()
+    {
+        RadioModel model;
+        SetupDialog dialog(&model);
+        dialog.resize(1180, 880);
+        dialog.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+        dialog.selectPage(QStringLiteral("Rotor"));
+        auto* page = dialog.findChild<RotorSetupPage*>();
+        QVERIFY(page != nullptr);
+        QCoreApplication::processEvents();
+
+        int fields = 0;
+        for (QWidget* w : page->findChildren<QWidget*>()) {
+            const bool field = qobject_cast<QComboBox*>(w) != nullptr
+                || qobject_cast<QAbstractSpinBox*>(w) != nullptr
+                || qobject_cast<QLineEdit*>(w) != nullptr;
+            if (!field || w->isHidden() || qobject_cast<QAbstractSpinBox*>(w->parentWidget())
+                || qobject_cast<QComboBox*>(w->parentWidget())) {
+                continue;
+            }
+            ++fields;
+            QVERIFY2(w->height() >= w->minimumSizeHint().height(),
+                     qPrintable(QStringLiteral("%1 is %2 px tall, needs %3")
+                                    .arg(w->objectName())
+                                    .arg(w->height())
+                                    .arg(w->minimumSizeHint().height())));
+        }
+        QVERIFY(fields >= 11);
+
+        int notes = 0;
+        for (QLabel* label : page->findChildren<QLabel*>()) {
+            if (label->isHidden() || !label->wordWrap() || label->text().isEmpty()) {
+                continue;
+            }
+            ++notes;
+            QVERIFY2(label->height() >= label->heightForWidth(label->width()),
+                     qPrintable(QStringLiteral("\"%1\" is %2 px tall, needs %3")
+                                    .arg(label->text().left(40))
+                                    .arg(label->height())
+                                    .arg(label->heightForWidth(label->width()))));
+        }
+        QVERIFY(notes >= 3);
     }
 
     void localSetupOutsideTheTablesIsRefused()
