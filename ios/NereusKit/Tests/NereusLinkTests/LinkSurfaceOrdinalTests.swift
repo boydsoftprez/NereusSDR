@@ -17,13 +17,14 @@ import Testing
 
     @Test func newestCapabilitiesSitWhereTheSurfacePinsThem() throws {
         let capabilities = try #require(try Self.surface()["capabilities"] as? [[String: Any]])
-        #expect(capabilities.count == 109)
+        #expect(capabilities.count == 110)
         #expect(capabilities[69]["value"] == nil, "The loopback capture cannot advertise a live TX watch value")
         // The merged b44d638 surface inserts diversityControlVersion after
         // diversityPatternVersion. Capture b20ad1186 also includes the existing
         // optional txWatchPathVersion after remoteTxVersion, shifting later indices.
         // Radio Mic 2 changes its value, without moving any other entry.
-        // Station CAT setup inserts stationCatVersion before coreBuildInfo,
+        // Station CAT setup inserts stationCatVersion and the radio speaker
+        // inserts radioSpeakerVersion before coreBuildInfo,
         // which stays last.
         let expected: [(index: Int, name: String, kind: String)] = [
             (69, "txWatchPathVersion", "i64"),
@@ -50,7 +51,7 @@ import Testing
         #expect((capabilities[89]["value"] as? NSNumber)?.intValue == 1)
         #expect((capabilities[104]["value"] as? NSNumber)?.intValue == 2)
         #expect((capabilities[107]["value"] as? NSNumber)?.intValue == 1)
-        #expect(Set(capabilities.compactMap { $0["name"] as? String }).count == 109)
+        #expect(Set(capabilities.compactMap { $0["name"] as? String }).count == 110)
         for entry in expected {
             try #require(capabilities.count > entry.index)
             #expect(capabilities[entry.index]["name"] as? String == entry.name, "\(entry.name)")
