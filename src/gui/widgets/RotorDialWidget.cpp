@@ -365,6 +365,7 @@ RotorDialWidget::State RotorDialWidget::state() const
         && std::abs(RotorRoute::planFree(m_actual, aimed).travelDeg) <= kArrivalToleranceDeg) {
         return State::OnTarget;
     }
+    // the mover owns this [original inline comment from RotorDialWidget.cpp:334]
     return m_moving ? State::Turning : State::Targeted;
 }
 
