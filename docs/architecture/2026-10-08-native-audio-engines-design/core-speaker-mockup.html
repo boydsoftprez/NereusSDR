@@ -1,0 +1,393 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Core Speaker Setup</title>
+<style>
+:root{--page:#05050c;--dlg:#0f0f1a;--tree:#131326;--border:#203040;--field:#152535;--accent:#00b4d8;--amber:#e0a030;--groove:#1a2a3a;--txt:#c8d8e8;--dim:#8aa8c0;--note:#8aa8c0;--off:#506070;--ok:#3d8;--bad:#e04848}
+*{box-sizing:border-box}
+body{background:var(--page);color:var(--txt);font:12px -apple-system,system-ui,"Segoe UI",sans-serif;margin:0;padding:16px}
+.demo{background:#14141f;border:1px dashed #3a3a55;border-radius:6px;padding:8px 10px;margin-bottom:10px;display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;color:#aab;max-width:1010px}
+.demo b{color:#dde;font-weight:600}
+.demo select{background:#1c1c2c;color:#dde;border:1px solid #3a3a55;border-radius:3px;padding:2px 4px;font-size:12px}
+.demo label{display:inline-flex;gap:5px;align-items:center}
+.demo label.dis{opacity:.4}
+.try{color:#99a;font-size:11px;width:100%;line-height:1.45}
+.win{max-width:1010px;border:1px solid var(--border);border-radius:6px;overflow:hidden;position:relative}
+.wtitle{height:28px;background:#1b1b28;display:flex;align-items:center;justify-content:center;color:#aab;font-size:12px;border-bottom:1px solid #000;position:relative}
+.wtitle i{position:absolute;left:10px;top:9px;width:11px;height:11px;border-radius:6px;background:#ff5f57;box-shadow:17px 0 0 #febc2e,34px 0 0 #28c840}
+.dlg{display:flex;background:var(--dlg);min-height:760px}
+.tree{width:200px;flex:none;background:var(--tree);padding:4px 0;border-right:3px solid #304050}
+.tree div{padding:2px 8px;min-height:19px;line-height:15px;white-space:nowrap;cursor:default}
+.tree .cat::before{content:"\25B8  ";color:var(--dim)}.tree .cat.open::before{content:"\25BE  "}
+.tree .leaf{padding-left:26px;cursor:pointer}.tree .leaf:hover{background:var(--groove)}
+.tree .leaf.sel{background:var(--accent);color:var(--dlg)}
+.pagewrap{flex:1;padding:8px 12px 14px;min-width:0}
+.page{display:none;max-width:750px}.page.on{display:block}
+h2{font-size:15px;margin:2px 0 10px 4px;color:#e0eef8;font-weight:700}
+.sys{display:flex;gap:6px;align-items:center;margin:0 0 4px 2px;color:var(--dim)}
+.sys b{color:var(--txt)}
+.dot{width:8px;height:8px;border-radius:4px;background:var(--ok);flex:none}
+fieldset{border:1px solid var(--border);border-radius:4px;margin:6px 0 10px;padding:6px 8px 8px;min-width:0}
+legend{font-weight:700;color:var(--dim);padding:0 4px;margin-left:6px}
+legend.cy{color:var(--accent)}legend.amb{color:var(--amber)}
+.sect{color:var(--dim);margin:10px 0 3px 2px}
+.bighead{font-weight:700;color:#e0eef8;font-size:13px;margin:10px 0 4px 0}
+.box{border:1px solid var(--border);border-radius:4px;padding:8px 10px;margin-bottom:10px}
+.box.off{color:var(--off)}
+.row{display:flex;align-items:center;gap:8px;margin:7px 0;min-height:22px}
+.row>.k{width:52px;flex:none}
+.drow{display:flex;align-items:center;gap:8px;margin:5px 0 5px 12px;min-height:22px}
+.drow>.k{width:82px;flex:none}
+.vrow{display:flex;align-items:center;gap:6px;margin:4px 0;min-height:18px}
+.vrow>.k{width:48px;flex:none;text-align:right;color:var(--dim);font-size:11px}
+.vrow .v{font-size:11px}.vrow .v.it{font-style:italic;color:var(--dim)}
+.off .k,.k.off{color:var(--off)}
+select{background:var(--field);border:1px solid var(--border);border-radius:3px;color:var(--txt);padding:2px 6px;font-size:12px;height:22px;font-family:inherit}
+select:disabled{color:var(--off)}
+select.dev{width:300px}select.drv{width:230px}select.sm{width:96px}select.md{width:140px}select.full{flex:1}
+.tbox{flex:1;background:var(--field);border:1px solid var(--border);border-radius:3px;padding:3px 6px;height:22px}
+option:disabled{color:#56687a}optgroup{color:var(--dim);font-style:normal;font-weight:600}
+.note{color:var(--note);font-size:11px;line-height:1.4;margin:3px 0}
+.note.amb{color:var(--amber)}.note.off{color:var(--off)}
+.intro{color:#a8b8c8;line-height:1.4;margin:2px 0 4px}
+.ms{color:var(--note);font-size:11px}
+.chk,.rad{display:inline-flex;gap:6px;align-items:center;cursor:pointer}
+.chk input,.rad input{margin:0}
+input[type=checkbox]{-webkit-appearance:none;appearance:none;width:14px;height:14px;border:1px solid #304050;border-radius:3px;background:#1a2a3a;flex:none}
+input[type=checkbox]:checked{background:var(--accent);border-color:var(--accent)}
+input[type=checkbox]:disabled{background:#121a24;border-color:#203040}
+input[type=radio]{-webkit-appearance:none;appearance:none;width:15px;height:15px;border-radius:8px;border:1px solid #304050;background:#1a2a3a;flex:none}
+input[type=radio]:checked{background:var(--accent);border-color:var(--accent);box-shadow:inset 0 0 0 1px #0f0f1a}
+input[type=radio]:disabled{background:#121a24;border-color:#203040}
+input[type=radio]:disabled:checked{background:#405060}
+.dis{color:var(--off)!important;cursor:default}
+input[type=range]{-webkit-appearance:none;appearance:none;height:16px;background:transparent;margin:0;width:160px}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:linear-gradient(var(--c,var(--accent)),var(--c,var(--accent))) 0/var(--p,50%) 100% no-repeat,var(--groove)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:6px;background:var(--c,var(--accent));margin-top:-4px}
+input[type=range].amb{--c:var(--amber)}
+input[type=range].wide{width:580px}
+.val{font-size:11px;background:#0a0a18;border:1px solid #203040;border-radius:3px;padding:2px 3px;color:var(--txt);min-width:26px;text-align:center}
+.ico{width:18px;height:18px}
+.fold{color:var(--dim);font-size:11px;cursor:pointer;margin:8px 0 4px 10px;user-select:none;display:inline-block}
+.fold::before{content:"";display:inline-block;width:0;height:0;border-style:solid;border-width:4px 0 4px 6px;border-color:transparent transparent transparent var(--dim);margin:0 8px 0 2px;vertical-align:0}
+.fold.open::before{border-width:6px 4px 0 4px;border-color:var(--dim) transparent transparent transparent;vertical-align:1px}
+.fold.dis{color:var(--off)}.fold.dis::before{opacity:.5}
+.pill{font-size:10px;border:1px solid #203040;border-radius:9px;padding:2px 8px;color:var(--dim);background:#152530}
+.pill.ok{color:var(--ok);border-color:#2a5a3a}
+button{background:#1a1a26;color:var(--txt);border:1px solid #3a3a48;border-radius:4px;padding:3px 12px;font-size:12px;cursor:pointer;font-family:inherit}
+button:disabled{color:var(--off);border-color:#2a2a36;cursor:default}
+button.pri{background:#00799a;border-color:var(--accent);color:#fff}
+button.small{font-size:11px;padding:2px 9px;background:#152535;border-color:#203040}
+.meter{height:9px;flex:1;background:#0a0a18;border:1px solid #2a3a4a;border-radius:2px;overflow:hidden}
+.meter.thin{height:7px}
+.meter i{display:block;height:100%;width:0;background:linear-gradient(90deg,#2a8,#cc4 75%,#e44);transition:width .08s}
+.sp{flex:1}
+.newtag{font-size:9px;font-weight:700;color:#0f0f1a;background:var(--amber);border-radius:3px;padding:0 4px;margin-left:4px;vertical-align:1px}
+.delay{color:var(--ok);font-weight:600}
+.indent{margin-left:12px}
+.modalbg{position:absolute;inset:28px 0 0 0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center}
+.modalbg.on{display:flex}
+.modal{width:470px;background:#161624;border:1px solid #304050;border-radius:6px;box-shadow:0 12px 40px #000a;padding:16px 18px 14px}
+.modal h3{margin:0 0 8px;font-size:13px;color:#e0eef8}
+.modal p{margin:6px 0;line-height:1.45}
+.modal ul{margin:6px 0 8px;padding-left:18px;line-height:1.6}
+.modal .btns{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+.hide{display:none!important}
+.pop{position:absolute;z-index:50;background:#152535;border:1px solid #203040;border-radius:3px;box-shadow:0 6px 18px #0009;max-height:340px;overflow-y:auto;padding:2px 0;font-size:12px;color:#c8d8e8}
+.pop div{padding:3px 10px 3px 8px;white-space:nowrap;cursor:default}
+.pop .it.ind{padding-left:18px}
+.pop .it.hi{background:#00b4d8;color:#fff}
+.pop .it.dis{color:#506070}
+.pop .grp{color:#8aa8c0;font-weight:700;padding-top:6px}
+select{cursor:default}
+.note.ok{color:var(--ok)}
+.standin{font-size:11px;color:#c8c8d8;font-style:italic;margin:0 0 6px;max-width:340px}
+.drvwin{width:340px;background:#f0f0f0;color:#111;border:1px solid #888;box-shadow:0 12px 40px #000a;font-family:"Segoe UI",system-ui,sans-serif;font-size:12px}
+.drvwin .dwt{background:#fff;border-bottom:1px solid #ccc;padding:6px 10px}
+.drvwin .dwb{padding:10px 14px 12px}
+.drvwin .dwr{display:flex;align-items:center;gap:8px;margin:7px 0}
+.drvwin .dwr span{width:100px}
+.drvwin select{background:#fff;color:#111;border:1px solid #999;border-radius:2px;width:170px}
+.drvwin .dwbtns{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+.drvwin button{background:#e1e1e1;color:#111;border:1px solid #adadad;border-radius:2px;padding:3px 16px}
+.pop.light{background:#fff;color:#111;border-color:#999}
+.pop.light .it.hi{background:#0078d4;color:#fff}
+.coredot{width:8px;height:8px;border-radius:4px;flex:none;display:inline-block;margin-right:4px;vertical-align:0}
+.coredot.ok{background:var(--ok)}.coredot.off{background:#506070}
+.where{color:var(--dim);font-size:11px;margin:12px 0 2px 4px;letter-spacing:.03em}
+.local-note{border:1px dashed #3a3a55;border-radius:4px;padding:8px 10px;margin:6px 0 10px;color:#99a;font-size:11px;line-height:1.45}
+.off-all .k,.off-all .row,.off-all .note:not(.reason),.off-all legend,.off-all .fold{color:var(--off)!important}
+.note.reason{color:var(--dim);font-style:italic}
+input[type=range]:disabled{--c:#405060}
+.off-all .val,.off-all .delay{color:var(--off)}
+</style></head><body>
+
+<div class="demo">
+ <b>Mockup controls (not part of the app):</b>
+ <label>This window <select id="win">
+  <option value="remote">Connected to a Core over the network</option>
+  <option value="offline">Not connected to the Core right now</option>
+  <option value="local">Runs the radio itself (no separate Core)</option>
+ </select></label>
+ <label><input type="checkbox" id="jack" checked> Core has a headphone jack</label>
+ <label><input type="checkbox" id="usb" checked> USB speaker plugged into the Core</label>
+ <label><input type="checkbox" id="hdmi"> HDMI screen on the Core</label>
+ <div class="try">Things to try. Pick the USB speaker on the Core speaker card, then untick "USB speaker plugged into the Core": the list and the card change by themselves, and ticking it again brings it back. Untick the jack and the USB speaker to see a Core with no sound card. Switch "This window" to see the card greyed while the Core is unreachable, and gone from a window that runs the radio itself. Device names are examples of what a Raspberry Pi reports; delay numbers are examples, not measurements.</div>
+</div>
+
+<div class="win">
+ <div class="wtitle"><i></i>NereusSDR Settings</div>
+ <div class="dlg">
+  <div class="tree">
+   <div class="cat">General</div><div class="cat">Cores</div><div class="cat">Hardware</div><div class="cat">PA</div>
+   <div class="cat open">Audio</div>
+   <div class="leaf sel">Outputs</div>
+   <div class="leaf">Microphone</div>
+   <div class="leaf">Digital modes</div>
+   <div class="leaf">TX Profile</div>
+   <div class="leaf">Advanced</div>
+   <div class="cat">DSP</div><div class="cat">Display</div><div class="cat">Transmit</div><div class="cat">Appearance</div><div class="cat">CAT &amp; Network</div><div class="cat">Keyboard</div><div class="cat">Test</div><div class="cat">Diagnostics</div>
+  </div>
+  <div class="pagewrap">
+  <div class="page on">
+   <h2>Outputs</h2>
+   <div class="sys"><span class="dot"></span><span><b>Sound system:</b> Core Audio</span></div>
+
+   <fieldset><legend class="cy">This computer</legend>
+    <div class="row"><span class="k">Volume:</span><img class="ico" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnhsaW5rPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5L3hsaW5rIiB2aWV3Qm94PSIwIDAgNjQgNjQiIHdpZHRoPSI2NCIgaGVpZ2h0PSI2NCI+PGRlZnM+PGxpbmVhckdyYWRpZW50IGlkPSJyaW0iIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNmZmZmZmYiLz48c3RvcCBvZmZzZXQ9IjAuMzUiIHN0b3AtY29sb3I9IiNjOWQyZGMiLz48c3RvcCBvZmZzZXQ9IjAuNiIgc3RvcC1jb2xvcj0iIzdkODk5NiIvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iI2U2ZWNmMiIvPjwvbGluZWFyR3JhZGllbnQ+PGxpbmVhckdyYWRpZW50IGlkPSJyaW1JbiIgeDE9IjEiIHkxPSIxIiB4Mj0iMCIgeTI9IjAiPjxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iI2Y0ZjdmYSIvPjxzdG9wIG9mZnNldD0iMC41IiBzdG9wLWNvbG9yPSIjOGE5NmEzIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjM2E0MzRkIi8+PC9saW5lYXJHcmFkaWVudD48cmFkaWFsR3JhZGllbnQgaWQ9ImNvbmUiIGN4PSIwLjU1IiBjeT0iMC41IiByPSIwLjYiIGZ4PSIwLjYyIiBmeT0iMC40MiI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjOWFhNGFlIi8+PHN0b3Agb2Zmc2V0PSIwLjMiIHN0b3AtY29sb3I9IiM0YTUyNWIiLz48c3RvcCBvZmZzZXQ9IjAuNzUiIHN0b3AtY29sb3I9IiMyMjI3MmQiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMxMjE1MTkiLz48L3JhZGlhbEdyYWRpZW50PjxyYWRpYWxHcmFkaWVudCBpZD0iY2FwIiBjeD0iMC41IiBjeT0iMC41IiByPSIwLjUiIGZ4PSIwLjM4IiBmeT0iMC4zMiI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjZmZmZmZmIi8+PHN0b3Agb2Zmc2V0PSIwLjI1IiBzdG9wLWNvbG9yPSIjYzdjZWQ2Ii8+PHN0b3Agb2Zmc2V0PSIwLjciIHN0b3AtY29sb3I9IiM1ZDY2NzAiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMyYTMwMzYiLz48L3JhZGlhbEdyYWRpZW50PjxsaW5lYXJHcmFkaWVudCBpZD0ibWFnIiB4MT0iMCIgeTE9IjAiIHgyPSIwIiB5Mj0iMSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjNmI3NDgwIi8+PHN0b3Agb2Zmc2V0PSIwLjQ1IiBzdG9wLWNvbG9yPSIjZDRkYmUyIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjM2Q0NDRjIi8+PC9saW5lYXJHcmFkaWVudD48bGluZWFyR3JhZGllbnQgaWQ9IndhdmUiIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNiOGYyZmYiLz48c3RvcCBvZmZzZXQ9IjAuNSIgc3RvcC1jb2xvcj0iIzJmYzZlYSIvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzBhN2ZiMCIvPjwvbGluZWFyR3JhZGllbnQ+PC9kZWZzPjxwYXRoIGQ9Ik01IDI1IFE0IDMyIDUgMzkgTDE2IDQxIEwxNiAyMyBaIiBmaWxsPSJ1cmwoI21hZykiLz48ZWxsaXBzZSBjeD0iMTYiIGN5PSIzMiIgcng9IjMuMiIgcnk9IjkiIGZpbGw9IiMyYTMwMzYiLz48ZWxsaXBzZSBjeD0iMjUiIGN5PSIzMiIgcng9IjEzIiByeT0iMjIiIGZpbGw9InVybCgjcmltKSIgdHJhbnNmb3JtPSJyb3RhdGUoLTggMjUgMzIpIi8+PGVsbGlwc2UgY3g9IjI1LjYiIGN5PSIzMiIgcng9IjEwLjgiIHJ5PSIxOS40IiBmaWxsPSJ1cmwoI3JpbUluKSIgdHJhbnNmb3JtPSJyb3RhdGUoLTggMjUgMzIpIi8+PGVsbGlwc2UgY3g9IjI2IiBjeT0iMzIiIHJ4PSI5LjYiIHJ5PSIxNy44IiBmaWxsPSJ1cmwoI2NvbmUpIiB0cmFuc2Zvcm09InJvdGF0ZSgtOCAyNSAzMikiLz48ZWxsaXBzZSBjeD0iMjcuNiIgY3k9IjMxLjQiIHJ4PSIzLjYiIHJ5PSI2LjQiIGZpbGw9InVybCgjY2FwKSIgdHJhbnNmb3JtPSJyb3RhdGUoLTggMjUgMzIpIi8+PHBhdGggZD0iTTE3IDE1IFEyMCAxMCAyNSAxMCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmZmZmIiBzdHJva2Utb3BhY2l0eT0iLjgiIHN0cm9rZS13aWR0aD0iMS40IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48cGF0aCBkPSJNNDMgMjIgUTQ5IDMyIDQzIDQyIiBmaWxsPSJub25lIiBzdHJva2U9IiMwNjNhNTIiIHN0cm9rZS1vcGFjaXR5PSIuNiIgc3Ryb2tlLXdpZHRoPSI0LjgwMDAwMDAwMDAwMDAwMSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PHBhdGggZD0iTTQzIDIyIFE0OSAzMiA0MyA0MiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ1cmwoI3dhdmUpIiBzdHJva2Utd2lkdGg9IjMuMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PHBhdGggZD0iTTQzIDIyIFE0OSAzMiA0MyA0MiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmZmZmIiBzdHJva2Utb3BhY2l0eT0iLjU1IiBzdHJva2Utd2lkdGg9IjAuOTYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoLS41IC0uNikiLz48cGF0aCBkPSJNNDkgMTUgUTU5IDMyIDQ5IDQ5IiBmaWxsPSJub25lIiBzdHJva2U9IiMwNjNhNTIiIHN0cm9rZS1vcGFjaXR5PSIuNiIgc3Ryb2tlLXdpZHRoPSI0LjgwMDAwMDAwMDAwMDAwMSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PHBhdGggZD0iTTQ5IDE1IFE1OSAzMiA0OSA0OSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ1cmwoI3dhdmUpIiBzdHJva2Utd2lkdGg9IjMuMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PHBhdGggZD0iTTQ5IDE1IFE1OSAzMiA0OSA0OSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmZmZmIiBzdHJva2Utb3BhY2l0eT0iLjU1IiBzdHJva2Utd2lkdGg9IjAuOTYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoLS41IC0uNikiLz48L3N2Zz4=" alt=""><input type="range" value="50" style="--p:50%"><span class="val">50</span><label class="chk"><input type="checkbox"> Mute</label></div>
+    <div class="row"><span class="k">Device:</span><select class="dev"><option>(platform default)</option><option>MacBook Pro Speakers</option><option>AirPods Pro</option></select></div>
+    <div class="note">Same control as PC in the header. Headphones below are not affected by it.</div>
+    <div class="fold">Device details</div>
+   </fieldset>
+
+   <fieldset><legend>Headphones</legend>
+    <div class="row" style="margin-top:4px"><label class="chk"><input type="checkbox"> Enabled</label></div>
+    <div class="note">The PC volume does not change the headphones.</div>
+    <div class="row"><span class="k off">Device:</span><select class="dev" disabled><option>(platform default)</option></select></div>
+    <div class="fold dis">Device details</div>
+   </fieldset>
+
+   <div class="local-note hide" id="localNote">This window runs the radio itself, so there is no separate Core: the This computer card above is the speaker the radio's audio plays on. The Core speaker card appears in a window connected to a Core.</div>
+
+   <fieldset id="cardCore"><legend id="coreLegend">Core speaker <span class="newtag">NEW</span></legend>
+    <div class="row" style="margin-top:4px"><span><span class="coredot ok" id="coreDot"></span>A speaker or sound card plugged into <b id="coreName">NereusCore-SkyHQ</b>.</span></div>
+    <div class="row"><span class="k">Volume:</span><span class="ico"></span><input type="range" id="coreVol" value="40" style="--p:40%"><span class="val" id="coreVolV">40</span><label class="chk" id="coreMuteL"><input type="checkbox" id="coreMute"> Mute Core speaker</label></div>
+    <div class="row"><span class="k" id="coreDevK">Device:</span><select class="dev" id="coreDev"></select></div>
+    <div class="note amb indent hide" id="coreGone"></div>
+    <div class="note" id="coreNote">This is the speaker at the Core, for listening where the Core sits. Changes here reach every window and the phone. Each slice's AF level and mute still apply.</div>
+    <div class="note reason hide" id="coreReason">Connect to the Core to change these.</div>
+    <div class="fold" id="coreFold">Device details</div>
+    <div id="coreDet" class="hide"></div>
+   </fieldset>
+
+   <fieldset><legend class="amb">Radio speaker</legend>
+    <div class="row" style="margin-top:4px">Speaker output on the radio at the Core.</div>
+    <div class="row"><span class="k">Volume:</span><img class="ico" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnhsaW5rPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5L3hsaW5rIiB2aWV3Qm94PSIwIDAgNjQgNjQiIHdpZHRoPSI2NCIgaGVpZ2h0PSI2NCI+PGRlZnM+PGxpbmVhckdyYWRpZW50IGlkPSJjYWIiIHgxPSIwIiB5MT0iMCIgeDI9IjAiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNmNmM0NmEiLz48c3RvcCBvZmZzZXQ9IjAuMTIiIHN0b3AtY29sb3I9IiNlMmE0NDAiLz48c3RvcCBvZmZzZXQ9IjAuNiIgc3RvcC1jb2xvcj0iI2I4NzQyYSIvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzdhNDYxOCIvPjwvbGluZWFyR3JhZGllbnQ+PGxpbmVhckdyYWRpZW50IGlkPSJjYWJFZGdlIiB4MT0iMCIgeTE9IjAiIHgyPSIwIiB5Mj0iMSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjZmZmMGM4Ii8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjNWEzMjEwIi8+PC9saW5lYXJHcmFkaWVudD48bGluZWFyR3JhZGllbnQgaWQ9ImRpYWwiIHgxPSIwIiB5MT0iMCIgeDI9IjAiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNmZmY4ZTQiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiNlOGQ2YTgiLz48L2xpbmVhckdyYWRpZW50PjxyYWRpYWxHcmFkaWVudCBpZD0ia25vYiIgY3g9IjAuNSIgY3k9IjAuNSIgcj0iMC41IiBmeD0iMC4zNiIgZnk9IjAuMyI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjZmZmZmZmIi8+PHN0b3Agb2Zmc2V0PSIwLjMiIHN0b3AtY29sb3I9IiNkOGRlZTQiLz48c3RvcCBvZmZzZXQ9IjAuNzUiIHN0b3AtY29sb3I9IiM2ZTc4ODIiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMyZTM0M2EiLz48L3JhZGlhbEdyYWRpZW50PjxsaW5lYXJHcmFkaWVudCBpZD0iYW50IiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMCI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjOGM5NmEwIi8+PHN0b3Agb2Zmc2V0PSIwLjUiIHN0b3AtY29sb3I9IiNmZmZmZmYiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiM4Yzk2YTAiLz48L2xpbmVhckdyYWRpZW50PjxsaW5lYXJHcmFkaWVudCBpZD0iZ3JpbGxlIiB4MT0iMCIgeTE9IjAiIHgyPSIwIiB5Mj0iMSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjM2EyNDEwIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMWUxMjA4Ii8+PC9saW5lYXJHcmFkaWVudD48bGluZWFyR3JhZGllbnQgaWQ9InBhbmVsIiB4MT0iMCIgeTE9IjAiIHgyPSIwIiB5Mj0iMSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjMmMyZTMyIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMTQxNTE4Ii8+PC9saW5lYXJHcmFkaWVudD48L2RlZnM+PHBhdGggZD0iTTE4IDIxIEw0NiA1IiBzdHJva2U9IiM0YTUwNTgiIHN0cm9rZS13aWR0aD0iMi42IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48cGF0aCBkPSJNMTggMjEgTDQ2IDUiIHN0cm9rZT0idXJsKCNhbnQpIiBzdHJva2Utd2lkdGg9IjEuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PGNpcmNsZSBjeD0iNDYuNCIgY3k9IjQuOCIgcj0iMi4yIiBmaWxsPSJ1cmwoI2tub2IpIi8+PHJlY3QgeD0iOSIgeT0iNTIiIHdpZHRoPSI3IiBoZWlnaHQ9IjQiIHJ4PSIxLjUiIGZpbGw9IiMyYTFhMGMiLz48cmVjdCB4PSI0OCIgeT0iNTIiIHdpZHRoPSI3IiBoZWlnaHQ9IjQiIHJ4PSIxLjUiIGZpbGw9IiMyYTFhMGMiLz48cmVjdCB4PSIzIiB5PSIxOSIgd2lkdGg9IjU4IiBoZWlnaHQ9IjM1IiByeD0iNyIgZmlsbD0iIzNhMjAwOCIvPjxyZWN0IHg9IjMiIHk9IjE4IiB3aWR0aD0iNTgiIGhlaWdodD0iMzUiIHJ4PSI3IiBmaWxsPSJ1cmwoI2NhYikiLz48cmVjdCB4PSI1IiB5PSIxOS4yIiB3aWR0aD0iNTQiIGhlaWdodD0iNSIgcng9IjIuNSIgZmlsbD0iI2ZmZmZmZiIgZmlsbC1vcGFjaXR5PSIuMzUiLz48cmVjdCB4PSI4IiB5PSIyNCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjI1IiByeD0iNCIgZmlsbD0idXJsKCNwYW5lbCkiLz48cmVjdCB4PSIxMSIgeT0iMjciIHdpZHRoPSIyOCIgaGVpZ2h0PSI5IiByeD0iMiIgZmlsbD0idXJsKCNkaWFsKSIvPjxwYXRoIGQ9Ik0xMyAzMC41aDI0TTE0IDMzLjV2LTNNMTggMzMuNXYtMk0yMiAzMy41di0zTTI2IDMzLjV2LTJNMzAgMzMuNXYtM00zNCAzMy41di0yIiBzdHJva2U9IiM4YTZhM2EiIHN0cm9rZS13aWR0aD0iLjgiLz48cGF0aCBkPSJNMjQgMjcuNnY4IiBzdHJva2U9IiNlMDIwMjAiIHN0cm9rZS13aWR0aD0iMS4zIi8+PHJlY3QgeD0iMTEuMiIgeT0iMjcuMiIgd2lkdGg9IjI3LjYiIGhlaWdodD0iMi40IiByeD0iMS4yIiBmaWxsPSIjZmZmZmZmIiBmaWxsLW9wYWNpdHk9Ii41NSIvPjxyZWN0IHg9IjExIiB5PSIzOC41IiB3aWR0aD0iMjgiIGhlaWdodD0iOCIgcng9IjIiIGZpbGw9InVybCgjZ3JpbGxlKSIvPjxwYXRoIGQ9Ik0xMi41IDQwLjVoMjVNMTIuNSA0Mi41aDI1TTEyLjUgNDQuNWgyNSIgc3Ryb2tlPSIjYzg5MDQ4IiBzdHJva2Utb3BhY2l0eT0iLjU1IiBzdHJva2Utd2lkdGg9Ii45Ii8+PGNpcmNsZSBjeD0iNDguNSIgY3k9IjM3IiByPSI3LjYiIGZpbGw9IiMxNDE1MTgiLz48Y2lyY2xlIGN4PSI0OC41IiBjeT0iMzYuNSIgcj0iNi44IiBmaWxsPSJ1cmwoI2tub2IpIi8+PHBhdGggZD0iTTQ4LjUgMzF2My42IiBzdHJva2U9IiMyYTJlMzQiIHN0cm9rZS13aWR0aD0iMS40IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48Y2lyY2xlIGN4PSI0NCIgY3k9IjI5IiByPSIxLjQiIGZpbGw9IiNmZmIwMzAiLz48Y2lyY2xlIGN4PSI0NCIgY3k9IjI5IiByPSIuNiIgZmlsbD0iI2ZmZjRjMCIvPjwvc3ZnPg==" alt=""><input type="range" class="amb" value="50" style="--p:50%"><span class="val">50</span><label class="chk"><input type="checkbox"> Mute radio speaker</label></div>
+    <div class="note">This is the speaker at the Core. Changes here reach every window and the phone. Each slice's AF level and mute still apply.</div>
+    <div class="row"><span>Speaker amplifier:</span>
+     <label class="rad"><input type="radio" name="amp" checked> Normal</label>
+     <label class="rad"><input type="radio" name="amp"> Off while transmitting</label>
+     <label class="rad"><input type="radio" name="amp"> Always off</label></div>
+    <div class="note">The radio's built-in amplifier for its speaker jacks. Muting the radio speaker also switches it off. Off while transmitting keeps it on for CW and Tune, so you still hear the sidetone. Switching it can make a pop.</div>
+   </fieldset>
+
+   <button disabled>Rescan devices</button>
+   <div class="note">Core Audio lists update by themselves, so there is nothing to rescan. The Core's list updates by itself too.</div>
+  </div>
+  </div>
+ </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+// What the Core reports, as a Raspberry Pi 4 names its outputs (examples).
+const CORE_DEVS = [
+  {v: "jack", t: "bcm2835 Headphones", on: () => $("jack").checked},
+  {v: "hdmi0", t: "vc4-hdmi-0", on: () => $("hdmi").checked},
+  {v: "usb", t: "USB Audio Device", on: () => $("usb").checked},
+];
+const state = {dev: "usb", buf: 256, delay: "auto", open: false};
+
+function present(v) {
+  if (v === "default") { return CORE_DEVS.some(d => d.on()); }
+  const d = CORE_DEVS.find(x => x.v === v);
+  return !!d && d.on();
+}
+function label(v) {
+  if (v === "default") { return "(the Core's default)"; }
+  const d = CORE_DEVS.find(x => x.v === v);
+  return d ? d.t : "";
+}
+// The Core's default is the first card it finds.
+function coreDefault() { const d = CORE_DEVS.find(x => x.on()); return d ? d.t : ""; }
+function playing() {
+  if (present(state.dev)) { return state.dev === "default" ? coreDefault() : label(state.dev); }
+  return coreDefault();
+}
+
+function fillDev() {
+  const sel = $("coreDev");
+  sel.innerHTML = "";
+  const any = CORE_DEVS.some(d => d.on());
+  if (!any && state.dev === "default") {
+    sel.add(new Option("(no sound card found)", "none"));
+    sel.value = "none";
+    return;
+  }
+  sel.add(new Option("(the Core's default)", "default"));
+  for (const d of CORE_DEVS) { if (d.on()) { sel.add(new Option(d.t, d.v)); } }
+  if (!present(state.dev) && state.dev !== "default") { sel.add(new Option(label(state.dev) + " (not connected)", state.dev)); }
+  sel.value = state.dev;
+}
+
+function details(off) {
+  const D = off ? " disabled" : "";
+  const kc = off ? "k off" : "k";
+  const live = !off && CORE_DEVS.some(d => d.on());
+  const bufs = [64, 128, 256, 512, 1024];
+  const delays = ["auto", "5", "10", "20", "40"].map(v => `<option value="${v}"${state.delay === v ? " selected" : ""}>${v === "auto" ? "Automatic" : v + " ms"}</option>`).join("");
+  const ms = (state.buf / 48 + (state.delay === "auto" ? 2 : Number(state.delay)) + 0.8).toFixed(1);
+  let h = "";
+  h += `<div class="drow"><span class="${kc}">Driver:</span><select class="drv" disabled title="The Core runs without a desktop, so it plays straight to the sound card."><option>ALSA, direct</option></select></div>`;
+  h += `<div class="drow"><span class="k"></span><span class="note" style="margin:0">The Core runs without a desktop, so it plays straight to the sound card.</span></div>`;
+  h += `<div class="drow"><span class="${kc}">Sample rate:</span><select class="md"${D}><option>48000 Hz</option><option>96000 Hz</option></select></div>`;
+  h += `<div class="drow"><span class="${kc}">Channels:</span><select class="md"${D}><option>2 (Stereo)</option></select></div>`;
+  h += `<div class="drow"><span class="${kc}">Buffer size:</span><select class="md" id="coreBuf"${D}>${bufs.map(n => `<option value="${n}"${n === state.buf ? " selected" : ""}>${n} samples</option>`).join("")}</select><span class="ms">${(state.buf / 48).toFixed(1)} ms</span></div>`;
+  h += `<div class="drow"><span class="${kc}">Delay:</span><select class="sm" id="coreDelay"${D}>${delays}</select><span class="note${live ? "" : " off"}" style="margin:0">Now <span class="delay">${live ? ms + " ms" : "--"}</span> from the radio to the Core speaker</span></div>`;
+  h += `<div class="drow"><span class="k off" style="font-size:11px">Negotiated:</span><span class="pill${live ? " ok" : ""}">${live ? "ALSA · " + playing() + " · 48000 Hz · 2 ch · " + state.buf + " samples" : "(not applied)"}</span></div>`;
+  $("coreDet").innerHTML = h;
+  const b = $("coreBuf"), d = $("coreDelay");
+  if (b) { b.onchange = e => { state.buf = Number(e.target.value); render(); }; }
+  if (d) { d.onchange = e => { state.delay = e.target.value; render(); }; }
+}
+
+function render() {
+  const w = $("win").value;
+  const local = w === "local";
+  const off = w === "offline";
+  $("cardCore").classList.toggle("hide", local);
+  $("localNote").classList.toggle("hide", !local);
+  for (const id of ["jack", "usb", "hdmi"]) { $(id).disabled = local; $(id).closest("label").classList.toggle("dis", local); }
+  if (local) { return; }
+
+  fillDev();
+  const any = CORE_DEVS.some(d => d.on());
+  $("cardCore").classList.toggle("off-all", off);
+  for (const id of ["coreVol", "coreMute", "coreDev"]) { $(id).disabled = off; }
+  $("coreMuteL").classList.toggle("dis", off);
+  $("coreReason").classList.toggle("hide", !off);
+  $("coreDot").className = "coredot " + (off ? "off" : "ok");
+  $("coreFold").classList.toggle("open", state.open);
+  $("coreDet").classList.toggle("hide", !state.open);
+  details(off);
+
+  let gone = "";
+  if (!off) {
+    if (state.dev !== "default" && !present(state.dev)) {
+      gone = any
+        ? label(state.dev) + " is not connected at the Core. Playing on the Core's default, " + coreDefault() + ", until it comes back."
+        : label(state.dev) + " is not connected at the Core, and the Core has no other sound card, so it is silent until it comes back.";
+    } else if (!any) {
+      gone = "No sound card is plugged into the Core. Plug in a USB sound card or speaker and it shows up here by itself.";
+    }
+  }
+  $("coreGone").textContent = gone;
+  $("coreGone").classList.toggle("hide", !gone);
+}
+
+$("coreDev").addEventListener("change", e => { if (e.target.value !== "none") { state.dev = e.target.value; } render(); });
+$("coreFold").addEventListener("click", () => { if ($("win").value === "offline" && false) { return; } state.open = !state.open; render(); });
+$("coreVol").addEventListener("input", e => { $("coreVolV").textContent = e.target.value; e.target.style.setProperty("--p", e.target.value + "%"); });
+for (const id of ["win", "jack", "usb", "hdmi"]) { $(id).addEventListener("change", render); }
+
+// The lists open in the page instead of as the browser's own menu, so they behave
+// the same in every browser and look like the app's own pop-up list.
+let pop = null;
+function closePop() { if (pop) { pop.el.remove(); pop = null; } }
+function popHi(i) {
+  if (!pop) { return; }
+  pop.items.forEach((d, k) => d.classList.toggle("hi", k === i));
+  pop.idx = i;
+  if (i >= 0) { pop.items[i].scrollIntoView({block: "nearest"}); }
+}
+function popPick(sel, v) {
+  closePop();
+  sel.focus();
+  if (sel.value === v) { return; }
+  sel.value = v;
+  sel.dispatchEvent(new Event("change", {bubbles: true}));
+}
+function openPop(sel) {
+  closePop();
+  const el = document.createElement("div");
+  el.className = "pop" + (sel.closest(".drvwin") ? " light" : "");
+  const items = [];
+  let cur = -1;
+  const add = (o, ind) => {
+    const d = document.createElement("div");
+    d.className = "it" + (ind ? " ind" : "") + (o.disabled ? " dis" : "");
+    d.textContent = o.text;
+    if (!o.disabled) {
+      const i = items.length;
+      if (o.value === sel.value && cur < 0) { cur = i; }
+      d.addEventListener("mousemove", () => { if (pop && pop.idx !== i) { popHi(i); } });
+      d.addEventListener("click", () => popPick(sel, o.value));
+      items.push(d);
+      d.dataset.v = o.value;
+    }
+    el.appendChild(d);
+  };
+  for (const ch of sel.children) {
+    if (ch.tagName === "OPTGROUP") {
+      const g = document.createElement("div");
+      g.className = "grp";
+      g.textContent = ch.label;
+      el.appendChild(g);
+      for (const o of ch.children) { add(o, true); }
+    } else {
+      add(ch, false);
+    }
+  }
+  el.addEventListener("mousedown", e => e.preventDefault());
+  document.body.appendChild(el);
+  const r = sel.getBoundingClientRect();
+  el.style.minWidth = r.width + "px";
+  el.style.left = Math.max(4, Math.min(r.left, innerWidth - el.offsetWidth - 4)) + scrollX + "px";
+  const h = el.offsetHeight;
+  const below = r.bottom + 2 + h <= innerHeight || r.top - 2 - h < 0;
+  el.style.top = (below ? r.bottom + 2 : r.top - 2 - h) + scrollY + "px";
+  pop = {el, sel, items, idx: -1};
+  popHi(cur);
+}
+document.addEventListener("mousedown", e => {
+  const s = e.target.closest ? e.target.closest("select") : null;
+  if (s) {
+    e.preventDefault();
+    if (s.disabled) { return; }
+    if (pop && pop.sel === s) { closePop(); return; }
+    s.focus();
+    openPop(s);
+    return;
+  }
+  if (pop && !pop.el.contains(e.target)) { closePop(); }
+}, true);
+document.addEventListener("keydown", e => {
+  if (pop) {
+    const n = pop.items.length;
+    if (e.key === "Escape" || e.key === "Tab") { closePop(); if (e.key === "Escape") { e.preventDefault(); } return; }
+    if (e.key === "ArrowDown") { popHi(Math.min(n - 1, pop.idx + 1)); e.preventDefault(); return; }
+    if (e.key === "ArrowUp") { popHi(Math.max(0, pop.idx - 1)); e.preventDefault(); return; }
+    if ((e.key === "Enter" || e.key === " ") && pop.idx >= 0) { popPick(pop.sel, pop.items[pop.idx].dataset.v); e.preventDefault(); return; }
+    e.preventDefault();
+    return;
+  }
+  const s = document.activeElement;
+  if (s && s.tagName === "SELECT" && !s.disabled && [" ", "Enter", "ArrowDown", "ArrowUp"].includes(e.key)) {
+    e.preventDefault();
+    openPop(s);
+  }
+}, true);
+window.addEventListener("scroll", e => { if (pop && e.target !== pop.el) { closePop(); } }, true);
+window.addEventListener("resize", closePop);
+render();
+</script>
+</body></html>
