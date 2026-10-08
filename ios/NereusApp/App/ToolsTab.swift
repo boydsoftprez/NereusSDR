@@ -27,6 +27,8 @@ struct ToolsTab: View {
     @ObservedObject var spots: SpotsModel
     @ObservedObject private var freedv: FreeDVReporterModel
     @ObservedObject private var performance: ConnectionPerformanceModel
+    /// The rotor, for its row's heading and its page (shared with the Radio tab's accessories).
+    @ObservedObject private var rotor: RotorModel
     @ObservedObject var router: ToolsRouter
     @StateObject private var list: ToolListModel
     var isActive: Bool
@@ -45,6 +47,7 @@ struct ToolsTab: View {
         case tciServer
         case vaxAudio
         case supportBundle
+        case rotor
 
         var title: String {
             switch self {
@@ -58,6 +61,7 @@ struct ToolsTab: View {
             case .tciServer: return "TCI Server"
             case .vaxAudio: return "VAX Audio"
             case .supportBundle: return "Support Bundle"
+            case .rotor: return "Rotor"
             }
         }
 
@@ -73,6 +77,7 @@ struct ToolsTab: View {
             case .vaxAudio: self = .vaxAudio
             case .performance: self = .performance
             case .supportBundle: self = .supportBundle
+            case .rotor: self = .rotor
             }
         }
     }
@@ -84,6 +89,7 @@ struct ToolsTab: View {
         self.spots = spots
         freedv = app.freedv
         performance = app.connectionPerformance
+        rotor = app.main.rotor
         self.router = router
         _list = StateObject(wrappedValue: ToolListModel(mirror: app.mirror, catalogFeed: app.main.catalogFeed))
         self.isActive = isActive
@@ -136,6 +142,10 @@ struct ToolsTab: View {
             if route.last == .performance {
                 if shown { performance.open(attempt: flow.attempt) } else { performance.close() }
             }
+            // Another tab in front ends a nudge held on the rotor page.
+            if !shown, route.last == .rotor {
+                rotor.sceneLeft()
+            }
         }
         .onChange(of: flow.attempt) { _, next in performance.setAttempt(next) }
         .confirmationDialog("Clear all spots?", isPresented: $askingToClear, titleVisibility: .visible) {
@@ -178,14 +188,14 @@ struct ToolsTab: View {
         case .spotHubPage(.identity)?:
             SpotIdentityPage(spots: spots)
         case .performance?, .freedvReporter?, .txEqualizer?, .pureSignal?, .diversity?, .tciServer?, .vaxAudio?,
-             .supportBundle?:
+             .supportBundle?, .rotor?:
             EmptyView()
         }
     }
 
     /// The pages of the Core's tools, each with its own scrolling and number pad.
     private static let stationPages: Set<Page> = [.txEqualizer, .pureSignal, .diversity, .tciServer, .vaxAudio,
-                                                  .supportBundle]
+                                                  .supportBundle, .rotor]
 
     @ViewBuilder
     private func stationPage(_ page: Page) -> some View {
@@ -215,6 +225,10 @@ struct ToolsTab: View {
             ToolScreen(model: app.supportBundle) {
                 SupportBundlePage(model: $0, log: app.coreLog)
             }
+        case .rotor:
+            ToolScreen(model: app.main.rotor) {
+                RotorPage(model: $0)
+            }
         default:
             EmptyView()
         }
@@ -228,6 +242,10 @@ struct ToolsTab: View {
             // FreeDV Reporter opens once the Core runs it.
             detail = freedvDetail
             enabled = freedv.runsReporter
+        }
+        if entry.page == .rotor, entry.enabled {
+            // The heading, and where it is turning.
+            detail = rotor.toolLine
         }
         let identifier = entry.page == .performance ? "tools.connectionPerformance" : "tools.\(entry.id)"
         return SpotHubPage.Row(title: entry.title, detail: detail, tag: entry.tag, enabled: enabled,
@@ -265,7 +283,7 @@ struct ToolsTab: View {
                 .foregroundStyle(ChromeColours.accent)
                 .accessibilityIdentifier("freedv.website")
         case .spotHub, .spotHubPage(.display), .performance, .txEqualizer, .pureSignal, .diversity, .tciServer,
-             .vaxAudio, .supportBundle:
+             .vaxAudio, .supportBundle, .rotor:
             LinkChip(link: link, core: core)
         }
     }

@@ -15,6 +15,8 @@ struct AccessoriesSection: View {
         case faults(AccessoriesModel.Device)
         case advanced(AccessoriesModel.Device)
         case tuneMemory
+        /// The rotor page, shared with the Tools tab's Rotor row.
+        case rotor
 
         /// The page's title on the bar, and the next page's way back.
         var title: String {
@@ -29,11 +31,15 @@ struct AccessoriesSection: View {
                 return "Advanced"
             case .tuneMemory:
                 return "Tune memory"
+            case .rotor:
+                return "Rotor"
             }
         }
     }
 
     @ObservedObject var model: AccessoriesModel
+    /// The rotor, listed after the amplifiers and tuner; nil leaves its row out.
+    var rotor: RotorModel?
     let open: (Route) -> Void
 
     var body: some View {
@@ -47,6 +53,10 @@ struct AccessoriesSection: View {
                     AccessoryStatusLine(device: device, status: AccessoryStatusLine.status(device, in: model)) {
                         open(.page(device))
                     }
+                }
+                if let rotor {
+                    AccessoryChrome.RowDivider()
+                    RotorAccessoryRow(model: rotor) { open(.rotor) }
                 }
             }
         }

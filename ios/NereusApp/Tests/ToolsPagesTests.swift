@@ -25,9 +25,10 @@ struct ToolsPagesTests {
 
     /// Every tool the suite's ANAN-G2 catalogue lists on the phone, in the
     /// desktop's order: all it offers, and TCI Server, which a Core without
-    /// its own TCI server does not offer and the phone shows greyed.
+    /// its own TCI server does not offer and the phone shows greyed, and the
+    /// Rotor last, greyed until a rotor is set up at the Core.
     static let offeredIds = ["spotHub", "freedvReporter", "txEqualizer", "pureSignal", "diversity", "tciServer",
-                             "vaxAudio", "networkDiagnostics", "supportBundle"]
+                             "vaxAudio", "networkDiagnostics", "supportBundle", "rotor"]
 
     // MARK: The list
 
@@ -47,13 +48,16 @@ struct ToolsPagesTests {
         })
         #expect(list.entries.map(\.title) == ["Spot Hub", "FreeDV Reporter", "TX Equalizer", "PureSignal",
                                               "Diversity", "TCI Server", "VAX Audio", "Connection and performance",
-                                              "Support Bundle"])
-        #expect(list.entries.map(\.tag) == [.both, .core, .core, .core, .core, .core, .core, .both, .both])
+                                              "Support Bundle", "Rotor"])
+        #expect(list.entries.map(\.tag) == [.both, .core, .core, .core, .core, .core, .core, .both, .both, .core])
         #expect(list.entries.allSatisfy { $0.page != nil })
         // This Core runs no TCI server of its own: TCI Server is greyed with the reason; the rest open.
         let tci = try #require(list.entries.first { $0.id == "tciServer" })
         #expect(!tci.enabled && tci.reason == StationToolList.noTciServerReason && tci.detail == tci.reason)
-        #expect(list.entries.filter { $0.id != "tciServer" }.allSatisfy { $0.enabled })
+        // No rotor is set up on this Core: the Rotor stays listed, greyed with that reason.
+        let rotor = try #require(list.entries.first { $0.id == "rotor" })
+        #expect(!rotor.enabled && rotor.reason == StationToolList.noRotorReason && rotor.page == .rotor)
+        #expect(list.entries.filter { !["tciServer", "rotor"].contains($0.id) }.allSatisfy { $0.enabled })
         // CWX, the Memory Manager and CAT Control are not built on the desktop: not listed (D41).
         #expect(!list.entries.contains { ["cwx", "memoryManager", "catControl"].contains($0.id) })
         await model.disconnect()
@@ -80,7 +84,7 @@ struct ToolsPagesTests {
         }
         #expect(await settle { list.entries.contains { $0.id == "cwx" } })
         #expect(list.entries.map(\.id) == ["spotHub", "freedvReporter", "txEqualizer", "diversity", "cwx",
-                                           "tciServer", "vaxAudio", "networkDiagnostics", "supportBundle"])
+                                           "tciServer", "vaxAudio", "networkDiagnostics", "supportBundle", "rotor"])
         let cwx = try #require(list.entries.first { $0.id == "cwx" })
         #expect(cwx.title == "CWX" && cwx.tag == .core && cwx.page == nil)
         #expect(cwx.reason == StationToolList.unknownToolReason && !cwx.enabled)
@@ -106,7 +110,7 @@ struct ToolsPagesTests {
         try await deliverCatalogue(station, revision: 2, fixture: "catalog-hermes-lite-2")
         #expect(await settle { list.entries.map(\.id) == ["spotHub", "freedvReporter", "txEqualizer", "pureSignal",
                                                           "tciServer", "vaxAudio", "networkDiagnostics",
-                                                          "supportBundle"] })
+                                                          "supportBundle", "rotor"] })
         #expect(list.entries.first { $0.id == "tciServer" }?.reason == StationToolList.noTciServerReason)
         // A headless Core with its own TCI server: VAX Audio greyed, TCI Server opens; no PureSignal on this radio.
         try await deliverCatalogue(station, revision: 3) { tools in
@@ -122,7 +126,7 @@ struct ToolsPagesTests {
         }
         #expect(await settle { list.entries.map(\.id) == ["spotHub", "freedvReporter", "txEqualizer", "diversity",
                                                           "tciServer", "vaxAudio", "networkDiagnostics",
-                                                          "supportBundle"] })
+                                                          "supportBundle", "rotor"] })
         let vax = try #require(list.entries.first { $0.id == "vaxAudio" })
         #expect(!vax.enabled && vax.reason == StationToolList.noVaxReason && vax.page == .vaxAudio)
         #expect(list.entries.first { $0.id == "tciServer" }?.enabled == true)
@@ -139,7 +143,7 @@ struct ToolsPagesTests {
          {"id":"spotHub","label":"Spot Hub","where":"both","offered":false}]
         """.utf8))
         let entries = StationToolList.entries(tools: tools, connected: true, olderCore: false)
-        #expect(entries.map(\.id) == ["networkDiagnostics", "spotHub"])
+        #expect(entries.map(\.id) == ["networkDiagnostics", "spotHub", "rotor"])
         #expect(entries[0].enabled)
         #expect(entries[1].reason == StationToolList.notOfferedReason)
     }
@@ -160,7 +164,9 @@ struct ToolsPagesTests {
         [{"id":"spotHub","label":"Spot Hub","where":"both","offered":true}]
         """.utf8))
         let bare = StationToolList.entries(tools: tools, connected: true, olderCore: false)
-        #expect(bare.map(\.id) == ["spotHub", "networkDiagnostics"])
+        #expect(bare.map(\.id) == ["spotHub", "networkDiagnostics", "rotor"])
+        // A Core that lists its tools without the rotor is older than it: the Rotor is greyed with that reason.
+        #expect(bare.last?.reason == StationToolList.rotorOlderCoreReason && bare.last?.page == .rotor)
     }
 
     // MARK: TX Equalizer

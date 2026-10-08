@@ -18,6 +18,8 @@ import NereusMirror
 /// of it.
 enum UITestBand {
     static let argument = "-NereusFlagsOnBand"
+    /// Beside ``argument``: a connected rotor on the Core, offered on Tools.
+    static let rotorArgument = "-NereusRotorFixture"
     static let catalogueEnvironment = "NEREUS_UITEST_CATALOGUE"
     static let centreHz = 7_244_500.0
     static let spanHz = 48_000.0
@@ -31,6 +33,7 @@ enum UITestBand {
             return
         }
         let mirror = app.mirror
+        let rotor = arguments.contains(rotorArgument)
         app.useBandFixturePropertySender { [weak mirror] write in
             guard write.key == "slice:0", write.properties.count == 1,
                   let entry = write.properties.first, entry.name == "afGain" else {
@@ -53,8 +56,13 @@ enum UITestBand {
             .init(ordinal: 0, name: BandSlicesModel.remoteTxCapability, value: .i64(1)),
             .init(ordinal: 1, name: "propertyResultVersion", value: .i64(1)),
             .init(ordinal: 2, name: "stationCatalogVersion", value: .i64(1)),
-        ])))
-        if let path = environment[catalogueEnvironment], let json = catalogueJSON(path: path) {
+        ] + (rotor ? [.init(ordinal: 3, name: RotorModel.capability, value: .i64(1))] : []))))
+        if let path = environment[catalogueEnvironment], var json = catalogueJSON(path: path) {
+            if rotor {
+                // The rotor set up, so the Core offers it.
+                json = json.replacingOccurrences(of: #""id":"rotor","label":"Rotor","offered":false"#,
+                                                 with: #""id":"rotor","label":"Rotor","offered":true"#)
+            }
             mirror.apply(.objectCreate(LinkMessage.ObjectCreate(key: CatalogFeed.objectKey, className: "StationCatalog",
                                                                properties: [
                 .init(ordinal: 0, name: "json", value: .utf8(json)),
@@ -77,6 +85,10 @@ enum UITestBand {
             .init(ordinal: 28, name: "sampleRateHz", value: .i64(192_000)),
             .init(ordinal: 35, name: "locked", value: .bool(false)),
         ])))
+        if rotor {
+            mirror.apply(.objectCreate(LinkMessage.ObjectCreate(key: RotorModel.objectKey, className: "RotorModel",
+                                                               properties: rotorProperties)))
+        }
         mirror.apply(.snapshotComplete)
         mirror.handle(.stateChanged(.ready))
         let band = app.main.band
@@ -93,6 +105,25 @@ enum UITestBand {
             band.receive(.context(context))
         }
     }
+
+    /// A Yaesu-style rotor on an Easy Rotor Control at the Core, connected,
+    /// pointing at 47 degrees, with three presets.
+    private static let rotorProperties: [LinkMessage.PropertyEntry] = {
+        let values: [(String, LinkMessage.PropertyValue)] = [
+            ("connectionPhase", .enumeration(6)), ("connectionError", .utf8("")), ("label", .utf8("Easy Rotor Control on COM4")),
+            ("driver", .enumeration(2)), ("serialPort", .utf8("COM4")), ("baud", .i64(9600)), ("host", .utf8("")),
+            ("port", .i64(4533)), ("serialPorts", .utf8("COM3\nCOM4")), ("hamlibModel", .i64(0)),
+            ("rotctldAvailable", .bool(false)), ("axes", .enumeration(0)), ("rangeDeg", .i64(450)),
+            ("endStop", .enumeration(2)), ("offsetDeg", .f64(0)), ("spanPositionDeg", .f64(227)),
+            ("travelDeg", .f64(0)), ("routeKnown", .bool(true)), ("positionFresh", .bool(true)),
+            ("azimuthDeg", .f64(47)), ("elevationDeg", .f64(-1)), ("targetAzimuthDeg", .f64(-1)),
+            ("targetElevationDeg", .f64(-1)), ("motion", .enumeration(0)),
+            ("presets", .utf8("EU\t45\nJA\t330\nVK\t250")), ("fault", .utf8("")),
+        ]
+        return values.enumerated().map { index, entry in
+            LinkMessage.PropertyEntry(ordinal: UInt16(index), name: entry.0, value: entry.1)
+        }
+    }()
 
     /// The catalogue's JSON from a conformance-suite session file: the
     /// `json` property of its `catalog` message.
