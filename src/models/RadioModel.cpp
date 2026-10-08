@@ -1012,6 +1012,9 @@
 //                rotor, so nereusd places callsigns; a remote window keeps
 //                each Core spot's bearingDeg in the spot model. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 4b: the `rotor` object
+//                (RotorLink::RotorModel), bound to the Core's controller.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1408,6 +1411,7 @@ mw0lge@grange-lane.co.uk
 #include "models/AmplifierModel.h"
 #include "models/RfKitModel.h"
 #include "models/StationTciModel.h"
+#include "models/RotorModel.h"
 #include "models/AccessoryDataModel.h"
 #include "models/AccessorySettingsModel.h"
 #include "core/StationAccessoryData.h"
@@ -3086,6 +3090,8 @@ RadioModel::RadioModel(Role role, QObject* parent)
     m_rfKitModel = new RfKitModel(this);
     // R-R3-48: the Core's station TCI server state (`stationTci`).
     m_stationTciModel = new StationTciModel(this);
+    // Rotor control plan Task 4b: the Core's rotor (`rotor`).
+    m_rotorModel = new RotorLink::RotorModel(this);
     if (m_role == Role::Local) {
         m_amplifierModel->bindConnection(m_pgxlConnection);
         m_rfKitModel->bindConnection(m_rfKitConnection.get());
@@ -5794,6 +5800,8 @@ void RadioModel::enableStationAccessoryIdentity()
             });
     }
     m_stationRotor->start();
+    // Rotor control plan Task 4b: what every window reads (`rotor`).
+    m_rotorModel->bindController(m_stationRotor);
     applyStationBind();
 }
 

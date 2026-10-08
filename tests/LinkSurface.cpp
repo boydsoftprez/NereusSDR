@@ -190,6 +190,9 @@
 //               sliceAccess 3, so sliceAccessVersion reads 3. J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
+//   2026-10-08: rotor control plan Task 4b: RotorModel joins the mirrored
+//               classes. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "LinkSurface.h"
@@ -273,6 +276,7 @@
 #include "models/RfKitModel.h"
 #include "models/SliceModel.h"
 #include "models/StationTciModel.h"
+#include "models/RotorModel.h"
 #include "models/TransmitModel.h"
 #include "models/TunerModel.h"
 
@@ -748,6 +752,8 @@ QJsonArray captureCapabilities()
     caps.setupDescriptionVersion = 1;
     caps.miniDisplayVersion = 1;
     caps.radioAntennaRowsVersion = 1;
+    // Rotor control plan Task 4b: sent by a Core that owns a rotor.
+    caps.remoteRotorControlVersion = 1;
     // iPhone app plan Task 25: sent to a peer that declared vax.
     caps.vaxEntry = true;
     // R-IOS-13 / R-R3-49: sent to a peer that declared txEqCurve; 2 with
@@ -1937,7 +1943,8 @@ QList<const QMetaObject*> LinkSurface::mirroredMetaObjects()
             &SliceAccess::staticMetaObject,
             &TransmitState::staticMetaObject,
             &StationVax::staticMetaObject,
-            &PaProfilesFacade::staticMetaObject};
+            &PaProfilesFacade::staticMetaObject,
+            &RotorLink::RotorModel::staticMetaObject};
 }
 
 QJsonObject LinkSurface::capture()

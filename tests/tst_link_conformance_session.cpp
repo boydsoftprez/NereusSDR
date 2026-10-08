@@ -288,6 +288,10 @@
 //   2026-10-02: Diversity v1 producer corpus export and offline Orion MkII
 //               codec planning, with bounded app incarnation placeholders.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-08: Rotor control plan Task 4b: with coreAccessories the
+//               Core's rotor sees no serial ports and no rotctld, so the
+//               rotor object reads the same on every machine.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -311,6 +315,8 @@
 #include "core/AppSettings.h"
 #include "core/ConnectionState.h"
 #include "core/MoxController.h"
+#include "core/RotctldProcess.h"
+#include "core/StationRotorController.h"
 #include "core/StepAttenuatorController.h"
 #include "core/accessories/AlexController.h"
 #include "core/dsp/DspAssetService.h"
@@ -329,6 +335,7 @@
 #include "core/settings/SettingsScope.h"
 #include "models/Band.h"
 #include "models/RadioModel.h"
+#include "models/RotorModel.h"
 #include "models/SliceModel.h"
 
 #include "LinkFixtures.h"
@@ -559,7 +566,15 @@ QString buildStation(const QJsonObject& setup, Station* station, quint16 major)
 
     RadioModel& model = *station->model;
     if (setup.value(QStringLiteral("coreAccessories")).toBool(false)) {
+        // The Core's rotor finds no rotctld and no serial ports, on every
+        // machine the runner runs on, and never opens one.
+        RotctldProcess::setBinaryOverrideForTesting(QString());
         model.enableStationAccessoryIdentity();
+        if (StationRotorController* rotor = model.stationRotorController()) {
+            rotor->setSerialPortListerForTesting([] { return QStringList(); });
+            // The rotor object looks again with the lister in place.
+            model.rotorModel()->bindController(rotor);
+        }
     }
     if (setup.value(QStringLiteral("stationTci")).toBool(false)) {
         model.enableStationTci(QStringLiteral("127.0.0.1"));

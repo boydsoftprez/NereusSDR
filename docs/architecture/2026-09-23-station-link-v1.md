@@ -39,6 +39,7 @@ maintained there:
 | Display extras (the subscription fields that ask the Core for the peak blobs, peak hold, noise floor, waterfall levels, normalise, calibration and averaging, and the NSDX v1 datagram beside each NSDC frame) | [2026-09-23-display-extras-v1.md](2026-09-23-display-extras-v1.md) |
 | Notch control (the `notches` object and the `notch.*` commands) | [2026-09-23-remote-notch-control-v1.md](2026-09-23-remote-notch-control-v1.md) |
 | Accessory control (the `tuner`, `amplifier`, `rfkit`, `stationTci`, `accessoryData` and `accessorySettings` objects, the 4O3A, RF-Kit, station TCI, accessory record and device settings commands and refusals) | [2026-09-23-remote-accessory-control-v1.md](2026-09-23-remote-accessory-control-v1.md) |
+| Rotor control (the `rotor` object, the seven rotor commands and their refusals, bearings on spots) | [2026-10-07-remote-rotor-control-v1.md](2026-10-07-remote-rotor-control-v1.md) |
 
 The design authority behind all of them is the
 [remote daemon architecture design](2026-07-28-remote-daemon-architecture-design.md),
@@ -1146,6 +1147,7 @@ table.
 | `setupDescriptionVersion` | 1 |
 | `miniDisplayVersion` | 1 |
 | `accessoryTxVersion` | 1 |
+| `remoteRotorControlVersion` | 1 |
 | `radioAntennaRowsVersion` | 1 |
 | `vaxVersion` | 1 |
 | `txEqCurveVersion` | 2 |
@@ -2431,30 +2433,31 @@ older window sees only the values it was built for.
 | 82 | `setupDescriptionVersion` | `i64` |
 | 83 | `miniDisplayVersion` | `i64` |
 | 84 | `accessoryTxVersion` | `i64` |
-| 85 | `radioAntennaRowsVersion` | `i64` |
-| 86 | `vaxVersion` | `i64` |
-| 87 | `txEqCurveVersion` | `i64` |
-| 88 | `band2mVersion` | `i64` |
-| 89 | `diversityPatternVersion` | `i64` |
-| 90 | `diversityControlVersion` | `i64` |
-| 91 | `logCategoryListVersion` | `i64` |
-| 92 | `radioModelsVersion` | `i64` |
-| 93 | `coreAddressesVersion` | `i64` |
-| 94 | `audioQualityVersion` | `i64` |
-| 95 | `stationTciSettingsVersion` | `i64` |
-| 96 | `adcAttenuatorVersion` | `i64` |
-| 97 | `paProfileVersion` | `i64` |
-| 98 | `radeStatusVersion` | `i64` |
-| 99 | `txInhibitReasonVersion` | `i64` |
-| 100 | `paTransmitBandVersion` | `i64` |
-| 101 | `sliceAccessVersion` | `i64` |
-| 102 | `mediaDirectVersion` | `i64` |
-| 103 | `mediaStunUrls` | `utf8` |
-| 104 | `rx2AttenuatorVersion` | `i64` |
-| 105 | `radioMicVersion` | `i64` |
-| 106 | `rxFilterLowPassVersion` | `i64` |
-| 107 | `radeReasonVersion` | `i64` |
-| 108 | `coreBuildInfo` | `utf8` |
+| 85 | `remoteRotorControlVersion` | `i64` |
+| 86 | `radioAntennaRowsVersion` | `i64` |
+| 87 | `vaxVersion` | `i64` |
+| 88 | `txEqCurveVersion` | `i64` |
+| 89 | `band2mVersion` | `i64` |
+| 90 | `diversityPatternVersion` | `i64` |
+| 91 | `diversityControlVersion` | `i64` |
+| 92 | `logCategoryListVersion` | `i64` |
+| 93 | `radioModelsVersion` | `i64` |
+| 94 | `coreAddressesVersion` | `i64` |
+| 95 | `audioQualityVersion` | `i64` |
+| 96 | `stationTciSettingsVersion` | `i64` |
+| 97 | `adcAttenuatorVersion` | `i64` |
+| 98 | `paProfileVersion` | `i64` |
+| 99 | `radeStatusVersion` | `i64` |
+| 100 | `txInhibitReasonVersion` | `i64` |
+| 101 | `paTransmitBandVersion` | `i64` |
+| 102 | `sliceAccessVersion` | `i64` |
+| 103 | `mediaDirectVersion` | `i64` |
+| 104 | `mediaStunUrls` | `utf8` |
+| 105 | `rx2AttenuatorVersion` | `i64` |
+| 106 | `radioMicVersion` | `i64` |
+| 107 | `rxFilterLowPassVersion` | `i64` |
+| 108 | `radeReasonVersion` | `i64` |
+| 109 | `coreBuildInfo` | `utf8` |
 
 <!-- /surface -->
 
@@ -2753,6 +2756,37 @@ An enum property lists the values its domain allows.
 | 27 | `bandFollow` | `enum` | outbound | 0, 1, 2, 3 |
 | 28 | `bandFollowAddress` | `utf8` | outbound |  |
 | 29 | `bandFollowPort` | `i64` | outbound |  |
+
+**RotorModel** (26 properties)
+
+| Ordinal | Property | Wire kind | Direction | Enum values |
+| --- | --- | --- | --- | --- |
+| 0 | `connectionPhase` | `enum` | outbound | 0, 1, 2, 3, 4, 5, 6, 7 |
+| 1 | `connectionError` | `utf8` | outbound |  |
+| 2 | `driver` | `enum` | outbound | 0, 1, 2, 3, 4 |
+| 3 | `label` | `utf8` | outbound |  |
+| 4 | `serialPort` | `utf8` | outbound |  |
+| 5 | `baud` | `i64` | outbound |  |
+| 6 | `host` | `utf8` | outbound |  |
+| 7 | `port` | `i64` | outbound |  |
+| 8 | `serialPorts` | `utf8` | outbound |  |
+| 9 | `axes` | `enum` | outbound | 0, 1 |
+| 10 | `rangeDeg` | `i64` | outbound |  |
+| 11 | `endStop` | `enum` | outbound | 0, 1, 2 |
+| 12 | `spanPositionDeg` | `f64` | outbound |  |
+| 13 | `travelDeg` | `f64` | outbound |  |
+| 14 | `routeKnown` | `bool` | outbound |  |
+| 15 | `offsetDeg` | `f64` | outbound |  |
+| 16 | `hamlibModel` | `i64` | outbound |  |
+| 17 | `rotctldAvailable` | `bool` | outbound |  |
+| 18 | `positionFresh` | `bool` | outbound |  |
+| 19 | `azimuthDeg` | `f64` | outbound |  |
+| 20 | `elevationDeg` | `f64` | outbound |  |
+| 21 | `targetAzimuthDeg` | `f64` | outbound |  |
+| 22 | `targetElevationDeg` | `f64` | outbound |  |
+| 23 | `motion` | `enum` | outbound | 0, 1, 2 |
+| 24 | `presets` | `utf8` | outbound |  |
+| 25 | `fault` | `utf8` | outbound |  |
 
 **SetupDescription** (12 properties)
 
@@ -3272,6 +3306,7 @@ destroyed during the session.
 | `stationTci` | `StationTciModel` |
 | `accessoryData` | `AccessoryDataModel` |
 | `accessorySettings` | `AccessorySettingsModel` |
+| `rotor` | `RotorModel` |
 | `devices` | `StationDevicesFacade` |
 | `connectedDevices` | `ConnectedDevicesFacade` |
 | `txState` | `TransmitState` |
@@ -5769,6 +5804,13 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `setTxInterlockPolicy` | `mode` i64, `graceMs` i64, `swrGateEnabled` bool, `swrGateMax` f64 | `accessoryDataVersion` | 1 | 11 |
 | `setPgxlPowerCap` | `enabled` bool, `watts` i64 | `accessoryDataVersion` | 1 | 11 |
 | `clearAccessoryFaults` | `device` utf8 | `accessoryDataVersion` | 1 | 11 |
+| `setRotorTarget` | `azimuthDeg` f64, `elevationDeg` f64 | `remoteRotorControlVersion` | 1 | 11 |
+| `turnRotorToCall` | `call` utf8, `longPath` bool | `remoteRotorControlVersion` | 1 | 11 |
+| `stopRotor` | none | `remoteRotorControlVersion` | 1 | 11 |
+| `nudgeRotor` | `direction` enum, `active` bool | `remoteRotorControlVersion` | 1 | 11 |
+| `configureRotor` | `driver` enum, `serialPort` utf8, `baud` i64, `host` utf8, `port` i64, `hamlibModel` i64, `axes` enum, `endStop` enum, `rangeDeg` i64, `offsetDeg` f64 | `remoteRotorControlVersion` | 1 | 11 |
+| `disconnectRotor` | none | `remoteRotorControlVersion` | 1 | 11 |
+| `setRotorPresets` | `presets` utf8 | `remoteRotorControlVersion` | 1 | 11 |
 | `requestIoBoardProbe` | none | `radioHardwareVersion` | 2 | 11 |
 | `setAlexRxAntenna` | `band` i64, `antenna` i64, `rxOnly` bool | `radioHardwareVersion` | 3 | 11 |
 | `setAlexRxAntennaForRadio` | `mac` utf8, `band` i64, `antenna` i64, `rxOnly` bool | `radioAntennaRowsVersion` | 1 | 11 |
@@ -6289,6 +6331,18 @@ These command groups need a sentence beyond the table:
   again when it stops."); the first three also while the Core is not
   connected to the amp. The reasons are in the remote accessory control
   document.
+- **The rotor** (`remoteRotorControlVersion` 1). `setRotorTarget`,
+  `turnRotorToCall`, `stopRotor`, `nudgeRotor`, `configureRotor`,
+  `disconnectRotor` and `setRotorPresets` go to the Core's rotor
+  controller, from a peer at agreed minor 11 on a Core that advertises the
+  capability (otherwise "Update this app to turn the rotor on this Core."
+  or "This Core does not control a rotor. Updating the Core may help.").
+  `accepted` means the command left for the rotor; where it points arrives
+  on the read-only `rotor` object. None keys anything or switches an RF
+  path, so the rotor turns while the radio is on the air, and none is a
+  shared setting. A session ending ends the turn button it was holding.
+  The arguments and reasons are in
+  [remote rotor control version 1](2026-10-07-remote-rotor-control-v1.md).
 - **The Tune Power slider.** `setTunePowerForTxBand` (`watts`, 0 to 100,
   0 to 99 on a Hermes Lite 2) does what the TX applet's Tune Power slider
   does in a local window: it sets the tune power for the band the Core

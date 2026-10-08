@@ -14,6 +14,11 @@ Each plan task extends this document in the same commit that adds what it
 describes; until then a section here is the agreed target, not shipped
 behaviour.
 
+**Status.** Shipped with plan Task 4b: Negotiation, the `rotor` object,
+Commands, Tools catalogue and Refusals. Bearings on spots shipped with plan
+Task 4a. The windows' own controls (desktop and iPhone) are later plan
+tasks.
+
 ## Negotiation
 
 | Capability | Session minor | Value | Meaning |
@@ -21,15 +26,32 @@ behaviour.
 | `remoteRotorControlVersion` | 11 | 1 | The Core mirrors its rotor as the `rotor` object; every command below works; spots carry a bearing |
 
 The Core advertises 1 when it owns a rotor connection (the headless Core,
-`nereusd`, always does), and 0 otherwise. `kSessionProtocolMinor` does not
+`nereusd`, always does), and 0 otherwise. As with the accessory
+capabilities, 0 is sent by leaving the capability out (absent reads as 0);
+it follows `accessoryTxVersion` in the capabilities message. A window below
+minor 11, or on a Core at 0, is not sent the `rotor` object. `kSessionProtocolMinor` does not
 change. A window on a Core that advertises 0 shows its rotor controls
 greyed with the reason "This Core does not control a rotor. Updating the
 Core may help."
 
 ## The `rotor` object
 
-Class `RotorModel`, key `rotor`. Sent to every app. Every property is the
-Core's to report.
+Class `RotorModel`, key `rotor`. Sent to every app at minor 11 on a Core
+that advertises `remoteRotorControlVersion` 1. Every property is the
+Core's to report: a write to the object is refused with "The Core reports
+its rotor here. Use the rotor controls to turn it or change its setup."
+and changes nothing.
+
+On the Core the class is `NereusSDR::RotorLink::RotorModel`
+(`src/models/RotorModel.h`), because `NereusSDR::RotorModel` is already the
+Hamlib model list entry; the wire names a class by its short name, so it is
+`RotorModel` here. Where the rotor points (`spanPositionDeg`, `travelDeg`,
+`routeKnown`, `positionFresh`, `azimuthDeg`, `elevationDeg`) changes in one
+delta, everything else in another. The Core looks again at its serial ports
+and for `rotctld` every 5 s (both are slow to ask; `configureRotor` always
+checks the ports as they are), so `serialPorts` and `rotctldAvailable` can
+lag a plugged-in adapter by that long. The 5 s is this design's choice,
+not a device fact.
 
 | Property | Kind | Meaning |
 | --- | --- | --- |
@@ -118,7 +140,10 @@ a live needle.
 numbers are this design's choice, not a device fact.
 
 **Who may turn the rotor.** Any window allowed to change station
-accessories (the same admission as the accessory settings commands). The
+accessories (the same admission as the accessory settings commands: a
+window at minor 11 on a Core that advertises the capability). Stop goes
+through the same admission. No rotor command is a shared setting, so a
+turn asks no other window to confirm. The
 rotor turns while the radio is on the air (JJ, 2026-10-07): it switches no
 RF path, unlike the amp and tuner controls that wait.
 
@@ -173,6 +198,14 @@ Reason text is the identifier and is kept word for word between releases.
 | "That callsign could not be placed." | `turnRotorToCall` for a call cty.dat does not resolve |
 | "Hamlib's rotctld is not installed on the Core's computer." | `configureRotor` with driver 4 and `rotctldAvailable` false |
 | "That serial port is not on the Core's computer." | `configureRotor` with a port not in `serialPorts` |
+| "That rotor setup is not valid." | `configureRotor` with a `driver`, `axes` or `endStop` outside its table, or a `port` outside 1 to 65535; checked before anything reaches the controller |
+| "The Core could not read this request." | Any rotor command whose arguments are missing, extra or of the wrong wire kind, or a `nudgeRotor` direction outside its table |
+| "Update this app to turn the rotor on this Core." | Any rotor command from a window below minor 11 |
+| "This Core does not control a rotor. Updating the Core may help." | Any rotor command to a Core that advertises 0 |
+
+A refused command changes nothing. `configureRotor` sends `hamlibModel` to
+the controller only for driver 4; for any other driver it is saved and
+reported as 0.
 
 `stopRotor` is never refused while connected.
 
@@ -191,5 +224,26 @@ preference (`Rotor/TurnOnTune`, `"False"` by default), not the Core's.
 
 ## Fixtures
 
-Plan Task 4 adds conformance fixtures for the object, every command and
-every refusal, and the rows in `tests/data/link/v1/surface.json`.
+- `tests/data/link/v1/surface.json`: the `rotor` key, the `RotorModel`
+  class, the seven commands and `remoteRotorControlVersion` 1 (regenerated
+  by `tst_link_surface_manifest_regen`).
+- `tests/data/link/v1/sessions/verbs-rotor.json` (`session-verbs-rotor`,
+  runs on the station and the app, in-process and over a data channel):
+  every command with its own arguments and with a renamed one on a Core
+  with no rotor set up, the setup values outside the tables, a serial port
+  the Core lacks, the preset refusals, the presets delta and the refused
+  write. The station runner's Core sees no serial ports and no `rotctld`
+  there, so the object reads the same on every machine.
+- The other `coreAccessories` session fixtures carry the capability, the
+  `RotorModel` schema and the `rotor` object.
+
+## Evidence
+
+- `tst_station_rotor_link`: every command and refusal on the wire against a
+  connected fake GS-232B rotor, the minor and capability gates, the setup
+  checks, `hamlibModel` for driver 4 only, a window's session ending its
+  hold, the refused write, the object following the rotor, the catalogue's
+  Rotor entry, and a remote window's `StationClient` mirroring the object
+  and sending all seven commands.
+- `tst_link_conformance_session` and the app's `LinkConformanceSessionTests`
+  play `session-verbs-rotor`; `tst_link_surface_manifest` checks the surface.

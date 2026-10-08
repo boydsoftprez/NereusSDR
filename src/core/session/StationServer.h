@@ -541,6 +541,8 @@
 //               a Core-wide cap, folded answers, the link, keepalive gaps
 //               per channel and watchdog stops). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-08: Rotor control plan Task 4b: remoteRotorControlVersion().
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -1382,6 +1384,10 @@ public:
     // rfkit* connection counts, parity Task 10); 0 otherwise.
     int accessoryDataVersion() const;
     int accessoryTxVersion() const { return accessoryDataVersion() > 0 ? 1 : 0; }
+    // Rotor control plan Task 4b: remoteRotorControlVersion. 1 on a Core
+    // that owns a rotor connection (the `rotor` object and the seven rotor
+    // verbs); 0 otherwise.
+    int remoteRotorControlVersion() const;
 
     /// iPhone app Task 71 (R-IOS-02): who holds a place on the Core, and
     /// the mirrored `connectedDevices` object. Never null. Task 48

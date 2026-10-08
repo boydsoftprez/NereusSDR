@@ -228,6 +228,10 @@
 //                                    hl2SwapAudioUnavailableReason
 //                                    (radioHardwareVersion 13).
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 4b:
+//                                    rotorControlAvailable and the seven
+//                                    rotor requests. AI-assisted via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 #include <QString>
@@ -465,6 +469,33 @@ public:
     { return { false, QStringLiteral("This Core does not share its amplifier and tuner settings with this app.") }; }
     virtual CommandOutcome requestClearAccessoryFaults(const QString&)
     { return { false, QStringLiteral("This Core does not share its amplifier and tuner settings with this app.") }; }
+
+    /// Rotor control plan Task 4b (remoteRotorControlVersion 1): the Core
+    /// mirrors its rotor (`rotor`) and takes the seven rotor commands
+    /// (remote rotor control v1). Acceptance means the Core sent the
+    /// command to the rotor; the `rotor` object says where it is. The
+    /// arguments are the contract's, enums as their wire numbers.
+    virtual bool rotorControlAvailable() const { return false; }
+    static QString rotorUnavailableReason()
+    { return QStringLiteral("This Core does not control a rotor. Updating the Core may help."); }
+    virtual CommandOutcome requestRotorTarget(double, double)
+    { return { false, rotorUnavailableReason() }; }
+    virtual CommandOutcome requestTurnRotorToCall(const QString&, bool)
+    { return { false, rotorUnavailableReason() }; }
+    virtual CommandOutcome requestStopRotor()
+    { return { false, rotorUnavailableReason() }; }
+    virtual CommandOutcome requestNudgeRotor(int, bool)
+    { return { false, rotorUnavailableReason() }; }
+    virtual CommandOutcome requestConfigureRotor(int /*driver*/, const QString& /*serialPort*/,
+                                                 int /*baud*/, const QString& /*host*/,
+                                                 int /*port*/, int /*hamlibModel*/,
+                                                 int /*axes*/, int /*endStop*/,
+                                                 int /*rangeDeg*/, double /*offsetDeg*/)
+    { return { false, rotorUnavailableReason() }; }
+    virtual CommandOutcome requestDisconnectRotor()
+    { return { false, rotorUnavailableReason() }; }
+    virtual CommandOutcome requestRotorPresets(const QString&)
+    { return { false, rotorUnavailableReason() }; }
 
     /// R-R3-47 / R-R3-22 (remotePgxlControlVersion 3): the Core sends the
     /// Power Genius's own settings (name, hardware, network, Save & Reboot,

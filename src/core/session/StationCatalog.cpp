@@ -58,6 +58,9 @@
 //   2026-09-30: Radio codec lane: board.radioMic and radioMicNote
 //               (radioMicVersion 1). J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Anthropic Claude Code.
+//   2026-10-08: Rotor control plan Task 4b: the `rotor` tool, listed only
+//               when a rotor is set up on the Core. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationCatalog.h"
@@ -74,6 +77,7 @@
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "models/StationTciModel.h"
+#include "models/RotorModel.h"
 
 #include <QColor>
 #include <QJsonArray>
@@ -912,6 +916,15 @@ QJsonArray toolsArray(const StationCatalog::Inputs& inputs)
                                  {QStringLiteral("where"), QString::fromLatin1(tool.where)},
                                  {QStringLiteral("offered"), offered(tool.offer, inputs)}});
     }
+    // Rotor control plan Task 4b (remote rotor control v1, "Tools
+    // catalogue"): the rotor, last, only when one is set up on the Core.
+    // An app shows it greyed otherwise.
+    if (inputs.rotorConfigured) {
+        tools.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("rotor")},
+                                 {QStringLiteral("label"), QStringLiteral("Rotor")},
+                                 {QStringLiteral("where"), QStringLiteral("station")},
+                                 {QStringLiteral("offered"), true}});
+    }
     return tools;
 }
 
@@ -1025,6 +1038,9 @@ StationCatalog::Inputs StationCatalog::inputsFrom(const RadioModel& model)
     // localAudioDevices() has no const form; it is only read here.
     const AudioEngine* audio = const_cast<RadioModel&>(model).localAudioDevices();
     inputs.vaxDevices = audio != nullptr && audio->vaxOutputsAllowed();
+    // Rotor control plan Task 4b: a rotor set up on the Core.
+    inputs.rotorConfigured = model.rotorModel() != nullptr
+        && model.rotorModel()->driver() != RotorLink::RotorModel::Driver::None;
     return inputs;
 }
 
@@ -1038,6 +1054,9 @@ void StationCatalog::bind(RadioModel* model)
         disconnect(&m_model->bandPlanManagerMutable(), nullptr, this, nullptr);
         if (StationTciModel* tci = m_model->stationTciModel()) {
             disconnect(tci, nullptr, this, nullptr);
+        }
+        if (RotorLink::RotorModel* rotor = m_model->rotorModel()) {
+            disconnect(rotor, nullptr, this, nullptr);
         }
     }
     m_model = model;
@@ -1059,6 +1078,15 @@ void StationCatalog::bind(RadioModel* model)
     // catalogue binds (RadioModel::enableStationTci publishes its state).
     if (StationTciModel* tci = model->stationTciModel()) {
         connect(tci, &StationTciModel::stateChanged, this, &StationCatalog::scheduleRefresh);
+    }
+    // Rotor control plan Task 4b: a rotor set up or removed (configureRotor)
+    // lists or drops the Rotor tool.
+    if (RotorLink::RotorModel* rotor = model->rotorModel()) {
+        connect(rotor, &RotorLink::RotorModel::stateChanged, this, [this, rotor] {
+            if ((rotor->driver() != RotorLink::RotorModel::Driver::None) != m_rotorConfigured) {
+                scheduleRefresh();
+            }
+        });
     }
     refresh();
 }
@@ -1085,7 +1113,9 @@ void StationCatalog::refresh()
     if (!m_model) {
         return;
     }
-    setInputs(inputsFrom(*m_model));
+    const Inputs inputs = inputsFrom(*m_model);
+    m_rotorConfigured = inputs.rotorConfigured;
+    setInputs(inputs);
 }
 
 void StationCatalog::scheduleRefresh()

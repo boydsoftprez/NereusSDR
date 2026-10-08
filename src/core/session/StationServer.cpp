@@ -966,6 +966,10 @@
 //               watchdog's stop, the heartbeat and a connection's end.
 //               Logging only. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-08: Rotor control plan Task 4b: remoteRotorControlVersion 1,
+//               the read-only `rotor` object and the seven rotor verbs,
+//               admitted as the accessory settings verbs are. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationServer.h"
@@ -1071,6 +1075,7 @@
 #include "models/StationTciModel.h"
 #include "models/AccessoryDataModel.h"
 #include "models/AccessorySettingsModel.h"
+#include "models/RotorModel.h"
 #include "models/TunerModel.h"
 #include "core/setup/SetupDescriptionService.h"
 #include "core/PaCalProfile.h"
@@ -1334,6 +1339,26 @@ bool isAccessoryDataMessage(const SessionMessage& message)
 // 1): the amp's and tuner's own settings, read-only, for a peer at
 // kRadioIdentitySessionProtocolMinor on a Core that owns its accessories.
 constexpr const char* kAccessorySettingsKey = "accessorySettings";
+
+// Rotor control plan Task 4b (remoteRotorControlVersion 1): the Core's
+// antenna rotor, read-only, for a peer at kRadioIdentitySessionProtocolMinor
+// on a Core that owns a rotor connection.
+constexpr const char* kRotorKey = "rotor";
+
+bool isRotorMessage(const SessionMessage& message)
+{
+    return message.objectKey == kRotorKey
+        || (message.kind == SessionMessageKind::Schema && message.className == "RotorModel");
+}
+
+// Rotor control plan Task 4b: the seven rotor verbs (remote rotor control
+// v1, "Commands").
+bool isRotorVerb(const QByteArray& verb)
+{
+    return verb == "setRotorTarget" || verb == "turnRotorToCall" || verb == "stopRotor"
+        || verb == "nudgeRotor" || verb == "configureRotor" || verb == "disconnectRotor"
+        || verb == "setRotorPresets";
+}
 
 // iPhone app Task 13 (R-IOS-08, deviceAdminVersion 1): the Core's paired
 // devices and label, read-only, for a device at
@@ -5633,6 +5658,21 @@ void StationServer::onTransportText(SessionTransport* transport, const QByteArra
                     : QStringLiteral("This Core cannot change its amplifier and tuner settings."), {}));
             break;
         }
+        // Rotor control plan Task 4b: the rotor verbs came with
+        // remoteRotorControlVersion 1, in the same minor-11 block, and are
+        // admitted exactly as the accessory settings verbs above (Stop
+        // included). Not a shared setting: a turn asks no one.
+        if (isRotorVerb(message.commandVerb)
+            && (it->agreedMinor < kRadioIdentitySessionProtocolMinor
+                || remoteRotorControlVersion() < 1)) {
+            send(transport, SessionMessages::commandResult(
+                message.commandVerb, message.commandId, false,
+                it->agreedMinor < kRadioIdentitySessionProtocolMinor
+                    ? QStringLiteral("Update this app to turn the rotor on this Core.")
+                    : QStringLiteral("This Core does not control a rotor. Updating the Core may "
+                                     "help."), {}));
+            break;
+        }
         if (isAccessoryTxVerb(message.commandVerb)
             || isLegacyAccessoryTxVerb(message.commandVerb)) {
             const bool newAccessoryTxVerb = isAccessoryTxVerb(message.commandVerb);
@@ -7477,6 +7517,9 @@ void StationServer::buildMirror()
     // 1): the amp's and tuner's own settings. Sent only to a peer at minor
     // 11 on a Core that owns its accessories.
     m_mirror->watch(QByteArray(kAccessorySettingsKey), m_radioModel->accessorySettingsModel());
+    // Rotor control plan Task 4b (remoteRotorControlVersion 1): the Core's
+    // rotor. Sent only to a peer at minor 11 on a Core that owns one.
+    m_mirror->watch(QByteArray(kRotorKey), m_radioModel->rotorModel());
     // iPhone app Task 13 (deviceAdminVersion 1): the Core's paired devices.
     // Sent only to a device at minor 11 that declares deviceAuth.
     m_mirror->watch(QByteArray(kDevicesKey), m_devicesFacade.get());
@@ -7759,6 +7802,9 @@ QList<SessionPropertyResult> StationServer::applyPropertyWrite(
         // R-R3-47 / R-R3-22: the devices' own settings change only through
         // their commands, which the Core sends to the device.
         stepAttRefusal = AccessorySettingsModel::readOnlyReason();
+    } else if (message.objectKey == kRotorKey) {
+        // Rotor control plan Task 4b: changed only through the rotor verbs.
+        stepAttRefusal = RotorLink::RotorModel::readOnlyReason();
     }
     // TX rulings (JJ, 2026-09-30): the attenuator and preamp act on the
     // slice the writer is shown. On a slice it only listens to, which
@@ -9177,6 +9223,12 @@ void StationServer::sendToPeer(SessionTransport* transport, const SessionMessage
         if (isAccessorySettingsMessage(message)
             && (minor < kRadioIdentitySessionProtocolMinor
                 || (pgxlControlVersion() < 3 && tgxlControlVersion() < 1))) {
+            return;
+        }
+        // Rotor control plan Task 4b: nor the rotor to an older app, or from
+        // a Core that owns no rotor connection.
+        if (isRotorMessage(message)
+            && (minor < kRadioIdentitySessionProtocolMinor || remoteRotorControlVersion() < 1)) {
             return;
         }
         // iPhone app Task 13: nor the devices object to anyone but a device
@@ -12797,6 +12849,14 @@ int StationServer::accessoryDataVersion() const
         ? 3 : 0;
 }
 
+int StationServer::remoteRotorControlVersion() const
+{
+    // Rotor control plan Task 4b: 1 on a Core that owns a rotor connection
+    // (nereusd always does: enableStationAccessoryIdentity makes it), 0
+    // otherwise.
+    return !m_radioModel.isNull() && m_radioModel->stationRotorController() != nullptr ? 1 : 0;
+}
+
 int StationServer::radioHardwareVersion() const
 {
     if (m_radioModel.isNull() || !m_radioModel->stepAttFacade()->isBound()) {
@@ -12976,6 +13036,8 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
             // R-R3-47 / R-R3-22: the Core's accessory records and settings.
             caps.accessoryDataVersion = accessoryDataVersion();
             caps.accessoryTxVersion = accessoryTxVersion();
+            // Rotor control plan Task 4b: the Core's rotor.
+            caps.remoteRotorControlVersion = remoteRotorControlVersion();
             // A radio-bound row needs the complete existing antenna path,
             // an Alex board, and an exactly named connected radio.
             const QString currentMac = m_radioModel->currentRadioMac();

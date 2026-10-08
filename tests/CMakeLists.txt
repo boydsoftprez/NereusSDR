@@ -6172,6 +6172,15 @@ nereus_add_test(tst_rotctld_process)
 # byte stream; no real serial port or rotctld.
 nereus_add_test(tst_station_rotor_controller)
 
+# ── Rotor control: the rotor on the station link (rotor plan Task 4b) ────
+# The read-only `rotor` object, the seven rotor commands and every refusal,
+# the minor and remoteRotorControlVersion gates, a window's hold ending with
+# its session, the tools catalogue's Rotor entry, and a remote window's
+# StationClient. A fake byte stream; no real serial port or rotctld.
+nereus_add_test(tst_station_rotor_link
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+
 # ── Rotor control: cty.dat on the headless Core, bearings on spots (4a) ────
 # Linked to NereusCore alone, as nereusd is: the Core's own :/cty.dat places
 # a callsign and is parsed once; the Core's start loads it so the rotor turns

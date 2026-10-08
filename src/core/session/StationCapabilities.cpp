@@ -171,6 +171,9 @@
 //   2026-09-28 - Slice control plan Task 4: sliceAccessVersion, after
 //                radioAntennaRowsVersion, only with sliceAccessEntry. J.J.
 //                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 4b: remoteRotorControlVersion,
+//                after accessoryTxVersion, when it is not 0. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationCapabilities.h"
@@ -412,6 +415,11 @@ QList<MirrorUpdate> StationCapabilities::toUpdates() const
             updates.append(intEntry("miniDisplayVersion", miniDisplayVersion));
         }
         updates.append(intEntry("accessoryTxVersion", accessoryTxVersion));
+        // Rotor control plan Task 4b: the Core's rotor, on a Core that owns
+        // one (absent reads as 0).
+        if (remoteRotorControlVersion > 0) {
+            updates.append(intEntry("remoteRotorControlVersion", remoteRotorControlVersion));
+        }
         if (radioAntennaRowsVersion == 1) {
             updates.append(intEntry("radioAntennaRowsVersion", radioAntennaRowsVersion));
         }
@@ -794,6 +802,7 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                    || u.name == "stationTciVersion"
                    || u.name == "accessoryDataVersion"
                    || u.name == "accessoryTxVersion"
+                   || u.name == "remoteRotorControlVersion"
                    || u.name == "remoteTgxlControlVersion"
                    || u.name == "stationIdentityVersion"
                    || u.name == "deviceAdminVersion"
@@ -860,6 +869,8 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                     caps.accessoryDataVersion = version;
                 } else if (u.name == "accessoryTxVersion") {
                     caps.accessoryTxVersion = version;
+                } else if (u.name == "remoteRotorControlVersion") {
+                    caps.remoteRotorControlVersion = version;
                 } else if (u.name == "radioAntennaRowsVersion") {
                     caps.radioAntennaRowsVersion = version == 1 ? 1 : 0;
                 } else if (u.name == "vaxVersion") {

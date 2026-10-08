@@ -44,6 +44,8 @@
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-09-28: Slice control plan Task 4: SliceAccess joins it. J.J. Boyd
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-08: Rotor control plan Task 4b: RotorModel joins it. J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -72,6 +74,7 @@
 #include "models/AmplifierModel.h"
 #include "models/RfKitModel.h"
 #include "models/StationTciModel.h"
+#include "models/RotorModel.h"
 #include "models/AccessoryDataModel.h"
 #include "models/AccessorySettingsModel.h"
 #include "core/session/StationCatalog.h"
@@ -914,7 +917,9 @@ private:
                  // iPhone app plan Task 25 (R-IOS-18): the Core's computer's VAX.
                  &StationVax::staticMetaObject,
                  // R-R3-49 / R-IOS-18: the Core's PA Gain profiles, read-only.
-                 &PaProfilesFacade::staticMetaObject };
+                 &PaProfilesFacade::staticMetaObject,
+                 // Rotor control plan Task 4b: the Core's rotor, read-only.
+                 &RotorLink::RotorModel::staticMetaObject };
     }
 };
 

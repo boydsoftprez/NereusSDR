@@ -62,6 +62,9 @@
 //   2026-09-28 - Slice control plan Task 4: SliceAccess mirrored
 //                 (`access:<sliceId>`). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 4b: RotorModel mirrored (`rotor`,
+//                 read-only). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/MirrorSchema.h"
@@ -155,6 +158,9 @@ const char* const kMirroredClasses[] = {
     // R-R3-49 / R-IOS-18 (paProfileVersion 1): the Core's PA Gain profiles,
     // read-only; the paProfile verbs change them.
     "NereusSDR::PaProfilesFacade",
+    // Rotor control plan Task 4b (remoteRotorControlVersion 1): the Core's
+    // antenna rotor, read-only; the rotor commands change it.
+    "NereusSDR::RotorLink::RotorModel",
 };
 
 // Per-property exclusions, as (class, property).
