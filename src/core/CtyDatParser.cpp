@@ -32,6 +32,11 @@
 //                                    matched alias's override is known;
 //                                    positionForCallsign. AI tooling:
 //                                    Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Final review fixes: the longitude
+//                                    sign comments say what is sourced
+//                                    and what is assumed. Behaviour
+//                                    unchanged. AI tooling: Anthropic
+//                                    Claude Code.
 
 #include "CtyDatParser.h"
 
@@ -63,9 +68,11 @@ static QString cleanPrefix(const QString& raw)
     return s;
 }
 
-// NereusSDR: the <lat/long> override on an alias token, if any. cty.dat
-// writes it like the header columns, latitude + north and longitude + west
-// (https://www.country-files.com/cty-dat-format/); returned + east.
+// NereusSDR: the <lat/long> override on an alias token, if any. Its sign
+// is unsourced: the format page names the override but not its sign, and
+// no cty.dat to hand (ours, or those of Thetis, AetherSDR and Longpath)
+// carries one; their parsers drop overrides. It is read as + west to
+// match the header columns, an assumption until confirmed; returned + east.
 static std::optional<GeoPosition> latLongOverride(const QString& raw)
 {
     static const QRegularExpression overrideRe(
@@ -213,8 +220,9 @@ void CtyDatParser::parse(const QStringList& lines)
             current.ituZone      = m.captured(3).toInt();
             current.continent    = m.captured(4).trimmed();
             // NereusSDR: cty.dat column 5 is latitude + north, column 6
-            // longitude + west (https://www.country-files.com/cty-dat-format/);
-            // stored + east.
+            // longitude + west. The format page does not state the sign; the
+            // data does (cty.dat:532 United States 91.87, cty.dat:515 Japan
+            // -138.38). Stored + east.
             current.latitude     = m.captured(5).toDouble();
             current.longitude    = -m.captured(6).toDouble();
             current.primaryPrefix = m.captured(7).trimmed().toUpper();
