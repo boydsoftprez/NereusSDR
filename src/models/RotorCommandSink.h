@@ -35,11 +35,16 @@
 //                                    (setRotorPresets), for the Rotor Setup
 //                                    page. AI-assisted via Anthropic Claude
 //                                    Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Final review I3: a setup view says when
+//                                    it opens and closes, so the rotor's
+//                                    computer reads its ports only then.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
 
 #include <QString>
+#include <QtGlobal>
 
 namespace NereusSDR {
 
@@ -108,6 +113,11 @@ public:
     /// Replace the presets (`name<TAB>degrees` per line, the `presets`
     /// property's form). Same answer as requestRotorTarget.
     virtual bool requestRotorPresets(const QString& presets, QString* reason) = 0;
+    /// A rotor setup view opened (true) or closed (false). The rotor's
+    /// computer reads its serial ports and looks for rotctld only while a
+    /// rotor is set up or a setup view is open; a view on a remote Core
+    /// asks it to (`refreshRotorPorts`) while open. Nothing to refuse.
+    virtual void setRotorSetupViewOpen(bool open) { Q_UNUSED(open); }
     /// The id the last rotor command left for a remote Core under, so a
     /// window can tell the Core's verdict on it apart
     /// (RadioModel::stationCommandFinished); 0 when it went to this

@@ -37,8 +37,13 @@
 // Modification history (NereusSDR):
 //   2026-10-08  J.J. Boyd / KG4VCF  Created (rotor control plan, Task 7).
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Final review I3: the page says when it
+//                                    is on screen, so the rotor's computer
+//                                    reads its ports only then.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
+#include <QPointer>
 #include <QWidget>
 
 class QComboBox;
@@ -61,6 +66,7 @@ class RotorSetupPage : public QWidget {
 
 public:
     explicit RotorSetupPage(RadioModel* model, QWidget* parent = nullptr);
+    ~RotorSetupPage() override;
 
     // Test seams (tst_rotor_setup_page).
     QComboBox*      driverComboForTesting() const { return m_driver; }
@@ -83,7 +89,15 @@ public:
     QString         messageTextForTesting() const;
     QString         availabilityTextForTesting() const;
 
+protected:
+    // On screen, the rotor's computer reads its serial ports (and, on a
+    // remote Core, is asked to); off screen it stops unless a rotor is set
+    // up (RotorCommandSink::setRotorSetupViewOpen).
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
+
 private:
+    void setViewOpen(bool open);
     QGroupBox* buildConnectionGroup();
     QGroupBox* buildRotorGroup();
     QGroupBox* buildPresetsGroup();
@@ -110,6 +124,9 @@ private:
 
     RadioModel* m_model{nullptr};
     RotorCommandSink* m_commands{nullptr};
+    // The model the open view was reported to (it may go first).
+    QPointer<RadioModel> m_viewModel;
+    bool m_viewOpen{false};
     RotorLink::RotorModel* m_rotor{nullptr};
 
     QLabel* m_availability{nullptr};

@@ -247,6 +247,9 @@
 //                                    rotorControlAvailable and the seven
 //                                    rotor requests. AI-assisted via
 //                                    Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Final review I3:
+//                                    requestRefreshRotorPorts. AI-assisted
+//                                    via Anthropic Claude Code.
 // =================================================================
 
 #include <QString>
@@ -536,6 +539,10 @@ public:
     virtual CommandOutcome requestDisconnectRotor()
     { return { false, rotorUnavailableReason() }; }
     virtual CommandOutcome requestRotorPresets(const QString&)
+    { return { false, rotorUnavailableReason() }; }
+    /// Final review I3: a setup view is open on this window; the Core reads
+    /// its serial ports and looks for rotctld now and for the next 30 s.
+    virtual CommandOutcome requestRefreshRotorPorts()
     { return { false, rotorUnavailableReason() }; }
 
     /// R-R3-47 / R-R3-22 (remotePgxlControlVersion 3): the Core sends the

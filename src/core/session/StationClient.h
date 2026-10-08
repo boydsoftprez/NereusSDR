@@ -1428,6 +1428,7 @@ public:
                                          int axes, int endStop, int rangeDeg,
                                          double offsetDeg) override;
     CommandOutcome requestDisconnectRotor() override;
+    CommandOutcome requestRefreshRotorPorts() override;
     CommandOutcome requestRotorPresets(const QString& presets) override;
     CommandOutcome requestPgxlName(const QString& name) override;
     CommandOutcome requestPgxlHardware(const QString& setting, const QString& value) override;

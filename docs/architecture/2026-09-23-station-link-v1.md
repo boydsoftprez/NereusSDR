@@ -5904,6 +5904,7 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `configureRotor` | `driver` enum, `serialPort` utf8, `baud` i64, `host` utf8, `port` i64, `hamlibModel` i64, `axes` enum, `endStop` enum, `rangeDeg` i64, `offsetDeg` f64 | `remoteRotorControlVersion` | 1 | 11 |
 | `disconnectRotor` | none | `remoteRotorControlVersion` | 1 | 11 |
 | `setRotorPresets` | `presets` utf8 | `remoteRotorControlVersion` | 1 | 11 |
+| `refreshRotorPorts` | none | `remoteRotorControlVersion` | 1 | 11 |
 | `requestIoBoardProbe` | none | `radioHardwareVersion` | 2 | 11 |
 | `setAlexRxAntenna` | `band` i64, `antenna` i64, `rxOnly` bool | `radioHardwareVersion` | 3 | 11 |
 | `setAlexRxAntennaForRadio` | `mac` utf8, `band` i64, `antenna` i64, `rxOnly` bool | `radioAntennaRowsVersion` | 1 | 11 |
@@ -6426,7 +6427,7 @@ These command groups need a sentence beyond the table:
   document.
 - **The rotor** (`remoteRotorControlVersion` 1). `setRotorTarget`,
   `turnRotorToCall`, `stopRotor`, `nudgeRotor`, `configureRotor`,
-  `disconnectRotor` and `setRotorPresets` go to the Core's rotor
+  `disconnectRotor`, `setRotorPresets` and `refreshRotorPorts` go to the Core's rotor
   controller, from a peer at agreed minor 11 on a Core that advertises the
   capability (otherwise "Update this app to turn the rotor on this Core."
   or "This Core does not control a rotor. Updating the Core may help.").

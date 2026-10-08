@@ -52,10 +52,15 @@ Hamlib model list entry; the wire names a class by its short name, so it is
 `RotorModel` here. Where the rotor points (`spanPositionDeg`, `travelDeg`,
 `routeKnown`, `positionFresh`, `azimuthDeg`, `elevationDeg`) changes in one
 delta, everything else in another. The Core looks again at its serial ports
-and for `rotctld` every 5 s (both are slow to ask; `configureRotor` always
-checks the ports as they are), so `serialPorts` and `rotctldAvailable` can
-lag a plugged-in adapter by that long. The 5 s is this design's choice,
-not a device fact.
+and for `rotctld` every 5 s, off its main thread, but only while a rotor is
+set up, a setup view on the Core's own computer is open, or a window asked
+with `refreshRotorPorts` in the last 30 s (both are slow to ask: on Windows
+listing the serial ports can take hundreds of ms; `configureRotor` always
+checks the ports as they are). So `serialPorts` and `rotctldAvailable` can
+lag a plugged-in adapter by 5 s, and are not kept up to date at all while
+nothing needs them. A window's setup view sends `refreshRotorPorts` when it
+opens and every 20 s while it stays open (final review, I3). The 5 s, 20 s
+and 30 s are this design's choice, not a device fact.
 
 | Property | Kind | Meaning |
 | --- | --- | --- |
@@ -128,6 +133,7 @@ command to the rotor, not that the rotor has arrived. Windows follow
 | `configureRotor` | `driver` enum, `serialPort` utf8, `baud` i64, `host` utf8, `port` i64, `hamlibModel` i64, `axes` enum, `endStop` enum, `rangeDeg` i64, `offsetDeg` f64 | Save the setup and (re)connect; driver 0 disconnects and forgets |
 | `disconnectRotor` | none | Disconnect, keeping the setup |
 | `setRotorPresets` | `presets` utf8 (as the property) | Replace the presets |
+| `refreshRotorPorts` | none | A setup view is open: read the serial ports and look for `rotctld` now, and keep doing so for 30 s (the answer arrives on `serialPorts` and `rotctldAvailable`) |
 
 **Strict headings** (after Longpath `RotorPeilung.h`). The Core checks every
 heading before anything reaches the rotor: a value that is not a finite
@@ -240,7 +246,7 @@ preference (`Rotor/TurnOnTune`, `"False"` by default), not the Core's.
 ## Fixtures
 
 - `tests/data/link/v1/surface.json`: the `rotor` key, the `RotorModel`
-  class, the seven commands and `remoteRotorControlVersion` 1 (regenerated
+  class, the eight commands and `remoteRotorControlVersion` 1 (regenerated
   by `tst_link_surface_manifest_regen`).
 - `tests/data/link/v1/sessions/verbs-rotor.json` (`session-verbs-rotor`,
   runs on the station and the app, in-process and over a data channel):
@@ -263,6 +269,6 @@ preference (`Rotor/TurnOnTune`, `"False"` by default), not the Core's.
   checks, `hamlibModel` for driver 4 only, a window's session ending its
   hold, the refused write, the object following the rotor, the catalogue's
   Rotor entry, and a remote window's `StationClient` mirroring the object
-  and sending all seven commands.
+  and sending all eight commands.
 - `tst_link_conformance_session` and the app's `LinkConformanceSessionTests`
   play `session-verbs-rotor`; `tst_link_surface_manifest` checks the surface.

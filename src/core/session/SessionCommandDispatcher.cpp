@@ -317,6 +317,10 @@
 //                                    range, Hamlib model, offset), and a
 //                                    session's end ends its rotor hold.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Final review I3: refreshRotorPorts, a
+//                                    setup view's ask for the Core's serial
+//                                    ports. AI-assisted via Anthropic Claude
+//                                    Code.
 // =================================================================
 
 #include "core/session/SessionCommandDispatcher.h"
@@ -342,6 +346,7 @@
 #include "core/StationRotorController.h"
 #include "models/BandGrid.h"
 #include "models/RadioModel.h"
+#include "models/RotorModel.h"
 #include "models/StationTciModel.h"
 #include "models/StationCatModel.h"
 #include "core/cat/StationCatController.h"
@@ -633,7 +638,7 @@ bool findBoolArgument(const QList<MirrorUpdate>& arguments, const QByteArray& na
 //   setTxInterlockPolicy, setPgxlPowerCap, clearAccessoryFaults
 //                          accessoryDataAvailable() (version 1)
 //   setRotorTarget, turnRotorToCall, stopRotor, nudgeRotor, configureRotor,
-//   disconnectRotor, setRotorPresets
+//   disconnectRotor, setRotorPresets, refreshRotorPorts
 //                          rotorControlAvailable() (remoteRotorControlVersion
 //                          1)
 //   requestIoBoardProbe    remoteHardwareConfigAvailable() (version 2)
@@ -911,6 +916,8 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
         {"disconnectRotor", {}, "remoteRotorControlVersion", 1,
          kRadioIdentitySessionProtocolMinor},
         {"setRotorPresets", {arg("presets", kUtf8)}, "remoteRotorControlVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"refreshRotorPorts", {}, "remoteRotorControlVersion", 1,
          kRadioIdentitySessionProtocolMinor},
         // The Core's radio hardware (R-R3-46).
         {"requestIoBoardProbe", {}, "radioHardwareVersion", 2,
@@ -1573,6 +1580,8 @@ void SessionCommandDispatcher::dispatch(const SessionMessage& invoke)
         handleDisconnectRotor(invoke);
     } else if (invoke.commandVerb == "setRotorPresets") {
         handleSetRotorPresets(invoke);
+    } else if (invoke.commandVerb == "refreshRotorPorts") {
+        handleRefreshRotorPorts(invoke);
     } else if (invoke.commandVerb == "setPgxlName" || invoke.commandVerb == "setPgxlHardware"
                || invoke.commandVerb == "setPgxlNetwork"
                || invoke.commandVerb == "savePgxlSettings"
@@ -3902,6 +3911,24 @@ void SessionCommandDispatcher::handleDisconnectRotor(const SessionMessage& invok
     QString reason;
     const bool accepted = rotor->disconnectRotor(&reason);
     emitResult(invoke.commandVerb, invoke.commandId, accepted, accepted ? QString() : reason, {});
+}
+
+// Final review I3: a window's rotor setup view is open. The Core reads its
+// serial ports and looks for rotctld now, off the main thread, and keeps
+// doing so for RotorModel::kRemoteSetupLeaseMs; the answer arrives on the
+// `rotor` object's serialPorts and rotctldAvailable.
+void SessionCommandDispatcher::handleRefreshRotorPorts(const SessionMessage& invoke)
+{
+    if (!hasExactlyArguments(invoke.arguments, {})) {
+        emitResult(invoke.commandVerb, invoke.commandId, false, rotorUnreadableReason(), {});
+        return;
+    }
+    if (m_radioModel->stationRotorController() == nullptr) {
+        emitResult(invoke.commandVerb, invoke.commandId, false, rotorUnavailableReason(), {});
+        return;
+    }
+    m_radioModel->rotorModel()->remoteSetupViewAsked();
+    emitResult(invoke.commandVerb, invoke.commandId, true, QString(), {});
 }
 
 void SessionCommandDispatcher::handleSetRotorPresets(const SessionMessage& invoke)

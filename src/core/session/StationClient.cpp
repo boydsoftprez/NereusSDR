@@ -507,6 +507,8 @@
 //               (setRotorTarget, turnRotorToCall, stopRotor, nudgeRotor),
 //               so no rotor refusal reads as a slice error. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08: Final review I3: requestRefreshRotorPorts. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // 2026-10-01: Authenticated Core address inventory and reconnect learning.
@@ -5403,6 +5405,7 @@ QString accessoryRefusalDevice(const QByteArray& verb, const QString& faultsDevi
     }
     // Rotor control plan Tasks 7 and 8: every rotor command.
     if (verb == "configureRotor" || verb == "setRotorPresets" || verb == "disconnectRotor"
+        || verb == "refreshRotorPorts"
         || verb == "setRotorTarget" || verb == "turnRotorToCall" || verb == "stopRotor"
         || verb == "nudgeRotor") {
         return QStringLiteral("rotor");
@@ -6943,6 +6946,14 @@ StationClient::CommandOutcome StationClient::requestDisconnectRotor()
         return IStationLink::requestDisconnectRotor();
     }
     return sendCommand("disconnectRotor", -1, {}, QStringLiteral("the rotor"));
+}
+
+StationClient::CommandOutcome StationClient::requestRefreshRotorPorts()
+{
+    if (!rotorControlAvailable()) {
+        return IStationLink::requestRefreshRotorPorts();
+    }
+    return sendCommand("refreshRotorPorts", -1, {}, QStringLiteral("the rotor setup"));
 }
 
 StationClient::CommandOutcome StationClient::requestRotorPresets(const QString& presets)

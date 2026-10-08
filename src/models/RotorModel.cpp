@@ -9,6 +9,9 @@
 // Modification history (NereusSDR):
 //   2026-10-08  J.J. Boyd / KG4VCF  Created (rotor control plan, Task 4b).
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Final review I3: the host scan, gated
+//                                    and off the main thread.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "models/RotorModel.h"
@@ -51,9 +54,13 @@ RotorModel::RotorModel(QObject* parent)
 {
     m_hostRefresh.setInterval(kHostRefreshMs);
     connect(&m_hostRefresh, &QTimer::timeout, this, [this] {
-        refreshHost();
-        refreshFromController();
+        if (m_controller != nullptr) {
+            m_controller->scanHost();
+        }
     });
+    m_remoteLease.setSingleShot(true);
+    m_remoteLease.setInterval(kRemoteSetupLeaseMs);
+    connect(&m_remoteLease, &QTimer::timeout, this, &RotorModel::updateHostRefresh);
 }
 
 RotorModel::State RotorModel::stateFrom(const StationRotorController& controller,
@@ -107,13 +114,21 @@ void RotorModel::bindController(StationRotorController* controller)
     disconnect(m_stateConnection);
     disconnect(m_positionConnection);
     disconnect(m_destroyedConnection);
+    disconnect(m_scanConnection);
     m_hostRefresh.stop();
     m_controller = controller;
     if (controller == nullptr) {
         return;
     }
-    m_stateConnection = connect(controller, &StationRotorController::stateChanged, this,
-                                &RotorModel::refreshFromController);
+    m_stateConnection = connect(controller, &StationRotorController::stateChanged, this, [this] {
+        refreshFromController();
+        // A rotor set up or forgotten starts or stops the scan.
+        updateHostRefresh();
+    });
+    m_scanConnection = connect(controller, &StationRotorController::hostScanned, this, [this] {
+        refreshHost();
+        refreshFromController();
+    });
     m_positionConnection = connect(controller, &StationRotorController::positionChanged, this,
                                    &RotorModel::refreshFromController);
     m_destroyedConnection = connect(controller, &QObject::destroyed, this, [this] {
@@ -122,7 +137,7 @@ void RotorModel::bindController(StationRotorController* controller)
     });
     refreshHost();
     refreshFromController();
-    m_hostRefresh.start();
+    updateHostRefresh();
 }
 
 void RotorModel::refreshHost()
@@ -130,8 +145,53 @@ void RotorModel::refreshHost()
     if (m_controller == nullptr) {
         return;
     }
-    m_hostSerialPorts = m_controller->serialPortsText();
-    m_hostRotctld = m_controller->rotctldAvailable();
+    // The last scan's answer; reading it asks the system nothing.
+    m_hostSerialPorts = m_controller->hostSerialPortsText();
+    m_hostRotctld = m_controller->hostRotctldAvailable();
+}
+
+bool RotorModel::hostRefreshWanted() const
+{
+    return m_controller != nullptr
+        && (m_controller->driver() != RotorDriver::None || m_setupViews > 0
+            || m_remoteLease.isActive());
+}
+
+void RotorModel::updateHostRefresh()
+{
+    if (!hostRefreshWanted()) {
+        m_hostRefresh.stop();
+        return;
+    }
+    if (!m_hostRefresh.isActive()) {
+        m_hostRefresh.start();
+        m_controller->scanHost();
+    }
+}
+
+void RotorModel::setupViewOpened()
+{
+    ++m_setupViews;
+    // A view opening shows the ports as they are now.
+    if (m_controller != nullptr) {
+        m_controller->scanHost();
+    }
+    updateHostRefresh();
+}
+
+void RotorModel::setupViewClosed()
+{
+    m_setupViews = qMax(0, m_setupViews - 1);
+    updateHostRefresh();
+}
+
+void RotorModel::remoteSetupViewAsked()
+{
+    m_remoteLease.start();
+    if (m_controller != nullptr) {
+        m_controller->scanHost();
+    }
+    updateHostRefresh();
 }
 
 void RotorModel::refreshFromController()

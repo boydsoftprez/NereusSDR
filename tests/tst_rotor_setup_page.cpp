@@ -15,6 +15,9 @@
 // Modification history (NereusSDR):
 //   2026-10-08  J.J. Boyd / KG4VCF  Created (rotor control plan, Task 7).
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Final review I3: the page has the ports
+//                                    read only while it is on screen.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -63,6 +66,7 @@ public:
     bool available{true};
     QList<Configure> configures;
     QStringList presets;
+    int refreshes{0};
     quint32 nextId{100};
 
     CommandOutcome requestAddSlice(const QString&) override { return {}; }
@@ -92,6 +96,11 @@ public:
             return IStationLink::requestRotorPresets(text);
         }
         presets.append(text);
+        return {true, {}, ++nextId};
+    }
+    CommandOutcome requestRefreshRotorPorts() override
+    {
+        ++refreshes;
         return {true, {}, ++nextId};
     }
 };
@@ -198,6 +207,29 @@ private slots:
         QVERIFY(!page.hamlibComboForTesting()->isEnabled());
         QVERIFY(page.serialPortComboForTesting()->isEnabled());
         verifyPlain(page);
+    }
+
+    void remoteWindowAsksTheCoreForItsPortsWhileOpen()
+    {
+        // Final review I3: the Core reads its ports only while a view
+        // needs them, so a remote page asks when it comes on screen (and
+        // every 20 s while there).
+        RadioModel window(RadioModel::Role::Remote);
+        RecordingRotorLink link;
+        window.attachStation(&link);
+        window.rotorModel()->setState(coreRotor());
+        RotorSetupPage page(&window);
+        QCOMPARE(link.refreshes, 0);
+        page.show();
+        QCOMPARE(link.refreshes, 1);
+        page.hide();
+        page.show();
+        QCOMPARE(link.refreshes, 2);
+        page.hide();
+        // A Core that does not control a rotor is not asked.
+        link.available = false;
+        page.show();
+        QCOMPARE(link.refreshes, 2);
     }
 
     void remoteSaveSendsConfigureRotor()
@@ -366,12 +398,16 @@ private slots:
         controller->connection()->setTransportFactoryForTesting([](const RotorTransportTarget&) {
             return std::unique_ptr<RotorTransport>(std::make_unique<SilentTransport>());
         });
-        // Look at the ports again (the object does every few seconds).
         radio.rotorModel()->bindController(controller);
         RotorSetupPage page(&radio);
+        // Final review I3: with no rotor set up the ports are read only
+        // while the page is on screen.
+        QVERIFY(!radio.rotorModel()->hostRefreshActive());
+        page.show();
+        QVERIFY(radio.rotorModel()->hostRefreshActive());
         QCOMPARE(page.availabilityTextForTesting(), QStringLiteral("This computer runs the rotor."));
-        QCOMPARE(items(page.serialPortComboForTesting()),
-                 QStringList({QStringLiteral("COM4"), QStringLiteral("COM7")}));
+        QTRY_COMPARE(items(page.serialPortComboForTesting()),
+                     QStringList({QStringLiteral("COM4"), QStringLiteral("COM7")}));
         // The contract's defaults with no rotor set up.
         QCOMPARE(page.driverComboForTesting()->currentData().toInt(), 0);
         QCOMPARE(page.endStopComboForTesting()->currentData().toInt(),
@@ -414,6 +450,10 @@ private slots:
         QCOMPARE(controller->config().driver, RotorDriver::None);
         QCOMPARE(page.statusTextForTesting(), QStringLiteral("No rotor is set up."));
         verifyPlain(page);
+        // Off screen, with no rotor set up, the ports are no longer read.
+        QVERIFY(radio.rotorModel()->hostRefreshActive());
+        page.hide();
+        QVERIFY(!radio.rotorModel()->hostRefreshActive());
     }
 
     // Bench fix: in the Settings window at the size JJ uses, every field

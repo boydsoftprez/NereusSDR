@@ -87,7 +87,7 @@ import Testing
         }
         #expect(fixtures.contains { $0.id == "session-connect-connectable" })
         // The Core's antenna rotor (remoteRotorControlVersion 1): the rotor
-        // object and its seven commands, played with no rotor set up.
+        // object and its eight commands, played with no rotor set up.
         #expect(fixtures.contains { $0.id == "session-verbs-rotor" })
         // The Settings Validation panel (settingsHygiene 2) and a Setup
         // description at version 1, run once the app declares them.

@@ -1072,6 +1072,10 @@
 //                column (the Core's bearing on each row it serves, else
 //                worked out from this window's cty.dat and grid square).
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Final review I3: setRotorSetupViewOpen, so the rotor's
+//                computer reads its serial ports only while a setup view
+//                is open or a rotor is set up. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -6110,6 +6114,41 @@ bool RadioModel::requestRotorPresets(const QString& presets, QString* reason)
     }
     if (reason) { *reason = IStationLink::rotorUnavailableReason(); }
     return false;
+}
+
+void RadioModel::setRotorSetupViewOpen(bool open)
+{
+    m_rotorSetupViews = open ? m_rotorSetupViews + 1 : qMax(0, m_rotorSetupViews - 1);
+    if (m_stationRotor) {
+        if (open) {
+            m_rotorModel->setupViewOpened();
+        } else {
+            m_rotorModel->setupViewClosed();
+        }
+        return;
+    }
+    const auto ask = [this] {
+        // Only a Core that controls a rotor is asked: any other would
+        // refuse, and its refusal would show every 20 s.
+        if (m_station && m_station->rotorControlAvailable()) {
+            m_station->requestRefreshRotorPorts();
+        }
+    };
+    if (!m_rotorSetupAsk) {
+        m_rotorSetupAsk = new QTimer(this);
+        m_rotorSetupAsk->setInterval(RotorLink::RotorModel::kRemoteSetupAskMs);
+        connect(m_rotorSetupAsk, &QTimer::timeout, this, ask);
+    }
+    if (m_rotorSetupViews == 0) {
+        m_rotorSetupAsk->stop();
+        return;
+    }
+    if (open) {
+        ask();
+    }
+    if (!m_rotorSetupAsk->isActive()) {
+        m_rotorSetupAsk->start();
+    }
 }
 
 void RadioModel::enableStationTci(const QString& bindOverride)

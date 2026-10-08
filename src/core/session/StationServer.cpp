@@ -988,6 +988,9 @@
 //   2026-10-08: Rotor control plan Task 4c: remoteRotorControlVersion's
 //               comment names the desktop running its own radio. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08: Final review I3: refreshRotorPorts admitted with the other
+//               rotor verbs. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/session/StationServer.h"
@@ -1386,13 +1389,13 @@ bool isRotorMessage(const SessionMessage& message)
         || (message.kind == SessionMessageKind::Schema && message.className == "RotorModel");
 }
 
-// Rotor control plan Task 4b: the seven rotor verbs (remote rotor control
-// v1, "Commands").
+// Rotor control plan Task 4b: the rotor verbs (remote rotor control v1,
+// "Commands"); refreshRotorPorts came with final review I3.
 bool isRotorVerb(const QByteArray& verb)
 {
     return verb == "setRotorTarget" || verb == "turnRotorToCall" || verb == "stopRotor"
         || verb == "nudgeRotor" || verb == "configureRotor" || verb == "disconnectRotor"
-        || verb == "setRotorPresets";
+        || verb == "setRotorPresets" || verb == "refreshRotorPorts";
 }
 
 // iPhone app Task 13 (R-IOS-08, deviceAdminVersion 1): the Core's paired

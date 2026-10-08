@@ -3711,6 +3711,10 @@ public:
     // ("That rotor setup is not valid."), as the Core checks a remote one.
     bool requestConfigureRotor(const Setup& setup, QString* reason) override;
     bool requestRotorPresets(const QString& presets, QString* reason) override;
+    // Final review I3: counted. Locally the rotor object scans while any is
+    // open; on a remote Core this window asks it every
+    // RotorLink::RotorModel::kRemoteSetupAskMs while any is open.
+    void setRotorSetupViewOpen(bool open) override;
     quint32 lastRotorCommandId() const override { return m_lastRotorCommandId; }
     bool configureTgxlForStation(const QString& host, quint16 port, QString* reason);
     bool disconnectTgxlForStation(QString* reason);
@@ -8492,6 +8496,10 @@ private:
     RotorLink::RotorModel*  m_rotorModel{nullptr};
     // Rotor control plan Task 6: see lastRotorCommandId().
     quint32 m_lastRotorCommandId{0};
+    // Final review I3: the open rotor setup views, and (on a remote Core)
+    // the timer that asks the Core to keep reading its ports; Qt child.
+    int     m_rotorSetupViews{0};
+    QTimer* m_rotorSetupAsk{nullptr};
     StationTciModel*        m_stationTciModel{nullptr};
     // M6: owned here and destroyed first in ~RadioModel (they hold this
     // model's slices and receivers), not through Qt parenting.

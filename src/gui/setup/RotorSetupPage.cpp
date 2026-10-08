@@ -24,6 +24,10 @@
 //                                    rows; the status line shows the live
 //                                    heading. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Final review I3: on screen, the page
+//                                    has the rotor's computer read its
+//                                    ports. AI-assisted via Anthropic
+//                                    Claude Code.
 // =================================================================
 
 #include "RotorSetupPage.h"
@@ -42,10 +46,12 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QHideEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QTableWidget>
@@ -193,6 +199,37 @@ RotorSetupPage::RotorSetupPage(RadioModel* model, QWidget* parent)
     refreshFromRotor();
     refreshStatus();
     refreshAvailability();
+}
+
+RotorSetupPage::~RotorSetupPage()
+{
+    setViewOpen(false);
+}
+
+void RotorSetupPage::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    setViewOpen(true);
+}
+
+void RotorSetupPage::hideEvent(QHideEvent* event)
+{
+    QWidget::hideEvent(event);
+    setViewOpen(false);
+}
+
+void RotorSetupPage::setViewOpen(bool open)
+{
+    if (open == m_viewOpen) {
+        return;
+    }
+    if (open) {
+        m_viewModel = m_model;
+    }
+    m_viewOpen = open;
+    if (m_viewModel) {
+        m_viewModel->setRotorSetupViewOpen(open);
+    }
 }
 
 QGroupBox* RotorSetupPage::buildConnectionGroup()

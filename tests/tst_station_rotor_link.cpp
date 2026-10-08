@@ -34,6 +34,12 @@
 //   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 8: refused
 //                                    turns take the accessory route too.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Final review I3: the Core reads its
+//                                    serial ports only while a rotor is set
+//                                    up or a setup view is open
+//                                    (refreshRotorPorts), off the main
+//                                    thread. AI-assisted via Anthropic
+//                                    Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -45,7 +51,9 @@
 #include <QPointer>
 #include <QRegularExpression>
 #include <QTemporaryDir>
+#include <QThread>
 
+#include <atomic>
 #include <cmath>
 #include <limits>
 #include <memory>
@@ -408,7 +416,7 @@ private slots:
     {
         const QList<QByteArray> verbs{"setRotorTarget", "turnRotorToCall", "stopRotor",
                                       "nudgeRotor",     "configureRotor",  "disconnectRotor",
-                                      "setRotorPresets"};
+                                      "setRotorPresets", "refreshRotorPorts"};
         for (const QByteArray& verb : verbs) {
             bool found = false;
             for (const CommandVerbSpec& spec : SessionCommandDispatcher::verbSpecs()) {
@@ -460,7 +468,8 @@ private slots:
             {"nudgeRotor", {enumArg("direction", 1), boolean("active", true)}},
             {"configureRotor", Setup{}.arguments()},
             {"disconnectRotor", {}},
-            {"setRotorPresets", {utf8("presets", QStringLiteral("Home\t90"))}}};
+            {"setRotorPresets", {utf8("presets", QStringLiteral("Home\t90"))}},
+            {"refreshRotorPorts", {}}};
 
         Core owning(true);
         QVERIFY(owning.connectRotorAt("090"));
@@ -888,6 +897,61 @@ private slots:
         QCOMPARE(dispatch(bare, "configureRotor", Setup{}.arguments()).reason, kCoreHasNoRotor);
     }
 
+    // ── When the Core reads its serial ports (final review I3) ─────
+
+    void theCoreReadsItsPortsOnlyWhenSomethingNeedsThem()
+    {
+        Core core(Owns::RotorOnly);
+        RotorState* object = core.model.rotorModel();
+        auto calls = std::make_shared<std::atomic<int>>(0);
+        auto offMain = std::make_shared<std::atomic<bool>>(true);
+        QThread* mainThread = QThread::currentThread();
+        core.controller()->setSerialPortListerForTesting([calls, offMain, mainThread] {
+            ++*calls;
+            if (QThread::currentThread() == mainThread) { *offMain = false; }
+            return QStringList{kPort};
+        });
+        object->bindController(core.controller());
+
+        // No rotor, no setup view: nothing is read, now or later.
+        QVERIFY(!object->hostRefreshWanted());
+        QVERIFY(!object->hostRefreshActive());
+        QTest::qWait(50);
+        QCOMPARE(calls->load(), 0);
+
+        // A setup view on this computer opens: read at once, off the main
+        // thread, and again every few seconds while it is open.
+        core.model.setRotorSetupViewOpen(true);
+        QVERIFY(object->hostRefreshActive());
+        QTRY_COMPARE(object->serialPorts(), kPort);
+        QVERIFY(calls->load() >= 1);
+        QVERIFY(offMain->load());
+        core.model.setRotorSetupViewOpen(false);
+        QVERIFY(!object->hostRefreshActive());
+
+        // A remote window's setup view asks: read again, and the scan
+        // keeps going for the lease.
+        Core remote(true);
+        LoopbackTransport* peer = remote.connect(this, kRadioIdentitySessionProtocolMinor);
+        QTRY_VERIFY(snapshotDone(peer));
+        RotorState* remoteObject = remote.model.rotorModel();
+        QVERIFY(!remoteObject->hostRefreshActive());
+        QCOMPARE(remoteObject->serialPorts(), QString());
+        QVERIFY(invoke(peer, "refreshRotorPorts", {}).accepted);
+        QVERIFY(remoteObject->hostRefreshActive());
+        QTRY_COMPARE(remoteObject->serialPorts(), QStringLiteral("/dev/ttyUSB0\nCOM4"));
+        const SessionMessage odd = invoke(peer, "refreshRotorPorts", {boolean("now", true)});
+        QCOMPARE(odd.reason, kUnreadable);
+
+        // A rotor set up keeps it going with no view; forgetting it stops.
+        QSignalSpy scanned(core.controller(), &StationRotorController::hostScanned);
+        QVERIFY(core.connectRotorAt("090"));
+        QVERIFY(object->hostRefreshActive());
+        QTRY_VERIFY(scanned.count() >= 1);
+        QVERIFY(core.controller()->configureRotor(RotorConfig{}, nullptr));
+        QVERIFY(!object->hostRefreshActive());
+    }
+
     // ── The read-only object ───────────────────────────────────────
 
     void writingTheRotorObjectIsRefused()
@@ -923,7 +987,11 @@ private slots:
         QTRY_VERIFY(snapshotDone(peer));
         RotorState* object = core.model.rotorModel();
         QCOMPARE(object->driver(), RotorState::Driver::None);
-        QCOMPARE(object->serialPorts(), QStringLiteral("/dev/ttyUSB0\nCOM4"));
+        // With no rotor set up and no setup view open the ports are not
+        // read (final review I3); a window opening its setup view asks.
+        QCOMPARE(object->serialPorts(), QString());
+        QVERIFY(invoke(peer, "refreshRotorPorts", {}).accepted);
+        QTRY_COMPARE(object->serialPorts(), QStringLiteral("/dev/ttyUSB0\nCOM4"));
         QVERIFY(!object->rotctldAvailable());
         QCOMPARE(object->azimuthDeg(), -1.0);
 
@@ -1162,6 +1230,8 @@ private slots:
         QVERIFY(client.requestDisconnectRotor().sent);
         NEREUS_TRY_COMPARE(window.rotorModel()->connectionPhase(),
                            TunerModel::ConnectionPhase::Disconnected);
+        // Final review I3: a setup view's ask.
+        QVERIFY(client.requestRefreshRotorPorts().sent);
     }
 
     // ── The GUI's one way to turn the rotor (Task 5) ───────────────

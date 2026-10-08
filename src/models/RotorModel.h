@@ -29,6 +29,10 @@
 // Modification history (NereusSDR):
 //   2026-10-08  J.J. Boyd / KG4VCF  Created (rotor control plan, Task 4b).
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Final review I3: the host scan runs only
+//                                    while a rotor is set up or a setup view
+//                                    is open, and off the main thread.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -140,10 +144,17 @@ public:
     /// Why a window cannot write this object: the Core refuses every write.
     static QString readOnlyReason();
     /// How often the Core looks again at its serial ports and for rotctld
-    /// while bound (both are slow to ask, and the position moves several
-    /// times a second). This design's choice, not a device fact;
-    /// configureRotor always checks the ports as they are.
+    /// (both are slow to ask, and the position moves several times a
+    /// second). Only while a rotor is set up or a setup view is open
+    /// (hostRefreshWanted()), and on a worker thread
+    /// (StationRotorController::scanHost). This design's choice, not a
+    /// device fact; configureRotor always checks the ports as they are.
     static constexpr int kHostRefreshMs = 5000;
+    /// A remote window's `refreshRotorPorts` keeps the scan going this
+    /// long; the window asks again every kRemoteSetupAskMs while its setup
+    /// view is open. Design values.
+    static constexpr int kRemoteSetupLeaseMs = 30000;
+    static constexpr int kRemoteSetupAskMs = 20000;
 
     explicit RotorModel(QObject* parent = nullptr);
 
@@ -185,6 +196,18 @@ public:
     /// The whole state at once (the Core's controller, or a test).
     void setState(const State& state);
 
+    /// The Core: one of this process's own setup views opened or closed
+    /// (counted). While any is open the ports are scanned.
+    void setupViewOpened();
+    void setupViewClosed();
+    /// The Core: a remote window's `refreshRotorPorts`. Scans now and keeps
+    /// scanning for kRemoteSetupLeaseMs.
+    void remoteSetupViewAsked();
+    /// Whether the periodic scan should run now: bound to a controller
+    /// with a rotor set up, a setup view open, or a remote lease running.
+    bool hostRefreshWanted() const;
+    bool hostRefreshActive() const { return m_hostRefresh.isActive(); }
+
     /// A remote window: one of the Core's values arriving.
     bool applyStationValue(const QByteArray& propertyName, const QVariant& value);
 
@@ -195,13 +218,19 @@ signals:
 private:
     void refreshFromController();
     void refreshHost();
+    // Starts or stops the periodic scan as hostRefreshWanted() says; a
+    // start scans at once.
+    void updateHostRefresh();
 
     State m_state;
     StationRotorController* m_controller{nullptr};
     QMetaObject::Connection m_stateConnection;
     QMetaObject::Connection m_positionConnection;
     QMetaObject::Connection m_destroyedConnection;
+    QMetaObject::Connection m_scanConnection;
     QTimer m_hostRefresh;
+    QTimer m_remoteLease;
+    int m_setupViews{0};
     QString m_hostSerialPorts;
     bool m_hostRotctld{false};
 };

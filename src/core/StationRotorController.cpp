@@ -13,7 +13,7 @@
 //               adapters first and leaves out console ports. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08: Final review fixes: a reversed hold stops before the new
-//               direction. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               direction; the host scan runs on a worker thread. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
 // =================================================================
 
@@ -29,8 +29,10 @@
 #include <QCollator>
 #include <QFile>
 #include <QLoggingCategory>
+#include <QPromise>
 #include <QRegularExpression>
 #include <QSignalBlocker>
+#include <QThreadPool>
 
 #ifdef HAVE_SERIALPORT
 #include <QSerialPortInfo>
@@ -38,6 +40,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 
 namespace NereusSDR {
 
@@ -172,6 +175,14 @@ StationRotorController::StationRotorController(QObject* parent)
     , m_connection(new RotorConnection(this))
     , m_portLister(&systemSerialPorts)
 {
+    connect(&m_scan, &QFutureWatcherBase::finished, this, [this]() {
+        if (m_scan.future().resultCount() < 1) { return; }
+        const HostScan scan = m_scan.result();
+        m_hostPorts = scan.ports;
+        m_hostRotctld = scan.rotctld;
+        emit hostScanned();
+    });
+
     m_holdTimer.setSingleShot(true);
     // A coarse timer may fire 5% early; the lapse is 750 ms, not 712.
     m_holdTimer.setTimerType(Qt::PreciseTimer);
@@ -418,6 +429,26 @@ QStringList StationRotorController::consoleDevicesFromCmdline(const QString& cmd
 bool StationRotorController::rotctldAvailable() const
 {
     return !RotctldProcess::findBinary().isEmpty();
+}
+
+void StationRotorController::scanHost()
+{
+    if (m_scan.isRunning()) { return; }
+    // The worker gets its own copy of the lister and touches nothing of
+    // this object's; the watcher (a member) delivers the answer here, or
+    // nowhere if this object has gone by then.
+    auto promise = std::make_shared<QPromise<HostScan>>();
+    m_scan.setFuture(promise->future());
+    promise->start();
+    SerialPortLister lister = m_portLister;
+    QThreadPool::globalInstance()->start([promise, lister = std::move(lister)]() {
+        HostScan scan;
+        scan.ports = lister ? lister() : QStringList{};
+        scan.ports.removeDuplicates();
+        scan.rotctld = !RotctldProcess::findBinary().isEmpty();
+        promise->addResult(scan);
+        promise->finish();
+    });
 }
 
 bool StationRotorController::positionFresh() const

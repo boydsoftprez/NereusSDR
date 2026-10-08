@@ -341,7 +341,11 @@ struct RotorSetupCard: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("rotor.setup")
-        .onAppear { take(model.state) }
+        .onAppear {
+            take(model.state)
+            model.setupShown()
+        }
+        .onDisappear { model.setupHidden() }
         .onChange(of: model.state) { _, state in take(state) }
     }
 

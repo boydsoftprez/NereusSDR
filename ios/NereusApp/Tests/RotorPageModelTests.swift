@@ -321,6 +321,32 @@ struct RotorPageModelTests {
         #expect(argument(command, "rangeDeg") == .i64(450))
     }
 
+    @Test("the setup card asks the Core for its serial ports when shown and every 20 s, quietly, until hidden")
+    func setupAsksForPorts() async {
+        let rig = await Rig()
+        rig.model.setupShown()
+        #expect(await turns { rig.sent("refreshRotorPorts").count == 1 })
+        #expect(rig.sent("refreshRotorPorts").first?.args.isEmpty == true)
+        await rig.clock.advance(by: 19_999)
+        await drain()
+        #expect(rig.sent("refreshRotorPorts").count == 1)
+        await rig.clock.advance(by: 1)
+        #expect(await turns { rig.sent("refreshRotorPorts").count == 2 })
+        rig.model.setupHidden()
+        await rig.clock.advance(by: 60_000)
+        await drain()
+        #expect(rig.sent("refreshRotorPorts").count == 2)
+        #expect(rig.model.note == nil)
+
+        // A Core too old is not asked, and nothing shows.
+        let older = await Rig(version: 0, rotor: nil)
+        older.model.setupShown()
+        await drain()
+        #expect(older.recorded.commands.isEmpty)
+        #expect(older.model.note == nil)
+        older.model.setupHidden()
+    }
+
     // MARK: The route
 
     @Test("the predicted route follows the end stop and the overlap, as the bench capture turned")

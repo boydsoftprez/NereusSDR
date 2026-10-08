@@ -1841,6 +1841,14 @@
         {
             "arguments": [
             ],
+            "capability": "remoteRotorControlVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "refreshRotorPorts"
+        },
+        {
+            "arguments": [
+            ],
             "capability": "radioHardwareVersion",
             "capabilityVersion": 2,
             "minMinor": 11,

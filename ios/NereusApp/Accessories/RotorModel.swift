@@ -198,6 +198,10 @@ final class RotorModel: ObservableObject {
     nonisolated static let arrivedDeg = 1.5
     /// The Core marks the heading stale after this long without a reply.
     static let staleAfterMs: Int64 = 1_500
+    /// How often the setup card asks the Core to keep reading its serial
+    /// ports while on screen (document, `refreshRotorPorts`; the Core's
+    /// lease is 30 s).
+    static let setupAskRepeat: Duration = .seconds(20)
 
     static let objectKey = "rotor"
     static let capability = "remoteRotorControlVersion"
@@ -230,6 +234,8 @@ final class RotorModel: ObservableObject {
     private var lapseTimer: (any LinkTimer)?
     private var holdTimer: (any LinkTimer)?
     private var holdGeneration: UInt64 = 0
+    private var setupAskTimer: (any LinkTimer)?
+    private var setupAskGeneration: UInt64 = 0
     private var selectionGeneration: UInt64 = 0
     private var targetGeneration: UInt64 = 0
     private let outcomes = ControlOutcomeOwner()
@@ -440,6 +446,36 @@ final class RotorModel: ObservableObject {
             return
         }
         send("configureRotor", setup.arguments)
+    }
+
+    /// The setup card came on screen: the Core reads its serial ports and
+    /// looks for rotctld only while a rotor is set up or a setup view asks
+    /// (`refreshRotorPorts`), so the card asks now and every 20 s while it
+    /// stays. Quiet: nothing shows if the Core cannot be asked.
+    func setupShown() {
+        setupAskGeneration &+= 1
+        askForPorts(setupAskGeneration)
+    }
+
+    /// The setup card left the screen: no more asks.
+    func setupHidden() {
+        setupAskTimer?.cancel()
+        setupAskTimer = nil
+        setupAskGeneration &+= 1
+    }
+
+    private func askForPorts(_ generation: UInt64) {
+        guard generation == setupAskGeneration else {
+            return
+        }
+        if setupReason == nil, let commands {
+            Task {
+                _ = try? await commands.invoke("refreshRotorPorts", arguments: [], timeout: .seconds(5))
+            }
+        }
+        setupAskTimer = clock.schedule(after: Self.setupAskRepeat) { [weak self] in
+            await self?.askForPorts(generation)
+        }
     }
 
     /// Disconnects, keeping the setup (`disconnectRotor`).

@@ -21,7 +21,7 @@ import Testing
         let classes = try SessionFixtures.mirrorClasses()
         let fixtures = try SessionFixtures.forApp()
         #expect(fixtures.count == 87)
-        // The rotor's seven commands and refusals (remote rotor control v1).
+        // The rotor's eight commands and refusals (remote rotor control v1).
         #expect(fixtures.contains { $0.id == "session-verbs-rotor" })
         #expect(Set(fixtures.map(\.id)).count == fixtures.count)
         for id in Self.diversityProducerSessions {

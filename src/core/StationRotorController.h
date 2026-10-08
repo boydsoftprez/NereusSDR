@@ -30,6 +30,7 @@
 #include "core/RotorConnection.h"
 #include "models/TunerModel.h"
 
+#include <QFutureWatcher>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -130,6 +131,19 @@ public:
     // The same, one per line, as the property is sent.
     QString serialPortsText() const { return serialPorts().join(QLatin1Char('\n')); }
     bool rotctldAvailable() const;
+
+    // ── The host scan (final review I3) ──
+    // serialPorts() and rotctldAvailable() read the system on the calling
+    // thread (QSerialPortInfo goes through SetupAPI on Windows, which can
+    // take hundreds of ms). configureRotor still checks with them once;
+    // anything periodic calls scanHost() instead, which reads both on a
+    // worker thread and emits hostScanned() on this object's thread. A
+    // scan asked for while one runs is folded into it.
+    void scanHost();
+    bool hostScanRunning() const { return m_scan.isRunning(); }
+    // The last scan's answer; empty and false before the first.
+    QString hostSerialPortsText() const { return m_hostPorts.join(QLatin1Char('\n')); }
+    bool hostRotctldAvailable() const { return m_hostRotctld; }
     bool positionFresh() const;
     // Compass heading after the offset, 0 to under 360; -1 when unknown.
     // Where the rotor is in the overlap is spanPositionDeg().
@@ -184,6 +198,9 @@ signals:
     void stateChanged();
     // The headings, freshness or span moved (a subset of stateChanged).
     void positionChanged();
+    // A scanHost() finished; hostSerialPortsText() and
+    // hostRotctldAvailable() hold its answer.
+    void hostScanned();
 
 private:
     void loadSettings();
@@ -207,6 +224,14 @@ private:
     bool m_wantConnected{false};
     CallsignLocator m_locator;
     SerialPortLister m_portLister;
+
+    struct HostScan {
+        QStringList ports;
+        bool        rotctld{false};
+    };
+    QFutureWatcher<HostScan> m_scan;
+    QStringList m_hostPorts;
+    bool m_hostRotctld{false};
 
     QTimer m_holdTimer;
     bool m_holdActive{false};
