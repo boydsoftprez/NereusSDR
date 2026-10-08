@@ -25,8 +25,12 @@ tasks.
 | --- | --- | --- | --- |
 | `remoteRotorControlVersion` | 11 | 1 | The Core mirrors its rotor as the `rotor` object; every command below works; spots carry a bearing |
 
-The Core advertises 1 when it owns a rotor connection (the headless Core,
-`nereusd`, always does), and 0 otherwise. As with the accessory
+The Core advertises 1 when it owns a rotor connection, and 0 otherwise.
+Two kinds of Core own one: the headless Core, `nereusd`, always does, and so
+does a desktop running its own radio, for its own windows and for any phone
+it hosts. A window on a remote Core never owns one; it reads that Core's
+`rotor` object, and switching a desktop to a remote Core closes its own
+rotor's port first. As with the accessory
 capabilities, 0 is sent by leaving the capability out (absent reads as 0);
 it follows `accessoryTxVersion` in the capabilities message. A window below
 minor 11, or on a Core at 0, is not sent the `rotor` object. `kSessionProtocolMinor` does not

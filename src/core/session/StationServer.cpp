@@ -970,6 +970,9 @@
 //               the read-only `rotor` object and the seven rotor verbs,
 //               admitted as the accessory settings verbs are. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08: Rotor control plan Task 4c: remoteRotorControlVersion's
+//               comment names the desktop running its own radio. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationServer.h"
@@ -12850,9 +12853,11 @@ int StationServer::accessoryDataVersion() const
 
 int StationServer::remoteRotorControlVersion() const
 {
-    // Rotor control plan Task 4b: 1 on a Core that owns a rotor connection
-    // (nereusd always does: enableStationAccessoryIdentity makes it), 0
-    // otherwise.
+    // Rotor control plan Task 4b: 1 on a Core that owns a rotor connection,
+    // 0 otherwise. nereusd always does (enableStationAccessoryIdentity makes
+    // it); Task 4c: so does a desktop running its own radio, whose hosted
+    // Core serves its phones (GuiSessionCoordinator calls
+    // enableStationRotor for every window in the Local role).
     return !m_radioModel.isNull() && m_radioModel->stationRotorController() != nullptr ? 1 : 0;
 }
 

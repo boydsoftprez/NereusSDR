@@ -561,6 +561,9 @@
 //                `rotor` object (rotorModel()), following the Core's
 //                controller. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-08 - Rotor control plan Task 4c: enableStationRotor(), the
+//                rotor alone, for a desktop running its own radio.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -3516,6 +3519,8 @@ public:
     // R-R3-47: the Core's RF-Kit controller (nullptr outside the Core).
     StationRfKitController* stationRfKitController() const { return m_stationRfKit; }
     // Rotor control plan Task 3c: the Core's rotor (nullptr outside the Core).
+    // Task 4c: a desktop running its own radio is a Core here too; a window
+    // on a remote Core never has one.
     StationRotorController* stationRotorController() const { return m_stationRotor; }
     // Rotor control plan Task 4b: the rotor as the `rotor` object. Non-null
     // from construction; follows the Core's controller on the Core, and
@@ -3548,8 +3553,17 @@ public:
 
     // R3 station-owned accessory lifecycle. Installed by DaemonApp before
     // radio startup, independently of the temporary receive-only policy.
+    // Makes the rotor too, through enableStationRotor().
     void enableStationAccessoryIdentity();
     bool stationAccessoryIdentityEnabled() const { return m_stationTgxl != nullptr; }
+    // Rotor control plan Task 4c: the antenna rotor alone (cty.dat, the
+    // controller from the saved Rotor/* settings, rotorModel() bound to it).
+    // nereusd reaches it through enableStationAccessoryIdentity(); a desktop
+    // running its own radio calls it by itself, without the Tuner Genius,
+    // Power Genius or RF-Kit controllers. Local role only; a second call
+    // makes nothing. The controller lives as long as this model: a switch to
+    // a remote Core replaces the whole model, which closes the rotor's port.
+    void enableStationRotor();
     bool configureTgxlForStation(const QString& host, quint16 port, QString* reason);
     bool disconnectTgxlForStation(QString* reason);
     // R-R3-47 / R-R3-22: the Core's Power Genius XL, as the tuner's above.
@@ -8259,7 +8273,8 @@ private:
     // and its state, and the RF-Kit's band follow over that server.
     StationRfKitController* m_stationRfKit{nullptr};
     // Rotor control plan Task 3c: the Core's rotor, made beside the other
-    // station accessories (enableStationAccessoryIdentity); Qt child.
+    // station accessories (enableStationAccessoryIdentity), or alone on a
+    // desktop running its own radio (enableStationRotor); Qt child.
     StationRotorController* m_stationRotor{nullptr};
     // Rotor control plan Task 4b: see rotorModel(); Qt child.
     RotorLink::RotorModel*  m_rotorModel{nullptr};

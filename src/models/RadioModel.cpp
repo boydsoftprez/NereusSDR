@@ -1015,6 +1015,11 @@
 //   2026-10-08 - Rotor control plan Task 4b: the `rotor` object
 //                (RotorLink::RotorModel), bound to the Core's controller.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 4c: the rotor moves into its own
+//                enableStationRotor(), which nereusd reaches through
+//                enableStationAccessoryIdentity() as before and a desktop
+//                running its own radio calls alone. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -5780,6 +5785,18 @@ void RadioModel::enableStationAccessoryIdentity()
             }
         });
     }
+    // Rotor control plan Task 4c: the rotor, made the same way a desktop
+    // running its own radio makes it.
+    enableStationRotor();
+    applyStationBind();
+}
+
+void RadioModel::enableStationRotor()
+{
+    // Rotor control plan Task 4c: one controller per process's local
+    // model, and none in a window on a remote Core (that window follows
+    // the Core's `rotor` object instead).
+    if (m_role != Role::Local || m_stationRotor) { return; }
     // Rotor control plan Task 3c: the antenna rotor, set up from the Core's
     // own Rotor/* settings; with no rotor set up it stays idle. Turning to a
     // callsign places it with the one cty.dat table the spots use.
@@ -5802,7 +5819,6 @@ void RadioModel::enableStationAccessoryIdentity()
     m_stationRotor->start();
     // Rotor control plan Task 4b: what every window reads (`rotor`).
     m_rotorModel->bindController(m_stationRotor);
-    applyStationBind();
 }
 
 void RadioModel::enableStationTci(const QString& bindOverride)

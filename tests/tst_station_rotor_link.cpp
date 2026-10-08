@@ -18,6 +18,10 @@
 // Modification history (NereusSDR):
 //   2026-10-08  J.J. Boyd / KG4VCF  Created (rotor control plan, Task 4b).
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 4c: a desktop
+//                                    running its own radio owns the rotor
+//                                    alone (enableStationRotor). AI-assisted
+//                                    via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -80,9 +84,10 @@ class FakeRotor : public RotorTransport {
 public:
     QByteArray written;
     QByteArray pending;
+    bool closed = false;
 
     void open() override { emit opened(); }
-    void close() override {}
+    void close() override { closed = true; }
     qint64 write(const QByteArray& bytes) override
     {
         written += bytes;
@@ -243,8 +248,15 @@ bool toolsListRotor(const QJsonObject& catalog)
     return toolsListRotorAt(catalog, true);
 }
 
+// How a Core comes to own its rotor.
+enum class Owns {
+    Nothing,       // a model with no rotor controller
+    Accessories,   // nereusd: enableStationAccessoryIdentity
+    RotorOnly,     // a desktop running its own radio: enableStationRotor
+};
+
 // A Core: its radio model, its rotor on the fake byte stream (when it owns
-// its accessories), and its station server.
+// one), and its station server.
 struct Core {
     QTemporaryDir dir;
     RadioModel model;
@@ -254,10 +266,18 @@ struct Core {
     int peers = 0;
 
     explicit Core(bool ownsAccessories)
+        : Core(ownsAccessories ? Owns::Accessories : Owns::Nothing)
     {
-        if (ownsAccessories) {
+    }
+
+    explicit Core(Owns owns)
+    {
+        if (owns == Owns::Accessories) {
             model.enableStationAccessoryIdentity();
-            StationRotorController* controller = model.stationRotorController();
+        } else if (owns == Owns::RotorOnly) {
+            model.enableStationRotor();
+        }
+        if (StationRotorController* controller = model.stationRotorController()) {
             controller->setSerialPortListerForTesting(
                 [] { return QStringList{kPort, QStringLiteral("COM4")}; });
             controller->connection()->setTransportFactoryForTesting(
@@ -991,6 +1011,93 @@ private slots:
         QTRY_VERIFY(!listed());
         // Listed still, greyed: disabled, never hidden.
         QVERIFY(toolsListRotorAt(QJsonDocument::fromJson(catalog.json().toUtf8()).object(), false));
+    }
+
+    // ── A desktop running its own radio (Task 4c) ──────────────────
+
+    void aDesktopRunningItsOwnRadioOwnsTheRotorAlone()
+    {
+        Core desktop(Owns::RotorOnly);
+        // Only the rotor: no Tuner Genius, Power Genius or RF-Kit.
+        QVERIFY(!desktop.model.stationAccessoryIdentityEnabled());
+        QVERIFY(desktop.model.stationRfKitController() == nullptr);
+        QPointer<StationRotorController> controller = desktop.controller();
+        QVERIFY(controller);
+        QCOMPARE(desktop.model.findChildren<StationRotorController*>().size(), 1);
+
+        // A second call makes nothing; nor does nereusd's call after it.
+        desktop.model.enableStationRotor();
+        QCOMPARE(desktop.controller(), controller.data());
+        QCOMPARE(desktop.model.findChildren<StationRotorController*>().size(), 1);
+
+        // Its hosted Core tells a phone it controls a rotor.
+        QCOMPARE(desktop.server->remoteRotorControlVersion(), 1);
+        LoopbackTransport* phone = desktop.connect(this, kRadioIdentitySessionProtocolMinor);
+        QTRY_VERIFY(snapshotDone(phone));
+        QCOMPARE(capabilityOf(phone, "remoteRotorControlVersion"), std::optional<qint64>(1));
+        QVERIFY(sawRotorObject(phone));
+
+        // The Rotor tool is listed greyed until a rotor is set up, then
+        // offered.
+        StationCatalog* catalog = desktop.server->catalog();
+        QVERIFY(catalog);
+        const auto tools = [catalog] {
+            return QJsonDocument::fromJson(catalog->json().toUtf8()).object();
+        };
+        QVERIFY(toolsListRotorAt(tools(), false));
+        QVERIFY(desktop.connectRotorAt("090"));
+        QTRY_VERIFY(toolsListRotorAt(tools(), true));
+
+        // The phone turns it.
+        const SessionMessage turned =
+            invoke(phone, "setRotorTarget", {f64("azimuthDeg", 200.0), f64("elevationDeg", -1.0)});
+        QVERIFY2(turned.accepted, qPrintable(turned.reason));
+        QCOMPARE(desktop.controller()->targetAzimuthDeg(), 200.0);
+    }
+
+    void nereusdStillMakesOneRotorThroughItsAccessories()
+    {
+        Core core(Owns::Accessories);
+        QVERIFY(core.model.stationAccessoryIdentityEnabled());
+        StationRotorController* controller = core.controller();
+        QVERIFY(controller);
+        core.model.enableStationRotor();
+        QCOMPARE(core.controller(), controller);
+        QCOMPARE(core.model.findChildren<StationRotorController*>().size(), 1);
+        QCOMPARE(core.model.rotorModel()->label(), QString());
+
+        // The rotor first, then the accessories: still one.
+        RadioModel desktop;
+        desktop.enableStationRotor();
+        StationRotorController* first = desktop.stationRotorController();
+        desktop.enableStationAccessoryIdentity();
+        QCOMPARE(desktop.stationRotorController(), first);
+        QCOMPARE(desktop.findChildren<StationRotorController*>().size(), 1);
+    }
+
+    void aWindowOnARemoteCoreNeverOwnsARotor()
+    {
+        RadioModel window(RadioModel::Role::Remote);
+        window.enableStationRotor();
+        QVERIFY(window.stationRotorController() == nullptr);
+        window.enableStationAccessoryIdentity();
+        QVERIFY(window.stationRotorController() == nullptr);
+        QVERIFY(window.findChildren<StationRotorController*>().isEmpty());
+    }
+
+    void theRotorsPortClosesWithItsModel()
+    {
+        QPointer<FakeRotor> port;
+        {
+            Core desktop(Owns::RotorOnly);
+            QVERIFY(desktop.connectRotorAt("090"));
+            port = desktop.rotor;
+            QVERIFY(port);
+        }
+        // A switch to a remote Core retires the whole model; the rotor's
+        // port is closed then, and nothing is left holding it.
+        QVERIFY(port.isNull() || port->closed);
+        QTRY_VERIFY(port.isNull());
     }
 
     // ── A remote window ────────────────────────────────────────────
