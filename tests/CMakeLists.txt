@@ -6144,6 +6144,25 @@ nereus_add_test(tst_rotor_route)
 target_compile_definitions(tst_rotor_route PRIVATE
     NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
 
+# ── Rotor control: the Core's rotor link (Task 3b) ────────────────────────
+# GS-232A and GS-232B over a fake serial stream and rotctld over a fake TCP
+# stream: the exact bytes for poll, set, stop and move (Hamlib gs232a.c,
+# gs232b.c, rotctld(1)); the ERC's `AZ=302  EL=000` and `AZ=302` read, the
+# bare CR, CR LF and `>` not; Hamlib's invalid replies; one poll at a time,
+# faster while turning; stop ahead of anything queued; stale after 1500 ms
+# and fresh on the next reply. Both bench captures from JJ's ERC are
+# replayed and the span positions checked (south stop span 3, clockwise
+# stop AZ=269 span 449). Driver 4 runs a stand-in script for rotctld.
+nereus_add_test(tst_rotor_connection)
+target_compile_definitions(tst_rotor_connection PRIVATE
+    NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
+
+# ── Rotor control: starting rotctld (after Longpath RotctldProcess) ───────
+# The command line (loopback only, no bare -r), the cause line from
+# Hamlib's stderr, the missing-binary refusal, a held port sidestepped, and
+# start, stop and restart of a stand-in script; never the real rotctld.
+nereus_add_test(tst_rotctld_process)
+
 # ── Phase 3J-2 Task C2: AdifParser (.adi / .adif log parser) ───────────────
 # Pins the contract that AdifParser parses ADIF (Amateur Data
 # Interchange Format) log files into QVector<QsoRecord> (callsign

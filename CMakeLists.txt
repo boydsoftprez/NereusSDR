@@ -1139,6 +1139,9 @@ set(CORE_SOURCES
     src/core/CtyDatParser.cpp
     src/core/GreatCircle.cpp
     src/core/RotorRoute.cpp
+    # Rotor control plan Task 3b: the Core's rotor link and rotctld starter
+    src/core/RotorConnection.cpp
+    src/core/RotctldProcess.cpp
     src/core/AdifParser.cpp
     src/core/DxccWorkedStatus.cpp
     src/core/DxccColorProvider.cpp
