@@ -7870,6 +7870,9 @@ nereus_add_test(tst_settings_backup_codec)
 nereus_add_test(tst_settings_backup_transfer)
 nereus_add_test(tst_settings_backup_export fakes/LoopbackTransport.cpp EXTRA_LABELS session)
 nereus_add_test(tst_settings_backup_window)
+# Import All Settings: the imported file is what the next launch reads; the
+# running window's later saves (the quit flush) no longer write over it.
+nereus_add_test(tst_settings_import)
 
 # Remote Daemon R2, Task 20: the remote-mode GUI gate. Pins RadioModel's
 # ownsLocalDsp() capability authority and the Role::Remote-only hand-out audit
