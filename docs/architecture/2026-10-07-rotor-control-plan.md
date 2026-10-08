@@ -152,21 +152,44 @@ Pure logic, no I/O. Starts the Longpath provenance file.
 - Turning works while the radio is on the air.
 - Settings persist with `AppSettings` under the contract's keys and defaults.
 
-## Task 4: The link: `rotor` object, commands, spot bearings, tools catalogue
+## Task 4a: cty.dat on the Core, and bearings on spots
+
+**Files:**
+- Modify: the build's resources (move `cty.dat` into the Core's resources with a
+  `Q_INIT_RESOURCE`, as the band plans were moved), so `nereusd` has it; load it once on the
+  Core and share that one parser with the rotor controller and the spot stream; the desktop
+  keeps working from the same single copy
+- Modify: the spot stream the Core serves (`bearingDeg`, short path, -1 with no grid or no
+  placeable callsign), `StationClient` and the desktop spot model (carry it)
+- Modify: `docs/architecture/2026-10-07-remote-rotor-control-v1.md` (fix the spot field
+  placement), the link document's tables, `surface.json` with its regen target
+- Test: a Core test that a spot from a placeable callsign carries the same bearing Task 1
+  computes and -1 with no grid; a test that `nereusd`'s Core resolves a callsign; the link
+  manifest test
+
+**Acceptance:**
+- On the headless Core, `turnRotorToCall` places a callsign (it refused every call before).
+- A spot from a placeable callsign carries the same bearing Task 1 computes; -1 with no grid.
+- Only one cty.dat is loaded per process.
+
+## Task 4b: The link: the `rotor` object, commands and tools catalogue
 
 **Files:**
 - Modify: `StationServer` and the accessory command handling (the `rotor` object and the seven
-  commands, the refusals word for word), the spot stream (`bearingDeg`), `StationCatalog`
+  commands, the refusals word for word, mirrored from Task 3c's controller), `StationCatalog`
   (`rotor` entry when configured), `StationClient` (send the commands, mirror the object)
-- Modify: `docs/architecture/2026-10-07-remote-rotor-control-v1.md` (fix the spot field
-  placement; mark the sections shipped), the link document's tables, `surface.json`
+- Modify: `docs/architecture/2026-10-07-remote-rotor-control-v1.md` (mark the sections shipped;
+  add the reason "That rotor setup is not valid." for an unknown driver, axes or end stop, or a
+  port outside 1 to 65535), the link document's tables, `surface.json`
 - Test: Core command tests for every command and refusal, conformance fixtures for all three
   runners, `tst_link_surface_manifest`
 
 **Acceptance:**
 - `remoteRotorControlVersion` is 1 on a Core that owns a rotor connection, 0 otherwise.
 - Every refusal in the document is produced, with no change applied.
-- A spot from a placeable callsign carries the same bearing Task 1 computes; -1 with no grid.
+- Only windows admitted to change station accessories can turn, configure or stop the rotor;
+  a window's session ending ends its hold.
+- `hamlibModel` is sent to the controller as 0 unless the driver is 4.
 
 ## Task 5: Drag to turn on the compass (`RotatorItem`)
 
