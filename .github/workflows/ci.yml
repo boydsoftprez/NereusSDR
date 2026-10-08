@@ -412,7 +412,7 @@ jobs:
           host: linux
           target: desktop
           arch: linux_gcc_64
-          modules: 'qtmultimedia qtshadertools qtwebsockets'
+          modules: 'qtmultimedia qtshadertools qtwebsockets qtserialport'
           cache: true
 
       - name: Configure
@@ -568,6 +568,10 @@ jobs:
         #
         # gdb: QtTest's watchdog uses it to print every thread's stack when
         # a test function hangs (QTEST_FUNCTION_TIMEOUT in the test step).
+        #
+        # libhamlib-utils: Ubuntu's Hamlib rigctl, which tst_cat_rigctld
+        # drives against our rigctld listener (NEREUS_HAMLIB_RIGCTL in the
+        # test step). Without it that check is skipped.
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
@@ -579,6 +583,7 @@ jobs:
             libssl-dev \
             python3-websockets python3-cryptography \
             gdb \
+            libhamlib-utils \
             xvfb libxkbcommon-x11-0 libxcb-cursor0 \
             libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
             libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
@@ -623,7 +628,7 @@ jobs:
           target: desktop
           arch: linux_gcc_64
           # Qt 6.8+ folds qtsvg into qtbase; not listable as a module.
-          modules: 'qtmultimedia qtshadertools qtwebsockets'
+          modules: 'qtmultimedia qtshadertools qtwebsockets qtserialport'
           cache: true
 
       # ------------------------------------------------------------------
@@ -653,7 +658,7 @@ jobs:
           host: windows
           target: desktop
           arch: win64_mingw
-          modules: 'qtmultimedia qtshadertools qtwebsockets'
+          modules: 'qtmultimedia qtshadertools qtwebsockets qtserialport'
           tools: 'tools_mingw1310'
           cache: true
 
@@ -1039,6 +1044,7 @@ jobs:
           if [ "${{ runner.os }}" = "Linux" ]; then
             export QT_QPA_PLATFORM=xcb
             export QTEST_FUNCTION_TIMEOUT=240000
+            export NEREUS_HAMLIB_RIGCTL=/usr/bin/rigctl
             xvfb-run -a ctest --output-on-failure
           else
             ctest --output-on-failure --no-tests=ignore

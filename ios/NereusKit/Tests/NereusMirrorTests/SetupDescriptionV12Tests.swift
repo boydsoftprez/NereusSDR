@@ -164,10 +164,10 @@ import Testing
         #expect(try Self.single(other, category: "display", version: 12).metadataIssue != nil)
     }
 
-    @Test func versionTwentyFourIsTheHighestAndOlderVersionsStillParse() throws {
-        #expect(SetupDescription.highestVersion == 24)
+    @Test func versionTwentyFiveIsTheHighestAndOlderVersionsStillParse() throws {
+        #expect(SetupDescription.highestVersion == 25)
         var root = try Self.resource("display")
-        root["version"] = 25
+        root["version"] = 26
         #expect(throws: SetupDescription.ParseError.self) { try Self.parse(root) }
         var raw = Self.rawControls(try Self.resource("display")).first { $0["id"] as? String == "display.gridScales.showGrid" }!
         raw["requiresDescriptionVersion"] = 13

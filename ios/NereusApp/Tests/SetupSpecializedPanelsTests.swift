@@ -80,7 +80,7 @@ struct SetupSpecializedPanelsTests {
         }.first
         let features = hello?.features ?? [:]
         #expect(features == LinkFeatures.app)
-        #expect(features["setupDescription"] == 24)
+        #expect(features["setupDescription"] == 25)
         #expect(features["settingsHygiene"] == 2 && features["radioAntennaRows"] == 1)
         #expect(features["band2m"] == 1)
         #expect(rig.app.mirror.capabilityVersion("setupDescriptionVersion") == 11)

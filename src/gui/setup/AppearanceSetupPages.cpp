@@ -175,7 +175,7 @@ void ColorsThemePage::buildUI()
         "Shown on the panadapter and waterfall during MOX/TUNE."));
     specForm->addRow(QStringLiteral("TX Passband Color:"), m_txFilterColorBtn);
 
-    contentLayout()->addWidget(specGroup);
+    addContent(specGroup);
 
     // --- Section: Waterfall ---
     auto* wfGroup = new QGroupBox(QStringLiteral("Waterfall"), this);
@@ -194,7 +194,7 @@ void ColorsThemePage::buildUI()
     UnbuiltFeatures::hideRowUnlessBuilt(m_wfLowColorBtn,
                                        UnbuiltFeature::WaterfallLowColor, wfForm);
 
-    contentLayout()->addWidget(wfGroup);
+    addContent(wfGroup);
 
     // Reset all colors to defaults — broadened from the Plan 4 D9c-3 button
     // that lived on Spectrum Defaults to cover all Colors & Theme entries.
@@ -234,9 +234,7 @@ void ColorsThemePage::buildUI()
     });
     resetRow->addWidget(resetBtn);
     resetRow->addStretch(1);
-    contentLayout()->addLayout(resetRow);
-
-    contentLayout()->addStretch();
+    addContent(resetRow);
 }
 
 // ---------------------------------------------------------------------------
@@ -347,7 +345,7 @@ void MeterStylesPage::buildUI()
         emit sMeterPeakDecayChanged(rate);
     });
 
-    contentLayout()->addWidget(smGroup);
+    addContent(smGroup);
 
     // --- Section: VFO Flag ---
     auto* vfoGroup = new QGroupBox(QStringLiteral("VFO Flag"), this);
@@ -375,11 +373,10 @@ void MeterStylesPage::buildUI()
             // once VfoWidget has a clean accessor path from MainWindow or SetupDialog
         });
 
-    contentLayout()->addWidget(vfoGroup);
+    addContent(vfoGroup);
     // R-R3-49: the flag stores this setting but draws nothing with it yet,
     // so the group (its only control) is hidden until that is built.
     UnbuiltFeatures::hideUnlessBuilt(vfoGroup, UnbuiltFeature::SmallFilter);
-    contentLayout()->addStretch();
 }
 
 // ---------------------------------------------------------------------------
@@ -434,8 +431,7 @@ void SkinsPage::buildUI()
     btnRow->addStretch();
     skinLayout->addLayout(btnRow);
 
-    contentLayout()->addWidget(skinGroup);
-    contentLayout()->addStretch();
+    addContent(skinGroup);
 }
 
 // ---------------------------------------------------------------------------
@@ -478,8 +474,7 @@ void CollapsibleDisplayPage::buildUI()
     m_enableToggle->setToolTip(QStringLiteral("Let the spectrum section collapse"));
     colForm->addRow(QString(), m_enableToggle);
 
-    contentLayout()->addWidget(colGroup);
-    contentLayout()->addStretch();
+    addContent(colGroup);
 }
 
 } // namespace NereusSDR

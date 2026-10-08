@@ -2,7 +2,7 @@
 // src/gui/setup/AudioVaxPage.cpp  (NereusSDR)
 // =================================================================
 //
-// NereusSDR-original Setup → Audio → VAX page.
+// NereusSDR-original VAX section of Setup → Audio → Digital modes.
 // See AudioVaxPage.h for the full header.
 //
 // Sub-Phase 12 Task 12.3 (2026-04-20): Written by J.J. Boyd (KG4VCF),
@@ -35,10 +35,20 @@
 // via Anthropic Claude Code. The note says "a few of the weakest" signals:
 // receiver streams now run Opus at 48 kbit/s when compressed, and the
 // wording holds for that and for an older Core's 24 kbit/s.
+//
+// 2026-10-06 (R-SPK-21, R-SPK-22, R-SPK-24, D16): J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code. The VAX section of Audio > Digital
+// modes: a sentence and status line for this system, worded for operators
+// from the banner meanings below (no "PipeWire" on a Mac or Windows); the
+// cards' Device row (the name on Mac and Linux, a cable picker on Windows
+// with "On" disabled until a cable is picked), "Used by" and "Activity";
+// "Detected virtual cables" with Rescan moved here from Advanced.
 // =================================================================
 
 #include "AudioVaxPage.h"
 #include "gui/RemoteAudioStatus.h"
+#include "gui/StyleConstants.h"
+#include "gui/VaxFirstRunDialog.h"
 
 #include "core/AppSettings.h"
 #include "core/AudioDeviceConfig.h"
@@ -48,6 +58,7 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QComboBox>
 #include <QDesktopServices>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -187,6 +198,34 @@ QString pipeWireNodeName(int channel)
     return QStringLiteral("nereussdr.vax-%1").arg(channel);
 }
 
+// R-SPK-24: the system the VAX section is laid out for. A test may set
+// another before building a section (AudioVaxPage::setSystemForTest).
+std::optional<SoundSystemLine::System>& systemOverride()
+{
+    static std::optional<SoundSystemLine::System> value;
+    return value;
+}
+
+SoundSystemLine::System currentSystem()
+{
+    return systemOverride().value_or(SoundSystemLine::thisSystem());
+}
+
+static const char* kCardStatusStyle =
+    "QLabel { color: #e8a030; font-size: 11px; }";
+
+static const char* kRowLabelStyle =
+    "QLabel { color: #607080; font-size: 11px; }";
+
+constexpr int kStatusDotPx = 8;
+
+static const char* kStatusDotOk =
+    "QLabel { background: #33dd88; border-radius: 4px; }";
+static const char* kStatusDotProblem =
+    "QLabel { background: #e04848; border-radius: 4px; }";
+static const char* kStatusTextOk = "QLabel { color: #8aa8c0; font-size: 12px; }";
+static const char* kStatusTextProblem = "QLabel { color: #e04848; font-size: 12px; }";
+
 } // namespace
 
 QString VaxChannelCard::nativeHalLabelForCable(const DetectedCable& cable)
@@ -238,12 +277,12 @@ VaxChannelCard::VaxChannelCard(int channel, QWidget* parent)
         auto* enableRow = new QHBoxLayout;
         enableRow->setSpacing(6);
         m_enableChk = new QCheckBox(tr("On"), this);
-        m_enableChk->setStyleSheet(QLatin1String(kEnableChkStyle));
+        m_enableChk->setObjectName(QStringLiteral("vaxEnable"));
+        // R-SPK-24: greyed while it cannot be used (Windows, no cable).
+        m_enableChk->setStyleSheet(QLatin1String(kEnableChkStyle)
+                                   + Style::darkPageDisabledRules());
         m_enableChk->setChecked(false);  // loadFromSettings() will set real value
-        m_enableChk->setToolTip(tr("Enable this VAX channel. When on, NereusSDR "
-                                   "exposes the channel as a PipeWire source that "
-                                   "consumer apps (WSJT-X, FLDIGI, etc.) can "
-                                   "select as an audio input device."));
+        // R-SPK-24: the tooltip is this system's (refreshPlatformTexts).
         enableRow->addWidget(m_enableChk);
         enableRow->addStretch(1);
         outerLayout->addLayout(enableRow);
@@ -263,26 +302,41 @@ VaxChannelCard::VaxChannelCard(int channel, QWidget* parent)
                 }
             }
             emit enabledChanged(m_channel, on);
+            // R-SPK-24: the card's line and the section's status follow
+            // "On" even when the open state does not change (a channel
+            // that was closed while off and still does not open).
+            updateBadge();
         });
     }
 
-    // "Exposed to system as:" row.
+    // "Device:" row (R-SPK-24, D16). Mac and Linux: the channel's own
+    // device by name (the "Exposed to system as:" value it replaces);
+    // Windows: a picker of the detected virtual cables.
     {
         auto* form = new QFormLayout;
         form->setSpacing(4);
         form->setContentsMargins(0, 0, 0, 0);
         form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
-        auto* exposedLbl = new QLabel(tr("Exposed to system as:"), this);
-        exposedLbl->setStyleSheet(
-            QStringLiteral("QLabel { color: #607080; font-size: 11px; }"));
+        auto* deviceLbl = new QLabel(tr("Device:"), this);
+        deviceLbl->setStyleSheet(QLatin1String(kRowLabelStyle));
 
-        m_nodeDescLabel = new QLabel(
-            defaultNodeDescription(m_channel), this);
-        m_nodeDescLabel->setStyleSheet(QLatin1String(kSpecRowValueStyle));
-        m_nodeDescLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-
-        form->addRow(exposedLbl, m_nodeDescLabel);
+        if (currentSystem() == SoundSystemLine::System::Windows) {
+            m_devicePicker = new QComboBox(this);
+            m_devicePicker->setObjectName(QStringLiteral("vaxDevicePicker"));
+            m_devicePicker->setToolTip(tr("The virtual cable this VAX channel sends "
+                                          "its audio to."));
+            connect(m_devicePicker, QOverload<int>::of(&QComboBox::activated),
+                    this, &VaxChannelCard::onCablePicked);
+            form->addRow(deviceLbl, m_devicePicker);
+        } else {
+            m_nodeDescLabel = new QLabel(
+                defaultNodeDescription(m_channel), this);
+            m_nodeDescLabel->setObjectName(QStringLiteral("vaxDeviceName"));
+            m_nodeDescLabel->setStyleSheet(QLatin1String(kSpecRowValueStyle));
+            m_nodeDescLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+            form->addRow(deviceLbl, m_nodeDescLabel);
+        }
 
         // "Format:" static row.
         auto* formatLbl = new QLabel(tr("Format:"), this);
@@ -290,11 +344,12 @@ VaxChannelCard::VaxChannelCard(int channel, QWidget* parent)
             QStringLiteral("QLabel { color: #607080; font-size: 11px; }"));
         m_formatLabel = new QLabel(
             QStringLiteral("48000 Hz · Stereo · Float32"), this);
+        m_formatLabel->setObjectName(QStringLiteral("vaxFormat"));
         m_formatLabel->setStyleSheet(QLatin1String(kSpecRowValueStyle));
         form->addRow(formatLbl, m_formatLabel);
 
-        // "Consumers:" placeholder row.
-        auto* consumersLbl = new QLabel(tr("Consumers:"), this);
+        // "Used by:" row (R-SPK-21; it was "Consumers:").
+        auto* consumersLbl = new QLabel(tr("Used by:"), this);
         consumersLbl->setStyleSheet(
             QStringLiteral("QLabel { color: #607080; font-size: 11px; }"));
         // R-R3-44: whether an app is reading this channel, where the
@@ -307,8 +362,9 @@ VaxChannelCard::VaxChannelCard(int channel, QWidget* parent)
         setReaderState(std::nullopt);
         form->addRow(consumersLbl, m_consumerLabel);
 
-        // "Level:" HGauge row.
-        auto* levelLbl = new QLabel(tr("Level:"), this);
+        // "Activity:" HGauge row (R-SPK-21 problem 5: it is only a meter, so
+        // it is no longer called "Level").
+        auto* levelLbl = new QLabel(tr("Activity:"), this);
         levelLbl->setStyleSheet(
             QStringLiteral("QLabel { color: #607080; font-size: 11px; }"));
         m_levelGauge = new HGauge(this);
@@ -324,27 +380,36 @@ VaxChannelCard::VaxChannelCard(int channel, QWidget* parent)
         outerLayout->addLayout(form);
     }
 
-    // Action buttons row: "Rename…" + "Copy node name".
+    // R-SPK-24: why this channel cannot work right now, from the banner
+    // meanings in updateBadge(). Hidden while there is nothing to say.
+    m_cardStatus = new QLabel(this);
+    m_cardStatus->setObjectName(QStringLiteral("vaxCardStatus"));
+    m_cardStatus->setStyleSheet(QLatin1String(kCardStatusStyle));
+    m_cardStatus->setWordWrap(true);
+    m_cardStatus->setVisible(false);
+    outerLayout->addWidget(m_cardStatus);
+
+    // Action buttons row: "Rename…" + "Copy name".
     {
         auto* btnRow = new QHBoxLayout;
         btnRow->setSpacing(6);
 
         m_renameBtn = new QPushButton(tr("Rename…"), this);
-        m_renameBtn->setStyleSheet(QLatin1String(kActionBtnStyle));
+        m_renameBtn->setObjectName(QStringLiteral("vaxRename"));
+        m_renameBtn->setStyleSheet(QLatin1String(kActionBtnStyle)
+                                   + Style::darkPageDisabledRules());
         m_renameBtn->setAutoDefault(false);
         m_renameBtn->setDefault(false);
-        m_renameBtn->setToolTip(tr("Change the display name this channel is "
-                                   "advertised as to consumer applications."));
         btnRow->addWidget(m_renameBtn);
 
-        m_copyNodeBtn = new QPushButton(tr("Copy node name"), this);
-        m_copyNodeBtn->setStyleSheet(QLatin1String(kActionBtnStyle));
+        m_copyNodeBtn = new QPushButton(tr("Copy name"), this);
+        m_copyNodeBtn->setObjectName(QStringLiteral("vaxCopyName"));
+        m_copyNodeBtn->setStyleSheet(QLatin1String(kActionBtnStyle)
+                                     + Style::darkPageDisabledRules());
         m_copyNodeBtn->setAutoDefault(false);
         m_copyNodeBtn->setDefault(false);
-        m_copyNodeBtn->setToolTip(
-            tr("Copy the PipeWire node.name (%1) to clipboard. "
-               "Use this string in pw-link or consumer app config.")
-                .arg(pipeWireNodeName(m_channel)));
+        // R-SPK-24: the Rename and Copy name tooltips are this system's
+        // (refreshPlatformTexts).
         btnRow->addWidget(m_copyNodeBtn);
 
         btnRow->addStretch(1);
@@ -524,7 +589,9 @@ void VaxChannelCard::updateNodeDescLabel()
         .value(m_prefix + QStringLiteral("/NodeDescription"),
                defaultNodeDescription(m_channel))
         .toString();
-    m_nodeDescLabel->setText(desc);
+    // R-SPK-24: a channel bound to another device names that device.
+    const QString bound = currentDeviceName();
+    m_nodeDescLabel->setText(bound.isEmpty() ? desc : bound);
 }
 
 void VaxChannelCard::onRenameClicked()
@@ -556,12 +623,27 @@ void VaxChannelCard::onRenameClicked()
 
     // Refresh the visible label.
     updateNodeDescLabel();
+    refreshPlatformTexts();
 }
 
 void VaxChannelCard::onCopyNodeNameClicked()
 {
     // Copies nereussdr.vax-N to clipboard (PipeWire node.name convention).
-    QApplication::clipboard()->setText(pipeWireNodeName(m_channel));
+    // R-SPK-24: that name is Linux's; a Mac copies the device name other
+    // apps list, and Windows the picked cable's name.
+    switch (currentSystem()) {
+    case SoundSystemLine::System::Linux:
+        QApplication::clipboard()->setText(pipeWireNodeName(m_channel));
+        break;
+    case SoundSystemLine::System::Mac:
+        QApplication::clipboard()->setText(defaultNodeDescription(m_channel));
+        break;
+    case SoundSystemLine::System::Windows:
+        if (!currentDeviceName().isEmpty()) {
+            QApplication::clipboard()->setText(currentDeviceName());
+        }
+        break;
+    }
 }
 
 void VaxChannelCard::updateBadge()
@@ -701,17 +783,42 @@ void VaxChannelCard::updateBadge()
         }
     }
 
-#if defined(Q_OS_WIN)
     // Windows: gate enable checkbox until a BYO device is picked.
     // On Mac/Linux the PipeWire bridge is automatic (no gate needed).
-    if (m_enableChk) {
-        m_enableChk->setEnabled(hasDevice);
-        if (!hasDevice) {
-            m_enableChk->setToolTip(tr("Pick a device first"));
+    // R-SPK-24: by the system the section is laid out for, so the Windows
+    // layout is testable on any build; the picker above sets the device.
+    const SoundSystemLine::System system = currentSystem();
+    if (system == SoundSystemLine::System::Windows) {
+        if (m_enableChk) {
+            m_enableChk->setEnabled(hasDevice);
         }
+        m_deviceCard->setEnableAllowed(hasDevice);
     }
-    m_deviceCard->setEnableAllowed(hasDevice);
-#endif
+
+    // R-SPK-24: the card's line, the banner meanings above worded for
+    // operators: no cable picked on Windows; the picked cable did not
+    // open; NereusSDR's own device did not open (the section's status
+    // line says why).
+    if (m_cardStatus) {
+        QString line;
+        if (system == SoundSystemLine::System::Windows && !hasDevice) {
+            line = tr("Pick a cable first.");
+        } else if (isChannelEnabled() && !m_busOpen) {
+            if (hasDevice) {
+                line = tr("Could not open %1. It may be unplugged or in use by "
+                          "another program.").arg(deviceName);
+            } else if (system == SoundSystemLine::System::Mac) {
+                line = tr("Not available until the VAX driver is allowed (see above).");
+            } else {
+                line = tr("Not available until the VAX devices can be made (see above).");
+            }
+        }
+        m_cardStatus->setText(line);
+        m_cardStatus->setVisible(!line.isEmpty());
+    }
+    updateNodeDescLabel();
+    fillPicker();
+    refreshPlatformTexts();
 
 #if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
     // Amber badge logic — hidden widget, state kept for API compat.
@@ -727,6 +834,135 @@ void VaxChannelCard::updateBadge()
 #else
     m_badgeLabel->setVisible(false);
 #endif
+    emit stateChanged(m_channel);
+}
+
+bool VaxChannelCard::ownDeviceFailed() const
+{
+    return currentSystem() != SoundSystemLine::System::Windows
+        && isChannelEnabled() && currentDeviceName().isEmpty() && !m_busOpen;
+}
+
+QString VaxChannelCard::statusLineText() const
+{
+    return m_cardStatus && !m_cardStatus->isHidden() ? m_cardStatus->text() : QString();
+}
+
+void VaxChannelCard::setCableChoices(const QVector<DetectedCable>& cables)
+{
+    m_cableChoices.clear();
+    for (const DetectedCable& cable : cables) {
+        if (!cable.isInput && cable.product != VirtualCableProduct::NereusSdrVax) {
+            m_cableChoices.append(cable);
+        }
+    }
+    fillPicker();
+}
+
+void VaxChannelCard::fillPicker()
+{
+    if (!m_devicePicker) {
+        return;
+    }
+    QSignalBlocker block(m_devicePicker);
+    m_devicePicker->clear();
+    m_devicePicker->addItem(tr("(pick a cable)"), QString());
+    const QString bound = currentDeviceName();
+    bool boundListed = bound.isEmpty();
+    for (const DetectedCable& cable : std::as_const(m_cableChoices)) {
+        m_devicePicker->addItem(cable.deviceName, cable.deviceName);
+        boundListed = boundListed || cable.deviceName == bound;
+    }
+    if (!boundListed) {
+        // A saved cable that this scan did not find stays shown.
+        m_devicePicker->addItem(tr("%1 (not found)").arg(bound), bound);
+    }
+    m_devicePicker->setCurrentIndex(std::max(0, m_devicePicker->findData(bound)));
+}
+
+void VaxChannelCard::onCablePicked(int index)
+{
+    if (!m_devicePicker || index < 0) {
+        return;
+    }
+    const QString name = m_devicePicker->itemData(index).toString();
+    if (name == currentDeviceName()) {
+        return;
+    }
+    if (name.isEmpty()) {
+        clearBinding();
+        return;
+    }
+    // The section's other cards: one already on this cable gives it up.
+    AudioVaxPage* page = nullptr;
+    for (QObject* p = parent(); p && !page; p = p->parent()) {
+        page = qobject_cast<AudioVaxPage*>(p);
+    }
+    VaxChannelCard* other = nullptr;
+    for (int ch = 1; page && ch <= 4 && !other; ++ch) {
+        VaxChannelCard* card = page->channelCard(ch);
+        if (card && card != this && card->currentDeviceName() == name) {
+            other = card;
+        }
+    }
+    if (other) {
+        QMessageBox confirm(this);
+        confirm.setWindowTitle(tr("Use this cable here?"));
+        confirm.setText(tr("VAX %1 uses %2. Move it to VAX %3? VAX %1 will have no "
+                           "cable.").arg(other->channelIndex()).arg(name).arg(m_channel));
+        confirm.setStandardButtons(QMessageBox::Ok | QMessageBox::Cancel);
+        confirm.setDefaultButton(QMessageBox::Cancel);
+        if (confirm.exec() != QMessageBox::Ok) {
+            fillPicker();
+            return;
+        }
+        other->clearBinding();
+    }
+    applyAutoDetectBinding(name);
+}
+
+void VaxChannelCard::refreshPlatformTexts()
+{
+    if (!m_enableChk || !m_renameBtn || !m_copyNodeBtn) {
+        return;
+    }
+    const QString name = AppSettings::instance()
+        .value(m_prefix + QStringLiteral("/NodeDescription"),
+               defaultNodeDescription(m_channel))
+        .toString();
+    const QString cable = currentDeviceName();
+    switch (currentSystem()) {
+    case SoundSystemLine::System::Windows:
+        m_enableChk->setToolTip(cable.isEmpty()
+            ? tr("Pick a cable first.")
+            : tr("Turn this VAX channel on. Other apps then use the other end of %1.")
+                  .arg(cable));
+        // Windows names the cable; NereusSDR cannot rename it.
+        m_renameBtn->setEnabled(false);
+        m_renameBtn->setToolTip(tr("Windows names the cable. It cannot be renamed here."));
+        m_copyNodeBtn->setEnabled(!cable.isEmpty());
+        m_copyNodeBtn->setToolTip(cable.isEmpty()
+            ? tr("Pick a cable first.")
+            : tr("Copy the cable's name (%1) to paste into another app.").arg(cable));
+        break;
+    case SoundSystemLine::System::Mac:
+        m_enableChk->setToolTip(tr("Turn this VAX channel on. Other apps (WSJT-X, fldigi "
+                                   "and so on) see it as an audio device named %1.")
+                                    .arg(defaultNodeDescription(m_channel)));
+        m_renameBtn->setToolTip(tr("Change the name NereusSDR shows for this channel."));
+        m_copyNodeBtn->setToolTip(tr("Copy the device name (%1) to paste into another app.")
+                                      .arg(defaultNodeDescription(m_channel)));
+        break;
+    case SoundSystemLine::System::Linux:
+        m_enableChk->setToolTip(tr("Turn this VAX channel on. NereusSDR makes it in your "
+                                   "sound system, and other apps (WSJT-X, fldigi and so "
+                                   "on) see it as an audio device named %1.").arg(name));
+        m_renameBtn->setToolTip(tr("Change the name other apps see for this channel."));
+        m_copyNodeBtn->setToolTip(
+            tr("Copy the channel's PipeWire node name (%1), for pw-link or another "
+               "app's settings.").arg(pipeWireNodeName(m_channel)));
+        break;
+    }
 }
 
 void VaxChannelCard::onAutoDetectClicked()
@@ -890,12 +1126,15 @@ void VaxChannelCard::onAutoDetectClicked()
 // AudioVaxPage
 // ---------------------------------------------------------------------------
 AudioVaxPage::AudioVaxPage(RadioModel* model, QWidget* parent)
-    : SetupPage(QStringLiteral("VAX"), model, parent)
+    : QWidget(parent)
     // R-R3-44: this computer's VAX outputs, live in a remote window too.
     , m_engine(model ? model->localAudioDevices() : nullptr)
 {
+    setObjectName(QStringLiteral("audioVaxSection"));
     buildPage();
     wirePillFeedback();
+    // The cables found now ("Detected virtual cables", the Windows pickers).
+    applyCables(VirtualCableDetector::scan());
     m_levelTimer = new QTimer(this);
     m_levelTimer->setInterval(50);  // 20 Hz, as VaxApplet polls
     connect(m_levelTimer, &QTimer::timeout, this, &AudioVaxPage::pollLevels);
@@ -952,7 +1191,7 @@ void AudioVaxPage::refreshReaders()
 
 void AudioVaxPage::showEvent(QShowEvent* event)
 {
-    SetupPage::showEvent(event);
+    QWidget::showEvent(event);
     pollLevels();
     m_levelTimer->start();
 }
@@ -960,7 +1199,7 @@ void AudioVaxPage::showEvent(QShowEvent* event)
 void AudioVaxPage::hideEvent(QHideEvent* event)
 {
     m_levelTimer->stop();
-    SetupPage::hideEvent(event);
+    QWidget::hideEvent(event);
 }
 
 void AudioVaxPage::pollLevels()
@@ -987,34 +1226,237 @@ double VaxChannelCard::levelDbForTest() const
     return m_levelGauge ? m_levelGauge->value() : -60.0;
 }
 
+SoundSystemLine::System AudioVaxPage::system()
+{
+    return currentSystem();
+}
+
+#ifdef NEREUS_BUILD_TESTS
+void AudioVaxPage::setSystemForTest(std::optional<SoundSystemLine::System> system)
+{
+    systemOverride() = system;
+}
+
+void AudioVaxPage::setDetectedCablesForTest(const QVector<DetectedCable>& cables)
+{
+    applyCables(cables);
+}
+#endif
+
+QString AudioVaxPage::introText(SoundSystemLine::System system)
+{
+    switch (system) {
+    case SoundSystemLine::System::Mac:
+        return tr("Each VAX channel shows up in other apps (WSJT-X, fldigi and so on) as "
+                  "an audio device named NereusSDR VAX 1 to 4. NereusSDR installs this "
+                  "driver itself; no virtual cable is needed.");
+    case SoundSystemLine::System::Linux:
+        return tr("Each VAX channel shows up in other apps (WSJT-X, fldigi and so on) as "
+                  "an audio device named NereusSDR VAX 1 to 4. NereusSDR creates them in "
+                  "your sound system; no virtual cable is needed.");
+    case SoundSystemLine::System::Windows:
+        return tr("Windows has no built-in way for one app to hand audio to another, so "
+                  "each VAX channel uses a virtual audio cable you install (VB-CABLE, "
+                  "Voicemeeter or VAC). Pick one cable per channel; WSJT-X and others "
+                  "then use the other end of that cable.");
+    }
+    return QString();
+}
+
+// R-SPK-24: the meanings of the old per-card banners (updateBadge above),
+// said once for the system: the Mac driver did not load, the Linux sound
+// system could not make a device, no Windows cable is installed.
+QString AudioVaxPage::statusText(const StatusInputs& in)
+{
+    switch (in.system) {
+    case SoundSystemLine::System::Mac:
+        if (in.ownDeviceFailed) {
+            return tr("The NereusSDR VAX driver did not load. Allow it in System Settings "
+                      "> Privacy & Security or reinstall NereusSDR, then restart NereusSDR.");
+        }
+        if (in.ownDeviceOpen) {
+            return tr("The NereusSDR VAX driver is loaded.");
+        }
+        if (in.anyOn) {
+            return tr("The channels that are on use the devices shown below.");
+        }
+        return tr("No VAX channel is on.");
+    case SoundSystemLine::System::Windows:
+        if (in.cablesFound <= 0) {
+            return tr("No virtual cable found. Install one, then click Rescan.");
+        }
+        if (in.cablesFound == 1) {
+            return tr("1 virtual cable found.");
+        }
+        return tr("%1 virtual cables found.").arg(in.cablesFound);
+    case SoundSystemLine::System::Linux:
+        if (in.linuxBackend == LinuxAudioBackend::None) {
+            return tr("No sound system is running, so the VAX devices cannot be made.");
+        }
+        if (in.ownDeviceFailed) {
+            return tr("A VAX device could not be made. Check that PipeWire or PulseAudio "
+                      "is running, then turn the channel off and on.");
+        }
+        if (in.linuxBackend == LinuxAudioBackend::PipeWire) {
+            return tr("VAX devices are made through PipeWire.");
+        }
+        return tr("VAX devices are made through PulseAudio (pactl).");
+    }
+    return QString();
+}
+
+bool AudioVaxPage::statusIsProblem(const StatusInputs& in)
+{
+    switch (in.system) {
+    case SoundSystemLine::System::Mac:
+        return in.ownDeviceFailed;
+    case SoundSystemLine::System::Windows:
+        return in.cablesFound <= 0;
+    case SoundSystemLine::System::Linux:
+        return in.linuxBackend == LinuxAudioBackend::None || in.ownDeviceFailed;
+    }
+    return false;
+}
+
+QString AudioVaxPage::statusLineText() const
+{
+    return m_statusLabel ? m_statusLabel->text() : QString();
+}
+
+QString AudioVaxPage::detectedCablesText() const
+{
+    return m_cablesLabel ? m_cablesLabel->text() : QString();
+}
+
+void AudioVaxPage::refreshStatus()
+{
+    if (!m_statusLabel || !m_statusDot) {
+        return;
+    }
+    StatusInputs in;
+    in.system = currentSystem();
+#if defined(Q_OS_LINUX)
+    if (m_engine) {
+        in.linuxBackend = m_engine->linuxBackend();
+    }
+#endif
+    // Without an engine (or off Linux) there is no backend to ask; a Linux
+    // layout then reads as PipeWire, the common case, rather than a fault.
+    if (in.system == SoundSystemLine::System::Linux && !m_engine) {
+        in.linuxBackend = LinuxAudioBackend::PipeWire;
+    }
+    for (const DetectedCable& cable : std::as_const(m_cables)) {
+        if (!cable.isInput && cable.product != VirtualCableProduct::NereusSdrVax) {
+            ++in.cablesFound;
+        }
+    }
+    for (VaxChannelCard* card : std::as_const(m_channelCards)) {
+        if (!card->isChannelEnabled()) {
+            continue;
+        }
+        in.anyOn = true;
+        if (card->currentDeviceName().isEmpty()) {
+            if (card->busOpen()) {
+                in.ownDeviceOpen = true;
+            } else {
+                in.ownDeviceFailed = true;
+            }
+        }
+    }
+    m_statusProblem = statusIsProblem(in);
+    m_statusLabel->setText(statusText(in));
+    m_statusLabel->setStyleSheet(QLatin1String(m_statusProblem ? kStatusTextProblem
+                                                               : kStatusTextOk));
+    m_statusDot->setStyleSheet(QLatin1String(m_statusProblem ? kStatusDotProblem
+                                                             : kStatusDotOk));
+}
+
+void AudioVaxPage::applyCables(const QVector<DetectedCable>& cables)
+{
+    m_cables = cables;
+    QStringList names;
+    for (const DetectedCable& c : cables) {
+        if (c.product == VirtualCableProduct::NereusSdrVax) {
+            continue;
+        }
+        names.append(c.deviceName +
+                     (c.isInput ? QStringLiteral(" (input)")
+                                : QStringLiteral(" (output)")));
+    }
+    if (m_cablesLabel) {
+        if (names.isEmpty()) {
+            m_cablesLabel->setText(
+                currentSystem() == SoundSystemLine::System::Windows
+                    ? tr("Detected virtual cables: None.")
+                    : tr("Detected virtual cables: None besides NereusSDR's own."));
+        } else {
+            m_cablesLabel->setText(
+                tr("Detected virtual cables: %1 cable%2: %3")
+                    .arg(names.size())
+                    .arg(names.size() == 1 ? QString() : QStringLiteral("s"))
+                    .arg(names.join(QStringLiteral(", "))));
+        }
+    }
+    for (VaxChannelCard* card : std::as_const(m_channelCards)) {
+        card->setCableChoices(cables);
+    }
+    refreshStatus();
+}
+
+// Moved from Setup > Audio > Advanced (R-SPK-21): rescan, show the cables,
+// and offer any new ones through the first-run dialog.
+void AudioVaxPage::onRescan()
+{
+    const QVector<DetectedCable> current = VirtualCableDetector::scan();
+    applyCables(current);
+
+    auto& s = AppSettings::instance();
+    const QString lastCsv =
+        s.value(QStringLiteral("audio/LastDetectedCables"), QString()).toString();
+    const QVector<DetectedCable> newCables =
+        VirtualCableDetector::diffNewCables(current, lastCsv);
+
+    // Update the stored fingerprint.
+    s.setValue(QStringLiteral("audio/LastDetectedCables"),
+               VirtualCableDetector::fingerprintCsv(current));
+    s.save();
+
+    if (!newCables.isEmpty()) {
+        VaxFirstRunDialog dlg(FirstRunScenario::RescanNewCables, newCables, this);
+        dlg.exec();
+    }
+}
+
 void AudioVaxPage::buildPage()
 {
-    // SetupPage base already wraps contentLayout() in a QScrollArea with a
-    // trailing addStretch(1) — insert widgets before that stretch so the
-    // content stacks from the top of the viewport.
-    auto insertBeforeStretch = [this](QWidget* w) {
-        const int stretchIndex = contentLayout()->count() - 1;
-        contentLayout()->insertWidget(stretchIndex, w);
-    };
+    // R-SPK-21: a section of Digital modes, which owns the title and the
+    // scroll area; the section stacks from the top.
+    auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(8);
 
-    // Section header.
-    auto* headerLabel = new QLabel(
-        QStringLiteral("Virtual Audio eXchange: PipeWire sources"), this);
-    headerLabel->setStyleSheet(
+    // R-SPK-24: what VAX is on this system, then how it is doing.
+    m_introLabel = new QLabel(introText(currentSystem()), this);
+    m_introLabel->setObjectName(QStringLiteral("vaxIntro"));
+    m_introLabel->setStyleSheet(
         QStringLiteral("QLabel { color: #8aa8c0; font-size: 12px; }"));
-    insertBeforeStretch(headerLabel);
+    m_introLabel->setWordWrap(true);
+    layout->addWidget(m_introLabel);
 
-    // Sub-header describing the new Phase 3O model.
-    auto* subHeader = new QLabel(
-        QStringLiteral(
-            "Each VAX channel is exposed to the system as a PipeWire virtual "
-            "source (node). Consumer applications (WSJT-X, FLDIGI, etc.) "
-            "select it as an audio input device; no virtual cable needed."),
-        this);
-    subHeader->setStyleSheet(
-        QStringLiteral("QLabel { color: #607080; font-size: 11px; }"));
-    subHeader->setWordWrap(true);
-    insertBeforeStretch(subHeader);
+    {
+        auto* row = new QHBoxLayout;
+        row->setContentsMargins(0, 0, 0, 0);
+        row->setSpacing(6);
+        m_statusDot = new QLabel(this);
+        m_statusDot->setObjectName(QStringLiteral("vaxSystemStatusDot"));
+        m_statusDot->setFixedSize(kStatusDotPx, kStatusDotPx);
+        m_statusLabel = new QLabel(this);
+        m_statusLabel->setObjectName(QStringLiteral("vaxSystemStatus"));
+        m_statusLabel->setWordWrap(true);
+        row->addWidget(m_statusDot, 0, Qt::AlignVCenter);
+        row->addWidget(m_statusLabel, 1);
+        layout->addLayout(row);
+    }
 
     // R-R3-43 / R-R3-44: in a remote window whose receiver streams are Opus,
     // say what that costs digital modes and what avoids it. Receiver streams
@@ -1037,7 +1479,7 @@ void AudioVaxPage::buildPage()
         QStringLiteral("QLabel { color: #607080; font-size: 11px; }"));
     m_compressedNote->setWordWrap(true);
     m_compressedNote->setVisible(false);
-    insertBeforeStretch(m_compressedNote);
+    layout->addWidget(m_compressedNote);
 
     // Four VAX channel cards (1–4).
     m_channelCards.reserve(4);
@@ -1045,7 +1487,8 @@ void AudioVaxPage::buildPage()
         auto* card = new VaxChannelCard(ch, this);
         card->loadFromSettings();
         m_channelCards.append(card);
-        insertBeforeStretch(card);
+        layout->addWidget(card);
+        connect(card, &VaxChannelCard::stateChanged, this, &AudioVaxPage::refreshStatus);
 
         // Wire configChanged to AudioEngine.
         if (m_engine) {
@@ -1066,6 +1509,27 @@ void AudioVaxPage::buildPage()
                 }
             });
         }
+    }
+
+    // R-SPK-21: "Detected virtual cables" and Rescan, moved from Advanced.
+    {
+        auto* row = new QHBoxLayout;
+        row->setContentsMargins(0, 0, 0, 0);
+        row->setSpacing(8);
+        m_cablesLabel = new QLabel(this);
+        m_cablesLabel->setObjectName(QStringLiteral("detectedCablesLabel"));
+        m_cablesLabel->setStyleSheet(
+            QStringLiteral("QLabel { color: #8aa8c0; font-size: 11px; }"));
+        m_cablesLabel->setWordWrap(true);
+        m_rescanButton = new QPushButton(tr("Rescan"), this);
+        m_rescanButton->setObjectName(QStringLiteral("detectedCablesRescan"));
+        m_rescanButton->setStyleSheet(QLatin1String(kActionBtnStyle));
+        m_rescanButton->setAutoDefault(false);
+        m_rescanButton->setToolTip(tr("Look again for virtual audio cables."));
+        connect(m_rescanButton, &QPushButton::clicked, this, &AudioVaxPage::onRescan);
+        row->addWidget(m_cablesLabel, 1);
+        row->addWidget(m_rescanButton, 0, Qt::AlignTop);
+        layout->addLayout(row);
     }
 
     // R-R3-49 fix wave I2: the informational "TX Monitor" group is gone. Its

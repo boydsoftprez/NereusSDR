@@ -145,7 +145,7 @@ struct SetupAudioTests {
         Pages.withCapabilities(app, ["transmitSettingsVersion": .i64(15), "txPermitted": .bool(true),
                                      "radioHardwareVersion": .i64(peer >= 24 ? 13 : 12)])
         await rig.station.deliverSetup(try categories(peer: peer, radio: radio, swapClosed: swapClosed))
-        let audioVersion = peer >= 24 ? 24 : 15
+        let audioVersion = peer >= 25 ? 25 : peer >= 24 ? 24 : 15
         #expect(await Pages.settle { app.setupPages.isCurrent && app.setupPages.categories["audio"]?.version == audioVersion })
         let values: [LinkMessage.PropertyEntry] = [
             .init(name: "micGainDb", value: .i64(-6)),
@@ -201,6 +201,94 @@ struct SetupAudioTests {
             .init(property: name, accepted: true, reason: "", value: .init(name: name, value: value)),
         ])))
         await station.deliver(.delta(.init(key: "transmit", properties: [.init(name: name, value: value)])))
+    }
+
+    // MARK: Audio 25: Outputs' radio speaker (R-SPK-23, phone side)
+
+    static let outputsPage = "audio.outputs"
+    static let outputsPath: [SetupTree.Route] = [.category("Audio"), .described(category: "audio", page: outputsPage)]
+
+    @Test("V25: Audio opens with Outputs, then Microphone; Outputs' three radio speaker rows write the Core's radio and the amplifier follows its availability")
+    func outputsRadioSpeaker() async throws {
+        let rig = try await Self.connected(peer: 25, radio: .g2)
+        defer { UserDefaults.standard.removePersistentDomain(forName: rig.suite) }
+        let app = rig.app
+        Pages.withCapabilities(app, ["transmitSettingsVersion": .i64(15), "txPermitted": .bool(true),
+                                     "radioHardwareVersion": .i64(13), "radioSpeakerVersion": .i64(1)])
+        await rig.station.deliver(SoundPanelTests.radioDelta([
+            "radioSpeakerVolume": .i64(40), "radioSpeakerMuted": .bool(false), "speakerAmplifierMode": .i64(1),
+            "radioSpeakerAvailability": .i64(1), "speakerAmplifierAvailable": .bool(true),
+        ]))
+        #expect(await Pages.settle { app.mirror.object("radio")?["speakerAmplifierAvailable"] == .bool(true) })
+
+        let audio = try #require(app.setupPages.categories["audio"])
+        #expect(audio.version == 25)
+        let tree = SetupTree.categories(described: app.setupPages.categories, order: FakeStation.setupCategoryIds,
+                                        unreadable: [:])
+        let pages = tree.first { $0.title == "Audio" }?.pages.map(\.title) ?? []
+        #expect(pages == ["On this phone", "Outputs", "Microphone", "TX Profile"])
+        let microphone = try Self.txInput(app)
+        #expect(microphone.title == "Microphone")
+        #expect(microphone.sections.first?.title == "Mic gain")
+
+        let outputs = try #require(audio.pages.first { $0.id == Self.outputsPage })
+        #expect(outputs.title == "Outputs")
+        #expect(outputs.sections.map(\.title) == ["Radio speaker"])
+        #expect(outputs.sections.flatMap(\.controls).map(\.id) == ["audio.outputs.radioSpeakerVolume",
+                                                                    "audio.outputs.radioSpeakerMuted",
+                                                                    "audio.outputs.speakerAmplifierMode"])
+        let controls = app.setupControls
+        let volume = try Self.control("audio.outputs.radioSpeakerVolume", in: outputs)
+        let muted = try Self.control("audio.outputs.radioSpeakerMuted", in: outputs)
+        let amplifier = try Self.control("audio.outputs.speakerAmplifierMode", in: outputs)
+        for control in [volume, muted, amplifier] {
+            #expect(control.metadataIssue == nil, "\(control.id)")
+            #expect(await Pages.settle { controls.state(of: control, in: "audio").editable }, "\(control.id)")
+        }
+        #expect(controls.state(of: volume, in: "audio").value == .integer(40))
+        #expect(controls.state(of: amplifier, in: "audio").value == .integer(1))
+        try await Typed.shootAll("radio-speaker-outputs-v25-g2", rig: rig, path: Self.outputsPath)
+
+        // The amplifier choice writes the Core's radio.
+        let choosing = Task { await controls.edit(amplifier, in: "audio", to: .integer(2)) }
+        let sent = await rig.station.waitForMessage { message in
+            if case .propertyWrite(let write) = message {
+                return write.key == "radio" && write.properties.first?.name == "speakerAmplifierMode"
+            }
+            return false
+        }
+        guard case .propertyWrite(let write)? = sent, let entry = write.properties.first else {
+            Issue.record("no write of radio.speakerAmplifierMode reached the Core")
+            return
+        }
+        #expect(entry.value == .i64(2))
+        await rig.station.deliver(.propertyResult(.init(key: "radio", writeId: write.writeId ?? 0, results: [
+            .init(property: "speakerAmplifierMode", accepted: true, reason: "", value: entry),
+        ])))
+        await rig.station.deliver(SoundPanelTests.radioDelta(["speakerAmplifierMode": .i64(2)]))
+        #expect(await choosing.value == .applied)
+
+        // A radio without a switchable amplifier greys the choice, never hides it.
+        await rig.station.deliver(SoundPanelTests.radioDelta(["speakerAmplifierAvailable": .bool(false)]))
+        #expect(await Pages.settle { !controls.state(of: amplifier, in: "audio").editable })
+        #expect(controls.state(of: amplifier, in: "audio").reason == SetupControlDispatcher.dependsReason)
+        #expect(controls.state(of: volume, in: "audio").editable)
+        try await Typed.shootAll("radio-speaker-outputs-v25-no-amplifier", rig: rig, path: Self.outputsPath)
+        await rig.app.disconnect()
+    }
+
+    @Test("V25 against a Core without the radio speaker: Outputs' rows are greyed with a reason")
+    func outputsWithoutTheRadioSpeaker() async throws {
+        let rig = try await Self.connected(peer: 25, radio: .g2)
+        defer { UserDefaults.standard.removePersistentDomain(forName: rig.suite) }
+        let outputs = try #require(rig.app.setupPages.categories["audio"]?.pages.first { $0.id == Self.outputsPage })
+        let controls = rig.app.setupControls
+        for control in outputs.sections.flatMap(\.controls) {
+            let state = controls.state(of: control, in: "audio")
+            #expect(!state.editable, "\(control.id)")
+            #expect(state.reason?.isEmpty == false, "\(control.id)")
+        }
+        await rig.app.disconnect()
     }
 
     // MARK: The ANAN-G2: the Saturn group

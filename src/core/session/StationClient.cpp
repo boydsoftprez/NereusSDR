@@ -9,6 +9,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-06  J.J. Boyd / KG4VCF  Radio speaker: the hello declares
+//                                    radioSpeaker 1; radio's RADIO level,
+//                                    mute and amplifier choice apply
+//                                    through their setters and go back to
+//                                    the Core, the two reports apply as the
+//                                    Core sent them; radioSpeakerAvailable
+//                                    (R-SPK-06, R-SPK-13, R-SPK-14).
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-04: Qt 6.4 WebSocket error-signal compatibility. J.J. Boyd
 //               (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-30  J.J. Boyd / KG4VCF  Fix wave GUI-I6: a Tune Power change
@@ -480,6 +488,13 @@
 //               tune this window asked for (RemoteTransmitClient), so TUNE
 //               and its keepalives do not stay on. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-07: CAT setup from a connected desktop: declares stationCat 1,
+//               registers `stationCat` when offered and sends the four CAT
+//               commands. J.J. Boyd (KG4VCF). AI tooling: Claude Code.
+//   2026-10-07: requestCatLog follows the Core's `catLog` stream (again
+//               after each snapshot) and hands its records to RadioModel;
+//               the window's line limit as backlog; the CAT tester's reply
+//               from its result. J.J. Boyd (KG4VCF). AI tooling: Claude Code.
 //   2026-10-08: Rotor control plan Task 4b: the `rotor` object mirrored
 //               from a Core that offers remoteRotorControlVersion 1, and
 //               the seven rotor requests. J.J. Boyd (KG4VCF), AI-assisted
@@ -540,6 +555,7 @@
 #include "models/NotchModel.h"
 #include "models/RfKitModel.h"
 #include "models/StationTciModel.h"
+#include "models/StationCatModel.h"
 #include "models/AccessoryDataModel.h"
 #include "models/RotorModel.h"
 #include "models/AccessorySettingsModel.h"
@@ -903,6 +919,10 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // JJ's ruling of 2026-09-28: this window shows and changes the rest of
     // the Core's TCI server settings (stationTciSettingsVersion 1).
     m_declaredFeatures.insert(QByteArrayLiteral("stationTciSettings"), 1);
+    // CAT setup from a connected desktop: this window shows and sets up the
+    // Core's CAT (the `stationCat` object, the `catLog` stream and its four
+    // commands; stationCatVersion 1).
+    m_declaredFeatures.insert(QByteArrayLiteral("stationCat"), 1);
     // R-R3-46 / R-R3-11: this window shows and sets the other ADC's own
     // attenuator for the slices on it (stepAtt rx2AttenuationDb,
     // rx2SliceMask; adcAttenuatorVersion 1).
@@ -924,6 +944,11 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // (radio's rxFilter0LowPassReason and rxFilter0LowPassSlice;
     // rxFilterLowPassVersion 1).
     m_declaredFeatures.insert(QByteArrayLiteral("rxFilterLowPass"), 1);
+    // Radio speaker (R-SPK-14): the header's RADIO group and Setup show and
+    // change the Core's radio speaker (radio's radioSpeakerVolume,
+    // radioSpeakerMuted, speakerAmplifierMode and the two reports;
+    // radioSpeakerVersion 1).
+    m_declaredFeatures.insert(QByteArrayLiteral("radioSpeaker"), 1);
     // PA on-air gate re-review, Important C: the PA pages open and lock
     // the row the Core holds on the air (paTransmitBandVersion 1).
     m_declaredFeatures.insert(QByteArrayLiteral("paTransmitBand"), 1);
@@ -2084,6 +2109,8 @@ void StationClient::attachTransport(SessionTransport* transport, const QString& 
     m_capabilities.displayBudget.reset();
     m_capabilities.displayBudgetReason.reset();
     m_capabilities.remotePs3DisplaySubscribed = false;
+    m_capabilitiesThisSession = false;
+    m_capabilities.radioSpeakerVersion = 0;
 
     // These three describe THIS session. Carrying them across a reconnect
     // would let a difference the station has since fixed keep showing up
@@ -2284,6 +2311,7 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
 
     m_capabilities.coreBuildInfo.reset();
     m_signedInWithDeviceKey = false;
+    m_capabilitiesThisSession = false;
     m_capabilities.radioAntennaRowsVersion = 0;
     m_capabilities.band2mVersion = 0;
     m_enrolledDeviceKey = false;
@@ -2468,6 +2496,7 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
         m_radioModel->clearStationBandOutputs();
         m_radioModel->clearStationAlexLpf();
         m_radioModel->clearStationLevelCal();
+        m_radioModel->clearStationRadioSpeaker();
         for (SliceModel* slice : m_radioModel->slices()) {
             slice->setStationAutoAgcNoiseFloor(slice->stationAutoAgcNoiseFloorDbm(), false,
                                               slice->stationAutoAgcNoiseFloorGeneration());
@@ -2938,6 +2967,16 @@ void StationClient::onTransportText(const QByteArray& wire)
                 subscribe(QStringLiteral("tciClients"), StationTciModel::kClientsCapacity);
             }
         }
+        // CAT setup from a connected desktop: the CAT log window's lines,
+        // with the Core's recent ones (the window shows each line once).
+        if (m_sessionPurpose == SessionPurpose::Ordinary && m_catLogWanted
+            && stationCatAvailable()) {
+            invokeCommand("records.subscribe",
+                          {MirrorUpdate{0, "stream", MirrorWireKind::Utf8,
+                                        QVariant(QStringLiteral("catLog"))},
+                           MirrorUpdate{0, "backlog", MirrorWireKind::Int64,
+                                        QVariant(static_cast<qlonglong>(m_catLogBacklog))}});
+        }
         // Parity Task 22 (R-R3-49): the Core's log follows again for the
         // viewers that hold it, and the support controls learn the session.
         if (!m_radioModel.isNull()) {
@@ -3059,6 +3098,13 @@ void StationClient::onTransportText(const QByteArray& wire)
                     emit cfcCompressionReceived(
                         bins, static_cast<qint64>(u.fields.value(QStringLiteral("atMs")).toDouble()));
                 }
+            }
+            break;
+        }
+        // CAT setup from a connected desktop: the CAT log window's lines.
+        if (message.recordBatch.stream == QLatin1String("catLog")) {
+            if (stationCatAvailable() && !m_radioModel.isNull()) {
+                m_radioModel->applyStationRecordBatch(message.recordBatch);
             }
             break;
         }
@@ -3525,6 +3571,7 @@ void StationClient::handleCapabilities(const SessionMessage& message)
         }
     }
     m_capabilities = incoming;
+    m_capabilitiesThisSession = true;
     if (m_settingsBackupExport && m_capabilities.settingsBackupVersion < 1) {
         finishSettingsBackupExport(false, QStringLiteral("The Core stopped offering settings export."),
                                    {}, true);
@@ -3804,6 +3851,10 @@ void StationClient::handleCapabilities(const SessionMessage& message)
         { "stationTci", m_radioModel->stationTciModel(),
           m_agreedMinor >= kRadioIdentitySessionProtocolMinor
               && m_capabilities.stationTciVersion >= 1 },
+        // CAT setup from a connected desktop: the Core's CAT.
+        { "stationCat", m_radioModel->stationCatModel(),
+          m_agreedMinor >= kRadioIdentitySessionProtocolMinor
+              && m_capabilities.stationCatVersion >= 1 },
         // R-R3-47 / R-R3-22: the Core's accessory records and settings.
         { "accessoryData", m_radioModel->accessoryDataModel(),
           m_agreedMinor >= kRadioIdentitySessionProtocolMinor
@@ -4902,6 +4953,11 @@ bool StationClient::applyClientOnlyProperty(QObject* target, const QByteArray& c
         if (m_radioModel->applyStationLevelCalValue(propertyName, native)) {
             return true;
         }
+        // Radio speaker (radioSpeakerVersion 1): the two reports, read-only
+        // on the wire, set as the Core sent them.
+        if (m_radioModel->applyStationRadioSpeakerValue(propertyName, native)) {
+            return true;
+        }
         return m_radioModel->applyStationFilterValue(propertyName, native);
     }
     if (className == "PureSignalSessionFacade") {
@@ -4974,6 +5030,12 @@ bool StationClient::applyClientOnlyProperty(QObject* target, const QByteArray& c
     if (className == "StationTciModel") {
         auto* tci = qobject_cast<StationTciModel*>(target);
         return tci != nullptr && tci->applyStationValue(propertyName, native);
+    }
+    // CAT setup from a connected desktop: a plain state apply; the Core's
+    // CAT changes only by command.
+    if (className == "StationCatModel") {
+        auto* cat = qobject_cast<StationCatModel*>(target);
+        return cat != nullptr && cat->applyStationValue(propertyName, native);
     }
     // R-R3-47 / R-R3-22: a plain state apply; changes only by command.
     if (className == "AccessoryDataModel") {
@@ -5297,9 +5359,9 @@ MirrorUpdate enumArgument(const QByteArray& name, int value)
 // refused was about, for RadioModel::accessoryRequestRefused; empty for
 // every other verb. "pgxl" and "tgxl" (the amp's and tuner's connection,
 // output limit and own settings), "rfkit", "interlock", "tci" (the
-// station TCI server), "4o3a" (the 4O3A switch), "rotor" (the rotor's
-// setup and presets; rotor plan Task 7) and, for a fault history, the
-// device it names ("faults" for any other).
+// station TCI server), "cat" (the Core's CAT), "4o3a" (the 4O3A switch),
+// "rotor" (the rotor's setup and presets; rotor plan Task 7) and, for a
+// fault history, the device it names ("faults" for any other).
 QString accessoryRefusalDevice(const QByteArray& verb, const QString& faultsDevice)
 {
     if (verb == "setPgxlName" || verb == "setPgxlHardware" || verb == "setPgxlNetwork"
@@ -5330,6 +5392,11 @@ QString accessoryRefusalDevice(const QByteArray& verb, const QString& faultsDevi
     if (verb == "setStationTci" || verb == "setStationTciOptions"
         || verb == "setStationTciSettings" || verb == "disconnectStationTciClient") {
         return QStringLiteral("tci");
+    }
+    // CAT setup from a connected desktop: the Core's CAT ("cat").
+    if (verb == "setStationCatChannel" || verb == "setStationCatGlobal"
+        || verb == "testStationCatCommand" || verb == "refreshStationCatDevices") {
+        return QStringLiteral("cat");
     }
     if (verb == "setFourO3AEnabled") {
         return QStringLiteral("4o3a");
@@ -5828,6 +5895,19 @@ bool StationClient::levelCalibrationRunAvailable() const
 bool StationClient::rx2PreampModeAvailable() const
 {
     return radioHardwareAvailable(12);
+}
+
+bool StationClient::radioSpeakerAvailable() const
+{
+    // Not stationLinkReady(): the snapshot applies the Core's values through
+    // the setters before the handshake completes, and they must land.
+    return m_sessionActive && m_authenticated && m_capabilities.radioSpeakerVersion >= 1;
+}
+
+bool StationClient::radioSpeakerNeedsNewerCore() const
+{
+    return m_sessionActive && m_authenticated && m_capabilitiesThisSession
+           && m_capabilities.radioSpeakerVersion < 1;
 }
 
 StationClient::CommandOutcome StationClient::requestStartLevelCalibration(float levelDbm,
@@ -6655,6 +6735,75 @@ StationClient::CommandOutcome StationClient::requestStationTciOptions(bool emula
                          boolArgument("cwluBecomesCw", cwluBecomesCw),
                          boolArgument("sendInitialState", sendInitialState) },
                        QStringLiteral("the Core's TCI server settings"));
+}
+
+bool StationClient::stationCatAvailable() const
+{
+    // CAT setup from a connected desktop: a Core that told this window
+    // stationCatVersion 1 (it declares stationCat).
+    return stationLinkReady() && m_agreedMinor >= kRadioIdentitySessionProtocolMinor
+        && m_capabilities.stationCatVersion >= 1;
+}
+
+StationClient::CommandOutcome StationClient::requestStationCatChannel(int channel,
+                                                                      const QString& configJson)
+{
+    if (!stationCatAvailable()) {
+        return { false, stationCatUnavailableReason() };
+    }
+    return sendCommand("setStationCatChannel", -1,
+                       { intArgument("channel", channel), stringArgument("config", configJson) },
+                       QStringLiteral("the Core's CAT channel"));
+}
+
+StationClient::CommandOutcome StationClient::requestStationCatGlobal(const QString& configJson)
+{
+    if (!stationCatAvailable()) {
+        return { false, stationCatUnavailableReason() };
+    }
+    return sendCommand("setStationCatGlobal", -1, { stringArgument("config", configJson) },
+                       QStringLiteral("the Core's CAT settings"));
+}
+
+StationClient::CommandOutcome StationClient::requestStationCatTest(qint64 requestId, int channel,
+                                                                   const QString& command)
+{
+    if (!stationCatAvailable()) {
+        return { false, stationCatUnavailableReason() };
+    }
+    return sendCommand("testStationCatCommand", -1,
+                       { MirrorUpdate{ 0, QByteArrayLiteral("requestId"), MirrorWireKind::Int64,
+                                       QVariant(static_cast<qlonglong>(requestId)) },
+                         intArgument("channel", channel), stringArgument("command", command) },
+                       QStringLiteral("the Core's CAT test command"));
+}
+
+void StationClient::requestCatLog(bool follow, int backlog)
+{
+    // Kept across sessions: each snapshot subscribes again while wanted.
+    const bool was = m_catLogWanted;
+    m_catLogWanted = follow;
+    m_catLogBacklog = follow ? qMax(0, backlog) : 0;
+    if (!stationCatAvailable() || (!follow && !was)) {
+        return;
+    }
+    QList<MirrorUpdate> arguments{
+        MirrorUpdate{0, "stream", MirrorWireKind::Utf8, QVariant(QStringLiteral("catLog"))}};
+    if (follow) {
+        // The Core's recent lines, then what happens while it is open.
+        arguments.append(MirrorUpdate{0, "backlog", MirrorWireKind::Int64,
+                                      QVariant(static_cast<qlonglong>(m_catLogBacklog))});
+    }
+    invokeCommand(follow ? "records.subscribe" : "records.unsubscribe", arguments);
+}
+
+StationClient::CommandOutcome StationClient::requestStationCatRefreshDevices()
+{
+    if (!stationCatAvailable()) {
+        return { false, stationCatUnavailableReason() };
+    }
+    return sendCommand("refreshStationCatDevices", -1, {},
+                       QStringLiteral("the Core's serial ports"));
 }
 
 bool StationClient::stationTciSettingsAvailable() const
@@ -7958,6 +8107,20 @@ void StationClient::handleCommandResult(const SessionMessage& message)
             m_radioModel->reportStationPgxlLanScan(message.commandId, message.accepted,
                                                    message.reason, devicesJson);
         }
+        if (!self) { return; }
+    }
+    // CAT setup from a connected desktop: the tester's reply comes in its
+    // result, to the window that sent it, before the result itself.
+    if (pending.verb == "testStationCatCommand" && message.accepted
+        && !m_radioModel.isNull()) {
+        QString reply;
+        for (const MirrorUpdate& value : message.updates) {
+            if (value.name == "reply" && value.kind == MirrorWireKind::Utf8) {
+                reply = value.value.toString();
+            }
+        }
+        const QPointer<StationClient> self(this);
+        m_radioModel->reportStationCatTestReply(message.commandId, reply);
         if (!self) { return; }
     }
     // R-R3-22 fix wave: every result by its id, so a sender (the amp

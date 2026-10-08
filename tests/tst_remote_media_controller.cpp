@@ -1,5 +1,12 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-07: R-R3-21, R-R3-51: the silence while the Core transmits
+//               holds the speakers' and the headphones' no-packets
+//               restarts without a backoff step, and the unkey asks for
+//               them again at once; a receiver stream asks for nothing; an
+//               older Core, other faults and audio already playing again
+//               behave as before.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-04: Hold accepted Core waterfall levels in the remote codec window.
@@ -108,6 +115,7 @@
 #include "core/session/DeviceSessionRegistry.h"
 #include "core/session/StationClient.h"
 #include "core/session/StationServer.h"
+#include "core/session/TransmitStateFacade.h"
 #include "core/settings/SettingsProxy.h"
 #include "core/settings/SettingsScope.h"
 #include "core/session/media/DisplayCodec.h"
@@ -630,6 +638,20 @@ QList<QJsonObject> receiverRequests(const QSignalSpy& coreControls, int sliceId)
         }
     }
     return requests;
+}
+
+// R-R3-51: how many requests this GUI sent that turn `op` on (for
+// receiver-audio, only those for slice `sliceId`).
+int enabledRequests(const QSignalSpy& coreControls, const QString& op, int sliceId = -1)
+{
+    int count = 0;
+    for (const QJsonObject& control : controlsFor(coreControls, op)) {
+        if (sliceId >= 0 && control.value(QStringLiteral("sliceId")).toInt() != sliceId) {
+            continue;
+        }
+        if (control.value(QStringLiteral("enabled")).toBool()) { ++count; }
+    }
+    return count;
 }
 
 // R-R3-43: a receiver the status shows as receiving in `profile`.
@@ -2029,7 +2051,11 @@ private slots:
             QVERIFY(update.name != "phase" || update.value.toString() != "needsConfirmation");
         }
         QCOMPARE(station.streamCentreHz(stream), centre);
-        QVERIFY(std::abs(widget->centerFrequency() - centre) < 1.0);
+        // The refusal returns the view to the Core's source. A context still
+        // settling from before the drag may land after that and move the view
+        // to its bin-aligned crop, as the check before the drag allows; the
+        // refused drag itself was 300 px away.
+        QVERIFY(std::abs(widget->centerFrequency() - centre) <= sourceBinHz);
         record("first-final-refusal", 0);
         for (int step = 1; step <= 5; ++step) {
             const int beforeFinishes = finishes.size();
@@ -8211,6 +8237,274 @@ private slots:
         h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
+    // R-R3-21, R-R3-51: the Core sends the keying device no receive audio
+    // while it transmits, so every stream this window plays runs out of
+    // packets. That silence is expected, not an outage: the speakers and
+    // the headphones mix each stop and wait, with no backoff step and no
+    // problem shown, and the Core's unkey asks for both again in the same
+    // pass of the event loop, each with a fresh backoff. Before this, each
+    // restart backed off (1, 2, 4 s) while keyed, and audio came back up
+    // to 4 s after the unkey. A receiver stream for apps never restarts
+    // for no packets (it idles, R-R3-43): it asks for nothing, keyed or at
+    // the unkey, and plays again as the packets return.
+    void transmitSilenceWaitsForTheUnkeyAndResumesAtOnce()
+    {
+        using State = RemoteAudioStatus::State;
+        Test::RemoteAudioSessionHarness h;
+        const auto routes = qScopeGuard([&h] { h.resetOutputRoutes(); });
+        h.attachRemoteHeadphones();
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        // The Core's display runs through the silence, as in production.
+        CoreDisplayKeepAlive display;
+        DaemonMediaController daemonMedia(&h.server, &h.station, nullptr, display.factory());
+        QSignalSpy errors(&remoteMedia, &RemoteMediaController::errorOccurred);
+        QSignalSpy coreControls(&h.server, &StationServer::mediaControlReceived);
+        Test::CollectingReceiverSink app;
+        const int sliceA = h.sliceA;
+        const auto release = qScopeGuard([&] { remoteMedia.releaseReceiverAudio(sliceA, &app); });
+        PacedRemoteAudio audio(h);
+        QTimer headphones;
+        headphones.setInterval(10);
+        headphones.setTimerType(Qt::PreciseTimer);
+        connect(&headphones, &QTimer::timeout, &headphones, [&h] {
+            h.remoteHeadphonesBus->render(Test::RemoteAudioSessionHarness::kFrames);
+        });
+        headphones.start();
+        h.station.sliceById(h.sliceB)->setOutputRoute(SliceModel::OutputRoute::Headphones);
+        h.connectSession();
+        QVERIFY(h.client.capabilities().txStateVersion >= 1);
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
+        QTRY_VERIFY_WITH_TIMEOUT(remoteMedia.headphonesTelemetry().running
+                                     && remoteMedia.headphonesTelemetry().decodedPackets > 10,
+                                 15000);
+        remoteMedia.requestReceiverAudio(sliceA, &app);
+        QTRY_VERIFY_WITH_TIMEOUT(app.frames(sliceA) >= 9600, 10000);
+        // A speakers' backoff step that comes due waits here instead of
+        // running, so a speakers' request below cannot come from one.
+        remoteMedia.holdAudioRestartForTest(true);
+
+        // The Core keys and its receive audio stops; its display goes on.
+        TransmitState* tx = h.client.transmitState();
+        QVERIFY(tx);
+        QVERIFY(tx->applyStationValue("keyed", true));
+        display.timer.start();
+        audio.source.stop();
+        const int speakers = enabledRequests(coreControls, QStringLiteral("audio"));
+        const int phones = enabledRequests(coreControls, QStringLiteral("headphones-audio"));
+        const int receiver =
+            enabledRequests(coreControls, QStringLiteral("receiver-audio"), sliceA);
+        QTRY_VERIFY_WITH_TIMEOUT(!remoteMedia.audioTelemetry().running
+                                     && !remoteMedia.headphonesTelemetry().running,
+                                 5000);
+        // Well past the first 1 s step: nothing is asked for while keyed,
+        // nothing waits on a backoff step, and nothing says audio failed.
+        QTest::qWait(1500);
+        QCOMPARE(enabledRequests(coreControls, QStringLiteral("audio")), speakers);
+        QCOMPARE(enabledRequests(coreControls, QStringLiteral("headphones-audio")), phones);
+        QCOMPARE(enabledRequests(coreControls, QStringLiteral("receiver-audio"), sliceA),
+                 receiver);
+        QVERIFY(!remoteMedia.audioRestartPendingForTest());
+        QVERIFY(!remoteMedia.audioRestartStepHeldForTest());
+        const RemoteAudioStatus keyed = remoteMedia.audioStatus();
+        QCOMPARE(keyed.state, State::WaitingForAudio);
+        QVERIFY(!keyed.problem.has_value());
+        QVERIFY(errors.isEmpty());
+        QVERIFY(remoteMedia.headphonesProblem().isEmpty());
+        QVERIFY(app.stops().isEmpty());
+        QVERIFY(remoteMedia.receiverAudioTelemetry().value(sliceA).running);
+        const int appFrames = app.frames(sliceA);
+
+        // The Core unkeys: the speakers and the headphones are asked for
+        // again with no timer between, only the queued delivery to the
+        // Core.
+        audio.source.start();
+        QVERIFY(tx->applyStationValue("keyed", false));
+        QVERIFY(!remoteMedia.audioRestartPendingForTest());
+        const auto allAskedAgain = [&] {
+            return enabledRequests(coreControls, QStringLiteral("audio")) > speakers
+                && enabledRequests(coreControls, QStringLiteral("headphones-audio")) > phones;
+        };
+        for (int pass = 0; pass < 100 && !allAskedAgain(); ++pass) {
+            QCoreApplication::processEvents();
+        }
+        QCOMPARE(enabledRequests(coreControls, QStringLiteral("audio")), speakers + 1);
+        QCOMPARE(enabledRequests(coreControls, QStringLiteral("headphones-audio")), phones + 1);
+
+        // And all three play again; no backoff step ever came due, and the
+        // receiver stream asked for nothing.
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(remoteMedia.headphonesTelemetry().running
+                                     && remoteMedia.headphonesTelemetry().decodedPackets > 10,
+                                 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(app.frames(sliceA) >= appFrames + 9600, 10000);
+        QCOMPARE(enabledRequests(coreControls, QStringLiteral("receiver-audio"), sliceA),
+                 receiver);
+        QVERIFY(!remoteMedia.audioRestartStepHeldForTest());
+        QVERIFY(errors.isEmpty());
+
+        remoteMedia.holdAudioRestartForTest(false);
+        display.timer.stop();
+        headphones.stop();
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // R-R3-51: a Core without the mirrored transmit state (txStateVersion
+    // 0) gives the window no way to tell that the silence is expected, so
+    // its restarts back off as before, keyed or not, and the unkey asks for
+    // nothing by itself.
+    void transmitSilenceFromAnOlderCoreBacksOffAsBefore()
+    {
+        using State = RemoteAudioStatus::State;
+        Test::RemoteAudioSessionHarness h;
+        h.hideTxState = true;
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        CoreDisplayKeepAlive display;
+        DaemonMediaController daemonMedia(&h.server, &h.station, nullptr, display.factory());
+        QSignalSpy coreControls(&h.server, &StationServer::mediaControlReceived);
+        PacedRemoteAudio audio(h);
+        h.connectSession();
+        QCOMPARE(h.client.capabilities().txStateVersion, 0);
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
+        remoteMedia.holdAudioRestartForTest(true);
+
+        TransmitState* tx = h.client.transmitState();
+        QVERIFY(tx);
+        QVERIFY(tx->applyStationValue("keyed", true));
+        display.timer.start();
+        audio.source.stop();
+        // The restart waits on its backoff step, which comes due (held).
+        QTRY_VERIFY_WITH_TIMEOUT(remoteMedia.audioRestartPendingForTest(), 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(remoteMedia.audioRestartStepHeldForTest(), 5000);
+        QCOMPARE(remoteMedia.audioStatus().state, State::Reconnecting);
+        const int speakers = enabledRequests(coreControls, QStringLiteral("audio"));
+
+        QVERIFY(tx->applyStationValue("keyed", false));
+        for (int pass = 0; pass < 100; ++pass) {
+            QCoreApplication::processEvents();
+        }
+        QCOMPARE(enabledRequests(coreControls, QStringLiteral("audio")), speakers);
+        QVERIFY(remoteMedia.audioRestartPendingForTest());
+
+        // Released, the step asks again as it always did.
+        audio.source.start();
+        remoteMedia.holdAudioRestartForTest(false);
+        QTRY_COMPARE_WITH_TIMEOUT(enabledRequests(coreControls, QStringLiteral("audio")),
+                                  speakers + 1, 2000);
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(), 10000);
+
+        display.timer.stop();
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // R-R3-51: only a no-packets restart is expected while the Core
+    // transmits. Any other restart backs off as before, and the unkey asks
+    // for nothing by itself.
+    void otherRestartsWhileTransmittingBackOffAsBefore_data()
+    {
+        QTest::addColumn<int>("fault");
+        QTest::newRow("decode failed") << int(RemoteAudioReceiver::Fault::DecodeFailed);
+        QTest::newRow("clock buffer") << int(RemoteAudioReceiver::Fault::ClockBuffer);
+    }
+
+    void otherRestartsWhileTransmittingBackOffAsBefore()
+    {
+        using State = RemoteAudioStatus::State;
+        QFETCH(int, fault);
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemonMedia(&h.server, &h.station);
+        QSignalSpy coreControls(&h.server, &StationServer::mediaControlReceived);
+        PacedRemoteAudio audio(h);
+        h.connectSession();
+        QVERIFY(h.client.capabilities().txStateVersion >= 1);
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
+        remoteMedia.holdAudioRestartForTest(true);
+
+        TransmitState* tx = h.client.transmitState();
+        QVERIFY(tx);
+        QVERIFY(tx->applyStationValue("keyed", true));
+        const int speakers = enabledRequests(coreControls, QStringLiteral("audio"));
+        remoteMedia.raiseAudioRestartForTest(RemoteAudioReceiver::Fault(fault));
+        QVERIFY(remoteMedia.audioRestartPendingForTest());
+        QCOMPARE(remoteMedia.audioStatus().state, State::Reconnecting);
+
+        QVERIFY(tx->applyStationValue("keyed", false));
+        for (int pass = 0; pass < 100; ++pass) {
+            QCoreApplication::processEvents();
+        }
+        QCOMPARE(enabledRequests(coreControls, QStringLiteral("audio")), speakers);
+        QVERIFY(remoteMedia.audioRestartPendingForTest());
+
+        QTRY_VERIFY_WITH_TIMEOUT(remoteMedia.audioRestartStepHeldForTest(), 5000);
+        remoteMedia.holdAudioRestartForTest(false);
+        QTRY_COMPARE_WITH_TIMEOUT(enabledRequests(coreControls, QStringLiteral("audio")),
+                                  speakers + 1, 2000);
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(), 10000);
+
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // R-R3-51: a restart held while keyed that something else already
+    // answered (here the operator's Retry while keyed, with the Core's
+    // audio back, as with the monitor on) is over: the unkey asks for
+    // nothing more.
+    void unkeyAsksNothingWhenAudioAlreadyPlaysAgain()
+    {
+        using State = RemoteAudioStatus::State;
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        CoreDisplayKeepAlive display;
+        DaemonMediaController daemonMedia(&h.server, &h.station, nullptr, display.factory());
+        QSignalSpy coreControls(&h.server, &StationServer::mediaControlReceived);
+        PacedRemoteAudio audio(h);
+        h.connectSession();
+        QVERIFY(h.client.capabilities().txStateVersion >= 1);
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
+        remoteMedia.holdAudioRestartForTest(true);
+
+        TransmitState* tx = h.client.transmitState();
+        QVERIFY(tx);
+        QVERIFY(tx->applyStationValue("keyed", true));
+        display.timer.start();
+        audio.source.stop();
+        QTRY_VERIFY_WITH_TIMEOUT(!remoteMedia.audioTelemetry().running, 5000);
+        QVERIFY(!remoteMedia.audioRestartPendingForTest());
+
+        audio.source.start();
+        remoteMedia.retryAudio();
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(), 10000);
+        const int speakers = enabledRequests(coreControls, QStringLiteral("audio"));
+
+        QVERIFY(tx->applyStationValue("keyed", false));
+        for (int pass = 0; pass < 100; ++pass) {
+            QCoreApplication::processEvents();
+        }
+        QTest::qWait(300);
+        QCOMPARE(enabledRequests(coreControls, QStringLiteral("audio")), speakers);
+        QCOMPARE(remoteMedia.audioStatus().state, State::Playing);
+        QVERIFY(!remoteMedia.audioRestartStepHeldForTest());
+
+        remoteMedia.holdAudioRestartForTest(false);
+        display.timer.stop();
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
     // Direct media: the case the harness hid. On a direct path the Core's
     // audio and display both go silent while control stays up, and the
     // window's audio restart backoff is running. The silence fallback moves
@@ -9521,10 +9815,10 @@ private slots:
         // the worker returns after the first, so exactly one is reported.
         const QString timingText = QStringLiteral(
             "The headphones stopped reporting their timing. Turn the headphones off and on in "
-            "Setup, Audio, Devices to try again.");
+            "Setup, Audio, Outputs to try again.");
         const QString writeText = QStringLiteral(
             "Audio could not be sent to the headphones. Turn the headphones off and on in "
-            "Setup, Audio, Devices to try again.");
+            "Setup, Audio, Outputs to try again.");
         QCOMPARE(RemoteMediaController::headphonesFaultText(
                      RemoteAudioReceiver::Fault::SpeakerTimingUnavailable), timingText);
         QCOMPARE(RemoteMediaController::headphonesFaultText(
@@ -9865,6 +10159,10 @@ const QStringList kAudioFunctions{
     QStringLiteral("micUplinkRunsOnlyWhileTransmittingOrVoxArmed"),
     QStringLiteral("microphoneAndProgramReachTheCoresRing"),
     QStringLiteral("headphonesWordingIsPlain"),
+    QStringLiteral("transmitSilenceWaitsForTheUnkeyAndResumesAtOnce"),
+    QStringLiteral("transmitSilenceFromAnOlderCoreBacksOffAsBefore"),
+    QStringLiteral("otherRestartsWhileTransmittingBackOffAsBefore"),
+    QStringLiteral("unkeyAsksNothingWhenAudioAlreadyPlaysAgain"),
 };
 
 // The test functions QtTest would run: private slots with no arguments,

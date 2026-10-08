@@ -3,6 +3,10 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 //
 // Modification history (NereusSDR):
+//   2026-10-07: R-R3-21, R-R3-51: raiseAudioRestartForTest, and a
+//               no-packets restart while the Core transmits waits for the
+//               unkey, which asks for audio at once. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
 //                 AI-assisted via OpenAI Codex.
 //   2026-09-29: startReplacement takes whether the replace carries a
@@ -487,6 +491,10 @@ public:
     void holdAudioRestartForTest(bool held);
     /// Test only: whether a backoff step came due while held.
     bool audioRestartStepHeldForTest() const;
+    /// Test only: the speakers' receiver asks for a restart with `fault`,
+    /// as it does itself, so a test can raise a fault a real stream cannot
+    /// produce on demand. No production caller.
+    void raiseAudioRestartForTest(RemoteAudioReceiver::Fault fault);
     /// iPhone app plan Task 29 fix wave (review Important 1): media follows
     /// every move of the session. A move marks a replacement pending; it
     /// starts as soon as it can (the media connection ready, unkeyed, VOX
@@ -610,6 +618,9 @@ private:
     void receiveHeadphonesAudioContext(const QJsonObject& payload);
     void onHeadphonesRestart(const QString& reason, RemoteAudioReceiver::Fault fault);
     void onHeadphonesError(const QString& reason, RemoteAudioReceiver::Fault fault);
+    // R-R3-51: the Core stopped transmitting; streams its silence stopped
+    // are asked for again at once.
+    void resumeAudioAfterTransmit();
     void setHeadphonesProblem(const QString& problem);
     void refreshAudioStatus();
     void resetMicrophoneQuality();

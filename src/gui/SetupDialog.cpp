@@ -184,6 +184,21 @@
 //                shows or hides the PA Values page, as Thetis's chkPAValues
 //                does; nothing read the setting before. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-06 - R-SPK-21, R-SPK-24 (radio speaker plan Task 9): Audio
+//                opens with Outputs (Mixed), and no Audio page carries the
+//                backend strip any more; the Sound system line on Outputs
+//                replaces it. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
+//   2026-10-06 - R-SPK-21, R-SPK-22 (radio speaker plan Task 10): TX Input
+//                is now "Microphone" and holds the one PC microphone
+//                section; the Devices page, whose microphone card moved
+//                there, is gone. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-10-06 - R-SPK-21, R-SPK-22, R-SPK-24 (radio speaker plan Task
+//                11): VAX and TCI are one "Digital modes" page, and Audio
+//                reads Outputs, Microphone, Digital modes, TX Profile,
+//                Advanced. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 //   2026-10-08 - Rotor control plan Task 7: CAT & Network > Rotor, the
 //                antenna rotor's setup and presets (RotorSetupPage). J.J.
 //                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -214,11 +229,11 @@
 // Phase 8 of #167: per-SKU PA visibility wiring needs RadioInfo
 #include "core/RadioDiscovery.h"
 // Audio
-#include "setup/AudioBackendStrip.h"
-#include "setup/AudioDevicesPage.h"
+#include "setup/AudioOutputsPage.h"
 #include "setup/AudioTxInputPage.h"
 #include "setup/AudioVaxPage.h"
 #include "setup/AudioTciPage.h"
+#include "setup/AudioDigitalModesPage.h"
 #include "setup/AudioAdvancedPage.h"
 // DSP
 #include "setup/DspSetupPages.h"
@@ -1335,21 +1350,6 @@ int SetupDialog::pageEntryIndex(const QString& label) const
     return -1;
 }
 
-QWidget* SetupDialog::wrapWithAudioBackendStrip(SetupPage* page)
-{
-    // Returns a margin-less container QWidget that owns both the strip and the
-    // page. Qt parent-ownership keeps memory clean — the container is
-    // reparented into the QStackedWidget by realizePage().
-    auto* container = new QWidget;
-    auto* lay = new QVBoxLayout(container);
-    lay->setContentsMargins(0, 0, 0, 0);
-    lay->setSpacing(0);
-    lay->addWidget(new AudioBackendStrip(
-        m_model ? m_model->localAudioDevices() : nullptr, container));
-    lay->addWidget(page);
-    return container;
-}
-
 // ── Tree builder ──────────────────────────────────────────────────────────────
 
 void SetupDialog::buildTree()
@@ -1600,11 +1600,17 @@ void SetupDialog::buildTree()
 
     // ── Audio ─────────────────────────────────────────────────────────────────
     QTreeWidgetItem* audio = addCategory("Audio");
-    // R-R3-23: Devices picks this computer's speakers, headphones and
-    // microphone, which a remote window uses too (remote playback, Test
-    // Mic), so it works in every window, connected or not.
-    registerPage(audio, "Devices", SetupScope::ThisComputer,
-                 [this] { return wrapWithAudioBackendStrip(new AudioDevicesPage(m_model)); });
+    // R-SPK-21 / D13: Outputs first. Mixed: this computer's speakers,
+    // headphones and PC volume work in every window; the Radio speaker
+    // controls write the Core's settings and follow their availability
+    // (AudioOutputsPage::setStationSettingsAvailable). R-SPK-21 / D15: no
+    // Audio page is wrapped in the backend strip; Outputs' Sound system
+    // line and Rescan devices replace it.
+    registerPage(audio, "Outputs", SetupScope::Mixed,
+                 [this] { return new AudioOutputsPage(m_model); });
+    // R-SPK-21 (Microphone): the Devices page is gone; its microphone card
+    // is Microphone's PC microphone section and the speakers and headphones
+    // are on Outputs.
     // R-R3-36: the PC microphone device, backend, buffer and Test Mic are
     // this computer's; the mic source, mic gain and radio microphone
     // hardware controls follow the transmit permission inside the page
@@ -1617,34 +1623,27 @@ void SetupDialog::buildTree()
     // (setup.designer.cs:46443 [v2.10.3.15]). It is not a transmit page, so a
     // remote window without transmit keeps it live (R-R3-36).
     markReceiveOnlyGated(
-        registerPage(audio, "TX Input", SetupScope::Mixed,  // I.1
-                     [this] { return wrapWithAudioBackendStrip(new AudioTxInputPage(m_model)); }),
+        registerPage(audio, "Microphone", SetupScope::Mixed,  // I.1
+                     [this] { return new AudioTxInputPage(m_model); }),
         /*nonTransmitPage=*/true);
+    // R-SPK-21 (Digital modes): VAX then TCI on one page.
     // R-R3-44: the VAX channels are this computer's in a remote window as in
     // a local one (a remote window feeds them from the Core's receiver
     // streams), and the page writes only this computer's audio/Vax* keys,
     // so it works in every window, connected or not.
-    registerPage(audio, "VAX", SetupScope::ThisComputer,
+    // R-R3-42: TCI configures the TCI server that runs on this computer, in
+    // a remote window as in a local one, and its keys are this computer's
+    // (SettingsScope "Tci"). It reaches no local DSP, so it works in a
+    // remote window, connected or not.
+    registerPage(audio, "Digital modes", SetupScope::ThisComputer,
                  [this] {
                      auto* vaxPage = new AudioVaxPage(m_model);
                      // R-R3-43 / R-R3-44: the compressed-audio note's state.
                      m_vaxPage = vaxPage;
                      vaxPage->setReceiverAudioNote(m_receiverAudioNote);
-                     return wrapWithAudioBackendStrip(vaxPage);
+                     return new AudioDigitalModesPage(m_model, vaxPage,
+                                                      new AudioTciPage(m_model));
                  });
-    // R-R3-42: Audio > TCI configures the TCI server that runs on this
-    // computer, in a remote window as in a local one, and its keys are this
-    // computer's (SettingsScope "Tci"). It reaches no local DSP (the backend
-    // strip goes through localAudioDevices()), so it works in a remote
-    // window, connected or not.
-    registerPage(audio, "TCI", SetupScope::ThisComputer,
-                 [this] { return wrapWithAudioBackendStrip(new AudioTciPage(m_model)); });
-    // R-R3-44: Mixed. Its VAX groups (VAX feedback tuning, the VAX flags,
-    // detected cables, Reset) are this computer's and work in a remote
-    // window; the DSP group writes the Core's audio/DspRate and
-    // audio/DspBlockSize and follows the Core's settings availability.
-    registerPage(audio, "Advanced", SetupScope::Mixed,
-                 [this] { return wrapWithAudioBackendStrip(new AudioAdvancedPage(m_model)); });
     // Phase 3M-1c J.3: TX Profile editor.
     //
     // R-R3-49 (parity Task 3): no longer held for remote transmit. In a
@@ -1672,6 +1671,13 @@ void SetupDialog::buildTree()
             m_model ? m_model->micProfileManager() : nullptr,
             m_model ? &m_model->transmitModel() : nullptr);
     }), /*nonTransmitPage=*/true);
+    // R-R3-44: Mixed. Its groups (Logs, the VAX flags, Reset) are this
+    // computer's and work in a remote window; the hidden DSP group writes
+    // the Core's audio/DspRate and audio/DspBlockSize and follows the
+    // Core's settings availability. R-SPK-21: last in Audio; the detected
+    // cables are on Digital modes.
+    registerPage(audio, "Advanced", SetupScope::Mixed,
+                 [this] { return new AudioAdvancedPage(m_model); });
 
     tick("Audio");
 
@@ -1879,7 +1885,7 @@ void SetupDialog::buildTree()
     QTreeWidgetItem* cat = addCategory("CAT & Network");
     if (UnbuiltFeatures::isBuilt(UnbuiltFeature::Cat)) {
         registerPage(cat, "Serial Ports", SetupScope::ThisComputer,
-                     [] { return new CatSerialPortsPage; });
+                     [this] { return new CatSerialPortsPage(m_model); });
     }
     // R-R3-42: this computer's TCI server and its own settings.
     registerPage(cat, "TCI Server", SetupScope::ThisComputer, [this]() -> QWidget* {
@@ -1948,7 +1954,13 @@ void SetupDialog::buildTree()
     // window it lists the Core's serial ports.
     registerPage(cat, "Rotor", SetupScope::Core, [this] { return new RotorSetupPage(m_model); });
     if (UnbuiltFeatures::isBuilt(UnbuiltFeature::Cat)) {
-        registerPage(cat, "TCP/IP CAT", SetupScope::ThisComputer, [] { return new CatTcpIpPage; });
+        registerPage(cat, "TCP/IP CAT", SetupScope::ThisComputer, [this] { return new CatTcpIpPage(m_model); });
+        registerPage(cat, "CAT Options", SetupScope::ThisComputer, [this] {
+            auto* page = new CatOptionsSetupPage(m_model);
+            connect(page,&CatOptionsSetupPage::showLogRequested,this,&SetupDialog::catLogRequested);
+            return page;
+        });
+        registerPage(cat, "CAT PTT", SetupScope::ThisComputer, [this] { return new CatPttSetupPage(m_model); });
     }
     if (UnbuiltFeatures::isBuilt(UnbuiltFeature::Midi)) {
         registerPage(cat, "MIDI Control", SetupScope::ThisComputer,

@@ -427,10 +427,15 @@ private final class LifetimeUDPProbe: @unchecked Sendable {
         guard count == bytes.count else { throw RelayICEError.socketUnavailable }
     }
     func receive() async -> Data? {
-        await Task.detached { [self] in
-            var buffer = [UInt8](repeating: 0, count: 1600)
-            let count = buffer.withUnsafeMutableBytes { Darwin.recv(fd, $0.baseAddress, $0.count, 0) }
-            return count > 0 ? Data(buffer.prefix(count)) : nil
-        }.value
+        // The blocking recv runs on a GCD thread, not a detached task: a
+        // detached task takes a cooperative thread for up to the 3 s timeout,
+        // and the relay task that forwards the datagram may need that thread.
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async { [self] in
+                var buffer = [UInt8](repeating: 0, count: 1600)
+                let count = buffer.withUnsafeMutableBytes { Darwin.recv(fd, $0.baseAddress, $0.count, 0) }
+                continuation.resume(returning: count > 0 ? Data(buffer.prefix(count)) : nil)
+            }
+        }
     }
 }

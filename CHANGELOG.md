@@ -1,5 +1,64 @@
 # Changelog
 
+## [Unreleased]
+
+### CAT control
+
+Logging, contest and digital-mode programs can now control NereusSDR with
+Thetis-compatible CAT commands.
+
+- Up to four CAT channels. Each one controls the slices you assign to it, not
+  whichever pan has focus.
+- A channel can listen on TCP, on a serial port, or on macOS and Linux on a
+  virtual serial port (PTY) that programs open like a real one.
+- Programs that speak Hamlib's rigctld protocol connect to a separate rigctld
+  port on the same channel.
+- Configure the channels in Setup > CAT & Network. The CAT applet and the
+  status bar show what is listening and how many programs are connected. The
+  CAT log shows every command and reply, and the tester sends one command at a
+  time without a program.
+- CAT keys the radio (PTT, Tune and two-tone) under the same transmit rules as
+  every other source. Opening a channel or loading settings never keys.
+- Every listener stays off until you turn it on. CAT runs with the Core, so
+  from a remote console, set it up on the computer running the Core.
+- Serial CAT and serial-pin PTT need serial-port support, which is in the
+  Windows packages for now.
+- Thetis commands for features NereusSDR does not have yet (recording, CWX,
+  VAC and memories among them) answer `?;`.
+
+### Separate computer and radio speaker volumes
+
+The header now has two volume controls: PC for this computer's speakers and
+RADIO for the speaker on the radio.
+
+- RADIO sets and mutes the radio's own speaker output without changing the
+  computer's volume, and PC no longer changes the radio speaker. Each slice's
+  AF level and mute still apply to both.
+- RADIO is saved for each radio. With a Core, it is the speaker at the Core:
+  every remote console and the iPhone or iPad app show the same setting, and a
+  change on one reaches the others.
+- On a narrow window the two controls stack.
+- Radios with a switchable speaker amplifier (on Protocol 2: the ANAN-G2,
+  ANAN-G2 1K, ANAN-7000DLE, ANAN-8000DLE, Anvelina Pro 3 and Red Pitaya) get a
+  Speaker amplifier choice in Setup > Audio > Outputs: Normal, Off while
+  transmitting (it stays on for CW and Tune so you hear the sidetone) or
+  Always off. Muting RADIO also switches the amplifier off. On other radios the
+  choice is greyed out with the reason. The ANAN-G2E is left off until it is
+  tested.
+- Drawn icons replace the emoji on the desktop's volume and mute buttons.
+
+### Audio Setup regrouped
+
+Setup > Audio is now Outputs, Microphone, Digital modes, TX Profile and
+Advanced, and each control appears on one page only.
+
+- Outputs holds this computer's speakers, the headphones and the radio speaker,
+  with a Sound system line that says which audio system NereusSDR uses.
+- Microphone holds the PC microphone and the radio's mic jack; the one not in
+  use is greyed out, never hidden. Mic gain applies to whichever is picked.
+- Digital modes holds VAX and TCI.
+- Every page opens at the top. Your saved audio settings carry over unchanged.
+
 ## [2026.10.0] - 2026-10-05
 
 **Your station. Wherever you operate.**

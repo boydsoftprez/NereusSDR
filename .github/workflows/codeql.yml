@@ -58,7 +58,7 @@ jobs:
           target: desktop
           arch: linux_gcc_64
           # Qt 6.8+ folds qtsvg into qtbase; not listable as a module.
-          modules: 'qtmultimedia qtshadertools qtwebsockets'
+          modules: 'qtmultimedia qtshadertools qtwebsockets qtserialport'
           cache: true
 
       - name: Initialize CodeQL

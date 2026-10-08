@@ -158,6 +158,10 @@
 //                UpdateRX1DDSFreq), so diversity's partner DDC1 is no longer
 //                left at 0 Hz. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-06 - Radio speaker (R-SPK-09, R-SPK-15): the speaker amplifier
+//                inputs, sent at once while running, and byte 1400 bit 1 from
+//                speakerAmplifierOff in buildCodecContext. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //
@@ -357,6 +361,7 @@ warren@wpratt.com
 #include "LogCategories.h"
 #include "OcMatrix.h"
 #include "SharedInputLowPass.h"
+#include "SpeakerAmplifier.h"
 #include "CalibrationController.h"
 #include "PerfMonitor.h"
 #include "audio/RealtimeAudioPriority.h"
@@ -1867,6 +1872,45 @@ void P2RadioConnection::setPaDisabled(bool disabled)
     m_tx[0].pa = bit;
     if (m_running && m_socket) {
         sendCmdGeneral();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The speaker amplifier inputs (R-SPK-09, R-SPK-15). Each change goes out in
+// one high-priority packet at once; MOX needs nothing here, because the
+// packet setMox already sends composes byte 1400 from m_mox
+// (buildCodecContext).
+// ---------------------------------------------------------------------------
+void P2RadioConnection::setSpeakerAmplifierMode(int mode)
+{
+    if (m_speakerAmplifierMode == mode) {
+        return;
+    }
+    RadioConnection::setSpeakerAmplifierMode(mode);
+    if (m_running) {
+        sendCmdHighPriority();
+    }
+}
+
+void P2RadioConnection::setRadioSpeakerMuted(bool muted)
+{
+    if (m_radioSpeakerMuted == muted) {
+        return;
+    }
+    RadioConnection::setRadioSpeakerMuted(muted);
+    if (m_running) {
+        sendCmdHighPriority();
+    }
+}
+
+void P2RadioConnection::setSidetoneExpected(bool expected)
+{
+    if (m_sidetoneExpected == expected) {
+        return;
+    }
+    RadioConnection::setSidetoneExpected(expected);
+    if (m_running) {
+        sendCmdHighPriority();
     }
 }
 
@@ -4396,6 +4440,12 @@ CodecContext P2RadioConnection::buildCodecContext() const
     // band while not (ocBandFrequencyHz). Only a board with OC outputs
     // (ocOutputCount, every Protocol 2 row) drives the pins.
     ctx.ocByte = composedOcByte();
+
+    // The speaker amplifier mute, high-priority byte 1400 bit 1, only on a
+    // model with the switchable amplifier (R-SPK-08, R-SPK-09).
+    ctx.p2SpeakerAmpOff = speakerAmplifierOff(m_hardwareProfile.hasAudioAmplifier,
+                                              m_speakerAmplifierMode, m_radioSpeakerMuted,
+                                              m_mox, m_sidetoneExpected);
 
     // From Thetis cmaster.SetADCSupply / NetworkIO.LRAudioSwap [v2.10.3.15]
     // Per clsHardwareSpecific.cs:85-191 — forwarded to WDSP, not a P2 wire byte.

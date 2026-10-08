@@ -26,6 +26,7 @@ Q_LOGGING_CATEGORY(lcSpectrum,   "nereus.spectrum", QtInfoMsg)
 Q_LOGGING_CATEGORY(lcContainer,  "nereus.container")
 Q_LOGGING_CATEGORY(lcMeter,      "nereus.meter")
 Q_LOGGING_CATEGORY(lcMmio,       "nereus.mmio")
+Q_LOGGING_CATEGORY(lcCat,        "nereus.cat")
 Q_LOGGING_CATEGORY(lcTci,        "nereus.tci")
 Q_LOGGING_CATEGORY(lcSpots,      "nereus.spots")
 

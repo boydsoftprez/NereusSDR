@@ -46,6 +46,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-06  J.J. Boyd / KG4VCF  Radio speaker: radioSpeakerAvailable,
+//                                    radioSpeakerNeedsNewerCore
+//                                    and radioSpeakerUnavailableReason
+//                                    (radioSpeakerVersion 1, R-SPK-06,
+//                                    R-SPK-14). AI-assisted via Anthropic
+//                                    Claude Code.
 //   2026-09-30  J.J. Boyd / KG4VCF  Level Cal: rx2PreampModeAvailable,
 //                                    RX2's own preamp mode on the Core
 //                                    (radioHardwareVersion 12). AI-assisted
@@ -228,6 +234,15 @@
 //                                    hl2SwapAudioUnavailableReason
 //                                    (radioHardwareVersion 13).
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-07  J.J. Boyd / KG4VCF  CAT setup from a connected desktop:
+//                                    stationCatAvailable, the four CAT
+//                                    requests and
+//                                    stationCatUnavailableReason. AI tooling:
+//                                    Claude Code.
+//   2026-10-07  J.J. Boyd / KG4VCF  requestCatLog: follow the Core's
+//                                    `catLog` stream for the CAT log window,
+//                                    with its recent lines.
+//                                    AI tooling: Claude Code.
 //   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 4b:
 //                                    rotorControlAvailable and the seven
 //                                    rotor requests. AI-assisted via
@@ -457,6 +472,32 @@ public:
     { return { false, stationTciServerUnavailableReason() }; }
     static QString stationTciServerUnavailableReason()
     { return QStringLiteral("This Core does not let this app change its TCI server's settings or see its apps. Updating the Core may help."); }
+
+    /// CAT setup from a connected desktop (stationCatVersion 1): the Core
+    /// shares its CAT as the read-only `stationCat` object (and its log as
+    /// the `catLog` stream) and takes these four commands. `configJson` is
+    /// a StationCatModel channel or global config object; the binding goes
+    /// as slice ids only and the Core resolves them. Acceptance means the
+    /// Core applied it; `stationCat` says what it now holds, and a test's
+    /// reply lands in its lastTest under `requestId`.
+    virtual bool stationCatAvailable() const { return false; }
+    virtual CommandOutcome requestStationCatChannel(int /*channel*/,
+                                                    const QString& /*configJson*/)
+    { return { false, stationCatUnavailableReason() }; }
+    virtual CommandOutcome requestStationCatGlobal(const QString& /*configJson*/)
+    { return { false, stationCatUnavailableReason() }; }
+    virtual CommandOutcome requestStationCatTest(qint64 /*requestId*/, int /*channel*/,
+                                                 const QString& /*command*/)
+    { return { false, stationCatUnavailableReason() }; }
+    virtual CommandOutcome requestStationCatRefreshDevices()
+    { return { false, stationCatUnavailableReason() }; }
+    /// Subscribes to (true) or leaves (false) the Core's `catLog` record
+    /// stream, and subscribes again after each new session while it is
+    /// wanted, each time asking for the `backlog` newest records first.
+    /// The records arrive through RadioModel::applyStationRecordBatch.
+    virtual void requestCatLog(bool /*follow*/, int /*backlog*/ = 0) {}
+    static QString stationCatUnavailableReason()
+    { return QStringLiteral("This Core does not let this app set up its CAT. Updating the Core may help."); }
 
     /// R-R3-47 / R-R3-22 (accessoryDataVersion 1): the Core shares its
     /// accessory records and settings (`accessoryData`) and takes these
@@ -727,6 +768,20 @@ public:
     virtual bool rx2PreampModeAvailable() const { return false; }
     static QString rx2PreampModeUnavailableReason()
     { return QStringLiteral("This Core cannot change the preamp of this slice's receiver input for this app. Updating the Core may help."); }
+
+    // Radio speaker (R-SPK-06, R-SPK-14, radioSpeakerVersion 1): the Core
+    // sends radio's RADIO level, mute, amplifier choice and the two reports
+    // to this link, and takes this window's changes to the three. The
+    // default says no, and the window shows RADIO disabled with the reason.
+    virtual bool radioSpeakerAvailable() const { return false; }
+    // True only when the link knows the Core is older: it is signed in,
+    // has the Core's capabilities for this session, and they do not carry
+    // radioSpeakerVersion 1. A link that is down, authenticating or still
+    // waiting for capabilities says no radio instead. The default treats a
+    // link that offers nothing as an older Core.
+    virtual bool radioSpeakerNeedsNewerCore() const { return !radioSpeakerAvailable(); }
+    static QString radioSpeakerUnavailableReason()
+    { return QStringLiteral("This Core can't set the radio speaker. Update the Core."); }
 
     // R-R3-49 (parity Task 16): verb "dsp.filterResponse" (dspInfoVersion
     // 1), the filter graph's curve for a slice's receiver on the Core. The

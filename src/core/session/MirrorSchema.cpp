@@ -62,6 +62,9 @@
 //   2026-09-28 - Slice control plan Task 4: SliceAccess mirrored
 //                 (`access:<sliceId>`). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-07 - CAT setup from a connected desktop: StationCatModel mirrored
+//                 (`stationCat`). J.J. Boyd (KG4VCF). AI tooling: Claude
+//                 Code.
 //   2026-10-08 - Rotor control plan Task 4b: RotorModel mirrored (`rotor`,
 //                 read-only). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
@@ -123,6 +126,9 @@ const char* const kMirroredClasses[] = {
     // R-R3-48 (stationTciVersion 1): the Core's station TCI server,
     // read-only.
     "NereusSDR::StationTciModel",
+    // CAT setup from a connected desktop (stationCatVersion 1): the Core's
+    // CAT, read-only.
+    "NereusSDR::StationCatModel",
     // R-R3-47 / R-R3-22 (accessoryDataVersion 1): the Core's accessory
     // records and settings, read-only.
     "NereusSDR::AccessoryDataModel",

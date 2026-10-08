@@ -1,0 +1,93 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Header Volume Mockup</title>
+<style>
+:root{--bar:#0a0a14;--border:#203040;--accent:#00b4d8;--groove:#1a2a3a;--inset:#0a0a18;--insetb:#1e2e3e;--txt:#8aa8c0;--page:#05050c;--dim:#4a5a6a}
+body{background:var(--page);color:#c8d8e8;font:13px -apple-system,system-ui,sans-serif;margin:0;padding:24px 16px}
+h1{font-size:18px;color:var(--accent);margin:0 0 4px}
+h2{font-size:14px;margin:28px 0 6px;color:#e0eef8}
+p{margin:4px 0 10px;color:#9ab;max-width:900px;line-height:1.45}
+.zoom{transform:scale(2);transform-origin:left top;width:50%;margin-bottom:40px}
+.bar{height:32px;background:var(--bar);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 8px;gap:0;font-size:11px;white-space:nowrap;overflow:hidden;width:1000px}
+.conn{color:#3d8;font-size:11px}.stat{color:#c8d8e8;font-size:11px;font-weight:600}.app{color:var(--accent);font-weight:bold;font-size:14px}
+.sp{flex:1}.utc{color:var(--txt);font-size:11px;margin-right:12px}
+.grp{display:flex;align-items:center;gap:4px}
+.ico{width:20px;text-align:center;font-size:14px;cursor:pointer;position:relative;user-select:none}
+.ico.muted{opacity:.4}
+.ico.muted::after{content:"";position:absolute;left:2px;right:2px;top:9px;height:2px;background:#e04040;transform:rotate(-35deg)}
+.lbl{font-size:9px;letter-spacing:.06em;color:var(--txt);font-weight:600}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100px;height:16px;background:transparent;margin:0}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:linear-gradient(var(--accent),var(--accent)) 0/var(--p,50%) 100% no-repeat,var(--groove)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:10px;height:10px;border-radius:5px;background:var(--accent);margin-top:-3px}
+input.radio::-webkit-slider-runnable-track{background:linear-gradient(#e0a030,#e0a030) 0/var(--p,50%) 100% no-repeat,var(--groove)}
+input.radio::-webkit-slider-thumb{background:#e0a030}
+input.thin{width:84px;height:12px}
+input:disabled::-webkit-slider-runnable-track{background:var(--groove)}input:disabled::-webkit-slider-thumb{background:var(--dim)}
+.val{font-size:10px;background:var(--inset);border:1px solid var(--insetb);border-radius:3px;padding:1px 2px;color:var(--txt);width:18px;text-align:center}
+.gap{width:14px}.feat{background:#3a2a00;border:1px solid #806020;border-radius:3px;padding:2px 4px;font-size:12px;margin-left:10px}
+.stack{display:flex;flex-direction:column;gap:0;line-height:12px}
+.stack .grp{gap:3px}.stack .ico{font-size:10px;width:14px}.stack .val{font-size:9px;padding:0 2px}
+.off{color:var(--dim)}
+.note{font-size:12px;color:#8a9;margin-top:-30px;margin-bottom:24px}
+</style></head><body>
+<h1>Header volume: Computer + Radio speaker</h1>
+<p>Each strip below is the real title bar at 2x zoom, using the real palette (dark bar, cyan accent, inset readout). Drag the sliders, and click an icon to mute. Everything to the left of the volume controls stays as it is today.</p>
+
+<h2>A. Side by side, with short word labels</h2>
+<p>Two identical groups, each with its own word. The Radio speaker group is amber, so you can tell them apart at a glance.</p>
+<div class="zoom"><div class="bar">
+ <span class="conn">●</span><span class="stat">&nbsp;Traffic ↓802.5 ↑1.0 kbps · Radio ↓37.3 Mbps · ANAN-G2</span><span class="sp"></span><span class="app">NereusSDR</span><span class="sp"></span>
+ <span class="utc">14:32:07 UTC</span>
+ <span class="grp"><span class="ico">🔊</span><span class="lbl">PC</span><input type="range" value="72"><span class="val">72</span></span>
+ <span class="gap"></span>
+ <span class="grp"><span class="ico">📻</span><span class="lbl">RADIO</span><input type="range" class="radio" value="40"><span class="val">40</span></span>
+ <span class="feat">💡</span>
+</div></div>
+
+<h2>B. Side by side, icons only</h2>
+<p>Narrower: a computer icon and a radio icon. The hover tooltip names each one.</p>
+<div class="zoom"><div class="bar">
+ <span class="conn">●</span><span class="stat">&nbsp;Traffic ↓802.5 ↑1.0 kbps · Radio ↓37.3 Mbps · ANAN-G2</span><span class="sp"></span><span class="app">NereusSDR</span><span class="sp"></span>
+ <span class="utc">14:32:07 UTC</span>
+ <span class="grp"><span class="ico" title="This computer's speakers">💻</span><input type="range" value="72"><span class="val">72</span></span>
+ <span class="gap"></span>
+ <span class="grp"><span class="ico" title="Radio speaker">📻</span><input type="range" class="radio" value="40"><span class="val">40</span></span>
+ <span class="feat">💡</span>
+</div></div>
+
+<h2>C. Stacked, two thin sliders in the space of one</h2>
+<p>Takes no extra width, but each slider is smaller and harder to grab.</p>
+<div class="zoom"><div class="bar">
+ <span class="conn">●</span><span class="stat">&nbsp;Traffic ↓802.5 ↑1.0 kbps · Radio ↓37.3 Mbps · ANAN-G2</span><span class="sp"></span><span class="app">NereusSDR</span><span class="sp"></span>
+ <span class="utc">14:32:07 UTC</span>
+ <span class="stack">
+  <span class="grp"><span class="ico">💻</span><input type="range" class="thin" value="72"><span class="val">72</span></span>
+  <span class="grp"><span class="ico">📻</span><input type="range" class="thin radio" value="40"><span class="val">40</span></span>
+ </span>
+ <span class="feat">💡</span>
+</div></div>
+
+<h2>States, shown with layout A</h2>
+<p><b>Radio speaker muted:</b> the computer keeps playing.</p>
+<div class="zoom"><div class="bar">
+ <span class="conn">●</span><span class="stat">&nbsp;Traffic ↓802.5 ↑1.0 kbps · Radio ↓37.3 Mbps · ANAN-G2</span><span class="sp"></span><span class="app">NereusSDR</span><span class="sp"></span><span class="utc">14:32:07 UTC</span>
+ <span class="grp"><span class="ico">🔊</span><span class="lbl">PC</span><input type="range" value="72"><span class="val">72</span></span><span class="gap"></span>
+ <span class="grp"><span class="ico muted">📻</span><span class="lbl">RADIO</span><input type="range" class="radio" value="40"><span class="val">40</span></span><span class="feat">💡</span>
+</div></div>
+<p><b>Radio with no speaker</b> (no radio connected). A Hermes Lite 2 keeps the group open with a note that it needs its audio add-on board, because the radio cannot report whether it has one: the group is greyed out, not hidden. Its tooltip says why.</p>
+<div class="zoom"><div class="bar">
+ <span class="conn">●</span><span class="stat">&nbsp;Traffic ↓802.5 ↑1.0 kbps · Radio: none</span><span class="sp"></span><span class="app">NereusSDR</span><span class="sp"></span><span class="utc">14:32:07 UTC</span>
+ <span class="grp"><span class="ico">🔊</span><span class="lbl">PC</span><input type="range" value="72"><span class="val">72</span></span><span class="gap"></span>
+ <span class="grp off" title="No radio connected"><span class="ico" style="opacity:.35">📻</span><span class="lbl off">RADIO</span><input type="range" class="radio" value="40" disabled><span class="val off">--</span></span><span class="feat">💡</span>
+</div></div>
+<p><b>Remote window connected to a Core:</b> PC is the computer in front of you. RADIO is the speaker at the Core, and it stays in sync with the phone and other windows.</p>
+<div class="zoom"><div class="bar">
+ <span class="conn">●</span><span class="stat">&nbsp;Traffic ↓802.5 ↑1.0 kbps · Radio ↓37.3 Mbps · Core: shack-pi</span><span class="sp"></span><span class="app">NereusSDR</span><span class="sp"></span><span class="utc">14:32:07 UTC</span>
+ <span class="grp"><span class="ico">🔊</span><span class="lbl">PC</span><input type="range" value="72"><span class="val">72</span></span><span class="gap"></span>
+ <span class="grp" title="Radio speaker at the Core (shared)"><span class="ico">📻</span><span class="lbl">RADIO</span><input type="range" class="radio" value="40"><span class="val">40</span></span><span class="feat">💡</span>
+</div></div>
+<script>
+document.querySelectorAll('input[type=range]').forEach(r=>{const v=r.parentElement.querySelector('.val');const u=()=>{r.style.setProperty('--p',r.value+'%');if(v&&!r.disabled)v.textContent=r.value};r.addEventListener('input',u);u()});
+document.querySelectorAll('.grp:not(.off) .ico').forEach(i=>i.addEventListener('click',()=>i.classList.toggle('muted')));
+</script>
+</body></html>

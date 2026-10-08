@@ -80,6 +80,9 @@ final class AppModel: ObservableObject {
     lazy var diversity = DiversityModel(mirror: mirror, phone: phoneSettings, commands: commands,
         slices: main.slices, captureSender: { [route] in route.captureCommandSender() })
     lazy var coreLog = CoreLogModel(mirror: mirror, commands: commands, records: records)
+    /// The speaker at the radio, as the Sound panel shows it: one level and
+    /// mute the Core keeps for every window and phone (R-SPK-20).
+    lazy var radioSpeaker = RadioSpeakerModel(mirror: mirror)
     /// The Setup pages the Core describes (R-IOS-18), for as long as it
     /// sends them in the current session.
     let setupFeed: SetupDescriptionFeed

@@ -20,6 +20,8 @@
 //   audio/Speakers/DeviceName)
 //   §6.3 (wiring table for menu-bar MasterOutputWidget)
 //   §7.3 (UI layout: speaker icon + 100px slider + inset readout)
+// Radio speaker plan Task 6 (R-SPK-17, D1, D5): the button shows the
+// pc-on / pc-muted icons and a "PC" word label follows it.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -27,9 +29,11 @@
 #include <QPushButton>
 #include <QSlider>
 #include <QLabel>
+#include <QLayout>
 
 #include "core/AppSettings.h"
 #include "core/AudioEngine.h"
+#include "gui/widgets/AppIcon.h"
 #include "gui/widgets/MasterOutputWidget.h"
 
 using namespace NereusSDR;
@@ -64,6 +68,26 @@ private slots:
         QVERIFY(w.findChild<QSlider*>("masterSlider") != nullptr);
         QVERIFY(w.findChild<QPushButton*>("speakerBtn") != nullptr);
         QVERIFY(w.findChild<QLabel*>("dbLabel") != nullptr);
+    }
+
+    // ── 1b. The PC group: icon and "PC" word between icon and slider ───────
+    // (R-SPK-17, D1). The button shows pc-on, unmuted, as an icon.
+
+    void pcGroupShowsIconAndWord() {
+        AudioEngine engine;
+        MasterOutputWidget w(&engine);
+        auto* btn = w.findChild<QPushButton*>("speakerBtn");
+        auto* label = w.findChild<QLabel*>("pcLabel");
+        auto* slider = w.findChild<QSlider*>("masterSlider");
+        QVERIFY(btn && label && slider);
+        QCOMPARE(label->text(), QStringLiteral("PC"));
+        QCOMPARE(btn->property(AppIcon::kIconProperty).toString(),
+                 QStringLiteral("pc-on"));
+        QVERIFY(btn->text().isEmpty());
+        auto* layout = w.layout();
+        QVERIFY(layout);
+        QCOMPARE(layout->indexOf(label), layout->indexOf(btn) + 1);
+        QCOMPARE(layout->indexOf(slider), layout->indexOf(label) + 1);
     }
 
     // ── 2. Slider move writes through to engine volume ─────────────────────
@@ -166,12 +190,19 @@ private slots:
         engine.setMasterMuted(true);
 
         QCOMPARE(btn->isChecked(), true);
-        // 🔇 U+1F507 when muted
-        QCOMPARE(btn->text(), QString::fromUtf8("\xF0\x9F\x94\x87"));
+        // The app's own muted speaker icon (R-SPK-19, D5), no emoji text.
+        QCOMPARE(btn->property(AppIcon::kIconProperty).toString(),
+                 QStringLiteral("pc-muted"));
+        QVERIFY(btn->text().isEmpty());
+        QVERIFY(!btn->icon().isNull());
 
         // The engine emitted exactly once (its own setMasterMuted). The
         // button update via the echo slot must not cause a second emission.
         QCOMPARE(engineSpy.count(), 1);
+
+        engine.setMasterMuted(false);
+        QCOMPARE(btn->property(AppIcon::kIconProperty).toString(),
+                 QStringLiteral("pc-on"));
     }
 
     // ── 8. setCurrentOutputDevice stores device name for the picker ────────

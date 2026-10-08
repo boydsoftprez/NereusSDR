@@ -1,5 +1,13 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-07: R-R3-21, R-R3-51: a no-packets restart while the Core
+//               transmits is the Core's expected receive silence, not an
+//               outage: the speakers and the headphones mix stop and wait
+//               with no backoff step, and the end of the Core's transmit
+//               asks for them again at once with a fresh backoff
+//               (resumeAudioAfterTransmit). Audio no longer waits up to
+//               4 s after the unkey. raiseAudioRestartForTest.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-04: Hold accepted Core waterfall levels in the remote codec window.
@@ -1277,6 +1285,7 @@ struct RemoteMediaController::Private {
     bool headphonesRetryPending = false;
     qint64 headphonesLastRequestMs = -1000;
     RemoteAudioRestartBackoff headphonesRestartBackoff; // R-R3-21
+    bool headphonesHeldForTransmit = false;             // R-R3-51, as the speakers'
     QString headphonesProblem;
     bool destroying = false;
     std::optional<RemoteAudioContextMessage> acceptedAudioContext;
@@ -1298,6 +1307,11 @@ struct RemoteMediaController::Private {
     std::function<void()> heldAudioRestartStep;
     // R-R3-21: repeated restarts wait 1, 2, 4 s, reset by a healthy 10 s.
     RemoteAudioRestartBackoff audioRestartBackoff;
+    // R-R3-51: the speakers' receiver ran out of packets while the Core
+    // transmits (it sends the keying device no receive audio), so it was
+    // stopped and nothing was asked for; the end of the Core's transmit
+    // asks again at once. Cleared by any request or accepted context.
+    bool audioHeldForTransmit = false;
     // R-R3-23. The operator's choice, stored on this computer. Whether this
     // media session has sent Core a `profile` (its contexts then carry the
     // profile shape). Whether this media session's link trial failed, so
@@ -1576,6 +1590,7 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         // run), and the next request is the operator's Retry or a change.
         d->audioRetryPending = false;
         ++d->audioRetryGeneration;
+        d->audioHeldForTransmit = false; // R-R3-51: lasting, as above
         const QPointer<RemoteMediaController> self(this);
         if (d->peer && d->peer->isReady()) {
             ++d->audioRevision;
@@ -1600,6 +1615,18 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
             [this](const QString& reason, RemoteAudioReceiver::Fault fault) {
         qCWarning(lcRemoteMedia) << reason;
         d->audio->stop();
+        // R-R3-21, R-R3-51: while the Core transmits it sends this device no
+        // receive audio, so running out of packets is expected silence, not
+        // an outage (nor a lossless link interruption). Nothing is asked
+        // for and no backoff step is taken: each context asked for while
+        // keyed would only run dry again and back off further, leaving the
+        // audio to wait for the next step after the unkey. The unkey asks
+        // again at once (resumeAudioAfterTransmit).
+        if (fault == RemoteAudioReceiver::Fault::NoPackets && d->coreTransmitting()) {
+            d->audioHeldForTransmit = true;
+            refreshAudioStatus();
+            return;
+        }
         // R-R3-23: a lossless stream that arrives badly enough to restart
         // counts against the link trial; failing it asks Core for Opus now.
         if (d->linkTrial.active() && linkInterruption(fault)
@@ -1760,6 +1787,9 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
                 const qint64 now = d->allocationClock();
                 if (d->lastMediaMs >= 0) { d->lastMediaMs = now; }
                 if (d->fallbackFinishedMs >= 0) { d->fallbackFinishedMs = now; }
+                // R-R3-51: streams the transmit silence stopped are asked
+                // for again now, not at a backoff step.
+                resumeAudioAfterTransmit();
             }
         });
         connect(txState, &TransmitState::holderChanged, this, [this, txState] {
@@ -2441,7 +2471,7 @@ QString RemoteMediaController::headphonesFaultText(RemoteAudioReceiver::Fault fa
     // or audio quality is chosen), so each says how to try again.
     using Fault = RemoteAudioReceiver::Fault;
     const QString again =
-        QStringLiteral(" Turn the headphones off and on in Setup, Audio, Devices to try again.");
+        QStringLiteral(" Turn the headphones off and on in Setup, Audio, Outputs to try again.");
     switch (fault) {
     case Fault::SpeakerOpenFailed:
         return QStringLiteral("The headphones could not be opened.") + again;
@@ -2717,6 +2747,7 @@ void RemoteMediaController::requestHeadphonesAudio()
     if (!d->headphonesRevision) { ++d->headphonesRevision; }
     d->headphonesRequested = wanted;
     d->headphonesRetryPending = false;
+    d->headphonesHeldForTransmit = false; // R-R3-51
     d->headphonesLastRequestMs = d->clock.elapsed();
     // The one quality choice, as the speakers' stream asks for it.
     const RemoteAudioProfile profile =
@@ -2738,6 +2769,7 @@ void RemoteMediaController::receiveHeadphonesAudioContext(const QJsonObject& pay
     d->headphonesGeneration = context->generation;
     d->headphonesContext = context;
     d->headphonesRetryPending = false;
+    d->headphonesHeldForTransmit = false; // R-R3-51
     d->headphones->stop();
     // start() can report a headphones failure synchronously, and a listener
     // to that report may retire this controller.
@@ -2775,6 +2807,14 @@ void RemoteMediaController::onHeadphonesRestart(const QString& reason,
     qCWarning(lcRemoteMedia).noquote()
         << QStringLiteral("Remote headphones audio: %1").arg(reason);
     d->headphones->stop();
+    // R-R3-21, R-R3-51: no packets while the Core transmits is expected
+    // silence, as for the speakers: no request, no backoff step; the
+    // unkey asks again at once.
+    if (fault == RemoteAudioReceiver::Fault::NoPackets && d->coreTransmitting()) {
+        d->headphonesHeldForTransmit = true;
+        refreshAudioStatus();
+        return;
+    }
     // R-R3-23: a lossless headphones mix's restart counts against the one
     // link trial, as the speakers' does.
     if (d->headphonesContext && d->headphonesContext->losslessEncoder
@@ -2811,6 +2851,7 @@ void RemoteMediaController::onHeadphonesError(const QString& reason,
     d->headphones->stop();
     d->headphonesFaulted = true;
     d->headphonesRetryPending = false;
+    d->headphonesHeldForTransmit = false; // R-R3-51
     const QPointer<RemoteMediaController> self(this);
     // headphonesWanted() is false now: the Core is asked to stop the mix.
     requestHeadphonesAudio();
@@ -2822,6 +2863,28 @@ void RemoteMediaController::onHeadphonesError(const QString& reason,
     refreshAudioStatus();
     if (!self) { return; }
     emit errorOccurred(text);
+}
+
+void RemoteMediaController::resumeAudioAfterTransmit()
+{
+    // R-R3-21, R-R3-51: the Core stopped transmitting, so its receive audio
+    // comes again. The speakers and the headphones mix, if the transmit
+    // silence stopped them, are asked for now, each with a fresh backoff,
+    // instead of at a backoff step. One something else already asked for
+    // again (a request or a context since the hold) is not held any more
+    // and is left alone. A receiver stream for apps needs nothing here:
+    // its receiver never restarts for no packets (it idles, R-R3-43) and
+    // plays again as the Core's packets return.
+    const QPointer<RemoteMediaController> self(this);
+    if (std::exchange(d->audioHeldForTransmit, false) && !d->audio->isRunning()) {
+        d->audioRestartBackoff.reset();
+        requestAudio();
+        if (!self) { return; }
+    }
+    if (std::exchange(d->headphonesHeldForTransmit, false) && !d->headphones->isRunning()) {
+        d->headphonesRestartBackoff.reset();
+        requestHeadphonesAudio();
+    }
 }
 
 void RemoteMediaController::retryAudio()
@@ -3017,6 +3080,8 @@ void RemoteMediaController::stop()
     ++d->audioRetryGeneration;
     d->audioRestartBackoff.reset();
     d->headphonesRestartBackoff.reset();
+    d->audioHeldForTransmit = false;       // R-R3-51
+    d->headphonesHeldForTransmit = false;
     d->audioRevision = 0;
     d->audioGeneration = 0;
     d->acceptedAudioContext.reset();
@@ -3677,6 +3742,12 @@ void RemoteMediaController::holdAudioRestartForTest(bool held)
 bool RemoteMediaController::audioRestartStepHeldForTest() const
 {
     return bool(d->heldAudioRestartStep);
+}
+
+void RemoteMediaController::raiseAudioRestartForTest(RemoteAudioReceiver::Fault fault)
+{
+    emit d->audio->restartRequested(QStringLiteral("Remote audio restart raised by a test"),
+                                    fault);
 }
 
 void RemoteMediaController::updateDirectUpgrade(bool viaTunnel)
@@ -5397,6 +5468,7 @@ void RemoteMediaController::requestAudio()
     d->audioEnabled = false;
     d->audioRetryPending = false;
     ++d->audioRetryGeneration;
+    d->audioHeldForTransmit = false; // R-R3-51: this request answers a hold
     // Every request follows a mute, speaker, radio or retry change (or the
     // media link becoming ready), each of which the status reflects.
     if (!d->peer || !d->peer->isReady() || !d->model || !d->client
@@ -6120,6 +6192,7 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
         d->captureAnchor.reset();
         // Core has answered: any automatic retry in flight is over.
         d->audioRestarting = false;
+        d->audioHeldForTransmit = false; // R-R3-51
         d->audio->stop();
         d->audioEnabled = false;
         // start() can report a speaker failure synchronously, and a listener

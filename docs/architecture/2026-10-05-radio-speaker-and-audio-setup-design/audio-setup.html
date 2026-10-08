@@ -1,0 +1,445 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Audio Setup Mockup</title>
+<style>
+:root{--page:#05050c;--dlg:#0f0f1a;--tree:#131326;--bar:#0a0a14;--border:#203040;--field:#152535;--accent:#00b4d8;--amber:#e0a030;--groove:#1a2a3a;--txt:#c8d8e8;--dim:#8aa8c0;--note:#607080;--off:#405060;--mute:#e04848;--ok:#3d8}
+*{box-sizing:border-box}
+body{background:var(--page);color:var(--txt);font:12px -apple-system,system-ui,"Segoe UI",sans-serif;margin:0;padding:16px}
+.demo{background:#14141f;border:1px dashed #3a3a55;border-radius:6px;padding:8px 10px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:14px;align-items:center;color:#aab}
+.demo b{color:#dde;font-weight:600}.demo select,.demo label{font-size:12px}
+.demo select{background:#1c1c2c;color:#dde;border:1px solid #3a3a55;border-radius:3px;padding:2px 4px}
+.tbar{height:32px;background:var(--bar);border:1px solid var(--border);display:flex;align-items:center;padding:0 8px;white-space:nowrap;overflow:hidden;font-size:11px;border-radius:4px 4px 0 0}
+.tbar .stat{font-weight:600}.tbar .app{color:var(--accent);font-weight:bold;font-size:14px}.sp{flex:1}.utc{color:var(--dim);margin-right:12px}
+.grp{display:flex;align-items:center;gap:4px}.grp.off{opacity:.45}
+.ic{width:18px;height:18px;cursor:pointer;flex:none}.grp.off .ic{cursor:default}
+.lbl{font-size:9px;letter-spacing:.06em;color:var(--dim);font-weight:600}
+input[type=range]{-webkit-appearance:none;appearance:none;height:16px;background:transparent;margin:0;width:100px}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:linear-gradient(var(--c,var(--accent)),var(--c,var(--accent))) 0/var(--p,50%) 100% no-repeat,var(--groove)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:10px;height:10px;border-radius:5px;background:var(--c,var(--accent));margin-top:-3px}
+input[type=range].amb{--c:var(--amber)}
+input[type=range]:disabled{--c:#3a4a5a}
+.val{font-size:10px;background:#0a0a18;border:1px solid #1e2e3e;border-radius:3px;padding:1px 2px;color:var(--dim);min-width:22px;text-align:center}
+.bulb{background:#3a2a00;border:1px solid #806020;border-radius:3px;padding:1px 2px;margin-left:10px;display:flex}
+.dlg{display:flex;height:720px;border:1px solid var(--border);border-top:none;background:var(--dlg);border-radius:0 0 4px 4px;overflow:hidden}
+.tree{width:190px;flex:none;background:var(--tree);padding:4px 0;overflow:auto;border-right:3px solid #304050}
+.tree div{padding:2px 8px;min-height:19px;line-height:15px;cursor:default;white-space:nowrap}
+.tree .cat::before{content:"\25B8  ";color:var(--dim)}.tree .cat.open::before{content:"\25BE  "}
+.tree .leaf{padding-left:26px;cursor:pointer}.tree .leaf:hover{background:var(--groove)}
+.tree .leaf.sel{background:var(--accent);color:var(--dlg)}
+.tree .new::after{content:" new";font-size:9px;color:var(--amber);margin-left:4px}
+.tree .leaf.sel.new::after{color:#4a3000}
+.pagewrap{flex:1;overflow:auto;padding:10px 14px 14px}
+.page{display:none}.page.on{display:block}
+h2{font-size:14px;margin:4px 0 10px;color:#e0eef8;font-weight:700}
+fieldset{border:1px solid var(--border);border-radius:4px;margin:0 0 10px;padding:8px 10px 10px;min-width:0}
+fieldset:disabled{color:var(--off)}
+legend{font-weight:700;color:var(--dim);padding:0 4px;font-size:12px}
+legend.amb{color:var(--amber)}legend.cy{color:var(--accent)}
+.row{display:grid;grid-template-columns:110px 1fr;align-items:center;gap:6px;margin:5px 0}
+.row>label:first-child{color:inherit}
+select,.spin{background:var(--field);border:1px solid var(--border);border-radius:3px;color:var(--txt);padding:2px 6px;font-size:12px;height:22px;max-width:260px}
+fieldset:disabled select,fieldset:disabled .spin,select:disabled{color:var(--off);background:#121a24}
+.ms{color:var(--note);font-size:11px;margin-left:6px}
+.note{color:var(--note);font-size:11px;line-height:1.4;margin:4px 0}
+.note.warn{color:#d0a060}
+.pill{font-size:10px;border:1px solid #2a3a4a;border-radius:8px;padding:1px 7px;color:var(--dim);background:#121e2a}
+.pill.ok{color:var(--ok);border-color:#2a5a3a}
+.opts{display:flex;gap:14px;flex-wrap:wrap}
+.opts label,.radios label,.chk{display:inline-flex;gap:5px;align-items:center}
+.radios{display:flex;flex-direction:column;gap:4px;margin:4px 0}
+.radios.h{flex-direction:row;gap:16px}
+button{background:#1a2a3a;color:var(--txt);border:1px solid #304050;border-radius:3px;padding:3px 10px;font-size:12px;cursor:pointer}
+button:disabled{color:var(--off);cursor:default}
+button.reset{background:#3a2400;color:#f0a830;border-color:#a07020;font-weight:700}
+.btnrow{display:flex;gap:8px;align-items:center;margin-top:6px}
+.lvl{display:flex;align-items:center;gap:6px}
+.lvl input[type=range]{width:240px}
+.meter{height:8px;flex:1;background:#0a0a18;border:1px solid #1e2e3e;border-radius:2px;overflow:hidden;max-width:420px}
+.meter i{display:block;height:100%;width:0;background:linear-gradient(90deg,#2a8,#cc4 75%,#e44);transition:width .08s}
+.details{margin-top:4px}.details summary{cursor:pointer;color:var(--dim);font-size:11px;margin:4px 0}
+.status{display:flex;gap:6px;align-items:center;margin:2px 0 6px;color:var(--dim)}
+.dot{width:8px;height:8px;border-radius:4px;background:var(--ok);flex:none}.dot.no{background:#556070}
+.cards{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.cards fieldset{margin:0}
+.sec{font-size:12px;font-weight:700;color:#e0eef8;margin:14px 0 6px;border-bottom:1px solid var(--border);padding-bottom:3px}
+.sec:first-of-type{margin-top:0}
+.why{margin-top:12px;max-width:900px;background:#14141f;border:1px dashed #3a3a55;border-radius:6px;padding:10px 12px;color:#aab;font-size:12px;line-height:1.45}
+.why b{color:#dde}.why ul{margin:4px 0 0;padding-left:16px}
+@media (max-width:1100px){.why{position:static;width:auto;margin-top:12px}}
+</style></head><body>
+
+<div class="demo">
+ <b>Mockup controls (not part of the app):</b>
+ <label>Radio <select id="radio">
+  <option value="g2">ANAN-G2 (speaker amp switch)</option>
+  <option value="g2e">ANAN-G2E (amp not yet tested)</option>
+  <option value="100d">ANAN-100D (no amp switch)</option>
+  <option value="hl2a">Hermes Lite 2</option>
+  <option value="none">No radio connected</option>
+ </select></label>
+ <label>Window <select id="win"><option value="local">On the radio's computer</option><option value="remote">Remote, via Core "shack-pi"</option></select></label>
+ <label class="chk"><input type="checkbox" id="tx"> Transmitting</label>
+ <span style="width:100%;height:0"></span>
+ <label>Computer <select id="os"><option value="mac">macOS</option><option value="win">Windows</option><option value="linux">Linux</option></select></label>
+ <label id="linuxL" style="display:none">Linux sound <select id="lsnd"><option value="pw">PipeWire</option><option value="pactl">PulseAudio only</option><option value="none">Neither running</option></select></label>
+ <label id="winL" style="display:none">Virtual cables <select id="wcab"><option value="yes">VB-CABLE A and B installed</option><option value="no">None installed</option></select></label>
+ <label id="macL" class="chk"><input type="checkbox" id="macBlocked"> VAX driver blocked by macOS</label>
+</div>
+
+<svg width="0" height="0" style="position:absolute"><defs>
+ <linearGradient id="chrome" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f4f8fc"/><stop offset=".45" stop-color="#a8b4c0"/><stop offset=".55" stop-color="#7a8694"/><stop offset="1" stop-color="#c8d2dc"/></linearGradient>
+ <linearGradient id="cone" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#2a3440"/><stop offset="1" stop-color="#5a6878"/></linearGradient>
+ <linearGradient id="amberBody" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f6c460"/><stop offset=".5" stop-color="#d08a20"/><stop offset="1" stop-color="#8a5410"/></linearGradient>
+ <linearGradient id="grille" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a2a14"/><stop offset="1" stop-color="#1a1208"/></linearGradient>
+ <linearGradient id="red" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff8080"/><stop offset=".5" stop-color="#e02828"/><stop offset="1" stop-color="#901010"/></linearGradient>
+ <symbol id="spk" viewBox="0 0 64 64"><path d="M8 24h10l16-13v42L18 40H8z" fill="url(#chrome)" stroke="#4a5562" stroke-width="1.5"/><path d="M18 24l16-13v42L18 40z" fill="url(#cone)" opacity=".55"/><g fill="none" stroke="#00c8f0" stroke-width="4" stroke-linecap="round"><path d="M42 24a11 11 0 0 1 0 16"/><path d="M48 17a20 20 0 0 1 0 30"/></g></symbol>
+ <symbol id="spkM" viewBox="0 0 64 64"><g opacity=".5"><path d="M8 24h10l16-13v42L18 40H8z" fill="url(#chrome)" stroke="#4a5562" stroke-width="1.5"/></g><path d="M6 55L56 7" stroke="#600" stroke-width="9" stroke-linecap="round"/><path d="M6 55L56 7" stroke="url(#red)" stroke-width="6" stroke-linecap="round"/></symbol>
+ <symbol id="rad" viewBox="0 0 64 64"><path d="M16 22L50 6" stroke="url(#chrome)" stroke-width="3" stroke-linecap="round"/><rect x="5" y="20" width="54" height="36" rx="7" fill="url(#amberBody)" stroke="#6a3c08" stroke-width="1.5"/><rect x="11" y="27" width="26" height="22" rx="3" fill="url(#grille)"/><g stroke="#8a6a3a" stroke-width="2"><path d="M14 32h20M14 37h20M14 42h20"/></g><circle cx="48" cy="38" r="7" fill="url(#chrome)" stroke="#4a3010"/></symbol>
+ <symbol id="radM" viewBox="0 0 64 64"><g opacity=".5"><use href="#rad"/></g><path d="M6 55L56 7" stroke="#600" stroke-width="9" stroke-linecap="round"/><path d="M6 55L56 7" stroke="url(#red)" stroke-width="6" stroke-linecap="round"/></symbol>
+ <symbol id="radN" viewBox="0 0 64 64"><g opacity=".35" style="filter:grayscale(1)"><use href="#rad"/></g></symbol>
+</defs></svg>
+
+<div class="tbar">
+ <span class="stat"><span style="color:var(--ok)">&#9679;</span> Traffic &darr;802.5 &uarr;1.0 kbps &middot; Radio &darr;37.3 Mbps &middot; <span id="tbRadio">ANAN-G2</span></span><span class="sp"></span><span class="app">NereusSDR</span><span class="sp"></span><span class="utc">14:32:07 UTC</span>
+ <span class="grp" title="This computer's speakers"><img class="ic" id="hPcIc" src="icons/pc-on.svg" alt=""><span class="lbl">PC</span><input type="range" id="hPc" value="72" max="100"><span class="val" id="hPcV">72</span></span>
+ <span style="width:14px"></span>
+ <span class="grp" id="hRadGrp"><img class="ic" id="hRadIc" src="icons/radio-on.svg" alt=""><span class="lbl">RADIO</span><input type="range" class="amb" id="hRad" value="72" max="100"><span class="val" id="hRadV">72</span></span>
+ <span class="bulb"><img class="ic" src="icons/bulb.svg" alt=""></span>
+</div>
+
+<div class="dlg">
+ <div class="tree" id="tree">
+  <div class="cat">General</div><div class="cat">Cores</div><div class="cat">Hardware</div><div class="cat">PA</div>
+  <div class="cat open">Audio</div>
+  <div class="leaf sel new" data-p="out">Outputs</div>
+  <div class="leaf new" data-p="mic">Microphone</div>
+  <div class="leaf new" data-p="dig">Digital modes</div>
+  <div class="leaf" data-p="prof">TX Profile</div>
+  <div class="leaf" data-p="adv">Advanced</div>
+  <div class="cat">DSP</div><div class="cat">Display</div><div class="cat">Transmit</div><div class="cat">Appearance</div><div class="cat">CAT &amp; Network</div><div class="cat">Keyboard</div><div class="cat">Test</div><div class="cat">Diagnostics</div>
+ </div>
+ <div class="pagewrap">
+
+ <!-- ===================== OUTPUTS ===================== -->
+ <div class="page on" id="p-out">
+  <h2>Outputs</h2>
+  <div class="status" style="margin:-4px 0 10px"><span class="dot" id="sysDot"></span><span><b style="color:var(--txt)">Sound system:</b> <span id="sysText"></span></span></div>
+
+  <fieldset id="fsPc"><legend class="cy">This computer</legend>
+   <div class="row"><label>Volume:</label><span class="lvl"><img class="ic" id="sPcIc" src="icons/pc-on.svg" alt=""><input type="range" id="sPc" value="72" max="100"><span class="val" id="sPcV">72</span><label class="chk" style="margin-left:8px"><input type="checkbox" id="sPcMute"> Mute</label></span></div>
+   <div class="row"><label>Device:</label><select class="outdev"></select></div>
+   <p class="note">Same control as PC in the header. Headphones below are not affected by it.</p>
+   <details class="details"><summary>Device details</summary>
+    <div class="row"><label>Driver API:</label><select class="api"></select></div>
+    <div class="row"><label>Sample rate:</label><select><option>48000 Hz</option><option>96000 Hz</option></select></div>
+    <div class="row"><label>Channels:</label><select><option>2 (Stereo)</option><option>1 (Mono)</option></select></div>
+    <div class="row"><label>Buffer size:</label><span><select class="buf"><option>128 samples</option><option>256 samples</option><option>512 samples</option></select><span class="ms">2.7 ms</span></span></div>
+    <div class="row wasapi"><label>Options:</label><span class="opts"><label><input type="checkbox">Exclusive</label><label><input type="checkbox">Event-driven</label><label><input type="checkbox">Bypass mixer</label></span></div>
+    <div class="row wasapiNote"><label></label><span class="note" style="margin:0">These three work only with WASAPI on Windows.</span></div>
+    <div class="row"><label style="color:var(--note)">Negotiated:</label><span><span class="pill ok">48000 Hz &middot; 2 ch &middot; 128</span></span></div>
+   </details>
+  </fieldset>
+
+  <fieldset id="fsHp"><legend>Headphones</legend>
+   <label class="chk"><input type="checkbox" id="hpOn"> Enabled</label>
+   <fieldset id="fsHpIn" disabled style="border:none;padding:0;margin:4px 0 0">
+    <div class="row"><label>Device:</label><select class="hpdev"></select></div>
+    <details class="details"><summary>Device details</summary>
+     <div class="row"><label>Driver API:</label><select class="api"></select></div>
+     <div class="row"><label>Sample rate:</label><select><option>48000 Hz</option></select></div>
+     <div class="row"><label>Channels:</label><select><option>2 (Stereo)</option></select></div>
+     <div class="row"><label>Buffer size:</label><span><select><option>128 samples</option></select><span class="ms">2.7 ms</span></span></div>
+     <div class="row wasapi"><label>Options:</label><span class="opts"><label><input type="checkbox">Exclusive</label><label><input type="checkbox">Event-driven</label><label><input type="checkbox">Bypass mixer</label></span></div>
+    <div class="row wasapiNote"><label></label><span class="note" style="margin:0">These three work only with WASAPI on Windows.</span></div>
+    </details>
+   </fieldset>
+  </fieldset>
+
+  <fieldset id="fsRad"><legend class="amb">Radio speaker</legend>
+   <div class="status"><span class="dot" id="radDot"></span><span id="radStatus"></span></div>
+   <div class="row"><label>Volume:</label><span class="lvl"><img class="ic" id="sRadIc" src="icons/radio-on.svg" alt=""><input type="range" class="amb" id="sRad" value="72" max="100"><span class="val" id="sRadV">72</span><label class="chk" style="margin-left:8px"><input type="checkbox" id="sRadMute"> Mute radio speaker</label></span></div>
+   <p class="note" id="radNote">Same control as RADIO in the header. Plays the receiving slices; each slice's AF level and mute still apply.</p>
+   <fieldset id="fsAmp" style="border:none;padding:0;margin:8px 0 0">
+    <div class="row" style="align-items:start"><label style="padding-top:4px">Speaker amplifier:</label>
+     <div><div class="radios">
+      <label><input type="radio" name="amp" value="n" checked> Normal</label>
+      <label><input type="radio" name="amp" value="tx"> Off while transmitting</label>
+      <label><input type="radio" name="amp" value="off"> Always off</label>
+     </div>
+     <p class="note" id="ampNote">The radio's built-in amplifier for the rear speaker jacks. Muting the radio speaker also switches it off.</p>
+     <p class="note warn" id="ampLive"></p></div>
+    </div>
+   </fieldset>
+  </fieldset>
+
+  <div class="btnrow"><button id="rescan">Rescan devices</button><span class="note" id="rescanMsg"></span></div>
+ </div>
+
+ <!-- ===================== MICROPHONE ===================== -->
+ <div class="page" id="p-mic">
+  <h2>Microphone</h2>
+  <fieldset><legend>Source</legend>
+   <div class="radios h">
+    <label><input type="radio" name="src" value="pc" checked> PC mic</label>
+    <label id="srcRadioL"><input type="radio" name="src" value="radio" id="srcRadio"> Radio mic</label>
+    <label><input type="radio" name="src" value="vax"> VAX TX (virtual device)</label>
+   </div>
+   <p class="note" id="srcNote">Pick where transmit audio comes from. The other sections stay visible but greyed out until you pick them.</p>
+  </fieldset>
+
+  <fieldset id="fsPcMic"><legend>PC microphone</legend>
+   <div class="row"><label>Device:</label><select class="indev"></select></div>
+   <div class="row"><label>Test:</label><span class="lvl"><button id="testMic">Test Mic</button><span class="meter"><i id="micMeter"></i></span></span></div>
+   <div class="row"><label></label><span class="btnrow" style="margin:0"><span id="micStatus">Microphone not in use</span><button id="retryMic" disabled>Retry microphone</button></span></div>
+   <details class="details"><summary>Device details</summary>
+    <div class="row"><label>Driver API:</label><select class="api"></select></div>
+    <div class="row"><label>Sample rate:</label><select><option>48000 Hz</option></select></div>
+    <div class="row"><label>Channels:</label><select><option>2 (Stereo)</option><option>1 (Mono)</option></select></div>
+    <div class="row"><label>Buffer size:</label><span><select><option>128 samples</option><option>256 samples</option></select><span class="ms">2.7 ms</span></span></div>
+    <div class="row wasapi"><label>Options:</label><span class="opts"><label><input type="checkbox">Exclusive</label><label><input type="checkbox">Event-driven</label><label><input type="checkbox">Bypass mixer</label></span></div>
+    <div class="row wasapiNote"><label></label><span class="note" style="margin:0">These three work only with WASAPI on Windows.</span></div>
+   </details>
+  </fieldset>
+
+  <fieldset id="fsRadMic" disabled><legend id="radMicTitle">Radio microphone (ANAN-G2)</legend>
+   <div id="radMicBody"></div>
+  </fieldset>
+
+  <fieldset id="fsGain"><legend>Mic gain</legend>
+   <div class="row"><label>Gain:</label><span class="lvl"><input type="range" id="gain" min="-40" max="10" value="-6"><span class="val" id="gainV" style="min-width:44px">-6 dB</span></span></div>
+   <p class="note">Applies to whichever source is picked above.</p>
+  </fieldset>
+ </div>
+
+ <!-- ===================== DIGITAL MODES ===================== -->
+ <div class="page" id="p-dig">
+  <h2>Digital modes</h2>
+  <div class="sec">VAX</div>
+  <p class="note" id="vaxIntro"></p>
+  <div class="status" id="vaxSys"><span class="dot" id="vaxDot"></span><span id="vaxSysText"></span></div>
+  <p class="note warn" id="opusNote" style="display:none">Receiver audio from the Core is compressed (Opus), so a few of the weakest digital-mode signals may not decode. Set Audio quality to Lossless in Core connection if your network can carry it.</p>
+  <div class="cards" id="vaxCards"></div>
+  <div class="btnrow"><span><b>Detected virtual cables:</b> <span id="cablesText"></span></span><button id="cabRescan">Rescan</button></div>
+
+  <div class="sec">TCI</div>
+  <p class="note">TCI audio is separate from the PC and radio speaker volumes; muting either one does not mute TCI.</p>
+  <fieldset><legend>Audio stream</legend>
+   <div class="row"><label>Slice A rate:</label><select><option>48000</option><option>24000</option><option>96000</option><option>192000</option></select></div>
+   <div class="row"><label>Format:</label><select><option>Float32</option><option>Int16</option><option>Int24</option><option>Int32</option></select></div>
+   <div class="row"><label>Channels:</label><select><option>Stereo</option><option>Mono</option></select></div>
+   <div class="row"><label>Block size:</label><input class="spin" type="number" value="2048" min="100" max="2048" style="width:120px"></div>
+   <p class="note">Slices C and D are not available over TCI.</p>
+  </fieldset>
+  <fieldset><legend>Transmit</legend>
+   <div class="row"><label>TX channel:</label><select><option>Both</option><option>Left</option><option>Right</option></select></div>
+   <div class="row"><label>TX buffering:</label><input class="spin" type="number" value="50" min="0" max="500" style="width:120px"></div>
+  </fieldset>
+ </div>
+
+ <!-- ===================== TX PROFILE ===================== -->
+ <div class="page" id="p-prof">
+  <h2>TX Profile</h2>
+  <p class="note">Unchanged by this redesign. Only its place in the list moves.</p>
+ </div>
+
+ <!-- ===================== ADVANCED ===================== -->
+ <div class="page" id="p-adv">
+  <h2>Advanced</h2>
+  <fieldset><legend>Logs</legend>
+   <div class="btnrow" style="margin:0"><button>Open logs folder</button><span class="note">For a bug report about sound.</span></div>
+  </fieldset>
+  <fieldset><legend>Reset</legend>
+   <button class="reset" id="resetBtn">Reset all audio to defaults&hellip;</button>
+   <p class="note">Puts every audio setting on this computer back to its default. Your radio speaker level at the Core is kept when you are connected remotely.</p>
+  </fieldset>
+ </div>
+
+ </div>
+</div>
+
+<div class="why"><b>What changed from today</b><ul>
+ <li>Five pages become: Outputs, Microphone, Digital modes, TX Profile, Advanced.</li>
+ <li>Each device is set in one place only. The PC mic used to be on two pages.</li>
+ <li>New Radio speaker section, kept in sync with RADIO in the header.</li>
+ <li>Rarely changed device settings fold under "Device details".</li>
+ <li>VAX and TCI share one page. The text no longer says "PipeWire" on a Mac or Windows.</li>
+ <li>Content starts at the top of each page. Today it sinks to the bottom on tall windows.</li>
+ <li>One Rescan button. On Linux it also checks the sound system again.</li>
+ <li>The Linux sound strip no longer sits on every page (on a Mac or Windows it said "Linux audio backend not available"). It is one "Sound system" line on Outputs; Open logs moves to Advanced.</li>
+ <li>Windows-only options are greyed out unless the driver is WASAPI.</li>
+ <li>Every VAX card has a Device row. On Windows it picks the cable, which today can only be done in the first-run dialog.</li>
+</ul></div>
+
+<script>
+const $=id=>document.getElementById(id);
+const RADIOS={
+ g2:{name:"ANAN-G2",spk:true,amp:true,status:"Speaker and headphone jacks on the ANAN-G2",mic:"g2"},
+ g2e:{name:"ANAN-G2E",spk:true,amp:false,status:"Speaker and headphone jacks on the ANAN-G2E",mic:"g2",ampWhy:"Not tested on the ANAN-G2E."},
+ "100d":{name:"ANAN-100D",spk:true,amp:false,status:"Speaker output on the ANAN-100D",mic:"hermes",ampWhy:"This radio has no switchable speaker amplifier."},
+ hl2a:{name:"Hermes Lite 2",spk:true,amp:false,status:"Headphone output on the Hermes Lite 2. It needs the audio add-on board; the radio cannot report whether it has one.",mic:"hl2",ampWhy:"The Hermes Lite 2 has no switchable speaker amplifier."},
+ hl2:{name:"Hermes Lite 2",spk:false,amp:false,status:"No speaker output. The Hermes Lite 2 needs the audio add-on board for one.",mic:null,ampWhy:"The Hermes Lite 2 has no switchable speaker amplifier."},
+ none:{name:"No radio",spk:false,amp:false,status:"No radio connected",mic:null,ampWhy:"Connect a radio to use this."}
+};
+const MIC={
+ g2:`<div class="row"><label>Input:</label><span class="radios h"><label><input type="radio" name="g2in"> 3.5 mm Jack</label><label><input type="radio" name="g2in" checked> XLR</label></span></div>
+  <div class="row"><label></label><span class="opts"><label><input type="checkbox" checked>Mic Tip-Ring (Tip is Mic)</label><label><input type="checkbox">Mic Bias</label><label><input type="checkbox">Mic PTT Disabled</label></span></div>`,
+ hermes:`<div class="row"><label>Input:</label><span class="radios h"><label><input type="radio" name="hin" checked> Mic In</label><label><input type="radio" name="hin"> Line In</label></span></div>
+  <div class="row"><label></label><label class="chk"><input type="checkbox" checked> +20 dB Mic Boost</label></div>
+  <div class="row"><label>Line In Gain:</label><span class="lvl"><input type="range" min="-34" max="12" value="0"><span class="val">0 dB</span></span></div>`,
+ hl2:`<div class="row"><label>Input:</label><span class="radios h"><label><input type="radio" name="lin" checked> Mic In</label><label><input type="radio" name="lin"> Line In</label></span></div>
+  <div class="row"><label></label><label class="chk"><input type="checkbox" checked> +20 dB Mic Boost</label></div>`
+};
+const st={pc:72,pcM:false,rad:72,radM:false,radio:"g2",remote:false,tx:false,amp:"n",src:"pc"};
+
+function paintSlider(r){r.style.setProperty('--p',((r.value-r.min)/(r.max-r.min)*100)+'%')}
+const ICON={"#spk": "pc-on", "#spkM": "pc-muted", "#rad": "radio-on", "#radM": "radio-muted", "#radN": "radio-none"};function ic(el,href){el.src='icons/'+ICON[href]+'.svg'}
+
+function render(){
+ const R=RADIOS[st.radio];
+ // PC
+ for(const [s,v] of [["hPc","hPcV"],["sPc","sPcV"]]){$(s).value=st.pc;paintSlider($(s));$(v).textContent=st.pc}
+ ic($("hPcIc"),st.pcM?"#spkM":"#spk");ic($("sPcIc"),st.pcM?"#spkM":"#spk");$("sPcMute").checked=st.pcM;
+ // Radio
+ const on=R.spk;
+ $("hRadGrp").classList.toggle("off",!on);
+ $("hRadGrp").title=on?(st.remote?"Radio speaker at the Core (shared with every window and the phone)":"Radio speaker"):R.status;
+ for(const [s,v] of [["hRad","hRadV"],["sRad","sRadV"]]){$(s).disabled=!on;$(s).value=st.rad;paintSlider($(s));$(v).textContent=on?st.rad:"--"}
+ const rIc=!on?"#radN":(st.radM?"#radM":"#rad");ic($("hRadIc"),rIc);ic($("sRadIc"),rIc);
+ $("sRadMute").checked=st.radM;$("sRadMute").disabled=!on;
+ $("radDot").classList.toggle("no",!on);
+ $("radStatus").textContent=R.status+(st.remote&&on?' (at Core "shack-pi")':"");
+ $("radNote").textContent=st.remote&&on
+  ?'This is the speaker at the Core "shack-pi". Changes here reach every window and the phone. Each slice\'s AF level and mute still apply.'
+  :"Same control as RADIO in the header. Plays the receiving slices; each slice's AF level and mute still apply.";
+ $("fsRad").querySelectorAll(".row label,.note").forEach(e=>e.style.opacity=on?1:.5);
+ // Amp
+ $("fsAmp").disabled=!R.amp;$("fsAmp").style.opacity=R.amp?1:.5;
+ $("ampNote").textContent=R.amp?"The radio's built-in amplifier for the rear speaker jacks. Muting the radio speaker also switches it off.":R.ampWhy;
+ let live="";
+ if(R.amp){const off=st.radM||st.amp==="off"||(st.amp==="tx"&&st.tx);live=off?"Amplifier is off now"+(st.radM?" (radio speaker muted).":st.amp==="off"?".":" (transmitting)."):"";}
+ $("ampLive").textContent=live;
+ $("tbRadio").textContent=st.remote?'Core: shack-pi ('+R.name+')':R.name;
+ // Mic
+ const hasRadMic=!!R.mic;
+ $("srcRadio").disabled=!hasRadMic;$("srcRadioL").style.opacity=hasRadMic?1:.45;
+ $("srcRadioL").title=hasRadMic?"":(st.radio==="none"?"Connect a radio to use its mic jack.":"Radio mic jack not present on Hermes Lite 2 without the audio board.");
+ if(!hasRadMic&&st.src==="radio"){st.src="pc";document.querySelector('input[name=src][value=pc]').checked=true}
+ $("radMicTitle").textContent=hasRadMic?"Radio microphone ("+R.name+")":"Radio microphone";
+ $("radMicBody").innerHTML=hasRadMic?MIC[R.mic]:`<p class="note">${st.radio==="none"?"Connect a radio to set up its mic jack.":"This radio has no mic jack without the audio add-on board."}</p>`;
+ $("radMicBody").querySelectorAll('input[type=range]').forEach(r=>{paintSlider(r);r.oninput=()=>{paintSlider(r);r.nextElementSibling.textContent=r.value+" dB"}});
+ $("fsPcMic").disabled=st.src!=="pc";$("fsRadMic").disabled=st.src!=="radio";
+ $("fsPcMic").style.opacity=st.src==="pc"?1:.55;$("fsRadMic").style.opacity=st.src==="radio"?1:.55;
+ $("opusNote").style.display=st.remote?"block":"none";
+}
+
+// wiring
+$("radio").onchange=e=>{st.radio=e.target.value;render()};
+$("win").onchange=e=>{st.remote=e.target.value==="remote";render()};
+$("tx").onchange=e=>{st.tx=e.target.checked;render()};
+for(const id of ["hPc","sPc"])$(id).oninput=e=>{st.pc=+e.target.value;render()};
+for(const id of ["hRad","sRad"])$(id).oninput=e=>{st.rad=+e.target.value;render()};
+for(const id of ["hPcIc","sPcIc"])$(id).onclick=()=>{st.pcM=!st.pcM;render()};
+$("sPcMute").onchange=e=>{st.pcM=e.target.checked;render()};
+for(const id of ["hRadIc","sRadIc"])$(id).onclick=()=>{if(!RADIOS[st.radio].spk)return;st.radM=!st.radM;render()};
+$("sRadMute").onchange=e=>{st.radM=e.target.checked;render()};
+document.querySelectorAll('input[name=amp]').forEach(r=>r.onchange=()=>{st.amp=r.value;render()});
+document.querySelectorAll('input[name=src]').forEach(r=>r.onchange=()=>{st.src=r.value;render()});
+$("hpOn").onchange=e=>{$("fsHpIn").disabled=!e.target.checked};
+$("gain").oninput=e=>{paintSlider(e.target);$("gainV").textContent=e.target.value+" dB"};paintSlider($("gain"));
+document.querySelectorAll(".buf").forEach(s=>s.onchange=()=>{s.nextElementSibling.textContent=(parseInt(s.value)/48).toFixed(1)+" ms"});
+$("rescan").onclick=()=>{$("rescanMsg").textContent=$("os").value==="linux"?"Checked the sound system again. Found 2 speakers and 2 microphones.":"Found 3 speakers and 3 microphones.";setTimeout(()=>$("rescanMsg").textContent="",2500)};
+$("resetBtn").onclick=()=>{confirm("Reset all audio settings on this computer to their defaults?")};
+// tree
+document.querySelectorAll(".tree .leaf").forEach(l=>l.onclick=()=>{
+ document.querySelectorAll(".tree .leaf").forEach(x=>x.classList.remove("sel"));l.classList.add("sel");
+ document.querySelectorAll(".page").forEach(p=>p.classList.remove("on"));$("p-"+l.dataset.p).classList.add("on");
+});
+// test mic meter
+let micT=null;
+$("testMic").onclick=()=>{
+ if(micT){clearInterval(micT);micT=null;$("testMic").textContent="Test Mic";$("micMeter").style.width="0";$("micStatus").textContent="Microphone not in use";return}
+ $("testMic").textContent="Stop Test";$("micStatus").textContent="Microphone open: MacBook Pro Microphone";
+ micT=setInterval(()=>{$("micMeter").style.width=(20+Math.random()*55)+"%"},90);
+};
+// VAX cards
+const vc=$("vaxCards");const cards=[];
+for(let n=1;n<=4;n++){
+ const f=document.createElement("fieldset");
+ f.innerHTML=`<legend>VAX ${n}</legend>
+  <label class="chk"><input type="checkbox" class="von"> On</label>
+  <div class="row"><label style="color:var(--note)">Device:</label><span><select class="vdev"></select><span class="vname"></span></span></div>
+  <div class="row"><label style="color:var(--note)">Format:</label><span>48000 Hz &middot; Stereo &middot; Float32</span></div>
+  <div class="row"><label style="color:var(--note)">Used by:</label><span class="vuse" style="font-style:italic;color:var(--note)">Not in use</span></div>
+  <div class="row"><label style="color:var(--note)">Activity:</label><span class="meter"><i></i></span></div>
+  <p class="note vst" style="margin:2px 0"></p>
+  <div class="btnrow"><button class="vren">Rename&hellip;</button><button class="vcopy">Copy name</button></div>`;
+ vc.appendChild(f);cards.push(f);
+ let t=null;const m=f.querySelector(".meter i");f._stop=()=>{clearInterval(t);m.style.width="0";f.querySelector(".vuse").textContent="Not in use"};
+ f.querySelector(".von").onchange=e=>{
+  if(e.target.checked){f.querySelector(".vuse").textContent=n===1?"WSJT-X":"Not in use";t=setInterval(()=>m.style.width=(10+Math.random()*40)+"%",120)}
+  else f._stop();
+ };
+ f.querySelector(".vdev").onchange=()=>renderOS();
+ f.querySelector(".vren").onclick=()=>{const v=prompt("Name for VAX "+n,"NereusSDR VAX "+n)};
+ f.querySelector(".vcopy").onclick=e=>{e.target.textContent="Copied";setTimeout(()=>e.target.textContent="Copy name",1200)};
+}
+const OS={
+ mac:{api:["Core Audio"],out:["MacBook Pro Speakers","USB Audio CODEC","External Headphones"],inp:["MacBook Pro Microphone","USB Audio CODEC","Heil PR-40 (USB)"]},
+ win:{api:["WASAPI","DirectSound","MME"],out:["Speakers (Realtek(R) Audio)","USB Audio CODEC","CABLE-A Input (VB-Audio)"],inp:["Microphone (Realtek(R) Audio)","USB Audio CODEC","CABLE-B Output (VB-Audio)"]},
+ linux:{api:["PipeWire","PulseAudio","ALSA"],out:["Built-in Audio Analog Stereo","USB Audio CODEC"],inp:["Built-in Audio Analog Stereo","USB Audio CODEC"]}
+};
+function fill(sel,list){const keep=sel.value;sel.innerHTML=list.map(x=>`<option>${x}</option>`).join("");if(list.includes(keep))sel.value=keep}
+function renderOS(){
+ const os=$("os").value,L=$("lsnd").value,W=$("wcab").value,blocked=$("macBlocked").checked,P=OS[os];
+ $("linuxL").style.display=os==="linux"?"":"none";$("winL").style.display=os==="win"?"":"none";$("macL").style.display=os==="mac"?"":"none";
+ document.querySelectorAll("select.api").forEach(x=>fill(x,os==="linux"&&L==="pactl"?["PulseAudio","ALSA"]:P.api));
+ document.querySelectorAll("select.outdev").forEach(x=>fill(x,P.out));
+ document.querySelectorAll("select.hpdev").forEach(x=>fill(x,["(system default)"].concat(P.out)));
+ document.querySelectorAll("select.indev").forEach(x=>fill(x,P.inp));
+ // WASAPI options: disabled unless the card's driver is WASAPI
+ document.querySelectorAll(".row.wasapi").forEach(r=>{
+  const api=r.parentElement.querySelector("select.api");const on=api&&api.value==="WASAPI";
+  r.querySelectorAll("input").forEach(i=>{i.disabled=!on;if(!on)i.checked=false});r.style.opacity=on?1:.5;
+  const note=r.nextElementSibling;if(note&&note.classList.contains("wasapiNote"))note.style.display=on?"none":"";
+ });
+ // sound system line
+ let sys,ok=true;
+ if(os==="mac")sys="Core Audio";
+ else if(os==="win")sys="Windows audio. Speakers and microphone use WASAPI unless you pick another driver.";
+ else if(L==="pw")sys="PipeWire. NereusSDR talks to it directly.";
+ else if(L==="pactl")sys="PulseAudio. PipeWire was not found, so NereusSDR uses the pactl tool instead.";
+ else{sys="None found. Start PipeWire or PulseAudio, then click Rescan devices.";ok=false}
+ $("sysText").textContent=sys;$("sysDot").classList.toggle("no",!ok);$("sysDot").style.background=ok?"":"var(--mute)";
+ // VAX
+ const winCables=W==="yes"?["CABLE-A Input (VB-Audio)","CABLE-B Input (VB-Audio)"]:[];
+ let intro,vaxOk=true,vaxTxt;
+ if(os==="mac"){intro="Each VAX channel shows up in other apps (WSJT-X, fldigi and so on) as an audio device named NereusSDR VAX 1 to 4. NereusSDR installs this driver itself; no virtual cable is needed.";
+  vaxOk=!blocked;vaxTxt=blocked?"macOS has blocked the NereusSDR VAX driver. Allow it in System Settings > Privacy & Security, then restart NereusSDR.":"Built-in VAX driver is loaded.";}
+ else if(os==="linux"){intro="Each VAX channel shows up in other apps (WSJT-X, fldigi and so on) as an audio device named NereusSDR VAX 1 to 4. NereusSDR creates them in your sound system; no virtual cable is needed.";
+  vaxOk=L!=="none";vaxTxt=L==="pw"?"VAX devices are made through PipeWire.":L==="pactl"?"VAX devices are made through PulseAudio (pactl).":"No sound system is running, so the VAX devices cannot be made.";}
+ else{intro="Windows has no built-in way for one app to hand audio to another, so each VAX channel uses a virtual audio cable you install (VB-CABLE, Voicemeeter or VAC). Pick one cable per channel; WSJT-X and others then use the other end of that cable.";
+  vaxOk=winCables.length>0;vaxTxt=vaxOk?"2 virtual cables found.":"No virtual cable found. Install one, then click Rescan.";}
+ $("vaxIntro").textContent=intro;$("vaxSysText").textContent=vaxTxt;$("vaxDot").style.background=vaxOk?"":"var(--mute)";
+ $("cablesText").textContent=os==="win"?(winCables.length?winCables.join(", "):"none"):(os==="mac"?"none besides NereusSDR's own":"none besides NereusSDR's own");
+ cards.forEach((f,i)=>{
+  const sel=f.querySelector(".vdev"),on=f.querySelector(".von"),st=f.querySelector(".vst");
+  let opts;
+  if(os==="win")opts=["(pick a cable)"].concat(winCables);
+  else opts=[`NereusSDR VAX ${i+1} (built in)`];
+  const keep=sel.value;sel.innerHTML=opts.map(x=>`<option>${x}</option>`).join("");
+  if(opts.includes(keep))sel.value=keep;else if(os==="win"&&winCables[i])sel.value=winCables[i];
+  sel.style.display=os==="win"?"":"none";f.querySelector(".vname").textContent=os==="win"?"":`NereusSDR VAX ${i+1} (built in)`;
+  const picked=os==="win"?sel.value!=="(pick a cable)":vaxOk;
+  on.disabled=!picked;if(!picked&&on.checked){on.checked=false;f._stop()}
+  st.textContent=os==="win"?(picked?"":"Pick a cable first."):(vaxOk?"":(os==="mac"?"Not available until the VAX driver is allowed (see above).":"Not available until the VAX devices can be made (see above)."));
+  st.style.display=st.textContent?"":"none";
+  f.querySelector(".vcopy").textContent="Copy name";
+  f.querySelector(".vren").style.display=os==="win"?"none":"";
+ });
+}
+for(const id of ["os","lsnd","wcab","macBlocked"])$(id).addEventListener("change",renderOS);
+document.addEventListener("change",e=>{if(e.target.matches("select.api"))renderOS()});
+renderOS();
+render();
+</script>
+</body></html>

@@ -63,6 +63,9 @@
 //   2026-10-01: Issue #289: persist the local DEXP threshold marker.
 //                 J.J. Boyd (KG4VCF), AI-assisted implementation via
 //                 OpenAI Codex.
+//   2026-10-06: R-SPK-21: the VAX right-click opens Setup > Audio >
+//               Microphone, the new name of TX Input. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1022,12 +1025,12 @@ void PhoneCwApplet::wireControls()
     // ── #8 VAX button bidirectional with TransmitModel::toggleVaxSource ────
     // Left-click toggles MicSource between Vax and the user's previous
     // non-VAX source (tracked by TransmitModel::previousNonVaxMicSource,
-    // persisted per-MAC). Right-click opens Setup -> Audio -> TX Input.
+    // persisted per-MAC). Right-click opens Setup -> Audio -> Microphone.
     if (m_vaxBtn) {
         m_vaxBtn->setToolTip(QStringLiteral(
             "VAX digital audio input.\n"
             "Left-click: toggle VAX as the TX audio source.\n"
-            "Right-click: open Setup > Audio > TX Input."));
+            "Right-click: open Setup > Audio > Microphone."));
         {
             QSignalBlocker b(m_vaxBtn);
             m_vaxBtn->setChecked(tx.micSource() == MicSource::Vax);
@@ -1049,13 +1052,13 @@ void PhoneCwApplet::wireControls()
             }
             m_updatingFromModel = false;
         });
-        // Right-click goes to Setup > Audio > TX Input.
+        // Right-click goes to Setup > Audio > Microphone (R-SPK-21).
         m_vaxBtn->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(m_vaxBtn, &QPushButton::customContextMenuRequested, this,
                 [this](const QPoint&) {
             if (!m_transmitPermitted) { return; }
             emit openSetupRequested(QStringLiteral("Audio"),
-                                    QStringLiteral("TX Input"));
+                                    QStringLiteral("Microphone"));
         });
     }
 

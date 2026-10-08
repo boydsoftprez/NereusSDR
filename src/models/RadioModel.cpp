@@ -19,6 +19,12 @@
 // Modification history (NereusSDR):
 //   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
 //                 AI-assisted via OpenAI Codex.
+//   2026-10-04: Preserve native untyped Tune OFF release alongside guarded
+//                CAT cancellation, by J.J. Boyd (KG4VCF), AI-assisted via
+//                OpenAI Codex.
+//   2026-10-04: CAT accepted-intent tags and guarded cycle lifetimes,
+//                NereusSDR-original, by J.J. Boyd (KG4VCF), AI-assisted
+//                via OpenAI Codex.
 //   2026-10-04 - Two-tone sideband follows the transmit-bound slice at
 //                 connect and handoff. J.J. Boyd (KG4VCF), AI-assisted
 //                 via OpenAI Codex. NereusSDR-original binding fix.
@@ -1003,6 +1009,37 @@
 //                call sends SpotSourceHost::reporterVersion(); a remote
 //                identity edit had sent "NereusSDR/<version>". J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-06 - CAT review X1/X2: a CAT TUNE already turning off is finished
+//                when another source's request arrives, not dropped; a TCI
+//                trx:true while MOX is on is not passed on again, as
+//                TCIServer.cs:3671-3672 [v2.10.3.15] does. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-06 - CAT review X5: a CAT TUNE start cut short by another
+//                source's request is finished as an off, not left with the
+//                tone, the mode swap or the power limit off; the fixed-power
+//                latch is set before the limit drops. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - CAT setup from a connected desktop: the `stationCat` object,
+//                and on the Core (Local role) its publisher over CatService.
+//                J.J. Boyd (KG4VCF). AI tooling: Claude Code.
+//   2026-10-07 - catControl() for the role, and the `catLog` records and
+//                the CAT tester's replies to it. J.J. Boyd (KG4VCF).
+//                AI tooling: Claude Code.
+//   2026-10-06 - Radio speaker: RADIO level, mute and the amplifier choice
+//                saved per radio and loaded on connect before the radio
+//                tap starts (seeded from the engine's master level when
+//                none is saved), forwarded to the AudioEngine and the
+//                connection; availability, reasons and the amplifier status
+//                line; the CW or Tune flag sent ahead of Tune's key
+//                (R-SPK-05 to R-SPK-07, R-SPK-11, R-SPK-12, R-SPK-15).
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-06 - Radio speaker in a remote window: the setters write
+//                through the mirror only while the Core offers the radio
+//                speaker (radioSpeakerVersion 1), the reports are the
+//                Core's, the reasons name an older Core, and
+//                radioSpeakerToolTip (R-SPK-06, R-SPK-13, R-SPK-14,
+//                R-SPK-16). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 //   2026-10-08 - Rotor control plan Task 3c: the Core's rotor
 //                (StationRotorController) made beside the other station
 //                accessories, placing callsigns with the spots' cty.dat.
@@ -1286,6 +1323,7 @@ mw0lge@grange-lane.co.uk
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+#include "core/cat/CatService.h"
 #include "RadioModel.h"
 #include "core/ClarityController.h"
 #include "core/session/RemoteDevicesState.h"
@@ -1419,6 +1457,8 @@ mw0lge@grange-lane.co.uk
 #include "core/StationRfKitController.h"
 #include "core/StationRotorController.h"
 #include "core/StationTciController.h"
+#include "core/cat/StationCatController.h"
+#include "core/cat/CatControl.h"
 #include "core/SliceOwnership.h"
 #include "core/session/SliceAccessPolicy.h"
 #include "core/session/StationServer.h"
@@ -1432,10 +1472,12 @@ mw0lge@grange-lane.co.uk
 #include "models/RfKitModel.h"
 #include "models/StationTciModel.h"
 #include "models/RotorModel.h"
+#include "models/StationCatModel.h"
 #include "models/AccessoryDataModel.h"
 #include "models/AccessorySettingsModel.h"
 #include "core/StationAccessoryData.h"
 #include "core/ConnectionDiagnostics.h"
+#include "core/SpeakerAmplifier.h"
 
 #include <algorithm>
 #include <array>
@@ -2474,6 +2516,8 @@ RadioModel::RadioModel(Role role, QObject* parent)
     // (already copied into m_role above) shadows the role() accessor
     // inside this function body.
     m_txSliceArbiter->setRemote(m_role == Role::Remote);
+    // Construction stays inert until the station policy and restored slices are ready.
+    m_catService = new CatService(*this, this);
     // iPhone app plan Task 77 (ruling 8.13): whose each slice is, each
     // owner's active slice and who holds transmit, for tx.setTxSlice, the
     // bind at a change of holder and the first bind.
@@ -2654,11 +2698,52 @@ RadioModel::RadioModel(Role role, QObject* parent)
     //
     // The deferred completion prevents the gen1-off transient from reaching
     // the radio while the WDSP TX channel is still pumping (issue #177).
+    connect(m_moxController, &MoxController::requestAccepted, this,
+            [this](const KeyerIdentity& requester, quint64 generation, bool requestedOn) {
+        if (!m_isTuning && !m_pendingTuneOff) { return; }
+        if (requester.requestTag == m_tuneCycleKeyer.requestTag) {
+            m_tuneAcceptedGeneration = generation;
+        } else if (m_tuneCycleGuarded && m_pendingTuneOff && !m_tuneStartObserving) {
+            // A CAT TUNE already turning off is finished, not dropped: the
+            // newer intent is not a TUNE, so nothing else would turn the
+            // tone off, put the mode and power back or release the manual
+            // key. The rest of the off is the station's, as before CAT,
+            // and the CAT request no longer owns it.
+            m_tuneCycleGuarded = false;
+            m_tuneAcceptedGeneration = 0;
+            if (requestedOn) {
+                // A new key stops the TX-to-RX walk, so the rxReady the off
+                // waits for never comes. Finish it now, as a MOX press does
+                // (setMoxFromButton, Task 7 fix wave M9), once the key that
+                // brought us here has returned.
+                QMetaObject::invokeMethod(this, [this, serial = m_tuneCycleSerial]() {
+                    if (tuneCycleCurrent(serial)) { completeTuneOff(); }
+                }, Qt::QueuedConnection);
+            }
+        } else if (m_tuneCycleGuarded) {
+            // A newer intent owns all later effects; preserve live snapshots for adoption.
+            const bool starting = m_tuneStartingSerial != 0
+                && m_tuneStartingSerial == m_tuneCycleSerial;
+            ++m_tuneCycleSerial;
+            m_tuneAcceptedGeneration = 0;
+            m_pendingTuneOff = false;
+            if (starting) {
+                // CAT review X5: a CAT TUNE still setting up stops at its
+                // next step, part done: nothing would adopt the tone, the
+                // mode swap or the power. Finish it as an off once the
+                // request that cut it short has returned.
+                QMetaObject::invokeMethod(this, [this, tag = m_tuneCycleKeyer.requestTag]() {
+                    finishCutShortTuneStart(tag);
+                }, Qt::QueuedConnection);
+            }
+        }
+    });
     connect(m_moxController, &MoxController::rxReady, this, [this]() {
         if (!m_pendingTuneOff) {
             return;
         }
-        QTimer::singleShot(m_tuneOffSettleMs, this, [this]() {
+        QTimer::singleShot(m_tuneOffSettleMs, this, [this, serial = m_tuneCycleSerial]() {
+            if (!tuneCycleCurrent(serial)) { return; }
             // Re-check the latch: a fresh setTune(true) (or a teardown) can
             // clear it between rxReady and the timer firing.  In that case the
             // deferred completion is a no-op because the new TUN-on path has
@@ -3112,6 +3197,18 @@ RadioModel::RadioModel(Role role, QObject* parent)
     m_stationTciModel = new StationTciModel(this);
     // Rotor control plan Task 4b: the Core's rotor (`rotor`).
     m_rotorModel = new RotorLink::RotorModel(this);
+    // CAT setup from a connected desktop (stationCatVersion 1): the Core's
+    // CAT as the `stationCat` object, filled from CatService on the Core.
+    m_stationCatModel = new StationCatModel(this);
+    if (m_role == Role::Local) {
+        m_stationCat = std::make_unique<StationCatController>(this, m_catService,
+                                                              m_stationCatModel);
+    }
+    if (m_role == Role::Remote) {
+        m_catControl = new RemoteCatControl(this, this);
+    } else {
+        m_catControl = new LocalCatControl(this, m_catService, this);
+    }
     if (m_role == Role::Local) {
         m_amplifierModel->bindConnection(m_pgxlConnection);
         m_rfKitModel->bindConnection(m_rfKitConnection.get());
@@ -4522,10 +4619,17 @@ RadioModel::RadioModel(Role role, QObject* parent)
         connect(m_widebandFftEngines[i], &WidebandFftEngine::geometryChanged,
                 this, [this, i]() { invalidateWidebandSpectrum(i); });
     }
+
+    // Radio speaker (R-SPK-15): the CW or Tune flag and the amplifier
+    // status line follow the transmit mode, Tune and the key.
+    wireRadioSpeakerState();
 }
 
 RadioModel::~RadioModel()
 {
+    // The CAT publisher reads this model and CatService; it goes first.
+    m_stationCat.reset();
+    if (m_catService) { m_catService->beginRetirement(); }
     // R-R3-48: the station TCI server holds this model's slices and
     // receivers; stop it while they still exist.
     m_rfKitBandFollow.reset();
@@ -4946,6 +5050,14 @@ StationSpotLook stationSpotLook(const QString& source)
 
 void RadioModel::applyStationRecordBatch(const RecordBatch& batch)
 {
+    // CAT setup from a connected desktop: the Core's CAT log lines, for the
+    // CAT log window.
+    if (batch.stream == QLatin1String("catLog")) {
+        if (auto* remote = qobject_cast<RemoteCatControl*>(m_catControl)) {
+            remote->applyLogBatch(batch);
+        }
+        return;
+    }
     // Remote-window parity Task 22 (R-R3-49): the Core's log, newest last.
     // A reset (each subscribe) replaces it.
     if (batch.stream == QLatin1String("coreLog")) {
@@ -10293,6 +10405,13 @@ void RadioModel::applyPanGridSetting(const QString& key)
         if (pan != nullptr) {
             pan->applyStationGridSetting(key);
         }
+    }
+}
+
+void RadioModel::reportStationCatTestReply(quint32 commandId, const QString& reply)
+{
+    if (auto* remote = qobject_cast<RemoteCatControl*>(m_catControl)) {
+        remote->applyTestReply(commandId, reply);
     }
 }
 
@@ -18322,6 +18441,11 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
     }
 #endif
     m_connection->setHardwareProfile(m_hardwareProfile);
+    // Radio speaker (R-SPK-05, R-SPK-12): this radio's saved RADIO level,
+    // mute and amplifier choice reach the AudioEngine and the connection
+    // now, before wireConnectionSignals installs the radio output tap and
+    // before the connection starts. Nothing here keys.
+    loadRadioSpeakerForConnect();
 
     // Phase B6' — per-board WDSP ChannelMaster-layer calls.
     //
@@ -20584,6 +20708,402 @@ void RadioModel::disconnectRadioSpeakerOutput()
         m_audioEngine->clearRadioOutputTap(m_radioSpeakerTap.get());
     }
     m_radioSpeakerTap.reset();
+}
+
+// ── Radio speaker (R-SPK-05 to R-SPK-07, R-SPK-11, R-SPK-12, R-SPK-15) ────
+// NereusSDR-original. The amplifier list and the CW or Tune exception are
+// Task 2's (HardwareProfile::hasAudioAmplifier, core/SpeakerAmplifier.h).
+
+namespace {
+
+const QString kRadioSpeakerVolumeKey = QStringLiteral("RadioSpeaker/Volume");
+const QString kRadioSpeakerMutedKey = QStringLiteral("RadioSpeaker/Muted");
+const QString kRadioSpeakerModeKey = QStringLiteral("RadioSpeaker/AmplifierMode");
+constexpr int kRadioSpeakerMaxVolume = 100;
+constexpr int kSpeakerAmplifierNormal = 0;
+constexpr int kSpeakerAmplifierAlwaysOff = 2;
+
+bool isCwMode(DSPMode mode)
+{
+    return mode == DSPMode::CWL || mode == DSPMode::CWU;
+}
+
+} // namespace
+
+void RadioModel::setRadioSpeakerVolume(int volume)
+{
+    volume = std::clamp(volume, 0, kRadioSpeakerMaxVolume);
+    // R-SPK-06 / R-SPK-14: a remote window of a Core that does not offer the
+    // radio speaker changes nothing and sends nothing.
+    if (volume == m_radioSpeakerVolume
+        || (m_role == Role::Remote && !stationOffersRadioSpeaker())) {
+        return;
+    }
+    m_radioSpeakerVolume = volume;
+    if (m_role != Role::Remote && m_audioEngine != nullptr) {
+        m_audioEngine->setRadioSpeakerVolume(
+            static_cast<float>(volume) / static_cast<float>(kRadioSpeakerMaxVolume));
+    }
+    saveRadioSpeaker();
+    emit radioSpeakerVolumeChanged(volume);
+}
+
+void RadioModel::setRadioSpeakerMuted(bool muted)
+{
+    if (muted == m_radioSpeakerMuted
+        || (m_role == Role::Remote && !stationOffersRadioSpeaker())) {
+        return;
+    }
+    m_radioSpeakerMuted = muted;
+    if (m_role != Role::Remote) {
+        if (m_audioEngine != nullptr) {
+            m_audioEngine->setRadioSpeakerMuted(muted);
+        }
+        if (m_connection != nullptr) {
+            QMetaObject::invokeMethod(m_connection, [conn = m_connection, muted]() {
+                conn->setRadioSpeakerMuted(muted);
+            });
+        }
+    }
+    saveRadioSpeaker();
+    emit radioSpeakerMutedChanged(muted);
+    refreshRadioSpeakerReports();
+}
+
+void RadioModel::setSpeakerAmplifierMode(int mode)
+{
+    mode = std::clamp(mode, kSpeakerAmplifierNormal, kSpeakerAmplifierAlwaysOff);
+    if (mode == m_speakerAmplifierMode
+        || (m_role == Role::Remote && !stationOffersRadioSpeaker())) {
+        return;
+    }
+    m_speakerAmplifierMode = mode;
+    if (m_role != Role::Remote && m_connection != nullptr) {
+        QMetaObject::invokeMethod(m_connection, [conn = m_connection, mode]() {
+            conn->setSpeakerAmplifierMode(mode);
+        });
+    }
+    saveRadioSpeaker();
+    emit speakerAmplifierModeChanged(mode);
+    refreshRadioSpeakerReports();
+}
+
+void RadioModel::saveRadioSpeaker()
+{
+    // Saved on the station that owns the radio (R-SPK-12); a remote window
+    // keeps none.
+    if (m_role == Role::Remote || m_radioSpeakerLoading) {
+        return;
+    }
+    const QString mac = m_lastRadioInfo.macAddress;
+    if (mac.isEmpty()) {
+        // No radio known yet: held in memory for the next radio that has
+        // nothing saved.
+        m_radioSpeakerHeld = true;
+        return;
+    }
+    // All three together, so a radio's seeded level is kept once anything
+    // about its speaker has been chosen.
+    AppSettings& s = AppSettings::instance();
+    s.setHardwareValue(mac, kRadioSpeakerVolumeKey, m_radioSpeakerVolume);
+    s.setHardwareValue(mac, kRadioSpeakerMutedKey,
+                       m_radioSpeakerMuted ? QStringLiteral("True")
+                                           : QStringLiteral("False"));
+    s.setHardwareValue(mac, kRadioSpeakerModeKey, m_speakerAmplifierMode);
+}
+
+void RadioModel::loadRadioSpeakerForConnect()
+{
+    if (m_role == Role::Remote) {
+        return;
+    }
+    const QString mac = m_lastRadioInfo.macAddress;
+    QVariant savedVolume;
+    QVariant savedMuted;
+    QVariant savedMode;
+    if (!mac.isEmpty()) {
+        const AppSettings& s = AppSettings::instance();
+        savedVolume = s.hardwareValue(mac, kRadioSpeakerVolumeKey);
+        savedMuted = s.hardwareValue(mac, kRadioSpeakerMutedKey);
+        savedMode = s.hardwareValue(mac, kRadioSpeakerModeKey);
+    }
+    const bool anySaved = savedVolume.isValid() || savedMuted.isValid()
+                          || savedMode.isValid();
+    const bool takeHeld = m_radioSpeakerHeld && !anySaved && !mac.isEmpty();
+
+    if (!takeHeld) {
+        // R-SPK-05 / D4: a radio with no saved level starts at the level it
+        // was fed at before the upgrade, the engine's master level now (the
+        // desktop header seeds it; a headless Core keeps the 0.5 default).
+        int volume = m_radioSpeakerVolume;
+        if (savedVolume.isValid()) {
+            volume = savedVolume.toInt();
+        } else if (m_audioEngine != nullptr) {
+            volume = static_cast<int>(std::lround(
+                m_audioEngine->volume() * static_cast<float>(kRadioSpeakerMaxVolume)));
+        }
+        const bool muted = savedMuted.isValid()
+                           && savedMuted.toString() == QLatin1String("True");
+        const int mode = savedMode.isValid() ? savedMode.toInt()
+                                             : kSpeakerAmplifierNormal;
+        const QScopedValueRollback<bool> loading(m_radioSpeakerLoading, true);
+        setRadioSpeakerVolume(volume);
+        setRadioSpeakerMuted(muted);
+        setSpeakerAmplifierMode(mode);
+    }
+    if (!mac.isEmpty()) {
+        m_radioSpeakerHeld = false;
+    }
+    if (takeHeld) {
+        saveRadioSpeaker();
+    }
+
+    // The engine and the connection get every value, changed or not: the
+    // connection is new, and nothing has keyed it.
+    if (m_audioEngine != nullptr) {
+        m_audioEngine->setRadioSpeakerVolume(
+            static_cast<float>(m_radioSpeakerVolume)
+            / static_cast<float>(kRadioSpeakerMaxVolume));
+        m_audioEngine->setRadioSpeakerMuted(m_radioSpeakerMuted);
+    }
+    m_tuneSidetoneHold = false;
+    m_sidetoneExpected = computeSidetoneExpected();
+    if (m_connection != nullptr) {
+        QMetaObject::invokeMethod(m_connection,
+            [conn = m_connection, mode = m_speakerAmplifierMode,
+             muted = m_radioSpeakerMuted, sidetone = m_sidetoneExpected]() {
+                conn->setSpeakerAmplifierMode(mode);
+                conn->setRadioSpeakerMuted(muted);
+                conn->setSidetoneExpected(sidetone);
+            });
+    }
+    refreshRadioSpeakerReports();
+}
+
+QString RadioModel::radioSpeakerUnavailableReason() const
+{
+    if (m_radioSpeakerAvailability != kRadioSpeakerNoRadio) {
+        return QString();
+    }
+    // R-SPK-06 / R-SPK-14: a remote window of an older Core. Only a link
+    // that is signed in and has the Core's capabilities can tell; while it
+    // is down or signing in the window says no radio, as the phone does.
+    if (m_role == Role::Remote && m_station != nullptr
+        && m_station->radioSpeakerNeedsNewerCore()) {
+        return IStationLink::radioSpeakerUnavailableReason();
+    }
+    return tr("No radio connected");
+}
+
+QString RadioModel::radioSpeakerAddOnNote()
+{
+    return tr("Needs the Hermes Lite 2 audio add-on board for its headphone output.");
+}
+
+QString RadioModel::radioSpeakerToolTip() const
+{
+    if (m_radioSpeakerAvailability == kRadioSpeakerNoRadio) {
+        return radioSpeakerUnavailableReason();
+    }
+    // R-SPK-16: in a remote window RADIO is the speaker at the Core.
+    QString tip = m_role == Role::Remote
+        ? tr("Radio speaker at the Core (shared with every window and the phone)")
+        : tr("Radio speaker");
+    if (m_radioSpeakerAvailability == kRadioSpeakerNeedsAddOn) {
+        tip += QLatin1Char('\n') + radioSpeakerAddOnNote();
+    }
+    return tip;
+}
+
+bool RadioModel::stationOffersRadioSpeaker() const
+{
+    return m_station != nullptr && m_station->radioSpeakerAvailable();
+}
+
+bool RadioModel::applyStationRadioSpeakerValue(const QByteArray& name, const QVariant& value)
+{
+    if (m_role != Role::Remote) {
+        return false;
+    }
+    if (name == "radioSpeakerAvailability") {
+        bool ok = false;
+        const int availability = value.toInt(&ok);
+        if (!ok || availability < kRadioSpeakerNoRadio
+            || availability > kRadioSpeakerNeedsAddOn) {
+            return false;
+        }
+        m_stationRadioSpeakerAvailability = availability;
+        refreshRadioSpeakerReports();
+        return true;
+    }
+    if (name == "speakerAmplifierAvailable") {
+        m_stationSpeakerAmplifierAvailable = value.toBool();
+        refreshRadioSpeakerReports();
+        return true;
+    }
+    return false;
+}
+
+void RadioModel::clearStationRadioSpeaker()
+{
+    if (m_role != Role::Remote) {
+        return;
+    }
+    m_stationRadioSpeakerAvailability = kRadioSpeakerNoRadio;
+    m_stationSpeakerAmplifierAvailable = false;
+    refreshRadioSpeakerReports();
+}
+
+QString RadioModel::speakerAmplifierUnavailableReason() const
+{
+    if (m_speakerAmplifierAvailable) {
+        return QString();
+    }
+    if (m_radioSpeakerAvailability == kRadioSpeakerNoRadio) {
+        return radioSpeakerUnavailableReason();
+    }
+    // D17: the G2E is left off the amplifier list until it is bench-tested
+    // (V-HW-6).
+    if (m_hardwareProfile.model == HPSDRModel::ANAN_G2E) {
+        return tr("Not tested on the ANAN-G2E.");
+    }
+    return tr("This radio has no switchable speaker amplifier.");
+}
+
+void RadioModel::refreshRadioSpeakerReports()
+{
+    int availability = kRadioSpeakerNoRadio;
+    bool amplifier = false;
+    if (m_role == Role::Remote) {
+        // R-SPK-06 / R-SPK-13: a remote window shows the Core's reports,
+        // and none from a Core that does not offer the radio speaker.
+        if (stationOffersRadioSpeaker()
+            && m_connectionState == ConnectionState::Connected) {
+            availability = m_stationRadioSpeakerAvailability;
+            amplifier = availability != kRadioSpeakerNoRadio
+                        && m_stationSpeakerAmplifierAvailable;
+        }
+    } else if (m_connectionState == ConnectionState::Connected && m_connection != nullptr
+        && m_connection->carriesRadioAudio()) {
+        // D11: the HL2 cannot report its audio add-on board, so its radio
+        // speaker stays available with the add-on note, as Radio Mic does.
+        const bool needsAddOn = m_hardwareProfile.caps != nullptr
+                                && m_hardwareProfile.caps->radioMicNeedsAddOn;
+        availability = needsAddOn ? kRadioSpeakerNeedsAddOn : kRadioSpeakerAvailable;
+        // R-SPK-08: Thetis HasAudioAmplifier also requires Protocol 2; the
+        // profile flag is the model alone.
+        amplifier = m_hardwareProfile.hasAudioAmplifier
+                    && m_connection->protocolVersion() == 2;
+    }
+
+    QString status;
+    if (amplifier
+        && speakerAmplifierOff(true, m_speakerAmplifierMode, m_radioSpeakerMuted,
+                               isTransmitting(), m_sidetoneExpected)) {
+        if (m_radioSpeakerMuted) {
+            status = tr("Amplifier is off now: radio speaker muted.");
+        } else if (m_speakerAmplifierMode == kSpeakerAmplifierAlwaysOff) {
+            status = tr("Amplifier is off now.");
+        } else {
+            status = tr("Amplifier is off now: transmitting.");
+        }
+    }
+
+    const bool availabilityChanged = availability != m_radioSpeakerAvailability;
+    const bool amplifierChanged = amplifier != m_speakerAmplifierAvailable;
+    const bool statusChanged = status != m_speakerAmplifierStatus;
+    m_radioSpeakerAvailability = availability;
+    m_speakerAmplifierAvailable = amplifier;
+    m_speakerAmplifierStatus = status;
+    if (availabilityChanged) {
+        emit radioSpeakerAvailabilityChanged(availability);
+    }
+    if (amplifierChanged) {
+        emit speakerAmplifierAvailableChanged(amplifier);
+    }
+    if (statusChanged) {
+        emit speakerAmplifierStatusChanged();
+    }
+}
+
+bool RadioModel::computeSidetoneExpected() const
+{
+    // R-SPK-15: CW or Tune. Tune swaps CW to LSB or USB while it runs, so
+    // Tune counts on its own; the hold keeps it counted from Tune's end
+    // until the radio has unkeyed.
+    if (m_transmitModel.isTune() || m_tuneSidetoneHold) {
+        return true;
+    }
+    const SliceModel* const txSlice = txBoundSlice();
+    return txSlice != nullptr && isCwMode(txSlice->dspMode());
+}
+
+void RadioModel::refreshSidetoneExpected()
+{
+    const bool expected = computeSidetoneExpected();
+    if (expected == m_sidetoneExpected) {
+        return;
+    }
+    m_sidetoneExpected = expected;
+    if (m_connection != nullptr) {
+        QMetaObject::invokeMethod(m_connection, [conn = m_connection, expected]() {
+            conn->setSidetoneExpected(expected);
+        });
+    }
+    refreshRadioSpeakerReports();
+}
+
+void RadioModel::wireRadioSpeakerState()
+{
+    // Tune's flag is sent here, from inside setTune(true) before it keys,
+    // so it reaches the connection ahead of the MOX bit (both are queued to
+    // the connection thread in order). At Tune's end the radio may still be
+    // keyed; the flag is held until hardwareFlipped(false) has sent MOX off.
+    // The hold keys off the transmit state, not isMox(): a Tune ended by a
+    // path that drops MOX first (a PA trip, a MOX click during Tune) is
+    // still walking to receive when Tune clears, with MOX off not yet sent.
+    // Never on a remote window: its Tune and transmit state are the Core's,
+    // its own controller never keys, so no hardwareFlipped would clear it.
+    connect(&m_transmitModel, &TransmitModel::tuneChanged, this, [this](bool on) {
+        m_tuneSidetoneHold = !on && m_role != Role::Remote
+                             && m_moxController != nullptr && isTransmitting();
+        refreshSidetoneExpected();
+    });
+    if (m_moxController != nullptr) {
+        // Queued, and connected after onMoxHardwareFlipped's own queued
+        // connection, so this runs after that slot has queued MOX off.
+        // A key that is not Tune also ends the hold: a re-key during the
+        // unkey walk cancels it, so hardwareFlipped(false) never comes.
+        connect(m_moxController, &MoxController::hardwareFlipped, this,
+                [this](bool isTx) {
+                    if (!isTx || !m_transmitModel.isTune()) {
+                        m_tuneSidetoneHold = false;
+                    }
+                    refreshSidetoneExpected();
+                },
+                Qt::QueuedConnection);
+    }
+    if (m_txSliceArbiter != nullptr) {
+        connect(m_txSliceArbiter, &TxSliceArbiter::txBoundSliceChanged, this,
+                [this](int, int) { refreshSidetoneExpected(); });
+    }
+    const auto watchSlice = [this](SliceModel* slice) {
+        if (slice != nullptr) {
+            connect(slice, &SliceModel::dspModeChanged, this,
+                    [this](DSPMode) { refreshSidetoneExpected(); });
+        }
+    };
+    for (SliceModel* const slice : m_slices) {
+        watchSlice(slice);
+    }
+    connect(this, &RadioModel::sliceAdded, this, [this, watchSlice](int index) {
+        watchSlice(sliceById(index));
+        refreshSidetoneExpected();
+    });
+    connect(this, &RadioModel::sliceRemoved, this,
+            [this](int) { refreshSidetoneExpected(); });
+    connect(this, &RadioModel::transmittingChanged, this,
+            [this](bool) { refreshRadioSpeakerReports(); });
 }
 
 void RadioModel::connectMicCodecSignals()
@@ -25601,6 +26121,8 @@ void RadioModel::applyHpsdrModel(HPSDRModel m, HPSDRHW board)
     m_txInhibit.setRadioModel(m_hardwareProfile.model);
     // Task 16: the HL2 receive-only kit runs receive only.
     applyRxOnly();
+    // Radio speaker: availability and the amplifier follow the board.
+    refreshRadioSpeakerReports();
     if (m_receiverManager) {
         m_receiverManager->setHpsdrModel(m_hardwareProfile.model);
 
@@ -25664,6 +26186,10 @@ void RadioModel::setConnectionState(ConnectionState s)
     // has already published its own state and must not be followed by ours.
     if (m_connectionState == s) {
         emit connectionStateChanged(s);
+    }
+    // Radio speaker (R-SPK-06): no radio, no radio speaker.
+    if (m_connectionState == s) {
+        refreshRadioSpeakerReports();
     }
 }
 
@@ -26595,19 +27121,57 @@ static bool isLsbFamily(DSPMode mode) noexcept
     return mode == DSPMode::LSB || mode == DSPMode::CWL || mode == DSPMode::DIGL;
 }
 
-void RadioModel::setTune(bool on, const KeyerIdentity& keyer)
+bool RadioModel::tuneCycleCurrent(quint64 serial) const
 {
-    // iPhone app plan Task 35 (R-IOS-13): the same TUNE, asked and keyed for
-    // `keyer`. Only the TUN-on path reads m_tuneKeyer; TUN-off ends a TUNE
-    // whoever started it.
-    if (!on) {
-        setTune(false);
-        return;
-    }
-    const QScopedValueRollback<const KeyerIdentity*> scope(m_tuneKeyer, &keyer);
-    setTune(true);
+    return serial == m_tuneCycleSerial && (!m_tuneCycleGuarded
+        || (m_moxController && m_tuneAcceptedGeneration != 0
+            && m_tuneAcceptedGeneration == m_moxController->acceptedRequestGeneration()));
 }
 
+// CAT review X5: a guarded TUNE start cut short by another source's
+// accepted request (the requestAccepted handler) stops part done, with the
+// tone, the CW-to-SSB swap or the power limit possibly in place and no key.
+// Unless a TUNE start or stop has adopted the cycle since, the off is the
+// station's, as for a CAT TUNE already turning off (X1).
+void RadioModel::finishCutShortTuneStart(quint64 tag)
+{
+    if (!m_isTuning || m_pendingTuneOff || !m_tuneCycleGuarded
+        || m_tuneAcceptedGeneration != 0 || m_tuneCycleKeyer.requestTag != tag) { return; }
+    m_tuneCycleGuarded = false;
+    const bool keyed = m_moxController && m_moxController->isMox();
+    if (!keyed || m_moxController->currentKeyer().requestTag == tag) {
+        // No other key holds the radio: the TUN-off path, completed at once
+        // when no TX-to-RX walk follows, as a refused key does in setTune.
+        setTune(false);
+        if (!keyed) { completeTuneOff(); }
+        return;
+    }
+    // Another source's key holds the radio: put the tone, the mode and the
+    // power back without releasing that key, as setMoxFromButton does.
+    m_pendingTuneOff = true;
+    m_transmitModel.setTune(false);
+    completeTuneOff();
+}
+
+bool RadioModel::endTuneIfRequest(quint64 tag, quint64 expectedAcceptedGeneration)
+{
+    if (tag == 0 || m_tuneCycleKeyer.requestTag != tag
+        || !tuneCycleCurrent(m_tuneCycleSerial)
+        || m_tuneAcceptedGeneration != expectedAcceptedGeneration) { return false; }
+    const KeyerIdentity requester = m_tuneCycleKeyer;
+    setTune(false, requester);
+    return true;
+}
+
+void RadioModel::setTune(bool on, const KeyerIdentity& keyer)
+{
+    const KeyerIdentity requester = keyer;
+    const QPointer<RadioModel> lifetime(this);
+    const KeyerIdentity* previous = m_tuneKeyer;
+    const auto restore = qScopeGuard([lifetime, previous] { if (lifetime) { lifetime->m_tuneKeyer = previous; } });
+    m_tuneKeyer = &requester;
+    setTune(on);
+}
 void RadioModel::setTune(bool on)
 {
     // iPhone app plan, desktop remote transmit (R-IOS-13): a remote
@@ -26677,9 +27241,12 @@ void RadioModel::setTune(bool on)
         // keying gate is asked before anything is saved or switched, so a
         // refused TUNE never touches another device's transmission.
         // Task 35: a remote device's TUNE asks for that device.
-        if (m_moxController
-            && !(m_tuneKeyer != nullptr ? m_moxController->admitKey(*m_tuneKeyer)
-                                        : m_moxController->admitStationKey(PttMode::Manual))) {
+        const QPointer<RadioModel> admissionLifetime(this);
+        const bool admitted = !m_moxController
+            || (m_tuneKeyer != nullptr ? m_moxController->admitKey(*m_tuneKeyer)
+                                      : m_moxController->admitStationKey(PttMode::Manual));
+        if (!admissionLifetime) { return; }
+        if (!admitted) {
             if (m_moxController->lastAdmitTook()) {
                 // TGXL tune lane (ruling 8.9): the tuner's front-panel TUNE
                 // is taking transmit; nothing keys now, and its cycle keys
@@ -26702,6 +27269,47 @@ void RadioModel::setTune(bool on)
             return;
         }
 
+        const KeyerIdentity requester = m_tuneKeyer != nullptr ? *m_tuneKeyer
+            : KeyerIdentity::station(PttMode::Manual);
+        const QPointer<RadioModel> lifetime(this);
+        if (m_isTuning) {
+            const bool previous = m_tuneKeyInFlight;
+            m_tuneKeyInFlight = true;
+            const auto restore = qScopeGuard([lifetime, previous] {
+                if (lifetime) { lifetime->m_tuneKeyInFlight = previous; }
+            });
+            const TxRefusal refusal = m_moxController->refusalBeforeTheGate();
+            if (!lifetime) { return; }
+            if (!refusal.isEmpty()) { emit tuneRefused(refusal.text); return; }
+        }
+        // Read before the start is reported: a guarded cycle's handler clears
+        // the off for any other requester, this start included.
+        const bool pendingOff = m_pendingTuneOff;
+        m_tuneStartObserving = true;
+        const quint64 generation = m_moxController->observeAcceptedRequest(requester, true);
+        if (!lifetime) { return; }
+        m_tuneStartObserving = false;
+        if (generation != m_moxController->acceptedRequestGeneration()) { return; }
+        const bool repeat = m_isTuning;
+        m_tuneCycleKeyer = requester;
+        m_tuneCycleGuarded = requester.requestTag != 0;
+        m_tuneAcceptedGeneration = generation;
+        const quint64 serial = ++m_tuneCycleSerial;
+        // CAT review X5: marks this start as setting up, so the
+        // requestAccepted handler finishes it if a newer request cuts it short.
+        const quint64 previousStarting = m_tuneStartingSerial;
+        m_tuneStartingSerial = serial;
+        const auto startingEnd = qScopeGuard([lifetime, previousStarting] {
+            if (lifetime) { lifetime->m_tuneStartingSerial = previousStarting; }
+        });
+        if (repeat) {
+            m_pendingTuneOff = false;
+            m_transmitModel.setTune(true);
+            if (!lifetime || !tuneCycleCurrent(serial)) { return; }
+            if (pendingOff || !m_moxController->isMox()) { m_moxController->setTune(true, requester); }
+            return;
+        }
+
         // 3M-1a G.4 fixup: set m_isTuning EARLY, matching Thetis console.cs:30010
         // [v2.10.3.13] "_tuning = true;" which precedes the tone-freq switch
         // (30022) and the PreviousPWR save (30043).  Functionally inconsequential
@@ -26718,6 +27326,7 @@ void RadioModel::setTune(bool on)
         // byte mid-TUN.  Mirrors Thetis console.cs:46665 [v2.10.3.13]
         // which reads `chkTUN.Checked` directly.
         m_transmitModel.setTune(true);
+        if (!lifetime || !tuneCycleCurrent(serial)) { return; }
 
         // Issue #177 — cancel any pending TUN-off completion.  If the user
         // double-clicks TUN (off → on within the rxReady + 100 ms settle
@@ -26795,6 +27404,7 @@ void RadioModel::setTune(bool on)
         //   }
         if (m_txChannel) {
             m_txChannel->setTuneTone(true, signedFreq, TxChannel::kMaxToneMag);
+            if (!lifetime || !tuneCycleCurrent(serial)) { return; }
         }
 
         // ── CW→LSB/USB DSP MODE SWAP ───────────────────────────────────────────
@@ -26815,6 +27425,7 @@ void RadioModel::setTune(bool on)
             }
             if (swappedMode != m_savedTxDspMode) {
                 txSlice->setDspMode(swappedMode);
+                if (!lifetime || !tuneCycleCurrent(serial)) { return; }
             }
         }
 
@@ -26893,6 +27504,7 @@ void RadioModel::setTune(bool on)
                     && m_transmitModel.tuneDrivePowerSource() == DrivePowerSource::TuneSlider
                     && m_txChannel) {
                     m_txChannel->setPostGenToneMag(m_transmitModel.txPostGenToneMag());
+                    if (!lifetime || !tuneCycleCurrent(serial)) { return; }
                 }
 
                 // #202 deep-fix: TXPostGenRun=0 case for new_pwr==0 during TUNE.
@@ -26930,6 +27542,7 @@ void RadioModel::setTune(bool on)
                     && m_txChannel) {
                     m_txChannel->setTuneTone(false, signedFreq,
                                              TxChannel::kMaxToneMag);
+                    if (!lifetime || !tuneCycleCurrent(serial)) { return; }
                 }
             }
             // No active profile loaded -> silently no-op the TUNE power
@@ -26950,9 +27563,13 @@ void RadioModel::setTune(bool on)
         // not move: TUN is on, so the PWR change takes the tune path, whose
         // FIXED case drives tune_power unconstrained, the value just pushed.
         if (tuneFixedSource) {
-            m_transmitModel.setPowerSliderLimitEnabled(false);
-            m_transmitModel.setPower(tuneNewPwr);
+            // CAT review X5: latched before the limit drops, so a start cut
+            // short from here on still puts the limit and the power back.
             m_tuneSetFixedPwr = true;
+            m_transmitModel.setPowerSliderLimitEnabled(false);
+            if (!lifetime || !tuneCycleCurrent(serial)) { return; }
+            m_transmitModel.setPower(tuneNewPwr);
+            if (!lifetime || !tuneCycleCurrent(serial)) { return; }
             // NereusSDR divergence (console.cs:30180-30185 [v2.10.3.15] re-reads the source at TUN-off): latched so a mid-TUNE source change cannot leave the limit off or restore a stale PreviousPWR.
         }
 
@@ -26990,9 +27607,13 @@ void RadioModel::setTune(bool on)
             const quint64 wireHz =
                 (adjustedTxHz < 0) ? 0 : static_cast<quint64>(adjustedTxHz);
             auto* conn = m_connection;
-            QMetaObject::invokeMethod(conn, [conn, wireHz]() {
-                conn->setTxFrequency(wireHz);
-            });
+            const QPointer<RadioConnection> tuneConnection(conn);
+            QMetaObject::invokeMethod(this, [this, serial, tuneConnection, wireHz]() {
+                if (!tuneCycleCurrent(serial) || !tuneConnection || m_connection != tuneConnection) { return; }
+                QMetaObject::invokeMethod(tuneConnection, [tuneConnection, wireHz]() {
+                    if (tuneConnection) { tuneConnection->setTxFrequency(wireHz); }
+                });
+            }, Qt::AutoConnection);
         }
 
         // ── WIRE SWR PROTECTION TO LIVE TUNE POWER (F.3 final wiring) ──────────
@@ -27008,11 +27629,13 @@ void RadioModel::setTune(bool on)
         //     if (HardwareSpecific.Model == HPSDRModel.ANAN8000D)        // K2UE idea: try to determine if Hi-Z or Lo-Z load
         //         alex_fwd_limit = 2.0f * (float)ptbPWR.Value;        //    by comparing alex_fwd with power setting
         m_swrProt.setTunePowerSliderValue(tunePower);
+        if (!lifetime || !tuneCycleCurrent(serial)) { return; }
         const float alexFwdLimit =
             (m_hardwareProfile.model == HPSDRModel::ANAN8000D)
                 ? 2.0f * static_cast<float>(tunePower)
                 : 5.0f;
         m_swrProt.setAlexFwdLimit(alexFwdLimit);
+        if (!lifetime || !tuneCycleCurrent(serial)) { return; }
 
         // ── ENGAGE MOX via MoxController ─────────────────────────────────────
         // Cite: console.cs:30081 [v2.10.3.13]: chkMOX.Checked = true;
@@ -27026,13 +27649,14 @@ void RadioModel::setTune(bool on)
             {
                 // R-R3-36: mark this call as Tune keying for the PC-microphone
                 // admission check (covers every caller, TGXL and TCI included).
-                const QScopedValueRollback<bool> tuneKey(m_tuneKeyInFlight, true);
+                const bool previousTuneKey = m_tuneKeyInFlight;
+                m_tuneKeyInFlight = true;
+                const auto tuneKey = qScopeGuard([lifetime, previousTuneKey] {
+                    if (lifetime) { lifetime->m_tuneKeyInFlight = previousTuneKey; }
+                });
                 // Task 35: a remote device's TUNE keys as that device.
-                if (m_tuneKeyer != nullptr) {
-                    m_moxController->setTune(true, *m_tuneKeyer);
-                } else {
-                    m_moxController->setTune(true);
-                }
+                m_moxController->setTune(true, requester);
+                if (!lifetime || !tuneCycleCurrent(serial)) { return; }
                 keyed = m_moxController->isMox();
                 // Tune pressed while already keyed commits no new key-up; the
                 // carrier now comes from the tune tone either way.
@@ -27124,6 +27748,14 @@ void RadioModel::setTune(bool on)
         // the constructor invoke completeTuneOff() at T+30+m_tuneOffSettleMs ms.
         // Until then, the rest of the TUN-off work (gen1 off, mode restore,
         // power restore, VFO un-offset) is deferred.
+        // An explicit OFF adopts teardown; the guarded CAT wrapper already verified ownership.
+        const KeyerIdentity requester = m_tuneKeyer != nullptr ? *m_tuneKeyer
+            : KeyerIdentity::station(PttMode::Manual);
+        m_tuneCycleKeyer = requester;
+        m_tuneCycleGuarded = requester.requestTag != 0;
+        m_tuneAcceptedGeneration = m_moxController->acceptedRequestGeneration();
+        const quint64 serial = ++m_tuneCycleSerial;
+        const QPointer<RadioModel> lifetime(this);
         m_pendingTuneOff = true;
 
         // #202 deep-fix: clear TransmitModel's m_tune flag — symmetric with
@@ -27135,6 +27767,7 @@ void RadioModel::setTune(bool on)
         // arriving in the gap correctly routes through txMode-0 (drive-
         // slider) rather than txMode-1 (TUNE).
         m_transmitModel.setTune(false);
+        if (!lifetime || !tuneCycleCurrent(serial)) { return; }
 
         // Capture MOX state BEFORE calling MoxController::setTune so we can
         // detect the "MOX already RX" path that would otherwise strand the
@@ -27197,7 +27830,15 @@ void RadioModel::setTune(bool on)
         // Deciding between them needs instrumentation on this path, not
         // another reorder. Do not re-apply (a) without evidence.
         if (m_moxController) {
-            m_moxController->setTune(false);
+            // Native OFF callers already enforce their release authority and may
+            // stop a remote/device tune. Preserve that untyped stop contract;
+            // an explicit keyer (including guarded CAT cancellation) stays typed.
+            if (m_tuneKeyer != nullptr) {
+                m_moxController->setTune(false, requester);
+            } else {
+                m_moxController->setTune(false);
+            }
+            if (!lifetime || !tuneCycleCurrent(serial)) { return; }
         }
 
         {
@@ -27211,7 +27852,8 @@ void RadioModel::setTune(bool on)
                 // unconditional — it fires whether or not the chkMOX assignment
                 // triggered a walk.  The lambda re-checks the latch in case a
                 // fresh setTune(true) clears it before the timer fires.
-                QTimer::singleShot(m_tuneOffSettleMs, this, [this]() {
+                QTimer::singleShot(m_tuneOffSettleMs, this, [this, serial = m_tuneCycleSerial]() {
+                    if (!tuneCycleCurrent(serial)) { return; }
                     if (!m_pendingTuneOff) {
                         return;
                     }
@@ -27261,6 +27903,10 @@ void RadioModel::setMox(bool on)
     // manual key clears keys the radio for an app that has let go. Passing
     // the release on clears the level; it can only unkey a TCI key, never
     // key anything.
+    //
+    // A trx:N,true while MOX is already on is not passed on, as in Thetis:
+    // it would re-key as a TCI request and take a CAT TUNE or two-tone out
+    // of the CAT client's hands, leaving neither CAT nor TCI able to end it.
     if (m_moxController) {
         if (!on || m_moxController->isMox() != on) {
             m_moxController->onTciPtt(on);
@@ -28055,7 +28701,9 @@ int RadioModel::diguOffset() const
 // ---------------------------------------------------------------------------
 void RadioModel::completeTuneOff()
 {
-    if (!m_pendingTuneOff) {
+    const quint64 serial = m_tuneCycleSerial;
+    const QPointer<RadioModel> lifetime(this);
+    if (!m_pendingTuneOff || !tuneCycleCurrent(serial)) {
         return;
     }
     m_pendingTuneOff = false;
@@ -28066,6 +28714,7 @@ void RadioModel::completeTuneOff()
     // so this gen1 update lands on an idle TXA chain — no transient.
     if (m_txChannel) {
         m_txChannel->setTuneTone(false, 0.0, 0.0);
+        if (!lifetime || !tuneCycleCurrent(serial)) { return; }
     }
 
     // ── RESTORE DSP MODE if swapped ────────────────────────────────────────
@@ -28078,6 +28727,7 @@ void RadioModel::completeTuneOff()
                                  m_savedTxDspMode == DSPMode::CWU);
         if (wasSwapped) {
             savedTxSlice->setDspMode(m_savedTxDspMode);
+            if (!lifetime || !tuneCycleCurrent(serial)) { return; }
         }
     }
     m_savedTxDspSliceId = -1;
@@ -28097,7 +28747,9 @@ void RadioModel::completeTuneOff()
     // NereusSDR divergence (console.cs:30180-30185 [v2.10.3.15] re-reads the source here): the latch keeps a mid-TUNE source change from leaving the limit off or restoring a stale PreviousPWR.
     if (m_tuneSetFixedPwr) {
         m_transmitModel.setPowerSliderLimitEnabled(true);
+        if (!lifetime || !tuneCycleCurrent(serial)) { return; }
         m_transmitModel.setPower(m_savedPowerPct);
+        if (!lifetime || !tuneCycleCurrent(serial)) { return; }
         m_tuneSetFixedPwr = false;
     }
     //
@@ -28152,9 +28804,13 @@ void RadioModel::completeTuneOff()
         // tx_freq that Thetis drops the TUNE offset from on unkey.
         const quint64 dialHz = txFrequencyForSlice(tuneSlice);
         auto* conn = m_connection;
-        QMetaObject::invokeMethod(conn, [conn, dialHz]() {
-            conn->setTxFrequency(dialHz);
-        });
+        const QPointer<RadioConnection> tuneConnection(conn);
+        QMetaObject::invokeMethod(this, [this, serial, tuneConnection, dialHz]() {
+            if (!tuneCycleCurrent(serial) || !tuneConnection || m_connection != tuneConnection) { return; }
+            QMetaObject::invokeMethod(tuneConnection, [tuneConnection, dialHz]() {
+                if (tuneConnection) { tuneConnection->setTxFrequency(dialHz); }
+            });
+        }, Qt::AutoConnection);
     }
 
     // ── RESTORE METER MODE ─────────────────────────────────────────────────
@@ -28172,6 +28828,7 @@ void RadioModel::completeTuneOff()
     // so no mic PTT or VOX keys while the tune tone is still up.
     if (m_moxController) {
         m_moxController->setManualKey(false);
+        if (!lifetime || !tuneCycleCurrent(serial)) { return; }
     }
     // Group B fix wave: TUNE's end clears the on-air rule last.
     releaseHeldOnAirWork();

@@ -16,8 +16,11 @@
 //   P2: 260-byte packets to port 1028: a 4-byte big-endian sequence number,
 //       then 64 L/R pairs as 16-bit big-endian, swapped when the model's
 //       lr_audio_swap is set (network.c:1276-1294, 1363-1373 [v2.10.3.15]).
-//   Engine: the radio output tap takes the station's program at the master
-//       volume, silence while muted (cmaster.cs:954-957 [v2.10.3.15]).
+//   Engine: the radio output tap takes the station's program at its own
+//       RADIO level, silence while the RADIO is muted; the speakers keep
+//       the PC level and mute (R-SPK-01 to R-SPK-04). Thetis has one AF
+//       volume for both (cmaster.cs:954-957 [v2.10.3.15]); NereusSDR
+//       splits it.
 //
 // Nothing here keys a radio: MOX is never set. One case runs the P2 send
 // thread against a loopback socket with the transmit ring empty.
@@ -34,6 +37,11 @@
 //                                    remote-owned slices while the local
 //                                    output stays masked. AI-assisted via
 //                                    Anthropic Claude Code.
+//   2026-10-06  J.J. Boyd / KG4VCF  Radio speaker plan Task 1 (R-SPK-01 to
+//                                    R-SPK-04): the tap cases assert the
+//                                    RADIO level and mute, independent of
+//                                    PC. AI-assisted via Anthropic Claude
+//                                    Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -49,6 +57,7 @@
 
 #include "fakes/FakeAudioBus.h"
 
+#include <cstring>
 #include <memory>
 #include <vector>
 
@@ -95,6 +104,47 @@ public:
         received.insert(received.end(), samples, samples + frames * 2);
     }
     std::vector<float> received;
+};
+
+// A model with one streaming slice at unity AF, the speakers on a fake
+// 48 kHz stereo bus (passthrough), and the mix ramps cut to one frame.
+struct EngineRig {
+    EngineRig()
+    {
+        engine = radio.audioEngine();
+        auto owned = std::make_unique<FakeAudioBus>(QStringLiteral("FakeSpeakers"));
+        AudioFormat format;
+        format.sampleRate = 48000;
+        format.channels = 2;
+        format.sample = AudioFormat::Sample::Float32;
+        owned->open(format);
+        bus = owned.get();
+        engine->setSpeakersBusForTest(std::move(owned));
+        radio.configureStreamPool(/*userDdcCount=*/5, /*maxSlices=*/5,
+                                  /*defaultRateHz=*/192000);
+        engine->masterMixForTest().setRampFrames(1);
+        engine->masterMixForTest().setSlewUpFrames(0);
+        slice = radio.addSlice();
+        engine->setSliceStreaming(slice, true);
+        radio.sliceById(slice)->setAfGain(100);
+    }
+
+    // The last float the speakers bus took.
+    float speakersLast() const
+    {
+        const QByteArray& b = bus->buffer();
+        if (b.size() < int(sizeof(float))) {
+            return -1.0f;
+        }
+        float v = 0.0f;
+        std::memcpy(&v, b.constData() + b.size() - int(sizeof(float)), sizeof(float));
+        return v;
+    }
+
+    RadioModel radio;
+    AudioEngine* engine = nullptr;
+    FakeAudioBus* bus = nullptr;
+    int slice = -1;
 };
 
 } // namespace
@@ -344,54 +394,146 @@ private slots:
 
     // ── Engine and model ─────────────────────────────────────────────────
 
-    // The radio output tap takes the program at the master volume, and
-    // silence while the master is muted; after clear it takes nothing.
-    void engine_radioOutputTap_followsVolumeAndMute()
+    // R-SPK-01 to R-SPK-03: the radio output tap takes the program at the
+    // RADIO level, the speakers at the PC level, each from the same mix.
+    void engine_radioOutputTap_takesRadioLevel_speakersTakePcLevel()
     {
-        RadioModel radio;
-        AudioEngine* engine = radio.audioEngine();
-        auto bus = std::make_unique<FakeAudioBus>(QStringLiteral("FakeSpeakers"));
-        AudioFormat format;
-        format.sampleRate = 48000;
-        format.channels = 2;
-        format.sample = AudioFormat::Sample::Float32;
-        bus->open(format);
-        engine->setSpeakersBusForTest(std::move(bus));
-        radio.configureStreamPool(/*userDdcCount=*/5, /*maxSlices=*/5,
-                                  /*defaultRateHz=*/192000);
-        engine->masterMixForTest().setRampFrames(1);
-        engine->masterMixForTest().setSlewUpFrames(0);
-        const int slice = radio.addSlice();
-        engine->setSliceStreaming(slice, true);
-        radio.sliceById(slice)->setAfGain(100);
-
+        EngineRig rig;
+        AudioEngine* engine = rig.engine;
         RecordingTap tap;
         engine->setRadioOutputTap(&tap);
         auto clear = qScopeGuard([&] { engine->clearRadioOutputTap(&tap); });
         const std::vector<float> block = stereo(64, 0.5f, 0.5f);
 
-        engine->setVolume(0.5f);
-        engine->rxBlockReady(slice, block.data(), 64);
-        QVERIFY(!tap.received.empty());
-        QVERIFY(qAbs(tap.received.back() - 0.25f) < 1e-4f);
+        engine->setVolume(0.30f);
+        engine->setRadioSpeakerVolume(0.80f);
+        engine->rxBlockReady(rig.slice, block.data(), 64);
+        QCOMPARE(tap.received.size(), size_t(128));
+        QVERIFY(qAbs(tap.received.back() - 0.5f * 0.80f) < 1e-4f);
+        QVERIFY(qAbs(rig.speakersLast() - 0.5f * 0.30f) < 1e-4f);
 
-        tap.received.clear();
-        engine->setMasterMuted(true);
-        engine->rxBlockReady(slice, block.data(), 64);
-        QVERIFY(!tap.received.empty());
-        QCOMPARE(tap.received.back(), 0.0f);
-        engine->setMasterMuted(false);
-
+        // After clear the tap takes nothing.
         engine->clearRadioOutputTap(&tap);
         tap.received.clear();
-        engine->rxBlockReady(slice, block.data(), 64);
+        engine->rxBlockReady(rig.slice, block.data(), 64);
         QVERIFY(tap.received.empty());
+    }
+
+    // R-SPK-02: PC mute silences only the speakers; RADIO mute gives the
+    // radio zero-filled blocks of the normal length, one per mixed block,
+    // while the speakers play at the PC level.
+    void engine_radioOutputTap_mutesAreIndependent()
+    {
+        EngineRig rig;
+        AudioEngine* engine = rig.engine;
+        RecordingTap tap;
+        engine->setRadioOutputTap(&tap);
+        auto clear = qScopeGuard([&] { engine->clearRadioOutputTap(&tap); });
+        const std::vector<float> block = stereo(64, 0.5f, 0.5f);
+        engine->setVolume(0.30f);
+        engine->setRadioSpeakerVolume(0.80f);
+
+        // PC muted, RADIO unmuted.
+        engine->setMasterMuted(true);
+        const int pushesBefore = rig.bus->pushCount();
+        engine->rxBlockReady(rig.slice, block.data(), 64);
+        QCOMPARE(rig.bus->pushCount(), pushesBefore);
+        QCOMPARE(tap.received.size(), size_t(128));
+        QVERIFY(qAbs(tap.received.back() - 0.5f * 0.80f) < 1e-4f);
+        engine->setMasterMuted(false);
+
+        // RADIO muted, PC unmuted: three blocks, three zero-filled blocks.
+        tap.received.clear();
+        engine->setRadioSpeakerMuted(true);
+        for (int i = 0; i < 3; ++i) {
+            engine->rxBlockReady(rig.slice, block.data(), 64);
+            QCOMPARE(tap.received.size(), size_t(128) * size_t(i + 1));
+            QVERIFY(qAbs(rig.speakersLast() - 0.5f * 0.30f) < 1e-4f);
+        }
+        for (const float v : tap.received) {
+            QCOMPARE(v, 0.0f);
+        }
+
+        // Unmuted again: the RADIO level is back.
+        engine->setRadioSpeakerMuted(false);
+        tap.received.clear();
+        engine->rxBlockReady(rig.slice, block.data(), 64);
+        QVERIFY(qAbs(tap.received.back() - 0.5f * 0.80f) < 1e-4f);
+    }
+
+    // R-SPK-04: a slice's own AF level and mute act on both outputs alike.
+    void engine_radioOutputTap_sliceLevelAndMuteActOnBoth()
+    {
+        EngineRig rig;
+        AudioEngine* engine = rig.engine;
+        RecordingTap tap;
+        engine->setRadioOutputTap(&tap);
+        auto clear = qScopeGuard([&] { engine->clearRadioOutputTap(&tap); });
+        const std::vector<float> block = stereo(64, 0.5f, 0.5f);
+        engine->setVolume(0.30f);
+        engine->setRadioSpeakerVolume(0.80f);
+
+        rig.radio.sliceById(rig.slice)->setAfGain(50);
+        engine->rxBlockReady(rig.slice, block.data(), 64);
+        engine->rxBlockReady(rig.slice, block.data(), 64);
+        const float radioAt50 = tap.received.back();
+        const float pcAt50 = rig.speakersLast();
+        QVERIFY(radioAt50 > 0.0f && radioAt50 < 0.5f * 0.80f - 1e-3f);
+        QVERIFY(qAbs(radioAt50 / 0.80f - pcAt50 / 0.30f) < 1e-4f);
+
+        rig.radio.sliceById(rig.slice)->setMuted(true);
+        tap.received.clear();
+        engine->rxBlockReady(rig.slice, block.data(), 64);
+        engine->rxBlockReady(rig.slice, block.data(), 64);
+        QVERIFY(qAbs(tap.received.back()) < 1e-6f);
+        QVERIFY(qAbs(rig.speakersLast()) < 1e-6f);
+    }
+
+    // R-SPK-01, R-SPK-02: PC and RADIO are separate values; setting one
+    // never moves the other, and each signal fires only on a change.
+    void engine_radioSpeakerSetters_independentOfPc()
+    {
+        RadioModel radio;
+        AudioEngine* engine = radio.audioEngine();
+        QSignalSpy volSpy(engine, &AudioEngine::radioSpeakerVolumeChanged);
+        QSignalSpy muteSpy(engine, &AudioEngine::radioSpeakerMutedChanged);
+
+        engine->setRadioSpeakerVolume(0.80f);
+        engine->setRadioSpeakerMuted(true);
+        QCOMPARE(volSpy.count(), 1);
+        QCOMPARE(muteSpy.count(), 1);
+        QCOMPARE(volSpy.at(0).at(0).toFloat(), 0.80f);
+        QCOMPARE(muteSpy.at(0).at(0).toBool(), true);
+
+        engine->setVolume(0.10f);
+        engine->setMasterMuted(true);
+        engine->setMasterMuted(false);
+        QCOMPARE(engine->radioSpeakerVolume(), 0.80f);
+        QCOMPARE(engine->radioSpeakerMuted(), true);
+
+        engine->setRadioSpeakerVolume(0.25f);
+        engine->setRadioSpeakerMuted(false);
+        QCOMPARE(engine->volume(), 0.10f);
+        QCOMPARE(engine->masterMuted(), false);
+
+        // No change, no signal; out of range is clamped.
+        volSpy.clear();
+        muteSpy.clear();
+        engine->setRadioSpeakerVolume(0.25f);
+        engine->setRadioSpeakerMuted(false);
+        QCOMPARE(volSpy.count(), 0);
+        QCOMPARE(muteSpy.count(), 0);
+        engine->setRadioSpeakerVolume(1.5f);
+        QCOMPARE(engine->radioSpeakerVolume(), 1.0f);
+        engine->setRadioSpeakerVolume(-0.5f);
+        QCOMPARE(engine->radioSpeakerVolume(), 0.0f);
+        QCOMPARE(volSpy.count(), 2);
     }
 
     // JJ's ruling (2026-09-30): with every slice owned by remote devices
     // (this computer's mask empty), the radio's speaker still carries their
-    // audio, as Thetis's mixer 0, while the local output stays masked; the
-    // master mute still gives zeros.
+    // audio, as Thetis's mixer 0, while the local output stays masked, at
+    // the RADIO level; the RADIO mute gives zeros (R-SPK-01, R-SPK-02).
     void engine_radioOutputTap_takesRemoteOwnedSlices()
     {
         RadioModel radio;
@@ -422,23 +564,24 @@ private slots:
         });
         const std::vector<float> block = stereo(64, 0.5f, 0.5f);
 
-        engine->setVolume(0.5f);
+        engine->setVolume(0.30f);
+        engine->setRadioSpeakerVolume(0.80f);
         engine->rxBlockReady(slice, block.data(), 64);
         QVERIFY(!tap.received.empty());
-        QVERIFY(qAbs(tap.received.back() - 0.25f) < 1e-4f);
+        QVERIFY(qAbs(tap.received.back() - 0.5f * 0.80f) < 1e-4f);
         QVERIFY(!local.received.empty());
         for (const float v : local.received) {
             QCOMPARE(v, 0.0f);
         }
 
         tap.received.clear();
-        engine->setMasterMuted(true);
+        engine->setRadioSpeakerMuted(true);
         engine->rxBlockReady(slice, block.data(), 64);
-        QVERIFY(!tap.received.empty());
+        QCOMPARE(tap.received.size(), size_t(128));
         for (const float v : tap.received) {
             QCOMPARE(v, 0.0f);
         }
-        engine->setMasterMuted(false);
+        engine->setRadioSpeakerMuted(false);
     }
 
     // RadioModel installs the tap for a connection that carries the audio,
@@ -452,6 +595,7 @@ private slots:
         engine->masterMixForTest().setRampFrames(1);
         engine->masterMixForTest().setSlewUpFrames(0);
         engine->setVolume(1.0f);
+        engine->setRadioSpeakerVolume(1.0f);  // R-SPK-01: the radio's own level
         const int slice = radio.addSlice();
         engine->setSliceStreaming(slice, true);
         radio.sliceById(slice)->setAfGain(100);

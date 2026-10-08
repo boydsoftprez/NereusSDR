@@ -170,6 +170,116 @@ class TestTwoToneController : public QObject
     Q_OBJECT
 
 private slots:
+    void supersededPendingStartNeverProgramsOrRekeys()
+    {
+        TransmitModel tx; RecordingTxChannel tc(kTxChannelId); MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0); mox.setMox(true);
+        TwoToneController ctrl; ctrl.setTransmitModel(&tx); ctrl.setTxChannel(&tc);
+        ctrl.setMoxController(&mox); ctrl.setSettleDelaysMs(1000, 0);
+        KeyerIdentity cat = KeyerIdentity::station(PttMode::Manual); cat.program = true; cat.requestTag = 73;
+        ctrl.setActive(true, cat); QVERIFY(ctrl.isActivationInFlight());
+        mox.setMox(true); const int calls = tc.calls.size();
+        QVERIFY(QMetaObject::invokeMethod(&ctrl, "onMoxReleaseSettleElapsed", Qt::DirectConnection));
+        QCOMPARE(tc.calls.size(), calls); QVERIFY(mox.isMox());
+        QVERIFY(!ctrl.isActivationInFlight());
+    }
+
+    void rejectedRepeatRetainsTaggedCycle()
+    {
+        TransmitModel tx; RecordingTxChannel tc(kTxChannelId); MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        TwoToneController ctrl; ctrl.setTransmitModel(&tx); ctrl.setTxChannel(&tc);
+        ctrl.setMoxController(&mox); ctrl.setSettleDelaysMs(0, 0);
+        KeyerIdentity cat = KeyerIdentity::station(PttMode::Manual); cat.program = true; cat.requestTag = 65;
+        ctrl.setActive(true, cat); QVERIFY(ctrl.isActive());
+        const quint64 stamp = mox.acceptedRequestGeneration(); const int calls = tc.calls.size();
+        mox.setMoxCheck([] { return BandPlanGuard::MoxCheckResult{false, QStringLiteral("repeat refused")}; });
+        ctrl.setActive(true);
+        QCOMPARE(mox.acceptedRequestGeneration(), stamp);
+        QCOMPARE(ctrl.keyer().requestTag, quint64(65)); QCOMPARE(tc.calls.size(), calls);
+        QVERIFY(ctrl.endIfRequest(65, stamp));
+    }
+
+    void supersededDelayedMag2DoesNotTouchGenerator()
+    {
+        TransmitModel tx; RecordingTxChannel tc(kTxChannelId); MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        TwoToneController ctrl; ctrl.setTransmitModel(&tx); ctrl.setTxChannel(&tc);
+        ctrl.setMoxController(&mox); ctrl.setSettleDelaysMs(0, 0);
+        tx.setTwoToneFreq2Delay(1000);
+        KeyerIdentity cat = KeyerIdentity::station(PttMode::Manual); cat.program = true; cat.requestTag = 63;
+        ctrl.setActive(true, cat); QVERIFY(ctrl.isActive());
+        mox.setMox(true);
+        const int calls = tc.calls.size();
+        QVERIFY(QMetaObject::invokeMethod(&ctrl, "onFreq2DelayElapsed", Qt::DirectConnection));
+        QCOMPARE(tc.calls.size(), calls);
+    }
+
+    void staleDeactivationCannotRestoreNewCycle()
+    {
+        TransmitModel tx; RecordingTxChannel tc(kTxChannelId); MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        TwoToneController ctrl; ctrl.setTransmitModel(&tx); ctrl.setTxChannel(&tc);
+        ctrl.setMoxController(&mox); ctrl.setSettleDelaysMs(0, 0);
+        KeyerIdentity cat = KeyerIdentity::station(PttMode::Manual); cat.program = true; cat.requestTag = 64;
+        ctrl.setActive(true, cat); QVERIFY(ctrl.isActive());
+        QVERIFY(ctrl.endIfRequest(64, mox.acceptedRequestGeneration()));
+        ctrl.setActive(true);
+        const int calls = tc.calls.size();
+        QVERIFY(QMetaObject::invokeMethod(&ctrl, "onDeactivationSettleElapsed", Qt::DirectConnection));
+        QCOMPARE(tc.calls.size(), calls);
+    }
+
+
+    void catStopSettlingFinishesUnderAnotherKey()
+    {
+        // Review X1: a key from another source inside a CAT stop's 200 ms
+        // settle must not strand the tones, the power or the manual key.
+        TransmitModel tx; RecordingTxChannel tc(kTxChannelId); MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        TwoToneController ctrl; ctrl.setTransmitModel(&tx); ctrl.setTxChannel(&tc);
+        ctrl.setMoxController(&mox); ctrl.setSettleDelaysMs(0, 0);
+        KeyerIdentity cat = KeyerIdentity::station(PttMode::Manual); cat.program = true; cat.requestTag = 65;
+        ctrl.setActive(true, cat); QVERIFY(ctrl.isActive());
+        ctrl.setSettleDelaysMs(50, 0);
+        QVERIFY(ctrl.endIfRequest(65, mox.acceptedRequestGeneration()));
+        QVERIFY(ctrl.isDeactivationInFlight());
+        const int calls = tc.calls.size();
+        mox.setMox(true);
+        QVERIFY(ctrl.isDeactivationInFlight());
+        QTRY_VERIFY(!ctrl.isActive());
+        QVERIFY(!ctrl.isDeactivationInFlight());
+        QVERIFY(!mox.isManualKey());
+        bool toneOff = false;
+        for (int i = calls; i < tc.calls.size(); ++i) {
+            if (tc.calls[i].method == QStringLiteral("setTxPostGenRun") && tc.calls[i].arg1 == 0.0) { toneOff = true; }
+        }
+        QVERIFY(toneOff);
+    }
+
+    void taggedRepeatAdoptsCycleAndStaleEndDoesNothing()
+    {
+        TransmitModel tx;
+        RecordingTxChannel tc(kTxChannelId);
+        MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        TwoToneController ctrl;
+        ctrl.setTransmitModel(&tx); ctrl.setTxChannel(&tc); ctrl.setMoxController(&mox);
+        ctrl.setSettleDelaysMs(0, 0);
+        KeyerIdentity cat = KeyerIdentity::station(PttMode::Manual);
+        cat.program = true; cat.requestTag = 51;
+        ctrl.setActive(true, cat);
+        QVERIFY(ctrl.isActive());
+        const quint64 stamp = mox.acceptedRequestGeneration();
+        const int calls = tc.calls.size();
+        ctrl.setActive(true);
+        QCOMPARE(tc.calls.size(), calls);
+        QCOMPARE(ctrl.keyer().requestTag, quint64(0));
+        QVERIFY(!ctrl.endIfRequest(51, stamp));
+        QCOMPARE(tc.calls.size(), calls);
+        QVERIFY(mox.isMox());
+    }
+
 
     // ── I.1.A: power-off precondition ─────────────────────────────────────
     void setActive_powerOff_doesNotEngage()
@@ -198,6 +308,50 @@ private slots:
         QCOMPARE(tc.calls.size(), 0);
         // No state transition (was already inactive), so signal should not fire.
         QCOMPARE(activeSpy.count(), 0);
+    }
+
+    // setup.cs:11063-11071: a start refused for power off unchecks
+    // chkTestIMD, which runs the stop; a live cycle is torn down, not kept.
+    void setActive_powerOffRepeat_stopsLiveCycle()
+    {
+        TransmitModel tx;
+        RecordingTxChannel tc(kTxChannelId);
+        MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        SliceModel slice;
+
+        TwoToneController ctrl;
+        ctrl.setTransmitModel(&tx);
+        ctrl.setTxChannel(&tc);
+        ctrl.setMoxController(&mox);
+        ctrl.setSliceModel(&slice);
+        ctrl.setSettleDelaysMs(0, 0);
+
+        ctrl.setActive(true);
+        QCoreApplication::processEvents();
+        QVERIFY(ctrl.isActive());
+        QVERIFY(mox.isMox());
+        tc.calls.clear();
+        QSignalSpy activeSpy(&ctrl, &TwoToneController::twoToneActiveChanged);
+
+        ctrl.setPowerOn(false);
+        ctrl.setActive(true);
+        for (int i = 0; i < 10; ++i) {
+            QCoreApplication::processEvents();
+        }
+
+        QVERIFY(!ctrl.isActive());
+        QVERIFY(!mox.isMox());
+        QVERIFY(!mox.isManualKey());
+        QCOMPARE(activeSpy.count(), 1);
+        QCOMPARE(activeSpy[0][0].toBool(), false);
+        bool sawRunOff = false;
+        for (const auto& c : tc.calls) {
+            if (c.method == QStringLiteral("setTxPostGenRun") && c.arg1 == 0.0) {
+                sawRunOff = true;
+            }
+        }
+        QVERIFY(sawRunOff);
     }
 
     // ── I.1.B: MOX-on first → cycle off + settle + continue ───────────────
@@ -1181,6 +1335,105 @@ private slots:
 
         QCOMPARE(tc.calls.size(), callCount1);  // no new calls
         QCOMPARE(activeSpy.count(), 1);          // no re-emit
+    }
+
+    // ── A start inside the stop's MOX settle adopts the live test ────────
+    // m_active stays true until the settle ends. A fast off/on's start
+    // keys again at once and keeps the running test, two-tone power
+    // included, and the settling stop never tears it down after.
+    void setActive_startDuringStopSettle_keepsTheTestRunning()
+    {
+        TransmitModel tx;
+        RecordingTxChannel tc(kTxChannelId);
+        MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        SliceModel slice;
+
+        TwoToneController ctrl;
+        ctrl.setTransmitModel(&tx);
+        ctrl.setTxChannel(&tc);
+        ctrl.setMoxController(&mox);
+        ctrl.setSliceModel(&slice);
+        ctrl.setSettleDelaysMs(0, 0);
+
+        QSignalSpy activeSpy(&ctrl, &TwoToneController::twoToneActiveChanged);
+        ctrl.setActive(true);
+        QCoreApplication::processEvents();
+        QVERIFY(ctrl.isActive());
+        QVERIFY(mox.isMox());
+
+        ctrl.setActive(false);
+        QVERIFY(ctrl.isDeactivationInFlight());
+        QVERIFY(!mox.isMox());
+        tc.calls.clear();
+
+        ctrl.setActive(true);
+        QVERIFY(!ctrl.isDeactivationInFlight());
+        // Keyed again at once, as the live test, not a fresh start.
+        QVERIFY(!ctrl.isActivationInFlight());
+        QVERIFY(mox.isMox());
+        for (int i = 0; i < 10; ++i) {
+            QCoreApplication::processEvents();
+        }
+
+        QVERIFY(ctrl.isActive());
+        QVERIFY(!ctrl.isActivationInFlight());
+        QVERIFY(mox.isMox());
+        QVERIFY(mox.isManualKey());
+        QVERIFY(tx.isTwoToneActive());
+        // Running, never stopped: one on, and no off from the old stop.
+        QCOMPARE(activeSpy.count(), 1);
+        QCOMPARE(activeSpy[0][0].toBool(), true);
+        for (const auto& c : tc.calls) {
+            if (c.method == QStringLiteral("setTxPostGenRun")) {
+                QVERIFY(c.arg1 > 0.5);
+            }
+        }
+    }
+
+    // The adopted test keeps the two-tone power without saving it again,
+    // so the next stop still restores the operator's power. Thetis takes
+    // the two-tone power as the operator's here (setup.cs:11151
+    // [v2.10.3.15]).
+    void setActive_startDuringStopSettle_keepsTheOperatorsPower()
+    {
+        TransmitModel tx;
+        tx.setTwoTonePulsed(false);
+        tx.setTwoToneFreq2Delay(0);
+        tx.setPower(75);
+        tx.setTwoTonePower(40);
+        tx.setTwoToneDrivePowerSource(DrivePowerSource::Fixed);
+
+        RecordingTxChannel tc(kTxChannelId);
+        MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        SliceModel slice;
+
+        TwoToneController ctrl;
+        ctrl.setTransmitModel(&tx);
+        ctrl.setTxChannel(&tc);
+        ctrl.setMoxController(&mox);
+        ctrl.setSliceModel(&slice);
+        ctrl.setSettleDelaysMs(0, 0);
+
+        ctrl.setActive(true);
+        QCoreApplication::processEvents();
+        QCOMPARE(tx.power(), 40);
+
+        ctrl.setActive(false);
+        ctrl.setActive(true);
+        for (int i = 0; i < 10; ++i) {
+            QCoreApplication::processEvents();
+        }
+        QVERIFY(ctrl.isActive());
+        QCOMPARE(tx.power(), 40);
+
+        ctrl.setActive(false);
+        for (int i = 0; i < 10; ++i) {
+            QCoreApplication::processEvents();
+        }
+        QVERIFY(!ctrl.isActive());
+        QCOMPARE(tx.power(), 75);
     }
 };
 

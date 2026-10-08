@@ -44,6 +44,8 @@
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-09-28: Slice control plan Task 4: SliceAccess joins it. J.J. Boyd
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-07: CAT setup from a connected desktop: StationCatModel joins it.
+// J.J. Boyd (KG4VCF). AI tooling: Claude Code.
 // 2026-10-08: Rotor control plan Task 4b: RotorModel joins it. J.J. Boyd
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
@@ -73,6 +75,7 @@
 #include "models/TunerModel.h"
 #include "models/AmplifierModel.h"
 #include "models/RfKitModel.h"
+#include "models/StationCatModel.h"
 #include "models/StationTciModel.h"
 #include "models/RotorModel.h"
 #include "models/AccessoryDataModel.h"
@@ -861,6 +864,31 @@ private slots:
         QVERIFY(MirrorPolicy::inboundAllowed("PanadapterModel", "centerFrequency"));
     }
 
+    // Radio speaker (R-SPK-13, R-SPK-14): the first writable RadioModel
+    // properties are Bidirectional, the two reports Outbound, and all five
+    // reach only a peer that declared radioSpeaker 1.
+    void radioSpeakerSettablesAreBidirectionalAndReportsOutbound()
+    {
+        for (const char* name : { "radioSpeakerVolume", "radioSpeakerMuted",
+                                  "speakerAmplifierMode" }) {
+            QVERIFY2(MirrorPolicy::inboundAllowed("RadioModel", name), name);
+        }
+        for (const char* name : { "radioSpeakerAvailability",
+                                  "speakerAmplifierAvailable" }) {
+            QVERIFY2(MirrorPolicy::hasExplicitEntry("RadioModel", name), name);
+            QVERIFY2(!MirrorPolicy::inboundAllowed("RadioModel", name), name);
+        }
+        for (const char* name : { "radioSpeakerVolume", "radioSpeakerMuted",
+                                  "speakerAmplifierMode", "radioSpeakerAvailability",
+                                  "speakerAmplifierAvailable" }) {
+            const MirrorPolicy::FeatureGate* gate =
+                MirrorPolicy::featureGateFor("RadioModel", name);
+            QVERIFY2(gate != nullptr, name);
+            QCOMPARE(QByteArray(gate->feature), QByteArrayLiteral("radioSpeaker"));
+            QCOMPARE(gate->minVersion, 1);
+        }
+    }
+
     void policyEntriesAreUnique()
     {
         QSet<QByteArray> seen;
@@ -893,6 +921,8 @@ private:
                  &AmplifierModel::staticMetaObject,
                  &RfKitModel::staticMetaObject,
                  &StationTciModel::staticMetaObject,
+                 // CAT setup from a connected desktop: the Core's CAT.
+                 &StationCatModel::staticMetaObject,
                  // R-R3-47 / R-R3-22: the Core's accessory records.
                  &AccessoryDataModel::staticMetaObject,
                  // R-R3-47 / R-R3-22: the amp's and tuner's own settings.

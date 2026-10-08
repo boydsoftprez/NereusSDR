@@ -32,6 +32,20 @@
 //                is emitted (selectOutputDevice). J.J. Boyd (KG4VCF),
 //                with AI-assisted implementation via Anthropic Claude
 //                Code.
+//   2026-10-06 - Radio speaker plan Task 6 (R-SPK-17, D1, D5): this is the
+//                header's PC group. The speaker button shows the app's
+//                own pc-on / pc-muted icons (AppIcon) instead of emoji
+//                text, a "PC" word label sits between it and the slider,
+//                and the styles the RADIO group shares are exported in
+//                HeaderVolumeStyle. Behaviour, keys and the right-click
+//                device menu are unchanged. J.J. Boyd (KG4VCF), with
+//                AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-06 - Radio speaker plan Task 6, JJ decision 2 (R-SPK-17, D1):
+//                setStacked() switches the PC group to the stacked form
+//                (thin row, small icon and readout, same handle) and
+//                HeaderVolumeStyle::applyForm() sizes either group for
+//                either form. J.J. Boyd (KG4VCF), with AI-assisted
+//                implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "core/AudioDeviceConfig.h"
@@ -48,13 +62,48 @@ namespace NereusSDR {
 
 class AudioEngine;
 
+// Styles the header's PC and RADIO groups share (R-SPK-17). Each group is
+// icon button, word label, 100 px slider and inset readout.
+namespace HeaderVolumeStyle {
+// Transparent, borderless 20 x 20 icon button.
+extern const char* const kIconButton;
+// The short word label ("PC", "RADIO"), dimmed while disabled.
+extern const char* const kWordLabel;
+// The PC slider: #1a2a3a groove, #00b4d8 handle and fill.
+extern const char* const kPcSlider;
+// The RADIO slider: the same groove with the amber #e0a030 handle and
+// fill, and no fill with a dim handle while disabled.
+extern const char* const kRadioSlider;
+// The inset value readout, dimmed while disabled.
+extern const char* const kReadout;
+// Logical size of the icon drawn in the 20 x 20 button.
+inline constexpr int kIconPx = 18;
+// The stacked readout (layout C): 9 px text, no vertical padding.
+extern const char* const kReadoutStacked;
+// Logical size of the icon drawn in the stacked form's 14 x 14 button.
+inline constexpr int kStackedIconPx = 12;
+
+// Sizes one group's icon button, word label, slider and readout for the
+// side-by-side form (layout A of header-layouts.html: 20 x 20 button,
+// 100 x 16 slider, 22 px readout) or the stacked form (layout C, one row of
+// two in the 32 px strip: 14 x 14 button, 84 x 12 slider, 20 x 13 readout,
+// the word label kept at stackedLabelWidth so both rows' sliders line up,
+// or hidden when stackedLabelWidth is 0). The slider handle stays the
+// header's 10 px either way. readoutStyle is the side-by-side readout
+// style. Returns the icon size to draw.
+int applyForm(QPushButton* button, QLabel* word, QSlider* slider, QLabel* readout,
+              bool stacked, int stackedLabelWidth, const char* readoutStyle);
+} // namespace HeaderVolumeStyle
+
 // MasterOutputWidget — menu-bar master-output composite.
 //
-// Layout (matches design spec §7.3, ~222 px wide × 22 px tall):
+// Layout (matches design spec §7.3, ~222 px wide × 22 px tall, plus the
+// "PC" word label of the radio speaker design, R-SPK-17):
 //
-//   [speaker 20] [slider 100] [label 22]
+//   [speaker 20] [PC] [slider 100] [label 22]
 //
-// - Speaker button: left-click toggles mute (🔊 ↔ 🔇). Right-click
+// - Speaker button: left-click toggles mute (icons pc-on / pc-muted,
+//   AppIcon; the button's AppIcon::kIconProperty names the icon). Right-click
 //   opens an output-device picker populated from
 //   PortAudioBus::hostApis() + PortAudioBus::outputDevicesFor. The
 //   picker emits outputDeviceChanged(name); the host (Task 10c
@@ -80,6 +129,12 @@ public:
     // Does NOT emit outputDeviceChanged — this is a sync-from-
     // elsewhere path, not a user action.
     void setCurrentOutputDevice(const QString& name);
+
+    // R-SPK-17: the side-by-side (false) or stacked (true) form of the
+    // group, chosen by TitleBar from the room the header has. The same
+    // children, with the same objectNames, serve both forms.
+    void setStacked(bool stacked, int stackedLabelWidth);
+    bool isStacked() const { return m_stacked; }
 
 signals:
     // User moved the slider. Value is the 0.0–1.0 linear volume.
@@ -118,7 +173,13 @@ private slots:
 
 private:
     AudioEngine* m_audio{nullptr};
+    // Shows pc-muted or pc-on on the speaker button (R-SPK-19, D5).
+    void applySpeakerIcon(bool muted);
+
     QPushButton* m_speakerBtn{nullptr};
+    QLabel*      m_pcLabel{nullptr};
+    bool         m_stacked{false};
+    int          m_iconPx{HeaderVolumeStyle::kIconPx};
     QSlider*     m_slider{nullptr};
     QLabel*      m_dbLabel{nullptr};
     bool         m_updatingFromModel{false};

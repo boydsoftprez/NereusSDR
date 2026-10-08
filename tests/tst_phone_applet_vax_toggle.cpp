@@ -8,7 +8,7 @@
 //   click_setsVax              - left-click toggles MicSource to Vax
 //   secondClick_restoresPrevious - second click reverts to previous source
 //   modelChange_syncsButton    - external micSource change updates checked state
-//   rightClick_emitsSetupReq   - right-click emits openSetupRequested("Audio", "TX Input")
+//   rightClick_emitsSetupReq   - right-click emits openSetupRequested("Audio", "Microphone")
 //   nyiMark_absent             - the NyiOverlay mark removed
 // =================================================================
 //
@@ -16,6 +16,9 @@
 //   2026-05-10 - Original test for NereusSDR by J.J. Boyd (KG4VCF),
 //                 with AI-assisted implementation via Anthropic Claude
 //                 Code.
+//   2026-10-06 - R-SPK-21: right-click opens Setup > Audio > Microphone.
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original test file.
@@ -109,7 +112,7 @@ private slots:
         QCOMPARE(spy.count(), 1);
         const auto args = spy.takeFirst();
         QCOMPARE(args.at(0).toString(), QStringLiteral("Audio"));
-        QCOMPARE(args.at(1).toString(), QStringLiteral("TX Input"));
+        QCOMPARE(args.at(1).toString(), QStringLiteral("Microphone"));
     }
 
     void nyiMark_absent()

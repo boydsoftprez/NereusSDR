@@ -79,7 +79,9 @@ private slots:
         QCOMPARE(meta.indexOfProperty("rxFilter0LowPassSlice"), index + 9);
         QCOMPARE(meta.indexOfProperty("diversityState"), index + 10);
         QCOMPARE(meta.indexOfProperty("diversityState") - meta.propertyOffset(), 37);
-        QCOMPARE(index, meta.propertyCount() - 11);
+        // Later features append after diversityState (the radio speaker at
+        // ordinals 38 to 42) without moving any of these.
+        QCOMPARE(meta.indexOfProperty("radioSpeakerVolume") - meta.propertyOffset(), 38);
         RadioModel model;
         QCOMPARE(model.logCategoryList(), LogManager::instance().categoryListJson());
     }

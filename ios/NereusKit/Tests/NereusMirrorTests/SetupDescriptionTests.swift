@@ -101,7 +101,7 @@ import Testing
 
     @Test func malformedCategoryAndUnknownVersionAreRejected() {
         #expect(throws: SetupDescription.ParseError.self) { try SetupDescription.parse(json: "{") }
-        #expect(throws: SetupDescription.ParseError.self) { try SetupDescription.parse(json: document(control("sample.main.one"), version: 25)) }
+        #expect(throws: SetupDescription.ParseError.self) { try SetupDescription.parse(json: document(control("sample.main.one"), version: 26)) }
     }
 
     @Test func commandSourcesStayTypedAndUnknownSourcesDisable() throws {
@@ -164,17 +164,26 @@ import Testing
         var rejected: [String] = []
         for name in names {
             let data = try Data(contentsOf: source.appendingPathComponent("\(name).json"))
-            for peerVersion in 1...24 {
+            for peerVersion in 1...25 {
                 var root = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
                 var pages = try #require(root["pages"] as? [[String: Any]])
                 var projectedPages: [[String: Any]] = []
                 var includedIds: Set<String> = []
                 let fifteen = ["dsp", "transmit", "audio", "diagnostics", "catNetwork"].contains(name)
                 for var page in pages {
+                    if name == "audio", peerVersion < 25, page["id"] as? String == "audio.txInput" {
+                        // Below 25 the Microphone page keeps its old title.
+                        page["title"] = "TX Input"
+                    }
                     var sections: [[String: Any]] = []
                     for var section in try #require(page["sections"] as? [[String: Any]]) {
                         // The Core keeps a board family's section for its own radio.
                         section.removeValue(forKey: "boardFamily")
+                        if name == "audio", peerVersion < 25, page["id"] as? String == "audio.txInput",
+                           section["title"] as? String == "Mic gain" {
+                            // And its Mic gain section its old title.
+                            section["title"] = "PC Mic"
+                        }
                         var controls: [[String: Any]] = []
                         for var control in try #require(section["controls"] as? [[String: Any]]) {
                             if name == "hardware", peerVersion < 18,
@@ -253,6 +262,10 @@ import Testing
                 if let coverage = root.removeValue(forKey: "coverageV19") as? String, peerVersion >= 19 {
                     root["coverage"] = coverage
                 }
+                // The version 25 wording (Audio's Outputs and Microphone) only to a peer at 25.
+                if let coverage = root.removeValue(forKey: "coverageV25") as? String, peerVersion >= 25 {
+                    root["coverage"] = coverage
+                }
                 if name == "dsp" {
                     // CFC's band editor comes at 19.
                     #expect(includedIds.contains("dsp.cfc.bands") == (peerVersion >= 19))
@@ -278,6 +291,11 @@ import Testing
                     // The Saturn G2's Mic Tip-Ring comes at 24; Line In Gain from 15 at every version.
                     #expect(includedIds.contains("audio.txInput.saturnMicTipRing") == (peerVersion >= 24))
                     #expect(includedIds.contains("audio.txInput.hermesLineInGain") == (peerVersion >= 15))
+                    // Outputs' radio speaker rows come at 25.
+                    for id in ["audio.outputs.radioSpeakerVolume", "audio.outputs.radioSpeakerMuted",
+                               "audio.outputs.speakerAmplifierMode"] {
+                        #expect(includedIds.contains(id) == (peerVersion >= 25), "\(id) v\(peerVersion)")
+                    }
                 }
                 if name == "pa" {
                     #expect(includedIds.contains("pa.values.paCurrent") == (peerVersion >= 5))
@@ -289,14 +307,14 @@ import Testing
                 // The Core's category versions: hardware changed at 6, 13, 16,
                 // 17, 18 and 23, PA at 5, 13, 14 and 20, transmit at 13 and 15,
                 // DSP at 15, 19 and 22, CAT & Network at 15 and 21, audio at
-                // 15 and 24, and diagnostics at 15.
+                // 15, 24 and 25, and diagnostics at 15.
                 let fitted = name == "hardware"
                     ? (peerVersion < 13 ? min(peerVersion, 6) : peerVersion < 16 ? 13 : peerVersion < 23 ? min(peerVersion, 18) : 23)
                     : name == "pa" ? (peerVersion < 13 ? min(peerVersion, 5) : peerVersion < 20 ? min(peerVersion, 14) : 20)
                     : name == "transmit" ? (peerVersion < 13 ? min(peerVersion, 3) : peerVersion < 15 ? 13 : 15)
                     : name == "dsp" ? (peerVersion < 15 ? min(peerVersion, 3) : peerVersion < 19 ? 15 : peerVersion < 22 ? 19 : 22)
                     : name == "catNetwork" ? (peerVersion < 15 ? min(peerVersion, 3) : peerVersion < 21 ? 15 : 21)
-                    : name == "audio" ? (peerVersion < 15 ? min(peerVersion, 3) : peerVersion < 24 ? 15 : 24)
+                    : name == "audio" ? (peerVersion < 15 ? min(peerVersion, 3) : peerVersion < 24 ? 15 : peerVersion < 25 ? 24 : 25)
                     : fifteen ? (peerVersion < 15 ? min(peerVersion, 3) : 15)
                     : name == "appearance" ? (peerVersion < 7 ? min(peerVersion, 4) : peerVersion < 12 ? 7 : 12)
                     : name == "display" ? (peerVersion < 8 ? min(peerVersion, 4) : min(peerVersion, 12))

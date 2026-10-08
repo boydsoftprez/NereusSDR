@@ -172,6 +172,7 @@
         {"id": "session-station-radio-models", "file": "sessions/station-radio-models.json", "kind": "session", "requires": {"stationRadiosVersion": 1, "radioModelsVersion": 1}},
         {"id": "session-verbs-station-tci-server", "file": "sessions/verbs-station-tci-server.json", "kind": "session", "requires": {"stationTciVersion": 2}},
         {"id": "session-verbs-station-tci-settings", "file": "sessions/verbs-station-tci-settings.json", "kind": "session", "requires": {"stationTciSettingsVersion": 1}},
+        {"id": "session-verbs-station-cat", "file": "sessions/verbs-station-cat.json", "kind": "session", "requires": {"stationCatVersion": 1}},
         {"id": "session-verbs-accessory-data", "file": "sessions/verbs-accessory-data.json", "kind": "session", "requires": {"accessoryDataVersion": 1}},
         {"id": "session-verbs-accessory-settings", "file": "sessions/verbs-accessory-settings.json", "kind": "session", "requires": {"remotePgxlControlVersion": 3, "remoteTgxlControlVersion": 1}},
         {"id": "session-verbs-tgxl-control", "file": "sessions/verbs-tgxl-control.json", "kind": "session", "requires": {"remoteTgxlControlVersion": 2}},

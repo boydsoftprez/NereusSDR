@@ -19,7 +19,9 @@ final class ToolsRouter: ObservableObject {
 /// under it, each with its way back (R-IOS-25, D32); FreeDV Reporter opens
 /// its station list (R-IOS-26), and Spot Hub's FreeDV row opens the Core's
 /// reporter connection. TX Equalizer, PureSignal, Diversity, TCI Server,
-/// VAX Audio and Support Bundle open their own pages. An older Core's
+/// VAX Audio and Support Bundle open their own pages. CAT Control opens its
+/// page and the pages under it (a channel, CAT Options, CAT PTT, Test and
+/// log), all sharing one model while any of them is open. An older Core's
 /// notice sits at the top.
 struct ToolsTab: View {
     @ObservedObject var app: AppModel
@@ -33,6 +35,8 @@ struct ToolsTab: View {
     /// The pages open over the tab: Spot Hub, then one under it.
     @State private var route: [Page]
     @State private var askingToClear = false
+    /// CAT Control's model, shared by its pages while one is open.
+    @StateObject private var cat: CatControlHolder
 
     enum Page: Hashable {
         case spotHub
@@ -42,6 +46,8 @@ struct ToolsTab: View {
         case txEqualizer
         case pureSignal
         case diversity
+        case catControl
+        case catControlPage(CatControlModel.Route)
         case tciServer
         case vaxAudio
         case supportBundle
@@ -55,6 +61,8 @@ struct ToolsTab: View {
             case .txEqualizer: return "TX Equalizer"
             case .pureSignal: return "PureSignal"
             case .diversity: return "Diversity"
+            case .catControl: return "CAT Control"
+            case .catControlPage(let page): return page.title
             case .tciServer: return "TCI Server"
             case .vaxAudio: return "VAX Audio"
             case .supportBundle: return "Support Bundle"
@@ -69,10 +77,19 @@ struct ToolsTab: View {
             case .txEqualizer: self = .txEqualizer
             case .pureSignal: self = .pureSignal
             case .diversity: self = .diversity
+            case .catControl: self = .catControl
             case .tciServer: self = .tciServer
             case .vaxAudio: self = .vaxAudio
             case .performance: self = .performance
             case .supportBundle: self = .supportBundle
+            }
+        }
+
+        /// CAT Control's page or one under it.
+        var isCat: Bool {
+            switch self {
+            case .catControl, .catControlPage: return true
+            default: return false
             }
         }
     }
@@ -88,6 +105,17 @@ struct ToolsTab: View {
         _list = StateObject(wrappedValue: ToolListModel(mirror: app.mirror, catalogFeed: app.main.catalogFeed))
         self.isActive = isActive
         _route = State(initialValue: route)
+        // Made once for the tab, however often SwiftUI makes the view
+        // again: a StateObject's value is built only when first installed.
+        _cat = StateObject(wrappedValue: CatControlHolder(route: route) {
+            CatControlModel(mirror: app.mirror, commands: app.commands, records: app.records)
+        })
+    }
+
+    /// Opens a page; CAT Control's model is made as its first page opens.
+    private func open(_ page: Page) {
+        cat.follow(route + [page])
+        route.append(page)
     }
 
     var body: some View {
@@ -116,6 +144,8 @@ struct ToolsTab: View {
                 FreeDVReporterPage(freedv: freedv)
             } else if let page = route.last, Self.stationPages.contains(page) {
                 stationPage(page)
+            } else if let page = route.last, page.isCat, let model = cat.model {
+                CatControlScreen(model: model, page: page) { open(.catControlPage($0)) }
             } else {
                 ScrollView {
                     content
@@ -138,6 +168,9 @@ struct ToolsTab: View {
             }
         }
         .onChange(of: flow.attempt) { _, next in performance.setAttempt(next) }
+        .onChange(of: route) { _, next in
+            cat.follow(next)
+        }
         .confirmationDialog("Clear all spots?", isPresented: $askingToClear, titleVisibility: .visible) {
             Button("Clear all spots", role: .destructive) {
                 spots.clearAll()
@@ -177,8 +210,8 @@ struct ToolsTab: View {
             SpotSourcePage(spots: spots, source: source)
         case .spotHubPage(.identity)?:
             SpotIdentityPage(spots: spots)
-        case .performance?, .freedvReporter?, .txEqualizer?, .pureSignal?, .diversity?, .tciServer?, .vaxAudio?,
-             .supportBundle?:
+        case .performance?, .freedvReporter?, .txEqualizer?, .pureSignal?, .diversity?, .catControl?,
+             .catControlPage?, .tciServer?, .vaxAudio?, .supportBundle?:
             EmptyView()
         }
     }
@@ -233,7 +266,7 @@ struct ToolsTab: View {
         return SpotHubPage.Row(title: entry.title, detail: detail, tag: entry.tag, enabled: enabled,
                                identifier: identifier) {
             if let page = entry.page {
-                route.append(Page(page))
+                open(Page(page))
             }
         }
     }
@@ -264,9 +297,67 @@ struct ToolsTab: View {
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(ChromeColours.accent)
                 .accessibilityIdentifier("freedv.website")
-        case .spotHub, .spotHubPage(.display), .performance, .txEqualizer, .pureSignal, .diversity, .tciServer,
-             .vaxAudio, .supportBundle:
+        case .spotHub, .spotHubPage(.display), .performance, .txEqualizer, .pureSignal, .diversity, .catControl,
+             .catControlPage, .tciServer, .vaxAudio, .supportBundle:
             LinkChip(link: link, core: core)
+        }
+    }
+}
+
+/// CAT Control's model while one of its pages is open: made as the first
+/// opens, once, and let go when the last of them closes.
+@MainActor
+final class CatControlHolder: ObservableObject {
+    @Published private(set) var model: CatControlModel?
+    private let make: () -> CatControlModel
+
+    init(route: [ToolsTab.Page] = [], make: @escaping () -> CatControlModel) {
+        self.make = make
+        follow(route)
+    }
+
+    /// Follows the pages open over the tab.
+    func follow(_ route: [ToolsTab.Page]) {
+        if !route.contains(where: \.isCat) {
+            if model != nil {
+                model = nil
+            }
+        } else if model == nil {
+            model = make()
+        }
+    }
+}
+
+/// CAT Control's page, or one under it, over the number pad they share.
+private struct CatControlScreen: View {
+    @ObservedObject var model: CatControlModel
+    let page: ToolsTab.Page
+    let open: (CatControlModel.Route) -> Void
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            ScrollView {
+                content
+                    .padding(12)
+                    .padding(.bottom, 8)
+            }
+            ValuePadLayer(pad: model.pad)
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch page {
+        case .catControlPage(.channel(let number)):
+            CatChannelPage(model: model, number: number)
+        case .catControlPage(.options):
+            CatOptionsPage(model: model)
+        case .catControlPage(.ptt):
+            CatPttPage(model: model)
+        case .catControlPage(.test):
+            CatTestPage(model: model)
+        default:
+            CatControlPage(model: model, open: open)
         }
     }
 }

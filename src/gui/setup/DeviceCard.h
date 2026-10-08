@@ -19,6 +19,18 @@
 //
 // Design spec: docs/architecture/2026-04-20-phase3o-subphase12-addendum.md
 // §§2.1 + 4.
+//
+// Modification history (NereusSDR):
+//   2026-10-06: R-SPK-21, R-SPK-24, D14 by J.J. Boyd (KG4VCF), with
+//               AI-assisted implementation via Anthropic Claude Code. The
+//               Device row stays in front and the other rows fold under
+//               "Device details"; the WASAPI options are greyed unless the
+//               driver API is WASAPI; rows above and below Device, greying
+//               until Enabled, and a device rescan for the Outputs page.
+//   2026-10-06: R-SPK-21 (Microphone) by J.J. Boyd (KG4VCF), with
+//               AI-assisted implementation via Anthropic Claude Code. The
+//               Device, Driver API and Buffer size combos are reachable
+//               for the Microphone page's PC microphone card.
 // =================================================================
 
 #include "core/AudioDeviceConfig.h"
@@ -30,6 +42,8 @@
 #include <QLabel>
 
 class QTimer;
+class QToolButton;
+class QVBoxLayout;
 
 namespace NereusSDR {
 
@@ -92,6 +106,44 @@ public:
         }
     }
 
+    // ── R-SPK-21 / D14: Device details ──────────────────────────────────
+    // Driver API, Sample rate (with Auto-match), Bit depth, Channels,
+    // Buffer size (with milliseconds), Options and Negotiated sit in a
+    // "Device details" section (objectName "deviceDetails", toggled by the
+    // "deviceDetailsToggle" button), folded by default.
+    bool detailsExpanded() const;
+    void setDetailsExpanded(bool expanded);
+
+    // A page's own rows: above the Device row (outside the part greyed
+    // until Enabled), or below it, above Device details. The card takes
+    // ownership.
+    void addAboveDevice(QWidget* widget);
+    void addBelowDevice(QWidget* widget);
+
+    // R-SPK-21: Device and Device details greyed while the Enabled box is
+    // off (Headphones). Off by default; no-op without an Enabled box.
+    void setGreyedUntilEnabled(bool greyed);
+
+    // Re-reads the device list for the card's driver API, keeping the
+    // selected device ("Rescan devices").
+    void rescanDevices();
+    // Devices the list offers, without "(platform default)" or a kept
+    // "(not available)" entry.
+    int deviceCount() const;
+
+    // R-SPK-21: the Microphone page and its tests reach the card's own
+    // Device, Driver API and Buffer size controls.
+    QComboBox* deviceCombo() const { return m_deviceCombo; }
+    QComboBox* driverApiCombo() const { return m_driverApiCombo; }
+    QComboBox* bufferSizeCombo() const { return m_bufferSizeCombo; }
+
+    // ── R-SPK-24: Exclusive / Event-driven / Bypass mixer ───────────────
+    // Live only when the card's driver API is WASAPI; otherwise disabled
+    // with wasapiOnlyReason() as their tooltip, and a note says so.
+    bool wasapiOptionsAvailable() const;
+    static bool isWasapiDriverName(const QString& driverApi);
+    static QString wasapiOnlyReason();
+
 signals:
     // Emitted on any control edit (excluding loadFromSettings).
     // Carries the card's current AudioDeviceConfig.
@@ -111,6 +163,8 @@ private:
     void populateDeviceCombo();
     void selectDeviceName(const QString& name);
     void updateBufferMsLabel();  // recompute derived ms readout from current combos
+    void updateWasapiOptions();
+    void updateBodyEnabled();
 
     QString       m_prefix;
     Role          m_role;
@@ -135,6 +189,15 @@ private:
 
     // Negotiated-format pill
     QLabel*     m_negotiatedPill{nullptr};
+
+    // R-SPK-21 / D14 / R-SPK-24
+    QVBoxLayout* m_aboveDeviceLayout{nullptr};
+    QVBoxLayout* m_belowDeviceLayout{nullptr};
+    QWidget*     m_body{nullptr};          // Device row + details
+    QToolButton* m_detailsToggle{nullptr};
+    QWidget*     m_details{nullptr};
+    QLabel*      m_wasapiNote{nullptr};
+    bool         m_greyedUntilEnabled{false};
 
     // 200 ms intra-control debounce for the buffer-size combo only (per
     // addendum §2.1 — debounce is intra-control, not card-wide).  Other

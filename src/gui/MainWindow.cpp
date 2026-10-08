@@ -610,6 +610,20 @@
 //                first wiring names its own pan; slice add and remove are
 //                logged. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-06 - CAT status count includes rigctld clients; a remote
+//                window's CAT status reads "On the Core". J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - The CAT status and the CAT log read catControl(): a remote
+//                window shows the Core's CAT state, counts and log; the
+//                status bar's text from CatControl::indicator(), refreshed
+//                on the channels' live state. J.J. Boyd (KG4VCF), AI
+//                tooling: Claude Code.
+//   2026-10-06 - Radio speaker plan Task 6 (R-SPK-16, R-SPK-17): the title
+//                bar's RADIO group is handed this window's RadioModel.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-06 - Radio speaker plan Task 11 (R-SPK-21): Tools > VAX Audio
+//                opens Setup > Audio > Digital modes, which holds VAX now.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Rotor control plan Task 6: the Rotor applet, always
 //                available and shown by default (JJ, 2026-10-08). J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -997,6 +1011,9 @@ warren@wpratt.com
 #include "applets/CwxApplet.h"
 #include "applets/DvkApplet.h"
 #include "applets/CatApplet.h"
+#include "core/cat/CatService.h"
+#include "core/cat/CatControl.h"
+#include "setup/CatLogWindow.h"
 #include "applets/TunerApplet.h"
 #include "applets/RotorApplet.h"
 // Phase 23: TCI server + applets (guarded so non-WebSocket builds still compile)
@@ -1403,6 +1420,9 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
     // reaches the engine through localAudioDevices(), not the audited
     // local-DSP accessor.
     m_titleBar = new TitleBar(m_radioModel->localAudioDevices(), this);
+    // R-SPK-17: the RADIO group reads and writes this window's model, the
+    // Core's radio speaker in a remote window (R-SPK-16).
+    m_titleBar->setRadioModel(m_radioModel);
     m_titleBar->setMenuBar(menuBar());
     setMenuWidget(m_titleBar);
 
@@ -9777,6 +9797,9 @@ void MainWindow::populateDefaultMeter()
     m_modMonApplet = new ModMonitorApplet(m_radioModel, nullptr);
     panel->insertApplet(0, m_modMonApplet);   // directly below the S-Meter
 
+    m_catApplet = new CatApplet(m_radioModel, nullptr);
+    panel->addApplet(m_catApplet);
+
     // Phase 23: TCI applets — live in Container #0 below the existing applets.
     // Visibility is now managed by AppletVisibilityController below
     // (registered as ids "Tci" + "ClientChain", keys AppletTciVisible +
@@ -10061,6 +10084,7 @@ void MainWindow::populateDefaultMeter()
     m_appletsById[QStringLiteral("Tuner")]      = m_tunerApplet;
     m_appletsById[QStringLiteral("Rotor")]      = m_rotorApplet;
     m_appletsById[QStringLiteral("RfKit")]      = m_rfKitApplet;
+    m_appletsById[QStringLiteral("Cat")]        = m_catApplet;
 #ifdef HAVE_WEBSOCKETS
     if (m_tciApplet) {
         m_appletsById[QStringLiteral("Tci")]        = m_tciApplet;
@@ -10109,6 +10133,7 @@ void MainWindow::populateDefaultMeter()
     // no rotor it stays, greyed with the reason (disabled, never hidden).
     m_appletVis->registerApplet(QStringLiteral("Rotor"),
                                 QStringLiteral("Rotor"),        true);
+    m_appletVis->registerApplet(QStringLiteral("Cat"),QStringLiteral("CAT"),true);
     m_appletVis->registerApplet(QStringLiteral("RfKit"),
                                 QStringLiteral("RF-Kit RF2K-S"), true);
 #ifdef HAVE_WEBSOCKETS
@@ -10235,7 +10260,7 @@ void MainWindow::populateDefaultMeter()
     // m_diversityApplet  = new DiversityApplet(m_radioModel, nullptr);  // TODO 3F (multi-RX)
     // m_cwxApplet        = new CwxApplet(m_radioModel, nullptr);        // TODO 3M-2 (CW TX)
     // m_dvkApplet        = new DvkApplet(m_radioModel, nullptr);        // TODO 3M-1 (DVK)
-    // m_catApplet        = new CatApplet(m_radioModel, nullptr);        // TODO 3J/3K/3-VAX
+    // CAT is registered with the live applet host above.
 
     // Detach the analog singleton before the old header wrapper is disposed.
     panel->clearHeaderWidget();
@@ -11364,7 +11389,9 @@ void MainWindow::buildMenuBar()
     }
     {
         QAction* catAction = toolsMenu->addAction(QStringLiteral("&CAT Control..."));
-        catAction->setEnabled(false);
+        catAction->setEnabled(true);
+        catAction->setObjectName("catControlAction");
+        connect(catAction,&QAction::triggered,this,&MainWindow::openCatSetupPage);
         // R-R3-49: hidden until CAT is built.
         UnbuiltFeatures::hideUnlessBuilt(catAction, UnbuiltFeature::Cat);
     }
@@ -11375,11 +11402,11 @@ void MainWindow::buildMenuBar()
         connect(tciAction, &QAction::triggered, this, &MainWindow::openTciSetupPage);
     }
     {
-        // R-R3-21: Setup > Audio > VAX, where the VAX channels are set up.
+        // R-R3-21: Setup > Audio > Digital modes (R-SPK-21), where the VAX channels are set up.
         QAction* daxAction = toolsMenu->addAction(QStringLiteral("&VAX Audio..."));
-        daxAction->setToolTip(QStringLiteral("Open Setup > Audio > VAX"));
+        daxAction->setToolTip(QStringLiteral("Open Setup > Audio > Digital modes"));
         connect(daxAction, &QAction::triggered, this,
-                [this]() { openSetupAtPage(QStringLiteral("VAX")); });
+                [this]() { openSetupAtPage(QStringLiteral("Digital modes")); });
     }
     {
         QAction* midiAction = toolsMenu->addAction(QStringLiteral("&MIDI Mapping..."));
@@ -12048,10 +12075,24 @@ void MainWindow::buildStatusBar()
         return w;
     };
 
-    // CAT Serial — NYI until Phase 3K; kept as static indicator, no live signal
+    // CAT status reflects actual local listener activity and errors.
     m_catIndicator = makeIndicator(QStringLiteral("CAT"), QStringLiteral("Off"));
     m_catIndicator->setObjectName(QStringLiteral("statusCatIndicator"));
     hbox->addWidget(m_catIndicator);
+    m_catIndicator->installEventFilter(this);
+    // A remote window shows the Core's CAT state and counts.
+    const auto refreshCat = [this] {
+        CatControl* control=m_radioModel->catControl();
+        if (!control) { return; }
+        const CatIndicator indicator=control->indicator();
+        const auto labels=m_catIndicator->findChildren<QLabel*>();
+        if (labels.size()>1) { labels.last()->setText(indicator.text); }
+        m_catIndicator->setToolTip(indicator.details.join('\n'));
+    };
+    // The channels' live state and whether CAT can be read here.
+    connect(m_radioModel->catControl(),&CatControl::channelStatusChanged,this,refreshCat);
+    connect(m_radioModel->catControl(),&CatControl::availabilityChanged,this,refreshCat);
+    refreshCat();
     m_catSep = makeSep();
     hbox->addWidget(m_catSep);
 
@@ -12829,6 +12870,21 @@ void MainWindow::updateTciIndicator()
 // openTciSetupPage() — open Setup dialog at "TCI Server" page.
 // Pattern-matched from the many other "open setup" sites in MainWindow.cpp
 // (e.g. vfoWidget::openSetupRequested, m_overlayPanel::openSetupRequested).
+void MainWindow::openCatSetupPage()
+{
+    auto* dialog=createSetupDialog();
+    if (!dialog) { return; }
+    dialog->selectPage(QStringLiteral("TCP/IP CAT")); dialog->show();
+}
+void MainWindow::showCatLog()
+{
+    if (!m_catLogWindow) {
+        m_catLogWindow=new CatLogWindow(m_radioModel->catControl(),this);
+        // A remote window follows the Core's CAT log only while it is open.
+        if (!m_radioModel->ownsLocalDsp()) { m_catLogWindow->setAttribute(Qt::WA_DeleteOnClose); }
+    }
+    m_catLogWindow->show(); m_catLogWindow->raise(); m_catLogWindow->activateWindow();
+}
 void MainWindow::openTciSetupPage()
 {
     auto* dialog = createSetupDialog();
@@ -13818,6 +13874,7 @@ void MainWindow::setVoltsAmpsVisible(bool visible)
 void MainWindow::wireSetupDialog(SetupDialog* dialog)
 {
     if (!dialog) { return; }
+    connect(dialog,&SetupDialog::catLogRequested,this,&MainWindow::showCatLog);
     // R-R3-21: Appearance > Meter Styles changes the S-meter on screen.
     const auto sMeter = [this]() {
         return m_appletPanel ? m_appletPanel->smeterWidget() : nullptr;
@@ -14814,6 +14871,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
     // Phase 23: m_tciIndicator click → open Setup → TCI Server.
     // The indicator is a QWidget (not a QLabel) so we match by pointer identity.
     if (event->type() == QEvent::MouseButtonPress) {
+        if (watched == m_catIndicator) { openCatSetupPage(); return true; }
         if (watched == m_tciIndicator) {
             openTciSetupPage();
             return true;  // event consumed
@@ -17736,7 +17794,7 @@ void MainWindow::checkVaxFirstRun()
     });
 
     // Sub-Phase 12: wire "Customize…" / "Why do I need this?" → Setup → VAX.
-    // Opens (or raises) the Setup dialog and navigates to Audio → VAX.
+    // Opens (or raises) the Setup dialog and navigates to Audio → Digital modes.
     connect(dlg, &VaxFirstRunDialog::openSetupAudioPage, this,
             [this](const QString& pageLabel) {
         auto* dialog = createSetupDialog();

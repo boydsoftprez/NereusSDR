@@ -540,6 +540,16 @@
             "value": 1
         },
         {
+            "kind": "i64",
+            "name": "stationCatVersion",
+            "value": 1
+        },
+        {
+            "kind": "i64",
+            "name": "radioSpeakerVersion",
+            "value": 1
+        },
+        {
             "kind": "utf8",
             "name": "coreBuildInfo",
             "value": "{\"productVersion\":\"0.5.2\",\"sourceTag\":\"link-surface@fixture\"}"
@@ -1565,6 +1575,68 @@
             "capabilityVersion": 1,
             "minMinor": 11,
             "verb": "setStationTciSettings"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
+                    "name": "channel",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "config",
+                    "optional": false
+                }
+            ],
+            "capability": "stationCatVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "setStationCatChannel"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "config",
+                    "optional": false
+                }
+            ],
+            "capability": "stationCatVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "setStationCatGlobal"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
+                    "name": "requestId",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "channel",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "command",
+                    "optional": false
+                }
+            ],
+            "capability": "stationCatVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "testStationCatCommand"
+        },
+        {
+            "arguments": [
+            ],
+            "capability": "stationCatVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "refreshStationCatDevices"
         },
         {
             "arguments": [
@@ -5588,6 +5660,36 @@
                     "kind": "utf8",
                     "name": "diversityState",
                     "ordinal": 37
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "i64",
+                    "name": "radioSpeakerVolume",
+                    "ordinal": 38
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "bool",
+                    "name": "radioSpeakerMuted",
+                    "ordinal": 39
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "i64",
+                    "name": "speakerAmplifierMode",
+                    "ordinal": 40
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "i64",
+                    "name": "radioSpeakerAvailability",
+                    "ordinal": 41
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "bool",
+                    "name": "speakerAmplifierAvailable",
+                    "ordinal": 42
                 }
             ]
         },
@@ -7360,6 +7462,52 @@
                 }
             ]
         },
+        "StationCatModel": {
+            "properties": [
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "global",
+                    "ordinal": 0
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "channel1",
+                    "ordinal": 1
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "channel2",
+                    "ordinal": 2
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "channel3",
+                    "ordinal": 3
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "channel4",
+                    "ordinal": 4
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "platform",
+                    "ordinal": 5
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "lastTest",
+                    "ordinal": 6
+                }
+            ]
+        },
         "StationCatalog": {
             "properties": [
                 {
@@ -8839,6 +8987,10 @@
         {
             "class": "StationTciModel",
             "key": "stationTci"
+        },
+        {
+            "class": "StationCatModel",
+            "key": "stationCat"
         },
         {
             "class": "AccessoryDataModel",

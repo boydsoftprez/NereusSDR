@@ -177,6 +177,15 @@ function(nereus_add_test name)
     cmake_parse_arguments(_nat "NATIVE_WINDOW;CORE_ONLY;REALTIME" "" "EXTRA_LABELS" ${ARGN})
     set(_extra_sources ${_nat_UNPARSED_ARGUMENTS})
 
+    # all_tests and the per-label targets are built from the list once,
+    # near the bottom of this file. A test registered after that is in
+    # ctest but in no build target, so CI reports it Not Run (PR #340's
+    # CAT suites). Stop the configure instead.
+    get_property(_sealed GLOBAL PROPERTY NEREUS_ALL_TESTS_SEALED)
+    if(_sealed)
+        message(FATAL_ERROR "nereus_add_test(${name}) comes after the all_tests aggregate; register it above that block")
+    endif()
+
     # Sharding gate — when this test's hash bucket doesn't match the
     # active shard, register a stub OBJECT library (EXCLUDE_FROM_ALL,
     # backed by the shared stub source set up at the top of this file)
@@ -1710,6 +1719,18 @@ nereus_add_test(tst_master_output_widget)
 # the fixed 32 px height. Live UI verification is the canonical check for
 # the menu-re-parent + in-window render on macOS.
 nereus_add_test(tst_title_bar)
+# Radio speaker plan Task 5 (R-SPK-19, D7): the app's own icon set and its
+# renderer replace colour emoji on the lock, pin and feature buttons; the
+# resource SVGs are compared byte-for-byte with the design folder's.
+nereus_add_test(tst_app_icon EXTRA_LABELS gui)
+target_compile_definitions(tst_app_icon PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+# Radio speaker plan Task 6 (R-SPK-06, R-SPK-07, R-SPK-16, R-SPK-17, D1, D5,
+# D10): the header's RADIO group writes and follows RadioModel without echo,
+# stays independent of PC, and is disabled with its reason when there is no
+# radio speaker to set. NEREUS_HEADER_CAPTURE_DIR saves header captures.
+nereus_add_test(tst_radio_speaker_widget EXTRA_LABELS gui)
+target_compile_definitions(tst_radio_speaker_widget PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Task A7 (bottom-banner cleanup): TitleBar::utcText() ─────────────────────
 # Single-row UTC clock moved from the bottom banner into TitleBar. Verifies
@@ -2177,6 +2198,13 @@ target_compile_definitions(tst_band_outputs_display PRIVATE NEREUS_BUILD_TESTS)
 # changes: a pin edit at once, a VFO step only across a byte change
 # (netInterface.c:399-407 SetOCBits, setup.cs:12718). NereusSDR-original.
 nereus_add_test(tst_p2_band_outputs_push fakes/P2FakeRadio.cpp)
+
+# ── Radio speaker amplifier on Protocol 2 (R-SPK-08, R-SPK-09, R-SPK-15) ─────
+# High-priority byte 1400 bit 1 (Thetis network.c:1028, piHPSDR alex.h:129)
+# on the six amplifier models only, the rule table and one packet per change
+# against the fake radio. NereusSDR-original.
+nereus_add_test(tst_p2_speaker_amplifier fakes/P2FakeRadio.cpp)
+target_compile_definitions(tst_p2_speaker_amplifier PRIVATE NEREUS_BUILD_TESTS)
 
 # ── A band change must retune the DDC even while CTUN holds it ───────────────
 # CTUN pins the DDC via ReceiverManager::m_ddcFreqLocked so a VFO nudge inside
@@ -3423,6 +3451,24 @@ target_compile_definitions(tst_setup_dialog_qt_warnings PRIVATE NEREUS_BUILD_TES
 # TciServer pointer, CFC dialog request, per-SKU PA capability push).
 nereus_add_test(tst_setup_dialog_lazy_pages)
 target_compile_definitions(tst_setup_dialog_lazy_pages PRIVATE NEREUS_BUILD_TESTS)
+
+# R-SPK-21 (problem 3): every Setup page's content starts at the top. Walks
+# every registered leaf in a 1400 px tall dialog offscreen: the first visible
+# item sits within 24 px of the content top and the content layout ends with
+# the stretch (SetupPage::addContent inserts before it, as addSection does).
+nereus_add_test(tst_setup_pages_start_at_top)
+target_compile_definitions(tst_setup_pages_start_at_top PRIVATE NEREUS_BUILD_TESTS)
+
+# R-SPK-21 Outputs, R-SPK-22, R-SPK-24 (radio speaker plan Task 9): Setup >
+# Audio > Outputs. Outputs leads Audio (Mixed) and no page shows the old
+# backend strip; each control once; saved keys unchanged; the PC control is
+# the header's; Headphones greyed until Enabled; the radio speaker writes and
+# follows RadioModel, with the amplifier choice enabled, greyed with the
+# model's reason (HL2, ANAN-100D, ANAN-G2E) and its live status; remote text
+# and gating; the Sound system texts; Rescan devices. Captures with
+# NEREUS_AUDIO_SETUP_CAPTURE_DIR.
+nereus_add_test(tst_audio_setup_regroup EXTRA_LABELS gui)
+target_compile_definitions(tst_audio_setup_regroup PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3M-0 Task 14: MainWindow status-bar TX Inhibit + PA Status badge ───
 # Tests the label-state logic for the two safety indicator widgets added to
@@ -4925,6 +4971,15 @@ target_compile_definitions(tst_radio_model_mic_codec_wire PRIVATE NEREUS_BUILD_T
 # output tap at master volume and mute).
 nereus_add_test(tst_radio_codec_speaker_out)
 target_compile_definitions(tst_radio_codec_speaker_out PRIVATE NEREUS_BUILD_TESTS)
+
+# Radio speaker plan Task 3 (R-SPK-05 to R-SPK-07, R-SPK-11, R-SPK-12,
+# R-SPK-15): RADIO level, mute and the amplifier choice on RadioModel,
+# saved per radio, seeded on connect, forwarded to the engine and the
+# connection; availability and reasons; the CW or Tune flag ordering.
+nereus_add_test(tst_radio_speaker_model
+    fakes/P1FakeRadio.cpp
+    fakes/ConnectableRadioModel.cpp)
+target_compile_definitions(tst_radio_speaker_model PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3M-1b Task G.6: P1 mic_xlr storage-only ──────────────────────────
 # 8 tests verify that P1RadioConnection::setMicXlr() is STORAGE-ONLY.
@@ -6858,6 +6913,18 @@ if(Qt6WebSockets_FOUND)
     nereus_add_test(tst_station_tci_server fakes/LoopbackTransport.cpp)
     target_link_libraries(tst_station_tci_server PRIVATE Qt6::WebSockets Qt6::Network)
 endif()
+# CAT setup from a connected desktop (stationCatVersion 1): the Core's
+# `stationCat` object follows CatService, its four commands apply and refuse,
+# a binding resolves to the live slice, only a peer that declared stationCat
+# gets it, the `catLog` stream, and a window changing a channel on a Core.
+# Loopback only.
+nereus_add_test(tst_station_cat fakes/LoopbackTransport.cpp)
+target_link_libraries(tst_station_cat PRIVATE Qt6::Network)
+# CAT setup from a connected desktop, the client side: a remote window's CAT
+# pages, applet and log window read and change a real Core's CAT through
+# RadioModel::catControl(). Loopback only.
+nereus_add_test(tst_cat_remote_setup fakes/LoopbackTransport.cpp)
+target_link_libraries(tst_cat_remote_setup PRIVATE Qt6::Network)
 
 # R-R3-22 / R-R3-47: the Core's station listeners (the SmartSDR API listener
 # on 4992, the accessory discovery filter, the station TCI server) accept
@@ -8478,6 +8545,11 @@ nereus_add_test(tst_slice_chooser
 # with that reason, never writes the slice, and offers Take control and
 # Stop listening; a controlled flag offers Release. No radio, no RF.
 nereus_add_test(tst_vfo_widget_slice_access EXTRA_LABELS gui)
+# Radio speaker plan Task 7 (R-SPK-18, D6): the flag's audio tab shows
+# pc-on / pc-muted from the mute its audio controls show (the slice's, or
+# this device's listen mute on a listened flag). NEREUS_FLAG_CAPTURE_DIR
+# saves captures. No radio, no RF.
+nereus_add_test(tst_vfo_widget_audio_tab EXTRA_LABELS gui)
 
 # Slice control plan Task 15: the RX applet holds every shared slice control
 # on a listened slice, with the reason naming the controlling device, never
@@ -8577,6 +8649,14 @@ nereus_add_test(tst_rade_reason_link
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
 target_compile_definitions(tst_rade_reason_link PRIVATE NEREUS_BUILD_TESTS)
+# Radio speaker (R-SPK-13, R-SPK-14, R-SPK-16; V-SW-4): radio's RADIO
+# level, mute, amplifier choice and reports reach only a peer that declared
+# radioSpeaker 1, a remote window's change lands on the Core, and a window
+# of an older Core shows RADIO disabled and sends nothing.
+nereus_add_test(tst_radio_speaker_link
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_radio_speaker_link PRIVATE NEREUS_BUILD_TESTS)
 # Level Cal: the window's grid stops following the noise floor while a run
 # goes and is put back after (Thetis CalibrateLevel).
 nereus_add_test(tst_level_cal_grid_follow_guard)
@@ -9948,6 +10028,40 @@ target_compile_definitions(tst_core_connection_candidates PRIVATE
 nereus_add_test(tst_diversity_control fakes/LoopbackTransport.cpp EXTRA_LABELS session)
 nereus_add_test(tst_diversity_local_admission fakes/LoopbackTransport.cpp EXTRA_LABELS models session)
 
+# Thetis CAT catalogue, also available to the headless Core.
+nereus_add_test(tst_cat_catalog CORE_ONLY)
+
+nereus_add_test(tst_cat_parser CORE_ONLY)
+
+nereus_add_test(tst_cat_bindings CORE_ONLY)
+nereus_add_test(tst_cat_settings CORE_ONLY)
+nereus_add_test(tst_cat_headless CORE_ONLY)
+
+nereus_add_test(tst_cat_tx_ownership CORE_ONLY)
+
+nereus_add_test(tst_cat_rx_commands CORE_ONLY)
+
+nereus_add_test(tst_cat_dsp_commands CORE_ONLY)
+nereus_add_test(tst_cat_tx_commands CORE_ONLY)
+nereus_add_test(tst_cat_coverage CORE_ONLY)
+
+nereus_add_test(tst_cat_tcp CORE_ONLY)
+nereus_add_test(tst_cat_reporting CORE_ONLY)
+
+nereus_add_test(tst_cat_serial CORE_ONLY)
+nereus_add_test(tst_cat_serial_ptt CORE_ONLY EXTRA_LABELS core models)
+
+nereus_add_test(tst_cat_pty CORE_ONLY)
+
+# Native CAT setup and applet controls.
+nereus_add_test(tst_cat_setup)
+nereus_add_test(tst_cat_applet)
+
+# Production TCP -> CAT parser -> model/connection intent and ownership gates.
+nereus_add_test(tst_cat_integration CORE_ONLY)
+
+nereus_add_test(tst_cat_rigctld CORE_ONLY)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------
@@ -9967,6 +10081,7 @@ nereus_add_test(tst_container_content_host_native NATIVE_WINDOW)
 
 get_property(_all_tests GLOBAL PROPERTY NEREUS_ALL_TESTS)
 add_custom_target(all_tests DEPENDS ${_all_tests})
+set_property(GLOBAL PROPERTY NEREUS_ALL_TESTS_SEALED TRUE)
 
 # --------------------------------------------------------------------------
 # Per-label build aggregates: tests_core / tests_models / tests_gui / ...

@@ -26,6 +26,9 @@
 //   2026-10-04 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //                 Expose the stop settle state for truthful asynchronous
 //                 PureSignal action acknowledgments. NereusSDR-original.
+//   2026-10-04: CAT accepted-intent tags and guarded cycle lifetimes,
+//                NereusSDR-original, by J.J. Boyd (KG4VCF), AI-assisted
+//                via OpenAI Codex.
 //   2026-04-29 — Original implementation for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via
 //                 Anthropic Claude Code.
@@ -82,6 +85,9 @@
 //                 the FIXED restore lands before the connection's saves and
 //                 before the held transmit band is cleared (console.cs:27473,
 //                 27492 [v2.10.3.15]).
+//   2026-10-06 : CAT review X1, by J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code. m_startObserving, so a start adopts
+//                 a stop still settling and any other request lets it finish.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived activation
@@ -292,6 +298,7 @@ public:
 
     // ── Getters ────────────────────────────────────────────────────────────
     bool isActive() const noexcept { return m_active; }
+    bool endIfRequest(quint64 tag, quint64 expectedAcceptedGeneration);
     // R-R3-36: true from setActive(true) until the activation walk commits
     // m_active or is abandoned. isActive() is still false while the walk's
     // own setMox(true) runs the MOX pre-check, so the PC-microphone
@@ -428,6 +435,20 @@ private:
     // device started it); its key is that keyer's.
     KeyerIdentity m_keyer{KeyerIdentity::station(PttMode::None)};
     bool m_keyerFromCaller{false};
+    KeyerIdentity m_requestedKeyer{KeyerIdentity::station(PttMode::None)};
+    quint64 m_cycleSerial{0};
+    quint64 m_acceptedGeneration{0};
+    bool m_cycleGuarded{false};
+    // True while setActive(true) reports its own start, which adopts a stop
+    // still settling rather than leaving it to finish.
+    bool m_startObserving{false};
+    bool cycleCurrent(quint64 serial) const;
+    QMetaObject::Connection m_acceptedConnection;
+    quint64 m_moxReleaseSerial{0};
+    quint64 m_tuneReleaseSerial{0};
+    quint64 m_freq2Serial{0};
+    quint64 m_deactivationSerial{0};
+    quint64 m_rejectSerial{0};
 
     // Freq2Delay sub-state — true if pulsed at the time we deferred Mag2.
     bool m_pulsedAtMag2Defer{false};

@@ -1,4 +1,4 @@
-# Setup description versions 1–24
+# Setup description versions 1–25
 
 The Core sends the desktop's built Setup pages as JSON strings on the read-only
 `setup` mirror object (`SetupDescription`). It has one string property per
@@ -165,7 +165,7 @@ command or result binding. The actual peer must separately declare
 nothing. A V3 peer still receives the older controls with their existing
 semantics. The Core filters every control above the peer's negotiated
 description version, drops empty sections and pages, and caps an unknown
-future declaration at version 24. PA has a version-20 ceiling (version 14
+future declaration at version 25. PA has a version-20 ceiling (version 14
 for V14–V19, version 13 for V13, version 5 for V5–V12) and Hardware a version-23 ceiling
 (version 18 for V18–V22, version 17
 for V17, version 16 for V16, version 13
@@ -173,8 +173,9 @@ for V13–V15, version 6 for V6–V12; see Versions 16, 17, 18 and 23); Display 
 Appearance a version-12 ceiling with its prior version-4 projection for
 V4–V6 and version-7 projection for V7–V11. DSP is version 22 to a V22 or
 later peer (see Version 22), version 19 to a V19 to V21 peer (see Version 19)
-and version 15 to a V15 to V18 peer; Audio is version 24 to a V24 or later
-peer (see Version 24) and version 15 to a V15 to V23 peer; Transmit and
+and version 15 to a V15 to V18 peer; Audio is version 25 to a V25 or later
+peer (see Version 25), version 24 to a V24 peer (see Version 24) and version
+15 to a V15 to V23 peer; Transmit and
 Diagnostics are version 15 to a V15 or later peer (see Version 15); CAT & Network is version
 21 to a V21 or later peer (see Version 21) and version 15 to a V15 to V20
 peer; Transmit is version 13 to a V13 or V14 peer and version 3 to
@@ -1168,6 +1169,41 @@ Two changes follow the connected radio and reach every peer from version
 
 A V15 to V23 peer receives Audio at version 15. This version adds no mirror
 field, ordinal or verb; the Core caps a declaration at 24.
+
+Version 25 (R-SPK-23) follows the desktop's Audio regroup. The page id
+`audio.txInput` is kept, titled `Microphone`, and its first section (Mic
+Gain alone) is titled `Mic gain`, as on the desktop. A new page,
+`audio.outputs`, titled `Outputs`, `where:"station"`, between Microphone
+and TX Profile, holds one section, `Radio speaker`: the radio speaker at
+the Core, the rows of the desktop Outputs page with the same
+`nereusSetupId`s. Its three rows are closed (the Core accepts exactly these
+rows, `validateAudioV25Control`), each with `applies:"live"`,
+`requiresDescriptionVersion:25` and the gate
+`{"capability":"radioSpeakerVersion","min":1}`, so a peer that did not
+declare `radioSpeaker` 1 shows them unavailable:
+
+- `audio.outputs.radioSpeakerVolume`, "Volume:", a `slider` from 0 to 100
+  in steps of 1, bound to `{"property":{"object":"radio","name":"radioSpeakerVolume"}}`.
+- `audio.outputs.radioSpeakerMuted`, "Mute radio speaker", a `toggle` bound
+  to `radio`'s `radioSpeakerMuted`.
+- `audio.outputs.speakerAmplifierMode`, "Speaker amplifier:", a `choice`
+  of Normal (0), Off while transmitting (1) and Always off (2), bound to
+  `radio`'s `speakerAmplifierMode`, with
+  `"enabledWhen":{"property":{"object":"radio","name":"speakerAmplifierAvailable"},"oneOf":[true]}`:
+  the row is enabled while the Core reports the amplifier available.
+
+The two level rows carry the tooltip "Radio speaker at the Core (shared
+with every window and the phone)", a remote window's; the choice has none.
+In Audio the Core accepts a `radio` binding only to these three
+properties, each writable on `RadioModel`, Bidirectional in `MirrorPolicy`
+and of its row's kind; the two read-only reports
+(`radioSpeakerAvailability`, `speakerAmplifierAvailable`) and every other
+`radio` property are refused. Audio's category coverage names the new pages
+(`coverageV25`, sent as `coverage` from 25). A V24 peer receives Audio at
+version 24 exactly as before: no Outputs page, TX Input and PC Mic titles,
+the earlier coverage. This version adds no mirror field, ordinal or verb
+(the properties and the capability are the station link's radio speaker
+lane); the Core caps a declaration at 25.
 
 V4 adds `default` metadata to these exact Display and Appearance controls.
 Display toggles use JSON booleans; its numeric controls use JSON numbers,

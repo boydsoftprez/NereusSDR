@@ -463,6 +463,37 @@ private slots:
         QVERIFY(accepted(p.send(p.appA, "tx.setMicSource", {utf8("source", QStringLiteral("RadioMic"))})));
     }
 
+    void twoToneStartDuringItsStopSettleKeepsTheTestRunning()
+    {
+        // A device's fast off/on: the start lands inside the stop's MOX
+        // settle, while the test still reads as running. It must keep the
+        // test running, not be answered "already on" and torn down at the
+        // settle.
+        Pair p(true);
+        TxChannel channel(1);
+        auto* tt = p.core.model->twoToneController();
+        tt->setTxChannel(&channel);
+        tt->setSliceModel(p.core.model->sliceById(0));
+        tt->setSettleDelaysMs(200, 0);
+        const auto cleanup = qScopeGuard([&]() {
+            tt->stopNow();
+            tt->setTxChannel(nullptr);
+            p.mox->setMox(false);
+        });
+        QVERIFY(accepted(p.send(p.appA, "tx.twoTone", {boolean("on", true)})));
+        QTRY_VERIFY(p.mox->isMox());
+        QVERIFY(accepted(p.send(p.appA, "tx.twoTone", {boolean("on", false)})));
+        QVERIFY(tt->isDeactivationInFlight());
+        const auto again = p.send(p.appA, "tx.twoTone", {boolean("on", true)});
+        QVERIFY2(accepted(again), qPrintable(describe(again)));
+        QVERIFY(!tt->isDeactivationInFlight());
+        QTRY_VERIFY(p.mox->isMox());
+        QTest::qWait(400); // past where the superseded stop would have ended
+        QVERIFY(tt->isActive());
+        QVERIFY(p.mox->isMox());
+        QCOMPARE(p.mox->currentKeyer().deviceId, p.a.key.fingerprint());
+    }
+
     void nestedExplicitRefusalPreservesOuterRadioAdmissionAndNextLocalIsolation()
     {
         Pair p(true);

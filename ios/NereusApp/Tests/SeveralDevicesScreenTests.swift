@@ -39,11 +39,12 @@ struct SeveralDevicesScreenTests {
             return
         }
         #expect(ours.features == ["deviceAuth": 1, "sessionHolder": 1, "remoteTx": 1,
-                                  "setupDescription": 24, "settingsHygiene": 2, "radioAntennaRows": 1, "vax": 1, "txEqCurve": 2,
+                                  "setupDescription": 25, "settingsHygiene": 2, "radioAntennaRows": 1, "vax": 1, "txEqCurve": 2,
                                   "diversityPattern": 1, "diversityControl": 1, "logCategoryList": 1, "radioModels": 1, "band2m": 1, "coreAddresses": 1,
                                   "radeStatus": 1, "stationTciSettings": 1, "txInhibitReason": 1, "alexLpf": 1, "mediaDirect": 1, "sliceAccess": 3, "cfcProfile": 1, "paProfiles": 1,
                                   "levelCalibration": 1, "adcAttenuators": 1, "rx2Attenuator": 1, "radioMic": 1,
-                                  "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1])
+                                  "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1, "stationCat": 1,
+                                  "radioSpeaker": 1])
         // The capabilities that declare it were delivered last; wait for the app to read them.
         #expect(await settle(seconds: 30) { SeveralDevices.available(in: model.mirror) })
 
@@ -661,7 +662,9 @@ struct SeveralDevicesScreenTests {
         #expect(await settle(seconds: 30) { slices.entries.first { $0.id == 1 }?.control == .here })
         let b = try #require(slices.entries.first { $0.id == 1 })
         #expect(b.slice.frequencyHz == 7_249_000 && b.mode == 0)
-        #expect(slices.takenHere == [1])
+        // The accepted take is recorded by the take's own task, which can
+        // run after the mirror shows control here.
+        #expect(await settle(seconds: 30) { slices.takenHere == [1] })
         #expect(slices.refusal == nil)
         #expect(slices.entries.first { $0.id == 0 }?.slice.txSlice == true)
         #expect(invokes(station, BandSlicesModel.setTxSliceVerb).isEmpty)
@@ -865,7 +868,9 @@ struct SeveralDevicesScreenTests {
                          values: [.init(name: "controlRevision", value: .i64(14))])
         await station.deliver(Self.controller(1, Self.phoneId, revision: 14))
         #expect(await settle(seconds: 30) { slices.entries.first { $0.id == 1 }?.control == .here })
-        #expect(slices.refusal == nil && slices.takenHere == [1])
+        // The accepted take is recorded by the take's own task, which can
+        // run after the mirror shows control here.
+        #expect(await settle(seconds: 30) { slices.refusal == nil && slices.takenHere == [1] })
         await model.disconnect()
     }
 

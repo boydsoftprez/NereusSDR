@@ -3,6 +3,9 @@
 // 2026-10-08 - Rotor control plan Task 4c: a Local window's model owns the
 //              rotor (enableStationRotor). J.J. Boyd (KG4VCF), AI-assisted via
 //              Anthropic Claude Code.
+// 2026-10-06 - Start CAT when the window owns the station even if the Remote
+//              Access listener failed. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+#include "core/cat/CatService.h"
 #include "gui/GuiSessionCoordinator.h"
 
 #include "core/AppSettings.h"
@@ -194,6 +197,13 @@ bool GuiSessionCoordinator::replace(const StationStartupSelection& selection,
 
 void GuiSessionCoordinator::retireWindow()
 {
+    const QPointer<GuiSessionCoordinator> self(this);
+    const quint64 generation = m_generation;
+    const QPointer<MainWindow> window(m_window.get());
+    if (window && window->radioModel()->catService()) {
+        window->radioModel()->catService()->stopAll();
+        if (!self || generation != m_generation || m_window.get() != window) { return; }
+    }
     m_hostedStartupPending = false;
     m_hostedRadioRecovery = false;
     m_hostedRadioAttempted = false;
@@ -300,11 +310,16 @@ void GuiSessionCoordinator::installDesktopStation()
     refreshStationRadios();
     const QPointer<GuiSessionCoordinator> self(this);
     const QPointer<RadioModel> localModel(model);
-    m_desktopRuntime->restore();
+    const bool restored = m_desktopRuntime->restore();
     if (!self || !localModel || generation != m_generation || !m_window
         || m_window->radioModel() != localModel) { return; }
     // Initial host ownership adoption is part of the startup seed. Every
     // subsequent edit must be accounted for before handing this model away.
+    // CAT belongs to the local station, not to the Remote Access listener: a
+    // busy Core port or Core configuration error must not leave CAT stopped.
+    if (restored || m_desktopRuntime->stationOwnershipActive()) { model->catService()->startConfigured(); }
+    if (!self || !localModel || generation != m_generation || !m_window
+        || m_window->radioModel() != localModel) { return; }
     model->beginStationHandoverEditTracking();
 }
 

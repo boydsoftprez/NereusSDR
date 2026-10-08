@@ -286,9 +286,10 @@ private slots:
     // ── 9. AudioVaxPage constructs (no engine / null RadioModel) ──────────
     void audioVaxPageConstructs()
     {
+        // R-SPK-21: a section of Digital modes, which owns the title.
         AudioVaxPage page(nullptr);
-        QVERIFY(!page.pageTitle().isEmpty());
-        QCOMPARE(page.pageTitle(), QStringLiteral("VAX"));
+        QCOMPARE(page.objectName(), QStringLiteral("audioVaxSection"));
+        QCOMPARE(page.findChildren<VaxChannelCard*>().size(), 4);
     }
 
     // ── 10. AudioVaxPage has exactly four VaxChannelCard children (1–4) ───

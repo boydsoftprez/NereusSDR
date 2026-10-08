@@ -55,6 +55,10 @@
 //   2026-09-25: iPhone app plan Task 72 (R-IOS-02): echo per writer. J.J.
 //               Boyd (KG4VCF), with AI-assisted implementation via
 //               Anthropic Claude Code.
+//   2026-10-06: Radio speaker: a peer's write of the RADIO level, mute or
+//               amplifier choice lands through the setters; the reports
+//               are refused (R-SPK-13). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -456,6 +460,38 @@ private slots:
             mirror.applyInbound("tuner:0", "isOperate", QVariant(true));
 
         QVERIFY2(result.accepted, qPrintable(result.reason));
+    }
+
+    // Radio speaker (R-SPK-13): a peer's write of the RADIO level, mute or
+    // amplifier choice lands through the Core's own setter; the two reports
+    // are the Core's and are refused.
+    void radioSpeakerWritesLandThroughTheSettersAndReportsAreRefused()
+    {
+        RadioModel radio;
+        StateMirror mirror;
+        QVERIFY(mirror.watch("radio", &radio));
+
+        QSignalSpy volume(&radio, &RadioModel::radioSpeakerVolumeChanged);
+        MirrorApplyResult result =
+            mirror.applyInbound("radio", "radioSpeakerVolume", QVariant(qlonglong(45)));
+        QVERIFY2(result.accepted, qPrintable(result.reason));
+        QCOMPARE(radio.radioSpeakerVolume(), 45);
+        QCOMPARE(volume.count(), 1);
+
+        result = mirror.applyInbound("radio", "radioSpeakerMuted", QVariant(true));
+        QVERIFY2(result.accepted, qPrintable(result.reason));
+        QVERIFY(radio.radioSpeakerMuted());
+
+        result = mirror.applyInbound("radio", "speakerAmplifierMode", QVariant(qlonglong(2)));
+        QVERIFY2(result.accepted, qPrintable(result.reason));
+        QCOMPARE(radio.speakerAmplifierMode(), 2);
+
+        result = mirror.applyInbound("radio", "radioSpeakerAvailability", QVariant(qlonglong(1)));
+        QVERIFY(!result.accepted);
+        QCOMPARE(radio.radioSpeakerAvailability(), int(RadioModel::kRadioSpeakerNoRadio));
+        result = mirror.applyInbound("radio", "speakerAmplifierAvailable", QVariant(true));
+        QVERIFY(!result.accepted);
+        QVERIFY(!radio.speakerAmplifierAvailable());
     }
 
     void radioModelIdentityPropertiesAreRejectedByTheHook()

@@ -11,6 +11,9 @@
 // Modification history (NereusSDR):
 //   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
 //                 AI-assisted via OpenAI Codex.
+//   2026-10-04: CAT accepted-intent tags and guarded cycle lifetimes,
+//                NereusSDR-original, by J.J. Boyd (KG4VCF), AI-assisted
+//                via OpenAI Codex.
 //   2026-10-03 - Diversity atomic reentry and slice-close/hydration lifetime
 //                 fences, J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-30 - Fix round 1 (minor 4): transmitLinkDownReason picks the
@@ -553,6 +556,34 @@
 //   2026-10-01 - Diversity lane: diversityTargetSlice(), the slice diversity
 //                runs for, for the Diversity dialog. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-06 - CAT review X1: m_tuneStartObserving, so a TUNE start adopts
+//                a TUNE turning off and any other request lets the off finish.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-06 - CAT review X5: m_tuneStartingSerial and
+//                finishCutShortTuneStart, so a CAT TUNE start cut short by
+//                another request is finished as an off. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - CAT setup from a connected desktop: stationCatModel() and
+//                stationCatController(), the Core's `stationCat` object and
+//                its publisher. J.J. Boyd (KG4VCF). AI tooling: Claude Code.
+//   2026-10-07 - catControl(): what the CAT pages, applet, log window and
+//                status bar use, local or the Core's; the CAT tester's
+//                reply by command (reportStationCatTestReply). J.J. Boyd
+//                (KG4VCF). AI tooling: Claude Code.
+//   2026-10-06 - Radio speaker: radioSpeakerVolume, radioSpeakerMuted,
+//                speakerAmplifierMode (saved per radio), the
+//                radioSpeakerAvailability and speakerAmplifierAvailable
+//                reports with their reasons, speakerAmplifierStatus, and
+//                the CW or Tune flag sent to the connection (R-SPK-05 to
+//                R-SPK-07, R-SPK-11, R-SPK-12, R-SPK-15). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-06 - Radio speaker in a remote window: the setters write
+//                through the mirror only while the Core offers the radio
+//                speaker (radioSpeakerVersion 1), the reports are the
+//                Core's, the reasons name an older Core, and
+//                radioSpeakerToolTip (R-SPK-06, R-SPK-13, R-SPK-14,
+//                R-SPK-16). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 //   2026-10-08 - Rotor control plan Task 3c: the Core's rotor
 //                (StationRotorController) made beside the other station
 //                accessories, placing callsigns with the spots' cty.dat.
@@ -633,6 +664,7 @@
 
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
+#include "core/MoxController.h"
 #include "core/NereusCoreExport.h"
 #include "core/ConnectionState.h"
 #include "core/audio/CaptureSupervisor.h"
@@ -750,6 +782,7 @@ class SliceMeterPump;
 // translation unit that touches RadioModel.h.
 class WidebandFftEngine;
 // 3M-1a G.1: forward declarations for TX-side components.
+class CatService;
 class MoxController;
 struct KeyerIdentity;
 class TxChannel;
@@ -843,6 +876,9 @@ class StationRotorController;
 namespace RotorLink { class RotorModel; }
 class StationTciController;
 class StationTciModel;
+class StationCatController;
+class StationCatModel;
+class CatControl;
 class SliceOwnership;
 class RfKitBandFollow;
 class AmplifierModel;
@@ -973,6 +1009,17 @@ class NEREUS_CORE_EXPORT RadioModel : public QObject, public RotorCommandSink {
     Q_PROPERTY(QString rxFilter0LowPassReason READ rxFilter0LowPassReason NOTIFY lowPassHoldChanged)
     Q_PROPERTY(int rxFilter0LowPassSlice READ rxFilter0LowPassSlice NOTIFY lowPassHoldChanged)
     Q_PROPERTY(QString diversityState READ diversityState NOTIFY diversityStateChanged)
+    // Radio speaker (R-SPK-11): the level and mute of the receive audio fed
+    // to the radio's own speaker out, and the speaker amplifier choice
+    // (0 Normal, 1 Off while transmitting, 2 Always off). Saved per radio
+    // (R-SPK-12). Declared after every existing property so no ordinal
+    // moves (R-SPK-14).
+    Q_PROPERTY(int radioSpeakerVolume READ radioSpeakerVolume WRITE setRadioSpeakerVolume NOTIFY radioSpeakerVolumeChanged)
+    Q_PROPERTY(bool radioSpeakerMuted READ radioSpeakerMuted WRITE setRadioSpeakerMuted NOTIFY radioSpeakerMutedChanged)
+    Q_PROPERTY(int speakerAmplifierMode READ speakerAmplifierMode WRITE setSpeakerAmplifierMode NOTIFY speakerAmplifierModeChanged)
+    // 0 no radio, 1 available, 2 available but needs an add-on board (HL2).
+    Q_PROPERTY(int radioSpeakerAvailability READ radioSpeakerAvailability NOTIFY radioSpeakerAvailabilityChanged)
+    Q_PROPERTY(bool speakerAmplifierAvailable READ speakerAmplifierAvailable NOTIFY speakerAmplifierAvailableChanged)
 
 
 public:
@@ -1231,6 +1278,10 @@ public:
     /// stationCommandFinished for a sender that waits on its own command.
     /// Ends any page's claim on the command (noteAccessoryRequestShownOnPage).
     void reportStationCommandFinished(quint32 commandId, bool accepted, const QString& reason);
+    /// Remote role: the Core's reply to CAT test command `commandId`
+    /// (testStationCatCommand), handed to catControl() before the
+    /// command's result is reported.
+    void reportStationCatTestReply(quint32 commandId, const QString& reply);
     /// Remote role only: a paired Core settings export completed or failed.
     /// coreXml is populated only after length, digest and XML validation.
     void reportStationSettingsBackupExportFinished(quint32 operationId, bool accepted,
@@ -2044,6 +2095,8 @@ public:
 
     // Sub-models
     MeterModel&       meterModel()       { return m_meterModel; }
+    // Inert model-owned CAT service; policy-ready lifecycle callers start it.
+    CatService* catService() const { return m_catService; }
     TransmitModel&    transmitModel()    { return m_transmitModel; }
 
     // Slice management (client-side — radio has no slice concept)
@@ -3078,6 +3131,53 @@ public:
     // holds the Core's value as it last heard it.
     bool isTransmitting() const;
 
+    // ── Radio speaker (R-SPK-05 to R-SPK-07, R-SPK-11, R-SPK-12) ────────
+    // RADIO level 0 to 100, RADIO mute and the amplifier choice (0 Normal,
+    // 1 Off while transmitting, 2 Always off). Setters clamp, emit only on
+    // a change, save under hardware/<mac>/RadioSpeaker/ for the radio this
+    // model is or was last connected to (held in memory while no radio is
+    // known), and forward: level and mute to the AudioEngine, mute and the
+    // choice to the connection. Owner thread.
+    static constexpr int kRadioSpeakerNoRadio = 0;
+    static constexpr int kRadioSpeakerAvailable = 1;
+    static constexpr int kRadioSpeakerNeedsAddOn = 2;
+    int radioSpeakerVolume() const { return m_radioSpeakerVolume; }
+    void setRadioSpeakerVolume(int volume);
+    bool radioSpeakerMuted() const { return m_radioSpeakerMuted; }
+    void setRadioSpeakerMuted(bool muted);
+    int speakerAmplifierMode() const { return m_speakerAmplifierMode; }
+    void setSpeakerAmplifierMode(int mode);
+    // 0 no radio, 1 available, 2 available but the radio needs its audio
+    // add-on board (Hermes Lite 2, D11).
+    int radioSpeakerAvailability() const { return m_radioSpeakerAvailability; }
+    // The amplifier switch exists: a HardwareProfile::hasAudioAmplifier
+    // board on Protocol 2 (R-SPK-08).
+    bool speakerAmplifierAvailable() const { return m_speakerAmplifierAvailable; }
+    // "No radio connected" with no radio; empty when available.
+    QString radioSpeakerUnavailableReason() const;
+    // "No radio connected", "Not tested on the ANAN-G2E." (D17) or
+    // "This radio has no switchable speaker amplifier."; empty when
+    // available.
+    QString speakerAmplifierUnavailableReason() const;
+    // Why the amplifier is off right now (R-SPK-10); empty while it is on
+    // and when it is unavailable.
+    QString speakerAmplifierStatus() const { return m_speakerAmplifierStatus; }
+    // R-SPK-16: the RADIO tooltip. In a remote window "Radio speaker at
+    // the Core (shared with every window and the phone)", locally "Radio
+    // speaker"; on a Hermes Lite 2 the add-on note follows on its own line
+    // (R-SPK-07); with no radio speaker to set, the reason instead.
+    QString radioSpeakerToolTip() const;
+    // R-SPK-07 / D11: the Hermes Lite 2's headphone output needs its audio
+    // add-on board, which the radio cannot report.
+    static QString radioSpeakerAddOnNote();
+    // Remote role (radioSpeakerVersion 1): the Core's two reports as it
+    // sent them (radioSpeakerAvailability 0 to 2, speakerAmplifierAvailable),
+    // applied by StationClient. False for any other name or a bad value, and
+    // on a Role::Local model. clearStationRadioSpeaker drops them when the
+    // link ends.
+    bool applyStationRadioSpeakerValue(const QByteArray& name, const QVariant& value);
+    void clearStationRadioSpeaker();
+
     // RADE end-of-over callsigns: the radio is sending FreeDV's end-of-over
     // frame after an operator's release (MoxController's end-of-over tail).
     // The Core's value; TransmitState sends it as txEnding.
@@ -3534,6 +3634,16 @@ public:
     StationTciModel* stationTciModel() const { return m_stationTciModel; }
     // R-R3-48: the Core's station TCI server (nullptr outside the Core).
     StationTciController* stationTciController() const { return m_stationTci.get(); }
+    // CAT setup from a connected desktop (stationCatVersion 1): the Core's
+    // CAT as the `stationCat` object. Non-null from construction; filled by
+    // the Core's publisher, and from the Core's values in a remote window.
+    StationCatModel* stationCatModel() const { return m_stationCatModel; }
+    // The Core's CAT publisher and commands (nullptr outside the Local role).
+    StationCatController* stationCatController() const { return m_stationCat.get(); }
+    // What the CAT pages, the CAT applet, the CAT log window and the status
+    // bar read and change: this window's own CatService (Local) or the
+    // Core's CAT (Remote). Non-null from construction.
+    CatControl* catControl() const { return m_catControl; }
     // R-R3-47: the Core's RF-Kit controller (nullptr outside the Core).
     StationRfKitController* stationRfKitController() const { return m_stationRfKit; }
     // Rotor control plan Task 3c: the Core's rotor (nullptr outside the Core).
@@ -4551,6 +4661,7 @@ public:
             board, defaultModelForBoard(board));
         m_calController.setHardwareModel(m_hardwareProfile.model);
         applyRxOnly();   // Task 16: the kit runs receive only
+        refreshRadioSpeakerReports();
     }
 
     // Phase 3P-I-a T14 — test-only hooks. Allow tests to inject a mock
@@ -4649,6 +4760,9 @@ public:
     void wireMicCodecForTest() { connectMicCodecSignals(); }
     void wireRadioSpeakerOutputForTest() { connectRadioSpeakerOutput(); }
     void unwireRadioSpeakerOutputForTest() { disconnectRadioSpeakerOutput(); }
+    // Radio speaker: the per-radio load connectToRadio runs for
+    // m_lastRadioInfo (pair with setLastRadioInfoForTest).
+    void loadRadioSpeakerForConnectForTest() { loadRadioSpeakerForConnect(); }
     // Task 13: wire the injected connection's user digital inputs to the
     // TX inhibit monitor, and undo it, without the full connect pipeline.
     void wireTxInhibitInputForTest() { connectTxInhibitInput(); }
@@ -5206,6 +5320,7 @@ public slots:
     // on unheld transmit takes it) and the tune's MOX key is that device's.
     // setTune(false) ends it as any TUNE ends.
     void setTune(bool on, const KeyerIdentity& keyer);
+    bool endTuneIfRequest(quint64 tag, quint64 expectedAcceptedGeneration);
 
     // TGXL autotune orchestration (NereusSDR-native, no Thetis source).
     //
@@ -5677,6 +5792,13 @@ public slots:
 
 signals:
     void diversityStateChanged(const QString& state);
+    // Radio speaker (R-SPK-11).
+    void radioSpeakerVolumeChanged(int volume);
+    void radioSpeakerMutedChanged(bool muted);
+    void speakerAmplifierModeChanged(int mode);
+    void radioSpeakerAvailabilityChanged(int availability);
+    void speakerAmplifierAvailableChanged(bool available);
+    void speakerAmplifierStatusChanged();
     void infoChanged();
     // Task 33: stopAllTx stopped a transmission. A non-empty message is for
     // the operator (MainWindow shows it for 10 s, as Thetis's
@@ -6531,6 +6653,21 @@ private:
     // before the connection goes.
     void connectRadioSpeakerOutput();
     void disconnectRadioSpeakerOutput();
+    // Radio speaker (R-SPK-05, R-SPK-12): load m_lastRadioInfo's saved
+    // values (or seed them) and push them to the engine and connection.
+    void loadRadioSpeakerForConnect();
+    void saveRadioSpeaker();
+    // Constructor wiring for the CW or Tune flag and the status line.
+    void wireRadioSpeakerState();
+    // Recompute availability, amplifier availability and the status line,
+    // emitting what changed.
+    void refreshRadioSpeakerReports();
+    // R-SPK-15: the CW or Tune flag, sent to the connection on a change.
+    bool computeSidetoneExpected() const;
+    void refreshSidetoneExpected();
+    // Remote role: the link says the Core offers the radio speaker
+    // (IStationLink::radioSpeakerAvailable).
+    bool stationOffersRadioSpeaker() const;
     // Task 13: the radio's user digital inputs reach TxInhibitMonitor
     // (PollTXInhibit, console.cs:25849-25887 [v2.10.3.15]). Called from
     // wireConnectionSignals.
@@ -7904,6 +8041,19 @@ private:
     //   (round-robin priority bank0 > bank10), this produced an RF spike past
     //   the radio's spec at high tune-slider settings.  Issue #177.
     bool m_pendingTuneOff{false};
+    // NereusSDR-original tune cycle lifetime; not a permission identity.
+    KeyerIdentity m_tuneCycleKeyer{KeyerIdentity::station(PttMode::Manual)};
+    quint64 m_tuneCycleSerial{0};
+    quint64 m_tuneAcceptedGeneration{0};
+    bool m_tuneCycleGuarded{false};
+    // True while setTune(true) reports its own start, which adopts a TUNE
+    // still turning off rather than leaving its off to finish.
+    bool m_tuneStartObserving{false};
+    // CAT review X5: the serial of a setTune(true) still setting up (0 when
+    // none), so a newer request that cuts it short gets its off finished.
+    quint64 m_tuneStartingSerial{0};
+    void finishCutShortTuneStart(quint64 tag);
+    bool tuneCycleCurrent(quint64 serial) const;
 
     // m_tuneOffSettleMs: explicit 100 ms wait between MoxController::rxReady
     //   and completeTuneOff().  Mirrors `await Task.Delay(100)` at Thetis
@@ -7947,6 +8097,9 @@ private:
     // accessor and docs/architecture/2026-05-26-phase3f-sub-epic-c-tx-arbiter-lifecycle-plan.md
     // Task 6.
     TxSliceArbiter* m_txSliceArbiter{nullptr};
+
+    // Qt child, stopped before transmit/model retirement.
+    CatService* m_catService{nullptr};
     UnkeyGate* m_unkeyGate{nullptr};   // Task 34, Qt-parented to this
 
     // Phase 3F Sub-Epic D Task 13: receiver -> pan FFT fan-out router.
@@ -8067,6 +8220,27 @@ private:
     // Radio codec (2026-09-30): the audio engine's radio output tap,
     // forwarding to the connection (connectRadioSpeakerOutput).
     std::unique_ptr<MasterMixAudioTap>     m_radioSpeakerTap;
+    // Radio speaker (R-SPK-11). Owner thread. m_radioSpeakerHeld: a value
+    // was set while no radio was known; the next radio with nothing saved
+    // takes it.
+    int  m_radioSpeakerVolume{50};
+    bool m_radioSpeakerMuted{false};
+    int  m_speakerAmplifierMode{0};
+    bool m_radioSpeakerHeld{false};
+    // True while loadRadioSpeakerForConnect applies loaded values, so the
+    // setters it calls save nothing (nothing is written until a value
+    // changes, R-SPK-05).
+    bool m_radioSpeakerLoading{false};
+    int  m_radioSpeakerAvailability{0};
+    bool m_speakerAmplifierAvailable{false};
+    QString m_speakerAmplifierStatus;
+    // R-SPK-15: the CW or Tune flag as last sent, and the hold that keeps
+    // it up after Tune ends until the radio has unkeyed.
+    bool m_sidetoneExpected{false};
+    bool m_tuneSidetoneHold{false};
+    // Remote role: the Core's reports as it last sent them.
+    int  m_stationRadioSpeakerAvailability{0};
+    bool m_stationSpeakerAmplifierAvailable{false};
     std::unique_ptr<RadioMicSource>        m_radioMicSource;
     // VAX TX consumer (added 2026-05-06, eager-borg-d64bed).  Pulls
     // audio from /nereussdr-vax-tx shared memory via AudioEngine and
@@ -8323,6 +8497,11 @@ private:
     // model's slices and receivers), not through Qt parenting.
     std::unique_ptr<StationTciController> m_stationTci;
     std::unique_ptr<RfKitBandFollow>      m_rfKitBandFollow;
+    // CAT setup from a connected desktop: the `stationCat` object and, on
+    // the Core, its publisher (destroyed first in ~RadioModel).
+    StationCatModel*                      m_stationCatModel{nullptr};
+    std::unique_ptr<StationCatController> m_stationCat;
+    CatControl*                           m_catControl{nullptr};
     // Follow-up 3: accessory requests whose refusal their page shows.
     QHash<quint32, QPointer<QObject>> m_pageShownAccessoryRequests;
 

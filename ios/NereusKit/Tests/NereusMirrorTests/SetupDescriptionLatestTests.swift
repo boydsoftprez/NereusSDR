@@ -1,4 +1,4 @@
-// NereusSDR for iOS: Setup description versions 18 to 24: the HL2 clock rows, TCI Forget, the on-air rows and TX Input's radio mic rows
+// NereusSDR for iOS: Setup description versions 18 to 25: the HL2 clock rows, TCI Forget, the on-air rows, TX Input's radio mic rows and Outputs' radio speaker
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
 import Combine
@@ -14,8 +14,10 @@ import Testing
 /// CAT & Network 21 greys TCI's Forget row while Duplicate is off, and DSP
 /// 22 says why the RX buffer rows are locked on the air. Hardware 23 adds
 /// Calibration's Rx1 6m LNA row; Audio 24 moves Line In Gain to 1.5 dB
-/// steps and adds the Saturn G2's Mic Tip-Ring row. HL2 Swap audio channels
-/// opens in place at 16 once the Core sends it without its closed reason.
+/// steps and adds the Saturn G2's Mic Tip-Ring row; Audio 25 adds Outputs'
+/// radio speaker rows and retitles TX Input as Microphone. HL2 Swap audio
+/// channels opens in place at 16 once the Core sends it without its closed
+/// reason.
 @MainActor
 @Suite struct SetupDescriptionLatestTests {
     // The Core's rows as its resources hold them (resources/setup).
@@ -47,9 +49,10 @@ import Testing
 
     // MARK: What the phone asks for
 
-    @Test func thePhoneAsksForTwentyFourAndReadsEachCategoryAtTheCoresVersion() {
-        #expect(SetupDescription.highestVersion == 24)
-        #expect(LinkFeatures.app["setupDescription"] == 24)
+    @Test func thePhoneAsksForTwentyFiveAndReadsEachCategoryAtTheCoresVersion() {
+        #expect(SetupDescription.highestVersion == 25)
+        #expect(LinkFeatures.app["setupDescription"] == 25)
+        #expect(LinkFeatures.app["radioSpeaker"] == 1)
         #expect(LinkFeatures.app["radioMic"] == 1)
         #expect(LinkFeatures.app["cfcProfile"] == 1)
         #expect(LinkFeatures.app["levelCalibration"] == 1)
@@ -58,16 +61,16 @@ import Testing
         // The Core's SetupDescription::fitCategoryForVersion, for the caps
         // older and current Cores send.
         let expected: [String: [Int64: Int]] = [
-            "hardware": [15: 13, 16: 16, 17: 17, 18: 18, 19: 18, 21: 18, 22: 18, 23: 23, 24: 23],
-            "pa": [15: 14, 16: 14, 17: 14, 18: 14, 19: 14, 20: 20, 21: 20, 22: 20, 24: 20],
-            "transmit": [15: 15, 16: 15, 17: 15, 18: 15, 19: 15, 21: 15, 22: 15, 24: 15],
-            "dsp": [15: 15, 16: 15, 17: 15, 18: 15, 19: 19, 21: 19, 22: 22, 24: 22],
-            "catNetwork": [15: 15, 16: 15, 17: 15, 18: 15, 19: 15, 20: 15, 21: 21, 22: 21, 24: 21],
-            "audio": [14: 3, 15: 15, 16: 15, 17: 15, 18: 15, 19: 15, 21: 15, 22: 15, 23: 15, 24: 24],
-            "diagnostics": [15: 15, 16: 15, 17: 15, 18: 15, 19: 15, 21: 15, 22: 15, 24: 15],
-            "appearance": [15: 12, 22: 12, 24: 12],
-            "display": [15: 12, 22: 12, 24: 12],
-            "general": [15: 3, 22: 3, 24: 3],
+            "hardware": [15: 13, 16: 16, 17: 17, 18: 18, 19: 18, 21: 18, 22: 18, 23: 23, 24: 23, 25: 23],
+            "pa": [15: 14, 16: 14, 17: 14, 18: 14, 19: 14, 20: 20, 21: 20, 22: 20, 24: 20, 25: 20],
+            "transmit": [15: 15, 16: 15, 17: 15, 18: 15, 19: 15, 21: 15, 22: 15, 24: 15, 25: 15],
+            "dsp": [15: 15, 16: 15, 17: 15, 18: 15, 19: 19, 21: 19, 22: 22, 24: 22, 25: 22],
+            "catNetwork": [15: 15, 16: 15, 17: 15, 18: 15, 19: 15, 20: 15, 21: 21, 22: 21, 24: 21, 25: 21],
+            "audio": [14: 3, 15: 15, 16: 15, 17: 15, 18: 15, 19: 15, 21: 15, 22: 15, 23: 15, 24: 24, 25: 25],
+            "diagnostics": [15: 15, 16: 15, 17: 15, 18: 15, 19: 15, 21: 15, 22: 15, 24: 15, 25: 15],
+            "appearance": [15: 12, 22: 12, 24: 12, 25: 12],
+            "display": [15: 12, 22: 12, 24: 12, 25: 12],
+            "general": [15: 3, 22: 3, 24: 3, 25: 3],
         ]
         for (category, caps) in expected {
             for (cap, version) in caps {
@@ -75,8 +78,8 @@ import Testing
                         "\(category) at \(cap)")
             }
         }
-        #expect(SetupDescriptionFeed.projectedVersion(maximum: 25, category: "pa") == nil)
-        #expect(SetupDescriptionFeed.projectedVersion(maximum: 25, category: "audio") == nil)
+        #expect(SetupDescriptionFeed.projectedVersion(maximum: 26, category: "pa") == nil)
+        #expect(SetupDescriptionFeed.projectedVersion(maximum: 26, category: "audio") == nil)
     }
 
     // MARK: Reading the rows
@@ -140,6 +143,52 @@ import Testing
         #expect(fifteen.range == SetupDescription.Range(minimum: -34, maximum: 12, step: 1))
         #expect(fifteen.decimals == nil)
     }
+
+    /// Audio 25 (the radio speaker): Outputs' three rows, each bound to the
+    /// Core's `radio` and gated on `radioSpeakerVersion` 1, read live: the
+    /// volume a 0 to 100 slider, the mute a switch, the amplifier a choice
+    /// of three that follows `speakerAmplifierAvailable`. A row asking for
+    /// 25 in an older category is not read.
+    @Test func audioTwentyFivesOutputsRadioSpeakerRowsAreLive() throws {
+        let rows = try Self.controls(Self.category("audio", version: 25, [Self.radioSpeakerVolume,
+                                                                          Self.radioSpeakerMuted,
+                                                                          Self.speakerAmplifierMode]))
+        #expect(rows.allSatisfy { $0.metadataIssue == nil && $0.unavailableReason == nil && $0.availability == nil })
+        let gate = SetupDescription.Gate(capability: "radioSpeakerVersion", minimum: 1, transmit: nil, board: nil,
+                                         offAir: nil, micLine: nil)
+        let volume = rows[0]
+        #expect(volume.id == "audio.outputs.radioSpeakerVolume" && volume.label == "Volume:")
+        #expect(volume.kind == .slider)
+        #expect(volume.range == SetupDescription.Range(minimum: 0, maximum: 100, step: 1))
+        #expect(volume.binding == .property(.init(object: "radio", name: "radioSpeakerVolume")))
+        #expect(volume.tooltip == Self.radioSpeakerTooltip)
+        #expect(volume.gate == gate)
+        let muted = rows[1]
+        #expect(muted.id == "audio.outputs.radioSpeakerMuted" && muted.label == "Mute radio speaker")
+        #expect(muted.kind == .toggle)
+        #expect(muted.binding == .property(.init(object: "radio", name: "radioSpeakerMuted")))
+        #expect(muted.gate == gate)
+        let amplifier = rows[2]
+        #expect(amplifier.id == "audio.outputs.speakerAmplifierMode" && amplifier.label == "Speaker amplifier:")
+        #expect(amplifier.kind == .choice)
+        #expect(amplifier.binding == .property(.init(object: "radio", name: "speakerAmplifierMode")))
+        #expect(amplifier.options == [.init(value: 0, label: "Normal"), .init(value: 1, label: "Off while transmitting"),
+                                      .init(value: 2, label: "Always off")])
+        #expect(amplifier.modern?.propertyDependency == SetupDescription.PropertyDependency(
+            property: .init(object: "radio", name: "speakerAmplifierAvailable"), oneOf: [.bool(true)]))
+        #expect(amplifier.gate == gate)
+        let older = try Self.controls(Self.category("audio", version: 24, [Self.radioSpeakerVolume,
+                                                                           Self.radioSpeakerMuted,
+                                                                           Self.speakerAmplifierMode]))
+        #expect(older.allSatisfy { $0.metadataIssue == "Unsupported Setup control version." })
+    }
+
+    /// The rows as the Core's resources/setup/audio.json and its version 25
+    /// table (SetupDescriptionService.cpp's kAudioV25Controls) hold them.
+    static let radioSpeakerTooltip = "Radio speaker at the Core (shared with every window and the phone)"
+    static let radioSpeakerVolume = #"{"id":"audio.outputs.radioSpeakerVolume","label":"Volume:","tooltip":"Radio speaker at the Core (shared with every window and the phone)","kind":"slider","binding":{"property":{"object":"radio","name":"radioSpeakerVolume"}},"applies":"live","requiresDescriptionVersion":25,"gate":{"capability":"radioSpeakerVersion","min":1},"min":0,"max":100,"step":1}"#
+    static let radioSpeakerMuted = #"{"id":"audio.outputs.radioSpeakerMuted","label":"Mute radio speaker","tooltip":"Radio speaker at the Core (shared with every window and the phone)","kind":"toggle","binding":{"property":{"object":"radio","name":"radioSpeakerMuted"}},"applies":"live","requiresDescriptionVersion":25,"gate":{"capability":"radioSpeakerVersion","min":1}}"#
+    static let speakerAmplifierMode = #"{"id":"audio.outputs.speakerAmplifierMode","label":"Speaker amplifier:","tooltip":"The radio's built-in amplifier for its speaker jacks. Muting the radio speaker also switches it off. Off while transmitting keeps it on for CW and Tune, so you still hear the sidetone. Switching it can make a pop. Greyed out when the radio has no switchable speaker amplifier.","kind":"choice","binding":{"property":{"object":"radio","name":"speakerAmplifierMode"}},"applies":"live","requiresDescriptionVersion":25,"gate":{"capability":"radioSpeakerVersion","min":1},"options":[{"value":0,"label":"Normal"},{"value":1,"label":"Off while transmitting"},{"value":2,"label":"Always off"}],"enabledWhen":{"property":{"object":"radio","name":"speakerAmplifierAvailable"},"oneOf":[true]}}"#
 
     /// HL2 Swap audio channels at 16: the Core now sends it open, with its
     /// tooltip and no availability, and the phone reads a live switch; an

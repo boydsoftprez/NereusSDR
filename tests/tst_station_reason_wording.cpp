@@ -260,6 +260,14 @@
 //   2026-10-01  J.J. Boyd / KG4VCF  DaemonApp's radioChangeStoppedReason
 //                                    is scanned.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-07  J.J. Boyd / KG4VCF  CAT setup from a connected desktop:
+//                                    StationCatController's and
+//                                    StationCatModel's reasons are scanned;
+//                                    stationCatUnavailableReason is the
+//                                    window's own. AI tooling: Claude Code.
+//   2026-10-07  J.J. Boyd / KG4VCF  CatControl's notConnectedReason is
+//                                    scanned; its unavailableReason is the
+//                                    window's own. AI tooling: Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -831,6 +839,10 @@ const QStringList& unkeyEventLogText()
 const QList<ReasonSource>& reasonSources()
 {
     static const QList<ReasonSource> sources{
+        // Local CAT configuration failures are shown by the Setup page.
+        // Scan the validator's four own sentences, including lambda failure calls.
+        {"src/core/cat/CatSettings.cpp", {QStringLiteral("validate")}, {}, 4, {},
+         {QStringLiteral("text")}},
         // Shared radio-mic refusals reach Core replies as well as the window.
         {"src/core/session/RemoteMicSource.h",
          {QStringLiteral("remoteRadioVoxReason"), QStringLiteral("remoteRadioProgramReason"),
@@ -907,6 +919,7 @@ const QList<ReasonSource>& reasonSources()
           QStringLiteral("AmplifierModel::readOnlyReason()"),
           QStringLiteral("RfKitModel::readOnlyReason()"),
           QStringLiteral("StationTciModel::readOnlyReason()"),
+          QStringLiteral("StationCatModel::readOnlyReason()"),
           // Parity Task 19: the `spotSources` object's, scanned below.
           QStringLiteral("SpotSourceHost::readOnlyReason()"),
           // Fix wave after parity Tasks 19 and 21 (I5): the radio verbs'
@@ -1461,6 +1474,18 @@ const QList<ReasonSource>& reasonSources()
          {QStringLiteral("readOnlyReason"), QStringLiteral("receiveOnlyOperateReason")}, {}, 2},
         {"src/models/RfKitModel.cpp", {QStringLiteral("readOnlyReason")}, {}, 1},
         {"src/models/StationTciModel.cpp", {QStringLiteral("readOnlyReason")}, {}, 1},
+        // CAT setup from a connected desktop: the `stationCat` object's
+        // read-only reason.
+        {"src/models/StationCatModel.cpp", {QStringLiteral("readOnlyReason")}, {}, 1},
+        // CAT setup from a connected desktop: the four CAT commands'
+        // refusals (the local CAT page's own words for a configuration the
+        // Core did not take).
+        {"src/core/cat/StationCatController.cpp", {}, {}, 4, {},
+         {// Each refuse() helper's argument, this file's own literals.
+          QStringLiteral("why")}},
+        // CAT setup from a connected desktop: a remote window's own words
+        // while it is not connected to the Core.
+        {"src/core/cat/CatControl.cpp", {QStringLiteral("notConnectedReason")}, {}, 1},
         // Parity Task 19 (R-IOS-25): the spots.* refusals and the
         // `spotSources` object's read-only reason.
         // Parity Task 21 (R-IOS-18): the station radio verbs' refusals and
@@ -1789,6 +1814,13 @@ const QList<AppSideReason>& appSideReasons()
         {"src/models/RadioModel.cpp", "mirrorTxProfilesFromStation",
          "a window's TX profile requests: it shows the link's own reason for a request it "
          "could not send"},
+        // R-SPK-06 / R-SPK-14: why RADIO and the amplifier choice are
+        // greyed; the window's own words or IStationLink's (registered
+        // there).
+        {"src/models/RadioModel.cpp", "radioSpeakerUnavailableReason",
+         "a window's own reason RADIO is greyed: no radio, or the link's older-Core reason"},
+        {"src/models/RadioModel.cpp", "speakerAmplifierUnavailableReason",
+         "a window's own reason the speaker amplifier choice is greyed"},
         {"src/models/RadioModel.cpp", "noStationReason",
          "a remote window's own notice when it has no link to the Core"},
         // Fix round 1 (minor 4): the link-down words MOX, TUNE and 2-TONE
@@ -1819,6 +1851,11 @@ const QList<AppSideReason>& appSideReasons()
         // radio without the switch, the window's own words.
         {"src/models/RadioModel.cpp", "hfPaSwitchUnavailableReason",
          "a window's own reason Disable HF PA is disabled on this radio"},
+        {"src/core/session/IStationLink.h", "stationCatUnavailableReason",
+         "a remote window's own reason when its Core cannot take the request"},
+        {"src/core/cat/CatControl.cpp", "unavailableReason",
+         "a window's own reason its CAT pages are disabled: none for its own "
+         "CAT, otherwise notConnectedReason or stationCatUnavailableReason"},
         {"src/core/session/IStationLink.h", "pgxlDeviceSettingsUnavailableReason",
          "a remote window's own reason when its Core cannot take the request"},
         {"src/core/session/IStationLink.h", "tgxlDeviceSettingsUnavailableReason",
@@ -1879,6 +1916,10 @@ const QList<AppSideReason>& appSideReasons()
         // Level Cal fix wave: a slice on the other ADC's preamp choice on a
         // Core without stepAtt's rx2PreampMode.
         {"src/core/session/IStationLink.h", "rx2PreampModeUnavailableReason",
+         "a remote window's own reason when its Core cannot take the request"},
+        // R-SPK-06 / R-SPK-14: the radio speaker (RADIO and the amplifier
+        // choice) on a Core without radioSpeakerVersion 1.
+        {"src/core/session/IStationLink.h", "radioSpeakerUnavailableReason",
          "a remote window's own reason when its Core cannot take the request"},
         // R-R3-49 (parity Task 16): the filter graph's curve.
         {"src/core/session/IStationLink.h", "filterResponseUnavailableReason",
@@ -2064,13 +2105,19 @@ struct ForwardingSite {
     const char* file;
     const char* function;
     const char* callee;
+    const char* calleeFile;
+    const char* calleeFunction;
 };
 
 const QList<ForwardingSite>& forwardingSites()
 {
     static const QList<ForwardingSite> sites{
-        {"src/core/RxChannel.cpp", "setNnrTuning", "NnrAdapter::apply"},
-        {"src/core/RxChannel.cpp", "setNnrDiagnostics", "NnrAdapter::setDiagnostics"},
+        {"src/core/RxChannel.cpp", "setNnrTuning", "NnrAdapter::apply",
+         "src/core/dsp/NnrAdapter.cpp", ""},
+        {"src/core/RxChannel.cpp", "setNnrDiagnostics", "NnrAdapter::setDiagnostics",
+         "src/core/dsp/NnrAdapter.cpp", ""},
+        {"src/core/cat/CatModelAdapter.cpp", "mayChangeGlobalDsp",
+         "m_model->stationOnAirRefusal", "src/models/RadioModel.cpp", "stationOnAirRefusal"},
     };
     return sites;
 }
@@ -2505,13 +2552,11 @@ private slots:
                                             .arg(QLatin1String(site.file),
                                                  QLatin1String(site.function),
                                                  QLatin1String(site.callee))));
-            const QString calleeClass =
-                QString::fromLatin1(site.callee).section(QStringLiteral("::"), 0, 0);
-            QVERIFY2(scanned(QStringLiteral("src/core/dsp/%1.cpp").arg(calleeClass), QString()),
-                     site.callee);
+            QVERIFY2(scanned(QString::fromLatin1(site.calleeFile),
+                             QString::fromLatin1(site.calleeFunction)), site.callee);
             ++checked;
         }
-        QCOMPARE(checked, 2);
+        QCOMPARE(checked, 3);
     }
 
     void notchConstantsArePlain()

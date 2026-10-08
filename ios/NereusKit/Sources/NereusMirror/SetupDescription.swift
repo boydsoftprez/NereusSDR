@@ -248,7 +248,7 @@ public struct SetupDescription: Equatable, Sendable {
 
     /// The highest description version this parser reads. What the phone
     /// asks the Core for is separate: `LinkFeatures`' `setupDescription`.
-    public static let highestVersion = 24
+    public static let highestVersion = 25
 
     /// The desktop's band names, by the Core's band number, as a per-band
     /// row's label names them (`src/models/Band.h`).

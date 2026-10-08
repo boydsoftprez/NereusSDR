@@ -833,7 +833,7 @@ void GeneralOptionsPage::buildHardwareConfigGroup()
         });
     }
 
-    contentLayout()->addWidget(group);
+    addContent(group);
 }
 
 // ---------------------------------------------------------------------------
@@ -1006,7 +1006,7 @@ void GeneralOptionsPage::buildOptionsGroup()
         vbox->addLayout(rateRow);
     }
 
-    contentLayout()->addWidget(group);
+    addContent(group);
 }
 
 // ---------------------------------------------------------------------------
@@ -1234,7 +1234,7 @@ void GeneralOptionsPage::buildTimeOutGroup()
     connect(m_udRemoteMoxTimeOutSeconds, QOverload<int>::of(&QSpinBox::valueChanged), this,
             applyRemote);
 
-    contentLayout()->addWidget(group);
+    addContent(group);
 }
 
 // ---------------------------------------------------------------------------
@@ -1344,7 +1344,7 @@ void GeneralOptionsPage::buildStepAttGroup()
         }
     });
 
-    contentLayout()->addWidget(group);
+    addContent(group);
 }
 
 // ---------------------------------------------------------------------------
@@ -1505,7 +1505,7 @@ void GeneralOptionsPage::buildAutoAttGroup()
             });
         }
 
-        contentLayout()->addWidget(group);
+        addContent(group);
 
         // R-R3-46 / R-R3-11: the RX2 group is usable on a radio with a
         // second receive ADC (refreshRx2StepAtt sets it).

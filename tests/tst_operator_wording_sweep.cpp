@@ -430,12 +430,13 @@ QList<QPair<QString, QString>> allSetupDescriptionText()
 // it. Beyond setupInternalNameIn()'s upstream names, a tooltip may not name
 // a member (m_x, _x) or a settings key (PGXL_TxInterlockGraceMs). The
 // product's term list is not applied here: the desktop's own words for its
-// DSP, TCI and audio settings are checked by the slots that own them. Two
+// DSP, TCI and audio settings are checked by the slots that own them. Three
 // phrases name Thetis as a product the operator knows, not as a source.
 QString desktopInternalNameIn(const QString& text)
 {
     static const QStringList productPhrases{
-        QStringLiteral("a skin made for Thetis"), QStringLiteral("to Thetis defaults")};
+        QStringLiteral("a skin made for Thetis"), QStringLiteral("to Thetis defaults"),
+        QStringLiteral("Thetis PTY")};
     QString rest = text;
     for (const QString& phrase : productPhrases) {
         rest.replace(phrase, QStringLiteral(" "));
@@ -1807,10 +1808,11 @@ private slots:
                                      "Applied by TxInterlockPolicy::evaluateTxRequest.",
                                      "Persisted as PGXL_TxInterlockGraceMs.",
                                      "Default gray, mirroring Thetis m_bDX2_Gray.",
-                                     "Full implementation in Task 2.5."}) {
+                                     "Full implementation in Task 2.5.",
+                                     "Thetis PTY uses CATParser.cs."}) {
             QVERIFY2(!desktopInternalNameIn(QLatin1String(internal)).isEmpty(), internal);
         }
-        for (const char* plain : {"Import a skin made for Thetis",
+        for (const char* plain : {"Import a skin made for Thetis", "Enable Thetis PTY for CAT1.",
                                   "Reset all OC matrix pin assignments and pin actions to Thetis defaults",
                                   "Default 6 dB/s.", "RX-only antenna", "Buffer Size (IQcomp)"}) {
             QVERIFY2(desktopInternalNameIn(QLatin1String(plain)).isEmpty(), plain);

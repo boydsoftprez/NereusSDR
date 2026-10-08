@@ -45,6 +45,10 @@
 //               outlive its session, and a card's Take it back is shown off
 //               once its session ends. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-06: radio speaker plan Task 7 (R-SPK-18): the flag's audio tab
+//               is found by its objectName, since it shows an icon instead
+//               of emoji text. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -1430,13 +1434,10 @@ private slots:
         flagYourVolume.setFrequency(14'230'000.0);
         flagYourVolume.setListenVolume(60, false);
         flagYourVolume.setSliceAccess(listened);
-        QPushButton* audioTab = nullptr;
-        for (QPushButton* button : flagYourVolume.findChildren<QPushButton*>()) {
-            if (button->text() == QString::fromUtf8("\xF0\x9F\x94\x8A")) {
-                audioTab = button;
-                break;
-            }
-        }
+        // Radio speaker plan Task 7: the audio tab is an icon now; find it
+        // by its objectName.
+        auto* audioTab = flagYourVolume.findChild<QPushButton*>(
+            QStringLiteral("audioTabButton"));
         QVERIFY(audioTab != nullptr);
         audioTab->click();
         QCOMPARE(flagYourVolume.afNameForTest(), QStringLiteral("Your volume"));

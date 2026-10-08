@@ -20,6 +20,7 @@
 
 #include "OperatorWording.h"
 #include "core/AppSettings.h"
+#include "core/cat/CatService.h"
 #include "core/SliceOwnership.h"
 #include "core/StationRotorController.h"
 #include "core/RadioConnection.h"
@@ -128,6 +129,8 @@ private slots:
         QVERIFY2(sessions.replace({}, false, &error), qPrintable(error));
         auto* model = sessions.window()->radioModel();
         QVERIFY(!model->isConnected());
+        QVERIFY(model->catService()->isStarted());
+        QVERIFY(!model->catService()->isListening(1));
         QVERIFY(!sessions.desktopRuntime()->controller()->server());
         const auto generation = sessions.generation();
         for (int i = 0; i < 3; ++i) {
@@ -138,6 +141,40 @@ private slots:
         QCOMPARE(sessions.generation(), generation);
         QVERIFY(!model->isConnected());
         QVERIFY(!QFileInfo::exists(service.profileDirectory + "/station-identity.pem"));
+    }
+
+    // 2026-10-06 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+    void catStartsWhenCoreListenerCannotOpen()
+    {
+        AppSettings& settings = AppSettings::instance();
+        StationHandover ownership(AppSettings::profileOverride());
+        QString error;
+        QVERIFY2(ownership.acquire(0, &error), qPrintable(error));
+        QTcpServer busy;
+        QVERIFY(busy.listen(QHostAddress::LocalHost, 0));
+        QFile config(QFileInfo(settings.filePath()).absolutePath() + QStringLiteral("/station.conf"));
+        QVERIFY(config.open(QIODevice::WriteOnly));
+        const QByteArray configBytes = QStringLiteral("remote_bind = 127.0.0.1\nremote_port = %1\n"
+            "status_page = off\nrendezvous_servers =\n").arg(busy.serverPort()).toUtf8();
+        QCOMPARE(config.write(configBytes), configBytes.size());
+        config.close();
+        settings.setValue(QStringLiteral("DesktopCore/Run"), true);
+        QTemporaryDir serviceHome;
+        QVERIFY(serviceHome.isValid());
+        StationServiceOptions options;
+        options.homeDirectory = serviceHome.path();
+        options.runner = [](const QString&, const QStringList&) {
+            return StationServiceCommandResult{0, {}};
+        };
+        GuiSessionCoordinator sessions;
+        QVERIFY(sessions.configureDesktopStation(AppSettings::profileOverride(),
+                                                   ownership.ownsProfile(), options));
+        QVERIFY2(sessions.replace({}, false, &error), qPrintable(error));
+        auto* model = sessions.window()->radioModel();
+        QVERIFY(!sessions.desktopRuntime()->controller()->server());
+        QVERIFY(sessions.desktopRuntime()->stationOwnershipActive());
+        QVERIFY(model->catService()->isStarted());
+        sessions.shutdown();
     }
 
     void desktopReclaimKeepsCoreRadioChoice_data()

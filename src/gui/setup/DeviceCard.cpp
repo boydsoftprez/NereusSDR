@@ -15,6 +15,12 @@
 // 2026-10-04: reset Qt6.11 Cocoa's popup accessibility cache before
 // replacing device rows or retained device/buffer entries.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-06: R-SPK-21, R-SPK-24, D14. Driver API, Sample rate, Bit depth,
+// Channels, Buffer size, Options and Negotiated fold under "Device
+// details", folded by default; the WASAPI options are greyed unless the
+// card's driver API is WASAPI; pages can add rows around the Device row,
+// grey the card until Enabled, and rescan its device list.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "DeviceCard.h"
@@ -37,6 +43,7 @@
 #include <QStandardItemModel>
 
 #include <QTimer>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <memory>
@@ -66,6 +73,7 @@ static const char* kComboStyle =
     "  color: #c8d8e8;"
     "  padding: 2px 6px;"
     "}"
+    "QComboBox:disabled { color: #506070; }"
     "QComboBox::drop-down { border: none; }"
     "QComboBox QAbstractItemView { background: #152535; color: #c8d8e8; "
     "  selection-background-color: #00b4d8; }";
@@ -74,11 +82,26 @@ static const char* kCheckStyle =
     "QCheckBox { color: #c8d8e8; spacing: 4px; }"
     "QCheckBox::indicator { width: 12px; height: 12px; border: 1px solid #203040;"
     "  border-radius: 2px; background: #0f0f1a; }"
-    "QCheckBox::indicator:checked { background: #00b4d8; }";
+    "QCheckBox::indicator:checked { background: #00b4d8; }"
+    // R-SPK-21 / R-SPK-24: a disabled box reads as greyed (D10).
+    "QCheckBox:disabled { color: #506070; }"
+    "QCheckBox::indicator:disabled:checked { background: #405060; }";
 
-static const char* kLabelStyle = "QLabel { color: #c8d8e8; font-size: 12px; }";
+static const char* kLabelStyle =
+    "QLabel { color: #c8d8e8; font-size: 12px; }"
+    "QLabel:disabled { color: #506070; }";
 
 static const char* kDimLabelStyle = "QLabel { color: #607080; font-size: 11px; }";
+
+// The "Device details" fold: a flat arrow and dim text, like the mockup's
+// summary line (audio-setup.html).
+static const char* kDetailsToggleStyle =
+    "QToolButton { color: #8aa8c0; font-size: 11px; border: none; padding: 2px 0; }"
+    "QToolButton:disabled { color: #405060; }";
+
+// PortAudio's name for its WASAPI host API.
+// From PortAudio src/hostapi/wasapi/pa_win_wasapi.c:2352 [v19.7.0]
+static constexpr const char* kWasapiHostApiName = "Windows WASAPI";
 
 // Pill style for the negotiated-format readout.
 static const char* kPillStyleOk =
@@ -244,34 +267,59 @@ DeviceCard::DeviceCard(const QString& prefix,
             AppSettings::instance().save();
             emit enabledChanged(on);
         });
+        // R-SPK-21: a card greyed until Enabled follows the box, including
+        // the loadFromSettings below (which suppresses only the signal).
+        connect(m_enableChk, &QCheckBox::toggled, this, [this](bool) { updateBodyEnabled(); });
     }
 
     loadFromSettings();
 }
 
 // ---------------------------------------------------------------------------
-// buildLayout — construct the 7-row form + pill
+// buildLayout: the Device row, then the folded "Device details" section
 // ---------------------------------------------------------------------------
+// R-SPK-21 / D14: the Device row stays in front; Driver API, Sample rate,
+// Bit depth, Channels, Buffer size, Options and Negotiated fold under
+// "Device details", folded by default. The driver API combo is created
+// first, so it stays the card's first QComboBox child as before.
 void DeviceCard::buildLayout()
 {
     auto* outer = new QVBoxLayout(this);
     outer->setContentsMargins(8, 12, 8, 8);
     outer->setSpacing(4);
 
-    auto* form = new QFormLayout;
-    form->setRowWrapPolicy(QFormLayout::DontWrapRows);
-    form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
-    form->setHorizontalSpacing(8);
-    form->setVerticalSpacing(4);
+    // Rows a page adds above the Device row (Outputs' Volume row).
+    m_aboveDeviceLayout = new QVBoxLayout;
+    m_aboveDeviceLayout->setContentsMargins(0, 0, 0, 0);
+    m_aboveDeviceLayout->setSpacing(4);
+    outer->addLayout(m_aboveDeviceLayout);
 
+    m_body = new QWidget(this);
+    m_body->setObjectName(QStringLiteral("deviceCardBody"));
+    auto* bodyLayout = new QVBoxLayout(m_body);
+    bodyLayout->setContentsMargins(0, 0, 0, 0);
+    bodyLayout->setSpacing(4);
+    outer->addWidget(m_body);
+
+    m_details = new QWidget(m_body);
+    m_details->setObjectName(QStringLiteral("deviceDetails"));
+
+    auto makeForm = []() {
+        auto* form = new QFormLayout;
+        form->setRowWrapPolicy(QFormLayout::DontWrapRows);
+        form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+        form->setHorizontalSpacing(8);
+        form->setVerticalSpacing(4);
+        return form;
+    };
     auto makeLabel = [](const QString& text) -> QLabel* {
         auto* l = new QLabel(text);
         l->setStyleSheet(QLatin1String(kLabelStyle));
         return l;
     };
 
-    // ── Row 1: Driver API ────────────────────────────────────────────────
-    m_driverApiCombo = new QComboBox;
+    // ── Driver API (Device details) ──────────────────────────────────────
+    m_driverApiCombo = new QComboBox(m_details);
     m_driverApiCombo->setStyleSheet(QLatin1String(kComboStyle));
     // Populate from PortAudio host APIs (requires Pa_Initialize done).
     const auto apis = PortAudioBus::hostApis();
@@ -280,16 +328,62 @@ void DeviceCard::buildLayout()
     for (const auto& api : apis) {
         m_driverApiCombo->addItem(api.name, QVariant::fromValue(api.index));
     }
-    form->addRow(makeLabel(QStringLiteral("Driver API:")), m_driverApiCombo);
 
-    // ── Row 2: Device ────────────────────────────────────────────────────
-    m_deviceCombo = new QComboBox;
+    // ── Device (always in front) ─────────────────────────────────────────
+    auto* deviceForm = makeForm();
+    m_deviceCombo = new QComboBox(m_body);
     m_deviceCombo->setStyleSheet(QLatin1String(kComboStyle));
     m_deviceCombo->setMinimumWidth(200);
     populateDeviceCombo();
-    form->addRow(makeLabel(QStringLiteral("Device:")), m_deviceCombo);
+    deviceForm->addRow(makeLabel(QStringLiteral("Device:")), m_deviceCombo);
 
-    // ── Row 3: Sample rate + Auto-match checkbox ─────────────────────────
+    // ── TX-input extras (Input role only), in front ──────────────────────
+    if (m_role == Role::Input) {
+        m_monitorDuringTxChk = new QCheckBox(
+            QStringLiteral("Monitor TX input during transmit"));
+        m_monitorDuringTxChk->setStyleSheet(QLatin1String(kCheckStyle));
+        m_monitorDuringTxChk->setToolTip(QStringLiteral(
+            "Route microphone input through the monitor bus while transmitting"));
+
+        m_toneCheckChk = new QCheckBox(
+            QStringLiteral("Enable tone check (A-440 Hz burst on PTT)"));
+        m_toneCheckChk->setStyleSheet(QLatin1String(kCheckStyle));
+        m_toneCheckChk->setToolTip(QStringLiteral(
+            "Inject a 440 Hz test tone to verify TX input routing on first PTT"));
+
+        deviceForm->addRow(makeLabel(QString()), m_monitorDuringTxChk);
+        deviceForm->addRow(makeLabel(QString()), m_toneCheckChk);
+        UnbuiltFeatures::hideRowUnlessBuilt(m_monitorDuringTxChk,
+                                           UnbuiltFeature::AudioMonitorTxInput, deviceForm);
+        UnbuiltFeatures::hideRowUnlessBuilt(m_toneCheckChk,
+                                           UnbuiltFeature::AudioToneCheck, deviceForm);
+    }
+    bodyLayout->addLayout(deviceForm);
+
+    // Rows a page adds below the Device row (a note).
+    m_belowDeviceLayout = new QVBoxLayout;
+    m_belowDeviceLayout->setContentsMargins(0, 0, 0, 0);
+    m_belowDeviceLayout->setSpacing(4);
+    bodyLayout->addLayout(m_belowDeviceLayout);
+
+    // ── "Device details" fold ────────────────────────────────────────────
+    m_detailsToggle = new QToolButton(m_body);
+    m_detailsToggle->setObjectName(QStringLiteral("deviceDetailsToggle"));
+    m_detailsToggle->setText(QStringLiteral("Device details"));
+    m_detailsToggle->setCheckable(true);
+    m_detailsToggle->setChecked(false);
+    m_detailsToggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_detailsToggle->setArrowType(Qt::RightArrow);
+    m_detailsToggle->setAutoRaise(true);
+    m_detailsToggle->setStyleSheet(QLatin1String(kDetailsToggleStyle));
+    bodyLayout->addWidget(m_detailsToggle);
+
+    auto* detailsForm = makeForm();
+    m_details->setLayout(detailsForm);
+    detailsForm->setContentsMargins(12, 0, 0, 0);
+    detailsForm->addRow(makeLabel(QStringLiteral("Driver API:")), m_driverApiCombo);
+
+    // Sample rate + Auto-match checkbox
     {
         auto* srRow = new QHBoxLayout;
         srRow->setSpacing(6);
@@ -305,20 +399,21 @@ void DeviceCard::buildLayout()
         srRow->addWidget(m_sampleRateCombo);
         srRow->addWidget(m_autoMatchSampleRate);
         srRow->addStretch();
-        form->addRow(makeLabel(QStringLiteral("Sample rate:")), srRow);
+        detailsForm->addRow(makeLabel(QStringLiteral("Sample rate:")), srRow);
         UnbuiltFeatures::hideUnlessBuilt(m_autoMatchSampleRate, UnbuiltFeature::AudioAutoMatch);
     }
 
-    // ── Row 4: Bit depth ─────────────────────────────────────────────────
+    // Bit depth
     m_bitDepthCombo = new QComboBox;
     m_bitDepthCombo->setStyleSheet(QLatin1String(kComboStyle));
     for (const QString& d : kBitDepths) {
         m_bitDepthCombo->addItem(d + QStringLiteral(" bit"), d.toInt());
     }
-    form->addRow(makeLabel(QStringLiteral("Bit depth:")), m_bitDepthCombo);
-    UnbuiltFeatures::hideRowUnlessBuilt(m_bitDepthCombo, UnbuiltFeature::AudioBitDepth, form);
+    detailsForm->addRow(makeLabel(QStringLiteral("Bit depth:")), m_bitDepthCombo);
+    UnbuiltFeatures::hideRowUnlessBuilt(m_bitDepthCombo, UnbuiltFeature::AudioBitDepth,
+                                        detailsForm);
 
-    // ── Row 5: Channels ──────────────────────────────────────────────────
+    // Channels
     m_channelsCombo = new QComboBox;
     m_channelsCombo->setStyleSheet(QLatin1String(kComboStyle));
     for (const QString& c : kChannels) {
@@ -327,9 +422,9 @@ void DeviceCard::buildLayout()
                                      : QStringLiteral("2 (Stereo)"),
                                  c.toInt());
     }
-    form->addRow(makeLabel(QStringLiteral("Channels:")), m_channelsCombo);
+    detailsForm->addRow(makeLabel(QStringLiteral("Channels:")), m_channelsCombo);
 
-    // ── Row 6: Buffer size + derived-ms readout ──────────────────────────
+    // Buffer size + derived-ms readout
     {
         auto* bufRow = new QHBoxLayout;
         bufRow->setSpacing(6);
@@ -345,10 +440,11 @@ void DeviceCard::buildLayout()
         bufRow->addWidget(m_bufferSizeCombo);
         bufRow->addWidget(m_bufferMsLabel);
         bufRow->addStretch();
-        form->addRow(makeLabel(QStringLiteral("Buffer size:")), bufRow);
+        detailsForm->addRow(makeLabel(QStringLiteral("Buffer size:")), bufRow);
     }
 
-    // ── Row 7: Options (WASAPI) ──────────────────────────────────────────
+    // Options (WASAPI). R-SPK-24: live only when the card's driver API is
+    // WASAPI, greyed with wasapiOnlyReason() otherwise (updateWasapiOptions).
     {
         auto* optRow = new QHBoxLayout;
         optRow->setSpacing(10);
@@ -361,46 +457,39 @@ void DeviceCard::buildLayout()
             optRow->addWidget(chk);
         }
         optRow->addStretch();
-        form->addRow(makeLabel(QStringLiteral("Options:")), optRow);
+        detailsForm->addRow(makeLabel(QStringLiteral("Options:")), optRow);
+        m_wasapiNote = new QLabel(wasapiOnlyReason());
+        m_wasapiNote->setObjectName(QStringLiteral("wasapiOnlyNote"));
+        m_wasapiNote->setStyleSheet(QLatin1String(kDimLabelStyle));
+        // One short line: a word-wrapped label in a form row is clipped to
+        // one line's height.
+        m_wasapiNote->setWordWrap(false);
+        detailsForm->addRow(makeLabel(QString()), m_wasapiNote);
     }
 
-    // ── TX-input extras (Input role only) ────────────────────────────────
-    if (m_role == Role::Input) {
-        m_monitorDuringTxChk = new QCheckBox(
-            QStringLiteral("Monitor TX input during transmit"));
-        m_monitorDuringTxChk->setStyleSheet(QLatin1String(kCheckStyle));
-        m_monitorDuringTxChk->setToolTip(QStringLiteral(
-            "Route microphone input through the monitor bus while transmitting"));
-
-        m_toneCheckChk = new QCheckBox(
-            QStringLiteral("Enable tone check (A-440 Hz burst on PTT)"));
-        m_toneCheckChk->setStyleSheet(QLatin1String(kCheckStyle));
-        m_toneCheckChk->setToolTip(QStringLiteral(
-            "Inject a 440 Hz test tone to verify TX input routing on first PTT"));
-
-        form->addRow(makeLabel(QString()), m_monitorDuringTxChk);
-        form->addRow(makeLabel(QString()), m_toneCheckChk);
-        UnbuiltFeatures::hideRowUnlessBuilt(m_monitorDuringTxChk,
-                                           UnbuiltFeature::AudioMonitorTxInput, form);
-        UnbuiltFeatures::hideRowUnlessBuilt(m_toneCheckChk,
-                                           UnbuiltFeature::AudioToneCheck, form);
-    }
-
-    outer->addLayout(form);
-
-    // ── Negotiated-format pill ───────────────────────────────────────────
+    // Negotiated-format pill
     {
         auto* pillRow = new QHBoxLayout;
         pillRow->setSpacing(4);
-        auto* pillLbl = new QLabel(QStringLiteral("Negotiated:"));
-        pillLbl->setStyleSheet(QLatin1String(kDimLabelStyle));
         m_negotiatedPill = new QLabel(QStringLiteral("(not applied)"));
         m_negotiatedPill->setStyleSheet(QLatin1String(kPillStyleApplying));
-        pillRow->addWidget(pillLbl);
         pillRow->addWidget(m_negotiatedPill);
         pillRow->addStretch();
-        outer->addLayout(pillRow);
+        auto* pillLbl = new QLabel(QStringLiteral("Negotiated:"));
+        pillLbl->setStyleSheet(QLatin1String(kDimLabelStyle));
+        detailsForm->addRow(pillLbl, pillRow);
     }
+
+    bodyLayout->addWidget(m_details);
+    m_details->setVisible(false);
+
+    connect(m_detailsToggle, &QToolButton::toggled, this, [this](bool on) {
+        m_detailsToggle->setArrowType(on ? Qt::DownArrow : Qt::RightArrow);
+        m_details->setVisible(on);
+    });
+    connect(m_driverApiCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int) { updateWasapiOptions(); });
+    updateWasapiOptions();
 
     // `outer` was already installed as this widget's layout by the
     // `new QVBoxLayout(this)` parent-ctor at the top of this function; a
@@ -465,6 +554,100 @@ void DeviceCard::buildLayout()
             this, [this](int) { updateBufferMsLabel(); });
     connect(m_sampleRateCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int) { updateBufferMsLabel(); });
+}
+
+// ---------------------------------------------------------------------------
+// Device details, page rows, Enabled greying, rescan, WASAPI options
+// ---------------------------------------------------------------------------
+bool DeviceCard::detailsExpanded() const
+{
+    return m_detailsToggle != nullptr && m_detailsToggle->isChecked();
+}
+
+void DeviceCard::setDetailsExpanded(bool expanded)
+{
+    if (m_detailsToggle != nullptr) {
+        m_detailsToggle->setChecked(expanded);
+    }
+}
+
+void DeviceCard::addAboveDevice(QWidget* widget)
+{
+    if (widget != nullptr) {
+        m_aboveDeviceLayout->addWidget(widget);
+    }
+}
+
+void DeviceCard::addBelowDevice(QWidget* widget)
+{
+    if (widget != nullptr) {
+        m_belowDeviceLayout->addWidget(widget);
+    }
+}
+
+void DeviceCard::setGreyedUntilEnabled(bool greyed)
+{
+    m_greyedUntilEnabled = greyed;
+    updateBodyEnabled();
+}
+
+void DeviceCard::updateBodyEnabled()
+{
+    if (m_body == nullptr) {
+        return;
+    }
+    m_body->setEnabled(!m_greyedUntilEnabled || isCheckboxEnabled());
+}
+
+void DeviceCard::rescanDevices()
+{
+    // Keeps the selection: populateDeviceCombo re-selects the current name
+    // (a configured device that has gone stays as "(not available)").
+    populateDeviceCombo();
+}
+
+int DeviceCard::deviceCount() const
+{
+    int count = 0;
+    for (int i = 0; i < m_deviceCombo->count(); ++i) {
+        if (!m_deviceCombo->itemData(i).toString().isEmpty()
+            && !m_deviceCombo->itemData(i, kKeptEntryRole).toBool()) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+bool DeviceCard::isWasapiDriverName(const QString& driverApi)
+{
+    return driverApi == QLatin1String(kWasapiHostApiName);
+}
+
+QString DeviceCard::wasapiOnlyReason()
+{
+    return QStringLiteral("These three work only with WASAPI on Windows.");
+}
+
+bool DeviceCard::wasapiOptionsAvailable() const
+{
+    return m_driverApiCombo != nullptr && m_driverApiCombo->currentIndex() > 0
+        && isWasapiDriverName(m_driverApiCombo->currentText());
+}
+
+void DeviceCard::updateWasapiOptions()
+{
+    const bool live = wasapiOptionsAvailable();
+    const QString tip = live ? QStringLiteral("WASAPI only") : wasapiOnlyReason();
+    for (QCheckBox* chk : { m_exclusiveChk, m_eventDrivenChk, m_bypassMixerChk }) {
+        if (chk == nullptr) {
+            continue;
+        }
+        chk->setEnabled(live);
+        chk->setToolTip(tip);
+    }
+    if (m_wasapiNote != nullptr) {
+        m_wasapiNote->setVisible(!live);
+    }
 }
 
 // ---------------------------------------------------------------------------

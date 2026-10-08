@@ -28,16 +28,23 @@
 // 2026-10-04: reset Qt6.11 Cocoa's popup accessibility cache before
 // refreshing the PC Mic device list. J.J. Boyd (KG4VCF),
 // AI-assisted via OpenAI Codex.
+// 2026-10-06: R-SPK-21 (Microphone), R-SPK-22. Titled "Microphone"; one PC
+// microphone card (the Devices page's DeviceCard on audio/TxInput, with
+// Test Mic, the capture status and Retry), a Mic gain group, and the
+// sections for sources not picked greyed out, never hidden. Keys and
+// nereusSetupIds unchanged. The radio mic placeholder and family groups
+// follow currentRadioChanged. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+// Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; no Thetis logic ported here.
 
 #include "AudioTxInputPage.h"
 #include "CaptureStatusText.h"
+#include "DeviceCard.h"
 
 #include "models/RadioModel.h"
 #include "models/TransmitModel.h"
-#include "core/AppSettings.h"
 #include "core/BoardCapabilities.h"
 #include "core/AudioEngine.h"
 #include "core/session/IStationLink.h"
@@ -45,13 +52,10 @@
 #include "gui/HGauge.h"
 
 #include <QAbstractButton>
-#include <QAbstractItemView>
-#include <QAccessible>
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QFormLayout>
 #include <QGroupBox>
-#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHideEvent>
 #include <QLabel>
@@ -61,80 +65,29 @@
 
 #include <cmath>
 
-// PortAudio enumeration — only the opaque struct access and hostApis() are
-// used here (no direct Pa_* calls); PortAudioBus wraps the C API.
-#include "core/audio/PortAudioBus.h"
-
 namespace NereusSDR {
 
-// ---------------------------------------------------------------------------
-// Static constant: discrete buffer-size steps exposed by the slider.
-// ---------------------------------------------------------------------------
-const QVector<int> AudioTxInputPage::kBufferSizes = {
-    64, 128, 256, 512, 1024, 2048, 4096, 8192
-};
+namespace {
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+// R-SPK-21: a section that is not picked stays in view, greyed. The page's
+// check box and radio button styles have no disabled look, so greyed and
+// live rows read the same; these are the DeviceCard's greyed colours (D10).
+constexpr auto kGreyedStyle =
+    "QCheckBox:disabled { color: #506070; }"
+    "QCheckBox::indicator:disabled:checked { background: #405060; border-color: #405060; }"
+    "QRadioButton:disabled { color: #506070; }"
+    "QRadioButton::indicator:disabled:checked { background: #405060; border-color: #405060; }"
+    "QGroupBox:disabled { color: #506070; }"
+    "QLabel:disabled { color: #506070; }";
 
-// Returns "N samples (M ms @ 48 kHz)" for the given sample count.
-// Reference sample rate is 48 000 Hz (standard NereusSDR audio rate).
-/*static*/ QString AudioTxInputPage::latencyString(int samples)
-{
-    // latency_ms = samples / 48000.0 * 1000.0
-    const double ms = static_cast<double>(samples) / 48000.0 * 1000.0;
-    return QStringLiteral("%1 samples (%2 ms @ 48 kHz)")
-        .arg(samples)
-        .arg(ms, 0, 'f', 1);
-}
-
-// Returns the OS-default PortAudio host API index.
-// Falls back to 0 if enumeration yields nothing (safe for test environments
-// where Pa_Initialize() has not been called).
-/*static*/ int AudioTxInputPage::defaultHostApiIndex()
-{
-    const QVector<PortAudioBus::HostApiInfo> apis = PortAudioBus::hostApis();
-
-#if defined(Q_OS_MACOS)
-    // macOS: CoreAudio is identified by name "Core Audio".
-    for (const auto& api : apis) {
-        if (api.name.contains(QLatin1String("Core Audio"), Qt::CaseInsensitive)) {
-            return api.index;
-        }
-    }
-#elif defined(Q_OS_LINUX)
-    // Linux: prefer PipeWire if NEREUS_HAVE_PIPEWIRE is defined and enumerable,
-    // else fall back to Pulse.
-    for (const auto& api : apis) {
-        if (api.name.contains(QLatin1String("PipeWire"), Qt::CaseInsensitive)) {
-            return api.index;
-        }
-    }
-    for (const auto& api : apis) {
-        if (api.name.contains(QLatin1String("Pulse"), Qt::CaseInsensitive)) {
-            return api.index;
-        }
-    }
-#elif defined(Q_OS_WIN)
-    // Windows: prefer WASAPI.
-    for (const auto& api : apis) {
-        if (api.name.contains(QLatin1String("WASAPI"), Qt::CaseInsensitive)) {
-            return api.index;
-        }
-    }
-#endif
-
-    // Fallback: first enumerated API, or -1 (PA default) if none available.
-    return apis.isEmpty() ? -1 : apis.first().index;
-}
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Constructor / Destructor
 // ---------------------------------------------------------------------------
 
 AudioTxInputPage::AudioTxInputPage(RadioModel* model, QWidget* parent)
-    : SetupPage(QStringLiteral("TX Input"), model, parent)
+    : SetupPage(QStringLiteral("Microphone"), model, parent)
 {
     // Radio codec lane: a board with a mic jack, or the HL2 with its
     // audio add-on board, takes the radio mic.
@@ -148,6 +101,7 @@ AudioTxInputPage::AudioTxInputPage(RadioModel* model, QWidget* parent)
     m_orionMicPanelAvailable = !model
         || RadioModel::orionMicPanelAvailable(model->hardwareProfile().model);
 
+    setStyleSheet(styleSheet() + QLatin1String(kGreyedStyle));
     buildPage(radioMicSelectable, m_hw);
 
     // Wire two-way sync with TransmitModel.
@@ -161,6 +115,11 @@ AudioTxInputPage::AudioTxInputPage(RadioModel* model, QWidget* parent)
         // Model → UI: reflect external setMicGainDb() calls into the slider.
         connect(tx, &TransmitModel::micGainDbChanged,
                 this, &AudioTxInputPage::onModelMicGainDbChanged);
+
+        // R-SPK-21: the radio mic placeholder and family groups follow the
+        // board when the radio changes.
+        connect(model, &RadioModel::currentRadioChanged,
+                this, [this]() { onCurrentRadioChanged(); });
 
         // Apply the current model state at construction.
         syncButtonsFromModel(tx->micSource());
@@ -256,13 +215,10 @@ AudioTxInputPage::AudioTxInputPage(RadioModel* model, QWidget* parent)
         }
     }
 
-    // R-R3-36: the PC Mic controls show the one audio/TxInput config the
-    // engine holds (the Devices page edits the same one) and follow every
-    // change to it, whichever page made it.
+    // R-R3-36 / R-SPK-21: the PC microphone card edits the one
+    // audio/TxInput config the engine holds and follows every change to it.
     if (AudioEngine* eng = engine()) {
-        applyTxInputConfigToControls(eng->txInputConfig());
-        connect(eng, &AudioEngine::txInputConfigChanged,
-                this, &AudioTxInputPage::applyTxInputConfigToControls);
+        wirePcMicCard();
         connect(eng, &AudioEngine::captureStatusChanged,
                 this, [this](const CaptureSupervisor::Status&) { refreshCaptureStatus(); });
         connect(m_retryCaptureBtn, &QPushButton::clicked,
@@ -271,8 +227,6 @@ AudioTxInputPage::AudioTxInputPage(RadioModel* model, QWidget* parent)
                         e->retryCapture();
                     }
                 });
-    } else {
-        applyTxInputConfigToControls(AudioDeviceConfig{});
     }
     refreshCaptureStatus();
 
@@ -328,64 +282,51 @@ AudioEngine* AudioTxInputPage::engine()
     return model() ? model()->localAudioDevices() : nullptr;
 }
 
-void AudioTxInputPage::applyTxInputConfigToControls(const AudioDeviceConfig& cfg)
+QGroupBox* AudioTxInputPage::pcMicGroupBox() const
 {
-    m_applyingTxInputConfig = true;
-
-    // Backend: -1 (PortAudio default) is shown as the OS-default API.
-    const int effectiveApi = (cfg.hostApiIndex == -1) ? defaultHostApiIndex()
-                                                      : cfg.hostApiIndex;
-    if (m_backendCombo) {
-        const int idx = m_backendCombo->findData(effectiveApi);
-        if (idx >= 0) {
-            QSignalBlocker blk(m_backendCombo);
-            m_backendCombo->setCurrentIndex(idx);
-        }
-    }
-    populateDeviceCombo(effectiveApi);
-
-    // Device: empty is the "(default)" entry. A named device that is not
-    // present stays selected under its own name, so the page never shows a
-    // different microphone than the one configured.
-    if (m_deviceCombo) {
-        QSignalBlocker blk(m_deviceCombo);
-        int idx = 0;
-        if (!cfg.deviceName.isEmpty()) {
-            idx = m_deviceCombo->findData(cfg.deviceName);
-            if (idx < 0) {
-                m_deviceCombo->addItem(
-                    QStringLiteral("%1 (not available)").arg(cfg.deviceName),
-                    cfg.deviceName);
-                idx = m_deviceCombo->count() - 1;
-            }
-        }
-        m_deviceCombo->setCurrentIndex(idx);
-    }
-
-    // Buffer.
-    if (m_bufferSlider) {
-        const int pos = kBufferSizes.indexOf(cfg.bufferSamples);
-        if (pos >= 0) {
-            QSignalBlocker blk(m_bufferSlider);
-            m_bufferSlider->setValue(pos);
-        }
-    }
-    updateBufferLabel(cfg.bufferSamples);
-
-    m_applyingTxInputConfig = false;
+    return m_pcMicCard;
 }
 
-// Persists exactly as the Devices page TX Input card does, then hands the
-// config to the engine (which reports it back through txInputConfigChanged).
-void AudioTxInputPage::commitTxInputConfig(const AudioDeviceConfig& cfg)
+QComboBox* AudioTxInputPage::deviceCombo() const
+{
+    return m_pcMicCard ? m_pcMicCard->deviceCombo() : nullptr;
+}
+
+QComboBox* AudioTxInputPage::driverApiCombo() const
+{
+    return m_pcMicCard ? m_pcMicCard->driverApiCombo() : nullptr;
+}
+
+QComboBox* AudioTxInputPage::bufferSizeCombo() const
+{
+    return m_pcMicCard ? m_pcMicCard->bufferSizeCombo() : nullptr;
+}
+
+// R-R3-36 / R-SPK-21: the card persists audio/TxInput itself, then the page
+// hands the config to the engine; the engine's change (from this card, a
+// TransmitModel pcMic* setter or anything else) reloads the card, as the
+// Devices page did.
+void AudioTxInputPage::wirePcMicCard()
 {
     AudioEngine* eng = engine();
-    if (!eng) {
+    if (!eng || !m_pcMicCard) {
         return;
     }
-    cfg.saveToSettings(QStringLiteral("audio/TxInput"));
-    AppSettings::instance().save();
-    eng->setTxInputConfig(cfg);
+    connect(m_pcMicCard, &DeviceCard::configChanged,
+            this, [this](const AudioDeviceConfig& cfg) {
+                if (m_updatingFromEngine) { return; }
+                if (AudioEngine* e = engine()) {
+                    e->setTxInputConfig(cfg);
+                }
+            });
+    connect(eng, &AudioEngine::txInputConfigChanged,
+            this, [this](const AudioDeviceConfig& cfg) {
+                m_updatingFromEngine = true;
+                QSignalBlocker blocker(m_pcMicCard);
+                m_pcMicCard->loadFromSettings();
+                m_pcMicCard->updateNegotiatedPill(cfg);
+                m_updatingFromEngine = false;
+            });
 }
 
 void AudioTxInputPage::refreshCaptureStatus()
@@ -480,7 +421,7 @@ void AudioTxInputPage::applyHeldControlGate()
 void AudioTxInputPage::buildPage(bool radioMicSelectable, HPSDRHW hw)
 {
     // ── Mic Source group box (I.1) ────────────────────────────────────────────
-    auto* srcGrp = new QGroupBox(QStringLiteral("Mic Source"), this);
+    auto* srcGrp = new QGroupBox(QStringLiteral("Source"), this);
     m_micSourceGroup = srcGrp;
     auto* srcLayout = new QVBoxLayout(srcGrp);
 
@@ -514,20 +455,31 @@ void AudioTxInputPage::buildPage(bool radioMicSelectable, HPSDRHW hw)
     // add-on board, so Radio Mic stays open with a plain note, as mi0bot
     // leaves Mic In / Line In open on every model (mi0bot setup.cs:14566-14589
     // [@c26a8a4]).
+    // Built on every board and shown only on one that needs the add-on, so
+    // onCurrentRadioChanged can show it when an HL2 connects later.
     if (m_radioMicNeedsAddOn) {
         m_radioMicBtn->setToolTip(RadioModel::radioMicAddOnNote());
-        m_radioMicNoteLabel = new QLabel(RadioModel::radioMicAddOnNote(), srcGrp);
-        m_radioMicNoteLabel->setWordWrap(true);
-        srcLayout->addWidget(m_radioMicNoteLabel);
     }
+    m_radioMicNoteLabel = new QLabel(RadioModel::radioMicAddOnNote(), srcGrp);
+    m_radioMicNoteLabel->setObjectName(QStringLiteral("radioMicAddOnNote"));
+    m_radioMicNoteLabel->setWordWrap(true);
+    m_radioMicNoteLabel->setVisible(m_radioMicNeedsAddOn);
+    srcLayout->addWidget(m_radioMicNoteLabel);
     srcLayout->addWidget(m_vaxMicBtn);
     m_micSelectionStatusLabel = new QLabel(srcGrp);
     m_micSelectionStatusLabel->setObjectName(QStringLiteral("remoteMicSelectionStatus"));
     m_micSelectionStatusLabel->setWordWrap(true);
     m_micSelectionStatusLabel->hide();
     srcLayout->addWidget(m_micSelectionStatusLabel);
+    // R-SPK-21: every source's section stays in view (audio-setup.html).
+    auto* srcNote = new QLabel(QStringLiteral(
+        "Pick where transmit audio comes from. The other sections stay visible "
+        "but greyed out until you pick them."), srcGrp);
+    srcNote->setObjectName(QStringLiteral("micSourceNote"));
+    srcNote->setWordWrap(true);
+    srcLayout->addWidget(srcNote);
 
-    contentLayout()->insertWidget(0, srcGrp);
+    addContent(srcGrp);
 
     // UI → Model: user toggles a radio button.
     connect(m_buttonGroup, &QButtonGroup::idToggled,
@@ -536,99 +488,97 @@ void AudioTxInputPage::buildPage(bool radioMicSelectable, HPSDRHW hw)
     // ── PC Mic group box (I.2) ────────────────────────────────────────────────
     auto* pcMicGroupContainer = new QVBoxLayout();
     buildPcMicGroup(pcMicGroupContainer);
-    contentLayout()->addLayout(pcMicGroupContainer);
+    addContent(pcMicGroupContainer);
 
     // ── Radio Mic per-family group boxes (I.3) ────────────────────────────────
-    auto* radioMicContainer = new QVBoxLayout();
+    // R-SPK-21: inside one container, which is greyed out unless Radio Mic
+    // is picked. The transmit gates disable the groups themselves, so the
+    // two never fight over one widget's state.
+    m_radioMicSection = new QWidget(this);
+    m_radioMicSection->setObjectName(QStringLiteral("radioMicSection"));
+    auto* radioMicContainer = new QVBoxLayout(m_radioMicSection);
+    radioMicContainer->setContentsMargins(0, 0, 0, 0);
     buildHermesRadioMicGroup(radioMicContainer);
     buildOrionRadioMicGroup(radioMicContainer);
     buildSaturnRadioMicGroup(radioMicContainer);
-    contentLayout()->addLayout(radioMicContainer);
+    buildRadioMicPlaceholder(radioMicContainer);
+    addContent(m_radioMicSection);
 
-    // Show PC Mic group only when PC Mic is selected.
-    updatePcMicGroupVisibility(MicSource::Pc);
-    // All Radio Mic groups hidden initially (PC Mic is selected by default).
-    updateRadioMicGroupVisibility(MicSource::Pc, hw);
+    // ── Mic gain (R-SPK-21) ───────────────────────────────────────────────
+    auto* micGainContainer = new QVBoxLayout();
+    buildMicGainGroup(micGainContainer);
+    addContent(micGainContainer);
+
+    // This board's radio mic group (or the placeholder) is in view; the
+    // source picked decides which section is live.
+    updateRadioMicGroupVisibility(hw);
+    updateSourceSections(MicSource::Pc);
 }
 
 void AudioTxInputPage::buildPcMicGroup(QVBoxLayout* parentLayout)
 {
-    m_pcMicGroup = new QGroupBox(QStringLiteral("PC Mic"), this);
-    auto* grpLayout = new QFormLayout(m_pcMicGroup);
-    grpLayout->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    grpLayout->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    // R-SPK-21 / R-SPK-22: the Devices page's microphone card, on the same
+    // audio/TxInput keys, is the PC microphone section. Device stays in
+    // front; Driver API, Sample rate, Bit depth, Channels, Buffer size,
+    // Options and Negotiated fold under Device details. The card's Monitor
+    // TX input and tone check rows follow UnbuiltFeatures as before.
+    m_pcMicCard = new DeviceCard(QStringLiteral("audio/TxInput"),
+                                 DeviceCard::Role::Input, false, this);
+    m_pcMicCard->setObjectName(QStringLiteral("pcMicrophoneGroup"));
+    m_pcMicCard->setTitle(QStringLiteral("PC microphone"));
 
-    // ── Row 1: Backend ────────────────────────────────────────────────────────
-    m_backendCombo = new QComboBox(this);
-    populateBackendCombo();
-    grpLayout->addRow(QStringLiteral("Backend:"), m_backendCombo);
-    connect(m_backendCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &AudioTxInputPage::onBackendChanged);
-
-    // ── Row 2: Device ─────────────────────────────────────────────────────────
-    m_deviceCombo = new QComboBox(this);
-    // Initial population uses the current backend combo selection.
-    // Actual seeding happens in the constructor after buildPage() returns.
-    grpLayout->addRow(QStringLiteral("Device:"), m_deviceCombo);
-    connect(m_deviceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &AudioTxInputPage::onDeviceChanged);
-
-    // ── Row 3: Buffer size ────────────────────────────────────────────────────
-    m_bufferSlider = new QSlider(Qt::Horizontal, this);
-    m_bufferSlider->setMinimum(0);
-    m_bufferSlider->setMaximum(kBufferSizes.size() - 1);
-    m_bufferSlider->setSingleStep(1);
-    m_bufferSlider->setPageStep(1);
-    // Default: index of 512 samples in kBufferSizes.
-    const int defaultBufIdx = kBufferSizes.indexOf(512);
-    m_bufferSlider->setValue(defaultBufIdx >= 0 ? defaultBufIdx : 3);
-
-    m_bufferLabel = new QLabel(latencyString(512), this);
-    m_bufferLabel->setMinimumWidth(220);
-
-    auto* bufRow = new QHBoxLayout();
-    bufRow->addWidget(m_bufferSlider);
-    bufRow->addWidget(m_bufferLabel);
-    grpLayout->addRow(QStringLiteral("Buffer:"), bufRow);
-
-    connect(m_bufferSlider, &QSlider::valueChanged,
-            this, &AudioTxInputPage::onBufferSliderChanged);
-
-    // ── Row 4: Test Mic + VU bar ──────────────────────────────────────────────
-    m_testMicBtn = new QPushButton(QStringLiteral("Test Mic"), this);
+    // ── Test Mic + VU bar ─────────────────────────────────────────────────────
+    auto* testRowWidget = new QWidget(m_pcMicCard);
+    auto* testRow = new QHBoxLayout(testRowWidget);
+    testRow->setContentsMargins(0, 0, 0, 0);
+    m_testMicBtn = new QPushButton(QStringLiteral("Test Mic"), testRowWidget);
     m_testMicBtn->setCheckable(true);
     m_testMicBtn->setToolTip(
         QStringLiteral("Click to open the selected PC mic and see the live level"));
 
-    m_vuBar = new HGauge(this);
+    m_vuBar = new HGauge(testRowWidget);
     m_vuBar->setRange(0.0, 100.0);
     m_vuBar->setYellowStart(80.0);
     m_vuBar->setRedStart(95.0);
     m_vuBar->setValue(0.0);
     m_vuBar->setMinimumWidth(120);
 
-    auto* testRow = new QHBoxLayout();
     testRow->addWidget(m_testMicBtn);
     testRow->addWidget(m_vuBar, 1);
-    grpLayout->addRow(QStringLiteral(""), testRow);
+    m_pcMicCard->addBelowDevice(testRowWidget);
 
     connect(m_testMicBtn, &QPushButton::toggled,
             this, &AudioTxInputPage::onTestMicToggled);
 
-    // ── Microphone status + Retry (R-R3-36) ───────────────────────────────────
-    m_captureStatusLabel = new QLabel(this);
+    // ── Microphone status + Retry (R-R3-36), once in Setup ────────────────────
+    auto* statusRowWidget = new QWidget(m_pcMicCard);
+    auto* statusRow = new QHBoxLayout(statusRowWidget);
+    statusRow->setContentsMargins(0, 0, 0, 0);
+    m_captureStatusLabel = new QLabel(statusRowWidget);
     m_captureStatusLabel->setObjectName(QStringLiteral("captureStatus"));
     m_captureStatusLabel->setWordWrap(true);
-    m_retryCaptureBtn = new QPushButton(QStringLiteral("Retry microphone"), this);
+    m_retryCaptureBtn = new QPushButton(QStringLiteral("Retry microphone"), statusRowWidget);
     m_retryCaptureBtn->setObjectName(QStringLiteral("retryCapture"));
     m_retryCaptureBtn->setEnabled(false);
 
-    auto* statusRow = new QHBoxLayout();
     statusRow->addWidget(m_captureStatusLabel, 1);
     statusRow->addWidget(m_retryCaptureBtn);
-    grpLayout->addRow(QStringLiteral(""), statusRow);
+    m_pcMicCard->addBelowDevice(statusRowWidget);
 
-    // ── Row 5: Mic Gain ───────────────────────────────────────────────────────
+    parentLayout->addWidget(m_pcMicCard);
+}
+
+void AudioTxInputPage::buildMicGainGroup(QVBoxLayout* parentLayout)
+{
+    // R-SPK-21: Mic gain is its own group; it applies to every source. The
+    // row keeps its "Mic Gain:" label, which the Setup description names.
+    m_micGainGroup = new QGroupBox(QStringLiteral("Mic gain"), this);
+    m_micGainGroup->setObjectName(QStringLiteral("micGainGroup"));
+    auto* grpLayout = new QFormLayout(m_micGainGroup);
+    grpLayout->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    grpLayout->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+
+    // ── Mic Gain ───────────────────────────────────────────────────────
     // Range is read from BoardCapabilities::micGainMinDb / micGainMaxDb.
     //
     // From Thetis console.cs:19151-19171 [v2.10.3.13]:
@@ -670,125 +620,41 @@ void AudioTxInputPage::buildPcMicGroup(QVBoxLayout* parentLayout)
     connect(m_micGainSlider, &QSlider::valueChanged,
             this, &AudioTxInputPage::onMicGainSliderChanged);
 
-    parentLayout->addWidget(m_pcMicGroup);
+    auto* gainNote = new QLabel(
+        QStringLiteral("Applies to whichever source is picked above."), m_micGainGroup);
+    gainNote->setObjectName(QStringLiteral("micGainNote"));
+    gainNote->setWordWrap(true);
+    grpLayout->addRow(gainNote);
+
+    parentLayout->addWidget(m_micGainGroup);
 }
 
 // ---------------------------------------------------------------------------
-// Populate backend combo from PortAudioBus::hostApis()
+// Source sections (R-SPK-21): never hidden, greyed unless picked
 // ---------------------------------------------------------------------------
 
-void AudioTxInputPage::populateBackendCombo()
+void AudioTxInputPage::updateSourceSections(MicSource source)
 {
-    if (!m_backendCombo) { return; }
-
-    QSignalBlocker blk(m_backendCombo);
-    m_backendCombo->clear();
-
-    const QVector<PortAudioBus::HostApiInfo> apis = PortAudioBus::hostApis();
-    if (apis.isEmpty()) {
-        // PortAudio not initialized (e.g. in headless tests): show placeholder.
-        m_backendCombo->addItem(QStringLiteral("(no audio APIs available)"), -1);
-        return;
+    // setEnabled on the card and on the radio section's container only:
+    // the transmit gates own the radio mic groups' and Mic Gain's state.
+    if (m_pcMicCard) {
+        m_pcMicCard->setEnabled(source == MicSource::Pc);
     }
-
-    for (const auto& api : apis) {
-        m_backendCombo->addItem(api.name, api.index);
-    }
-
-    // Select the OS-default API.
-    const int defApi = defaultHostApiIndex();
-    for (int i = 0; i < m_backendCombo->count(); ++i) {
-        if (m_backendCombo->itemData(i).toInt() == defApi) {
-            m_backendCombo->setCurrentIndex(i);
-            break;
-        }
+    if (m_radioMicSection) {
+        m_radioMicSection->setEnabled(source == MicSource::Radio);
     }
 }
 
 // ---------------------------------------------------------------------------
-// Populate device combo from PortAudioBus::inputDevicesFor()
+// Radio Mic per-family group visibility (I.3, R-SPK-21)
+// This board's family group is in view whichever source is picked (its
+// section is greyed unless Radio Mic is picked); the other families' groups
+// do not apply to this board and stay hidden. A board with no group shows
+// the placeholder.
 // ---------------------------------------------------------------------------
 
-void AudioTxInputPage::populateDeviceCombo(int hostApiIndex)
+void AudioTxInputPage::updateRadioMicGroupVisibility(HPSDRHW hw)
 {
-    if (!m_deviceCombo) { return; }
-
-    QSignalBlocker blk(m_deviceCombo);
-#if defined(Q_OS_MAC)
-    if (QGuiApplication::platformName() == QStringLiteral("cocoa")
-        && qVersion() == QStringLiteral("6.11.0")) {
-        // Qt6.11 Cocoa expires promoted popup cells with its old native
-        // rows (qcocoaaccessibilityelement.mm:219-226,257-267,342-362),
-        // but QAccessibleTable retains their IDs and dereferences them on
-        // RowsRemoved (itemviews.cpp:696-741). Clear only that accessibility
-        // cache through the public API before the combo mutates its model.
-        QAbstractItemView* view = m_deviceCombo->view();
-        QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(view);
-        if (accessible != nullptr && accessible->tableInterface() != nullptr) {
-            QAccessibleTableModelChangeEvent reset(
-                view, QAccessibleTableModelChangeEvent::ModelReset);
-            accessible->tableInterface()->modelChange(&reset);
-        }
-    }
-#endif
-    m_deviceCombo->clear();
-
-    if (hostApiIndex < 0) {
-        m_deviceCombo->addItem(QStringLiteral("(default)"), QString());
-        return;
-    }
-
-    const QVector<PortAudioBus::DeviceInfo> devices =
-        PortAudioBus::inputDevicesFor(hostApiIndex);
-
-    if (devices.isEmpty()) {
-        m_deviceCombo->addItem(QStringLiteral("(no input devices)"), QString());
-        return;
-    }
-
-    // First entry: use the PA default device for this host API.
-    m_deviceCombo->addItem(QStringLiteral("(default)"), QString());
-
-    for (const auto& dev : devices) {
-        m_deviceCombo->addItem(dev.name, dev.name);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Buffer label update
-// ---------------------------------------------------------------------------
-
-void AudioTxInputPage::updateBufferLabel(int samples)
-{
-    if (m_bufferLabel) {
-        m_bufferLabel->setText(latencyString(samples));
-    }
-}
-
-// ---------------------------------------------------------------------------
-// PC Mic group visibility: show group only when PC Mic is selected
-// ---------------------------------------------------------------------------
-
-void AudioTxInputPage::updatePcMicGroupVisibility(MicSource source)
-{
-    if (m_pcMicGroup) {
-        m_pcMicGroup->setVisible(source == MicSource::Pc);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Radio Mic per-family group visibility (I.3)
-// Shows the appropriate family group when Radio Mic is selected AND
-// caps.hasMicJack == true. The hasMicJack gate is implicit: if hasMicJack
-// is false the Radio Mic button is disabled so source can never be Radio in
-// normal use; these groups are also explicitly hidden in that case.
-// ---------------------------------------------------------------------------
-
-void AudioTxInputPage::updateRadioMicGroupVisibility(MicSource source, HPSDRHW hw)
-{
-    // Only show a Radio Mic group when Radio Mic is actually selected.
-    const bool radioMicActive = (source == MicSource::Radio);
-
     // The Hermes Lite 2 takes the Hermes group's Mic In / Line In, boost and
     // Line In Gain through its AK4951 add-on board (P1CodecHl2).
     const bool isHermes = (hw == HPSDRHW::Hermes
@@ -801,9 +667,71 @@ void AudioTxInputPage::updateRadioMicGroupVisibility(MicSource source, HPSDRHW h
     const bool isSaturn = (hw == HPSDRHW::Saturn
                         || hw == HPSDRHW::SaturnMKII);
 
-    if (m_hermesGroup) { m_hermesGroup->setVisible(radioMicActive && isHermes); }
-    if (m_orionGroup)  { m_orionGroup->setVisible(radioMicActive && isOrion);  }
-    if (m_saturnGroup) { m_saturnGroup->setVisible(radioMicActive && isSaturn); }
+    if (m_hermesGroup) { m_hermesGroup->setVisible(isHermes); }
+    if (m_orionGroup)  { m_orionGroup->setVisible(isOrion);  }
+    if (m_saturnGroup) { m_saturnGroup->setVisible(isSaturn); }
+    if (m_radioMicPlaceholder) {
+        m_radioMicPlaceholder->setVisible(!isHermes && !isOrion && !isSaturn);
+    }
+}
+
+void AudioTxInputPage::buildRadioMicPlaceholder(QVBoxLayout* parentLayout)
+{
+    // R-SPK-21: a board without a radio mic group still shows the section,
+    // with why there is nothing to set (audio-setup.html).
+    m_radioMicPlaceholder = new QGroupBox(QStringLiteral("Radio microphone"), this);
+    m_radioMicPlaceholder->setObjectName(QStringLiteral("radioMicPlaceholder"));
+    auto* layout = new QVBoxLayout(m_radioMicPlaceholder);
+    m_radioMicPlaceholderNote = new QLabel(m_radioMicPlaceholder);
+    m_radioMicPlaceholderNote->setObjectName(QStringLiteral("radioMicPlaceholderNote"));
+    m_radioMicPlaceholderNote->setWordWrap(true);
+    refreshRadioMicPlaceholderNote(m_hw);
+    layout->addWidget(m_radioMicPlaceholderNote);
+    parentLayout->addWidget(m_radioMicPlaceholder);
+}
+
+void AudioTxInputPage::refreshRadioMicPlaceholderNote(HPSDRHW hw)
+{
+    if (m_radioMicPlaceholderNote) {
+        m_radioMicPlaceholderNote->setText(hw == HPSDRHW::Unknown
+            ? QStringLiteral("Connect a radio to set up its mic jack.")
+            : QStringLiteral("This radio has no mic jack."));
+    }
+}
+
+// R-SPK-21: the radio changed (connect, disconnect, another board).
+// Everything the constructor built from the board follows it: Radio Mic's
+// state, tooltip and add-on note, the Hermes group's title and add-on
+// notes, the placeholder's note and which family group is in view, so a
+// page opened before the radio connected does not keep the old board.
+void AudioTxInputPage::onCurrentRadioChanged()
+{
+    if (!model()) {
+        return;
+    }
+    const BoardCapabilities& caps = model()->boardCapabilities();
+    const HPSDRHW hw = caps.board;
+    m_hw = hw;
+    m_radioMicNeedsAddOn = caps.radioMicNeedsAddOn;
+    if (m_radioMicNoteLabel) {
+        m_radioMicNoteLabel->setVisible(m_radioMicNeedsAddOn);
+    }
+    if (m_hermesGroup) {
+        m_hermesGroup->setTitle(hermesGroupTitle(hw));
+    }
+    applyHermesAddOnNotes(hw);
+    refreshRadioMicPlaceholderNote(hw);
+    updateRadioMicGroupVisibility(hw);
+    if (model()->ownsLocalDsp()) {
+        const bool selectable = caps.radioMicSelectable();
+        m_radioMicBtn->setEnabled(selectable);
+        m_radioMicBtn->setToolTip(!selectable
+            ? QStringLiteral("Radio mic jack not present on Hermes Lite 2")
+            : (m_radioMicNeedsAddOn ? RadioModel::radioMicAddOnNote() : QString()));
+    } else {
+        // A remote window's Radio Mic follows the Core's reasons too.
+        applyHeldControlGate();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -856,8 +784,7 @@ void AudioTxInputPage::onMicSourceButtonToggled(int id, bool checked)
 void AudioTxInputPage::onModelMicSourceChanged(MicSource source)
 {
     syncButtonsFromModel(source);
-    updatePcMicGroupVisibility(source);
-    updateRadioMicGroupVisibility(source, m_hw);
+    updateSourceSections(source);
 }
 
 void AudioTxInputPage::syncButtonsFromModel(MicSource source)
@@ -870,67 +797,6 @@ void AudioTxInputPage::syncButtonsFromModel(MicSource source)
         btn->setChecked(true);
     }
     m_updatingFromModel = false;
-}
-
-// ---------------------------------------------------------------------------
-// Slot: Backend combo changed (I.2 Row 1)
-// ---------------------------------------------------------------------------
-
-void AudioTxInputPage::onBackendChanged(int comboIndex)
-{
-    if (!m_backendCombo) { return; }
-    if (m_applyingTxInputConfig) { return; }
-
-    const int hostApiIndex = m_backendCombo->itemData(comboIndex).toInt();
-
-    // Repopulate device combo for the new host API.
-    populateDeviceCombo(hostApiIndex);
-
-    // R-R3-36: one audio/TxInput config. The Devices card stores the API by
-    // name (driverApi) and index; keep both in step. Device name resets to
-    // the default when the backend changes.
-    AudioEngine* eng = engine();
-    if (!eng) { return; }
-    AudioDeviceConfig cfg = eng->txInputConfig();
-    cfg.hostApiIndex = hostApiIndex;
-    cfg.driverApi = (hostApiIndex < 0) ? QString() : m_backendCombo->itemText(comboIndex);
-    cfg.deviceName.clear();
-    commitTxInputConfig(cfg);
-}
-
-// ---------------------------------------------------------------------------
-// Slot: Device combo changed (I.2 Row 2)
-// ---------------------------------------------------------------------------
-
-void AudioTxInputPage::onDeviceChanged(int comboIndex)
-{
-    if (!m_deviceCombo) { return; }
-    if (m_updatingFromModel || m_applyingTxInputConfig) { return; }
-
-    AudioEngine* eng = engine();
-    if (!eng) { return; }
-    AudioDeviceConfig cfg = eng->txInputConfig();
-    cfg.deviceName = m_deviceCombo->itemData(comboIndex).toString();
-    commitTxInputConfig(cfg);
-}
-
-// ---------------------------------------------------------------------------
-// Slot: Buffer slider changed (I.2 Row 3)
-// ---------------------------------------------------------------------------
-
-void AudioTxInputPage::onBufferSliderChanged(int sliderPos)
-{
-    if (sliderPos < 0 || sliderPos >= kBufferSizes.size()) { return; }
-
-    const int samples = kBufferSizes[sliderPos];
-    updateBufferLabel(samples);
-    if (m_applyingTxInputConfig) { return; }
-
-    AudioEngine* eng = engine();
-    if (!eng) { return; }
-    AudioDeviceConfig cfg = eng->txInputConfig();
-    cfg.bufferSamples = samples;
-    commitTxInputConfig(cfg);
 }
 
 // ---------------------------------------------------------------------------
@@ -1025,10 +891,7 @@ void AudioTxInputPage::onModelMicGainDbChanged(int dB)
 
 void AudioTxInputPage::buildHermesRadioMicGroup(QVBoxLayout* parentLayout)
 {
-    m_hermesGroup = new QGroupBox(m_hw == HPSDRHW::HermesLite
-                                      ? QStringLiteral("Radio Mic (Hermes Lite 2)")
-                                      : QStringLiteral("Radio Mic (Hermes / Atlas)"),
-                                  this);
+    m_hermesGroup = new QGroupBox(hermesGroupTitle(m_hw), this);
     auto* grpLayout = new QVBoxLayout(m_hermesGroup);
 
     // ── Row 1: Mic In / Line In radio buttons ─────────────────────────────────
@@ -1092,15 +955,30 @@ void AudioTxInputPage::buildHermesRadioMicGroup(QVBoxLayout* parentLayout)
     // On the Hermes Lite 2 these settings reach the AK4951 on its audio
     // add-on board, which the gateware cannot report, so each row carries
     // the same note as Radio Mic (the Setup description's tooltip).
-    if (m_hw == HPSDRHW::HermesLite && m_radioMicNeedsAddOn) {
-        const QString note = RadioModel::radioMicAddOnNote();
-        micInBtn->setToolTip(note);
-        lineInBtn->setToolTip(note);
-        m_hermesMicBoostChk->setToolTip(note);
-        m_hermesLineInGainSlider->setToolTip(note);
-    }
+    applyHermesAddOnNotes(m_hw);
 
     parentLayout->addWidget(m_hermesGroup);
+}
+
+/*static*/ QString AudioTxInputPage::hermesGroupTitle(HPSDRHW hw)
+{
+    return hw == HPSDRHW::HermesLite ? QStringLiteral("Radio Mic (Hermes Lite 2)")
+                                     : QStringLiteral("Radio Mic (Hermes / Atlas)");
+}
+
+void AudioTxInputPage::applyHermesAddOnNotes(HPSDRHW hw)
+{
+    const QString note = (hw == HPSDRHW::HermesLite && m_radioMicNeedsAddOn)
+        ? RadioModel::radioMicAddOnNote() : QString();
+    QList<QWidget*> rows{m_hermesMicBoostChk, m_hermesLineInGainSlider};
+    if (m_hermesMicInputGroup) {
+        rows << m_hermesMicInputGroup->button(0) << m_hermesMicInputGroup->button(1);
+    }
+    for (QWidget* w : rows) {
+        if (w) {
+            w->setToolTip(note);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

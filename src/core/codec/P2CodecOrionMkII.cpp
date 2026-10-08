@@ -57,6 +57,9 @@
 //                attenuator range above 31 dB on Alex boards (value + 2,
 //                console.cs:11044-11056 [v2.10.3.15]). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-06 - Radio speaker (R-SPK-09): high-priority byte 1400 bit 1, the
+//                speaker amplifier mute (Thetis network.c:1028 [v2.10.3.15]).
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 // === Verbatim Thetis Console/console.cs header (lines 1-50) ===
@@ -284,10 +287,17 @@ void P2CodecOrionMkII::composeCmdHighPriority(const CodecContext& ctx, quint8 bu
     // From Thetis ChannelMaster/network.c:1030-1031 [v2.10.3.15]
     //   // Open Collector Outputs
     //   packetbuf[1401] = (prn->oc_output << 1) & 0xfe;
-    // (The byte before it, not ported here, carries its own tag:
-    //   packetbuf[1400] = xvtr_enable | (!audioamp_enable) << 1 | atu_tune << 2; //MW0LGE_22b  // user_dig_in was gettin overwritten by 1025 packet read
-    // network.c:1028 [v2.10.3.15].)
     buf[1401] = static_cast<quint8>((ctx.ocByte << 1) & 0xfe);
+
+    // R-SPK-09: the speaker amplifier mute. Bit 1 only: bit 0 (transverter
+    // out) and bit 2 (ATU tune) stay zero, as they always have here.
+    // From Thetis ChannelMaster/network.c:1026-1028 [v2.10.3.15]
+    //   // Enable transverter T/R relay 8   Mute Audio Amp bit 1 from J16 pin 9 IO4---DLE
+    //   //packetbuf[1400] = xvtr_enable | ((!(prn->user_dig_in & 0x01)) << 1 | atu_tune << 2);
+    //   packetbuf[1400] = xvtr_enable | (!audioamp_enable) << 1 | atu_tune << 2; //MW0LGE_22b  // user_dig_in was gettin overwritten by 1025 packet read
+    // From piHPSDR src/alex.h:129 [@4aa95c5] (the bit's name)
+    //   ANAN7000_HIPRIO1400_SPKR_MUTE  0x00000002   //  Enable/mute audio (1 = mute)
+    buf[1400] = ctx.p2SpeakerAmpOff ? 0x02 : 0x00;
 
     // From Thetis network.c:1037-1038 [@501e3f5] — Mercury Attenuator
     buf[1403] = static_cast<quint8>(ctx.p2Rx1Preamp << 1 | ctx.rxPreamp[0]);

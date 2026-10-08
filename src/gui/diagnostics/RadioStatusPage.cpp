@@ -119,7 +119,7 @@ RadioStatusPage::RadioStatusPage(RadioModel* model, QWidget* parent)
     auto* outer = new QVBoxLayout();
     outer->setSpacing(6);
     outer->setContentsMargins(6, 6, 6, 6);
-    contentLayout()->addLayout(outer);
+    addContent(outer);
 
     // ── Top status bar ────────────────────────────────────────────────────
     auto* statusBar = new QFrame(this);

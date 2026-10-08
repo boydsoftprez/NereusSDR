@@ -23,11 +23,18 @@ import Testing
 struct ToolsPagesTests {
     private let platform = TestPlatform()
 
-    /// Every tool the suite's ANAN-G2 catalogue lists on the phone, in the
-    /// desktop's order: all it offers, and TCI Server, which a Core without
-    /// its own TCI server does not offer and the phone shows greyed.
-    static let offeredIds = ["spotHub", "freedvReporter", "txEqualizer", "pureSignal", "diversity", "tciServer",
-                             "vaxAudio", "networkDiagnostics", "supportBundle"]
+    /// Every tool this app has a page for that the suite's ANAN-G2
+    /// catalogue lists, in the desktop's order: all it offers, and TCI
+    /// Server, which a Core without its own TCI server does not offer and
+    /// the phone shows greyed.
+    static let offeredIds = ["spotHub", "freedvReporter", "txEqualizer", "pureSignal", "diversity", "catControl",
+                             "tciServer", "vaxAudio", "networkDiagnostics", "supportBundle"]
+
+    /// The phone's list from that catalogue: the same tools. CAT Control
+    /// opens from a Core that lets this app set up its CAT, and is greyed
+    /// with its reason from one that does not.
+    static let listedIds = ["spotHub", "freedvReporter", "txEqualizer", "pureSignal", "diversity", "catControl",
+                            "tciServer", "vaxAudio", "networkDiagnostics", "supportBundle"]
 
     // MARK: The list
 
@@ -42,21 +49,38 @@ struct ToolsPagesTests {
         // and every Core tool greyed, so wait for TCI Server's reason, which
         // only this catalogue's read gives it.
         #expect(await settle {
-            model.main.catalogFeed.revision == 2 && list.entries.map(\.id) == Self.offeredIds
+            model.main.catalogFeed.revision == 2 && list.entries.map(\.id) == Self.listedIds
                 && list.entries.first { $0.id == "tciServer" }?.reason == StationToolList.noTciServerReason
         })
         #expect(list.entries.map(\.title) == ["Spot Hub", "FreeDV Reporter", "TX Equalizer", "PureSignal",
-                                              "Diversity", "TCI Server", "VAX Audio", "Connection and performance",
-                                              "Support Bundle"])
-        #expect(list.entries.map(\.tag) == [.both, .core, .core, .core, .core, .core, .core, .both, .both])
+                                              "Diversity", "CAT Control", "TCI Server", "VAX Audio",
+                                              "Connection and performance", "Support Bundle"])
+        #expect(list.entries.map(\.tag) == [.both, .core, .core, .core, .core, .core, .core, .core, .both, .both])
         #expect(list.entries.allSatisfy { $0.page != nil })
         // This Core runs no TCI server of its own: TCI Server is greyed with the reason; the rest open.
         let tci = try #require(list.entries.first { $0.id == "tciServer" })
         #expect(!tci.enabled && tci.reason == StationToolList.noTciServerReason && tci.detail == tci.reason)
-        #expect(list.entries.filter { $0.id != "tciServer" }.allSatisfy { $0.enabled })
-        // CWX, the Memory Manager and CAT Control are not built on the desktop: not listed (D41).
-        #expect(!list.entries.contains { ["cwx", "memoryManager", "catControl"].contains($0.id) })
+        #expect(list.entries.filter { !["tciServer", "catControl"].contains($0.id) }.allSatisfy { $0.enabled })
+        // CAT Control runs on the Core; this Core does not let this app set up its CAT: greyed with the reason.
+        let cat = try #require(list.entries.first { $0.id == "catControl" })
+        #expect(cat.page == .catControl && !cat.enabled && cat.reason == StationToolList.noStationCatReason)
+        #expect(cat.detail == StationToolList.noStationCatReason)
+        // CWX and the Memory Manager are not built on the desktop: not listed (D41).
+        #expect(!list.entries.contains { ["cwx", "memoryManager"].contains($0.id) })
         await model.disconnect()
+    }
+
+    @Test("CAT Control opens from a Core that lets this app set up its CAT, with its own line")
+    func catControlOpens() async throws {
+        let (model, station) = try await connected(additions: [.stationCat])
+        let list = ToolListModel(mirror: model.mirror, catalogFeed: model.main.catalogFeed)
+        try await deliverCatalogue(station, revision: 2)
+        #expect(await settle { list.entries.first { $0.id == "catControl" }?.enabled == true })
+        let cat = try #require(list.entries.first { $0.id == "catControl" })
+        #expect(cat.title == "CAT Control" && cat.tag == .core && cat.page == .catControl)
+        #expect(cat.detail == "The Core's CAT channels for logging and digital-mode apps")
+        await model.disconnect()
+        #expect(await settle { list.entries.first { $0.id == "catControl" }?.reason == StationToolList.notConnectedReason })
     }
 
     @Test("a new catalogue while the tab is open changes the list; a tool this app lacks is greyed with its reason")
@@ -64,7 +88,7 @@ struct ToolsPagesTests {
         let (model, station) = try await connected()
         let list = ToolListModel(mirror: model.mirror, catalogFeed: model.main.catalogFeed)
         try await deliverCatalogue(station, revision: 2)
-        #expect(await settle { model.main.catalogFeed.revision == 2 && list.entries.map(\.id) == Self.offeredIds })
+        #expect(await settle { model.main.catalogFeed.revision == 2 && list.entries.map(\.id) == Self.listedIds })
         // The desktop builds CWX, and the Core stops offering PureSignal.
         try await deliverCatalogue(station, revision: 3) { tools in
             tools.map { tool in
@@ -80,7 +104,8 @@ struct ToolsPagesTests {
         }
         #expect(await settle { list.entries.contains { $0.id == "cwx" } })
         #expect(list.entries.map(\.id) == ["spotHub", "freedvReporter", "txEqualizer", "diversity", "cwx",
-                                           "tciServer", "vaxAudio", "networkDiagnostics", "supportBundle"])
+                                           "catControl", "tciServer", "vaxAudio", "networkDiagnostics",
+                                           "supportBundle"])
         let cwx = try #require(list.entries.first { $0.id == "cwx" })
         #expect(cwx.title == "CWX" && cwx.tag == .core && cwx.page == nil)
         #expect(cwx.reason == StationToolList.unknownToolReason && !cwx.enabled)
@@ -105,8 +130,8 @@ struct ToolsPagesTests {
         // The Hermes Lite 2's catalogue: no diversity receiver, no TCI server of the Core's own.
         try await deliverCatalogue(station, revision: 2, fixture: "catalog-hermes-lite-2")
         #expect(await settle { list.entries.map(\.id) == ["spotHub", "freedvReporter", "txEqualizer", "pureSignal",
-                                                          "tciServer", "vaxAudio", "networkDiagnostics",
-                                                          "supportBundle"] })
+                                                          "catControl", "tciServer", "vaxAudio",
+                                                          "networkDiagnostics", "supportBundle"] })
         #expect(list.entries.first { $0.id == "tciServer" }?.reason == StationToolList.noTciServerReason)
         // A headless Core with its own TCI server: VAX Audio greyed, TCI Server opens; no PureSignal on this radio.
         try await deliverCatalogue(station, revision: 3) { tools in
@@ -121,8 +146,8 @@ struct ToolsPagesTests {
             }
         }
         #expect(await settle { list.entries.map(\.id) == ["spotHub", "freedvReporter", "txEqualizer", "diversity",
-                                                          "tciServer", "vaxAudio", "networkDiagnostics",
-                                                          "supportBundle"] })
+                                                          "catControl", "tciServer", "vaxAudio",
+                                                          "networkDiagnostics", "supportBundle"] })
         let vax = try #require(list.entries.first { $0.id == "vaxAudio" })
         #expect(!vax.enabled && vax.reason == StationToolList.noVaxReason && vax.page == .vaxAudio)
         #expect(list.entries.first { $0.id == "tciServer" }?.enabled == true)
@@ -530,6 +555,545 @@ struct ToolsPagesTests {
         #expect(await settle { tci.optionsReason == nil })
         await model.disconnect()
         #expect(await settle { tci.optionsReason == TciServerModel.notConnectedReason && tci.options == nil })
+    }
+
+    // MARK: CAT Control
+
+    @Test("CAT Control waits for the Core's CAT, greys on an older Core and when the Core goes away")
+    func catReasons() async throws {
+        let (older, olderModel, olderStation) = try await catModel([])
+        #expect(await settle { older.reason == CatControlModel.olderCoreReason })
+        #expect(older.logReason == CatControlModel.olderCoreReason && older.global == nil)
+        older.change(1) { $0.tcpEnabled = false }
+        older.test("FA;")
+        #expect(older.tests.isEmpty)
+        #expect(catInvokes(olderStation, StationCat.setChannelVerb).isEmpty)
+        await olderModel.disconnect()
+        #expect(await settle { older.reason == CatControlModel.notConnectedReason })
+
+        let (cat, model, station) = try await catModel()
+        #expect(await settle { cat.reason == CatControlModel.waitingReason })
+        try await station.deliverStationCat()
+        #expect(await settle { cat.reason == nil && cat.global != nil })
+        #expect(cat.channel(1).config.tcpEnabled && cat.channel(2).config.serialEnabled)
+        #expect(cat.summary(1) == "Listening · TCP clients: 2 · /dev/ttys004")
+        #expect(cat.summary(2) == "Listening · Serial: Listening")
+        #expect(cat.summary(4) == "Disabled")
+        #expect(cat.tcpStatus(1) == "TCP: Listening · Bound: 127.0.0.1:13013 · Clients: 2")
+        #expect(cat.ptyStatus(1) == "/dev/ttys004" && cat.ptyStatus(4) == "PTY: Stopped")
+        #expect(cat.ptyDialectLine(1) == "CAT 1 PTY uses Kenwood and ZZ commands on the Core's computer.")
+        #expect(cat.pttState == "Disabled")
+        await model.disconnect()
+        #expect(await settle { cat.reason == CatControlModel.notConnectedReason && cat.global == nil })
+        cat.change(4) { $0.tcpEnabled = true }
+        #expect(catInvokes(station, StationCat.setChannelVerb).isEmpty)
+    }
+
+    @Test("a CAT channel's switch and port go to the Core as the whole channel, and the page follows")
+    func catChannelWrites() async throws {
+        let (cat, model, station) = try await catModel()
+        try await station.deliverStationCat()
+        #expect(await settle { cat.reason == nil })
+        cat.change(4) { $0.tcpEnabled = true }
+        // Shown at once, before the Core answers.
+        #expect(cat.channel(4).config.tcpEnabled)
+        let switched = try #require(await sent(station, StationCat.setChannelVerb))
+        #expect(switched.first == .init(name: "channel", value: .i64(4)))
+        let config = try #require(Self.catConfig(switched))
+        #expect(config["tcpEnabled"] == .bool(true) && config["tcpPort"] == .number(13016))
+        #expect(config["primaryRebind"] == .bool(false) && config["secondaryRebind"] == .bool(false))
+        #expect(config["tcpBindAddress"] == .string("127.0.0.1") && config["serialBaud"] == .number(115200))
+        #expect(await settle { cat.channel(4).status.tcp == "Listening" })
+        cat.openPortPad(4, .tcp)
+        let pad = try #require(cat.pad)
+        type(pad, "13100")
+        #expect(await pad.enter())
+        #expect(await settle { cat.channel(4).status.tcpBoundPort == 13100 })
+        let moved = try #require(Self.catConfig(catInvokes(station, StationCat.setChannelVerb).last))
+        #expect(moved["tcpPort"] == .number(13100) && moved["tcpEnabled"] == .bool(true))
+        // Two changes in a row: the second carries the first.
+        cat.change(4) { $0.serialBaud = 9600 }
+        cat.change(4) { $0.serialParity = "Odd" }
+        #expect(await settle { catInvokes(station, StationCat.setChannelVerb).count == 4 })
+        let last = try #require(Self.catConfig(catInvokes(station, StationCat.setChannelVerb).last))
+        #expect(last["serialBaud"] == .number(9600) && last["serialParity"] == .string("Odd"))
+        #expect(await settle { cat.channel(4).config.serialParity == "Odd" && cat.channel(4).config.serialBaud == 9600 })
+        await model.disconnect()
+    }
+
+    @Test("picking a slice for a CAT channel binds it again, and a closed slice says so")
+    func catSliceRebind() async throws {
+        let (cat, model, station) = try await catModel()
+        try await station.deliverStationCat()
+        #expect(await settle { cat.reason == nil && !cat.sliceIds.isEmpty })
+        // CAT 3 was bound to a slice that was closed.
+        #expect(cat.sliceProblem(3, .a) == CatControlModel.closedSliceReason)
+        #expect(cat.sliceSelected(3, .a) == "closed:5")
+        let closed = try #require(cat.sliceChoices(3, .a).first { $0.value == "closed:5" })
+        #expect(!closed.enabled && closed.label == "Slice F, closed")
+        #expect(cat.sliceChoices(3, .b).first?.label == "None" && cat.sliceSelected(3, .b) == "none")
+        #expect(cat.sliceSelected(1, .a) == "slice:0" && cat.sliceProblem(1, .a) == nil)
+        let slice = try #require(cat.sliceIds.first)
+        cat.pickSlice(3, .a, "slice:\(slice)")
+        let config = try #require(Self.catConfig(await sent(station, StationCat.setChannelVerb)))
+        #expect(config["primarySliceId"] == .number(Double(slice)))
+        #expect(config["primaryRebind"] == .bool(true) && config["secondaryRebind"] == .bool(false))
+        #expect(await settle { cat.sliceProblem(3, .a) == nil && cat.sliceSelected(3, .a) == "slice:\(slice)" })
+        // None unbinds without the flag; the closed one sends nothing.
+        cat.pickSlice(1, .b, "none")
+        #expect(await settle { catInvokes(station, StationCat.setChannelVerb).count == 2 })
+        let none = try #require(Self.catConfig(catInvokes(station, StationCat.setChannelVerb).last))
+        #expect(none["secondarySliceId"] == .number(-1) && none["secondaryRebind"] == .bool(false))
+        cat.pickSlice(3, .a, "closed:5")
+        #expect(catInvokes(station, StationCat.setChannelVerb).count == 2)
+        await model.disconnect()
+    }
+
+    @Test("a CAT option goes to the Core with every shared setting; a refusal shows the Core's words and its value")
+    func catGlobalAndRefusal() async throws {
+        let (cat, model, station) = try await catModel()
+        try await station.deliverStationCat()
+        #expect(await settle { cat.global != nil })
+        cat.changeGlobal { $0.rigIdentity = "TS-480" }
+        #expect(cat.global?.rigIdentity == "TS-480")
+        let sent = try #require(await sent(station, StationCat.setGlobalVerb))
+        #expect(sent.map(\.name) == ["config"])
+        let config = try #require(Self.catConfig(sent))
+        #expect(config["rigIdentity"] == .string("TS-480") && config["sendWelcome"] == .bool(true))
+        #expect(config["rttyDiguHz"] == .number(2125) && config["pttDeviceSource"] == .string("None"))
+        #expect(await settle {
+            StationCat(values: model.mirror.object(StationCat.objectKey)?.values ?? [:]).global.config.rigIdentity
+                == "TS-480"
+        })
+        cat.changeGlobal { $0.pttEnabled = true }
+        #expect(await settle { cat.pttState == "Armed" })
+        cat.openRttyPad(digu: false)
+        let pad = try #require(cat.pad)
+        type(pad, "1275")
+        #expect(await pad.enter())
+        #expect(await settle { cat.global?.rttyDiglHz == 1275 })
+        // A refused channel change: the Core's words, and its own value again.
+        station.refuseNext(StationCat.setChannelVerb, reason: FakeStation.catChannelRefusedReason)
+        cat.change(4) { $0.rigctldEnabled = true }
+        #expect(cat.channel(4).config.rigctldEnabled)
+        #expect(await settle { cat.note(.channel(4)) == FakeStation.catChannelRefusedReason })
+        #expect(await settle { !cat.channel(4).config.rigctldEnabled })
+        // A refusal without words still says so; an accepted change clears the words.
+        station.refuseNext(StationCat.setGlobalVerb, reason: "")
+        cat.changeGlobal { $0.sendWelcome = false }
+        #expect(await settle { cat.note(.global) == CatControlModel.refusedText })
+        #expect(await settle { cat.global?.sendWelcome == true })
+        cat.change(4) { $0.rigctldEnabled = true }
+        #expect(await settle { cat.note(.channel(4)) == nil && cat.channel(4).status.rigctld == "Listening" })
+        await model.disconnect()
+    }
+
+    @Test("the CAT tester shows each reply by its own test, and two quick tests both answer")
+    func catTester() async throws {
+        let (cat, model, station) = try await catModel()
+        try await station.deliverStationCat()
+        #expect(await settle { cat.reason == nil })
+        cat.test("FA;")
+        cat.testChannel = 2
+        cat.test("ID;")
+        #expect(cat.tests.map(\.command) == ["ID;", "FA;"])
+        #expect(await settle { cat.tests.allSatisfy { $0.answer != nil } })
+        #expect(cat.tests.map(\.answer) == ["ID019;", "FA00014074000;"])
+        #expect(cat.tests.map(\.channel) == [2, 1])
+        #expect(cat.tests.allSatisfy { $0.kind == .reply })
+        let sent = catInvokes(station, StationCat.testVerb)
+        #expect(sent.count == 2)
+        #expect(Array(sent.first?.dropFirst() ?? []) == [.init(name: "channel", value: .i64(1)),
+                                                         .init(name: "command", value: .utf8("FA;"))])
+        // Request ids rise from this phone's clock, as the desktop seeds its
+        // own, so two devices do not name their tests alike in lastTest.
+        guard case .i64(let first)? = sent.first?.first?.value, case .i64(let second)? = sent.last?.first?.value else {
+            Issue.record("the tests carry no request id")
+            return
+        }
+        #expect(sent.first?.first?.name == "requestId" && second == first + 1)
+        #expect(first > Int64(Date().timeIntervalSince1970 - 3600) * 1_000_000)
+        // The Core answers a transmit command with "?;".
+        cat.test("TX;")
+        #expect(await settle { cat.tests.first?.answer == "?;" })
+        station.refuseNext(StationCat.testVerb, reason: FakeStation.catNotUnderstoodReason)
+        cat.test("FB;")
+        #expect(await settle { cat.tests.first?.answer == FakeStation.catNotUnderstoodReason })
+        #expect(cat.tests.first?.refused == true && cat.tests.first?.kind == .refused)
+        #expect(CatControlModel.escaped("A\r\\") == "A\\x0d\\x5c")
+        await model.disconnect()
+    }
+
+    @Test("a CAT test the Core does not answer says so as a note, not as the radio's reply")
+    func catTesterUnanswered() async throws {
+        let (cat, model, station) = try await catModel(timeout: .milliseconds(400))
+        try await station.deliverStationCat()
+        #expect(await settle { cat.reason == nil })
+        station.answerNextCat(StationCat.testVerb, with: .unanswered)
+        cat.test("FA;")
+        #expect(await settle { cat.tests.first?.answer == CatControlModel.unansweredText })
+        #expect(cat.tests.first?.kind == .note && cat.tests.first?.refused == false)
+        await model.disconnect()
+    }
+
+    @Test("a CAT change refused while a newer one waits keeps the newer shown; no answer lets it go and says so; a later one settles")
+    func catSendPaths() async throws {
+        let (cat, model, station) = try await catModel(timeout: .milliseconds(600))
+        try await station.deliverStationCat()
+        #expect(await settle { cat.reason == nil })
+        station.refuseNext(StationCat.setChannelVerb, reason: FakeStation.catChannelRefusedReason)
+        station.answerNextCat(StationCat.setChannelVerb, with: .unanswered)
+        cat.change(4) { $0.tcpEnabled = true }
+        cat.change(4) { $0.tcpPort = 13100 }
+        // The first is refused while the second is on its way: the second stays shown.
+        #expect(await settle { cat.note(.channel(4)) == FakeStation.catChannelRefusedReason })
+        #expect(cat.channel(4).config.tcpEnabled && cat.channel(4).config.tcpPort == 13100)
+        #expect(catInvokes(station, StationCat.setChannelVerb).count == 2)
+        // No answer to the second: the Core's value again, and the words say so.
+        #expect(await settle { cat.note(.channel(4)) == PropertyWriteOutcome.notConfirmed.reason })
+        #expect(!cat.channel(4).config.tcpEnabled && cat.channel(4).config.tcpPort == 13016)
+        // A later change the Core keeps settles on its value, and the words go.
+        cat.change(4) { $0.tcpEnabled = true }
+        #expect(await settle { cat.note(.channel(4)) == nil && cat.channel(4).status.tcp == "Listening" })
+        #expect(cat.channel(4).config.tcpEnabled && cat.channel(4).config.tcpPort == 13016)
+        await model.disconnect()
+    }
+
+    @Test("a CAT change the Core accepts but has not applied stays shown until that channel changes, its status included")
+    func catHeldUntilChannelChanges() async throws {
+        let (cat, model, station) = try await catModel()
+        try await station.deliverStationCat()
+        #expect(await settle { cat.reason == nil })
+        station.answerNextCat(StationCat.setChannelVerb, with: .acceptedUnchanged)
+        cat.change(4) { $0.tcpEnabled = true }
+        #expect(await settle { catInvokes(station, StationCat.setChannelVerb).count == 1 })
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(cat.channel(4).config.tcpEnabled && cat.note(.channel(4)) == nil)
+        // Another channel's change leaves it shown.
+        var scene = FakeStation.SceneCat.board
+        if case .object(var status)? = scene.channels[0]["status"] {
+            status["tcpClients"] = .number(3)
+            scene.channels[0]["status"] = .object(status)
+        }
+        try await station.deliverStationCat(scene)
+        #expect(await settle { cat.channel(1).status.tcpClients == 3 })
+        #expect(cat.channel(4).config.tcpEnabled)
+        // A change to CAT 4's status alone: the Core's value shows again.
+        scene.channels[3] = FakeStation.catChannel(4, config: [:], status: ["state": .string("Error")])
+        try await station.deliverStationCat(scene)
+        #expect(await settle { cat.channel(4).status.state == "Error" })
+        #expect(!cat.channel(4).config.tcpEnabled)
+        await model.disconnect()
+    }
+
+    @Test("picking the CAT choice already shown sends nothing")
+    func catSamePickSendsNothing() async throws {
+        let (cat, model, station) = try await catModel()
+        try await station.deliverStationCat()
+        #expect(await settle { cat.reason == nil && !cat.sliceIds.isEmpty })
+        #expect(cat.sliceSelected(1, .a) == "slice:0")
+        cat.pickSlice(1, .a, "slice:0")
+        cat.pickSlice(4, .b, "none")
+        cat.change(4) { $0.tcpEnabled = false }
+        cat.changeGlobal { $0.sendWelcome = true }
+        // A real change after them is the first to reach the Core.
+        cat.change(4) { $0.serialBaud = 9600 }
+        cat.changeGlobal { $0.rigIdentity = "TS-480" }
+        #expect(await settle { catInvokes(station, StationCat.setGlobalVerb).count == 1 })
+        let channels = catInvokes(station, StationCat.setChannelVerb)
+        #expect(channels.count == 1)
+        #expect(Self.catConfig(channels.first)?["serialBaud"] == .number(9600))
+        await model.disconnect()
+    }
+
+    @Test("losing the Core lets go of CAT changes and their words, and asks it for nothing")
+    func catDisconnect() async throws {
+        let (cat, model, station) = try await catModel()
+        try await station.deliverStationCat()
+        #expect(await settle { cat.reason == nil })
+        station.refuseNext(StationCat.setChannelVerb, reason: FakeStation.catChannelRefusedReason)
+        cat.change(1) { $0.serialBaud = 9600 }
+        #expect(await settle { cat.note(.channel(1)) == FakeStation.catChannelRefusedReason })
+        station.answerNextCat(StationCat.setChannelVerb, with: .unanswered)
+        cat.change(4) { $0.tcpEnabled = true }
+        #expect(await settle { catInvokes(station, StationCat.setChannelVerb).count == 2 })
+        #expect(cat.channel(4).config.tcpEnabled)
+        await station.dropLink()
+        #expect(await settle { cat.reason == CatControlModel.notConnectedReason })
+        #expect(cat.note(.channel(1)) == nil && cat.note(.channel(4)) == nil)
+        cat.setOpen(.channel(2), true)
+        cat.setOpen(.ptt, true)
+        #expect(catInvokes(station, StationCat.refreshDevicesVerb).isEmpty)
+        cat.setOpen(.channel(2), false)
+        cat.setOpen(.ptt, false)
+        // Back: the Core's values, with nothing held from before.
+        #expect(await settle(seconds: 60) { model.connection == .connected })
+        try await station.deliverStationCat()
+        #expect(await settle { cat.reason == nil && cat.global != nil })
+        #expect(!cat.channel(4).config.tcpEnabled && cat.note(.channel(4)) == nil && cat.note(.channel(1)) == nil)
+        await model.disconnect()
+        #expect(await settle { cat.reason == CatControlModel.notConnectedReason })
+        cat.setOpen(.channel(3), true)
+        #expect(catInvokes(station, StationCat.refreshDevicesVerb).isEmpty)
+    }
+
+    @Test("the Tools tab makes CAT Control's model once as its pages open, keeps it across them, and lets it go when they close")
+    func catHolder() async throws {
+        let (model, _) = try await connected(additions: [.stationCat])
+        var made = 0
+        let make = {
+            made += 1
+            return CatControlModel(mirror: model.mirror, commands: model.commands, records: model.records)
+        }
+        let closed = CatControlHolder(make: make)
+        #expect(closed.model == nil && made == 0)
+        let holder = CatControlHolder(route: [.catControl], make: make)
+        #expect(holder.model != nil && made == 1)
+        weak var first = holder.model
+        holder.follow([.catControl, .catControlPage(.test)])
+        holder.follow([.catControl, .catControlPage(.test), .catControlPage(.options)])
+        holder.follow([.catControl])
+        #expect(holder.model === first && made == 1)
+        first?.setOpen(.test, true)
+        first?.setOpen(.test, false)
+        holder.follow([.performance])
+        #expect(holder.model == nil)
+        #expect(await settle { first == nil })
+        holder.follow([.catControl])
+        #expect(holder.model != nil && made == 2)
+        await model.disconnect()
+    }
+
+    @Test("the CAT log is asked for only while Test and log is open, fills from the Core's lines, filters, pauses and clears")
+    func catLog() async throws {
+        let (cat, model, station) = try await catModel()
+        try await station.deliverStationCat()
+        #expect(await settle { cat.reason == nil && cat.logReason == nil })
+        cat.setOpen(.options, true)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(!station.messages.contains { Self.asksFor($0, StationCat.logStream) })
+        cat.setOpen(.test, true)
+        #expect(await settle { cat.logLines.count == 4 })
+        #expect(station.messages.contains { Self.asksFor($0, StationCat.logStream) })
+        #expect(CatControlModel.lineText(cat.logLines[0]) == "CAT1 in   FA;")
+        #expect(CatControlModel.lineText(cat.logLines[1]) == "CAT1 out  FA00014074000;")
+        // The desktop's line, with the byte count and the bytes in hex.
+        #expect(CatControlModel.lineText(cat.logLines[0], bytes: true) == "CAT1 in bytes=3  FA;  [hex 46 41 3b]")
+        #expect(CatControlModel.lineText(cat.logLines[1], bytes: true)
+                    == "CAT1 out bytes=14  FA00014074000;  [hex 46 41 30 30 30 31 34 30 37 34 30 30 30 3b]")
+        // Follow newest keeps the newest line in view.
+        #expect(cat.followNewest && cat.scrollTarget == cat.logLines.last?.id)
+        cat.setLogFilter(.received)
+        #expect(cat.logLines.map(\.text) == ["FA;", "ZZFB;"])
+        cat.setLogFilter(.sent)
+        #expect(cat.logLines.map(\.text) == ["FA00014074000;", "ZZFB00014076000;"])
+        cat.setLogFilter(.all)
+        // A line with no time shows the time it arrived, as the desktop's window does.
+        await station.deliverCatLog([FakeStation.LogLine(channel: 3, inbound: true, text: "IF;", timeMs: 0)])
+        #expect(await settle { cat.logLines.last?.text == "IF;" })
+        let clock = DateFormatter()
+        clock.dateFormat = "HH:mm:ss.SSS"
+        #expect(cat.logLines.last?.time != clock.string(from: Date(timeIntervalSince1970: 0)))
+        #expect(cat.logLines.last?.time.count == 12)
+        // Follow newest off: the view stays where it was.
+        cat.followNewest = false
+        let kept = cat.scrollTarget
+        await station.deliverCatLog([FakeStation.LogLine(channel: 3, inbound: false, text: "IF0;", timeMs: 5)])
+        #expect(await settle { cat.logLines.last?.text == "IF0;" })
+        #expect(cat.scrollTarget == kept && kept != cat.logLines.last?.id)
+        cat.followNewest = true
+        #expect(cat.scrollTarget == cat.logLines.last?.id)
+        // Paused, new lines are dropped; Resume starts with what comes next.
+        cat.setPaused(true)
+        await station.deliverCatLog([FakeStation.LogLine(channel: 3, inbound: false, text: "IF00014074000;", timeMs: 6)])
+        #expect(await settle { model.records.records(StationCat.logStream).count == 7 })
+        #expect(cat.logLines.count == 6)
+        cat.setPaused(false)
+        #expect(cat.logLines.count == 6)
+        await station.deliverCatLog([FakeStation.LogLine(channel: 3, inbound: true, text: "MD;", timeMs: 7)])
+        #expect(await settle { cat.logLines.last?.text == "MD;" })
+        #expect(cat.logLines.count == 7)
+        #expect(!cat.logLines.contains { $0.text == "IF00014074000;" })
+        // A channel's change of state is a diagnostic line, as the desktop's window writes it.
+        cat.change(4) { $0.tcpEnabled = true }
+        #expect(await settle { cat.logLines.contains { $0.text == "CAT4 TCP: Listening" } })
+        #expect(cat.logLines.contains { $0.text == "CAT4 state: Listening" })
+        cat.setLogFilter(.diagnostics)
+        #expect(!cat.logLines.isEmpty && cat.logLines.allSatisfy { $0.kind == .diagnostic })
+        #expect(CatControlModel.lineText(cat.logLines[0], bytes: true) == cat.logLines[0].text)
+        cat.changeGlobal { $0.pttEnabled = true }
+        #expect(await settle { cat.logLines.last?.text == "PTT: Armed" })
+        cat.setLogFilter(.all)
+        // Clear empties the log; the Core's lines already read do not come back.
+        cat.clearLog()
+        #expect(cat.logLines.isEmpty && cat.scrollTarget == nil)
+        await station.deliverCatLog([FakeStation.LogLine(channel: 1, inbound: true, text: "FB;", timeMs: 8)])
+        #expect(await settle { cat.logLines.map(\.text) == ["FB;"] })
+        cat.setOpen(.test, false)
+        cat.setOpen(.options, false)
+        #expect(await settle {
+            station.messages.contains { message in
+                let invoke = AccessoryPagesTests.invoke(message)
+                return invoke?.verb == "records.unsubscribe" && invoke?.args.first?.value == .utf8(StationCat.logStream)
+            }
+        })
+        await model.disconnect()
+        #expect(await settle { cat.logReason == CatControlModel.notConnectedReason })
+    }
+
+    @Test("the CAT log grows only with its own lines: a burst appends, other changes leave it alone, a full log fills quickly")
+    func catLogLoad() async throws {
+        let (cat, model, station) = try await catModel()
+        try await station.deliverStationCat()
+        #expect(await settle { cat.reason == nil && cat.logReason == nil })
+        cat.setOpen(.test, true)
+        #expect(await settle { cat.logLines.count == 4 })
+        let rebuilds = cat.logRebuilds
+        // A burst of the Core's lines: each batch appends, nothing is made again.
+        for number in 0..<20 {
+            await station.deliverCatLog([FakeStation.LogLine(channel: 1, inbound: number % 2 == 0, text: "FA;",
+                                                             timeMs: 10 + Int64(number))])
+        }
+        #expect(await settle { cat.logLines.count == 24 })
+        #expect(cat.logRebuilds == rebuilds)
+        #expect(cat.logLines.map(\.id) == cat.logLines.map(\.id).sorted())
+        // Changes that are not the log's: another stream, the radio, the
+        // Core's CAT settings. The log is not read and not touched.
+        let reads = cat.logReads
+        let shown = cat.logLines
+        model.records.want("spots", backlog: 10, by: model)
+        model.records.apply(LinkMessage.RecordBatch(stream: "spots", generation: 1, reset: true, upserts: [
+            LinkMessage.RecordBatch.Record(id: "1", fields: ["callsign": .string("K1ABC")]),
+        ], removes: []))
+        await station.deliver(.delta(LinkMessage.Delta(key: "radio", properties: [
+            .init(ordinal: try ordinal("RadioModel", "transmitting"), name: "transmitting", value: .bool(false)),
+        ])))
+        cat.changeGlobal { $0.rigIdentity = "TS-480" }
+        #expect(await settle {
+            StationCat(values: model.mirror.object(StationCat.objectKey)?.values ?? [:]).global.config.rigIdentity
+                == "TS-480"
+        })
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(cat.logReads == reads && cat.logRebuilds == rebuilds && cat.logLines == shown)
+        model.records.unwant("spots", by: model)
+        // The Core's whole log at once: the desktop's 10000 lines, kept to
+        // that many, appended in one read.
+        let lines = (0..<StationCat.logCapacity).map { number in
+            LinkMessage.RecordBatch.Record(id: "\(100 + number)", fields: [
+                "channel": .number(2), "inbound": .bool(number % 2 == 0), "text": .string("ZZFA00014074000;"),
+                "time": .number(1_790_000_000_000 + Double(number)),
+            ])
+        }
+        let took = ContinuousClock().measure {
+            model.records.apply(LinkMessage.RecordBatch(stream: StationCat.logStream, generation: 1, reset: false,
+                                                        upserts: lines, removes: []))
+        }
+        #expect(cat.logLines.count == StationCat.logCapacity)
+        #expect(cat.logLines.last?.text == "ZZFA00014074000;" && cat.logRebuilds == rebuilds)
+        #expect(cat.logReads == reads + 1)
+        #expect(took < .seconds(2), "\(took)")
+        await model.disconnect()
+    }
+
+    @Test("the CAT log stops with the link, and is asked for again after a reconnect while Test and log is open")
+    func catLogReconnect() async throws {
+        let (cat, model, station) = try await catModel()
+        try await station.deliverStationCat()
+        #expect(await settle { cat.reason == nil && cat.logReason == nil })
+        cat.setOpen(.test, true)
+        #expect(await settle { cat.logLines.count == 4 })
+        let asked = station.messages.filter { Self.asksFor($0, StationCat.logStream) }.count
+        await station.dropLink()
+        #expect(await settle { cat.logReason == CatControlModel.notConnectedReason })
+        #expect(!model.records.isWanted(StationCat.logStream, by: cat))
+        #expect(model.records.records(StationCat.logStream).isEmpty)
+        // The lines already shown stay.
+        #expect(cat.logLines.count == 4)
+        #expect(await settle(seconds: 60) { model.connection == .connected && cat.logReason == nil })
+        try await station.deliverStationCat()
+        #expect(await settle { station.messages.filter { Self.asksFor($0, StationCat.logStream) }.count == asked + 1 })
+        #expect(model.records.isWanted(StationCat.logStream, by: cat))
+        // The Core sends its recent lines again: none shows twice.
+        #expect(await settle { model.records.records(StationCat.logStream).count == 4 })
+        await station.deliverCatLog([FakeStation.LogLine(channel: 2, inbound: true, text: "IF;", timeMs: 9)])
+        #expect(await settle { cat.logLines.last?.text == "IF;" })
+        #expect(cat.logLines.count == 5)
+        await model.disconnect()
+    }
+
+    @Test("an open CAT listener warns, the Core computer's limits grey their choices, and channel and PTT pages read the devices again")
+    func catWarningAndLimits() async throws {
+        let (cat, model, station) = try await catModel()
+        try await station.deliverStationCat()
+        #expect(await settle { cat.reason == nil })
+        #expect(!cat.opensToNetwork(1, .tcp))
+        cat.setAddress(1, .tcp, "0.0.0.0")
+        #expect(cat.opensToNetwork(1, .tcp))
+        #expect(await settle { cat.channel(1).status.tcpBoundAddress == "0.0.0.0" })
+        #expect(cat.opensToNetwork(1, .tcp))
+        // A listener switched off opens nothing.
+        cat.setAddress(4, .rigctld, "192.168.1.20")
+        #expect(!cat.opensToNetwork(4, .rigctld))
+        #expect(CatControlModel.opensToNetwork(enabled: true, address: "192.168.1.20"))
+        #expect(CatControlModel.opensToNetwork(enabled: true, address: "::"))
+        #expect(!CatControlModel.opensToNetwork(enabled: true, address: "::1"))
+        #expect(!CatControlModel.opensToNetwork(enabled: true, address: "127.0.0.1"))
+        #expect(!CatControlModel.opensToNetwork(enabled: true, address: ""))
+        #expect(!CatControlModel.opensToNetwork(enabled: false, address: "192.168.1.20"))
+        // This Core's computer has no mark or space parity, nor 1.5 stop bits.
+        #expect(cat.parityChoices.filter { !$0.enabled }.map(\.value) == ["Mark", "Space"])
+        #expect(cat.parityChoices.first { $0.value == "Mark" }?.reason == CatControlModel.markParityReason)
+        #expect(cat.stopBitChoices.filter { !$0.enabled }.map(\.value) == ["1.5"])
+        #expect(cat.serialReason == nil && cat.ptyReason == nil && cat.pttReason == nil)
+        #expect(cat.deviceChoices(current: "/dev/cu.typed").map(\.value)
+                    == ["/dev/cu.usbserial-A10K", "/dev/cu.usbmodem1101", "/dev/cu.typed"])
+        #expect(cat.dialectChoices(1).map(\.label) == ["Kenwood and ZZ commands", "Hamlib rigctld"])
+        // Opening a channel page or the PTT page asks for the devices again; Options does not.
+        cat.setOpen(.options, true)
+        cat.setOpen(.channel(2), true)
+        #expect(await settle { catInvokes(station, StationCat.refreshDevicesVerb).count == 1 })
+        cat.setOpen(.ptt, true)
+        #expect(await settle { catInvokes(station, StationCat.refreshDevicesVerb).count == 2 })
+        let refreshes = catInvokes(station, StationCat.refreshDevicesVerb)
+        #expect(refreshes.allSatisfy { $0.isEmpty })
+        // A Core whose computer has no serial ports and no virtual ones, but every format.
+        var scene = FakeStation.SceneCat.board
+        scene.platform["serial"] = .bool(false)
+        scene.platform["pty"] = .bool(false)
+        scene.platform["markSpaceParity"] = .bool(true)
+        scene.platform["oneAndHalfStop"] = .bool(true)
+        try await station.deliverStationCat(scene)
+        #expect(await settle { cat.serialReason == CatControlModel.noSerialReason })
+        #expect(cat.ptyReason == CatControlModel.noPtyReason && cat.pttReason == CatControlModel.noPttReason)
+        #expect(cat.parityChoices.allSatisfy(\.enabled) && cat.stopBitChoices.allSatisfy(\.enabled))
+        await model.disconnect()
+    }
+
+    @Test("CAT Control's words are plain: nothing promised, no dashes, no build or bench")
+    func catWords() {
+        // The desktop's data bits: 8, 7 or 6 on a channel, 5 to 8 for the PTT device.
+        #expect(CatControlModel.channelDataBits == [8, 7, 6] && CatControlModel.pttDataBits == [5, 6, 7, 8])
+        let texts = [StationToolList.noStationCatReason, CatControlModel.waitingReason, CatControlModel.noLogReason,
+                     CatControlModel.openToNetworkWarning, CatControlModel.slicesNote,
+                     CatControlModel.closedSliceReason, CatControlModel.noSerialReason, CatControlModel.noPtyReason,
+                     CatControlModel.markParityReason, CatControlModel.spaceParityReason,
+                     CatControlModel.oneAndHalfStopReason, CatControlModel.recenterNote, CatControlModel.pttNote,
+                     CatControlModel.noPttReason, CatControlModel.testerNote, CatControlModel.noReplyText,
+                     CatControlModel.unansweredText, CatControlModel.pausedNote, CatControlModel.noLinesText,
+                     CatControlModel.showBytesTitle, "The Core's CAT channels for logging and digital-mode apps"]
+            + [CatControlModel.Route.channel(1), .options, .ptt, .test].map(\.title)
+            + CatControlModel.LogFilter.allCases.map(\.label)
+            + Self.catSourceTexts()
+        #expect(texts.contains("Clear") && texts.contains("Follow newest"))
+        for text in texts {
+            let words = text.lowercased().split { !$0.isLetter }
+            for promise in ["yet", "soon", "later", "coming", "build", "bench", "station"] {
+                #expect(!words.contains(Substring(promise)), "\(text)")
+            }
+            #expect(!text.contains("\u{2014}") && !text.contains("\u{2013}"), "\(text)")
+        }
+        #expect(CatControlModel.openToNetworkWarning
+            == "Open to your network: any device that can reach this port can tune and key the radio. There is no password.")
     }
 
     // MARK: Support Bundle
@@ -1122,6 +1686,52 @@ struct ToolsPagesTests {
     private func sent(_ station: FakeStation, _ verb: String) async -> [LinkMessage.PropertyEntry]? {
         await station.waitForMessage(within: .seconds(30)) { AccessoryPagesTests.invoke($0)?.verb == verb }
             .flatMap(AccessoryPagesTests.invoke)?.args
+    }
+
+    /// A CAT Control model on a fake Core with `additions`.
+    private func catModel(_ additions: FakeStation.Additions = [.stationCat],
+                          timeout: Duration = CatControlModel.timeout) async throws
+        -> (CatControlModel, AppModel, FakeStation) {
+        let (model, station) = try await connected(additions: additions)
+        let cat = CatControlModel(mirror: model.mirror, commands: model.commands, records: model.records,
+                                  timeout: timeout)
+        return (cat, model, station)
+    }
+
+    /// Every string written in CAT Control's page and model, comments and
+    /// log lines aside: what the pages can show.
+    private static func catSourceTexts() -> [String] {
+        let tools = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Tools")
+        var texts: [String] = []
+        for name in ["CatControlPages.swift", "CatControlModel.swift"] {
+            guard let source = try? String(contentsOf: tools.appendingPathComponent(name), encoding: .utf8) else {
+                Issue.record("\(name) could not be read")
+                continue
+            }
+            for line in source.split(separator: "\n") {
+                let code = line.trimmingCharacters(in: .whitespaces)
+                if code.hasPrefix("//") || code.contains("logger.") || code.contains("Logger(") {
+                    continue
+                }
+                texts += code.matches(of: /"((?:[^"\\]|\\.)*)"/).map { String($0.output.1) }
+            }
+        }
+        return texts
+    }
+
+    /// The arguments of every `verb` the app sent, in order.
+    private func catInvokes(_ station: FakeStation, _ verb: String) -> [[LinkMessage.PropertyEntry]] {
+        station.messages.compactMap(AccessoryPagesTests.invoke).filter { $0.verb == verb }.map(\.args)
+    }
+
+    /// The `config` argument of a CAT change, read as the Core reads it.
+    private static func catConfig(_ arguments: [LinkMessage.PropertyEntry]?) -> [String: LinkJSON]? {
+        guard case .utf8(let text)? = arguments?.first(where: { $0.name == "config" })?.value,
+              case .object(let fields)? = try? LinkJSON.parse(text) else {
+            return nil
+        }
+        return fields
     }
 
     /// The message asks the Core for `stream`.

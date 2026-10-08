@@ -119,8 +119,10 @@ enum SetupTree {
                  native: [], opensPage: nil),
         Skeleton(coreId: "pa", title: "PA", tag: .core, pageOrder: ["PA Gain", "Watt Meter", "PA Values"],
                  native: [], opensPage: nil),
+        // Outputs and Microphone from Audio 25; a Core before it sends TX Input.
         Skeleton(coreId: "audio", title: "Audio", tag: .both,
-                 pageOrder: ["On this phone", "Devices", "TX Input", "VAX", "TCI", "Advanced", "TX Profile"],
+                 pageOrder: ["On this phone", "Outputs", "Microphone", "Devices", "TX Input", "VAX", "TCI", "Advanced",
+                             "TX Profile"],
                  native: [PageEntry(page: .audioOnThisPhone, title: "On this phone", tag: .thisPhone)],
                  opensPage: nil),
         Skeleton(coreId: "dsp", title: "DSP", tag: .core,

@@ -425,6 +425,30 @@ private slots:
         QCOMPARE(first.wfActiveLowThreshold(), -105.0f);
         QCOMPARE(second.wfActiveHighThreshold(), direct.lastHigh());
     }
+    void unkeyRestoresClarityAtTheUnchangedFloor()
+    {
+        // Bench 2026-10-06: after a two-tone or MOX, the receive floor came
+        // back to the floor Clarity last emitted, the deadband held the emit
+        // back, and every pan stayed off Clarity on the persisted sliders.
+        RadioModel model(RadioModel::Role::Remote); PanClarityRegistry registry(&model);
+        SpectrumWidget tx, other; SliceModel slice; slice.setStreamIndex(0); NereusSDR::FFTEngine engine(0);
+        registry.registerPan("tx", &tx, nullptr); registry.registerPan("other", &other, nullptr);
+        registry.bindLocal("tx", &slice, &engine, {0,0,1,192000});
+        registry.bindLocal("other", &slice, &engine, {0,0,1,192000});
+        for (const QString& id : {QString("tx"), QString("other")}) { registry.controllerForPan(id)->setPollIntervalMs(0); }
+        const QVector<float> bins(1024, -130.0f);
+        emit engine.fftReady(0, bins);
+        QVERIFY(tx.clarityActive()); QVERIFY(other.clarityActive());
+        const float low = tx.wfActiveLowThreshold(), high = tx.wfActiveHighThreshold();
+        registry.setKeyed(true);
+        QVERIFY(!tx.clarityActive()); QVERIFY(!other.clarityActive());
+        emit engine.fftReady(0, bins);
+        registry.setKeyed(false);
+        emit engine.fftReady(0, bins);
+        QVERIFY(tx.clarityActive()); QVERIFY(other.clarityActive());
+        QCOMPARE(tx.wfActiveLowThreshold(), low); QCOMPARE(tx.wfActiveHighThreshold(), high);
+        QCOMPARE(other.wfActiveLowThreshold(), low);
+    }
     void masterKeepsPauseAndSavedFields()
     {
         RadioModel model(RadioModel::Role::Remote); PanClarityRegistry registry(&model);

@@ -1,0 +1,52 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Phone Sound Panel</title><style>
+body{background:#05050c;color:#c8d8e8;font:13px -apple-system,system-ui,sans-serif;margin:0;padding:24px 16px}
+h1{font-size:18px;color:#00b4d8;margin:0 0 4px}p{color:#9ab;max-width:900px;line-height:1.45;margin:2px 0 14px}
+.wrap{display:flex;gap:40px;flex-wrap:wrap;align-items:flex-start}
+.col{display:flex;flex-direction:column;gap:8px}.cap{font-size:12px;color:#8aa8c0;font-weight:600}
+.panel{width:250px;background:#0f0f1a;padding:8px;border-radius:12px;border:1px solid #304050;box-shadow:0 10px 30px #0008}
+.row{display:flex;align-items:center;justify-content:space-between;min-height:44px;padding:0 12px;font-size:15px;font-weight:600}
+.sw{width:51px;height:31px;border-radius:16px;background:#39393d;position:relative;cursor:pointer;flex:none}.sw::after{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:14px;background:#fff;transition:.15s}
+.sw.on{background:#00b4d8}.sw.on::after{left:22px}.sw.amber.on{background:#e0a030}
+.div{height:1px;background:#304050;margin:6px 0}
+.head{font-size:11px;font-weight:700;letter-spacing:.9px;text-transform:uppercase;color:#708090;padding:0 6px 6px}
+.rt{display:flex;justify-content:space-between;align-items:center;padding:10px 8px;border-radius:8px;font-size:14px}.rt.cur{background:#1a2a3a}.tick{color:#00b4d8;font-weight:700}
+.sl{display:flex;align-items:center;gap:10px;padding:4px 12px 8px}
+input[type=range]{-webkit-appearance:none;flex:1;height:28px;background:transparent}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:linear-gradient(#e0a030,#e0a030) 0/var(--p,40%) 100% no-repeat,#1a2a3a}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:26px;height:26px;border-radius:13px;background:#fff;margin-top:-11px;box-shadow:0 1px 4px #0009}
+.val{font-size:13px;color:#8aa8c0;width:26px;text-align:right;font-variant-numeric:tabular-nums}
+.note{font-size:12px;color:#607080;padding:0 12px 6px;line-height:1.35}
+.dis{opacity:.4;pointer-events:none}
+.ico{width:22px;height:22px;flex:none}
+</style></head><body>
+<h1>iPhone: Sound panel with the radio speaker</h1>
+<p>The panel the toolbar's speaker button opens today has Mute and "Play the band through". The new radio-speaker section sits between them, in amber like the desktop's RADIO slider. It controls the speaker at the radio, so moving it here moves it on every desktop window too. Drag the slider and tap the switches.</p>
+<div class="wrap">
+ <div class="col"><span class="cap">Connected to a radio with a speaker</span>
+ <div class="panel">
+  <div class="row">Mute this phone<span class="sw" onclick="this.classList.toggle('on')"></span></div>
+  <div class="div"></div>
+  <div class="head">Radio speaker</div>
+  <div class="sl"><img class="ico" src="svg/radio-on.svg"><input type="range" value="40" oninput="this.style.setProperty('--p',this.value+'%');this.nextElementSibling.textContent=this.value"><span class="val">40</span></div>
+  <div class="row">Mute radio speaker<span class="sw amber" onclick="this.classList.toggle('on')"></span></div>
+  <div class="div"></div>
+  <div class="head">Play the band through</div>
+  <div class="rt cur">Speaker<span class="tick">✓</span></div>
+  <div class="rt">Earpiece</div>
+  <div class="rt">AirPods Pro</div>
+ </div></div>
+ <div class="col"><span class="cap">No radio connected</span>
+ <div class="panel">
+  <div class="row">Mute this phone<span class="sw"></span></div>
+  <div class="div"></div>
+  <div class="head">Radio speaker</div>
+  <div class="dis"><div class="sl"><img class="ico" src="svg/radio-none.svg"><input type="range" value="40" style="--p:0%"><span class="val">--</span></div>
+  <div class="row">Mute radio speaker<span class="sw"></span></div></div>
+  <div class="note">No radio is connected to the Core.</div>
+  <div class="div"></div>
+  <div class="head">Play the band through</div>
+  <div class="rt cur">Speaker<span class="tick">✓</span></div>
+  <div class="rt">Earpiece</div>
+ </div></div>
+</div>
+</body></html>

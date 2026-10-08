@@ -6,6 +6,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-06 - Radio speaker: RadioModel radioSpeakerVolume,
+//                 radioSpeakerMuted and speakerAmplifierMode
+//                 Bidirectional, radioSpeakerAvailability and
+//                 speakerAmplifierAvailable Outbound, all five gated on
+//                 radioSpeaker (radioSpeakerVersion 1) (R-SPK-13,
+//                 R-SPK-14). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-09-30 - RADE reason: SliceModel radeReason Outbound, gated on
 //                 radeReason (radeReasonVersion 1). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -205,6 +212,9 @@
 //   2026-09-28 - Slice control plan Task 4: SliceAccess, sliceId and
 //                 incarnation ConstantSnapshot, the rest Outbound. J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - CAT setup from a connected desktop: StationCatModel, every
+//                 property Outbound. J.J. Boyd (KG4VCF). AI tooling: Claude
+//                 Code.
 //   2026-10-08 - Rotor control plan Task 4b: RotorModel, all Outbound.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
@@ -830,6 +840,15 @@ const MirrorPolicy::Entry kEntries[] = {
     { "StationTciModel", "forgetRx2VfoBOnDisconnect", MirrorDirection::Outbound },
     { "StationTciModel", "useRx1VfoaForRx2Vfoa", MirrorDirection::Outbound },
     { "StationTciModel", "copyRx2VfobToVfoa", MirrorDirection::Outbound },
+    // CAT setup from a connected desktop (stationCatVersion 1): the Core's
+    // CAT, read-only; changed only through its four commands.
+    { "StationCatModel", "global", MirrorDirection::Outbound },
+    { "StationCatModel", "channel1", MirrorDirection::Outbound },
+    { "StationCatModel", "channel2", MirrorDirection::Outbound },
+    { "StationCatModel", "channel3", MirrorDirection::Outbound },
+    { "StationCatModel", "channel4", MirrorDirection::Outbound },
+    { "StationCatModel", "platform", MirrorDirection::Outbound },
+    { "StationCatModel", "lastTest", MirrorDirection::Outbound },
 
     // iPhone app plan Task 25 (vaxVersion 1): the station computer's VAX.
     // The slices, device names and transmit slice are the Core's; the
@@ -1137,7 +1156,7 @@ const MirrorPolicy::Entry kEntries[] = {
     { "PureSignalSettings", "hardwarePeakOverride", MirrorDirection::Bidirectional },
     { "PureSignalSettings", "lastLoadError", MirrorDirection::Outbound },
 
-    // ---- RadioModel (35 entries) ----
+    // ---- RadioModel (43 entries) ----
     { "RadioModel", "settingsSaveError", MirrorDirection::Outbound },
     { "RadioModel", "receiveLayoutRestoreState", MirrorDirection::Outbound },
     { "RadioModel", "receiveLayoutRestoreMessage", MirrorDirection::Outbound },
@@ -1214,6 +1233,17 @@ const MirrorPolicy::Entry kEntries[] = {
     { "RadioModel", "rxFilter0LowPassReason", MirrorDirection::Outbound },
     { "RadioModel", "rxFilter0LowPassSlice", MirrorDirection::Outbound },
     { "RadioModel", "diversityState", MirrorDirection::Outbound },
+    // Radio speaker (R-SPK-13, radioSpeakerVersion 1): the RADIO level, its
+    // mute and the speaker amplifier choice are the first writable
+    // RadioModel properties, so a remote window or the phone changes the
+    // Core's value and every other window follows; the two reports are
+    // Core to window only. All five only to a peer that declared
+    // radioSpeaker (StationServer::fitPeerOnlyProperties).
+    { "RadioModel", "radioSpeakerVolume", MirrorDirection::Bidirectional },
+    { "RadioModel", "radioSpeakerMuted", MirrorDirection::Bidirectional },
+    { "RadioModel", "speakerAmplifierMode", MirrorDirection::Bidirectional },
+    { "RadioModel", "radioSpeakerAvailability", MirrorDirection::Outbound },
+    { "RadioModel", "speakerAmplifierAvailable", MirrorDirection::Outbound },
 
     // ---- PanadapterModel (4 entries) ----
     { "PanadapterModel", "centerFrequency", MirrorDirection::Bidirectional },
@@ -1326,6 +1356,14 @@ const QList<MirrorPolicy::FeatureGate>& MirrorPolicy::featureGates()
         // declared rxFilterLowPass 1.
         {"RadioModel", "rxFilter0LowPassReason", "rxFilterLowPass", 1},
         {"RadioModel", "rxFilter0LowPassSlice", "rxFilterLowPass", 1},
+        // Radio speaker (R-SPK-14, radioSpeakerVersion 1): the RADIO level,
+        // mute, amplifier choice and the two reports, to a peer that
+        // declared radioSpeaker 1 (StationServer::fitPeerOnlyProperties).
+        {"RadioModel", "radioSpeakerVolume", "radioSpeaker", 1},
+        {"RadioModel", "radioSpeakerMuted", "radioSpeaker", 1},
+        {"RadioModel", "speakerAmplifierMode", "radioSpeaker", 1},
+        {"RadioModel", "radioSpeakerAvailability", "radioSpeaker", 1},
+        {"RadioModel", "speakerAmplifierAvailable", "radioSpeaker", 1},
     };
     return gates;
 }

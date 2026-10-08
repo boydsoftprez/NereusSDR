@@ -84,6 +84,10 @@
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-01: Added approved compact STEP units during PR review by
 //                 J.J. Boyd (KG4VCF), with AI assistance via OpenAI Codex.
+//   2026-10-06 - Radio speaker plan Task 5 (R-SPK-19, D7): the lock button
+//                 shows the app's own lock / unlock icons (AppIcon) in place
+//                 of colour emoji text. J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -205,6 +209,7 @@
 #include "gui/ComboStyle.h"
 #include "gui/StyleConstants.h"
 #include "gui/styles/PopupMenuStyle.h"
+#include "gui/widgets/AppIcon.h"
 #include "gui/widgets/FilterPassbandWidget.h"
 #include "gui/widgets/VfoWidget.h"  // VfoWidget::sliceColor — shared slice palette
 #include "models/PanadapterModel.h"
@@ -234,6 +239,11 @@
 #include <QVBoxLayout>
 
 namespace NereusSDR {
+
+namespace {
+// Logical size of the lock button's icon inside its 20 x 20 button.
+constexpr int kLockIconPx = 16;
+} // namespace
 
 // ─── RxApplet ─────────────────────────────────────────────────────────────────
 
@@ -664,12 +674,15 @@ void RxApplet::buildUi()
             showSliceMenu(m_badgeSliceId, m_sliceBadge, pos);
         });
 
-        // Control 2: Lock button (checkable, 20×20, emoji 🔓/🔒)
+        // Control 2: Lock button (checkable, 20×20, AppIcon unlock/lock;
+        // colour emoji replaced by the app's own icons, R-SPK-19 / D7)
         // Live in S2.9 — wired to SliceModel::setLocked (client-side guard).
         // Checked color: #4488ff.
         // §A2 one-off: #4488ff is NereusSDR-original "live blue" (lock + RX-ant accents).
         // Not the same as kBlueBg (#0070c0) or kAccent (#00b4d8). Flagged for B7/B3 review.
-        m_lockBtn = new QPushButton(QString::fromUtf8("\xF0\x9F\x94\x93"), this); // 🔓
+        m_lockBtn = new QPushButton(this);
+        m_lockBtn->setObjectName(QStringLiteral("RxLockButton"));
+        AppIcon::apply(m_lockBtn, QStringLiteral("unlock"), kLockIconPx);
         m_lockBtn->setCheckable(true);
         m_lockBtn->setFixedSize(20, 20);
         m_lockBtn->setFlat(true);
@@ -678,9 +691,8 @@ void RxApplet::buildUi()
             "QPushButton:checked { color: #4488ff; }"  // §A2 one-off "live blue"
         ));
         connect(m_lockBtn, &QPushButton::toggled, this, [this](bool locked) {
-            m_lockBtn->setText(locked
-                ? QString::fromUtf8("\xF0\x9F\x94\x92")   // 🔒
-                : QString::fromUtf8("\xF0\x9F\x94\x93")); // 🔓
+            AppIcon::apply(m_lockBtn, locked ? QStringLiteral("lock") : QStringLiteral("unlock"),
+                           kLockIconPx);
             if (!m_updatingFromModel && m_slice && !isListening()) {
                 m_slice->setLocked(locked);
             }
@@ -2005,9 +2017,8 @@ void RxApplet::syncFromModel()
 
     // Lock state (S2.9)
     m_lockBtn->setChecked(m_slice->locked());
-    m_lockBtn->setText(m_slice->locked()
-        ? QString::fromUtf8("\xF0\x9F\x94\x92")   // 🔒
-        : QString::fromUtf8("\xF0\x9F\x94\x93")); // 🔓
+    AppIcon::apply(m_lockBtn, m_slice->locked() ? QStringLiteral("lock") : QStringLiteral("unlock"),
+                   kLockIconPx);
 
     // RIT state (S2.8)
     m_ritOnBtn->setChecked(m_slice->ritEnabled());
@@ -2121,9 +2132,8 @@ void RxApplet::connectSlice(SliceModel* s)
     connect(s, &SliceModel::lockedChanged, this, [this](bool locked) {
         m_updatingFromModel = true;
         m_lockBtn->setChecked(locked);
-        m_lockBtn->setText(locked
-            ? QString::fromUtf8("\xF0\x9F\x94\x92")   // 🔒
-            : QString::fromUtf8("\xF0\x9F\x94\x93")); // 🔓
+        AppIcon::apply(m_lockBtn, locked ? QStringLiteral("lock") : QStringLiteral("unlock"),
+                       kLockIconPx);
         m_updatingFromModel = false;
     });
 

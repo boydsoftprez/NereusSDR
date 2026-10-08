@@ -301,6 +301,14 @@
 //                                    slice.setListenLevel, a listener's own
 //                                    level and mute for a slice it hears.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-07  J.J. Boyd / KG4VCF  CAT setup from a connected desktop:
+//                                    setStationCatChannel,
+//                                    setStationCatGlobal,
+//                                    testStationCatCommand and
+//                                    refreshStationCatDevices
+//                                    (stationCatVersion 1); the tester's
+//                                    reply in its result. AI tooling:
+//                                    Claude Code.
 //   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 4b: the seven
 //                                    rotor verbs on the Core's
 //                                    StationRotorController, the setup
@@ -335,6 +343,8 @@
 #include "models/BandGrid.h"
 #include "models/RadioModel.h"
 #include "models/StationTciModel.h"
+#include "models/StationCatModel.h"
+#include "core/cat/StationCatController.h"
 #include "models/SliceModel.h"
 
 #include <QHash>
@@ -614,6 +624,12 @@ bool findBoolArgument(const QList<MirrorUpdate>& arguments, const QByteArray& na
 //                          requestDisconnectStationTciClient)
 //   setStationTciSettings  stationTciSettingsVersion 1
 //                          (requestStationTciSetting)
+//   setStationCatChannel, setStationCatGlobal, testStationCatCommand,
+//   refreshStationCatDevices
+//                          stationCatVersion 1, to a peer whose hello
+//                          declared stationCat (requestStationCatChannel,
+//                          requestStationCatGlobal, requestStationCatTest,
+//                          requestStationCatRefreshDevices)
 //   setTxInterlockPolicy, setPgxlPowerCap, clearAccessoryFaults
 //                          accessoryDataAvailable() (version 1)
 //   setRotorTarget, turnRotorToCall, stopRotor, nudgeRotor, configureRotor,
@@ -859,6 +875,17 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
           optionalArg("forgetRx2VfoBOnDisconnect", kBool),
           optionalArg("useRx1VfoaForRx2Vfoa", kBool), optionalArg("copyRx2VfobToVfoa", kBool)},
          "stationTciSettingsVersion", 1, kRadioIdentitySessionProtocolMinor},
+        // CAT setup from a connected desktop: the Core's CAT channels, its
+        // global settings, its tester and its serial ports (CatService).
+        {"setStationCatChannel", {arg("channel", kInt), arg("config", kUtf8)},
+         "stationCatVersion", 1, kRadioIdentitySessionProtocolMinor},
+        {"setStationCatGlobal", {arg("config", kUtf8)}, "stationCatVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"testStationCatCommand",
+         {arg("requestId", kInt), arg("channel", kInt), arg("command", kUtf8)},
+         "stationCatVersion", 1, kRadioIdentitySessionProtocolMinor},
+        {"refreshStationCatDevices", {}, "stationCatVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
         // The Core's accessory records and settings (R-R3-47, R-R3-22).
         {"setTxInterlockPolicy",
          {arg("mode", kInt), arg("graceMs", kInt), arg("swrGateEnabled", kBool),
@@ -1521,6 +1548,11 @@ void SessionCommandDispatcher::dispatch(const SessionMessage& invoke)
         handleStationTciServer(invoke);
     } else if (invoke.commandVerb == "setStationTciSettings") {
         handleSetStationTciSettings(invoke);
+    } else if (invoke.commandVerb == "setStationCatChannel"
+               || invoke.commandVerb == "setStationCatGlobal"
+               || invoke.commandVerb == "testStationCatCommand"
+               || invoke.commandVerb == "refreshStationCatDevices") {
+        handleStationCat(invoke);
     } else if (invoke.commandVerb == "setTxInterlockPolicy") {
         handleSetTxInterlockPolicy(invoke);
     } else if (invoke.commandVerb == "setPgxlPowerCap") {
@@ -3414,6 +3446,90 @@ void SessionCommandDispatcher::handlePairingWindow(const SessionMessage& invoke)
         verb, invoke.commandId, true, QString(), {"devices"},
         {MirrorUpdate{0, QByteArrayLiteral("code"), MirrorWireKind::Utf8,
                       QVariant(m_deviceAdmin->pairingCode())}}));
+}
+
+// CAT setup from a connected desktop (stationCatVersion 1): the Core's CAT
+// through StationCatController, as the local CAT pages change it through
+// CatService. No on-air refusal: the local pages apply while transmitting,
+// and CatService releases a reconfigured session's transmit itself.
+void SessionCommandDispatcher::handleStationCat(const SessionMessage& invoke)
+{
+    const QByteArray& verb = invoke.commandVerb;
+    StationCatController* cat = m_radioModel->stationCatController();
+    if (cat == nullptr) {
+        emitResult(verb, invoke.commandId, false, QStringLiteral("This Core does not run CAT."),
+                   {});
+        return;
+    }
+    const auto notUnderstood = [this, &invoke]() {
+        emitResult(invoke.commandVerb, invoke.commandId, false,
+                   QStringLiteral("The request to set up the Core's CAT was not understood."),
+                   {});
+    };
+    const auto readText = [&invoke](const char* name, QString* out) {
+        QVariant value;
+        if (!hasWireKind(invoke.arguments, name, MirrorWireKind::Utf8)
+            || !findArgument(invoke.arguments, name, &value)
+            || value.typeId() != QMetaType::QString) {
+            return false;
+        }
+        *out = value.toString();
+        return true;
+    };
+    const auto readInt = [&invoke](const char* name, int* out) {
+        return hasWireKind(invoke.arguments, name, MirrorWireKind::Int64)
+            && findIntArgument(invoke.arguments, name, out) == ArgumentStatus::Ok;
+    };
+    QString reason;
+    bool accepted = false;
+    if (verb == "setStationCatChannel") {
+        int channel = 0;
+        QString config;
+        if (!hasExactlyArguments(invoke.arguments, { "channel", "config" })
+            || !readInt("channel", &channel) || !readText("config", &config)
+            || channel < 1 || channel > StationCatModel::kChannels) {
+            notUnderstood();
+            return;
+        }
+        accepted = cat->setChannel(channel, config, &reason);
+    } else if (verb == "setStationCatGlobal") {
+        QString config;
+        if (!hasExactlyArguments(invoke.arguments, { "config" }) || !readText("config", &config)) {
+            notUnderstood();
+            return;
+        }
+        accepted = cat->setGlobal(config, &reason);
+    } else if (verb == "testStationCatCommand") {
+        QVariant requestId;
+        int channel = 0;
+        QString command;
+        if (!hasExactlyArguments(invoke.arguments, { "requestId", "channel", "command" })
+            || !hasWireKind(invoke.arguments, "requestId", MirrorWireKind::Int64)
+            || !findArgument(invoke.arguments, "requestId", &requestId)
+            || !readInt("channel", &channel) || !readText("command", &command)
+            || channel < 1 || channel > StationCatModel::kChannels) {
+            notUnderstood();
+            return;
+        }
+        // The reply goes back in the result, to the window that sent it.
+        QString reply;
+        accepted = cat->testCommand(requestId.toLongLong(), channel, command, &reply, &reason);
+        if (accepted) {
+            emit commandResultReady(SessionMessages::commandResult(
+                verb, invoke.commandId, true, QString(), {},
+                {MirrorUpdate{0, QByteArrayLiteral("reply"), MirrorWireKind::Utf8,
+                              QVariant(reply)}}));
+            return;
+        }
+    } else {
+        if (!invoke.arguments.isEmpty()) {
+            notUnderstood();
+            return;
+        }
+        cat->refreshDevices();
+        accepted = true;
+    }
+    emitResult(verb, invoke.commandId, accepted, accepted ? QString() : reason, {});
 }
 
 void SessionCommandDispatcher::handleSetStationTci(const SessionMessage& invoke)
