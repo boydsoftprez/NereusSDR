@@ -359,6 +359,10 @@ struct RotorPageModelTests {
         #expect(RotorRoute.travel(heading: 350, spanDeg: -1, target: 10, endStop: .none, rangeDeg: 360) == 20)
         // An end stop with the span unknown: no prediction.
         #expect(RotorRoute.travel(heading: 350, spanDeg: -1, target: 10, endStop: .north, rangeDeg: 360) == nil)
+        // The long way round is past 270, the Core's and the desktop's threshold.
+        #expect(RotorModel.toGoText(-200) == "200\u{00B0} to go")
+        #expect(RotorModel.toGoText(270) == "270\u{00B0} to go")
+        #expect(RotorModel.toGoText(280) == "280\u{00B0} to go, the long way round")
         #expect(RotorModel.headingText(47) == "047\u{00B0}")
         #expect(RotorModel.headingText(nil) == "---\u{00B0}")
     }

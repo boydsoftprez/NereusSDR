@@ -8,7 +8,7 @@ import NereusMirror
 import os
 
 /// The Core's antenna rotor (remote rotor control version 1): the `rotor`
-/// object the Core mirrors at `remoteRotorControlVersion` 1, and its seven
+/// object the Core mirrors at `remoteRotorControlVersion` 1, and its eight
 /// commands. The Core owns the rotor; this phone reads the object and asks
 /// the Core to act.
 ///
@@ -196,6 +196,9 @@ final class RotorModel: ObservableObject {
     static let holdRepeat: Duration = .milliseconds(250)
     /// How far from the target counts as there (the Core's arrival rule).
     nonisolated static let arrivedDeg = 1.5
+    /// A route longer than this is the long way round, as the Core's route
+    /// planner and the desktop readout say it (RotorRoute::kLongWayDeg).
+    nonisolated static let longWayDeg = 270.0
     /// The Core marks the heading stale after this long without a reply.
     static let staleAfterMs: Int64 = 1_500
     /// How often the setup card asks the Core to keep reading its serial
@@ -668,7 +671,7 @@ final class RotorModel: ObservableObject {
         if abs(travel) < arrivedDeg {
             return "on target"
         }
-        return abs(travel) > 180 ? "\(magnitude)\u{00B0} to go, the long way round" : "\(magnitude)\u{00B0} to go"
+        return abs(travel) > longWayDeg ? "\(magnitude)\u{00B0} to go, the long way round" : "\(magnitude)\u{00B0} to go"
     }
 
     /// The line under the heading.
