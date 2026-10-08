@@ -336,4 +336,36 @@ struct RotorPageModelTests {
         #expect(RotorModel.headingText(47) == "047\u{00B0}")
         #expect(RotorModel.headingText(nil) == "---\u{00B0}")
     }
+
+    @Test("the predicted route answers the shared route vectors as the Core's planner does")
+    func sharedRouteVectors() throws {
+        // tests/data/rotor/route-vectors.json is also read by the Core's
+        // tst_rotor_route, so the phone and the Core agree case by case.
+        let file = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("tests/data/rotor/route-vectors.json")
+        let object = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        let cases = try #require(object["cases"] as? [[String: Any]])
+        #expect(cases.count >= 10)
+        for vector in cases {
+            let name = vector["name"] as? String ?? "?"
+            let endStop: RotorModel.EndStop
+            switch vector["endStop"] as? String {
+            case "north": endStop = .north
+            case "south": endStop = .south
+            default: endStop = .none
+            }
+            func number(_ key: String) -> Double { (vector[key] as? NSNumber)?.doubleValue ?? .nan }
+            let travel = RotorRoute.travel(heading: number("headingDeg"), spanDeg: number("spanDeg"),
+                                           target: number("targetDeg"), endStop: endStop,
+                                           rangeDeg: Int64(number("rangeDeg")), offsetDeg: number("offsetDeg"))
+            if vector["travelDeg"] is NSNull {
+                #expect(travel == nil, "\(name)")
+            } else {
+                let expected = number("travelDeg")
+                #expect(travel.map { abs($0 - expected) < 1e-9 } == true, "\(name): \(String(describing: travel))")
+            }
+        }
+    }
 }

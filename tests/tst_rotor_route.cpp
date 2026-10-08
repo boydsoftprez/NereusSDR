@@ -20,6 +20,8 @@
 // Modification history (NereusSDR):
 //   2026-10-08: Initial version. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-08: Final review fixes: readings above 360, and the shared
+//               route vectors in tests/data/rotor/route-vectors.json.
 
 #include <QtTest>
 
@@ -28,6 +30,9 @@
 #include "OperatorWording.h"
 
 #include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QRegularExpression>
 #include <QSet>
 
@@ -116,6 +121,7 @@ private slots:
     void offsetAppliesToReplyAndIsRemovedFromTarget();
     void offsetNearTheStopPredictsTheControllersDirection();
     void readingsAbove360KeepTheirPlacement();
+    void sharedRouteVectors();
     void longWayNoteIsPlain();
     void modelListMatchesHamlib();
 };
@@ -432,6 +438,41 @@ void TestRotorRoute::readingsAbove360KeepTheirPlacement()
     SpanTracker v(EndStop::South, kOverlapRange);
     v.update(400.0);
     QCOMPARE(v.spanPositionDeg(), 220.0);
+}
+
+void TestRotorRoute::sharedRouteVectors()
+{
+    // Final review M13: tests/data/rotor/route-vectors.json is read here
+    // and by the iPhone's RotorPageModelTests, so the Core's planner and
+    // the phone's prediction answer the same cases the same way.
+    QFile f(QStringLiteral(NEREUS_TEST_DATA_DIR "/rotor/route-vectors.json"));
+    QVERIFY(f.open(QIODevice::ReadOnly));
+    const QJsonArray cases = QJsonDocument::fromJson(f.readAll()).object().value(QStringLiteral("cases")).toArray();
+    QVERIFY(cases.size() >= 10);
+    for (const QJsonValue& v : cases) {
+        const QJsonObject c = v.toObject();
+        const QString name = c.value(QStringLiteral("name")).toString();
+        const QString stopName = c.value(QStringLiteral("endStop")).toString();
+        const EndStop stop = stopName == QLatin1String("north")   ? EndStop::North
+                             : stopName == QLatin1String("south") ? EndStop::South
+                                                                  : EndStop::None;
+        const double range = c.value(QStringLiteral("rangeDeg")).toDouble();
+        const double offset = c.value(QStringLiteral("offsetDeg")).toDouble();
+        const double span = c.value(QStringLiteral("spanDeg")).toDouble();
+        const double heading = c.value(QStringLiteral("headingDeg")).toDouble();
+        const double target = c.value(QStringLiteral("targetDeg")).toDouble();
+        const Move m = stop == EndStop::None
+                           ? planFree(heading, target)
+                           : planOnSpan(span, removeOffset(target, offset), stop, range);
+        const QJsonValue expected = c.value(QStringLiteral("travelDeg"));
+        if (expected.isNull()) {
+            QVERIFY2(!m.routeKnown, qPrintable(name));
+        } else {
+            QVERIFY2(m.routeKnown, qPrintable(name));
+            QVERIFY2(qFuzzyCompare(1.0 + m.travelDeg, 1.0 + expected.toDouble()),
+                     qPrintable(QStringLiteral("%1: travel %2").arg(name).arg(m.travelDeg)));
+        }
+    }
 }
 
 void TestRotorRoute::offsetNearTheStopPredictsTheControllersDirection()

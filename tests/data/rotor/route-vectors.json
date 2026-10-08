@@ -1,0 +1,16 @@
+{
+  "about": "Shared rotor route vectors. tst_rotor_route (the Core's RotorRoute planner) and the iPhone's RotorPageModelTests (RotorRoute.travel) both read this file, so the two planners are held to the same answers without being merged. endStop is none, north or south; spanDeg is the controller's own span position (-1 when not known); headingDeg and targetDeg are as shown, after offsetDeg; travelDeg is the signed turn, null when no route can be known. The first three cases are from tests/data/rotor/erc-gs232b-range-2026-10-07.log; the north-stop 350 to 010 case is Longpath's example in BeamHeading.h [@551576e].",
+  "cases": [
+    {"name": "ERC W010 from 183 goes clockwise through north", "endStop": "south", "rangeDeg": 450, "offsetDeg": 0, "spanDeg": 3, "headingDeg": 183, "targetDeg": 10, "travelDeg": 187},
+    {"name": "ERC W000 from 292 goes clockwise to 360", "endStop": "south", "rangeDeg": 450, "offsetDeg": 0, "spanDeg": 112, "headingDeg": 292, "targetDeg": 0, "travelDeg": 68},
+    {"name": "ERC W180 from 301 goes to 180, not 540", "endStop": "south", "rangeDeg": 450, "offsetDeg": 0, "spanDeg": 121, "headingDeg": 301, "targetDeg": 180, "travelDeg": -121},
+    {"name": "north stop 350 to 010 goes the long way", "endStop": "north", "rangeDeg": 360, "offsetDeg": 0, "spanDeg": 350, "headingDeg": 350, "targetDeg": 10, "travelDeg": -340},
+    {"name": "no end stop takes the shorter way", "endStop": "none", "rangeDeg": 360, "offsetDeg": 0, "spanDeg": -1, "headingDeg": 350, "targetDeg": 10, "travelDeg": 20},
+    {"name": "an end stop with the span unknown has no route", "endStop": "north", "rangeDeg": 360, "offsetDeg": 0, "spanDeg": -1, "headingDeg": 350, "targetDeg": 10, "travelDeg": null},
+    {"name": "offset +5 near the stop: the controller turns the long way", "endStop": "north", "rangeDeg": 360, "offsetDeg": 5, "spanDeg": 358, "headingDeg": 3, "targetDeg": 10, "travelDeg": -353},
+    {"name": "offset +5 short of the stop: a short clockwise turn", "endStop": "north", "rangeDeg": 360, "offsetDeg": 5, "spanDeg": 345, "headingDeg": 350, "targetDeg": 355, "travelDeg": 5},
+    {"name": "offset -5 just past the stop: the long way clockwise", "endStop": "north", "rangeDeg": 360, "offsetDeg": -5, "spanDeg": 3, "headingDeg": 358, "targetDeg": 350, "travelDeg": 352},
+    {"name": "north 450 from span 350 takes the nearer 040, span 400", "endStop": "north", "rangeDeg": 450, "offsetDeg": 0, "spanDeg": 350, "headingDeg": 350, "targetDeg": 40, "travelDeg": 50},
+    {"name": "south 450 from span 220 to 050", "endStop": "south", "rangeDeg": 450, "offsetDeg": 0, "spanDeg": 220, "headingDeg": 40, "targetDeg": 50, "travelDeg": 10}
+  ]
+}
