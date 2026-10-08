@@ -547,9 +547,11 @@ Ps3ActionResult PureSignalSessionFacade::executeAction(Ps3Action action,
     case Ps3Action::SetTwoTone: {
         pending.twoToneTarget = arguments.value("enabled").toBool();
         TwoToneController* controller = m_radio ? m_radio->twoToneController() : nullptr;
-        if (pending.twoToneTarget && controller && controller->isDeactivationInFlight()) {
-            return fail(QStringLiteral("The two-tone test is still stopping. Try again after it stops."));
-        }
+        // A start inside the stop's settle supersedes the stop
+        // (TwoToneController::setActive), as the TX button's and a remote
+        // device's do: the stop's request is replaced below, and the test
+        // stays on. Its m_active never drops, so the next status poll, not
+        // twoToneActiveChanged, completes the start.
         for (quint32 id : m_pending.keys()) {
             const PendingOperation previous = m_pending.value(id);
             if (previous.action == Ps3Action::SetTwoTone
