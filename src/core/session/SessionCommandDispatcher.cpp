@@ -305,9 +305,10 @@
 //                                    rotor verbs on the Core's
 //                                    StationRotorController, the setup
 //                                    checked against the contract's tables
-//                                    first, and a session's end ends its
-//                                    rotor hold. AI-assisted via Anthropic
-//                                    Claude Code.
+//                                    first (enum and integer widths, baud,
+//                                    range, Hamlib model, offset), and a
+//                                    session's end ends its rotor hold.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/SessionCommandDispatcher.h"
@@ -328,6 +329,8 @@
 #include "PureSignalSessionFacade.h"
 #include "core/accessories/AlexAntennaFacade.h"
 #include "core/session/StationDevicesFacade.h"
+#include "core/session/IStationLink.h"
+#include "core/session/StationServer.h"
 #include "core/StationRotorController.h"
 #include "models/BandGrid.h"
 #include "models/RadioModel.h"
@@ -342,6 +345,7 @@
 #include <QVariant>
 
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <initializer_list>
 #include <cmath>
@@ -503,31 +507,22 @@ QString rotorUnreadableReason()
     return QStringLiteral("The Core could not read this request.");
 }
 
-// A configureRotor whose driver, axes or end stop is not in the contract's
-// tables, or whose port is outside 1 to 65535 (contract, "Refusals").
+// A configureRotor of the right wire kinds whose values cannot be used
+// (contract, "Refusals"): a driver, axes or end stop outside its table, a
+// port outside 1 to 65535, a baud of 0 or below, an integer that does not
+// fit an int, a range other than 360 or 450, a Hamlib model of 0 or below
+// with driver 4, or an offset that is NaN or infinite.
 QString rotorSetupInvalidReason()
 {
     return QStringLiteral("That rotor setup is not valid.");
 }
 
 // A Core without a rotor controller (the server refuses these verbs first;
-// this answers a dispatch that reaches here anyway).
+// this answers a dispatch that reaches here anyway). The one wording is
+// IStationLink's.
 QString rotorUnavailableReason()
 {
-    return QStringLiteral("This Core does not control a rotor. Updating the Core may help.");
-}
-
-// The window session a rotor command came from: the session owner's
-// "station:<id>" (StationServer::sessionOwner), else 0.
-quint64 rotorSessionIdOf(const QString& owner)
-{
-    static const QString kPrefix = QStringLiteral("station:");
-    if (!owner.startsWith(kPrefix)) {
-        return 0;
-    }
-    bool ok = false;
-    const quint64 id = QStringView(owner).mid(kPrefix.size()).toULongLong(&ok);
-    return ok ? id : 0;
+    return IStationLink::rotorUnavailableReason();
 }
 
 // A double argument of wire kind f64, finite or not: the controller says
@@ -551,6 +546,33 @@ bool findRotorEnumArgument(const QList<MirrorUpdate>& arguments, const QByteArra
 {
     return hasWireKind(arguments, name, MirrorWireKind::Enum)
         && findIntArgument(arguments, name, out) == ArgumentStatus::Ok;
+}
+
+// A configureRotor integer of wire kind `kind` (i64 or enum). Missing when
+// it is absent or not an integer of that kind (the request cannot be
+// read); NotRepresentable when it is an integer that does not fit an int
+// (a setup that is not valid, contract "Refusals").
+ArgumentStatus findRotorSetupInt(const QList<MirrorUpdate>& arguments, const QByteArray& name,
+                                 MirrorWireKind kind, int* out)
+{
+    QVariant raw;
+    if (!hasWireKind(arguments, name, kind) || !findArgument(arguments, name, &raw)) {
+        return ArgumentStatus::Missing;
+    }
+    switch (raw.typeId()) {
+    case QMetaType::Short:
+    case QMetaType::UShort:
+    case QMetaType::Int:
+    case QMetaType::UInt:
+    case QMetaType::Long:
+    case QMetaType::ULong:
+    case QMetaType::LongLong:
+    case QMetaType::ULongLong:
+        break;
+    default:
+        return ArgumentStatus::Missing;
+    }
+    return findIntArgument(arguments, name, out);
 }
 
 bool findBoolArgument(const QList<MirrorUpdate>& arguments, const QByteArray& name, bool* out)
@@ -1218,7 +1240,7 @@ void SessionCommandDispatcher::endSessionOwner(const QString& owner)
         // turn button this session was holding lets go, and the rotor
         // stops.
         if (StationRotorController* rotor = m_radioModel->stationRotorController()) {
-            const quint64 sessionId = rotorSessionIdOf(owner);
+            const quint64 sessionId = StationServer::sessionIdOfOwner(owner);
             if (sessionId != 0) {
                 rotor->sessionEnded(sessionId);
             }
@@ -3671,7 +3693,8 @@ void SessionCommandDispatcher::handleNudgeRotor(const SessionMessage& invoke)
     // (endSessionOwner).
     QString reason;
     const bool accepted = rotor->nudgeRotor(static_cast<RotorDirection>(direction), active,
-                                            rotorSessionIdOf(m_sessionOwner), &reason);
+                                            StationServer::sessionIdOfOwner(m_sessionOwner),
+                                            &reason);
     emitResult(invoke.commandVerb, invoke.commandId, accepted, accepted ? QString() : reason, {});
 }
 
@@ -3687,35 +3710,43 @@ void SessionCommandDispatcher::handleConfigureRotor(const SessionMessage& invoke
     int endStop = -1;
     int rangeDeg = 0;
     double offsetDeg = 0.0;
+    const std::array<ArgumentStatus, 7> integers = {
+        findRotorSetupInt(invoke.arguments, "driver", MirrorWireKind::Enum, &driver),
+        findRotorSetupInt(invoke.arguments, "baud", MirrorWireKind::Int64, &baud),
+        findRotorSetupInt(invoke.arguments, "port", MirrorWireKind::Int64, &port),
+        findRotorSetupInt(invoke.arguments, "hamlibModel", MirrorWireKind::Int64, &hamlibModel),
+        findRotorSetupInt(invoke.arguments, "axes", MirrorWireKind::Enum, &axes),
+        findRotorSetupInt(invoke.arguments, "endStop", MirrorWireKind::Enum, &endStop),
+        findRotorSetupInt(invoke.arguments, "rangeDeg", MirrorWireKind::Int64, &rangeDeg),
+    };
+    const auto anyIs = [&integers](ArgumentStatus status) {
+        return std::find(integers.begin(), integers.end(), status) != integers.end();
+    };
     if (!hasExactlyArguments(invoke.arguments,
                              { "driver", "serialPort", "baud", "host", "port", "hamlibModel",
                                "axes", "endStop", "rangeDeg", "offsetDeg" })
-        || !findRotorEnumArgument(invoke.arguments, "driver", &driver)
+        || anyIs(ArgumentStatus::Missing)
         || !findUtf8Argument(invoke.arguments, "serialPort", &serialPort)
-        || !hasWireKind(invoke.arguments, "baud", MirrorWireKind::Int64)
-        || findIntArgument(invoke.arguments, "baud", &baud) != ArgumentStatus::Ok
         || !findUtf8Argument(invoke.arguments, "host", &host)
-        || !hasWireKind(invoke.arguments, "port", MirrorWireKind::Int64)
-        || findIntArgument(invoke.arguments, "port", &port) != ArgumentStatus::Ok
-        || !hasWireKind(invoke.arguments, "hamlibModel", MirrorWireKind::Int64)
-        || findIntArgument(invoke.arguments, "hamlibModel", &hamlibModel) != ArgumentStatus::Ok
-        || !findRotorEnumArgument(invoke.arguments, "axes", &axes)
-        || !findRotorEnumArgument(invoke.arguments, "endStop", &endStop)
-        || !hasWireKind(invoke.arguments, "rangeDeg", MirrorWireKind::Int64)
-        || findIntArgument(invoke.arguments, "rangeDeg", &rangeDeg) != ArgumentStatus::Ok
         || !findRotorDoubleArgument(invoke.arguments, "offsetDeg", &offsetDeg)) {
         emitResult(invoke.commandVerb, invoke.commandId, false, rotorUnreadableReason(), {});
         return;
     }
     // The wire's values against the contract's tables before anything
-    // reaches the controller.
-    if (driver < static_cast<int>(RotorDriver::None)
+    // reaches the controller (contract, "Refusals").
+    if (anyIs(ArgumentStatus::NotRepresentable)
+        || driver < static_cast<int>(RotorDriver::None)
         || driver > static_cast<int>(RotorDriver::RotctldStarted)
         || axes < static_cast<int>(RotorAxes::Azimuth)
         || axes > static_cast<int>(RotorAxes::AzimuthElevation)
         || endStop < static_cast<int>(RotorRoute::EndStop::None)
         || endStop > static_cast<int>(RotorRoute::EndStop::South)
-        || port < 1 || port > 65535) {
+        || port < 1 || port > 65535
+        || baud <= 0
+        || (static_cast<double>(rangeDeg) != RotorRoute::kFullTurnDeg
+            && static_cast<double>(rangeDeg) != RotorRoute::kOverlapRangeDeg)
+        || (driver == static_cast<int>(RotorDriver::RotctldStarted) && hamlibModel <= 0)
+        || !std::isfinite(offsetDeg)) {
         emitResult(invoke.commandVerb, invoke.commandId, false, rotorSetupInvalidReason(), {});
         return;
     }

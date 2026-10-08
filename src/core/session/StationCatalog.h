@@ -59,8 +59,8 @@
 //               stationTciServer and vaxDevices, the board, the unbuilt
 //               features list). J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Anthropic Claude Code.
-//   2026-10-08: Rotor control plan Task 4b: the `rotor` tool when a rotor
-//               is set up on the Core (Inputs' rotorConfigured). J.J. Boyd
+//   2026-10-08: Rotor control plan Task 4b: the `rotor` tool, offered when
+//               a rotor is set up on the Core (Inputs' rotorConfigured). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -129,8 +129,9 @@ public:
         /// Audio tool is offered.
         bool vaxDevices = false;
         /// Rotor control plan Task 4b: a rotor is set up on the Core (its
-        /// driver is not none), so the Rotor tool is listed (remote rotor
-        /// control v1, "Tools catalogue"). Without one it is not listed.
+        /// driver is not none), so the Rotor tool is offered (remote rotor
+        /// control v1, "Tools catalogue"). Without one it is listed, not
+        /// offered.
         bool rotorConfigured = false;
         /// iPhone app plan Task 23 (R-IOS-09): the Opus profiles the
         /// catalogue's `audio.opusProfiles` lists, the station's measured

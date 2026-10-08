@@ -222,17 +222,25 @@ bool sawRotorObject(const LoopbackTransport* peer)
     return false;
 }
 
+// The catalogue lists the Rotor tool, last, with `offered` as given.
+bool toolsListRotorAt(const QJsonObject& catalog, bool offered)
+{
+    const QJsonArray tools = catalog.value(QStringLiteral("tools")).toArray();
+    if (tools.isEmpty()) {
+        return false;
+    }
+    const QJsonObject o = tools.last().toObject();
+    return o.value(QStringLiteral("id")).toString() == QStringLiteral("rotor")
+        && o.value(QStringLiteral("label")).toString() == QStringLiteral("Rotor")
+        && o.value(QStringLiteral("where")).toString() == QStringLiteral("station")
+        && o.value(QStringLiteral("offered")).isBool()
+        && o.value(QStringLiteral("offered")).toBool() == offered;
+}
+
+// The catalogue offers the Rotor tool.
 bool toolsListRotor(const QJsonObject& catalog)
 {
-    for (const QJsonValue& tool : catalog.value(QStringLiteral("tools")).toArray()) {
-        const QJsonObject o = tool.toObject();
-        if (o.value(QStringLiteral("id")).toString() == QStringLiteral("rotor")) {
-            return o.value(QStringLiteral("label")).toString() == QStringLiteral("Rotor")
-                && o.value(QStringLiteral("where")).toString() == QStringLiteral("station")
-                && o.value(QStringLiteral("offered")).toBool();
-        }
-    }
-    return false;
+    return toolsListRotorAt(catalog, true);
 }
 
 // A Core: its radio model, its rotor on the fake byte stream (when it owns
@@ -590,6 +598,60 @@ private slots:
             s.port = port;
             invalid.append(s);
         }
+        // Integers that do not fit an int, for each integer argument.
+        constexpr qint64 kTooWide = qint64(std::numeric_limits<int>::max()) + 1;
+        constexpr qint64 kTooNarrow = qint64(std::numeric_limits<int>::min()) - 1;
+        for (const qint64 wide : {kTooWide, kTooNarrow}) {
+            Setup s;
+            s.driver = wide;
+            invalid.append(s);
+            s = Setup{};
+            s.axes = wide;
+            invalid.append(s);
+            s = Setup{};
+            s.endStop = wide;
+            invalid.append(s);
+            s = Setup{};
+            s.port = wide;
+            invalid.append(s);
+            s = Setup{};
+            s.baud = wide;
+            invalid.append(s);
+            s = Setup{};
+            s.hamlibModel = wide;
+            invalid.append(s);
+            s = Setup{};
+            s.rangeDeg = wide;
+            invalid.append(s);
+        }
+        // A range other than 360 or 450.
+        for (const qint64 range : {qint64(0), qint64(359), qint64(361), qint64(449),
+                                   qint64(451), qint64(-360), qint64(720)}) {
+            Setup s;
+            s.rangeDeg = range;
+            invalid.append(s);
+        }
+        // A baud of 0 or below.
+        for (const qint64 baud : {qint64(0), qint64(-9600)}) {
+            Setup s;
+            s.baud = baud;
+            invalid.append(s);
+        }
+        // Driver 4 with a Hamlib model of 0 or below.
+        for (const qint64 model : {qint64(0), qint64(-404)}) {
+            Setup s;
+            s.driver = 4;
+            s.hamlibModel = model;
+            invalid.append(s);
+        }
+        // An offset that is not a number.
+        for (const double offset : {std::numeric_limits<double>::quiet_NaN(),
+                                    std::numeric_limits<double>::infinity(),
+                                    -std::numeric_limits<double>::infinity()}) {
+            Setup s;
+            s.offsetDeg = offset;
+            invalid.append(s);
+        }
         for (const Setup& s : invalid) {
             const SessionMessage answer = invoke(peer, "configureRotor", s.arguments());
             QVERIFY(!answer.accepted);
@@ -597,6 +659,21 @@ private slots:
             QCOMPARE(rotor->config().driver, RotorDriver::None);
             QVERIFY(!AppSettings::instance().contains(QStringLiteral("Rotor/Driver")));
             QVERIFY(core.rotor.isNull());
+        }
+        // Nothing of any refused setup was saved.
+        for (const char* key : {"Rotor/Driver", "Rotor/SerialPort", "Rotor/Baud", "Rotor/Host",
+                                "Rotor/Port", "Rotor/HamlibModel", "Rotor/Axes", "Rotor/EndStop",
+                                "Rotor/RangeDeg", "Rotor/OffsetDeg"}) {
+            QVERIFY2(!AppSettings::instance().contains(QString::fromLatin1(key)), key);
+        }
+        // Driver 4 with a Hamlib model above 0 passes the setup checks
+        // (and is refused here only for the missing rotctld).
+        {
+            Setup s;
+            s.driver = 4;
+            s.hamlibModel = 1;
+            QCOMPARE(invoke(peer, "configureRotor", s.arguments()).reason,
+                     RotctldProcess::notInstalledReason());
         }
 
         // A serial port the Core does not have, and rotctld it lacks.
@@ -712,13 +789,31 @@ private slots:
         QCOMPARE(core.controller()->motion(), RotorMotion::Nudging);
         core.rotor->take();
 
-        // Another window's session ending leaves the hold alone.
-        other->closeLink(QStringLiteral("gone"));
-        QTest::qWait(50);
-        QCOMPARE(core.controller()->motion(), RotorMotion::Nudging);
+        // The holder repeats its turn well inside the controller's own
+        // lapse, so only the session's end can stop the rotor below.
+        const auto keepHolding = [&] {
+            const SessionMessage repeat =
+                invoke(holder, "nudgeRotor", {enumArg("direction", 0), boolean("active", true)});
+            QVERIFY2(repeat.accepted, qPrintable(repeat.reason));
+        };
+        static_assert(StationRotorController::kHoldLapseMs > 300,
+                      "the stop below must come well inside the hold lapse");
 
+        // Another window's session ending leaves the hold alone, past a
+        // full lapse while the holder keeps holding.
+        other->closeLink(QStringLiteral("gone"));
+        for (int i = 0; i < 5; ++i) {
+            QTest::qWait(StationRotorController::kHoldRepeatMs);
+            keepHolding();
+            QCOMPARE(core.controller()->motion(), RotorMotion::Nudging);
+        }
+
+        // The holder's own session ending stops the rotor at once, not a
+        // lapse later.
+        keepHolding();
+        core.rotor->take();
         holder->closeLink(QStringLiteral("gone"));
-        QTRY_COMPARE(core.controller()->motion(), RotorMotion::Stopped);
+        QTRY_COMPARE_WITH_TIMEOUT(core.controller()->motion(), RotorMotion::Stopped, 300);
         QCOMPARE(core.rotor->take(), QByteArray("S\r"));
     }
 
@@ -866,9 +961,10 @@ private slots:
 
     // ── The tools catalogue ────────────────────────────────────────
 
-    void theCatalogueListsTheRotorOnlyWhenOneIsSetUp()
+    void theCatalogueOffersTheRotorOnlyWhenOneIsSetUp()
     {
         StationCatalog::Inputs inputs;
+        QVERIFY(toolsListRotorAt(StationCatalog::build(inputs), false));
         QVERIFY(!toolsListRotor(StationCatalog::build(inputs)));
         inputs.rotorConfigured = true;
         QVERIFY(toolsListRotor(StationCatalog::build(inputs)));
@@ -881,6 +977,7 @@ private slots:
             return toolsListRotor(QJsonDocument::fromJson(catalog.json().toUtf8()).object());
         };
         QVERIFY(!listed());
+        QVERIFY(toolsListRotorAt(QJsonDocument::fromJson(catalog.json().toUtf8()).object(), false));
         const quint32 before = catalog.revision();
         QVERIFY(core.connectRotorAt("090"));
         QTRY_VERIFY(listed());
@@ -892,6 +989,8 @@ private slots:
         QCOMPARE(catalog.revision(), configured);
         QVERIFY(core.controller()->configureRotor(RotorConfig{}, nullptr));
         QTRY_VERIFY(!listed());
+        // Listed still, greyed: disabled, never hidden.
+        QVERIFY(toolsListRotorAt(QJsonDocument::fromJson(catalog.json().toUtf8()).object(), false));
     }
 
     // ── A remote window ────────────────────────────────────────────

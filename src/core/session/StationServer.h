@@ -541,7 +541,8 @@
 //               a Core-wide cap, folded answers, the link, keepalive gaps
 //               per channel and watchdog stops). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
-//   2026-10-08: Rotor control plan Task 4b: remoteRotorControlVersion().
+//   2026-10-08: Rotor control plan Task 4b: remoteRotorControlVersion(),
+//               and sessionIdOfOwner() public for the command dispatcher.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -977,6 +978,11 @@ public:
     /// inside the subnet of an address of a running interface. Empty (a
     /// relayed connection) is not. One tap pairs only from such an address.
     static bool isOnDirectNetwork(const QString& address);
+    /// The session id an owner string `station:<sessionId>` names; 0 for
+    /// any other. Public so the command dispatcher reads a session's owner
+    /// the same way (rotor control plan Task 4b: a rotor hold is its
+    /// session's).
+    static quint64 sessionIdOfOwner(const QString& owner);
 
 #ifdef NEREUS_BUILD_TESTS
     /// Replaces the code's hash (SpakeExchange::storedData) so a test can
@@ -2573,9 +2579,6 @@ private:
             return qHashMulti(seed, key.sessionId, key.verb, key.commandId);
         }
     };
-    /// The session id an owner string `station:<sessionId>` names; 0 for
-    /// any other.
-    static quint64 sessionIdOfOwner(const QString& owner);
     /// The key of `result` for the session the dispatcher says it answers.
     ResultKey resultKeyOf(const SessionMessage& result) const;
     /// Whether `result` is the last its command sends (its route goes).

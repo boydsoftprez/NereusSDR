@@ -58,8 +58,9 @@
 //   2026-09-30: Radio codec lane: board.radioMic and radioMicNote
 //               (radioMicVersion 1). J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Anthropic Claude Code.
-//   2026-10-08: Rotor control plan Task 4b: the `rotor` tool, listed only
-//               when a rotor is set up on the Core. J.J. Boyd (KG4VCF),
+//   2026-10-08: Rotor control plan Task 4b: the `rotor` tool, always
+//               listed, offered only when a rotor is set up on the Core.
+//               J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -917,14 +918,12 @@ QJsonArray toolsArray(const StationCatalog::Inputs& inputs)
                                  {QStringLiteral("offered"), offered(tool.offer, inputs)}});
     }
     // Rotor control plan Task 4b (remote rotor control v1, "Tools
-    // catalogue"): the rotor, last, only when one is set up on the Core.
-    // An app shows it greyed otherwise.
-    if (inputs.rotorConfigured) {
-        tools.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("rotor")},
-                                 {QStringLiteral("label"), QStringLiteral("Rotor")},
-                                 {QStringLiteral("where"), QStringLiteral("station")},
-                                 {QStringLiteral("offered"), true}});
-    }
+    // catalogue"): the rotor, last, always listed and offered only when
+    // one is set up on the Core. An app shows it greyed otherwise.
+    tools.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("rotor")},
+                             {QStringLiteral("label"), QStringLiteral("Rotor")},
+                             {QStringLiteral("where"), QStringLiteral("station")},
+                             {QStringLiteral("offered"), inputs.rotorConfigured}});
     return tools;
 }
 

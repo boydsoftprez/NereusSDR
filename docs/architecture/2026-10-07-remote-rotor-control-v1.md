@@ -179,9 +179,12 @@ A remote desktop window keeps the value in its spot model
 
 ## Tools catalogue
 
-The Core's tools catalogue lists `rotor` ("Rotor", station) when a rotor is
-configured on this Core. Without one it is not offered, and the iPhone's
-Tools tab shows it greyed with "No rotor is set up on this Core."
+The Core's tools catalogue always lists `rotor` ("Rotor", station), last,
+like every other tool: `offered` is true when a rotor is configured on this
+Core (its driver is not none) and false without one, and the iPhone's Tools
+tab shows it greyed with "No rotor is set up on this Core." Setting up or
+forgetting a rotor changes `offered` and the catalogue's revision; a heading
+alone does not.
 
 ## Refusals
 
@@ -198,7 +201,7 @@ Reason text is the identifier and is kept word for word between releases.
 | "That callsign could not be placed." | `turnRotorToCall` for a call cty.dat does not resolve |
 | "Hamlib's rotctld is not installed on the Core's computer." | `configureRotor` with driver 4 and `rotctldAvailable` false |
 | "That serial port is not on the Core's computer." | `configureRotor` with a port not in `serialPorts` |
-| "That rotor setup is not valid." | `configureRotor` with a `driver`, `axes` or `endStop` outside its table, or a `port` outside 1 to 65535; checked before anything reaches the controller |
+| "That rotor setup is not valid." | `configureRotor` of the right wire kinds whose values cannot be used: a `driver`, `axes` or `endStop` outside its table (an enum value that does not fit a 32-bit integer included), a `port` outside 1 to 65535, a `baud` of 0 or below, a `baud`, `port`, `hamlibModel` or `rangeDeg` that does not fit a 32-bit integer, a `rangeDeg` other than 360 or 450, a `hamlibModel` of 0 or below with driver 4, or an `offsetDeg` that is NaN or infinite; checked before anything reaches the controller |
 | "The Core could not read this request." | Any rotor command whose arguments are missing, extra or of the wrong wire kind, or a `nudgeRotor` direction outside its table |
 | "Update this app to turn the rotor on this Core." | Any rotor command from a window below minor 11 |
 | "This Core does not control a rotor. Updating the Core may help." | Any rotor command to a Core that advertises 0 |
@@ -236,6 +239,10 @@ preference (`Rotor/TurnOnTune`, `"False"` by default), not the Core's.
   there, so the object reads the same on every machine.
 - The other `coreAccessories` session fixtures carry the capability, the
   `RotorModel` schema and the `rotor` object.
+- The catalogue fixtures (`session-catalog-anan-g2`,
+  `session-catalog-hermes-lite-2`, `session-settings-band-plan`,
+  `session-verbs-radio-bound-antenna-rows`) list the `rotor` tool last,
+  not offered, on a Core with no rotor set up.
 
 ## Evidence
 

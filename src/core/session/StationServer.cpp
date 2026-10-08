@@ -5669,8 +5669,7 @@ void StationServer::onTransportText(SessionTransport* transport, const QByteArra
                 message.commandVerb, message.commandId, false,
                 it->agreedMinor < kRadioIdentitySessionProtocolMinor
                     ? QStringLiteral("Update this app to turn the rotor on this Core.")
-                    : QStringLiteral("This Core does not control a rotor. Updating the Core may "
-                                     "help."), {}));
+                    : IStationLink::rotorUnavailableReason(), {}));
             break;
         }
         if (isAccessoryTxVerb(message.commandVerb)
