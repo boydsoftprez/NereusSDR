@@ -179,9 +179,11 @@ Move planOnSpan(double fromSpanDeg, double toDeg, EndStop stop, double rangeDeg)
 // a second, so each step between replies is taken as the one between -180
 // and 180. The first reply, and the first after markStale(), places the
 // rotor when its heading has one span position; a heading in the overlap
-// band leaves it unknown until a reply outside the band. The span position
-// is held to 0 to the range: a controller that reads a few degrees past
-// its stop stays at the stop.
+// band leaves it unknown until a reply outside the band. A reply above 360
+// (a controller that counts on through its overlap) places the span
+// outright, the reply less the stop's compass. The span position is held
+// to 0 to the range: a controller that reads a few degrees past its stop
+// stays at the stop.
 class SpanTracker {
 public:
     SpanTracker() = default;

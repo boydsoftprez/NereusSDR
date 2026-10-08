@@ -173,6 +173,7 @@ private slots:
     void gs232bJoinsARepliesSplitAcrossReads();
     void offsetIsAddedToRepliesAndRemovedFromTargets();
     void offsetLeavesTheSpanOnTheControllersReading();
+    void aReadingAbove360PlacesTheSpan();
     void strictHeadingsRefuseBeforeAnythingIsSent();
     void azimuthRotorRefusesElevation();
 
@@ -485,6 +486,21 @@ void TestRotorConnection::offsetLeavesTheSpanOnTheControllersReading()
     const RotorRoute::Move route = m_conn->routeToTarget();
     QVERIFY(route.routeKnown);
     QCOMPARE(route.travelDeg, -353.0);
+}
+
+void TestRotorConnection::aReadingAbove360PlacesTheSpan()
+{
+    // Final review M12: a 450 degree north-stop rotor whose controller
+    // reads 400 is at span 400, compass 040, from its first reply.
+    RotorConfig c;
+    c.driver = RotorDriver::Gs232b;
+    c.endStop = EndStop::North;
+    c.rangeDeg = 450.0;
+    connectWith(c);
+    m_fake->take();
+    m_fake->feed("AZ=400  EL=000\r\n");
+    QCOMPARE(m_conn->azimuthDeg(), 40.0);
+    QCOMPARE(m_conn->spanPositionDeg(), 400.0);
 }
 
 void TestRotorConnection::strictHeadingsRefuseBeforeAnythingIsSent()

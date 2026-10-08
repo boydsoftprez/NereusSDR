@@ -23,6 +23,9 @@
 //               has two span positions and the nearer wins. wrap360()
 //               never returns 360 itself. SpanTracker and the offset
 //               helpers are NereusSDR's own.
+//   2026-10-08: Final review fix: a reading above 360 places the span
+//               directly. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 //
 // --- From BeamHeading.cpp ---
@@ -200,6 +203,19 @@ bool SpanTracker::update(double headingDeg)
     m_haveHeading = true;
 
     if (m_stop == EndStop::None) { return true; }
+
+    // A controller that reads past 360 (a GS-232B on a 450 degree rotor
+    // may report up to 450) says where on its span it is outright: the
+    // reading less the stop's compass, when that is on the span. 360
+    // itself is not taken: JJ's ERC reads north as 360 at either end.
+    if (headingDeg > kFullTurnDeg) {
+        const double s = headingDeg - stopCompassDeg(m_stop);
+        if (s >= 0.0 && s <= m_rangeDeg) {
+            m_spanDeg = s;
+            m_spanKnown = true;
+            return true;
+        }
+    }
 
     if (m_spanKnown) {
         // Polls come at least once a second and the rotor turns under 10

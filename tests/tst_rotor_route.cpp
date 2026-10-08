@@ -115,6 +115,7 @@ private slots:
     void unknownSpanHasNoRoute();
     void offsetAppliesToReplyAndIsRemovedFromTarget();
     void offsetNearTheStopPredictsTheControllersDirection();
+    void readingsAbove360KeepTheirPlacement();
     void longWayNoteIsPlain();
     void modelListMatchesHamlib();
 };
@@ -400,6 +401,37 @@ void TestRotorRoute::offsetAppliesToReplyAndIsRemovedFromTarget()
     QCOMPARE(t.headingDeg(), 358.0);
     QCOMPARE(t.spanPositionDeg(), 358.0);
     QCOMPARE(applyOffset(358.0, 5.0), 3.0);
+}
+
+void TestRotorRoute::readingsAbove360KeepTheirPlacement()
+{
+    // Final review M12: a north-stop 450 controller that counts on past
+    // 360. Its 400 is span 400 (compass 040), even as a first reply in the
+    // overlap band, where a reading of 040 could be either end.
+    SpanTracker t(EndStop::North, kOverlapRange);
+    t.update(400.0);
+    QCOMPARE(t.headingDeg(), 40.0);
+    QVERIFY(t.spanKnown());
+    QCOMPARE(t.spanPositionDeg(), 400.0);
+    // Continuing clockwise, it follows the reading itself.
+    t.update(430.0);
+    QCOMPARE(t.spanPositionDeg(), 430.0);
+    // Back below 360 it is followed by continuity as before.
+    t.update(410.0);
+    t.update(350.0);
+    QCOMPARE(t.spanPositionDeg(), 350.0);
+    // A route from there to 040 takes the nearer, span 400.
+    QCOMPARE(t.planTo(40.0).travelDeg, 50.0);
+
+    // 360 itself is not placed: the ERC reads north as 360 at either end.
+    SpanTracker u(EndStop::North, kOverlapRange);
+    u.update(360.0);
+    QVERIFY(!u.spanKnown());
+
+    // A south-stop rotor reading 400 is at span 220.
+    SpanTracker v(EndStop::South, kOverlapRange);
+    v.update(400.0);
+    QCOMPARE(v.spanPositionDeg(), 220.0);
 }
 
 void TestRotorRoute::offsetNearTheStopPredictsTheControllersDirection()
