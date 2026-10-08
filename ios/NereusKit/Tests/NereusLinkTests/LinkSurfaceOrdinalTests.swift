@@ -17,33 +17,37 @@ import Testing
 
     @Test func newestCapabilitiesSitWhereTheSurfacePinsThem() throws {
         let capabilities = try #require(try Self.surface()["capabilities"] as? [[String: Any]])
-        #expect(capabilities.count == 108)
+        #expect(capabilities.count == 109)
         #expect(capabilities[69]["value"] == nil, "The loopback capture cannot advertise a live TX watch value")
         // The merged b44d638 surface inserts diversityControlVersion after
         // diversityPatternVersion. Capture b20ad1186 also includes the existing
         // optional txWatchPathVersion after remoteTxVersion, shifting later indices.
         // Radio Mic 2 changes its value, without moving any other entry.
+        // Core 31d51c0a4 inserts remoteRotorControlVersion after
+        // accessoryTxVersion, moving each later entry on by one.
         let expected: [(index: Int, name: String, kind: String)] = [
             (69, "txWatchPathVersion", "i64"),
-            (89, "diversityControlVersion", "i64"),
-            (96, "paProfileVersion", "i64"),
-            (98, "txInhibitReasonVersion", "i64"),
-            (99, "paTransmitBandVersion", "i64"),
-            (100, "sliceAccessVersion", "i64"),
-            (101, "mediaDirectVersion", "i64"),
-            (102, "mediaStunUrls", "utf8"),
-            (103, "rx2AttenuatorVersion", "i64"),
-            (104, "radioMicVersion", "i64"),
-            (105, "rxFilterLowPassVersion", "i64"),
-            (106, "radeReasonVersion", "i64"),
-            (107, "coreBuildInfo", "utf8"),
+            (84, "remoteRotorControlVersion", "i64"),
+            (90, "diversityControlVersion", "i64"),
+            (97, "paProfileVersion", "i64"),
+            (99, "txInhibitReasonVersion", "i64"),
+            (100, "paTransmitBandVersion", "i64"),
+            (101, "sliceAccessVersion", "i64"),
+            (102, "mediaDirectVersion", "i64"),
+            (103, "mediaStunUrls", "utf8"),
+            (104, "rx2AttenuatorVersion", "i64"),
+            (105, "radioMicVersion", "i64"),
+            (106, "rxFilterLowPassVersion", "i64"),
+            (107, "radeReasonVersion", "i64"),
+            (108, "coreBuildInfo", "utf8"),
         ]
         // Core trunk b26112687: sliceAccessVersion reads 3 (the Core's own
         // slice can be taken); nothing moved.
-        #expect((capabilities[100]["value"] as? NSNumber)?.intValue == 3)
-        #expect((capabilities[89]["value"] as? NSNumber)?.intValue == 1)
-        #expect((capabilities[104]["value"] as? NSNumber)?.intValue == 2)
-        #expect(Set(capabilities.compactMap { $0["name"] as? String }).count == 108)
+        #expect((capabilities[101]["value"] as? NSNumber)?.intValue == 3)
+        #expect((capabilities[90]["value"] as? NSNumber)?.intValue == 1)
+        #expect((capabilities[105]["value"] as? NSNumber)?.intValue == 2)
+        #expect((capabilities[84]["value"] as? NSNumber)?.intValue == 1)
+        #expect(Set(capabilities.compactMap { $0["name"] as? String }).count == 109)
         for entry in expected {
             try #require(capabilities.count > entry.index)
             #expect(capabilities[entry.index]["name"] as? String == entry.name, "\(entry.name)")

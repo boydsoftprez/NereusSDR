@@ -79,7 +79,8 @@ import Testing
     /// New verbs retain their exact minor, capability and typed argument contracts.
     @Test func integratedCommandsKeepTheirTypedMetadata() throws {
         let commands = try #require(try Self.surface()["commands"] as? [[String: Any]])
-        #expect(commands.count == 160)
+        // Core 31d51c0a4 adds the rotor's seven verbs.
+        #expect(commands.count == 167)
         #expect(Set(commands.compactMap { $0["verb"] as? String }).count == commands.count)
         let expected: [(verb: String, capability: String, version: Int, names: [String], kinds: [String])] = [
             ("diversity.setTarget", "diversityControlVersion", 1,
