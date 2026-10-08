@@ -1717,6 +1717,8 @@ set(GUI_SOURCES
     src/gui/chrome/ChromeBarItems.cpp
     src/gui/widgets/StatusBadge.cpp
     src/gui/widgets/StatusBadge.h
+    src/gui/widgets/RotorDialWidget.cpp
+    src/gui/widgets/RotorDialWidget.h
     src/gui/widgets/AdcOverloadBadge.cpp
     src/gui/widgets/AdcOverloadBadge.h
     src/gui/widgets/OverflowChip.cpp
@@ -1971,6 +1973,7 @@ set(GUI_SOURCES
     src/gui/applets/DvkApplet.cpp
     src/gui/applets/CatApplet.cpp
     src/gui/applets/TunerApplet.cpp
+    src/gui/applets/RotorApplet.cpp
     src/gui/applets/AmpApplet.cpp
     src/gui/applets/Rf2ksApplet.cpp
     src/gui/applets/TciApplet.cpp
