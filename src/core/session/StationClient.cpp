@@ -484,6 +484,10 @@
 //               from a Core that offers remoteRotorControlVersion 1, and
 //               the seven rotor requests. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-08: Rotor control plan Task 7: a refused rotor setup, presets
+//               or disconnect goes the accessory way ("rotor"), so the
+//               Rotor Setup page shows it and anywhere else a notice does.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // 2026-10-01: Authenticated Core address inventory and reconnect learning.
@@ -5289,8 +5293,9 @@ MirrorUpdate enumArgument(const QByteArray& name, int value)
 // refused was about, for RadioModel::accessoryRequestRefused; empty for
 // every other verb. "pgxl" and "tgxl" (the amp's and tuner's connection,
 // output limit and own settings), "rfkit", "interlock", "tci" (the
-// station TCI server), "4o3a" (the 4O3A switch) and, for a fault history,
-// the device it names ("faults" for any other).
+// station TCI server), "4o3a" (the 4O3A switch), "rotor" (the rotor's
+// setup and presets; rotor plan Task 7) and, for a fault history, the
+// device it names ("faults" for any other).
 QString accessoryRefusalDevice(const QByteArray& verb, const QString& faultsDevice)
 {
     if (verb == "setPgxlName" || verb == "setPgxlHardware" || verb == "setPgxlNetwork"
@@ -5324,6 +5329,9 @@ QString accessoryRefusalDevice(const QByteArray& verb, const QString& faultsDevi
     }
     if (verb == "setFourO3AEnabled") {
         return QStringLiteral("4o3a");
+    }
+    if (verb == "configureRotor" || verb == "setRotorPresets" || verb == "disconnectRotor") {
+        return QStringLiteral("rotor");
     }
     if (verb == "clearAccessoryFaults") {
         if (faultsDevice == QLatin1String("pgxl") || faultsDevice == QLatin1String("tgxl")

@@ -7039,6 +7039,12 @@ target_link_libraries(tst_rf2ks_connection_control PRIVATE Qt6::Network)
 nereus_add_test(tst_rf2ks_applet_layout)
 nereus_add_test(tst_rf2ks_applet_context_menu)
 nereus_add_test(tst_rfkit_page_master_gate)
+# Rotor control plan Task 7: CAT & Network > Rotor. A remote window lists
+# the Core's serial ports and sends configureRotor and setRotorPresets; a
+# refusal shows on the page while it is open and as a notice otherwise; a
+# Core too old for the rotor greys the page with the reason; a local window
+# sets up its own rotor over a fake byte stream. No real serial port.
+nereus_add_test(tst_rotor_setup_page)
 
 # Task 13: SMeterWidget subscribes to RadioModel::externalAmpOperateChanged
 # (cross-vendor aggregator) instead of the PGXL-specific statusUpdated signal.

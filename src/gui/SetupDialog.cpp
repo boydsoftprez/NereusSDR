@@ -184,6 +184,9 @@
 //                shows or hides the PA Values page, as Thetis's chkPAValues
 //                does; nothing read the setting before. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 7: CAT & Network > Rotor, the
+//                antenna rotor's setup and presets (RotorSetupPage). J.J.
+//                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "SetupDialog.h"
@@ -243,6 +246,9 @@
 #include <QHash>
 // RF-Kit RF2K-S integration page (Settings -> CAT & Network -> RF-Kit).
 #include "setup/RfKitPage.h"
+// Rotor control plan Task 7: the antenna rotor (Settings -> CAT & Network
+// -> Rotor).
+#include "setup/RotorSetupPage.h"
 // Keyboard
 #include "setup/KeyboardSetupPages.h"
 // Diagnostics
@@ -1937,6 +1943,10 @@ void SetupDialog::buildTree()
     // connect and disconnect its amplifier (it never dials the amp from
     // this computer); a Core that does not offer that says so on the page.
     registerPage(cat, "RF-Kit", SetupScope::Core, [this] { return new RfKitPage(m_model); });
+    // Rotor control plan Task 7: the Core's antenna rotor, set up through
+    // the rotor commands (configureRotor, setRotorPresets); in a remote
+    // window it lists the Core's serial ports.
+    registerPage(cat, "Rotor", SetupScope::Core, [this] { return new RotorSetupPage(m_model); });
     if (UnbuiltFeatures::isBuilt(UnbuiltFeature::Cat)) {
         registerPage(cat, "TCP/IP CAT", SetupScope::ThisComputer, [] { return new CatTcpIpPage; });
     }

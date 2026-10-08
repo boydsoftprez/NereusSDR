@@ -67,6 +67,8 @@ public:
     bool rotorControlAvailable(QString*) const override { return true; }
     bool requestTurnRotorToCall(const QString&, bool, QString*) override { return accept; }
     bool requestNudgeRotor(Nudge, bool, QString*) override { return accept; }
+    bool requestConfigureRotor(const Setup&, QString*) override { return accept; }
+    bool requestRotorPresets(const QString&, QString*) override { return accept; }
     quint32 lastRotorCommandId() const override { return 0; }
 };
 

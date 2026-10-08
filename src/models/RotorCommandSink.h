@@ -30,6 +30,11 @@
 //                                    may turn the rotor, turn to a callsign,
 //                                    the nudge hold, the last command's id).
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 7: the rotor
+//                                    setup (configureRotor) and the presets
+//                                    (setRotorPresets), for the Rotor Setup
+//                                    page. AI-assisted via Anthropic Claude
+//                                    Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -47,6 +52,24 @@ public:
         Cw = 1,
         Down = 2,
         Up = 3,
+    };
+
+    /// The contract's `configureRotor` arguments, in its wire numbers
+    /// (driver 0 none, 1 GS-232A, 2 GS-232B, 3 rotctld already running,
+    /// 4 rotctld started by the Core; axes 0 azimuth, 1 azimuth and
+    /// elevation; endStop 0 none, 1 north, 2 south). The defaults are the
+    /// contract's ("Core-owned settings").
+    struct Setup {
+        int driver{0};
+        QString serialPort;
+        int baud{9600};
+        QString host;
+        int port{4533};
+        int hamlibModel{0};   // used for driver 4 only
+        int axes{0};
+        int endStop{1};
+        int rangeDeg{360};    // 360, or 450 for a rotor with overlap
+        double offsetDeg{0.0};
     };
 
     virtual ~RotorCommandSink() = default;
@@ -76,6 +99,15 @@ public:
     /// held: the contract's hold dead man) or let go (`active` false).
     /// Same answer as requestRotorTarget.
     virtual bool requestNudgeRotor(Nudge direction, bool active, QString* reason) = 0;
+    /// Save the rotor setup on the rotor's computer and connect again;
+    /// driver 0 disconnects and forgets the setup. Same answer as
+    /// requestRotorTarget; refusals are the contract's ("That rotor setup
+    /// is not valid.", "That serial port is not on the Core's computer.",
+    /// "Hamlib's rotctld is not installed on the Core's computer.").
+    virtual bool requestConfigureRotor(const Setup& setup, QString* reason) = 0;
+    /// Replace the presets (`name<TAB>degrees` per line, the `presets`
+    /// property's form). Same answer as requestRotorTarget.
+    virtual bool requestRotorPresets(const QString& presets, QString* reason) = 0;
     /// The id the last rotor command left for a remote Core under, so a
     /// window can tell the Core's verdict on it apart
     /// (RadioModel::stationCommandFinished); 0 when it went to this

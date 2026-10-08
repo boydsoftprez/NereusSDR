@@ -573,6 +573,10 @@
 //                requestTurnRotorToCall, requestNudgeRotor,
 //                lastRotorCommandId). J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 7: requestConfigureRotor and
+//                requestRotorPresets for the Rotor Setup page, routed the
+//                same way. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1199,7 +1203,8 @@ public:
 
     /// R-R3-47 / R-R3-22 / R-R3-48: the Core refused an accessory request,
     /// with its own reason. `device` says what it was about: "pgxl",
-    /// "tgxl", "rfkit", "interlock", "tci", "4o3a", or for a fault history
+    /// "tgxl", "rfkit", "interlock", "tci", "4o3a", "rotor" (its setup
+    /// and presets), or for a fault history
     /// the device it names ("faults" for any other). Role::Remote only.
     /// Routed to accessoryRequestRefused, which MainWindow toasts and the
     /// pages that sent the request show, never to the slice toast.
@@ -3588,6 +3593,11 @@ public:
     bool requestTurnRotorToCall(const QString& call, bool longPath,
                                 QString* reason) override;
     bool requestNudgeRotor(Nudge direction, bool active, QString* reason) override;
+    // Rotor control plan Task 7: the setup and the presets, routed the same
+    // way. Locally the setup is checked against the contract's tables first
+    // ("That rotor setup is not valid."), as the Core checks a remote one.
+    bool requestConfigureRotor(const Setup& setup, QString* reason) override;
+    bool requestRotorPresets(const QString& presets, QString* reason) override;
     quint32 lastRotorCommandId() const override { return m_lastRotorCommandId; }
     bool configureTgxlForStation(const QString& host, quint16 port, QString* reason);
     bool disconnectTgxlForStation(QString* reason);

@@ -89,6 +89,8 @@ public:
         nudges.append({direction, active});
         return true;
     }
+    bool requestConfigureRotor(const Setup&, QString*) override { return accept; }
+    bool requestRotorPresets(const QString&, QString*) override { return accept; }
     quint32 lastRotorCommandId() const override { return 0; }
 
 private:

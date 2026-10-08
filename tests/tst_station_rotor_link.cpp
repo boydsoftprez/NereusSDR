@@ -26,6 +26,11 @@
 //                                    routes a window's rotor commands to the
 //                                    local rotor or the remote Core.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 7: the setup
+//                                    and presets through the GUI's sink, and
+//                                    a refused setup on the accessory route
+//                                    ("rotor"), not the slice one.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -1200,6 +1205,36 @@ private slots:
         NEREUS_TRY_COMPARE(core.controller()->targetAzimuthDeg(), 250.0);
         QVERIFY2(window.requestStopRotor(&why), qPrintable(why));
         NEREUS_TRY_COMPARE(core.controller()->motion(), RotorMotion::Stopped);
+
+        // Task 7: the setup and presets. A refused setup takes the
+        // accessory route ("rotor"), so the Rotor Setup page shows it or a
+        // notice does, and never the slice one.
+        QSignalSpy refused(&window, &RadioModel::accessoryRequestRefused);
+        QSignalSpy sliceRefused(&window, &RadioModel::sliceAddRejected);
+        QSignalSpy finished(&window, &RadioModel::stationCommandFinished);
+        RotorCommandSink::Setup setup;
+        setup.driver = 2;
+        setup.serialPort = QStringLiteral("/dev/ttyNOTHERE");
+        QVERIFY2(window.requestConfigureRotor(setup, &why), qPrintable(why));
+        const quint32 id = window.lastRotorCommandId();
+        QVERIFY(id != 0);
+        NEREUS_TRY_VERIFY(!refused.isEmpty());
+        QCOMPARE(refused.at(0).at(0).toString(), QStringLiteral("rotor"));
+        QCOMPARE(refused.at(0).at(1).toString(),
+                 QStringLiteral("That serial port is not on the Core's computer."));
+        QVERIFY(!refused.at(0).at(2).toBool());   // no page claimed it: a notice
+        NEREUS_TRY_VERIFY(!finished.isEmpty());
+        QCOMPARE(finished.constLast().at(0).toUInt(), id);
+        QVERIFY(!finished.constLast().at(1).toBool());
+        QCOMPARE(sliceRefused.count(), 0);
+        QVERIFY2(window.requestRotorPresets(QStringLiteral("Home\t45"), &why), qPrintable(why));
+        NEREUS_TRY_COMPARE(core.controller()->presets(), QStringLiteral("Home\t45"));
+        setup.serialPort = kPort;
+        setup.endStop = 2;
+        setup.rangeDeg = 450;
+        QVERIFY2(window.requestConfigureRotor(setup, &why), qPrintable(why));
+        NEREUS_TRY_COMPARE(core.controller()->config().rangeDeg, 450.0);
+        QCOMPARE(core.controller()->config().endStop, RotorRoute::EndStop::South);
         window.detachStation();
     }
 };
