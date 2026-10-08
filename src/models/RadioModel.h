@@ -568,6 +568,11 @@
 //                RotorCommandSink (requestRotorTarget, requestStopRotor),
 //                routed to the local rotor or to the remote Core.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 6: the rest of the sink the
+//                Rotor applet uses (rotorControlAvailable,
+//                requestTurnRotorToCall, requestNudgeRotor,
+//                lastRotorCommandId). J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -3576,6 +3581,14 @@ public:
     bool requestRotorTarget(double azimuthDeg, double elevationDeg,
                             QString* reason) override;
     bool requestStopRotor(QString* reason) override;
+    // Rotor control plan Task 6: the rest of the sink, routed the same way.
+    // A nudge from this process's own windows holds under session 0, the
+    // owner the Core gives every window that is not a remote session.
+    bool rotorControlAvailable(QString* reason) const override;
+    bool requestTurnRotorToCall(const QString& call, bool longPath,
+                                QString* reason) override;
+    bool requestNudgeRotor(Nudge direction, bool active, QString* reason) override;
+    quint32 lastRotorCommandId() const override { return m_lastRotorCommandId; }
     bool configureTgxlForStation(const QString& host, quint16 port, QString* reason);
     bool disconnectTgxlForStation(QString* reason);
     // R-R3-47 / R-R3-22: the Core's Power Genius XL, as the tuner's above.
@@ -8290,6 +8303,8 @@ private:
     StationRotorController* m_stationRotor{nullptr};
     // Rotor control plan Task 4b: see rotorModel(); Qt child.
     RotorLink::RotorModel*  m_rotorModel{nullptr};
+    // Rotor control plan Task 6: see lastRotorCommandId().
+    quint32 m_lastRotorCommandId{0};
     StationTciModel*        m_stationTciModel{nullptr};
     // M6: owned here and destroyed first in ~RadioModel (they hold this
     // model's slices and receivers), not through Qt parenting.

@@ -602,6 +602,10 @@ nereus_add_test(tst_meter_item_scale)
 # (RotatorItem), its stop circle and its elevation face. A fake command sink;
 # no rotor.
 nereus_add_test(tst_rotator_item_drag)
+# Rotor control plan Task 6: the Rotor applet and its dial (after Longpath's
+# RotorDialWidget): the mockup's states, the hold dead man, turn on release,
+# Stop the only red control. A fake command sink; no rotor.
+nereus_add_test(tst_rotor_applet)
 nereus_add_test(tst_meter_presets)
 
 # ── Phase 3M-1c G.1 / G.2: VfoDisplayItem TX-state badge + Phase L routing ──

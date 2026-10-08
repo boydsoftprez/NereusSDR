@@ -610,6 +610,9 @@
 //                first wiring names its own pan; slice add and remove are
 //                logged. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-08 - Rotor control plan Task 6: the Rotor applet, always
+//                available, hidden until the operator shows it. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -989,6 +992,7 @@ warren@wpratt.com
 #include "applets/DvkApplet.h"
 #include "applets/CatApplet.h"
 #include "applets/TunerApplet.h"
+#include "applets/RotorApplet.h"
 // Phase 23: TCI server + applets (guarded so non-WebSocket builds still compile)
 #ifdef HAVE_WEBSOCKETS
 #  include "applets/TciApplet.h"
@@ -9807,6 +9811,12 @@ void MainWindow::populateDefaultMeter()
                                     m_radioModel->tuneMemoryStore());
     panel->addApplet(m_tunerApplet);
 
+    // Rotor control plan Task 6: the Rotor applet. Whether a rotor is set
+    // up, connected, or controlled by this Core at all is the applet's to
+    // show (greyed, with the reason), so it is always available.
+    m_rotorApplet = new RotorApplet(m_radioModel, nullptr);
+    panel->addApplet(m_rotorApplet);
+
     // 2026-05-20 bench fix: rescale TunerApplet's fwd-power bar when
     // PGXL comes into the chain. TunerApplet defaults to 0-200 W
     // (barefoot) which pegs out the moment PGXL pushes its amplified
@@ -10033,6 +10043,7 @@ void MainWindow::populateDefaultMeter()
     m_appletsById[QStringLiteral("ModMon")]     = m_modMonApplet;
     m_appletsById[QStringLiteral("Amp")]        = m_ampApplet;
     m_appletsById[QStringLiteral("Tuner")]      = m_tunerApplet;
+    m_appletsById[QStringLiteral("Rotor")]      = m_rotorApplet;
     m_appletsById[QStringLiteral("RfKit")]      = m_rfKitApplet;
 #ifdef HAVE_WEBSOCKETS
     if (m_tciApplet) {
@@ -10078,6 +10089,10 @@ void MainWindow::populateDefaultMeter()
                                 QStringLiteral("Power Genius"), true);
     m_appletVis->registerApplet(QStringLiteral("Tuner"),
                                 QStringLiteral("Tuner Genius"), true);
+    // Rotor: not shown by default, so a station without a rotor sees no
+    // change; the operator shows it from the applet menu.
+    m_appletVis->registerApplet(QStringLiteral("Rotor"),
+                                QStringLiteral("Rotor"),        false);
     m_appletVis->registerApplet(QStringLiteral("RfKit"),
                                 QStringLiteral("RF-Kit RF2K-S"), true);
 #ifdef HAVE_WEBSOCKETS

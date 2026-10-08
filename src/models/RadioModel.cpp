@@ -1024,6 +1024,10 @@
 //                requestStopRotor, the GUI's rotor commands, routed to the
 //                local controller or the remote Core. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 6: rotorControlAvailable,
+//                requestTurnRotorToCall, requestNudgeRotor and
+//                lastRotorCommandId for the Rotor applet. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -5830,6 +5834,7 @@ void RadioModel::enableStationRotor()
 // the rotor (Task 4c) even when a phone or another window is signed in.
 bool RadioModel::requestRotorTarget(double azimuthDeg, double elevationDeg, QString* reason)
 {
+    m_lastRotorCommandId = 0;
     if (m_stationRotor) {
         return m_stationRotor->setRotorTarget(azimuthDeg, elevationDeg, reason);
     }
@@ -5837,6 +5842,7 @@ bool RadioModel::requestRotorTarget(double azimuthDeg, double elevationDeg, QStr
         const IStationLink::CommandOutcome sent =
             m_station->requestRotorTarget(azimuthDeg, elevationDeg);
         if (!sent.sent && reason) { *reason = sent.reason; }
+        if (sent.sent) { m_lastRotorCommandId = sent.commandId; }
         return sent.sent;
     }
     if (reason) { *reason = IStationLink::rotorUnavailableReason(); }
@@ -5845,12 +5851,64 @@ bool RadioModel::requestRotorTarget(double azimuthDeg, double elevationDeg, QStr
 
 bool RadioModel::requestStopRotor(QString* reason)
 {
+    m_lastRotorCommandId = 0;
     if (m_stationRotor) {
         return m_stationRotor->stopRotor(reason);
     }
     if (m_station) {
         const IStationLink::CommandOutcome sent = m_station->requestStopRotor();
         if (!sent.sent && reason) { *reason = sent.reason; }
+        if (sent.sent) { m_lastRotorCommandId = sent.commandId; }
+        return sent.sent;
+    }
+    if (reason) { *reason = IStationLink::rotorUnavailableReason(); }
+    return false;
+}
+
+// Rotor control plan Task 6: the rest of the GUI's rotor commands, routed
+// as above.
+bool RadioModel::rotorControlAvailable(QString* reason) const
+{
+    if (m_stationRotor || (m_station && m_station->rotorControlAvailable())) {
+        return true;
+    }
+    if (reason) { *reason = IStationLink::rotorUnavailableReason(); }
+    return false;
+}
+
+bool RadioModel::requestTurnRotorToCall(const QString& call, bool longPath, QString* reason)
+{
+    m_lastRotorCommandId = 0;
+    if (m_stationRotor) {
+        return m_stationRotor->turnRotorToCall(call, longPath, reason);
+    }
+    if (m_station) {
+        const IStationLink::CommandOutcome sent =
+            m_station->requestTurnRotorToCall(call, longPath);
+        if (!sent.sent && reason) { *reason = sent.reason; }
+        if (sent.sent) { m_lastRotorCommandId = sent.commandId; }
+        return sent.sent;
+    }
+    if (reason) { *reason = IStationLink::rotorUnavailableReason(); }
+    return false;
+}
+
+bool RadioModel::requestNudgeRotor(Nudge direction, bool active, QString* reason)
+{
+    m_lastRotorCommandId = 0;
+    if (m_stationRotor) {
+        // This process's own windows are session 0 to the Core (the owner
+        // StationServer::sessionIdOfOwner gives anything that is not a
+        // remote session); the 750 ms lapse still stops a hold they drop.
+        constexpr quint64 kLocalWindowsSession = 0;
+        return m_stationRotor->nudgeRotor(static_cast<RotorDirection>(direction), active,
+                                          kLocalWindowsSession, reason);
+    }
+    if (m_station) {
+        const IStationLink::CommandOutcome sent =
+            m_station->requestNudgeRotor(static_cast<int>(direction), active);
+        if (!sent.sent && reason) { *reason = sent.reason; }
+        if (sent.sent) { m_lastRotorCommandId = sent.commandId; }
         return sent.sent;
     }
     if (reason) { *reason = IStationLink::rotorUnavailableReason(); }

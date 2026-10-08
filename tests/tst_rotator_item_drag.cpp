@@ -11,6 +11,9 @@
 // Modification history (NereusSDR):
 //   2026-10-08  J.J. Boyd / KG4VCF  Created (rotor control plan, Task 5).
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  The fake answers the rest of the sink
+//                                    (rotor control plan, Task 6).
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QImage>
@@ -61,6 +64,10 @@ public:
         ++stops;
         return true;
     }
+    bool rotorControlAvailable(QString*) const override { return true; }
+    bool requestTurnRotorToCall(const QString&, bool, QString*) override { return accept; }
+    bool requestNudgeRotor(Nudge, bool, QString*) override { return accept; }
+    quint32 lastRotorCommandId() const override { return 0; }
 };
 
 RotorModel::State connectedRotor(RotorModel::Axes axes = RotorModel::Axes::AzimuthElevation)
