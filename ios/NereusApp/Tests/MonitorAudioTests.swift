@@ -76,7 +76,9 @@ struct MonitorAudioTests {
     func greyedOffHeadphones() async throws {
         let rig = try await connected()
         let transmit = rig.transmit
-        #expect(rig.audio.route == .speaker)
+        // The route arrives from the session's queue; wait for it as the
+        // earpiece check below does.
+        #expect(await ShotWait.until { rig.audio.route == .speaker })
         #expect(!transmit.onHeadphones)
         #expect(await ShotWait.until { transmit.monReason == TransmitModel.monNeedsHeadphonesText })
         // A Core that sends the monitor is told this phone may ask for it.
