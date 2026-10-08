@@ -22,6 +22,11 @@ CHECKER = PROJECT / "scripts" / "check-new-ports.py"
 BAD_PORT = "// From Thetis console.cs:4821 [v2.10.3.15]\nvoid ported() {}\n"
 BAD_CITE = "// From Thetis console.cs:4821\nvoid cited() {}\n"
 NATIVE = "void native() {}\n"
+LONGPATH_PORT = (
+    "// From Longpath src/core/BeamHeading.cpp:51 [@551576e]\n"
+    "void planned() {}\n"
+)
+LONGPATH_BAD_CITE = "// From Longpath src/core/BeamHeading.cpp:51\nvoid planned() {}\n"
 
 
 class CheckerRepo:
@@ -41,6 +46,7 @@ class CheckerRepo:
             "WDSP-PROVENANCE.md",
             "aethersdr-reconciliation.md",
             "FREEDV-GUI-PROVENANCE.md",
+            "LONGPATH-PROVENANCE.md",
         ):
             self.write(f"docs/attribution/{name}", "| NereusSDR file | Source |\n|---|---|\n")
         self.write("src/Existing.cpp", NATIVE)
@@ -173,6 +179,32 @@ class NewPortsStagedTests(unittest.TestCase):
         result = self.fixture.check()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("No added/modified files", result.stdout)
+
+    def test_unregistered_longpath_port_fails_and_registered_passes(self) -> None:
+        self.fixture.write("src/RotorRoute.cpp", LONGPATH_PORT)
+        self.fixture.stage("src/RotorRoute.cpp")
+        result = self.fixture.check()
+        self.assert_fails_for(result, "src/RotorRoute.cpp")
+        self.assertIn("Source: comment citing Longpath", result.stdout)
+
+        self.fixture.write(
+            "docs/attribution/LONGPATH-PROVENANCE.md",
+            "| NereusSDR file | Longpath source |\n|---|---|\n"
+            "| `src/RotorRoute.cpp` | `src/core/BeamHeading.cpp` |\n",
+        )
+        self.fixture.stage("docs/attribution/LONGPATH-PROVENANCE.md")
+        result = self.fixture.check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("OK [diff]", result.stdout)
+        result = self.fixture.check(full_tree=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_unstamped_longpath_cite_fails(self) -> None:
+        self.fixture.write("src/Existing.cpp", LONGPATH_BAD_CITE)
+        self.fixture.stage("src/Existing.cpp")
+        result = self.fixture.check()
+        self.assert_fails_for(result, "src/Existing.cpp")
+        self.assertIn("Longpath cite missing version stamp", result.stdout)
 
     def test_full_tree_keeps_worktree_sweep_and_all_registry_lookup(self) -> None:
         self.fixture.write("src/WorktreeOnly.cpp", BAD_PORT)

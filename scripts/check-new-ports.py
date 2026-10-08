@@ -18,6 +18,8 @@ Heuristics (any one match flags the file):
     these are Samphire-era Thetis conventions and are very unusual in
     NereusSDR-original code
   - Explicit `// Source:` or `// From <thetis-file>` citation comments
+  - A `// From Longpath ...` (or `Source:` / `Ported from`) comment naming
+    Longpath; registered Longpath ports live in LONGPATH-PROVENANCE.md
 
 Skip conditions (file is not flagged):
 
@@ -58,6 +60,7 @@ PROVENANCE = REPO / "docs" / "attribution" / "THETIS-PROVENANCE.md"
 WDSP_PROVENANCE = REPO / "docs" / "attribution" / "WDSP-PROVENANCE.md"
 AETHER_RECONCILIATION = REPO / "docs" / "attribution" / "aethersdr-reconciliation.md"
 FREEDV_PROVENANCE = REPO / "docs" / "attribution" / "FREEDV-GUI-PROVENANCE.md"
+LONGPATH_PROVENANCE = REPO / "docs" / "attribution" / "LONGPATH-PROVENANCE.md"
 BASE_REF = os.environ.get("CHECK_NEW_PORTS_BASE_REF", "origin/main")
 FULL_TREE = (
     os.environ.get("CHECK_NEW_PORTS_FULL") == "1"
@@ -184,6 +187,23 @@ RE_FREEDV_COMMENT = re.compile(
 RE_FREEDV_CITE = re.compile(
     r"//\s*(?:From\s+freedv-gui\s+|Source:\s+freedv-gui/)"
     r"[\w./-]+\.(?:c|h|cpp|cc|hpp)(?::\d+(?:[,\s]+\d+)*)"
+)
+
+# Longpath (oe5sos/Longpath, a GPL-3 NereusSDR fork; rotor control ports
+# since 2026-10-08). Its files carry no contributor callsigns in comments
+# and its filenames (BeamHeading, RotorModels, ...) are ordinary words, so
+# the tell is the cite itself: `// From Longpath <path>:<line>` or a
+# `Source:` / `Ported from` comment naming Longpath. "Longpath" is
+# distinctive enough to run in both modes. Registered files live in
+# LONGPATH-PROVENANCE.md.
+RE_LONGPATH_COMMENT = re.compile(
+    r"//\s*(Source|From|Ported from|Layout from|Pattern from)\b.*\bLongpath\b",
+    re.IGNORECASE,
+)
+# Diff-mode cite-version stamp gate for Longpath ports, as for Thetis and
+# freedv-gui: `// From Longpath src/core/BeamHeading.cpp:51 [@551576e]`.
+RE_LONGPATH_CITE = re.compile(
+    r"//\s*From\s+Longpath\s+[\w./-]+\.(?:h|cpp|cc|hpp)(?::\d+(?:[-,\s]+\d+)*)"
 )
 
 
@@ -351,6 +371,7 @@ def check_file(rel, listed, diff_lines=None, text=None):
         (RE_THETIS_FILE, "Thetis filename reference"),
         (RE_CALLSIGN, "Thetis contributor callsign"),
         (RE_THETIS_CLASS, "Thetis-style C# class name (cls*/uc*/frm*)"),
+        (RE_LONGPATH_COMMENT, "Source: comment citing Longpath"),
     ]
     if FULL_TREE:
         patterns.extend([
@@ -393,6 +414,14 @@ def check_file(rel, listed, diff_lines=None, text=None):
                     "freedv-gui cite missing version stamp",
                     m.group(0).strip(),
                 ))
+                continue
+            m = RE_LONGPATH_CITE.search(line)
+            if m and not RE_HAS_VERSION_STAMP.search(line):
+                findings.append((
+                    i,
+                    "Longpath cite missing version stamp",
+                    m.group(0).strip(),
+                ))
 
     return findings
 
@@ -402,7 +431,7 @@ def main():
         files = all_src_files()
         listed = parse_provenance_paths(
             PROVENANCE, WDSP_PROVENANCE, AETHER_RECONCILIATION,
-            FREEDV_PROVENANCE,
+            FREEDV_PROVENANCE, LONGPATH_PROVENANCE,
         )
         mode_label = "full-tree"
     else:
@@ -413,7 +442,7 @@ def main():
         # whether this invocation happens to inspect a PR diff.
         listed = parse_provenance_paths(
             PROVENANCE, WDSP_PROVENANCE, AETHER_RECONCILIATION,
-            FREEDV_PROVENANCE,
+            FREEDV_PROVENANCE, LONGPATH_PROVENANCE,
             text_reader=index_snapshot_text,
         )
         mode_label = "diff"

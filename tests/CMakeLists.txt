@@ -6124,6 +6124,26 @@ target_compile_definitions(tst_cty_dat_parser PRIVATE
 # as short + 180, and "no bearing" for a bad or empty grid.
 nereus_add_test(tst_great_circle)
 
+# ── Rotor control: strict headings (after Longpath RotorPeilung.h) ─────────
+# Not-a-number, infinity, below 0 and above 360 are refused, never wrapped;
+# 360 is north and comes out as 0; an empty or blank box is refused, never
+# north; text that is not a number is refused.
+nereus_add_test(tst_rotor_heading)
+
+# ── Rotor control: routes, end stops and the overlap (after Longpath ──────
+# BeamHeading::plan). The moves and the clockwise run come from JJ's ERC
+# full-range capture (tests/data/rotor/erc-gs232b-range-2026-10-07.log,
+# south stop, 450 degrees): 183 to 010 is +187, 292 to 000 is +68, 301 to
+# 180 is -121, and the run from 183 (span 3) to the clockwise stop ends at
+# span 449 on AZ=269, 446 degrees of travel. A first reply in the overlap
+# band leaves the span unknown and the route unknown until a reply outside
+# it. No end stop takes the shorter way; a north stop with range 360 takes
+# 350 to 010 as -340. The offset is added to a reply and removed from a
+# target. The model list is checked against Hamlib's rotlist.h numbers.
+nereus_add_test(tst_rotor_route)
+target_compile_definitions(tst_rotor_route PRIVATE
+    NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
+
 # ── Phase 3J-2 Task C2: AdifParser (.adi / .adif log parser) ───────────────
 # Pins the contract that AdifParser parses ADIF (Amateur Data
 # Interchange Format) log files into QVector<QsoRecord> (callsign

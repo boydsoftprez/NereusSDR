@@ -1138,6 +1138,7 @@ set(CORE_SOURCES
     src/core/SpotSourceHost.cpp
     src/core/CtyDatParser.cpp
     src/core/GreatCircle.cpp
+    src/core/RotorRoute.cpp
     src/core/AdifParser.cpp
     src/core/DxccWorkedStatus.cpp
     src/core/DxccColorProvider.cpp
