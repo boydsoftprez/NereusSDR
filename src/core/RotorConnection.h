@@ -124,6 +124,14 @@ public:
     virtual void close() = 0;
     virtual qint64 write(const QByteArray& bytes) = 0;
     virtual QByteArray readAll() = 0;
+    // Waits up to `msecs` for what was written to leave, and with
+    // `awaitReply` for the answer as well (rotctld answers a stop once it
+    // has passed it to the rotor). Used only just before close().
+    virtual void flush(int msecs, bool awaitReply)
+    {
+        Q_UNUSED(msecs);
+        Q_UNUSED(awaitReply);
+    }
 
 signals:
     void opened();
@@ -144,6 +152,9 @@ public:
     // never sent while one is outstanding.
     static constexpr int kPollStillMs = 1000;
     static constexpr int kPollTurningMs = 250;
+    // How long a stop sent as the link closes may take to leave (and, for
+    // rotctld, to be answered). A design value.
+    static constexpr int kStopFlushMs = 300;
     // A poll unanswered this long is given up (serial) or the link is cut
     // and dialled again (rotctld, as Longpath's reply watchdog).
     static constexpr int kReplyTimeoutMs = 1000;
@@ -291,6 +302,9 @@ private:
     bool isRotctldDriver() const;
     RotorDriver wireDriver() const;   // driver 4 speaks as driver 3
     void openTransport();
+    // Before a link closes mid-turn: the stop, written and flushed, so a
+    // GS-232 move does not run on to its end stop with nobody to stop it.
+    void stopBeforeClose();
     void closeTransport();
     void onOpened();
     void onTransportFailed(const QString& reason);

@@ -197,6 +197,15 @@ private slots:
     void aSilentPortIsNotConnectedAndFaultsAtTheDeadline();
     void aPortAnsweringGarbageIsNotConnected();
 
+    // A stop before the link closes mid-turn (final review I2)
+    void disconnectDuringAMoveSendsAStop();
+    void disconnectDuringATargetTurnSendsAStop();
+    void reconnectDuringAMoveStopsTheOldLink();
+    void rotctldDisconnectDuringATurnSendsItsStop();
+    void teardownDuringAMoveSendsAStop();
+    void quittingDuringAMoveSendsAStop();
+    void disconnectWhileStillSendsNothing();
+
     // Bench captures
     void replayErcCapture();
     void replayErcRangeCapture();
@@ -1000,6 +1009,117 @@ void TestRotorConnection::failedOpenIsRetried()
     // An explicit disconnect stops retrying.
     m_conn->disconnectFromRotor();
     QVERIFY(!m_conn->reconnectPending());
+}
+
+// ── A stop before the link closes mid-turn ──────────────────────────
+
+namespace {
+RotorConfig gs232bConfig()
+{
+    RotorConfig c;
+    c.driver = RotorDriver::Gs232b;
+    c.serialPort = QStringLiteral("/dev/ttyUSB0");
+    return c;
+}
+} // namespace
+
+void TestRotorConnection::disconnectDuringAMoveSendsAStop()
+{
+    connectWith(gs232bConfig());
+    m_fake->feed("AZ=100  EL=000\r\n");
+    QVERIFY(m_conn->isConnected());
+    m_fake->take();
+    QVERIFY(m_conn->startMove(RotorDirection::Cw));
+    QCOMPARE(m_fake->take(), QByteArray("R\r"));
+    const QPointer<FakeTransport> link = m_fake;
+    m_conn->disconnectFromRotor();
+    QVERIFY(link);
+    QCOMPARE(link->written, QByteArray("S\r"));
+    QVERIFY(link->closed);
+}
+
+void TestRotorConnection::disconnectDuringATargetTurnSendsAStop()
+{
+    connectWith(gs232bConfig());
+    m_fake->feed("AZ=100  EL=000\r\n");
+    m_fake->take();
+    QVERIFY(m_conn->setTarget(200.0));
+    QCOMPARE(m_fake->take(), QByteArray("W200 000\r"));
+    const QPointer<FakeTransport> link = m_fake;
+    m_conn->disconnectFromRotor();
+    QCOMPARE(link->written, QByteArray("S\r"));
+}
+
+void TestRotorConnection::reconnectDuringAMoveStopsTheOldLink()
+{
+    // A new setup reconnects (StationRotorController::connectNow and
+    // connectToRotor): the old link's turn is stopped before it closes.
+    connectWith(gs232bConfig());
+    m_fake->feed("AZ=100  EL=000\r\n");
+    m_fake->take();
+    QVERIFY(m_conn->startMove(RotorDirection::Ccw));
+    QCOMPARE(m_fake->take(), QByteArray("L\r"));
+    const QPointer<FakeTransport> oldLink = m_fake;
+    QVERIFY(m_conn->connectToRotor());
+    QCOMPARE(oldLink->written, QByteArray("S\r"));
+    QVERIFY(oldLink->closed);
+    QVERIFY(m_fake != oldLink);
+    QCOMPARE(m_fake->take(), QByteArray("C2\r"));   // the new link polls
+}
+
+void TestRotorConnection::rotctldDisconnectDuringATurnSendsItsStop()
+{
+    RotorConfig c;
+    c.driver = RotorDriver::Rotctld;
+    c.host = QStringLiteral("127.0.0.1");
+    connectWith(c);
+    QCOMPARE(m_fake->take(), QByteArray("p\n"));
+    m_fake->feed("100.000000\n0.000000\n");
+    QVERIFY(m_conn->isConnected());
+    QVERIFY(m_conn->startMove(RotorDirection::Cw));
+    QVERIFY(m_fake->take().startsWith("M "));
+    m_fake->feed("RPRT 0\n");
+    const QPointer<FakeTransport> link = m_fake;
+    m_conn->disconnectFromRotor();
+    QCOMPARE(link->written, QByteArray("S\n"));
+}
+
+void TestRotorConnection::teardownDuringAMoveSendsAStop()
+{
+    // The desktop's role switch and nereusd's exit destroy the connection.
+    connectWith(gs232bConfig());
+    m_fake->feed("AZ=100  EL=000\r\n");
+    m_fake->take();
+    QVERIFY(m_conn->startMove(RotorDirection::Cw));
+    m_fake->take();
+    const QPointer<FakeTransport> link = m_fake;
+    m_conn.reset();
+    QVERIFY(link);   // deleted later, by the event loop
+    QCOMPARE(link->written, QByteArray("S\r"));
+}
+
+void TestRotorConnection::quittingDuringAMoveSendsAStop()
+{
+    connectWith(gs232bConfig());
+    m_fake->feed("AZ=100  EL=000\r\n");
+    m_fake->take();
+    QVERIFY(m_conn->setTarget(300.0));
+    m_fake->take();
+    // aboutToQuit is a private signal: reach it the way QCoreApplication
+    // does, by name.
+    QVERIFY(QMetaObject::invokeMethod(QCoreApplication::instance(), "aboutToQuit",
+                                      Qt::DirectConnection));
+    QCOMPARE(m_fake->take(), QByteArray("S\r"));
+}
+
+void TestRotorConnection::disconnectWhileStillSendsNothing()
+{
+    connectWith(gs232bConfig());
+    m_fake->feed("AZ=100  EL=000\r\n");
+    m_fake->take();
+    const QPointer<FakeTransport> link = m_fake;
+    m_conn->disconnectFromRotor();
+    QCOMPARE(link->written, QByteArray());
 }
 
 // ── Bench captures ───────────────────────────────────────────────────

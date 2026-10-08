@@ -19,6 +19,7 @@
 #include "core/RotctldProcess.h"
 #include "core/RotorHeading.h"
 
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QLoggingCategory>
 #include <QRegularExpression>
@@ -124,6 +125,13 @@ public:
     qint64 write(const QByteArray& bytes) override { return m_socket.write(bytes); }
     QByteArray readAll() override { return m_socket.readAll(); }
 
+    void flush(int msecs, bool awaitReply) override
+    {
+        if (m_socket.state() != QAbstractSocket::ConnectedState) { return; }
+        m_socket.waitForBytesWritten(msecs);
+        if (awaitReply) { m_socket.waitForReadyRead(msecs); }
+    }
+
 private:
     QString    m_host;
     quint16    m_port{0};
@@ -180,6 +188,13 @@ public:
 
     qint64 write(const QByteArray& bytes) override { return m_port.write(bytes); }
     QByteArray readAll() override { return m_port.readAll(); }
+
+    void flush(int msecs, bool awaitReply) override
+    {
+        if (!m_port.isOpen()) { return; }
+        m_port.waitForBytesWritten(msecs);
+        if (awaitReply) { m_port.waitForReadyRead(msecs); }
+    }
 
 private:
     QString     m_portName;
@@ -268,6 +283,19 @@ RotorConnection::RotorConnection(QObject* parent)
                  : QStringLiteral("Hamlib's rotctld stopped: %1").arg(why));
         scheduleReconnect();
     });
+
+    // A quitting Core (nereusd's shutdown, a window closing) stops a turn
+    // before anything closes. RotctldProcess stops rotctld on aboutToQuit
+    // by itself; that would take rotctld away before the stop could pass
+    // through it, so this hook replaces it: the stop first, then rotctld.
+    if (QCoreApplication* app = QCoreApplication::instance()) {
+        QObject::disconnect(app, &QCoreApplication::aboutToQuit,
+                            m_rotctld.get(), &RotctldProcess::stop);
+        connect(app, &QCoreApplication::aboutToQuit, this, [this]() {
+            stopBeforeClose();
+            m_rotctld->stop();
+        });
+    }
 }
 
 RotorConnection::~RotorConnection()
@@ -275,6 +303,7 @@ RotorConnection::~RotorConnection()
     // No signals to an owner that is itself being torn down.
     const QSignalBlocker block(this);
     m_wantConnected = false;
+    stopBeforeClose();
     closeTransport();
     if (m_rotctld) { m_rotctld->stop(); }
 }
@@ -417,6 +446,8 @@ bool RotorConnection::connectToRotor()
 {
     m_reconnectTimer.stop();
     m_dialTimer.stop();
+    // A reconnect (a new setup) mid-turn stops the old turn first.
+    stopBeforeClose();
     closeTransport();
 
     if (m_config.driver == RotorDriver::None) {
@@ -457,6 +488,7 @@ void RotorConnection::disconnectFromRotor()
     m_reconnectTimer.stop();
     m_dialTimer.stop();
     const bool wasConnected = m_connected;
+    stopBeforeClose();
     closeTransport();
     m_rotctld->stop();
     if (wasConnected) { emit disconnected(); }
@@ -498,6 +530,22 @@ void RotorConnection::openTransport()
     connect(t, &RotorTransport::dropped, this, &RotorConnection::onDropped);
     connect(t, &RotorTransport::readyRead, this, &RotorConnection::onReadyRead);
     t->open();
+}
+
+// Only for a close the Core chose (disconnect, a new setup, teardown):
+// after a failure or a drop the link is gone and there is nothing to
+// write to. A queued move that never left is stopped too, harmlessly.
+void RotorConnection::stopBeforeClose()
+{
+    if (!m_transport || !m_connected || !(m_hasTarget || m_moveActive)) { return; }
+    qCInfo(lcRotor) << "closing the link during a turn; sending a stop first";
+    // Nothing more is read from this link: the stop's answer is not parsed.
+    QObject::disconnect(m_transport.get(), &RotorTransport::readyRead,
+                        this, &RotorConnection::onReadyRead);
+    m_transport->write(stopCommand(wireDriver()));
+    m_transport->flush(kStopFlushMs, isRotctldDriver());
+    m_hasTarget = false;
+    m_moveActive = false;
 }
 
 // Closes the transport and forgets the link: queue, replies awaited,

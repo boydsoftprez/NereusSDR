@@ -625,6 +625,43 @@ private slots:
         QCOMPARE(m_fake->take(), QByteArray());
     }
 
+    // ── A stop before the link closes (final review I2) ─────────────
+
+    void aNewSetupDuringAHoldStopsTheRotorFirst()
+    {
+        connectAt("090");
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Cw, true, 5, nullptr));
+        QCOMPARE(m_fake->take(), QByteArray("R\r"));
+        const QPointer<FakeTransport> oldLink = m_fake;
+        RotorConfig c = gs232b();
+        c.serialPort = QStringLiteral("COM4");
+        QString why;
+        QVERIFY2(m_ctl->configureRotor(c, &why), qPrintable(why));
+        QCOMPARE(oldLink->written, QByteArray("S\r"));
+        QCOMPARE(m_ctl->holdSessionId(), quint64(0));
+    }
+
+    void disconnectingDuringATurnStopsTheRotorFirst()
+    {
+        connectAt("090");
+        QVERIFY(m_ctl->setRotorTarget(200.0, -1.0, nullptr));
+        QCOMPARE(m_fake->take(), QByteArray("W200 000\r"));
+        const QPointer<FakeTransport> link = m_fake;
+        QVERIFY(m_ctl->disconnectRotor(nullptr));
+        QCOMPARE(link->written, QByteArray("S\r"));
+    }
+
+    void noRotorDuringAHoldStopsTheRotorFirst()
+    {
+        // Driver 0 forgets the setup and disconnects.
+        connectAt("090");
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Ccw, true, 5, nullptr));
+        QCOMPARE(m_fake->take(), QByteArray("L\r"));
+        const QPointer<FakeTransport> link = m_fake;
+        QVERIFY(m_ctl->configureRotor(RotorConfig{}, nullptr));
+        QCOMPARE(link->written, QByteArray("S\r"));
+    }
+
     // ── Turning to a callsign ───────────────────────────────────────
 
     void turnToCallNeedsAGridSquare()

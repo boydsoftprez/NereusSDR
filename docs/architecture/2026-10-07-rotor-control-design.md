@@ -235,7 +235,12 @@ Behaviour:
   not switch RF, unlike the amp and tuner controls that wait (the
   2026-09-25 on-air rule), and Thetis does not block it either.
 * **Stop wins.** Stop from any window is sent at once, ahead of anything
-  queued.
+  queued. Closing the link is not a stop: a GS-232 move runs on to its end
+  stop after the host goes away. So whenever the Core closes a link while
+  a turn or a move is under way (disconnect, a new setup, driver 0, the
+  desktop's role switch, quitting), it writes the driver's stop and waits
+  up to 300 ms for it to leave (for rotctld, for its answer) before the
+  port or rotctld closes (final review, I2).
 
 ### Session objects and commands
 
