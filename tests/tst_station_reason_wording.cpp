@@ -1520,11 +1520,22 @@ const QList<ReasonSource>& reasonSources()
           QStringLiteral("text")}},
         // Rotor bench fix: a GS-232 controller that never answers on its
         // port, the rotor's fault (the port's name inserted).
-        {"src/core/RotorConnection.cpp", {QStringLiteral("notAnsweringReason")}, {}, 1,
-         {QStringLiteral("serialPort")}},
+        // Final review M8: the link's faults in plain words (the raw Qt, OS
+        // and Hamlib text is logged), the operator's own address, port
+        // and serial port inserted.
+        {"src/core/RotorConnection.cpp",
+         {QStringLiteral("notAnsweringReason"), QStringLiteral("noAnswerReason"),
+          QStringLiteral("unreachableReason"), QStringLiteral("controllerRefusedReason"),
+          QStringLiteral("rotctldStoppedReason"), QStringLiteral("serialOpenReason"),
+          QStringLiteral("serialLostReason")},
+         {}, 16,
+         {QStringLiteral("serialPort"), QStringLiteral("host"), QStringLiteral("port"),
+          QStringLiteral("portName")}},
         // Remote rotor control: configureRotor's refusal when Hamlib's
         // rotctld is missing (StationRotorController::rotctldMissingReason).
-        {"src/core/RotctldProcess.cpp", {QStringLiteral("notInstalledReason")}, {}, 1},
+        // Final review M8: rotctld that would not start, in plain words.
+        {"src/core/RotctldProcess.cpp",
+         {QStringLiteral("notInstalledReason"), QStringLiteral("startFailedReason")}, {}, 3},
         // Remote rotor control: the `rotor` object's read-only reason.
         {"src/models/RotorModel.cpp", {QStringLiteral("readOnlyReason")}, {}, 1},
         // Remote rotor control: a Core without a rotor controller, sent by

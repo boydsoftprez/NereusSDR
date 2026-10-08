@@ -69,6 +69,98 @@ double circularGap(double a, double b)
     return d > 180.0 ? 360.0 - d : d;
 }
 
+// ── Fault words ──────────────────────────────────────────────────────
+//
+// Final review M8: a fault the operator reads is said in plain words with
+// what to check; the raw Qt, OS or Hamlib text goes to the log.
+
+QString noAnswerReason(const QString& host, quint16 port)
+{
+    return QStringLiteral("No answer from %1 port %2. Check the address and that the "
+                          "rotor controller is on.")
+        .arg(host).arg(port);
+}
+
+QString unreachableReason(const QString& host, quint16 port, QAbstractSocket::SocketError error)
+{
+    switch (error) {
+    case QAbstractSocket::ConnectionRefusedError:
+        return QStringLiteral("Nothing answered at %1 port %2. Check the port and that the "
+                              "rotor controller is on.")
+            .arg(host).arg(port);
+    case QAbstractSocket::HostNotFoundError:
+        return QStringLiteral("The address %1 was not found. Check the rotor's address in "
+                              "Setup.")
+            .arg(host);
+    default:
+        return QStringLiteral("Could not reach %1 port %2. Check the address and the "
+                              "network.")
+            .arg(host).arg(port);
+    }
+}
+
+// What a controller's nonzero RPRT means to the operator; the code is
+// logged where it is read.
+QString controllerRefusedReason()
+{
+    return QStringLiteral("The rotor controller refused that command.");
+}
+
+// Hamlib's rotctld exiting, from the cause line RotctldProcess picked out
+// of its stderr (empty when none named one).
+QString rotctldStoppedReason(const QString& cause)
+{
+    const auto says = [&cause](const char* word) {
+        return cause.contains(QLatin1String(word), Qt::CaseInsensitive);
+    };
+    if (says("timed out")) {
+        return QStringLiteral("Hamlib's rotctld stopped: the rotor controller did not answer "
+                              "in time. Check the rotor's port and that it is on.");
+    }
+    if (says("refused")) {
+        return QStringLiteral("Hamlib's rotctld stopped: the rotor controller turned the "
+                              "connection away. Check the rotor's port in Setup.");
+    }
+    if (says("no such")) {
+        return QStringLiteral("Hamlib's rotctld stopped: the rotor's port was not found. "
+                              "Check it is plugged in and named right in Setup.");
+    }
+    if (says("in use")) {
+        return QStringLiteral("Hamlib's rotctld stopped: another program is using the "
+                              "rotor's port.");
+    }
+    if (says("permission") || says("not permitted")) {
+        return QStringLiteral("Hamlib's rotctld stopped: this computer's account may not "
+                              "open the rotor's port.");
+    }
+    return QStringLiteral("Hamlib's rotctld stopped. Check the rotor's port and model in "
+                          "Setup.");
+}
+
+#ifdef HAVE_SERIALPORT
+QString serialOpenReason(const QString& portName, QSerialPort::SerialPortError error)
+{
+    switch (error) {
+    case QSerialPort::DeviceNotFoundError:
+        return QStringLiteral("The serial port %1 was not found. Check it is plugged in.")
+            .arg(portName);
+    case QSerialPort::PermissionError:
+        return QStringLiteral("The serial port %1 is in use by another program, or this "
+                              "computer's account may not open it.")
+            .arg(portName);
+    default:
+        return QStringLiteral("Could not open the serial port %1. Check it is plugged in "
+                              "and not in use.")
+            .arg(portName);
+    }
+}
+
+QString serialLostReason(const QString& portName)
+{
+    return QStringLiteral("The serial port %1 went away. Check the cable.").arg(portName);
+}
+#endif
+
 // ── Production transports ────────────────────────────────────────────
 
 class TcpRotorTransport final : public RotorTransport {
@@ -79,8 +171,7 @@ public:
         m_connectTimer.setSingleShot(true);
         connect(&m_connectTimer, &QTimer::timeout, this, [this]() {
             m_socket.abort();
-            emit failed(QStringLiteral("No answer from %1 port %2.")
-                            .arg(m_host).arg(m_port));
+            emit failed(noAnswerReason(m_host, m_port));
         });
         connect(&m_socket, &QTcpSocket::connected, this, [this]() {
             m_connectTimer.stop();
@@ -95,16 +186,16 @@ public:
             emit dropped(QStringLiteral("The rotor controller closed the connection."));
         });
         connect(&m_socket, &QTcpSocket::errorOccurred, this,
-                [this](QAbstractSocket::SocketError) {
+                [this](QAbstractSocket::SocketError error) {
             if (m_open) {
                 // disconnected() follows for a link that was up.
                 return;
             }
             m_connectTimer.stop();
-            const QString why = m_socket.errorString();
+            qCWarning(lcRotor).noquote() << "could not reach" << m_host << "port" << m_port
+                                         << "-" << m_socket.errorString();
             m_socket.abort();
-            emit failed(QStringLiteral("Could not reach %1 port %2: %3")
-                            .arg(m_host).arg(m_port).arg(why));
+            emit failed(unreachableReason(m_host, m_port, error));
         });
     }
 
@@ -154,10 +245,10 @@ public:
             // An unplugged USB serial adapter reports a resource error.
             if (m_open && error == QSerialPort::ResourceError) {
                 m_open = false;
-                const QString why = m_port.errorString();
+                qCWarning(lcRotor).noquote() << "serial port" << m_portName << "went away -"
+                                             << m_port.errorString();
                 m_port.close();
-                emit dropped(QStringLiteral("The serial port %1 went away: %2")
-                                 .arg(m_portName, why));
+                emit dropped(serialLostReason(m_portName));
             }
         });
     }
@@ -173,8 +264,9 @@ public:
         m_port.setStopBits(QSerialPort::OneStop);
         m_port.setFlowControl(QSerialPort::NoFlowControl);
         if (!m_port.open(QIODevice::ReadWrite)) {
-            emit failed(QStringLiteral("Could not open the serial port %1: %2")
-                            .arg(m_portName, m_port.errorString()));
+            qCWarning(lcRotor).noquote() << "could not open serial port" << m_portName << "-"
+                                         << m_port.errorString();
+            emit failed(serialOpenReason(m_portName, m_port.error()));
             return;
         }
         m_open = true;
@@ -231,11 +323,6 @@ std::unique_ptr<RotorTransport> makeTransport(const RotorTransportTarget& t)
     return std::make_unique<TcpRotorTransport>(t.host, t.port);
 }
 
-QString describeReport(int code)
-{
-    return QStringLiteral("The rotor controller reported error %1.").arg(code);
-}
-
 } // namespace
 
 // ── Construction ─────────────────────────────────────────────────────
@@ -279,9 +366,10 @@ RotorConnection::RotorConnection(QObject* parent)
         closeTransport();
         if (wasConnected) { emit disconnected(); }
         const QString why = RotctldProcess::reasonFromStderr(stderrText);
-        fail(why.isEmpty()
-                 ? QStringLiteral("Hamlib's rotctld stopped.")
-                 : QStringLiteral("Hamlib's rotctld stopped: %1").arg(why));
+        if (!why.isEmpty()) {
+            qCWarning(lcRotor).noquote() << "rotctld stopped:" << why;
+        }
+        fail(rotctldStoppedReason(why));
         scheduleReconnect();
     });
 
@@ -945,7 +1033,7 @@ void RotorConnection::parseRotctld()
             const int code = line1.mid(4).trimmed().toInt(&ok);
             if (ok && code != 0) {
                 qCWarning(lcRotor) << "rotctld answered" << line1;
-                emit rotorError(code, describeReport(code));
+                emit rotorError(code, controllerRefusedReason());
             }
         } else if (expect == Expect::Position) {
             // `p` answers azimuth then elevation, one per line.

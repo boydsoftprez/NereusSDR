@@ -18,6 +18,9 @@
 //               (KG4VCF), with AI-assisted transformation via Anthropic
 //               Claude Code. Rotor control plan, Task 3b. See
 //               RotctldProcess.h for what changed.
+//   2026-10-08: Final review fixes: a start that fails is said in plain
+//               words (startFailedReason), Qt's text logged. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 // --- From RotctldProcess.cpp ---
@@ -49,6 +52,17 @@ namespace {
 
 // From Longpath src/core/RotctldProcess.cpp:25 [@551576e]
 Q_LOGGING_CATEGORY(lcRotctld, "nereus.rotctld")
+
+// Final review M8: why rotctld would not start, in the operator's words.
+QString startFailedReason(QProcess::ProcessError error)
+{
+    if (error == QProcess::FailedToStart) {
+        return QStringLiteral("Hamlib's rotctld would not start. Check that Hamlib is "
+                              "installed and this computer's account may run it.");
+    }
+    return QStringLiteral("Hamlib's rotctld would not start. Check the rotor's port and "
+                          "model in Setup.");
+}
 
 // findBinary()'s test override (setBinaryOverrideForTesting).
 std::optional<QString>& binaryOverride()
@@ -280,9 +294,10 @@ bool RotctldProcess::start(int hamlibModel, const QString& device, int baud,
     m_proc.start();
 
     if (!m_proc.waitForStarted(3000)) {
+        // Final review M8: plain words for the operator, Qt's in the log.
+        qCWarning(lcRotctld).noquote() << "rotctld would not start:" << m_proc.errorString();
         if (error) {
-            *error = QStringLiteral("Hamlib's rotctld would not start: %1")
-                         .arg(m_proc.errorString());
+            *error = startFailedReason(m_proc.error());
         }
         return false;
     }

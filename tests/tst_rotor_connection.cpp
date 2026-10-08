@@ -704,7 +704,9 @@ void TestRotorConnection::rotctldReadsPositionsAndReports()
     m_fake->feed("RPRT -11\n");
     QCOMPARE(errors.count(), 1);
     QCOMPARE(errors.at(0).at(0).toInt(), -11);
-    QVERIFY(!errors.at(0).at(1).toString().isEmpty());
+    // Plain words for the operator; the code is in the log (final review M8).
+    QCOMPARE(errors.at(0).at(1).toString(),
+             QStringLiteral("The rotor controller refused that command."));
 
     // Hamlib backends that report -180 to 180 are wrapped.
     m_conn->pollNowForTesting();
@@ -1465,11 +1467,14 @@ void TestRotorConnection::driver4ReportsWhyRotctldExited()
     QSignalSpy failed(m_conn.get(), &RotorConnection::connectionFailed);
     QSignalSpy down(m_conn.get(), &RotorConnection::disconnected);
     expectWarning("rotctld exited on its own, code 1");
+    // Hamlib's own line goes to the log; the operator reads plain words.
     expectWarning("rotctld stopped: connect to 192.168.1.16:4001");
+    expectWarning("rotctld stopped: the rotor controller did not answer in time");
     QTRY_COMPARE_WITH_TIMEOUT(failed.count(), 1, 5000);
     const QString why = failed.at(0).at(0).toString();
-    QVERIFY2(why.contains(QStringLiteral("timed out")), qPrintable(why));
-    QVERIFY2(why.startsWith(QStringLiteral("Hamlib's rotctld stopped")), qPrintable(why));
+    QCOMPARE(why, QStringLiteral("Hamlib's rotctld stopped: the rotor controller did not "
+                                 "answer in time. Check the rotor's port and that it is on."));
+    QVERIFY2(!why.contains(QStringLiteral("192.168")), qPrintable(why));
     QCOMPARE(down.count(), 1);
     QVERIFY(!m_conn->isConnected());
     QVERIFY(m_conn->reconnectPending());
