@@ -10,7 +10,8 @@
 //   2026-10-08: Created by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code. Rotor control plan, Task 3b.
 //   2026-10-08: Final review fixes (span on the controller's reading, a
-//               stop before a link closes mid-turn, plain fault words).
+//               stop before a link closes mid-turn, arrival on the span,
+//               plain fault words).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -1027,7 +1028,16 @@ void RotorConnection::acceptPosition(double reportedAz, double reportedEl, bool 
 
     if (m_turning && !m_moveActive) {
         bool arrived = false;
-        if (m_hasTarget && circularGap(heading, m_targetAz) <= kArrivedDeg) {
+        // Arrival is judged on the span once the route is known (final
+        // review M1): on a rotor with overlap a compass heading names two
+        // span positions, and only the one the route goes to is arrival.
+        // With the nearer-position route the two rules agree; the span is
+        // the one that cannot be fooled. Compass otherwise.
+        const RotorRoute::Move route = routeToTarget();
+        const double gap = route.routeKnown && m_config.endStop != RotorRoute::EndStop::None
+                               ? std::abs(route.travelDeg)
+                               : circularGap(heading, m_targetAz);
+        if (m_hasTarget && gap <= kArrivedDeg) {
             arrived = m_targetEl < 0.0 || m_elevationDeg < 0.0
                    || std::abs(m_elevationDeg - m_targetEl) <= kArrivedDeg;
         }

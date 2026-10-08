@@ -206,6 +206,9 @@ private slots:
     void quittingDuringAMoveSendsAStop();
     void disconnectWhileStillSendsNothing();
 
+    // Arrival on the span (final review M1)
+    void arrivalInTheOverlapIsJudgedOnTheSpan();
+
     // Bench captures
     void replayErcCapture();
     void replayErcRangeCapture();
@@ -1110,6 +1113,32 @@ void TestRotorConnection::quittingDuringAMoveSendsAStop()
     QVERIFY(QMetaObject::invokeMethod(QCoreApplication::instance(), "aboutToQuit",
                                       Qt::DirectConnection));
     QCOMPARE(m_fake->take(), QByteArray("S\r"));
+}
+
+void TestRotorConnection::arrivalInTheOverlapIsJudgedOnTheSpan()
+{
+    // South stop, 450: span 100 is compass 280. A target of 200 has span
+    // positions 20 and 380; the route takes 20, counter-clockwise 80.
+    RotorConfig c = gs232bConfig();
+    c.endStop = EndStop::South;
+    c.rangeDeg = 450.0;
+    connectWith(c);
+    m_fake->feed("AZ=280  EL=000\r\n");
+    QCOMPARE(m_conn->spanPositionDeg(), 100.0);
+    m_fake->take();
+    QVERIFY(m_conn->setTarget(200.0));
+    QCOMPARE(m_conn->routeToTarget().travelDeg, -80.0);
+    QVERIFY(m_conn->turning());
+    // Two degrees short on the span is not there.
+    m_conn->pollNowForTesting();
+    m_fake->feed("AZ=202  EL=000\r\n");
+    QVERIFY(m_conn->turning());
+    QCOMPARE(m_conn->targetAzimuthDeg(), 200.0);
+    // Within 1.5 on the span is.
+    m_conn->pollNowForTesting();
+    m_fake->feed("AZ=201  EL=000\r\n");
+    QVERIFY(!m_conn->turning());
+    QCOMPARE(m_conn->targetAzimuthDeg(), -1.0);
 }
 
 void TestRotorConnection::disconnectWhileStillSendsNothing()
