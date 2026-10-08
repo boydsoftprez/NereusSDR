@@ -419,6 +419,34 @@ private slots:
     // Bench fix: in the Settings window at the size JJ uses, every field
     // row has its natural height and every help label shows all its lines
     // (the page scrolls; nothing is squeezed).
+    // Bench fix: the status line shows the heading while it is fresh.
+    void statusLineShowsTheLiveHeading()
+    {
+        RadioModel window(RadioModel::Role::Remote);
+        RecordingRotorLink link;
+        window.attachStation(&link);
+        RotorModel::State s = coreRotor();
+        s.positionFresh = true;
+        s.azimuthDeg = 301.4;
+        window.rotorModel()->setState(s);
+        RotorSetupPage page(&window);
+        QCOMPARE(page.statusTextForTesting(),
+                 QStringLiteral("Yaesu GS-232B on /dev/ttyCORE2: connected, heading 301°"));
+
+        // A heading that moves updates the line (position only, no state).
+        s.azimuthDeg = 359.6;
+        window.rotorModel()->setState(s);
+        QCOMPARE(page.statusTextForTesting(),
+                 QStringLiteral("Yaesu GS-232B on /dev/ttyCORE2: connected, heading 0°"));
+
+        // Stale: no heading claimed.
+        s.positionFresh = false;
+        window.rotorModel()->setState(s);
+        QCOMPARE(page.statusTextForTesting(),
+                 QStringLiteral("Yaesu GS-232B on /dev/ttyCORE2: connected"));
+        verifyPlain(page);
+    }
+
     void pageLaysOutAtItsNaturalHeightInTheSettingsWindow()
     {
         RadioModel model;

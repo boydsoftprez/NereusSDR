@@ -21,7 +21,9 @@
 //                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-08  J.J. Boyd / KG4VCF  Bench fix: the page scrolls, so the
 //                                    Settings window no longer squeezes its
-//                                    rows. AI-assisted via Anthropic Claude Code.
+//                                    rows; the status line shows the live
+//                                    heading. AI-assisted via Anthropic
+//                                    Claude Code.
 // =================================================================
 
 #include "RotorSetupPage.h"
@@ -178,6 +180,8 @@ RotorSetupPage::RotorSetupPage(RadioModel* model, QWidget* parent)
             refreshFromRotor();
             refreshStatus();
         });
+        // Bench fix: the live heading is on the status line.
+        connect(m_rotor, &LinkRotor::positionChanged, this, &RotorSetupPage::refreshStatus);
     }
     if (m_model) {
         connect(m_model, &RadioModel::stationLinkStateChanged, this,
@@ -532,7 +536,16 @@ void RotorSetupPage::refreshStatus()
         case Phase::Connecting:
         case Phase::Identifying: text = tr("%1: connecting").arg(label); break;
         case Phase::Retrying: text = tr("%1: trying again").arg(label); break;
-        case Phase::Connected: text = tr("%1: connected").arg(label); break;
+        case Phase::Connected:
+            // Bench fix: the heading the rotor reads, while it is fresh, so
+            // the page shows the rotor answering (JJ had nowhere to see it).
+            if (s.positionFresh && s.azimuthDeg >= 0.0) {
+                const int heading = static_cast<int>(std::lround(s.azimuthDeg)) % 360;
+                text = tr("%1: connected, heading %2°").arg(label).arg(heading);
+            } else {
+                text = tr("%1: connected").arg(label);
+            }
+            break;
         case Phase::Error:
             text = tr("%1: %2").arg(label,
                                     OperatorReasonText::forDisplay(s.connectionError));
