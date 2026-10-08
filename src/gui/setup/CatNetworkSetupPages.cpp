@@ -78,8 +78,6 @@ void CatTciServerPage::buildUI()
     buildAudioStreamGroup();
     buildSensorsGroup();
     buildVfoQuirksGroup();
-
-    contentLayout()->addStretch();
 }
 
 // ---------------------------------------------------------------------------
@@ -277,7 +275,7 @@ void CatTciServerPage::buildServerGroup()
     m_stationLine->setVisible(false);
     form->addRow(QString(), m_stationLine);
 
-    contentLayout()->addWidget(group);
+    addContent(group);
 }
 
 void CatTciServerPage::setRadioModel(NereusSDR::RadioModel* model)
@@ -457,7 +455,7 @@ void CatTciServerPage::buildCoreGroup()
     m_coreReason->setTextFormat(Qt::PlainText);
     form->addRow(QString(), m_coreReason);
     m_coreGroup->hide();
-    contentLayout()->addWidget(m_coreGroup);
+    addContent(m_coreGroup);
 }
 
 void CatTciServerPage::refreshCoreGroup()
@@ -677,7 +675,7 @@ void CatTciServerPage::buildCompatibilityGroup()
     });
     form->addRow(QString(), m_cwBecomesCwuCheck);
 
-    contentLayout()->addWidget(group);
+    addContent(group);
 }
 
 // ---------------------------------------------------------------------------
@@ -727,7 +725,7 @@ void CatTciServerPage::buildIqStreamGroup()
     });
     form->addRow(QString(), m_alwaysStreamIqCheck);
 
-    contentLayout()->addWidget(group);
+    addContent(group);
     refreshIqStreamGroup();
 }
 
@@ -790,7 +788,7 @@ void CatTciServerPage::buildAudioStreamGroup()
     });
     form->addRow(tr("TX channel:"), m_txChannelCombo);
 
-    contentLayout()->addWidget(group);
+    addContent(group);
 }
 
 // ---------------------------------------------------------------------------
@@ -848,7 +846,7 @@ void CatTciServerPage::buildSensorsGroup()
     noteLabel->setWordWrap(true);
     form->addRow(noteLabel);
 
-    contentLayout()->addWidget(group);
+    addContent(group);
     // R-R3-49: the sensor intervals are not applied yet; hidden until they are.
 }
 
@@ -956,7 +954,7 @@ void CatTciServerPage::buildVfoQuirksGroup()
     });
     form->addRow(QString(), m_copyRx2VfobToVfoaCheck);
 
-    contentLayout()->addWidget(group);
+    addContent(group);
 }
 
 // ---------------------------------------------------------------------------
@@ -1215,8 +1213,7 @@ void CatMidiControlPage::buildUI()
     m_learnButton->setToolTip(QStringLiteral("Learn a control: move it on the MIDI device to assign it"));
     grid->addWidget(m_learnButton, 3, 0, 1, 2);
 
-    contentLayout()->addWidget(group);
-    contentLayout()->addStretch();
+    addContent(group);
 }
 
 // ---------------------------------------------------------------------------

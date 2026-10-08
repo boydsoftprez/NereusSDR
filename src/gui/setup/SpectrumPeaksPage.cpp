@@ -339,7 +339,7 @@ void SpectrumPeaksPage::buildUI()
         "trace white)."));
     aphForm->addRow(QStringLiteral("Trace color:"), m_aphColor);
 
-    contentLayout()->addWidget(m_aphGroup);
+    addContent(m_aphGroup);
 
     // ── Peak Blobs ────────────────────────────────────────────────────────────
     // From Thetis Display.cs:4395-4714 [v2.10.3.13] — ShowPeakBlobs / NumberOfPeakBlobs /
@@ -432,7 +432,7 @@ void SpectrumPeaksPage::buildUI()
         "Color of the dBm readout text on each peak blob."));
     blobForm->addRow(QStringLiteral("Text color:"), m_blobTextColor);
 
-    contentLayout()->addWidget(m_blobGroup);
+    addContent(m_blobGroup);
 
     // ── Cross-link ────────────────────────────────────────────────────────────
     m_backBtn = new QPushButton(QStringLiteral("← Spectrum defaults"), this);
@@ -444,9 +444,8 @@ void SpectrumPeaksPage::buildUI()
         "QPushButton:hover { background: #203040; color: #c8d8e8; }"));
     connect(m_backBtn, &QPushButton::clicked,
             this, &SpectrumPeaksPage::backToSpectrumDefaultsRequested);
-    contentLayout()->addWidget(m_backBtn, 0, Qt::AlignLeft);
-
-    contentLayout()->addStretch();
+    addContent(m_backBtn);
+    contentLayout()->setAlignment(m_backBtn, Qt::AlignLeft);
 }
 
 }  // namespace NereusSDR

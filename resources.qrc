@@ -28,4 +28,16 @@
         <file alias="badge-apf.svg">resources/icons/badge-apf.svg</file>
         <file alias="badge-sql.svg">resources/icons/badge-sql.svg</file>
     </qresource>
+    <qresource prefix="/icons/emoji">
+        <file alias="pc-on.svg">resources/icons/emoji/pc-on.svg</file>
+        <file alias="pc-muted.svg">resources/icons/emoji/pc-muted.svg</file>
+        <file alias="radio-on.svg">resources/icons/emoji/radio-on.svg</file>
+        <file alias="radio-muted.svg">resources/icons/emoji/radio-muted.svg</file>
+        <file alias="radio-none.svg">resources/icons/emoji/radio-none.svg</file>
+        <file alias="lock.svg">resources/icons/emoji/lock.svg</file>
+        <file alias="unlock.svg">resources/icons/emoji/unlock.svg</file>
+        <file alias="bulb.svg">resources/icons/emoji/bulb.svg</file>
+        <file alias="pin.svg">resources/icons/emoji/pin.svg</file>
+        <file alias="pinned.svg">resources/icons/emoji/pinned.svg</file>
+    </qresource>
 </RCC>

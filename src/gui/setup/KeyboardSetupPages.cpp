@@ -72,8 +72,7 @@ void KeyboardShortcutsPage::buildUI()
 
     vLayout->addLayout(btnRow);
 
-    contentLayout()->addWidget(group);
-    contentLayout()->addStretch();
+    addContent(group);
 }
 
 } // namespace NereusSDR

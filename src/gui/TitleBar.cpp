@@ -66,12 +66,29 @@
 //                 offline", and the kUtcToMasterGap comment records that
 //                 18 px now covers every audio group in the measured fonts.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-06 - Radio speaker plan Task 5 (R-SPK-19, D7): the feature
+//                 button shows the app's own bulb icon (AppIcon); the
+//                 QPainter lightbulb painter is removed. J.J. Boyd (KG4VCF),
+//                 with AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-06 - Radio speaker plan Task 6 (R-SPK-16, R-SPK-17, D1): the
+//                 RADIO group (RadioSpeakerWidget) follows the PC group
+//                 after kPcToRadioGap; setRadioModel() binds it. J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
+//                 Claude Code.
+//   2026-10-06 - Radio speaker plan Task 6, JJ decision 2 (R-SPK-17, D1):
+//                 PC and RADIO sit in one volume group that stacks them
+//                 (layout C) when side by side would leave the connection
+//                 segment less than it asks for, and returns to side by
+//                 side past kSideBySideReturnSpare. J.J. Boyd (KG4VCF),
+//                 with AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "TitleBar.h"
 
 #include "StyleConstants.h"
+#include "widgets/AppIcon.h"
 #include "widgets/MasterOutputWidget.h"
+#include "widgets/RadioSpeakerWidget.h"
 
 #include <QDateTime>
 #include <QHBoxLayout>
@@ -87,6 +104,9 @@
 #include <QPolygonF>
 #include <QPushButton>
 #include <QSize>
+#include <QBoxLayout>
+#include <QEvent>
+#include <QLayoutItem>
 #include <QSizePolicy>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -113,6 +133,35 @@ constexpr int kSpacing      = 6;
 // than a 24 px gap allowed, and 18 covers it with 2 px (Menlo) or 3 px
 // (the others) to spare.
 constexpr int kUtcToMasterGap = 18;
+
+// Visible gap between the PC group's readout and the RADIO group's icon
+// in the side-by-side form (R-SPK-17, header-layouts.html layout A): the
+// spacing of the volume group's own layout.
+constexpr int kPcToRadioGap = 16;
+
+// R-SPK-17 (JJ, 2026-10-06): the header shows PC and RADIO side by side
+// (layout A) while that leaves the connection segment the width it asks
+// for (its sizeHint, which covers every remote group plus 14 px beyond
+// what tst_connection_segment_v2 and tst_remote_window_harness require),
+// and stacks them (layout C) otherwise. The decision uses the width the
+// segment WOULD get side by side, whichever form is showing, so the form
+// does not feed back into it; layout A returns only once it leaves this
+// much more than the segment asks for, so readings whose width moves by a
+// few pixels each second cannot flip the form back and forth.
+//
+// Measured 2026-10-06, offscreen, default header font (SF Mono 10
+// DemiBold), real MainWindow remote header connected with all four
+// readouts (Traffic, Audio, Radio, Core RTT; longest text 527 px hint):
+//   1440 px window: side by side would leave the segment 316 px, so the
+//     header stacks; stacked group 159x28, segment 527 px, worst margin
+//     over every audio state +13 px (Menlo -77, Monaco, Courier New,
+//     Andale Mono and PT Mono -76, against Menlo -78 before Task 6;
+//     not chased).
+//   Side by side the volume group is 370 px wide, so with the longest
+//     text the header stacks below a window of about 1651 px and returns
+//     to side by side from about 1667 px (1651 + this spare).
+//   2200 px window: side by side, segment margin +14 px.
+constexpr int kSideBySideReturnSpare = 16;
 
 // Fixed strip height. From AetherSDR TitleBar.cpp:30.
 constexpr int kStripHeight = 32;
@@ -704,6 +753,7 @@ TitleBar::TitleBar(AudioEngine* audio, QWidget* parent)
     // and invited a mis-drag on a widget where an accidental grab changes
     // audio level (bench feedback, 2026-08-03).
     m_utcLabel = new QLabel(this);
+    m_utcLabel->setObjectName(QStringLiteral("utcLabel"));
     m_utcLabel->setToolTip(tr("UTC time"));
     m_utcLabel->setStyleSheet(QStringLiteral(
         "QLabel { color: #8aa8c0; font-size: 11px;"
@@ -712,8 +762,22 @@ TitleBar::TitleBar(AudioEngine* audio, QWidget* parent)
     m_hbox->addSpacing(kUtcToMasterGap);
 
     // ── MasterOutputWidget — Task 10b composite ────────────────────────────
-    m_master = new MasterOutputWidget(audio, this);
-    m_hbox->addWidget(m_master);
+    // ── Volume group, R-SPK-17: PC then RADIO ───────────────────────────
+    // One box whose direction switches between side by side (layout A)
+    // and stacked (layout C); see updateVolumeForm().
+    m_volumeGroup = new QWidget(this);
+    m_volumeGroup->setObjectName(QStringLiteral("headerVolumeGroup"));
+    m_volumeBox = new QBoxLayout(QBoxLayout::LeftToRight, m_volumeGroup);
+    m_volumeBox->setContentsMargins(0, 0, 0, 0);
+    m_volumeBox->setSpacing(kPcToRadioGap);
+    m_master = new MasterOutputWidget(audio, m_volumeGroup);
+    m_volumeBox->addWidget(m_master);
+    // The RADIO group is built with no model so the strip's order never
+    // changes; it shows no radio connected (disabled, never hidden) until
+    // setRadioModel().
+    m_radioSpeaker = new RadioSpeakerWidget(nullptr, m_volumeGroup);
+    m_volumeBox->addWidget(m_radioSpeaker);
+    m_hbox->addWidget(m_volumeGroup);
     m_hbox->addSpacing(10);
 
     auto tickUtc = [this]() {
@@ -733,53 +797,11 @@ TitleBar::TitleBar(AudioEngine* audio, QWidget* parent)
     // element.
     m_hbox->addSpacing(6);
 
-    // Paint a lightbulb icon so it renders cleanly at any DPI.
-    auto makeBulbIcon = [](QColor bulbColor, QColor baseColor) -> QIcon {
-        constexpr int sz = 64;  // paint large, Qt scales down
-        QPixmap pm(sz, sz);
-        pm.fill(Qt::transparent);
-        QPainter p(&pm);
-        p.setRenderHint(QPainter::Antialiasing);
-
-        // Bulb (circle)
-        p.setPen(Qt::NoPen);
-        p.setBrush(bulbColor);
-        p.drawEllipse(QRectF(14, 4, 36, 36));
-
-        // Neck (trapezoid connecting bulb to base)
-        QPolygonF neck;
-        neck << QPointF(22, 36) << QPointF(42, 36)
-             << QPointF(40, 44) << QPointF(24, 44);
-        p.drawPolygon(neck);
-
-        // Base (screw threads — 3 thin lines)
-        p.setPen(QPen(baseColor, 2.5));
-        p.drawLine(QPointF(24, 46), QPointF(40, 46));
-        p.drawLine(QPointF(25, 50), QPointF(39, 50));
-        p.drawLine(QPointF(27, 54), QPointF(37, 54));
-
-        // Tip
-        p.setPen(Qt::NoPen);
-        p.setBrush(baseColor);
-        p.drawEllipse(QRectF(29, 56, 6, 4));
-
-        // Filament lines inside bulb
-        p.setPen(QPen(baseColor, 1.5));
-        p.drawLine(QPointF(28, 34), QPointF(28, 22));
-        p.drawLine(QPointF(28, 22), QPointF(32, 16));
-        p.drawLine(QPointF(32, 16), QPointF(36, 22));
-        p.drawLine(QPointF(36, 22), QPointF(36, 34));
-
-        p.end();
-        return QIcon(pm);
-    };
-
-    QIcon bulbIcon = makeBulbIcon(QColor(0xFF, 0xD0, 0x60), QColor(0x80, 0x60, 0x20));
-
     m_featureBtn = new QPushButton(this);
     m_featureBtn->setObjectName(QStringLiteral("featureButton"));
-    m_featureBtn->setIcon(bulbIcon);
-    m_featureBtn->setIconSize(QSize(22, 22));
+    // The app's own bulb icon (AppIcon), replacing the QPainter-drawn bulb
+    // so it matches the rest of the icon set (R-SPK-19, D7).
+    AppIcon::apply(m_featureBtn, QStringLiteral("bulb"), 22);
     m_featureBtn->setFixedSize(28, 28);
     m_featureBtn->setToolTip(QStringLiteral("Submit a feature request or bug report"));
     m_featureBtn->setAccessibleName(QStringLiteral("Feature request"));
@@ -817,6 +839,75 @@ void TitleBar::setMenuBar(QMenuBar* mb)
     m_menuBar = mb;
     // Insert at position 0 (before the first stretch).
     m_hbox->insertWidget(0, mb);
+}
+
+void TitleBar::setRadioModel(RadioModel* model)
+{
+    m_radioSpeaker->setRadioModel(model);
+}
+
+bool TitleBar::event(QEvent* event)
+{
+    // The layout has already placed the children for this resize or
+    // layout request (QLayout::widgetEvent runs first), so the stretch
+    // and segment geometry below are current.
+    const bool handled = QWidget::event(event);
+    if (event->type() == QEvent::LayoutRequest || event->type() == QEvent::Resize) {
+        updateVolumeForm();
+    }
+    return handled;
+}
+
+int TitleBar::segmentWidthSideBySide() const
+{
+    // The segment's own width plus the two centre stretches is the room
+    // the segment can have in the form now showing; side by side it has
+    // that, less what the side-by-side group takes beyond this one.
+    int pool = m_connectionSegment->width();
+    for (int i = 0; i < m_hbox->count(); ++i) {
+        QLayoutItem* item = m_hbox->itemAt(i);
+        if (item->spacerItem() && (item->expandingDirections() & Qt::Horizontal)) {
+            pool += item->geometry().width();
+        }
+    }
+    return pool + m_volumeGroup->width() - m_sideBySideGroupWidth;
+}
+
+void TitleBar::updateVolumeForm()
+{
+    if (m_updatingVolumeForm || !isVisible()) {
+        return;
+    }
+    if (!m_stacked) {
+        m_sideBySideGroupWidth = m_volumeGroup->sizeHint().width();
+    }
+    if (m_sideBySideGroupWidth <= 0) {
+        return;
+    }
+    const int need = m_connectionSegment->sizeHint().width();
+    const int sideBySide = segmentWidthSideBySide();
+    const bool stack = m_stacked ? sideBySide < need + kSideBySideReturnSpare
+                                 : sideBySide < need;
+    setVolumeStacked(stack);
+}
+
+void TitleBar::setVolumeStacked(bool stacked)
+{
+    if (stacked == m_stacked) {
+        return;
+    }
+    m_updatingVolumeForm = true;
+    m_stacked = stacked;
+    // Layout C: PC above RADIO, word labels kept at RADIO's width so the
+    // two sliders line up.
+    const int labelWidth = stacked ? m_radioSpeaker->findChild<QLabel*>(
+                                         QStringLiteral("radioLabel"))->sizeHint().width()
+                                   : 0;
+    m_volumeBox->setDirection(stacked ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
+    m_volumeBox->setSpacing(stacked ? 0 : kPcToRadioGap);
+    m_master->setStacked(stacked, labelWidth);
+    m_radioSpeaker->setStacked(stacked, labelWidth);
+    m_updatingVolumeForm = false;
 }
 
 QString TitleBar::utcText() const

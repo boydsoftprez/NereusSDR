@@ -41,6 +41,14 @@
 //               the Core; the Core's refusal stays the backstop. J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
+//   2026-10-06 - R-SPK-21: addContent() for widgets and layouts, inserted
+//                 before the trailing stretch so every page starts at the
+//                 top. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
+//   2026-10-06 - R-SPK-21 (Microphone): the gates save a control's own
+//                 enabled state, not its parent's, so a control in a greyed
+//                 section is not left disabled when the gate lifts.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "SetupPage.h"
@@ -161,7 +169,12 @@ void gateControlsWith(const QList<QWidget*>& controls, bool allowed, const QStri
             if (!control->property(savedTooltip).isValid()) {
                 control->setProperty(savedTooltip, control->toolTip());
                 control->setProperty(savedDescription, control->accessibleDescription());
-                control->setProperty(savedEnabled, control->isEnabled());
+                // The control's own state, not the one its parent imposes:
+                // a control inside a greyed section (Audio > Microphone's
+                // radio mic groups, R-SPK-21) comes back live when the
+                // section is picked, instead of staying disabled for good.
+                control->setProperty(savedEnabled,
+                                     !control->testAttribute(Qt::WA_ForceDisabled));
             }
             control->setEnabled(false);
             control->setToolTip(reason);
@@ -216,6 +229,19 @@ QGroupBox* SetupPage::addSection(const QString& title)
     m_contentLayout->insertWidget(stretchIndex, group);
 
     return group;
+}
+
+// R-SPK-21: content goes before the trailing stretch, as addSection() does.
+void SetupPage::addContent(QWidget* widget)
+{
+    const int stretchIndex = m_contentLayout->count() - 1;
+    m_contentLayout->insertWidget(stretchIndex, widget);
+}
+
+void SetupPage::addContent(QLayout* layout)
+{
+    const int stretchIndex = m_contentLayout->count() - 1;
+    m_contentLayout->insertLayout(stretchIndex, layout);
 }
 
 // ── Convenience single-argument row builders ──────────────────────────────────

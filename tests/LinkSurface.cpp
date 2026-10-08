@@ -12,6 +12,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-06  J.J. Boyd / KG4VCF  Radio speaker: the capture declares
+//                                    radioSpeaker, so radioSpeakerVersion
+//                                    and radio's five radio speaker
+//                                    properties are captured. AI-assisted
+//                                    via Anthropic Claude Code.
 //   2026-10-04  J.J. Boyd / KG4VCF  Complete conditional media fields,
 //                                    legacy nested variants and lossless
 //                                    bitrate refusal shapes. AI-assisted
@@ -717,7 +722,10 @@ std::optional<QList<QByteArray>> liveSessionWire(
                                   {"radeReason", 1},
                                   // CAT setup from a connected desktop:
                                   // stationCatVersion and `stationCat`.
-                                  {"stationCat", 1}})));
+                                  {"stationCat", 1},
+                                  // Radio speaker: radioSpeakerVersion and
+                                  // radio's five radio speaker properties.
+                                  {"radioSpeaker", 1}})));
     clientEnd->sendText(SessionMessages::encode(SessionMessages::authRequest({}, block)));
 
     // The loopback delivers on later event-loop turns, as a socket would.
@@ -807,6 +815,8 @@ QJsonArray captureCapabilities()
     // CAT setup from a connected desktop: sent to a peer that declared
     // stationCat.
     caps.stationCatVersion = 1;
+    // Radio speaker: sent to a peer that declared radioSpeaker.
+    caps.radioSpeakerVersion = 1;
 
     // The values come from a live station with every feature a Core can
     // switch on: media, telemetry, an enforced display budget with its

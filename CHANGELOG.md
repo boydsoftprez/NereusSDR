@@ -26,6 +26,39 @@ Thetis-compatible CAT commands.
 - Thetis commands for features NereusSDR does not have yet (recording, CWX,
   VAC and memories among them) answer `?;`.
 
+### Separate computer and radio speaker volumes
+
+The header now has two volume controls: PC for this computer's speakers and
+RADIO for the speaker on the radio.
+
+- RADIO sets and mutes the radio's own speaker output without changing the
+  computer's volume, and PC no longer changes the radio speaker. Each slice's
+  AF level and mute still apply to both.
+- RADIO is saved for each radio. With a Core, it is the speaker at the Core:
+  every remote console and the iPhone or iPad app show the same setting, and a
+  change on one reaches the others.
+- On a narrow window the two controls stack.
+- Radios with a switchable speaker amplifier (on Protocol 2: the ANAN-G2,
+  ANAN-G2 1K, ANAN-7000DLE, ANAN-8000DLE, Anvelina Pro 3 and Red Pitaya) get a
+  Speaker amplifier choice in Setup > Audio > Outputs: Normal, Off while
+  transmitting (it stays on for CW and Tune so you hear the sidetone) or
+  Always off. Muting RADIO also switches the amplifier off. On other radios the
+  choice is greyed out with the reason. The ANAN-G2E is left off until it is
+  tested.
+- Drawn icons replace the emoji on the desktop's volume and mute buttons.
+
+### Audio Setup regrouped
+
+Setup > Audio is now Outputs, Microphone, Digital modes, TX Profile and
+Advanced, and each control appears on one page only.
+
+- Outputs holds this computer's speakers, the headphones and the radio speaker,
+  with a Sound system line that says which audio system NereusSDR uses.
+- Microphone holds the PC microphone and the radio's mic jack; the one not in
+  use is greyed out, never hidden. Mic gain applies to whichever is picked.
+- Digital modes holds VAX and TCI.
+- Every page opens at the top. Your saved audio settings carry over unchanged.
+
 ## [2026.10.0] - 2026-10-05
 
 **Your station. Wherever you operate.**

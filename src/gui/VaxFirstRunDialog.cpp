@@ -11,6 +11,9 @@
 // Modification history (NereusSDR):
 //   2026-04-20 — Written by J.J. Boyd (KG4VCF), with AI-assisted
 //                transformation via Anthropic Claude Code.
+//   2026-10-06 - R-SPK-21: Customize and "Why do I need this?" open Setup >
+//                Audio > Digital modes, which holds VAX now. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "VaxFirstRunDialog.h"
@@ -996,8 +999,8 @@ QWidget* VaxFirstRunDialog::buildFooter()
             whyBtn->setObjectName(QString::fromUtf8(kBtnWhyNeeded));
             whyBtn->setStyleSheet(linkButtonStyle());
             connect(whyBtn, &QPushButton::clicked, this, [this]() {
-                // Emit → MainWindow → SetupDialog::selectPage("VAX").
-                emit openSetupAudioPage(QStringLiteral("VAX"));
+                // Emit → MainWindow → SetupDialog::selectPage("Digital modes").
+                emit openSetupAudioPage(QStringLiteral("Digital modes"));
                 // reject() (not accept()) — the user hasn't completed
                 // first-run; they're going to Setup for more info, same
                 // semantics as Customize…
@@ -1083,7 +1086,7 @@ void VaxFirstRunDialog::onSkip()
 
 void VaxFirstRunDialog::onCustomize()
 {
-    emit openSetupAudioPage(QStringLiteral("VAX"));
+    emit openSetupAudioPage(QStringLiteral("Digital modes"));
     // Customize is "dismissed without completing first-run here" —
     // SetupDialog will persist audio/FirstRunComplete on its own path.
     reject();

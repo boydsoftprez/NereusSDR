@@ -246,7 +246,9 @@ private slots:
             {QStringLiteral("&Mic Profiles..."), QStringLiteral("TX Profile")},
             {QStringLiteral("&Import..."), QStringLiteral("Export / Import")},
             {QStringLiteral("&Export..."), QStringLiteral("Export / Import")},
-            {QStringLiteral("&VAX Audio..."), QStringLiteral("VAX")},
+            // R-SPK-21 (radio speaker plan Task 11): VAX lives on Digital
+            // modes with TCI, so Tools > VAX Audio opens that page.
+            {QStringLiteral("&VAX Audio..."), QStringLiteral("Digital modes")},
             {QStringLiteral("&Antenna Setup…"), QStringLiteral("Hardware Config")},
         };
         GuiSessionCoordinator sessions;

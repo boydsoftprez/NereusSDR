@@ -9,6 +9,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-06  J.J. Boyd / KG4VCF  Radio speaker: the hello declares
+//                                    radioSpeaker 1; radio's RADIO level,
+//                                    mute and amplifier choice apply
+//                                    through their setters and go back to
+//                                    the Core, the two reports apply as the
+//                                    Core sent them; radioSpeakerAvailable
+//                                    (R-SPK-06, R-SPK-13, R-SPK-14).
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-04: Qt 6.4 WebSocket error-signal compatibility. J.J. Boyd
 //               (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-30  J.J. Boyd / KG4VCF  Fix wave GUI-I6: a Tune Power change
@@ -923,6 +931,11 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // (radio's rxFilter0LowPassReason and rxFilter0LowPassSlice;
     // rxFilterLowPassVersion 1).
     m_declaredFeatures.insert(QByteArrayLiteral("rxFilterLowPass"), 1);
+    // Radio speaker (R-SPK-14): the header's RADIO group and Setup show and
+    // change the Core's radio speaker (radio's radioSpeakerVolume,
+    // radioSpeakerMuted, speakerAmplifierMode and the two reports;
+    // radioSpeakerVersion 1).
+    m_declaredFeatures.insert(QByteArrayLiteral("radioSpeaker"), 1);
     // PA on-air gate re-review, Important C: the PA pages open and lock
     // the row the Core holds on the air (paTransmitBandVersion 1).
     m_declaredFeatures.insert(QByteArrayLiteral("paTransmitBand"), 1);
@@ -2083,6 +2096,8 @@ void StationClient::attachTransport(SessionTransport* transport, const QString& 
     m_capabilities.displayBudget.reset();
     m_capabilities.displayBudgetReason.reset();
     m_capabilities.remotePs3DisplaySubscribed = false;
+    m_capabilitiesThisSession = false;
+    m_capabilities.radioSpeakerVersion = 0;
 
     // These three describe THIS session. Carrying them across a reconnect
     // would let a difference the station has since fixed keep showing up
@@ -2283,6 +2298,7 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
 
     m_capabilities.coreBuildInfo.reset();
     m_signedInWithDeviceKey = false;
+    m_capabilitiesThisSession = false;
     m_capabilities.radioAntennaRowsVersion = 0;
     m_capabilities.band2mVersion = 0;
     m_enrolledDeviceKey = false;
@@ -2467,6 +2483,7 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
         m_radioModel->clearStationBandOutputs();
         m_radioModel->clearStationAlexLpf();
         m_radioModel->clearStationLevelCal();
+        m_radioModel->clearStationRadioSpeaker();
         for (SliceModel* slice : m_radioModel->slices()) {
             slice->setStationAutoAgcNoiseFloor(slice->stationAutoAgcNoiseFloorDbm(), false,
                                               slice->stationAutoAgcNoiseFloorGeneration());
@@ -3541,6 +3558,7 @@ void StationClient::handleCapabilities(const SessionMessage& message)
         }
     }
     m_capabilities = incoming;
+    m_capabilitiesThisSession = true;
     if (m_settingsBackupExport && m_capabilities.settingsBackupVersion < 1) {
         finishSettingsBackupExport(false, QStringLiteral("The Core stopped offering settings export."),
                                    {}, true);
@@ -4918,6 +4936,11 @@ bool StationClient::applyClientOnlyProperty(QObject* target, const QByteArray& c
         if (m_radioModel->applyStationLevelCalValue(propertyName, native)) {
             return true;
         }
+        // Radio speaker (radioSpeakerVersion 1): the two reports, read-only
+        // on the wire, set as the Core sent them.
+        if (m_radioModel->applyStationRadioSpeakerValue(propertyName, native)) {
+            return true;
+        }
         return m_radioModel->applyStationFilterValue(propertyName, native);
     }
     if (className == "PureSignalSessionFacade") {
@@ -5835,6 +5858,19 @@ bool StationClient::levelCalibrationRunAvailable() const
 bool StationClient::rx2PreampModeAvailable() const
 {
     return radioHardwareAvailable(12);
+}
+
+bool StationClient::radioSpeakerAvailable() const
+{
+    // Not stationLinkReady(): the snapshot applies the Core's values through
+    // the setters before the handshake completes, and they must land.
+    return m_sessionActive && m_authenticated && m_capabilities.radioSpeakerVersion >= 1;
+}
+
+bool StationClient::radioSpeakerNeedsNewerCore() const
+{
+    return m_sessionActive && m_authenticated && m_capabilitiesThisSession
+           && m_capabilities.radioSpeakerVersion < 1;
 }
 
 StationClient::CommandOutcome StationClient::requestStartLevelCalibration(float levelDbm,

@@ -6,6 +6,9 @@
 // AI-assisted via Anthropic Claude Code.
 // 2026-10-04: restored TX profile watch coverage and Core-produced typed
 // fixture. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-06: the cap is 25 (Audio > Outputs' radio speaker rows); a
+// version 25 phone sets the radio speaker. J.J. Boyd (KG4VCF), AI-assisted
+// via Anthropic Claude Code.
 #include <QtTest>
 
 #include <algorithm>
@@ -699,9 +702,9 @@ private slots:
     // reason; a version 15 phone keeps version 13's Hardware. Version 17
     // (the Alex-1 low-pass rows) keeps them, and version 18 (HL2 Options'
     // clock rows) opens the clock rows; version 23 (Calibration's Rx1 6m
-    // LNA row) is Hardware's cap; 24 (Audio > TX Input) is the
+    // LNA row) is Hardware's cap; 25 (Audio > Outputs) is the
     // description's own (21: CAT & Network's Forget row follows Duplicate;
-    // 22: DSP's RX buffer size lock).
+    // 22: DSP's RX buffer size lock; 24: Audio > TX Input).
     void pairedV16PhoneReadsHl2Options()
     {
         const auto hl2OptionsOf = [](const QJsonObject& hardware) {
@@ -718,7 +721,8 @@ private slots:
         // {declared, capability sent back, Hardware version the phone reads}
         const QList<std::tuple<int, int, int>> declarations{
             {16, 16, 16}, {17, 17, 17}, {18, 18, 18}, {19, 19, 18}, {20, 20, 18},
-            {21, 21, 18}, {22, 22, 18}, {23, 23, 23}, {24, 24, 23}, {99, 24, 23},
+            {21, 21, 18}, {22, 22, 18}, {23, 23, 23}, {24, 24, 23}, {25, 25, 23},
+            {99, 25, 23},
             {15, 15, 13}};
         for (const auto& [declared, granted, received] : declarations) {
             // One Core per phone: five phones are more than a Core's places.
@@ -871,6 +875,65 @@ private slots:
         QCOMPARE(olderRows.at(2).toObject().value("step"), QJsonValue(1));
         QCOMPARE(olderRows.at(2).toObject().value("min"), QJsonValue(-34));
         QVERIFY(!olderRows.at(2).toObject().contains("decimals"));
+    }
+
+    // Version 25 (R-SPK-23): a version 25 phone that declared radioSpeaker
+    // reads Audio's Outputs page and Microphone's title, and its volume
+    // reaches the Core's radio speaker; a version 24 phone reads version 24
+    // with TX Input's title and no Outputs page.
+    void pairedV25PhoneReadsAndSetsTheRadioSpeaker()
+    {
+        Core core;
+        Device current(QStringLiteral("Speaker V25 iPhone"), QStringLiteral("phone"));
+        Device older(QStringLiteral("Speaker V24 iPhone"), QStringLiteral("phone"));
+        core.pair(current);
+        core.pair(older);
+        QHash<QByteArray, int> v25 = kHolder;
+        v25.insert("setupDescription", 25);
+        v25.insert("radioSpeaker", 1);
+        QHash<QByteArray, int> v24 = kHolder;
+        v24.insert("setupDescription", 24);
+        auto* app = core.signIn(current, v25);
+        auto* olderApp = core.signIn(older, v24);
+        QVERIFY(admitted(app) && admitted(olderApp));
+        QCOMPARE(capability(app->received(), QStringLiteral("setupDescriptionVersion")),
+                 std::optional<qint64>(25));
+        QCOMPARE(capability(app->received(), QStringLiteral("radioSpeakerVersion")),
+                 std::optional<qint64>(1));
+
+        const auto audioOf = [](LoopbackTransport* peer) {
+            return QJsonDocument::fromJson(latest(peer->received(), QStringLiteral("setup"),
+                                                  QStringLiteral("audio")).toString().toUtf8())
+                .object();
+        };
+        const auto pageOf = [](const QJsonObject& audio, const QString& id) {
+            for (const QJsonValue& page : audio.value("pages").toArray()) {
+                if (page.toObject().value("id") == QJsonValue(id)) { return page.toObject(); }
+            }
+            return QJsonObject{};
+        };
+        const QJsonObject audio = audioOf(app);
+        QCOMPARE(audio.value("version"), QJsonValue(25));
+        QCOMPARE(pageOf(audio, "audio.txInput").value("title"), QJsonValue("Microphone"));
+        const QJsonArray rows = pageOf(audio, "audio.outputs").value("sections").toArray()
+            .first().toObject().value("controls").toArray();
+        QCOMPARE(rows.size(), 3);
+        QCOMPARE(rows.at(0).toObject().value("binding"),
+                 QJsonValue(QJsonObject{{"property", QJsonObject{{"object", "radio"},
+                                                                 {"name", "radioSpeakerVolume"}}}}));
+        for (const QJsonValue& row : rows) {
+            QVERIFY(SetupDescriptionService::validateAudioV25Control(row.toObject()));
+        }
+
+        const QJsonObject olderAudio = audioOf(olderApp);
+        QCOMPARE(olderAudio.value("version"), QJsonValue(24));
+        QCOMPARE(pageOf(olderAudio, "audio.txInput").value("title"), QJsonValue("TX Input"));
+        QVERIFY(pageOf(olderAudio, "audio.outputs").isEmpty());
+
+        app->sendText(SessionMessages::encode(SessionMessages::propertyWrite(
+            "radio", {MirrorUpdate{0, "radioSpeakerVolume", MirrorWireKind::Int64, qint64(27)}},
+            2501)));
+        QTRY_COMPARE(core.model->radioSpeakerVolume(), 27);
     }
 
     // Version 13 (R-R3-49, R-IOS-18): a paired phone reads PA and Hardware

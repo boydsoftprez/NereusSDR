@@ -1814,6 +1814,13 @@ const QList<AppSideReason>& appSideReasons()
         {"src/models/RadioModel.cpp", "mirrorTxProfilesFromStation",
          "a window's TX profile requests: it shows the link's own reason for a request it "
          "could not send"},
+        // R-SPK-06 / R-SPK-14: why RADIO and the amplifier choice are
+        // greyed; the window's own words or IStationLink's (registered
+        // there).
+        {"src/models/RadioModel.cpp", "radioSpeakerUnavailableReason",
+         "a window's own reason RADIO is greyed: no radio, or the link's older-Core reason"},
+        {"src/models/RadioModel.cpp", "speakerAmplifierUnavailableReason",
+         "a window's own reason the speaker amplifier choice is greyed"},
         {"src/models/RadioModel.cpp", "noStationReason",
          "a remote window's own notice when it has no link to the Core"},
         // Fix round 1 (minor 4): the link-down words MOX, TUNE and 2-TONE
@@ -1909,6 +1916,10 @@ const QList<AppSideReason>& appSideReasons()
         // Level Cal fix wave: a slice on the other ADC's preamp choice on a
         // Core without stepAtt's rx2PreampMode.
         {"src/core/session/IStationLink.h", "rx2PreampModeUnavailableReason",
+         "a remote window's own reason when its Core cannot take the request"},
+        // R-SPK-06 / R-SPK-14: the radio speaker (RADIO and the amplifier
+        // choice) on a Core without radioSpeakerVersion 1.
+        {"src/core/session/IStationLink.h", "radioSpeakerUnavailableReason",
          "a remote window's own reason when its Core cannot take the request"},
         // R-R3-49 (parity Task 16): the filter graph's curve.
         {"src/core/session/IStationLink.h", "filterResponseUnavailableReason",

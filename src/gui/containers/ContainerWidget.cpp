@@ -30,6 +30,10 @@
 //   2026-09-28 - The VFO display's filter right-click goes out as
 //                 vfoFilterContextRequested. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-06 - Radio speaker plan Task 5 (R-SPK-19, D7): the pin-on-top
+//                 button shows the app's own pin / pinned icons (AppIcon) in
+//                 place of colour emoji text. J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 /*  ucMeter.cs
@@ -74,6 +78,7 @@ mw0lge@grange-lane.co.uk
 
 #include "ContainerWidget.h"
 #include "ContainerContentHost.h"
+#include "gui/widgets/AppIcon.h"
 #include <QMenu>
 #include <QContextMenuEvent>
 #include <QTimer>
@@ -103,6 +108,11 @@ mw0lge@grange-lane.co.uk
 #include <algorithm>
 
 namespace NereusSDR {
+
+namespace {
+// Logical size of the pin-on-top icon inside its 22 x 22 title-bar button.
+constexpr int kPinIconPx = 16;
+} // namespace
 
 ContainerWidget::ContainerWidget(QWidget* parent)
     : QWidget(parent)
@@ -179,7 +189,9 @@ void ContainerWidget::buildUI()
     barLayout->addWidget(m_btnAxis);
 
     // Pin-on-top button (floating only)
-    m_btnPin = new QPushButton(QStringLiteral("\U0001F4CC"), m_titleBar);
+    m_btnPin = new QPushButton(m_titleBar);
+    m_btnPin->setObjectName(QStringLiteral("ContainerPinButton"));
+    AppIcon::apply(m_btnPin, QStringLiteral("pin"), kPinIconPx);
     m_btnPin->setFixedSize(22, 22);
     m_btnPin->setToolTip(QStringLiteral("Pin on top"));
     m_btnPin->setStyleSheet(btnStyle);
@@ -496,7 +508,7 @@ void ContainerWidget::setPinOnTop(bool pin)
 {
     // From Thetis ucMeter.cs:974-978
     m_pinOnTop = pin;
-    m_btnPin->setText(pin ? QStringLiteral("\U0001F4CD") : QStringLiteral("\U0001F4CC"));
+    AppIcon::apply(m_btnPin, pin ? QStringLiteral("pinned") : QStringLiteral("pin"), kPinIconPx);
     setTopMost();
 }
 

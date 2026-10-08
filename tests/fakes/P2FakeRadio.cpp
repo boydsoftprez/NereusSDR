@@ -65,6 +65,7 @@ bool P2FakeRadio::start(const QHostAddress& address,
     m_moxAssertedCount = 0;
     m_lastHighPriorityFlags = 0;
     m_lastHighPriorityOcByte = -1;
+    m_highPriorityRecords.clear();
     m_ddcSequence = 0;
     m_statusSequence = 0;
     m_widebandSequence.fill(0);
@@ -185,6 +186,8 @@ void P2FakeRadio::drainRoleSocket(int offset)
             m_lastHighPriorityFlags = flags;
             m_lastHighPriorityOcByte =
                 int(static_cast<quint8>(datagram.data().at(1401)) >> 1);
+            m_highPriorityRecords.append(
+                {flags, static_cast<quint8>(datagram.data().at(1400))});
             if ((flags & 0x01u) == 0) {
                 ++m_stopCount;
             }

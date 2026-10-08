@@ -68,6 +68,9 @@
 //                                    feature for marking one built, and
 //                                    four ctest entries (main()).
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-06  J.J. Boyd / KG4VCF  R-SPK-21: the microphone card's rows
+//                                    are on Setup > Audio > Microphone.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -153,13 +156,16 @@ StationStartupSelection remoteCore()
 
 // True when `w` would be on screen once `root` is: nothing between them is
 // hidden, except by a stacked widget choosing another page (a tab not
-// selected is still offered).
+// selected is still offered). R-SPK-21 / D14: a device card's folded
+// "Device details" section (objectName "deviceDetails") is offered too, one
+// click away, as a tab is.
 bool shownWithin(const QWidget* w, const QWidget* root)
 {
     if (w == nullptr) { return false; }
     for (const QWidget* p = w; p != nullptr && p != root; p = p->parentWidget()) {
         const bool stackPage = qobject_cast<const QStackedWidget*>(p->parentWidget()) != nullptr;
-        if (p->isHidden() && !stackPage) { return false; }
+        const bool foldedDetails = p->objectName() == QLatin1String("deviceDetails");
+        if (p->isHidden() && !stackPage && !foldedDetails) { return false; }
     }
     return true;
 }
@@ -811,13 +817,13 @@ QMap<F, QList<Surface>> surfaces()
                 }},
         Surface{QStringLiteral("container Click Box Add"), Host::Container,
                 [](Hosts& h) { return actionShown(h.containerDialog(), QStringLiteral("Click Box")); }}};
-    map[F::AudioBitDepth] = {onPage(QStringLiteral("Devices"), QStringLiteral("bit depth"),
+    map[F::AudioBitDepth] = {onPage(QStringLiteral("Microphone"), QStringLiteral("bit depth"),
                                    text(QStringLiteral("Bit depth:")))};
-    map[F::AudioAutoMatch] = {onPage(QStringLiteral("Devices"), QStringLiteral("auto match"),
+    map[F::AudioAutoMatch] = {onPage(QStringLiteral("Microphone"), QStringLiteral("auto match"),
                                     text(QStringLiteral("Auto-match")))};
-    map[F::AudioMonitorTxInput] = {onPage(QStringLiteral("Devices"), QStringLiteral("monitor TX input"),
+    map[F::AudioMonitorTxInput] = {onPage(QStringLiteral("Microphone"), QStringLiteral("monitor TX input"),
                                          text(QStringLiteral("Monitor TX input during transmit")))};
-    map[F::AudioToneCheck] = {onPage(QStringLiteral("Devices"), QStringLiteral("tone check"),
+    map[F::AudioToneCheck] = {onPage(QStringLiteral("Microphone"), QStringLiteral("tone check"),
                                     text(QStringLiteral("Enable tone check (A-440 Hz burst on PTT)")))};
     map[F::WaterfallLowColor] = {onPage(QStringLiteral("Colors & Theme"), QStringLiteral("low color"),
                                       text(QStringLiteral("Low Level Color:")))};
@@ -927,7 +933,7 @@ private slots:
         GuiSessionCoordinator sessions;
         for (bool remote : {false, true}) {
             Hosts hosts(sessions, remote);
-            QWidget* page = hosts.page(QStringLiteral("TCI"));
+            QWidget* page = hosts.page(QStringLiteral("Digital modes"));
             QVERIFY2(page != nullptr, remote ? "remote" : "local");
             QVERIFY2(usableShown(page, QStringLiteral("tciStreamChannelsCombo")),
                      remote ? "remote" : "local");

@@ -181,7 +181,7 @@ void MultimeterPage::buildUI()
     m_showDecimal->setProperty("nereusSetupId", "display.multimeter.showDecimal");
     m_showDecimal->setToolTip(tr("Display a decimal digit in S-meter and dBm text readouts "
                                   "(e.g. S5.3 or -85.6 dBm)."));
-    contentLayout()->addWidget(m_showDecimal);
+    addContent(m_showDecimal);
 
     Q_UNUSED(multiGroup)
 
@@ -206,7 +206,7 @@ void MultimeterPage::buildUI()
 
     m_signalHistoryEnable = new QCheckBox(tr("Enable signal history graph"), this);
     m_signalHistoryEnable->setToolTip(tr("Show a scrolling history of signal levels in HistoryGraph meter items."));
-    contentLayout()->addWidget(m_signalHistoryEnable);
+    addContent(m_signalHistoryEnable);
 
     m_signalHistoryDurationMs = addLabeledSpinner(
         tr("History duration:"), 1000, 600000,
@@ -226,7 +226,8 @@ void MultimeterPage::buildUI()
 
     m_backBtn = new QPushButton(tr("← Spectrum defaults"), this);
     m_backBtn->setToolTip(tr("Navigate to the Spectrum Defaults setup page."));
-    contentLayout()->addWidget(m_backBtn, 0, Qt::AlignLeft);
+    addContent(m_backBtn);
+    contentLayout()->setAlignment(m_backBtn, Qt::AlignLeft);
 }
 
 // R-R3-21: the values below reached the meters only when this page was

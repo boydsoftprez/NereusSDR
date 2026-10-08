@@ -10,7 +10,7 @@
 //   1. Construction in all 5 scenarios.
 //   2. Scenario A Apply-suggested emits payload + Accepted.
 //   3. Scenario A/B Skip / Continue-without-VAX — no payload, Accepted.
-//   4. Scenario A Customize — openSetupAudioPage("VAX") emitted, Rejected.
+//   4. Scenario A Customize: openSetupAudioPage("Digital modes") emitted, Rejected.
 //   5. Scenario B Install-URL — openInstallUrl carries the vendor URL.
 //   6. Escape key — Rejected, no signals.
 //   7. Scenario C/D Got-it — no payload, Accepted.
@@ -177,7 +177,7 @@ private slots:
         QCOMPARE(dlg.result(), static_cast<int>(QDialog::Accepted));
     }
 
-    // ── 4. Customize (Scenario A) — openSetupAudioPage("VAX") + Rejected ──
+    // ── 4. Customize (Scenario A): openSetupAudioPage("Digital modes") + Rejected ──
     void customizeEmitsOpenSetupAndRejects()
     {
         VaxFirstRunDialog dlg(FirstRunScenario::WindowsCablesFound,
@@ -193,7 +193,7 @@ private slots:
         QTest::mouseClick(customizeBtn, Qt::LeftButton);
 
         QCOMPARE(openSetupSpy.count(), 1);
-        QCOMPARE(openSetupSpy.at(0).at(0).toString(), QStringLiteral("VAX"));
+        QCOMPARE(openSetupSpy.at(0).at(0).toString(), QStringLiteral("Digital modes"));
         QCOMPARE(applySpy.count(), 0);
         QCOMPARE(dlg.result(), static_cast<int>(QDialog::Rejected));
     }

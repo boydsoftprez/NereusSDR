@@ -20,6 +20,13 @@
 //  12. R-R3-36: a configured device that is not present and a configured
 //      buffer size the list lacks survive an unrelated edit on the card.
 //  13. R-R3-36: reloading replaces those kept entries instead of adding more.
+//  14. R-SPK-21 / D14: everything but Device folds under "Device details",
+//      folded by default; the toggle unfolds it.
+//  15. R-SPK-24: Exclusive / Event-driven / Bypass mixer are greyed with
+//      "These three work only with WASAPI on Windows." unless the card's
+//      driver API is WASAPI.
+//  16. R-SPK-21: a card greyed until Enabled greys Device and Device
+//      details while the box is off; a row added above Device stays live.
 //
 // Design spec:
 //   docs/architecture/2026-04-20-phase3o-subphase12-addendum.md §2.1
@@ -34,6 +41,8 @@
 #include <QAbstractItemView>
 #include <QSignalBlocker>
 #include <QStandardPaths>
+#include <QLabel>
+#include <QToolButton>
 
 #include "core/AppSettings.h"
 #include "core/AudioDeviceConfig.h"
@@ -471,6 +480,126 @@ private slots:
         }
         QVERIFY(has4096);
         QVERIFY(has8192);
+    }
+
+    // ── 14. Device details fold (R-SPK-21, D14) ───────────────────────────
+
+    void deviceDetailsFoldedByDefault() {
+        DeviceCard card(QStringLiteral("audio/Speakers"), DeviceCard::Role::Output, false);
+        auto* details = card.findChild<QWidget*>(QStringLiteral("deviceDetails"));
+        auto* toggle = card.findChild<QToolButton*>(QStringLiteral("deviceDetailsToggle"));
+        QVERIFY(details != nullptr);
+        QVERIFY(toggle != nullptr);
+        QCOMPARE(toggle->text(), QStringLiteral("Device details"));
+        QVERIFY(!card.detailsExpanded());
+        QVERIFY(details->isHidden());
+
+        // Every row but Device is inside the fold; Device is in front.
+        const QStringList folded{QStringLiteral("Driver API:"), QStringLiteral("Sample rate:"),
+                                 QStringLiteral("Channels:"), QStringLiteral("Buffer size:"),
+                                 QStringLiteral("Options:"), QStringLiteral("Negotiated:")};
+        QStringList foundInDetails;
+        for (QLabel* label : details->findChildren<QLabel*>()) {
+            foundInDetails << label->text();
+        }
+        for (const QString& text : folded) {
+            QVERIFY2(foundInDetails.contains(text), qPrintable(text));
+        }
+        QVERIFY(!foundInDetails.contains(QStringLiteral("Device:")));
+        // The driver API combo stays the card's first combo, inside the fold.
+        QComboBox* first = card.findChildren<QComboBox*>().first();
+        QVERIFY(details->isAncestorOf(first));
+
+        toggle->click();
+        QVERIFY(card.detailsExpanded());
+        QVERIFY(!details->isHidden());
+        card.setDetailsExpanded(false);
+        QVERIFY(details->isHidden());
+        QVERIFY(!toggle->isChecked());
+    }
+
+    // ── 15. WASAPI-only options (R-SPK-24) ────────────────────────────────
+
+    void wasapiOptionsGreyedUnlessWasapi() {
+        DeviceCard card(QStringLiteral("audio/Speakers"), DeviceCard::Role::Output, false);
+        const QString reason = QStringLiteral("These three work only with WASAPI on Windows.");
+        QCOMPARE(DeviceCard::wasapiOnlyReason(), reason);
+        QVERIFY(DeviceCard::isWasapiDriverName(QStringLiteral("Windows WASAPI")));
+        QVERIFY(!DeviceCard::isWasapiDriverName(QStringLiteral("MME")));
+        QVERIFY(!DeviceCard::isWasapiDriverName(QStringLiteral("Core Audio")));
+
+        auto optionBoxes = [&card]() {
+            QList<QCheckBox*> boxes;
+            for (QCheckBox* box : card.findChildren<QCheckBox*>()) {
+                if (box->text() == QStringLiteral("Exclusive")
+                    || box->text() == QStringLiteral("Event-driven")
+                    || box->text() == QStringLiteral("Bypass mixer")) {
+                    boxes << box;
+                }
+            }
+            return boxes;
+        };
+        auto* note = card.findChild<QLabel*>(QStringLiteral("wasapiOnlyNote"));
+        QVERIFY(note != nullptr);
+        QCOMPARE(note->text(), reason);
+
+        // "(PortAudio default)" is not WASAPI: greyed, never hidden.
+        QCOMPARE(optionBoxes().size(), 3);
+        QVERIFY(!card.wasapiOptionsAvailable());
+        for (QCheckBox* box : optionBoxes()) {
+            QVERIFY(!box->isEnabled());
+            QVERIFY(!box->isHidden());
+            QCOMPARE(box->toolTip(), reason);
+        }
+        QVERIFY(!note->isHidden());
+
+        // A WASAPI driver API makes them live and drops the note.
+        QComboBox* driver = card.findChildren<QComboBox*>().first();
+        driver->addItem(QStringLiteral("Windows WASAPI"), QVariant::fromValue(97));
+        driver->addItem(QStringLiteral("MME"), QVariant::fromValue(98));
+        driver->setCurrentIndex(driver->findText(QStringLiteral("Windows WASAPI")));
+        QVERIFY(card.wasapiOptionsAvailable());
+        for (QCheckBox* box : optionBoxes()) {
+            QVERIFY(box->isEnabled());
+            QVERIFY(box->toolTip() != reason);
+        }
+        QVERIFY(note->isHidden());
+
+        driver->setCurrentIndex(driver->findText(QStringLiteral("MME")));
+        QVERIFY(!card.wasapiOptionsAvailable());
+        for (QCheckBox* box : optionBoxes()) {
+            QVERIFY(!box->isEnabled());
+            QCOMPARE(box->toolTip(), reason);
+        }
+    }
+
+    // ── 16. Greyed until Enabled (R-SPK-21) ───────────────────────────────
+
+    void greyedUntilEnabled() {
+        DeviceCard card(QStringLiteral("audio/Headphones"), DeviceCard::Role::Output, true);
+        auto* above = new QLabel(QStringLiteral("note"));
+        card.addAboveDevice(above);
+        auto* body = card.findChild<QWidget*>(QStringLiteral("deviceCardBody"));
+        QVERIFY(body != nullptr);
+        QCheckBox* enabled = nullptr;
+        for (QCheckBox* box : card.findChildren<QCheckBox*>()) {
+            if (box->text() == QStringLiteral("Enabled")) { enabled = box; }
+        }
+        QVERIFY(enabled != nullptr);
+        QVERIFY(!enabled->isChecked());
+
+        // Opt-in: without it the body stays live.
+        QVERIFY(body->isEnabled());
+        card.setGreyedUntilEnabled(true);
+        QVERIFY(!body->isEnabled());
+        QVERIFY(above->isEnabled());
+        QVERIFY(enabled->isEnabled());
+        QVERIFY(!body->isHidden());
+
+        enabled->setChecked(true);
+        QVERIFY(body->isEnabled());
+        enabled->setChecked(false);
+        QVERIFY(!body->isEnabled());
     }
 };
 

@@ -1725,6 +1725,8 @@ set(GUI_SOURCES
     src/gui/widgets/VfoModeContainers.h
     src/gui/widgets/VaxChannelSelector.cpp
     src/gui/widgets/MasterOutputWidget.cpp
+    src/gui/widgets/RadioSpeakerWidget.cpp
+    src/gui/widgets/RadioSpeakerWidget.h
     src/gui/widgets/VfoStyles.h
     src/gui/widgets/VfoWidget.cpp
     src/gui/widgets/MetricLabel.cpp
@@ -1740,6 +1742,8 @@ set(GUI_SOURCES
     src/gui/widgets/AdcOverloadBadge.h
     src/gui/widgets/OverflowChip.cpp
     src/gui/widgets/OverflowChip.h
+    src/gui/widgets/AppIcon.cpp
+    src/gui/widgets/AppIcon.h
     src/gui/widgets/RxDashboard.cpp
     src/gui/widgets/RxDashboard.h
     src/gui/SliceChooser.cpp
@@ -1933,13 +1937,14 @@ set(GUI_SOURCES
     src/gui/setup/hardware/Hl2OptionsTab.cpp
     src/gui/setup/hardware/BandwidthMonitorTab.cpp
     src/gui/setup/AudioAdvancedPage.cpp
-    src/gui/setup/AudioBackendStrip.cpp
-    src/gui/setup/AudioDevicesPage.cpp
+    src/gui/setup/AudioOutputsPage.cpp
     src/gui/setup/AudioTxInputPage.cpp
+    src/gui/setup/SoundSystemLine.cpp
     src/gui/setup/CaptureStatusText.cpp
     src/gui/setup/TestTwoTonePage.cpp
     src/gui/setup/TxProfileSetupPage.cpp
     src/gui/setup/AudioTciPage.cpp
+    src/gui/setup/AudioDigitalModesPage.cpp
     src/gui/setup/AudioVaxPage.cpp
     src/gui/setup/DeviceCard.cpp
     src/gui/setup/DspSetupPages.cpp

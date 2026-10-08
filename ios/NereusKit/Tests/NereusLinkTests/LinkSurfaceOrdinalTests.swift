@@ -17,13 +17,14 @@ import Testing
 
     @Test func newestCapabilitiesSitWhereTheSurfacePinsThem() throws {
         let capabilities = try #require(try Self.surface()["capabilities"] as? [[String: Any]])
-        #expect(capabilities.count == 109)
+        #expect(capabilities.count == 110)
         #expect(capabilities[69]["value"] == nil, "The loopback capture cannot advertise a live TX watch value")
         // The merged b44d638 surface inserts diversityControlVersion after
         // diversityPatternVersion. Capture b20ad1186 also includes the existing
         // optional txWatchPathVersion after remoteTxVersion, shifting later indices.
         // Radio Mic 2 changes its value, without moving any other entry.
-        // Station CAT setup inserts stationCatVersion before coreBuildInfo,
+        // Station CAT setup inserts stationCatVersion and the radio speaker
+        // inserts radioSpeakerVersion before coreBuildInfo,
         // which stays last.
         let expected: [(index: Int, name: String, kind: String)] = [
             (69, "txWatchPathVersion", "i64"),
@@ -39,7 +40,10 @@ import Testing
             (105, "rxFilterLowPassVersion", "i64"),
             (106, "radeReasonVersion", "i64"),
             (107, "stationCatVersion", "i64"),
-            (108, "coreBuildInfo", "utf8"),
+            // The radio speaker (feature `radioSpeaker` 1) goes before the
+            // build info, which is read by name and moves to 109.
+            (108, "radioSpeakerVersion", "i64"),
+            (109, "coreBuildInfo", "utf8"),
         ]
         // Core trunk b26112687: sliceAccessVersion reads 3 (the Core's own
         // slice can be taken); nothing moved.
@@ -47,7 +51,7 @@ import Testing
         #expect((capabilities[89]["value"] as? NSNumber)?.intValue == 1)
         #expect((capabilities[104]["value"] as? NSNumber)?.intValue == 2)
         #expect((capabilities[107]["value"] as? NSNumber)?.intValue == 1)
-        #expect(Set(capabilities.compactMap { $0["name"] as? String }).count == 109)
+        #expect(Set(capabilities.compactMap { $0["name"] as? String }).count == 110)
         for entry in expected {
             try #require(capabilities.count > entry.index)
             #expect(capabilities[entry.index]["name"] as? String == entry.name, "\(entry.name)")
@@ -75,8 +79,8 @@ import Testing
         let classes = try #require(try Self.surface()["mirrorClasses"] as? [String: Any])
         let radio = try #require(classes["RadioModel"] as? [String: Any])
         let properties = try #require(radio["properties"] as? [[String: Any]])
-        #expect(properties.count == 38)
-        #expect(properties.compactMap { ($0["ordinal"] as? NSNumber)?.intValue }.sorted() == Array(0..<38))
+        #expect(properties.count == 43)
+        #expect(properties.compactMap { ($0["ordinal"] as? NSNumber)?.intValue }.sorted() == Array(0..<43))
         let diversity = try #require(properties.first { $0["name"] as? String == "diversityState" })
         #expect(diversity["kind"] as? String == "utf8")
         #expect(diversity["direction"] as? String == "outbound")
@@ -87,6 +91,32 @@ import Testing
         #expect(bits["kind"] as? String == "i64")
         #expect(bits["direction"] as? String == "outbound")
         #expect((bits["ordinal"] as? NSNumber)?.intValue == 29)
+    }
+
+    /// The radio speaker (feature `radioSpeaker` 1, which the phone
+    /// declares): its level, mute and amplifier choice, written by the
+    /// phone, then the two reports, read only, appended after the
+    /// Diversity state, so no property the phone reads moved.
+    @Test func radioSpeakerPropertiesFollowTheDiversityState() throws {
+        let classes = try #require(try Self.surface()["mirrorClasses"] as? [String: Any])
+        let radio = try #require(classes["RadioModel"] as? [String: Any])
+        let properties = try #require(radio["properties"] as? [[String: Any]])
+        let expected: [(ordinal: Int, name: String, kind: String, direction: String)] = [
+            (38, "radioSpeakerVolume", "i64", "bidirectional"),
+            (39, "radioSpeakerMuted", "bool", "bidirectional"),
+            (40, "speakerAmplifierMode", "i64", "bidirectional"),
+            (41, "radioSpeakerAvailability", "i64", "outbound"),
+            (42, "speakerAmplifierAvailable", "bool", "outbound"),
+        ]
+        for entry in expected {
+            let property = try #require(properties.first { $0["name"] as? String == entry.name })
+            #expect((property["ordinal"] as? NSNumber)?.intValue == entry.ordinal, "\(entry.name)")
+            #expect(property["kind"] as? String == entry.kind, "\(entry.name)")
+            #expect(property["direction"] as? String == entry.direction, "\(entry.name)")
+        }
+        let capabilities = try #require(try Self.surface()["capabilities"] as? [[String: Any]])
+        let version = try #require(capabilities.first { $0["name"] as? String == "radioSpeakerVersion" })
+        #expect((version["value"] as? NSNumber)?.intValue == 1)
     }
 
     /// Why the receive low-pass on the first input is set for another slice

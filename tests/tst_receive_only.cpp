@@ -54,6 +54,9 @@
 //               follow the transmit slice, not the active one. J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
+//   2026-10-06: R-SPK-21: Setup > Audio > TX Input is now Microphone.
+//               J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -848,14 +851,15 @@ private slots:
         QVERIFY(notice->isHidden());
     }
 
-    // Fix wave 2 (Minor 4): Audio > TX Input follows receive only, as
+    // Fix wave 2 (Minor 4): Audio > Microphone (TX Input before R-SPK-21)
+    // follows receive only, as
     // Thetis's grpBoxMic on tpTransmit does (setup.designer.cs:46443
     // [v2.10.3.15]; setup.cs:6499 [v2.10.3.15]), with the reason.
     void setupTxInputFollowsReceiveOnly()
     {
         Rig rig;
         SetupDialog dialog(rig.model.get());
-        const QString label = QStringLiteral("TX Input");
+        const QString label = QStringLiteral("Microphone");
         dialog.selectPage(label);
         QWidget* page = dialog.realizedPageForTest(label);
         QVERIFY(page != nullptr);
@@ -881,15 +885,15 @@ private slots:
         QVERIFY(notice->isHidden());
     }
 
-    // Fix wave 2 (Minor 4): a remote window without transmit keeps TX Input
-    // live (R-R3-36); only receive only disables it, with its own reason.
+    // Fix wave 2 (Minor 4): a remote window without transmit keeps
+    // Microphone live (R-R3-36); only receive only disables it, with its own reason.
     void setupTxInputInARemoteWindowOnlyFollowsReceiveOnly()
     {
         const QString transmitReason = QStringLiteral("Remote transmit is unavailable.");
         RadioModel window(RadioModel::Role::Remote);
         SetupDialog dialog(&window);
         dialog.setTransmitPermitted(false, transmitReason);
-        const QString label = QStringLiteral("TX Input");
+        const QString label = QStringLiteral("Microphone");
         dialog.selectPage(label);
         QWidget* page = dialog.realizedPageForTest(label);
         QVERIFY(page != nullptr);

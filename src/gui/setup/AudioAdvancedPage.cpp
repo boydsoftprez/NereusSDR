@@ -29,6 +29,12 @@
 // implementation via Anthropic Claude Code. The VAC feedback-loop tuning
 // group is removed, with its editor and reader; saved
 // audio/VacFeedback/<ch>/* values stay in the settings file.
+//
+// 2026-10-06: R-SPK-21, R-SPK-22 by J.J. Boyd (KG4VCF), with AI-assisted
+// implementation via Anthropic Claude Code. Advanced holds Logs ("Open
+// logs folder", back from the removed backend strip), Feature Flags and
+// Reset, with the DSP group still hidden. "Detected virtual cables" and
+// Rescan moved to Digital modes.
 // =================================================================
 
 #include "AudioAdvancedPage.h"
@@ -37,13 +43,12 @@
 #include "core/AudioEngine.h"
 #include "core/LogCategories.h"
 #include "core/settings/SettingsScope.h"
-#include "core/audio/VirtualCableDetector.h"
 #include "gui/UnbuiltFeatures.h"
-#include "gui/VaxFirstRunDialog.h"
 #include "models/RadioModel.h"
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDesktopServices>
 #include <QEvent>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -52,6 +57,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 
@@ -112,8 +118,8 @@ AudioAdvancedPage::AudioAdvancedPage(RadioModel* model, QWidget* parent)
     , m_engine(model ? model->localAudioDevices() : nullptr)
 {
     buildDspSection();
+    buildLogsSection();
     buildFeatureFlagsSection();
-    buildCablesSection();
     buildResetSection();
 }
 
@@ -134,6 +140,7 @@ void AudioAdvancedPage::buildDspSection()
     form->setContentsMargins(8, 16, 8, 8);
 
     m_dspRateCombo = new QComboBox(box);
+    m_dspRateCombo->setObjectName(QStringLiteral("audioAdvancedDspRate"));
     m_dspRateCombo->setStyleSheet(QLatin1String(kComboStyle));
     m_dspRateCombo->addItem(QStringLiteral("48 000 Hz"),  48000);
     m_dspRateCombo->addItem(QStringLiteral("96 000 Hz"),  96000);
@@ -142,6 +149,7 @@ void AudioAdvancedPage::buildDspSection()
     form->addRow(QStringLiteral("DSP Sample Rate"), m_dspRateCombo);
 
     m_dspBlockCombo = new QComboBox(box);
+    m_dspBlockCombo->setObjectName(QStringLiteral("audioAdvancedDspBlockSize"));
     m_dspBlockCombo->setStyleSheet(QLatin1String(kComboStyle));
     m_dspBlockCombo->addItem(QStringLiteral("64"),   64);
     m_dspBlockCombo->addItem(QStringLiteral("128"),  128);
@@ -184,7 +192,7 @@ void AudioAdvancedPage::buildDspSection()
                 }
             });
 
-    contentLayout()->addWidget(box);
+    addContent(box);
 }
 
 void AudioAdvancedPage::loadDspSettings()
@@ -231,6 +239,7 @@ void AudioAdvancedPage::buildFeatureFlagsSection()
     {
         auto* row = new QHBoxLayout;
         m_sendIqToVaxCheck = new QCheckBox(QStringLiteral("Send IQ to VAX"), box);
+        m_sendIqToVaxCheck->setObjectName(QStringLiteral("sendIqToVax"));
         const bool on =
             s.value(QStringLiteral("audio/SendIqToVax"),
                     QStringLiteral("False")).toString() == QStringLiteral("True");
@@ -259,6 +268,7 @@ void AudioAdvancedPage::buildFeatureFlagsSection()
     {
         auto* row = new QHBoxLayout;
         m_txMonitorToVaxCheck = new QCheckBox(QStringLiteral("TX Monitor to VAX"), box);
+        m_txMonitorToVaxCheck->setObjectName(QStringLiteral("txMonitorToVax"));
         const bool on =
             s.value(QStringLiteral("audio/TxMonitorToVax"),
                     QStringLiteral("False")).toString() == QStringLiteral("True");
@@ -287,6 +297,7 @@ void AudioAdvancedPage::buildFeatureFlagsSection()
     {
         m_muteVaxDuringTxOtherCheck =
             new QCheckBox(QStringLiteral("Mute VAX during TX on other slice"), box);
+        m_muteVaxDuringTxOtherCheck->setObjectName(QStringLiteral("muteVaxDuringTxOtherSlice"));
         const bool on =
             s.value(QStringLiteral("audio/MuteVaxDuringTxOnOtherSlice"),
                     QStringLiteral("False")).toString() == QStringLiteral("True");
@@ -307,7 +318,7 @@ void AudioAdvancedPage::buildFeatureFlagsSection()
                 });
     }
 
-    contentLayout()->addWidget(box);
+    addContent(box);
 
     // R-R3-49: none of the three is applied yet; each is hidden until it is,
     // and the group goes with them while all three are.
@@ -322,101 +333,69 @@ void AudioAdvancedPage::buildFeatureFlagsSection()
 }
 
 // ---------------------------------------------------------------------------
-// Section 3: Detected cables + Rescan
+// Section: Logs (R-SPK-21). "Open logs" left Audio with the backend strip;
+// it opens the folder Help > Support uses.
 // ---------------------------------------------------------------------------
 
-void AudioAdvancedPage::buildCablesSection()
+void AudioAdvancedPage::buildLogsSection()
 {
-    auto* box = new QGroupBox(QStringLiteral("Detected Virtual Cables"), this);
+    auto* box = new QGroupBox(tr("Logs"), this);
     box->setStyleSheet(QLatin1String(kGroupStyle));
+    box->setObjectName(QStringLiteral("audioAdvancedLogsGroup"));
     auto* layout = new QHBoxLayout(box);
     layout->setContentsMargins(8, 16, 8, 8);
     layout->setSpacing(8);
 
-    m_cablesLabel = new QLabel(QStringLiteral("Scanning…"), box);
-    m_cablesLabel->setWordWrap(true);
+    m_openLogsButton = new QPushButton(tr("Open logs folder"), box);
+    m_openLogsButton->setObjectName(QStringLiteral("openLogsFolder"));
+    m_openLogsButton->setAutoDefault(false);
+    connect(m_openLogsButton, &QPushButton::clicked, this, [] {
+        QDesktopServices::openUrl(
+            QUrl::fromLocalFile(LogManager::instance().logDirPath()));
+    });
 
-    m_rescanButton = new QPushButton(QStringLiteral("Rescan"), box);
-    m_rescanButton->setFixedWidth(80);
+    auto* note = new QLabel(tr("For a bug report about sound."), box);
+    note->setStyleSheet(QLatin1String(kNoteStyle));
 
-    layout->addWidget(m_cablesLabel, 1);
-    layout->addWidget(m_rescanButton);
+    layout->addWidget(m_openLogsButton);
+    layout->addWidget(note, 1);
 
-    // Initial scan.
-    const QVector<DetectedCable> initial = VirtualCableDetector::scan();
-    updateCablesLabel(initial);
-
-    connect(m_rescanButton, &QPushButton::clicked,
-            this, &AudioAdvancedPage::onRescan);
-
-    contentLayout()->addWidget(box);
-}
-
-void AudioAdvancedPage::updateCablesLabel(const QVector<DetectedCable>& cables)
-{
-    if (cables.isEmpty()) {
-        m_cablesLabel->setText(QStringLiteral("No virtual cables detected."));
-        return;
-    }
-    QStringList names;
-    for (const DetectedCable& c : cables) {
-        names.append(c.deviceName +
-                     (c.isInput ? QStringLiteral(" (input)")
-                                : QStringLiteral(" (output)")));
-    }
-    m_cablesLabel->setText(
-        QStringLiteral("%1 cable%2: %3")
-            .arg(cables.size())
-            .arg(cables.size() == 1 ? QString() : QStringLiteral("s"))
-            .arg(names.join(QStringLiteral(", "))));
-}
-
-void AudioAdvancedPage::onRescan()
-{
-    const QVector<DetectedCable> current = VirtualCableDetector::scan();
-    updateCablesLabel(current);
-
-    auto& s = AppSettings::instance();
-    const QString lastCsv =
-        s.value(QStringLiteral("audio/LastDetectedCables"), QString()).toString();
-    const QVector<DetectedCable> newCables =
-        VirtualCableDetector::diffNewCables(current, lastCsv);
-
-    // Update the stored fingerprint.
-    s.setValue(QStringLiteral("audio/LastDetectedCables"),
-               VirtualCableDetector::fingerprintCsv(current));
-    s.save();
-
-    if (!newCables.isEmpty()) {
-        auto* dlg = new VaxFirstRunDialog(
-            FirstRunScenario::RescanNewCables, newCables, this);
-        dlg->setAttribute(Qt::WA_DeleteOnClose);
-        dlg->exec();
-    }
+    addContent(box);
 }
 
 // ---------------------------------------------------------------------------
-// Section 4: Reset all audio to defaults
+// Section: Reset all audio to defaults
 // ---------------------------------------------------------------------------
 
 void AudioAdvancedPage::buildResetSection()
 {
     auto* box = new QGroupBox(QStringLiteral("Reset"), this);
     box->setStyleSheet(QLatin1String(kGroupStyle));
+    box->setObjectName(QStringLiteral("audioAdvancedResetGroup"));
     auto* layout = new QVBoxLayout(box);
     layout->setContentsMargins(8, 16, 8, 8);
     layout->setSpacing(6);
 
     m_resetButton = new QPushButton(
         QStringLiteral("Reset all audio to defaults…"), box);
+    m_resetButton->setObjectName(QStringLiteral("resetAllAudio"));
     m_resetButton->setStyleSheet(QLatin1String(kAmberButtonStyle));
 
     layout->addWidget(m_resetButton, 0, Qt::AlignLeft);
 
+    // resetAudioSettings() removes audio/* keys only; the radio speaker
+    // settings live under hardware/<mac>/RadioSpeaker/ and stay.
+    auto* note = new QLabel(
+        tr("Puts the audio settings on this computer back to their defaults. "
+           "The radio speaker settings are kept."), box);
+    note->setStyleSheet(QLatin1String(kNoteStyle));
+    note->setWordWrap(true);
+    layout->addWidget(note);
+
     connect(m_resetButton, &QPushButton::clicked,
             this, &AudioAdvancedPage::onResetClicked);
 
-    contentLayout()->addWidget(box);
+    addContent(box);
 }
 
 void AudioAdvancedPage::onResetClicked()
@@ -500,9 +479,6 @@ void AudioAdvancedPage::onResetClicked()
                     QStringLiteral("False")).toString() == QStringLiteral("True");
         m_muteVaxDuringTxOtherCheck->setChecked(muteVax);
     }
-
-    // Refresh cable readout.
-    updateCablesLabel(VirtualCableDetector::scan());
 }
 
 // ---------------------------------------------------------------------------

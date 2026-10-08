@@ -115,8 +115,9 @@ public final class SetupDescriptionFeed: ObservableObject {
         // rows) and 23 (Calibration's Rx1 6m LNA row), PA at 5, 13, 14 and 20 (profiles live on air),
         // Transmit at 13 and 15, DSP at 15, 19 (the CFC bands) and 22
         // (RX buffers on air), CAT and Network at 15 and 21 (the TCI
-        // Forget row's dependency), Audio at 15 and 24 (Line In Gain's
-        // 1.5 dB steps, the Saturn G2's Mic Tip-Ring) and Diagnostics at 15.
+        // Forget row's dependency), Audio at 15, 24 (Line In Gain's
+        // 1.5 dB steps, the Saturn G2's Mic Tip-Ring) and 25 (Outputs' radio
+        // speaker rows) and Diagnostics at 15.
         let cap: Int64
         switch category {
         case "hardware": cap = maximum < 13 ? 6 : maximum < 16 ? 13 : maximum < 17 ? 16 : maximum < 18 ? 17 : maximum < 23 ? 18 : 23
@@ -124,7 +125,7 @@ public final class SetupDescriptionFeed: ObservableObject {
         case "transmit": cap = maximum < 13 ? 3 : maximum < 15 ? 13 : 15
         case "dsp": cap = maximum < 15 ? 3 : maximum < 19 ? 15 : maximum < 22 ? 19 : 22
         case "catNetwork": cap = maximum < 15 ? 3 : maximum < 21 ? 15 : 21
-        case "audio": cap = maximum < 15 ? 3 : maximum < 24 ? 15 : 24
+        case "audio": cap = maximum < 15 ? 3 : maximum < 24 ? 15 : maximum < 25 ? 24 : 25
         case "diagnostics": cap = maximum < 15 ? 3 : 15
         case "appearance": cap = maximum < 7 ? 4 : maximum < 12 ? 7 : 12
         case "display": cap = maximum < 8 ? 4 : maximum < 12 ? 11 : 12

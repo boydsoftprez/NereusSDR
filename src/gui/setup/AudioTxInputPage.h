@@ -93,6 +93,17 @@
 //                G2 group gains Mic Tip-Ring; the Orion group is disabled
 //                on the Red Pitaya with its reason; Line In Gain moves in
 //                1.5 dB steps (Setup description version 24).
+//   2026-10-06 : R-SPK-21 (Microphone), R-SPK-22 by J.J. Boyd (KG4VCF),
+//                with AI-assisted implementation via Anthropic Claude Code.
+//                The page is titled "Microphone". The Devices page's
+//                microphone card and this page's PC Mic group became one
+//                "PC microphone" card (DeviceCard, audio/TxInput): Device,
+//                Test Mic with its meter, the capture status with the one
+//                "Retry microphone", the monitor and tone check rows, and
+//                Device details folded. Mic Gain has its own "Mic gain"
+//                group. The sections for the sources not picked stay in
+//                view and greyed out. Saved keys and nereusSetupIds are
+//                unchanged.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; no Thetis logic ported here.
@@ -118,21 +129,26 @@ class QHideEvent;
 namespace NereusSDR {
 
 class AudioEngine;
+class DeviceCard;
 class HGauge;
 
 // ---------------------------------------------------------------------------
-// AudioTxInputPage — Setup → Audio → TX Input
+// AudioTxInputPage: Setup → Audio → Microphone (R-SPK-21)
 //
-// Top-level mic-source selector (I.1):
-//   • "PC Mic"    — always enabled; default.
-//   • "Radio Mic" — disabled with tooltip when hasMicJack == false (HL2).
-//
-// PC Mic group box (I.2) — visible only when PC Mic is selected:
-//   Row 1: Backend selector (CoreAudio / WASAPI / ALSA / PipeWire / …)
-//   Row 2: Device picker (repopulated on backend change)
-//   Row 3: Buffer-size slider + ms-latency readout (48 kHz reference)
-//   Row 4: Test Mic button + HGauge VU bar (10 ms QTimer bus-tap)
-//   Row 5: Mic Gain slider (bidirectional mirror with TxApplet)
+// Sections, top to bottom:
+//   • Source:        PC Mic / Radio Mic / VAX TX. Radio Mic follows
+//                    radioMicSelectable() and its reasons.
+//   • PC microphone: a DeviceCard on audio/TxInput (the card the Devices
+//                    page had): Device, Test Mic + HGauge meter, capture
+//                    status + "Retry microphone", Monitor TX input and the
+//                    tone check, then Device details folded.
+//   • Radio microphone: this board's per-family group (Hermes / Atlas,
+//                    Orion-MkII, Saturn G2, Hermes Lite 2), or a
+//                    placeholder group when the board has none.
+//   • Mic gain:      applies to whichever source is picked.
+// The PC microphone card and the radio microphone section are always in
+// view; the one for a source not picked is greyed out (setEnabled on the
+// card and on the radio section's container, never on the gated groups).
 //
 // Selection changes use RadioModel::requestMicSource. Remote changes wait for
 // authenticated session acknowledgement; local changes use the model setter. Model changes
@@ -146,6 +162,11 @@ class HGauge;
 // (reconnect to a different board type) is deferred.
 // TODO [3M-1b I.x]: dynamic hasMicJack refresh on currentRadioChanged,
 // once RadioModel emits a capability-change signal.
+//
+// PC microphone card (R-R3-36, R-SPK-21): the card saves audio/TxInput and
+//   the page hands its config to AudioEngine::setTxInputConfig(); the card
+//   reloads on txInputConfigChanged, so TransmitModel's pcMic* setters and
+//   any other writer show here.
 //
 // Test Mic implementation (R-R3-36):
 //   While Test Mic is checked the page holds a CaptureSupervisor TestMic
@@ -166,14 +187,15 @@ public:
     explicit AudioTxInputPage(RadioModel* model, QWidget* parent = nullptr);
     ~AudioTxInputPage() override;
 
-    // Expose the PC Mic group box for test introspection.
-    QGroupBox* pcMicGroupBox() const { return m_pcMicGroup; }
+    // The PC microphone card (R-SPK-21), for test introspection.
+    QGroupBox* pcMicGroupBox() const;
+    DeviceCard* pcMicCard() const { return m_pcMicCard; }
 
-    // Expose per-row widgets for test probes.
-    QComboBox*   backendCombo()    const { return m_backendCombo; }
-    QComboBox*   deviceCombo()     const { return m_deviceCombo; }
-    QSlider*     bufferSlider()    const { return m_bufferSlider; }
-    QLabel*      bufferLabel()     const { return m_bufferLabel; }
+    // Expose per-row widgets for test probes. Device, Driver API and Buffer
+    // size are the PC microphone card's own combos.
+    QComboBox*   deviceCombo()     const;
+    QComboBox*   driverApiCombo()  const;
+    QComboBox*   bufferSizeCombo() const;
     QPushButton* testMicButton()   const { return m_testMicBtn; }
     HGauge*      vuBar()           const { return m_vuBar; }
     QSlider*     micGainSlider()   const { return m_micGainSlider; }
@@ -193,6 +215,12 @@ public:
     QSlider*   hermesLineInGainSlider() const { return m_hermesLineInGainSlider; }
     QLabel*    hermesLineInGainLabel()  const { return m_hermesLineInGainLabel; }
     QCheckBox* saturnMicTipRingCheck()  const { return m_saturnMicTipRingChk; }
+    // R-SPK-21: the radio microphone section (greyed unless Radio Mic is
+    // picked), its placeholder for a board without a radio mic group, and
+    // the Mic gain group.
+    QWidget*   radioMicSection()     const { return m_radioMicSection; }
+    QGroupBox* radioMicPlaceholder() const { return m_radioMicPlaceholder; }
+    QGroupBox* micGainGroup()        const { return m_micGainGroup; }
 
     // The Line In Gain slider counts half decibels, so it moves in the
     // 1.5 dB steps of Thetis's udLineInBoost (TransmitModel::kLineInBoostStep).
@@ -227,9 +255,6 @@ private slots:
     void onMicSourceButtonToggled(int id, bool checked);
     void onModelMicSourceChanged(MicSource source);
 
-    void onBackendChanged(int comboIndex);
-    void onDeviceChanged(int comboIndex);
-    void onBufferSliderChanged(int value);
     void onTestMicToggled(bool checked);
     void onVuTimerTick();
 
@@ -267,29 +292,27 @@ private slots:
 private:
     void buildPage(bool radioMicSelectable, HPSDRHW hw);
     void buildPcMicGroup(QVBoxLayout* parentLayout);
+    void buildMicGainGroup(QVBoxLayout* parentLayout);
     void buildHermesRadioMicGroup(QVBoxLayout* parentLayout);
     void buildOrionRadioMicGroup(QVBoxLayout* parentLayout);
     void buildSaturnRadioMicGroup(QVBoxLayout* parentLayout);
+    void buildRadioMicPlaceholder(QVBoxLayout* parentLayout);
     void syncButtonsFromModel(MicSource source);
-    void populateBackendCombo();
-    void populateDeviceCombo(int hostApiIndex);
-    void updateBufferLabel(int samples);
-    void updatePcMicGroupVisibility(MicSource source);
-    void updateRadioMicGroupVisibility(MicSource source, HPSDRHW hw);
+    // R-SPK-21: the PC microphone card and the radio microphone section
+    // stay in view; the one for a source not picked is greyed out.
+    void updateSourceSections(MicSource source);
+    void updateRadioMicGroupVisibility(HPSDRHW hw);
+    void refreshRadioMicPlaceholderNote(HPSDRHW hw);
+    void onCurrentRadioChanged();
+    static QString hermesGroupTitle(HPSDRHW hw);
+    void applyHermesAddOnNotes(HPSDRHW hw);
     static QString lineInBoostLabel(double dB);
     void showLineInBoost(double dB);
 
     // R-R3-36: shared audio/TxInput config.
     AudioEngine* engine();
-    void applyTxInputConfigToControls(const AudioDeviceConfig& cfg);
-    void commitTxInputConfig(const AudioDeviceConfig& cfg);
+    void wirePcMicCard();
     void refreshCaptureStatus();
-
-    // Returns the latency string for `samples` samples at 48 kHz reference.
-    static QString latencyString(int samples);
-
-    // Returns the OS-default PortAudio host API index.
-    static int defaultHostApiIndex();
 
     // ── Source selector (I.1) ─────────────────────────────────────────────
     QGroupBox*     m_micSourceGroup{nullptr};
@@ -301,19 +324,12 @@ private:
     // 3rd-party apps writing to "NereusSDR TX" CoreAudio device.
     QRadioButton*  m_vaxMicBtn{nullptr};
 
-    // ── PC Mic group box (I.2) ────────────────────────────────────────────
-    QGroupBox*   m_pcMicGroup{nullptr};
-
-    // Row 1: Backend
-    QComboBox*   m_backendCombo{nullptr};
-
-    // Row 2: Device
-    QComboBox*   m_deviceCombo{nullptr};
-
-    // Row 3: Buffer size
-    QSlider*     m_bufferSlider{nullptr};
+    // ── PC microphone card (I.2, R-SPK-21) ───────────────────────────────
+    DeviceCard*  m_pcMicCard{nullptr};
     QLabel* m_micSelectionStatusLabel{nullptr};
-    QLabel*      m_bufferLabel{nullptr};
+    // True while the page reloads the card from an engine change, so the
+    // card's change does not go back to the engine.
+    bool m_updatingFromEngine{false};
 
     // Row 4: Test Mic + VU bar
     QPushButton* m_testMicBtn{nullptr};
@@ -325,11 +341,8 @@ private:
     QLabel*      m_captureStatusLabel{nullptr};
     QPushButton* m_retryCaptureBtn{nullptr};
 
-    // True while applyTxInputConfigToControls() moves the PC Mic controls,
-    // so their change slots do not write the config back.
-    bool m_applyingTxInputConfig{false};
-
-    // Row 5: Mic Gain
+    // Mic gain group (R-SPK-21)
+    QGroupBox*   m_micGainGroup{nullptr};
     QSlider*     m_micGainSlider{nullptr};
     // R-R3-21: the two conditions the held controls follow (see
     // applyHeldControlGate()).
@@ -357,6 +370,11 @@ private:
     QLabel* m_radioMicNoteLabel{nullptr};
 
     // ── Radio Mic per-family group boxes (I.3) ────────────────────────────────
+    // R-SPK-21: the container greyed unless Radio Mic is picked, and the
+    // group shown when this board has no radio mic group.
+    QWidget*   m_radioMicSection{nullptr};
+    QGroupBox* m_radioMicPlaceholder{nullptr};
+    QLabel*    m_radioMicPlaceholderNote{nullptr};
     QGroupBox* m_hermesGroup{nullptr};
     QGroupBox* m_orionGroup{nullptr};
     QGroupBox* m_saturnGroup{nullptr};
@@ -379,12 +397,6 @@ private:
     QCheckBox*    m_saturnMicBiasChk{nullptr};
     QCheckBox*    m_saturnMicBoostChk{nullptr};
     QCheckBox*    m_saturnMicTipRingChk{nullptr};
-
-public:
-    // Discrete buffer sizes exposed by the slider (power-of-2 steps).
-    // Slider position maps to index in this list. Exposed as public so
-    // tests can verify latency calculations without reimplementing the list.
-    static const QVector<int> kBufferSizes;
 };
 
 } // namespace NereusSDR

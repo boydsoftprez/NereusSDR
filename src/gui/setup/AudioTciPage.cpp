@@ -6,7 +6,7 @@
 // src/gui/setup/AudioTciPage.cpp  (NereusSDR)
 // =================================================================
 //
-// NereusSDR-original Setup -> Audio -> TCI page.
+// NereusSDR-original TCI section of Setup -> Audio -> Digital modes.
 // See AudioTciPage.h for the full header and design notes.
 //
 // Phase 24 Task 24.2 (2026-05-10): Written by J.J. Boyd (KG4VCF),
@@ -15,6 +15,12 @@
 // 2026-09-24: R-R3-49 by J.J. Boyd (KG4VCF), with AI-assisted
 // implementation via Anthropic Claude Code. The Slice B rate control is
 // removed; nothing read its setting.
+//
+// 2026-10-06 (R-SPK-21, R-SPK-22): J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code. The TCI section of Audio > Digital modes: one
+// sentence that TCI audio is separate from the PC and radio speaker
+// volumes replaces the "Master Mute Behavior" box, and the settings sit
+// in an "Audio stream" group and a "Transmit" group. Every key is kept.
 // =================================================================
 
 #include "AudioTciPage.h"
@@ -26,12 +32,15 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QVBoxLayout>
 
 namespace NereusSDR {
 
 AudioTciPage::AudioTciPage(RadioModel* model, QWidget* parent)
-    : SetupPage(QStringLiteral("TCI"), model, parent)
+    : QWidget(parent)
 {
+    Q_UNUSED(model);
+    setObjectName(QStringLiteral("audioTciSection"));
     buildUI();
 }
 
@@ -39,12 +48,37 @@ void AudioTciPage::buildUI()
 {
     NereusSDR::Style::applyDarkPageStyle(this);
 
-    buildSampleRateGroup();
-    buildFormatGroup();
-    buildTxDirectionGroup();
-    buildMasterMuteNoteGroup();
+    // R-SPK-21: a section of Digital modes, which owns the title and the
+    // scroll area.
+    m_layout = new QVBoxLayout(this);
+    m_layout->setContentsMargins(0, 0, 0, 0);
+    m_layout->setSpacing(8);
 
-    contentLayout()->addStretch();
+    // R-SPK-22: in place of the "Master Mute Behavior" box.
+    auto* separateNote = new QLabel(
+        tr("TCI audio is separate from the PC and radio speaker volumes; muting "
+           "either one does not mute TCI."), this);
+    separateNote->setObjectName(QStringLiteral("tciSeparateNote"));
+    separateNote->setStyleSheet(QString::fromLatin1(Style::kSecondaryLabelStyle));
+    separateNote->setWordWrap(true);
+    m_layout->addWidget(separateNote);
+
+    auto* streamGroup = new QGroupBox(tr("Audio stream"), this);
+    streamGroup->setObjectName(QStringLiteral("tciAudioStreamGroup"));
+    streamGroup->setStyleSheet(QString::fromLatin1(Style::kGroupBoxStyle));
+    auto* streamForm = new QFormLayout(streamGroup);
+    streamForm->setSpacing(6);
+    buildSampleRateGroup(streamGroup, streamForm);
+    buildFormatGroup(streamGroup, streamForm);
+    m_layout->addWidget(streamGroup);
+
+    auto* txGroup = new QGroupBox(tr("Transmit"), this);
+    txGroup->setObjectName(QStringLiteral("tciTransmitGroup"));
+    txGroup->setStyleSheet(QString::fromLatin1(Style::kGroupBoxStyle));
+    auto* txForm = new QFormLayout(txGroup);
+    txForm->setSpacing(6);
+    buildTxDirectionGroup(txGroup, txForm);
+    m_layout->addWidget(txGroup);
 }
 
 // ---------------------------------------------------------------------------
@@ -54,13 +88,8 @@ void AudioTciPage::buildUI()
 // stays in the settings file.
 // Slices C/D not exposed via TCI in Phase 3J-1 per design doc Section 1.2.
 // ---------------------------------------------------------------------------
-void AudioTciPage::buildSampleRateGroup()
+void AudioTciPage::buildSampleRateGroup(QGroupBox* group, QFormLayout* form)
 {
-    auto* group = new QGroupBox(tr("Output Sample Rate per Slice"), this);
-    group->setStyleSheet(QString::fromLatin1(Style::kGroupBoxStyle));
-    auto* form = new QFormLayout(group);
-    form->setSpacing(6);
-
     auto& s = AppSettings::instance();
 
     static const char* kRates[] = {
@@ -69,6 +98,7 @@ void AudioTciPage::buildSampleRateGroup()
 
     // Slice A
     m_sliceARateCombo = new QComboBox(group);
+    m_sliceARateCombo->setObjectName(QStringLiteral("tciSliceARateCombo"));
     m_sliceARateCombo->setStyleSheet(QString::fromLatin1(Style::kComboStyle));
     for (int i = 0; kRates[i] != nullptr; ++i) {
         m_sliceARateCombo->addItem(QString::fromLatin1(kRates[i]));
@@ -94,8 +124,6 @@ void AudioTciPage::buildSampleRateGroup()
         tr("Slices C and D are not available over TCI."), group);
     noteLabel->setStyleSheet(QString::fromLatin1(Style::kSecondaryLabelStyle));
     form->addRow(noteLabel);
-
-    contentLayout()->addWidget(group);
 }
 
 // ---------------------------------------------------------------------------
@@ -104,17 +132,13 @@ void AudioTciPage::buildSampleRateGroup()
 //              TciAudioStreamChannels (default 2),
 //              TciAudioStreamSamples (default 2048, also on TCI Server page).
 // ---------------------------------------------------------------------------
-void AudioTciPage::buildFormatGroup()
+void AudioTciPage::buildFormatGroup(QGroupBox* group, QFormLayout* form)
 {
-    auto* group = new QGroupBox(tr("Sample Format"), this);
-    group->setStyleSheet(QString::fromLatin1(Style::kGroupBoxStyle));
-    auto* form = new QFormLayout(group);
-    form->setSpacing(6);
-
     auto& s = AppSettings::instance();
 
     // Sample type
     m_formatCombo = new QComboBox(group);
+    m_formatCombo->setObjectName(QStringLiteral("tciStreamFormatCombo"));
     m_formatCombo->setStyleSheet(QString::fromLatin1(Style::kComboStyle));
     m_formatCombo->addItems({
         QStringLiteral("Int16"),
@@ -165,6 +189,7 @@ void AudioTciPage::buildFormatGroup()
 
     // Block size (shared key with CatTciServerPage Group 4)
     m_blockSizeSpin = new QSpinBox(group);
+    m_blockSizeSpin->setObjectName(QStringLiteral("tciBlockSizeSpin"));
     m_blockSizeSpin->setStyleSheet(QString::fromLatin1(Style::kSpinBoxStyle));
     m_blockSizeSpin->setRange(100, 2048);
     m_blockSizeSpin->setSuffix(tr(" samples"));
@@ -178,8 +203,6 @@ void AudioTciPage::buildFormatGroup()
         AppSettings::instance().setValue(QStringLiteral("TciAudioStreamSamples"), v);
     });
     form->addRow(tr("Block size:"), m_blockSizeSpin);
-
-    contentLayout()->addWidget(group);
 }
 
 // ---------------------------------------------------------------------------
@@ -187,17 +210,13 @@ void AudioTciPage::buildFormatGroup()
 // AppSettings: TciTxChannel (default "Both", shared with CatTciServerPage),
 //              TciTxStreamBufferingMs (default 50, range 10..200).
 // ---------------------------------------------------------------------------
-void AudioTciPage::buildTxDirectionGroup()
+void AudioTciPage::buildTxDirectionGroup(QGroupBox* group, QFormLayout* form)
 {
-    auto* group = new QGroupBox(tr("TX Direction"), this);
-    group->setStyleSheet(QString::fromLatin1(Style::kGroupBoxStyle));
-    auto* form = new QFormLayout(group);
-    form->setSpacing(6);
-
     auto& s = AppSettings::instance();
 
     // TX channel (shared key with CatTciServerPage Group 4)
     m_txChannelCombo = new QComboBox(group);
+    m_txChannelCombo->setObjectName(QStringLiteral("tciTxChannelCombo"));
     m_txChannelCombo->setStyleSheet(QString::fromLatin1(Style::kComboStyle));
     m_txChannelCombo->addItems({
         QStringLiteral("Left"),
@@ -222,6 +241,7 @@ void AudioTciPage::buildTxDirectionGroup()
 
     // TX stream buffering
     m_txBufferingSpin = new QSpinBox(group);
+    m_txBufferingSpin->setObjectName(QStringLiteral("tciTxBufferingSpin"));
     m_txBufferingSpin->setStyleSheet(QString::fromLatin1(Style::kSpinBoxStyle));
     m_txBufferingSpin->setRange(10, 200);
     m_txBufferingSpin->setSuffix(tr(" ms"));
@@ -235,31 +255,6 @@ void AudioTciPage::buildTxDirectionGroup()
         AppSettings::instance().setValue(QStringLiteral("TciTxStreamBufferingMs"), v);
     });
     form->addRow(tr("TX buffering:"), m_txBufferingSpin);
-
-    contentLayout()->addWidget(group);
-}
-
-// ---------------------------------------------------------------------------
-// Group 4: Master Mute Note
-// Read-only informational text. No AppSettings key.
-// ---------------------------------------------------------------------------
-void AudioTciPage::buildMasterMuteNoteGroup()
-{
-    auto* group = new QGroupBox(tr("Master Mute Behavior"), this);
-    group->setStyleSheet(QString::fromLatin1(Style::kGroupBoxStyle));
-    auto* vbox = new QVBoxLayout(group);
-    vbox->setSpacing(6);
-
-    auto* noteLabel = new QLabel(
-        tr("TCI audio streams are independent of the main audio output mute. "
-           "Use the Slice A/B gain sliders in the TCI Applet to attenuate TCI "
-           "output without affecting the main speaker output."),
-        group);
-    noteLabel->setStyleSheet(QString::fromLatin1(Style::kSecondaryLabelStyle));
-    noteLabel->setWordWrap(true);
-    vbox->addWidget(noteLabel);
-
-    contentLayout()->addWidget(group);
 }
 
 } // namespace NereusSDR

@@ -1,6 +1,17 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-06: Setup description version 25 (Audio > Outputs' radio
+//               speaker rows, TX Input titled Microphone) is the cap
+//               (R-SPK-23). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
+//   2026-10-06: Radio speaker: radio's radioSpeakerVolume,
+//               radioSpeakerMuted, speakerAmplifierMode,
+//               radioSpeakerAvailability and speakerAmplifierAvailable go
+//               only to a peer that declared radioSpeaker 1, which is sent
+//               radioSpeakerVersion 1 (before coreBuildInfo); a write of
+//               one from any other peer is refused (R-SPK-13, R-SPK-14).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-04: Resume retained automatic PureSignal intent after the
 //               first successful media admission, preserving retirement.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -1398,6 +1409,9 @@ bool isDevicesSettingsKey(const QString& key)
 constexpr const char* kCatalogKey = "catalog";
 
 constexpr const char* kSetupDescriptionKey = "setup";
+// The highest Setup description version the Core sends (25: Audio's
+// Outputs page and Microphone title, R-SPK-23).
+constexpr int kSetupDescriptionCap = 25;
 
 bool isSetupDescriptionMessage(const SessionMessage& message)
 {
@@ -1526,6 +1540,13 @@ constexpr PeerOnlyProperty kPeerOnlyProperties[] = {
     // holding it (rxFilterLowPassVersion 1, shared-input filters ruling (d)).
     {"RadioModel", "radio", false, "rxFilter0LowPassReason", "rxFilterLowPass"},
     {"RadioModel", "radio", false, "rxFilter0LowPassSlice", "rxFilterLowPass"},
+    // The radio speaker at the Core: its RADIO level, mute and amplifier
+    // choice, and the two reports (radioSpeakerVersion 1, R-SPK-14).
+    {"RadioModel", "radio", false, "radioSpeakerVolume", "radioSpeaker"},
+    {"RadioModel", "radio", false, "radioSpeakerMuted", "radioSpeaker"},
+    {"RadioModel", "radio", false, "speakerAmplifierMode", "radioSpeaker"},
+    {"RadioModel", "radio", false, "radioSpeakerAvailability", "radioSpeaker"},
+    {"RadioModel", "radio", false, "speakerAmplifierAvailable", "radioSpeaker"},
     // The CFC dialog's band editor (transmitSettingsVersion 15).
     {"TransmitModel", "transmit", false, "cfcProfile", "cfcProfile"},
 };
@@ -1708,6 +1729,19 @@ bool isTransmitKeyingProperty(const QByteArray& name)
 // client, never runs on the station for a client's write.
 constexpr const char* kOutboundWriteReason =
     "The Core sets this itself; it cannot be changed from here.";
+
+// Radio speaker (R-SPK-14): why a write of radio's radio speaker properties
+// is refused from a peer that did not declare radioSpeaker 1. Such a peer
+// is never sent them, so only a misbehaving one gets here.
+constexpr const char* kRadioSpeakerWriteReason =
+    "Update this app to change the radio speaker on this Core.";
+
+bool isRadioSpeakerProperty(const QByteArray& name)
+{
+    return name == "radioSpeakerVolume" || name == "radioSpeakerMuted"
+        || name == "speakerAmplifierMode" || name == "radioSpeakerAvailability"
+        || name == "speakerAmplifierAvailable";
+}
 
 // The tuner properties whose remote write reaches the tuner itself
 // (TunerModel::applyMirroredValue sends operate, bypass or antenna
@@ -7972,6 +8006,11 @@ QList<SessionPropertyResult> StationServer::applyPropertyWrite(
             refusals.insert(update.name, QString::fromLatin1(kRfKitSwitchWriteReason));
             continue;
         }
+        if (radioWrite && isRadioSpeakerProperty(update.name)
+            && !peerGetsFeatureProperties(transport, QByteArrayLiteral("radioSpeaker"))) {
+            refusals.insert(update.name, QString::fromLatin1(kRadioSpeakerWriteReason));
+            continue;
+        }
         if (!negotiated && (message.objectKey == "pureSignalSettings"
             || update.name.startsWith("nnr")
             || (update.name == "activeNr" && update.value.toInt() == static_cast<int>(NrSlot::NNR)))) {
@@ -9287,8 +9326,9 @@ void StationServer::sendToPeer(SessionTransport* transport, const SessionMessage
             // Duplicate is off. 22: DSP > Options' RX buffer sizes'
             // on-the-air lock. 23: Hardware > Calibration's Rx1 6m LNA row.
             // 24: Audio > TX Input's Line In Gain in 1.5 dB steps and the
-            // Saturn G2's Mic Tip-Ring row.
-            const int version = qMin(declared, 24);
+            // Saturn G2's Mic Tip-Ring row. 25: Audio > Outputs' radio
+            // speaker rows; TX Input titled Microphone.
+            const int version = qMin(declared, kSetupDescriptionCap);
             // Version 20: the transmit holder's own PA band stays live.
             const QByteArray deviceId = peerInfoFor(transport).deviceId;
             const bool holdsTransmit = m_transmitHolder && !deviceId.isEmpty()
@@ -13092,7 +13132,8 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
             caps.stationCatalogVersion = stationCatalogVersion();
             caps.setupDescriptionVersion = peerDeclares(
                 transport, QByteArrayLiteral("setupDescription"), 1)
-                ? qMin(peer->features.value(QByteArrayLiteral("setupDescription")), 24) : 0;
+                ? qMin(peer->features.value(QByteArrayLiteral("setupDescription")),
+                       kSetupDescriptionCap) : 0;
             // iPhone app Task 20: display extras.
             caps.displayExtrasVersion = media ? displayExtrasVersion() : 0;
             // R-R3-49 (parity Task 1): the transmit settings.
@@ -13179,6 +13220,13 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
             // that declared stationCat 1 (after radeReasonVersion and before
             // coreBuildInfo on the wire).
             caps.stationCatVersion = peerGetsStationCat(transport) ? 1 : 0;
+            // Radio speaker (R-SPK-14): radio's RADIO level, mute,
+            // amplifier choice and reports, for a peer that declared
+            // radioSpeaker 1 (after stationCatVersion and before
+            // coreBuildInfo on the wire), the same test that sends it the
+            // properties (fitPeerOnlyProperties).
+            caps.radioSpeakerVersion =
+                peerGetsFeatureProperties(transport, QByteArrayLiteral("radioSpeaker")) ? 1 : 0;
             // R-IOS-13 / R-R3-49: the AM Mod Monitor's readings, appended
             // after remoteIqVersion by StationCapabilities::toUpdates().
             caps.txModMonitorVersion = txModMonitorVersion();

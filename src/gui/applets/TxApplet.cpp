@@ -219,6 +219,9 @@
 //   2026-09-30  J.J. Boyd / KG4VCF  Fix wave GUI-I7: PS-A greyed by the
 //                PureSignal facade carries the facade's reason.
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-06  J.J. Boyd / KG4VCF  R-SPK-21: the mic source badge points
+//                to Settings > Audio > Microphone, the new name of TX Input.
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -466,7 +469,7 @@ void TxApplet::buildUI()
         m_micSourceBadge->setAccessibleName(QStringLiteral("Mic source indicator"));
         m_micSourceBadge->setToolTip(QStringLiteral(
             "Active microphone source: PC mic or Radio mic.\n"
-            "Change via Settings > Audio > TX Input."));
+            "Change via Settings > Audio > Microphone."));
         vbox->addWidget(m_micSourceBadge);
     }
 
@@ -2036,7 +2039,7 @@ void TxApplet::refreshMicSourceBadge()
     m_micSourceBadge->setToolTip(!reason.isEmpty() ? reason
         : source == MicSource::Radio && !m_model->ownsLocalDsp()
             ? QStringLiteral("Radio microphone at the Core (no microphone stream from this computer).")
-            : QStringLiteral("Change microphone source via Settings > Audio > TX Input."));
+            : QStringLiteral("Change microphone source via Settings > Audio > Microphone."));
 }
 
 void TxApplet::syncFromModel()

@@ -978,6 +978,17 @@ built for, with no `radeReason`, and a change to it alone sends that peer
 no slice delta. The station does not declare it; the desktop's remote
 window does.
 
+**`radioSpeaker` 1** (the radio speaker): the client shows and sets the
+radio speaker at the Core: the receive audio level and mute of the radio's
+own speaker output and its speaker amplifier choice. A peer that declares
+it is sent `radioSpeakerVersion` (section 6.3) and the `radio` object's
+`radioSpeakerVolume`, `radioSpeakerMuted`, `speakerAmplifierMode`,
+`radioSpeakerAvailability` and `speakerAmplifierAvailable` (section 7); a
+peer that does not sees exactly the wire it was built for, with none of the
+five, and a change to them alone sends that peer no `radio` delta. A write
+of one from a peer that did not declare it is refused. The station does not
+declare it; the desktop's remote window does.
+
 **`sessionHolder` 1** (iPhone app plan Task 71; the several-devices
 design, ruling 10.1): the Core admits up to four devices at once (section
 5.1). A client declares it only together with `deviceAuth` 1 or later, and
@@ -1169,6 +1180,7 @@ table.
 | `rxFilterLowPassVersion` | 1 |
 | `radeReasonVersion` | 1 |
 | `stationCatVersion` | 1 |
+| `radioSpeakerVersion` | 1 |
 
 <!-- /surface -->
 
@@ -2253,6 +2265,17 @@ A window's CAT log subscribes with a backlog of 10000, the lines it keeps,
 and shows each record once by its rising id across a new session's
 backlog. A peer that did not declare the feature is sent none of them.
 
+**The radio speaker.** A client that declared `radioSpeaker` 1 is sent
+`radioSpeakerVersion`, an `i64`, 1, after `stationCatVersion` (or after
+the last entry before it when that is absent) and before `coreBuildInfo`.
+At 1 the `radio` object carries `radioSpeakerVolume`, `radioSpeakerMuted`
+and `speakerAmplifierMode`, which the client may write, and
+`radioSpeakerAvailability` and `speakerAmplifierAvailable`, which it may
+not (section 7). A peer that did not declare the feature is sent no entry
+and none of the five. A client connected to a Core that sends no entry
+shows the radio speaker disabled, with the reason "This Core can't set the
+radio speaker. Update the Core.", and sends no write of the three.
+
 **Core executable identity.** A client at agreed minor 11 may declare
 `coreBuildInfo` 1. After authentication, a Core with a known product version
 appends one optional `coreBuildInfo` utf8 capability after all existing
@@ -2289,7 +2312,8 @@ for a peer that declared `radeStatus`; `txInhibitReasonVersion` only for a
 peer that declared `txInhibitReason` (section 6.1); `paTransmitBandVersion` only for a
 peer that declared `paTransmitBand`; `radeReasonVersion` only for a peer
 that declared `radeReason`; `stationCatVersion` only for a peer that
-declared `stationCat` on a Core that runs CAT. A client ignores a capability it does not know
+declared `stationCat` on a Core that runs CAT; `radioSpeakerVersion` only for a peer that
+declared `radioSpeaker`. A client ignores a capability it does not know
 (`StationCapabilities::fromUpdates`).
 
 **Each device's share of the display budget** (iPhone app plan Task 76; the
@@ -2485,7 +2509,8 @@ older window sees only the values it was built for.
 | 106 | `rxFilterLowPassVersion` | `i64` |
 | 107 | `radeReasonVersion` | `i64` |
 | 108 | `stationCatVersion` | `i64` |
-| 109 | `coreBuildInfo` | `utf8` |
+| 109 | `radioSpeakerVersion` | `i64` |
+| 110 | `coreBuildInfo` | `utf8` |
 
 <!-- /surface -->
 
@@ -2707,7 +2732,7 @@ An enum property lists the values its domain allows.
 | 8 | `hardwarePeakOverride` | `f64` | bidirectional |  |
 | 9 | `lastLoadError` | `utf8` | outbound |  |
 
-**RadioModel** (38 properties)
+**RadioModel** (43 properties)
 
 | Ordinal | Property | Wire kind | Direction | Enum values |
 | --- | --- | --- | --- | --- |
@@ -2749,6 +2774,11 @@ An enum property lists the values its domain allows.
 | 35 | `rxFilter0LowPassReason` | `utf8` | outbound |  |
 | 36 | `rxFilter0LowPassSlice` | `i64` | outbound |  |
 | 37 | `diversityState` | `utf8` | outbound |  |
+| 38 | `radioSpeakerVolume` | `i64` | bidirectional |  |
+| 39 | `radioSpeakerMuted` | `bool` | bidirectional |  |
+| 40 | `speakerAmplifierMode` | `i64` | bidirectional |  |
+| 41 | `radioSpeakerAvailability` | `i64` | outbound |  |
+| 42 | `speakerAmplifierAvailable` | `bool` | outbound |  |
 
 **RfKitModel** (30 properties)
 
@@ -3995,6 +4025,21 @@ Notes on the keys:
   never sends them shows the WIDE reason alone. They are optional: a
   chain's filter state is shown once its mode, effective state, band and
   reason have arrived, with or without them.
+- **The radio speaker at the Core (`radio`).** `radioSpeakerVolume` (int,
+  0 to 100), `radioSpeakerMuted` (bool) and `speakerAmplifierMode` (int:
+  0 Normal, 1 Off while transmitting, 2 Always off), bidirectional, are the
+  level and mute of the receive audio the Core sends to its radio's own
+  speaker output and the radio's speaker amplifier choice. They are the
+  first writable `radio` properties. A write lands through the Core's own
+  setters, which clamp it, and is saved on the Core for its radio (per
+  radio, under `hardware/<mac>/RadioSpeaker/`); every other window and the
+  phone follow. `radioSpeakerAvailability` (int, outbound only: 0 no radio,
+  1 available, 2 available but the radio needs its audio add-on board, the
+  Hermes Lite 2) and `speakerAmplifierAvailable` (bool, outbound only: the
+  amplifier can be switched on this radio) are the Core's reports; a raw
+  write of either is refused. All five are sent only to a peer that
+  declared `radioSpeaker` 1 (section 6.2), and declared after every other
+  `radio` property so no earlier ordinal moves.
 
 #### The TX EQ curve (`txEqCurve`)
 

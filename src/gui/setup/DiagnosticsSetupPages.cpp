@@ -63,7 +63,7 @@ void DiagSignalGeneratorPage::buildUI()
         m_toneEnableCheck->setToolTip(QStringLiteral("Add a test tone to the signal"));
         grid->addWidget(m_toneEnableCheck, 2, 0, 1, 2);
 
-        contentLayout()->addWidget(group);
+        addContent(group);
     }
 
     // --- Noise section ---
@@ -92,7 +92,7 @@ void DiagSignalGeneratorPage::buildUI()
         m_noiseLevelSlider->setToolTip(QStringLiteral("Noise level"));
         grid->addWidget(m_noiseLevelSlider, 1, 1);
 
-        contentLayout()->addWidget(group);
+        addContent(group);
     }
 
     // --- Sweep section ---
@@ -115,10 +115,8 @@ void DiagSignalGeneratorPage::buildUI()
         m_sweepRangeLabel->setAlignment(Qt::AlignCenter);
         grid->addWidget(m_sweepRangeLabel, 1, 0, 1, 2);
 
-        contentLayout()->addWidget(group);
+        addContent(group);
     }
-
-    contentLayout()->addStretch();
 }
 
 // ---------------------------------------------------------------------------
@@ -163,8 +161,7 @@ void DiagHardwareTestsPage::buildUI()
     m_loopbackButton->setToolTip(QStringLiteral("Send a test signal from transmit back into receive"));
     vLayout->addWidget(m_loopbackButton);
 
-    contentLayout()->addWidget(group);
-    contentLayout()->addStretch();
+    addContent(group);
 }
 
 // ---------------------------------------------------------------------------
@@ -227,7 +224,7 @@ void DiagLoggingPage::buildUI()
 
         grid->addLayout(btnRow, 2, 0, 1, 2);
 
-        contentLayout()->addWidget(group);
+        addContent(group);
     }
 
     // --- Categories section ---
@@ -245,10 +242,8 @@ void DiagLoggingPage::buildUI()
         m_filterLabel->setMinimumHeight(60);
         vLayout->addWidget(m_filterLabel);
 
-        contentLayout()->addWidget(group);
+        addContent(group);
     }
-
-    contentLayout()->addStretch();
 }
 
 } // namespace NereusSDR

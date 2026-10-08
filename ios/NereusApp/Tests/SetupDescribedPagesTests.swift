@@ -35,6 +35,15 @@ struct SetupDescribedPagesTests {
             var root = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
             var pages: [[String: Any]] = []
             for var page in root["pages"] as? [[String: Any]] ?? [] {
+                if id == "audio", peer < 25, page["id"] as? String == "audio.txInput" {
+                    // Below 25 the Microphone page keeps its old title, and its Mic gain section too.
+                    page["title"] = "TX Input"
+                    page["sections"] = (page["sections"] as? [[String: Any]] ?? []).map { section in
+                        var section = section
+                        if section["title"] as? String == "Mic gain" { section["title"] = "PC Mic" }
+                        return section
+                    }
+                }
                 var sections: [[String: Any]] = []
                 for var section in page["sections"] as? [[String: Any]] ?? [] {
                     var controls: [[String: Any]] = []
@@ -85,6 +94,10 @@ struct SetupDescribedPagesTests {
             if let coverage = root.removeValue(forKey: "coverageV19") as? String, peer >= 19 {
                 root["coverage"] = coverage
             }
+            // The version 25 wording (Audio's Outputs and Microphone) goes only to a peer at 25.
+            if let coverage = root.removeValue(forKey: "coverageV25") as? String, peer >= 25 {
+                root["coverage"] = coverage
+            }
             // From 13 on each category keeps the version its file carries,
             // raised to the Core's floor of 3 as the Core sends it.
             if peer < 13 {
@@ -98,9 +111,10 @@ struct SetupDescribedPagesTests {
                 // buffer rows on the air): 15 to 18 see 15, 19 to 21 see 19.
                 root["version"] = peer < 19 ? 15 : peer < 22 ? 19 : 22
             } else if id == "audio" {
-                // Audio changed at 15 and 24 (Line In Gain's 1.5 dB steps, the
-                // Saturn G2's Mic Tip-Ring): 13 to 23 see 15.
-                root["version"] = peer < 24 ? 15 : 24
+                // Audio changed at 15, 24 (Line In Gain's 1.5 dB steps, the
+                // Saturn G2's Mic Tip-Ring) and 25 (Outputs' radio speaker):
+                // 13 to 23 see 15.
+                root["version"] = peer < 24 ? 15 : peer < 25 ? 24 : 25
             } else if id == "pa", peer >= 20 {
                 // PA changed at 20 (the profile rows on the air).
                 root["version"] = 20
@@ -438,10 +452,10 @@ struct SetupDescribedPagesTests {
 
     @Test("V22: the phone asks for 22 and draws every V12 row; a V11 Core stays V11 with 3D View greyed")
     func v12DrawsEveryRow() async throws {
-        #expect(LinkFeatures.app["setupDescription"] == 24)
+        #expect(LinkFeatures.app["setupDescription"] == 25)
         #expect(LinkFeatures.app["alexLpf"] == 1)
         #expect(LinkFeatures.app["cfcProfile"] == 1)
-        #expect(SetupDescription.highestVersion == 24)
+        #expect(SetupDescription.highestVersion == 25)
         #expect(SetupDescribedPages.notDrawnYet.isEmpty)
         let rig = try await Self.connected()
         defer { UserDefaults.standard.removePersistentDomain(forName: rig.suite) }

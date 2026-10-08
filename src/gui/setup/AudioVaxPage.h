@@ -4,7 +4,8 @@
 // src/gui/setup/AudioVaxPage.h  (NereusSDR)
 // =================================================================
 //
-// NereusSDR-original Setup → Audio → VAX page.
+// NereusSDR-original VAX section of Setup → Audio → Digital modes
+// (R-SPK-21; it was the Audio → VAX page).
 // No Thetis port, no attribution headers required (per memory:
 // feedback_source_first_ui_vs_dsp — Qt widgets in Setup pages are
 // NereusSDR-native).
@@ -57,13 +58,22 @@
 //                weakest" signals, true of the receiver streams' 48 kbit/s
 //                Opus and of an older Core's 24 kbit/s. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-06 - R-SPK-21, R-SPK-22, R-SPK-24, D16 (radio speaker plan
+//                Task 11): now the VAX section of Audio > Digital modes, a
+//                plain widget rather than a page. One sentence and a status
+//                line for this system; each card shows On, Device (the name
+//                on Mac and Linux, a picker of detected cables on Windows),
+//                Format, Used by, Activity, Rename and Copy name, with a
+//                card line when it cannot work; "Detected virtual cables"
+//                with Rescan moved here from Advanced. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/VirtualCableDetector.h"
 #include "gui/HGauge.h"
 #include "gui/RemoteReceiverAudioNote.h"
-#include "gui/SetupPage.h"
 #include "gui/setup/DeviceCard.h"
+#include "gui/setup/SoundSystemLine.h"
 
 #include <QCheckBox>
 #include <QLabel>
@@ -72,6 +82,7 @@
 
 #include <optional>
 
+class QComboBox;
 class QTimer;
 class QShowEvent;
 class QHideEvent;
@@ -79,6 +90,7 @@ class QHideEvent;
 namespace NereusSDR {
 
 class AudioEngine;
+class RadioModel;
 
 // VaxChannelCard — one VAX channel slot (QGroupBox with enable toggle,
 // spec §9.2 info rows, and Rename / Copy buttons).
@@ -183,9 +195,26 @@ public:
     void setReaderState(std::optional<bool> reading);
     QString readerText() const;
 
+    // R-SPK-24 / D16: the cables the Windows Device picker offers (output
+    // cables other than NereusSDR's own). Does nothing on Mac and Linux,
+    // where the Device row shows the channel's own device by name.
+    void setCableChoices(const QVector<DetectedCable>& cables);
+
+    // Whether the engine's output for this channel is open.
+    bool busOpen() const { return m_busOpen; }
+    // True when the channel is on, uses NereusSDR's own device (no cable
+    // picked) and that device did not open: on a Mac the driver is
+    // blocked, on Linux the sound system could not make it.
+    bool ownDeviceFailed() const;
+    // The card's line under Activity: why it cannot work, or empty.
+    QString statusLineText() const;
+
 signals:
     void configChanged(int channel, NereusSDR::AudioDeviceConfig cfg);
     void enabledChanged(int channel, bool on);
+    // The card's state changed (binding, On, open state); the section
+    // refreshes its status line.
+    void stateChanged(int channel);
 
 private slots:
     void onAutoDetectClicked();
@@ -198,6 +227,14 @@ private slots:
 private:
     void buildSpecLayout(QVBoxLayout* outerLayout);
     void updateNodeDescLabel();
+    // R-SPK-24: a cable picked in the Windows Device picker; asks before
+    // taking a cable another channel uses.
+    void onCablePicked(int index);
+    // Fills the Windows picker from m_cableChoices and selects the bound
+    // cable. Emits nothing.
+    void fillPicker();
+    // Tooltips and button states that depend on the system and binding.
+    void refreshPlatformTexts();
 
     int          m_channel;
     QString      m_prefix;
@@ -221,12 +258,15 @@ private:
 
     // Spec §9.2 visible widgets.
     QCheckBox*   m_enableChk{nullptr};      // "On" toggle (visible)
-    QLabel*      m_nodeDescLabel{nullptr};   // "Exposed to system as:" value
+    QLabel*      m_nodeDescLabel{nullptr};   // "Device:" value (Mac, Linux)
+    QComboBox*   m_devicePicker{nullptr};    // "Device:" cable picker (Windows)
+    QVector<DetectedCable> m_cableChoices;
+    QLabel*      m_cardStatus{nullptr};      // why the channel cannot work
     QLabel*      m_formatLabel{nullptr};     // "Format:" static value
-    QLabel*      m_consumerLabel{nullptr};   // "Consumers:" placeholder
-    HGauge*      m_levelGauge{nullptr};      // Level meter (quiescent)
+    QLabel*      m_consumerLabel{nullptr};   // "Used by:" value
+    HGauge*      m_levelGauge{nullptr};      // "Activity:" meter
     QPushButton* m_renameBtn{nullptr};       // Opens QInputDialog
-    QPushButton* m_copyNodeBtn{nullptr};     // Copies nereussdr.vax-N
+    QPushButton* m_copyNodeBtn{nullptr};     // "Copy name"
 
 #ifdef NEREUS_BUILD_TESTS
     bool                    m_useTestCables{false};
@@ -235,9 +275,10 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// AudioVaxPage
+// AudioVaxPage: the VAX section of Setup > Audio > Digital modes
+// (AudioDigitalModesPage). A plain widget, not a Setup page.
 // ---------------------------------------------------------------------------
-class AudioVaxPage : public SetupPage {
+class AudioVaxPage : public QWidget {
     Q_OBJECT
 public:
     explicit AudioVaxPage(RadioModel* model, QWidget* parent = nullptr);
@@ -264,25 +305,68 @@ public:
     bool compressedAudioNoteShown() const;
     QString compressedAudioNoteText() const;
 
-private:
-    void buildPage();
-    void wirePillFeedback();
-    // R-R3-44: refreshes each card's "Consumers:" row.
-    void refreshReaders();
+    // R-SPK-24: the system the section is laid out for (this build's,
+    // unless a test overrides it before building the section).
+    static SoundSystemLine::System system();
+    // The sentence under the VAX heading for `system`.
+    static QString introText(SoundSystemLine::System system);
 
-    AudioEngine*                m_engine{nullptr};
-    QVector<VaxChannelCard*>    m_channelCards;  // index 0 = channel 1
-    QLabel*                     m_compressedNote{nullptr};
+    // What the status line under the sentence is worked out from.
+    struct StatusInputs {
+        SoundSystemLine::System system{SoundSystemLine::System::Mac};
+        LinuxAudioBackend linuxBackend{LinuxAudioBackend::None};
+        int cablesFound{0};        // Windows: virtual output cables found
+        bool ownDeviceFailed{false};  // a channel on NereusSDR's device did not open
+        bool ownDeviceOpen{false};    // a channel on NereusSDR's device is open
+        bool anyOn{false};            // any channel is on
+    };
+    static QString statusText(const StatusInputs& in);
+    static bool statusIsProblem(const StatusInputs& in);
+
+    QString statusLineText() const;
+    bool statusLineShowsProblem() const { return m_statusProblem; }
+
+    // "Detected virtual cables" text for the cables found.
+    QString detectedCablesText() const;
+
+#ifdef NEREUS_BUILD_TESTS
+    // Lays every section built after this call out for `system` (nullopt:
+    // this build's).
+    static void setSystemForTest(std::optional<SoundSystemLine::System> system);
+    // Replaces the scanned cables (no PortAudio), as Rescan would find them.
+    void setDetectedCablesForTest(const QVector<DetectedCable>& cables);
+#endif
 
 protected:
     void showEvent(QShowEvent* event) override;
     void hideEvent(QHideEvent* event) override;
 
 private:
+    void buildPage();
+    void wirePillFeedback();
+    // R-R3-44: refreshes each card's "Used by:" row.
+    void refreshReaders();
+    // R-SPK-24: the status line, from the system and the cards' state.
+    void refreshStatus();
+    // The cables found: the "Detected virtual cables" line, the Windows
+    // pickers and the status line.
+    void applyCables(const QVector<DetectedCable>& cables);
+    void onRescan();
     // R-R3-21: 20 Hz level poll while the page is showing, the VAX
     // applet's cadence (VaxApplet::pollLevels).
     void pollLevels();
-    QTimer* m_levelTimer{nullptr};
+
+    AudioEngine*                m_engine{nullptr};
+    QVector<VaxChannelCard*>    m_channelCards;  // index 0 = channel 1
+    QLabel*                     m_compressedNote{nullptr};
+    QLabel*                     m_introLabel{nullptr};
+    QLabel*                     m_statusDot{nullptr};
+    QLabel*                     m_statusLabel{nullptr};
+    bool                        m_statusProblem{false};
+    QLabel*                     m_cablesLabel{nullptr};
+    QPushButton*                m_rescanButton{nullptr};
+    QVector<DetectedCable>      m_cables;
+    QTimer*                     m_levelTimer{nullptr};
 };
 
 } // namespace NereusSDR

@@ -171,7 +171,7 @@ private slots:
         // VAX is receive export. It is this computer's page and works in a
         // remote window (R-R3-44), and the transmit permission must not
         // reclassify it: granting or withdrawing it leaves the page usable.
-        QWidget* vax = dialog.realizePageForTest(QStringLiteral("VAX"));
+        QWidget* vax = dialog.realizePageForTest(QStringLiteral("Digital modes"));
         QVERIFY(vax && vax->isEnabled());
         dialog.setTransmitPermitted(true);
         QVERIFY(vax->isEnabled());

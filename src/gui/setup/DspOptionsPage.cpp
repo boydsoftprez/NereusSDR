@@ -446,7 +446,6 @@ void DspOptionsPage::buildUI()
     // TransmitSetupPages, DisplaySetupPages, AppearanceSetupPages, etc.).
     Style::applyDarkPageStyle(this);
 
-    QVBoxLayout* layout = contentLayout();
 
     // One warning icon per outer category — visibility logic in
     // recomputeWarnings() (Task 4.5, ported from Thetis console.cs:38797-38807).
@@ -623,7 +622,7 @@ void DspOptionsPage::buildUI()
     topRow->addWidget(bufColumn);
     topRow->addWidget(fszColumn);
     topRow->addWidget(ftColumn);
-    layout->addLayout(topRow);
+    addContent(topRow);
 
     // =========================================================================
     // Group 4: Filter Impulse Cache
@@ -657,7 +656,7 @@ void DspOptionsPage::buildUI()
     cacheLayout->addWidget(m_cacheImpulse);
     cacheLayout->addWidget(m_cacheImpulseSaveRestore);
 
-    layout->addWidget(cacheGroup);
+    addContent(cacheGroup);
 
     // =========================================================================
     // Standalone: High-resolution filter characteristics
@@ -709,7 +708,7 @@ void DspOptionsPage::buildUI()
     // because SetupDialog is constructed after all containers are initialised.
     applyPersistedHighResFilter(model());
 
-    layout->addWidget(m_highResFilterChars);
+    addContent(m_highResFilterChars);
 
     // =========================================================================
     // Time-to-last-change readout
@@ -737,7 +736,7 @@ void DspOptionsPage::buildUI()
         show(model()->dspOptionsLastApplyMs());
     }
 
-    layout->addWidget(m_timeToLastChangeLabel);
+    addContent(m_timeToLastChangeLabel);
 
     // =========================================================================
     // Task 4.5: Warning icon wiring

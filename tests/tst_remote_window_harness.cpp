@@ -114,6 +114,10 @@
 //                                    reads "Radio offline"; the width check
 //                                    and its 34 px margin are unchanged.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-06  J.J. Boyd / KG4VCF  R-SPK-21: this computer's microphone
+//                                    buffer is on Setup > Audio >
+//                                    Microphone, in the PC microphone card.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -1231,12 +1235,12 @@ private slots:
         QVERIFY(notice->isVisible());
         QCOMPARE(notice->text(), kStationReason);
 
-        // This computer's microphone buffer, on Devices.
-        QWidget* const devices = showSetupLeaf(dialog, QStringLiteral("Devices"));
+        // This computer's microphone buffer, on Microphone (R-SPK-21).
+        QWidget* const devices = showSetupLeaf(dialog, QStringLiteral("Microphone"));
         QVERIFY(devices);
         QVERIFY(devices->isEnabled());
         QVERIFY(!notice->isVisible());
-        DeviceCard* const mic = deviceCardOf(devices, QStringLiteral("TX Input (Microphone)"));
+        DeviceCard* const mic = deviceCardOf(devices, QStringLiteral("PC microphone"));
         QVERIFY(mic);
         QVERIFY(mic->isEnabled());
         QComboBox* const buffer = deviceCardBufferCombo(mic);
@@ -1264,12 +1268,12 @@ private slots:
             5000);
         QVERIFY(!notice->isVisible());
 
-        // The Devices change stuck and is the one the window uses; it never
+        // The Microphone change stuck and is the one the window uses; it never
         // went to the Core.
         QCOMPARE(AppSettings::instance().value(bufferKey).toString(), QString::number(samples));
         QCOMPARE(h.remoteModel()->localAudioDevices()->txInputConfig().bufferSamples, samples);
         QVERIFY(!h.stationSettings().contains(bufferKey));
-        QVERIFY(showSetupLeaf(dialog, QStringLiteral("Devices"))->isEnabled());
+        QVERIFY(showSetupLeaf(dialog, QStringLiteral("Microphone"))->isEnabled());
 
         // The operator's Disconnect: the Core's page is disabled again,
         // with the reason, and still shows the Core's last values.
@@ -1280,7 +1284,7 @@ private slots:
         QCOMPARE(nb->objectName() == QStringLiteral("setupStationPlaceholder"), false);
         QVERIFY(notice->isVisible());
         QCOMPARE(notice->text(), kStationReason);
-        QVERIFY(showSetupLeaf(dialog, QStringLiteral("Devices"))->isEnabled());
+        QVERIFY(showSetupLeaf(dialog, QStringLiteral("Microphone"))->isEnabled());
         QCOMPARE(h.acceptedConnections(), 1);
     }
 
@@ -1318,7 +1322,7 @@ private slots:
         const QString reason = QStringLiteral("The Core has not sent its settings.");
         QCOMPARE(notice->text(), reason);
         QVERIFY(OperatorWording::isPlain(reason));
-        QVERIFY(showSetupLeaf(dialog, QStringLiteral("Devices"))->isEnabled());
+        QVERIFY(showSetupLeaf(dialog, QStringLiteral("Microphone"))->isEnabled());
         QCOMPARE(writes.size(), 0);
         QCOMPARE(removes.size(), 0);
 

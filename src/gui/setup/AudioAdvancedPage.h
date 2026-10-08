@@ -16,6 +16,10 @@
 // DSP group (the Core's audio/DspRate and audio/DspBlockSize) follows the
 // Core's settings availability, and Send IQ to VAX is refused there with
 // a plain reason.
+//
+// 2026-10-06 (R-SPK-21): J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+// Claude Code. Logs, Feature Flags and Reset; the cables row moved to
+// Digital modes.
 // =================================================================
 
 #include "gui/SetupPage.h"
@@ -30,17 +34,18 @@ class QPushButton;
 namespace NereusSDR {
 
 class AudioEngine;
-struct DetectedCable;
 
 // ---------------------------------------------------------------------------
 // AudioAdvancedPage
 //
 // Sections:
 //   1. DSP — sample-rate + block-size combos (persist + log deferred).
-//   2. Feature Flags: SendIqToVax, TxMonitorToVax (Phase 3M deferred),
+//      Hidden until built.
+//   2. Logs: "Open logs folder" (R-SPK-21).
+//   3. Feature Flags: SendIqToVax, TxMonitorToVax (Phase 3M deferred),
 //                      MuteVaxDuringTxOnOtherSlice (active).
-//   3. Detected Cables: readonly readout + Rescan button.
 //   4. Reset: amber "Reset all audio to defaults" + confirm modal.
+// "Detected virtual cables" and Rescan are on Digital modes (R-SPK-21).
 // ---------------------------------------------------------------------------
 class AudioAdvancedPage : public SetupPage {
     Q_OBJECT
@@ -61,8 +66,8 @@ public:
 private:
     // Section builders.
     void buildDspSection();
+    void buildLogsSection();
     void buildFeatureFlagsSection();
-    void buildCablesSection();
     void buildResetSection();
 
     // Load/save helpers.
@@ -77,9 +82,8 @@ private:
     QCheckBox* m_txMonitorToVaxCheck       = nullptr;
     QCheckBox* m_muteVaxDuringTxOtherCheck = nullptr;
 
-    // Cables section.
-    QLabel*      m_cablesLabel  = nullptr;
-    QPushButton* m_rescanButton = nullptr;
+    // Logs section.
+    QPushButton* m_openLogsButton = nullptr;
 
     // Reset section.
     QPushButton* m_resetButton = nullptr;
@@ -88,8 +92,6 @@ private:
     AudioEngine* m_engine = nullptr;
 
     // Helpers.
-    void updateCablesLabel(const QVector<DetectedCable>& cables);
-    void onRescan();
     void onResetClicked();
     void installWheelFilter(QComboBox* combo);
 };

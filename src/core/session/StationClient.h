@@ -208,6 +208,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-06  J.J. Boyd / KG4VCF  Radio speaker: radioSpeakerAvailable
+//                                    and radioSpeakerNeedsNewerCore
+//                                    (radioSpeakerVersion 1, R-SPK-14).
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-09-30  J.J. Boyd / KG4VCF  Level Cal: rx2PreampModeAvailable,
 //                                    RX2's own preamp mode on the Core
 //                                    (radioHardwareVersion 12). AI-assisted
@@ -1509,6 +1513,12 @@ public:
     /// Level Cal: the Core's stepAtt carries rx2PreampMode
     /// (radioHardwareVersion 12).
     bool rx2PreampModeAvailable() const override;
+    /// Radio speaker (R-SPK-14): the Core advertised radioSpeakerVersion 1
+    /// on this session, so radio carries the radio speaker's properties.
+    bool radioSpeakerAvailable() const override;
+    /// Signed in, this session's capabilities arrived, and they carry no
+    /// radioSpeakerVersion 1.
+    bool radioSpeakerNeedsNewerCore() const override;
     /// Parity Task 16 (dspInfoVersion 1). Verb "dsp.filterResponse". The
     /// answer goes to RadioModel::reportStationFilterResponse.
     CommandOutcome requestFilterResponse(int sliceId, bool highResolution) override;
@@ -2067,6 +2077,11 @@ private:
     /// emit on m_handshakeComplete, so a station that was simply down
     /// produced no signal whatsoever.
     bool m_sessionActive = false;
+
+    /// True once this session's capabilities arrived; cleared at every
+    /// attach and session end. radioSpeakerNeedsNewerCore needs it so a
+    /// link that is down or still signing in never reads as an older Core.
+    bool m_capabilitiesThisSession = false;
 
     /// True once a frame has actually arrived from the station. Gates the
     /// heartbeat: a wss dial can take seconds, and counting missed pongs

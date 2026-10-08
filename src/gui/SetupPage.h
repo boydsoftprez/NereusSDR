@@ -74,6 +74,13 @@ public:
     // Add a titled group box section to the page content area.
     QGroupBox* addSection(const QString& title);
 
+    // R-SPK-21: add a widget or a layout to the page content area, before
+    // the trailing stretch as addSection() does, so the page's content
+    // starts at the top. Pages use these instead of appending straight to
+    // contentLayout(), which would put the item after the stretch.
+    void addContent(QWidget* widget);
+    void addContent(QLayout* layout);
+
     // ── Convenience row builders ──────────────────────────────────────────────
     // Each creates a labeled row (150px label + control) and adds it to the
     // current section. Returns the created control widget.
