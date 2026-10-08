@@ -23,6 +23,7 @@ Yaesu GS-232 commands or that Hamlib's `rotctld` can drive.
 | Elevation | Supported; azimuth or azimuth + elevation is set in rotor setup |
 | Turn to a spot | Its own action everywhere (pan menu, Spot Hub, iPhone spot sheet), plus a "turn the beam when I tune to a spot" setting, off by default |
 | Look | As in the mockup: the Longpath-style dial in NereusSDR colours (amber heading needle, dashed cyan target arrow, the travel sector, "73° to go", green on arrival, an elevation quarter gauge beside the rose on az/el rotors, rose or tape shape), Stop the only red button |
+| End stops and overlap | Tracked (JJ, 2026-10-08, after the full-range capture of his south-stop, 450-degree rotor). Setup says where the end stop is (none, north or south) and the range (360 or 450); the Core follows the heading so it knows which end of the overlap the rotor is at, predicts the route the controller will take, and every dial draws that route and its real "to go". Built on Longpath's stop-aware route planner, extended to the overlap |
 | Touch safety | The desktop turns on release: drag the dial or the meter item to a heading and let go. The iPhone selects, then confirms: a drag on the dial only selects (target colour, no turning) and a Turn button sends it; an unsent selection is dropped after 15 s (after Longpath's select-then-press). Presets, Stop, the nudge holds and "Turn beam" on a spot are one tap everywhere |
 
 ## What exists today
@@ -66,6 +67,14 @@ ported:
 * Strict heading checks (Longpath `RotorPeilung.h`): not-a-number refused,
   out of range refused rather than wrapped, 360 sent as 0.
 * Hamlib's own ERC driver, model 404, offered in the rotctld model list.
+* The stop-aware route planner (Longpath `BeamHeading::plan`,
+  `src/core/BeamHeading.{h,cpp}`): an end stop of none, north or south, the
+  signed travel the rotor will really make, and a "long way round" note.
+  Longpath models a 360-degree span only; we extend it to the overlap (see
+  Core, "End stops and overlap"). Neither Longpath nor Hamlib tracks which
+  end of an overlap a rotor is at; Hamlib's GS-232B driver allows -180 to
+  450 and leaves the route to the controller, and its `south_zero` option is
+  for rotors that report 0 at south, which the ERC does not.
 * The Core starting `rotctld` itself (Longpath `RotctldProcess`): it finds
   the binary (including Homebrew paths a GUI-launched process does not see),
   runs `rotctld -m <model> -r <port> -s <baud> -T 127.0.0.1 -t <listen>`
@@ -188,8 +197,31 @@ Behaviour:
   lapses or that window disconnects. A dropped phone never leaves the
   rotor turning.
 * **Calibration offset and range** (rotor setup): an offset added to the
-  read heading, and the rotor's range (360 or 450 degrees for rotors with
-  overlap).
+  read heading, the end stop (none, north or south) and the rotor's range
+  (360, or 450 for rotors with overlap).
+* **End stops and overlap.** The rotor lives on a span from its
+  counter-clockwise stop: 0 to 360 or 0 to 450 span degrees, compass
+  heading = (stop + span) modulo 360. A compass heading in the overlap has
+  two span positions; any other has one.
+  * *Where it is.* The controller replies modulo 360 (JJ's ERC, Facts).
+    The Core keeps the span position by continuity: polls come at least
+    once a second and the rotor turns under 10 degrees a second, so each
+    step is far below 180 and its direction is never in doubt. On connect,
+    a heading outside the overlap band places the rotor at once; inside the
+    band the span position is unknown (`spanPositionDeg` -1) until the
+    heading leaves the band. A reconnect after a stale spell re-places it
+    the same way.
+  * *Where it will go.* For a target heading, the Core takes the one span
+    position, or the nearer of two, matching what the ERC was seen to do,
+    and reports the signed travel. The capture's moves are the test cases:
+    183 to 010 is +187 (clockwise through north), 292 to 000 is +68, 301 to
+    180 is -121, never the short way across the stop.
+  * *What is sent.* The compass heading, as now (`Waaa eee`); the ERC picks
+    the same position the Core predicted. A target is still a compass
+    heading 0 to 360; the strict-heading rule applies to that, not to span
+    degrees.
+  * With no end stop (continuous rotation) the route is the shorter way,
+    as in Longpath, and there is no overlap.
 * **Turning while on the air is allowed** (JJ, 2026-10-07). A rotor does
   not switch RF, unlike the amp and tuner controls that wait (the
   2026-09-25 on-air rule), and Thetis does not block it either.
@@ -239,7 +271,12 @@ In short:
   az/el rotor, an elevation quarter gauge (0 to 90) beside the rose in the
   same style (amber needle, dashed cyan target, travel sector); Longpath
   shows elevation only as a corner readout. Dragging the dial sets the
-  target and the rotor turns when the mouse is released.
+  target and the rotor turns when the mouse is released. The travel sector
+  follows the predicted route, the long way round when the stop forces it,
+  and "to go" is that route's length; the end stop is marked on the rim
+  (Longpath `setEndStop`). With the span position unknown the dial shows
+  the heading and target with no sector, and the readout says the route is
+  known once the rotor moves.
 * **Rotor applet** (`src/gui/applets/RotorApplet.*`, registered as
   `applet:rotor` in `ContainerContentRegistry`): status line, the dial, the
   heading readout and "to go" under it, CCW / STOP / CW, Down / Up for

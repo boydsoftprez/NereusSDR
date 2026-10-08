@@ -44,6 +44,10 @@ Core's to report.
 | `serialPorts` | utf8 | The serial ports the Core's computer has, one per line, so a phone can offer them in setup |
 | `axes` | enum | Axes table below |
 | `rangeDeg` | i64 | 360, or 450 for a rotor with overlap |
+| `endStop` | enum | End stop table below |
+| `spanPositionDeg` | f64 | Where the rotor is on its span, degrees clockwise from its counter-clockwise stop, 0 to `rangeDeg`; -1 when it is in the overlap band and the Core cannot yet tell which end, or with no end stop |
+| `travelDeg` | f64 | The signed turn still to make to the target along the route the controller will take (negative is counter-clockwise); 0 with no target |
+| `routeKnown` | bool | False while the span position is unknown with a target set; `travelDeg` is then 0 and a window draws no route |
 | `offsetDeg` | f64 | Calibration offset added to the read heading |
 | `hamlibModel` | i64 | Hamlib rotor model for driver 4 (404 is the ERC's own driver); 0 otherwise |
 | `rotctldAvailable` | bool | The Core's computer has Hamlib's `rotctld` (needed for driver 4) |
@@ -68,6 +72,9 @@ loopback and talks to it as driver 3).
 
 `axes`: 0 azimuth, 1 azimuth and elevation.
 
+`endStop`: 0 none (continuous rotation), 1 north, 2 south (after Longpath
+`BeamHeading::Stop`).
+
 `motion`: 0 stopped, 1 turning to a target, 2 nudging (a window is holding
 a turn button).
 
@@ -86,15 +93,17 @@ command to the rotor, not that the rotor has arrived. Windows follow
 | `turnRotorToCall` | `call` utf8, `longPath` bool | The Core works out the bearing from its cty.dat and the station's grid square, then turns as `setRotorTarget` |
 | `stopRotor` | none | Stop now; sent ahead of anything queued |
 | `nudgeRotor` | `direction` enum (0 CCW, 1 CW, 2 down, 3 up), `active` bool | `active` true starts or keeps a hold going; false ends it |
-| `configureRotor` | `driver` enum, `serialPort` utf8, `baud` i64, `host` utf8, `port` i64, `hamlibModel` i64, `axes` enum, `rangeDeg` i64, `offsetDeg` f64 | Save the setup and (re)connect; driver 0 disconnects and forgets |
+| `configureRotor` | `driver` enum, `serialPort` utf8, `baud` i64, `host` utf8, `port` i64, `hamlibModel` i64, `axes` enum, `endStop` enum, `rangeDeg` i64, `offsetDeg` f64 | Save the setup and (re)connect; driver 0 disconnects and forgets |
 | `disconnectRotor` | none | Disconnect, keeping the setup |
 | `setRotorPresets` | `presets` utf8 (as the property) | Replace the presets |
 
 **Strict headings** (after Longpath `RotorPeilung.h`). The Core checks every
 heading before anything reaches the rotor: a value that is not a finite
-number is refused; a value below 0 or above the range is refused, never
+number is refused; a value below 0 or above 360 is refused, never
 wrapped (someone who sends -90 made a mistake, and 270 is a different
-answer); exactly 360 on a 360-degree rotor means north and is sent as 0. A
+answer); exactly 360 means north and is sent as 0. A target is a compass
+heading; on a rotor with overlap the Core, like the controller, takes the
+nearer of its two span positions. A
 window applies the same rule to what it reads from a text box, so an empty
 box never turns the antenna to north.
 
@@ -139,7 +148,7 @@ Reason text is the identifier and is kept word for word between releases.
 | "The rotor is not connected." | Any turn command off `connected` |
 | "This rotor turns in azimuth only." | An elevation target or up/down nudge on an azimuth rotor |
 | "That heading is not a number." | A heading that is NaN or infinite |
-| "That heading is outside the rotor's range." | A target below 0 or above `rangeDeg`, or elevation outside 0 to 90 |
+| "That heading is outside the rotor's range." | A target below 0 or above 360, or elevation outside 0 to 90 |
 | "Set your grid square in Setup to turn the beam to spots." | `turnRotorToCall` with no grid square |
 | "That callsign could not be placed." | `turnRotorToCall` for a call cty.dat does not resolve |
 | "Hamlib's rotctld is not installed on the Core's computer." | `configureRotor` with driver 4 and `rotctldAvailable` false |
@@ -151,8 +160,9 @@ Reason text is the identifier and is kept word for word between releases.
 
 `AppSettings` on the Core, PascalCase keys: `Rotor/Driver`,
 `Rotor/SerialPort`, `Rotor/Baud`, `Rotor/Host`, `Rotor/Port`, `Rotor/HamlibModel`, `Rotor/Axes`,
-`Rotor/RangeDeg`, `Rotor/OffsetDeg`, `Rotor/Presets`. Defaults: driver none,
-baud 9600, port 4533, axes azimuth, range 360, offset 0. 9600 baud and
+`Rotor/EndStop`, `Rotor/RangeDeg`, `Rotor/OffsetDeg`, `Rotor/Presets`.
+Defaults: driver none, baud 9600, port 4533, axes azimuth, end stop north
+(Longpath: "the common case"), range 360, offset 0. 9600 baud and
 GS-232B follow the ERC maker's setup example (ERC SMD USB V4.3
 Instructions, section 7).
 

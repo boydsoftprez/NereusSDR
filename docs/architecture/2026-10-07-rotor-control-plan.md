@@ -99,6 +99,10 @@ it.
 - Create: `src/core/RotorModels.h` (the curated Hamlib model list, ERC 404 among them; model
   numbers checked against Hamlib's `rotlist.h`, not copied on trust)
 - Create: `src/core/RotorHeading.h` (strict heading checks, after Longpath `RotorPeilung.h`)
+- Create: `src/core/RotorRoute.{h,cpp}` (ported from Longpath `BeamHeading::plan` and `Stop`,
+  extended to the overlap: span position from the stop, the nearer of two span positions,
+  signed travel; and the span tracker that follows modulo-360 replies by continuity, as the
+  design's "End stops and overlap" says)
 - Create: `src/core/StationRotorController.{h,cpp}` (settings under `Rotor/*`, presets,
   target and arrival, stop priority, the hold dead man of 250 ms repeats and a 750 ms lapse,
   reconnect as the other accessories do, the Core's serial port list)
@@ -116,6 +120,11 @@ it.
 - Stop jumps the queue. A lapsed hold, or its window's session ending, sends stop.
 - The offset applies to the reported heading and is removed from a target.
 - Turning works while the radio is on the air.
+- Route and overlap, from the full-range capture with a south stop and range 450: 183 to 010
+  travels +187; 292 to 000 travels +68; 301 to 180 travels -121; replaying the capture's
+  clockwise run from 183 (span 3) to the stop gives span position 449 at the reply `AZ=269`, 446 degrees of travel. A first
+  reply inside the overlap band gives span position -1 and `routeKnown` false until a reply
+  outside the band. With no end stop the route is the shorter way.
 
 ## Task 4: The link: `rotor` object, commands, spot bearings, tools catalogue
 
@@ -154,7 +163,9 @@ it.
 
 **Files:**
 - Create: `src/gui/widgets/RotorDialWidget.{h,cpp}` (ported from Longpath, see Global
-  Constraints: rose and tape shapes, amber heading needle, dashed target arrow, travel sector,
+  Constraints: rose and tape shapes, amber heading needle, dashed target arrow, travel sector
+  along the Core's predicted route (`travelDeg`, the long way when the stop forces it), the end
+  stop marked on the rim, no sector while `routeKnown` is false,
   arrival tolerance and green on arrival, an elevation quarter gauge beside the rose on az/el
   rotors (our addition, see the design), drag to aim and turn on release, a stale
   heading drawn muted with its age; shape choice saved with `AppSettings`)
@@ -174,7 +185,7 @@ it.
 
 **Files:**
 - Modify: the accessories Setup page beside the PGXL, TGXL and RF2K-S (driver, the Core's serial
-  ports and baud, or host and port; axes; range; offset; presets editor), sending
+  ports and baud, or host and port; axes; end stop; range; offset; presets editor), sending
   `configureRotor` and `setRotorPresets`
 - Test: a setup page test in a local and a remote window
 
@@ -201,7 +212,7 @@ it.
 
 **Files:**
 - Create: `ios/NereusApp/Accessories/RotorPage.swift` and its model (the Longpath-style dial in
-  SwiftUI, matching the desktop dial; a drag only selects, drawn in the target colour, and a "Turn to N°"
+  SwiftUI, matching the desktop dial, including the predicted route and end stop; a drag only selects, drawn in the target colour, and a "Turn to N°"
   button sends it, with an unsent selection dropped after 15 s; presets, Stop and the nudge holds
   are one tap; STOP between the nudge buttons; short and long path; preset chips; Up and
   Down on az/el; the rotor setup card with the Core's serial ports)
