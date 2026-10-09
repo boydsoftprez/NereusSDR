@@ -63,6 +63,7 @@
 //               implementation via Anthropic Claude Code.
 // =================================================================
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -237,6 +238,30 @@ inline constexpr int kDisplayBinWidthDecimals = 3;
 // NereusSDR-native.
 inline constexpr int kDisplayFftPlanMinSize = 1024;
 inline constexpr int kDisplayFftPlanMaxSize = 262144;
+
+// The largest FFT a zoom (or the Hz/bin target) grows a pan's FFT to, on a
+// local pan (MainWindow's bandwidthChangeRequested auto-zoom) and a remote
+// pan (RemoteMediaController's plannedFftSize) alike. NereusSDR-native.
+//
+// Set well below kDisplayFftPlanMaxSize (262144) to bound the buffer-fill
+// pause on every replan: at 768 kHz DDC, 65536 fills in 85 ms (barely
+// perceptible). 262144 would take 340 ms (jarring) and create a multi-frame
+// avenger ghost in the waterfall as the smoothed state crosses fftSize
+// resolutions. Users who want larger FFTs explicitly opt in via the slider
+// (one-time pause they chose); auto-zoom won't push above the cap
+// automatically.
+inline constexpr int kAutoZoomMaxFftSize = 65536;
+
+// The FFT size a zoom asks for: `desiredPow2` (the power of two the zoom or
+// Hz/bin target wants) floored at the user's `baseline` (the slider's choice
+// is always honoured) and capped at kAutoZoomMaxFftSize. When the baseline
+// is above the cap (the user picked a larger size), the baseline wins and a
+// zoom does not grow past it.
+constexpr int autoZoomFftSize(int desiredPow2, int baseline) noexcept
+{
+    return std::min(std::max(desiredPow2, baseline),
+                    std::max(baseline, kAutoZoomMaxFftSize));
+}
 
 // FFT window: the "Window" combo, in Thetis's order, each item's value its
 // WindowFunction (WDSP analyzer.c's case order):

@@ -33,6 +33,7 @@
 
 #include <algorithm>
 
+#include "core/ControlRanges.h"
 #include "core/FFTEngine.h"
 
 using namespace NereusSDR;
@@ -49,8 +50,33 @@ struct AutoZoomResult {
 // Auto-zoom cap (NereusSDR-original): bounds the buffer-fill pause on
 // every replan to ~85 ms at 768 kHz DDC.  Slider may go higher manually
 // (up to FFTEngine::kMaxFftSize=262144); auto-zoom won't push above the
-// cap unless the slider already did.
-constexpr int kAutoZoomMaxFftSize = 65536;
+// cap unless the slider already did.  Shared with the remote planner.
+using ControlRanges::kAutoZoomMaxFftSize;
+
+// Mirror of fftSizeFor in src/gui/RemoteMediaController.cpp: the smallest
+// power of two from kDisplayFftPlanMinSize that reaches `target`, at most
+// kDisplayFftPlanMaxSize.
+int planFftSizeFor(double target)
+{
+    int size = ControlRanges::kDisplayFftPlanMinSize;
+    while (size < ControlRanges::kDisplayFftPlanMaxSize && size < target) {
+        size *= 2;
+    }
+    return size;
+}
+
+// Mirror of RemoteMediaController's plannedFftSize: the zoom term
+// (sample rate x pixels / span) and the Hz/bin term, through the shared
+// ControlRanges::autoZoomFftSize.
+int remotePlannedFftSize(double sampleRate, int pixels, double spanHz,
+                         double hzPerBinTarget, int baseline)
+{
+    double target = sampleRate * pixels / spanHz;
+    if (hzPerBinTarget > 0.0) {
+        target = std::max(target, sampleRate / hzPerBinTarget);
+    }
+    return ControlRanges::autoZoomFftSize(planFftSizeFor(target), baseline);
+}
 
 AutoZoomResult computeAutoZoomFftSize(int baseline,
                                       int currentSize,
@@ -65,10 +91,10 @@ AutoZoomResult computeAutoZoomFftSize(int baseline,
     while (targetSize < desired && targetSize < kAutoZoomMaxFftSize) {
         targetSize *= 2;
     }
-    targetSize = std::max(targetSize, baseline);
-    // Cap at max(baseline, autoZoomMax): when the user picks a slider
-    // value above the auto-zoom cap, baseline wins (their explicit choice).
-    targetSize = std::min(targetSize, std::max(baseline, kAutoZoomMaxFftSize));
+    // Floor at baseline, cap at max(baseline, autoZoomMax): when the user
+    // picks a slider value above the auto-zoom cap, baseline wins (their
+    // explicit choice).
+    targetSize = ControlRanges::autoZoomFftSize(targetSize, baseline);
     if (currentSize > 0) {
         const double ratio = static_cast<double>(targetSize)
                              / static_cast<double>(currentSize);
@@ -192,6 +218,48 @@ private slots:
         // baseline=131072, autoZoomCap=65536) = 131072.  Final=131072.
         const auto r = computeAutoZoomFftSize(131072, 0, 768000.0, 192000.0);
         QCOMPARE(r.size, 131072);
+    }
+
+    // The shared helper: floor at the baseline, cap at 65536 unless the
+    // baseline is above it.
+    void shared_helper_floors_and_caps()
+    {
+        QCOMPARE(kAutoZoomMaxFftSize, 65536);
+        QCOMPARE(ControlRanges::autoZoomFftSize(1024, 4096), 4096);
+        QCOMPARE(ControlRanges::autoZoomFftSize(32768, 4096), 32768);
+        QCOMPARE(ControlRanges::autoZoomFftSize(65536, 4096), 65536);
+        QCOMPARE(ControlRanges::autoZoomFftSize(262144, 4096), 65536);
+        QCOMPARE(ControlRanges::autoZoomFftSize(262144, 131072), 131072);
+        QCOMPARE(ControlRanges::autoZoomFftSize(1024, 262144), 262144);
+        static_assert(ControlRanges::autoZoomFftSize(262144, 4096) == 65536);
+    }
+
+    // The remote planner's size and tier ("fine" when the size is above
+    // the baseline) for a 96 kHz receiver on a pan 1068 px wide.
+    void remote_planner_caps_zoom_like_local_data()
+    {
+        QTest::addColumn<double>("spanHz");
+        QTest::addColumn<double>("hzPerBin");
+        QTest::addColumn<int>("baseline");
+        QTest::addColumn<int>("size");
+        QTest::addColumn<bool>("fine");
+        QTest::newRow("300 Hz span: capped, was 262144") << 300.0 << 0.0 << 4096 << 65536 << true;
+        QTest::newRow("96 kHz span: baseline, wide") << 96000.0 << 0.0 << 4096 << 4096 << false;
+        QTest::newRow("5549 Hz span: below the cap") << 5549.0 << 0.0 << 4096 << 32768 << true;
+        QTest::newRow("baseline 131072 wins over the cap") << 300.0 << 0.0 << 131072 << 131072 << false;
+        QTest::newRow("Hz/bin 0.5: capped, was 262144") << 96000.0 << 0.5 << 4096 << 65536 << true;
+    }
+
+    void remote_planner_caps_zoom_like_local()
+    {
+        QFETCH(double, spanHz);
+        QFETCH(double, hzPerBin);
+        QFETCH(int, baseline);
+        QFETCH(int, size);
+        QFETCH(bool, fine);
+        const int planned = remotePlannedFftSize(96000.0, 1068, spanHz, hzPerBin, baseline);
+        QCOMPARE(planned, size);
+        QCOMPARE(planned > baseline, fine);
     }
 
     // Hysteresis: small bandwidth change relative to current FFT size

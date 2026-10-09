@@ -5546,8 +5546,9 @@ nereus_add_test(tst_fft_size_slider)
 # not auto-replan on zoom).  Verifies setFftSizeBaseline round-trip +
 # rejection rules, and exercises the bandwidthChangeRequested lambda's
 # formula via an inline copy: targetSize = baseline * sampleRate / bwHz,
-# floored at baseline, capped at 262144, with [0.66, 1.5] hysteresis
-# bracket.
+# floored at baseline, capped at 65536 (ControlRanges::kAutoZoomMaxFftSize,
+# shared with the remote planner) unless the baseline is above it, with
+# [0.66, 1.5] hysteresis bracket.
 nereus_add_test(tst_auto_zoom_fft)
 
 # ── Task 2.5: ActivePeakHoldTrace ────────────────────────────────────────────
