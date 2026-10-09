@@ -31,6 +31,9 @@
 //                the cards follow the engine's device catalogue; Rescan
 //                devices rescans the older drivers. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Native audio plan Task 22 (R-AUD-27, R-AUD-30, D24): the
+//                Core speaker card in a window connected to a Core.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/SetupPage.h"
@@ -46,6 +49,7 @@ class QWidget;
 namespace NereusSDR {
 
 class AudioEngine;
+class CoreSpeakerCard;
 class DeviceCard;
 class SoundSystemLine;
 
@@ -58,6 +62,7 @@ class SoundSystemLine;
 //     Device, Device details (folded)
 //   Headphones     (DeviceCard, audio/Headphones, headphonesGroup)
 //     Enabled; Device and Device details greyed until Enabled
+//   Core speaker   (CoreSpeakerCard, coreSpeakerGroup), remote windows only
 //   Radio speaker  (amber group, radioSpeakerGroup)
 //     status line (radioSpeakerStatusLine)
 //     Volume [radio icon] [slider radioSpeakerVolume] [readout]
@@ -117,6 +122,9 @@ private:
 
     // Headphones
     DeviceCard* m_headphonesCard{nullptr};
+
+    // Core speaker (a remote window only)
+    CoreSpeakerCard* m_coreSpeakerCard{nullptr};
 
     // Radio speaker
     QWidget*      m_radioGroup{nullptr};

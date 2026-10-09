@@ -87,6 +87,11 @@
 //                greyed with its reason and live with no radio; the ASIO
 //                and Core cards in full; Linux with neither engine running.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Native audio plan Task 22 (R-AUD-27, D24): cases 2 and 7
+//                place the Core speaker card: absent from a window that runs
+//                the radio itself, between Headphones and Radio speaker in a
+//                remote window. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -565,6 +570,8 @@ private slots:
         QCOMPARE(headphones, 1);
         QVERIFY(!dialog.pageLabelsForTest().contains(QStringLiteral("Devices")));
         QCOMPARE(countNamed(&dialog, QStringLiteral("radioSpeakerExplanation")), 0);
+        // R-AUD-27: no Core speaker in a window that runs the radio itself.
+        QCOMPARE(countNamed(&dialog, QStringLiteral("coreSpeakerGroup")), 0);
     }
 
     // 3 and 4. The PC control: header and page are one control, saved keys
@@ -817,6 +824,17 @@ private slots:
         QCOMPARE(r.note->text(),
                  QStringLiteral("This is the speaker at the Core. Changes here reach every window "
                                 "and the phone. Each slice's AF level and mute still apply."));
+        // D24: the Core speaker card sits between Headphones and Radio
+        // speaker, once.
+        QCOMPARE(countNamed(&page, QStringLiteral("coreSpeakerGroup")), 1);
+        {
+            auto* core = child<QWidget>(&page, "coreSpeakerGroup");
+            QLayout* layout = core->parentWidget()->layout();
+            QCOMPARE(layout->indexOf(core),
+                     layout->indexOf(child<QWidget>(&page, "headphonesGroup")) + 1);
+            QCOMPARE(layout->indexOf(child<QWidget>(&page, "radioSpeakerGroup")),
+                     layout->indexOf(core) + 1);
+        }
 
         remote.setStationConnectionState(ConnectionState::Connected);
         QCOMPARE(r.status->text(), kOlderCore);

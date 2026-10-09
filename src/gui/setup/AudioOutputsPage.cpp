@@ -15,9 +15,14 @@
 // the older drivers and says which lists update by themselves (greyed on
 // the Mac); the Sound system line follows the cards' choices.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-09: native audio plan Task 22 (R-AUD-27, R-AUD-30, D24): the
+// Core speaker card between Headphones and Radio speaker, in a window
+// connected to a Core only. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+// Claude Code.
 // =================================================================
 
 #include "AudioOutputsPage.h"
+#include "CoreSpeakerCard.h"
 #include "DeviceCard.h"
 #include "SoundSystemLine.h"
 
@@ -164,6 +169,13 @@ AudioOutputsPage::AudioOutputsPage(RadioModel* model, QWidget* parent)
 
     buildThisComputer();
     buildHeadphones();
+    // D24: the Core speaker sits between Headphones and Radio speaker. A
+    // window that runs the radio itself has no separate Core, so the card
+    // is absent there (R-AUD-27: This computer is that speaker).
+    if (model && model->role() == RadioModel::Role::Remote) {
+        m_coreSpeakerCard = new CoreSpeakerCard(model, this);
+        addContent(m_coreSpeakerCard);
+    }
     buildRadioSpeaker();
     buildRescan();
 
@@ -702,6 +714,9 @@ void AudioOutputsPage::setStationSettingsAvailable(bool available, const QString
 {
     m_stationAvailable = available;
     m_stationReason = reason.isEmpty() ? tr("Connect to the Core to change these.") : reason;
+    if (m_coreSpeakerCard) {
+        m_coreSpeakerCard->setStationSettingsAvailable(available, reason);
+    }
     syncRadioSpeaker();
 }
 
