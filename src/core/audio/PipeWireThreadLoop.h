@@ -2,6 +2,9 @@
 // src/core/audio/PipeWireThreadLoop.h  (NereusSDR)
 //   Copyright (C) 2026 J.J. Boyd (KG4VCF) — GPLv2-or-later.
 //   2026-04-23 — created. AI-assisted via Claude Code.
+//   2026-10-09: connect() may stay quiet when the daemon does not answer
+//               (native audio plan Task 10). J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -22,7 +25,9 @@ public:
 
     // True when connect() succeeded. Until then the object is
     // safe to destroy but may not be used for stream creation.
-    bool connect();
+    // reportUnreachable false keeps a daemon that does not answer out of
+    // the log (the device engine's reconnect tries, every 1.5 s).
+    bool connect(bool reportUnreachable = true);
 
     pw_thread_loop* loop() const { return m_loop; }
     pw_core*        core() const { return m_core; }

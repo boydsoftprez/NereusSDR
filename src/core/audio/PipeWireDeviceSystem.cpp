@@ -19,6 +19,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMutexLocker>
+#include <QThread>
 
 #include <algorithm>
 #include <atomic>
@@ -249,6 +250,242 @@ QString PipeWireNodeDirectory::defaultNodeName(AudioDeviceDirection direction) c
     return direction == AudioDeviceDirection::Output ? m_defaultSink : m_defaultSource;
 }
 
+// ---------------------------------------------------------------------------
+// ReconnectingPipeWireDeviceSystem
+// ---------------------------------------------------------------------------
+
+// The engine's notice sink.  Each current connection's directory posts
+// through it; it outlives the system while a connection still holds it.
+struct ReconnectingPipeWireDeviceSystem::Forward {
+    std::mutex mutex;
+    std::function<void(AudioNotice)> sink;
+
+    void post(AudioNotice notice)
+    {
+        std::function<void(AudioNotice)> s;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            s = sink;
+        }
+        if (s) {
+            s(notice);
+        }
+    }
+};
+
+// A lost handler's way back to the system's thread, and the guard on every
+// timer and queued call into the system.  stop() clears the target under
+// `mutex`, so no handler queues anything after it; it sets `stopped` under
+// `runMutex`, which a running try or loss holds, so nothing runs in the
+// system once stop() returns, even when the system is destroyed on another
+// thread while its own thread is in a try.
+struct ReconnectingPipeWireDeviceSystem::Relay {
+    std::mutex mutex;
+    QObject* target = nullptr;
+
+    std::mutex runMutex;
+    bool stopped = false;
+};
+
+ReconnectingPipeWireDeviceSystem::ReconnectingPipeWireDeviceSystem(PipeWireConnector connector,
+                                                                   int retryIntervalMs)
+    : m_connector(std::move(connector))
+    , m_retryIntervalMs(retryIntervalMs)
+    , m_forward(std::make_shared<Forward>())
+    , m_relay(std::make_shared<Relay>())
+    , m_retryTimer(std::make_unique<QTimer>())
+{
+    m_retryTimer->setSingleShot(true);
+    std::shared_ptr<Relay> relay = m_relay;
+    QObject::connect(m_retryTimer.get(), &QTimer::timeout, m_retryTimer.get(), [this, relay] {
+        std::lock_guard<std::mutex> run(relay->runMutex);
+        if (!relay->stopped) {
+            retryNow();
+        }
+    });
+    {
+        std::lock_guard<std::mutex> lock(m_relay->mutex);
+        m_relay->target = m_retryTimer.get();
+    }
+    std::shared_ptr<IPipeWireConnection> first = m_connector ? m_connector() : nullptr;
+    if (first) {
+        adopt(first);
+    }
+    if (!first || !first->running()) {
+        if (m_retryIntervalMs > 0) {
+            qCInfo(lcAudio) << "PipeWire is not running; its engine is offered as not running"
+                            << "and tries again every" << m_retryIntervalMs << "ms";
+        }
+        scheduleRetry();
+    }
+}
+
+ReconnectingPipeWireDeviceSystem::~ReconnectingPipeWireDeviceSystem()
+{
+    stop();
+}
+
+void ReconnectingPipeWireDeviceSystem::stop()
+{
+    if (m_stopped) {
+        return;
+    }
+    m_stopped = true;
+    {
+        std::lock_guard<std::mutex> lock(m_relay->mutex);
+        m_relay->target = nullptr;
+    }
+    {
+        // Waits only for a try already running on the system's thread (at
+        // most the connection's kPipeWireConnectWaitSeconds); a pending try
+        // is never waited for.
+        std::lock_guard<std::mutex> run(m_relay->runMutex);
+        m_relay->stopped = true;
+    }
+    if (m_retryTimer) {
+        QObject::disconnect(m_retryTimer.get(), nullptr, nullptr, nullptr);
+        if (m_retryTimer->thread() == QThread::currentThread()) {
+            m_retryTimer.reset();   // stops a pending try; queued lost events go with it
+        } else {
+            // Destroyed off its thread (a catalogue thread that outlived
+            // its stop()): the timer is stopped and deleted on its own.
+            m_retryTimer.release()->deleteLater();
+        }
+    }
+    if (std::shared_ptr<IPipeWireConnection> connection = current()) {
+        connection->setLostHandler({});
+        connection->directory().setNoticeSink({});
+    }
+}
+
+bool ReconnectingPipeWireDeviceSystem::retrying() const
+{
+    return m_retryTimer && m_retryTimer->isActive();
+}
+
+std::shared_ptr<IPipeWireConnection> ReconnectingPipeWireDeviceSystem::current() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_current;
+}
+
+void ReconnectingPipeWireDeviceSystem::adopt(const std::shared_ptr<IPipeWireConnection>& connection)
+{
+    std::shared_ptr<IPipeWireConnection> old;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        old = std::exchange(m_current, connection);
+    }
+    if (old) {
+        // Its streams keep it alive until they close; it posts nothing more.
+        old->setLostHandler({});
+        old->directory().setNoticeSink({});
+    }
+    std::weak_ptr<IPipeWireConnection> weak = connection;
+    std::shared_ptr<Relay> relay = m_relay;
+    connection->setLostHandler([this, relay, weak] {
+        std::lock_guard<std::mutex> lock(relay->mutex);
+        if (relay->target != nullptr) {
+            // Runs only while the target (owned by this system) lives.
+            QMetaObject::invokeMethod(
+                relay->target,
+                [this, relay, weak] {
+                    std::lock_guard<std::mutex> run(relay->runMutex);
+                    if (!relay->stopped) {
+                        onLost(weak);
+                    }
+                },
+                Qt::QueuedConnection);
+        }
+    });
+    std::shared_ptr<Forward> forward = m_forward;
+    connection->directory().setNoticeSink([forward](AudioNotice notice) { forward->post(notice); });
+}
+
+void ReconnectingPipeWireDeviceSystem::onLost(const std::weak_ptr<IPipeWireConnection>& lost)
+{
+    if (m_stopped || lost.lock() != current()) {
+        return;   // an old connection, already replaced
+    }
+    if (m_retryIntervalMs > 0) {
+        qCWarning(lcAudio) << "PipeWire went away; trying again every" << m_retryIntervalMs << "ms";
+    }
+    scheduleRetry();
+}
+
+void ReconnectingPipeWireDeviceSystem::scheduleRetry()
+{
+    if (m_stopped || m_retryIntervalMs <= 0 || !m_connector || !m_retryTimer
+        || m_retryTimer->isActive()) {
+        return;
+    }
+    m_retryTimer->start(m_retryIntervalMs);
+}
+
+void ReconnectingPipeWireDeviceSystem::retryNow()
+{
+    if (m_stopped) {
+        return;
+    }
+    std::shared_ptr<IPipeWireConnection> active = current();
+    if (active && active->running()) {
+        return;
+    }
+    std::shared_ptr<IPipeWireConnection> next = m_connector();
+    if (!next || !next->running()) {
+        scheduleRetry();
+        return;
+    }
+    adopt(next);
+    qCInfo(lcAudio) << "PipeWire answers again; its devices are listed";
+    // The supervisor reopens the chosen devices on the new list.
+    m_forward->post(AudioNotice::DevicesChanged);
+    m_forward->post(AudioNotice::DefaultOutputChanged);
+    m_forward->post(AudioNotice::DefaultInputChanged);
+    if (!next->running()) {
+        scheduleRetry();   // lost again before its handler was set
+    }
+}
+
+bool ReconnectingPipeWireDeviceSystem::running()
+{
+    std::shared_ptr<IPipeWireConnection> connection = current();
+    return connection && connection->running();
+}
+
+QList<PipeWireNodeRecord> ReconnectingPipeWireDeviceSystem::nodes()
+{
+    std::shared_ptr<IPipeWireConnection> connection = current();
+    return connection ? connection->directory().nodes() : QList<PipeWireNodeRecord>{};
+}
+
+QString ReconnectingPipeWireDeviceSystem::defaultNodeName(AudioDeviceDirection direction)
+{
+    std::shared_ptr<IPipeWireConnection> connection = current();
+    return connection ? connection->directory().defaultNodeName(direction) : QString();
+}
+
+void ReconnectingPipeWireDeviceSystem::setNoticeSink(std::function<void(AudioNotice)> sink)
+{
+    std::lock_guard<std::mutex> lock(m_forward->mutex);
+    m_forward->sink = std::move(sink);
+}
+
+std::unique_ptr<IAudioBus> ReconnectingPipeWireDeviceSystem::createOutput(
+    const PipeWireNodeRecord& node, const AudioStreamRequest& request)
+{
+    std::shared_ptr<IPipeWireConnection> connection = current();
+    return connection ? connection->createOutput(node, request) : nullptr;
+}
+
+std::unique_ptr<IAudioInputStream> ReconnectingPipeWireDeviceSystem::createInput(
+    const PipeWireNodeRecord& node, const AudioStreamRequest& request, MicChannelPick pick,
+    IAudioInputSink* sink)
+{
+    std::shared_ptr<IPipeWireConnection> connection = current();
+    return connection ? connection->createInput(node, request, pick, sink) : nullptr;
+}
+
 #ifdef NEREUS_HAVE_PIPEWIRE
 
 // ---------------------------------------------------------------------------
@@ -340,22 +577,36 @@ struct PipeWireLossWatch {
     }
 };
 
-// Everything the adapter and its streams share.  A stream holds it, so the
-// thread loop outlives every stream on it.
-class PipeWireDeviceCore {
+// One connection to the daemon: everything the adapter and its streams
+// share.  A stream holds it, so the thread loop outlives every stream on it.
+class PipeWireDeviceCore final : public IPipeWireConnection,
+                                 public std::enable_shared_from_this<PipeWireDeviceCore> {
 public:
     PipeWireDeviceCore() = default;
-    ~PipeWireDeviceCore() { disconnect(); }
+    ~PipeWireDeviceCore() override { disconnect(); }
 
     PipeWireDeviceCore(const PipeWireDeviceCore&) = delete;
     PipeWireDeviceCore& operator=(const PipeWireDeviceCore&) = delete;
 
-    bool connect();
+    bool connect(bool reportUnreachable);
     void disconnect();
 
     PipeWireThreadLoop* loop() const { return m_loop.get(); }
-    bool running() const { return m_running.load(std::memory_order_acquire); }
-    PipeWireNodeDirectory& directory() { return m_directory; }
+    bool running() const override { return m_running.load(std::memory_order_acquire); }
+    PipeWireNodeDirectory& directory() override { return m_directory; }
+
+    void setLostHandler(std::function<void()> handler) override
+    {
+        std::lock_guard<std::mutex> lock(m_lostMutex);
+        m_lostHandler = std::move(handler);
+    }
+
+    std::unique_ptr<IAudioBus> createOutput(const PipeWireNodeRecord& node,
+                                            const AudioStreamRequest& request) override;
+    std::unique_ptr<IAudioInputStream> createInput(const PipeWireNodeRecord& node,
+                                                   const AudioStreamRequest& request,
+                                                   MicChannelPick pick,
+                                                   IAudioInputSink* sink) override;
 
     void watch(const std::shared_ptr<PipeWireLossWatch>& watch)
     {
@@ -393,6 +644,7 @@ private:
     void unbindNode(std::map<std::uint32_t, std::unique_ptr<BoundNode>>::iterator it);
     void unbindMetadata();
     void postLost(std::uint32_t id);
+    void postAllLost();
 
     std::unique_ptr<PipeWireThreadLoop> m_loop;
     pw_registry* m_registry = nullptr;
@@ -411,9 +663,12 @@ private:
 
     std::mutex m_watchMutex;
     std::vector<std::weak_ptr<PipeWireLossWatch>> m_watches;
+
+    std::mutex m_lostMutex;
+    std::function<void()> m_lostHandler;
 };
 
-bool PipeWireDeviceCore::connect()
+bool PipeWireDeviceCore::connect(bool reportUnreachable)
 {
     // Only the members every supported libpipewire has (0.3.50 up); the
     // rest stay null.
@@ -431,7 +686,7 @@ bool PipeWireDeviceCore::connect()
     };
 
     m_loop = std::make_unique<PipeWireThreadLoop>();
-    if (!m_loop->connect()) {
+    if (!m_loop->connect(reportUnreachable)) {
         m_loop.reset();
         return false;
     }
@@ -525,6 +780,22 @@ void PipeWireDeviceCore::postLost(std::uint32_t id)
     }
 }
 
+void PipeWireDeviceCore::postAllLost()
+{
+    std::vector<std::shared_ptr<PipeWireLossWatch>> lost;
+    {
+        std::lock_guard<std::mutex> lock(m_watchMutex);
+        for (const std::weak_ptr<PipeWireLossWatch>& weak : m_watches) {
+            if (std::shared_ptr<PipeWireLossWatch> watch = weak.lock()) {
+                lost.push_back(std::move(watch));
+            }
+        }
+    }
+    for (const std::shared_ptr<PipeWireLossWatch>& watch : lost) {
+        watch->post(AudioStreamEvent::Kind::DeviceLost, QStringLiteral("PipeWire went away"));
+    }
+}
+
 // The listener's callbacks: the thread loop's thread, its lock held.
 void PipeWireDeviceCore::onCoreDone(void* data, uint32_t id, int seq)
 {
@@ -551,9 +822,23 @@ void PipeWireDeviceCore::onCoreError(void* data, uint32_t id, int /*seq*/, int r
     // The daemon went away: nothing is listed and the engine is not running.
     // (The thread loop's thread, not a device callback: logging is safe.)
     qCWarning(lcAudio) << "PipeWire connection lost:" << (message ? message : "");
-    self->m_running.store(false, std::memory_order_release);
+    const bool wasRunning = self->m_running.exchange(false, std::memory_order_acq_rel);
     self->m_directory.clear();
     pw_thread_loop_signal(self->m_loop->loop(), false);
+    if (!wasRunning) {
+        return;
+    }
+    // Every open stream is on a dead connection; the system's handler
+    // queues a reconnect to its own thread and returns.
+    self->postAllLost();
+    std::function<void()> handler;
+    {
+        std::lock_guard<std::mutex> lock(self->m_lostMutex);
+        handler = self->m_lostHandler;
+    }
+    if (handler) {
+        handler();
+    }
 }
 
 void PipeWireDeviceCore::onGlobal(void* data, uint32_t id, uint32_t /*permissions*/,
@@ -942,62 +1227,43 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// The adapter.
+// The connection's streams, and the adapter.
 // ---------------------------------------------------------------------------
-class PipeWireDeviceSystem final : public IPipeWireDeviceSystem {
-public:
-    PipeWireDeviceSystem()
-        : m_core(std::make_shared<PipeWireDeviceCore>())
-    {
-        // R-AUD-32: a test run never reaches a sound server.
-        if (audioDevicesBarredForTestRun()) {
-            return;
-        }
-        if (!m_core->connect()) {
-            qCInfo(lcAudio) << "PipeWire is not running; its engine is offered as not running";
-        }
-    }
+std::unique_ptr<IAudioBus> PipeWireDeviceCore::createOutput(const PipeWireNodeRecord& node,
+                                                            const AudioStreamRequest& request)
+{
+    return std::make_unique<PipeWireDeviceOutputBus>(
+        shared_from_this(), pipeWireDeviceStreamConfig(node, request, AudioDeviceDirection::Output),
+        request.delayMs, node.id);
+}
 
-    bool running() override { return m_core->running(); }
-    QList<PipeWireNodeRecord> nodes() override { return m_core->directory().nodes(); }
-
-    QString defaultNodeName(AudioDeviceDirection direction) override
-    {
-        return m_core->directory().defaultNodeName(direction);
-    }
-
-    void setNoticeSink(std::function<void(AudioNotice)> sink) override
-    {
-        m_core->directory().setNoticeSink(std::move(sink));
-    }
-
-    std::unique_ptr<IAudioBus> createOutput(const PipeWireNodeRecord& node,
-                                            const AudioStreamRequest& request) override
-    {
-        return std::make_unique<PipeWireDeviceOutputBus>(
-            m_core, pipeWireDeviceStreamConfig(node, request, AudioDeviceDirection::Output),
-            request.delayMs, node.id);
-    }
-
-    std::unique_ptr<IAudioInputStream> createInput(const PipeWireNodeRecord& node,
-                                                   const AudioStreamRequest& request,
-                                                   MicChannelPick pick,
-                                                   IAudioInputSink* sink) override
-    {
-        return std::make_unique<PipeWireDeviceInputStream>(
-            m_core, pipeWireDeviceStreamConfig(node, request, AudioDeviceDirection::Input), pick,
-            sink, node.id);
-    }
-
-private:
-    std::shared_ptr<PipeWireDeviceCore> m_core;
-};
+std::unique_ptr<IAudioInputStream> PipeWireDeviceCore::createInput(const PipeWireNodeRecord& node,
+                                                                   const AudioStreamRequest& request,
+                                                                   MicChannelPick pick,
+                                                                   IAudioInputSink* sink)
+{
+    return std::make_unique<PipeWireDeviceInputStream>(
+        shared_from_this(), pipeWireDeviceStreamConfig(node, request, AudioDeviceDirection::Input),
+        pick, sink, node.id);
+}
 
 } // namespace
 
 std::unique_ptr<IPipeWireDeviceSystem> makePipeWireDeviceSystem()
 {
-    return std::make_unique<PipeWireDeviceSystem>();
+    // R-AUD-32: a test run never reaches a sound server, and never retries.
+    const bool barred = audioDevicesBarredForTestRun();
+    auto reported = std::make_shared<std::atomic<bool>>(false);
+    PipeWireConnector connector = [barred, reported]() -> std::shared_ptr<IPipeWireConnection> {
+        auto core = std::make_shared<PipeWireDeviceCore>();
+        if (!barred) {
+            // The first try that finds no daemon says so; the retries stay quiet.
+            core->connect(!reported->exchange(true));
+        }
+        return core;
+    };
+    return std::make_unique<ReconnectingPipeWireDeviceSystem>(
+        std::move(connector), barred ? 0 : kPipeWireReconnectIntervalMs);
 }
 
 #endif // NEREUS_HAVE_PIPEWIRE

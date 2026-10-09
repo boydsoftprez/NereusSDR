@@ -9,7 +9,9 @@
 // desktop's PipeWire: whether the daemon answers, its nodes, the default
 // sink and source, its notices and its streams.  A test installs a fake.
 //
-// The real adapter (makePipeWireDeviceSystem) runs its own thread loop.
+// The real adapter (makePipeWireDeviceSystem) is a
+// ReconnectingPipeWireDeviceSystem over connections to the daemon.  Each
+// connection (IPipeWireConnection) runs its own thread loop.
 // Its registry listener binds every audio device node and keeps the node's
 // properties as a PipeWireNodeRecord in a PipeWireNodeDirectory; it binds
 // the "default" metadata for default.audio.sink and default.audio.source.
@@ -21,6 +23,15 @@
 // IAudioInputSink.  While audioDevicesBarredForTestRun() is true the
 // adapter never connects (running() is false, nothing is listed) and every
 // open fails, so no test reaches a sound server.
+//
+// When the daemon goes away (a session restart, a Bluetooth reset), the
+// connection marks itself not running, forgets its list, posts
+// DevicesChanged and DeviceLost to its open streams, and calls its lost
+// handler.  The system then tries a new connection every
+// kPipeWireReconnectIntervalMs on the thread that made it (its event loop,
+// never a PipeWire callback, never an audio or DSP thread).  When one runs
+// it becomes the current connection and the system posts DevicesChanged,
+// so the stream supervisor reopens the chosen devices without a restart.
 //
 // The directory and the record helpers hold no PipeWire types, so the
 // listener's logic is tested without a daemon.
@@ -43,7 +54,9 @@
 #include <QMutex>
 #include <QString>
 #include <QStringList>
+#include <QTimer>
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -83,8 +96,13 @@ public:
 // none (design choice 11: today's default buffer).
 inline constexpr int kPipeWireDefaultQuantumFrames = 128;
 
-// How long the real adapter waits, once, for the daemon's first list.
+// How long the real adapter waits, once per connection, for the daemon's
+// first list.
 inline constexpr int kPipeWireConnectWaitSeconds = 2;
+
+// How long the adapter waits between connection tries while the daemon
+// does not answer.
+inline constexpr int kPipeWireReconnectIntervalMs = 1500;
 
 // True for a node the device lists show: an "Audio/Sink", "Audio/Source"
 // or "Audio/Duplex" node that is not a monitor (node.name ending in
@@ -140,8 +158,85 @@ private:
     std::function<void(AudioNotice)> m_sink;
 };
 
-// The real adapter on this desktop's PipeWire.  It connects once, when it
-// is made, and waits at most kPipeWireConnectWaitSeconds for the first list.
+// One connection to the daemon.  The real one owns a thread loop and its
+// registry listener; a test installs a fake.  directory() is what its
+// listener knows.
+class IPipeWireConnection {
+public:
+    virtual ~IPipeWireConnection() = default;
+    virtual bool running() const = 0;
+    virtual PipeWireNodeDirectory& directory() = 0;
+    // Called at most once, from any thread, when the daemon goes away; by
+    // then running() is false and the directory is clear.
+    virtual void setLostHandler(std::function<void()> handler) = 0;
+    virtual std::unique_ptr<IAudioBus> createOutput(const PipeWireNodeRecord&, const AudioStreamRequest&) = 0;
+    virtual std::unique_ptr<IAudioInputStream> createInput(const PipeWireNodeRecord&, const AudioStreamRequest&, MicChannelPick, IAudioInputSink*) = 0;
+};
+
+// Makes a connection, running or not (a daemon that does not answer gives
+// one that is not running).  Called on the system's thread.
+using PipeWireConnector = std::function<std::shared_ptr<IPipeWireConnection>()>;
+
+// The engine's system over a connector: it connects when made and, while
+// its connection is not running, tries again every retryIntervalMs on the
+// event loop of the thread that made it (retryIntervalMs 0: never again).
+// A new connection that runs replaces the old one, and DevicesChanged and
+// both default notices follow.  Streams keep the connection they opened
+// on, so an old one lives until its last stream closes.  Every call but
+// retrying() and the constructor may come from any thread.
+class ReconnectingPipeWireDeviceSystem final : public IPipeWireDeviceSystem {
+public:
+    explicit ReconnectingPipeWireDeviceSystem(PipeWireConnector connector,
+                                              int retryIntervalMs = kPipeWireReconnectIntervalMs);
+    ~ReconnectingPipeWireDeviceSystem() override;   // stop()
+
+    ReconnectingPipeWireDeviceSystem(const ReconnectingPipeWireDeviceSystem&) = delete;
+    ReconnectingPipeWireDeviceSystem& operator=(const ReconnectingPipeWireDeviceSystem&) = delete;
+
+    bool running() override;
+    QList<PipeWireNodeRecord> nodes() override;
+    QString defaultNodeName(AudioDeviceDirection direction) override;
+    void setNoticeSink(std::function<void(AudioNotice)> sink) override;
+    std::unique_ptr<IAudioBus> createOutput(const PipeWireNodeRecord& node,
+                                            const AudioStreamRequest& request) override;
+    std::unique_ptr<IAudioInputStream> createInput(const PipeWireNodeRecord& node,
+                                                   const AudioStreamRequest& request,
+                                                   MicChannelPick pick,
+                                                   IAudioInputSink* sink) override;
+
+    // Cancels a pending try at once and detaches the current connection's
+    // notices; the connector is never called again.  On the system's
+    // thread it never waits; from another thread (a destructor there) it
+    // waits only for a try already running.
+    void stop();
+    // A try is scheduled (the system's thread).
+    bool retrying() const;
+
+private:
+    struct Forward;
+    struct Relay;
+
+    std::shared_ptr<IPipeWireConnection> current() const;
+    void adopt(const std::shared_ptr<IPipeWireConnection>& connection);
+    void onLost(const std::weak_ptr<IPipeWireConnection>& lost);
+    void scheduleRetry();
+    void retryNow();
+
+    PipeWireConnector m_connector;
+    int m_retryIntervalMs;
+    std::shared_ptr<Forward> m_forward;
+    std::shared_ptr<Relay> m_relay;
+    std::unique_ptr<QTimer> m_retryTimer;   // the system's thread; also the relay's target
+    std::atomic<bool> m_stopped{false};
+
+    mutable std::mutex m_mutex;
+    std::shared_ptr<IPipeWireConnection> m_current;
+};
+
+// The real adapter on this desktop's PipeWire: a
+// ReconnectingPipeWireDeviceSystem whose connections wait at most
+// kPipeWireConnectWaitSeconds for their first list.  In a test run it never
+// connects and never retries.
 std::unique_ptr<IPipeWireDeviceSystem> makePipeWireDeviceSystem();
 
 #ifdef NEREUS_HAVE_PIPEWIRE

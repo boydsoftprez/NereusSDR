@@ -54,6 +54,7 @@ QList<AudioDeviceInfo> pipeWireDevicesFromNodes(const QList<PipeWireNodeRecord>&
 {
     QList<AudioDeviceInfo> devices;
     for (const PipeWireNodeRecord& node : nodes) {
+        // Our own VAX nodes are listed on purpose, as every engine lists them.
         if (!pipeWireNodeIsListed(node)) {
             continue;
         }

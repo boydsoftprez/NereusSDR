@@ -2,6 +2,9 @@
 // src/core/audio/PipeWireThreadLoop.cpp  (NereusSDR)
 //   Copyright (C) 2026 J.J. Boyd (KG4VCF) — GPLv2-or-later.
 //   2026-04-23 — created. AI-assisted via Claude Code.
+//   2026-10-09: connect() may stay quiet when the daemon does not answer
+//               (native audio plan Task 10). J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 #ifdef NEREUS_HAVE_PIPEWIRE
 #include "core/audio/PipeWireThreadLoop.h"
@@ -41,7 +44,7 @@ PipeWireThreadLoop::~PipeWireThreadLoop()
     pw_deinit();
 }
 
-bool PipeWireThreadLoop::connect()
+bool PipeWireThreadLoop::connect(bool reportUnreachable)
 {
     m_loop = pw_thread_loop_new("nereussdr.pw", nullptr);
     if (!m_loop) {
@@ -64,7 +67,9 @@ bool PipeWireThreadLoop::connect()
     m_core = pw_context_connect(m_context, nullptr, 0);
     if (!m_core) {
         unlock();
-        qCWarning(lcPw) << "pw_context_connect failed (socket unreachable?)";
+        if (reportUnreachable) {
+            qCWarning(lcPw) << "pw_context_connect failed (socket unreachable?)";
+        }
         return false;
     }
 

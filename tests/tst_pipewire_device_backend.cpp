@@ -5,12 +5,15 @@
 // (native audio plan Task 10: R-AUD-01, R-AUD-02, R-AUD-03, R-AUD-07,
 // R-AUD-14, R-AUD-32) with a fake system: nodes to devices, pairs, the
 // stream a pair opens, the registry listener's notices, the matcher
-// output's fill, the not-running engine and the test-run barrier.  No
+// output's fill, the not-running engine, reconnecting when the daemon
+// returns and the test-run barrier.  No
 // sound server is reached: the real adapter never connects in a test run.
 //
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 10. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-09: reconnect cases (Task 10 fix round 1). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 #ifdef NEREUS_HAVE_PIPEWIRE
 
@@ -33,6 +36,7 @@
 #include <cmath>
 #include <memory>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 using namespace NereusSDR;
@@ -209,6 +213,110 @@ struct NoticeLog {
         return out;
     }
 };
+
+// A connection seam fake: running or not when made, its directory filled
+// by the test, lose() as the daemon going away.
+class FakePipeWireConnection final : public IPipeWireConnection {
+public:
+    explicit FakePipeWireConnection(bool up) : isRunning(up) {}
+
+    bool running() const override { return isRunning.load(); }
+    PipeWireNodeDirectory& directory() override { return dir; }
+    void setLostHandler(std::function<void()> handler) override
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        lostHandler = std::move(handler);
+    }
+    std::unique_ptr<IAudioBus> createOutput(const PipeWireNodeRecord&,
+                                            const AudioStreamRequest& request) override
+    {
+        return std::make_unique<FakeMatcherAudioBus>(request);
+    }
+    std::unique_ptr<IAudioInputStream> createInput(const PipeWireNodeRecord&,
+                                                   const AudioStreamRequest&, MicChannelPick,
+                                                   IAudioInputSink*) override
+    {
+        return std::make_unique<FakeInputStream>();
+    }
+
+    // As the real connection does on -EPIPE, from another thread.
+    void lose()
+    {
+        isRunning.store(false);
+        dir.clear();
+        std::function<void()> handler;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            handler = lostHandler;
+        }
+        if (handler) {
+            handler();
+        }
+    }
+
+    bool hasLostHandler()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return bool(lostHandler);
+    }
+
+    std::atomic<bool> isRunning;
+    PipeWireNodeDirectory dir;
+    std::mutex mutex;
+    std::function<void()> lostHandler;
+};
+
+// A desktop whose daemon the test starts and stops.  Every connection it
+// makes while up lists a sink and a source.
+struct FakeServer {
+    std::atomic<bool> up{true};
+    std::atomic<int> tries{0};
+    std::mutex mutex;
+    std::vector<std::shared_ptr<FakePipeWireConnection>> made;
+
+    PipeWireConnector connector()
+    {
+        return [this]() -> std::shared_ptr<IPipeWireConnection> {
+            tries.fetch_add(1);
+            auto connection = std::make_shared<FakePipeWireConnection>(up.load());
+            if (connection->running()) {
+                connection->dir.nodeProperties(31, sinkProps(QStringLiteral("alsa_output.analog-stereo"),
+                                                             QStringLiteral("Built-in")));
+                QHash<QString, QString> source = sinkProps(QStringLiteral("alsa_input.analog-stereo"),
+                                                           QStringLiteral("Built-in Mic"));
+                source.insert(QStringLiteral("media.class"), QStringLiteral("Audio/Source"));
+                connection->dir.nodeProperties(32, source);
+            }
+            std::lock_guard<std::mutex> lock(mutex);
+            made.push_back(connection);
+            return connection;
+        };
+    }
+
+    std::shared_ptr<FakePipeWireConnection> last()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return made.empty() ? nullptr : made.back();
+    }
+};
+
+// Short in the test so the waits stay short; the real interval is
+// kPipeWireReconnectIntervalMs.
+constexpr int kTestRetryMs = 20;
+
+// The system's own log lines, expected where a case makes them.
+void expectLost()
+{
+    QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("PipeWire went away")));
+}
+void expectBack()
+{
+    QTest::ignoreMessage(QtInfoMsg, QRegularExpression(QStringLiteral("PipeWire answers again")));
+}
+void expectNotRunning()
+{
+    QTest::ignoreMessage(QtInfoMsg, QRegularExpression(QStringLiteral("PipeWire is not running")));
+}
 
 QString prop(pw_properties* p, const char* key)
 {
@@ -661,6 +769,135 @@ private slots:
         PipeWireDeviceBackend backend(makePipeWireDeviceSystem());
         QVERIFY(!backend.running());
         QVERIFY(backend.enumerate().isEmpty());
+
+        // Nor does it retry.
+        auto* reconnecting = dynamic_cast<ReconnectingPipeWireDeviceSystem*>(system.get());
+        QVERIFY(reconnecting != nullptr);
+        QVERIFY(!reconnecting->retrying());
+    }
+
+    // R-AUD-03: the daemon goes away and comes back.  The list empties and
+    // the engine is not running; the system tries again on its own thread
+    // on a timer (never a busy loop); when the daemon answers the devices
+    // are listed again and DevicesChanged lets the supervisor reopen them,
+    // with no restart.
+    void reconnectsWhenTheServerReturns()
+    {
+        FakeServer server;
+        auto owned = std::make_unique<ReconnectingPipeWireDeviceSystem>(server.connector(), kTestRetryMs);
+        ReconnectingPipeWireDeviceSystem* system = owned.get();
+        PipeWireDeviceBackend backend(std::move(owned));
+        NoticeLog log;
+        backend.setNoticeSink(log.sink());
+
+        QVERIFY(backend.running());
+        QVERIFY(!system->retrying());
+        QCOMPARE(backend.enumerate().size(), 2);
+        QCOMPARE(server.tries.load(), 1);
+
+        // The daemon stops: as the real connection does, off this thread.
+        server.up.store(false);
+        std::shared_ptr<FakePipeWireConnection> first = server.last();
+        expectLost();
+        std::thread pwThread([first] { first->lose(); });
+        pwThread.join();
+        QVERIFY(!backend.running());
+        QVERIFY(backend.enumerate().isEmpty());
+        QVERIFY(log.take().contains(AudioNotice::DevicesChanged));
+
+        // The retry is queued to this thread, then tries on the timer.
+        QElapsedTimer down;
+        down.start();
+        QTRY_VERIFY(server.tries.load() >= 3);
+        const qint64 downMs = down.elapsed();
+        QVERIFY(system->retrying());
+        QVERIFY(!backend.running());
+        QVERIFY(backend.enumerate().isEmpty());
+        // A timer, not a loop: no more tries than the interval allows
+        // (a late timer under load only makes fewer).
+        QVERIFY2(server.tries.load() <= 2 + int(down.elapsed() / kTestRetryMs) + 1,
+                 qPrintable(QStringLiteral("%1 tries in %2 ms").arg(server.tries.load()).arg(downMs)));
+
+        // The daemon answers again.
+        expectBack();
+        server.up.store(true);
+        QTRY_VERIFY(backend.running());
+        QVERIFY(!system->retrying());
+        const QList<AudioDeviceInfo> back = backend.enumerate();
+        QCOMPARE(back.size(), 2);
+        QVERIFY(find(back, QStringLiteral("alsa_output.analog-stereo"), AudioDeviceDirection::Output));
+        QVERIFY(find(back, QStringLiteral("alsa_input.analog-stereo"), AudioDeviceDirection::Input));
+        const QList<AudioNotice> notices = log.take();
+        QVERIFY(notices.contains(AudioNotice::DevicesChanged));
+        QVERIFY(notices.contains(AudioNotice::DefaultOutputChanged));
+        QVERIFY(notices.contains(AudioNotice::DefaultInputChanged));
+
+        // The old connection is detached: it posts nothing and its loss
+        // no longer reaches the system.
+        QVERIFY(!first->hasLostHandler());
+        first->dir.nodeProperties(99, sinkProps(QStringLiteral("stale"), QStringLiteral("Stale")));
+        QVERIFY(log.take().isEmpty());
+
+        // Opens go to the new connection.
+        QVERIFY(backend.createOutput(AudioStreamRequest{}) != nullptr);
+
+        // Lost again: the cycle repeats.
+        const int before = server.tries.load();
+        server.up.store(false);
+        expectLost();
+        server.last()->lose();
+        QTRY_VERIFY(server.tries.load() > before);
+        expectBack();
+        server.up.store(true);
+        QTRY_VERIFY(backend.running());
+    }
+
+    // No daemon at start: the system keeps trying and lists the devices
+    // once it answers.
+    void connectsWhenTheServerStartsLate()
+    {
+        FakeServer server;
+        server.up.store(false);
+        expectNotRunning();
+        ReconnectingPipeWireDeviceSystem system(server.connector(), kTestRetryMs);
+        QVERIFY(!system.running());
+        QVERIFY(system.retrying());
+        expectBack();
+        server.up.store(true);
+        QTRY_VERIFY(system.running());
+        QCOMPARE(system.nodes().size(), 2);
+    }
+
+    // stop() during a retry cancels it at once and the connector is never
+    // called again; a late loss from the old connection does nothing.
+    void stopDuringARetryReturnsPromptly()
+    {
+        FakeServer server;
+        server.up.store(false);
+        expectNotRunning();
+        ReconnectingPipeWireDeviceSystem system(server.connector(), kTestRetryMs);
+        QTRY_VERIFY(server.tries.load() >= 2);
+        QVERIFY(system.retrying());
+
+        QElapsedTimer timer;
+        timer.start();
+        system.stop();
+        const qint64 stopMs = timer.elapsed();
+        // It never waits on the daemon: well inside one retry interval of
+        // the real adapter.
+        QVERIFY2(stopMs < kPipeWireReconnectIntervalMs, qPrintable(QString::number(stopMs)));
+        QVERIFY(!system.retrying());
+
+        const int after = server.tries.load();
+        server.up.store(true);
+        QTest::qWait(kTestRetryMs * 5);
+        QCOMPARE(server.tries.load(), after);
+        QVERIFY(!system.running());
+        QVERIFY(!server.last()->hasLostHandler());
+        server.last()->lose();   // detached: nothing happens
+        QTest::qWait(kTestRetryMs * 2);
+        QCOMPARE(server.tries.load(), after);
+        system.stop();   // a second stop() is harmless
     }
 
     // R-AUD-01 on Linux: PipeWire ahead of the older drivers, outside the
