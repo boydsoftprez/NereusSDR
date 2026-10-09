@@ -268,6 +268,15 @@
 //   2026-10-07  J.J. Boyd / KG4VCF  CatControl's notConnectedReason is
 //                                    scanned; its unavailableReason is the
 //                                    window's own. AI tooling: Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Rotor bench fix: RotorConnection's
+//                                    "not answering" fault is scanned.
+//   2026-10-08  J.J. Boyd / KG4VCF  Remote rotor control: the rotor's
+//                                    reasons are scanned (StationRotorController,
+//                                    RotctldProcess, RotorModel, the
+//                                    dispatcher's and IStationLink's rotor
+//                                    words, RadioModel's rotor requests);
+//                                    SpotBeamTurner's are the window's own.
+//                                    AI tooling: Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -920,6 +929,8 @@ const QList<ReasonSource>& reasonSources()
           QStringLiteral("RfKitModel::readOnlyReason()"),
           QStringLiteral("StationTciModel::readOnlyReason()"),
           QStringLiteral("StationCatModel::readOnlyReason()"),
+          // Remote rotor control: the `rotor` object's, scanned below.
+          QStringLiteral("RotorLink::RotorModel::readOnlyReason()"),
           // Parity Task 19: the `spotSources` object's, scanned below.
           QStringLiteral("SpotSourceHost::readOnlyReason()"),
           // Fix wave after parity Tasks 19 and 21 (I5): the radio verbs'
@@ -1169,6 +1180,11 @@ const QList<ReasonSource>& reasonSources()
                          "alex->setRxAntForBand(Band(band), antenna)"),
           // A function of this file, its literal scanned here.
           QStringLiteral("notRepresentableReason()"),
+          // Remote rotor control: the rotor verbs' two refusals of this
+          // file, their literals scanned here, and IStationLink's words for
+          // a Core without a rotor controller (scanned below).
+          QStringLiteral("rotorUnreadableReason()"), QStringLiteral("rotorSetupInvalidReason()"),
+          QStringLiteral("rotorUnavailableReason()"),
           // Level Cal: RadioModel::requestStartLevelCalibration's refusal,
           // worded in LevelCalibrationService.cpp and LevelCalibrationRun.cpp
           // (both scanned below) or RadioModel.cpp's on-air words.
@@ -1486,6 +1502,59 @@ const QList<ReasonSource>& reasonSources()
         // CAT setup from a connected desktop: a remote window's own words
         // while it is not connected to the Core.
         {"src/core/cat/CatControl.cpp", {QStringLiteral("notConnectedReason")}, {}, 1},
+        // Remote rotor control: the seven rotor verbs' refusals, the
+        // contract's words (StationRotorController), sent as their
+        // command.result by the dispatcher.
+        {"src/core/StationRotorController.cpp",
+         {QStringLiteral("setReason"), QStringLiteral("noRotorReason"),
+          QStringLiteral("notConnectedReason"), QStringLiteral("azimuthOnlyReason"),
+          QStringLiteral("notANumberReason"), QStringLiteral("outOfRangeReason"),
+          QStringLiteral("noGridReason"), QStringLiteral("callNotPlacedReason"),
+          QStringLiteral("rotctldMissingReason"), QStringLiteral("unknownSerialPortReason"),
+          QStringLiteral("setupInvalidReason"), QStringLiteral("turnable"), QStringLiteral("acceptTarget"),
+          QStringLiteral("setRotorTarget"), QStringLiteral("turnRotorToCall"),
+          QStringLiteral("stopRotor"), QStringLiteral("nudgeRotor"),
+          QStringLiteral("configureRotor"), QStringLiteral("setRotorPresets")},
+         {}, 8, {},
+         {// setReason's parameter: the reasons above, this entry's own literals.
+          QStringLiteral("text")}},
+        // Rotor bench fix: a GS-232 controller that never answers on its
+        // port, the rotor's fault (the port's name inserted).
+        // Final review M8: the link's faults in plain words (the raw Qt, OS
+        // and Hamlib text is logged), the operator's own address, port
+        // and serial port inserted.
+        {"src/core/RotorConnection.cpp",
+         {QStringLiteral("notAnsweringReason"), QStringLiteral("noAnswerReason"),
+          QStringLiteral("unreachableReason"), QStringLiteral("controllerRefusedReason"),
+          QStringLiteral("rotctldStoppedReason"), QStringLiteral("serialOpenReason"),
+          QStringLiteral("serialLostReason")},
+         {}, 16,
+         {QStringLiteral("serialPort"), QStringLiteral("host"), QStringLiteral("port"),
+          QStringLiteral("portName")}},
+        // Remote rotor control: configureRotor's refusal when Hamlib's
+        // rotctld is missing (StationRotorController::rotctldMissingReason).
+        // Final review M8: rotctld that would not start, in plain words.
+        {"src/core/RotctldProcess.cpp",
+         {QStringLiteral("notInstalledReason"), QStringLiteral("startFailedReason")}, {}, 3},
+        // Remote rotor control: the `rotor` object's read-only reason.
+        {"src/models/RotorModel.cpp", {QStringLiteral("readOnlyReason")}, {}, 1},
+        // Remote rotor control: a Core without a rotor controller, sent by
+        // StationServer and the dispatcher; a remote window shows the same
+        // words when its Core is older than the rotor.
+        {"src/core/session/IStationLink.h", {QStringLiteral("rotorUnavailableReason")}, {}, 1},
+        // Remote rotor control: a window's rotor commands. They pass on the
+        // controller's refusal (scanned above) or the Core's command.result
+        // through the link, or IStationLink's words; the setup check is
+        // the controller's, shared with the dispatcher (final review M11),
+        // and its sentence is scanned with the controller above.
+        {"src/models/RadioModel.cpp",
+         {QStringLiteral("requestRotorTarget"), QStringLiteral("requestStopRotor"),
+          QStringLiteral("rotorControlAvailable"), QStringLiteral("requestTurnRotorToCall"),
+          QStringLiteral("requestNudgeRotor"), QStringLiteral("requestConfigureRotor"),
+          QStringLiteral("requestRotorPresets")},
+         {}, 1, {},
+         {QStringLiteral("sent.reason"), QStringLiteral("IStationLink::rotorUnavailableReason()"),
+          QStringLiteral("StationRotorController::setupInvalidReason()")}},
         // Parity Task 19 (R-IOS-25): the spots.* refusals and the
         // `spotSources` object's read-only reason.
         // Parity Task 21 (R-IOS-18): the station radio verbs' refusals and
@@ -1856,6 +1925,17 @@ const QList<AppSideReason>& appSideReasons()
         {"src/core/cat/CatControl.cpp", "unavailableReason",
          "a window's own reason its CAT pages are disabled: none for its own "
          "CAT, otherwise notConnectedReason or stationCatUnavailableReason"},
+        // Remote rotor control: the desktop's Turn beam action on a spot.
+        // Its words are StationRotorController's (scanned) or the reason a
+        // window's rotor command gives back (RadioModel, scanned).
+        {"src/models/SpotBeamTurner.cpp", "setReason",
+         "stores the reason a window's own Turn beam action was refused"},
+        {"src/models/SpotBeamTurner.cpp", "noBearingReason",
+         "a window's own reason Turn beam is disabled: StationRotorController's words"},
+        {"src/models/SpotBeamTurner.cpp", "rotorUnavailableReason",
+         "a window's own reason Turn beam is disabled: StationRotorController's or the link's words"},
+        {"src/models/SpotBeamTurner.cpp", "turnBeam",
+         "a window's own Turn beam: passes on its disabled reason or its rotor command's refusal"},
         {"src/core/session/IStationLink.h", "pgxlDeviceSettingsUnavailableReason",
          "a remote window's own reason when its Core cannot take the request"},
         {"src/core/session/IStationLink.h", "tgxlDeviceSettingsUnavailableReason",

@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-08 - The Rotor applet (applet:rotor), rotor control plan Task 6, by
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-03 — Canonical independent control creation shortcuts by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Plain preview and unavailable explanations by J.J. Boyd (KG4VCF),
@@ -145,7 +147,8 @@ QString ContainerContentRegistry::appletTypeForVisibilityId(const QString& id)
         {"Rx","rx"},{"Display","Display"},{"Tx","TX"},{"PhoneCw","PHCW"},
         {"Rade","RADE"},{"Vax","vax"},{"PureSignal","pure_signal"},
         {"ModMon","mod_monitor"},{"Tci","tci"},{"ClientChain","tci_clients"},
-        {"Cat","cat"},{"Amp","amp"},{"Tuner","tuner"},{"RfKit","RfKit"},{"SMeter","s_meter"}};
+        {"Cat","cat"},{"Amp","amp"},{"Tuner","tuner"},{"Rotor","rotor"},{"RfKit","RfKit"},
+        {"SMeter","s_meter"}};
     return aliases.contains(id) ? QStringLiteral("applet:") + aliases.value(id) : QString();
 }
 void ContainerContentRegistry::attachSingleton(const QString& typeId, QWidget* widget)
@@ -279,6 +282,7 @@ QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
     result.append({QStringLiteral("applet:tci_clients"), QStringLiteral("Client Chain"), true, true, {}});
     result.append({QStringLiteral("applet:amp"), QStringLiteral("Amplifier"), true, true, {}});
     result.append({QStringLiteral("applet:tuner"), QStringLiteral("Tuner"), true, true, {}});
+    result.append({QStringLiteral("applet:rotor"), QStringLiteral("Rotor"), true, true, {}});
     result.append({QStringLiteral("applet:RfKit"), QStringLiteral("RF Kit"), true, true, {}});
     result.append({QStringLiteral("applet:s_meter"), QStringLiteral("S-Meter"), true, true, {}});
     for (auto& descriptor : result) {

@@ -191,7 +191,7 @@ struct SpotScreenTests {
         #expect(!spots.showsOnBand(.pota))
         let again = SpotsModel(records: nil, mirror: model.mirror, commands: nil, settings: nil,
                                slices: model.main.slices, catalogFeed: model.main.catalogFeed,
-                               phone: PhoneSettings(defaults: defaults))
+                               phone: PhoneSettings(defaults: defaults), rotor: model.main.rotor)
         #expect(again.display.maxLevels == 5 && again.display.hiddenSources == ["POTA"])
         await model.disconnect()
     }
@@ -260,7 +260,7 @@ struct SpotScreenTests {
         // Kept on this phone, and read back by the next model.
         let again = SpotsModel(records: nil, mirror: model.mirror, commands: nil, settings: nil,
                                slices: model.main.slices, catalogFeed: model.main.catalogFeed,
-                               phone: PhoneSettings(defaults: defaults))
+                               phone: PhoneSettings(defaults: defaults), rotor: model.main.rotor)
         #expect(!again.display.autoMode)
         await model.disconnect()
     }
@@ -399,7 +399,7 @@ struct SpotScreenTests {
         #expect(written == nil)
         let again = SpotsModel(records: nil, mirror: model.mirror, commands: nil, settings: nil,
                                slices: model.main.slices, catalogFeed: model.main.catalogFeed,
-                               phone: PhoneSettings(defaults: defaults))
+                               phone: PhoneSettings(defaults: defaults), rotor: model.main.rotor)
         #expect(again.display.overrideColours && again.display.overrideColour == "#00FF00")
         #expect(!again.display.overrideBackground && again.display.backgroundColour == "#203040")
         #expect(again.display.backgroundOpacity == 100)

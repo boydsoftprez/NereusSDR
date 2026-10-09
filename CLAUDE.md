@@ -15,6 +15,7 @@ The radio is an ADC/DAC with network transport.
 | Hardware facts (DDCs, ADCs, clocks) | docs/protocols/, TAPR and Anvelina gateware (facts only) |
 | Qt6 structure, UI patterns | AetherSDR |
 | Digital voice, PSK Reporter | freedv-gui |
+| Rotor control, a NereusSDR fork's take | Longpath (OE5SOS, GPL-3) |
 
 **Study, then choose.** Read how the references do it and summarize it in the
 plan or PR. Then **port** when it fits as written (faithfully, under the rules
@@ -161,7 +162,8 @@ First launch generates FFTW wisdom (~15 min), cached in `~/.config/NereusSDR/`.
   `../pihpsdr/` (github.com/dl1ycf/pihpsdr), `../deskhpsdr/`
   (github.com/dl1bz/deskhpsdr), `../n1gp-Anvelina_PROIII/`
   (github.com/n1gp/Anvelina_PROIII, pinned), `../TAPR-OpenHPSDR-Firmware/`
-  (github.com/TAPR/OpenHPSDR-Firmware, pinned).
+  (github.com/TAPR/OpenHPSDR-Firmware, pinned), `../Longpath/`
+  (github.com/oe5sos/Longpath, a GPL-3 NereusSDR fork, pinned `551576e`).
 * Vendored: `third_party/wdsp/` (WDSP 2.10, TAPR b02d5bac), `third_party/rade/` (radae_nopy
   b289102, BSD-2), `third_party/r8brain/` (MIT resampler), `third_party/fftw3/`
   (Windows DLL).

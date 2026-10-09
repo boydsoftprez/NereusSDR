@@ -35,11 +35,19 @@
 //                                    (m_maxSpots{500}) preserved
 //                                    verbatim. AI tooling: Anthropic
 //                                    Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 8: a ninth
+//                                    column, ColBearing (appended, so the
+//                                    eight above keep their numbers): the
+//                                    Core's bearing to the spot, else the
+//                                    one setBearingResolver works out.
+//                                    AI-assisted via Anthropic Claude Code.
 
 #pragma once
 
 #include <QAbstractTableModel>
 #include <QVector>
+
+#include <functional>
 
 #include "core/DxSpot.h"
 
@@ -50,7 +58,8 @@ class SpotTableModel : public QAbstractTableModel {
     Q_OBJECT
 
 public:
-    enum Column { ColTime, ColFreq, ColDxCall, ColComment, ColSpotter, ColBand, ColMode, ColSource, ColCount };
+    enum Column { ColTime, ColFreq, ColDxCall, ColComment, ColSpotter, ColBand, ColMode, ColSource,
+                  ColBearing, ColCount };
     static QString extractMode(const QString& comment);
 
     explicit SpotTableModel(QObject* parent = nullptr) : QAbstractTableModel(parent) {}
@@ -66,11 +75,23 @@ public:
     void setMaxSpots(int max) { m_maxSpots = max; }
     double freqAtRow(int row) const;
 
+    /// Rotor control plan Task 8: a spot's short-path bearing for the
+    /// Bearing column when the Core served none (DxSpot::bearingDeg -1):
+    /// given the DX call, 0 to under 360, or -1 when there is none.
+    using BearingResolver = std::function<double(const QString& call)>;
+    void setBearingResolver(BearingResolver resolver);
+    /// The row's bearing as the Bearing column shows it: the Core's, else
+    /// the resolver's; -1 when there is none.
+    double bearingAtRow(int row) const;
+    /// The row's Core-served bearing (DxSpot::bearingDeg), -1 when none.
+    double servedBearingAtRow(int row) const;
+
 private:
     static QString bandForFreq(double mhz);
 
     QVector<DxSpot> m_spots;
     int m_maxSpots{500};
+    BearingResolver m_bearingResolver;
 };
 
 } // namespace NereusSDR

@@ -59,6 +59,9 @@
 //               stationTciServer and vaxDevices, the board, the unbuilt
 //               features list). J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Anthropic Claude Code.
+//   2026-10-08: Rotor control plan Task 4b: the `rotor` tool, offered when
+//               a rotor is set up on the Core (Inputs' rotorConfigured). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/BoardCapabilities.h"
@@ -125,6 +128,11 @@ public:
         /// hosts; a headless Core publishes none, R-R3-44), so the VAX
         /// Audio tool is offered.
         bool vaxDevices = false;
+        /// Rotor control plan Task 4b: a rotor is set up on the Core (its
+        /// driver is not none), so the Rotor tool is offered (remote rotor
+        /// control v1, "Tools catalogue"). Without one it is listed, not
+        /// offered.
+        bool rotorConfigured = false;
         /// iPhone app plan Task 23 (R-IOS-09): the Opus profiles the
         /// catalogue's `audio.opusProfiles` lists, the station's measured
         /// table (kOpusMeasuredProfiles) unless a test removes one.
@@ -166,6 +174,9 @@ private:
     QTimer* m_refreshTimer = nullptr;
     QString m_json;
     quint32 m_revision = 0;
+    // Rotor control plan Task 4b: whether the last refresh saw a rotor set
+    // up, so a rotor change refreshes only when that changes.
+    bool m_rotorConfigured = false;
 };
 
 } // namespace NereusSDR

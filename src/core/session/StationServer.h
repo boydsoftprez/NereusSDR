@@ -544,6 +544,9 @@
 //   2026-10-07: CAT setup from a connected desktop: peerGetsStationCat,
 //               stationCatVersion and the catLog line counter. J.J. Boyd
 //               (KG4VCF). AI tooling: Claude Code.
+//   2026-10-08: Rotor control plan Task 4b: remoteRotorControlVersion(),
+//               and sessionIdOfOwner() public for the command dispatcher.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -978,6 +981,11 @@ public:
     /// inside the subnet of an address of a running interface. Empty (a
     /// relayed connection) is not. One tap pairs only from such an address.
     static bool isOnDirectNetwork(const QString& address);
+    /// The session id an owner string `station:<sessionId>` names; 0 for
+    /// any other. Public so the command dispatcher reads a session's owner
+    /// the same way (rotor control plan Task 4b: a rotor hold is its
+    /// session's).
+    static quint64 sessionIdOfOwner(const QString& owner);
 
 #ifdef NEREUS_BUILD_TESTS
     /// Replaces the code's hash (SpakeExchange::storedData) so a test can
@@ -1392,6 +1400,10 @@ public:
     // rfkit* connection counts, parity Task 10); 0 otherwise.
     int accessoryDataVersion() const;
     int accessoryTxVersion() const { return accessoryDataVersion() > 0 ? 1 : 0; }
+    // Rotor control plan Task 4b: remoteRotorControlVersion. 1 on a Core
+    // that owns a rotor connection (the `rotor` object and the seven rotor
+    // verbs); 0 otherwise.
+    int remoteRotorControlVersion() const;
 
     /// iPhone app Task 71 (R-IOS-02): who holds a place on the Core, and
     /// the mirrored `connectedDevices` object. Never null. Task 48
@@ -2577,9 +2589,6 @@ private:
             return qHashMulti(seed, key.sessionId, key.verb, key.commandId);
         }
     };
-    /// The session id an owner string `station:<sessionId>` names; 0 for
-    /// any other.
-    static quint64 sessionIdOfOwner(const QString& owner);
     /// The key of `result` for the session the dispatcher says it answers.
     ResultKey resultKeyOf(const SessionMessage& result) const;
     /// Whether `result` is the last its command sends (its route goes).

@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rotor Mockup</title>
+<style>
+:root{
+  --app:#0f0f1a; --bar:#0a0a14; --panel:#0a0a18; --edge:#304050; --text:#c8d8e8; --bright:#e4eef8;
+  --dim:#8090a0; --faint:#607080; --accent:#00b4d8; --btn:#1a2a3a; --btnB:#205070;
+  --blue:#0070c0; --blueB:#0090e0; --green:#1a6030; --greenB:#20a040; --greenT:#80ff80;
+  --amber:#604000; --amberB:#906000; --amberT:#ffb800; --red:#7a1c1c; --redB:#c14848; --redT:#ffd0d0;
+  --compass:#202020;
+}
+*{box-sizing:border-box}
+body{margin:0;background:#06060c;color:var(--text);font:13px/1.35 -apple-system,"Segoe UI",Roboto,sans-serif;padding:24px 16px 60px}
+h1{font-size:18px;color:var(--bright);margin:0 0 4px}
+h2{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin:36px 0 12px;border-bottom:1px solid #1a2a3a;padding-bottom:6px}
+.cap{color:var(--faint);font-size:11px;margin:8px 0 0;text-align:center}
+.row{display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start}
+.btn{background:var(--btn);border:1px solid var(--btnB);color:var(--text);border-radius:4px;padding:5px 10px;font-size:12px;cursor:pointer;user-select:none;text-align:center}
+.btn.on{background:var(--blue);border-color:var(--blueB);color:#fff}
+.btn.stop{background:var(--red);border-color:var(--redB);color:var(--redT);font-weight:700;letter-spacing:.06em}
+.btn.dis{background:#141c26;border-color:#253040;color:#506070}
+/* desktop container */
+.container{width:330px;background:var(--app);border:1px solid var(--edge);border-radius:3px;overflow:hidden;box-shadow:0 6px 24px #0008}
+.ctitle{background:linear-gradient(#3a4a5a,#2a3a4a 50%,#1a2a38);border-bottom:1px solid #0a1a28;color:var(--bright);font-size:11px;font-weight:600;padding:4px 8px;display:flex;justify-content:space-between}
+.ctitle span:last-child{color:var(--dim);font-weight:400}
+.cbody{padding:8px}
+.status{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dim);margin-bottom:6px}
+.dot{width:8px;height:8px;border-radius:50%;background:#5fff8a;box-shadow:0 0 6px #5fff8a}
+.dot.amber{background:var(--amberT);box-shadow:0 0 6px var(--amberT)}
+.readout{display:flex;justify-content:space-between;align-items:baseline;margin:4px 2px 6px}
+.readout .big{font:600 26px/1 ui-monospace,Menlo,monospace;color:#ffb800}
+.readout .tgt{font:12px ui-monospace,Menlo,monospace;color:var(--dim)}
+.grid3{display:grid;grid-template-columns:1fr 1.3fr 1fr;gap:6px;margin-top:6px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px}
+.presets{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}
+.presets .btn{padding:3px 7px;font-size:11px}
+.lbl{font-size:10px;color:var(--faint);text-transform:uppercase;letter-spacing:.06em;margin:10px 0 3px}
+.spotline{display:flex;gap:6px}
+.spotline input{flex:1;background:var(--btn);border:1px solid var(--edge);color:var(--text);border-radius:3px;padding:4px 6px;font-size:12px}
+svg.compass{display:block;margin:0 auto;cursor:crosshair;touch-action:none}
+/* pan */
+.pan{position:relative;width:560px;height:250px;background:linear-gradient(#0a1020,#050810);border:1px solid var(--edge);border-radius:3px;overflow:hidden}
+.pan .trace{position:absolute;inset:0}
+.spotlbl{position:absolute;font:11px ui-monospace,Menlo,monospace;color:#ffd060;background:#000a;padding:1px 4px;border:1px solid #806020;border-radius:2px}
+.menu{position:absolute;background:#1a2a3a;border:1px solid #304050;border-radius:3px;box-shadow:0 6px 18px #000a;padding:3px 0;min-width:230px;font-size:12px}
+.menu div{padding:4px 14px;color:var(--text)}
+.menu div.hl{background:var(--accent);color:#0f0f1a}
+.menu hr{border:0;border-top:1px solid #304050;margin:3px 0}
+.menu .grey{color:#506070}
+/* spot hub */
+.hub{width:600px;background:var(--app);border:1px solid var(--edge);border-radius:3px;position:relative}
+table{border-collapse:collapse;width:100%;font-size:12px}
+th{background:#1a2a3a;color:var(--dim);font-weight:500;text-align:left;padding:4px 8px;border-bottom:1px solid var(--edge)}
+td{padding:4px 8px;border-bottom:1px solid #141e2a;font-family:ui-monospace,Menlo,monospace}
+tr.sel td{background:#0f3550}
+th.new,td.new{color:var(--amberT)}
+/* phone */
+.phone{width:300px;height:620px;background:var(--app);border:10px solid #1b1b22;border-radius:42px;position:relative;overflow:hidden;box-shadow:0 10px 30px #000b}
+.notch{position:absolute;top:8px;left:50%;transform:translateX(-50%);width:90px;height:24px;background:#000;border-radius:14px;z-index:5}
+.pstatus{height:40px}
+.navbar{display:flex;align-items:center;justify-content:space-between;padding:4px 14px 8px;border-bottom:1px solid #203040;background:var(--bar)}
+.navbar .back{color:var(--accent);font-size:14px}
+.navbar .t{color:var(--bright);font-weight:600;font-size:15px}
+.pbody{padding:10px 14px}
+.pbig{font:600 34px/1 ui-monospace,Menlo,monospace;color:#ffb800;text-align:center}
+.psub{text-align:center;color:var(--dim);font:12px ui-monospace,Menlo,monospace;margin-top:2px}
+.pbtns{display:grid;grid-template-columns:1fr 1.4fr 1fr;gap:8px;margin-top:10px}
+.pbtns .btn{padding:12px 0;font-size:14px;border-radius:8px}
+.chips{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px}
+.btn.turn{background:#00b4d822;border-color:#00b4d8;color:#00b4d8;font-weight:600;padding:9px 0;border-radius:8px;margin-top:8px}
+.chips .btn{border-radius:14px;white-space:nowrap;padding:5px 0;font-size:11px}
+.tabbar{position:absolute;bottom:0;left:0;right:0;height:56px;background:var(--bar);border-top:1px solid #203040;display:flex;justify-content:space-around;align-items:center;font-size:10px;color:var(--faint)}
+.tabbar .on{color:var(--accent)}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:var(--panel);border-top:1px solid var(--edge);border-radius:14px 14px 0 0;padding:12px 16px 24px;box-shadow:0 -8px 24px #000c}
+.grab{width:36px;height:4px;background:#405060;border-radius:2px;margin:0 auto 10px}
+.kv{display:grid;grid-template-columns:90px 1fr;gap:3px 8px;font-size:12px;margin:8px 0 12px}
+.kv span:nth-child(odd){color:var(--faint)}
+.sheetbtns{display:grid;grid-template-columns:1fr 1.3fr 1fr;gap:8px}
+.sheetbtns .btn{padding:10px 0;font-size:13px;border-radius:6px}
+.list{margin-top:4px}
+.li{display:flex;justify-content:space-between;align-items:center;padding:10px 2px;border-bottom:1px solid #182330}
+.li .t{color:var(--bright)} .li .d{color:var(--faint);font-size:11px}
+.tag{font-size:10px;border:1px solid var(--btnB);color:var(--accent);border-radius:3px;padding:1px 5px}
+.dimpan{position:absolute;inset:0;background:linear-gradient(#0a1020,#050810)}
+.toggle{width:34px;height:20px;border-radius:10px;background:#253040;position:relative;flex:none}
+.toggle::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#8090a0}
+</style>
+</head>
+<body>
+<h1>Rotor control mockup</h1>
+<div style="color:var(--faint);margin-bottom:4px">Dial: Longpath style (after OE5SOS's RotorDialWidget) in NereusSDR colours. The Thetis compass stays as the meter item in custom layouts.</div>
+<div style="color:var(--faint)">Desktop: drag the dial and let go to turn. iPhone: drag to select, then tap Turn (the selection drops after 15 s).</div>
+
+<h2>Desktop: Rotor applet in a container</h2>
+<div class="row">
+  <div>
+    <div class="container">
+      <div class="ctitle"><span>Rotor</span><span>Azimuth</span></div>
+      <div class="cbody">
+        <div class="status"><span class="dot amber"></span>Easy Rotor Control on COM4 · Turning</div>
+        <div id="dCompass"></div>
+        <div class="readout"><span class="big" id="dHead">047°</span><span class="tgt" id="dTgt">120° · 73° to go</span></div>
+        <div class="grid3">
+          <div class="btn">◀ CCW</div><div class="btn stop">STOP</div><div class="btn">CW ▶</div>
+        </div>
+        <div class="grid2">
+          <div class="btn on">Short path</div><div class="btn">Long path</div>
+        </div>
+        <div class="lbl">Presets</div>
+        <div class="presets">
+          <div class="btn">EU 45°</div><div class="btn">AF 100°</div><div class="btn">SA 160°</div>
+          <div class="btn">VK 230°</div><div class="btn">JA 330°</div><div class="btn">W6 285°</div>
+        </div>
+        <div class="lbl">Turn to</div>
+        <div class="spotline"><input value="JA1ABC"><div class="btn">Turn · 330°</div></div>
+      </div>
+    </div>
+    <div class="cap">Azimuth rotor (your Yaesu + ERC)</div>
+  </div>
+
+  <div>
+    <div class="container">
+      <div class="ctitle"><span>Rotor</span><span>Az + El</span></div>
+      <div class="cbody">
+        <div class="status"><span class="dot amber"></span>rotctld 192.168.1.40:4533 · Turning</div>
+        <div id="dCompass2"></div>
+        <div class="readout"><span class="big">212° <span style="font-size:16px">el 34°</span></span><span class="tgt">el 45° · 11° to go</span></div>
+        <div class="grid3">
+          <div class="btn">◀ CCW</div><div class="btn stop">STOP</div><div class="btn">CW ▶</div>
+        </div>
+        <div class="grid2">
+          <div class="btn">▼ Down</div><div class="btn">▲ Up</div>
+        </div>
+        <div class="grid2">
+          <div class="btn on">Short path</div><div class="btn">Long path</div>
+        </div>
+      </div>
+    </div>
+    <div class="cap">Az/el rotor (set in rotor setup)</div>
+  </div>
+
+  <div>
+    <div class="container" style="width:260px">
+      <div class="ctitle"><span>Rotor</span><span>Azimuth</span></div>
+      <div class="cbody">
+        <div class="status"><span class="dot" style="background:#404858;box-shadow:none"></span>Not connected</div>
+        <div id="dCompass3" style="opacity:.45"></div>
+        <div class="readout"><span class="big" style="color:#506070">---°</span></div>
+        <div class="grid3">
+          <div class="btn dis">◀ CCW</div><div class="btn dis">STOP</div><div class="btn dis">CW ▶</div>
+        </div>
+        <div style="font-size:11px;color:var(--faint);margin-top:6px">No rotor is set up on this Core.</div>
+      </div>
+    </div>
+    <div class="cap">No rotor: shown, greyed, with the reason</div>
+  </div>
+
+  <div>
+    <div class="container" style="width:420px">
+      <div class="ctitle"><span>Rotor</span><span>Tape</span></div>
+      <div class="cbody">
+        <div class="status"><span class="dot amber"></span>Easy Rotor Control on COM4 · Turning</div>
+        <div id="dTape"></div>
+        <div class="readout"><span class="big">047°</span><span class="tgt">120° · CW 73° to go</span></div>
+        <div class="grid3"><div class="btn">◀ CCW</div><div class="btn stop">STOP</div><div class="btn">CW ▶</div></div>
+      </div>
+    </div>
+    <div class="cap">Tape shape for a short, wide panel (right-click the dial to switch)</div>
+  </div>
+</div>
+
+<h2>Desktop: turn beam from a spot</h2>
+<div class="row">
+  <div>
+    <div class="pan">
+      <svg class="trace" viewBox="0 0 560 250" preserveAspectRatio="none">
+        <polyline fill="none" stroke="#00b4d8" stroke-width="1.2" points="0,200 30,196 60,202 90,190 110,198 130,150 140,195 170,199 200,192 230,140 238,120 246,142 260,196 300,198 340,188 360,196 400,170 410,197 450,195 480,199 520,192 560,198"/>
+      </svg>
+      <div class="spotlbl" style="left:205px;top:92px">JA1ABC</div>
+      <div class="spotlbl" style="left:370px;top:140px">DL5XYZ</div>
+      <div class="spotlbl" style="left:100px;top:122px">PY2QQ</div>
+      <div class="menu" style="left:240px;top:110px">
+        <div>Tune to JA1ABC</div>
+        <div class="hl">Turn beam to JA1ABC (330°)</div>
+        <div>Copy Callsign</div>
+        <div>Lookup on QRZ</div>
+        <hr>
+        <div>Remove Spot</div>
+      </div>
+    </div>
+    <div class="cap">Right-click a spot on the pan</div>
+  </div>
+
+  <div>
+    <div class="hub">
+      <div class="ctitle"><span>Spot Hub</span><span>DX cluster</span></div>
+      <table>
+        <tr><th>Time</th><th>Freq</th><th>Call</th><th>Mode</th><th class="new">Bearing</th><th>Spotter</th></tr>
+        <tr><td>14:02</td><td>14.025.0</td><td>JA1ABC</td><td>CW</td><td class="new">330°</td><td>K1TTT</td></tr>
+        <tr class="sel"><td>14:01</td><td>14.074.0</td><td>DL5XYZ</td><td>FT8</td><td class="new">45°</td><td>W3LPL</td></tr>
+        <tr><td>13:59</td><td>14.195.0</td><td>PY2QQ</td><td>SSB</td><td class="new">155°</td><td>N4ZR</td></tr>
+        <tr><td>13:58</td><td>14.010.0</td><td>VK3ABC</td><td>CW</td><td class="new">235°</td><td>KG4VCF</td></tr>
+        <tr><td>13:55</td><td>14.230.0</td><td>ZS6XX</td><td>SSB</td><td class="new">105°</td><td>AA4ZZ</td></tr>
+        <tr><td>13:52</td><td>14.021.5</td><td>EA8XX</td><td>CW</td><td class="new">95°</td><td>VE3EJ</td></tr>
+        <tr><td>13:50</td><td>14.074.0</td><td>KH6ABC</td><td>FT8</td><td class="new">280°</td><td>W1AW</td></tr>
+        <tr><td>13:47</td><td>14.205.0</td><td>OH2XX</td><td>SSB</td><td class="new">35°</td><td>K3LR</td></tr>
+      </table>
+      <div class="menu" style="left:24px;top:76px">
+        <div>Tune to DL5XYZ</div>
+        <div class="hl">Turn beam to DL5XYZ (45°)</div>
+        <hr>
+        <div>Copy Callsign</div>
+        <div>Lookup on QRZ</div>
+      </div>
+    </div>
+    <div class="cap">New Bearing column and a right-click menu</div>
+  </div>
+</div>
+
+<h2>iPhone</h2>
+<div class="row">
+  <div>
+    <div class="phone">
+      <div class="notch"></div><div class="pstatus"></div>
+      <div class="navbar"><span class="back">‹ Accessories</span><span class="t">Rotor</span><span style="width:70px"></span></div>
+      <div class="pbody">
+        <div class="status" style="justify-content:center"><span class="dot amber"></span>Easy Rotor Control · Turning</div>
+        <div id="pCompass" style="margin-top:4px"></div>
+        <div class="pbig" id="pHead">047°</div>
+        <div class="psub" id="pTgt">120° short path · 73° to go</div>
+        <div class="btn turn" id="pTurn" style="display:none">Turn to 120°</div>
+        <div class="pbtns">
+          <div class="btn">◀</div><div class="btn stop">STOP</div><div class="btn">▶</div>
+        </div>
+        <div class="grid2" style="margin-top:8px">
+          <div class="btn on" style="padding:8px">Short path</div><div class="btn" style="padding:8px">Long path</div>
+        </div>
+        <div class="chips">
+          <div class="btn">EU 45°</div><div class="btn">AF 100°</div><div class="btn">SA 160°</div><div class="btn">VK 230°</div>
+        </div>
+      </div>
+    </div>
+    <div class="cap">Rotor page (also opens from the Tools tab)</div>
+  </div>
+
+  <div>
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="dimpan">
+        <svg viewBox="0 0 280 600" style="width:100%;height:100%">
+          <polyline fill="none" stroke="#00b4d8" stroke-width="1.2" points="0,300 30,296 60,302 90,250 100,298 140,299 170,230 180,296 220,298 250,290 280,298"/>
+        </svg>
+        <div class="spotlbl" style="left:150px;top:200px">JA1ABC</div>
+      </div>
+      <div style="position:absolute;inset:0;background:#0006"></div>
+      <div class="sheet">
+        <div class="grab"></div>
+        <div style="display:flex;justify-content:space-between;align-items:baseline">
+          <span style="font:600 18px ui-monospace,Menlo,monospace;color:var(--bright)">JA1ABC</span>
+          <span style="color:var(--dim)">14.025.0 CW</span>
+        </div>
+        <div class="kv">
+          <span>Country</span><span>Japan</span>
+          <span>Bearing</span><span style="color:var(--amberT)">330° short · 150° long</span>
+          <span>Spotter</span><span>K1TTT</span>
+          <span>Comment</span><span>599 strong</span>
+          <span>Time</span><span>14:02 UTC</span>
+        </div>
+        <div class="sheetbtns">
+          <div class="btn on">Tune</div><div class="btn on" style="background:var(--amber);border-color:var(--amberB);color:var(--amberT)">Turn beam 330°</div><div class="btn">Close</div>
+        </div>
+      </div>
+    </div>
+    <div class="cap">Spot details sheet (tap a spot on the pan or in the list)</div>
+  </div>
+
+  <div>
+    <div class="phone">
+      <div class="notch"></div><div class="pstatus"></div>
+      <div class="navbar"><span></span><span class="t">Tools</span><span></span></div>
+      <div class="pbody list">
+        <div class="li"><div><div class="t">Spot Hub</div><div class="d">Spots from the cluster and reporters</div></div><span class="tag">Core</span></div>
+        <div class="li" style="background:#0f2030;margin:0 -14px;padding:10px 16px"><div><div class="t">Rotor</div><div class="d">047° · turning to 120°</div></div><span class="tag">Core</span></div>
+        <div class="li"><div><div class="t">TX Equalizer</div><div class="d">Shape the transmit audio</div></div><span class="tag">Core</span></div>
+        <div class="li"><div><div class="t">PureSignal</div><div class="d">Amplifier linearisation</div></div><span class="tag">Core</span></div>
+        <div class="li"><div><div class="t">TCI server</div><div class="d">The Core's own TCI server</div></div><span class="tag">Core</span></div>
+        <div style="margin-top:22px;font-size:10px;color:var(--faint);text-transform:uppercase;letter-spacing:.06em">Rotor setting</div>
+        <div class="li"><div><div class="t" style="font-size:13px">Turn the beam when I tune to a spot</div><div class="d">Off: only Turn beam moves the rotor</div></div><span class="toggle"></span></div>
+      </div>
+      <div class="tabbar"><span>Radio</span><span>Spots</span><span class="on">Tools</span><span>Setup</span></div>
+    </div>
+    <div class="cap">Tools tab row, and the auto-turn setting (off by default)</div>
+  </div>
+</div>
+
+<script>
+const NS="http://www.w3.org/2000/svg";
+function el(t,a,p){const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e;}
+function pt(cx,cy,r,deg){const a=(deg-90)*Math.PI/180;return[cx+r*Math.cos(a),cy+r*Math.sin(a)];}
+function compass(host,size,opts){
+  // Longpath-style control dial (after Longpath RotorDialWidget), in NereusSDR colours
+  const AMBER="#ffb800", TGT="#00b4d8", GREEN="#5fff8a", RING="#7e8a96", INNER="#2c3a48", MUTED="#a6b0bc";
+  const W=opts.el!=null?300:200;
+  const s=el("svg",{class:"compass",width:size*W/200,height:size,viewBox:`0 0 ${W} 200`});
+  host.appendChild(s);
+  const cx=100,cy=100,R=88;
+  const defs=el("defs",{},s);
+  const g=el("radialGradient",{id:"lamp"+host.id},defs);
+  el("stop",{offset:"0","stop-color":AMBER,"stop-opacity":.13},g);el("stop",{offset:"1","stop-color":AMBER,"stop-opacity":0},g);
+  el("circle",{cx,cy,r:R*1.05,fill:`url(#lamp${host.id})`},s);
+  el("circle",{cx,cy,r:R,fill:"none",stroke:RING,"stroke-width":.9},s);
+  el("circle",{cx,cy,r:R*.83,fill:"none",stroke:INNER,"stroke-width":.9},s);
+  for(let d=0;d<360;d+=10){const card=d%90===0,maj=d%30===0;const r0=R*(card?.86:maj?.90:.94);
+    const[a,b]=pt(cx,cy,r0,d),[c2,d2]=pt(cx,cy,R,d);el("line",{x1:a,y1:b,x2:c2,y2:d2,stroke:card?MUTED:RING,"stroke-width":card?1.5:maj?1.1:.6},s);}
+  for(let d=30;d<360;d+=30){if(d%90===0)continue;const[x,y]=pt(cx,cy,R*.755,d);const t=el("text",{x,y:y+3,fill:RING,"fill-opacity":.7,"font-size":8,"text-anchor":"middle","font-family":"Menlo,monospace"},s);t.textContent=d;}
+  [["N",0],["E",90],["S",180],["W",270]].forEach(([c,d])=>{const[x,y]=pt(cx,cy,R*.745,d);const t=el("text",{x,y:y+4,fill:MUTED,"font-size":10,"text-anchor":"middle","font-family":"Menlo,monospace"},s);t.textContent=c;});
+  if(opts.el!=null){
+    // elevation quarter gauge beside the rose, same language: rings, ticks, amber needle, cyan dashed target
+    const ex=208,ey=178,er=84,E=(r,d)=>[ex+r*Math.cos(d*Math.PI/180),ey-r*Math.sin(d*Math.PI/180)];
+    const glow=el("path",{d:`M${ex},${ey} L${ex+er},${ey} A${er},${er} 0 0 0 ${ex},${ey-er} Z`,fill:AMBER,"fill-opacity":.05},s);
+    el("path",{d:`M${ex+er},${ey} A${er},${er} 0 0 0 ${ex},${ey-er}`,fill:"none",stroke:RING,"stroke-width":.9},s);
+    el("path",{d:`M${ex+er*.83},${ey} A${er*.83},${er*.83} 0 0 0 ${ex},${ey-er*.83}`,fill:"none",stroke:INNER,"stroke-width":.9},s);
+    el("line",{x1:ex,y1:ey,x2:ex+er,y2:ey,stroke:INNER},s);el("line",{x1:ex,y1:ey,x2:ex,y2:ey-er,stroke:INNER},s);
+    for(let d=0;d<=90;d+=5){const maj=d%30===0,mid=d%10===0;const[a,b]=E(er*(maj?.86:mid?.90:.94),d),[c2,d2]=E(er,d);
+      el("line",{x1:a,y1:b,x2:c2,y2:d2,stroke:maj?MUTED:RING,"stroke-width":maj?1.4:mid?1:.6},s);}
+    for(const d of [30,60]){const[x,y]=E(er*.72,d);const t=el("text",{x,y:y+3,fill:RING,"fill-opacity":.7,"font-size":8,"text-anchor":"middle","font-family":"Menlo,monospace"},s);t.textContent=d;}
+    {const t=el("text",{x:ex+er,y:ey+11,fill:RING,"font-size":8,"text-anchor":"middle","font-family":"Menlo,monospace"},s);t.textContent="0";}
+    {const t=el("text",{x:ex,y:ey-er-4,fill:RING,"font-size":8,"text-anchor":"middle","font-family":"Menlo,monospace"},s);t.textContent="90";}
+    if(opts.elTgt!=null){const[tx,ty]=E(er*.97,opts.elTgt);el("line",{x1:ex,y1:ey,x2:tx,y2:ty,stroke:TGT,"stroke-width":1.6,"stroke-dasharray":"5 3"},s);
+      const lo=Math.min(opts.el,opts.elTgt),hi=Math.max(opts.el,opts.elTgt),[p1x,p1y]=E(er,lo),[p2x,p2y]=E(er,hi);
+      el("path",{d:`M${ex},${ey} L${p1x},${p1y} A${er},${er} 0 0 0 ${p2x},${p2y} Z`,fill:AMBER,"fill-opacity":30/255},s);}
+    { // same tapered needle as the rose (Longpath drawNeedle), pivoting at the gauge corner
+      const a=opts.el*Math.PI/180,dx=Math.cos(a),dy=-Math.sin(a),nx=-dy,ny=dx,hw=2.6*.9,tl=er*.10;
+      const P=[[ex+er*.9*dx,ey+er*.9*dy],[ex+nx*hw,ey+ny*hw],[ex-tl*dx+nx*hw*.7,ey-tl*dy+ny*hw*.7],[ex-tl*dx-nx*hw*.7,ey-tl*dy-ny*hw*.7],[ex-nx*hw,ey-ny*hw]].map(p=>p.join(",")).join(" ");
+      el("polygon",{points:P,fill:"none",stroke:AMBER,"stroke-opacity":60/255,"stroke-width":3,"stroke-linejoin":"round"},s);
+      el("polygon",{points:P,fill:AMBER},s);
+      el("circle",{cx:ex,cy:ey,r:7,fill:AMBER,"fill-opacity":.25},s);el("circle",{cx:ex,cy:ey,r:3.6,fill:AMBER},s);
+    }
+    const t=el("text",{x:ex+er*.5,y:ey-6,fill:MUTED,"font-size":9,"text-anchor":"middle","font-family":"Menlo,monospace"},s);t.textContent="EL "+opts.el+"°";
+  }
+  // Geometry follows Longpath RotorDialWidget.cpp paintFace() [@551576e]:
+  // travel pie at r (alpha 30), beam wedge at 0.95r (alpha 16), dashed target with halo to 0.90r,
+  // a rim triangle 9 px deep, a tapered needle with a 0.16r counterweight and a halo, a gradient hub.
+  const travel=el("path",{"fill-opacity":30/255},s);
+  const beam=el("path",{fill:AMBER,"fill-opacity":16/255},s);
+  const tgtHalo=el("line",{stroke:TGT,"stroke-opacity":70/255,"stroke-width":2.4+2.6,"stroke-linecap":"round"},s);
+  const tgtLine=el("line",{stroke:TGT,"stroke-width":2.4,"stroke-dasharray":`${2.2*2.4} ${1.6*2.4}`,"stroke-linecap":"round"},s);
+  const rim=el("polygon",{fill:TGT},s);
+  const needleHalo=el("polygon",{fill:"none","stroke-width":3,"stroke-linejoin":"round","stroke-opacity":60/255},s);
+  const needle=el("polygon",{},s);
+  const hubG=el("radialGradient",{id:"hub"+host.id},defs);
+  const hs1=el("stop",{offset:"0","stop-color":AMBER},hubG),hs2=el("stop",{offset:"1","stop-color":AMBER,"stop-opacity":0},hubG);
+  el("circle",{cx,cy,r:9,fill:`url(#hub${host.id})`},s);const hubDot=el("circle",{cx,cy,r:3.6,fill:AMBER},s);
+  function dirv(d){const a=(d-90)*Math.PI/180;return[Math.cos(a),Math.sin(a)];}
+  function needlePts(d,len,width){const[dx,dy]=dirv(d),nx=-dy,ny=dx,hw=width*.9,tl=R*.16;
+    const tip=[cx+R*len*dx,cy+R*len*dy],tail=[cx-tl*dx,cy-tl*dy];
+    return[tip,[cx+nx*hw,cy+ny*hw],[tail[0]+nx*hw*.7,tail[1]+ny*hw*.7],[tail[0]-nx*hw*.7,tail[1]-ny*hw*.7],[cx-nx*hw,cy-ny*hw]].map(p=>p.join(",")).join(" ");}
+  function pie(path,r,a1,span){const[x1,y1]=pt(cx,cy,r,a1),[x2,y2]=pt(cx,cy,r,a1+span);
+    path.setAttribute("d",`M${cx},${cy} L${x1},${y1} A${r},${r} 0 ${Math.abs(span)>180?1:0} ${span>=0?1:0} ${x2},${y2} Z`);}
+  function draw(head,tgt){
+    const d=tgt==null?0:((tgt-head+540)%360)-180, arrived=tgt!=null&&Math.abs(d)<1.5;
+    const turning=tgt!=null&&!arrived&&moving; // a target not yet sent draws in the target colour (Longpath "targeted")
+    const col=arrived?GREEN:AMBER;
+    needle.setAttribute("points",needlePts(head,.90,2.6));needle.setAttribute("fill",col);
+    needleHalo.setAttribute("points",needlePts(head,.90,2.6));needleHalo.setAttribute("stroke",col);
+    hs1.setAttribute("stop-color",col);hs2.setAttribute("stop-color",col);hubDot.setAttribute("fill",col);
+    pie(beam,R*.95,head-20,40);
+    if(tgt==null){[travel,tgtHalo,tgtLine,rim].forEach(e=>e.style.display="none");return;}
+    rim.style.display="";
+    const[dx,dy]=dirv(tgt),nx=-dy,ny=dx,on=[cx+R*dx,cy+R*dy],inn=[cx+(R-9)*dx,cy+(R-9)*dy];
+    rim.setAttribute("points",[on,[inn[0]+nx*4.5,inn[1]+ny*4.5],[inn[0]-nx*4.5,inn[1]-ny*4.5]].map(p=>p.join(",")).join(" "));
+    rim.setAttribute("fill",arrived?GREEN:TGT);
+    travel.style.display="";travel.setAttribute("fill",arrived?GREEN:turning?AMBER:TGT);travel.setAttribute("fill-opacity",(turning||arrived?30:26)/255);pie(travel,R,head,d);
+    if(arrived){tgtHalo.style.display=tgtLine.style.display="none";return;}
+    tgtHalo.style.display=tgtLine.style.display="";
+    const tip=[cx+R*.9*dx,cy+R*.9*dy];[tgtHalo,tgtLine].forEach(e=>{e.setAttribute("x1",cx);e.setAttribute("y1",cy);e.setAttribute("x2",tip[0]);e.setAttribute("y2",tip[1]);});
+  }
+  let head=opts.head,tgt=opts.tgt,moving=tgt!=null,expiry=null;draw(head,tgt);
+  const report=()=>{opts.onState&&opts.onState(head,tgt,moving);};report();
+  // Touch rule (JJ, 2026-10-07): the desktop turns on release; the iPhone (opts.confirm) only
+  // selects, and a second press on Turn sends it. An unsent selection is dropped after 15 s.
+  const api={go(){if(tgt==null)return;moving=true;clearTimeout(expiry);draw(head,tgt);report();},
+             drop(){if(moving)return;tgt=null;draw(head,tgt);report();}};
+  if(opts.drag){
+    const set=e=>{const r=s.getBoundingClientRect();const x=(e.clientX-r.left)/r.width*200-cx,y=(e.clientY-r.top)/r.height*200-cy;
+      tgt=Math.round((Math.atan2(y,x)*180/Math.PI+90+360)%360);moving=false;draw(head,tgt);report();};
+    let down=false;s.addEventListener("pointerdown",e=>{down=true;s.setPointerCapture(e.pointerId);set(e);});
+    s.addEventListener("pointermove",e=>{if(down)set(e);});
+    s.addEventListener("pointerup",()=>{if(!down)return;down=false;
+      if(opts.confirm){clearTimeout(expiry);expiry=setTimeout(api.drop,15000);report();}else{api.go();}});
+    setInterval(()=>{if(tgt==null||!moving)return;let d=((tgt-head+540)%360)-180;if(Math.abs(d)<1){head=tgt;}else{head=(head+Math.sign(d)+360)%360;}draw(head,tgt);report();},60);
+  }
+  return api;
+}
+function tape(host,w,head,tgt){
+  const AMBER="#ffb800",TGT="#00b4d8",RING="#7e8a96",MUTED="#a6b0bc";
+  const s=el("svg",{width:w,height:62,viewBox:`0 0 ${w} 62`},host);
+  const ppd=w/200, x0=w/2, X=d=>x0+(((d-head+540)%360)-180)*ppd;
+  el("rect",{x:x0-20*ppd,y:12,width:40*ppd,height:24,fill:AMBER,"fill-opacity":.12},s);
+  for(let d=0;d<360;d+=5){const x=X(d);if(x<0||x>w)continue;const card=d%90===0,maj=d%30===0;
+    el("line",{x1:x,y1:card?14:maj?20:30,x2:x,y2:36,stroke:card?MUTED:RING,"stroke-width":card?1.5:maj?1:.6},s);
+    if(maj){const t=el("text",{x,y:50,fill:card?"#dcdce1":RING,"font-size":card?11:10,"text-anchor":"middle","font-family":"Menlo,monospace"},s);t.textContent=card?"NESW"[d/90]:d;}}
+  el("polygon",{points:`${x0-7},4 ${x0+7},4 ${x0},14`,fill:AMBER},s);el("line",{x1:x0,y1:12,x2:x0,y2:40,stroke:AMBER,"stroke-width":2.4},s);
+  const tx=X(tgt);el("line",{x1:tx,y1:10,x2:tx,y2:36,stroke:TGT,"stroke-width":1.6,"stroke-dasharray":"4 3"},s);el("polygon",{points:`${tx-5},40 ${tx+5},40 ${tx},32`,fill:TGT},s);
+}
+const pad=n=>String(n).padStart(3,"0")+"°";
+const togo=(h,t)=>{const d=((t-h+540)%360)-180;return Math.abs(d)<1?"on target":Math.round(Math.abs(d))+"° to go";};
+compass(document.getElementById("dCompass"),230,{head:47,tgt:120,drag:true,onState:(h,t)=>{dHead.textContent=pad(h);dTgt.textContent=t+"° · "+togo(h,t);}});
+compass(document.getElementById("dCompass2"),200,{head:212,tgt:null,el:34,elTgt:45});
+compass(document.getElementById("dCompass3"),170,{head:0,tgt:null});
+const pDial=compass(document.getElementById("pCompass"),250,{head:47,tgt:120,drag:true,confirm:true,onState:(h,t,m)=>{pHead.textContent=pad(h);
+  pTurn.style.display=t!=null&&!m?"":"none";pTurn.textContent="Turn to "+t+"°";
+  pTgt.textContent=t==null?"no target":!m?"selected · tap Turn within 15 s":t+"° short path · "+togo(h,t);}});
+pTurn.addEventListener("click",()=>pDial.go());
+tape(document.getElementById("dTape"),400,47,120);
+</script>
+</body>
+</html>

@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 : Rotor control plan Task 8: SpotMarker::bearingDeg, the
+//                 spot menu's Turn beam (setSpotBeamTurner,
+//                 buildSpotContextMenu) and spotTuned for auto-turn.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-04 : Opt-in numeric diagnostics for actual waterfall rows and
 //                 applied Core extras. J.J. Boyd (KG4VCF), AI-assisted
 //                 via OpenAI Codex. No display behavior changes.
@@ -305,6 +309,7 @@ mw0lge@grange-lane.co.uk
 #include "core/spectrum/ISpectrumSink.h"  // R1 Task 4: also supplies WfColorScheme + AverageMode
 #include "core/spectrum/WaterfallPalettes.h"  // iPhone app Task 19: WfGradientStop, wfSchemeStops
 #include "core/session/media/DisplayCodec.h"
+#include "models/SpotBeamTurner.h"  // rotor control plan Task 8: QPointer needs the type
 
 QT_BEGIN_NAMESPACE
 class QLabel;
@@ -1954,6 +1959,10 @@ public:
         QString spotterCallsign;
         QString comment;
         qint64  timestampMs{0};
+        // NereusSDR addition (rotor control plan Task 8): the Core's
+        // short-path bearing to the spot (SpotData::bearingDeg), -1 when
+        // it served none; SpotBeamTurner works one out then.
+        double  bearingDeg{-1.0};
     };
 
     // Cluster badge descriptor for spots that overflowed the level cap.
@@ -2143,6 +2152,24 @@ public:
     void buildNotchContextMenuForTest(int id, QMenu& menu) {
         buildNotchContextMenu(id, menu);
     }
+    // Rotor control plan Task 8: the same seam for a spot label's menu
+    // (markerIdx indexes spotMarkersForTest()).
+    void buildSpotContextMenuForTest(int markerIdx, QMenu& menu) {
+        buildSpotContextMenu(markerIdx, menu);
+    }
+    // A left click on a spot label, without synthesising one.
+    void clickSpotForTest(int markerIdx) {
+        if (markerIdx >= 0 && markerIdx < m_spotMarkers.size()) {
+            const SpotMarker& sm = m_spotMarkers[markerIdx];
+            tuneToSpot(sm.freqMhz * 1.0e6, sm.callsign, sm.bearingDeg);
+            emit spotTriggered(sm.index);
+        }
+    }
+
+    // Rotor control plan Task 8: what answers the spot menu's "Turn beam
+    // to CALL (330°)" (shown greyed with the reason without one, or with no
+    // rotor or bearing). Not owned.
+    void setSpotBeamTurner(SpotBeamTurner* turner) { m_spotBeamTurner = turner; }
 
     // Overlay-cache seam.  Returns false on a CPU-only build, where there
     // is no cached texture to invalidate.
@@ -2218,6 +2245,12 @@ signals:
     // sources (Memory, DX cluster, RBN, etc.) can react.
     // From AetherSDR src/gui/SpectrumWidget.h:327 [@0cd4559]
     void spotTriggered(int spotIndex);
+    // Rotor control plan Task 8: the operator tuned to a spot (a label
+    // click, a cluster popup entry or the menu's Tune), with its call and
+    // its Core-served bearing (-1 when none). MainWindow hands it to
+    // SpotBeamTurner::spotTuned, which turns the beam only with auto-turn
+    // on.
+    void spotTuned(const QString& call, double bearingDeg);
 
     // 2026-05-12 bench fix (Gap #3 from adversarial audit).  Emitted
     // from the right-click context menu's "Remove Spot" action so the
@@ -2567,6 +2600,11 @@ private:
     NotchGrab notchGrabAt(int id, int x, bool shiftHeld,
                           const QRect& specRect) const;
     void      buildNotchContextMenu(int id, QMenu& menu);
+    // Rotor control plan Task 8: the right-click menu over a spot label.
+    void      buildSpotContextMenu(int markerIdx, QMenu& menu);
+    // Tune to a spot through requestTune and, when the tune went out, say
+    // so on spotTuned.
+    void      tuneToSpot(double hz, const QString& call, double bearingDeg);
 
     // ---- Visual notch (design section 8.3) ----
     /// True when this frame's pixels are to be dented: the toggle is on, we
@@ -3279,6 +3317,7 @@ private:
     // Backing store + per-frame click-rect / cluster vectors. Defaults
     // match AetherSDR src/gui/SpectrumWidget.h:634-651 [@0cd4559].
     QVector<SpotMarker>  m_spotMarkers;
+    QPointer<SpotBeamTurner> m_spotBeamTurner;  // rotor control plan Task 8
     QVector<SpotHitRect> m_spotClickRects;
     QVector<SpotCluster> m_spotClusters;
     bool   m_showSpots{true};

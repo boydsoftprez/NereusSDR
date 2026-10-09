@@ -468,6 +468,12 @@
             "name": "accessoryTxVersion",
             "ordinal": 0,
             "value": 1
+          },
+          {
+            "kind": "i64",
+            "name": "remoteRotorControlVersion",
+            "ordinal": 0,
+            "value": 1
           }
         ],
         "type": "capabilities"
@@ -564,6 +570,14 @@
       "from": "station",
       "message": {
         "class": "AccessorySettingsModel",
+        "fields": "$any",
+        "type": "schema"
+      }
+    },
+    {
+      "from": "station",
+      "message": {
+        "class": "RotorModel",
         "fields": "$any",
         "type": "schema"
       }
@@ -687,6 +701,15 @@
       "message": {
         "class": "AccessorySettingsModel",
         "key": "accessorySettings",
+        "properties": "$any",
+        "type": "object.create"
+      }
+    },
+    {
+      "from": "station",
+      "message": {
+        "class": "RotorModel",
+        "key": "rotor",
         "properties": "$any",
         "type": "object.create"
       }

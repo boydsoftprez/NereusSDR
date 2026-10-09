@@ -1400,12 +1400,16 @@ struct ModesTabBindingTests {
                                           "[1, 10, 100, 500, 1000, 10000]",
                                           // CAT Control's serial baud rates, the desktop's list, the
                                           // same on every Core: a serial port's, not a radio's.
-                                          "[300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]"]
+                                          "[300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]",
+                                          // The rotor setup's serial baud rates, the desktop's
+                                          // commonRotorBauds: a rotor controller's port, not a radio's.
+                                          "[1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]"]
         #expect(TransmitTimeOutModel.choices == [30, 60, 120, 180, 300, 600, 900, 1200, 1800])
         #expect(ModMonitorModel.posScale.ticks == [0, 50, 100, 125, 160])
         #expect(TxEqualizerModel.curveCounts == [5, 10, 18])
         #expect(FlagControls.stepLadder == [1, 10, 100, 500, 1000, 10000])
         #expect(CatControlModel.baudRates == [300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200])
+        #expect(RotorSetupCard.bauds == [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200])
         #expect(TxEqCurveParts.tickStep(250) == 50 && TxEqCurveParts.tickStep(40_000) == 10000)
         func tables(in text: String) -> [Substring] {
             text.matches(of: numericList).map { text[$0.range] }.filter { list in

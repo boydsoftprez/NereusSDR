@@ -36,7 +36,7 @@ struct SetupRenderingTests {
         #expect(categories.map(\.tag) == [.core, .both, .both, .both, .both, .both, .both, .thisPhone])
         #expect(categories.map(\.summary) == ["Paired phones and computers \u{00B7} Add a device",
                                               "Navigation \u{00B7} Battery and sessions", "On this phone",
-                                              "On this phone", "PTT buttons", "Data use", "Logs",
+                                              "On this phone", "PTT buttons", "Rotor \u{00B7} Data use", "Logs",
                                               "Build · Credits · Licenses"])
         // Nothing the phone leaves off (spec section 5.2 item 7), and no page the Core would describe.
         let titles = categories.flatMap { $0.pages.map(\.title) }

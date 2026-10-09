@@ -2,6 +2,11 @@
 //
 // no-port-check: Test references real DXCC entity callsigns as
 // fixtures. Precedent: B2-B6, C1-C4, D1.
+//
+// Modification history (NereusSDR):
+//   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 8: nine
+//                                    columns, with Bearing last.
+//                                    AI-assisted via Anthropic Claude Code.
 
 #include <QtTest>
 
@@ -16,7 +21,7 @@ class TestSpotTableModel : public QObject {
 private slots:
     void initialState();
     void addSpotIncrementsRowCount();
-    void columnCountIsEight();
+    void columnCountIsNine();
     void dataRoundTrip();
     void freqAtRowMatchesSource();
     void setMaxSpotsBounds();
@@ -48,9 +53,11 @@ void TestSpotTableModel::addSpotIncrementsRowCount() {
     QCOMPARE(m.rowCount(), 1);
 }
 
-void TestSpotTableModel::columnCountIsEight() {
+void TestSpotTableModel::columnCountIsNine() {
+    // Rotor control plan Task 8 added the Bearing column (2026-10-08).
     SpotTableModel m;
-    QCOMPARE(m.columnCount(), 8);
+    QCOMPARE(m.columnCount(), 9);
+    QCOMPARE(int(SpotTableModel::ColBearing), 8);
 }
 
 void TestSpotTableModel::dataRoundTrip() {

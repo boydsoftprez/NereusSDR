@@ -495,6 +495,20 @@
 //               after each snapshot) and hands its records to RadioModel;
 //               the window's line limit as backlog; the CAT tester's reply
 //               from its result. J.J. Boyd (KG4VCF). AI tooling: Claude Code.
+//   2026-10-08: Rotor control plan Task 4b: the `rotor` object mirrored
+//               from a Core that offers remoteRotorControlVersion 1, and
+//               the seven rotor requests. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
+//   2026-10-08: Rotor control plan Task 7: a refused rotor setup, presets
+//               or disconnect goes the accessory way ("rotor"), so the
+//               Rotor Setup page shows it and anywhere else a notice does.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08: Rotor control plan Task 8: the turn commands too
+//               (setRotorTarget, turnRotorToCall, stopRotor, nudgeRotor),
+//               so no rotor refusal reads as a slice error. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08: Final review I3: requestRefreshRotorPorts. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // 2026-10-01: Authenticated Core address inventory and reconnect learning.
@@ -545,6 +559,7 @@
 #include "models/StationTciModel.h"
 #include "models/StationCatModel.h"
 #include "models/AccessoryDataModel.h"
+#include "models/RotorModel.h"
 #include "models/AccessorySettingsModel.h"
 
 #include <QAuthenticator>
@@ -3851,6 +3866,10 @@ void StationClient::handleCapabilities(const SessionMessage& message)
           m_agreedMinor >= kRadioIdentitySessionProtocolMinor
               && (m_capabilities.remotePgxlControlVersion >= 3
                   || m_capabilities.remoteTgxlControlVersion >= 1) },
+        // Rotor control plan Task 4b: the Core's rotor.
+        { "rotor", m_radioModel->rotorModel(),
+          m_agreedMinor >= kRadioIdentitySessionProtocolMinor
+              && m_capabilities.remoteRotorControlVersion >= 1 },
     };
     for (const auto& accessory : accessories) {
         const QByteArray key(accessory.key);
@@ -5030,6 +5049,12 @@ bool StationClient::applyClientOnlyProperty(QObject* target, const QByteArray& c
         auto* settings = qobject_cast<AccessorySettingsModel*>(target);
         return settings != nullptr && settings->applyStationValue(propertyName, native);
     }
+    // Rotor control plan Task 4b: a plain state apply; changes only by
+    // command.
+    if (className == "RotorModel") {
+        auto* rotor = qobject_cast<RotorLink::RotorModel*>(target);
+        return rotor != nullptr && rotor->applyStationValue(propertyName, native);
+    }
     if (className != "SliceModel") {
         return false;
     }
@@ -5323,14 +5348,22 @@ MirrorUpdate doubleArgument(const QByteArray& name, double value)
     return MirrorUpdate{ 0, name, MirrorWireKind::Float64, QVariant(value) };
 }
 
+// Rotor control plan Task 4b: an enum argument, its wire number.
+MirrorUpdate enumArgument(const QByteArray& name, int value)
+{
+    return MirrorUpdate{ 0, name, MirrorWireKind::Enum,
+                         QVariant(static_cast<qlonglong>(value)) };
+}
+
 // R-R3-47 / R-R3-22: the amp's and tuner's own settings verbs, whose
 // refusals the Advanced pages show (RadioModel::accessoryRequestRefused).
 // L1 (R-R3-47, R-R3-22, R-R3-48): what an accessory request the Core
 // refused was about, for RadioModel::accessoryRequestRefused; empty for
 // every other verb. "pgxl" and "tgxl" (the amp's and tuner's connection,
 // output limit and own settings), "rfkit", "interlock", "tci" (the
-// station TCI server), "cat" (the Core's CAT), "4o3a" (the 4O3A switch)
-// and, for a fault history, the device it names ("faults" for any other).
+// station TCI server), "cat" (the Core's CAT), "4o3a" (the 4O3A switch),
+// "rotor" (the rotor's setup and presets; rotor plan Task 7) and, for a
+// fault history, the device it names ("faults" for any other).
 QString accessoryRefusalDevice(const QByteArray& verb, const QString& faultsDevice)
 {
     if (verb == "setPgxlName" || verb == "setPgxlHardware" || verb == "setPgxlNetwork"
@@ -5369,6 +5402,13 @@ QString accessoryRefusalDevice(const QByteArray& verb, const QString& faultsDevi
     }
     if (verb == "setFourO3AEnabled") {
         return QStringLiteral("4o3a");
+    }
+    // Rotor control plan Tasks 7 and 8: every rotor command.
+    if (verb == "configureRotor" || verb == "setRotorPresets" || verb == "disconnectRotor"
+        || verb == "refreshRotorPorts"
+        || verb == "setRotorTarget" || verb == "turnRotorToCall" || verb == "stopRotor"
+        || verb == "nudgeRotor") {
+        return QStringLiteral("rotor");
     }
     if (verb == "clearAccessoryFaults") {
         if (faultsDevice == QLatin1String("pgxl") || faultsDevice == QLatin1String("tgxl")
@@ -6838,6 +6878,93 @@ StationClient::CommandOutcome StationClient::requestClearAccessoryFaults(const Q
                        QStringLiteral("the fault history"));
 }
 
+// Rotor control plan Task 4b (remoteRotorControlVersion 1): the Core's
+// rotor. A Core that did not offer it is not asked; the window says why.
+StationClient::CommandOutcome StationClient::requestRotorTarget(double azimuthDeg,
+                                                                double elevationDeg)
+{
+    if (!rotorControlAvailable()) {
+        return IStationLink::requestRotorTarget(azimuthDeg, elevationDeg);
+    }
+    return sendCommand("setRotorTarget", -1,
+                       { doubleArgument("azimuthDeg", azimuthDeg),
+                         doubleArgument("elevationDeg", elevationDeg) },
+                       QStringLiteral("the rotor"));
+}
+
+StationClient::CommandOutcome StationClient::requestTurnRotorToCall(const QString& call,
+                                                                    bool longPath)
+{
+    if (!rotorControlAvailable()) {
+        return IStationLink::requestTurnRotorToCall(call, longPath);
+    }
+    return sendCommand("turnRotorToCall", -1,
+                       { stringArgument("call", call), boolArgument("longPath", longPath) },
+                       QStringLiteral("the rotor"));
+}
+
+StationClient::CommandOutcome StationClient::requestStopRotor()
+{
+    if (!rotorControlAvailable()) {
+        return IStationLink::requestStopRotor();
+    }
+    return sendCommand("stopRotor", -1, {}, QStringLiteral("the rotor"));
+}
+
+StationClient::CommandOutcome StationClient::requestNudgeRotor(int direction, bool active)
+{
+    if (!rotorControlAvailable()) {
+        return IStationLink::requestNudgeRotor(direction, active);
+    }
+    return sendCommand("nudgeRotor", -1,
+                       { enumArgument("direction", direction), boolArgument("active", active) },
+                       QStringLiteral("the rotor"));
+}
+
+StationClient::CommandOutcome StationClient::requestConfigureRotor(
+    int driver, const QString& serialPort, int baud, const QString& host, int port,
+    int hamlibModel, int axes, int endStop, int rangeDeg, double offsetDeg)
+{
+    if (!rotorControlAvailable()) {
+        return IStationLink::requestConfigureRotor(driver, serialPort, baud, host, port,
+                                                   hamlibModel, axes, endStop, rangeDeg,
+                                                   offsetDeg);
+    }
+    return sendCommand("configureRotor", -1,
+                       { enumArgument("driver", driver), stringArgument("serialPort", serialPort),
+                         intArgument("baud", baud), stringArgument("host", host),
+                         intArgument("port", port), intArgument("hamlibModel", hamlibModel),
+                         enumArgument("axes", axes), enumArgument("endStop", endStop),
+                         intArgument("rangeDeg", rangeDeg),
+                         doubleArgument("offsetDeg", offsetDeg) },
+                       QStringLiteral("the rotor setup"));
+}
+
+StationClient::CommandOutcome StationClient::requestDisconnectRotor()
+{
+    if (!rotorControlAvailable()) {
+        return IStationLink::requestDisconnectRotor();
+    }
+    return sendCommand("disconnectRotor", -1, {}, QStringLiteral("the rotor"));
+}
+
+StationClient::CommandOutcome StationClient::requestRefreshRotorPorts()
+{
+    if (!rotorControlAvailable()) {
+        return IStationLink::requestRefreshRotorPorts();
+    }
+    return sendCommand("refreshRotorPorts", -1, {}, QStringLiteral("the rotor setup"));
+}
+
+StationClient::CommandOutcome StationClient::requestRotorPresets(const QString& presets)
+{
+    if (!rotorControlAvailable()) {
+        return IStationLink::requestRotorPresets(presets);
+    }
+    return sendCommand("setRotorPresets", -1, { stringArgument("presets", presets) },
+                       QStringLiteral("the rotor presets"));
+}
+
 // R-R3-47 / R-R3-22 (remotePgxlControlVersion 3, remoteTgxlControlVersion
 // 1): the amp's and tuner's own settings. A Core that did not offer them is
 // not asked; the window says why.
@@ -8122,6 +8249,12 @@ bool StationClient::accessoryDataAvailable() const
 {
     return stationLinkReady() && m_agreedMinor >= kRadioIdentitySessionProtocolMinor
         && m_capabilities.accessoryDataVersion >= 1;
+}
+
+bool StationClient::rotorControlAvailable() const
+{
+    return stationLinkReady() && m_agreedMinor >= kRadioIdentitySessionProtocolMinor
+        && m_capabilities.remoteRotorControlVersion >= 1;
 }
 
 bool StationClient::pgxlDeviceSettingsAvailable() const

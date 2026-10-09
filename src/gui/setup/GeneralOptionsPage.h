@@ -41,6 +41,9 @@
 //   2026-09-30 - Level Cal 2 review: rx2StepAttMaxDb, the top of the RX2
 //                 box. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code.
+//   2026-10-08 - Rotor control plan Task 8: m_chkTurnBeamOnTune ("Turn the
+//                 beam when I tune to a spot"). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -244,6 +247,9 @@ private:
     // existing General Options group to keep the Setup tree shallow.
     QCheckBox* m_chkHideFeedback{nullptr};
     QCheckBox* m_chkSwapRedBlue{nullptr};
+    // Rotor control plan Task 8: "Turn the beam when I tune to a spot"
+    // (Rotor/TurnOnTune), this window's preference, off by default.
+    QCheckBox* m_chkTurnBeamOnTune{nullptr};
 
     // Time Out Timers group (iPhone app plan Task 38). From Thetis
     // groupBoxTS32 on tpOptions2 (setup.designer.cs:10154-10299

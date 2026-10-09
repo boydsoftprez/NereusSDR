@@ -179,6 +179,7 @@
         {"id": "session-verbs-tgxl-relays", "file": "sessions/verbs-tgxl-relays.json", "kind": "session", "requires": {"remoteTgxlControlVersion": 4}},
         {"id": "session-verbs-accessory-tx", "file": "sessions/verbs-accessory-tx.json", "kind": "session", "requires": {"accessoryTxVersion": 1}},
         {"id": "session-verbs-pgxl-control", "file": "sessions/verbs-pgxl-control.json", "kind": "session", "requires": {"remotePgxlControlVersion": 4}},
+        {"id": "session-verbs-rotor", "file": "sessions/verbs-rotor.json", "kind": "session", "requires": {"remoteRotorControlVersion": 1}},
         {"id": "session-verbs-transmit-settings", "file": "sessions/verbs-transmit-settings.json", "kind": "session", "requires": {"transmitSettingsVersion": 2}},
         {"id": "session-verbs-tx-profiles", "file": "sessions/verbs-tx-profiles.json", "kind": "session", "requires": {"transmitSettingsVersion": 3}},
         {"id": "session-verbs-pa-profiles", "file": "sessions/verbs-pa-profiles.json", "kind": "session", "requires": {"paProfileVersion": 1}},

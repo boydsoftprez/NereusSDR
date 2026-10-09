@@ -19,12 +19,24 @@
 //                                    isLoaded) follow upstream
 //                                    byte-for-byte. AI tooling:
 //                                    Anthropic Claude Code.
+//   2026-10-07  J.J. Boyd / KG4VCF  Rotor control, bearings: DxccEntity
+//                                    gains latitude and longitude
+//                                    (cty.dat columns 5 and 6, longitude
+//                                    turned from + west to + east);
+//                                    <lat/long> alias overrides kept per
+//                                    prefix or exact call;
+//                                    positionForCallsign. AI tooling:
+//                                    Anthropic Claude Code.
 
 #pragma once
+
+#include "GreatCircle.h"
 
 #include <QString>
 #include <QHash>
 #include <QSet>
+
+#include <optional>
 
 namespace NereusSDR {
 
@@ -35,6 +47,10 @@ struct DxccEntity {
     QString continent;       // e.g. "EU"
     int     cqZone{0};
     int     ituZone{0};
+    // NereusSDR addition: entity position from the header line, degrees,
+    // latitude + north, longitude + east (cty.dat writes + west).
+    double  latitude{0.0};
+    double  longitude{0.0};
 };
 
 // From AetherSDR src/core/CtyDatParser.h:17-49 [@0cd4559]
@@ -58,11 +74,23 @@ public:
     // Look up entity details by primary prefix.
     const DxccEntity* entityByPrefix(const QString& primaryPrefix) const;
 
+    // NereusSDR addition: position for a callsign. A <lat/long> override
+    // on the prefix or exact-call alias that matched wins over the entity's
+    // header position. std::nullopt when the callsign resolves to nothing.
+    std::optional<GeoPosition> positionForCallsign(const QString& callsign) const;
+
     int entityCount() const { return m_entityByPrefix.size(); }
     bool isLoaded()   const { return !m_entityByPrefix.isEmpty(); }
 
 private:
     void parse(const QStringList& lines);
+
+    // NereusSDR addition: the alias a callsign matched, with its override.
+    struct Match {
+        QString primaryPrefix;
+        std::optional<GeoPosition> positionOverride;
+    };
+    Match resolveMatch(const QString& callsign) const;
 
     // exact-match table:  "=VK9XX"  -> primaryPrefix
     QHash<QString, QString> m_exactMatch;
@@ -71,6 +99,9 @@ private:
     // entity details keyed by primaryPrefix
     QHash<QString, DxccEntity> m_entityByPrefix;
     int m_maxPrefixLen{0};
+    // NereusSDR addition: <lat/long> overrides keyed like the tables above.
+    QHash<QString, GeoPosition> m_exactPosition;
+    QHash<QString, GeoPosition> m_prefixPosition;
 };
 
 } // namespace NereusSDR

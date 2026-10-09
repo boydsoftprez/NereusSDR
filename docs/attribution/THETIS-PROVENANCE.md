@@ -302,8 +302,8 @@ Template variant (see `HEADER-TEMPLATES.md`):
 | src/gui/meters/NeedleScalePwrItem.h | Project Files/Source/Console/MeterManager.cs | 14888+; 22817-23002; 31822-31823 | port | thetis-samphire | clsNeedleScalePwrItem, AddCrossNeedle |
 | src/gui/meters/OtherButtonItem.cpp | Project Files/Source/Console/MeterManager.cs | 8225+ | port | thetis-samphire | clsOtherButtons |
 | src/gui/meters/OtherButtonItem.h | Project Files/Source/Console/MeterManager.cs | 8225+ | port | thetis-samphire | clsOtherButtons |
-| src/gui/meters/RotatorItem.cpp | Project Files/Source/Console/MeterManager.cs | 15042+; 35170-35569; 15290-15312 | port | thetis-samphire | clsRotatorItem, renderRotator, Update |
-| src/gui/meters/RotatorItem.h | Project Files/Source/Console/MeterManager.cs | 15042+; 15290-15312 | port | thetis-samphire | clsRotatorItem, Update |
+| src/gui/meters/RotatorItem.cpp | Project Files/Source/Console/MeterManager.cs | 15042+; 35170-35569; 15290-15312; 16475-16717, 36697-37217, 23474-23503 [v2.10.3.15] | port | thetis-samphire | clsRotatorItem, renderRotator, Update; drag to turn, SendRotatorMessage, MouseUp/MouseDown (rotor control plan Task 5) |
+| src/gui/meters/RotatorItem.h | Project Files/Source/Console/MeterManager.cs | 15042+; 15290-15312; 36697-36703 [v2.10.3.15] | port | thetis-samphire | clsRotatorItem, Update; drag state (rotor control plan Task 5) |
 | src/gui/meters/SignalTextItem.cpp | Project Files/Source/Console/MeterManager.cs; Project Files/Source/Console/console.cs | 20286-20540; 20420+ | port | multi-source | clsSignalText, Common.UVfromDBM, dBm format helpers |
 | src/gui/meters/SignalTextItem.h | Project Files/Source/Console/MeterManager.cs; Project Files/Source/Console/console.cs | 20286+ | port | multi-source | |
 | src/gui/meters/SpacerItem.cpp | Project Files/Source/Console/MeterManager.cs | 16116; 35010 | port | thetis-samphire | clsSpacerItem, renderSpacer |

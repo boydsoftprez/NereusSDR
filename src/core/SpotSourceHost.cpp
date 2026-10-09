@@ -165,6 +165,11 @@
 //                                    versionString() so every caller sends
 //                                    the same reporter software tag.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 4a: each spot
+//                                    record carries bearingDeg, from the
+//                                    Core's grid square and its one cty.dat
+//                                    table. AI-assisted via Anthropic
+//                                    Claude Code.
 // =================================================================
 
 #include "core/SpotSourceHost.h"
@@ -173,6 +178,7 @@
 #include "core/DxClusterClient.h"
 #include "core/DxccColorProvider.h"
 #include "core/FreeDVReporterClient.h"
+#include "core/GreatCircle.h"
 #include "models/FreeDVStationModel.h"
 #include "core/LogCategories.h"
 #include "core/PotaClient.h"
@@ -271,6 +277,35 @@ QString SpotSourceHost::reporterVersion()
 
 QJsonObject SpotSourceHost::spotRecordFields(const SpotData& spot, const DxccColorProvider* dxcc)
 {
+    return spotRecordFields(spot, dxcc, freedvGridSquare());
+}
+
+double SpotSourceHost::spotBearingDeg(const QString& call, const DxccColorProvider* dxcc,
+                                      const QString& stationGrid)
+{
+    // Rotor control plan Task 4a (remote rotor control contract, "Bearings
+    // on spots"): -1 is "not known", never 0, which is north.
+    constexpr double kUnknownBearingDeg = -1.0;
+    if (dxcc == nullptr || call.trimmed().isEmpty()) {
+        return kUnknownBearingDeg;
+    }
+    const std::optional<GeoPosition> to = dxcc->positionForCallsign(call.trimmed().toUpper());
+    if (!to) {
+        return kUnknownBearingDeg;
+    }
+    const std::optional<double> bearing = GreatCircle::bearingFromGrid(stationGrid, *to);
+    if (!bearing || !std::isfinite(*bearing)) {
+        return kUnknownBearingDeg;
+    }
+    // One decimal: the stream has no other angle to follow, and a tenth of a
+    // degree is finer than any rotor turns.
+    const double rounded = std::round(*bearing * 10.0) / 10.0;
+    return rounded >= 360.0 ? 0.0 : rounded;
+}
+
+QJsonObject SpotSourceHost::spotRecordFields(const SpotData& spot, const DxccColorProvider* dxcc,
+                                             const QString& stationGrid)
+{
     // The heard-on frequency first, as the panadapter overlay places it.
     const double mhz = spot.rxFreqMhz > 0.0 ? spot.rxFreqMhz : spot.txFreqMhz;
     const qint64 hz = static_cast<qint64>(std::llround(mhz * 1.0e6));
@@ -303,6 +338,8 @@ QJsonObject SpotSourceHost::spotRecordFields(const SpotData& spot, const DxccCol
         {QStringLiteral("band"), static_cast<int>(bandFromFrequency(static_cast<double>(hz)))},
         {QStringLiteral("dxccColour"), colour},
         {QStringLiteral("dxccPriority"), priority},
+        // Rotor control plan Task 4a: the short-path bearing to the spot.
+        {QStringLiteral("bearingDeg"), spotBearingDeg(spot.callsign, dxcc, stationGrid)},
     };
     // Spot resolved mode (R-IOS-25, recordStreamVersion 2): the mode a click
     // on this spot puts a slice in, as the desktop's own resolver (ported
