@@ -10,10 +10,15 @@
 //   2026-10-09: native audio plan Task 8 (R-AUD-01, R-AUD-02, R-AUD-03,
 //               R-AUD-07, R-AUD-11, R-AUD-14). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: Task 8 merge (R-AUD-32): in a test run the real adapter
+//               lists no device, reports no default and registers no
+//               listener, as the older drivers' list is empty there. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CoreAudioSystem.h"
 
+#include "core/audio/AudioTestBarrier.h"
 #include "core/audio/CoreAudioInputStream.h"
 #include "core/audio/CoreAudioOutputBus.h"
 
@@ -158,6 +163,10 @@ public:
     QList<CoreAudioDeviceRecord> devices() override
     {
         QList<CoreAudioDeviceRecord> records;
+        // R-AUD-32: a test run walks no real device.
+        if (audioDevicesBarredForTestRun()) {
+            return records;
+        }
         const std::vector<AudioObjectID> ids =
             coreaudio::readArray<AudioObjectID>(kAudioObjectSystemObject, kAudioHardwarePropertyDevices);
         std::set<AudioObjectID> present;
@@ -202,6 +211,9 @@ public:
 
     std::optional<std::uint32_t> defaultDevice(AudioDeviceDirection direction) override
     {
+        if (audioDevicesBarredForTestRun()) {
+            return std::nullopt;
+        }
         const AudioObjectPropertySelector selector = direction == AudioDeviceDirection::Output
                                                          ? kAudioHardwarePropertyDefaultOutputDevice
                                                          : kAudioHardwarePropertyDefaultInputDevice;
@@ -219,7 +231,7 @@ public:
             std::lock_guard<std::mutex> sinkLock(m_sinkMutex);
             m_sink = std::move(sink);
         }
-        if (m_systemListening) {
+        if (m_systemListening || audioDevicesBarredForTestRun()) {
             return;
         }
         const AudioObjectPropertyAddress devices = coreaudio::address(kAudioHardwarePropertyDevices);

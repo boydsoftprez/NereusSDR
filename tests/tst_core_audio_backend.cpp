@@ -20,6 +20,9 @@
 //   2026-10-09: Task 8 fix (R-AUD-17): the capture clock follows a probe
 //               clock that jumps an hour mid-stream within one callback.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: Task 8 merge (R-AUD-32): the real adapter lists nothing
+//               in a test run. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -364,6 +367,10 @@ private slots:
 #ifdef Q_OS_MAC
         std::unique_ptr<ICoreAudioSystem> system = makeCoreAudioSystem();
         QVERIFY(system != nullptr);
+        // It walks no device and reports no default in a test run.
+        QVERIFY(system->devices().isEmpty());
+        QCOMPARE(system->defaultDevice(AudioDeviceDirection::Output), std::nullopt);
+        QCOMPARE(system->defaultDevice(AudioDeviceDirection::Input), std::nullopt);
         const CoreAudioDeviceRecord fakeDevice =
             record(0, QStringLiteral("never-opened"), QStringLiteral("Never opened"), fourCc("usb "), 2, 2);
         AudioStreamRequest request;
