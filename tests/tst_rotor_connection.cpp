@@ -69,6 +69,19 @@ public:
         pending.clear();
         return out;
     }
+    // The stop before close: the budget each read wait was given, and the
+    // answers that arrive one per read wait.
+    QList<int> readBudgets;
+    QList<QByteArray> arriveOnWait;
+    std::function<void()> onReadWait;
+    bool waitForMoreToRead(int msecs) override
+    {
+        readBudgets.append(msecs);
+        if (onReadWait) { onReadWait(); }
+        if (arriveOnWait.isEmpty()) { return false; }
+        pending += arriveOnWait.takeFirst();
+        return true;
+    }
 
     void feed(const QByteArray& bytes)
     {
@@ -202,6 +215,8 @@ private slots:
     void disconnectDuringATargetTurnSendsAStop();
     void reconnectDuringAMoveStopsTheOldLink();
     void rotctldDisconnectDuringATurnSendsItsStop();
+    void rotctldCloseWaitsForTheStopsOwnReply();
+    void driver4EndsRotctldOnlyAfterTheStopsReply();
     void teardownDuringAMoveSendsAStop();
     void quittingDuringAMoveSendsAStop();
     void disconnectWhileStillSendsNothing();
@@ -1088,6 +1103,74 @@ void TestRotorConnection::rotctldDisconnectDuringATurnSendsItsStop()
     const QPointer<FakeTransport> link = m_fake;
     m_conn->disconnectFromRotor();
     QCOMPARE(link->written, QByteArray("S\n"));
+}
+
+void TestRotorConnection::rotctldCloseWaitsForTheStopsOwnReply()
+{
+    // Re-review N1: a poll outstanding at close answers first. Its answer
+    // is not the stop's; the close waits on for the RPRT after it.
+    RotorConfig c;
+    c.driver = RotorDriver::Rotctld;
+    c.host = QStringLiteral("127.0.0.1");
+    connectWith(c);
+    QCOMPARE(m_fake->take(), QByteArray("p\n"));
+    m_fake->feed("100.000000\n0.000000\n");
+    QVERIFY(m_conn->startMove(RotorDirection::Cw));
+    QVERIFY(m_fake->take().startsWith("M "));
+    m_fake->feed("RPRT 0\n");
+    m_conn->pollNowForTesting();
+    QCOMPARE(m_fake->take(), QByteArray("p\n"));   // outstanding at close
+    const QPointer<FakeTransport> link = m_fake;
+    // The poll's answer comes in two pieces, then the stop's.
+    link->arriveOnWait = {QByteArray("104.000000\n"), QByteArray("0.000000\n"),
+                          QByteArray("RPRT 0\n")};
+    m_conn->disconnectFromRotor();
+    QCOMPARE(link->written, QByteArray("S\n"));
+    QCOMPARE(link->readBudgets.size(), 3);
+    QVERIFY(link->arriveOnWait.isEmpty());
+}
+
+void TestRotorConnection::driver4EndsRotctldOnlyAfterTheStopsReply()
+{
+#ifdef Q_OS_WIN
+    QSKIP("The rotctld stand-in is a POSIX shell script.");
+#endif
+    const QString out = m_dir->filePath(QStringLiteral("args"));
+    const QString script = writeStandIn(QStringLiteral(
+        "#!/bin/sh\n"
+        "trap 'echo stopped >> \"%1\"; exit 0' TERM\n"
+        "echo \"$@\" > \"%1\"\n"
+        "while :; do sleep 0.2 & wait $!; done\n").arg(out));
+    QVERIFY(!script.isEmpty());
+    RotctldProcess::setBinaryOverrideForTesting(script);
+
+    RotorConfig c;
+    c.driver = RotorDriver::RotctldStarted;
+    c.hamlibModel = 404;
+    c.serialPort = QStringLiteral("/dev/ttyUSB0");
+    connectWith(c);
+    QTRY_VERIFY_WITH_TIMEOUT(m_conn->isConnected(), 2000);
+    QCOMPARE(m_fake->take(), QByteArray("p\n"));
+    m_fake->feed("100.000000\n0.000000\n");
+    QVERIFY(m_conn->startMove(RotorDirection::Ccw));
+    m_fake->take();
+    m_fake->feed("RPRT 0\n");
+    m_conn->pollNowForTesting();
+    QCOMPARE(m_fake->take(), QByteArray("p\n"));
+
+    const QPointer<FakeTransport> link = m_fake;
+    link->arriveOnWait = {QByteArray("98.000000\n0.000000\n"), QByteArray("RPRT 0\n")};
+    QList<bool> runningAtWait;
+    link->onReadWait = [this, &runningAtWait]() {
+        runningAtWait.append(m_conn->rotctldProcess()->isRunning());
+    };
+    m_conn->disconnectFromRotor();
+    QCOMPARE(link->written, QByteArray("S\n"));
+    // rotctld was still running through both waits, the second being the
+    // one that brought the stop's answer; only then was it ended.
+    QCOMPARE(runningAtWait, QList<bool>({true, true}));
+    QVERIFY(link->arriveOnWait.isEmpty());
+    QVERIFY(!m_conn->rotctldProcess()->isRunning());
 }
 
 void TestRotorConnection::teardownDuringAMoveSendsAStop()

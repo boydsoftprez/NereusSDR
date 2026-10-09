@@ -50,6 +50,7 @@
 #include "core/RotorRoute.h"
 
 #include <QByteArray>
+#include <QDeadlineTimer>
 #include <QObject>
 #include <QString>
 #include <QTimer>
@@ -124,13 +125,15 @@ public:
     virtual void close() = 0;
     virtual qint64 write(const QByteArray& bytes) = 0;
     virtual QByteArray readAll() = 0;
-    // Waits up to `msecs` for what was written to leave, and with
-    // `awaitReply` for the answer as well (rotctld answers a stop once it
-    // has passed it to the rotor). Used only just before close().
-    virtual void flush(int msecs, bool awaitReply)
+    // Used only just before close(), to see a stop out. Waits up to
+    // `msecs` for what was written to leave.
+    virtual void waitForWritten(int msecs) { Q_UNUSED(msecs); }
+    // Waits up to `msecs` for more bytes to read; false when none came
+    // (timed out, or the link has gone). Bytes are taken with readAll().
+    virtual bool waitForMoreToRead(int msecs)
     {
         Q_UNUSED(msecs);
-        Q_UNUSED(awaitReply);
+        return false;
     }
 
 signals:
@@ -305,6 +308,9 @@ private:
     // Before a link closes mid-turn: the stop, written and flushed, so a
     // GS-232 move does not run on to its end stop with nobody to stop it.
     void stopBeforeClose();
+    // rotctld answers in order: reads until the stop's own RPRT, past any
+    // answer still outstanding, or until the deadline passes.
+    void awaitRotctldStopReply(const QDeadlineTimer& deadline);
     void closeTransport();
     void onOpened();
     void onTransportFailed(const QString& reason);

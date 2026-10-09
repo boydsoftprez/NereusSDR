@@ -217,11 +217,15 @@ public:
     qint64 write(const QByteArray& bytes) override { return m_socket.write(bytes); }
     QByteArray readAll() override { return m_socket.readAll(); }
 
-    void flush(int msecs, bool awaitReply) override
+    void waitForWritten(int msecs) override
     {
         if (m_socket.state() != QAbstractSocket::ConnectedState) { return; }
         m_socket.waitForBytesWritten(msecs);
-        if (awaitReply) { m_socket.waitForReadyRead(msecs); }
+    }
+    bool waitForMoreToRead(int msecs) override
+    {
+        if (m_socket.state() != QAbstractSocket::ConnectedState) { return false; }
+        return m_socket.waitForReadyRead(msecs);
     }
 
 private:
@@ -282,11 +286,15 @@ public:
     qint64 write(const QByteArray& bytes) override { return m_port.write(bytes); }
     QByteArray readAll() override { return m_port.readAll(); }
 
-    void flush(int msecs, bool awaitReply) override
+    void waitForWritten(int msecs) override
     {
         if (!m_port.isOpen()) { return; }
         m_port.waitForBytesWritten(msecs);
-        if (awaitReply) { m_port.waitForReadyRead(msecs); }
+    }
+    bool waitForMoreToRead(int msecs) override
+    {
+        if (!m_port.isOpen()) { return false; }
+        return m_port.waitForReadyRead(msecs);
     }
 
 private:
@@ -632,9 +640,46 @@ void RotorConnection::stopBeforeClose()
     QObject::disconnect(m_transport.get(), &RotorTransport::readyRead,
                         this, &RotorConnection::onReadyRead);
     m_transport->write(stopCommand(wireDriver()));
-    m_transport->flush(kStopFlushMs, isRotctldDriver());
+    // One deadline for the stop to leave and, for rotctld, to be answered
+    // (rotctld answers once it has passed the stop to the rotor; driver 4
+    // ends rotctld only after this returns).
+    const QDeadlineTimer deadline(kStopFlushMs);
+    m_transport->waitForWritten(int(deadline.remainingTime()));
+    if (isRotctldDriver()) { awaitRotctldStopReply(deadline); }
     m_hasTarget = false;
     m_moveActive = false;
+}
+
+// A poll or a command still outstanding is answered first: a poll with
+// two lines (or an RPRT when it failed), a command with an RPRT. Those are
+// skipped, not parsed; the stop's RPRT is the answer after them all.
+void RotorConnection::awaitRotctldStopReply(const QDeadlineTimer& deadline)
+{
+    std::deque<Expect> ahead = m_inFlight;
+    ahead.push_back(Expect::Report);
+    QByteArray rx = m_rx;
+    while (true) {
+        rx += m_transport->readAll();
+        while (!ahead.empty()) {
+            const qsizetype first = rx.indexOf('\n');
+            if (first < 0) { break; }
+            if (ahead.front() == Expect::Position
+                && !rx.left(first).trimmed().startsWith("RPRT")) {
+                const qsizetype second = rx.indexOf('\n', first + 1);
+                if (second < 0) { break; }
+                rx.remove(0, second + 1);
+            } else {
+                rx.remove(0, first + 1);
+            }
+            ahead.pop_front();
+        }
+        if (ahead.empty()) { return; }
+        const qint64 left = deadline.remainingTime();
+        if (left <= 0 || !m_transport->waitForMoreToRead(int(left))) {
+            qCInfo(lcRotor) << "rotctld did not answer the stop before the link closed";
+            return;
+        }
+    }
 }
 
 // Closes the transport and forgets the link: queue, replies awaited,
