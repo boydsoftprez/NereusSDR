@@ -24,6 +24,11 @@
 //   2026-10-09: native audio plan Task 15 (R-AUD-01, R-AUD-07, R-AUD-11,
 //               R-AUD-19, R-AUD-20, R-AUD-21, R-AUD-22). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 17 (R-AUD-07, R-AUD-19 to R-AUD-22):
+//               each output's role in its use, the session's
+//               buffer and rate, preferencesChanged(), and the control
+//               panel while only the mic runs.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #pragma once
@@ -99,6 +104,13 @@ public:
     std::optional<AsioDriverCaps> driverCaps(const QString& driver) const;
     bool driverInUse(const QString& driver) const;
     QString sessionDriver() const;     // empty with no output open
+    // Native audio plan Task 17 (R-AUD-20): the buffer and rate the open
+    // session runs at (0 before it answers or with no output open), and
+    // a note that audio/Asio/BufferFrames or SampleRate changed, so the
+    // reopened outputs take the saved values.
+    int sessionBufferFrames() const;
+    double sessionRate() const;
+    void preferencesChanged();
 
     struct Shared;
 
