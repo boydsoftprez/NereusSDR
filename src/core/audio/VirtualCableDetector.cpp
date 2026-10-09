@@ -242,3 +242,20 @@ QVector<DetectedCable> VirtualCableDetector::diffNewCables(
     }
     return fresh;
 }
+
+QString VirtualCableDetector::fingerprintSource(bool fromCatalogue)
+{
+    return fromCatalogue ? QStringLiteral("Catalogue") : QStringLiteral("PortAudio");
+}
+
+QVector<DetectedCable> VirtualCableDetector::newCablesSince(const QVector<DetectedCable>& current,
+                                                            const QString& lastCsv,
+                                                            const QString& lastSource,
+                                                            const QString& source)
+{
+    const QString last = lastSource.isEmpty() ? fingerprintSource(false) : lastSource;
+    if (last != source) {
+        return {};
+    }
+    return diffNewCables(current, lastCsv);
+}

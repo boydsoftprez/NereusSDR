@@ -403,7 +403,8 @@ private:
     // After a rescan: the cables found, and any new ones offered through
     // the first-run dialog.
     void afterRescan(const QVector<DetectedCable>& current);
-    // The other channels' pickers again, after `channel` changed.
+    // The other channels' pickers again, after `channel` changed (0: every
+    // channel's, after a speakers or headphones change).
     void refreshOtherPickers(int channel);
     // R-R3-21: 20 Hz level poll while the page is showing, the VAX
     // applet's cadence (VaxApplet::pollLevels).

@@ -235,6 +235,51 @@ private slots:
         QCOMPARE(fresh.size(), 1);
         QCOMPARE(fresh[0].deviceName, QStringLiteral("CABLE-C Input"));
     }
+    // ── newCablesSince(): like with like (R-AUD-03) ───────────────────
+    // An older build saved the fingerprint from the PortAudio scan, with
+    // no source key; on Windows MME cut the name to 31 characters. The
+    // first catalogue launch flags nothing and the next compares like
+    // with like.
+    void upgradeFromPortAudioNamesFlagsNothing() {
+        QVector<DetectedCable> old;
+        old.push_back(makeCable(VirtualCableProduct::VbCableA,
+                                QStringLiteral("CABLE-A Input (VB-Audio Virtual")));
+        const QString oldCsv = VirtualCableDetector::fingerprintCsv(old);
+
+        QVector<DetectedCable> now;
+        now.push_back(makeCable(VirtualCableProduct::VbCableA,
+                                QStringLiteral("CABLE-A Input (VB-Audio Virtual Cable)")));
+        const QString catalogue = VirtualCableDetector::fingerprintSource(true);
+        QCOMPARE(catalogue, QStringLiteral("Catalogue"));
+        QCOMPARE(VirtualCableDetector::fingerprintSource(false), QStringLiteral("PortAudio"));
+        // The names differ, so a plain diff would call the cable new.
+        QCOMPARE(VirtualCableDetector::diffNewCables(now, oldCsv).size(), 1);
+        QVERIFY(VirtualCableDetector::newCablesSince(now, oldCsv, QString(), catalogue).isEmpty());
+
+        // The launch after: a cable added since is new, the known one not.
+        QVector<DetectedCable> later = now;
+        later.push_back(makeCable(VirtualCableProduct::VbCableB,
+                                  QStringLiteral("CABLE-B Input (VB-Audio Virtual Cable)")));
+        const auto fresh = VirtualCableDetector::newCablesSince(
+            later, VirtualCableDetector::fingerprintCsv(now), catalogue, catalogue);
+        QCOMPARE(fresh.size(), 1);
+        QCOMPARE(fresh[0].deviceName, QStringLiteral("CABLE-B Input (VB-Audio Virtual Cable)"));
+    }
+    void portAudioScanAgainstOldFingerprintStillDiffs() {
+        QVector<DetectedCable> old;
+        old.push_back(makeCable(VirtualCableProduct::VbCableA, QStringLiteral("CABLE-A Input")));
+        QVector<DetectedCable> now = old;
+        now.push_back(makeCable(VirtualCableProduct::VbCableB, QStringLiteral("CABLE-B Input")));
+        const QString portAudio = VirtualCableDetector::fingerprintSource(false);
+        const QString oldCsv = VirtualCableDetector::fingerprintCsv(old);
+        QCOMPARE(VirtualCableDetector::newCablesSince(now, oldCsv, QString(), portAudio).size(), 1);
+        QCOMPARE(VirtualCableDetector::newCablesSince(now, oldCsv, portAudio, portAudio).size(), 1);
+        // A catalogue fingerprint read by a launch without one: nothing.
+        QVERIFY(VirtualCableDetector::newCablesSince(
+                    now, oldCsv, VirtualCableDetector::fingerprintSource(true), portAudio)
+                    .isEmpty());
+    }
+
     // ── detect(): the catalogue's devices (R-AUD-03) ──────────────────
     void detectKeepsMatchesWithIdAndBackend() {
         const QList<AudioDeviceInfo> devices{
