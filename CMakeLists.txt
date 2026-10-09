@@ -1599,6 +1599,13 @@ list(APPEND CORE_SOURCES
 if(APPLE)
     list(APPEND CORE_SOURCES src/core/audio/CoreAudioHalBus.cpp)
     list(APPEND CORE_SOURCES src/core/MacMicPermission.mm)
+    # Native audio plan Task 8 (R-AUD-01): the Core Audio engine, its
+    # system seam, the AUHAL output on the clock matcher and the input.
+    list(APPEND CORE_SOURCES
+        src/core/audio/CoreAudioSystem.cpp
+        src/core/audio/CoreAudioBackend.cpp
+        src/core/audio/CoreAudioOutputBus.cpp
+        src/core/audio/CoreAudioInputStream.cpp)
 endif()
 
 # LinuxPipeBus — Linux-only IAudioBus implementation bridging to PulseAudio /
@@ -2388,6 +2395,11 @@ function(nereus_apply_core_deps target)
         # APIs themselves come from libSystem (already linked) but the
         # property-query helpers and AudioDeviceID type live in CoreAudio.
         target_link_libraries(${target} PUBLIC "-framework CoreAudio")
+
+        # AudioToolbox and AudioUnit for the Core Audio engine's AUHAL
+        # output and input units (src/core/audio/CoreAudioOutputBus.cpp,
+        # CoreAudioInputStream.cpp; native audio plan Task 8).
+        target_link_libraries(${target} PUBLIC "-framework AudioToolbox" "-framework AudioUnit")
     endif()
 
     if(WIN32)

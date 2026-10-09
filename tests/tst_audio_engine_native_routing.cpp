@@ -18,6 +18,9 @@
 //   2026-10-09: native audio plan Task 7 (R-AUD-02, R-AUD-06, R-AUD-15,
 //               R-AUD-34). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-09: native audio plan Task 8 (R-AUD-01, R-AUD-02): the Mac's
+//               registry is Core Audio only. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -164,11 +167,17 @@ private slots:
         pipewire->setRunning(true);
         QCOMPARE(defaultAudioEngine({pipewire, older}), AudioEngineKind::PipeWire);
 
-        // The registry builds the older drivers here, until the native
-        // engine tasks add theirs.
+        // R-AUD-01: the Mac registers Core Audio only; the other systems
+        // build the older drivers last, until their engine tasks add theirs.
         const auto system = makeSystemAudioBackends(AudioBackendContext{});
         QVERIFY(!system.empty());
+#ifdef Q_OS_MAC
+        QCOMPARE(system.size(), std::size_t(1));
+        QCOMPARE(system.front()->id(), AudioBackendId::CoreAudio);
+        QCOMPARE(defaultAudioEngine(system), AudioEngineKind::CoreAudio);
+#else
         QCOMPARE(system.back()->id(), AudioBackendId::PortAudio);
+#endif
     }
 
     // The saved Engine decides which backend opens the role.

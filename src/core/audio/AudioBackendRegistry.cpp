@@ -6,11 +6,21 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 7 (R-AUD-01, R-AUD-02). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 8 (R-AUD-01, R-AUD-02): the Mac
+//               registers Core Audio alone. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AudioBackendRegistry.h"
 
 #include "core/audio/PortAudioBackend.h"
+
+#include <QtGlobal>
+
+#ifdef Q_OS_MAC
+#include "core/audio/CoreAudioBackend.h"
+#include "core/audio/CoreAudioSystem.h"
+#endif
 
 #include <optional>
 
@@ -50,6 +60,12 @@ std::vector<std::shared_ptr<IAudioEngineBackend>> makeSystemAudioBackends(const 
     static_cast<void>(context);
 
     std::vector<std::shared_ptr<IAudioEngineBackend>> backends;
+#if defined(Q_OS_MAC)
+    // R-AUD-01: Core Audio is the Mac's only engine, in the window, the
+    // Core and the mic helper alike; the older drivers add nothing here,
+    // so PortAudio is not registered.
+    backends.push_back(std::make_shared<CoreAudioBackend>(makeCoreAudioSystem()));
+#else
     // Until the Mac's and Windows' native engines land, the older drivers
     // also list the host APIs those engines replace, so nothing goes
     // silent meanwhile.
@@ -57,6 +73,7 @@ std::vector<std::shared_ptr<IAudioEngineBackend>> makeSystemAudioBackends(const 
     backends.push_back(std::make_shared<PortAudioBackend>(&listPortAudioDevices,
                                                           currentOlderDriverPlatform(),
                                                           kIncludeReplacedHostApis));
+#endif
     return backends;
 }
 
