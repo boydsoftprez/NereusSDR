@@ -59,6 +59,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09: Core speaker: coreSpeakerVersion, after radioSpeakerVersion
+//               and before coreBuildInfo (native audio plan Task 21,
+//               R-AUD-25). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-06: Radio speaker: radioSpeakerVersion, after
 //               radeReasonVersion and before coreBuildInfo (R-SPK-14).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -618,6 +622,13 @@ struct StationCapabilities {
     /// Sent after stationCatVersion and before coreBuildInfo, only to a
     /// peer whose hello declared `radioSpeaker` 1; 0 otherwise.
     int radioSpeakerVersion = 0;
+    /// Core speaker (native audio plan Task 21): 1 means radio carries
+    /// coreSpeakerVolume, coreSpeakerMuted, coreSpeakerDevice and
+    /// coreSpeakerDetails (writable) and coreSpeakerDevices and
+    /// coreSpeakerState (read-only). Sent after radioSpeakerVersion and
+    /// before coreBuildInfo, only to a peer whose hello declared
+    /// `coreSpeaker` 1, from a Core that has its own speaker; 0 otherwise.
+    int coreSpeakerVersion = 0;
     /// At most this many URLs are read, each at most kMaxMediaStunUrlBytes.
     static constexpr int kMaxMediaStunUrls = 8;
     static constexpr int kMaxMediaStunUrlBytes = 512;

@@ -989,6 +989,19 @@ five, and a change to them alone sends that peer no `radio` delta. A write
 of one from a peer that did not declare it is refused. The station does not
 declare it; the desktop's remote window does.
 
+**`coreSpeaker` 1** (the Core speaker): the client shows and sets the
+Core's own sound card output: its level and mute, the card it plays on and
+that card's buffer, delay setting and sample rate. A peer that declares it,
+on a Core that has its own speaker (a desktop that hosts a station has
+none), is sent `coreSpeakerVersion` (section 6.3) and the `radio` object's
+`coreSpeakerVolume`, `coreSpeakerMuted`, `coreSpeakerDevice`,
+`coreSpeakerDevices`, `coreSpeakerState` and `coreSpeakerDetails` (section
+7); a peer that does not sees exactly the wire it was built for, with none
+of the six, and a change to them alone sends that peer no `radio` delta. A
+write of one from a peer that is not sent them is refused with "Update this
+app to change the Core speaker on this Core." The station does not declare
+it; the desktop's remote window does.
+
 **`sessionHolder` 1** (iPhone app plan Task 71; the several-devices
 design, ruling 10.1): the Core admits up to four devices at once (section
 5.1). A client declares it only together with `deviceAuth` 1 or later, and
@@ -1181,6 +1194,7 @@ table.
 | `radeReasonVersion` | 1 |
 | `stationCatVersion` | 1 |
 | `radioSpeakerVersion` | 1 |
+| `coreSpeakerVersion` | 1 |
 
 <!-- /surface -->
 
@@ -2276,6 +2290,18 @@ and none of the five. A client connected to a Core that sends no entry
 shows the radio speaker disabled, with the reason "This Core can't set the
 radio speaker. Update the Core.", and sends no write of the three.
 
+**The Core speaker.** A client that declared `coreSpeaker` 1 is sent
+`coreSpeakerVersion`, an `i64`, 1, by a Core that has its own speaker,
+after `radioSpeakerVersion` (or after the last entry before it when that is
+absent) and before `coreBuildInfo`. At 1 the `radio` object carries
+`coreSpeakerVolume`, `coreSpeakerMuted`, `coreSpeakerDevice` and
+`coreSpeakerDetails`, which the client may write, and `coreSpeakerDevices`
+and `coreSpeakerState`, which it may not (section 7). A peer that did not
+declare the feature, or a Core without its own speaker, is sent no entry
+and none of the six. A client connected to a Core that sends no entry shows
+the Core speaker disabled, with the reason "This Core can't set its speaker
+from here. Update the Core.", and sends no write of the four.
+
 **Core executable identity.** A client at agreed minor 11 may declare
 `coreBuildInfo` 1. After authentication, a Core with a known product version
 appends one optional `coreBuildInfo` utf8 capability after all existing
@@ -2313,7 +2339,8 @@ peer that declared `txInhibitReason` (section 6.1); `paTransmitBandVersion` only
 peer that declared `paTransmitBand`; `radeReasonVersion` only for a peer
 that declared `radeReason`; `stationCatVersion` only for a peer that
 declared `stationCat` on a Core that runs CAT; `radioSpeakerVersion` only for a peer that
-declared `radioSpeaker`. A client ignores a capability it does not know
+declared `radioSpeaker`; `coreSpeakerVersion` only for a peer that declared
+`coreSpeaker` on a Core with its own speaker. A client ignores a capability it does not know
 (`StationCapabilities::fromUpdates`).
 
 **Each device's share of the display budget** (iPhone app plan Task 76; the
@@ -2510,7 +2537,8 @@ older window sees only the values it was built for.
 | 107 | `radeReasonVersion` | `i64` |
 | 108 | `stationCatVersion` | `i64` |
 | 109 | `radioSpeakerVersion` | `i64` |
-| 110 | `coreBuildInfo` | `utf8` |
+| 110 | `coreSpeakerVersion` | `i64` |
+| 111 | `coreBuildInfo` | `utf8` |
 
 <!-- /surface -->
 
@@ -2732,7 +2760,7 @@ An enum property lists the values its domain allows.
 | 8 | `hardwarePeakOverride` | `f64` | bidirectional |  |
 | 9 | `lastLoadError` | `utf8` | outbound |  |
 
-**RadioModel** (43 properties)
+**RadioModel** (49 properties)
 
 | Ordinal | Property | Wire kind | Direction | Enum values |
 | --- | --- | --- | --- | --- |
@@ -2779,6 +2807,12 @@ An enum property lists the values its domain allows.
 | 40 | `speakerAmplifierMode` | `i64` | bidirectional |  |
 | 41 | `radioSpeakerAvailability` | `i64` | outbound |  |
 | 42 | `speakerAmplifierAvailable` | `bool` | outbound |  |
+| 43 | `coreSpeakerVolume` | `i64` | bidirectional |  |
+| 44 | `coreSpeakerMuted` | `bool` | bidirectional |  |
+| 45 | `coreSpeakerDevice` | `utf8` | bidirectional |  |
+| 46 | `coreSpeakerDevices` | `utf8` | outbound |  |
+| 47 | `coreSpeakerState` | `utf8` | outbound |  |
+| 48 | `coreSpeakerDetails` | `utf8` | bidirectional |  |
 
 **RfKitModel** (30 properties)
 
@@ -4040,6 +4074,34 @@ Notes on the keys:
   write of either is refused. All five are sent only to a peer that
   declared `radioSpeaker` 1 (section 6.2), and declared after every other
   `radio` property so no earlier ordinal moves.
+- **The Core speaker (`radio`).** The Core's own sound card output, which
+  plays the Core's receive audio on the Core box. `coreSpeakerVolume` (int,
+  0 to 100; 50 when none was ever saved) and `coreSpeakerMuted` (bool),
+  bidirectional, are the Core's master level and mute; they act on the
+  Core's sound card alone, never on the audio the Core sends a window, the
+  phone, TCI or the radio. `coreSpeakerDevice` (utf8, bidirectional) is the
+  card chosen, as compact JSON `{"id":"Device,0","name":"USB Audio
+  Device"}`; `{"id":"","name":""}` is the Core's default card and
+  `{"id":"(none)","name":""}` no card. `coreSpeakerDetails` (utf8,
+  bidirectional) is `{"bufferFrames":128,"delayMs":0,"sampleRate":48000,
+  "negotiated":"...","delayNowMs":12.5}`: a write sets the buffer, the
+  delay setting (0 automatic) and the sample rate to a value Setup offers,
+  and a value it does not offer is left as it was; `negotiated` (the format
+  the card opened with) and `delayNowMs` (the delay now, -1 when silent)
+  are the Core's. `coreSpeakerDevices` (utf8, outbound only) lists the
+  Core's cards, `[{"id":"...","name":"...","state":"present"}]`, with
+  `state` one of `present`, `notConnected` (a chosen card that is gone) and
+  `inUse`. `coreSpeakerState` (utf8, outbound only) is
+  `{"state":"playing","playing":"...","chosen":"...","desktop":false}`, with
+  `state` one of `playing`, `notConnected`, `inUse`, `noCard` and
+  `waitingForPick` (a Core box that starts into a desktop and has no card
+  picked opens none until a window picks one; `desktop` says the box does).
+  Keys come in any order, and a value with a key missing or extra is
+  ignored. A write lands through the Core's own setters and is saved on the
+  Core (`audio/Master/` and `audio/Speakers/`); every other window and the
+  phone follow. A raw write of the two reports is refused. All six are sent
+  only to a peer that declared `coreSpeaker` 1 (section 6.2), and declared
+  after every other `radio` property so no earlier ordinal moves.
 
 #### The TX EQ curve (`txEqCurve`)
 
