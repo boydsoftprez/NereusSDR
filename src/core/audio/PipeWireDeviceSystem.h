@@ -28,8 +28,9 @@
 // connection marks itself not running, forgets its list, posts
 // DevicesChanged and DeviceLost to its open streams, and calls its lost
 // handler.  The system then tries a new connection every
-// kPipeWireReconnectIntervalMs on the thread that made it (its event loop,
-// never a PipeWire callback, never an audio or DSP thread).  When one runs
+// kPipeWireReconnectIntervalMs: a timer on the thread that made it starts
+// each try on a worker thread (never a PipeWire callback, never an audio
+// or DSP thread, never blocking the system's thread).  When one runs
 // it becomes the current connection and the system posts DevicesChanged,
 // so the stream supervisor reopens the chosen devices without a restart.
 //
@@ -174,14 +175,19 @@ public:
 };
 
 // Makes a connection, running or not (a daemon that does not answer gives
-// one that is not running).  Called on the system's thread.
+// one that is not running).  The first call is on the system's thread when
+// it is made; every retry calls it on a worker thread of its own.
 using PipeWireConnector = std::function<std::shared_ptr<IPipeWireConnection>()>;
 
-// The engine's system over a connector: it connects when made and, while
-// its connection is not running, tries again every retryIntervalMs on the
-// event loop of the thread that made it (retryIntervalMs 0: never again).
-// A new connection that runs replaces the old one, and DevicesChanged and
-// both default notices follow.  Streams keep the connection they opened
+// The engine's system over a connector: it connects when made, on the
+// calling thread and bounded by the connection's own wait, so the engine's
+// running state is known at once.  While its connection is not running a
+// timer on the event loop of the thread that made it (retryIntervalMs; 0:
+// never again) starts one try on a worker thread; the next timer starts
+// only after that try reports back, so one try runs at a time and the
+// system's thread never waits on the daemon.  A try's connection is
+// adopted on the system's thread; one that runs replaces the old one, and
+// DevicesChanged and both default notices follow.  Streams keep the connection they opened
 // on, so an old one lives until its last stream closes.  Every call but
 // retrying() and the constructor may come from any thread.
 class ReconnectingPipeWireDeviceSystem final : public IPipeWireDeviceSystem {
@@ -205,11 +211,13 @@ public:
                                                    IAudioInputSink* sink) override;
 
     // Cancels a pending try at once and detaches the current connection's
-    // notices; the connector is never called again.  On the system's
-    // thread it never waits; from another thread (a destructor there) it
-    // waits only for a try already running.
+    // notices; the connector is never called again.  A try still running
+    // on its worker is abandoned, never waited for: when it ends its
+    // connection is discarded, never adopted.  From another thread (a
+    // destructor there) stop() waits only for a call already running on
+    // the system's thread, which never waits on the daemon.
     void stop();
-    // A try is scheduled (the system's thread).
+    // A try is scheduled or running (the system's thread).
     bool retrying() const;
 
 private:
@@ -221,6 +229,7 @@ private:
     void onLost(const std::weak_ptr<IPipeWireConnection>& lost);
     void scheduleRetry();
     void retryNow();
+    void finishTry(const std::shared_ptr<IPipeWireConnection>& next);
 
     PipeWireConnector m_connector;
     int m_retryIntervalMs;
@@ -228,6 +237,7 @@ private:
     std::shared_ptr<Relay> m_relay;
     std::unique_ptr<QTimer> m_retryTimer;   // the system's thread; also the relay's target
     std::atomic<bool> m_stopped{false};
+    bool m_tryRunning = false;   // the system's thread
 
     mutable std::mutex m_mutex;
     std::shared_ptr<IPipeWireConnection> m_current;

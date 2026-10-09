@@ -33,6 +33,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <memory>
 #include <mutex>
@@ -266,18 +267,40 @@ public:
     std::function<void()> lostHandler;
 };
 
-// A desktop whose daemon the test starts and stops.  Every connection it
-// makes while up lists a sink and a source.
+// A desktop whose daemon the test starts, stops and slows.  Every
+// connection it makes while up lists a sink and a source.  A try with a
+// delay sleeps first, as a daemon that is up but slow to answer.
 struct FakeServer {
     std::atomic<bool> up{true};
+    std::atomic<int> delayMs{0};
     std::atomic<int> tries{0};
+    std::atomic<int> slowTries{0};
+    std::atomic<int> inFlight{0};
+    std::atomic<int> maxInFlight{0};
     std::mutex mutex;
     std::vector<std::shared_ptr<FakePipeWireConnection>> made;
+
+    // A try still on its worker uses this server: wait for it.
+    ~FakeServer()
+    {
+        while (inFlight.load() > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
 
     PipeWireConnector connector()
     {
         return [this]() -> std::shared_ptr<IPipeWireConnection> {
             tries.fetch_add(1);
+            const int now = inFlight.fetch_add(1) + 1;
+            int seen = maxInFlight.load();
+            while (now > seen && !maxInFlight.compare_exchange_weak(seen, now)) {
+            }
+            const int delay = delayMs.load();
+            if (delay > 0) {
+                slowTries.fetch_add(1);
+                std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+            }
             auto connection = std::make_shared<FakePipeWireConnection>(up.load());
             if (connection->running()) {
                 connection->dir.nodeProperties(31, sinkProps(QStringLiteral("alsa_output.analog-stereo"),
@@ -287,8 +310,11 @@ struct FakeServer {
                 source.insert(QStringLiteral("media.class"), QStringLiteral("Audio/Source"));
                 connection->dir.nodeProperties(32, source);
             }
-            std::lock_guard<std::mutex> lock(mutex);
-            made.push_back(connection);
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                made.push_back(connection);
+            }
+            inFlight.fetch_sub(1);
             return connection;
         };
     }
@@ -303,6 +329,9 @@ struct FakeServer {
 // Short in the test so the waits stay short; the real interval is
 // kPipeWireReconnectIntervalMs.
 constexpr int kTestRetryMs = 20;
+
+// A daemon that is up but this slow to answer each try.
+constexpr int kSlowConnectMs = 2000;
 
 // The system's own log lines, expected where a case makes them.
 void expectLost()
@@ -898,6 +927,93 @@ private slots:
         QTest::qWait(kTestRetryMs * 2);
         QCOMPARE(server.tries.load(), after);
         system.stop();   // a second stop() is harmless
+    }
+
+    // A try against a daemon that is up but slow runs on a worker: this
+    // thread stays free, one try runs at a time, and the try's connection
+    // is adopted here when it ends.
+    void aSlowTryLeavesTheThreadFree()
+    {
+        FakeServer server;
+        server.up.store(false);
+        expectNotRunning();
+        ReconnectingPipeWireDeviceSystem system(server.connector(), kTestRetryMs);
+        server.delayMs.store(kSlowConnectMs);
+        server.up.store(true);
+        QTRY_VERIFY(server.slowTries.load() >= 1);
+        const int triesAtStart = server.tries.load();
+
+        bool fired = false;
+        QElapsedTimer timer;
+        timer.start();
+        QTimer::singleShot(0, [&fired] { fired = true; });
+        QTRY_VERIFY_WITH_TIMEOUT(fired, 100);
+        QVERIFY2(timer.elapsed() < 100, qPrintable(QString::number(timer.elapsed())));
+        QCOMPARE(server.inFlight.load(), 1);   // still inside the slow try
+        QVERIFY(!system.running());
+        QVERIFY(system.retrying());
+
+        expectBack();
+        QTRY_VERIFY_WITH_TIMEOUT(system.running(), kSlowConnectMs * 3);
+        QCOMPARE(server.tries.load(), triesAtStart);   // none started during it
+        QCOMPARE(server.maxInFlight.load(), 1);
+        QCOMPARE(system.nodes().size(), 2);
+        QVERIFY(server.last()->hasLostHandler());
+    }
+
+    // stop() during a slow try returns without waiting for it; the try's
+    // connection, when it ends, is discarded, never adopted.  Destroying
+    // the system during a slow try is the same.
+    void stopDuringASlowTryDiscardsIt()
+    {
+        FakeServer server;
+        server.up.store(false);
+        expectNotRunning();
+        auto system = std::make_unique<ReconnectingPipeWireDeviceSystem>(server.connector(),
+                                                                         kTestRetryMs);
+        NoticeLog log;
+        system->setNoticeSink(log.sink());
+        server.delayMs.store(kSlowConnectMs);
+        server.up.store(true);
+        QTRY_VERIFY(server.slowTries.load() >= 1);
+
+        QElapsedTimer timer;
+        timer.start();
+        system->stop();
+        const qint64 stopMs = timer.elapsed();
+        // Never the slow try's length: well inside one retry interval.
+        QVERIFY2(stopMs < kPipeWireReconnectIntervalMs, qPrintable(QString::number(stopMs)));
+        QVERIFY(!system->retrying());
+
+        QTRY_VERIFY_WITH_TIMEOUT(server.inFlight.load() == 0, kSlowConnectMs * 3);
+        QTest::qWait(kTestRetryMs * 3);   // a report, were one queued, would run here
+        QVERIFY(!system->running());
+        QVERIFY(system->nodes().isEmpty());
+        std::shared_ptr<FakePipeWireConnection> late = server.last();
+        QVERIFY(late->running());
+        QVERIFY(!late->hasLostHandler());
+        late->dir.nodeProperties(98, sinkProps(QStringLiteral("late"), QStringLiteral("Late")));
+        QVERIFY(log.take().isEmpty());
+        const int triesAfter = server.tries.load();
+        QTest::qWait(kTestRetryMs * 3);
+        QCOMPARE(server.tries.load(), triesAfter);
+
+        // Destroyed while a slow try is on its worker.
+        server.delayMs.store(0);
+        server.up.store(false);
+        expectNotRunning();
+        auto doomed = std::make_unique<ReconnectingPipeWireDeviceSystem>(server.connector(),
+                                                                         kTestRetryMs);
+        const int slowBefore = server.slowTries.load();
+        server.delayMs.store(kSlowConnectMs);
+        server.up.store(true);
+        QTRY_VERIFY(server.slowTries.load() > slowBefore);
+        timer.restart();
+        doomed.reset();
+        QVERIFY2(timer.elapsed() < kPipeWireReconnectIntervalMs,
+                 qPrintable(QString::number(timer.elapsed())));
+        QTRY_VERIFY_WITH_TIMEOUT(server.inFlight.load() == 0, kSlowConnectMs * 3);
+        QTest::qWait(kTestRetryMs * 3);   // the late report finds no system
     }
 
     // R-AUD-01 on Linux: PipeWire ahead of the older drivers, outside the

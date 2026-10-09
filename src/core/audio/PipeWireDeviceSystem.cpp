@@ -25,6 +25,7 @@
 #include <atomic>
 #include <cmath>
 #include <map>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -275,10 +276,10 @@ struct ReconnectingPipeWireDeviceSystem::Forward {
 
 // A lost handler's way back to the system's thread, and the guard on every
 // timer and queued call into the system.  stop() clears the target under
-// `mutex`, so no handler queues anything after it; it sets `stopped` under
-// `runMutex`, which a running try or loss holds, so nothing runs in the
-// system once stop() returns, even when the system is destroyed on another
-// thread while its own thread is in a try.
+// `mutex`, so no handler or try queues anything after it; it sets `stopped`
+// under `runMutex`, which a running timer, report or loss holds, so nothing
+// runs in the system once stop() returns, even when the system is
+// destroyed on another thread while its own thread is in one of them.
 struct ReconnectingPipeWireDeviceSystem::Relay {
     std::mutex mutex;
     QObject* target = nullptr;
@@ -336,9 +337,10 @@ void ReconnectingPipeWireDeviceSystem::stop()
         m_relay->target = nullptr;
     }
     {
-        // Waits only for a try already running on the system's thread (at
-        // most the connection's kPipeWireConnectWaitSeconds); a pending try
-        // is never waited for.
+        // Waits only for a call already running on the system's thread
+        // (adopting a finished try, or a loss), which never waits on the
+        // daemon; a pending try, or one still on its worker, is never
+        // waited for.
         std::lock_guard<std::mutex> run(m_relay->runMutex);
         m_relay->stopped = true;
     }
@@ -360,7 +362,7 @@ void ReconnectingPipeWireDeviceSystem::stop()
 
 bool ReconnectingPipeWireDeviceSystem::retrying() const
 {
-    return m_retryTimer && m_retryTimer->isActive();
+    return !m_stopped && (m_tryRunning || (m_retryTimer && m_retryTimer->isActive()));
 }
 
 std::shared_ptr<IPipeWireConnection> ReconnectingPipeWireDeviceSystem::current() const
@@ -415,7 +417,7 @@ void ReconnectingPipeWireDeviceSystem::onLost(const std::weak_ptr<IPipeWireConne
 
 void ReconnectingPipeWireDeviceSystem::scheduleRetry()
 {
-    if (m_stopped || m_retryIntervalMs <= 0 || !m_connector || !m_retryTimer
+    if (m_stopped || m_tryRunning || m_retryIntervalMs <= 0 || !m_connector || !m_retryTimer
         || m_retryTimer->isActive()) {
         return;
     }
@@ -424,17 +426,49 @@ void ReconnectingPipeWireDeviceSystem::scheduleRetry()
 
 void ReconnectingPipeWireDeviceSystem::retryNow()
 {
-    if (m_stopped) {
+    if (m_stopped || m_tryRunning) {
         return;
     }
     std::shared_ptr<IPipeWireConnection> active = current();
     if (active && active->running()) {
         return;
     }
-    std::shared_ptr<IPipeWireConnection> next = m_connector();
+    // The try runs on a worker of its own, so a daemon that is up but slow
+    // never holds this thread.  The worker holds no pointer to the system:
+    // it reports back through the relay, and a report that arrives after
+    // stop() is never run (its connection is dropped with it).
+    m_tryRunning = true;
+    std::thread([this, connector = m_connector, relay = m_relay] {
+        std::shared_ptr<IPipeWireConnection> next = connector();
+        std::lock_guard<std::mutex> lock(relay->mutex);
+        if (relay->target == nullptr) {
+            return;   // stopped: discarded here, never adopted
+        }
+        QMetaObject::invokeMethod(
+            relay->target,
+            [this, relay, next] {
+                std::lock_guard<std::mutex> run(relay->runMutex);
+                if (!relay->stopped) {
+                    finishTry(next);
+                }
+            },
+            Qt::QueuedConnection);
+    }).detach();
+}
+
+void ReconnectingPipeWireDeviceSystem::finishTry(const std::shared_ptr<IPipeWireConnection>& next)
+{
+    m_tryRunning = false;
+    if (m_stopped) {
+        return;
+    }
     if (!next || !next->running()) {
         scheduleRetry();
         return;
+    }
+    std::shared_ptr<IPipeWireConnection> active = current();
+    if (active && active->running()) {
+        return;   // nothing to replace
     }
     adopt(next);
     qCInfo(lcAudio) << "PipeWire answers again; its devices are listed";
