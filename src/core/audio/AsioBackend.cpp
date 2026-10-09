@@ -7,6 +7,11 @@
 //   2026-10-09: native audio plan Task 15 (R-AUD-01, R-AUD-07, R-AUD-11,
 //               R-AUD-19, R-AUD-20, R-AUD-21, R-AUD-22). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 17 (R-AUD-07, R-AUD-19 to R-AUD-22):
+//               each output's role in its use, the session's buffer and
+//               rate, preferencesChanged(), and the control panel while
+//               only the mic runs.  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AsioBackend.h"
@@ -198,6 +203,8 @@ public:
     CaptureProtocol::AsioOpenUse useLocked() const
     {
         CaptureProtocol::AsioOpenUse use;
+        // Native audio plan Task 17: the helper knows which role plays here.
+        use.role = m_request.role;
         use.pair = m_request.pair;
         use.direction = AudioDeviceDirection::Output;
         use.memory = m_names.memory;
@@ -631,9 +638,11 @@ std::unique_ptr<IAudioInputStream> AsioBackend::createInput(const AudioStreamReq
 void AsioBackend::openControlPanel(const QString& deviceId)
 {
     std::lock_guard lock(m_shared->mutex);
-    // R-AUD-22: the panel of the driver the helper has loaded.
+    // R-AUD-22: the panel of the driver the helper has loaded.  With no
+    // output open the helper may still run the driver for the mic; it
+    // opens the panel only for a running session (Task 17).
     if (m_shared->linked() && m_shared->link.openControlPanel && !deviceId.isEmpty()
-        && deviceId == m_shared->sessionDriver) {
+        && (deviceId == m_shared->sessionDriver || m_shared->sessionDriver.isEmpty())) {
         m_shared->link.openControlPanel();
     }
 }
@@ -674,6 +683,27 @@ QString AsioBackend::sessionDriver() const
 {
     std::lock_guard lock(m_shared->mutex);
     return m_shared->sessionDriver;
+}
+
+int AsioBackend::sessionBufferFrames() const
+{
+    std::lock_guard lock(m_shared->mutex);
+    return m_shared->buses.isEmpty() ? 0 : m_shared->runningFrames;
+}
+
+double AsioBackend::sessionRate() const
+{
+    std::lock_guard lock(m_shared->mutex);
+    return m_shared->buses.isEmpty() ? 0.0 : m_shared->runningRate;
+}
+
+void AsioBackend::preferencesChanged()
+{
+    std::lock_guard lock(m_shared->mutex);
+    // R-AUD-20: the next open takes the saved buffer and rate, not the
+    // running session's.
+    m_shared->runningFrames = 0;
+    m_shared->runningRate = 0.0;
 }
 
 } // namespace NereusSDR

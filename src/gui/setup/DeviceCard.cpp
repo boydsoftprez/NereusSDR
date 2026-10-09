@@ -37,6 +37,13 @@
 // older drivers with no host API saved show on the "Older drivers"
 // heading, never a second row of that name.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-09: native audio plan Task 17 (R-AUD-07, R-AUD-19 to R-AUD-22,
+// settled call 28). An interface's pairs under its name in the Device
+// list; the same-pair note; "Mic is on:" Left, Right or Both; the prompt
+// before a second ASIO driver; the ASIO driver's buffer sizes and rates,
+// shared by every card on it; the restarted note; the ASIO control panel
+// button; the pairs of a driver with an unusable sample format greyed.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "DeviceCard.h"
@@ -46,6 +53,7 @@
 #include "core/AudioEngine.h"
 #include "core/audio/IAudioDeviceCatalog.h"
 #include "gui/UnbuiltFeatures.h"
+#include "gui/setup/AsioSwitchAllDialog.h"
 #include "gui/setup/AudioDriverList.h"
 
 #include <QCheckBox>
@@ -57,8 +65,12 @@
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QPainter>
+#include <QPushButton>
+#include <QRadioButton>
 #include <QSignalBlocker>
 #include <QStandardItemModel>
+#include <QStyledItemDelegate>
 
 #include <QTimer>
 #include <QToolButton>
@@ -66,6 +78,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -202,6 +215,11 @@ static constexpr int kPairedRole = Qt::UserRole + 6;
 // The entry's list label, before the closed field marks the chosen device
 // in use by another program (R-AUD-11).
 static constexpr int kListLabelRole = Qt::UserRole + 7;
+// Task 17: the entry's channel count (2, or 1 for "Output 5").
+static constexpr int kPairChannelsRole = Qt::UserRole + 10;
+
+// Task 17: the popup indents a pair under its interface's heading.
+static constexpr int kPairIndentPx = 16;
 
 // R-AUD-15: the Delay list ("Automatic" saves DelayMs 0).
 static constexpr std::array<int, 7> kDelayChoicesMs{0, 2, 3, 5, 10, 20, 40};
@@ -306,6 +324,68 @@ const IAudioDeviceCatalog& emptyCatalogue()
     return catalogue;
 }
 
+// Task 17 (R-AUD-07): the Device popup shows an interface's heading in
+// bold, dim, and its pairs indented under it by their pair label alone;
+// the closed field keeps the full label.
+class DeviceListDelegate final : public QStyledItemDelegate {
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+
+    void paint(QPainter* painter, const QStyleOptionViewItem& option,
+               const QModelIndex& index) const override
+    {
+        QStyleOptionViewItem indented(option);
+        if (!index.data(DeviceCard::kPopupTextRole).toString().isEmpty()) {
+            indented.rect.adjust(kPairIndentPx, 0, 0, 0);
+        }
+        QStyledItemDelegate::paint(painter, indented, index);
+    }
+
+protected:
+    void initStyleOption(QStyleOptionViewItem* option, const QModelIndex& index) const override
+    {
+        QStyledItemDelegate::initStyleOption(option, index);
+        if (index.data(DeviceCard::kGroupHeadingRole).toBool()) {
+            option->font.setBold(true);
+            option->palette.setColor(QPalette::Text, QColor(0x8a, 0xa8, 0xc0));
+            option->palette.setColor(QPalette::Disabled, QPalette::Text, QColor(0x8a, 0xa8, 0xc0));
+        } else if (!(index.flags() & Qt::ItemIsEnabled)) {
+            // Settled call 28: a driver NereusSDR cannot use reads greyed in
+            // the open list too (the style sheet's item colour otherwise wins).
+            const QColor off(0x56, 0x68, 0x7a);
+            option->palette.setColor(QPalette::All, QPalette::Text, off);
+            option->palette.setColor(QPalette::All, QPalette::WindowText, off);
+            option->palette.setColor(QPalette::All, QPalette::HighlightedText, off);
+        }
+        const QString popup = index.data(DeviceCard::kPopupTextRole).toString();
+        if (!popup.isEmpty()) {
+            option->text = popup;
+        }
+    }
+};
+
+// Task 17: a combo's items replaced only when they differ, so a list the
+// operator has open is not rebuilt under them.
+void setComboChoices(QComboBox* combo, const QList<QPair<QString, int>>& choices, int selected)
+{
+    bool same = combo->count() == choices.size();
+    for (int i = 0; same && i < choices.size(); ++i) {
+        same = combo->itemText(i) == choices.at(i).first
+            && combo->itemData(i).toInt() == choices.at(i).second
+            && !combo->itemData(i, kKeptEntryRole).toBool();
+    }
+    QSignalBlocker blocker(combo);
+    if (!same) {
+        resetPopupAccessibilityCache(combo);
+        combo->clear();
+        for (const auto& [text, value] : choices) {
+            combo->addItem(text, QVariant::fromValue(value));
+        }
+    }
+    const int idx = combo->findData(QVariant::fromValue(selected));
+    combo->setCurrentIndex(idx >= 0 ? idx : 0);
+}
+
 std::optional<AudioEngineKind>& buildDefaultOverride()
 {
     static std::optional<AudioEngineKind> value;
@@ -386,6 +466,7 @@ DeviceCard::DeviceCard(const QString& prefix,
         // R-SPK-21: a card greyed until Enabled follows the box, including
         // the loadFromSettings below (which suppresses only the signal).
         connect(m_enableChk, &QCheckBox::toggled, this, [this](bool) { updateBodyEnabled(); });
+        connect(m_enableChk, &QCheckBox::toggled, this, [this](bool) { refreshSamePairNote(); });
     }
 
     loadFromSettings();
@@ -468,6 +549,38 @@ void DeviceCard::buildLayout()
     // card is shown; the field follows its entries, never truncating it.
     m_deviceCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     deviceForm->addRow(makeLabel(QStringLiteral("Device:")), m_deviceCombo);
+    // Task 17 (R-AUD-07): pairs indented under their interface's heading.
+    m_deviceCombo->setItemDelegate(new DeviceListDelegate(m_deviceCombo));
+
+    // Task 17: the mic's side of its pair.  Never hidden; greyed with its
+    // reason while it cannot act.
+    if (m_role == Role::Input) {
+        m_micChannelRow = new QWidget(m_body);
+        m_micChannelRow->setObjectName(QStringLiteral("micChannelRow"));
+        auto* micRow = new QHBoxLayout(m_micChannelRow);
+        micRow->setContentsMargins(0, 0, 0, 0);
+        micRow->setSpacing(8);
+        auto* micLabel = makeLabel(QStringLiteral("Mic is on:"));
+        micLabel->setParent(m_micChannelRow);
+        micRow->addWidget(micLabel);
+        m_micLeft = new QRadioButton(QStringLiteral("Left"), m_micChannelRow);
+        m_micLeft->setObjectName(QStringLiteral("micChannelLeft"));
+        m_micRight = new QRadioButton(QStringLiteral("Right"), m_micChannelRow);
+        m_micRight->setObjectName(QStringLiteral("micChannelRight"));
+        m_micBoth = new QRadioButton(QStringLiteral("Both"), m_micChannelRow);
+        m_micBoth->setObjectName(QStringLiteral("micChannelBoth"));
+        m_micLeft->setChecked(true);   // MicChannel's default, before any save is wired
+        for (QRadioButton* radio : {m_micLeft, m_micRight, m_micBoth}) {
+            radio->setStyleSheet(QLatin1String(kCheckStyle));
+            micRow->addWidget(radio);
+            connect(radio, &QRadioButton::toggled, this, [this](bool on) {
+                if (on) {
+                    onAnyControlChanged();
+                }
+            });
+        }
+        micRow->addStretch(1);
+    }
 
     // ── TX-input extras (Input role only), in front ──────────────────────
     if (m_role == Role::Input) {
@@ -491,6 +604,9 @@ void DeviceCard::buildLayout()
                                            UnbuiltFeature::AudioToneCheck, deviceForm);
     }
     bodyLayout->addLayout(deviceForm);
+    if (m_micChannelRow != nullptr) {
+        bodyLayout->addWidget(m_micChannelRow);
+    }
 
     // R-AUD-08 to R-AUD-11, R-AUD-14: the role's state, right under the
     // Device row (empty, and so not shown, while the role plays as chosen).
@@ -500,6 +616,23 @@ void DeviceCard::buildLayout()
     m_stateNote->setWordWrap(true);
     m_stateNote->setVisible(false);
     bodyLayout->addWidget(m_stateNote);
+
+    // Task 17: speakers and headphones on one pair play together.
+    if (m_audioRole == AudioRole::Speakers || m_audioRole == AudioRole::Headphones) {
+        m_samePairNote = new QLabel(m_body);
+        m_samePairNote->setObjectName(QStringLiteral("samePairNote"));
+        m_samePairNote->setStyleSheet(QLatin1String(kEngineNoteStyle));
+        m_samePairNote->setWordWrap(true);
+        m_samePairNote->setVisible(false);
+        bodyLayout->addWidget(m_samePairNote);
+    }
+    // Settled call 28: why a driver's pairs are greyed.
+    m_asioFormatNote = new QLabel(m_body);
+    m_asioFormatNote->setObjectName(QStringLiteral("asioFormatNote"));
+    m_asioFormatNote->setStyleSheet(QLatin1String(kStateNoteStyle));
+    m_asioFormatNote->setWordWrap(true);
+    m_asioFormatNote->setVisible(false);
+    bodyLayout->addWidget(m_asioFormatNote);
 
     // Rows a page adds below the Device row (a note).
     m_belowDeviceLayout = new QVBoxLayout;
@@ -520,6 +653,7 @@ void DeviceCard::buildLayout()
     bodyLayout->addWidget(m_detailsToggle);
 
     auto* detailsForm = makeForm();
+    m_detailsForm = detailsForm;
     m_details->setLayout(detailsForm);
     detailsForm->setContentsMargins(12, 0, 0, 0);
     detailsForm->addRow(makeLabel(QStringLiteral("Driver:")), m_driverApiCombo);
@@ -580,8 +714,25 @@ void DeviceCard::buildLayout()
         m_bufferMsLabel->setMinimumWidth(50);
         bufRow->addWidget(m_bufferSizeCombo);
         bufRow->addWidget(m_bufferMsLabel);
+        // R-AUD-22: the driver's own settings window.
+        m_asioControlPanel = new QPushButton(QStringLiteral("ASIO control panel"));
+        m_asioControlPanel->setObjectName(QStringLiteral("asioControlPanel"));
+        m_asioControlPanel->setEnabled(false);
+        bufRow->addWidget(m_asioControlPanel);
         bufRow->addStretch();
         detailsForm->addRow(makeLabel(QStringLiteral("Buffer size:")), bufRow);
+
+        // R-AUD-20: a driver with one size, and the roles sharing it.
+        m_asioBufferNote = new QLabel(QStringLiteral("Set in the ASIO control panel"));
+        m_asioBufferNote->setObjectName(QStringLiteral("asioBufferNote"));
+        m_asioBufferNote->setStyleSheet(QLatin1String(kEngineNoteStyle));
+        detailsForm->addRow(makeLabel(QString()), m_asioBufferNote);
+        detailsForm->setRowVisible(m_asioBufferNote, false);
+        m_asioSharedNote = new QLabel;
+        m_asioSharedNote->setObjectName(QStringLiteral("asioSharedNote"));
+        m_asioSharedNote->setStyleSheet(QLatin1String(kEngineNoteStyle));
+        detailsForm->addRow(makeLabel(QString()), m_asioSharedNote);
+        detailsForm->setRowVisible(m_asioSharedNote, false);
     }
 
     // Delay (R-AUD-15): the clock-matched buffer's size, and the delay now.
@@ -617,6 +768,13 @@ void DeviceCard::buildLayout()
         pillLbl->setStyleSheet(QLatin1String(kDimLabelStyle));
         detailsForm->addRow(pillLbl, pillRow);
     }
+
+    // R-AUD-21: for kAsioRestartNoteMs after the driver's reset.
+    m_asioRestartedNote = new QLabel(QStringLiteral("Restarted with the driver's new settings."));
+    m_asioRestartedNote->setObjectName(QStringLiteral("asioRestartedNote"));
+    m_asioRestartedNote->setStyleSheet(QStringLiteral("QLabel { color: #80c8a0; font-size: 11px; }"));
+    detailsForm->addRow(makeLabel(QString()), m_asioRestartedNote);
+    detailsForm->setRowVisible(m_asioRestartedNote, false);
 
     // R-AUD-16: what the picked driver means. One short line: a
     // word-wrapped label in a form row is clipped to one line's height.
@@ -685,6 +843,11 @@ void DeviceCard::buildLayout()
                 this, &DeviceCard::onAnyControlChanged);
     };
     connectCheck(m_autoMatchSampleRate);
+    connect(m_asioControlPanel, &QPushButton::clicked, this, [this]() {
+        if (m_engine) {
+            m_engine->openAsioControlPanel();
+        }
+    });
     if (m_monitorDuringTxChk) { connectCheck(m_monitorDuringTxChk); }
     if (m_toneCheckChk)       { connectCheck(m_toneCheckChk); }
 
@@ -755,6 +918,7 @@ int DeviceCard::deviceCount() const
     int count = 0;
     for (int i = 1; i < m_deviceCombo->count(); ++i) {
         if (!m_deviceCombo->itemData(i, kKeptEntryRole).toBool()
+            && !m_deviceCombo->itemData(i, kGroupHeadingRole).toBool()
             && m_deviceCombo->itemData(i, kDeviceIdRole).toString()
                    != QLatin1String(kAudioDeviceNone)) {
             ++count;
@@ -800,6 +964,21 @@ void DeviceCard::setAudioEngine(AudioEngine* engine)
         // R-AUD-15: the mic's pill follows the capture's Ready.
         connect(m_engine, &AudioEngine::captureStatusChanged, this,
                 [this](const CaptureSupervisor::Status&) { renderPill(); });
+    }
+    // Task 17 (R-AUD-19 to R-AUD-21): a switch moved this card, the
+    // shared buffer or rate changed, or the driver restarted.
+    connect(m_engine, &AudioEngine::asioStatusChanged, this, [this]() {
+        syncFromSavedChoice();
+        refreshAsioDetails();
+        refreshSamePairNote();
+    });
+    if (m_samePairNote != nullptr) {
+        connect(m_engine, &AudioEngine::speakersConfigChanged, this,
+                [this](const AudioDeviceConfig&) { refreshSamePairNote(); });
+        connect(m_engine, &AudioEngine::headphonesConfigChanged, this,
+                [this](const AudioDeviceConfig&) { refreshSamePairNote(); });
+        connect(m_engine, &AudioEngine::headphonesEnabledChanged, this,
+                [this](bool) { refreshSamePairNote(); });
     }
     if (m_audioRole) {
         m_status = m_engine->roleStatus(*m_audioRole);
@@ -879,6 +1058,9 @@ void DeviceCard::refreshStatus()
     markChosenInUse();
     refreshDelayNow();
     renderPill();
+    refreshAsioDetails();
+    refreshSamePairNote();
+    updateMicChannelRow();
 }
 
 // R-AUD-11: a chosen device another program holds reads
@@ -1091,11 +1273,45 @@ void DeviceCard::populateDeviceCombo()
     QSignalBlocker blocker(m_deviceCombo);
     resetPopupAccessibilityCache(m_deviceCombo);
     m_deviceCombo->clear();
-    for (int i = 0; i < entries.size(); ++i) {
-        const AudioDeviceEntry& e = entries.at(i);
+    // Settled call 28: an ASIO driver whose sample format NereusSDR cannot
+    // convert lists its pairs greyed, with the reason.
+    QStringList unusable;
+    auto unusableReason = [this, engine, &unusable](const AudioDeviceEntry& e) -> QString {
+        if (engine != AudioEngineKind::Asio || !m_engine || e.deviceId.isEmpty()
+            || e.deviceId == QLatin1String(kAudioDeviceNone)) {
+            return {};
+        }
+        const std::optional<AsioDriverCaps> caps = m_engine->asioDriverCaps(e.deviceId);
+        if (!caps || asioDeviceFormat(caps->sampleType)) {
+            return {};
+        }
+        const QString name = deviceNameForId(e.deviceId).isEmpty() ? e.deviceId
+                                                                   : deviceNameForId(e.deviceId);
+        const QString reason = asioFormatNote(name);
+        if (!unusable.contains(reason)) {
+            unusable.append(reason);
+        }
+        return reason;
+    };
+    QString group;
+    for (int n = 0; n < entries.size(); ++n) {
+        const AudioDeviceEntry& e = entries.at(n);
+        const QString reason = unusableReason(e);
+        // R-AUD-07: an interface's pairs sit under a heading of its name.
+        if (!e.group.isEmpty() && e.group != group) {
+            const int heading = m_deviceCombo->count();
+            m_deviceCombo->addItem(e.group, QVariant::fromValue(QString()));
+            m_deviceCombo->setItemData(heading, true, kGroupHeadingRole);
+            setItemEnabled(m_deviceCombo, heading, false);
+            if (!reason.isEmpty()) {
+                m_deviceCombo->setItemData(heading, reason, Qt::ToolTipRole);
+            }
+        }
+        group = e.group;
+        const int i = m_deviceCombo->count();
         QString name;
         bool kept = false;
-        if (i == 0) {
+        if (n == 0) {
             name.clear();   // "(platform default)"
         } else if (e.deviceId == QLatin1String(kAudioDeviceNone)) {
             name = QString::fromLatin1(kAudioDeviceNone);
@@ -1113,10 +1329,23 @@ void DeviceCard::populateDeviceCombo()
         m_deviceCombo->setItemData(i, e.bluetooth, kBluetoothRole);
         m_deviceCombo->setItemData(i, !e.group.isEmpty(), kPairedRole);
         m_deviceCombo->setItemData(i, e.label, kListLabelRole);
+        m_deviceCombo->setItemData(i, e.pair.channelCount, kPairChannelsRole);
+        if (!e.group.isEmpty()) {
+            const AudioDeviceDirection direction = m_role == Role::Output
+                                                       ? AudioDeviceDirection::Output
+                                                       : AudioDeviceDirection::Input;
+            m_deviceCombo->setItemData(i, audioPairLabel(direction, e.pair), kPopupTextRole);
+        }
         if (kept) {
             m_deviceCombo->setItemData(i, true, kKeptEntryRole);
         }
+        if (!reason.isEmpty()) {
+            setItemEnabled(m_deviceCombo, i, false);
+            m_deviceCombo->setItemData(i, reason, Qt::ToolTipRole);
+        }
     }
+    m_asioFormatNote->setText(unusable.join(QLatin1Char(' ')));
+    m_asioFormatNote->setVisible(!unusable.isEmpty());
     selectDevice();
 }
 
@@ -1168,6 +1397,19 @@ void DeviceCard::onDevicePicked()
     }
     const int idx = m_deviceCombo->currentIndex();
     if (idx < 0) {
+        return;
+    }
+    if (m_deviceCombo->itemData(idx, kGroupHeadingRole).toBool() || !confirmAsioSwitch(idx)) {
+        // A heading is never a choice; a cancelled switch keeps the
+        // previous selection and writes nothing (R-AUD-19).
+        const bool suppressed = m_suppressSignals;
+        m_suppressSignals = true;
+        {
+            QSignalBlocker blocker(m_deviceCombo);
+            selectDevice();
+        }
+        m_suppressSignals = suppressed;
+        refreshStatus();
         return;
     }
     m_selection.deviceId = m_deviceCombo->itemData(idx, kDeviceIdRole).toString();
@@ -1243,6 +1485,13 @@ AudioDeviceConfig DeviceCard::currentConfig() const
     cfg.delayMs       = m_delayCombo     ? m_delayCombo->currentData().toInt()     : 0;
 
     cfg.manualLatencyMs = 0;  // Not exposed in this card; reserved for Advanced page.
+
+    // Task 17: the mic's side of its pair (MicChannel).
+    if (m_micChannelRow != nullptr) {
+        cfg.micChannel = m_micRight->isChecked() ? MicChannelPick::Right
+                       : m_micBoth->isChecked()  ? MicChannelPick::Both
+                                                 : MicChannelPick::Left;
+    }
 
     return cfg;
 }
@@ -1459,6 +1708,13 @@ void DeviceCard::loadFromSettings()
         m_enableChk->setChecked(on);
     }
 
+    if (m_micChannelRow != nullptr) {
+        QRadioButton* pick = cfg.micChannel == MicChannelPick::Right ? m_micRight
+                           : cfg.micChannel == MicChannelPick::Both  ? m_micBoth
+                                                                     : m_micLeft;
+        pick->setChecked(true);
+    }
+
     updateEngineNote();
     refreshStatus();
     m_suppressSignals = false;
@@ -1470,6 +1726,18 @@ void DeviceCard::loadFromSettings()
 void DeviceCard::onAnyControlChanged()
 {
     if (m_suppressSignals) {
+        return;
+    }
+
+    // R-AUD-20: an ASIO card's buffer size and rate are the driver's, for
+    // every card on it; the engine saves them and reopens each role.
+    if (m_asioLists && m_engine && !selectedAsioDriver().isEmpty()
+        && (sender() == m_sampleRateCombo || sender() == m_bufferSizeDebounceTimer)) {
+        const int frames = m_bufferSizeCombo->currentData().toInt();
+        const int rate = m_sampleRateCombo->currentData().toInt();
+        m_loaded.bufferSamples = frames;
+        m_loaded.sampleRate = rate;
+        m_engine->setAsioBufferAndRate(frames, static_cast<double>(rate));
         return;
     }
 
@@ -1503,6 +1771,298 @@ void DeviceCard::onAnyControlChanged()
 
     emit configChanged(cfg);
 }
+
+// ---------------------------------------------------------------------------
+// Pairs and ASIO (native audio plan Task 17)
+// ---------------------------------------------------------------------------
+QString DeviceCard::selectedAsioDriver() const
+{
+    if (selectedEngine() != AudioEngineKind::Asio) {
+        return {};
+    }
+    const QString driver =
+        !m_selection.deviceId.isEmpty() ? m_selection.deviceId : m_selection.deviceName;
+    if (driver == QLatin1String(kAudioDeviceNone)) {
+        return {};
+    }
+    return driver;
+}
+
+// R-AUD-19: a pick that would put a second ASIO driver in use lists every
+// role that moves with it and asks first.  True: go on with the pick (the
+// other roles have moved); false: cancelled, nothing written.
+bool DeviceCard::confirmAsioSwitch(int index)
+{
+    if (!m_engine || !m_audioRole || selectedEngine() != AudioEngineKind::Asio) {
+        return true;
+    }
+    const QString driver = m_deviceCombo->itemData(index, kDeviceIdRole).toString();
+    if (driver.isEmpty() || driver == QLatin1String(kAudioDeviceNone)) {
+        return true;
+    }
+    const int channels = m_deviceCombo->itemData(index, kPairChannelsRole).toInt();
+    const AudioChannelPair pair{std::max(1, m_deviceCombo->itemData(index, kFirstChannelRole).toInt()),
+                                channels > 0 ? channels : 2};
+    const AsioSwitchPlan plan = m_engine->planAsioSwitchFor(*m_audioRole, driver, pair);
+    if (plan.moves.isEmpty()) {
+        return true;
+    }
+    QList<QPair<QString, QString>> moves;
+    for (const AsioUse& move : plan.moves) {
+        moves.append({asioRoleName(move.role),
+                      move.pair.channelCount > 0 ? audioPairLabel(move.direction, move.pair)
+                                                 : QStringLiteral("(no channels)")});
+    }
+    QString name = m_deviceCombo->itemData(index).toString();
+    if (name.isEmpty()) {
+        name = driver;
+    }
+    AsioSwitchAllDialog dialog(asioRoleName(*m_audioRole), name, moves, this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return false;
+    }
+    m_switchingAsio = true;
+    m_engine->applyAsioSwitch(plan);
+    m_switchingAsio = false;
+    return true;
+}
+
+// R-AUD-19 / R-AUD-20: another card's switch moved this one, or the shared
+// buffer and rate changed; the saved choice is the card's again.
+void DeviceCard::syncFromSavedChoice()
+{
+    if (m_switchingAsio || !m_catalogue) {
+        return;
+    }
+    const AudioDeviceConfig saved = AudioDeviceConfig::loadFromSettings(m_prefix);
+    if (saved.engine != AudioEngineKind::Asio && m_driverEngine != AudioEngineKind::Asio) {
+        return;
+    }
+    m_loaded.bufferSamples = saved.bufferSamples;
+    m_loaded.sampleRate = saved.sampleRate;
+    const bool moved = saved.engine != m_driverEngine || saved.deviceId != m_selection.deviceId
+        || std::max(1, saved.firstChannel) != m_selection.firstChannel;
+    if (!moved) {
+        return;
+    }
+    const bool suppressed = m_suppressSignals;
+    m_suppressSignals = true;
+    takeSavedChoice(saved);
+    populateDriverCombo();
+    populateDeviceCombo();
+    m_suppressSignals = suppressed;
+    updateEngineNote();
+    refreshStatus();
+}
+
+// R-AUD-20 to R-AUD-22: on ASIO the Sample rate and Buffer size lists are
+// the driver's, the values the session's; the shared and restarted notes;
+// the control panel button.
+void DeviceCard::refreshAsioDetails()
+{
+    const QString driver = m_engine ? selectedAsioDriver() : QString();
+    const bool onAsio = m_engine && selectedEngine() == AudioEngineKind::Asio;
+
+    m_asioControlPanel->setEnabled(!driver.isEmpty());
+    QString tip;
+    if (!driver.isEmpty()) {
+        tip = QStringLiteral("Opens the driver's own settings window");
+    } else if (onAsio) {
+        tip = QStringLiteral("Pick an ASIO driver first");
+    } else {
+#if defined(Q_OS_WIN)
+        tip = QStringLiteral("For ASIO drivers");
+#else
+        tip = QStringLiteral("ASIO drivers are Windows only.");
+#endif
+    }
+    m_asioControlPanel->setToolTip(tip);
+
+    if (driver.isEmpty()) {
+        if (m_asioLists) {
+            restoreStandardLists();
+        }
+        m_detailsForm->setRowVisible(m_asioBufferNote, false);
+        m_detailsForm->setRowVisible(m_asioSharedNote, false);
+        m_detailsForm->setRowVisible(m_asioRestartedNote, false);
+        return;
+    }
+
+    const AsioStatus status = m_engine->asioStatus();
+    const std::optional<AsioDriverCaps> caps = m_engine->asioDriverCaps(driver);
+    const bool session = status.driver == driver;
+    int frames = 0;
+    double rate = 0.0;
+    if (session) {
+        frames = status.bufferFrames;
+        rate = status.sampleRate;
+    } else {
+        // The driver opens at the saved values, inside its caps.
+        const AppSettings& s = AppSettings::instance();
+        const int savedFrames = s.value(QStringLiteral("audio/Asio/BufferFrames"), 0).toInt();
+        const double savedRate = s.value(QStringLiteral("audio/Asio/SampleRate"), 48000).toDouble();
+        if (caps) {
+            frames = asioSessionBufferFrames(*caps, savedFrames);
+            rate = caps->sampleRates.contains(savedRate) ? savedRate : caps->currentRate;
+        } else {
+            frames = savedFrames;
+            rate = savedRate;
+        }
+    }
+    if (frames <= 0) {
+        frames = m_loaded.bufferSamples > 0 ? m_loaded.bufferSamples : 256;
+    }
+    if (rate <= 0.0) {
+        rate = 48000.0;
+    }
+    const int rateHz = static_cast<int>(std::lround(rate));
+
+    QList<int> rates;
+    if (caps) {
+        for (const double r : caps->sampleRates) {
+            const int hz = static_cast<int>(std::lround(r));
+            if (hz > 0 && !rates.contains(hz)) {
+                rates.append(hz);
+            }
+        }
+    }
+    if (!rates.contains(rateHz)) {
+        rates.append(rateHz);
+    }
+    std::sort(rates.begin(), rates.end());
+    QList<QPair<QString, int>> rateChoices;
+    for (const int hz : rates) {
+        rateChoices.append({QStringLiteral("%1 Hz").arg(hz), hz});
+    }
+    setComboChoices(m_sampleRateCombo, rateChoices, rateHz);
+
+    QList<int> sizes = caps ? asioBufferChoices(*caps) : QList<int>{};
+    if (!sizes.contains(frames)) {
+        sizes.append(frames);
+        std::sort(sizes.begin(), sizes.end());
+    }
+    QList<QPair<QString, int>> sizeChoices;
+    for (const int size : sizes) {
+        sizeChoices.append({QStringLiteral("%1 samples").arg(size), size});
+    }
+    setComboChoices(m_bufferSizeCombo, sizeChoices, frames);
+
+    // A driver with one size: greyed, with where it is set.
+    const bool fixed = caps && asioBufferSizeFixed(*caps);
+    m_bufferSizeCombo->setEnabled(!fixed);
+    m_bufferSizeCombo->setToolTip(fixed ? QStringLiteral("Set in the ASIO control panel") : QString());
+    m_detailsForm->setRowVisible(m_asioBufferNote, fixed);
+
+    QList<AudioRole> others;
+    if (session) {
+        for (const AudioRole role : status.users) {
+            if (!m_audioRole || role != *m_audioRole) {
+                others.append(role);
+            }
+        }
+    }
+    const QString shared = asioSharedNote(others);
+    if (m_asioSharedNote->text() != shared) {
+        m_asioSharedNote->setText(shared);
+    }
+    m_detailsForm->setRowVisible(m_asioSharedNote, !shared.isEmpty());
+    m_detailsForm->setRowVisible(m_asioRestartedNote, session && status.restartedRecently);
+    m_asioLists = true;
+    updateBufferMsLabel();
+}
+
+// The card left ASIO: the standard Sample rate and Buffer size lists, on
+// the saved values.
+void DeviceCard::restoreStandardLists()
+{
+    m_asioLists = false;
+    QList<QPair<QString, int>> rateChoices;
+    for (const QString& r : kSampleRates) {
+        rateChoices.append({r + QStringLiteral(" Hz"), r.toInt()});
+    }
+    const bool rateListed = kSampleRates.contains(QString::number(m_loaded.sampleRate));
+    setComboChoices(m_sampleRateCombo, rateChoices, rateListed ? m_loaded.sampleRate : 48000);
+
+    QList<QPair<QString, int>> sizeChoices;
+    for (const int size : (m_role == Role::Input ? kInputBufferSizes : kBufferSizes)) {
+        sizeChoices.append({QStringLiteral("%1 samples").arg(size), size});
+    }
+    const int saved = m_loaded.bufferSamples;
+    const bool sizeListed =
+        (m_role == Role::Input ? kInputBufferSizes : kBufferSizes).contains(saved);
+    setComboChoices(m_bufferSizeCombo, sizeChoices, sizeListed ? saved : 256);
+    if (!sizeListed && saved > 0) {
+        // R-R3-36: a saved size the list lacks is kept, in order.
+        QSignalBlocker blocker(m_bufferSizeCombo);
+        int insertAt = 0;
+        while (insertAt < m_bufferSizeCombo->count()
+               && m_bufferSizeCombo->itemData(insertAt).toInt() < saved) {
+            ++insertAt;
+        }
+        m_bufferSizeCombo->insertItem(insertAt, QStringLiteral("%1 samples").arg(saved),
+                                      QVariant::fromValue(saved));
+        m_bufferSizeCombo->setItemData(insertAt, true, kKeptEntryRole);
+        m_bufferSizeCombo->setCurrentIndex(insertAt);
+    }
+    m_bufferSizeCombo->setEnabled(true);
+    m_bufferSizeCombo->setToolTip(QString());
+    updateBufferMsLabel();
+}
+
+// R-AUD-07: speakers and headphones on one pair of one interface play
+// together; the note says so on both cards.
+void DeviceCard::refreshSamePairNote()
+{
+    if (m_samePairNote == nullptr) {
+        return;
+    }
+    bool share = false;
+    if (m_catalogue && m_audioRole) {
+        const bool speakers = *m_audioRole == AudioRole::Speakers;
+        const AudioDeviceConfig partner = AudioDeviceConfig::loadFromSettings(
+            speakers ? QStringLiteral("audio/Headphones") : QStringLiteral("audio/Speakers"));
+        const bool headphonesOn = speakers
+            ? AppSettings::instance()
+                      .value(QStringLiteral("audio/Headphones/Enabled"), QStringLiteral("False"))
+                      .toString()
+                  == QStringLiteral("True")
+            : isCheckboxEnabled();
+        const int idx = m_deviceCombo->currentIndex();
+        const bool pair = idx > 0 && !m_deviceCombo->itemData(idx, kKeptEntryRole).toBool()
+            && (selectedEngine() == AudioEngineKind::Asio
+                || m_deviceCombo->itemData(idx, kPairedRole).toBool());
+        const QString& id = m_selection.deviceId;
+        share = headphonesOn && pair && !id.isEmpty() && id != QLatin1String(kAudioDeviceNone)
+            && partner.engine == selectedEngine() && partner.deviceId == id
+            && std::max(1, partner.firstChannel) == m_selection.firstChannel;
+    }
+    const QString text =
+        share ? QStringLiteral("Speakers and headphones are on the same pair, so they play together.")
+              : QString();
+    if (m_samePairNote->text() != text) {
+        m_samePairNote->setText(text);
+    }
+    m_samePairNote->setVisible(share);
+}
+
+// The mic's side: greyed, with its reason, while it cannot act.
+void DeviceCard::updateMicChannelRow()
+{
+    if (m_micChannelRow == nullptr) {
+        return;
+    }
+    const int idx = m_deviceCombo->currentIndex();
+    QString reason;
+    if (idx >= 0
+        && m_deviceCombo->itemData(idx, kDeviceIdRole).toString() == QLatin1String(kAudioDeviceNone)) {
+        reason = QStringLiteral("The mic is off.");
+    } else if (idx >= 0 && m_deviceCombo->itemData(idx, kPairChannelsRole).toInt() == 1) {
+        reason = QStringLiteral("This input has one channel.");
+    }
+    m_micChannelRow->setEnabled(reason.isEmpty());
+    m_micChannelRow->setToolTip(reason);
+}
+
 
 // ---------------------------------------------------------------------------
 // eventFilter — block wheel events on combo boxes in scroll areas
