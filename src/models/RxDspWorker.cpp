@@ -51,6 +51,11 @@
 //                 processSliceChunk so both paths share it. J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-10-09 - Native audio plan Task 8 (R-AUD-18): once per batch the
+//                 DSP thread checks the speakers workgroup generation and,
+//                 when it changed, rejoins the workgroup of the device the
+//                 speakers play on. NereusSDR-original. J.J. Boyd (KG4VCF),
+//                 with AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -234,6 +239,30 @@ void RxDspWorker::setEngines(WdspEngine* wdsp, AudioEngine* audio)
 {
     m_wdspEngine  = wdsp;
     m_audioEngine = audio;
+}
+
+// R-AUD-18: the DSP thread follows the audio workgroup of the device the
+// speakers play on.  Two atomic loads per batch; the rejoin itself (a HAL
+// property read and os_workgroup_join) runs only when the engine opened
+// the speakers on a device since the last batch.  NereusSDR-original.
+void RxDspWorker::followSpeakersWorkgroup()
+{
+    if (m_audioEngine == nullptr) {
+        return;
+    }
+    const std::uint32_t generation = m_audioEngine->speakersWorkgroupGeneration();
+    if (generation == m_seenWorkgroupGeneration) {
+        return;
+    }
+    m_seenWorkgroupGeneration = generation;
+    const std::uint32_t device = m_audioEngine->speakersWorkgroupDevice();
+#ifdef NEREUS_BUILD_TESTS
+    if (m_workgroupRejoinForTest) {
+        m_workgroupRejoinForTest(m_audioPrioToken, device);
+        return;
+    }
+#endif
+    rejoinAudioWorkgroup(m_audioPrioToken, device);
 }
 
 int RxDspWorker::externalDiversityChunkSize() const
@@ -946,6 +975,8 @@ void RxDspWorker::processIqBatch(int receiverIndex,
         std::this_thread::sleep_for(std::chrono::microseconds(delayUs));
     }
 #endif
+
+    followSpeakersWorkgroup();
 
     // Snapshot the sizing for this batch so a concurrent
     // setBufferSizes() (e.g. mid-batch reconfigure) can't split a

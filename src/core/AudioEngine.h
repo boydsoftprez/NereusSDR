@@ -21,6 +21,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09 : Native audio plan early-review fix wave and its follow-up
+//                 (R-AUD-02, R-AUD-06, R-AUD-08, R-AUD-12, R-AUD-14,
+//                 R-AUD-16) by J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code. m_roleOpenDeviceId and
+//                 backendOpensOneStreamAtATime() for the open-first rule;
+//                 kRescanSlewMs; ensureAudioDevices(DeviceStart) starts the
+//                 mic role alone for a capture demand before start().
 //   2026-10-09 : Native audio plan Task 7 fix (R-AUD-06, R-AUD-08) by J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //                 PortAudio starts and stops through PortAudioLibrary; a
@@ -220,6 +227,11 @@
 //                 setLocalListen add a slice to a device's own sum at that
 //                 device's level. The VAX tee and the receiver taps no
 //                 longer undo the AF gain. NereusSDR-original.
+//   2026-10-09: native audio plan Task 8 (R-AUD-18) by J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//                 speakersWorkgroupGeneration() and speakersWorkgroupDevice():
+//                 the DSP thread follows the audio workgroup of the device
+//                 the speakers play on. NereusSDR-original.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -250,6 +262,7 @@ namespace NereusSDR { class PipeWireThreadLoop; }
 
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <vector>
 #include <functional>
 #include <memory>
@@ -584,14 +597,31 @@ public:
     // (matcherFillMs -1 without a matcher or a bus; the mic has none here,
     // R-AUD-15).  defaultEngine() is R-AUD-02's engine for a role on
     // "(platform default)".  rescanOlderDrivers() (R-AUD-06) closes every
-    // role on PortAudio after a fade of at most kRescanFadeMs, has
+    // role on PortAudio after a fade of at most the larger of
+    // kRescanFadeMs and the stream's callback period plus kRescanSlewMs
+    // (the matcher's fade is its slew, 3 ms at most), has
     // PortAudio list its devices again and reopens those roles; a role on
     // another engine is never closed.  Main thread.
     static constexpr int kRescanFadeMs = 20;
+    static constexpr double kRescanSlewMs = 3.0;
     IAudioDeviceCatalog* catalogue() const;
     AudioRoleStatus roleStatus(AudioRole role) const;
     AudioDelayParts delayParts(AudioRole role) const;
     AudioEngineKind defaultEngine() const { return m_defaultEngine; }
+    // R-AUD-18: the generation is bumped, and the device stored first,
+    // whenever the speakers bus opens on a device (a fall-back to the
+    // default and the return included).  The device is the bus's
+    // audioWorkgroupDevice(): an AudioObjectID on Core Audio, else 0.  The
+    // DSP thread loads the generation once per block and rejoins that
+    // device's workgroup when it changed.  Any thread.
+    std::uint32_t speakersWorkgroupGeneration() const
+    {
+        return m_speakersWorkgroupGeneration.load(std::memory_order_acquire);
+    }
+    std::uint32_t speakersWorkgroupDevice() const
+    {
+        return m_speakersWorkgroupDevice.load(std::memory_order_acquire);
+    }
     void rescanOlderDrivers();
     // Before start(); DaemonApp sets daemon = true.
     void setAudioBackendContext(const AudioBackendContext& context);
@@ -1340,7 +1370,12 @@ private:
     // ── Native audio plan Task 7: the device layer ──────────────────────
     // True once the catalogue and the stream supervisor run; builds them
     // on the first call where the layer applies (see catalogue()).
-    bool ensureAudioDevices();
+    // MicOnly (a capture demand before start(), or a mic choice) starts
+    // the mic role alone when nothing has started; All also starts the
+    // outputs.  An output setter starts MicOnly, hands its choice over,
+    // then All, so the output opens once, on that choice.
+    enum class DeviceStart { All, MicOnly };
+    bool ensureAudioDevices(DeviceStart start = DeviceStart::All);
     bool audioDevicesApply() const;
     void tearDownAudioDevices();
     // The config with R-AUD-02's engine on "(platform default)".
@@ -1358,6 +1393,8 @@ private:
     IAudioBus* roleBusLocked(AudioRole role) const;
     std::unique_ptr<IAudioBus>& roleBusSlot(AudioRole role);
     std::mutex& roleBusMutex(AudioRole role) const;
+    // The engine's backend reports opensOneStreamAtATime() (C1).
+    bool backendOpensOneStreamAtATime(AudioEngineKind engine) const;
 
     // The input the TX path reads: an injected test bus when present,
     // otherwise the capture supervisor's stable reader.
@@ -1419,6 +1456,14 @@ private:
     // from a replaced bus is dropped; the engine of the open bus.
     std::array<quint64, kAudioRoleCount> m_roleBusGeneration{};
     std::array<std::optional<AudioEngineKind>, kAudioRoleCount> m_roleOpenEngine{};
+    // R-AUD-18: see speakersWorkgroupGeneration().  Main thread writes.
+    void noteSpeakersWorkgroup(const IAudioBus* bus);
+    std::atomic<std::uint32_t> m_speakersWorkgroupGeneration{0};
+    std::atomic<std::uint32_t> m_speakersWorkgroupDevice{0};
+    // The device the open bus plays: its id, or for the system default the
+    // catalogue's default at the open (empty when unknown).  openRole()
+    // closes first only to reopen this same device (C1, R-AUD-08).
+    std::array<QString, kAudioRoleCount> m_roleOpenDeviceId{};
     // speakersConfigChanged emits made by openRole(), so setSpeakersConfig
     // announces a config only when no open did.
     quint64 m_speakersAnnouncements{0};

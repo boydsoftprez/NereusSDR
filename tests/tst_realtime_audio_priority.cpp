@@ -5,6 +5,14 @@
 // process-wide warning must appear exactly once however many threads are
 // refused. Exercised through the platform-independent seam so the rule is
 // checked on every platform, not only on Linux where refusal is common.
+//
+// Also rejoinAudioWorkgroup() (R-AUD-18): with no token or no device the
+// Mac returns false and the thread is out of any workgroup; elsewhere it
+// returns true and does nothing.  No audio stream is opened.
+//
+// Modification history (NereusSDR):
+//   2026-10-09: native audio plan Task 8 (R-AUD-18): the rejoin cases.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -117,6 +125,40 @@ private slots:
 
         QCOMPARE(logged.load(), 1);
         QCOMPARE(capturedWarnings().size(), 1);
+    }
+
+    void rejoinWithoutTokenIsRefusedOnTheMac()
+    {
+#ifdef Q_OS_MAC
+        QVERIFY(!rejoinAudioWorkgroup(nullptr, 0));
+        QVERIFY(!rejoinAudioWorkgroup(nullptr, 42));
+#else
+        QVERIFY(rejoinAudioWorkgroup(nullptr, 0));
+        QVERIFY(rejoinAudioWorkgroup(nullptr, 42));
+#endif
+        QVERIFY(!audioPriorityTokenInWorkgroup(nullptr));
+    }
+
+    // Device 0 (no speakers device): the thread leaves the workgroup it
+    // was in and joins none.  On its own thread, as the DSP thread would.
+    void rejoinToNoDeviceLeavesTheWorkgroup()
+    {
+        bool rejoined = true;
+        bool inAfter = true;
+        std::unique_ptr<QThread> thread(QThread::create([&]() {
+            AudioPriorityToken* token = elevateAudioThreadPriority();
+            rejoined = rejoinAudioWorkgroup(token, 0);
+            inAfter = audioPriorityTokenInWorkgroup(token);
+            leaveAudioThreadPriority(token);
+        }));
+        thread->start();
+        QVERIFY(thread->wait(5000));
+#ifdef Q_OS_MAC
+        QVERIFY(!rejoined);
+#else
+        QVERIFY(rejoined);
+#endif
+        QVERIFY(!inAfter);
     }
 };
 

@@ -8,7 +8,10 @@
 // The host (AudioEngine) is called on the main thread only.  openRole()
 // opens or reopens the role's stream; a stream already open for the role
 // is replaced only when the new one opens, so a failed open leaves the
-// role's current stream as it was.  A Pending result (the PC mic, opened
+// role's current stream as it was.  The exception is a stream the host
+// must close first (the same device again, or an engine that runs one
+// stream at a time): when that open fails the host calls
+// AudioStreamSupervisor::onRoleClosed() before returning.  A Pending result (the PC mic, opened
 // by the capture helper) is completed later through
 // AudioStreamSupervisor::onOpenFinished().  closeRole() closes whatever
 // the role has open; it is harmless when nothing is open.
@@ -16,6 +19,9 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 5 (R-AUD-08 to R-AUD-14). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan early-review fix wave (R-AUD-08): the
+//               close-first exception.  J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #pragma once

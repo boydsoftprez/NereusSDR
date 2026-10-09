@@ -36,11 +36,19 @@
 //
 // Start: the constructor posts the first evaluation to the event loop, so
 // every setChoice() made in the same turn is known before anything opens
-// and the mic is opened before the outputs.
+// and the mic is opened before the outputs.  startMicOnly() starts the mic
+// role alone (a capture demand before the radio starts); the outputs then
+// wait, their choices kept, until startOutputs().
 //
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 5 (R-AUD-08 to R-AUD-14). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan early-review fix wave (R-AUD-08):
+//               onRoleClosed().  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-09: early-review fix wave follow-up (R-AUD-08, R-AUD-14):
+//               startMicOnly() and startOutputs().  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -75,6 +83,17 @@ public:
     void setNoneMeansWaitingForPick(AudioRole role, bool waiting);   // a "(none)" choice reads WaitingForPick, not Off
     void onStreamEvent(AudioRole role, const AudioStreamEvent& event);   // main thread
     void onOpenFinished(AudioRole role, AudioOpenResult result);          // completes a Pending open (the mic helper)
+    // The host closed the role's stream inside a failed openRole() (it had
+    // to close it first: the same device, or an engine that runs one
+    // stream at a time).  The role then has nothing open.  Called from
+    // within openRole(), before it returns the failure.
+    void onRoleClosed(AudioRole role);
+    // Starts the mic role alone, now; the outputs open on startOutputs().
+    // Nothing when already started.  startOutputs() starts every role not
+    // yet started (all of them when nothing has started).
+    void startMicOnly();
+    void startOutputs();
+    bool outputsStarted() const { return m_started && !m_outputsDeferred; }
     AudioRoleStatus status(AudioRole role) const;
 
     // Scales every retry and the Bluetooth mic wait (0.01: a hundred times
@@ -170,6 +189,7 @@ private:
     bool m_transmitting = false;
     bool m_micDefaultMovedWhileTransmitting = false;
     bool m_outputsHeld = false;
+    bool m_outputsDeferred = false;   // startMicOnly(): the outputs wait for startOutputs()
     QTimer m_bluetoothWait;
     double m_retryScale = 1.0;
 };

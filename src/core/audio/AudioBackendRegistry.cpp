@@ -6,6 +6,13 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 7 (R-AUD-01, R-AUD-02). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 8 (R-AUD-01, R-AUD-02): the Mac
+//               registers Core Audio alone. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 9: Windows audio registers first on
+//               Windows, the older drivers then without the host APIs it
+//               replaces (R-AUD-01, R-AUD-02). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-09: native audio plan Task 10 (R-AUD-01): one branch per
 //               system; Linux registers PipeWire ahead of the older
 //               drivers, outside the Core. J.J. Boyd (KG4VCF), AI-assisted
@@ -16,7 +23,14 @@
 
 #include "core/audio/PortAudioBackend.h"
 
-#if defined(Q_OS_LINUX) && defined(NEREUS_HAVE_PIPEWIRE)
+#include <QtGlobal>
+
+#if defined(Q_OS_MAC)
+#include "core/audio/CoreAudioBackend.h"
+#include "core/audio/CoreAudioSystem.h"
+#elif defined(Q_OS_WIN)
+#include "core/audio/WasapiBackendWin.h"
+#elif defined(Q_OS_LINUX) && defined(NEREUS_HAVE_PIPEWIRE)
 #include "core/audio/PipeWireDeviceBackend.h"
 #include "core/audio/PipeWireDeviceSystem.h"
 #endif
@@ -56,18 +70,20 @@ std::vector<std::shared_ptr<IAudioEngineBackend>> makeSystemAudioBackends(const 
     // The native engines join this list in their own tasks, ahead of the
     // older drivers, and read the context then (the Core and the mic
     // helper register different engines).
+    static_cast<void>(context);
+
     std::vector<std::shared_ptr<IAudioEngineBackend>> backends;
-    // Until the Mac's and Windows' native engines land, the older drivers
-    // also list the host APIs those engines replace, so nothing goes
-    // silent meanwhile.
-    constexpr bool kIncludeReplacedHostApis = true;
 #if defined(Q_OS_MAC)
-    static_cast<void>(context);
-    backends.push_back(std::make_shared<PortAudioBackend>(&listPortAudioDevices,
-                                                          currentOlderDriverPlatform(),
-                                                          kIncludeReplacedHostApis));
+    // R-AUD-01: Core Audio is the Mac's only engine, in the window, the
+    // Core and the mic helper alike; the older drivers add nothing here,
+    // so PortAudio is not registered.
+    backends.push_back(std::make_shared<CoreAudioBackend>(makeCoreAudioSystem()));
 #elif defined(Q_OS_WIN)
-    static_cast<void>(context);
+    // R-AUD-02: Windows audio (shared and exclusive) comes first; the older
+    // drivers then list only what it does not replace: MME, DirectSound
+    // and WDM-KS (olderDriverHostApis in PortAudioBackend.cpp).
+    backends.push_back(std::make_shared<WasapiBackendWin>());
+    constexpr bool kIncludeReplacedHostApis = false;
     backends.push_back(std::make_shared<PortAudioBackend>(&listPortAudioDevices,
                                                           currentOlderDriverPlatform(),
                                                           kIncludeReplacedHostApis));
@@ -79,9 +95,11 @@ std::vector<std::shared_ptr<IAudioEngineBackend>> makeSystemAudioBackends(const 
     if (!context.daemon) {
         backends.push_back(std::make_shared<PipeWireDeviceBackend>(makePipeWireDeviceSystem()));
     }
-#else
-    static_cast<void>(context);
 #endif
+    // Until Linux's native engines land, the older drivers
+    // also list the host APIs those engines replace, so nothing goes
+    // silent meanwhile.
+    constexpr bool kIncludeReplacedHostApis = true;
     backends.push_back(std::make_shared<PortAudioBackend>(&listPortAudioDevices,
                                                           currentOlderDriverPlatform(),
                                                           kIncludeReplacedHostApis));

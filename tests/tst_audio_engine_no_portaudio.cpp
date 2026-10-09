@@ -17,6 +17,10 @@
 //   2026-10-09: native audio plan Task 7 (R-AUD-32): the system backends
 //               and Rescan make no PortAudio call. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 8 (R-AUD-01, R-AUD-32): on the Mac
+//               the system's engine is Core Audio, which lists nothing in
+//               a test run either. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -75,7 +79,16 @@ private slots:
             engine.setAudioBackendsForTest(makeSystemAudioBackends(AudioBackendContext{}));
             engine.start();
             QVERIFY(engine.catalogue() != nullptr);
+#ifdef Q_OS_MAC
+            // R-AUD-01: Core Audio alone, and in a test run it walks no
+            // device either.
+            QCOMPARE(engine.defaultEngine(), AudioEngineKind::CoreAudio);
+            QVERIFY(engine.catalogue()
+                        ->devices(AudioBackendId::CoreAudio, AudioDeviceDirection::Output)
+                        .isEmpty());
+#else
             QCOMPARE(engine.defaultEngine(), AudioEngineKind::PortAudio);
+#endif
             QVERIFY(engine.catalogue()
                         ->devices(AudioBackendId::PortAudio, AudioDeviceDirection::Output)
                         .isEmpty());

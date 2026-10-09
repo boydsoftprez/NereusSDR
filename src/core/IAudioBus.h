@@ -12,6 +12,8 @@
 //   2026-10-09: native audio plan Task 7 (R-AUD-06): requestFadeOut() and
 //               fadedOut() for Rescan. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 8 (R-AUD-18): audioWorkgroupDevice().
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -20,6 +22,7 @@
 
 #include <QString>
 
+#include <cstdint>
 #include <functional>
 #include <optional>
 
@@ -121,6 +124,10 @@ public:
     // to fade).  Any thread.
     virtual void requestFadeOut() {}
     virtual bool fadedOut() const { return true; }
+    // R-AUD-18: the device whose audio workgroup the DSP thread joins
+    // while this bus plays the speakers: its AudioObjectID on Core Audio,
+    // 0 elsewhere.
+    virtual std::uint32_t audioWorkgroupDevice() const { return 0; }
 };
 
 } // namespace NereusSDR

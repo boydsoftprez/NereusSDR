@@ -19,6 +19,10 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 5. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-09: early-review fix wave follow-up (R-AUD-08, R-AUD-14):
+//               startMicOnly() opens the mic alone; startOutputs() opens
+//               the outputs without reopening it.  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -730,6 +734,42 @@ private slots:
         QCOMPARE(rig.host.opensFor(AudioRole::Speakers).last().device->id, kPodsOutId);
         QCOMPARE(rig.host.opensFor(AudioRole::Headphones).size(), 1);
         QCOMPARE(rig.st(AudioRole::Speakers).state, AudioRoleState::Playing);
+    }
+
+    // startMicOnly() opens the mic alone: nothing (a list change, the
+    // mic's open finishing, the posted start) opens an output until
+    // startOutputs(), which opens them on their current choices and leaves
+    // the mic as it is.
+    void micOnlyStartOpensNoOutput()
+    {
+        Rig rig;
+        addStandardOutputs(rig.catalogue);
+        addStandardInputs(rig.catalogue);
+        rig.host.sticky.insert(kMicUsbId, AudioOpenResult::Pending);
+        rig.sup->setChoice(AudioRole::Speakers, chosen(kUsbId, kUsbName));
+        rig.sup->setChoice(AudioRole::Headphones, platformDefault());
+        rig.sup->setChoice(AudioRole::TxInput, chosen(kMicUsbId, kMicUsbName));
+        rig.sup->startMicOnly();
+        QVERIFY(!rig.sup->outputsStarted());
+        QCOMPARE(rig.host.opens.size(), 1);
+        QCOMPARE(rig.host.opens.first().role, AudioRole::TxInput);
+
+        rig.start();                 // the posted start: nothing more
+        rig.catalogue.changed();
+        rig.sup->onOpenFinished(AudioRole::TxInput, AudioOpenResult::Opened);
+        rig.sup->setChoice(AudioRole::Speakers, chosen(kBuiltId, kBuiltName));
+        QCOMPARE(rig.host.opens.size(), 1);
+        QCOMPARE(rig.st(AudioRole::TxInput).state, AudioRoleState::Playing);
+
+        rig.sup->startOutputs();
+        QVERIFY(rig.sup->outputsStarted());
+        QCOMPARE(rig.host.opensFor(AudioRole::TxInput).size(), 1);
+        QCOMPARE(rig.host.opensFor(AudioRole::Speakers).size(), 1);
+        QCOMPARE(rig.host.opensFor(AudioRole::Speakers).last().device->id, kBuiltId);
+        QCOMPARE(rig.host.opensFor(AudioRole::Headphones).size(), 1);
+        QCOMPARE(rig.st(AudioRole::Speakers).state, AudioRoleState::Playing);
+        rig.sup->startOutputs();     // once
+        QCOMPARE(rig.host.opens.size(), 3);
     }
 
     // R-AUD-14: the outputs open after kBluetoothMicFirstWaitMs (scaled

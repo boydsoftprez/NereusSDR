@@ -16,6 +16,9 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 3 (R-AUD-03, R-AUD-07, R-AUD-32).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan early-review fix wave (R-AUD-08):
+//               opensOneStreamAtATime().  J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -82,6 +85,11 @@ public:
     virtual bool hasControlPanel() const { return false; }
     virtual void openControlPanel(const QString& /*deviceId*/) {}
     virtual void rescan() {}
+    // True when a second stream of this engine cannot open while one of
+    // its streams is open (an ASIO driver is loaded once per process).
+    // AudioEngine then closes a role's stream before opening its next one
+    // on the same engine; otherwise the next opens first and replaces it.
+    virtual bool opensOneStreamAtATime() const { return false; }
 };
 
 } // namespace NereusSDR

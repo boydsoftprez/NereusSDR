@@ -18,6 +18,23 @@
 //   2026-10-09: native audio plan Task 7 (R-AUD-02, R-AUD-06, R-AUD-15,
 //               R-AUD-34). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-09: native audio plan Task 8 (R-AUD-01, R-AUD-02): the Mac's
+//               registry is Core Audio only. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 8 (R-AUD-18): the speakers
+//               workgroup generation and the DSP thread's rejoin. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: early-review fix wave (R-AUD-02, R-AUD-06, R-AUD-08,
+//               R-AUD-16): a failed open leaves the playing bus playing,
+//               reopening the same device closes first, Windows shared
+//               asks for the smallest period, Rescan waits out a large
+//               callback, and the first mic demand opens the helper once.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: early-review fix wave follow-up (R-AUD-08, R-AUD-14): a
+//               capture demand before start() opens the mic role alone;
+//               start() opens the outputs without reopening the mic, and an
+//               output setting changed meanwhile opens once, on its choice.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -33,6 +50,8 @@
 #include "core/audio/CaptureSupervisor.h"
 #include "core/audio/IAudioDeviceCatalog.h"
 #include "core/audio/PortAudioBackend.h"
+#include "core/audio/RealtimeAudioPriority.h"
+#include "models/RxDspWorker.h"
 
 #include "fakes/FakeAudioEngineBackend.h"
 #include "fakes/FakeCaptureChild.h"
@@ -164,11 +183,104 @@ private slots:
         pipewire->setRunning(true);
         QCOMPARE(defaultAudioEngine({pipewire, older}), AudioEngineKind::PipeWire);
 
-        // The registry builds the older drivers here, until the native
-        // engine tasks add theirs.
+        // R-AUD-01: the Mac registers Core Audio only; the other systems
+        // build the older drivers last, until their engine tasks add theirs.
         const auto system = makeSystemAudioBackends(AudioBackendContext{});
         QVERIFY(!system.empty());
+#ifdef Q_OS_MAC
+        QCOMPARE(system.size(), std::size_t(1));
+        QCOMPARE(system.front()->id(), AudioBackendId::CoreAudio);
+        QCOMPARE(defaultAudioEngine(system), AudioEngineKind::CoreAudio);
+#else
         QCOMPARE(system.back()->id(), AudioBackendId::PortAudio);
+#endif
+    }
+
+    // R-AUD-18: every speakers open on a device bumps the workgroup
+    // generation and stores the device's workgroup id: the saved device,
+    // the fall-back to the default, and the return.
+    void speakersOpenBumpsTheWorkgroupGeneration()
+    {
+        Rig rig;
+        rig.native->setWorkgroupDevice(QStringLiteral("desk-uid"), 71);
+        rig.native->setWorkgroupDevice(QString(), 72);
+        savedChoice(AudioEngineKind::CoreAudio, QStringLiteral("desk-uid"),
+                    QStringLiteral("Desk speakers"))
+            .saveToSettings(QStringLiteral("audio/Speakers"));
+        rig.build();
+        QCOMPARE(rig.engine->speakersWorkgroupGeneration(), std::uint32_t(0));
+        QCOMPARE(rig.engine->speakersWorkgroupDevice(), std::uint32_t(0));
+        rig.engine->start();
+        QCOMPARE(rig.native->outputRequests().size(), std::size_t(1));
+        QCOMPARE(rig.engine->speakersWorkgroupGeneration(), std::uint32_t(1));
+        QCOMPARE(rig.engine->speakersWorkgroupDevice(), std::uint32_t(71));
+
+        // The device goes away: the speakers fall back to the default.
+        FakeMatcherAudioBus* desk = rig.native->lastOutput();
+        QVERIFY(desk != nullptr);
+        AudioStreamEvent lost;
+        lost.kind = AudioStreamEvent::Kind::DeviceLost;
+        desk->emitEventForTest(lost);
+        QTRY_COMPARE_WITH_TIMEOUT(rig.engine->roleStatus(AudioRole::Speakers).state,
+                                  AudioRoleState::PlayingOnDefault, kWaitMs);
+        QCOMPARE(rig.native->outputRequests().size(), std::size_t(2));
+        QCOMPARE(rig.engine->speakersWorkgroupGeneration(), std::uint32_t(2));
+        QCOMPARE(rig.engine->speakersWorkgroupDevice(), std::uint32_t(72));
+
+        // The chosen device is chosen again: the speakers return to it.
+        rig.engine->setSpeakersConfig(savedChoice(AudioEngineKind::CoreAudio,
+                                                  QStringLiteral("built-in-uid"),
+                                                  QStringLiteral("Built-in speakers")));
+        rig.engine->setSpeakersConfig(savedChoice(AudioEngineKind::CoreAudio,
+                                                  QStringLiteral("desk-uid"),
+                                                  QStringLiteral("Desk speakers")));
+        QTRY_COMPARE_WITH_TIMEOUT(rig.engine->roleStatus(AudioRole::Speakers).state,
+                                  AudioRoleState::Playing, kWaitMs);
+        QCOMPARE(rig.native->outputRequests().back().deviceId, QStringLiteral("desk-uid"));
+        const auto opens = static_cast<std::uint32_t>(rig.native->outputRequests().size());
+        QCOMPARE(rig.engine->speakersWorkgroupGeneration(), opens);
+        QCOMPARE(rig.engine->speakersWorkgroupDevice(), std::uint32_t(71));
+        rig.engine->stop();
+    }
+
+    // R-AUD-18: the DSP thread rejoins once per change of the generation,
+    // with the stored device, and never on a batch with no change.
+    void dspThreadRejoinsOncePerChange()
+    {
+        Rig rig;
+        rig.native->setWorkgroupDevice(QStringLiteral("desk-uid"), 71);
+        rig.native->setWorkgroupDevice(QStringLiteral("built-in-uid"), 73);
+        savedChoice(AudioEngineKind::CoreAudio, QStringLiteral("desk-uid"),
+                    QStringLiteral("Desk speakers"))
+            .saveToSettings(QStringLiteral("audio/Speakers"));
+        rig.build();
+
+        RxDspWorker worker;
+        worker.setEngines(nullptr, rig.engine.get());
+        std::vector<std::uint32_t> rejoins;
+        worker.setWorkgroupRejoinForTest([&rejoins](AudioPriorityToken*, std::uint32_t device) {
+            rejoins.push_back(device);
+            return true;
+        });
+        const QVector<float> empty;
+
+        // No speakers open yet: nothing to follow.
+        worker.processIqBatch(0, empty);
+        QVERIFY(rejoins.empty());
+
+        rig.engine->start();
+        worker.processIqBatch(0, empty);
+        worker.processIqBatch(0, empty);
+        QCOMPARE(rejoins, std::vector<std::uint32_t>({71}));
+
+        rig.engine->setSpeakersConfig(savedChoice(AudioEngineKind::CoreAudio,
+                                                  QStringLiteral("built-in-uid"),
+                                                  QStringLiteral("Built-in speakers")));
+        QCOMPARE(rig.native->outputRequests().back().deviceId, QStringLiteral("built-in-uid"));
+        worker.processIqBatch(0, empty);
+        worker.processIqBatch(0, empty);
+        QCOMPARE(rejoins, std::vector<std::uint32_t>({71, 73}));
+        rig.engine->stop();
     }
 
     // The saved Engine decides which backend opens the role.
@@ -538,6 +650,304 @@ private slots:
         CaptureSupervisor::Lease lease =
             rig.engine->acquireCaptureDemand(CaptureSupervisor::Demand::TestMic);
         QTRY_VERIFY_WITH_TIMEOUT(lostAfterPlaying, 10000);
+        lease.release();
+        rig.engine->stop();
+    }
+
+    // R-AUD-08 (C1): the chosen device fails to open while the system
+    // default plays; each retry's failed open leaves the default's bus
+    // open and in the slot, and the role still reads PlayingOnDefault.
+    void failedRetryKeepsTheDefaultPlaying()
+    {
+        Rig rig;
+        rig.native->setFailingOutputs({QStringLiteral("desk-uid")});
+        savedChoice(AudioEngineKind::CoreAudio, QStringLiteral("desk-uid"),
+                    QStringLiteral("Desk speakers"))
+            .saveToSettings(QStringLiteral("audio/Speakers"));
+        rig.build();
+        // The failed opens are the case under test.
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("could not open")));
+        for (int i = 0; i < 2; ++i) {
+            QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("open failed")));
+            QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("did not open")));
+        }
+        rig.engine->start();
+        QCOMPARE(rig.native->outputRequests().size(), std::size_t(2));
+        QCOMPARE(rig.native->outputRequests().at(0).deviceId, QStringLiteral("desk-uid"));
+        QVERIFY(rig.native->outputRequests().at(1).deviceId.isEmpty());
+        QCOMPARE(rig.engine->roleStatus(AudioRole::Speakers).state, AudioRoleState::PlayingOnDefault);
+        FakeMatcherAudioBus* def = rig.native->lastOutput();
+        QVERIFY(def != nullptr && rig.native->outputAlive(1));
+
+        // The retry (250 ms) tries the chosen device again, and fails.
+        QTRY_VERIFY_WITH_TIMEOUT(rig.native->outputRequests().size() >= std::size_t(3), kWaitMs);
+        QCOMPARE(rig.native->outputRequests().at(2).deviceId, QStringLiteral("desk-uid"));
+        QVERIFY(!rig.native->outputAlive(2));
+        QVERIFY(rig.native->outputAlive(1));
+        QVERIFY(def->isOpen());
+        QCOMPARE(rig.native->aliveOutputs(), 1);
+        // Still the bus the speakers play on: the readout is its matcher.
+        QVERIFY(rig.engine->delayParts(AudioRole::Speakers).matcherFillMs >= 0.0);
+        QCOMPARE(rig.engine->roleStatus(AudioRole::Speakers).state, AudioRoleState::PlayingOnDefault);
+        QCOMPARE(rig.engine->roleStatus(AudioRole::Speakers).playingName,
+                 QStringLiteral("Built-in speakers"));
+        rig.engine->stop();
+    }
+
+    // R-AUD-08, R-AUD-12 (C1): the system default moves while the role
+    // plays on it, and the new default cannot open: the old default's
+    // bus keeps playing.
+    void failedOpenOnADefaultMoveKeepsTheOldDefault()
+    {
+        Rig rig;
+        rig.build();
+        rig.engine->start();
+        QCOMPARE(rig.native->outputRequests().size(), std::size_t(1));
+        QCOMPARE(rig.engine->roleStatus(AudioRole::Speakers).state, AudioRoleState::Playing);
+
+        rig.native->setFailingOutputs({QString()});
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("open failed")));
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("did not open")));
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("could not open")));
+        rig.native->setDefault(AudioDeviceDirection::Output, QStringLiteral("desk-uid"));
+        rig.native->postNotice(AudioNotice::DefaultOutputChanged);
+        QTRY_VERIFY_WITH_TIMEOUT(rig.native->outputRequests().size() >= std::size_t(2), kWaitMs);
+        QVERIFY(!rig.native->outputAlive(1));
+        QVERIFY(rig.native->outputAlive(0));
+        QVERIFY(rig.native->lastOutput() != nullptr);
+        QVERIFY(rig.engine->delayParts(AudioRole::Speakers).matcherFillMs >= 0.0);
+        rig.engine->stop();
+    }
+
+    // C1: reopening the same device closes the old stream first (a device
+    // may not open twice); another device opens before the old one closes.
+    // When that reopen fails the role is closed, and the supervisor falls
+    // back to the system default.
+    void reopenOfTheSameDeviceClosesFirst()
+    {
+        std::vector<int> aliveAtCreate;   // outlives the rig's hook
+        Rig rig;
+        savedChoice(AudioEngineKind::CoreAudio, QStringLiteral("desk-uid"),
+                    QStringLiteral("Desk speakers"))
+            .saveToSettings(QStringLiteral("audio/Speakers"));
+        rig.build();
+        rig.native->setOutputCreatedHook([&](const AudioStreamRequest&) {
+            aliveAtCreate.push_back(rig.native->aliveOutputs());
+        });
+        rig.engine->start();
+        QCOMPARE(aliveAtCreate, std::vector<int>({1}));
+
+        // Another device: the new bus opens while the old one still plays.
+        rig.engine->setSpeakersConfig(savedChoice(AudioEngineKind::CoreAudio,
+                                                  QStringLiteral("built-in-uid"),
+                                                  QStringLiteral("Built-in speakers")));
+        QCOMPARE(aliveAtCreate, std::vector<int>({1, 2}));
+        QCOMPARE(rig.native->aliveOutputs(), 1);
+
+        // The same device again (a format change): closed first.
+        AudioStreamEvent changed;
+        changed.kind = AudioStreamEvent::Kind::FormatChanged;
+        rig.native->lastOutput()->emitEventForTest(changed);
+        QTRY_COMPARE_WITH_TIMEOUT(aliveAtCreate.size(), std::size_t(3), kWaitMs);
+        QCOMPARE(aliveAtCreate.back(), 1);
+        QCOMPARE(rig.engine->roleStatus(AudioRole::Speakers).state, AudioRoleState::Playing);
+
+        // The same device again, and it fails: the role reads closed and
+        // falls back to the system default.
+        rig.native->setFailingOutputs({QStringLiteral("built-in-uid")});
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("open failed")));
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("did not open")));
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("could not open")));
+        rig.native->lastOutput()->emitEventForTest(changed);
+        QTRY_COMPARE_WITH_TIMEOUT(aliveAtCreate.size(), std::size_t(5), kWaitMs);
+        QCOMPARE(aliveAtCreate.at(3), 1);
+        QVERIFY(rig.native->outputRequests().back().deviceId.isEmpty());
+        QCOMPARE(rig.native->aliveOutputs(), 1);
+        QCOMPARE(rig.engine->roleStatus(AudioRole::Speakers).state, AudioRoleState::PlayingOnDefault);
+        rig.native->setOutputCreatedHook({});
+        rig.engine->stop();
+    }
+
+    // R-AUD-16 (W1): Windows audio, shared asks for the engine's smallest
+    // period (bufferFrames 0); the other engines keep the saved size.
+    void windowsSharedAsksForTheSmallestPeriod()
+    {
+        auto wasapi = std::make_shared<FakeAudioEngineBackend>(AudioBackendId::Wasapi);
+        wasapi->setDevices({deviceInfo(AudioBackendId::Wasapi, AudioDeviceDirection::Output,
+                                       QStringLiteral("wasapi-desk"), QStringLiteral("Desk speakers"))});
+        wasapi->setDefault(AudioDeviceDirection::Output, QStringLiteral("wasapi-desk"));
+        auto older = std::make_shared<FakeAudioEngineBackend>(AudioBackendId::PortAudio);
+        older->setTakesStereoMix(false);
+        older->setDevices({deviceInfo(AudioBackendId::PortAudio, AudioDeviceDirection::Output,
+                                      paId(QStringLiteral("Desk headphones")),
+                                      QStringLiteral("Desk headphones"), kCoreAudioApi)});
+
+        AudioDeviceConfig speakers = savedChoice(AudioEngineKind::WindowsShared,
+                                                 QStringLiteral("wasapi-desk"),
+                                                 QStringLiteral("Desk speakers"));
+        speakers.bufferSamples = 128;
+        speakers.saveToSettings(QStringLiteral("audio/Speakers"));
+        AudioDeviceConfig headphones = savedChoice(AudioEngineKind::PortAudio,
+                                                   paId(QStringLiteral("Desk headphones")),
+                                                   QStringLiteral("Desk headphones"), kCoreAudioApi);
+        headphones.bufferSamples = 128;
+        headphones.saveToSettings(QStringLiteral("audio/Headphones"));
+        AppSettings::instance().setValue(QStringLiteral("audio/Headphones/Enabled"),
+                                         QStringLiteral("True"));
+
+        AudioEngine engine;
+        engine.setVaxOutputsAllowed(false);
+        engine.setAudioBackendsForTest({wasapi, older});
+        engine.setHeadphonesEnabled(true);
+        engine.start();
+        QCOMPARE(wasapi->outputRequests().size(), std::size_t(1));
+        QCOMPARE(wasapi->outputRequests().front().bufferFrames, 0);
+        QVERIFY(!wasapi->outputRequests().front().exclusive);
+        QCOMPARE(older->outputRequests().size(), std::size_t(1));
+        QCOMPARE(older->outputRequests().front().bufferFrames, 128);
+
+        // Windows audio, exclusive keeps the saved size.
+        AudioDeviceConfig exclusive = speakers;
+        exclusive.engine = AudioEngineKind::WindowsExclusive;
+        engine.setSpeakersConfig(exclusive);
+        QCOMPARE(wasapi->outputRequests().size(), std::size_t(2));
+        QCOMPARE(wasapi->outputRequests().back().bufferFrames, 128);
+        QVERIFY(wasapi->outputRequests().back().exclusive);
+        engine.stop();
+    }
+
+    // R-AUD-06 (M3): Rescan waits out a fade longer than kRescanFadeMs
+    // when the stream's callback is larger: 2048 frames at 48 kHz is
+    // 42.7 ms, so a 30 ms fade ends before the bus is closed.
+    void rescanWaitsOutALargeCallback()
+    {
+        Rig rig;
+        rig.older->setTakesStereoMix(true);
+        rig.older->setCallbackFrames(2048);
+        rig.older->setFadeTimeMs(30);
+        savedChoice(AudioEngineKind::PortAudio, paId(QStringLiteral("Desk headphones")),
+                    QStringLiteral("Desk headphones"), kCoreAudioApi)
+            .saveToSettings(QStringLiteral("audio/Headphones"));
+        AppSettings::instance().setValue(QStringLiteral("audio/Headphones/Enabled"),
+                                         QStringLiteral("True"));
+        rig.build();
+        rig.engine->setHeadphonesEnabled(true);
+        rig.engine->start();
+        QCOMPARE(rig.older->outputRequests().size(), std::size_t(1));
+        QCOMPARE(rig.older->outputRequests().front().sampleRate, 48000);
+
+        QSignalSpy rescanned(rig.engine->catalogue(), &IAudioDeviceCatalog::olderDriversRescanned);
+        rig.engine->rescanOlderDrivers();
+        QCOMPARE(rig.older->fadeRequests(), 1);
+        QVERIFY(!rig.older->outputAlive(0));
+        QCOMPARE(rig.older->closedUnfaded(), 0);
+        QVERIFY(rescanned.wait(kWaitMs));
+        QTRY_COMPARE_WITH_TIMEOUT(rig.older->outputRequests().size(), std::size_t(2), kWaitMs);
+        rig.engine->stop();
+    }
+
+    // M2: a capture demand before the radio starts (Test Mic) opens the
+    // helper once, on the matched mic, never the saved choice and then the
+    // matched one.  A mic saved before engines (no Engine, no DeviceId)
+    // matches to a config that differs from the saved one.
+    void firstMicDemandOpensTheHelperOnce()
+    {
+        // Declared before the rig: the helper's last statuses arrive while
+        // the engine is destroyed.
+        std::vector<quint32> generations;
+        Rig rig;
+        rig.native->addDevice(deviceInfo(AudioBackendId::CoreAudio, AudioDeviceDirection::Input,
+                                         QStringLiteral("desk-mic-uid"), QStringLiteral("Desk mic")));
+        AudioDeviceConfig legacy;
+        legacy.deviceName = QStringLiteral("Desk mic");
+        legacy.driverApi = kCoreAudioApi;
+        legacy.saveToSettings(QStringLiteral("audio/TxInput"));
+        rig.build(fakeHelper(QStringLiteral("ready")));
+        connect(rig.engine.get(), &AudioEngine::captureStatusChanged, this,
+                [&](const CaptureSupervisor::Status& status) {
+                    if (status.generation == 0) {
+                        return;
+                    }
+                    if (generations.empty() || generations.back() != status.generation) {
+                        generations.push_back(status.generation);
+                    }
+                });
+        CaptureSupervisor::Lease lease =
+            rig.engine->acquireCaptureDemand(CaptureSupervisor::Demand::TestMic);
+        QTRY_COMPARE_WITH_TIMEOUT(rig.engine->captureStatus().state,
+                                  CaptureSupervisor::Status::State::Ready, 10000);
+        const quint32 first = rig.engine->captureStatus().generation;
+        rig.engine->start();
+        QCoreApplication::processEvents();
+        QCOMPARE(rig.engine->captureStatus().generation, first);
+        QCOMPARE(rig.engine->captureStatus().state, CaptureSupervisor::Status::State::Ready);
+        QCOMPARE(rig.engine->roleStatus(AudioRole::TxInput).state, AudioRoleState::Playing);
+        QCOMPARE(generations, std::vector<quint32>({first}));
+        lease.release();
+        rig.engine->stop();
+    }
+
+    // Follow-up to M2: Test Mic before the radio starts opens the mic role
+    // alone (no output takes a device from other programs); start() then
+    // opens the outputs and leaves the mic as it is.
+    void micDemandBeforeStartOpensNoOutput()
+    {
+        std::vector<quint32> generations;   // outlives the engine
+        Rig rig;
+        savedChoice(AudioEngineKind::PortAudio, paId(QStringLiteral("Desk mic")),
+                    QStringLiteral("Desk mic"), kCoreAudioApi)
+            .saveToSettings(QStringLiteral("audio/TxInput"));
+        rig.build(fakeHelper(QStringLiteral("ready")));
+        connect(rig.engine.get(), &AudioEngine::captureStatusChanged, this,
+                [&](const CaptureSupervisor::Status& status) {
+                    if (status.generation != 0
+                        && (generations.empty() || generations.back() != status.generation)) {
+                        generations.push_back(status.generation);
+                    }
+                });
+        CaptureSupervisor::Lease lease =
+            rig.engine->acquireCaptureDemand(CaptureSupervisor::Demand::TestMic);
+        QTRY_COMPARE_WITH_TIMEOUT(rig.engine->captureStatus().state,
+                                  CaptureSupervisor::Status::State::Ready, 10000);
+        QCOMPARE(rig.engine->roleStatus(AudioRole::TxInput).state, AudioRoleState::Playing);
+        QCoreApplication::processEvents();
+        QVERIFY(rig.native->outputRequests().empty());
+        QVERIFY(rig.older->outputRequests().empty());
+        QCOMPARE(rig.native->aliveOutputs() + rig.older->aliveOutputs(), 0);
+        const quint32 first = rig.engine->captureStatus().generation;
+
+        rig.engine->start();
+        QCoreApplication::processEvents();
+        QCOMPARE(rig.native->outputRequests().size(), std::size_t(1));
+        QCOMPARE(rig.engine->roleStatus(AudioRole::Speakers).state, AudioRoleState::Playing);
+        QCOMPARE(rig.engine->captureStatus().generation, first);
+        QCOMPARE(rig.engine->captureStatus().state, CaptureSupervisor::Status::State::Ready);
+        QCOMPARE(generations, std::vector<quint32>({first}));
+        lease.release();
+        rig.engine->stop();
+    }
+
+    // While only the mic role runs, a speaker choice opens the outputs
+    // once, on that choice, never the saved one first; start() then
+    // opens nothing again.
+    void outputChoiceWhileOnlyTheMicRunsOpensOnce()
+    {
+        Rig rig;
+        savedChoice(AudioEngineKind::CoreAudio, QStringLiteral("built-in-uid"),
+                    QStringLiteral("Built-in speakers"))
+            .saveToSettings(QStringLiteral("audio/Speakers"));
+        rig.build(fakeHelper(QStringLiteral("ready")));
+        CaptureSupervisor::Lease lease =
+            rig.engine->acquireCaptureDemand(CaptureSupervisor::Demand::TestMic);
+        QVERIFY(rig.native->outputRequests().empty());
+        rig.engine->setSpeakersConfig(savedChoice(AudioEngineKind::CoreAudio, QStringLiteral("desk-uid"),
+                                                  QStringLiteral("Desk speakers")));
+        QCOMPARE(rig.native->outputRequests().size(), std::size_t(1));
+        QCOMPARE(rig.native->outputRequests().front().deviceId, QStringLiteral("desk-uid"));
+        rig.engine->start();
+        QCoreApplication::processEvents();
+        QCOMPARE(rig.native->outputRequests().size(), std::size_t(1));
+        QCOMPARE(rig.engine->roleStatus(AudioRole::Speakers).playingName, QStringLiteral("Desk speakers"));
         lease.release();
         rig.engine->stop();
     }

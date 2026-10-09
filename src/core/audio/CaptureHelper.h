@@ -7,12 +7,20 @@
 //
 // Design: docs/architecture/2026-09-22-optional-microphone-capture-design.md
 // (Process and PCM contract).  Requirement R-R3-36.
+//
+// Modification history (NereusSDR):
+//   2026-10-09: native audio plan early-review fix wave (R-AUD-02, bug 1):
+//               captureHostApiIndex(), the mic opens on its saved host API.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
 
 #include <QByteArray>
+#include <QPair>
+#include <QString>
 #include <QStringList>
+#include <QVector>
 #include <QtGlobal>
 
 namespace NereusSDR {
@@ -32,6 +40,14 @@ int runCaptureHelper(int argc, char** argv);
 // not on the list fails as a missing device, a listed one fails without
 // opening anything. Call before runCaptureHelper; ignored outside a test run.
 void setCaptureHelperTestDevices(const QStringList& names);
+
+// R-AUD-02 (bug 1): the PortAudio host API index the mic opens on, from
+// the PortAudio host APIs (index, name) listed now.  A mic saved with its
+// host API name (driverApi) opens on that host API, never on a device of
+// the same name under another one; with no driverApi, or one not listed,
+// the saved index stands, as PortAudioBackend::createOutput does.
+int captureHostApiIndex(const QString& driverApi, int savedHostApiIndex,
+                        const QVector<QPair<int, QString>>& hostApis);
 
 // Process-level pipe plumbing shared by the helper and its scripted test
 // double.  Not for use inside NereusSDR itself.

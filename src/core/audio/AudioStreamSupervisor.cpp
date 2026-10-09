@@ -8,6 +8,12 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 5 (R-AUD-08 to R-AUD-14). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan early-review fix wave (R-AUD-08):
+//               onRoleClosed().  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-09: early-review fix wave follow-up (R-AUD-08, R-AUD-14):
+//               startMicOnly() and startOutputs().  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AudioStreamSupervisor.h"
@@ -234,6 +240,16 @@ void AudioStreamSupervisor::onOpenFinished(AudioRole role, AudioOpenResult resul
     }
 }
 
+void AudioStreamSupervisor::onRoleClosed(AudioRole role)
+{
+    // The failed open that follows reads it as closed: the fallback opens
+    // the system default, and a role on the default retries.
+    RoleState& s = state(role);
+    s.open = false;
+    s.onDefault = false;
+    s.openDevice.reset();
+}
+
 AudioRoleStatus AudioStreamSupervisor::status(AudioRole role) const
 {
     return state(role).status;
@@ -396,11 +412,33 @@ void AudioStreamSupervisor::start()
     if (m_started) {
         return;
     }
+    startMicOnly();
+    startOutputs();
+}
+
+void AudioStreamSupervisor::startMicOnly()
+{
+    if (m_started) {
+        return;
+    }
     m_started = true;
+    m_outputsDeferred = true;
+    evaluate(AudioRole::TxInput, false);
+}
+
+void AudioStreamSupervisor::startOutputs()
+{
+    if (!m_started) {
+        start();
+        return;
+    }
+    if (!m_outputsDeferred) {
+        return;
+    }
+    m_outputsDeferred = false;
 
     // R-AUD-14: the mic opens first, so a Bluetooth headset that is both
     // mic and speakers settles on its mic before any output opens.
-    evaluate(AudioRole::TxInput, false);
     const RoleState& mic = state(AudioRole::TxInput);
     if (mic.pending && isBluetooth(mic.pendingDevice)) {
         m_outputsHeld = true;
@@ -419,8 +457,8 @@ void AudioStreamSupervisor::evaluate(AudioRole role, bool defaultMoved)
     const ChoiceKind kind = kindOf(role);
     if (kind == ChoiceKind::Off) {
         evaluateOff(role);
-    } else if (m_outputsHeld && isOutput(role)) {
-        // Waiting for the Bluetooth mic to open first.
+    } else if ((m_outputsHeld || m_outputsDeferred) && isOutput(role)) {
+        // Waiting for the Bluetooth mic to open first, or for startOutputs().
     } else if (kind == ChoiceKind::Chosen) {
         evaluateChosen(role, defaultMoved);
     } else if (role == AudioRole::TxInput) {
@@ -735,7 +773,8 @@ void AudioStreamSupervisor::onRetryTimer(AudioRole role)
         return;
     }
     const ChoiceKind kind = kindOf(role);
-    if (kind == ChoiceKind::Off || s.pending || (m_outputsHeld && isOutput(role))) {
+    if (kind == ChoiceKind::Off || s.pending
+        || ((m_outputsHeld || m_outputsDeferred) && isOutput(role))) {
         return;
     }
 
@@ -775,6 +814,9 @@ void AudioStreamSupervisor::releaseHeldOutputs()
     }
     m_outputsHeld = false;
     m_bluetoothWait.stop();
+    if (m_outputsDeferred) {
+        return;   // startOutputs() evaluates them
+    }
     for (AudioRole role : kOutputRoles) {
         evaluate(role, false);
     }
