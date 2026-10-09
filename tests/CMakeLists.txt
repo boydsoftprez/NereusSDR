@@ -585,6 +585,9 @@ nereus_add_test(tst_container_legacy_import)
 nereus_add_test(tst_container_persistence)
 nereus_add_test(tst_container_arrangement)
 nereus_add_test(tst_container_application_quit)
+# Removing a popped-out container from its own settings dialog, and the
+# shells an emptied container leaves (offscreen; JJ crash 2026-10-09).
+nereus_add_test(tst_container_popout_removal)
 nereus_add_test(tst_container_position_restore)
 nereus_add_test(tst_container_follow_selected_rx)
 nereus_add_test(tst_container_stack_responsive)

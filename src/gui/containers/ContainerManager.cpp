@@ -7,6 +7,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09 - Container Settings opens after the menu that asked for it
+//                 has returned and belongs to the main window, not to the
+//                 container's shell, which Remove deletes while the dialog
+//                 is open (JJ's crash removing a popped-out container).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-04 — Follow responsive content height in auto-height containers by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04 — Preserve pending container placement and initialize overlay
@@ -512,8 +517,30 @@ void ContainerManager::wireContainer(ContainerWidget* container)
     });
     connect(container, &ContainerWidget::settingsRequested, this,
             [this, container]() {
-        ContainerSettingsDialog dialog(container, container->window(), this);
-        dialog.exec();
+        // The dialog opens once the menu that asked for it has returned,
+        // and belongs to the main window, never to the container's shell:
+        // Remove and Apply delete the container and its shell while the
+        // dialog is still open, and a dialog on the stack owned by the
+        // shell was freed with it (JJ 2026-10-09, "pointer being freed
+        // was not allocated").
+        QMetaObject::invokeMethod(this, [this, view = QPointer<ContainerWidget>(container)] {
+            if (!view || this->container(view->id()) != view.data()) {
+                return;
+            }
+            QWidget* shell = view->window();
+            QWidget* owner = m_dockParent ? m_dockParent->window() : nullptr;
+            ContainerSettingsDialog dialog(view.data(), owner, this);
+            if (shell && shell != owner) {
+                // Over the shell, where it opened when the shell owned it.
+                if (shell->windowFlags().testFlag(Qt::WindowStaysOnTopHint)) {
+                    dialog.setWindowFlag(Qt::WindowStaysOnTopHint);
+                }
+                QRect frame(QPoint(), dialog.size());
+                frame.moveCenter(shell->geometry().center());
+                dialog.move(frame.topLeft());
+            }
+            dialog.exec();
+        }, Qt::QueuedConnection);
     });
     connect(container, &ContainerWidget::notesChanged, this,
             [this, container](const QString& notes) {

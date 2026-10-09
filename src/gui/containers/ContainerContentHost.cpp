@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-10-09 - The entry menus live on the heap under the host
+//                 (OwnedMenu.h): an entry action that removes the container
+//                 while its menu is open no longer frees a menu on the
+//                 stack. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-04 — Project native bar rows into responsive viewport allocations by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04 — Fit stacked button groups to compact shared rows by
@@ -35,6 +40,7 @@ Q_LOGGING_CATEGORY(lcFreeCanvas,"nereus.container.canvas")
 #include <QLabel>
 #include <QPushButton>
 #include <QMenu>
+#include "gui/containers/OwnedMenu.h"
 #include <QJsonArray>
 #include <QScrollArea>
 #include <algorithm>
@@ -71,7 +77,7 @@ ContainerContentHost::ContainerContentHost(ContainerContentRegistry& registry, Q
         const auto result=m_arrange->placeFreeCanvas(id,rect,original);
         if(!result.ok) {qCWarning(lcFreeCanvas)<<result.error;m_canvas->project(m_document,[this]{QHash<QString,QPointer<QWidget>> views;for(const auto& row:m_rows) {views[row.entryId]=row.widget;}return views;}());}
     });
-    connect(m_canvas,&FreeCanvasSurface::entryContextMenuRequested,this,[this](const QString& id,const QPoint& position){QMenu menu(this);addEntryActions(menu,id);if(!menu.isEmpty()) {menu.exec(position);}});
+    connect(m_canvas,&FreeCanvasSurface::entryContextMenuRequested,this,[this](const QString& id,const QPoint& position){OwnedMenu owned(this);QMenu& menu=owned.menu();addEntryActions(menu,id);if(!menu.isEmpty()) {menu.exec(position);}});
 }
 ContainerContentHost::~ContainerContentHost() { releaseViews(); }
 QJsonObject ContainerContentHost::effectiveContext(const ContainerDocument& document, const ContentEntry& entry)
@@ -791,7 +797,8 @@ bool ContainerContentHost::eventFilter(QObject *watched, QEvent *event)
     if (!id.isEmpty()) {
         if (event->type() == QEvent::ContextMenu) {
             auto *context = static_cast<QContextMenuEvent *>(event);
-            QMenu menu(this);
+            OwnedMenu owned(this);
+            QMenu &menu = owned.menu();
             addEntryActions(menu, id);
             menu.exec(context->globalPos());
             return true;
