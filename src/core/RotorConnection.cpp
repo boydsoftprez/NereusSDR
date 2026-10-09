@@ -1119,8 +1119,10 @@ void RotorConnection::acceptPosition(double reportedAz, double reportedEl, bool 
         // Arrival is judged on the span once the route is known (final
         // review M1): on a rotor with overlap a compass heading names two
         // span positions, and only the one the route goes to is arrival.
-        // With the nearer-position route the two rules agree; the span is
-        // the one that cannot be fooled. Compass otherwise.
+        // The two rules disagree at the ends of the range, where the
+        // target's other span position is past the stop: at the clockwise
+        // stop of a 360 range, 360 and 001 are 1 apart on the compass and
+        // 359 apart on the span (re-review M1). Compass otherwise.
         const RotorRoute::Move route = routeToTarget();
         const double gap = route.routeKnown && m_config.endStop != RotorRoute::EndStop::None
                                ? std::abs(route.travelDeg)

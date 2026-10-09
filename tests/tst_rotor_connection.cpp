@@ -208,6 +208,7 @@ private slots:
 
     // Arrival on the span (final review M1)
     void arrivalInTheOverlapIsJudgedOnTheSpan();
+    void arrivalAtTheClockwiseStopIsJudgedOnTheSpan();
 
     // Bench captures
     void replayErcCapture();
@@ -1141,6 +1142,33 @@ void TestRotorConnection::arrivalInTheOverlapIsJudgedOnTheSpan()
     m_fake->feed("AZ=201  EL=000\r\n");
     QVERIFY(!m_conn->turning());
     QCOMPARE(m_conn->targetAzimuthDeg(), -1.0);
+}
+
+void TestRotorConnection::arrivalAtTheClockwiseStopIsJudgedOnTheSpan()
+{
+    // Re-review M1: north stop, range 360, the rotor at its clockwise stop
+    // reading 360 (span 360). Target 001 sits only at span 1 (its other
+    // place, 361, is past the stop), so the way there is -359. On the
+    // compass 360 and 001 are 1 apart, which the old rule called arrived.
+    RotorConfig c = gs232bConfig();
+    c.endStop = EndStop::North;
+    c.rangeDeg = 360.0;
+    connectWith(c);
+    m_fake->feed("AZ=350  EL=000\r\n");
+    m_conn->pollNowForTesting();
+    m_fake->feed("AZ=355  EL=000\r\n");
+    m_conn->pollNowForTesting();
+    m_fake->feed("AZ=360  EL=000\r\n");
+    QCOMPARE(m_conn->spanPositionDeg(), 360.0);
+    m_fake->take();
+    QVERIFY(m_conn->setTarget(1.0));
+    QCOMPARE(m_conn->routeToTarget().travelDeg, -359.0);
+    m_conn->pollNowForTesting();
+    m_fake->feed("AZ=360  EL=000\r\n");
+    // Still turning, with all of -359 to go.
+    QVERIFY(m_conn->turning());
+    QCOMPARE(m_conn->targetAzimuthDeg(), 1.0);
+    QCOMPARE(m_conn->routeToTarget().travelDeg, -359.0);
 }
 
 void TestRotorConnection::disconnectWhileStillSendsNothing()
