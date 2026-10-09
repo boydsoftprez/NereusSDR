@@ -1,4 +1,4 @@
-// NereusSDR for iOS: the Rotor page: the dial, the heading, Turn, Stop and the nudge holds, the paths, the presets and the rotor setup
+// NereusSDR for iOS: the Rotor page: the dial, the heading, Turn, Stop and the nudge holds, the paths and the presets
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
 import SwiftUI
@@ -6,9 +6,10 @@ import SwiftUI
 /// The Rotor page (design, iPhone; the rotor mockup's phone): the status
 /// line, the dial, the heading in amber and the target with its "to go"
 /// under it, Turn while a selection waits, CCW, STOP and CW, Down and Up on
-/// an az/el rotor, short and long path, the preset chips, and the rotor
-/// setup with the Core's serial ports. The Accessories row on the Radio tab
-/// and the Rotor row on the Tools tab open this same page.
+/// an az/el rotor, short and long path, and the preset chips. The rotor's
+/// setup and its presets list are in Setup, CAT & Network, Rotor
+/// (``RotorSetupPage``), where the desktop keeps them. The Accessories row
+/// on the Radio tab and the Rotor row on the Tools tab open this same page.
 ///
 /// A drag on the dial only selects; Turn sends it. Presets and Stop are one
 /// tap; CCW, CW, Down and Up turn while held. Leaving the page or the app
@@ -40,7 +41,6 @@ struct RotorPage: View {
                 AccessoryChrome.Note(text: state.fault)
                     .accessibilityIdentifier("rotor.fault")
             }
-            RotorSetupCard(model: model)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("rotorPage")
@@ -244,160 +244,6 @@ struct RotorHoldButton: View {
             .accessibilityAddTraits(.isButton)
             .accessibilityValue(enabled ? (held ? "Turning" : "") : "Not available")
             .accessibilityIdentifier("rotor.nudge.\(direction.rawValue)")
-    }
-}
-
-/// The rotor setup (design, Desktop and iPhone: rotor setup): the driver,
-/// the Core's serial port and baud rate, or rotctld's address, Hamlib's
-/// model, the axes, the end stop and range, and the calibration offset.
-/// Save sends it to the Core, which saves it and connects; Disconnect keeps
-/// it. The serial ports are the Core's own, as it lists them.
-struct RotorSetupCard: View {
-    @ObservedObject var model: RotorModel
-    @State private var draft = RotorModel.Setup()
-    @State private var reported: RotorModel.Setup?
-    @State private var portText = ""
-    @State private var modelText = ""
-
-    static let bauds: [Int64] = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]
-
-    var body: some View {
-        let reason = model.setupReason
-        let enabled = reason == nil
-        VStack(alignment: .leading, spacing: 6) {
-            AccessoryChrome.Caption(text: "Rotor setup")
-            AccessoryChrome.Card {
-                AccessoryFields.ChoiceRow(label: "Controller", value: draft.driver.title,
-                                          options: RotorModel.Driver.allCases.filter { $0 != RotorModel.Driver.none }.map(\.title),
-                                          enabled: enabled, identifier: "rotor.setup.driver") { title in
-                    if let driver = RotorModel.Driver.allCases.first(where: { $0.title == title }) {
-                        draft.driver = driver
-                    }
-                }
-                if draft.driver.usesSerialPort {
-                    let ports = model.state?.serialPorts ?? []
-                    AccessoryFields.ChoiceRow(label: "Serial port on the Core", value: draft.serialPort,
-                                              options: ports, enabled: enabled && !ports.isEmpty,
-                                              identifier: "rotor.setup.serialPort") { draft.serialPort = $0 }
-                    if ports.isEmpty {
-                        AccessoryChrome.Note(text: Self.noPortsText)
-                    }
-                    AccessoryFields.ChoiceRow(label: "Baud rate", value: String(draft.baud),
-                                              options: Self.bauds.map(String.init), enabled: enabled,
-                                              identifier: "rotor.setup.baud") { draft.baud = Int64($0) ?? draft.baud }
-                }
-                if draft.driver == .rotctldRunning {
-                    field("rotctld address", text: $draft.host, keyboard: .URL, enabled: enabled,
-                          identifier: "rotor.setup.host")
-                    field("rotctld port", text: $portText, keyboard: .numberPad, enabled: enabled,
-                          identifier: "rotor.setup.port")
-                }
-                if draft.driver == .rotctldStarted {
-                    field("Hamlib rotor model", text: $modelText, keyboard: .numberPad, enabled: enabled,
-                          identifier: "rotor.setup.hamlibModel")
-                    if model.state?.rotctldAvailable == false {
-                        AccessoryChrome.Note(text: Self.noRotctldText)
-                    }
-                }
-                AccessoryFields.ChoiceRow(label: "Axes", value: draft.axes.title,
-                                          options: RotorModel.Axes.allCases.map(\.title), enabled: enabled,
-                                          identifier: "rotor.setup.axes") { title in
-                    draft.axes = RotorModel.Axes.allCases.first { $0.title == title } ?? draft.axes
-                }
-                AccessoryFields.ChoiceRow(label: "End stop", value: draft.endStop.title,
-                                          options: RotorModel.EndStop.allCases.map(\.title), enabled: enabled,
-                                          identifier: "rotor.setup.endStop") { title in
-                    draft.endStop = RotorModel.EndStop.allCases.first { $0.title == title } ?? draft.endStop
-                }
-                AccessoryFields.ChoiceRow(label: "Range", value: "\(draft.rangeDeg)\u{00B0}",
-                                          options: ["360\u{00B0}", "450\u{00B0}"], enabled: enabled,
-                                          identifier: "rotor.setup.range") { title in
-                    draft.rangeDeg = title.hasPrefix("450") ? 450 : 360
-                }
-                AccessoryFields.NumberRow(label: "Offset", value: Int64(draft.offsetDeg.rounded()), range: -180...180,
-                                          step: 1, unit: "\u{00B0}", enabled: enabled,
-                                          identifier: "rotor.setup.offset") { draft.offsetDeg = Double($0) }
-                HStack(spacing: 8) {
-                    AccessoryFields.ActionButton(title: "Save and connect", enabled: enabled && changedOrIdle,
-                                                 identifier: "rotor.setup.save") {
-                        var setup = draft
-                        setup.port = Int64(portText) ?? setup.port
-                        setup.hamlibModel = Int64(modelText) ?? setup.hamlibModel
-                        model.configure(setup)
-                    }
-                    AccessoryFields.ActionButton(title: "Disconnect",
-                                                 enabled: enabled && model.state?.driver != RotorModel.Driver.none,
-                                                 identifier: "rotor.setup.disconnect") {
-                        model.disconnect()
-                    }
-                }
-                if let reason {
-                    AccessoryChrome.Note(text: reason)
-                } else if let error = model.state?.connectionError, !error.isEmpty {
-                    AccessoryChrome.Note(text: error)
-                        .accessibilityIdentifier("rotor.setup.error")
-                }
-            }
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("rotor.setup")
-        .onAppear {
-            take(model.state)
-            model.setupShown()
-        }
-        .onDisappear { model.setupHidden() }
-        .onChange(of: model.state) { _, state in take(state) }
-    }
-
-    static let noPortsText = "The Core's computer lists no serial ports. Plug in the rotor's interface; the list follows within a few seconds."
-    static let noRotctldText = "Hamlib's rotctld is not installed on the Core's computer."
-
-    /// Save is lit once the card differs from the Core's setup, or when no rotor is set up yet.
-    private var changedOrIdle: Bool {
-        guard let state = model.state, state.driver != .none, let reported else {
-            return true
-        }
-        var current = draft
-        current.port = Int64(portText) ?? current.port
-        current.hamlibModel = Int64(modelText) ?? current.hamlibModel
-        return current != reported
-    }
-
-    /// Follows the Core's setup when it changes, keeping an edit in progress otherwise.
-    private func take(_ state: RotorModel.State?) {
-        let next = state.map(RotorModel.Setup.init) ?? RotorModel.Setup()
-        guard next != reported else {
-            return
-        }
-        reported = next
-        draft = next
-        portText = String(next.port)
-        modelText = String(next.hamlibModel)
-    }
-
-    private func field(_ label: String, text: Binding<String>, keyboard: UIKeyboardType, enabled: Bool,
-                       identifier: String) -> some View {
-        HStack(spacing: 8) {
-            Text(label)
-                .font(.system(size: 12))
-                .foregroundStyle(ChromeColours.textDim)
-            Spacer(minLength: 8)
-            TextField("", text: text)
-                .keyboardType(keyboard)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .multilineTextAlignment(.trailing)
-                .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                .foregroundStyle(enabled ? ChromeColours.text : ChromeColours.buttonOffText)
-                .padding(.horizontal, 8)
-                .frame(maxWidth: 170, minHeight: 34)
-                .background(enabled ? ChromeColours.button : ChromeColours.buttonOff, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(enabled ? ChromeColours.buttonBorder : ChromeColours.buttonOffBorder, lineWidth: 1))
-                .disabled(!enabled)
-                .accessibilityLabel(label)
-                .accessibilityIdentifier(identifier)
-        }
     }
 }
 

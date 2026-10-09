@@ -132,7 +132,7 @@ final class RotorModel: ObservableObject {
         var targetElevation: Double? { targetElevationDeg >= 0 ? targetElevationDeg : nil }
     }
 
-    /// What `configureRotor` sends: the rotor setup card's values.
+    /// What `configureRotor` sends: Setup's Rotor page's values.
     struct Setup: Equatable {
         var driver = Driver.gs232b
         var serialPort = ""
@@ -147,7 +147,7 @@ final class RotorModel: ObservableObject {
 
         init() {}
 
-        /// The setup the Core reports, as the card starts.
+        /// The setup the Core reports, as Setup's Rotor page starts.
         init(_ state: State) {
             driver = state.driver == .none ? .gs232b : state.driver
             serialPort = state.serialPort.isEmpty ? (state.serialPorts.first ?? "") : state.serialPort
@@ -201,8 +201,8 @@ final class RotorModel: ObservableObject {
     nonisolated static let longWayDeg = 270.0
     /// The Core marks the heading stale after this long without a reply.
     static let staleAfterMs: Int64 = 1_500
-    /// How often the setup card asks the Core to keep reading its serial
-    /// ports while on screen (document, `refreshRotorPorts`; the Core's
+    /// How often Setup's Rotor page asks the Core to keep reading its
+    /// serial ports while on screen (document, `refreshRotorPorts`; the Core's
     /// lease is 30 s).
     static let setupAskRepeat: Duration = .seconds(20)
 
@@ -451,16 +451,16 @@ final class RotorModel: ObservableObject {
         send("configureRotor", setup.arguments)
     }
 
-    /// The setup card came on screen: the Core reads its serial ports and
-    /// looks for rotctld only while a rotor is set up or a setup view asks
-    /// (`refreshRotorPorts`), so the card asks now and every 20 s while it
-    /// stays. Quiet: nothing shows if the Core cannot be asked.
+    /// Setup's Rotor page came on screen: the Core reads its serial ports
+    /// and looks for rotctld only while a rotor is set up or a setup view
+    /// asks (`refreshRotorPorts`), so the page asks now and every 20 s while
+    /// it stays. Quiet: nothing shows if the Core cannot be asked.
     func setupShown() {
         setupAskGeneration &+= 1
         askForPorts(setupAskGeneration)
     }
 
-    /// The setup card left the screen: no more asks.
+    /// Setup's Rotor page left the screen: no more asks.
     func setupHidden() {
         setupAskTimer?.cancel()
         setupAskTimer = nil
@@ -479,6 +479,18 @@ final class RotorModel: ObservableObject {
         setupAskTimer = clock.schedule(after: Self.setupAskRepeat) { [weak self] in
             await self?.askForPorts(generation)
         }
+    }
+
+    /// Replaces the Core's presets (`setRotorPresets`) with `presets`, one
+    /// `name<TAB>degrees` per line in order (``RotorPresetsDraft/serialized()``).
+    /// True once the Core accepts them; a refusal shows as the note.
+    @discardableResult
+    func savePresets(_ presets: String) async -> Bool {
+        guard allowed(setupReason) else {
+            return false
+        }
+        let result = await invoke("setRotorPresets", [CommandArgument(name: "presets", value: .text(presets))])
+        return result?.accepted == true
     }
 
     /// Disconnects, keeping the setup (`disconnectRotor`).

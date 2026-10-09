@@ -321,7 +321,34 @@ struct RotorPageModelTests {
         #expect(argument(command, "rangeDeg") == .i64(450))
     }
 
-    @Test("the setup card asks the Core for its serial ports when shown and every 20 s, quietly, until hidden")
+    @Test("Save presets sends setRotorPresets with the list's text; true once accepted, the Core's refusal shows")
+    func savePresets() async throws {
+        let rig = await Rig()
+        let saving = Task { await rig.model.savePresets("EU\t45\nJA\t330") }
+        #expect(await turns { rig.sent("setRotorPresets").count == 1 })
+        let command = try #require(rig.sent("setRotorPresets").first)
+        #expect(command.args.map(\.name) == ["presets"])
+        #expect(argument(command, "presets") == .utf8("EU\t45\nJA\t330"))
+        await rig.answer(command)
+        #expect(await saving.value)
+        #expect(rig.model.note == nil)
+
+        let refused = Task { await rig.model.savePresets("EU\t45") }
+        #expect(await turns { rig.sent("setRotorPresets").count == 2 })
+        await rig.answer(try #require(rig.sent("setRotorPresets").last), accepted: false,
+                         reason: "That heading is outside the rotor's range.")
+        #expect(await refused.value == false)
+        #expect(rig.model.note != nil)
+
+        // A Core too old is not asked; the reason shows.
+        let older = await Rig(version: 0, rotor: nil)
+        #expect(await older.model.savePresets("EU\t45") == false)
+        await drain()
+        #expect(older.recorded.commands.isEmpty)
+        #expect(older.model.note == RotorModel.olderCoreReason)
+    }
+
+    @Test("Setup's Rotor page asks the Core for its serial ports when shown and every 20 s, quietly, until hidden")
     func setupAsksForPorts() async {
         let rig = await Rig()
         rig.model.setupShown()

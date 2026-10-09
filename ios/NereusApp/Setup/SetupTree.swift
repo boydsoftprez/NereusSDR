@@ -22,6 +22,8 @@ enum SetupTree {
         case audioOnThisPhone
         case displayOnThisPhone
         case pttButtons
+        /// CAT & Network, Rotor: the Core's rotor, set up as the desktop's Rotor page does.
+        case rotor
         case dataUse
         case coreLogs
         case about
@@ -140,9 +142,11 @@ enum SetupTree {
         Skeleton(coreId: "appearance", title: "Appearance", tag: .thisPhone,
                  pageOrder: ["Colors & Theme", "Meter Styles", "Gradients"], native: [], opensPage: nil),
         Skeleton(coreId: "catNetwork", title: "CAT & Network", tag: .both,
-                 pageOrder: ["Serial Ports", "TCI Server", "Peripherals", "4O3A", "RF-Kit", "TCP/IP CAT",
+                 pageOrder: ["Serial Ports", "TCI Server", "Peripherals", "4O3A", "RF-Kit", "Rotor", "TCP/IP CAT",
                              "MIDI Control", "Data use"],
-                 native: [PageEntry(page: .dataUse, title: "Data use", tag: .thisPhone)], opensPage: nil),
+                 // Rotor sits after RF-Kit, as the desktop registers it (SetupDialog's CAT & Network).
+                 native: [PageEntry(page: .rotor, title: "Rotor", tag: .core),
+                          PageEntry(page: .dataUse, title: "Data use", tag: .thisPhone)], opensPage: nil),
         Skeleton(coreId: "test", title: "Test", tag: .core, pageOrder: ["Two-Tone IMD"], native: [], opensPage: nil),
         Skeleton(coreId: "diagnostics", title: "Diagnostics", tag: .both,
                  pageOrder: ["Radio Status", "Connection Quality", "Settings Validation", "Logs", "Export / Import"],

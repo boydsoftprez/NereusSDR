@@ -173,7 +173,7 @@ struct SetupDescribedPagesTests {
         #expect(pages("Display") == ["On this phone", "Spectrum Defaults", "Spectrum Peaks", "Waterfall Defaults",
                                      "Multimeter", "TX Display", "3D View"])
         #expect(pages("Transmit") == ["Power", "DEXP/VOX", "PTT buttons"])
-        #expect(pages("CAT & Network") == ["TCI Server", "Data use"])
+        #expect(pages("CAT & Network") == ["TCI Server", "Rotor", "Data use"])
         #expect(pages("Audio") == ["On this phone", "TX Profile"])
         #expect(pages("Appearance") == ["Colors & Theme", "Meter Styles"])
         // Each described page is marked where its settings live.
