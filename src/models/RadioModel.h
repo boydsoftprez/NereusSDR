@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09 - PC mic status for the transmit badge (native audio plan
+//                Task 20; R-AUD-24, R-AUD-09, R-AUD-13). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-04: CAT accepted-intent tags and guarded cycle lifetimes,
@@ -649,6 +652,7 @@
 #include "core/NereusCoreExport.h"
 #include "core/ConnectionState.h"
 #include "core/audio/CaptureSupervisor.h"
+#include "core/audio/IAudioStreamHost.h"
 #include "core/ReceiveLayoutStore.h"
 #include "core/spectrum/WidebandSpectrumCache.h"
 #include "core/PgxlConnection.h"
@@ -1491,6 +1495,15 @@ public:
     // and fails on any other caller, so a new use has to come through that
     // list and say why the object it reaches is live on a remote model.
     AudioEngine*      localAudioDevices() { return m_audioEngine; }
+
+    // Native audio plan Task 20 (R-AUD-24, R-AUD-09, R-AUD-13): this
+    // computer's own PC mic, as the engine's TxInput role reports it
+    // (AudioEngine::roleStatus / roleStatusChanged). Off until the device
+    // layer starts. Read by the transmit panel's source badge only: it
+    // never gates keying (R-R3-36 stays on pcCaptureReady()) and it is not
+    // a property, so it is never mirrored to a remote window or the phone.
+    // pcMicStatusChanged fires when the status changes. Main thread.
+    AudioRoleStatus pcMicStatus() const { return m_pcMicStatus; }
 
     // ── Remote-daemon R2 Task 20: the reach-through audit ────────────────
     //
@@ -6174,6 +6187,8 @@ signals:
     /// release). Shown as a local refusal is; the buttons follow the Core.
     void remoteTransmitRefused(const QString& reason);
     void remoteMicSourceStateChanged();
+    // Native audio plan Task 20 (R-AUD-24): pcMicStatus() changed.
+    void pcMicStatusChanged();
 
     // ── Plan 4 D8: per-profile TX filter relay signal ─────────────────────────
     //
@@ -8270,6 +8285,8 @@ private:
     bool m_coreSpeakerWaiting{false};
     int  m_coreSpeakerVolume{50};
     bool m_coreSpeakerMuted{false};
+    // Native audio plan Task 20 (R-AUD-24): the TxInput role's last status.
+    AudioRoleStatus m_pcMicStatus;
     QString m_coreSpeakerDevice;
     QString m_coreSpeakerDevices;
     QString m_coreSpeakerState;
