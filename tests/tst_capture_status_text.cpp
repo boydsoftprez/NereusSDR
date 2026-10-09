@@ -10,6 +10,9 @@
 //               Anthropic Claude Code.
 //   2026-10-09: native audio plan Task 13 (R-AUD-11): device in use.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 16 (R-AUD-09, R-AUD-11): not
+//               connected, and the in-use text names the mic.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -58,7 +61,7 @@ private slots:
             << QStringLiteral("Microphone access is turned off for NereusSDR. "
                               "Allow it in System Settings, then retry.");
         QTest::newRow("device-not-found") << State::Failed << Reason::DeviceNotFound << mic << QString()
-            << QStringLiteral("The selected microphone \"USB Mic\" is not available.");
+            << QStringLiteral("The selected microphone \"USB Mic\" is not connected.");
         QTest::newRow("default-not-found") << State::Failed << Reason::DeviceNotFound << QString() << QString()
             << QStringLiteral("The system default microphone is not available.");
         QTest::newRow("open-failed") << State::Failed << Reason::OpenFailed << mic << QString()
@@ -78,7 +81,9 @@ private slots:
         QTest::newRow("protocol-error") << State::Failed << Reason::ProtocolError << mic << QString()
             << QStringLiteral("Microphone support stopped unexpectedly.");
         QTest::newRow("device-in-use") << State::Failed << Reason::DeviceInUse << mic << QString()
-            << QStringLiteral("The selected microphone is in use by another program.");
+            << QStringLiteral("The selected microphone \"USB Mic\" is in use by another program.");
+        QTest::newRow("default-in-use") << State::Failed << Reason::DeviceInUse << QString() << QString()
+            << QStringLiteral("The system default microphone is in use by another program.");
     }
 
     void wording()

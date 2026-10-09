@@ -10,6 +10,11 @@
 // implementation via Anthropic Claude Code. The Speakers and Headphones
 // cards and their engine wiring moved here from the Devices page, keys
 // unchanged.
+// 2026-10-09: native audio plan Task 16 (R-AUD-01, R-AUD-03, R-AUD-06):
+// the cards follow the engine's device catalogue; Rescan devices rescans
+// the older drivers and says which lists update by themselves (greyed on
+// the Mac); the Sound system line follows the cards' choices.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "AudioOutputsPage.h"
@@ -20,6 +25,8 @@
 #include "core/AudioDeviceConfig.h"
 #include "core/AudioEngine.h"
 #include "core/HpsdrModel.h"
+#include "core/audio/IAudioDeviceCatalog.h"
+#include "gui/setup/AudioDriverList.h"
 #include "gui/widgets/AppIcon.h"
 #include "gui/widgets/MasterOutputWidget.h"
 #include "models/RadioModel.h"
@@ -35,6 +42,7 @@
 #include <QRadioButton>
 #include <QSignalBlocker>
 #include <QSlider>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <cmath>
@@ -46,6 +54,9 @@ namespace {
 constexpr int kButtonPx = 20;
 constexpr int kSliderWidth = 160;
 constexpr int kReadoutWidth = 26;
+// How often the page looks for the engine's device catalogue until it has
+// one (the cards look as often, R-AUD-15's readout tick).
+constexpr int kCataloguePickupMs = 1000;
 
 // Amplifier choice ids: RadioModel::speakerAmplifierMode values.
 constexpr int kAmpNormal = 0;
@@ -158,6 +169,7 @@ AudioOutputsPage::AudioOutputsPage(RadioModel* model, QWidget* parent)
     if (m_engine) {
         wireEngine();
     }
+    updateRescanState();
     syncPcFromEngine();
     wireModel();
     syncRadioSpeaker();
@@ -417,23 +429,74 @@ void AudioOutputsPage::buildRescan()
 
 void AudioOutputsPage::rescan()
 {
-#if defined(Q_OS_LINUX)
-    // R-SPK-21: on Linux the button also checks the sound system again.
+    // R-AUD-06: only the older drivers need a rescan; the native engines'
+    // lists update by themselves.  The engine closes and reopens only the
+    // roles on older drivers, and the cards follow the new lists.
     if (m_engine) {
-        m_engine->rescanLinuxBackend();
+        m_engine->rescanOlderDrivers();
     }
-#endif
-    m_soundSystem->refresh();
     m_speakersCard->rescanDevices();
     m_headphonesCard->rescanDevices();
-    const int found = m_speakersCard->deviceCount();
-    m_rescanResult->setText(found == 1 ? tr("Found 1 output device.")
-                                       : tr("Found %1 output devices.").arg(found));
+    updateRescanState();
+}
+
+// The note beside Rescan devices, shown from the start, and the button
+// greyed with its reason where there is nothing to rescan (the Mac).
+void AudioOutputsPage::updateRescanState()
+{
+    const IAudioDeviceCatalog* catalogue = m_engine ? m_engine->catalogue() : nullptr;
+    QString note;
+    bool nothingToDo = false;
+    if (catalogue != nullptr) {
+        note = rescanNote(*catalogue);
+        nothingToDo = rescanHasNothingToDo(*catalogue);
+    } else {
+#if defined(Q_OS_MAC)
+        note = tr("Core Audio lists update by themselves, so there is nothing to rescan.");
+        nothingToDo = true;
+#elif defined(Q_OS_WIN)
+        note = tr("Only the older drivers need this. Windows audio and ASIO lists update "
+                  "by themselves.");
+#else
+        note = tr("Only the older drivers need this.");
+#endif
+    }
+    m_rescanResult->setText(note);
+    m_rescanButton->setEnabled(!nothingToDo);
+    m_rescanButton->setToolTip(nothingToDo ? note : QString());
+    m_soundSystem->refresh();
 }
 
 // ── Engine wiring (moved from the Devices page) ────────────────────────────
 void AudioOutputsPage::wireEngine()
 {
+    // R-AUD-01, R-AUD-03, R-AUD-08: the cards list the engine's devices and
+    // show their roles' states.
+    m_speakersCard->setAudioEngine(m_engine);
+    m_headphonesCard->setAudioEngine(m_engine);
+
+    // The Sound system line names the older drivers the cards use.
+    for (DeviceCard* card : {m_speakersCard, m_headphonesCard}) {
+        connect(card, &DeviceCard::configChanged, this,
+                [this](const AudioDeviceConfig&) { m_soundSystem->refresh(); });
+        connect(card, &DeviceCard::enabledChanged, this,
+                [this](bool) { m_soundSystem->refresh(); });
+    }
+
+    // The engine builds its device catalogue on first use: the note and
+    // the line take it up once it is there.
+    m_cataloguePickup = new QTimer(this);
+    m_cataloguePickup->setInterval(kCataloguePickupMs);
+    connect(m_cataloguePickup, &QTimer::timeout, this, [this]() {
+        if (m_engine->catalogue() != nullptr) {
+            m_cataloguePickup->stop();
+            updateRescanState();
+        }
+    });
+    if (m_engine->catalogue() == nullptr) {
+        m_cataloguePickup->start();
+    }
+
     // Speakers card -> engine
     connect(m_speakersCard, &DeviceCard::configChanged,
             this, [this](const AudioDeviceConfig& cfg) {

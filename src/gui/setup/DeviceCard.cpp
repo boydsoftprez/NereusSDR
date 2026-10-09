@@ -21,14 +21,24 @@
 // card's driver API is WASAPI; pages can add rows around the Device row,
 // grey the card until Enabled, and rescan its device list.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-09: native audio plan Task 16 (R-AUD-01, R-AUD-03, R-AUD-08 to
+// R-AUD-11, R-AUD-14 to R-AUD-17, D10). One Driver list replaces the Driver
+// API list and the three WASAPI checkboxes; the Device list comes from the
+// engine's device catalogue and follows it live; a missing device stays as
+// "<name> (not connected)"; the role's status notes, the engine notes and
+// the Delay line. The saved ExclusiveMode, EventDriven and BypassMixer keys
+// are kept as they are and no longer written.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "DeviceCard.h"
 
 #include "core/AppSettings.h"
 #include "core/AudioDeviceConfig.h"
-#include "core/audio/PortAudioBus.h"
+#include "core/AudioEngine.h"
+#include "core/audio/IAudioDeviceCatalog.h"
 #include "gui/UnbuiltFeatures.h"
+#include "gui/setup/AudioDriverList.h"
 
 #include <QCheckBox>
 #include <QAbstractItemView>
@@ -46,7 +56,11 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include <algorithm>
+#include <array>
 #include <memory>
+#include <optional>
+#include <utility>
 #include <vector>
 
 namespace NereusSDR {
@@ -99,9 +113,10 @@ static const char* kDetailsToggleStyle =
     "QToolButton { color: #8aa8c0; font-size: 11px; border: none; padding: 2px 0; }"
     "QToolButton:disabled { color: #405060; }";
 
-// PortAudio's name for its WASAPI host API.
-// From PortAudio src/hostapi/wasapi/pa_win_wasapi.c:2352 [v19.7.0]
-static constexpr const char* kWasapiHostApiName = "Windows WASAPI";
+// R-AUD-08 to R-AUD-11, R-AUD-14: a role's trouble or Bluetooth note, amber
+// like the mockup's (asio-setup-mockup.html).
+static const char* kStateNoteStyle = "QLabel { color: #e0a030; font-size: 11px; }";
+static const char* kEngineNoteStyle = "QLabel { color: #8aa8c0; font-size: 11px; }";
 
 // Pill style for the negotiated-format readout.
 static const char* kPillStyleOk =
@@ -167,6 +182,37 @@ static const QList<int> kInputBufferSizes = { 64, 128, 256, 512, 1024, 2048, 409
 // this role, so the next load removes it before adding its own.
 static constexpr int kKeptEntryRole = Qt::UserRole + 1;
 
+// Driver list items: Qt::UserRole is the engine key (empty on the "Older
+// drivers" heading), kHostApiRole the older driver's host API.
+static constexpr int kHostApiRole = Qt::UserRole + 2;
+// Device list items: Qt::UserRole is the device name (empty for
+// "(platform default)"), these the saved identity.
+static constexpr int kDeviceIdRole = Qt::UserRole + 3;
+static constexpr int kFirstChannelRole = Qt::UserRole + 4;
+static constexpr int kBluetoothRole = Qt::UserRole + 5;
+static constexpr int kPairedRole = Qt::UserRole + 6;
+
+// R-AUD-15: the Delay list ("Automatic" saves DelayMs 0).
+static constexpr std::array<int, 7> kDelayChoicesMs{0, 2, 3, 5, 10, 20, 40};
+
+// R-AUD-15: the delay readout's refresh, and the catalogue's pick-up.
+static constexpr int kRefreshIntervalMs = 1000;
+
+// D10: the saved WASAPI option keys stay in the file, never rewritten.
+static constexpr std::array<const char*, 3> kRetiredWasapiKeys{"ExclusiveMode", "EventDriven",
+                                                               "BypassMixer"};
+
+static void setItemEnabled(QComboBox* combo, int index, bool enabled)
+{
+    auto* model = qobject_cast<QStandardItemModel*>(combo->model());
+    if (model == nullptr) {
+        return;
+    }
+    if (QStandardItem* item = model->item(index)) {
+        item->setEnabled(enabled);
+    }
+}
+
 static void resetPopupAccessibilityCache(QComboBox* combo)
 {
 #if defined(Q_OS_MAC)
@@ -223,6 +269,45 @@ static QString bufferMs(int samples, int sampleRate)
     return QStringLiteral("%1 ms").arg(ms, 0, 'f', 1);
 }
 
+
+// A catalogue with nothing in it: a card without an engine (or before the
+// engine has its catalogue) lists "(platform default)" and the saved
+// device through the same functions.
+class EmptyAudioDeviceCatalog final : public IAudioDeviceCatalog {
+public:
+    QList<AudioBackendId> backends() const override { return {}; }
+    bool backendRunning(AudioBackendId) const override { return false; }
+    QList<AudioDeviceInfo> devices(AudioBackendId, AudioDeviceDirection) const override
+    {
+        return {};
+    }
+    std::optional<AudioDeviceInfo> defaultDevice(AudioBackendId,
+                                                 AudioDeviceDirection) const override
+    {
+        return std::nullopt;
+    }
+    void rescanOlderDrivers() override {}
+};
+
+const IAudioDeviceCatalog& emptyCatalogue()
+{
+    static EmptyAudioDeviceCatalog catalogue;
+    return catalogue;
+}
+
+// R-AUD-02's first native choice for this build, shown on the Driver list
+// of a card whose engine has no device catalogue to ask.
+AudioEngineKind buildDefaultEngine()
+{
+#if defined(Q_OS_MAC)
+    return AudioEngineKind::CoreAudio;
+#elif defined(Q_OS_WIN)
+    return AudioEngineKind::WindowsShared;
+#else
+    return AudioEngineKind::PipeWire;
+#endif
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -236,8 +321,19 @@ DeviceCard::DeviceCard(const QString& prefix,
     : QGroupBox(parent)
     , m_prefix(prefix)
     , m_role(role)
+    , m_audioRole(roleForPrefix(prefix))
 {
     setStyleSheet(QLatin1String(kGroupStyle));
+
+    // R-AUD-15: the delay readout refreshes once a second while the card
+    // follows an engine; the same tick picks up the engine's catalogue.
+    m_refreshTimer = new QTimer(this);
+    m_refreshTimer->setInterval(kRefreshIntervalMs);
+    connect(m_refreshTimer, &QTimer::timeout, this, [this]() {
+        attachCatalogue();
+        refreshDelayNow();
+    });
+
     buildLayout();
 
     // Enable checkbox (Headphones + VAX channels).  Inserted as the first
@@ -275,12 +371,31 @@ DeviceCard::DeviceCard(const QString& prefix,
     loadFromSettings();
 }
 
+std::optional<AudioRole> DeviceCard::roleForPrefix(const QString& prefix)
+{
+    static const std::array<std::pair<const char*, AudioRole>, 7> kPrefixes{{
+        {"audio/Speakers", AudioRole::Speakers},
+        {"audio/Headphones", AudioRole::Headphones},
+        {"audio/TxInput", AudioRole::TxInput},
+        {"audio/Vax1", AudioRole::Vax1},
+        {"audio/Vax2", AudioRole::Vax2},
+        {"audio/Vax3", AudioRole::Vax3},
+        {"audio/Vax4", AudioRole::Vax4},
+    }};
+    for (const auto& [name, role] : kPrefixes) {
+        if (prefix == QLatin1String(name)) {
+            return role;
+        }
+    }
+    return std::nullopt;
+}
+
 // ---------------------------------------------------------------------------
 // buildLayout: the Device row, then the folded "Device details" section
 // ---------------------------------------------------------------------------
-// R-SPK-21 / D14: the Device row stays in front; Driver API, Sample rate,
-// Bit depth, Channels, Buffer size, Options and Negotiated fold under
-// "Device details", folded by default. The driver API combo is created
+// R-SPK-21 / D14: the Device row stays in front; Driver, Sample rate, Bit
+// depth, Channels, Buffer size, Delay, Negotiated and the engine note fold
+// under "Device details", folded by default. The Driver combo is created
 // first, so it stays the card's first QComboBox child as before.
 void DeviceCard::buildLayout()
 {
@@ -318,23 +433,17 @@ void DeviceCard::buildLayout()
         return l;
     };
 
-    // ── Driver API (Device details) ──────────────────────────────────────
+    // ── Driver (Device details), R-AUD-01 / D10 ──────────────────────────
+    // Filled by populateDriverCombo() from the engine's device catalogue.
     m_driverApiCombo = new QComboBox(m_details);
+    m_driverApiCombo->setObjectName(QStringLiteral("deviceDriverCombo"));
     m_driverApiCombo->setStyleSheet(QLatin1String(kComboStyle));
-    // Populate from PortAudio host APIs (requires Pa_Initialize done).
-    const auto apis = PortAudioBus::hostApis();
-    m_driverApiCombo->addItem(QStringLiteral("(PortAudio default)"),
-                              QVariant::fromValue(-1));
-    for (const auto& api : apis) {
-        m_driverApiCombo->addItem(api.name, QVariant::fromValue(api.index));
-    }
 
     // ── Device (always in front) ─────────────────────────────────────────
     auto* deviceForm = makeForm();
     m_deviceCombo = new QComboBox(m_body);
     m_deviceCombo->setStyleSheet(QLatin1String(kComboStyle));
     m_deviceCombo->setMinimumWidth(200);
-    populateDeviceCombo();
     deviceForm->addRow(makeLabel(QStringLiteral("Device:")), m_deviceCombo);
 
     // ── TX-input extras (Input role only), in front ──────────────────────
@@ -360,6 +469,15 @@ void DeviceCard::buildLayout()
     }
     bodyLayout->addLayout(deviceForm);
 
+    // R-AUD-08 to R-AUD-11, R-AUD-14: the role's state, right under the
+    // Device row (empty, and so not shown, while the role plays as chosen).
+    m_stateNote = new QLabel(m_body);
+    m_stateNote->setObjectName(QStringLiteral("deviceStateNote"));
+    m_stateNote->setStyleSheet(QLatin1String(kStateNoteStyle));
+    m_stateNote->setWordWrap(true);
+    m_stateNote->setVisible(false);
+    bodyLayout->addWidget(m_stateNote);
+
     // Rows a page adds below the Device row (a note).
     m_belowDeviceLayout = new QVBoxLayout;
     m_belowDeviceLayout->setContentsMargins(0, 0, 0, 0);
@@ -381,7 +499,7 @@ void DeviceCard::buildLayout()
     auto* detailsForm = makeForm();
     m_details->setLayout(detailsForm);
     detailsForm->setContentsMargins(12, 0, 0, 0);
-    detailsForm->addRow(makeLabel(QStringLiteral("Driver API:")), m_driverApiCombo);
+    detailsForm->addRow(makeLabel(QStringLiteral("Driver:")), m_driverApiCombo);
 
     // Sample rate + Auto-match checkbox
     {
@@ -443,28 +561,25 @@ void DeviceCard::buildLayout()
         detailsForm->addRow(makeLabel(QStringLiteral("Buffer size:")), bufRow);
     }
 
-    // Options (WASAPI). R-SPK-24: live only when the card's driver API is
-    // WASAPI, greyed with wasapiOnlyReason() otherwise (updateWasapiOptions).
+    // Delay (R-AUD-15): the clock-matched buffer's size, and the delay now.
     {
-        auto* optRow = new QHBoxLayout;
-        optRow->setSpacing(10);
-        m_exclusiveChk   = new QCheckBox(QStringLiteral("Exclusive"));
-        m_eventDrivenChk = new QCheckBox(QStringLiteral("Event-driven"));
-        m_bypassMixerChk = new QCheckBox(QStringLiteral("Bypass mixer"));
-        for (QCheckBox* chk : { m_exclusiveChk, m_eventDrivenChk, m_bypassMixerChk }) {
-            chk->setStyleSheet(QLatin1String(kCheckStyle));
-            chk->setToolTip(QStringLiteral("WASAPI only"));
-            optRow->addWidget(chk);
+        auto* delayRow = new QHBoxLayout;
+        delayRow->setSpacing(6);
+        m_delayCombo = new QComboBox;
+        m_delayCombo->setObjectName(QStringLiteral("deviceDelayCombo"));
+        m_delayCombo->setStyleSheet(QLatin1String(kComboStyle));
+        for (int ms : kDelayChoicesMs) {
+            m_delayCombo->addItem(ms == 0 ? QStringLiteral("Automatic")
+                                          : QStringLiteral("%1 ms").arg(ms),
+                                  QVariant::fromValue(ms));
         }
-        optRow->addStretch();
-        detailsForm->addRow(makeLabel(QStringLiteral("Options:")), optRow);
-        m_wasapiNote = new QLabel(wasapiOnlyReason());
-        m_wasapiNote->setObjectName(QStringLiteral("wasapiOnlyNote"));
-        m_wasapiNote->setStyleSheet(QLatin1String(kDimLabelStyle));
-        // One short line: a word-wrapped label in a form row is clipped to
-        // one line's height.
-        m_wasapiNote->setWordWrap(false);
-        detailsForm->addRow(makeLabel(QString()), m_wasapiNote);
+        m_delayNow = new QLabel(QStringLiteral("Now -- ms"));
+        m_delayNow->setObjectName(QStringLiteral("deviceDelayNow"));
+        m_delayNow->setStyleSheet(QLatin1String(kDimLabelStyle));
+        delayRow->addWidget(m_delayCombo);
+        delayRow->addWidget(m_delayNow);
+        delayRow->addStretch();
+        detailsForm->addRow(makeLabel(QStringLiteral("Delay:")), delayRow);
     }
 
     // Negotiated-format pill
@@ -480,6 +595,14 @@ void DeviceCard::buildLayout()
         detailsForm->addRow(pillLbl, pillRow);
     }
 
+    // R-AUD-16: what the picked driver means. One short line: a
+    // word-wrapped label in a form row is clipped to one line's height.
+    m_engineNote = new QLabel;
+    m_engineNote->setObjectName(QStringLiteral("engineNote"));
+    m_engineNote->setStyleSheet(QLatin1String(kEngineNoteStyle));
+    m_engineNote->setWordWrap(false);
+    detailsForm->addRow(makeLabel(QString()), m_engineNote);
+
     bodyLayout->addWidget(m_details);
     m_details->setVisible(false);
 
@@ -487,9 +610,6 @@ void DeviceCard::buildLayout()
         m_detailsToggle->setArrowType(on ? Qt::DownArrow : Qt::RightArrow);
         m_details->setVisible(on);
     });
-    connect(m_driverApiCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this](int) { updateWasapiOptions(); });
-    updateWasapiOptions();
 
     // `outer` was already installed as this widget's layout by the
     // `new QVBoxLayout(this)` parent-ctor at the top of this function; a
@@ -507,10 +627,10 @@ void DeviceCard::buildLayout()
         connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
                 this, &DeviceCard::onAnyControlChanged);
     };
-    connectCombo(m_driverApiCombo);
     connectCombo(m_sampleRateCombo);
     connectCombo(m_bitDepthCombo);
     connectCombo(m_channelsCombo);
+    connectCombo(m_delayCombo);
     // Buffer-size uses a 200 ms intra-control debounce (addendum §2.1).
     // Other combos fire immediately.
     if (m_bufferSizeCombo) {
@@ -527,15 +647,14 @@ void DeviceCard::buildLayout()
                 });
     }
 
-    // Device combo fires populateDeviceCombo on driver-API change, then
-    // also commits via the device-combo's own currentIndexChanged.
+    // A Driver pick repopulates the Device list for that driver, then
+    // commits once; a Device pick commits the picked device.
+    m_driverApiCombo->installEventFilter(this);
     connect(m_driverApiCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this](int) {
-                populateDeviceCombo();
-                // onAnyControlChanged is called via the device combo's
-                // own signal after population — no double-commit here.
-            });
-    connectCombo(m_deviceCombo);
+            this, [this](int) { onDriverPicked(); });
+    m_deviceCombo->installEventFilter(this);
+    connect(m_deviceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int) { onDevicePicked(); });
 
     auto connectCheck = [this](QCheckBox* chk) {
         if (!chk) { return; }
@@ -543,9 +662,6 @@ void DeviceCard::buildLayout()
                 this, &DeviceCard::onAnyControlChanged);
     };
     connectCheck(m_autoMatchSampleRate);
-    connectCheck(m_exclusiveChk);
-    connectCheck(m_eventDrivenChk);
-    connectCheck(m_bypassMixerChk);
     if (m_monitorDuringTxChk) { connectCheck(m_monitorDuringTxChk); }
     if (m_toneCheckChk)       { connectCheck(m_toneCheckChk); }
 
@@ -557,7 +673,7 @@ void DeviceCard::buildLayout()
 }
 
 // ---------------------------------------------------------------------------
-// Device details, page rows, Enabled greying, rescan, WASAPI options
+// Device details, page rows, Enabled greying, rescan
 // ---------------------------------------------------------------------------
 bool DeviceCard::detailsExpanded() const
 {
@@ -601,121 +717,399 @@ void DeviceCard::updateBodyEnabled()
 
 void DeviceCard::rescanDevices()
 {
-    // Keeps the selection: populateDeviceCombo re-selects the current name
-    // (a configured device that has gone stays as "(not available)").
+    // Keeps the selection: a configured device that has gone stays as
+    // "<name> (not connected)".
+    const bool suppressed = m_suppressSignals;
+    m_suppressSignals = true;
+    populateDriverCombo();
     populateDeviceCombo();
+    m_suppressSignals = suppressed;
+    refreshStatus();
 }
 
 int DeviceCard::deviceCount() const
 {
     int count = 0;
-    for (int i = 0; i < m_deviceCombo->count(); ++i) {
-        if (!m_deviceCombo->itemData(i).toString().isEmpty()
-            && !m_deviceCombo->itemData(i, kKeptEntryRole).toBool()) {
+    for (int i = 1; i < m_deviceCombo->count(); ++i) {
+        if (!m_deviceCombo->itemData(i, kKeptEntryRole).toBool()
+            && m_deviceCombo->itemData(i, kDeviceIdRole).toString()
+                   != QLatin1String(kAudioDeviceNone)) {
             ++count;
         }
     }
     return count;
 }
 
-bool DeviceCard::isWasapiDriverName(const QString& driverApi)
+// ---------------------------------------------------------------------------
+// The engine, its catalogue and its role's status
+// ---------------------------------------------------------------------------
+void DeviceCard::setAudioEngine(AudioEngine* engine)
 {
-    return driverApi == QLatin1String(kWasapiHostApiName);
+    if (m_engine == engine) {
+        return;
+    }
+    if (m_engine) {
+        disconnect(m_engine, nullptr, this, nullptr);
+    }
+    if (m_catalogue) {
+        disconnect(m_catalogue, nullptr, this, nullptr);
+    }
+    m_catalogue = nullptr;
+    m_engine = engine;
+    m_status = AudioRoleStatus{};
+    if (!m_engine) {
+        m_refreshTimer->stop();
+        refreshStatus();
+        return;
+    }
+    // R-AUD-12: the card shows the same status the header's PC tooltip
+    // reads, so a default change updates both at once.
+    connect(m_engine, &AudioEngine::roleStatusChanged, this,
+            [this](AudioRole role, const AudioRoleStatus& status) {
+                if (!m_audioRole || role != *m_audioRole) {
+                    return;
+                }
+                m_status = status;
+                attachCatalogue();
+                refreshStatus();
+            });
+    if (m_audioRole) {
+        m_status = m_engine->roleStatus(*m_audioRole);
+    }
+    m_refreshTimer->start();
+    attachCatalogue();
+    refreshStatus();
 }
 
-QString DeviceCard::wasapiOnlyReason()
+void DeviceCard::attachCatalogue()
 {
-    return QStringLiteral("These three work only with WASAPI on Windows.");
+    if (m_catalogue || !m_engine) {
+        return;
+    }
+    IAudioDeviceCatalog* catalogue = m_engine->catalogue();
+    if (catalogue == nullptr) {
+        return;
+    }
+    m_catalogue = catalogue;
+    // R-AUD-05: the engine migrated the saved keys as it built the
+    // catalogue, so the card takes the saved choice again.  Every edit
+    // saves at once, so the file holds nothing the card has not shown.
+    takeSavedChoice(AudioDeviceConfig::loadFromSettings(m_prefix));
+    // R-AUD-03: a device added or removed shows at once, the selection kept.
+    connect(catalogue, &IAudioDeviceCatalog::devicesChanged, this,
+            [this]() { rescanDevices(); });
+    connect(catalogue, &IAudioDeviceCatalog::defaultChanged, this,
+            [this](AudioDeviceDirection) { refreshStatus(); });
+    rescanDevices();
+    updateEngineNote();
 }
 
-bool DeviceCard::wasapiOptionsAvailable() const
+void DeviceCard::takeSavedChoice(const AudioDeviceConfig& saved)
 {
-    return m_driverApiCombo != nullptr && m_driverApiCombo->currentIndex() > 0
-        && isWasapiDriverName(m_driverApiCombo->currentText());
+    m_loaded = saved;
+    m_driverEngine = saved.engine;
+    m_driverHostApi =
+        saved.engine == AudioEngineKind::PortAudio ? saved.driverApi : QString();
+    m_selection = Selection{saved.deviceId, saved.deviceName, std::max(1, saved.firstChannel)};
 }
 
-void DeviceCard::updateWasapiOptions()
+AudioEngineKind DeviceCard::selectedEngine() const
 {
-    const bool live = wasapiOptionsAvailable();
-    const QString tip = live ? QStringLiteral("WASAPI only") : wasapiOnlyReason();
-    for (QCheckBox* chk : { m_exclusiveChk, m_eventDrivenChk, m_bypassMixerChk }) {
-        if (chk == nullptr) {
-            continue;
+    if (m_driverEngine) {
+        return *m_driverEngine;
+    }
+    if (m_engine && m_catalogue) {
+        return m_engine->defaultEngine();
+    }
+    return buildDefaultEngine();
+}
+
+void DeviceCard::refreshStatus()
+{
+    QString note;
+    if (m_engine && m_audioRole) {
+        note = audioRoleNote(*m_audioRole, m_status);
+        // R-AUD-14: a Bluetooth mic picked by name says what it costs.
+        const int idx = m_deviceCombo->currentIndex();
+        if (note.isEmpty() && *m_audioRole == AudioRole::TxInput && idx > 0
+            && m_deviceCombo->itemData(idx, kBluetoothRole).toBool()
+            && !m_deviceCombo->itemData(idx, kKeptEntryRole).toBool()) {
+            note = bluetoothMicNote(m_deviceCombo->itemData(idx).toString());
         }
-        chk->setEnabled(live);
-        chk->setToolTip(tip);
     }
-    if (m_wasapiNote != nullptr) {
-        m_wasapiNote->setVisible(!live);
+    if (m_stateNote->text() != note) {
+        m_stateNote->setText(note);
+    }
+    m_stateNote->setVisible(!note.isEmpty());
+    refreshDelayNow();
+    renderPill();
+}
+
+void DeviceCard::refreshDelayNow()
+{
+    QString text = audioDelayLine(m_audioRole.value_or(AudioRole::Speakers), AudioDelayParts{},
+                                  QString());
+    if (m_engine && m_audioRole
+        && (m_status.state == AudioRoleState::Playing
+            || m_status.state == AudioRoleState::PlayingOnDefault)) {
+        // The device actually playing, the system default included.
+        text = audioDelayLine(*m_audioRole, m_engine->delayParts(*m_audioRole),
+                              m_status.playingName);
+    }
+    if (m_delayNow->text() != text) {
+        m_delayNow->setText(text);
     }
 }
 
+void DeviceCard::updateEngineNote()
+{
+    QString note;
+    switch (selectedEngine()) {
+    case AudioEngineKind::WindowsExclusive:
+        note = QStringLiteral("Other apps cannot play through this device while NereusSDR has it.");
+        break;
+    case AudioEngineKind::PortAudio:
+        note = QStringLiteral("An older driver: more delay, and its list updates only with "
+                              "Rescan devices.");
+        break;
+    case AudioEngineKind::CoreAudio:
+    case AudioEngineKind::WindowsShared:
+    case AudioEngineKind::Asio:
+    case AudioEngineKind::PipeWire:
+    case AudioEngineKind::PulseAudio:
+    case AudioEngineKind::AlsaDirect:
+        break;
+    }
+    m_engineNote->setText(note);
+    m_engineNote->setVisible(!note.isEmpty());
+}
+
 // ---------------------------------------------------------------------------
-// populateDeviceCombo
+// populateDriverCombo: the Driver list (R-AUD-01, D10)
 // ---------------------------------------------------------------------------
+void DeviceCard::populateDriverCombo()
+{
+    QList<AudioDriverEntry> entries = audioDriverEntries(
+        m_catalogue ? static_cast<const IAudioDeviceCatalog&>(*m_catalogue) : emptyCatalogue(),
+        false);
+    const AudioEngineKind engine = selectedEngine();
+    const bool older = engine == AudioEngineKind::PortAudio;
+    auto isChoice = [&](const AudioDriverEntry& e) {
+        return e.engine && *e.engine == engine && (!older || e.hostApi == m_driverHostApi);
+    };
+    bool listed = false;
+    for (const AudioDriverEntry& e : entries) {
+        listed = listed || isChoice(e);
+    }
+    if (!listed) {
+        // The card's own choice always shows: a saved driver this list does
+        // not offer, or the build's default while the lists are not ready.
+        AudioDriverEntry own;
+        own.engine = engine;
+        own.hostApi = older ? m_driverHostApi : QString();
+        own.label = older && !m_driverHostApi.isEmpty() ? olderDriverDisplayName(m_driverHostApi)
+                                                        : audioEngineLabel(engine);
+        if (!m_catalogue) {
+            own.enabled = false;
+            own.disabledReason = QStringLiteral("The device lists are not ready.");
+        }
+        entries.append(own);
+    }
+
+    QSignalBlocker blocker(m_driverApiCombo);
+    resetPopupAccessibilityCache(m_driverApiCombo);
+    m_driverApiCombo->clear();
+    int current = -1;
+    int choices = 0;
+    for (int i = 0; i < entries.size(); ++i) {
+        const AudioDriverEntry& e = entries.at(i);
+        m_driverApiCombo->addItem(e.label);
+        m_driverApiCombo->setItemData(i, e.engine ? audioEngineKey(*e.engine) : QString());
+        m_driverApiCombo->setItemData(i, e.hostApi, kHostApiRole);
+        if (!e.enabled) {
+            setItemEnabled(m_driverApiCombo, i, false);
+            if (!e.disabledReason.isEmpty()) {
+                m_driverApiCombo->setItemData(i, e.disabledReason, Qt::ToolTipRole);
+            }
+        } else if (e.engine) {
+            ++choices;
+        }
+        if (current < 0 && isChoice(e)) {
+            current = i;
+        }
+    }
+    m_driverApiCombo->setCurrentIndex(current);
+    // Disabled, never hidden: a list with nothing else to pick is greyed
+    // with its reason (the Mac, the Core, lists not ready).
+    const bool currentEnabled = current >= 0 && entries.at(current).enabled;
+    const bool pickable = choices > 1 || (choices == 1 && !currentEnabled);
+    m_driverApiCombo->setEnabled(pickable);
+    const QString reason = current >= 0 ? entries.at(current).disabledReason : QString();
+    m_driverApiCombo->setToolTip(currentEnabled ? QString() : reason);
+
+    // R-AUD-15 / R-AUD-05: DelayMs is saved with the engine's keys, which a
+    // choice the engine has not migrated cannot write. Until the lists are
+    // ready the Delay is greyed with that reason, never a change that is lost.
+    if (m_delayCombo) {
+        const bool delaySaves = m_catalogue || m_loaded.engine.has_value();
+        m_delayCombo->setEnabled(delaySaves);
+        m_delayCombo->setToolTip(delaySaves ? QString()
+                                            : QStringLiteral("The device lists are not ready."));
+    }
+}
+
+void DeviceCard::onDriverPicked()
+{
+    if (m_suppressSignals) {
+        return;
+    }
+    const int idx = m_driverApiCombo->currentIndex();
+    const std::optional<AudioEngineKind> engine =
+        audioEngineFromKey(m_driverApiCombo->itemData(idx).toString());
+    if (!engine) {
+        return;   // the "Older drivers" heading is never picked
+    }
+    m_driverEngine = engine;
+    m_driverHostApi = m_driverApiCombo->itemData(idx, kHostApiRole).toString();
+    m_driverApiCombo->setToolTip(QString());
+
+    // R-R3-36: the device stays the one chosen, by name, never a
+    // substitute: the new driver's device of that name when it lists one,
+    // else "<name> (not connected)". A device's id belongs to its driver.
+    if (m_selection.deviceId != QLatin1String(kAudioDeviceNone)) {
+        m_selection.deviceId.clear();
+    }
+    {
+        const bool suppressed = m_suppressSignals;
+        m_suppressSignals = true;
+        populateDeviceCombo();
+        m_suppressSignals = suppressed;
+    }
+    updateEngineNote();
+    refreshStatus();
+    onAnyControlChanged();
+}
+
+// ---------------------------------------------------------------------------
+// populateDeviceCombo: the Device list for the card's driver (R-AUD-03)
+// ---------------------------------------------------------------------------
+QString DeviceCard::deviceNameForId(const QString& deviceId) const
+{
+    if (!m_catalogue || deviceId.isEmpty()) {
+        return {};
+    }
+    const AudioDeviceDirection direction =
+        m_role == Role::Output ? AudioDeviceDirection::Output : AudioDeviceDirection::Input;
+    for (const AudioDeviceInfo& info :
+         m_catalogue->devices(audioBackendFor(selectedEngine()), direction)) {
+        if (info.id == deviceId) {
+            return info.name;
+        }
+    }
+    return {};
+}
+
 void DeviceCard::populateDeviceCombo()
 {
-    QSignalBlocker blocker(m_deviceCombo);
-    const QString prevName = m_deviceCombo->currentData().toString();
+    const AudioEngineKind engine = selectedEngine();
+    AudioDeviceConfig saved;
+    saved.engine = engine;
+    saved.driverApi = engine == AudioEngineKind::PortAudio ? m_driverHostApi : QString();
+    saved.deviceId = m_selection.deviceId;
+    saved.deviceName = m_selection.deviceName;
+    saved.firstChannel = m_selection.firstChannel;
+    const QList<AudioDeviceEntry> entries = audioDeviceEntries(
+        m_catalogue ? static_cast<const IAudioDeviceCatalog&>(*m_catalogue) : emptyCatalogue(),
+        engine, saved.driverApi,
+        m_role == Role::Output ? AudioDeviceDirection::Output : AudioDeviceDirection::Input, saved);
 
+    QSignalBlocker blocker(m_deviceCombo);
     resetPopupAccessibilityCache(m_deviceCombo);
     m_deviceCombo->clear();
-    m_deviceCombo->addItem(QStringLiteral("(platform default)"), QString());
-
-    const int apiIdx = m_driverApiCombo
-        ? m_driverApiCombo->currentData().toInt()
-        : -1;
-
-    QVector<PortAudioBus::DeviceInfo> devices;
-    if (apiIdx < 0) {
-        // All APIs.
-        const auto apis = PortAudioBus::hostApis();
-        for (const auto& api : apis) {
-            if (m_role == Role::Output) {
-                const auto devs = PortAudioBus::outputDevicesFor(api.index);
-                devices += devs;
-            } else {
-                const auto devs = PortAudioBus::inputDevicesFor(api.index);
-                devices += devs;
+    for (int i = 0; i < entries.size(); ++i) {
+        const AudioDeviceEntry& e = entries.at(i);
+        QString name;
+        bool kept = false;
+        if (i == 0) {
+            name.clear();   // "(platform default)"
+        } else if (e.deviceId == QLatin1String(kAudioDeviceNone)) {
+            name = QString::fromLatin1(kAudioDeviceNone);
+        } else {
+            name = deviceNameForId(e.deviceId);
+            if (name.isEmpty()) {
+                // The saved device, missing: it keeps its saved name.
+                name = m_selection.deviceName.isEmpty() ? e.deviceId : m_selection.deviceName;
+                kept = true;
             }
         }
-    } else {
-        if (m_role == Role::Output) {
-            devices = PortAudioBus::outputDevicesFor(apiIdx);
-        } else {
-            devices = PortAudioBus::inputDevicesFor(apiIdx);
+        m_deviceCombo->addItem(e.label, QVariant::fromValue(name));
+        m_deviceCombo->setItemData(i, e.deviceId, kDeviceIdRole);
+        m_deviceCombo->setItemData(i, e.pair.firstChannel, kFirstChannelRole);
+        m_deviceCombo->setItemData(i, e.bluetooth, kBluetoothRole);
+        m_deviceCombo->setItemData(i, !e.group.isEmpty(), kPairedRole);
+        if (kept) {
+            m_deviceCombo->setItemData(i, true, kKeptEntryRole);
         }
     }
-
-    for (int i = 0; i < devices.size(); ++i) {
-        m_deviceCombo->addItem(devices[i].name,
-                               QVariant::fromValue(devices[i].name));
-    }
-    selectDeviceName(prevName);
+    selectDevice();
 }
 
 // ---------------------------------------------------------------------------
-// selectDeviceName — select a configured device, never a substitute
+// selectDevice: select the configured device, never a substitute
 // ---------------------------------------------------------------------------
-// R-R3-36: a named device that is not present is kept as
-// "<name> (not available)" with the name as its data, so the card shows it
-// and currentConfig() saves the same name back. Falling to
-// "(platform default)" would silently switch the device on the next edit.
-void DeviceCard::selectDeviceName(const QString& name)
+// R-R3-36 / R-AUD-08: a named device that is not present is kept as
+// "<name> (not connected)", so the card shows it and currentConfig() saves
+// the same identity back. Falling to "(platform default)" would silently
+// switch the device on the next edit.
+void DeviceCard::selectDevice()
 {
-    removeKeptEntries(m_deviceCombo);
     int idx = 0;
-    if (!name.isEmpty()) {
-        idx = m_deviceCombo->findData(QVariant::fromValue(name));
-        if (idx < 0) {
-            m_deviceCombo->addItem(
-                QStringLiteral("%1 (not available)").arg(name),
-                QVariant::fromValue(name));
-            idx = m_deviceCombo->count() - 1;
-            m_deviceCombo->setItemData(idx, true, kKeptEntryRole);
+    if (!m_selection.deviceId.isEmpty() || !m_selection.deviceName.isEmpty()) {
+        auto pairMatches = [this](int i) {
+            return !m_deviceCombo->itemData(i, kPairedRole).toBool()
+                || m_deviceCombo->itemData(i, kFirstChannelRole).toInt()
+                       == m_selection.firstChannel;
+        };
+        int byName = -1;
+        for (int i = 1; i < m_deviceCombo->count() && idx == 0; ++i) {
+            if (!pairMatches(i)) {
+                continue;
+            }
+            const QString id = m_deviceCombo->itemData(i, kDeviceIdRole).toString();
+            if (!m_selection.deviceId.isEmpty() && id == m_selection.deviceId) {
+                idx = i;
+            } else if (byName < 0 && !m_selection.deviceName.isEmpty()
+                       && m_deviceCombo->itemData(i).toString() == m_selection.deviceName) {
+                byName = i;
+            }
+        }
+        if (idx == 0 && byName > 0) {
+            // Found by name: the listed device's id is the one saved from
+            // now on, as the stream supervisor saves it.
+            idx = byName;
+            if (m_catalogue && !m_deviceCombo->itemData(idx, kKeptEntryRole).toBool()) {
+                m_selection.deviceId = m_deviceCombo->itemData(idx, kDeviceIdRole).toString();
+            }
         }
     }
     m_deviceCombo->setCurrentIndex(idx);
+}
+
+void DeviceCard::onDevicePicked()
+{
+    if (m_suppressSignals) {
+        return;
+    }
+    const int idx = m_deviceCombo->currentIndex();
+    if (idx < 0) {
+        return;
+    }
+    m_selection.deviceId = m_deviceCombo->itemData(idx, kDeviceIdRole).toString();
+    m_selection.deviceName = m_deviceCombo->itemData(idx).toString();
+    m_selection.firstChannel =
+        std::max(1, m_deviceCombo->itemData(idx, kFirstChannelRole).toInt());
+    refreshStatus();
+    onAnyControlChanged();
 }
 
 // ---------------------------------------------------------------------------
@@ -741,19 +1135,27 @@ void DeviceCard::updateBufferMsLabel()
 // ---------------------------------------------------------------------------
 AudioDeviceConfig DeviceCard::currentConfig() const
 {
-    AudioDeviceConfig cfg;
+    // Fields the card does not edit (the mic's channel, the retired WASAPI
+    // options) carry through from the saved config.
+    AudioDeviceConfig cfg = m_loaded;
 
     // deviceName: empty string from "(platform default)" entry maps to
     // AudioDeviceConfig empty deviceName → makeBus treats as platform default.
-    cfg.deviceName = m_deviceCombo->currentData().toString();
+    cfg.deviceName = m_selection.deviceName;
+    cfg.deviceId = m_selection.deviceId;
+    cfg.firstChannel = m_selection.firstChannel;
 
-    cfg.driverApi = (m_driverApiCombo && m_driverApiCombo->currentIndex() > 0)
-        ? m_driverApiCombo->currentText()
-        : QString();
-
-    cfg.hostApiIndex = m_driverApiCombo
-        ? m_driverApiCombo->currentData().toInt()
-        : -1;
+    // R-AUD-04: a pick from the engine's lists saves the engine with it
+    // (Engine, DeviceId, DeviceName, FirstChannel). Without the lists the
+    // saved engine stays as it was: the engine has not migrated the keys
+    // (R-AUD-05), and a save must never mark them migrated.
+    if (m_catalogue) {
+        cfg.engine = selectedEngine();
+        // As AudioEngine::openRole sets them: the host API on older
+        // drivers, empty on the native engines; the index is left to it.
+        cfg.driverApi = *cfg.engine == AudioEngineKind::PortAudio ? m_driverHostApi : QString();
+        cfg.hostApiIndex = -1;
+    }
 
     // Auto-match is a UI preference (session-only) meant to signal "use the
     // device's own default sample rate".  That resolution isn't wired yet —
@@ -772,10 +1174,7 @@ AudioDeviceConfig DeviceCard::currentConfig() const
     cfg.bitDepth      = m_bitDepthCombo  ? m_bitDepthCombo->currentData().toInt()  : 32;
     cfg.channels      = m_channelsCombo  ? m_channelsCombo->currentData().toInt()  : 2;
     cfg.bufferSamples = m_bufferSizeCombo? m_bufferSizeCombo->currentData().toInt(): 256;
-
-    cfg.exclusiveMode = m_exclusiveChk   && m_exclusiveChk->isChecked();
-    cfg.eventDriven   = m_eventDrivenChk && m_eventDrivenChk->isChecked();
-    cfg.bypassMixer   = m_bypassMixerChk && m_bypassMixerChk->isChecked();
+    cfg.delayMs       = m_delayCombo     ? m_delayCombo->currentData().toInt()     : 0;
 
     cfg.manualLatencyMs = 0;  // Not exposed in this card; reserved for Advanced page.
 
@@ -788,22 +1187,47 @@ AudioDeviceConfig DeviceCard::currentConfig() const
 void DeviceCard::updateNegotiatedPill(const AudioDeviceConfig& negotiated,
                                       const QString& errorString)
 {
+    m_applying = false;
+    m_negotiated = negotiated;
+    m_negotiatedError = errorString;
+    renderPill();
+}
+
+void DeviceCard::renderPill()
+{
     if (!m_negotiatedPill) {
         return;
     }
-
-    if (!errorString.isEmpty()) {
+    if (m_applying) {
+        // Show "APPLYING" pill while the engine is rebuilding the bus.
+        m_negotiatedPill->setStyleSheet(QLatin1String(kPillStyleApplying));
+        m_negotiatedPill->setText(QStringLiteral("APPLYING…"));
+        return;
+    }
+    if (!m_negotiatedError.isEmpty()) {
         // Red pill — driver rejected the config.
         m_negotiatedPill->setStyleSheet(QLatin1String(kPillStyleError));
-        m_negotiatedPill->setText(QStringLiteral("Error: ") + errorString);
+        m_negotiatedPill->setText(QStringLiteral("Error: ") + m_negotiatedError);
+        return;
+    }
+    if (!m_negotiated) {
+        m_negotiatedPill->setStyleSheet(QLatin1String(kPillStyleApplying));
+        m_negotiatedPill->setText(QStringLiteral("(not applied)"));
         return;
     }
 
-    // Green pill — show negotiated format.
+    // Green pill: show negotiated format.  With an engine, the name is
+    // the device the role plays on now, from the role's status.
+    const AudioDeviceConfig& negotiated = *m_negotiated;
     m_negotiatedPill->setStyleSheet(QLatin1String(kPillStyleOk));
-    const QString name = negotiated.deviceName.isEmpty()
+    QString name = negotiated.deviceName.isEmpty()
         ? QStringLiteral("(default)")
         : negotiated.deviceName;
+    if (m_engine && !m_status.playingName.isEmpty()
+        && (m_status.state == AudioRoleState::Playing
+            || m_status.state == AudioRoleState::PlayingOnDefault)) {
+        name = m_status.playingName;
+    }
     const QString sr = negotiated.sampleRate == 0
         ? QStringLiteral("auto")
         : QStringLiteral("%1 Hz").arg(negotiated.sampleRate);
@@ -822,28 +1246,17 @@ void DeviceCard::loadFromSettings()
 {
     const AudioDeviceConfig cfg =
         AudioDeviceConfig::loadFromSettings(m_prefix);
+    m_loaded = cfg;
 
     m_suppressSignals = true;
 
-    // Device name. A configured device that is not present stays selected.
-    {
-        QSignalBlocker blocker(m_deviceCombo);
-        selectDeviceName(cfg.deviceName);
-    }
-
-    // Driver API — look up by display text (api.name is the item text, set in
-    // buildLayout).  Empty driverApi falls through to index 0 ("(PortAudio
-    // default)").  findText returns -1 on no match; guard keeps found == 0.
-    if (m_driverApiCombo) {
-        int found = 0;
-        if (!cfg.driverApi.isEmpty()) {
-            const int byName = m_driverApiCombo->findText(cfg.driverApi);
-            if (byName >= 0) {
-                found = byName;
-            }
-        }
-        m_driverApiCombo->setCurrentIndex(found);
-    }
+    // Driver and device: the saved choice. A choice saved before engines
+    // were named shows on the default engine until the engine migrates it
+    // (R-AUD-05), when it builds its catalogue. A configured device that
+    // is not present stays selected.
+    takeSavedChoice(cfg);
+    populateDriverCombo();
+    populateDeviceCombo();
 
     // Sample rate.
     if (m_sampleRateCombo) {
@@ -898,10 +1311,27 @@ void DeviceCard::loadFromSettings()
         }
     }
 
-    // WASAPI options.
-    if (m_exclusiveChk)   { m_exclusiveChk->setChecked(cfg.exclusiveMode); }
-    if (m_eventDrivenChk) { m_eventDrivenChk->setChecked(cfg.eventDriven); }
-    if (m_bypassMixerChk) { m_bypassMixerChk->setChecked(cfg.bypassMixer); }
+    // Delay (R-AUD-15). A saved value the list lacks is kept, in order, as
+    // the buffer size is.
+    if (m_delayCombo) {
+        {
+            QSignalBlocker blocker(m_delayCombo);
+            removeKeptEntries(m_delayCombo);
+        }
+        int idx = m_delayCombo->findData(QVariant::fromValue(cfg.delayMs));
+        if (idx < 0 && cfg.delayMs > 0) {
+            int insertAt = 1;
+            while (insertAt < m_delayCombo->count()
+                   && m_delayCombo->itemData(insertAt).toInt() < cfg.delayMs) {
+                ++insertAt;
+            }
+            m_delayCombo->insertItem(insertAt, QStringLiteral("%1 ms").arg(cfg.delayMs),
+                                     QVariant::fromValue(cfg.delayMs));
+            m_delayCombo->setItemData(insertAt, true, kKeptEntryRole);
+            idx = insertAt;
+        }
+        m_delayCombo->setCurrentIndex(idx >= 0 ? idx : 0);   // default Automatic
+    }
 
     // Enable checkbox (Headphones + VAX channels) — restored from
     // audio/<prefix>/Enabled.  Default is unchecked on fresh install so the
@@ -914,6 +1344,8 @@ void DeviceCard::loadFromSettings()
         m_enableChk->setChecked(on);
     }
 
+    updateEngineNote();
+    refreshStatus();
     m_suppressSignals = false;
 }
 
@@ -928,15 +1360,31 @@ void DeviceCard::onAnyControlChanged()
 
     const AudioDeviceConfig cfg = currentConfig();
 
-    // Persist to AppSettings immediately.
-    cfg.saveToSettings(m_prefix);
-    AppSettings::instance().save();
-
-    // Show "APPLYING" pill while the engine is rebuilding the bus.
-    if (m_negotiatedPill) {
-        m_negotiatedPill->setStyleSheet(QLatin1String(kPillStyleApplying));
-        m_negotiatedPill->setText(QStringLiteral("APPLYING…"));
+    // Persist to AppSettings immediately.  D10: the retired WASAPI option
+    // keys stay in the file as they were (readable for migration) and are
+    // never written again.
+    auto& settings = AppSettings::instance();
+    std::array<std::optional<QString>, kRetiredWasapiKeys.size()> retired;
+    for (std::size_t i = 0; i < kRetiredWasapiKeys.size(); ++i) {
+        const QString key = m_prefix + QLatin1Char('/') + QLatin1String(kRetiredWasapiKeys[i]);
+        if (settings.contains(key)) {
+            retired[i] = settings.value(key).toString();
+        }
     }
+    cfg.saveToSettings(m_prefix);
+    for (std::size_t i = 0; i < kRetiredWasapiKeys.size(); ++i) {
+        const QString key = m_prefix + QLatin1Char('/') + QLatin1String(kRetiredWasapiKeys[i]);
+        if (retired[i]) {
+            settings.setValue(key, *retired[i]);
+        } else {
+            settings.remove(key);
+        }
+    }
+    settings.save();
+    m_loaded = cfg;
+
+    m_applying = true;
+    renderPill();
 
     emit configChanged(cfg);
 }

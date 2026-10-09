@@ -35,6 +35,9 @@
 // nereusSetupIds unchanged. The radio mic placeholder and family groups
 // follow currentRadioChanged. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 // Claude Code.
+// 2026-10-09: native audio plan Task 16 (R-AUD-03, R-AUD-09, R-AUD-14): the
+// PC microphone card follows the engine's device catalogue and the mic
+// role's state. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; no Thetis logic ported here.
@@ -312,6 +315,9 @@ void AudioTxInputPage::wirePcMicCard()
     if (!eng || !m_pcMicCard) {
         return;
     }
+    // R-AUD-03, R-AUD-09, R-AUD-14: the engine's mic list and the mic
+    // role's state.
+    m_pcMicCard->setAudioEngine(eng);
     connect(m_pcMicCard, &DeviceCard::configChanged,
             this, [this](const AudioDeviceConfig& cfg) {
                 if (m_updatingFromEngine) { return; }
