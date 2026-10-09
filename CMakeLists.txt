@@ -1151,6 +1151,7 @@ set(CORE_SOURCES
     src/core/audio/AudioBackendRegistry.cpp
     src/core/audio/PortAudioBackend.cpp
     src/core/audio/PortAudioLibrary.cpp
+    src/core/audio/WasapiPolicy.cpp
     src/core/audio/IAudioStreamHost.h
     src/core/audio/IAudioDeviceCatalog.h
     src/core/audio/IAudioEngineBackend.h
@@ -1621,6 +1622,22 @@ endif()
 if(UNIX AND NOT APPLE)
     list(APPEND CORE_SOURCES src/core/audio/LinuxPipeBus.cpp)
     list(APPEND CORE_SOURCES src/core/audio/LinuxAudioBackend.cpp)
+endif()
+
+# Windows audio, shared and exclusive (native audio plan Task 9, R-AUD-02,
+# R-AUD-11, R-AUD-16).  Every decision lives in the portable WasapiPolicy
+# (CORE_SOURCES above, tested on every platform by tst_wasapi_policy); these
+# files hold only the COM calls.  They set _WIN32_WINNT before windows.h, so
+# they skip the precompiled header, as DnsSdAdvertiserWindows.cpp does.
+if(WIN32)
+    set(NEREUS_WASAPI_SOURCES
+        src/core/audio/WasapiSystemWin.cpp
+        src/core/audio/WasapiBackendWin.cpp
+        src/core/audio/WasapiOutputBusWin.cpp
+        src/core/audio/WasapiInputStreamWin.cpp
+    )
+    list(APPEND CORE_SOURCES ${NEREUS_WASAPI_SOURCES})
+    set_source_files_properties(${NEREUS_WASAPI_SOURCES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 endif()
 
 set(MODEL_SOURCES
@@ -2405,8 +2422,12 @@ function(nereus_apply_core_deps target)
     if(WIN32)
         # avrt provides AvSetMmThreadCharacteristicsW + AvRevertMmThreadCharacteristics
         # used by src/core/audio/RealtimeAudioPriority.cpp to join the
-        # "Pro Audio" MMCSS task class.
-        target_link_libraries(${target} PUBLIC avrt)
+        # "Pro Audio" MMCSS task class.  ole32 (CoInitializeEx,
+        # CoCreateInstance, CoTaskMemFree, PropVariantClear) and uuid
+        # (IID_IUnknown) serve the Windows audio engine in
+        # src/core/audio/Wasapi*Win.cpp; ksuser carries the kernel-streaming
+        # format GUIDs, which that engine also defines itself with cites.
+        target_link_libraries(${target} PUBLIC avrt ole32 uuid ksuser)
     endif()
 
     if(Qt6SerialPort_FOUND)

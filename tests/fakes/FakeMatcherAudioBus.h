@@ -27,6 +27,11 @@
 //   2026-10-09: native audio plan Task 8 (R-AUD-18): a settable
 //               audioWorkgroupDevice(). J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-09: early-review fix wave (R-AUD-06, R-AUD-08): a fade can
+//               take setFadeTimeForTest() ms; the bus marks a shared flag
+//               when it is destroyed (alive) and counts a close before its
+//               fade ended (closedUnfaded).  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -42,6 +47,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -62,6 +68,16 @@ public:
         , m_takesStereoMix(takesStereoMix)
         , m_callbackFrames(callbackFrames)
     {
+    }
+
+    ~FakeMatcherAudioBus() override
+    {
+        if (m_fadeRequests > 0 && !fadedOut() && m_closedUnfaded) {
+            m_closedUnfaded->fetch_add(1);
+        }
+        if (m_alive) {
+            m_alive->store(false);
+        }
     }
 
     bool open(const AudioFormat& format) override
@@ -174,15 +190,36 @@ public:
         }
     }
 
-    // Task 7: the Rescan fade.  The fake fades at once.
+    // Task 7: the Rescan fade.  The fake fades at once, or after
+    // setFadeTimeForTest() ms.
     void requestFadeOut() override
     {
+        if (m_fadeRequests == 0) {
+            m_fadeRequestedAt = std::chrono::steady_clock::now();
+        }
         ++m_fadeRequests;
         if (m_fadeCounter) {
             m_fadeCounter->fetch_add(1);
         }
     }
-    bool fadedOut() const override { return true; }
+    bool fadedOut() const override
+    {
+        return m_fadeTimeMs <= 0 || m_fadeRequests == 0
+               || std::chrono::steady_clock::now() - m_fadeRequestedAt
+                      >= std::chrono::milliseconds(m_fadeTimeMs);
+    }
+    void setFadeTimeForTest(int ms) { m_fadeTimeMs = ms; }
+    // Set false when the bus is destroyed.
+    void setAliveFlagForTest(std::shared_ptr<std::atomic<bool>> alive)
+    {
+        m_alive = std::move(alive);
+        m_alive->store(true);
+    }
+    // Counts a bus destroyed after a fade request, before its fade ended.
+    void setClosedUnfadedCounterForTest(std::shared_ptr<std::atomic<int>> counter)
+    {
+        m_closedUnfaded = std::move(counter);
+    }
     void setFadeCounterForTest(std::shared_ptr<std::atomic<int>> counter)
     {
         m_fadeCounter = std::move(counter);
@@ -257,7 +294,11 @@ private:
     int m_pushes = 0;
     int m_restarts = 0;
     int m_fadeRequests = 0;
+    int m_fadeTimeMs = 0;
+    std::chrono::steady_clock::time_point m_fadeRequestedAt{};
     std::shared_ptr<std::atomic<int>> m_fadeCounter;
+    std::shared_ptr<std::atomic<bool>> m_alive;
+    std::shared_ptr<std::atomic<int>> m_closedUnfaded;
     QByteArray m_bytes;
     std::mutex m_sinkMutex;
     std::function<void(const AudioStreamEvent&)> m_sink;

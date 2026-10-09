@@ -14,6 +14,10 @@
 //   2026-09-24: R-R3-21: the helper child answers from a test device list
 //               and never initialises PortAudio. J.J. Boyd (KG4VCF), with
 //               AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-09: early-review fix wave (R-AUD-02, bug 1): the mic's host
+//               API index follows its saved driverApi
+//               (captureHostApiIndex).  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -138,6 +142,24 @@ QByteArray stopRecord(quint32 generation) { return P::encodeStop(P::Command{gene
 class TstCaptureHelperProcess : public QObject {
     Q_OBJECT
 private slots:
+    // Bug 1 on the PC mic: the saved host API name picks the host API the
+    // helper opens on, never MME's device of the same name listed first.
+    void micHostApiFollowsDriverApi()
+    {
+        const QVector<QPair<int, QString>> windows{
+            {0, QStringLiteral("MME")},
+            {1, QStringLiteral("Windows DirectSound")},
+            {2, QStringLiteral("Windows WASAPI")}};
+        QCOMPARE(captureHostApiIndex(QStringLiteral("Windows DirectSound"), -1, windows), 1);
+        QCOMPARE(captureHostApiIndex(QStringLiteral("Windows WASAPI"), 0, windows), 2);
+        // No host API name: the saved index stands.
+        QCOMPARE(captureHostApiIndex(QString(), -1, windows), -1);
+        QCOMPARE(captureHostApiIndex(QString(), 1, windows), 1);
+        // A host API not listed now: the saved index stands.
+        QCOMPARE(captureHostApiIndex(QStringLiteral("ASIO"), -1, windows), -1);
+        QCOMPARE(captureHostApiIndex(QStringLiteral("Windows DirectSound"), 0, {}), 0);
+    }
+
     void helperSendsHelloFirstWithinDeadline()
     {
         Child helper;

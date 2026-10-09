@@ -17,6 +17,9 @@
 //   2026-10-09: native audio plan Task 6 (R-AUD-15): a flush leaves
 //               nothing of the earlier audio. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: early-review fix wave (R-AUD-15): a restart sizes afresh,
+//               and the fade-in after a dry run follows its padding. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -272,6 +275,8 @@ private slots:
     void forcedOverrunStaysSmooth();
     void flushRestartAndFade();
     void flushLeavesNothingOfTheEarlierAudio();
+    void restartSizesAfresh();
+    void dryRunFadeInFollowsItsPadding();
 };
 
 void TestDeviceRateMatcher::ringLayoutAndAttach()
@@ -629,6 +634,108 @@ void TestDeviceRateMatcher::flushLeavesNothingOfTheEarlierAudio()
     QVERIFY2(nonZero == 0,
              qPrintable(QStringLiteral("%1 non-zero samples after the blend, the first at frame %2, peak %3")
                             .arg(nonZero).arg(firstNonZero).arg(peakAfter)));
+}
+
+// D7: a restart starts the automatic size again.  A writer that was idle
+// for 2 s and then restarts the clock match (a quiet remote VAX channel, a
+// remote stream ending) sizes from the gaps after the restart, so it
+// reaches the step a fresh matcher reaches on the same steady audio, never
+// the 40 ms the idle gap would ask for.  The write times are the
+// simulated clock's, so the check does not depend on the host.
+void TestDeviceRateMatcher::restartSizesAfresh()
+{
+    constexpr std::int64_t kWritePeriodNs = 1'333'333;   // 64 frames at 48 kHz
+    std::vector<float> in(static_cast<std::size_t>(kWriteFrames) * 2, 0.25f);
+    std::vector<float> out(static_cast<std::size_t>(kReadFrames) * 2);
+    auto steady = [&](DeviceRateMatcher& matcher, MatcherReader& reader, std::int64_t& nowNs,
+                      int writes) {
+        for (int i = 0; i < writes; ++i) {
+            matcher.write(in.data(), kWriteFrames, nowNs);
+            nowNs += kWritePeriodNs;
+            if (i % 2 == 1) {
+                reader.read(out.data(), kReadFrames);
+            }
+        }
+    };
+    constexpr int kSteadyWrites = 2625;   // 3.5 s, past the 3 s start-up
+
+    DeviceRateMatcher fresh(DeviceRateMatcher::Config{});
+    MatcherReader freshReader = fresh.makeReader();
+    std::int64_t freshNow = 0;
+    steady(fresh, freshReader, freshNow, kSteadyWrites);
+    QVERIFY(fresh.stats().controlActive);
+    const int freshStep = fresh.delayStepMs();
+
+    DeviceRateMatcher matcher(DeviceRateMatcher::Config{});
+    MatcherReader reader = matcher.makeReader();
+    std::int64_t nowNs = 0;
+    steady(matcher, reader, nowNs, 10);
+    nowNs += 2'000'000'000LL;   // idle 2 s: no writes, no reads
+    matcher.requestRestart();
+    steady(matcher, reader, nowNs, kSteadyWrites);
+    QVERIFY(matcher.stats().controlActive);
+    qInfo("restart after 2 s idle: step %d ms, a fresh matcher %d ms", matcher.delayStepMs(), freshStep);
+    QVERIFY(freshStep < DeviceRateMatcher::kDelayStepsMs.back());
+    QCOMPARE(matcher.delayStepMs(), freshStep);
+}
+
+// The reader counts a dry run (dryRuns) and then raises upslewPending.
+// The writer can see the flag while the count it loaded is still the old
+// one; it must neither fade in that chunk with no padding before it nor
+// leave half a fade for after the padding.  The two steps of the reader's
+// dry run are made visible one at a time here, in the ring itself, as the
+// writer would see them across that interleaving.
+void TestDeviceRateMatcher::dryRunFadeInFollowsItsPadding()
+{
+    constexpr float kLevel = 0.5f;
+    constexpr std::int64_t kWritePeriodNs = 1'333'333;
+    DeviceRateMatcher matcher(DeviceRateMatcher::Config{});
+    MatcherReader reader = matcher.makeReader();
+    MatcherRingHeader* ring = matcher.ring();
+    QVERIFY(ring != nullptr);
+    const std::uint64_t mask = static_cast<std::uint64_t>(ring->capacityFrames) - 1;
+    const int ntslew = static_cast<int>(ring->slewFrames);
+    QVERIFY(ntslew > kWriteFrames);
+    auto frameAt = [&](std::uint64_t index) { return ring->frames()[(index & mask) * 2]; };
+
+    const std::vector<float> in(static_cast<std::size_t>(kWriteFrames) * 2, kLevel);
+    std::vector<float> out(static_cast<std::size_t>(kReadFrames) * 2);
+    std::int64_t nowNs = 0;
+    for (int i = 0; i < 100; ++i) {   // the filter settles; no dry run
+        matcher.write(in.data(), kWriteFrames, nowNs);
+        nowNs += kWritePeriodNs;
+        if (i % 2 == 1) {
+            reader.read(out.data(), kReadFrames);
+        }
+    }
+    QCOMPARE(matcher.stats().dryRuns, std::uint64_t{0});
+
+    // The flag without its count: this chunk is written as any other.
+    const std::uint64_t w0 = ring->written.load();
+    ring->upslewPending.store(1);
+    matcher.write(in.data(), kWriteFrames, nowNs);
+    nowNs += kWritePeriodNs;
+    const std::uint64_t w1 = ring->written.load();
+    QVERIFY(w1 > w0);
+    for (std::uint64_t f = w0; f < w1; ++f) {
+        QVERIFY2(std::abs(frameAt(f) - kLevel) < 0.01f,
+                 qPrintable(QStringLiteral("frame %1 of the chunk: %2").arg(f - w0).arg(frameAt(f))));
+    }
+
+    // Then the count: the next chunk follows the padding, faded in from
+    // its first frame.  Its last frame, about 64 frames into the 127-frame
+    // raised cosine, is near half the level; a fade begun on the chunk
+    // before would be over by then.
+    ring->dryRuns.fetch_add(1);
+    matcher.write(in.data(), kWriteFrames, nowNs);
+    const std::uint64_t w2 = ring->written.load();
+    QVERIFY(w2 > w1);
+    const float last = frameAt(w2 - 1);
+    QVERIFY2(last > 0.15f * kLevel && last < 0.7f * kLevel,
+             qPrintable(QStringLiteral("last frame of the faded chunk: %1").arg(last)));
+    const float first = frameAt(w2 - static_cast<std::uint64_t>(kWriteFrames) + 1);
+    QVERIFY2(std::abs(first) < 0.01f,
+             qPrintable(QStringLiteral("second frame of the faded chunk: %1").arg(first)));
 }
 
 QTEST_GUILESS_MAIN(TestDeviceRateMatcher)

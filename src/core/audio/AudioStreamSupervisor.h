@@ -41,6 +41,9 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 5 (R-AUD-08 to R-AUD-14). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan early-review fix wave (R-AUD-08):
+//               onRoleClosed().  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -75,6 +78,11 @@ public:
     void setNoneMeansWaitingForPick(AudioRole role, bool waiting);   // a "(none)" choice reads WaitingForPick, not Off
     void onStreamEvent(AudioRole role, const AudioStreamEvent& event);   // main thread
     void onOpenFinished(AudioRole role, AudioOpenResult result);          // completes a Pending open (the mic helper)
+    // The host closed the role's stream inside a failed openRole() (it had
+    // to close it first: the same device, or an engine that runs one
+    // stream at a time).  The role then has nothing open.  Called from
+    // within openRole(), before it returns the failure.
+    void onRoleClosed(AudioRole role);
     AudioRoleStatus status(AudioRole role) const;
 
     // Scales every retry and the Bluetooth mic wait (0.01: a hundred times

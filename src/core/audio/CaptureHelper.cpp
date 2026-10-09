@@ -15,6 +15,10 @@
 //               Pa_Terminate hold PortAudioLibrary's lock, as every
 //               PortAudio call outside a callback does. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan early-review fix wave (R-AUD-02, bug 1):
+//               the mic opens on its saved host API (driverApi), mapped
+//               under PortAudioLibrary's lock.  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CaptureHelper.h"
@@ -142,6 +146,19 @@ qint64 readInput(char* buffer, qint64 size)
 }
 
 } // namespace CaptureHelperIo
+
+int captureHostApiIndex(const QString& driverApi, int savedHostApiIndex,
+                        const QVector<QPair<int, QString>>& hostApis)
+{
+    if (!driverApi.isEmpty()) {
+        for (const QPair<int, QString>& api : hostApis) {
+            if (api.second == driverApi) {
+                return api.first;
+            }
+        }
+    }
+    return savedHostApiIndex;
+}
 
 namespace {
 
@@ -502,22 +519,34 @@ private:
         }
 
         auto bus = std::make_unique<PortAudioBus>();
-        PortAudioConfig config;
-        config.direction = AudioDirection::Input;
-        config.hostApiIndex = m_device.hostApiIndex;
-        config.deviceName = m_device.deviceName;
-        config.bufferSamples = m_device.bufferSamples;
-        config.exclusiveMode = m_device.exclusiveMode;
-        bus->setConfig(config);
-        bus->setStrictInputDevice(true);
-        bus->setInputBlockHook(&m_probeTap);
-
         AudioFormat format;
         format.sampleRate = P::kSampleRate;
         format.channels = 1;
         format.sample = AudioFormat::Sample::Float32;
+        bool opened = false;
+        {
+            // R-AUD-02 (bug 1): the saved host API's index, looked up and
+            // opened under one hold of the library lock so the numbering
+            // cannot change in between.
+            std::lock_guard<std::recursive_mutex> paLock(PortAudioLibrary::mutex());
+            QVector<QPair<int, QString>> listed;
+            for (const PortAudioBus::HostApiInfo& api : PortAudioBus::hostApis()) {
+                listed.append({api.index, api.name});
+            }
+            PortAudioConfig config;
+            config.direction = AudioDirection::Input;
+            config.hostApiIndex =
+                captureHostApiIndex(m_device.driverApi, m_device.hostApiIndex, listed);
+            config.deviceName = m_device.deviceName;
+            config.bufferSamples = m_device.bufferSamples;
+            config.exclusiveMode = m_device.exclusiveMode;
+            bus->setConfig(config);
+            bus->setStrictInputDevice(true);
+            bus->setInputBlockHook(&m_probeTap);
+            opened = bus->open(format);
+        }
 
-        if (!bus->open(format)) {
+        if (!opened) {
             P::FailReason reason = P::FailReason::OpenFailed;
             switch (bus->lastOpenFailure()) {
             case PortAudioBus::OpenFailure::DeviceNotFound:

@@ -1817,6 +1817,11 @@ nereus_add_test(tst_port_audio_backend)
 # Native audio plan Task 7 fix (R-AUD-06): PortAudio's lock under Rescan,
 # on the real library with no stream opened.
 nereus_add_test(tst_port_audio_library_lock)
+# Native audio plan Task 9 (R-AUD-02, R-AUD-03, R-AUD-11, R-AUD-14,
+# R-AUD-16): the Windows audio engine's decisions, portable and tested on
+# every system (format order, periods, notices, transport, results).  The
+# Windows adapter files compile only in Windows CI.
+nereus_add_test(tst_wasapi_policy)
 target_compile_definitions(tst_port_audio_library_lock PRIVATE NEREUS_BUILD_TESTS)
 
 # Native audio Task 7 (R-AUD-02, R-AUD-06, R-AUD-15, R-AUD-34): AudioEngine

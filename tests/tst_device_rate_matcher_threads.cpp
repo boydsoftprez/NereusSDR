@@ -14,6 +14,10 @@
 // Modification history (NereusSDR):
 //   2026-10-08: native audio plan Task 2 (R-AUD-15, V-SW-5). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: early-review fix wave (R-AUD-15): the reads check, which
+//               counted due times and could not fail, checks the ring's
+//               read counters instead.  J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -509,9 +513,14 @@ void TestDeviceRateMatcherThreads::writerAndReaderThreads()
           static_cast<unsigned long long>(g_lockCalls.load()));
 #endif
 
-    // Most of the reads happened (a loaded machine may delay some).
-    const auto expectedReads = static_cast<std::uint64_t>(30.0 * kRate / kReadFrames);
-    QVERIFY(result.reads > expectedReads * 9 / 10);
+    // The reader made one read for every due time in the 30 s, late or
+    // not, so its count says nothing about timing; what it can check is
+    // that the matcher counted every read and every frame the reader asked
+    // for.
+    QVERIFY(result.reads > 0);
+    QCOMPARE(ring->readCalls.load(std::memory_order_acquire), result.reads);
+    QCOMPARE(ring->requested.load(std::memory_order_acquire),
+             result.reads * static_cast<std::uint64_t>(kReadFrames));
     QVERIFY(result.checkedFrames > 0);
     QCOMPARE(result.tornFrames, std::uint64_t{0});
     QCOMPARE(result.breaks, std::uint64_t{0});
