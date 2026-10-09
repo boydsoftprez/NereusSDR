@@ -104,7 +104,7 @@ listed under "Design choices to confirm".
 | # | Decision | Reason |
 |---|---|---|
 | D1 | Speakers, headphones, the PC mic and Windows VAX move to native engines: Core Audio (Mac), Windows audio shared and exclusive, and ASIO (Windows), PipeWire and PulseAudio (Linux desktops), and ALSA direct (the headless Core). PortAudio stays as the "Older drivers" choice. | Live lists need the system's own device-change notices, which PortAudio does not have; and JJ's bar is the lowest latency on every system. JJ: "1, native engines on all three", widened by D3, D16 and D18. |
-| D2 | A clock-matched buffer (WDSP's rmatchV) on the local DSP-to-device path. | Today that path has none, so its fill drifts (above). Remote playback and Thetis's VAC and ASIO paths already use rmatchV. |
+| D2 | A clock-matched buffer on the local DSP-to-device path, matching the way WDSP's rmatchV does (its shape: D34). | Today that path has none, so its fill drifts (above). Remote playback and Thetis's VAC and ASIO paths already use rmatchV. |
 | D3 | Native ASIO is its own engine on Windows, studied from Thetis's cmASIO and ported where it fits, with its headers. | JJ raised cmASIO; the GPL-3 ASIO SDK makes it possible ("1 yes"). |
 | D4 | A chosen speaker or headphone device that goes away: keep playing on the system default, show "not connected" in Setup and the speaker menu, and switch back by itself when it returns. | The band keeps playing; nothing to redo when the device comes back. |
 | D5 | A chosen PC mic that goes away is never replaced by another mic. It goes silent, the transmit panel says so, and it resumes by itself when it returns. | Transmitting on a mic the operator did not pick is worse than silence. |
@@ -136,6 +136,7 @@ listed under "Design choices to confirm".
 | D31 | On a Core box that starts into a desktop, the Core leaves every sound card alone until a Core speaker is picked in a window. On a box without a desktop it uses its default card out of the box. | The desktop's own sound system uses the cards, and an ALSA card has one user at a time. |
 | D32 | Bench machines: a Mac, the Pis, AirPods, a Windows PC, an ASIO interface on it, and a PipeWire desktop (current Ubuntu). There is no PulseAudio desktop, so that engine and its pair check stay untested on hardware. | What JJ has. |
 | D33 | The ASIO driver runs in the mic helper process whenever any device uses ASIO, outputs included, over the same shared-memory hand-off as the mic. | Many ASIO drivers accept one program at a time, and the PC mic lives in the helper (D22), so ASIO in two processes would fail on those drivers. A hanging ASIO driver then cannot freeze the window either. The cost is one sub-millisecond hop on ASIO outputs, measured by V-HW-8. JJ, 2026-10-08: "1 in the helper", over ASIO in the window's process. |
+| D34 | The clock matcher is our own, read straight from each device's callback: rmatchV's control and slew logic ported, WDSP's `xvarsamp` resampler called as vendored, and one lock-free ring between them. | One buffer instead of rmatchV's ring plus a queue to the callback, about 1 to 3 ms less on every device (estimated). rmatchV takes two locks per call (`rmatch.c:309-360`, `:435-465`), which the project bars from audio callbacks. JJ, 2026-10-08: "1 our own matcher", over rmatchV unchanged beside the DSP with a queue. |
 
 ## Source facts
 
@@ -219,6 +220,26 @@ listed under "Design choices to confirm".
   the engine's minimum (Microsoft Learn's example: 48 frames, 1 ms) in the
   device's own format. Exclusive mode with event callbacks goes lower but
   locks the device.
+- Microsoft Learn, "Low Latency Audio" (2024-12-13): in shared mode every
+  app gets 10 ms buffers unless it asks for less through `IAudioClient3`;
+  from Windows 10 the engine adds 1.3 ms on output; Microsoft's own HD
+  Audio driver supports 128 to 480 frames (2.66 to 10 ms) at 48 kHz, and
+  other drivers support small buffers only when their makers update them.
+- PortAudio's own buffering, which NereusSDR asks for by passing each
+  device's default low latency (`PortAudioBus.cpp:342-343`): MME 90 ms
+  (`pa_win_wmme.c:190`), DirectSound 120 ms (`pa_win_ds.c:153`, chosen at
+  `:347-349`), WDM-KS 10 ms (`pa_win_wdmks.c:3669`, `:3679`), and WASAPI
+  shared polled (`pa_win_wasapi.c:3968`) with its period raised to the
+  device's default, usually 10 ms (`:3368-3375`).
+- The receive DSP at its defaults (64-frame blocks, the Low Latency
+  filter, AGC on) takes roughly 10 ms: 2.7 ms of blocks, about 4 ms of AGC
+  look-ahead (`wcpAGC.c:119` with `RXA.c:380-382`), and the filter and
+  rate change. The Linear Phase filter adds about 43 ms (half of 4096 taps
+  at 48 kHz). The radio and network add about 2 ms at 192 kHz (238-sample
+  Protocol 2 packets, `P2RadioConnection.cpp:446`; 126 per Protocol 1
+  frame). Estimates from the code, not measured.
+- rmatchV's resampler is a FIR whose delay is 69 frames (1.4 ms) at 48 kHz
+  (`RemoteAudioRateMatcher.h:164-174`, from `varsamp.c:41-63`).
 - PipeWire's default quantum is 1024 frames at 48 kHz (about 21 ms); a
   client asks for less with `node.latency`.
 - deskHPSDR: 128 frames out and 256 in on Core Audio
@@ -244,6 +265,16 @@ listed under "Design choices to confirm".
   (`RemoteAudioRateMatcher.h:148-155`, `IAudioBus::outputPacing`). Thetis's
   cmASIO calls it inside the ASIO callback; ours does not, because the
   project rule bars locks in audio callbacks.
+- rmatchV resamples on the writing side: `xrmatchIN` runs `xvarsamp` and
+  writes output-rate frames into its ring; `xrmatchOUT` only copies them
+  out; both call `control()` (`rmatch.c:256-273`, `:301-362`, `:428-467`).
+  `xvarsamp` takes no lock and allocates nothing (`varsamp.c:126-181`). Each
+  side rewrites the other's state on a fault: a dry run (`dslew`) rewrites
+  the ring and the writer's index from the reading side, and an overrun
+  moves the reader's index and crossfades (`blend`) from the writing side
+  (`rmatch.c:275-298`, `:318-352`, `:364-425`). Thetis's copies of
+  `rmatch.c` and `varsamp.c` at v2.10.3.15 are identical to the vendored
+  ones.
 - R-R3-36's keying rule: `RadioModel.cpp:21154-21162` refuses voice MOX
   while the PC mic is not ready; `RadioModel::onCaptureStatusChanged`
   (`:21237`) releases MOX when it is lost; `RadioModel::updatePcCaptureDemand`
@@ -276,7 +307,7 @@ interface. `AudioEngine::makeBus` chooses the engine from the saved
 | PipeWire | Linux | `pw_stream` with `node.latency` from the buffer size | the same, in the mic helper | registry listener on the thread loop |
 | PulseAudio | Linux | `pa_stream` with small requested buffers | the same, in the mic helper | `pa_context_subscribe` |
 | ALSA direct | Core | `hw:` PCM, the card's own format | not part of this design | inotify on `/dev/snd` |
-| Older drivers | all | `PortAudioBus`, unchanged | unchanged | none; Rescan re-initializes PortAudio |
+| Older drivers | all | `PortAudioBus`, its output ring replaced by the clock matcher | as today | none; Rescan re-initializes PortAudio |
 
 The ASIO driver runs in the mic helper process whenever any device uses
 ASIO (D33), so the helper then runs even while the mic is not in use.
@@ -287,7 +318,8 @@ workgroups, Windows MMCSS, Linux `SCHED_FIFO`).
 ASIO is ported from cmASIO where it fits (driver loading, buffer creation,
 the sample-format conversions), with cmASIO's headers byte-for-byte and a
 `THETIS-PROVENANCE.md` row, and its inline comments kept. Where ours
-differs: rmatchV runs off the ASIO callback (above), the driver's control
+differs: the ASIO callback reads our lock-free clock matcher where cmASIO
+calls rmatchV and its locks (D34), the driver's control
 panel opens from Setup, and a reset request restarts the driver instead of
 stopping it. The ASIO SDK 2.3.4 (GPL-3.0-only) is vendored under
 `third_party/`; downloading it waits for JJ's yes during the plan.
@@ -336,21 +368,79 @@ apart by ID.
 
 ### Clock matching and the delay readout
 
-Each local output gets an rmatchV between the DSP and the device, built the
-way remote playback's already is: the DSP side writes into rmatchV on the
-audio thread that feeds the device today, and refills a lock-free queue
-(`AudioRingSpsc`) by the device's consumed-frame count; the device callback
-only reads that queue. The automatic size starts at the device callback
-plus the measured arrival jitter, and steps up one size on each dry run
-(`getRMatchDiags` underflows); it never steps down while the stream is
-open. The manual delay replaces the automatic size. Remote playback keeps
-its own matcher (`RemoteAudioRateMatcher`) and feeds the device's queue
-directly, so its audio never passes through a second one.
+Every speaker, headphone and Windows VAX stream, on a native engine or an
+older driver, and the PC mic get their own clock matcher,
+`DeviceRateMatcher`, where the radio's clock meets the device's (D34). It
+keeps rmatchV's layout and math, but its two sides share no lock and never
+move each other's index:
 
-"Now X ms from the radio to <device>" adds the rmatchV fill, the queue, the
-device buffer and the latency the system reports for the device
-(`OutputPacing::deviceLatencyNs`, R-R3-35). The mic's line uses the same
-parts in the other direction, plus the helper hop.
+- The writing side resamples each block with WDSP's `xvarsamp`, called as
+  vendored, at the ratio last published, and writes the result into one
+  lock-free single-writer, single-reader ring. It runs on the audio thread
+  that feeds the device today; for the PC mic, in the helper's device
+  callback.
+- The reading side only copies frames out of the ring and publishes how
+  many it has read, as `xrmatchOUT` does. For an output it is the device's
+  callback itself, so nothing sits between the matcher and the device; for
+  the PC mic, the window's transmit side.
+- For the PC mic, and for ASIO outputs in the helper (D33), the ring is
+  the shared-memory hand-off itself ("The PC mic hand-off"), so crossing
+  the process adds no second buffer.
+- The control is rmatchV's `control()`, ported: the feed-forward ratio
+  from the frames written and read, the averaged deviation from a
+  half-full ring, the proportional gain, the 0.96 to 1.04 clamp and the
+  3 s start-up wait (`rmatch.c:256-273`, `:501-527`). It runs on the
+  writing side once per block, from the two published counts, and
+  publishes the ratio atomically.
+- A dry run: the reading side slews its last frames to silence along
+  rmatchV's 3 ms slew curve (`dslew`), fills the rest with silence, counts
+  it and raises a flag; the writing side slews its next frames in
+  (`upslew`).
+- An overrun: the ring has room for one block above its size, so the
+  writer never waits. The writer publishes how far over the size it is;
+  at its next read the reading side keeps the frames it would have played
+  next, skips forward by that count and crossfades over the slew
+  (`blend`).
+- The ported logic carries `rmatch.c`'s header byte-for-byte (Warren
+  Pratt, NR0V), its inline comments verbatim, cites to Thetis's
+  `wdsp/rmatch.c` [v2.10.3.15], and a `THETIS-PROVENANCE.md` row.
+
+The automatic size starts at the device callback plus the measured arrival
+jitter, and steps up one size on each dry run; it never steps down while
+the stream is open. The manual delay replaces the automatic size. Remote
+audio that plays to one of these streams (`RemoteAudioReceiver`, and
+`RemoteVaxFeeder` on Windows) writes into that stream's matcher from the
+receiver worker, so it passes through one matcher, not two.
+`RemoteAudioRateMatcher` stays where audio ends somewhere this design does
+not own: the phone mic's transmit pump (`RemoteMicReceiver`, R-IOS-13) and
+VAX on the Mac and Linux.
+
+"Now X ms from the radio to <device>" adds the matcher's fill, its
+resampler's delay (69 frames at 48 kHz), the device buffer and the latency
+the system reports for the device (`OutputPacing::deviceLatencyNs`,
+R-R3-35). The mic's line uses the same parts in the other direction; the
+helper hop is part of the matcher's fill.
+
+### Expected delay
+
+Estimates built from "Latency figures", from the radio to the ear at
+default settings; none of this is measured, and V-HW-8 measures it. Every
+row carries about 12 ms of radio, network and DSP. The matcher holds
+about 3 to 6 ms at a 128-frame device callback and about 6 to 12 ms when
+the device runs 10 ms periods. Bluetooth headphones add their own delay,
+typically 100 ms or more.
+
+| System and driver | Today (ms) | This design (ms) |
+|---|---|---|
+| Mac, Core Audio | 26 to 60 | 19 to 26 |
+| Windows, nothing picked (MME today, D8 after) | 120 to 150 | as Windows audio, shared |
+| Windows audio, shared (today: WASAPI through PortAudio) | 42 to 77 | 19 to 24 with Microsoft's own sound driver; 29 to 37 with a driver that offers only 10 ms |
+| Windows audio, exclusive (today the checkbox does nothing) | as shared | 18 to 24 |
+| ASIO (not built today, `CMakeLists.txt:541`) | none | 18 to 27, with the driver's buffer set in its own panel |
+| Older drivers: MME, DirectSound, WDM-KS | 120 to 150, 150 to 180, 32 to 64 | about 120 to 130, 150 to 160, 25 to 35 |
+| Linux, PipeWire | 47 to 97 | 20 to 26 |
+| Linux, PulseAudio | not estimated | 33 to 54 |
+| The Core, its own sound card | 32 to 72 | 20 to 28 |
 
 ### The PC mic hand-off
 
@@ -366,7 +456,9 @@ changes is the hand-off:
 - on the Mac the helper's audio thread joins the input device's audio
   workgroup across the process boundary (`os_workgroup_copy_port`,
   `os_workgroup_create_with_port`);
-- one self-sizing rmatchV where the mic meets the radio's transmit clock.
+- the shared-memory ring is the mic's clock matcher ("Clock matching and
+  the delay readout"): the helper's callback resamples and writes, and the
+  window reads, so the hop adds no second buffer.
 
 The helper uses the same engine and saved identity as the main process.
 
@@ -519,7 +611,9 @@ today.
 ### Latency
 
 R-AUD-15. Each local output has a clock-matched buffer ("Clock matching
-and the delay readout") whose size is automatic by default. Device details
+and the delay readout") whose size is automatic by default. The device's
+callback reads it directly, taking no lock and allocating nothing, and the
+two sides of the matcher never move each other's index (D34). Device details
 show "Delay: Automatic / 2 / 3 / 5 / 10 / 20 / 40 ms" and "Now X ms from
 the radio to <device>". On each system measured in V-HW-8, at defaults,
 the delay is no larger than the previous build's on the same machine.
@@ -680,9 +774,12 @@ Software tests (this machine, offscreen, fakes only):
   the platform default following outputs and inputs, held during
   transmit, never to Bluetooth. (R-AUD-08 to R-AUD-14)
 - V-SW-5. Clock matching: simulated device clocks 200 ppm fast and slow
-  for 10 minutes stay inside the buffer with no dry runs after sizing; a
-  forced dry run steps the size up once; the readout equals the sum of its
-  parts; the device callback takes no lock. (R-AUD-15)
+  for 10 minutes stay inside the buffer with no dry runs after sizing, and
+  the ratio settles within 10 ppm of WDSP's rmatchV fed the same clocks; a
+  forced dry run steps the size up once; on a 1 kHz tone a forced dry run
+  and a forced overrun leave no sample-to-sample step larger than twice the
+  tone's own largest; the readout equals the sum of its parts; a test hook
+  counts no lock and no allocation in the reading side. (R-AUD-15)
 - V-SW-6. Mic hand-off: the shared-memory ring passes audio in order with
   no loss under a slow and a fast reader; a helper that hangs while opening
   still leaves the window responsive. (R-AUD-17, R-R3-36)
@@ -779,6 +876,15 @@ decision above or had one sensible answer. Each can be vetoed.
 12. Rescan affects only the older drivers.
 13. The new user-facing strings in R-AUD-06 to R-AUD-30 are this spec's
     wording, beyond those JJ saw in the mockups.
+14. The matcher's lock-free details: the writing side resamples and runs
+    the control from the published counts, the ring keeps room for one
+    block above its size so the writer never waits, and an overrun is
+    skipped and crossfaded by the reading side.
+15. Remote audio playing to a stream this design owns writes into that
+    stream's matcher; `RemoteAudioRateMatcher` stays for the phone mic's
+    transmit pump and for VAX on the Mac and Linux.
+16. Older drivers keep PortAudio but get the matcher in place of today's
+    ring, so they stop drifting too.
 
 ## Mockups
 
