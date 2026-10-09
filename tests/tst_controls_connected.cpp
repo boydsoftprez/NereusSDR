@@ -451,6 +451,8 @@ private slots:
         auto* source = childByAccessibleName<QComboBox>(applet, QStringLiteral("Microphone source"));
         QVERIFY(source != nullptr);
         QVERIFY2(source->isEnabled(), "the mic source combo is greyed");
+        // Tests the VAX path itself, which Windows does not offer.
+        tx.setVaxSourceAvailable(true);
         tx.setMicSource(MicSource::Vax);
         source->setCurrentIndex(static_cast<int>(PhoneCwApplet::MicInput::Pc));
         emit source->activated(static_cast<int>(PhoneCwApplet::MicInput::Pc));

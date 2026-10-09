@@ -18,6 +18,9 @@
 //               names the configured device, as the real helper names the
 //               device it opened; the busy-while-marked scenario.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 20 round 3 (R-AUD-24): the
+//               busy-while-marked-then-pending scenario. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "FakeCaptureChild.h"
@@ -64,7 +67,7 @@ constexpr int kToneFrames = 480;
 enum class Scenario {
     Ready, HangOpen, NoHello, PermissionThenReady, CrashAfterReady,
     Malformed, Oversize, InputLost, IgnoreStop, Stale, Probe, Version1,
-    PcmRecord, Busy, BusyWhileMarked, BadRing
+    PcmRecord, Busy, BusyWhileMarked, BusyWhileMarkedThenPending, BadRing
 };
 
 std::optional<Scenario> scenarioFromName(const QString& name)
@@ -84,6 +87,9 @@ std::optional<Scenario> scenarioFromName(const QString& name)
     if (name == QLatin1String("pcm-record")) { return Scenario::PcmRecord; }
     if (name == QLatin1String("busy")) { return Scenario::Busy; }
     if (name == QLatin1String("busy-while-marked")) { return Scenario::BusyWhileMarked; }
+    if (name == QLatin1String("busy-while-marked-then-pending")) {
+        return Scenario::BusyWhileMarkedThenPending;
+    }
     if (name == QLatin1String("bad-ring")) { return Scenario::BadRing; }
     return std::nullopt;
 }
@@ -444,6 +450,16 @@ private:
             startStreaming();
             return;
         }
+        case Scenario::BusyWhileMarkedThenPending:
+            if (!QFile::exists(qEnvironmentVariable("NEREUS_FAKE_CAPTURE_BUSY_FILE"))) {
+                // The engine's retry: Opening, then no answer.
+                sendStatus(m_generation, P::HelperState::Opening);
+                return;
+            }
+            sendStatus(m_generation, P::HelperState::Opening);
+            sendStatus(m_generation, P::HelperState::Failed, P::FailReason::DeviceInUse,
+                       QStringLiteral("fake device held by another program"));
+            return;
         case Scenario::BusyWhileMarked:
             if (!QFile::exists(qEnvironmentVariable("NEREUS_FAKE_CAPTURE_BUSY_FILE"))) {
                 sendStatus(m_generation, P::HelperState::Opening);

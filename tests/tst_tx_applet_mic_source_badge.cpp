@@ -164,6 +164,8 @@ private slots:
     void liveChange_Vax()
     {
         RadioModel model;
+        // Tests the VAX path itself, which Windows does not offer.
+        model.transmitModel().setVaxSourceAvailable(true);
         TxApplet applet(&model);
         auto* badge = findBadge(&applet);
         QVERIFY(badge != nullptr);
@@ -175,6 +177,8 @@ private slots:
     void syncFromModel_Vax()
     {
         RadioModel model;
+        // Tests the VAX path itself, which Windows does not offer.
+        model.transmitModel().setVaxSourceAvailable(true);
         model.transmitModel().setMicSource(MicSource::Vax);
 
         TxApplet applet(&model);
@@ -291,6 +295,8 @@ private slots:
     void radioAndVaxSources_neverShowPcMicStates()
     {
         RadioModel model;
+        // Tests the VAX path itself, which Windows does not offer.
+        model.transmitModel().setVaxSourceAvailable(true);
         model.transmitModel().setMicSource(MicSource::Radio);
         TxApplet applet(&model);
         auto* badge = findBadge(&applet);

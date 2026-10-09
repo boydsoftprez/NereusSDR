@@ -95,6 +95,8 @@ private slots:
         clearState(mac);
 
         TransmitModel m;
+        // Tests the VAX path itself, which Windows does not offer.
+        m.setVaxSourceAvailable(true);
         m.loadFromSettings(mac);
         m.setMicSource(MicSource::Radio);
         QCOMPARE(m.previousNonVaxMicSource(), MicSource::Radio);
@@ -110,6 +112,8 @@ private slots:
         clearState(mac);
 
         TransmitModel m;
+        // Tests the VAX path itself, which Windows does not offer.
+        m.setVaxSourceAvailable(true);
         m.loadFromSettings(mac);
         m.toggleVaxSource(true);
         QCOMPARE(m.micSource(), MicSource::Vax);
@@ -121,6 +125,8 @@ private slots:
         clearState(mac);
 
         TransmitModel m;
+        // Tests the VAX path itself, which Windows does not offer.
+        m.setVaxSourceAvailable(true);
         m.loadFromSettings(mac);
         m.setMicSource(MicSource::Radio);
         m.toggleVaxSource(true);
@@ -136,6 +142,8 @@ private slots:
         clearState(mac);
 
         TransmitModel m;
+        // Tests the VAX path itself, which Windows does not offer.
+        m.setVaxSourceAvailable(true);
         m.loadFromSettings(mac);
         // Pretend Radio was the previous source on a non-HL2 radio.
         m.setMicSource(MicSource::Radio);
@@ -220,6 +228,8 @@ private slots:
     void vaxUnavailable_activeAndSavedFallBackToPc()
     {
         TransmitModel active;
+        // Starts from an active VAX choice, which Windows does not offer.
+        active.setVaxSourceAvailable(true);
         active.setMicSource(MicSource::Vax);
         QCOMPARE(active.micSource(), MicSource::Vax);
         active.setVaxSourceAvailable(false);

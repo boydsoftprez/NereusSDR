@@ -434,6 +434,8 @@ private slots:
             QVERIFY(!rig.model->pcCaptureRequired());
             rig.mox()->setMox(true);
         } else if (keying == QLatin1String("vax")) {
+            // Tests the VAX path itself, which Windows does not offer.
+            rig.model->transmitModel().setVaxSourceAvailable(true);
             rig.model->transmitModel().setMicSource(MicSource::Vax);
             QVERIFY(!rig.model->pcCaptureRequired());
             rig.mox()->setMox(true);

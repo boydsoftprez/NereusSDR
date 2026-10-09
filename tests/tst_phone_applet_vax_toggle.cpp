@@ -59,6 +59,8 @@ private slots:
     void click_setsVax()
     {
         RadioModel model;
+        // Tests the VAX path itself, which Windows does not offer.
+        model.transmitModel().setVaxSourceAvailable(true);
         PhoneCwApplet applet(&model);
         auto* btn = findVaxButton(&applet);
         QVERIFY(btn != nullptr);
@@ -72,6 +74,8 @@ private slots:
     void secondClick_restoresPrevious()
     {
         RadioModel model;
+        // Tests the VAX path itself, which Windows does not offer.
+        model.transmitModel().setVaxSourceAvailable(true);
         model.transmitModel().setMicSource(MicSource::Radio);
 
         PhoneCwApplet applet(&model);
@@ -89,6 +93,8 @@ private slots:
     void modelChange_syncsButton()
     {
         RadioModel model;
+        // Tests the VAX path itself, which Windows does not offer.
+        model.transmitModel().setVaxSourceAvailable(true);
         PhoneCwApplet applet(&model);
         auto* btn = findVaxButton(&applet);
         QVERIFY(btn != nullptr);

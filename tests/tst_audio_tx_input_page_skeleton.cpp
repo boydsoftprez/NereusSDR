@@ -319,6 +319,8 @@ private slots:
     void vaxTx_unavailable_greyedWithReason()
     {
         RadioModel model;
+        // Starts from an active VAX choice, which Windows does not offer.
+        model.transmitModel().setVaxSourceAvailable(true);
         model.transmitModel().setMicSource(MicSource::Vax);
         model.transmitModel().setVaxSourceAvailable(false);
         QCOMPARE(model.transmitModel().micSource(), MicSource::Pc);

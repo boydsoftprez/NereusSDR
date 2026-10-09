@@ -46,6 +46,11 @@
 //   busy-while-marked     As busy while the file NEREUS_FAKE_CAPTURE_BUSY_FILE
 //                         names exists, else as ready: another program lets
 //                         the mic go when the test removes the file.
+//   busy-while-marked-then-pending
+//                         As busy while the file NEREUS_FAKE_CAPTURE_BUSY_FILE
+//                         names exists; once it is gone, an Open answers
+//                         Opening and nothing more (Stop and Shutdown are
+//                         still honoured): the engine's retry stays pending.
 //   bad-ring              Hello; on Open: Opening, Ready, then a wake with
 //                         the region's ring header zeroed.
 // Every scenario accepts ProbeEnable; only probe acts on it (V-HW-8).
@@ -67,6 +72,9 @@
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09: native audio plan Task 16 fix round 2: Ready names the
 //               configured device; busy-while-marked. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 20 round 3 (R-AUD-24):
+//               busy-while-marked-then-pending. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
