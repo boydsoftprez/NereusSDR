@@ -33,6 +33,11 @@
 //      use, "(none)", a pick saving the identity and reaching the engine,
 //      the Delay line and its readout, the engine notes, the Bluetooth mic
 //      note.
+//  18. Task 16 fix round: the lists and the Delay before a radio connects
+//      (the engine never started), opening nothing; the older drivers'
+//      default on the "Older drivers" heading; an in-use device in the
+//      closed Device field; the Negotiated pill when Setup opens after the
+//      engine started.
 //
 // Design spec:
 //   docs/architecture/2026-04-20-phase3o-subphase12-addendum.md §2.1
@@ -42,6 +47,9 @@
 //   2026-10-09: native audio plan Task 16 (R-AUD-01, R-AUD-03, R-AUD-08 to
 //               R-AUD-16, D10). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-09: Task 16 fix round, case 18 (R-AUD-01, R-AUD-03, R-AUD-11,
+//               R-AUD-15). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -125,11 +133,17 @@ struct Rig {
 
     static AudioBackendId windows() { return AudioBackendId::Wasapi; }
 
-    void start()
+    // The engine before a radio connects: made, never started.
+    void prepare()
     {
         engine = std::make_unique<AudioEngine>();
         engine->setVaxOutputsAllowed(false);
         engine->setAudioBackendsForTest({native, older});
+    }
+
+    void start()
+    {
+        prepare();
         engine->start();
         QVERIFY(engine->catalogue() != nullptr);
     }
@@ -698,6 +712,110 @@ private slots:
             QCOMPARE(AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/Speakers")).delayMs,
                      saved.at(i));
         }
+        rig.engine->stop();
+    }
+
+    // Fix round, R-AUD-01/R-AUD-03: the lists exist before a radio
+    // connects (the engine never started), the Delay is settable, and
+    // nothing opens a device.
+    void listsAndDelayBeforeStartOpenNothing() {
+        Rig rig;
+        rig.prepare();
+        DeviceCard card(QStringLiteral("audio/Speakers"), DeviceCard::Role::Output, false);
+        card.setAudioEngine(rig.engine.get());
+        QVERIFY(rig.engine->catalogue() != nullptr);
+        bool desk = false;
+        bool builtIn = false;
+        for (QComboBox* combo : card.findChildren<QComboBox*>()) {
+            desk = desk || combo->findText(QStringLiteral("Desk speakers")) >= 0;
+            builtIn = builtIn || combo->findText(QStringLiteral("Built-in speakers")) >= 0;
+        }
+        QVERIFY(desk);
+        QVERIFY(builtIn);
+        QComboBox* delay = comboNamed(card, "deviceDelayCombo");
+        QVERIFY(delay->isEnabled());
+        QVERIFY(delay->toolTip().isEmpty());
+        delay->setCurrentIndex(delay->findText(QStringLiteral("10 ms")));
+        const AudioDeviceConfig saved =
+            AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/Speakers"));
+        QCOMPARE(saved.delayMs, 10);
+        QVERIFY(saved.engine.has_value());
+        QVERIFY(rig.native->outputRequests().empty());
+        QVERIFY(rig.older->outputRequests().empty());
+    }
+
+    // Fix round, R-AUD-01: with no native engine running, the older drivers
+    // with no host API saved show on the "Older drivers" heading, never as a
+    // second, pickable row of that name.
+    void olderDriversDefaultIsTheHeadingRow() {
+        Rig rig(AudioBackendId::PulseAudio);
+        rig.native->setRunning(false);
+        rig.prepare();
+        DeviceCard card(QStringLiteral("audio/Speakers"), DeviceCard::Role::Output, false);
+        card.setAudioEngine(rig.engine.get());
+        QComboBox* driver = comboNamed(card, "deviceDriverCombo");
+        int headings = 0;
+        for (int i = 0; i < driver->count(); ++i) {
+            headings += driver->itemText(i) == QStringLiteral("Older drivers") ? 1 : 0;
+        }
+        QCOMPARE(headings, 1);
+        QCOMPARE(driver->itemText(0), QStringLiteral("PipeWire (not running)"));
+        QCOMPARE(driver->itemText(1), QStringLiteral("PulseAudio (not running)"));
+        QCOMPARE(driver->currentText(), QStringLiteral("Older drivers"));
+        QVERIFY(driver->isEnabled());
+    }
+
+    // Fix round, R-AUD-11: the closed Device field names the chosen device
+    // in use by another program.
+    void inUseChosenDeviceReadsSoInTheClosedField() {
+        savedChoice(AudioEngineKind::CoreAudio, QStringLiteral("desk-uid"),
+                    QStringLiteral("Desk speakers"))
+            .saveToSettings(QStringLiteral("audio/Speakers"));
+        Rig rig;
+        rig.start();
+        DeviceCard card(QStringLiteral("audio/Speakers"), DeviceCard::Role::Output, false);
+        card.setAudioEngine(rig.engine.get());
+        QComboBox* device = nullptr;
+        for (QComboBox* combo : card.findChildren<QComboBox*>()) {
+            if (combo->currentText() == QStringLiteral("Desk speakers")) {
+                device = combo;
+            }
+        }
+        QVERIFY(device != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(rig.native->lastOutput() != nullptr, 5000);
+        AudioStreamEvent event;
+        event.kind = AudioStreamEvent::Kind::DeviceBusy;
+        rig.native->lastOutput()->emitEventForTest(event);
+        QTRY_COMPARE_WITH_TIMEOUT(device->currentText(),
+                                  QStringLiteral("Desk speakers (in use by another program)"),
+                                  5000);
+        QVERIFY(device->findText(QStringLiteral("Built-in speakers")) > 0);
+        rig.engine->stop();
+    }
+
+    // Fix round, R-AUD-15: a card made after the engine started shows the
+    // format the role plays now.
+    void pillShowsThePlayingFormatWhenSetupOpensLater() {
+        Rig rig;
+        rig.start();
+        QTRY_VERIFY_WITH_TIMEOUT(rig.native->lastOutput() != nullptr, 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            rig.engine->roleStatus(AudioRole::Speakers).state == AudioRoleState::Playing
+                || rig.engine->roleStatus(AudioRole::Speakers).state
+                       == AudioRoleState::PlayingOnDefault,
+            5000);
+        DeviceCard card(QStringLiteral("audio/Speakers"), DeviceCard::Role::Output, false);
+        card.setAudioEngine(rig.engine.get());
+        const AudioFormat format = rig.native->lastOutput()->negotiatedFormat();
+        QVERIFY(format.sampleRate > 0);
+        const QString expected = QStringLiteral("%1 Hz \u00b7 %2 ch")
+                                     .arg(format.sampleRate)
+                                     .arg(format.channels);
+        bool shown = false;
+        for (QLabel* label : card.findChildren<QLabel*>()) {
+            shown = shown || label->text().contains(expected);
+        }
+        QVERIFY2(shown, qPrintable(expected));
         rig.engine->stop();
     }
 

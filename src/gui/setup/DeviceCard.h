@@ -198,6 +198,7 @@ private:
     void attachCatalogue();
     void takeSavedChoice(const AudioDeviceConfig& saved);
     void refreshStatus();
+    void markChosenInUse();
     void refreshDelayNow();
     void renderPill();
     void updateEngineNote();

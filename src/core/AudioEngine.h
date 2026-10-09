@@ -21,6 +21,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09 : Native audio plan Task 16 fix round (R-AUD-01, R-AUD-03)
+//                 by J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. catalogue() lists the devices before start();
+//                 roleFormat().
 //   2026-10-09 : Native audio plan Task 21 (R-AUD-30, D31) by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //                 setSpeakersWaitForPick(): a "(none)" speakers choice reads
@@ -606,7 +610,10 @@ public:
     // application object, or a test run with no injected backends, keeps
     // the direct device paths (the DeviceBusFactory seam, or nothing).
     //
-    // catalogue() is null until then.  roleStatus() is the supervisor's
+    // catalogue() builds the catalogue alone on first use, before start()
+    // (Task 16 fix round): it lists the devices, opens none and migrates
+    // no saved key; null where the device layer does not apply, and after
+    // stop() until it is asked again.  roleStatus() is the supervisor's
     // status (Off before it starts); roleStatusChanged re-emits it.
     // delayParts(role) is that role's output bus's delay parts
     // (matcherFillMs -1 without a matcher or a bus; the mic has none here,
@@ -619,9 +626,12 @@ public:
     // another engine is never closed.  Main thread.
     static constexpr int kRescanFadeMs = 20;
     static constexpr double kRescanSlewMs = 3.0;
-    IAudioDeviceCatalog* catalogue() const;
+    IAudioDeviceCatalog* catalogue();
     AudioRoleStatus roleStatus(AudioRole role) const;
     AudioDelayParts delayParts(AudioRole role) const;
+    // The format an output role's bus plays now; nullopt while it is
+    // closed, and for the mic (Task 16 fix round).
+    std::optional<AudioFormat> roleFormat(AudioRole role) const;
     AudioEngineKind defaultEngine() const { return m_defaultEngine; }
     // Native audio plan Task 21 (R-AUD-30, D31): the Core box that starts
     // into a desktop leaves its cards alone until a Core speaker is picked.
@@ -1408,6 +1418,12 @@ private:
     // then All, so the output opens once, on that choice.
     enum class DeviceStart { All, MicOnly };
     bool ensureAudioDevices(DeviceStart start = DeviceStart::All);
+    // The engine backends, the default engine and the catalogue alone
+    // (catalogue()); false where the device layer does not apply.
+    bool ensureCatalogue();
+    // R-AUD-05's migration of the saved keys (idempotent; it writes nothing
+    // for a role with nothing saved), and the in-memory choices it changed.
+    void migrateSavedChoices();
     bool audioDevicesApply() const;
     void tearDownAudioDevices();
     // The config with R-AUD-02's engine on "(platform default)".

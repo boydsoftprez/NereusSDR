@@ -19,6 +19,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09 : Native audio plan Task 16 fix round (R-AUD-01, R-AUD-03)
+//                 by J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. catalogue() builds the device catalogue on first
+//                 use (ensureCatalogue()), before start(), opening no
+//                 device; it migrates only saved keys, as the start
+//                 does.  roleFormat(): the format an output role plays now.
 //   2026-10-09 : Native audio plan Task 21 (R-AUD-30, D31) by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //                 setSpeakersWaitForPick() and prepareAudioDevices().
@@ -1511,9 +1517,37 @@ void AudioEngine::setAudioBackendsForTest(std::vector<std::shared_ptr<IAudioEngi
 }
 #endif
 
-IAudioDeviceCatalog* AudioEngine::catalogue() const
+IAudioDeviceCatalog* AudioEngine::catalogue()
 {
+    // Native audio plan Task 16 fix round (R-AUD-01, R-AUD-03): the lists
+    // exist before start(), so the device cards (and the Core speaker's
+    // list) fill before a radio connects.  Listing opens no device and
+    // saves nothing: the saved keys migrate only when the device layer
+    // starts, so the daemon's audio_device seeding still applies.
+    ensureCatalogue();
     return m_catalogue.get();
+}
+
+bool AudioEngine::ensureCatalogue()
+{
+    if (m_catalogue) {
+        return true;
+    }
+    if (!m_deviceLayerReady || !audioDevicesApply()) {
+        return false;
+    }
+    if (m_backends.empty()) {
+        m_backends = makeSystemAudioBackends(m_backendContext);
+    }
+    m_defaultEngine = defaultAudioEngine(m_backends);
+    m_catalogue = std::make_unique<AudioDeviceCatalog>(m_backends);
+    m_catalogue->start();
+    connect(m_catalogue.get(), &IAudioDeviceCatalog::olderDriversRescanned, this,
+            [this]() { finishOlderDriversRescan(m_rescanToken); });
+    // The cards show the saved choices on their engines.  Migrating writes
+    // nothing for a role with nothing saved, so a later seed still applies.
+    migrateSavedChoices();
+    return true;
 }
 
 void AudioEngine::setSpeakersWaitForPick(bool waiting)
@@ -1572,22 +1606,8 @@ AudioDeviceConfig AudioEngine::withDefaultEngine(const AudioDeviceConfig& cfg) c
     return out;
 }
 
-bool AudioEngine::ensureAudioDevices(DeviceStart start)
+void AudioEngine::migrateSavedChoices()
 {
-    if (m_streamSupervisor) {
-        if (start == DeviceStart::All) {
-            m_streamSupervisor->startOutputs();
-        }
-        return true;
-    }
-    if (!m_deviceLayerReady || !audioDevicesApply()) {
-        return false;
-    }
-    if (m_backends.empty()) {
-        m_backends = makeSystemAudioBackends(m_backendContext);
-    }
-    m_defaultEngine = defaultAudioEngine(m_backends);
-
     // R-AUD-05: the saved device keys gain their engine before anything
     // is matched.  An in-memory choice the migration rewrote is reloaded.
     AudioMigrationContext migration;
@@ -1620,11 +1640,24 @@ bool AudioEngine::ensureAudioDevices(DeviceStart start)
     if (!(micBefore == micAfter) && m_txInputConfig == micBefore) {
         m_txInputConfig = micAfter;
     }
+}
 
-    m_catalogue = std::make_unique<AudioDeviceCatalog>(m_backends);
-    m_catalogue->start();
-    connect(m_catalogue.get(), &IAudioDeviceCatalog::olderDriversRescanned, this,
-            [this]() { finishOlderDriversRescan(m_rescanToken); });
+bool AudioEngine::ensureAudioDevices(DeviceStart start)
+{
+    if (m_streamSupervisor) {
+        if (start == DeviceStart::All) {
+            m_streamSupervisor->startOutputs();
+        }
+        return true;
+    }
+    // The catalogue may already list the devices (catalogue()).
+    if (!ensureCatalogue()) {
+        return false;
+    }
+
+    // R-AUD-05: every time the layer starts (a key seeded since the
+    // catalogue was built migrates now).
+    migrateSavedChoices();
 
     m_streamSupervisor = std::make_unique<AudioStreamSupervisor>(*m_catalogue, *this);
     connect(m_streamSupervisor.get(), &AudioStreamSupervisor::statusChanged,
@@ -2277,6 +2310,21 @@ std::optional<DeviceRateMatcherStats> AudioEngine::remotePlaybackMatcherStats(
     std::lock_guard<std::mutex> lock(m_speakersBusMutex);
     if (!m_speakersBus || !m_speakersBus->isOpen()) { return std::nullopt; }
     return m_speakersBus->matcherStats();
+}
+
+std::optional<AudioFormat> AudioEngine::roleFormat(AudioRole role) const
+{
+    // Task 16 fix round (R-AUD-15): the format the role's output bus
+    // plays now, for Setup's Negotiated line whenever it opens.
+    if (role == AudioRole::TxInput) {
+        return std::nullopt;
+    }
+    std::lock_guard<std::mutex> lock(roleBusMutex(role));
+    const IAudioBus* bus = roleBusLocked(role);
+    if (bus == nullptr || !bus->isOpen()) {
+        return std::nullopt;
+    }
+    return bus->negotiatedFormat();
 }
 
 AudioDelayParts AudioEngine::delayParts(AudioRole role) const

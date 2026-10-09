@@ -26,6 +26,7 @@
 #include "core/AudioEngine.h"
 #include "core/HpsdrModel.h"
 #include "core/audio/IAudioDeviceCatalog.h"
+#include "gui/StyleConstants.h"
 #include "gui/setup/AudioDriverList.h"
 #include "gui/widgets/AppIcon.h"
 #include "gui/widgets/MasterOutputWidget.h"
@@ -418,6 +419,9 @@ void AudioOutputsPage::buildRescan()
     row->setSpacing(8);
     m_rescanButton = new QPushButton(tr("Rescan devices"), this);
     m_rescanButton->setObjectName(QStringLiteral("rescanDevices"));
+    // R-AUD-06: greyed on the Mac, so it must draw greyed (the shared
+    // disabled rules; the enabled look is unchanged).
+    m_rescanButton->setStyleSheet(Style::darkPageDisabledRules());
     row->addWidget(m_rescanButton);
     m_rescanResult = new QLabel(this);
     m_rescanResult->setObjectName(QStringLiteral("rescanDevicesResult"));

@@ -38,6 +38,8 @@
 // 2026-10-09: native audio plan Task 16 (R-AUD-03, R-AUD-09, R-AUD-14): the
 // PC microphone card follows the engine's device catalogue and the mic
 // role's state. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// Fix round (R-AUD-09, R-AUD-11): the status line reads "PC mic not
+// connected" (or in use) in amber while the chosen mic is.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; no Thetis logic ported here.
@@ -224,6 +226,13 @@ AudioTxInputPage::AudioTxInputPage(RadioModel* model, QWidget* parent)
         wirePcMicCard();
         connect(eng, &AudioEngine::captureStatusChanged,
                 this, [this](const CaptureSupervisor::Status&) { refreshCaptureStatus(); });
+        // R-AUD-09, R-AUD-11: a missing or held mic reads so on the line.
+        connect(eng, &AudioEngine::roleStatusChanged, this,
+                [this](AudioRole role, const AudioRoleStatus&) {
+                    if (role == AudioRole::TxInput) {
+                        refreshCaptureStatus();
+                    }
+                });
         connect(m_retryCaptureBtn, &QPushButton::clicked,
                 this, [this]() {
                     if (AudioEngine* e = engine()) {
@@ -341,7 +350,13 @@ void AudioTxInputPage::refreshCaptureStatus()
     const CaptureSupervisor::Status status =
         eng ? eng->captureStatus() : CaptureSupervisor::Status{};
     if (m_captureStatusLabel) {
-        m_captureStatusLabel->setText(captureStatusText(status));
+        // R-AUD-09, R-AUD-11: the chosen mic missing or held by another
+        // program reads in amber, as tx-mic-mockup.html's badge does.
+        const QString missing =
+            eng ? micRoleStatusText(eng->roleStatus(AudioRole::TxInput)) : QString();
+        m_captureStatusLabel->setText(missing.isEmpty() ? captureStatusText(status) : missing);
+        m_captureStatusLabel->setStyleSheet(
+            missing.isEmpty() ? QString() : QStringLiteral("QLabel { color: #e0a030; }"));
     }
     if (m_retryCaptureBtn) {
         m_retryCaptureBtn->setEnabled(
