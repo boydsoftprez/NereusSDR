@@ -17,6 +17,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09 - PC mic status for the transmit badge (native audio plan
+//                Task 20; R-AUD-24, R-AUD-09, R-AUD-13). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-09 - Core speaker (native audio plan Task 21; R-AUD-25,
 //                R-AUD-28, R-AUD-30, D23, D31): the six coreSpeaker
 //                properties, bound on the Core to the engine's master level
@@ -1780,6 +1783,17 @@ RadioModel::RadioModel(Role role, QObject* parent)
     connect(m_audioEngine, &AudioEngine::captureStatusChanged,
             this, &RadioModel::onCaptureStatusChanged);
     wirePcMicConfigProjection();
+    // Native audio plan Task 20 (R-AUD-24): the PC mic's role status for
+    // the transmit badge. Display only; keying stays on pcCaptureReady().
+    m_pcMicStatus = m_audioEngine->roleStatus(AudioRole::TxInput);
+    connect(m_audioEngine, &AudioEngine::roleStatusChanged, this,
+            [this](AudioRole role, const AudioRoleStatus& status) {
+                if (role != AudioRole::TxInput || status == m_pcMicStatus) {
+                    return;
+                }
+                m_pcMicStatus = status;
+                emit pcMicStatusChanged();
+            });
     connect(this, &RadioModel::connectionStateChanged, this, [this](ConnectionState state) {
         if (state == ConnectionState::Connected && m_pureSignal) {
             m_pureSignal->applyAcceptedSettingsToEngine();
