@@ -25,8 +25,18 @@
 //   ignore-stop           As ready but never answers Stop.
 //   stale                 Hello; on Open: Opening for N, then Ready and PCM
 //                         tagged with generation N-1 (4294967295 when N is 1).
+//   probe                 As ready; a ProbeEnable before its Ready exits with
+//                         code 4.  While enabled, a ProbeHit every 50 ms with
+//                         captureNs 1000 x (times enabled) + (hits since).
+//   version-1             A protocol 1 Hello in a version 1 record header.
+// Every scenario accepts ProbeEnable; only probe acts on it (V-HW-8).
 // Every scenario exits with code 0 on stdin EOF, and on Shutdown unless
 // it is ignoring commands.  An unknown scenario exits with code 2.
+//
+// Modification history (NereusSDR):
+//   2026-10-08: native audio plan Task 1 (V-HW-8): probe and version-1
+//               scenarios. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #pragma once

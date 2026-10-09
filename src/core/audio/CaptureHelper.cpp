@@ -5,6 +5,12 @@
 // nereus-audio-capture helper process; no Thetis logic.  The native input
 // path is the existing PortAudioBus (native-rate open plus its resampler);
 // this file only drives it and frames its output.
+//
+// Modification history (NereusSDR):
+//   2026-10-08: native audio plan Task 1 (V-HW-8): ProbeEnable turns the
+//               audio delay probe's detector on the input callback on or
+//               off; its hits go to the window as ProbeHit records.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CaptureHelper.h"
@@ -13,6 +19,7 @@
 #include "core/IAudioBus.h"
 #include "core/LogCategories.h"
 #include "core/MacMicPermission.h"
+#include "core/audio/AudioDelayProbe.h"
 #include "core/audio/CaptureProtocol.h"
 #include "core/audio/PortAudioBus.h"
 
@@ -21,6 +28,9 @@
 
 #include <portaudio.h>
 
+#include <algorithm>
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <cerrno>
 #include <cmath>
@@ -154,6 +164,7 @@ struct ParentCommand {
     P::RecordType type = P::RecordType::Shutdown;
     P::Configure configure;          // Configure only
     quint32 generation = 0;          // Open / Stop
+    bool probeEnabled = false;       // ProbeEnable
 };
 
 struct CommandQueue {
@@ -199,9 +210,18 @@ std::optional<ParentCommand> parseCommand(const P::Record& record)
             return std::nullopt;
         }
         return command;
+    case P::RecordType::ProbeEnable: {
+        const auto enabled = P::decodeProbeEnable(record.payload);
+        if (!enabled) {
+            return std::nullopt;
+        }
+        command.probeEnabled = *enabled;
+        return command;
+    }
     case P::RecordType::Hello:
     case P::RecordType::Status:
     case P::RecordType::Pcm:
+    case P::RecordType::ProbeHit:
         break;
     }
     return std::nullopt;
@@ -248,6 +268,91 @@ quint64 monotonicNs()
     return static_cast<quint64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                     Clock::now().time_since_epoch()).count());
 }
+
+// V-HW-8: the audio delay probe's detector on the input callback.  It runs
+// only while the window has enabled the probe and a detector is published
+// for the open stream.  Hits reach the pump through a small single-producer
+// single-consumer ring; nothing here locks, allocates or makes a Qt call.
+class ProbeTap final : public PortAudioBus::InputBlockHook {
+public:
+    void setEnabled(bool enabled) { m_enabled.store(enabled, std::memory_order_release); }
+
+    // The detector for the open stream, or nullptr.  Cleared only while no
+    // callback runs (after the bus is closed).
+    void setDetector(AudioDelayProbeDetector* detector)
+    {
+        m_detector.store(detector, std::memory_order_release);
+    }
+
+    void onInputBlock(const float* interleaved, int frames, int channels, int sampleRate,
+                      std::int64_t captureNsOfFrame0) override
+    {
+        if (!m_enabled.load(std::memory_order_acquire)) {
+            return;
+        }
+        AudioDelayProbeDetector* const detector = m_detector.load(std::memory_order_acquire);
+        if (detector == nullptr || interleaved == nullptr || channels < 1 || sampleRate < 1) {
+            return;
+        }
+        // The loudest channel of each frame: the loopback cable may feed
+        // any one input of the interface.
+        for (int offset = 0; offset < frames; offset += kChunkFrames) {
+            const int count = std::min(kChunkFrames, frames - offset);
+            for (int f = 0; f < count; ++f) {
+                const float* frame =
+                    interleaved + static_cast<std::ptrdiff_t>(offset + f) * channels;
+                float loudest = 0.0f;
+                for (int c = 0; c < channels; ++c) {
+                    if (std::abs(frame[c]) > std::abs(loudest)) {
+                        loudest = frame[c];
+                    }
+                }
+                m_mono[static_cast<std::size_t>(f)] = loudest;
+            }
+            const std::int64_t chunkNs =
+                captureNsOfFrame0
+                + static_cast<std::int64_t>(std::llround(static_cast<double>(offset) * 1e9
+                                                         / static_cast<double>(sampleRate)));
+            const auto hit = detector->process(m_mono.data(), count, chunkNs);
+            if (hit) {
+                pushHit(*hit);
+            }
+        }
+    }
+
+    // Pump thread only.
+    std::optional<std::int64_t> takeHit()
+    {
+        const std::uint64_t tail = m_tail.load(std::memory_order_relaxed);
+        if (tail == m_head.load(std::memory_order_acquire)) {
+            return std::nullopt;
+        }
+        const std::int64_t hit = m_hits[static_cast<std::size_t>(tail % kHitSlots)];
+        m_tail.store(tail + 1, std::memory_order_release);
+        return hit;
+    }
+
+private:
+    static constexpr int kChunkFrames = 256;
+    static constexpr std::size_t kHitSlots = 16;
+
+    void pushHit(std::int64_t hit)
+    {
+        const std::uint64_t head = m_head.load(std::memory_order_relaxed);
+        if (head - m_tail.load(std::memory_order_acquire) >= kHitSlots) {
+            return;                  // the pump is behind; a click a second never fills this
+        }
+        m_hits[static_cast<std::size_t>(head % kHitSlots)] = hit;
+        m_head.store(head + 1, std::memory_order_release);
+    }
+
+    std::atomic<bool> m_enabled{false};
+    std::atomic<AudioDelayProbeDetector*> m_detector{nullptr};
+    std::array<float, kChunkFrames> m_mono{};
+    std::array<std::int64_t, kHitSlots> m_hits{};
+    std::atomic<std::uint64_t> m_head{0};
+    std::atomic<std::uint64_t> m_tail{0};
+};
 
 class Helper {
 public:
@@ -307,6 +412,11 @@ private:
                 break;
             }
             open();
+            break;
+        case P::RecordType::ProbeEnable:
+            qCInfo(lcAudio) << "capture helper: audio delay probe"
+                            << (command.probeEnabled ? "on" : "off");
+            m_probeTap.setEnabled(command.probeEnabled);
             break;
         case P::RecordType::Stop:
             if (command.generation != m_generation) {
@@ -394,6 +504,7 @@ private:
         config.exclusiveMode = m_device.exclusiveMode;
         bus->setConfig(config);
         bus->setStrictInputDevice(true);
+        bus->setInputBlockHook(&m_probeTap);
 
         AudioFormat format;
         format.sampleRate = P::kSampleRate;
@@ -438,6 +549,11 @@ private:
                         << ready.actualDevice << ready.nativeRate << "Hz"
                         << ready.nativeChannels << "ch";
 
+        // V-HW-8: the detector at the stream's own rate, published to the
+        // callback, which skips the probe until it is.
+        m_probeDetector = std::make_unique<AudioDelayProbeDetector>(bus->openedNativeRate());
+        m_probeTap.setDetector(m_probeDetector.get());
+
         m_bus = std::move(bus);
         m_framePosition = 0;
         m_pending.clear();
@@ -479,6 +595,10 @@ private:
                             m_pending.begin() + static_cast<std::ptrdiff_t>(offset));
         }
 
+        while (const auto hit = m_probeTap.takeHit()) {
+            write(P::encodeProbeHit(*hit));
+        }
+
         if (now - m_lastInput >= kInputLostAfter) {
             qCWarning(lcAudio) << "capture helper: no input for 500 ms on generation"
                                << m_generation;
@@ -493,6 +613,11 @@ private:
         if (m_bus) {
             m_bus->close();
             m_bus.reset();
+        }
+        // No callback runs now; the detector and any unsent hit go with it.
+        m_probeTap.setDetector(nullptr);
+        m_probeDetector.reset();
+        while (m_probeTap.takeHit()) {
         }
         m_pending.clear();
     }
@@ -539,6 +664,9 @@ private:
     quint32 m_generation = 0;
     AudioDeviceConfig m_device;
     bool m_paInitialized = false;
+    // Declared before m_bus so the stream that calls them is gone first.
+    ProbeTap m_probeTap;
+    std::unique_ptr<AudioDelayProbeDetector> m_probeDetector;
     std::unique_ptr<PortAudioBus> m_bus;
     quint64 m_framePosition = 0;
     Clock::time_point m_lastInput;

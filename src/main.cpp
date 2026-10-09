@@ -3,6 +3,7 @@
 #include "gui/styles/AppTheme.h"
 #include "core/AppSettings.h"
 #include "core/AudioDeviceConfig.h"
+#include "core/AudioEngine.h"
 #include "core/BuildIdentity.h"
 #include "core/CoreInit.h"
 #include "core/MacMicPermission.h"
@@ -235,7 +236,18 @@ int main(int argc, char* argv[])
             QStringLiteral("Use this computer's built-in Core for local radios."));
         parser.addOption(localOpt);
 
+        // V-HW-8: the audio delay probe, for bench measurements.
+        QCommandLineOption delayProbeOpt(
+            QStringLiteral("audio-delay-probe"),
+            QStringLiteral(
+                "Measure the delay from the speakers to the microphone input. "
+                "A short click plays on the speakers once a second and the "
+                "delay is written to the log. Needs a cable from a speaker "
+                "output to an input."));
+        parser.addOption(delayProbeOpt);
+
         parser.process(app);
+        NereusSDR::AudioEngine::setDelayProbeRequestedAtStart(parser.isSet(delayProbeOpt));
 
         // Command-line values only. The saved-Setup fallback cannot be read
         // yet: AppSettings is not loaded until CoreInit::initialize() below,

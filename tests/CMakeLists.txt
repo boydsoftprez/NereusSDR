@@ -1804,6 +1804,13 @@ nereus_add_test(tst_capture_helper_process fakes/FakeCaptureChild.cpp)
 # hanging child. No real microphone is opened.
 nereus_add_test(tst_capture_supervisor fakes/FakeCaptureChild.cpp)
 
+# Native audio plan Task 1 (V-HW-8): the audio delay probe. The speakers
+# click, the input detector, the click and hit matcher, the input capture
+# time, and the engine wiring (click on the speakers push only, a Test Mic
+# lease while it runs). Fake speakers and VAX buses; the helper is the
+# scripted fake (--fake-capture-child probe). No real device is opened.
+nereus_add_test(tst_audio_delay_probe fakes/FakeCaptureChild.cpp)
+
 # R-R3-36 Task 5: AudioEngine and RadioModel PC microphone session demand.
 # start() opens no input; a hanging helper never delays start, connect or
 # disconnect; the local session holds a capture lease only while PC mic is

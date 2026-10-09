@@ -8,6 +8,9 @@
 //   2026-09-25: iPhone app plan Task 36 (R-IOS-13): the remote window's
 //               demand named in the log. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-08: native audio plan Task 1 (V-HW-8): ProbeEnable after Ready
+//               and ProbeHit forwarding for the audio delay probe.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CaptureSupervisor.h"
@@ -119,15 +122,17 @@ qint64 steadyNowNs()
 class CaptureSupervisorWorker final : public QObject {
 public:
     using Publish = std::function<void(const Status&)>;
+    using PublishProbeHit = std::function<void(qint64)>;
 
     CaptureSupervisorWorker(const CaptureSupervisor::Options& options,
                             std::shared_ptr<CaptureAudioBus> reader,
                             std::shared_ptr<std::atomic<qint64>> helperPid,
-                            Publish publish)
+                            Publish publish, PublishProbeHit publishProbeHit)
         : m_options(options)
         , m_reader(std::move(reader))
         , m_helperPid(std::move(helperPid))
         , m_publish(std::move(publish))
+        , m_publishProbeHit(std::move(publishProbeHit))
         , m_helloTimer(new QTimer(this))
         , m_openTimer(new QTimer(this))
         , m_stopTimer(new QTimer(this))
@@ -199,6 +204,18 @@ public:
             startGeneration();
         } else if (m_status.state == State::Failed) {
             publish(State::Closed, Reason::None);
+        }
+    }
+
+    // V-HW-8: enabled waits for the helper's Ready; disabled goes at once.
+    void setProbeEnabled(bool enabled)
+    {
+        if (enabled == m_probeEnabled) {
+            return;
+        }
+        m_probeEnabled = enabled;
+        if (!enabled || m_helperReady) {
+            sendProbeEnable(enabled);
         }
     }
 
@@ -413,6 +430,16 @@ private:
         m_openTimer->start(m_openRemainingMs);
     }
 
+    void sendProbeEnable(bool enabled)
+    {
+        if (!m_process || !m_helloReceived || m_dying) {
+            return;
+        }
+        qCInfo(lcAudio) << "capture: audio delay probe" << (enabled ? "on" : "off")
+                        << "for generation" << m_generation;
+        write(P::encodeProbeEnable(enabled));
+    }
+
     void write(const QByteArray& record)
     {
         if (m_process && m_process->state() == QProcess::Running) {
@@ -557,6 +584,9 @@ private:
         case P::RecordType::Pcm:
             handlePcm(record.payload);
             return;
+        case P::RecordType::ProbeHit:
+            handleProbeHit(record.payload);
+            return;
         default:
             protocolError(QStringLiteral("unexpected record type %1").arg(static_cast<int>(record.type)));
             return;
@@ -601,6 +631,9 @@ private:
             qCInfo(lcAudio) << "capture: helper reports generation" << m_generation << "open on"
                             << status->actualDevice << status->nativeRate << "Hz"
                             << status->nativeChannels << "ch";
+            if (m_probeEnabled) {
+                sendProbeEnable(true);
+            }
             return;
         case P::HelperState::Failed:
             qCWarning(lcAudio) << "capture: helper failed generation" << m_generation << ":"
@@ -654,6 +687,19 @@ private:
             m_delayTimer->start();
             publish(State::Ready, Reason::None);
         }
+    }
+
+    void handleProbeHit(const QByteArray& payload)
+    {
+        const auto captureNs = P::decodeProbeHit(payload);
+        if (!captureNs) {
+            protocolError(QStringLiteral("invalid probe hit"));
+            return;
+        }
+        if (!m_probeEnabled || !m_open) {
+            return;
+        }
+        m_publishProbeHit(static_cast<qint64>(*captureNs));
     }
 
     void protocolError(const QString& detail)
@@ -771,6 +817,7 @@ private:
     std::shared_ptr<CaptureAudioBus> m_reader;
     std::shared_ptr<std::atomic<qint64>> m_helperPid;
     Publish m_publish;
+    PublishProbeHit m_publishProbeHit;
 
     QTimer* m_helloTimer;                     // Qt parent ownership
     QTimer* m_openTimer;
@@ -779,6 +826,7 @@ private:
 
     // Demand and configuration, mirrored from the owner.
     bool m_demanded = false;
+    bool m_probeEnabled = false;              // V-HW-8
     bool m_shuttingDown = false;
     AudioDeviceConfig m_config;
     std::function<void()> m_shutdownDone;
@@ -884,6 +932,14 @@ CaptureSupervisor::CaptureSupervisor(Options options, QObject* parent)
             // Runs on the I/O thread; hand the status to the owner thread.
             QMetaObject::invokeMethod(this, [this, status]() { onWorkerStatus(status); },
                                       Qt::QueuedConnection);
+        },
+        [this](qint64 captureNs) {
+            // V-HW-8: on the I/O thread; the hit is emitted on the owner thread.
+            QMetaObject::invokeMethod(this, [this, captureNs]() {
+                if (!m_shutDown && m_probeEnabled) {
+                    emit probeHit(captureNs);
+                }
+            }, Qt::QueuedConnection);
         });
     m_worker->moveToThread(&m_thread);
     m_thread.start();
@@ -960,6 +1016,17 @@ void CaptureSupervisor::configure(const AudioDeviceConfig& config)
     markRestarting(&config.deviceName);
     CaptureSupervisorWorker* worker = m_worker.get();
     QMetaObject::invokeMethod(worker, [worker, config]() { worker->configure(config); },
+                              Qt::QueuedConnection);
+}
+
+void CaptureSupervisor::setProbeEnabled(bool enabled)
+{
+    if (m_shutDown || enabled == m_probeEnabled) {
+        return;
+    }
+    m_probeEnabled = enabled;
+    CaptureSupervisorWorker* worker = m_worker.get();
+    QMetaObject::invokeMethod(worker, [worker, enabled]() { worker->setProbeEnabled(enabled); },
                               Qt::QueuedConnection);
 }
 

@@ -91,7 +91,7 @@ private slots:
 
     void contractConstants()
     {
-        QCOMPARE(int(kVersion), 1);
+        QCOMPARE(int(kVersion), 2);
         QCOMPARE(kHeaderBytes, 12);
         QCOMPARE(kMaxJsonBytes, 4096);
         QCOMPARE(kPcmHeaderBytes, 24);
@@ -105,7 +105,7 @@ private slots:
         const QByteArray rec = encodeRecord(RecordType::Status, QByteArray(300, 'x'));
         QCOMPARE(rec.size(), kHeaderBytes + 300);
         QCOMPARE(rec.left(4), QByteArray("NCAP"));
-        QCOMPARE(quint8(rec[4]), quint8(1));
+        QCOMPARE(quint8(rec[4]), quint8(2));
         QCOMPARE(quint8(rec[5]), quint8(2));
         QCOMPARE(quint8(rec[6]), quint8(0));
         QCOMPARE(quint8(rec[7]), quint8(0));
@@ -123,7 +123,10 @@ private slots:
         const int pcmMax = kPcmHeaderBytes + kMaxPcmFrames * 4;
         QVERIFY(!encodeRecord(RecordType::Pcm, QByteArray(pcmMax, 'a')).isEmpty());
         QVERIFY(encodeRecord(RecordType::Pcm, QByteArray(pcmMax + 1, 'a')).isEmpty());
-        QVERIFY(encodeRecord(static_cast<RecordType>(4), QByteArray("{}")).isEmpty());
+        QVERIFY(encodeRecord(static_cast<RecordType>(5), QByteArray("{}")).isEmpty());
+        QVERIFY(!encodeRecord(RecordType::ProbeHit, QByteArray(kMaxJsonBytes, 'a')).isEmpty());
+        QVERIFY(encodeRecord(RecordType::ProbeHit, QByteArray(kMaxJsonBytes + 1, 'a')).isEmpty());
+        QVERIFY(encodeRecord(RecordType::ProbeEnable, QByteArray(kMaxJsonBytes + 1, 'a')).isEmpty());
     }
 
     // ── RecordReader ──────────────────────────────────────────────────────
@@ -201,24 +204,30 @@ private slots:
     {
         QTest::addColumn<QByteArray>("bytes");
         QTest::addColumn<int>("error");
-        QTest::newRow("bad magic") << rawHeader("NCAQ", 1, 2, 0, 2) + "{}"
+        QTest::newRow("bad magic") << rawHeader("NCAQ", 2, 2, 0, 2) + "{}"
                                    << int(RecordReader::Error::BadMagic);
-        QTest::newRow("version 2") << rawHeader("NCAP", 2, 2, 0, 2) + "{}"
+        QTest::newRow("version 1") << rawHeader("NCAP", 1, 2, 0, 2) + "{}"
                                    << int(RecordReader::Error::BadVersion);
-        QTest::newRow("reserved nonzero") << rawHeader("NCAP", 1, 2, 1, 2) + "{}"
+        QTest::newRow("version 3") << rawHeader("NCAP", 3, 2, 0, 2) + "{}"
+                                   << int(RecordReader::Error::BadVersion);
+        QTest::newRow("reserved nonzero") << rawHeader("NCAP", 2, 2, 1, 2) + "{}"
                                           << int(RecordReader::Error::BadReserved);
-        QTest::newRow("reserved high byte") << rawHeader("NCAP", 1, 2, 0x100, 2) + "{}"
+        QTest::newRow("reserved high byte") << rawHeader("NCAP", 2, 2, 0x100, 2) + "{}"
                                             << int(RecordReader::Error::BadReserved);
-        QTest::newRow("unknown type") << rawHeader("NCAP", 1, 4, 0, 2) + "{}"
+        QTest::newRow("unknown type") << rawHeader("NCAP", 2, 5, 0, 2) + "{}"
                                       << int(RecordReader::Error::UnknownType);
-        QTest::newRow("json 4097") << rawHeader("NCAP", 1, 2, 0, 4097)
+        QTest::newRow("unknown type 21") << rawHeader("NCAP", 2, 21, 0, 2) + "{}"
+                                         << int(RecordReader::Error::UnknownType);
+        QTest::newRow("probe hit 4097") << rawHeader("NCAP", 2, 4, 0, 4097)
+                                        << int(RecordReader::Error::Oversize);
+        QTest::newRow("json 4097") << rawHeader("NCAP", 2, 2, 0, 4097)
                                    << int(RecordReader::Error::Oversize);
-        QTest::newRow("configure 4097") << rawHeader("NCAP", 1, 16, 0, 4097)
+        QTest::newRow("configure 4097") << rawHeader("NCAP", 2, 16, 0, 4097)
                                         << int(RecordReader::Error::Oversize);
         QTest::newRow("pcm oversize")
-            << rawHeader("NCAP", 1, 3, 0, kPcmHeaderBytes + kMaxPcmFrames * 4 + 1)
+            << rawHeader("NCAP", 2, 3, 0, kPcmHeaderBytes + kMaxPcmFrames * 4 + 1)
             << int(RecordReader::Error::Oversize);
-        QTest::newRow("payload 0xFFFFFFFF") << rawHeader("NCAP", 1, 3, 0, 0xFFFFFFFFu)
+        QTest::newRow("payload 0xFFFFFFFF") << rawHeader("NCAP", 2, 3, 0, 0xFFFFFFFFu)
                                             << int(RecordReader::Error::Oversize);
     }
 
@@ -256,7 +265,7 @@ private slots:
     void readerBoundedWhileLargestRecordArrives()
     {
         const qsizetype bound = kHeaderBytes + kPcmHeaderBytes + kMaxPcmFrames * 4;
-        const QByteArray header = rawHeader("NCAP", 1, 3, 0,
+        const QByteArray header = rawHeader("NCAP", 2, 3, 0,
                                             kPcmHeaderBytes + kMaxPcmFrames * 4);
         RecordReader reader;
         reader.append(header.constData(), header.size());
@@ -611,6 +620,124 @@ private slots:
         bad = readyStatus();
         bad.nativeRate = 500000;
         QVERIFY(encodeStatus(bad).isEmpty());
+    }
+
+    // ── Probe records (V-HW-8) ────────────────────────────────────────────
+
+    void probeRecordTypes()
+    {
+        QCOMPARE(int(RecordType::ProbeHit), 4);
+        QCOMPARE(int(RecordType::ProbeEnable), 20);
+    }
+
+    void probeHitRoundTrip_data()
+    {
+        QTest::addColumn<qint64>("captureNs");
+        QTest::newRow("-1") << qint64(-1);
+        QTest::newRow("0") << qint64(0);
+        QTest::newRow("max") << qint64(9223372036854775807LL);
+        QTest::newRow("min") << std::numeric_limits<qint64>::min();
+        QTest::newRow("steady") << qint64(1234567890123456789LL);
+    }
+
+    void probeHitRoundTrip()
+    {
+        QFETCH(qint64, captureNs);
+        const QByteArray rec = encodeProbeHit(captureNs);
+        QVERIFY(!rec.isEmpty());
+        QCOMPARE(quint8(rec[4]), quint8(kVersion));
+        QCOMPARE(quint8(rec[5]), quint8(RecordType::ProbeHit));
+        // The value is a decimal string, so the 64-bit value is exact.
+        const QJsonObject obj = objectOf(rec);
+        QCOMPARE(obj.size(), 1);
+        QVERIFY(obj.value("captureNs").isString());
+        QCOMPARE(obj.value("captureNs").toString(), QString::number(captureNs));
+        const auto decoded = decodeProbeHit(payloadOf(rec));
+        QVERIFY(decoded);
+        QCOMPARE(qint64(*decoded), captureNs);
+    }
+
+    void probeHitExactMaximumText()
+    {
+        const auto decoded = decodeProbeHit(QByteArray(R"({"captureNs":"9223372036854775807"})"));
+        QVERIFY(decoded);
+        QCOMPARE(qint64(*decoded), qint64(9223372036854775807LL));
+        QVERIFY(payloadOf(encodeProbeHit(9223372036854775807LL))
+                == QByteArray(R"({"captureNs":"9223372036854775807"})"));
+    }
+
+    void probeHitRejections()
+    {
+        QVERIFY(decodeProbeHit(QByteArray(R"({"captureNs":"12"})")));
+        QVERIFY(!decodeProbeHit(QByteArray(R"({"captureNs":12})")));
+        QVERIFY(!decodeProbeHit(QByteArray(R"({"captureNs":"1x"})")));
+        QVERIFY(!decodeProbeHit(QByteArray(R"({"captureNs":"12","extra":1})")));
+        QVERIFY(!decodeProbeHit(QByteArray(R"({})")));
+        QVERIFY(!decodeProbeHit(QByteArray(R"({"captureMs":"12"})")));
+        QVERIFY(!decodeProbeHit(QByteArray(R"({"captureNs":""})")));
+        QVERIFY(!decodeProbeHit(QByteArray(R"({"captureNs":"+12"})")));
+        QVERIFY(!decodeProbeHit(QByteArray(R"({"captureNs":"012"})")));
+        QVERIFY(!decodeProbeHit(QByteArray(R"({"captureNs":" 12"})")));
+        QVERIFY(!decodeProbeHit(QByteArray(R"({"captureNs":"9223372036854775808"})")));
+        QVERIFY(!decodeProbeHit(QByteArray(R"({"captureNs":true})")));
+        QVERIFY(!decodeProbeHit(QByteArray("not json")));
+        QVERIFY(!decodeProbeHit(QByteArray(kMaxJsonBytes + 1, ' ')));
+    }
+
+    void probeEnableRoundTrip()
+    {
+        for (const bool enabled : {true, false}) {
+            const QByteArray rec = encodeProbeEnable(enabled);
+            QVERIFY(!rec.isEmpty());
+            QCOMPARE(quint8(rec[5]), quint8(RecordType::ProbeEnable));
+            QCOMPARE(payloadOf(rec), enabled ? QByteArray(R"({"enabled":true})")
+                                             : QByteArray(R"({"enabled":false})"));
+            const auto decoded = decodeProbeEnable(payloadOf(rec));
+            QVERIFY(decoded);
+            QCOMPARE(*decoded, enabled);
+        }
+    }
+
+    void probeEnableRejections()
+    {
+        QVERIFY(!decodeProbeEnable(QByteArray(R"({"enabled":1})")));
+        QVERIFY(!decodeProbeEnable(QByteArray(R"({"enabled":"true"})")));
+        QVERIFY(!decodeProbeEnable(QByteArray(R"({"enabled":true,"extra":1})")));
+        QVERIFY(!decodeProbeEnable(QByteArray(R"({})")));
+        QVERIFY(!decodeProbeEnable(QByteArray("[true]")));
+    }
+
+    void readerAcceptsProbeRecords()
+    {
+        const QByteArray stream = encodeProbeHit(-1) + encodeProbeEnable(true)
+                                  + encodeProbeEnable(false) + encodeProbeHit(42);
+        RecordReader reader;
+        reader.append(stream.constData(), stream.size());
+        QCOMPARE(reader.error(), RecordReader::Error::None);
+        const auto a = reader.next();
+        const auto b = reader.next();
+        const auto c = reader.next();
+        const auto d = reader.next();
+        QVERIFY(a && b && c && d);
+        QCOMPARE(a->type, RecordType::ProbeHit);
+        QCOMPARE(b->type, RecordType::ProbeEnable);
+        QCOMPARE(c->type, RecordType::ProbeEnable);
+        QCOMPARE(d->type, RecordType::ProbeHit);
+        QCOMPARE(qint64(*decodeProbeHit(a->payload)), qint64(-1));
+        QCOMPARE(*decodeProbeEnable(b->payload), true);
+        QCOMPARE(*decodeProbeEnable(c->payload), false);
+        QCOMPARE(qint64(*decodeProbeHit(d->payload)), qint64(42));
+        QVERIFY(!reader.next());
+    }
+
+    void readerRejectsAVersion1ProbeRecord()
+    {
+        // A version 1 peer never sends these; a version 1 header is
+        // rejected whatever its type.
+        RecordReader reader;
+        const QByteArray bytes = rawHeader("NCAP", 1, 4, 0, 2) + "{}";
+        reader.append(bytes.constData(), bytes.size());
+        QCOMPARE(reader.error(), RecordReader::Error::BadVersion);
     }
 };
 

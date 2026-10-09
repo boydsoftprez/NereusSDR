@@ -9,6 +9,9 @@
 // Modification history (NereusSDR):
 //   2026-09-22: J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //               Anthropic Claude Code.
+//   2026-10-08: native audio plan Task 1 (V-HW-8): the delay probe's
+//               ProbeEnable and ProbeHit, and a protocol 1 helper refused.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -408,6 +411,8 @@ private slots:
         QTest::addColumn<QString>("scenario");
         QTest::newRow("malformed") << QStringLiteral("malformed");
         QTest::newRow("oversize") << QStringLiteral("oversize");
+        // V-HW-8: protocol 2 rejects a protocol 1 helper, as before.
+        QTest::newRow("version-1") << QStringLiteral("version-1");
     }
 
     void protocolErrors()
@@ -588,6 +593,47 @@ private slots:
         QCOMPARE(supervisor.status().configuredDevice, QStringLiteral("USB microphone"));
         QCOMPARE(supervisor.helperProcessId(), pid);             // same helper reused
         QVERIFY(!pullFrames(supervisor.reader(), 480, 2000).empty());
+    }
+
+    // V-HW-8: ProbeEnable goes only after Ready (the fake exits with code
+    // 4 on one before), hits come back as probeHit(), disabled stops them
+    // at the helper, and enabling again starts a new run there.
+    void probeEnabledAfterReadyAndHitsForwarded()
+    {
+        CaptureSupervisor supervisor(fakeOptions(QStringLiteral("probe")));
+        QSignalSpy hits(&supervisor, &CaptureSupervisor::probeHit);
+        supervisor.setProbeEnabled(true);                       // before the helper exists
+        auto lease = supervisor.acquire(CaptureSupervisor::Demand::TestMic);
+        QVERIFY(waitForState(supervisor, State::Ready, 5000));
+        QTRY_VERIFY_WITH_TIMEOUT(hits.size() >= 2, 3000);
+        QCOMPARE(hits.at(0).at(0).toLongLong(), qint64(1000));
+        QCOMPARE(hits.at(1).at(0).toLongLong(), qint64(1001));
+        QCOMPARE(supervisor.status().state, State::Ready);
+
+        supervisor.setProbeEnabled(false);
+        QTest::qWait(150);
+        hits.clear();
+        QTest::qWait(250);
+        QCOMPARE(hits.size(), 0);
+
+        supervisor.setProbeEnabled(true);                       // the helper is Ready now
+        QTRY_VERIFY_WITH_TIMEOUT(hits.size() >= 1, 3000);
+        QCOMPARE(hits.at(0).at(0).toLongLong(), qint64(2000));
+        QCOMPARE(supervisor.status().state, State::Ready);
+        lease.release();
+        QVERIFY(waitForState(supervisor, State::Closed, 3000));
+    }
+
+    // Without setProbeEnabled no ProbeEnable is sent and no hit arrives.
+    void probeOffSendsNothing()
+    {
+        CaptureSupervisor supervisor(fakeOptions(QStringLiteral("probe")));
+        QSignalSpy hits(&supervisor, &CaptureSupervisor::probeHit);
+        auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
+        QVERIFY(waitForState(supervisor, State::Ready, 5000));
+        QTest::qWait(300);
+        QCOMPARE(hits.size(), 0);
+        QCOMPARE(supervisor.status().state, State::Ready);
     }
 };
 

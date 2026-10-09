@@ -19,6 +19,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08  J.J. Boyd / KG4VCF  Native audio plan Task 1 (V-HW-8):
+//                                    the audio delay probe's click on the
+//                                    speakers push, its Test Mic lease,
+//                                    pairing and summary log.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-06  J.J. Boyd / KG4VCF  Radio speaker plan Task 1 (R-SPK-01 to
 //                                    R-SPK-04): the radio tap takes the
 //                                    RADIO level and mute, the speakers
@@ -702,10 +707,18 @@ void AudioEngine::start()
                             ? "speakers bus open"
                             : "speakers bus NOT open")
                     << ")";
+
+    // V-HW-8: --audio-delay-probe turns the probe on once audio runs.
+    if (delayProbeRequestedAtStart().load(std::memory_order_acquire)) {
+        setDelayProbeEnabled(true);
+    }
 }
 
 void AudioEngine::stop()
 {
+    // V-HW-8: the probe ends with the audio it measures.
+    setDelayProbeEnabled(false);
+
     // Close every owned bus unconditionally — setVaxConfig / setHeadphonesConfig
     // etc. may populate bus slots even when start() was never called (test
     // paths, SetupDialog preview on a freshly constructed engine). If we only
@@ -1156,7 +1169,66 @@ void AudioEngine::installCaptureSupervisor(CaptureSupervisor::Options options)
     m_captureSupervisor = std::make_unique<CaptureSupervisor>(std::move(options));
     connect(m_captureSupervisor.get(), &CaptureSupervisor::statusChanged,
             this, &AudioEngine::captureStatusChanged);
+    connect(m_captureSupervisor.get(), &CaptureSupervisor::probeHit,
+            this, [this](qint64 captureNs) { onDelayProbeHit(captureNs); });
     m_captureSupervisor->configure(m_txInputConfig);
+}
+
+std::atomic<bool>& AudioEngine::delayProbeRequestedAtStart()
+{
+    static std::atomic<bool> requested{false};
+    return requested;
+}
+
+void AudioEngine::setDelayProbeRequestedAtStart(bool requested)
+{
+    delayProbeRequestedAtStart().store(requested, std::memory_order_release);
+}
+
+// V-HW-8: the lease opens the helper; the supervisor tells it to listen
+// once it is Ready. Off: the helper is told first, then the lease goes.
+void AudioEngine::setDelayProbeEnabled(bool enabled)
+{
+    if (enabled == m_delayProbeEnabled.load(std::memory_order_acquire)) {
+        return;
+    }
+    if (enabled) {
+        qCInfo(lcAudio) << "Audio delay probe: on (a click on the speakers once a second)";
+        m_delayProbeMatchedClickNs = 0;
+        m_delayProbeLastClickNs.store(0, std::memory_order_release);
+        m_delayProbeLease = acquireCaptureDemand(CaptureSupervisor::Demand::TestMic);
+        if (m_captureSupervisor) {
+            m_captureSupervisor->setProbeEnabled(true);
+        }
+        m_delayProbeEnabled.store(true, std::memory_order_release);
+        return;
+    }
+    m_delayProbeEnabled.store(false, std::memory_order_release);
+    if (m_captureSupervisor) {
+        m_captureSupervisor->setProbeEnabled(false);
+    }
+    m_delayProbeLease.release();
+    qCInfo(lcAudio) << "Audio delay probe: off";
+}
+
+void AudioEngine::onDelayProbeHit(qint64 captureNs)
+{
+    if (!m_delayProbeEnabled.load(std::memory_order_acquire)) {
+        return;
+    }
+    ++m_delayProbeHitCount;
+    // The click is handed over here, on the main thread, so the DSP thread
+    // only stores one atomic. A hit always follows its click's push.
+    const std::int64_t clickNs = m_delayProbeLastClickNs.load(std::memory_order_acquire);
+    if (clickNs != 0 && clickNs != m_delayProbeMatchedClickNs) {
+        m_delayProbeMatcher.addClick(clickNs);
+        m_delayProbeMatchedClickNs = clickNs;
+    }
+    m_delayProbeMatcher.addHit(static_cast<std::int64_t>(captureNs));
+    const QString summary = m_delayProbeMatcher.takeSummary();
+    if (!summary.isEmpty()) {
+        qCInfo(lcAudio).noquote() << summary;
+    }
 }
 
 IAudioBus* AudioEngine::txInputSource() const noexcept
@@ -2741,7 +2813,22 @@ void AudioEngine::drainMixes(int frames, bool monitorOnly)
         if (speakersLk.owns_lock()) {
             IAudioBus* speakersBus = m_speakersBus.get();
             if (speakersBus != nullptr && speakersBus->isOpen()) {
+                // V-HW-8: the delay probe's click, into this block only,
+                // after every gain and mute. One atomic load; off, the
+                // block is untouched. A click starting in this block is
+                // stamped just before its push.
+                const bool probeOn = m_delayProbeEnabled.load(std::memory_order_acquire);
+                if (probeOn && !m_delayProbeOnLastBlock) {
+                    m_delayProbeClicker = AudioDelayProbeClicker{};
+                }
+                m_delayProbeOnLastBlock = probeOn;
+                const bool clickStarts =
+                    probeOn && m_delayProbeClicker.process(mix.data(), mixed, 2);
                 if (m_speakersConverter.passthrough()) {
+                    if (clickStarts) {
+                        m_delayProbeLastClickNs.store(audioProbeNowNs(),
+                                                      std::memory_order_release);
+                    }
                     speakersBus->push(
                         reinterpret_cast<const char*>(mix.data()),
                         static_cast<qint64>(stereoFloats) * sizeof(float));
@@ -2751,6 +2838,10 @@ void AudioEngine::drainMixes(int frames, bool monitorOnly)
                     // (a 96 kHz device played it at twice the speed, a mono
                     // one read interleaved stereo). Preallocated at open.
                     const int samples = m_speakersConverter.convert(mix.data(), mixed);
+                    if (clickStarts) {
+                        m_delayProbeLastClickNs.store(audioProbeNowNs(),
+                                                      std::memory_order_release);
+                    }
                     if (samples > 0) {
                         speakersBus->push(
                             reinterpret_cast<const char*>(m_speakersConverter.output()),

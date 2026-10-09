@@ -3,6 +3,11 @@
 // =================================================================
 // no-port-check: NereusSDR-original.  Scripted capture-helper peer for
 // process supervision tests; see FakeCaptureChild.h for the scenarios.
+//
+// Modification history (NereusSDR):
+//   2026-10-08: native audio plan Task 1 (V-HW-8): probe and version-1
+//               scenarios. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "FakeCaptureChild.h"
@@ -36,11 +41,13 @@ using Clock = std::chrono::steady_clock;
 constexpr auto kTick = std::chrono::milliseconds(10);
 constexpr auto kPermissionHold = std::chrono::milliseconds(300);
 constexpr auto kPcmBeforeEvent = std::chrono::milliseconds(100);
+constexpr auto kProbeHitEvery = std::chrono::milliseconds(50);
+constexpr int kProbeEnabledBeforeReadyExit = 4;
 constexpr double kTwoPi = 6.283185307179586;
 
 enum class Scenario {
     Ready, HangOpen, NoHello, PermissionThenReady, CrashAfterReady,
-    Malformed, Oversize, InputLost, IgnoreStop, Stale
+    Malformed, Oversize, InputLost, IgnoreStop, Stale, Probe, Version1
 };
 
 std::optional<Scenario> scenarioFromName(const QString& name)
@@ -55,12 +62,15 @@ std::optional<Scenario> scenarioFromName(const QString& name)
     if (name == QLatin1String("input-lost")) { return Scenario::InputLost; }
     if (name == QLatin1String("ignore-stop")) { return Scenario::IgnoreStop; }
     if (name == QLatin1String("stale")) { return Scenario::Stale; }
+    if (name == QLatin1String("probe")) { return Scenario::Probe; }
+    if (name == QLatin1String("version-1")) { return Scenario::Version1; }
     return std::nullopt;
 }
 
 struct Command {
     P::RecordType type = P::RecordType::Shutdown;
     quint32 generation = 0;
+    bool probeEnabled = false;
 };
 
 struct Queue {
@@ -95,6 +105,12 @@ void readParent(std::shared_ptr<Queue> queue)
                     std::_Exit(0);
                 }
                 command.generation = decoded->generation;
+            } else if (record->type == P::RecordType::ProbeEnable) {
+                const auto enabled = P::decodeProbeEnable(record->payload);
+                if (!enabled) {
+                    std::_Exit(0);
+                }
+                command.probeEnabled = *enabled;
             } else if (record->type != P::RecordType::Shutdown) {
                 std::_Exit(0);
             }
@@ -157,6 +173,25 @@ QByteArray oversizePcmRecord(quint32 generation)
     return record;
 }
 
+// A Hello as a protocol 1 helper writes it: version 1 header, protocol 1.
+QByteArray version1HelloRecord()
+{
+    const QByteArray json = QByteArrayLiteral("{\"build\":\"old\",\"pid\":")
+                            + QByteArray::number(QCoreApplication::applicationPid())
+                            + QByteArrayLiteral(",\"protocol\":1}");
+    QByteArray record;
+    record.append("NCAP", 4);
+    record.append(static_cast<char>(1));
+    record.append(static_cast<char>(P::RecordType::Hello));
+    record.append('\0');
+    record.append('\0');
+    char word[4];
+    qToLittleEndian<quint32>(static_cast<quint32>(json.size()), word);
+    record.append(word, 4);
+    record.append(json);
+    return record;
+}
+
 class Fake {
 public:
     Fake(Scenario scenario, std::shared_ptr<Queue> queue)
@@ -168,7 +203,9 @@ public:
 
     int run()
     {
-        if (m_scenario != Scenario::NoHello) {
+        if (m_scenario == Scenario::Version1) {
+            send(version1HelloRecord());
+        } else if (m_scenario != Scenario::NoHello) {
             P::Hello hello;
             hello.protocol = P::kVersion;
             hello.pid = QCoreApplication::applicationPid();
@@ -207,7 +244,22 @@ private:
         case P::RecordType::Configure:
             m_generation = command.generation;
             m_streaming = false;
+            m_readySent = false;
             m_readyAt.reset();
+            break;
+        case P::RecordType::ProbeEnable:
+            if (m_scenario != Scenario::Probe) {
+                break;
+            }
+            if (command.probeEnabled && !m_readySent) {
+                std::_Exit(kProbeEnabledBeforeReadyExit);
+            }
+            m_probeOn = command.probeEnabled;
+            if (m_probeOn) {
+                ++m_probeEnables;
+                m_probeHits = 0;
+                m_nextProbeHit = Clock::now();
+            }
             break;
         case P::RecordType::Open:
             if (command.generation == m_generation) {
@@ -217,6 +269,8 @@ private:
         case P::RecordType::Stop:
             if (command.generation == m_generation && m_scenario != Scenario::IgnoreStop) {
                 m_streaming = false;
+                m_readySent = false;
+                m_probeOn = false;
                 m_readyAt.reset();
                 sendStatus(m_generation, P::HelperState::Stopped);
             }
@@ -271,6 +325,7 @@ private:
         default:
             sendStatus(m_generation, P::HelperState::Opening);
             sendStatus(m_generation, P::HelperState::Ready);
+            m_readySent = true;
             startStreaming(m_generation);
             return;
         }
@@ -300,6 +355,12 @@ private:
         while (m_streaming && now >= m_nextPcm) {
             sendTone();
             m_nextPcm += kTick;
+        }
+        while (m_probeOn && now >= m_nextProbeHit) {
+            send(P::encodeProbeHit(1000 * static_cast<std::int64_t>(m_probeEnables)
+                                   + m_probeHits));
+            ++m_probeHits;
+            m_nextProbeHit += kProbeHitEvery;
         }
         if (now - m_streamStart >= kPcmBeforeEvent) {
             if (m_scenario == Scenario::CrashAfterReady) {
@@ -338,6 +399,11 @@ private:
     Clock::time_point m_nextPcm;
     std::optional<Clock::time_point> m_readyAt;
     std::vector<float> m_tone;
+    bool m_readySent = false;
+    bool m_probeOn = false;
+    int m_probeEnables = 0;
+    std::int64_t m_probeHits = 0;
+    Clock::time_point m_nextProbeHit;
 };
 
 } // namespace

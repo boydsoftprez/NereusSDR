@@ -26,6 +26,10 @@
 //               at least 100 ms at its own rate and channel count, so a
 //               remote window can play on a 176.4 to 384 kHz speaker.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08: native audio plan Task 1 (V-HW-8): an optional input-block
+//               hook for the audio delay probe's detector, with each
+//               block's capture time. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -35,6 +39,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -86,6 +91,23 @@ public:
     // every existing caller keeps the fallback.  Used by the
     // nereus-audio-capture helper (R-R3-36).
     void setStrictInputDevice(bool strict) { m_strictInputDevice = strict; }
+
+    // Optional observer of every capture callback block, for the audio
+    // delay probe (V-HW-8).  Runs on the PortAudio audio thread: it must
+    // not lock, allocate or make a Qt call.  `interleaved` is the device's
+    // own block (native rate, stream channel count) before any resampling;
+    // captureNsOfFrame0 is audioProbeCaptureNs() on the steady clock.
+    class InputBlockHook {
+    public:
+        virtual ~InputBlockHook() = default;
+        virtual void onInputBlock(const float* interleaved, int frames, int channels,
+                                  int sampleRate, std::int64_t captureNsOfFrame0) = 0;
+    };
+    // Input streams only; nullptr removes it.  The hook must outlive the
+    // open stream (close() joins the callback).
+    void setInputBlockHook(InputBlockHook* hook) {
+        m_inputHook.store(hook, std::memory_order_release);
+    }
 
     // Which step of the last open() failed; None after a successful open.
     enum class OpenFailure { None, DeviceNotFound, OpenFailed, StartFailed };
@@ -292,6 +314,10 @@ private:
     // R-R3-35: the open output stream's latency as PortAudio reports it
     // (Pa_GetStreamInfo outputLatency), in ns; -1 when unknown or closed.
     std::atomic<qint64> m_outputLatencyNs{-1};
+    // V-HW-8: the open input stream's latency (Pa_GetStreamInfo
+    // inputLatency) in ns, published before the stream starts; -1 unknown.
+    std::atomic<qint64> m_inputLatencyNs{-1};
+    std::atomic<InputBlockHook*> m_inputHook{nullptr};
 
     std::atomic<float> m_rxLevel{0.0f};
     std::atomic<float> m_txLevel{0.0f};

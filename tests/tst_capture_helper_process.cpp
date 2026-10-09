@@ -150,7 +150,7 @@ private slots:
         QCOMPARE(record->type, P::RecordType::Hello);
         const auto hello = P::decodeHello(record->payload);
         QVERIFY(hello.has_value());
-        QCOMPARE(hello->protocol, 1);
+        QCOMPARE(hello->protocol, int(P::kVersion));
         QCOMPARE(hello->pid, helper.process().processId());
         QVERIFY(!hello->build.isEmpty());
         QVERIFY2(elapsed < 3000, qPrintable(QStringLiteral("hello after %1 ms").arg(elapsed)));

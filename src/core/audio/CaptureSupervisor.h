@@ -12,6 +12,10 @@
 //   2026-09-25: iPhone app plan Task 36 (R-IOS-13): a remote window's
 //               microphone uplink is a demand too (Demand::RemoteWindow).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08: native audio plan Task 1 (V-HW-8): setProbeEnabled() sends
+//               ProbeEnable once the helper is Ready; probeHit() forwards
+//               the helper's ProbeHit records. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -128,8 +132,17 @@ public:
     // True while at least one Lease is active.  Owner thread only.
     bool hasDemand() const { return !m_leases.isEmpty(); }
 
+    // Audio delay probe (V-HW-8).  Enabled: ProbeEnable {"enabled":true}
+    // goes to the helper once it is Ready for the current generation (and
+    // again on every later Ready); disabled: ProbeEnable {"enabled":false}
+    // goes to a running helper at once.  Holds no demand by itself.
+    void setProbeEnabled(bool enabled);
+
 signals:
     void statusChanged(const NereusSDR::CaptureSupervisor::Status& status);
+    // A ProbeHit from the helper while the probe is enabled, on the owner
+    // thread: the steady-clock time the click reached the input converter.
+    void probeHit(qint64 captureNs);
 
 private:
     void releaseLease(quint64 id);
@@ -148,6 +161,7 @@ private:
     quint64 m_nextLeaseId = 1;
     AudioDeviceConfig m_config;
     bool m_shutDown = false;
+    bool m_probeEnabled = false;
 
     mutable QMutex m_statusMutex;
     Status m_status;

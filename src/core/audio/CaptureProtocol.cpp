@@ -3,6 +3,11 @@
 // =================================================================
 // no-port-check: NereusSDR-original.  Record framing and message codecs
 // for the nereus-audio-capture helper pipe; no Thetis logic.
+//
+// Modification history (NereusSDR):
+//   2026-10-08: native audio plan Task 1 (V-HW-8): ProbeHit and
+//               ProbeEnable codecs (protocol version 2). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CaptureProtocol.h"
@@ -29,10 +34,12 @@ bool isKnownType(quint8 raw)
     case RecordType::Hello:
     case RecordType::Status:
     case RecordType::Pcm:
+    case RecordType::ProbeHit:
     case RecordType::Configure:
     case RecordType::Open:
     case RecordType::Stop:
     case RecordType::Shutdown:
+    case RecordType::ProbeEnable:
         return true;
     }
     return false;
@@ -536,6 +543,52 @@ std::optional<Command> decodeCommand(const QByteArray& json)
 QByteArray encodeShutdown()
 {
     return encodeRecord(RecordType::Shutdown, QByteArrayLiteral("{}"));
+}
+
+// ── Probe (V-HW-8) ─────────────────────────────────────────────────────────
+
+QByteArray encodeProbeHit(std::int64_t captureNs)
+{
+    QJsonObject obj;
+    obj.insert(QStringLiteral("captureNs"), QString::number(static_cast<qlonglong>(captureNs)));
+    return checkedRecord(RecordType::ProbeHit, toJson(obj), decodeProbeHit);
+}
+
+std::optional<std::int64_t> decodeProbeHit(const QByteArray& json)
+{
+    static const QSet<QString> kKeys = {QStringLiteral("captureNs")};
+    const auto obj = parseExactObject(json, kKeys);
+    if (!obj) {
+        return std::nullopt;
+    }
+    const auto text = readString(*obj, QStringLiteral("captureNs"));
+    if (!text) {
+        return std::nullopt;
+    }
+    bool ok = false;
+    const qlonglong value = text->toLongLong(&ok);
+    // Canonical decimal only: no sign on positives, no padding, no spaces.
+    if (!ok || QString::number(value) != *text) {
+        return std::nullopt;
+    }
+    return static_cast<std::int64_t>(value);
+}
+
+QByteArray encodeProbeEnable(bool enabled)
+{
+    QJsonObject obj;
+    obj.insert(QStringLiteral("enabled"), enabled);
+    return checkedRecord(RecordType::ProbeEnable, toJson(obj), decodeProbeEnable);
+}
+
+std::optional<bool> decodeProbeEnable(const QByteArray& json)
+{
+    static const QSet<QString> kKeys = {QStringLiteral("enabled")};
+    const auto obj = parseExactObject(json, kKeys);
+    if (!obj) {
+        return std::nullopt;
+    }
+    return readBool(*obj, QStringLiteral("enabled"));
 }
 
 // ── Status ─────────────────────────────────────────────────────────────────

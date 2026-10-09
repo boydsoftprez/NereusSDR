@@ -21,6 +21,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 : Native audio plan Task 1 (V-HW-8) by J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code. The audio delay
+//                 probe: setDelayProbeEnabled() adds a click to the speakers
+//                 block once a second, holds a Test Mic capture lease and
+//                 pairs the helper's hits with the clicks. NereusSDR-original.
 //   2026-10-06 : Radio speaker plan Task 1 (R-SPK-01 to R-SPK-04) by J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //                 The radio's speaker out takes its own RADIO level and
@@ -197,6 +202,7 @@
 #include "core/NereusCoreExport.h"
 #include "AudioDeviceConfig.h"
 #include "IAudioBus.h"
+#include "audio/AudioDelayProbe.h"
 #include "audio/CaptureSupervisor.h"
 #include "audio/MasterMixer.h"
 #include "audio/VaxChannelMixer.h"
@@ -555,6 +561,22 @@ public:
     CaptureSupervisor::Lease acquireCaptureDemand(CaptureSupervisor::Demand demand);
     void retryCapture();
 
+    // V-HW-8: the audio delay probe. On, the speakers block carries a
+    // 48-frame click once a second (after every gain and mute, just before
+    // the speakers push; no other output carries it), the engine holds a
+    // Test Mic capture lease, the helper is told to listen once it is
+    // Ready, and every 30 paired clicks one summary line is logged. Off
+    // tells the helper to stop and releases the lease; the speakers block
+    // is then exactly as without the probe. Main thread only.
+    void setDelayProbeEnabled(bool enabled);
+    bool isDelayProbeEnabled() const
+    {
+        return m_delayProbeEnabled.load(std::memory_order_acquire);
+    }
+    // --audio-delay-probe: every later start() turns the probe on after it
+    // has started. Process-wide; set before the engine starts.
+    static void setDelayProbeRequestedAtStart(bool requested);
+
     // Per-VAX device configuration. On Mac/Linux the VAX slots are populated
     // eagerly by start() with the platform-native virtual bus
     // (CoreAudioHalBus / LinuxPipeBus); calling setVaxConfig there replaces
@@ -736,6 +758,8 @@ public:
     void setCaptureSupervisorOptionsForTest(CaptureSupervisor::Options options);
     // The running capture helper's process id, 0 when none.
     qint64 captureHelperProcessIdForTest() const;
+    // V-HW-8: probe hits the engine has taken while the probe was on.
+    quint64 delayProbeHitCountForTest() const { return m_delayProbeHitCount; }
 
     // Persistent test seam — prepare dependencies before every start().
     // stop() intentionally releases all buses, so reconnect fixtures use
@@ -1272,6 +1296,19 @@ private:
     // worker across start()/stop().
     AudioDeviceConfig m_txInputConfig;
     std::unique_ptr<CaptureSupervisor> m_captureSupervisor;
+
+    // V-HW-8: the audio delay probe (setDelayProbeEnabled).
+    void onDelayProbeHit(qint64 captureNs);    // main thread
+    static std::atomic<bool>& delayProbeRequestedAtStart();
+    std::atomic<bool> m_delayProbeEnabled{false};
+    bool m_delayProbeOnLastBlock{false};               // DSP thread only
+    AudioDelayProbeClicker m_delayProbeClicker;        // DSP thread only
+    // The latest click's push time (audioProbeNowNs), 0 before the first.
+    std::atomic<std::int64_t> m_delayProbeLastClickNs{0};
+    std::int64_t m_delayProbeMatchedClickNs{0};        // main thread
+    AudioDelayProbeMatcher m_delayProbeMatcher;
+    CaptureSupervisor::Lease m_delayProbeLease;        // main thread
+    quint64 m_delayProbeHitCount{0};                   // main thread
 
     // (Phase 3M-1c D.1 added a kMicBlockFrames=720-sample mic-block
     //  accumulator + clearMicBuffer + bench-fix-A pumpMic timer.  The

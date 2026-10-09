@@ -14,8 +14,17 @@
 //     u32 generation  u32 frameCount  u64 framePosition  u64 sentMonotonicNs
 //     frameCount x float32 (mono, 48000 Hz), frameCount in 1..kMaxPcmFrames.
 //
+//   Probe payloads (version 2, the audio delay probe, V-HW-8):
+//     ProbeHit    helper to window  {"captureNs":"<decimal string>"}
+//     ProbeEnable window to helper  {"enabled":true} or {"enabled":false}
+//
 // Design: docs/architecture/2026-09-22-optional-microphone-capture-design.md
 // (Process and PCM contract).  Requirement R-R3-36.
+//
+// Modification history (NereusSDR):
+//   2026-10-08: native audio plan Task 1 (V-HW-8): version 2 adds the
+//               ProbeHit and ProbeEnable records of the audio delay probe.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -27,12 +36,13 @@
 #include <QVector>
 #include <QtGlobal>
 
+#include <cstdint>
 #include <deque>
 #include <optional>
 
 namespace NereusSDR::CaptureProtocol {
 
-inline constexpr quint8 kVersion = 1;
+inline constexpr quint8 kVersion = 2;
 inline constexpr int kHeaderBytes = 12;          // "NCAP", u8 version, u8 type, u16 reserved(0), u32 payloadBytes, little-endian
 inline constexpr int kMaxJsonBytes = 4096;
 inline constexpr int kPcmHeaderBytes = 24;       // u32 generation, u32 frameCount, u64 framePosition, u64 sentMonotonicNs
@@ -43,7 +53,7 @@ inline constexpr int kSampleRate = 48'000;
 // Largest payload any record type may carry (a full PCM record).
 inline constexpr int kMaxPcmPayloadBytes = kPcmHeaderBytes + kMaxPcmFrames * 4;
 
-enum class RecordType : quint8 { Hello = 1, Status = 2, Pcm = 3, Configure = 16, Open = 17, Stop = 18, Shutdown = 19 };
+enum class RecordType : quint8 { Hello = 1, Status = 2, Pcm = 3, ProbeHit = 4, Configure = 16, Open = 17, Stop = 18, Shutdown = 19, ProbeEnable = 20 };
 
 struct Record {
     RecordType type = RecordType::Hello;
@@ -153,5 +163,14 @@ QByteArray encodeStatus(const Status& status);
 std::optional<Status> decodeStatus(const QByteArray& json);
 
 QByteArray encodeShutdown();             // payload is the empty JSON object {}
+
+// Audio delay probe (V-HW-8).  captureNs is std::chrono::steady_clock
+// nanoseconds, carried as a decimal string so the 64-bit value is exact;
+// only the canonical form (QString::number) decodes.
+QByteArray encodeProbeHit(std::int64_t captureNs);
+std::optional<std::int64_t> decodeProbeHit(const QByteArray& json);
+
+QByteArray encodeProbeEnable(bool enabled);
+std::optional<bool> decodeProbeEnable(const QByteArray& json);
 
 } // namespace NereusSDR::CaptureProtocol

@@ -11,6 +11,10 @@
 // macOS for the same end), not as a port.  No Thetis bytes ported.
 //
 // Modification history (NereusSDR):
+//   2026-10-08: native audio plan Task 1 (V-HW-8): the input callback hands
+//               each block and its capture time to an optional hook (the
+//               audio delay probe's detector). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-09-23: R-R3-23 an output stream sizes its ring by
 //               outputRingSamples() before it starts, so a speaker faster
 //               than 48 kHz stereo still holds 100 ms. J.J. Boyd (KG4VCF),
@@ -34,6 +38,7 @@
 #include "../MemoryLock.h"
 #include "../PerfMonitor.h"
 #include "../Resampler.h"
+#include "AudioDelayProbe.h"
 
 #include <portaudio.h>
 
@@ -292,6 +297,7 @@ bool PortAudioBus::open(const AudioFormat& format) {
     m_outputConsumedFrames.store(0, std::memory_order_relaxed);
     m_outputCallbackFrames.store(0, std::memory_order_relaxed);
     m_outputLatencyNs.store(-1, std::memory_order_relaxed);
+    m_inputLatencyNs.store(-1, std::memory_order_relaxed);
     m_lastOutL = 0.0f;
     m_lastOutR = 0.0f;
     m_crossfadeFramesRem = 0;
@@ -470,6 +476,17 @@ bool PortAudioBus::open(const AudioFormat& format) {
                 .arg(wantOutput ? QStringLiteral("output")
                                 : QStringLiteral("mic"))
                 .arg(openRate);
+    }
+
+    // V-HW-8: the input latency the delay probe's capture time falls back
+    // on, published before the callback can run.
+    if (!wantOutput) {
+        const PaStreamInfo* streamInfo = Pa_GetStreamInfo(m_stream);
+        const double latencySeconds = streamInfo != nullptr ? streamInfo->inputLatency : 0.0;
+        m_inputLatencyNs.store(std::isfinite(latencySeconds) && latencySeconds > 0.0
+                                   ? static_cast<qint64>(std::llround(latencySeconds * 1e9))
+                                   : qint64{-1},
+                               std::memory_order_release);
     }
 
     // Callback-visible state is now fully published; safe to start.
@@ -674,7 +691,7 @@ qint64 PortAudioBus::pull(char* data, qint64 maxBytes) {
 
 int PortAudioBus::paCallback(const void* in, void* out,
                              unsigned long frames,
-                             const PaStreamCallbackTimeInfo* /*timeInfo*/,
+                             const PaStreamCallbackTimeInfo* timeInfo,
                              unsigned long flags,
                              void* userData) {
     PortAudioBus* self = static_cast<PortAudioBus*>(userData);
@@ -870,6 +887,21 @@ int PortAudioBus::paCallback(const void* in, void* out,
 
         qint64 w = self->m_ringWrite.load(std::memory_order_relaxed);
         float peak = 0.0f;
+
+        // V-HW-8: the delay probe's detector sees the device's own block
+        // with the time its frame 0 reached the converter.
+        InputBlockHook* const hook = self->m_inputHook.load(std::memory_order_acquire);
+        if (hook != nullptr && i_in != nullptr && frames > 0) {
+            const qint64 latencyNs = self->m_inputLatencyNs.load(std::memory_order_acquire);
+            const std::int64_t captureNs = audioProbeCaptureNs(
+                audioProbeNowNs(),
+                timeInfo != nullptr ? timeInfo->currentTime : 0.0,
+                timeInfo != nullptr ? timeInfo->inputBufferAdcTime : 0.0,
+                static_cast<int>(frames), self->m_nativeSampleRate,
+                latencyNs > 0 ? static_cast<double>(latencyNs) / 1e9 : 0.0);
+            hook->onInputBlock(i_in, static_cast<int>(frames), channels,
+                               self->m_nativeSampleRate, captureNs);
+        }
 
         if (i_in == nullptr) {
             self->m_txLevel.store(0.0f, std::memory_order_release);
