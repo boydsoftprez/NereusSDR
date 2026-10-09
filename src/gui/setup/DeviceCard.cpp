@@ -306,10 +306,19 @@ const IAudioDeviceCatalog& emptyCatalogue()
     return catalogue;
 }
 
+std::optional<AudioEngineKind>& buildDefaultOverride()
+{
+    static std::optional<AudioEngineKind> value;
+    return value;
+}
+
 // R-AUD-02's first native choice for this build, shown on the Driver list
 // of a card whose engine has no device catalogue to ask.
 AudioEngineKind buildDefaultEngine()
 {
+    if (buildDefaultOverride()) {
+        return *buildDefaultOverride();
+    }
 #if defined(Q_OS_MAC)
     return AudioEngineKind::CoreAudio;
 #elif defined(Q_OS_WIN)
@@ -831,6 +840,13 @@ void DeviceCard::takeSavedChoice(const AudioDeviceConfig& saved)
         saved.engine == AudioEngineKind::PortAudio ? saved.driverApi : QString();
     m_selection = Selection{saved.deviceId, saved.deviceName, std::max(1, saved.firstChannel)};
 }
+
+#ifdef NEREUS_BUILD_TESTS
+void DeviceCard::setBuildDefaultEngineForTest(std::optional<AudioEngineKind> engine)
+{
+    buildDefaultOverride() = engine;
+}
+#endif
 
 AudioEngineKind DeviceCard::selectedEngine() const
 {

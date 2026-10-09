@@ -77,11 +77,16 @@
 //                unfolded; each open Driver and Device list, reason
 //                tooltips, the Sound system line and the engine notes.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Case 23: the VAX channel cards show the laid-out
+//                system's engine on any test build (the Linux build showed
+//                PipeWire on a Mac and a Windows layout). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 
 #include <array>
+#include <utility>
 #include <memory>
 #include <vector>
 
@@ -111,6 +116,7 @@
 #include "core/RadioConnection.h"
 #include "core/RadioDiscovery.h"
 #include "core/session/IStationLink.h"
+#include "core/audio/AudioDeviceTypes.h"
 #include "core/audio/IAudioDeviceCatalog.h"
 #include "core/audio/PortAudioBackend.h"
 #include "fakes/FakeAudioEngineBackend.h"
@@ -1539,14 +1545,28 @@ private slots:
         QCOMPARE(page.detectedCablesText(), QStringLiteral("Detected virtual cables: None."));
     }
 
-    // 23. No PipeWire on a Mac or Windows layout.
+    // 23. No PipeWire on a Mac or Windows layout.  The channel cards have
+    // no device lists here, so their Driver list shows the laid-out
+    // system's engine, whichever system the test build runs on.
     void vaxSectionSaysNoPipeWireOffLinux()
     {
-        for (SoundSystemLine::System system :
-             {SoundSystemLine::System::Mac, SoundSystemLine::System::Windows}) {
+        const std::array<std::pair<SoundSystemLine::System, AudioEngineKind>, 3> layouts{{
+            {SoundSystemLine::System::Mac, AudioEngineKind::CoreAudio},
+            {SoundSystemLine::System::Windows, AudioEngineKind::WindowsShared},
+            {SoundSystemLine::System::Linux, AudioEngineKind::PipeWire},
+        }};
+        for (const auto& [system, engine] : layouts) {
             const auto restore = vaxSystem(system);
             AudioVaxPage page(nullptr);
             page.setDetectedCablesForTest({outputCable(QStringLiteral("CABLE Input"))});
+            const QList<DeviceCard*> cards = page.findChildren<DeviceCard*>();
+            QVERIFY(!cards.isEmpty());
+            for (DeviceCard* card : cards) {
+                QCOMPARE(card->driverApiCombo()->currentText(), audioEngineLabel(engine));
+            }
+            if (system == SoundSystemLine::System::Linux) {
+                continue;
+            }
             for (const QString& text : textsUnder(&page)) {
                 QVERIFY2(!text.contains(QLatin1String("PipeWire"), Qt::CaseInsensitive),
                          qPrintable(text));

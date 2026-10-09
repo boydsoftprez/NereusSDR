@@ -46,7 +46,8 @@
 //
 // 2026-10-09 (R-AUD-04): native audio plan Task 16 fix round. J.J. Boyd
 // (KG4VCF), AI-assisted via Anthropic Claude Code. A cable picked by name
-// drops the previous device's id and channel pair.
+// drops the previous device's id and channel pair. setSystemForTest() also
+// lays the channel cards out for that system (their engine without lists).
 // =================================================================
 
 #include "AudioVaxPage.h"
@@ -1244,6 +1245,23 @@ SoundSystemLine::System AudioVaxPage::system()
 void AudioVaxPage::setSystemForTest(std::optional<SoundSystemLine::System> system)
 {
     systemOverride() = system;
+    // The channel cards are laid out for that system too: a card with no
+    // device lists shows its engine, not this build's.
+    std::optional<AudioEngineKind> engine;
+    if (system) {
+        switch (*system) {
+        case SoundSystemLine::System::Mac:
+            engine = AudioEngineKind::CoreAudio;
+            break;
+        case SoundSystemLine::System::Windows:
+            engine = AudioEngineKind::WindowsShared;
+            break;
+        case SoundSystemLine::System::Linux:
+            engine = AudioEngineKind::PipeWire;
+            break;
+        }
+    }
+    DeviceCard::setBuildDefaultEngineForTest(engine);
 }
 
 void AudioVaxPage::setDetectedCablesForTest(const QVector<DetectedCable>& cables)
