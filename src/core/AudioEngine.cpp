@@ -297,6 +297,11 @@
 //                 setAsioBufferAndRate(), openAsioControlPanel(), the 5 s
 //                 restarted note after a driver reset, and the role each
 //                 output's stream request plays. NereusSDR-original.
+//   2026-10-09: settings scope fix (R-AUD-07, R-AUD-20): the saved ASIO
+//               buffer size and rate and the headphones Enabled box are
+//               read through AudioEngine, so a Setup page does not read
+//               a key a core consumer reads. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "AudioEngine.h"
@@ -2632,6 +2637,24 @@ void AudioEngine::applyAsioSwitch(const AsioSwitchPlan& plan)
     if (!plan.moves.isEmpty()) {
         emit asioStatusChanged();   // the moved cards show their new pairs
     }
+}
+
+int AudioEngine::savedAsioBufferFrames()
+{
+    return AppSettings::instance().value(QStringLiteral("audio/Asio/BufferFrames"), 0).toInt();
+}
+
+double AudioEngine::savedAsioSampleRate()
+{
+    return AppSettings::instance().value(QStringLiteral("audio/Asio/SampleRate"), 48000).toDouble();
+}
+
+bool AudioEngine::savedHeadphonesEnabled()
+{
+    return AppSettings::instance()
+               .value(QStringLiteral("audio/Headphones/Enabled"), QStringLiteral("False"))
+               .toString()
+        == QStringLiteral("True");
 }
 
 void AudioEngine::setAsioBufferAndRate(int bufferFrames, double sampleRate)

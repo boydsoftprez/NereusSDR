@@ -27,7 +27,13 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 17 (R-AUD-19). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: Windows test fix (R-AUD-07, R-AUD-19): exported from the
+//               GUI DLL, so a signal of it is found from outside the DLL
+//               on Windows. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
+
+#include "gui/NereusGuiExport.h"
 
 #include <QDialog>
 #include <QList>
@@ -41,7 +47,7 @@ namespace NereusSDR {
 // Cancel note, and the buttons "Switch all to <driver>" (objectName
 // asioSwitchAllOk) and "Cancel" (asioSwitchAllCancel).  Each move is a
 // name and the pair it moves to.
-class AsioSwitchAllDialog : public QDialog {
+class NEREUS_GUI_EXPORT AsioSwitchAllDialog : public QDialog {
     Q_OBJECT
 public:
     AsioSwitchAllDialog(const QString& device, const QString& driver,

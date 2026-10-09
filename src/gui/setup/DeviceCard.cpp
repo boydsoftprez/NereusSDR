@@ -44,6 +44,11 @@
 // shared by every card on it; the restarted note; the ASIO control panel
 // button; the pairs of a driver with an unusable sample format greyed.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: settings scope fix (R-AUD-07, R-AUD-20): the saved ASIO
+//               buffer size and rate and the headphones Enabled box are
+//               read through AudioEngine, so a Setup page does not read
+//               a key a core consumer reads. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "DeviceCard.h"
@@ -1898,9 +1903,8 @@ void DeviceCard::refreshAsioDetails()
         rate = status.sampleRate;
     } else {
         // The driver opens at the saved values, inside its caps.
-        const AppSettings& s = AppSettings::instance();
-        const int savedFrames = s.value(QStringLiteral("audio/Asio/BufferFrames"), 0).toInt();
-        const double savedRate = s.value(QStringLiteral("audio/Asio/SampleRate"), 48000).toDouble();
+        const int savedFrames = AudioEngine::savedAsioBufferFrames();
+        const double savedRate = AudioEngine::savedAsioSampleRate();
         if (caps) {
             frames = asioSessionBufferFrames(*caps, savedFrames);
             rate = caps->sampleRates.contains(savedRate) ? savedRate : caps->currentRate;
@@ -2021,12 +2025,8 @@ void DeviceCard::refreshSamePairNote()
         const bool speakers = *m_audioRole == AudioRole::Speakers;
         const AudioDeviceConfig partner = AudioDeviceConfig::loadFromSettings(
             speakers ? QStringLiteral("audio/Headphones") : QStringLiteral("audio/Speakers"));
-        const bool headphonesOn = speakers
-            ? AppSettings::instance()
-                      .value(QStringLiteral("audio/Headphones/Enabled"), QStringLiteral("False"))
-                      .toString()
-                  == QStringLiteral("True")
-            : isCheckboxEnabled();
+        const bool headphonesOn =
+            speakers ? AudioEngine::savedHeadphonesEnabled() : isCheckboxEnabled();
         const int idx = m_deviceCombo->currentIndex();
         const bool pair = idx > 0 && !m_deviceCombo->itemData(idx, kKeptEntryRole).toBool()
             && (selectedEngine() == AudioEngineKind::Asio
