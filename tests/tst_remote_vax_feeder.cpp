@@ -66,6 +66,7 @@
 #include "core/session/media/IReceiverPcmSink.h"
 #include "core/settings/SettingsScope.h"
 #include "fakes/CapacityLimitedTransport.h"
+#include "fakes/FakeMatcherAudioBus.h"
 #include "fakes/PacedAudioBus.h"
 #include "fakes/RemoteAudioSessionHarness.h"
 #include "gui/OperatorReasonText.h"
@@ -970,6 +971,79 @@ private slots:
         feeder.pump();
         QCOMPARE(feeder.stats().state, RemoteVaxFeederStats::State::Idle);
         QCOMPARE(written + stats.droppedFrames, quint64(21 * kOpusFrames));
+    }
+
+    // R-AUD-15: an output with its own clock matcher (the Windows VAX
+    // bus) is written as the audio arrives, 48 kHz stereo, even though it
+    // reports pacing; the feeder runs no rate matcher of its own and
+    // restarts the output's matcher when playback starts afresh.
+    void anOutputWithItsOwnMatcherIsWrittenAsItArrives()
+    {
+        constexpr qint64 kMs = 1'000'000;
+        qint64 now = 0;
+        quint64 written = 0;
+        int clockRestarts = 0;
+        VaxOutputPort port;
+        port.pacing = [] {
+            IAudioBus::OutputPacing pacing;
+            pacing.queuedFrames = 240;
+            pacing.capacityFrames = 480;
+            pacing.callbackFrames = 128;
+            return std::optional<IAudioBus::OutputPacing>(pacing);
+        };
+        port.write = [&written](const float*, int frames) { written += quint64(frames); return true; };
+        port.takesStereoMix = [] { return true; };
+        port.restartClockMatch = [&clockRestarts] { ++clockRestarts; };
+        RemoteVaxFeeder feeder(2, port, [&now] { return now; });
+        feeder.setSourceSlice(1);
+        const std::vector<float> block = toneBlock(0, kOpusFrames, 1000.0, 0.1);
+        feeder.receiverAudioBlock(1, block.data(), kOpusFrames);
+        feeder.pump();
+        QCOMPARE(written, quint64(kOpusFrames));
+        QCOMPARE(clockRestarts, 1);
+        QCOMPARE(feeder.stats().state, RemoteVaxFeederStats::State::Playing);
+        QCOMPARE(feeder.stats().matcherFillFrames, 0);
+
+        now += 40 * kMs;
+        feeder.receiverAudioBlock(1, block.data(), kOpusFrames);
+        feeder.pump();
+        QCOMPARE(written, quint64(2 * kOpusFrames));
+        QCOMPARE(clockRestarts, 1);
+
+        // The Core goes quiet, then comes back: a fresh start.
+        now += RemoteVaxFeeder::kQuietNs + kMs;
+        feeder.pump();
+        QCOMPARE(feeder.stats().state, RemoteVaxFeederStats::State::WaitingForAudio);
+        QCOMPARE(clockRestarts, 1);
+        now += 5 * kMs;
+        feeder.receiverAudioBlock(1, block.data(), kOpusFrames);
+        feeder.pump();
+        QCOMPARE(clockRestarts, 2);
+        QCOMPARE(written, quint64(3 * kOpusFrames));
+        QCOMPARE(feeder.stats().state, RemoteVaxFeederStats::State::Playing);
+        QCOMPARE(feeder.stats().restarts, 0);
+
+        // The engine's port asks the channel's bus.
+        AudioEngine engine;
+        AudioStreamRequest request;
+        auto matcherBus = std::make_unique<FakeMatcherAudioBus>(request, true, 128);
+        AudioFormat format;
+        format.sampleRate = 48000;
+        format.channels = 2;
+        format.sample = AudioFormat::Sample::Float32;
+        QVERIFY(matcherBus->open(format));
+        FakeMatcherAudioBus* vax = matcherBus.get();
+        engine.setVaxBusForTest(3, std::move(matcherBus));
+        engine.setVaxBusForTest(4, std::make_unique<CollectingBus>());
+        const VaxOutputPort three = VaxOutputPort::forEngine(&engine, 3);
+        const VaxOutputPort four = VaxOutputPort::forEngine(&engine, 4);
+        QVERIFY(three.takesStereoMix());
+        QVERIFY(!four.takesStereoMix());
+        QVERIFY(!VaxOutputPort::forEngine(&engine, 1).takesStereoMix());
+        three.restartClockMatch();
+        QCOMPARE(vax->restartCount(), 1);
+        QVERIFY(three.write(block.data(), kOpusFrames));
+        QCOMPARE(vax->pushCount(), 1);
     }
 
     void audioArrivingDuringThePumpIsKept_data()

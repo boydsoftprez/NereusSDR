@@ -12,6 +12,9 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-04: Preserve ingress arriving after the pump's snapshot.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-09: native audio plan Task 6 (R-AUD-15): an output with its own
+//                 clock matcher is written as the audio arrives.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/RemoteVaxFeeder.h"
@@ -45,6 +48,14 @@ VaxOutputPort VaxOutputPort::forEngine(AudioEngine* engine, int channel)
     };
     port.write = [engine, channel](const float* stereo, int frames) {
         return engine && engine->writeVaxOutput(channel, stereo, frames);
+    };
+    port.takesStereoMix = [engine, channel] {
+        return engine && engine->vaxOutputTakesStereoMix(channel);
+    };
+    port.restartClockMatch = [engine, channel] {
+        if (engine) {
+            engine->restartVaxOutputClockMatch(channel);
+        }
     };
     return port;
 }
@@ -474,6 +485,24 @@ void RemoteVaxFeeder::pump()
 
     const std::optional<IAudioBus::OutputPacing> pacing =
         m_port.pacing ? m_port.pacing() : std::nullopt;
+    if (m_port.takesStereoMix && m_port.takesStereoMix()) {
+        // R-AUD-15: the output matches its device's clock itself, so what
+        // arrives is written as it arrives, 48 kHz stereo, into its
+        // matcher. Its control starts afresh with each new playback; the
+        // restart is applied at the first write.
+        if (m_state != State::Playing && m_port.restartClockMatch) {
+            m_port.restartClockMatch();
+        }
+        const int moved = drainHandoff(false, now);
+        if (moved > 0) {
+            m_lastInputNs = now;
+            m_state = State::Playing;
+        } else if (m_state == State::Playing && now - m_lastInputNs > kQuietNs) {
+            m_state = State::WaitingForAudio;
+        }
+        publish(m_state, pacing ? pacing->queuedFrames : 0);
+        return;
+    }
     if (!pacing) {
         // No playback timing to pace by (or the output is closed): write
         // what arrived as it arrives.

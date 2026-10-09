@@ -54,6 +54,10 @@
 //                 a slice's lag behind the others capped at 85 ms; a slice
 //                 leaving no longer trims the others. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 6 (R-AUD-15): an output that takes
+//                 the stereo mix into its own clock matcher is written as
+//                 the audio arrives, without this feeder's rate matcher.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -87,6 +91,13 @@ struct VaxOutputPort {
     /// Interleaved 48 kHz stereo, `frames` frames. False when nothing was
     /// written (the output is closed).
     std::function<bool(const float* stereo, int frames)> write;
+    /// R-AUD-15: true when the output takes the 48 kHz stereo mix into its
+    /// own clock matcher (IAudioBus::takesStereoMix). The feeder then
+    /// writes what arrives as it arrives and runs no rate matcher of its
+    /// own; restartClockMatch() restarts the output's matcher when playback
+    /// starts afresh. Either may be empty (an output without one).
+    std::function<bool()> takesStereoMix;
+    std::function<void()> restartClockMatch;
 
     /// The engine's VAX output for `channel` (1..4), with the channel's
     /// VAX gain and mute applied (AudioEngine::writeVaxOutput).

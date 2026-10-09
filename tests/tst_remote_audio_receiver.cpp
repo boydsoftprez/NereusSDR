@@ -19,6 +19,7 @@
 #include "core/session/media/RemoteAudioRateMatcher.h"
 #include "core/session/media/RemoteAudioReceiver.h"
 #include "core/session/media/RemoteAudioRestartBackoff.h"
+#include "fakes/FakeMatcherAudioBus.h"
 #include "fakes/PacedAudioBus.h"
 #include "OperatorWording.h"
 #include <functional>
@@ -1856,6 +1857,117 @@ private slots:
         QVERIFY(!receiver.telemetry().playout);
         QVERIFY(!receiver.telemetry().release);
         receiver.stop();
+    }
+
+    // R-AUD-15, settled call 30: on a speakers bus with its own clock
+    // matcher the receiver releases by the jitter hold alone and writes the
+    // 48 kHz stereo stream into that matcher; it runs no rate matcher of
+    // its own, its counters are the bus matcher's, and begin and end
+    // restart the bus's clock match. Step mode on virtual time; the fake
+    // device reads 128 frames as each 128 frames of time pass.
+    void playsIntoTheSpeakersOwnMatcher()
+    {
+        constexpr quint32 kSsrc = 0x4e520615;
+        AudioEngine engine;
+        engine.setVolume(1.0f);
+        AudioStreamRequest request;
+        request.sampleRate = 48000;
+        auto bus = std::make_unique<FakeMatcherAudioBus>(request, true, 128);
+        AudioFormat format;
+        format.sampleRate = 48000;
+        format.channels = 2;
+        format.sample = AudioFormat::Sample::Float32;
+        QVERIFY(bus->open(format));
+        FakeMatcherAudioBus* device = bus.get();
+        engine.setSpeakersBusForTest(std::move(bus));
+        QVERIFY(engine.remotePlaybackIntoMatcher());
+
+        qint64 now = 1'000'000'000;
+        RemoteAudioReceiver receiver(&engine, nullptr, [&now] { return now; });
+        receiver.setStepModeForTest(true);
+        QSignalSpy errors(&receiver, &RemoteAudioReceiver::errorOccurred);
+        QSignalSpy restarts(&receiver, &RemoteAudioReceiver::restartRequested);
+        // start() ends any earlier playback first, then begins: begin's
+        // restart is the last.
+        const int restartsBefore = device->restartCount();
+        QVERIFY(receiver.start(kSsrc, 0, RemoteAudioProfile::Lossless));
+        QVERIFY(device->restartCount() > restartsBefore);
+        const int restartsAtStart = device->restartCount();
+        // The format begin accepted is still the device's own.
+        QCOMPARE(engine.remotePlaybackFormat(), std::optional<AudioFormat>(format));
+
+        constexpr qint64 kMs = 1'000'000;
+        constexpr int kSeconds = 3;
+        int packet = 0;
+        double owed = 0.0;
+        float peak = 0.0f;
+        for (qint64 ms = 0; ms < qint64(kSeconds) * 1000; ++ms) {
+            now += kMs;
+            while (qint64(packet) * 4 <= ms) {
+                receiver.submit(losslessTonePacket(packet, kSsrc));
+                ++packet;
+            }
+            QVERIFY(receiver.runWorkerPassForTest());
+            owed += 48.0;
+            while (owed >= 128.0) {
+                device->pumpForTest(128);
+                owed -= 128.0;
+                if (ms > 1000) {
+                    for (int i = 0; i < 256; ++i) {
+                        peak = std::max(peak, std::abs(device->lastRead()[i]));
+                    }
+                }
+            }
+        }
+        QCoreApplication::processEvents();
+        QVERIFY2(errors.isEmpty(), errors.isEmpty() ? "" : qPrintable(errors.first().first().toString()));
+        QVERIFY2(restarts.isEmpty(), restarts.isEmpty() ? "" : qPrintable(restarts.first().first().toString()));
+        // Every packet but the jitter hold's last few was written, and the
+        // tone reached the device.
+        QVERIFY2(receiver.decodedPackets() >= quint64(packet - 40),
+                 qPrintable(QStringLiteral("%1 of %2").arg(receiver.decodedPackets()).arg(packet)));
+        QVERIFY2(peak > 0.15f, qPrintable(QString::number(peak)));
+        const auto telemetry = receiver.telemetry();
+        QCOMPARE(telemetry.underflows, 0);
+        QCOMPARE(telemetry.overflows, 0);
+        QVERIFY(telemetry.playout);
+        QCOMPARE(telemetry.playout->speakerQueuedFrames, 0);
+        QVERIFY(telemetry.playout->matcherFillFrames >= 0);
+        QVERIFY(telemetry.deviceConsumedFrames > 0);
+
+        // Muted, the stream still writes (silence) and nothing faults.
+        engine.setMasterMuted(true);
+        for (qint64 ms = 0; ms < 200; ++ms) {
+            now += kMs;
+            while (qint64(packet) * 4 <= qint64(kSeconds) * 1000 + ms) {
+                receiver.submit(losslessTonePacket(packet, kSsrc));
+                ++packet;
+            }
+            QVERIFY(receiver.runWorkerPassForTest());
+            owed += 48.0;
+            while (owed >= 128.0) {
+                device->pumpForTest(128);
+                owed -= 128.0;
+            }
+        }
+        QCoreApplication::processEvents();
+        QVERIFY(errors.isEmpty());
+        QVERIFY(restarts.isEmpty());
+
+        // The device stopping is still a stall after 500 ms.
+        for (qint64 ms = 0; ms < 700 && receiver.runWorkerPassForTest(); ++ms) {
+            now += kMs;
+            while (qint64(packet) * 4 <= qint64(kSeconds) * 1000 + 200 + ms) {
+                receiver.submit(losslessTonePacket(packet, kSsrc));
+                ++packet;
+            }
+        }
+        QCoreApplication::processEvents();
+        QCOMPARE(errors.count(), 1);
+        QCOMPARE(errors.first().at(1).value<RemoteAudioReceiver::Fault>(),
+                 RemoteAudioReceiver::Fault::SpeakerStalled);
+        receiver.stop();
+        QCOMPARE(device->restartCount(), restartsAtStart + 1);
     }
 
     // R-R3-23: remote playback begins on every rate and channel count the

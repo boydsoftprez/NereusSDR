@@ -17,7 +17,8 @@
 //   2026-10-09: native audio plan Task 3 (R-AUD-03, R-AUD-32). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09: native audio plan Task 6 (R-AUD-15): flush() asks the
-//               matcher to drop what is queued. J.J. Boyd (KG4VCF),
+//               matcher to drop what is queued; outputPacing() as a
+//               PortAudio output reports it. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -137,6 +138,21 @@ public:
             return std::nullopt;
         }
         return m_matcher->stats();
+    }
+
+    // As PortAudioBus with a matcher: every frame the device asked for,
+    // the matcher's fill and its automatic size (Task 6).
+    std::optional<OutputPacing> outputPacing() const override
+    {
+        if (!m_matcher) {
+            return std::nullopt;
+        }
+        OutputPacing pacing;
+        pacing.consumedFrames = quint64(m_pumpedFrames.load());
+        pacing.queuedFrames = std::max(0, int(m_matcher->fillFrames() + 0.5));
+        pacing.capacityFrames = m_matcher->stats().rsizeFrames;
+        pacing.callbackFrames = m_callbackFrames;
+        return pacing;
     }
 
     // As PortAudioBus: a flush asks the matcher to drop what is queued at

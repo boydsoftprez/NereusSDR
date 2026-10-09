@@ -1829,6 +1829,28 @@ bool AudioEngine::writeVaxOutput(int channel, const float* stereo, int frames)
     return bus->push(reinterpret_cast<const char*>(scaled.data()), bytes) == bytes;
 }
 
+bool AudioEngine::vaxOutputTakesStereoMix(int channel)
+{
+    if (channel < 1 || channel > 4) {
+        return false;
+    }
+    std::lock_guard<std::mutex> busLock(m_vaxBusMutex[channel - 1]);
+    const IAudioBus* bus = m_vaxBus[channel - 1].get();
+    return bus != nullptr && bus->isOpen() && bus->takesStereoMix();
+}
+
+void AudioEngine::restartVaxOutputClockMatch(int channel)
+{
+    if (channel < 1 || channel > 4) {
+        return;
+    }
+    std::lock_guard<std::mutex> busLock(m_vaxBusMutex[channel - 1]);
+    IAudioBus* bus = m_vaxBus[channel - 1].get();
+    if (bus != nullptr && bus->isOpen()) {
+        bus->restartClockMatch();
+    }
+}
+
 std::optional<bool> AudioEngine::vaxOutputHasReader(int channel)
 {
     if (channel < 1 || channel > 4) {

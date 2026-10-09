@@ -198,6 +198,13 @@ struct RemoteAudioReceiverTelemetry {
 // at (AudioEngine::remotePlaybackFormat()): the rate matcher matches the
 // 48 kHz stream to the device's rate and clock, and a mono device hears
 // the two channels mixed as (left + right) / 2.
+// R-AUD-15 (settled call 30): when the output's bus has its own clock
+// matcher (AudioEngine::remotePlaybackIntoMatcher()), the receiver
+// releases audio by the jitter hold alone, as the PCM sink does, writes
+// the 48 kHz stereo stream into that matcher and runs no rate matcher of
+// its own; the bus's matcher counters are its underflow and overflow
+// counts, and the matcher fill above its working level is delay the
+// adaptive hold sheds.
 class NEREUS_CORE_EXPORT RemoteAudioReceiver final : public QObject {
     Q_OBJECT
 public:

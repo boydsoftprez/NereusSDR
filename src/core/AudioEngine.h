@@ -26,7 +26,9 @@
 //                 the stereo mix gets the 48 kHz block without the speaker
 //                 format converter (silence while muted);
 //                 remotePlaybackIntoMatcher(), remotePlaybackMatcherStats(),
-//                 speakersDelayParts() and the probe's readout.
+//                 speakersDelayParts() and the probe's readout;
+//                 vaxOutputTakesStereoMix() and restartVaxOutputClockMatch()
+//                 for the remote VAX feeder.
 //   2026-10-08 : Native audio plan Task 1 (V-HW-8) by J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code. The audio delay
 //                 probe: setDelayProbeEnabled() adds a click to the speakers
@@ -719,6 +721,12 @@ public:
     // reports it (IAudioBus::outputHasReader); nullopt otherwise or when
     // the channel has no output. Owner thread.
     std::optional<bool> vaxOutputHasReader(int channel);
+    // R-AUD-15: whether the channel's output takes the 48 kHz stereo mix
+    // into its own clock matcher (the Windows VAX bus), and a restart of
+    // that matcher's control (no-op without one). Feeder worker; both take
+    // the channel's lock.
+    bool vaxOutputTakesStereoMix(int channel);
+    void restartVaxOutputClockMatch(int channel);
 
 #ifdef NEREUS_BUILD_TESTS
     // R-R3-44 test seam: makeVaxBus() (channel 1..4) and makeVaxTxBus()
