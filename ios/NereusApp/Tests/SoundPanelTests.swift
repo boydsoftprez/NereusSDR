@@ -1,4 +1,4 @@
-// NereusSDR for iOS: the band's Sound panel mutes this phone, sets the radio speaker, lists, marks and moves the band's sound
+// NereusSDR for iOS: the band's Sound panel mutes this phone, sets the radio and Core speakers, lists, marks and moves the band's sound
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
 import AVFoundation
@@ -16,8 +16,10 @@ import UIKit
 /// band plays is the same choice Setup, Audio, On this phone makes, both
 /// ways. R-SPK-20 (D12): between them the Radio speaker section sets the
 /// Core's speaker level and mute, follows the Core's value, and is greyed
-/// with its reason when it cannot be used. With `NEREUS_MAIN_SHOTS` set,
-/// the panel is written there as PNGs.
+/// with its reason when it cannot be used. R-AUD-29 (D25, D26): under it
+/// the Core speaker section sets the Core's own speaker level and mute,
+/// is left out while the Core plays on no card and comes back by itself.
+/// With `NEREUS_MAIN_SHOTS` set, the panel is written there as PNGs.
 @Suite("SoundPanel", .serialized)
 @MainActor
 struct SoundPanelTests {
@@ -154,7 +156,10 @@ struct SoundPanelTests {
     /// The Core's `radio` ordinals of the speaker's properties (surface.json).
     static let ordinals: [String: UInt16] = ["radioSpeakerVolume": 38, "radioSpeakerMuted": 39,
                                              "speakerAmplifierMode": 40, "radioSpeakerAvailability": 41,
-                                             "speakerAmplifierAvailable": 42]
+                                             "speakerAmplifierAvailable": 42,
+                                             "coreSpeakerVolume": 43, "coreSpeakerMuted": 44,
+                                             "coreSpeakerDevice": 45, "coreSpeakerDevices": 46,
+                                             "coreSpeakerState": 47, "coreSpeakerDetails": 48]
 
     static func radioDelta(_ values: [String: LinkMessage.PropertyValue]) -> LinkMessage {
         .delta(LinkMessage.Delta(key: "radio", properties: values.keys.sorted().map {
@@ -164,8 +169,10 @@ struct SoundPanelTests {
 
     /// A model connected to a fake Core; with `speaker`, the Core offers the
     /// radio speaker (`radioSpeakerVersion` 1) and reports `availability`,
-    /// level 40 and not muted.
-    private func connected(speaker: Bool, availability: Int64 = 1,
+    /// level 40 and not muted. With `core`, the Core also offers the Core
+    /// speaker (`coreSpeakerVersion` 1) with `core` as its state, level 60
+    /// and not muted.
+    private func connected(speaker: Bool, availability: Int64 = 1, core: String? = nil,
                            audio: AudioSessionController? = nil) async throws -> (AppModel, FakeStation) {
         let model = AppModel(phoneSettings: try settings(), audio: audio)
         let station = try FakeStation()
@@ -173,17 +180,30 @@ struct SoundPanelTests {
                             transportFactory: station.transportFactory)
         #expect(await station.waitUntilLive())
         #expect(await ShotWait.until { model.connection == .connected })
-        if speaker {
+        if speaker || core != nil {
             var capabilities = model.mirror.capabilities
-            capabilities[RadioSpeakerModel.capabilityName] = .int(1)
+            if speaker {
+                capabilities[RadioSpeakerModel.capabilityName] = .int(1)
+            }
+            if core != nil {
+                capabilities[CoreSpeakerModel.capabilityName] = .int(1)
+            }
             await station.deliver(.capabilities(LinkMessage.Capabilities(properties: capabilities.keys.sorted().map {
                 LinkMessage.PropertyEntry(name: $0, value: capabilities[$0]?.wireValue ?? .i64(0))
             })))
+        }
+        if speaker {
             await station.deliver(Self.radioDelta([
                 "radioSpeakerVolume": .i64(40), "radioSpeakerMuted": .bool(false), "speakerAmplifierMode": .i64(0),
                 "radioSpeakerAvailability": .i64(availability), "speakerAmplifierAvailable": .bool(false),
             ]))
             #expect(await ShotWait.until { model.mirror.capabilityVersion(RadioSpeakerModel.capabilityName) == 1 })
+        }
+        if let core {
+            await station.deliver(Self.radioDelta([
+                "coreSpeakerVolume": .i64(60), "coreSpeakerMuted": .bool(false), "coreSpeakerState": .utf8(core),
+            ]))
+            #expect(await ShotWait.until { model.mirror.capabilityVersion(CoreSpeakerModel.capabilityName) == 1 })
         }
         return (model, station)
     }
@@ -305,7 +325,165 @@ struct SoundPanelTests {
         await app.disconnect()
     }
 
-    // MARK: Pictures (V-UI-5, against phone-sound-panel.html)
+    // MARK: The Core speaker (R-AUD-29)
+
+    /// The Core's `coreSpeakerState`, as the Core writes it (keys sorted).
+    nonisolated static func coreState(_ state: String, playing: String = "", chosen: String = "",
+                          desktop: Bool = false) -> String {
+        "{\"chosen\":\"\(chosen)\",\"desktop\":\(desktop),\"playing\":\"\(playing)\",\"state\":\"\(state)\"}"
+    }
+
+    nonisolated static let usb = "USB Audio Device"
+    nonisolated static let headphones = "bcm2835 Headphones"
+    nonisolated static let playingUsb = coreState("playing", playing: usb, chosen: usb)
+
+    private static func writes(_ station: FakeStation, of property: String) -> [LinkMessage.PropertyWrite] {
+        radioWrites(station).filter { $0.properties.first?.name == property }
+    }
+
+    @Test("the Core speaker shows while the Core plays; its slider writes the Core's level and follows it")
+    func coreSpeakerVolumeFollowsTheCore() async throws {
+        let (app, station) = try await connected(speaker: true, core: Self.playingUsb)
+        let panel = SoundPanel(app: app)
+        let core = panel.coreSpeaker
+        #expect(await ShotWait.until { core.volume == 60 })
+        #expect(core.isShown && core.isEnabled)
+        #expect(core.reason == nil && core.missingNote == nil && core.refusal == nil)
+
+        core.setVolume(33.6)
+        let write = await keep(station, "coreSpeakerVolume")
+        #expect(write?.properties.first?.value == .i64(34))
+        #expect(await ShotWait.until { core.volume == 34 })
+
+        // A change made on a desktop window or another phone moves the slider here.
+        await station.deliver(Self.radioDelta(["coreSpeakerVolume": .i64(12)]))
+        #expect(await ShotWait.until { core.volume == 12 })
+        // The radio speaker is left alone.
+        #expect(Self.writes(station, of: "radioSpeakerVolume").isEmpty)
+        #expect(app.radioSpeaker.volume == 40)
+        await app.disconnect()
+    }
+
+    @Test("Mute Core speaker toggles the Core's mute; neither other mute touches it")
+    func coreSpeakerMuteIsTheCores() async throws {
+        let (app, station) = try await connected(speaker: true, core: Self.playingUsb)
+        let panel = SoundPanel(app: app)
+        let core = panel.coreSpeaker
+        #expect(await ShotWait.until { core.volume == 60 && app.radioSpeaker.volume == 40 })
+
+        core.setMuted(true)
+        #expect(await keep(station, "coreSpeakerMuted")?.properties.first?.value == .bool(true))
+        #expect(await ShotWait.until { core.muted })
+        #expect(!app.radioSpeaker.muted)
+
+        // Mute radio speaker and Mute this phone leave the Core speaker alone.
+        app.radioSpeaker.setMuted(true)
+        #expect(await keep(station, "radioSpeakerMuted")?.properties.first?.value == .bool(true))
+        panel.setMuted(true)
+        #expect(app.audioMuted)
+        for _ in 0..<2_000 { await Task.yield() }
+        #expect(Self.writes(station, of: "coreSpeakerMuted").count == 1)
+        #expect(core.muted)
+        panel.setMuted(false)
+
+        core.setMuted(false)
+        #expect(await ShotWait.until { Self.writes(station, of: "coreSpeakerMuted").count == 2 })
+        #expect(Self.writes(station, of: "coreSpeakerMuted").last?.properties.first?.value == .bool(false))
+        await app.disconnect()
+    }
+
+    @Test("with its card missing, the section stays live and says in amber where it plays meanwhile")
+    func coreSpeakerMissingCardNote() async throws {
+        let unplugged = Self.coreState("notConnected", playing: Self.headphones, chosen: Self.usb)
+        let (app, station) = try await connected(speaker: true, core: unplugged)
+        let core = app.coreSpeaker
+        #expect(await ShotWait.until { core.missingNote != nil })
+        #expect(core.missingNote == "USB Audio Device is not connected at the Core. "
+            + "Playing on the Core's default, bcm2835 Headphones, until it comes back.")
+        #expect(core.isShown && core.isEnabled && core.volume == 60)
+        core.setVolume(20)
+        #expect(await keep(station, "coreSpeakerVolume")?.properties.first?.value == .i64(20))
+
+        // Held by another program: the same, in use.
+        await station.deliver(Self.radioDelta([
+            "coreSpeakerState": .utf8(Self.coreState("inUse", playing: Self.headphones, chosen: Self.usb)),
+        ]))
+        #expect(await ShotWait.until { core.missingNote?.contains("in use") == true })
+        #expect(core.missingNote == "USB Audio Device is in use by another program at the Core. "
+            + "Playing on the Core's default, bcm2835 Headphones, until it comes back.")
+
+        // It comes back: the note goes by itself.
+        await station.deliver(Self.radioDelta(["coreSpeakerState": .utf8(Self.playingUsb)]))
+        #expect(await ShotWait.until { core.missingNote == nil })
+        #expect(core.isShown && core.isEnabled)
+        await app.disconnect()
+    }
+
+    @Test("while the Core plays on no card the section is left out, and it comes back by itself", arguments: [
+        SoundPanelTests.coreState("noCard"),
+        SoundPanelTests.coreState("waitingForPick", desktop: true),
+        SoundPanelTests.coreState("notConnected", chosen: SoundPanelTests.usb),
+        SoundPanelTests.coreState("inUse", chosen: SoundPanelTests.usb),
+    ])
+    func coreSpeakerLeftOutWithNoCard(state: String) async throws {
+        let (app, station) = try await connected(speaker: true, core: state)
+        let core = app.coreSpeaker
+        #expect(await ShotWait.until { !core.isShown })
+        #expect(core.volume == nil && core.missingNote == nil && core.reason == nil)
+        core.setVolume(80)
+        core.setMuted(true)
+        for _ in 0..<2_000 { await Task.yield() }
+        #expect(Self.writes(station, of: "coreSpeakerVolume").isEmpty)
+        #expect(Self.writes(station, of: "coreSpeakerMuted").isEmpty)
+        // The radio speaker stays as it is.
+        #expect(app.radioSpeaker.isEnabled && app.radioSpeaker.volume == 40)
+
+        // A card is plugged into the Core: the section comes back with no action here.
+        await station.deliver(Self.radioDelta(["coreSpeakerState": .utf8(Self.playingUsb)]))
+        #expect(await ShotWait.until { core.isShown && core.volume == 60 })
+        #expect(core.isEnabled)
+        await app.disconnect()
+    }
+
+    @Test("a Core without the Core speaker greys the section with its reason and sends nothing")
+    func olderCoreGreysTheCoreSpeaker() async throws {
+        let (app, station) = try await connected(speaker: true)
+        let core = app.coreSpeaker
+        #expect(await ShotWait.until { core.reason == CoreSpeakerModel.olderCoreReason })
+        #expect(core.reason == "This Core can't set its speaker from here. Update the Core.")
+        #expect(core.isShown && !core.isEnabled && core.volume == nil)
+        core.setVolume(80)
+        core.setMuted(true)
+        for _ in 0..<2_000 { await Task.yield() }
+        #expect(Self.writes(station, of: "coreSpeakerVolume").isEmpty)
+        #expect(Self.writes(station, of: "coreSpeakerMuted").isEmpty)
+        await app.disconnect()
+    }
+
+    @Test("with no Core reachable the section is greyed: Connect to the Core to change these")
+    func unreachableGreysTheCoreSpeaker() async throws {
+        let alone = AppModel()
+        #expect(alone.coreSpeaker.reason == "Connect to the Core to change these.")
+        #expect(alone.coreSpeaker.isShown && !alone.coreSpeaker.isEnabled)
+
+        let (app, _) = try await connected(speaker: true, core: Self.playingUsb)
+        let core = app.coreSpeaker
+        #expect(await ShotWait.until { core.isEnabled && core.volume == 60 })
+        await app.disconnect()
+        #expect(await ShotWait.until { core.reason == CoreSpeakerModel.unreachableReason })
+        #expect(core.isShown && core.volume == nil)
+    }
+
+    @Test("the state's text reads in any key order and refuses anything else")
+    func coreSpeakerStateDecodes() {
+        let state = CoreSpeakerModel.State.decode(#"{"state":"inUse","playing":"A","desktop":true,"chosen":"B"}"#)
+        #expect(state == CoreSpeakerModel.State(state: .inUse, playing: "A", chosen: "B", desktop: true))
+        #expect(CoreSpeakerModel.State.decode(#"{"chosen":"","desktop":false,"playing":"","state":"asleep"}"#) == nil)
+        #expect(CoreSpeakerModel.State.decode(#"{"chosen":"","playing":"","state":"playing"}"#) == nil)
+        #expect(CoreSpeakerModel.State.decode("") == nil)
+    }
+
+    // MARK: Pictures (V-UI-5, against phone-sound-panel.html and phone-core-speaker-mockup.html)
 
     @Test("the panel with the radio speaker, available and greyed")
     func pictures() async throws {
@@ -326,11 +504,44 @@ struct SoundPanelTests {
         await none.disconnect()
     }
 
-    private func shoot(_ name: String, app: AppModel) async throws {
+    @Test("the panel with the Core speaker in each state")
+    func coreSpeakerPictures() async throws {
+        let size = CGSize(width: 290, height: 680)
+        let states: [(name: String, state: String, shown: Bool)] = [
+            ("playing", Self.playingUsb, true),
+            ("not-connected", Self.coreState("notConnected", playing: Self.headphones, chosen: Self.usb), true),
+            ("in-use", Self.coreState("inUse", playing: Self.headphones, chosen: Self.usb), true),
+            ("no-card", Self.coreState("noCard"), false),
+            ("waiting-for-pick", Self.coreState("waitingForPick", desktop: true), false),
+        ]
+        for entry in states {
+            let audio = await playing(FakeAudioSession(device: .bluetooth("AirPods Pro")))
+            let (app, _) = try await connected(speaker: true, core: entry.state, audio: audio)
+            #expect(await ShotWait.until { app.radioSpeaker.volume == 40 })
+            #expect(await ShotWait.until {
+                app.coreSpeaker.isShown == entry.shown && (app.coreSpeaker.volume == 60) == entry.shown
+            }, "\(entry.name)")
+            try await shoot("sound-panel-core-speaker-\(entry.name)", app: app, size: size)
+            await app.disconnect()
+        }
+
+        let (older, _) = try await connected(speaker: true, audio: controller(FakeAudioSession()))
+        #expect(await ShotWait.until { older.coreSpeaker.reason == CoreSpeakerModel.olderCoreReason })
+        #expect(await ShotWait.until { older.radioSpeaker.volume == 40 })
+        try await shoot("sound-panel-core-speaker-older-core", app: older, size: size)
+        await older.disconnect()
+
+        let (gone, _) = try await connected(speaker: true, core: Self.playingUsb, audio: controller(FakeAudioSession()))
+        #expect(await ShotWait.until { gone.coreSpeaker.volume == 60 })
+        await gone.disconnect()
+        #expect(await ShotWait.until { gone.coreSpeaker.reason == CoreSpeakerModel.unreachableReason })
+        try await shoot("sound-panel-core-speaker-unreachable", app: gone, size: size)
+    }
+
+    private func shoot(_ name: String, app: AppModel, size: CGSize = CGSize(width: 290, height: 520)) async throws {
         guard let directory = ProcessInfo.processInfo.environment["NEREUS_MAIN_SHOTS"], !directory.isEmpty else {
             return
         }
-        let size = CGSize(width: 290, height: 520)
         let window = try BandFlagShotTests.window(size: size)
         let root = ZStack(alignment: .top) {
             Color.black

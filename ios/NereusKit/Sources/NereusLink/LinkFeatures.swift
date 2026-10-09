@@ -184,6 +184,14 @@
 /// `radioSpeakerVersion` 1 and the five properties; a Core that sends none
 /// leaves the panel's radio speaker greyed with its reason.
 ///
+/// `coreSpeaker` 1: the app's Sound panel reads and sets the speaker or
+/// sound card plugged into the Core's own computer (`radio`'s
+/// `coreSpeakerVolume` and `coreSpeakerMuted`, with `coreSpeakerState`
+/// beside them); choosing the Core's card stays on the desktop. The Core
+/// then sends `coreSpeakerVersion` 1 and the six `coreSpeaker` properties;
+/// the panel leaves the section out while the Core plays on no card, and a
+/// Core that sends none leaves it greyed with its reason.
+///
 /// The PA readings need no declaration: the Core sends its telemetry to
 /// every peer at `stationTelemetryVersion` 4 or later.
 public enum LinkFeatures {
@@ -199,5 +207,5 @@ public enum LinkFeatures {
                                             "levelCalibration": 1, "adcAttenuators": 1, "rx2Attenuator": 1,
                                             "radioMic": 1, "rxFilterLowPass": 1, "radeReason": 1,
                                             "audioQuality": 1, "stationCat": 1,
-                                            "radioSpeaker": 1]
+                                            "radioSpeaker": 1, "coreSpeaker": 1]
 }
