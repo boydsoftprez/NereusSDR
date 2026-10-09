@@ -2028,6 +2028,7 @@ set(GUI_SOURCES
     src/gui/setup/AudioDigitalModesPage.cpp
     src/gui/setup/AudioVaxPage.cpp
     src/gui/setup/AudioDriverList.cpp
+    src/gui/setup/AsioSwitchAllDialog.cpp
     src/gui/setup/DeviceCard.cpp
     src/gui/setup/DspSetupPages.cpp
     src/gui/setup/DspOptionsPage.cpp

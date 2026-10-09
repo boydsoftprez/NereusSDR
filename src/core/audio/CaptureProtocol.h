@@ -55,6 +55,8 @@
 //   2026-10-09: native audio plan Task 15 (R-AUD-19 to R-AUD-22): version 4
 //               adds the ASIO records.  J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 17 (R-AUD-21): kAsioResetDetail.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -285,6 +287,11 @@ struct AsioOpen {
 };
 
 enum class AsioStateKind { Running, Restarted, InUse, Failed, Closed };
+
+// Native audio plan Task 17 (R-AUD-21): the detail of a Restarted state the
+// driver's reset caused, so the window can tell it from a restart for the
+// mic coming or going.
+inline constexpr char kAsioResetDetail[] = "reset";
 
 struct AsioState {
     quint32 serial = 0;                  // the AsioOpen it answers; 0 for none

@@ -7,6 +7,10 @@
 //   2026-10-09: native audio plan Task 16 (R-AUD-01, R-AUD-03, R-AUD-06,
 //               R-AUD-08 to R-AUD-11, R-AUD-14, R-AUD-15, R-AUD-16, D10).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 17 (R-AUD-07, R-AUD-19, R-AUD-20,
+//               settled call 28): the ASIO names, the shared note, the
+//               buffer sizes a driver allows and the format note.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/setup/AudioDriverList.h"
@@ -18,6 +22,7 @@
 #include <QChar>
 #include <QStringList>
 
+#include <algorithm>
 #include <cmath>
 
 namespace NereusSDR {
@@ -437,6 +442,95 @@ QString rescanNote(const IAudioDeviceCatalog& catalogue)
         break;
     }
     return older;
+}
+
+QString asioRoleName(AudioRole role)
+{
+    switch (role) {
+    case AudioRole::Speakers:
+        return QStringLiteral("Speakers");
+    case AudioRole::Headphones:
+        return QStringLiteral("Headphones");
+    case AudioRole::TxInput:
+        return QStringLiteral("Microphone");
+    case AudioRole::Vax1:
+    case AudioRole::Vax2:
+    case AudioRole::Vax3:
+    case AudioRole::Vax4:
+        return QStringLiteral("VAX %1").arg(vaxNumber(role));
+    }
+    return {};
+}
+
+QString joinedNames(const QStringList& names)
+{
+    if (names.size() < 2) {
+        return names.join(QString());
+    }
+    return names.mid(0, names.size() - 1).join(QStringLiteral(", ")) + QStringLiteral(" and ")
+        + names.last();
+}
+
+QString asioSharedNote(const QList<AudioRole>& others)
+{
+    if (others.isEmpty()) {
+        return {};
+    }
+    QStringList names;
+    for (const AudioRole role : others) {
+        names.append(asioRoleName(role));
+    }
+    return QStringLiteral("Buffer size and sample rate are shared with %1, on the same ASIO driver.")
+        .arg(joinedNames(names));
+}
+
+QList<int> asioBufferChoices(const AsioDriverCaps& caps)
+{
+    const int minimum = caps.minBufferFrames;
+    const int maximum = caps.maxBufferFrames;
+    if (minimum <= 0 || maximum < minimum) {
+        return {};
+    }
+    if (minimum == maximum) {
+        return {minimum};
+    }
+    QList<int> sizes;
+    auto add = [&sizes, minimum, maximum](int size) {
+        if (size >= minimum && size <= maximum && !sizes.contains(size)) {
+            sizes.append(size);
+        }
+    };
+    if (caps.granularity == -1) {
+        // From third_party/asiosdk/common/asio.h:640-645: powers of two
+        // from the minimum up to the maximum.
+        for (qint64 size = minimum; size <= maximum; size *= 2) {
+            add(static_cast<int>(size));
+        }
+    } else if (caps.granularity > 0
+               && (maximum - minimum) / caps.granularity < kAsioBufferChoicesMax) {
+        for (qint64 size = minimum; size <= maximum; size += caps.granularity) {
+            add(static_cast<int>(size));
+        }
+        add(maximum - (maximum - minimum) % caps.granularity);
+    } else {
+        // Granularity 0, or too many steps to list: the minimum, its
+        // doublings, the preferred size and the last step.
+        add(minimum);
+        if (caps.granularity > 0) {
+            for (qint64 size = minimum; size <= maximum; size *= 2) {
+                add(static_cast<int>(size));
+            }
+        }
+        add(caps.preferredBufferFrames);
+        add(caps.granularity > 0 ? maximum - (maximum - minimum) % caps.granularity : maximum);
+    }
+    std::sort(sizes.begin(), sizes.end());
+    return sizes;
+}
+
+QString asioFormatNote(const QString& driver)
+{
+    return QStringLiteral("%1 uses a sample format NereusSDR can't play or record.").arg(driver);
 }
 
 } // namespace NereusSDR

@@ -42,6 +42,14 @@
 //               Anthropic Claude Code. setBuildDefaultEngineForTest(), so
 //               a page a test lays out for another system shows that
 //               system's engine on a card with no device lists.
+//   2026-10-09: native audio plan Task 17 (R-AUD-07, R-AUD-19 to R-AUD-22,
+//               settled call 28) by J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code. An interface's pairs under its name
+//               in the Device list, the same-pair note, the mic's "Mic is
+//               on:" pick, the one-driver prompt, the ASIO buffer size and
+//               rate shared across cards, the restarted note, the ASIO
+//               control panel button and greyed pairs for a driver whose
+//               sample format NereusSDR cannot use.
 // =================================================================
 
 #include "core/AudioDeviceConfig.h"
@@ -56,6 +64,9 @@
 
 #include <optional>
 
+class QFormLayout;
+class QPushButton;
+class QRadioButton;
 class QTimer;
 class QToolButton;
 class QVBoxLayout;
@@ -174,6 +185,20 @@ public:
     static void setBuildDefaultEngineForTest(std::optional<AudioEngineKind> engine);
 #endif
 
+    // ── Pairs and ASIO (native audio plan Task 17) ──────────────────────
+    // An interface with more than two channels lists a heading row (its
+    // name, never picked, kGroupHeadingRole true) and its pairs under it;
+    // the popup shows a pair as kPopupTextRole ("Outputs 3-4"), indented,
+    // and the closed field its full label ("<name> · Outputs 3-4").
+    // Notes: "samePairNote" (speakers and headphones), "asioFormatNote"
+    // (settled call 28), and in Device details "asioBufferNote",
+    // "asioSharedNote" and "asioRestartedNote"; the "asioControlPanel"
+    // button; the mic card's "micChannelRow" with "micChannelLeft",
+    // "micChannelRight" and "micChannelBoth".  A pick that would put a
+    // second ASIO driver in use asks first (AsioSwitchAllDialog).
+    static constexpr int kPopupTextRole = Qt::UserRole + 8;
+    static constexpr int kGroupHeadingRole = Qt::UserRole + 9;
+
 signals:
     // Emitted on any control edit (excluding loadFromSettings).
     // Carries the card's current AudioDeviceConfig.
@@ -213,6 +238,14 @@ private:
     void updateEngineNote();
     QString deviceNameForId(const QString& deviceId) const;
     AudioEngineKind selectedEngine() const;
+    // Task 17
+    QString selectedAsioDriver() const;   // empty unless the card is on ASIO with a driver
+    bool confirmAsioSwitch(int index);    // false: the pick was cancelled
+    void syncFromSavedChoice();
+    void refreshAsioDetails();
+    void restoreStandardLists();
+    void refreshSamePairNote();
+    void updateMicChannelRow();
 
     QString       m_prefix;
     Role          m_role;
@@ -260,6 +293,21 @@ private:
     QString                         m_driverHostApi;           // older drivers: the host API
     Selection                       m_selection;
     AudioRoleStatus                 m_status;
+
+    // Task 17
+    QFormLayout*  m_detailsForm{nullptr};
+    QLabel*       m_samePairNote{nullptr};
+    QLabel*       m_asioFormatNote{nullptr};
+    QLabel*       m_asioBufferNote{nullptr};
+    QLabel*       m_asioSharedNote{nullptr};
+    QLabel*       m_asioRestartedNote{nullptr};
+    QPushButton*  m_asioControlPanel{nullptr};
+    QWidget*      m_micChannelRow{nullptr};
+    QRadioButton* m_micLeft{nullptr};
+    QRadioButton* m_micRight{nullptr};
+    QRadioButton* m_micBoth{nullptr};
+    bool          m_asioLists{false};      // the rate and buffer lists are the driver's
+    bool          m_switchingAsio{false};  // applying this card's own switch
 
     // 200 ms intra-control debounce for the buffer-size combo only (per
     // addendum §2.1 — debounce is intra-control, not card-wide).  Other

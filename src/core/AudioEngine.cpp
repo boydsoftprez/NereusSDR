@@ -291,6 +291,12 @@
 //                 ASIO backend reaches the mic helper through the capture
 //                 supervisor, and an ASIO output holds Demand::AsioDevice
 //                 so the helper runs with the PC mic off. NereusSDR-original.
+//   2026-10-09: native audio plan Task 17 (R-AUD-07, R-AUD-19 to R-AUD-22)
+//                 by J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. asioStatus(), planAsioSwitchFor(), applyAsioSwitch(),
+//                 setAsioBufferAndRate(), openAsioControlPanel(), the 5 s
+//                 restarted note after a driver reset, and the role each
+//                 output's stream request plays. NereusSDR-original.
 // =================================================================
 
 #include "AudioEngine.h"
@@ -331,6 +337,7 @@
 #include <portaudio.h>
 
 #include <algorithm>
+#include <cmath>
 #include <bit>
 #include <array>
 #include <vector>
@@ -430,6 +437,14 @@ AudioEngine::AudioEngine(QObject* parent)
             static_cast<size_t>(kMixScratchMinFrames) * 2, 0.0f);
     }
     m_mixScratchFrames.store(kMixScratchMinFrames, std::memory_order_seq_cst);
+
+    // Native audio plan Task 17: a role's new choice may change who is on
+    // the ASIO driver (asioStatusChanged for the Setup cards).
+    connect(this, &AudioEngine::speakersConfigChanged, this, [this]() { noteAsioStatusMaybeChanged(); });
+    connect(this, &AudioEngine::headphonesConfigChanged, this, [this]() { noteAsioStatusMaybeChanged(); });
+    connect(this, &AudioEngine::headphonesEnabledChanged, this, [this]() { noteAsioStatusMaybeChanged(); });
+    connect(this, &AudioEngine::txInputConfigChanged, this, [this]() { noteAsioStatusMaybeChanged(); });
+    connect(this, &AudioEngine::vaxConfigChanged, this, [this]() { noteAsioStatusMaybeChanged(); });
     // Native audio plan Task 7: roleStatusChanged may be queued.
     qRegisterMetaType<NereusSDR::AudioRole>();
     qRegisterMetaType<NereusSDR::AudioRoleStatus>();
@@ -971,7 +986,8 @@ void AudioEngine::reinitForSampleRate(int newWireRateHz)
 
 std::unique_ptr<IAudioBus> AudioEngine::makeBus(const AudioDeviceConfig& cfg,
                                                 bool capture,
-                                                bool* inUse)
+                                                bool* inUse,
+                                                std::optional<AudioRole> role)
 {
     if (inUse != nullptr) {
         *inUse = false;
@@ -1033,6 +1049,7 @@ std::unique_ptr<IAudioBus> AudioEngine::makeBus(const AudioDeviceConfig& cfg,
             request.delayMs = std::max(0, cfg.delayMs);
             request.exclusive = engine == AudioEngineKind::WindowsExclusive
                                 || (engine == AudioEngineKind::PortAudio && cfg.exclusiveMode);
+            request.role = role;   // Task 17: the helper's ASIO use names it
             std::unique_ptr<IAudioBus> bus = backend->createOutput(request);
             if (!bus) {
                 qCWarning(lcAudio) << "Audio output not created on" << audioEngineLabel(engine);
@@ -1404,6 +1421,7 @@ void AudioEngine::installCaptureSupervisor(CaptureSupervisor::Options options)
                 if (AsioBackend* const asio = asioBackend()) {
                     asio->onAsioState(state);
                 }
+                onAsioSessionState(state);
             });
     if (m_asioDemanded) {
         m_asioLease = m_captureSupervisor->acquire(CaptureSupervisor::Demand::AsioDevice);
@@ -1947,7 +1965,7 @@ AudioOpenResult AudioEngine::openRole(AudioRole role, AudioEngineKind engine,
     }
 
     bool inUse = false;
-    std::unique_ptr<IAudioBus> bus = makeBus(cfg, /*capture=*/false, &inUse);
+    std::unique_ptr<IAudioBus> bus = makeBus(cfg, /*capture=*/false, &inUse, role);
     const bool opened = bus != nullptr;
     QString backendName;
     if (opened) {
@@ -2416,6 +2434,292 @@ std::optional<AudioFormat> AudioEngine::roleFormat(AudioRole role) const
     }
     return bus->negotiatedFormat();
 }
+
+// ── ASIO for the Setup cards (native audio plan Task 17) ────────────────────
+
+namespace {
+
+QString asioRoleKeyPath(AudioRole role, const char* key)
+{
+    return rolePrefix(role) + QLatin1Char('/') + QLatin1String(key);
+}
+
+bool savedTrue(const QString& key)
+{
+    return AppSettings::instance().value(key, QStringLiteral("False")).toString()
+           == QStringLiteral("True");
+}
+
+} // namespace
+
+std::optional<AsioDriverCaps> AudioEngine::asioDriverCaps(const QString& driver) const
+{
+    if (driver.isEmpty()) {
+        return std::nullopt;
+    }
+#ifdef NEREUS_BUILD_TESTS
+    const auto known = m_asioCapsForTest.constFind(driver);
+    if (known != m_asioCapsForTest.constEnd()) {
+        return *known;
+    }
+#endif
+    if (AsioBackend* const asio = asioBackend()) {
+        return asio->driverCaps(driver);
+    }
+    return std::nullopt;
+}
+
+QList<AsioUse> AudioEngine::asioUses() const
+{
+    // R-AUD-19: the saved choices on ASIO.  The headphones and a VAX
+    // channel count only while their Enabled box is on, as they play only
+    // then.
+    QList<AsioUse> uses;
+    for (int i = 0; i < kAudioRoleCount; ++i) {
+        const AudioRole role = static_cast<AudioRole>(i);
+        const AudioDeviceConfig saved = AudioDeviceConfig::loadFromSettings(rolePrefix(role));
+        if (saved.engine != AudioEngineKind::Asio || saved.isNone()) {
+            continue;
+        }
+        if (role == AudioRole::Headphones
+            && !(m_headphonesEnabled || savedTrue(asioRoleKeyPath(role, "Enabled")))) {
+            continue;
+        }
+        if (vaxChannelOf(role) != 0 && !savedTrue(asioRoleKeyPath(role, "Enabled"))) {
+            continue;
+        }
+        const QString driver = !saved.deviceId.isEmpty() ? saved.deviceId : saved.deviceName;
+        if (driver.isEmpty()) {
+            continue;
+        }
+        AsioUse use{role, driver, AudioChannelPair{}, AudioDeviceDirection::Output};
+        use.direction = role == AudioRole::TxInput ? AudioDeviceDirection::Input
+                                                   : AudioDeviceDirection::Output;
+        // The saved first channel, as the pair the driver's channels give
+        // it (an odd last channel is a one-channel pair).
+        int channels = 2;
+        if (const std::optional<AsioDriverCaps> caps = asioDriverCaps(driver)) {
+            channels = use.direction == AudioDeviceDirection::Input ? caps->inputChannels
+                                                                    : caps->outputChannels;
+        } else if (m_catalogue) {
+            for (const AudioDeviceInfo& device :
+                 m_catalogue->devices(AudioBackendId::Asio, use.direction)) {
+                if (device.id == driver) {
+                    channels = device.channelCount;
+                    break;
+                }
+            }
+        }
+        const int first = std::max(1, saved.firstChannel);
+        use.pair = AudioChannelPair{first, 2};
+        for (const AudioChannelPair& pair : audioChannelPairs(channels)) {
+            if (pair.firstChannel == first) {
+                use.pair = pair;
+                break;
+            }
+        }
+        uses.append(use);
+    }
+    return uses;
+}
+
+AsioStatus AudioEngine::asioStatus() const
+{
+    AsioStatus status;
+    const QList<AsioUse> uses = asioUses();
+    AsioBackend* const asio = asioBackend();
+    const QString session = asio != nullptr ? asio->sessionDriver() : QString();
+    status.driver = !session.isEmpty() ? session
+                                       : (uses.isEmpty() ? QString() : uses.first().driver);
+    if (status.driver.isEmpty()) {
+        return status;
+    }
+    for (const AsioUse& use : uses) {
+        if (use.driver == status.driver) {
+            status.users.append(use.role);
+        }
+    }
+    status.caps = asioDriverCaps(status.driver);
+    // Settled call 28: a driver whose sample format NereusSDR cannot convert.
+    status.formatUnsupported = status.caps && !asioDeviceFormat(status.caps->sampleType);
+
+    // R-AUD-20: what the session runs at, else what it will open at (the
+    // saved values inside the driver's caps, as AsioBackend opens).
+    const AppSettings& s = AppSettings::instance();
+    const int savedFrames = s.value(QStringLiteral("audio/Asio/BufferFrames"), 0).toInt();
+    const double savedRate = s.value(QStringLiteral("audio/Asio/SampleRate"), 48000).toDouble();
+    const int runningFrames = asio != nullptr ? asio->sessionBufferFrames() : 0;
+    if (runningFrames > 0 && session == status.driver) {
+        status.bufferFrames = runningFrames;
+        status.sampleRate = asio->sessionRate();
+    } else if (status.caps) {
+        status.bufferFrames = asioSessionBufferFrames(*status.caps, savedFrames);
+        status.sampleRate = status.caps->sampleRates.contains(savedRate)
+                                ? savedRate
+                                : status.caps->currentRate;
+    } else {
+        status.bufferFrames = savedFrames;
+        status.sampleRate = savedRate;
+    }
+    status.restartedRecently = m_asioRestartNote != nullptr && m_asioRestartNote->isActive();
+    return status;
+}
+
+AsioSwitchPlan AudioEngine::planAsioSwitchFor(AudioRole role, const QString& driver,
+                                              AudioChannelPair pair) const
+{
+    const AudioDeviceDirection direction = role == AudioRole::TxInput
+                                               ? AudioDeviceDirection::Input
+                                               : AudioDeviceDirection::Output;
+    const AsioUse requested{role, driver, pair, direction};
+    std::optional<AsioDriverCaps> caps = asioDriverCaps(driver);
+    if (!caps) {
+        // Not described yet: its channel counts from the device lists.
+        AsioDriverCaps listed;
+        listed.name = driver;
+        listed.inputChannels = 0;
+        listed.outputChannels = 0;
+        if (m_catalogue) {
+            for (const AudioDeviceInfo& device :
+                 m_catalogue->devices(AudioBackendId::Asio, AudioDeviceDirection::Input)) {
+                if (device.id == driver) {
+                    listed.inputChannels = device.channelCount;
+                }
+            }
+            for (const AudioDeviceInfo& device :
+                 m_catalogue->devices(AudioBackendId::Asio, AudioDeviceDirection::Output)) {
+                if (device.id == driver) {
+                    listed.outputChannels = device.channelCount;
+                }
+            }
+        }
+        caps = listed;
+    }
+    return planAsioSwitch(asioUses(), requested, *caps);
+}
+
+void AudioEngine::applyRoleChoice(AudioRole role, const AudioDeviceConfig& cfg)
+{
+    switch (role) {
+    case AudioRole::Speakers: setSpeakersConfig(cfg); break;
+    case AudioRole::Headphones: setHeadphonesConfig(cfg); break;
+    case AudioRole::TxInput: setTxInputConfig(cfg); break;
+    case AudioRole::Vax1:
+    case AudioRole::Vax2:
+    case AudioRole::Vax3:
+    case AudioRole::Vax4: setVaxConfig(vaxChannelOf(role), cfg); break;
+    }
+}
+
+void AudioEngine::applyAsioSwitch(const AsioSwitchPlan& plan)
+{
+    // R-AUD-19: each moved role keeps its other settings; only its driver
+    // and pair change (the retired WASAPI keys are never rewritten).  A
+    // role that opens while the old driver still runs for another retries
+    // through the stream supervisor once that one has moved.
+    AppSettings& s = AppSettings::instance();
+    for (const AsioUse& move : plan.moves) {
+        s.setValue(asioRoleKeyPath(move.role, "Engine"), audioEngineKey(AudioEngineKind::Asio));
+        s.setValue(asioRoleKeyPath(move.role, "DeviceId"), plan.toDriver);
+        s.setValue(asioRoleKeyPath(move.role, "DeviceName"), plan.toDriver);
+        s.setValue(asioRoleKeyPath(move.role, "FirstChannel"),
+                   QString::number(std::max(1, move.pair.firstChannel)));
+    }
+    for (const AsioUse& move : plan.moves) {
+        applyRoleChoice(move.role, AudioDeviceConfig::loadFromSettings(rolePrefix(move.role)));
+    }
+    m_lastAsioStatus = asioStatus();
+    if (!plan.moves.isEmpty()) {
+        emit asioStatusChanged();   // the moved cards show their new pairs
+    }
+}
+
+void AudioEngine::setAsioBufferAndRate(int bufferFrames, double sampleRate)
+{
+    // R-AUD-20: one buffer size and one rate for every role on the driver.
+    AppSettings& s = AppSettings::instance();
+    const int frames = std::max(0, bufferFrames);
+    s.setValue(QStringLiteral("audio/Asio/BufferFrames"), QString::number(frames));
+    s.setValue(QStringLiteral("audio/Asio/SampleRate"), QString::number(sampleRate));
+    if (AsioBackend* const asio = asioBackend()) {
+        asio->preferencesChanged();
+    }
+    const QList<AudioRole> users = asioStatus().users;
+    for (const AudioRole role : users) {
+        s.setValue(asioRoleKeyPath(role, "BufferSamples"), QString::number(frames));
+        s.setValue(asioRoleKeyPath(role, "SampleRate"),
+                   QString::number(static_cast<int>(std::lround(sampleRate))));
+    }
+    for (const AudioRole role : users) {
+        applyRoleChoice(role, AudioDeviceConfig::loadFromSettings(rolePrefix(role)));
+    }
+    m_lastAsioStatus = asioStatus();
+    emit asioStatusChanged();
+}
+
+void AudioEngine::openAsioControlPanel()
+{
+    // R-AUD-22: the driver's own settings window, shown by the helper.
+    const QString driver = asioStatus().driver;
+    if (driver.isEmpty()) {
+        return;
+    }
+    for (const std::shared_ptr<IAudioEngineBackend>& backend : m_backends) {
+        if (backend && backend->id() == AudioBackendId::Asio) {
+            backend->openControlPanel(driver);
+            return;
+        }
+    }
+}
+
+void AudioEngine::onAsioSessionState(const CaptureProtocol::AsioState& state)
+{
+    // R-AUD-21: a restart after the driver's reset shows its note for
+    // kAsioRestartNoteMs; a restart for the mic coming or going does not.
+    if (state.state == CaptureProtocol::AsioStateKind::Restarted
+        && state.detail == QLatin1String(CaptureProtocol::kAsioResetDetail)) {
+        if (m_asioRestartNote == nullptr) {
+            m_asioRestartNote = new QTimer(this);
+            m_asioRestartNote->setSingleShot(true);
+            connect(m_asioRestartNote, &QTimer::timeout, this, [this]() {
+                m_lastAsioStatus = asioStatus();
+                emit asioStatusChanged();
+            });
+        }
+        m_asioRestartNote->start(m_asioRestartNoteMs);
+        m_lastAsioStatus = asioStatus();
+        emit asioStatusChanged();
+        return;
+    }
+    noteAsioStatusMaybeChanged();
+}
+
+void AudioEngine::noteAsioStatusMaybeChanged()
+{
+    const AsioStatus status = asioStatus();
+    if (m_lastAsioStatus && *m_lastAsioStatus == status) {
+        return;
+    }
+    m_lastAsioStatus = status;
+    emit asioStatusChanged();
+}
+
+#ifdef NEREUS_BUILD_TESTS
+void AudioEngine::setAsioDriverCapsForTest(const QString& driver, std::optional<AsioDriverCaps> caps)
+{
+    if (caps) {
+        m_asioCapsForTest.insert(driver, *caps);
+    } else {
+        m_asioCapsForTest.remove(driver);
+    }
+    noteAsioStatusMaybeChanged();
+}
+
+void AudioEngine::deliverAsioStateForTest(const CaptureProtocol::AsioState& state)
+{
+    onAsioSessionState(state);
+}
+#endif
 
 AudioDelayParts AudioEngine::delayParts(AudioRole role) const
 {

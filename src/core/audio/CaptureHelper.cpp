@@ -31,6 +31,10 @@
 //               its uses, AsioDescribe lists the drivers and their caps,
 //               AsioControlPanel opens the driver's panel.  J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 17 (R-AUD-07, R-AUD-19 to R-AUD-22):
+//               a Restarted state after a driver reset carries
+//               kAsioResetDetail.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/audio/CaptureHelper.h"
@@ -1301,7 +1305,7 @@ private:
     void onAsioRestarted()
     {
         if (!m_asioOutputs.empty()) {
-            sendAsioRun(P::AsioStateKind::Restarted);
+            sendAsioRun(P::AsioStateKind::Restarted, QString::fromLatin1(P::kAsioResetDetail));
         }
         checkAsioMicRate();
     }
@@ -1315,7 +1319,7 @@ private:
     }
 
     // The session's state for the window's latest open.
-    void sendAsioRun(P::AsioStateKind kind)
+    void sendAsioRun(P::AsioStateKind kind, const QString& detail = QString())
     {
         if (kind == P::AsioStateKind::Failed || !m_asio || !m_asio->isOpen()) {
             const bool busy = m_asio && m_asio->lastFailure() == AsioDriverFailure::InUse;
@@ -1328,6 +1332,7 @@ private:
         state.serial = m_asioSerial;
         state.state = kind;
         state.driver = clampText(m_asio->driverName());
+        state.detail = detail;
         state.bufferFrames = m_asio->bufferFrames();
         state.rate = m_asio->sampleRate();
         const AsioDriverCaps caps = m_asio->caps();
