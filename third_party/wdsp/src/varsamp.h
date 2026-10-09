@@ -24,6 +24,16 @@ warren@wpratt.com
 
 */
 
+// NereusSDR modifications (2026-10-09, J.J. Boyd KG4VCF, with Anthropic Claude
+// Code; against the pinned TAPR WDSP 2.10 tree at b02d5bac, whose varsamp.c and
+// varsamp.h match Thetis v2.10.3.15): varsamp keeps a second, phase-major copy
+// of its coefficients (ht) beside h, and hshift reads its taps from that copy.
+// Upstream reads rsize taps R doubles apart (8 KB at R = 1024) for every output
+// sample; with 4 KB pages that touches a different page for each tap, which made
+// a 48 kHz rmatch stream cost about ten times the processor time on aarch64
+// Linux it costs on macOS. The values read and the arithmetic are unchanged, so
+// the output is bit-identical (R-AUD-15).
+
 #ifndef _varsamp_h
 #define _varsamp_h
 
@@ -52,6 +62,7 @@ typedef struct _varsamp
 	double dicvar;
 	double delta;
 	double* hs;
+	double* ht;		// NereusSDR: h by phase, (R + 1) rows of rsize taps; ht[p * rsize + m] = h[p + m * R]
 	int R;
 	double h_offset;
 	double isamps;
