@@ -20,6 +20,7 @@ directory alongside NereusSDR's own `LICENSE`.
 | rnnoise 70f1d256 | NR3 noise reduction and its two bundled models | BSD-3-Clause | `rnnoise.txt`, `rnnoise-notices.txt` | `rnnoise.txt` |
 | DeepFilterNet d375b2d8 | DFNR noise reduction library and its bundled model | Apache-2.0 OR MIT | `deepfilternet.txt`, `deepfilternet-crates.txt` | `deepfilternet-apache.txt`, `deepfilternet-mit.txt` |
 | PortAudio v19.7.0 | audio device input and output | MIT | `portaudio.txt`, `portaudio-notices.txt` | `portaudio.txt` |
+| Steinberg ASIO SDK 2.3.4 (Windows builds) | ASIO driver loading and the ASIO entry points for the ASIO engine, in the mic helper nereus-audio-capture | GPL-3.0-only (dual Steinberg ASIO License OR GPL-3.0, taken under GPL-3.0); the host helper files carry an embedded BSD-style notice | `asiosdk.txt`, `asiosdk-notices.txt` | `GPLv3.txt` |
 | nlohmann json 55f93686 | JSON parsing for libdatachannel | MIT | `nlohmann-json.txt` | `nlohmann-json.txt` |
 | zlib v1.3.1 (Windows builds) | compression for stored equaliser settings | Zlib | `zlib.txt` | `zlib.txt` |
 | libASPL v3.1.2 (macOS audio driver) | the NereusSDR VAX audio driver installed by the macOS package | MIT | `libaspl.txt` | `libaspl.txt` |
@@ -61,6 +62,7 @@ directory, or when a text file here is named by no row.
 | rnnoise | `third_party/rnnoise`, FetchContent `rnnoise_upstream` | 70f1d256acd4b34a572f999a05c87bf00b67730d | desktop packages and the Core (models too) | `rnnoise.txt`, `rnnoise-notices.txt` |
 | DeepFilterNet | `third_party/deepfilter`, built or downloaded by `setup-deepfilter.sh` and `setup-deepfilter.ps1` | d375b2d8309e0935d165700c91da9de862a99c31 | desktop packages, and the Core when its build has the library | `deepfilternet.txt`, `deepfilternet-crates.txt` |
 | PortAudio | FetchContent `portaudio` | v19.7.0 | desktop packages and the Core | `portaudio.txt`, `portaudio-notices.txt` |
+| Steinberg ASIO SDK | `third_party/asiosdk`, the release archive `ASIO-SDK_2.3.4_2025-10-15.zip` copied unchanged (SHA-256 in `third_party/asiosdk/VERSION.txt`), built as `asiosdk_host` on Windows only | 2.3.4 | Windows packages (the mic helper) | `asiosdk.txt`, `asiosdk-notices.txt` |
 | zlib | FetchContent `zlib` on Windows; the system library elsewhere | v1.3.1 on Windows | Windows packages | `zlib.txt` |
 | libdatachannel | FetchContent `nereus_libdatachannel`, with build-owned source copies changed by `cmake/patches/libdatachannel-keep-remote-description-first.cpp`, `libdatachannel-set-dtls-mtu-before-incoming.cpp`, `libdatachannel-0003-retain-juice-agent-through-turn-release.patch`, `libdatachannel-0004-retain-ice-lifetime-anchor.patch` and `libdatachannel-0005-defer-dtls-startup.patch` in the same directory | v0.24.5 | desktop packages and the Core | `libdatachannel.txt`, `libdatachannel-notices.txt` |
 | libjuice | FetchContent `nereus_libjuice`, with build-owned source copies changed by `cmake/patches/libjuice-0001-give-turn-allocations-back.patch`, `libjuice-0002-bounded-turn-release-lifecycle.patch` and `libjuice-0003-keep-poll-worker-with-retained-agents.patch` in the same directory | 3c40a3545b6b1b62c7adee7f8f2bd58aa290afd6 | desktop packages and the Core | `libjuice.txt`, `libjuice-notices.txt` |
@@ -110,7 +112,8 @@ files carry only the notice `libspecbleach.txt` and `LGPLv2.1.txt` already
 hold. The DeepFilterNet header NereusSDR compiles carries no notice.
 libsodium's file also lists the public-domain and CC0 dedications its
 sources carry in place of a copyright notice (the preset reads those
-too). SPAKE2+EE's compiled files carry no notice beyond `spake2-ee.txt`,
+too). The ASIO SDK has no preset in the script: `asiosdk-notices.txt` was
+collected by hand from the files `asiosdk_host` compiles and names them. SPAKE2+EE's compiled files carry no notice beyond `spake2-ee.txt`,
 so it has no such file. The
 plog headers libdatachannel compiles carry no copyright notice, and
 libdatachannel's compiled files include no nlohmann json header. The
@@ -222,6 +225,10 @@ the §6(b) fallback.
 - plog, usrsctp and libsrtp: permissive MIT or BSD dependencies whose full
   notices are reproduced here.
 - OpenSSL 3: Apache-2.0, compatible with this GPLv3 combined work.
+- Steinberg ASIO SDK 2.3.4 (Windows builds): dual licensed, the Steinberg
+  ASIO License or GPL version 3; NereusSDR takes it under GPL-3.0, the
+  licence of the combined work. Its host helper files' embedded BSD-style
+  notice is reproduced in `asiosdk-notices.txt`.
 - Mbed TLS: dual Apache-2.0 OR GPL-2.0-or-later, used under Apache-2.0,
   compatible with this GPLv3 combined work and with the App Store
   permission of the iPhone and iPad app (`ios/LICENSE`).
@@ -263,6 +270,7 @@ the §6(b) fallback.
 - `deepfilternet-apache.txt` DeepFilterNet's copy of the Apache License 2.0
 - `deepfilternet-mit.txt` DeepFilterNet full MIT notice
 - `portaudio.txt`       PortAudio full MIT notice
+- `asiosdk.txt`         Steinberg ASIO SDK licence (dual Steinberg ASIO License or GPL-3.0)
 - `nlohmann-json.txt`   nlohmann json full MIT notice
 - `zlib.txt`            zlib full notice
 - `libaspl.txt`         libASPL full MIT notice
@@ -273,6 +281,7 @@ the §6(b) fallback.
 - `r8brain-notices.txt` notices in the r8brain-free-src headers NereusSDR compiles
 - `rnnoise-notices.txt` notices in the rnnoise sources NereusSDR compiles
 - `portaudio-notices.txt` notices in the PortAudio sources NereusSDR compiles
+- `asiosdk-notices.txt` notices in the ASIO SDK sources NereusSDR compiles
 - `libdatachannel-notices.txt` notices in the libdatachannel sources NereusSDR compiles
 - `libjuice-notices.txt` notices in the libjuice sources NereusSDR compiles
 - `usrsctp-notices.txt` notices in the usrsctp sources NereusSDR compiles

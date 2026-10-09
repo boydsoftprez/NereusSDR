@@ -779,6 +779,7 @@ handles the real hardware interface, DAX handles virtual routing.
 
 - Use ASIO SDK (Steinberg, free for non-commercial — check license for
   NereusSDR's open-source status)
+  Superseded 2026-10-09: Steinberg dual-licensed the ASIO SDK 2.3.4 under GPL version 3; NereusSDR bundles it (third_party/asiosdk/).
 - Alternatively, PortAudio with ASIO host API (LGPL, well-tested)
 - ASIO callbacks run on a dedicated high-priority thread — same atomic
   parameter pattern as current AudioEngine

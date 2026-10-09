@@ -529,16 +529,19 @@ FetchContent_Declare(
     GIT_TAG        v19.7.0  # verified cmake-clean release
 )
 
-# PortAudio build options — turn off ASIO. Direct ASIO support was
-# dropped during the 2026-04-19 GPL compliance review (see plan §"GPL
-# Compliance Review"); PortAudio's built-in ASIO host API is gated off
-# for the same reason (the Steinberg ASIO SDK license is
-# GPL-incompatible). All other PortAudio host APIs remain enabled:
+# PortAudio build options: PortAudio's own ASIO host API stays off,
+# because NereusSDR hosts ASIO itself (its own ASIO engine, built on the
+# vendored SDK below). History: the 2026-04-19 GPL compliance review
+# dropped ASIO because the Steinberg ASIO SDK licence was then
+# GPL-incompatible. Since SDK 2.3.4 (October 2025) the SDK is dual
+# licensed, the Steinberg ASIO License or GPL version 3, and NereusSDR,
+# distributed under GPL-3.0 (LICENSE-NOTICE), takes it under GPL-3.0.
+# All other PortAudio host APIs remain enabled:
 # MME / DS / WDM-KS / WASAPI on Windows, CoreAudio on macOS,
 # ALSA / Pulse / PipeWire / JACK on Linux.
 set(PA_BUILD_SHARED OFF CACHE BOOL "PortAudio static" FORCE)
 set(PA_BUILD_STATIC ON  CACHE BOOL "PortAudio static" FORCE)
-set(PA_USE_ASIO    OFF CACHE BOOL "PortAudio ASIO host API — forced OFF for GPL compliance (Steinberg SDK incompatible)" FORCE)
+set(PA_USE_ASIO    OFF CACHE BOOL "PortAudio ASIO host API, forced OFF: NereusSDR hosts ASIO itself" FORCE)
 
 # Linux audio backends — force ON so the static PortAudio actually contains
 # the host-API modules. PortAudio's CMake nominally auto-detects ALSA/JACK
@@ -558,6 +561,15 @@ endif()
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "Minimum CMake policy version for vendored subprojects" FORCE)
 
 FetchContent_MakeAvailable(portaudio)
+
+# Steinberg ASIO SDK 2.3.4 (third_party/asiosdk, vendored unchanged;
+# GPL-3.0 as NereusSDR takes it, see third_party/asiosdk/VERSION.txt and
+# docs/attribution/ASIO-SDK-PROVENANCE.md). Defines the static library
+# asiosdk_host, which only the mic helper nereus-audio-capture links.
+# ASIO exists only on Windows, so macOS and Linux never see the target.
+if(WIN32)
+    add_subdirectory(third_party/asiosdk)
+endif()
 
 # PortAudio's Windows host APIs (pa_win_ds.c, pa_win_wasapi.c, pa_win_wdmks.c)
 # call windows.h's min / max macros directly. The global NOMINMAX above

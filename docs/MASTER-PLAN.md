@@ -1091,6 +1091,7 @@ Scope:
 - **Linux bridge** — `pactl`-loaded `module-pipe-source` × 4 + `module-pipe-sink` × 1, rebranded to `nereussdr-vax-*`. Works on both Pulse and PipeWire-via-pipewire-pulse. Stale-module cleanup on startup.
 - **Windows BYO path** — `VirtualCableDetector` regex-matches VB-Audio family, VAC, Voicemeeter, Dante, FlexRadio DAX. First-run dialog pre-fills bindings; links to vendor install pages when none detected.
 - ~~Optional Direct ASIO engine (Windows) — cmASIO parity~~ **Deferred** per 2026-04-19 GPL-3 compliance review (Steinberg ASIO SDK not GPL-compatible). PortAudio's built-in ASIO host API remains as the ASIO path. See plan's GPL Compliance Review section and spec §8.5 compliance note.
+  - Corrected 2026-10-09: the incompatibility is no longer true. Steinberg dual-licensed the ASIO SDK 2.3.4 under GPL version 3, and NereusSDR bundles it (third_party/asiosdk/) for its own native ASIO engine (docs/architecture/2026-10-08-native-audio-engines-design.md). PortAudio's ASIO host API stays off.
 - **Routing model** — SmartSDR-style: `SliceModel.vaxChannel` (0..4) set via new `VaxChannelSelector` row on `VfoWidget`; speakers always-on unless muted; one VAX owns TX at a time (`TransmitModel.txOwnerSlot`).
 - **`VaxApplet` (docked, ported from AetherSDR `DaxApplet`, renamed DAX→VAX)** — 4 channel strips with meter + gain + mute + device picker + assigned-slice tags; TX row with gain + meter.
 - **Menu-bar `MasterOutputWidget`** — global volume + mute + right-click device picker; scroll-wheel fine-tune.

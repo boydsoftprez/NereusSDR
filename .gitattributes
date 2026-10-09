@@ -7,3 +7,6 @@ resources/bandplans/** linguist-data
 # every context line and the configure would stop: "patch failed:
 # src/agent.c:157". Never convert their line endings.
 *.patch -text
+# The Steinberg ASIO SDK is vendored byte for byte from its release archive
+# (CRLF line endings included); never convert it.
+third_party/asiosdk/** -text

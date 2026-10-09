@@ -589,6 +589,8 @@ Each extends `SetupPage`, is registered directly under the "Audio" category in `
 
 ### 8.5 ASIO SDK integration (Windows Direct ASIO)
 
+> **Licence today (2026-10-09):** The compliance note below is history. Steinberg released ASIO SDK 2.3.4 in October 2025 under a dual licence: the Steinberg ASIO License or the GNU General Public License version 3 (the SDK's `LICENSE.txt`; its `changes.txt` says 2.3.4 added it). NereusSDR is distributed under GPL-3.0 (`LICENSE-NOTICE`) and takes the SDK under GPL-3.0, so the SDK can be vendored and linked into distributed binaries. It is vendored unchanged at `third_party/asiosdk/` (see `third_party/asiosdk/VERSION.txt` and `docs/attribution/ASIO-SDK-PROVENANCE.md`), and NereusSDR hosts ASIO itself as its own engine (`docs/architecture/2026-10-08-native-audio-engines-design.md`, D3). PortAudio's own ASIO host API stays off (`PA_USE_ASIO` OFF in the root `CMakeLists.txt`). The "cannot be bundled" and "GPL-3 incompatible" statements below were true of SDK 2.3.3 and earlier and no longer apply.
+
 > **Compliance note (2026-04-19):** After a GPL-3 compliance review during plan authoring, **Direct ASIO is deferred from Phase 3O.** The Steinberg ASIO SDK license is not GPL-3 compatible; linking it into distributed NereusSDR binaries would violate both the ASIO SDK terms and GPL-3. Audacity and other GPL audio projects hit the same wall and ship ASIO-disabled. Decision recorded in the implementation plan's GPL Compliance Review section. This spec section is retained as design intent; if community demand justifies revisiting, it lands as a separate compliance proposal (developer-build-only gate or Steinberg commercial licensing), not part of Phase 3O.
 
 For reference, the original design was:

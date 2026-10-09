@@ -25,9 +25,19 @@ version" grant. The same applies to upstream FFTW, WDSP, Midi2Cat, and the
 Andromeda/ARIES contributions (G8NJJ), which carry compatible v2-or-later
 grants. Permissive dependencies (PortAudio MIT, rnnoise BSD-3-Clause,
 SharpDX MIT, SkiaSharp MIT) and LGPL-2.1-or-later dependencies
-(libspecbleach) are GPLv3-compatible. NereusSDR does not bundle the
-Steinberg ASIO SDK (the "cmASIO" component in Thetis) — its proprietary
-licensing is incompatible with any GPL version.
+(libspecbleach) are GPLv3-compatible.
+
+NereusSDR bundles the Steinberg ASIO SDK 2.3.4 in third_party/asiosdk/
+(updated 2026-10-09). Steinberg dual-licenses that release under the
+Steinberg ASIO License or the GNU General Public License version 3, with
+no "or later" clause (third_party/asiosdk/LICENSE.txt); earlier releases,
+including the one Thetis's "cmASIO" component uses, were under the
+Steinberg licence only. NereusSDR uses the SDK under GPL version 3. It is
+compiled only into the Windows build, so Windows builds that contain it
+are distributed under GPL version 3, and the SDK's files are not
+available to recipients under GPL version 2 (section 2 below does not
+apply to them). The SDK's host helper files carry their own embedded
+notice, reproduced in packaging/third-party-licenses/asiosdk-notices.txt.
 
 ------------------------------------------------------------------------------------------
 2. Downstream recipients' election rights (GPL propagation)
