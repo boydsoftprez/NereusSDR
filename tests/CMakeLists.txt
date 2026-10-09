@@ -607,6 +607,14 @@ nereus_add_test(tst_meter_dynamics)
 nereus_add_test(tst_meter_item_bar)
 nereus_add_test(tst_reading_name)
 nereus_add_test(tst_meter_item_scale)
+# Rotor control plan Task 5: drag to turn on the compass meter item
+# (RotatorItem), its stop circle and its elevation face. A fake command sink;
+# no rotor.
+nereus_add_test(tst_rotator_item_drag)
+# Rotor control plan Task 6: the Rotor applet and its dial (after Longpath's
+# RotorDialWidget): the mockup's states, the hold dead man, turn on release,
+# Stop the only red control. A fake command sink; no rotor.
+nereus_add_test(tst_rotor_applet)
 nereus_add_test(tst_meter_presets)
 
 # ── Phase 3M-1c G.1 / G.2: VfoDisplayItem TX-state badge + Phase L routing ──
@@ -6171,6 +6179,81 @@ nereus_add_test(tst_cty_dat_parser)
 target_compile_definitions(tst_cty_dat_parser PRIVATE
     NEREUS_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 
+# ── Rotor control: GreatCircle (grid square, bearing, long path) ───────────
+# Pins Maidenhead to the centre of the square or subsquare (4 or 6
+# characters, case-insensitive, anything else gives no position), the
+# initial great-circle bearing against published worked examples (Aviation
+# Formulary LAX to JFK, Movable Type Scripts Baghdad to Osaka), long path
+# as short + 180, and "no bearing" for a bad or empty grid.
+nereus_add_test(tst_great_circle)
+
+# ── Rotor control: strict headings (after Longpath RotorPeilung.h) ─────────
+# Not-a-number, infinity, below 0 and above 360 are refused, never wrapped;
+# 360 is north and comes out as 0; an empty or blank box is refused, never
+# north; text that is not a number is refused.
+nereus_add_test(tst_rotor_heading)
+
+# ── Rotor control: routes, end stops and the overlap (after Longpath ──────
+# BeamHeading::plan). The moves and the clockwise run come from JJ's ERC
+# full-range capture (tests/data/rotor/erc-gs232b-range-2026-10-07.log,
+# south stop, 450 degrees): 183 to 010 is +187, 292 to 000 is +68, 301 to
+# 180 is -121, and the run from 183 (span 3) to the clockwise stop ends at
+# span 449 on AZ=269, 446 degrees of travel. A first reply in the overlap
+# band leaves the span unknown and the route unknown until a reply outside
+# it. No end stop takes the shorter way; a north stop with range 360 takes
+# 350 to 010 as -340. The offset is added to a reply and removed from a
+# target. The model list is checked against Hamlib's rotlist.h numbers.
+nereus_add_test(tst_rotor_route)
+target_compile_definitions(tst_rotor_route PRIVATE
+    NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
+
+# ── Rotor control: the Core's rotor link (Task 3b) ────────────────────────
+# GS-232A and GS-232B over a fake serial stream and rotctld over a fake TCP
+# stream: the exact bytes for poll, set, stop and move (Hamlib gs232a.c,
+# gs232b.c, rotctld(1)); the ERC's `AZ=302  EL=000` and `AZ=302` read, the
+# bare CR, CR LF and `>` not; Hamlib's invalid replies; one poll at a time,
+# faster while turning; stop ahead of anything queued; stale after 1500 ms
+# and fresh on the next reply. Both bench captures from JJ's ERC are
+# replayed and the span positions checked (south stop span 3, clockwise
+# stop AZ=269 span 449). Driver 4 runs a stand-in script for rotctld.
+nereus_add_test(tst_rotor_connection)
+target_compile_definitions(tst_rotor_connection PRIVATE
+    NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
+
+# ── Rotor control: starting rotctld (after Longpath RotctldProcess) ───────
+# The command line (loopback only, no bare -r), the cause line from
+# Hamlib's stderr, the missing-binary refusal, a held port sidestepped, and
+# start, stop and restart of a stand-in script; never the real rotctld.
+nereus_add_test(tst_rotctld_process)
+
+# ── Rotor control: the Core's rotor controller (Task 3c) ──────────────────
+# Settings under Rotor/* with the contract's defaults, the refusals word for
+# word, arrival within 1.5 degrees or when the heading stops changing, Stop
+# ahead of anything queued, the hold dead man (750 ms lapse, release, the
+# holding window going away), turning to a callsign by its bearing, the
+# presets, and span and travel on a 450 degree south-stop rotor. A fake
+# byte stream; no real serial port or rotctld.
+nereus_add_test(tst_station_rotor_controller)
+
+# ── Rotor control: the rotor on the station link (rotor plan Task 4b) ────
+# The read-only `rotor` object, the seven rotor commands and every refusal,
+# the minor and remoteRotorControlVersion gates, a window's hold ending with
+# its session, the tools catalogue's Rotor entry, and a remote window's
+# StationClient. A fake byte stream; no real serial port or rotctld.
+nereus_add_test(tst_station_rotor_link
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+# The on-air test keys the Core's MOX on an injected radio.
+target_compile_definitions(tst_station_rotor_link PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Rotor control: cty.dat on the headless Core, bearings on spots (4a) ────
+# Linked to NereusCore alone, as nereusd is: the Core's own :/cty.dat places
+# a callsign and is parsed once; the Core's start loads it so the rotor turns
+# to a call; a spot record's bearingDeg is GreatCircle's short-path bearing
+# from the station's grid square to one decimal, -1 with no grid square, an
+# unreadable one or a call cty.dat cannot place; the spot model keeps it.
+nereus_add_test(tst_core_spot_bearing CORE_ONLY)
+
 # ── Phase 3J-2 Task C2: AdifParser (.adi / .adif log parser) ───────────────
 # Pins the contract that AdifParser parses ADIF (Amateur Data
 # Interchange Format) log files into QVector<QsoRecord> (callsign
@@ -6414,6 +6497,12 @@ nereus_add_test(tst_mode_menu_rade)
 # (drawSpotMarkers + showSpotClusterPopup). First task of Phase E
 # (panadapter spot overlay).
 nereus_add_test(tst_spot_overlay_render)
+
+# ── Rotor control plan Task 8: Turn beam from spots, and auto-turn ─────────
+# The pan's spot menu and the Spot Hub offer Turn beam (greyed with the
+# reason when there is no rotor or no bearing), the Spot Hub shows a Bearing
+# column, and with auto-turn off tuning to a spot never moves the rotor.
+nereus_add_test(tst_spot_beam_turner)
 
 # ── Phase 3J-2 Task F1+F2+F3: SpotHubDialog tab-strip smoke ────────────────
 # Pins the contract that SpotHubDialog (the AetherSDR DxClusterDialog
@@ -7025,6 +7114,12 @@ target_link_libraries(tst_rf2ks_connection_control PRIVATE Qt6::Network)
 nereus_add_test(tst_rf2ks_applet_layout)
 nereus_add_test(tst_rf2ks_applet_context_menu)
 nereus_add_test(tst_rfkit_page_master_gate)
+# Rotor control plan Task 7: CAT & Network > Rotor. A remote window lists
+# the Core's serial ports and sends configureRotor and setRotorPresets; a
+# refusal shows on the page while it is open and as a notice otherwise; a
+# Core too old for the rotor greys the page with the reason; a local window
+# sets up its own rotor over a fake byte stream. No real serial port.
+nereus_add_test(tst_rotor_setup_page)
 
 # Task 13: SMeterWidget subscribes to RadioModel::externalAmpOperateChanged
 # (cross-vendor aggregator) instead of the PGXL-specific statusUpdated signal.
@@ -7870,6 +7965,9 @@ nereus_add_test(tst_settings_backup_codec)
 nereus_add_test(tst_settings_backup_transfer)
 nereus_add_test(tst_settings_backup_export fakes/LoopbackTransport.cpp EXTRA_LABELS session)
 nereus_add_test(tst_settings_backup_window)
+# Import All Settings: the imported file is what the next launch reads; the
+# running window's later saves (the quit flush) no longer write over it.
+nereus_add_test(tst_settings_import)
 
 # Remote Daemon R2, Task 20: the remote-mode GUI gate. Pins RadioModel's
 # ownsLocalDsp() capability authority and the Role::Remote-only hand-out audit
@@ -9963,6 +10061,8 @@ nereus_add_test(tst_cat_pty CORE_ONLY)
 # Native CAT setup and applet controls.
 nereus_add_test(tst_cat_setup)
 nereus_add_test(tst_cat_applet)
+# A realized CAT channel page outlives its RadioModel on quit.
+nereus_add_test(tst_cat_setup_page_teardown)
 
 # Production TCP -> CAT parser -> model/connection intent and ownership gates.
 nereus_add_test(tst_cat_integration CORE_ONLY)

@@ -17,6 +17,10 @@
 //              J.J. Boyd (KG4VCF), AI tooling: Claude Code.
 // 2026-10-07 - The PTY dialects from the one list in core/cat/CatPtyDialects.h.
 //              J.J. Boyd (KG4VCF), AI tooling: Claude Code.
+// 2026-10-08 - A Serial Ports or TCP/IP CAT page alive when its RadioModel is
+//              destroyed (quit with Setup open) stops listening to CAT, so
+//              CatService's teardown no longer reads deleted slices.
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "CatNetworkSetupPages.h"
 #include "core/cat/CatControl.h"
 #include "core/cat/CatPtyDialects.h"
@@ -206,6 +210,16 @@ CatChannelSetupPage::CatChannelSetupPage(RadioModel* model, bool serial, QWidget
         connect(m_control,&CatControl::platformChanged,this,[this] { syncPlatform(true); });
     }
     if (model) { connect(model,&RadioModel::sliceAdded,this,[this] { syncFromModel(); }); connect(model,&RadioModel::sliceRemoved,this,[this] { syncFromModel(); }); }
+    if (model) {
+        // On quit MainWindow destroys its RadioModel before the Setup dialog.
+        // The model's slices are gone when destroyed() fires, and CatService
+        // (a child, deleted after it) then reports each channel stopped: the
+        // page stops listening here instead of reading slices that are gone.
+        connect(model,&QObject::destroyed,this,[this] {
+            if (m_control) { disconnect(m_control,nullptr,this,nullptr); }
+            m_control.clear();
+        });
+    }
     syncFromModel();
 }
 bool CatChannelSetupPage::eventFilter(QObject* watched,QEvent* event) {

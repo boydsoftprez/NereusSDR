@@ -38,6 +38,9 @@
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-06: the reporter software tag is "NereusSDR <version>".
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08: the spot record's bearingDeg (rotor control plan Task
+//               4a). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 // =================================================================
 
 #include <QtTest>
@@ -265,15 +268,17 @@ private slots:
         spot.comment = QStringLiteral("big signal");
         spot.timestamp = QDateTime(QDate(2026, 9, 26), QTime(18, 24), Qt::UTC);
         const QJsonObject f = SpotSourceHost::spotRecordFields(spot, nullptr);
-        QCOMPARE(f.keys(), (QStringList{"band", "call", "comment", "dxccColour", "dxccPriority",
-                                        "frequencyHz", "mode", "resolvedMode", "source",
-                                        "spotter", "timeUtc"}));
+        QCOMPARE(f.keys(), (QStringList{"band", "bearingDeg", "call", "comment", "dxccColour",
+                                        "dxccPriority", "frequencyHz", "mode", "resolvedMode",
+                                        "source", "spotter", "timeUtc"}));
         QCOMPARE(f.value("frequencyHz").toDouble(), 14025000.0);
         QCOMPARE(f.value("call").toString(), QStringLiteral("JA1ABC"));
         QCOMPARE(f.value("timeUtc").toString(), QStringLiteral("2026-09-26T18:24:00Z"));
         QCOMPARE(f.value("band").toInt(), static_cast<int>(Band::Band20m));
         QCOMPARE(f.value("dxccColour").toString(), QString());
         QCOMPARE(f.value("dxccPriority").toInt(), 0);
+        // Rotor control plan Task 4a: no cty.dat, no bearing (-1, never 0).
+        QCOMPARE(f.value("bearingDeg").toDouble(), -1.0);
         QCOMPARE(f.value("resolvedMode").toInt(), static_cast<int>(DSPMode::CWU));
     }
 

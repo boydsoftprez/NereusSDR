@@ -39,6 +39,7 @@ maintained there:
 | Display extras (the subscription fields that ask the Core for the peak blobs, peak hold, noise floor, waterfall levels, normalise, calibration and averaging, and the NSDX v1 datagram beside each NSDC frame) | [2026-09-23-display-extras-v1.md](2026-09-23-display-extras-v1.md) |
 | Notch control (the `notches` object and the `notch.*` commands) | [2026-09-23-remote-notch-control-v1.md](2026-09-23-remote-notch-control-v1.md) |
 | Accessory control (the `tuner`, `amplifier`, `rfkit`, `stationTci`, `accessoryData` and `accessorySettings` objects, the 4O3A, RF-Kit, station TCI, accessory record and device settings commands and refusals) | [2026-09-23-remote-accessory-control-v1.md](2026-09-23-remote-accessory-control-v1.md) |
+| Rotor control (the `rotor` object, the seven rotor commands and their refusals, bearings on spots) | [2026-10-07-remote-rotor-control-v1.md](2026-10-07-remote-rotor-control-v1.md) |
 
 The design authority behind all of them is the
 [remote daemon architecture design](2026-07-28-remote-daemon-architecture-design.md),
@@ -1157,6 +1158,7 @@ table.
 | `setupDescriptionVersion` | 1 |
 | `miniDisplayVersion` | 1 |
 | `accessoryTxVersion` | 1 |
+| `remoteRotorControlVersion` | 1 |
 | `radioAntennaRowsVersion` | 1 |
 | `vaxVersion` | 1 |
 | `txEqCurveVersion` | 2 |
@@ -2485,32 +2487,33 @@ older window sees only the values it was built for.
 | 82 | `setupDescriptionVersion` | `i64` |
 | 83 | `miniDisplayVersion` | `i64` |
 | 84 | `accessoryTxVersion` | `i64` |
-| 85 | `radioAntennaRowsVersion` | `i64` |
-| 86 | `vaxVersion` | `i64` |
-| 87 | `txEqCurveVersion` | `i64` |
-| 88 | `band2mVersion` | `i64` |
-| 89 | `diversityPatternVersion` | `i64` |
-| 90 | `diversityControlVersion` | `i64` |
-| 91 | `logCategoryListVersion` | `i64` |
-| 92 | `radioModelsVersion` | `i64` |
-| 93 | `coreAddressesVersion` | `i64` |
-| 94 | `audioQualityVersion` | `i64` |
-| 95 | `stationTciSettingsVersion` | `i64` |
-| 96 | `adcAttenuatorVersion` | `i64` |
-| 97 | `paProfileVersion` | `i64` |
-| 98 | `radeStatusVersion` | `i64` |
-| 99 | `txInhibitReasonVersion` | `i64` |
-| 100 | `paTransmitBandVersion` | `i64` |
-| 101 | `sliceAccessVersion` | `i64` |
-| 102 | `mediaDirectVersion` | `i64` |
-| 103 | `mediaStunUrls` | `utf8` |
-| 104 | `rx2AttenuatorVersion` | `i64` |
-| 105 | `radioMicVersion` | `i64` |
-| 106 | `rxFilterLowPassVersion` | `i64` |
-| 107 | `radeReasonVersion` | `i64` |
-| 108 | `stationCatVersion` | `i64` |
-| 109 | `radioSpeakerVersion` | `i64` |
-| 110 | `coreBuildInfo` | `utf8` |
+| 85 | `remoteRotorControlVersion` | `i64` |
+| 86 | `radioAntennaRowsVersion` | `i64` |
+| 87 | `vaxVersion` | `i64` |
+| 88 | `txEqCurveVersion` | `i64` |
+| 89 | `band2mVersion` | `i64` |
+| 90 | `diversityPatternVersion` | `i64` |
+| 91 | `diversityControlVersion` | `i64` |
+| 92 | `logCategoryListVersion` | `i64` |
+| 93 | `radioModelsVersion` | `i64` |
+| 94 | `coreAddressesVersion` | `i64` |
+| 95 | `audioQualityVersion` | `i64` |
+| 96 | `stationTciSettingsVersion` | `i64` |
+| 97 | `adcAttenuatorVersion` | `i64` |
+| 98 | `paProfileVersion` | `i64` |
+| 99 | `radeStatusVersion` | `i64` |
+| 100 | `txInhibitReasonVersion` | `i64` |
+| 101 | `paTransmitBandVersion` | `i64` |
+| 102 | `sliceAccessVersion` | `i64` |
+| 103 | `mediaDirectVersion` | `i64` |
+| 104 | `mediaStunUrls` | `utf8` |
+| 105 | `rx2AttenuatorVersion` | `i64` |
+| 106 | `radioMicVersion` | `i64` |
+| 107 | `rxFilterLowPassVersion` | `i64` |
+| 108 | `radeReasonVersion` | `i64` |
+| 109 | `stationCatVersion` | `i64` |
+| 110 | `radioSpeakerVersion` | `i64` |
+| 111 | `coreBuildInfo` | `utf8` |
 
 <!-- /surface -->
 
@@ -2814,6 +2817,37 @@ An enum property lists the values its domain allows.
 | 27 | `bandFollow` | `enum` | outbound | 0, 1, 2, 3 |
 | 28 | `bandFollowAddress` | `utf8` | outbound |  |
 | 29 | `bandFollowPort` | `i64` | outbound |  |
+
+**RotorModel** (26 properties)
+
+| Ordinal | Property | Wire kind | Direction | Enum values |
+| --- | --- | --- | --- | --- |
+| 0 | `connectionPhase` | `enum` | outbound | 0, 1, 2, 3, 4, 5, 6, 7 |
+| 1 | `connectionError` | `utf8` | outbound |  |
+| 2 | `driver` | `enum` | outbound | 0, 1, 2, 3, 4 |
+| 3 | `label` | `utf8` | outbound |  |
+| 4 | `serialPort` | `utf8` | outbound |  |
+| 5 | `baud` | `i64` | outbound |  |
+| 6 | `host` | `utf8` | outbound |  |
+| 7 | `port` | `i64` | outbound |  |
+| 8 | `serialPorts` | `utf8` | outbound |  |
+| 9 | `axes` | `enum` | outbound | 0, 1 |
+| 10 | `rangeDeg` | `i64` | outbound |  |
+| 11 | `endStop` | `enum` | outbound | 0, 1, 2 |
+| 12 | `spanPositionDeg` | `f64` | outbound |  |
+| 13 | `travelDeg` | `f64` | outbound |  |
+| 14 | `routeKnown` | `bool` | outbound |  |
+| 15 | `offsetDeg` | `f64` | outbound |  |
+| 16 | `hamlibModel` | `i64` | outbound |  |
+| 17 | `rotctldAvailable` | `bool` | outbound |  |
+| 18 | `positionFresh` | `bool` | outbound |  |
+| 19 | `azimuthDeg` | `f64` | outbound |  |
+| 20 | `elevationDeg` | `f64` | outbound |  |
+| 21 | `targetAzimuthDeg` | `f64` | outbound |  |
+| 22 | `targetElevationDeg` | `f64` | outbound |  |
+| 23 | `motion` | `enum` | outbound | 0, 1, 2 |
+| 24 | `presets` | `utf8` | outbound |  |
+| 25 | `fault` | `utf8` | outbound |  |
 
 **SetupDescription** (12 properties)
 
@@ -3346,6 +3380,7 @@ destroyed during the session.
 | `stationCat` | `StationCatModel` |
 | `accessoryData` | `AccessoryDataModel` |
 | `accessorySettings` | `AccessorySettingsModel` |
+| `rotor` | `RotorModel` |
 | `devices` | `StationDevicesFacade` |
 | `connectedDevices` | `ConnectedDevicesFacade` |
 | `txState` | `TransmitState` |
@@ -5355,7 +5390,7 @@ the Core keeps:
 
 | Stream | Capacity | Record |
 | --- | --- | --- |
-| `spots` | 500 | One spot the Core holds (its SpotModel: the station sources' spots, and FreeDV Reporter's once the Core runs it), `id` its index: `timeUtc` (string, ISO 8601 UTC), `frequencyHz` (number, whole Hz), `call`, `mode`, `source` (the source's label: `Cluster`, `RBN`, `POTA`, `PSK`, `FreeDV`), `spotter`, `comment` (strings), `band` (number, the Band as the catalogue's `bands` numbers it: 11 for GEN, 27 for 2 m; a peer without `band2mVersion` 1 reads 11 for 2 m, section 6.1), `dxccColour` (string, `#rrggbb`, empty when the Core does not colour it) and `dxccPriority` (number: 4 a new DXCC entity, 3 a new band, 2 a new mode, 1 worked before, 0 not known or colouring off); with `recordStreamVersion` 2, `resolvedMode` (number, the slice's `dspMode` value 0 to 13 a click on the spot selects, as the desktop resolves it: `CWU` 4 or `CWL` 3 for CW by the 10 MHz rule, `USB` 1, `LSB` 0, `DIGU` 7, `DIGL` 9, `AM` 6, `SAM` 10, `FM` 5 (NFM too), `RADE_U` 12 or `RADE_L` 13 for a FreeDV spot; absent when the resolver has none: the spot or its comment names a mode it does not map, or names none and the spot is below 1.8 MHz or in a band's digital segment, whose inferred `DIGU` the resolver's table does not map) |
+| `spots` | 500 | One spot the Core holds (its SpotModel: the station sources' spots, and FreeDV Reporter's once the Core runs it), `id` its index: `timeUtc` (string, ISO 8601 UTC), `frequencyHz` (number, whole Hz), `call`, `mode`, `source` (the source's label: `Cluster`, `RBN`, `POTA`, `PSK`, `FreeDV`), `spotter`, `comment` (strings), `band` (number, the Band as the catalogue's `bands` numbers it: 11 for GEN, 27 for 2 m; a peer without `band2mVersion` 1 reads 11 for 2 m, section 6.1), `dxccColour` (string, `#rrggbb`, empty when the Core does not colour it) and `dxccPriority` (number: 4 a new DXCC entity, 3 a new band, 2 a new mode, 1 worked before, 0 not known or colouring off); `bearingDeg` (number, the short-path great-circle bearing in degrees from the Core's grid square to the spot's cty.dat position, 0 to under 360 to one decimal, -1 when not known: no grid square, one that cannot be read, or a call cty.dat cannot place; never 0 for not known; sent by a Core of this build whatever the window advertises, and read by a window only when the Core advertises `remoteRotorControlVersion` 1, docs/architecture/2026-10-07-remote-rotor-control-v1.md); with `recordStreamVersion` 2, `resolvedMode` (number, the slice's `dspMode` value 0 to 13 a click on the spot selects, as the desktop resolves it: `CWU` 4 or `CWL` 3 for CW by the 10 MHz rule, `USB` 1, `LSB` 0, `DIGU` 7, `DIGL` 9, `AM` 6, `SAM` 10, `FM` 5 (NFM too), `RADE_U` 12 or `RADE_L` 13 for a FreeDV spot; absent when the resolver has none: the spot or its comment names a mode it does not map, or names none and the spot is below 1.8 MHz or in a band's digital segment, whose inferred `DIGU` the resolver's table does not map) |
 | `spotConsole:<source>` | 200 | One console line of a station source (`dxCluster`, `rbn`, `pota`, `pskReporter`, and with `stationFreedvVersion` 1 `freedvReporter`), `id` a rising number: `line` (string). A command typed from any device shows as `> <command>` |
 | `freedvStations` | 1000 | With `stationFreedvVersion` 1: one station FreeDV Reporter lists, as the Core hears it, `id` its FreeDV Reporter session id: the FreeDV Reporter dialog's 14 columns, `callsign`, `gridSquare` (strings), `distanceKm` and `headingDeg` (numbers, from the Core's own grid square; 0 with `headingCardinal` empty while either grid square is not known), `headingCardinal` (string, `N` to `NNW`), `version` (string), `frequencyHz` (number, whole Hz, 0 not known), `txMode` (string), `status` (string: `Active`, `TX` or `RX Only`), `userMessage` (string), `lastTxUtc` (string, ISO 8601 UTC, empty when never), `lastRxCallsign`, `lastRxMode` (strings), `snrDb` (number, -99 not known) and `lastUpdateUtc` (string, ISO 8601 UTC, empty when not known); then `transmitting` (boolean), `receivingFrom` (string: whom its latest receive report heard, the last callsign it named, while that report stands; empty once a frequency change clears it), `messageChangedAtMs` (number, the Core's clock in ms since the epoch when `userMessage` last changed, 0 never) and `lastRxUtc` (string, ISO 8601 UTC, when its latest receive report came, empty when none stands); with `stationFreedvVersion` 2, `band` (number, the Band as the `spots` record numbers it: 0 160 m, 1 80 m, 2 60 m, 3 40 m, 4 30 m, 5 20 m, 6 17 m, 7 15 m, 8 12 m, 9 10 m, 10 6 m, 11 GEN for a frequency outside those bands, 12 WWV within 5 kHz of 2.5, 5, 10, 15, 20 or 25 MHz, 27 2 m (144 to 148 MHz; a peer without `band2mVersion` 1 reads 11, section 6.1); each band's edges belong to it; absent while `frequencyHz` is 0). The list starts again (a reset) each time the Core's connection to FreeDV Reporter connects or ends |
 | `coreLog` | 200 | With `supportBundleVersion` 1: one line of the Core's log as its log file has it (`[HH:mm:ss.zzz] INF: text`, addresses already shortened), `id` its number in the Core's log (rising): `line` (string). Keys, tokens and pairing codes are removed as the support bundle removes them. The Core reads its log every 250 ms while a peer follows the stream, and only then; its first backlog is the newest lines at the first subscribe |
@@ -5862,6 +5897,14 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `setTxInterlockPolicy` | `mode` i64, `graceMs` i64, `swrGateEnabled` bool, `swrGateMax` f64 | `accessoryDataVersion` | 1 | 11 |
 | `setPgxlPowerCap` | `enabled` bool, `watts` i64 | `accessoryDataVersion` | 1 | 11 |
 | `clearAccessoryFaults` | `device` utf8 | `accessoryDataVersion` | 1 | 11 |
+| `setRotorTarget` | `azimuthDeg` f64, `elevationDeg` f64 | `remoteRotorControlVersion` | 1 | 11 |
+| `turnRotorToCall` | `call` utf8, `longPath` bool | `remoteRotorControlVersion` | 1 | 11 |
+| `stopRotor` | none | `remoteRotorControlVersion` | 1 | 11 |
+| `nudgeRotor` | `direction` enum, `active` bool | `remoteRotorControlVersion` | 1 | 11 |
+| `configureRotor` | `driver` enum, `serialPort` utf8, `baud` i64, `host` utf8, `port` i64, `hamlibModel` i64, `axes` enum, `endStop` enum, `rangeDeg` i64, `offsetDeg` f64 | `remoteRotorControlVersion` | 1 | 11 |
+| `disconnectRotor` | none | `remoteRotorControlVersion` | 1 | 11 |
+| `setRotorPresets` | `presets` utf8 | `remoteRotorControlVersion` | 1 | 11 |
+| `refreshRotorPorts` | none | `remoteRotorControlVersion` | 1 | 11 |
 | `requestIoBoardProbe` | none | `radioHardwareVersion` | 2 | 11 |
 | `setAlexRxAntenna` | `band` i64, `antenna` i64, `rxOnly` bool | `radioHardwareVersion` | 3 | 11 |
 | `setAlexRxAntennaForRadio` | `mac` utf8, `band` i64, `antenna` i64, `rxOnly` bool | `radioAntennaRowsVersion` | 1 | 11 |
@@ -6382,6 +6425,18 @@ These command groups need a sentence beyond the table:
   again when it stops."); the first three also while the Core is not
   connected to the amp. The reasons are in the remote accessory control
   document.
+- **The rotor** (`remoteRotorControlVersion` 1). `setRotorTarget`,
+  `turnRotorToCall`, `stopRotor`, `nudgeRotor`, `configureRotor`,
+  `disconnectRotor`, `setRotorPresets` and `refreshRotorPorts` go to the Core's rotor
+  controller, from a peer at agreed minor 11 on a Core that advertises the
+  capability (otherwise "Update this app to turn the rotor on this Core."
+  or "This Core does not control a rotor. Updating the Core may help.").
+  `accepted` means the command left for the rotor; where it points arrives
+  on the read-only `rotor` object. None keys anything or switches an RF
+  path, so the rotor turns while the radio is on the air, and none is a
+  shared setting. A session ending ends the turn button it was holding.
+  The arguments and reasons are in
+  [remote rotor control version 1](2026-10-07-remote-rotor-control-v1.md).
 - **The Tune Power slider.** `setTunePowerForTxBand` (`watts`, 0 to 100,
   0 to 99 on a Hermes Lite 2) does what the TX applet's Tune Power slider
   does in a local window: it sets the tune power for the band the Core

@@ -526,7 +526,8 @@ void checkDesktopValues(const QJsonObject& catalog, HPSDRModel model, ProtocolVe
     }
 
     // Tools and the Radio menu's items, in the desktop's order, without
-    // MIDI Mapping and Macro Buttons (D42).
+    // MIDI Mapping and Macro Buttons (D42). The Rotor last (remote rotor
+    // control v1), listed whether or not a rotor is set up.
     QStringList tools;
     bool catSeen=false;
     for (const QJsonValue& t : catalog.value(QStringLiteral("tools")).toArray()) {
@@ -546,7 +547,7 @@ void checkDesktopValues(const QJsonObject& catalog, HPSDRModel model, ProtocolVe
                                  QStringLiteral("Memory Manager"), QStringLiteral("CAT Control"),
                                  QStringLiteral("TCI Server"), QStringLiteral("VAX Audio"),
                                  QStringLiteral("Network Diagnostics"),
-                                 QStringLiteral("Support Bundle")}));
+                                 QStringLiteral("Support Bundle"), QStringLiteral("Rotor")}));
     QStringList radioItems;
     for (const QJsonValue& r : catalog.value(QStringLiteral("radioItems")).toArray()) {
         radioItems << r.toObject().value(QStringLiteral("label")).toString();

@@ -93,6 +93,8 @@ struct RadioView: View {
         let wanted = Self.lifecycle(onScreen: onScreen)
         if wanted.readings { radio.show() } else { radio.hide() }
         if wanted.radioList { radios.open() } else { radios.close() }
+        // The tab going behind another, or the app to the background, ends a nudge held on the rotor page.
+        if onScreen == nil, route.last == .accessory(.rotor) { main.rotor.sceneLeft() }
     }
 
     @ViewBuilder
@@ -103,7 +105,7 @@ struct RadioView: View {
         let back = route.dropLast().last?.title ?? "Radio"
         switch route.last {
         case .accessory(let page)?:
-            AccessoryScreen(model: main.accessories, transmit: main.transmit, route: page, backTitle: back,
+            AccessoryScreen(model: main.accessories, transmit: main.transmit, rotor: main.rotor, route: page, backTitle: back,
                             coreName: core,
                             back: { route.removeLast() }, open: { route.append(.accessory($0)) }) {
                 LinkChip(link: link, core: core)
@@ -161,7 +163,7 @@ struct RadioView: View {
                                       if let selectedID { flow.requestRemove(identityKey: selectedID) }
                                   })
                     RadioAtAGlanceSection(model: radio, now: { app.mirrorClock.nowMilliseconds })
-                    AccessoriesSection(model: main.accessories) { route.append(.accessory($0)) }
+                    AccessoriesSection(model: main.accessories, rotor: main.rotor) { route.append(.accessory($0)) }
                     RadioMoreSection(entries: radio.menu) { route.append(Route($0)) }
                 }
                 .padding(12)

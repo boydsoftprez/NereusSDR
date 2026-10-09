@@ -2,6 +2,9 @@
 // iPhone app Task 71 (R-IOS-02): an end the operator did not ask for is the
 // Core retiring the token, now that a second window is admitted beside the
 // first. J.J. Boyd (KG4VCF), 2026-09-25, AI-assisted via Anthropic Claude Code.
+// Rotor control plan Task 4c: a Local window's model owns the rotor; a window
+// on a remote Core never does. J.J. Boyd (KG4VCF), 2026-10-08, AI-assisted via
+// Anthropic Claude Code.
 #include <QtTest/QtTest>
 #include <QApplication>
 #include <QCloseEvent>
@@ -19,6 +22,7 @@
 #include "core/AppSettings.h"
 #include "core/cat/CatService.h"
 #include "core/SliceOwnership.h"
+#include "core/StationRotorController.h"
 #include "core/RadioConnection.h"
 #include "core/RadioDiscovery.h"
 #include "core/WdspEngine.h"
@@ -495,6 +499,29 @@ private slots:
         QVERIFY(settings.save(&error));
         ownership.release();
         QVERIFY(competitor.acquire(0, &error));
+    }
+
+    // Rotor control plan Task 4c.
+    void localWindowOwnsTheRotorAndARemoteWindowNever()
+    {
+        GuiSessionCoordinator sessions;
+        QVERIFY(sessions.replace({}, false));
+        QPointer<StationRotorController> local =
+            sessions.window()->radioModel()->stationRotorController();
+        QVERIFY(local);
+        QVERIFY(!sessions.window()->radioModel()->stationAccessoryIdentityEnabled());
+        QCOMPARE(sessions.window()->radioModel()->findChildren<StationRotorController*>().size(), 1);
+
+        // On a remote Core the old rotor is gone with its model, and the
+        // window follows the Core's rotor instead of holding one.
+        QVERIFY(sessions.replace(core(QStringLiteral("a")), false));
+        QVERIFY(local.isNull());
+        QVERIFY(sessions.window()->radioModel()->stationRotorController() == nullptr);
+
+        // Back on this computer's radio, a rotor again from the saved setup.
+        QVERIFY(sessions.replace({}, false));
+        QVERIFY(sessions.window()->radioModel()->stationRotorController() != nullptr);
+        sessions.shutdown();
     }
 
     void replacesWholeSessionAndRetiresQueuedPickerAndProxy()

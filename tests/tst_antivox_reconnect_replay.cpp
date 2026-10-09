@@ -21,8 +21,8 @@
 
 #ifdef HAVE_WDSP
 extern "C" {
-double nereus_issue299_antivox_tau(int channel);
-int nereus_issue299_antivox_running(int channel);
+double nereus_issue299_antivox_tau(int dexp_id);
+int nereus_issue299_antivox_running(int dexp_id);
 }
 #endif
 
@@ -75,9 +75,8 @@ private slots:
         QCOMPARE(model.transmitModel().antiVoxTauMs(), 80);
         QCoreApplication::processEvents();
         QVERIFY(model.waitForTransmitLaneForTest(5000));
-        int channelId = model.txChannel()->channelId();
         if (checkRun) {
-            QCOMPARE(nereus_issue299_antivox_running(channelId), 1);
+            QCOMPARE(nereus_issue299_antivox_running(TxChannel::kDexpId), 1);
             TxWorkerThread* const firstWorker = model.txWorkerMutableForTest();
             QVERIFY(firstWorker);
             QSignalSpy copied(firstWorker, &TxWorkerThread::antiVoxReferenceCopied);
@@ -85,7 +84,7 @@ private slots:
             firstWorker->onAntiVoxBlockReady(reference.data(), 64);
             QCOMPARE(copied.count(), 1);
         } else {
-            QCOMPARE(nereus_issue299_antivox_tau(channelId), 0.080);
+            QCOMPARE(nereus_issue299_antivox_tau(TxChannel::kDexpId), 0.080);
         }
 
         model.disconnectFromRadio();
@@ -98,7 +97,6 @@ private slots:
         QCOMPARE(model.moxController(), controller);
         QVERIFY(model.transmitModel().antiVoxRun());
         QCOMPARE(model.transmitModel().antiVoxTauMs(), 80);
-        channelId = model.txChannel()->channelId();
         if (checkRun) {
             // This goes through the real worker's atomic gate. A model or
             // channel getter alone cannot prove the reference feed is live.
@@ -107,9 +105,9 @@ private slots:
             const std::array<float, 128> reference{};
             worker->onAntiVoxBlockReady(reference.data(), 64);
             QCOMPARE(copied.count(), 1);
-            QCOMPARE(nereus_issue299_antivox_running(channelId), 1);
+            QCOMPARE(nereus_issue299_antivox_running(TxChannel::kDexpId), 1);
         } else {
-            QCOMPARE(nereus_issue299_antivox_tau(channelId), 0.080);
+            QCOMPARE(nereus_issue299_antivox_tau(TxChannel::kDexpId), 0.080);
         }
 #endif
     }

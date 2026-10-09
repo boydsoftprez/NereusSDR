@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original. R-R3-38 complete station-session ownership.
 // 2026-10-04 - Include the setup signal type for Qt 6.4; JJ Boyd, OpenAI Codex.
+// 2026-10-08 - Rotor control plan Task 4c: a Local window's model owns the
+//              rotor (enableStationRotor). J.J. Boyd (KG4VCF), AI-assisted via
+//              Anthropic Claude Code.
 // 2026-10-06 - Start CAT when the window owns the station even if the Remote
 //              Access listener failed. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 #include "core/cat/CatService.h"
@@ -171,6 +174,11 @@ bool GuiSessionCoordinator::replace(const StationStartupSelection& selection,
     m_window->setConnectionPickerManaged(true);
     m_window->installEventFilter(this);
     const QPointer<MainWindow> installedWindow(m_window.get());
+    // Rotor control plan Task 4c: a desktop running its own radio owns the
+    // antenna rotor, as nereusd does, for its windows and any phone it hosts.
+    // retireWindow() above destroyed the outgoing model and with it any rotor
+    // it held, so the port is never open twice; a remote window holds none.
+    if (!selection.connection.isRemote()) { m_window->radioModel()->enableStationRotor(); }
     if (m_desktopConfigured && !selection.connection.isRemote()) { installDesktopStation(); }
     if (!self || !installedWindow || m_window.get() != installedWindow) { return false; }
     const quint64 generation = m_generation;

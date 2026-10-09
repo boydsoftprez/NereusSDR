@@ -24,6 +24,11 @@
 //                                    spy on `spotReceived(DxSpot)` rather
 //                                    than calling a parser seam
 //                                    synchronously).
+//   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 8: bearingDeg,
+//                                    the Core's short-path bearing to a
+//                                    spot it serves (-1 for any other),
+//                                    for the Spot Hub's Bearing column.
+//                                    AI-assisted via Anthropic Claude Code.
 
 #pragma once
 
@@ -44,6 +49,11 @@ struct DxSpot {
     QString color;           // #AARRGGBB for radio spot color (optional)
     int     snr{0};          // signal-to-noise ratio (dB)
     int     lifetimeSec{0};  // 0 = use source default from AppSettings
+    // NereusSDR addition (rotor control plan Task 8): the Core's short-path
+    // bearing to the spot (a spot record's bearingDeg), 0 to under 360; -1
+    // when the Core served none or the spot is from this computer's own
+    // sources. Never 0 for "not known".
+    double  bearingDeg{-1.0};
 };
 
 }  // namespace NereusSDR

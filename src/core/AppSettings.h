@@ -20,6 +20,11 @@
 //                 defaults to the new ones, out-of-range values clamped).
 //                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                 Anthropic Claude Code.
+//   2026-10-08 - importFileForNextLaunch(): Import All Settings saves the
+//                 chosen file and holds later saves until restart, so the
+//                 running window no longer writes its old values back over
+//                 the import. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 //=================================================================
@@ -142,6 +147,19 @@ public:
     // reads the file directly and checks keys, not element names.
     static QString keyFromXmlTag(const QString& tag);
     bool importLocalXml(const QByteArray& xml, QString* error = nullptr);
+
+    // Setup > Diagnostics > Import All Settings. Reads the file at `path`,
+    // checks it as importLocalXml() does (element names an older build
+    // wrote unescaped are repaired first, as load() repairs them) and saves
+    // it as this store's file for the next launch. The in-memory values
+    // stay as they are: the running window reads them live, and a mix of
+    // its own and the imported values is not a state anyone chose. After
+    // success every later save() writes nothing and reports success until
+    // the process ends, so the running window cannot put its own values
+    // back over the import (the quit flush, a timed save) before the
+    // restart. Nothing is written or held when the file is refused.
+    bool importFileForNextLaunch(const QString& path, QString* error = nullptr);
+    bool savesHeldUntilRestart() const { return m_savesHeldUntilRestart; }
 
     // Get/set top-level settings.
     QVariant value(const QString& key, const QVariant& defaultValue = {}) const;
@@ -794,6 +812,9 @@ private:
     bool    m_wasCorruptedOnLoad{false};
     QString m_preservedCorruptFilePath;
     bool    m_recoveredFromBackup{false};
+
+    // Set by importFileForNextLaunch(); never cleared (see its comment).
+    bool    m_savesHeldUntilRestart{false};
 };
 
 } // namespace NereusSDR

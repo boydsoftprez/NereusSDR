@@ -584,6 +584,33 @@
 //                radioSpeakerToolTip (R-SPK-06, R-SPK-13, R-SPK-14,
 //                R-SPK-16). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-08 - Rotor control plan Task 3c: the Core's rotor
+//                (StationRotorController) made beside the other station
+//                accessories, placing callsigns with the spots' cty.dat.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 4b: the rotor as the read-only
+//                `rotor` object (rotorModel()), following the Core's
+//                controller. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
+//   2026-10-08 - Rotor control plan Task 4c: enableStationRotor(), the
+//                rotor alone, for a desktop running its own radio.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 5: RadioModel is the GUI's
+//                RotorCommandSink (requestRotorTarget, requestStopRotor),
+//                routed to the local rotor or to the remote Core.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 6: the rest of the sink the
+//                Rotor applet uses (rotorControlAvailable,
+//                requestTurnRotorToCall, requestNudgeRotor,
+//                lastRotorCommandId). J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 7: requestConfigureRotor and
+//                requestRotorPresets for the Rotor Setup page, routed the
+//                same way. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
+//   2026-10-08 - Rotor control plan Task 8: every rotor command's refusal
+//                from a remote Core goes the accessory way ("rotor").
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -658,6 +685,7 @@
 #include "core/spectrum/ISpectrumSink.h"
 #include "core/TxInterlockPolicy.h"
 #include "core/TuneMemoryStore.h"
+#include "models/RotorCommandSink.h"
 #include "models/TunerModel.h"
 #include "models/ReceiverDspLoadSampler.h"
 #include "core/dsp/NnrLoadGovernor.h"
@@ -844,6 +872,8 @@ class Resampler;
 class StationTgxlController;
 class StationPgxlController;
 class StationRfKitController;
+class StationRotorController;
+namespace RotorLink { class RotorModel; }
 class StationTciController;
 class StationTciModel;
 class StationCatController;
@@ -870,7 +900,7 @@ class ConnectionDiagnostics;
 //                kept off main because WDSP fexchange2 with bfo=1 can
 //                block on Sem_OutReady and would otherwise freeze the
 //                Qt event loop, deadlocking against wdspmain.
-class NEREUS_CORE_EXPORT RadioModel : public QObject {
+class NEREUS_CORE_EXPORT RadioModel : public QObject, public RotorCommandSink {
     Q_OBJECT
 
     Q_PROPERTY(QString settingsSaveError READ settingsSaveError NOTIFY settingsSaveErrorChanged)
@@ -1223,7 +1253,8 @@ public:
 
     /// R-R3-47 / R-R3-22 / R-R3-48: the Core refused an accessory request,
     /// with its own reason. `device` says what it was about: "pgxl",
-    /// "tgxl", "rfkit", "interlock", "tci", "4o3a", or for a fault history
+    /// "tgxl", "rfkit", "interlock", "tci", "4o3a", "rotor" (every rotor
+    /// command), or for a fault history
     /// the device it names ("faults" for any other). Role::Remote only.
     /// Routed to accessoryRequestRefused, which MainWindow toasts and the
     /// pages that sent the request show, never to the slice toast.
@@ -3615,6 +3646,14 @@ public:
     CatControl* catControl() const { return m_catControl; }
     // R-R3-47: the Core's RF-Kit controller (nullptr outside the Core).
     StationRfKitController* stationRfKitController() const { return m_stationRfKit; }
+    // Rotor control plan Task 3c: the Core's rotor (nullptr outside the Core).
+    // Task 4c: a desktop running its own radio is a Core here too; a window
+    // on a remote Core never has one.
+    StationRotorController* stationRotorController() const { return m_stationRotor; }
+    // Rotor control plan Task 4b: the rotor as the `rotor` object. Non-null
+    // from construction; follows the Core's controller on the Core, and
+    // holds the Core's values in a remote window.
+    RotorLink::RotorModel* rotorModel() const { return m_rotorModel; }
     // SmartSDR API server on TCP 4992. Owned by RadioModel; lifetime matches.
     // Used by MainWindow to push slice/transmit state so PGXL/TGXL pull the
     // current band/freq via the SmartSDR API rather than from a stale cache.
@@ -3642,8 +3681,41 @@ public:
 
     // R3 station-owned accessory lifecycle. Installed by DaemonApp before
     // radio startup, independently of the temporary receive-only policy.
+    // Makes the rotor too, through enableStationRotor().
     void enableStationAccessoryIdentity();
     bool stationAccessoryIdentityEnabled() const { return m_stationTgxl != nullptr; }
+    // Rotor control plan Task 4c: the antenna rotor alone (cty.dat, the
+    // controller from the saved Rotor/* settings, rotorModel() bound to it).
+    // nereusd reaches it through enableStationAccessoryIdentity(); a desktop
+    // running its own radio calls it by itself, without the Tuner Genius,
+    // Power Genius or RF-Kit controllers. Local role only; a second call
+    // makes nothing. The controller lives as long as this model: a switch to
+    // a remote Core replaces the whole model, which closes the rotor's port.
+    void enableStationRotor();
+    // Rotor control plan Task 5: the one way a window turns the rotor
+    // (RotorCommandSink). The local controller when this process runs the
+    // rotor; otherwise the remote Core over the station link; otherwise
+    // refused with the reason.
+    bool requestRotorTarget(double azimuthDeg, double elevationDeg,
+                            QString* reason) override;
+    bool requestStopRotor(QString* reason) override;
+    // Rotor control plan Task 6: the rest of the sink, routed the same way.
+    // A nudge from this process's own windows holds under session 0, the
+    // owner the Core gives every window that is not a remote session.
+    bool rotorControlAvailable(QString* reason) const override;
+    bool requestTurnRotorToCall(const QString& call, bool longPath,
+                                QString* reason) override;
+    bool requestNudgeRotor(Nudge direction, bool active, QString* reason) override;
+    // Rotor control plan Task 7: the setup and the presets, routed the same
+    // way. Locally the setup is checked against the contract's tables first
+    // ("That rotor setup is not valid."), as the Core checks a remote one.
+    bool requestConfigureRotor(const Setup& setup, QString* reason) override;
+    bool requestRotorPresets(const QString& presets, QString* reason) override;
+    // Final review I3: counted. Locally the rotor object scans while any is
+    // open; on a remote Core this window asks it every
+    // RotorLink::RotorModel::kRemoteSetupAskMs while any is open.
+    void setRotorSetupViewOpen(bool open) override;
+    quint32 lastRotorCommandId() const override { return m_lastRotorCommandId; }
     bool configureTgxlForStation(const QString& host, quint16 port, QString* reason);
     bool disconnectTgxlForStation(QString* reason);
     // R-R3-47 / R-R3-22: the Core's Power Genius XL, as the tuner's above.
@@ -8416,6 +8488,24 @@ private:
     // R-R3-47 / R-R3-48: the Core's RF-Kit controller, station TCI server
     // and its state, and the RF-Kit's band follow over that server.
     StationRfKitController* m_stationRfKit{nullptr};
+    // Rotor control plan Task 3c: the Core's rotor, made beside the other
+    // station accessories (enableStationAccessoryIdentity), or alone on a
+    // desktop running its own radio (enableStationRotor); Qt child.
+    StationRotorController* m_stationRotor{nullptr};
+    // Rotor control plan Task 4b: see rotorModel(); Qt child.
+    RotorLink::RotorModel*  m_rotorModel{nullptr};
+    // Rotor control plan Task 6: see lastRotorCommandId().
+    quint32 m_lastRotorCommandId{0};
+    // Final review I3: the open rotor setup views, and (on a remote Core)
+    // the timer that asks the Core to keep reading its ports; Qt child.
+    int     m_rotorSetupViews{0};
+    QTimer* m_rotorSetupAsk{nullptr};
+    // Re-review N6: whether the Core controlled a rotor at the last link
+    // report, so a setup view open before the capability arrived asks the
+    // moment it does (reportStationLinkStateChanged).
+    bool    m_rotorControlSeen{false};
+    // One ask (`refreshRotorPorts`) of a Core that controls a rotor.
+    void askCoreForRotorPorts();
     StationTciModel*        m_stationTciModel{nullptr};
     // M6: owned here and destroyed first in ~RadioModel (they hold this
     // model's slices and receivers), not through Qt parenting.

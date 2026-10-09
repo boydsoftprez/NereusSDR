@@ -613,6 +613,21 @@ public:
 
     int channelId() const noexcept { return m_channelId; }
 
+    // WDSP keeps its DEXP (VOX / downward expander) objects in a lookup table
+    // with only four slots, separate from the channel table. The TX WDSP
+    // channel id (WdspEngine::kTxChannelId, 5) is past its end, so DEXP is
+    // indexed by transmitter, as Thetis does: create_dexp(i, ...) with
+    // "// transmitter id, txid", destroy_dexp(i) and xdexp(tx), where i and
+    // tx run over cmXMTR transmitters. NereusSDR has one transmitter.
+    // Issue #365: id 5 read and wrote the global after pdexp[] on Windows,
+    // so opening RX channel 0 replaced the DEXP pointer and xdexp crashed.
+    // From Thetis cmaster.c:119-131, 258-267, 388 [v2.10.3.15].
+    static constexpr int kDexpId = 0;
+    // From Thetis wdsp/dexp.c:29 [v2.10.3.15]: `DEXP pdexp[4];`
+    static constexpr int kWdspDexpSlots = 4;
+    static_assert(kDexpId >= 0 && kDexpId < kWdspDexpSlots,
+                  "DEXP id must index inside WDSP's pdexp[] table");
+
     // ── R-R3-39: the transmit lane ───────────────────────────────────────────
     //
     // Every WDSP call this wrapper makes (setters, state, PureSignal, meters)

@@ -54,6 +54,8 @@ final class MainScreenModel: ObservableObject {
     let micLevel: LiveMicLevel
     /// The Core's amplifiers and tuner, for their pages under the Radio tab.
     let accessories: AccessoriesModel
+    /// The Core's rotor, for the Rotor page the Radio and Tools tabs share.
+    let rotor: RotorModel
     let keyedMeters: KeyedMetersModel
     /// The iPad's analog S-meter and its menu (D86).
     let sMeter: SMeterModel
@@ -144,6 +146,7 @@ final class MainScreenModel: ObservableObject {
         sliceList = SliceListModel(store: mirror, slices: slices, commands: commands)
         accessories = AccessoriesModel(mirror: mirror, commands: commands, slices: slices, catalogFeed: catalogFeed,
                                        settings: settings)
+        rotor = RotorModel(mirror: mirror, commands: commands)
         let band = band
         // A keyed zoom the band remembers is kept like any other change.
         band.keepSettings = { [displaySettings] kept in

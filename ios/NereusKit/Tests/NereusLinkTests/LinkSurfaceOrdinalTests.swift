@@ -17,7 +17,7 @@ import Testing
 
     @Test func newestCapabilitiesSitWhereTheSurfacePinsThem() throws {
         let capabilities = try #require(try Self.surface()["capabilities"] as? [[String: Any]])
-        #expect(capabilities.count == 110)
+        #expect(capabilities.count == 111)
         #expect(capabilities[69]["value"] == nil, "The loopback capture cannot advertise a live TX watch value")
         // The merged b44d638 surface inserts diversityControlVersion after
         // diversityPatternVersion. Capture b20ad1186 also includes the existing
@@ -25,33 +25,37 @@ import Testing
         // Radio Mic 2 changes its value, without moving any other entry.
         // Station CAT setup inserts stationCatVersion and the radio speaker
         // inserts radioSpeakerVersion before coreBuildInfo,
-        // which stays last.
+        // which stays last. The Core's rotor inserts
+        // remoteRotorControlVersion after accessoryTxVersion (index 84),
+        // moving every later entry one place.
         let expected: [(index: Int, name: String, kind: String)] = [
             (69, "txWatchPathVersion", "i64"),
-            (89, "diversityControlVersion", "i64"),
-            (96, "paProfileVersion", "i64"),
-            (98, "txInhibitReasonVersion", "i64"),
-            (99, "paTransmitBandVersion", "i64"),
-            (100, "sliceAccessVersion", "i64"),
-            (101, "mediaDirectVersion", "i64"),
-            (102, "mediaStunUrls", "utf8"),
-            (103, "rx2AttenuatorVersion", "i64"),
-            (104, "radioMicVersion", "i64"),
-            (105, "rxFilterLowPassVersion", "i64"),
-            (106, "radeReasonVersion", "i64"),
-            (107, "stationCatVersion", "i64"),
+            (84, "remoteRotorControlVersion", "i64"),
+            (90, "diversityControlVersion", "i64"),
+            (97, "paProfileVersion", "i64"),
+            (99, "txInhibitReasonVersion", "i64"),
+            (100, "paTransmitBandVersion", "i64"),
+            (101, "sliceAccessVersion", "i64"),
+            (102, "mediaDirectVersion", "i64"),
+            (103, "mediaStunUrls", "utf8"),
+            (104, "rx2AttenuatorVersion", "i64"),
+            (105, "radioMicVersion", "i64"),
+            (106, "rxFilterLowPassVersion", "i64"),
+            (107, "radeReasonVersion", "i64"),
+            (108, "stationCatVersion", "i64"),
             // The radio speaker (feature `radioSpeaker` 1) goes before the
-            // build info, which is read by name and moves to 109.
-            (108, "radioSpeakerVersion", "i64"),
-            (109, "coreBuildInfo", "utf8"),
+            // build info, which is read by name and moves to 110.
+            (109, "radioSpeakerVersion", "i64"),
+            (110, "coreBuildInfo", "utf8"),
         ]
         // Core trunk b26112687: sliceAccessVersion reads 3 (the Core's own
         // slice can be taken); nothing moved.
-        #expect((capabilities[100]["value"] as? NSNumber)?.intValue == 3)
-        #expect((capabilities[89]["value"] as? NSNumber)?.intValue == 1)
-        #expect((capabilities[104]["value"] as? NSNumber)?.intValue == 2)
-        #expect((capabilities[107]["value"] as? NSNumber)?.intValue == 1)
-        #expect(Set(capabilities.compactMap { $0["name"] as? String }).count == 110)
+        #expect((capabilities[101]["value"] as? NSNumber)?.intValue == 3)
+        #expect((capabilities[90]["value"] as? NSNumber)?.intValue == 1)
+        #expect((capabilities[105]["value"] as? NSNumber)?.intValue == 2)
+        #expect((capabilities[84]["value"] as? NSNumber)?.intValue == 1)
+        #expect((capabilities[108]["value"] as? NSNumber)?.intValue == 1)
+        #expect(Set(capabilities.compactMap { $0["name"] as? String }).count == 111)
         for entry in expected {
             try #require(capabilities.count > entry.index)
             #expect(capabilities[entry.index]["name"] as? String == entry.name, "\(entry.name)")
