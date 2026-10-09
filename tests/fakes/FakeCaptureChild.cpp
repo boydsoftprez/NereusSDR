@@ -8,12 +8,19 @@
 //   2026-10-08: native audio plan Task 1 (V-HW-8): probe and version-1
 //               scenarios. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-09: native audio plan Task 13 (R-AUD-17): AttachRing, and the
+//               tone through a clock matcher in the shared ring.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "FakeCaptureChild.h"
 
+#include "core/audio/AudioDelayProbe.h"
 #include "core/audio/CaptureHelper.h"
 #include "core/audio/CaptureProtocol.h"
+#include "core/audio/CaptureShm.h"
+#include "core/audio/DeviceRateMatcher.h"
+#include "core/audio/MatcherRing.h"
 
 #include <QCoreApplication>
 #include <QFile>
@@ -23,6 +30,7 @@
 #include <cmath>
 #include <condition_variable>
 #include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <limits>
 #include <memory>
@@ -44,10 +52,12 @@ constexpr auto kPcmBeforeEvent = std::chrono::milliseconds(100);
 constexpr auto kProbeHitEvery = std::chrono::milliseconds(50);
 constexpr int kProbeEnabledBeforeReadyExit = 4;
 constexpr double kTwoPi = 6.283185307179586;
+constexpr int kToneFrames = 480;
 
 enum class Scenario {
     Ready, HangOpen, NoHello, PermissionThenReady, CrashAfterReady,
-    Malformed, Oversize, InputLost, IgnoreStop, Stale, Probe, Version1
+    Malformed, Oversize, InputLost, IgnoreStop, Stale, Probe, Version1,
+    PcmRecord, Busy, BadRing
 };
 
 std::optional<Scenario> scenarioFromName(const QString& name)
@@ -64,6 +74,9 @@ std::optional<Scenario> scenarioFromName(const QString& name)
     if (name == QLatin1String("stale")) { return Scenario::Stale; }
     if (name == QLatin1String("probe")) { return Scenario::Probe; }
     if (name == QLatin1String("version-1")) { return Scenario::Version1; }
+    if (name == QLatin1String("pcm-record")) { return Scenario::PcmRecord; }
+    if (name == QLatin1String("busy")) { return Scenario::Busy; }
+    if (name == QLatin1String("bad-ring")) { return Scenario::BadRing; }
     return std::nullopt;
 }
 
@@ -71,6 +84,8 @@ struct Command {
     P::RecordType type = P::RecordType::Shutdown;
     quint32 generation = 0;
     bool probeEnabled = false;
+    CaptureShmNames ring;          // AttachRing
+    qint64 ringBytes = 0;
 };
 
 struct Queue {
@@ -105,6 +120,14 @@ void readParent(std::shared_ptr<Queue> queue)
                     std::_Exit(0);
                 }
                 command.generation = decoded->generation;
+            } else if (record->type == P::RecordType::AttachRing) {
+                const auto attach = P::decodeAttachRing(record->payload);
+                if (!attach) {
+                    std::_Exit(0);
+                }
+                command.generation = attach->generation;
+                command.ring = {attach->memory, attach->wake};
+                command.ringBytes = attach->bytes;
             } else if (record->type == P::RecordType::ProbeEnable) {
                 const auto enabled = P::decodeProbeEnable(record->payload);
                 if (!enabled) {
@@ -143,6 +166,8 @@ void sendStatus(quint32 generation, P::HelperState state,
         status.actualDevice = QStringLiteral("Fake microphone");
         status.nativeRate = P::kSampleRate;
         status.nativeChannels = 1;
+        status.latencyUs = 1500;
+        status.bufferFrames = kToneFrames;
     }
     send(P::encodeStatus(status));
 }
@@ -198,7 +223,7 @@ public:
         : m_scenario(scenario), m_queue(std::move(queue))
     {
         m_ignoring = (scenario == Scenario::NoHello);
-        m_tone.resize(P::kHelperPcmFrames);
+        m_tone.resize(static_cast<std::size_t>(kToneFrames) * 2);
     }
 
     int run()
@@ -246,6 +271,18 @@ private:
             m_streaming = false;
             m_readySent = false;
             m_readyAt.reset();
+            m_matcher.reset();
+            break;
+        case P::RecordType::AttachRing:
+            m_matcher.reset();
+            m_region = CaptureShmRegion::attach(command.ring,
+                                                static_cast<std::size_t>(command.ringBytes));
+            if (!m_region) {
+                sendStatus(command.generation, P::HelperState::Failed, P::FailReason::Internal,
+                           QStringLiteral("fake could not attach the ring"));
+                break;
+            }
+            send(P::encodeRingAttached(P::Command{command.generation}));
             break;
         case P::RecordType::ProbeEnable:
             if (m_scenario != Scenario::Probe) {
@@ -269,6 +306,7 @@ private:
         case P::RecordType::Stop:
             if (command.generation == m_generation && m_scenario != Scenario::IgnoreStop) {
                 m_streaming = false;
+                m_matcher.reset();
                 m_readySent = false;
                 m_probeOn = false;
                 m_readyAt.reset();
@@ -314,9 +352,29 @@ private:
             const quint32 stale = (m_generation == 1) ? std::numeric_limits<quint32>::max()
                                                       : m_generation - 1;
             sendStatus(stale, P::HelperState::Ready);
-            startStreaming(stale);
+            startStreaming();
             return;
         }
+        case Scenario::Busy:
+            sendStatus(m_generation, P::HelperState::Opening);
+            sendStatus(m_generation, P::HelperState::Failed, P::FailReason::DeviceInUse,
+                       QStringLiteral("fake device held by another program"));
+            return;
+        case Scenario::BadRing:
+            sendStatus(m_generation, P::HelperState::Opening);
+            sendStatus(m_generation, P::HelperState::Ready);
+            if (m_region) {
+                std::memset(m_region->data(), 0, sizeof(MatcherRingHeader));
+                m_region->postWake();
+            }
+            return;
+        case Scenario::PcmRecord:
+            sendStatus(m_generation, P::HelperState::Opening);
+            sendStatus(m_generation, P::HelperState::Ready);
+            m_readySent = true;
+            startStreaming();
+            send(P::encodePcm(m_generation, 0, 0, m_tone.data(), P::kHelperPcmFrames));
+            return;
         case Scenario::Oversize:
             sendStatus(m_generation, P::HelperState::Opening);
             sendStatus(m_generation, P::HelperState::Ready);
@@ -326,18 +384,33 @@ private:
             sendStatus(m_generation, P::HelperState::Opening);
             sendStatus(m_generation, P::HelperState::Ready);
             m_readySent = true;
-            startStreaming(m_generation);
+            startStreaming();
             return;
         }
     }
 
-    void startStreaming(quint32 pcmGeneration)
+    // Builds the clock matcher in the attached region.  Without a region
+    // the fake keeps its timeline (the scripted events after 100 ms) but
+    // writes nothing.
+    void startStreaming()
     {
         m_streaming = true;
-        m_pcmGeneration = pcmGeneration;
         m_framePosition = 0;
         m_streamStart = Clock::now();
         m_nextPcm = m_streamStart;
+        if (!m_region) {
+            return;
+        }
+        DeviceRateMatcher::Config config;
+        config.inRate = P::kSampleRate;
+        config.outRate = P::kSampleRate;
+        config.writeBlockFrames = 64;
+        config.callbackFrames = kToneFrames;
+        config.delayMs = 0;
+        m_matcher = std::make_unique<DeviceRateMatcher>(config, m_region->data(), m_region->size());
+        if (!m_matcher->valid()) {
+            m_matcher.reset();
+        }
     }
 
     void tick()
@@ -347,7 +420,7 @@ private:
             m_readyAt.reset();
             sendStatus(m_generation, P::HelperState::Opening);
             sendStatus(m_generation, P::HelperState::Ready);
-            startStreaming(m_generation);
+            startStreaming();
         }
         if (!m_streaming) {
             return;
@@ -376,23 +449,27 @@ private:
 
     void sendTone()
     {
-        for (int i = 0; i < P::kHelperPcmFrames; ++i) {
-            const double n = static_cast<double>(m_framePosition + static_cast<quint64>(i));
-            m_tone[static_cast<std::size_t>(i)] =
-                static_cast<float>(0.5 * std::sin(kTwoPi * 1000.0 * n / P::kSampleRate));
+        if (!m_matcher) {
+            return;
         }
-        const auto sentNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                Clock::now().time_since_epoch()).count();
-        send(P::encodePcm(m_pcmGeneration, m_framePosition, static_cast<quint64>(sentNs),
-                          m_tone.data(), P::kHelperPcmFrames));
-        m_framePosition += static_cast<quint64>(P::kHelperPcmFrames);
+        for (int i = 0; i < kToneFrames; ++i) {
+            const double n = static_cast<double>(m_framePosition + static_cast<quint64>(i));
+            const auto value =
+                static_cast<float>(0.5 * std::sin(kTwoPi * 1000.0 * n / P::kSampleRate));
+            m_tone[static_cast<std::size_t>(2 * i)] = value;
+            m_tone[static_cast<std::size_t>(2 * i + 1)] = value;
+        }
+        m_matcher->write(m_tone.data(), kToneFrames, audioProbeNowNs());
+        m_region->postWake();
+        m_framePosition += static_cast<quint64>(kToneFrames);
     }
 
     Scenario m_scenario;
     std::shared_ptr<Queue> m_queue;
     bool m_ignoring = false;
     quint32 m_generation = 0;
-    quint32 m_pcmGeneration = 0;
+    std::unique_ptr<CaptureShmRegion> m_region;
+    std::unique_ptr<DeviceRateMatcher> m_matcher;   // built in m_region
     bool m_streaming = false;
     quint64 m_framePosition = 0;
     Clock::time_point m_streamStart;

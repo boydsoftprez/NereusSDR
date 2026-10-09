@@ -12,6 +12,9 @@
 //   2026-10-09: native audio plan early-review fix wave (R-AUD-02, bug 1):
 //               captureHostApiIndex(), the mic opens on its saved host API.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 13 (R-AUD-17): the mic goes through
+//               the shared ring, no PCM records.  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -29,9 +32,12 @@ namespace NereusSDR {
 // logs on stderr.  Sends Hello first.  A stdin reader thread parses the
 // parent's records; stdin EOF, a read error or a protocol error ends the
 // process at once with std::_Exit(0), even while the main thread is inside
-// a native audio call.  The main thread runs Configure / Open / Stop /
-// Shutdown in order and pumps 480-frame PCM records every 10 ms while a
-// microphone is open.  Returns 0 after Shutdown.
+// a native audio call.  The main thread runs Configure / AttachRing / Open /
+// Stop / Shutdown in order.  R-AUD-17: the microphone opens on the saved
+// engine, and its input callback writes the clock matcher in the window's
+// shared ring (AttachRing) and posts the ring's wake; every 10 ms the main
+// thread sends probe hits and watches for a lost input.  Returns 0 after
+// Shutdown.
 int runCaptureHelper(int argc, char** argv);
 
 // R-R3-21: the input device names a test run's helper answers from. A test

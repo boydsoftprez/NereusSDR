@@ -1178,6 +1178,7 @@ set(CORE_SOURCES
     src/core/audio/IAudioDeviceCatalog.h
     src/core/audio/IAudioEngineBackend.h
     src/core/audio/CaptureProtocol.cpp
+    src/core/audio/CaptureShm.cpp
     src/core/audio/CaptureHelper.cpp
     src/core/audio/CaptureAudioBus.cpp
     src/core/audio/CaptureSupervisor.cpp

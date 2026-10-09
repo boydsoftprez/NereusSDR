@@ -18,6 +18,14 @@
 //     ProbeHit    helper to window  {"captureNs":"<decimal string>"}
 //     ProbeEnable window to helper  {"enabled":true} or {"enabled":false}
 //
+//   Shared-memory hand-off (version 3, the PC mic, R-AUD-17):
+//     AttachRing   window to helper  {"generation","memory","wake","bytes","inRate"}
+//     RingAttached helper to window  {"generation"}
+//   In version 3 the audio travels through the clock matcher's ring in
+//   the shared region (CaptureShm.h), never in Pcm records: the helper
+//   never sends one and the window treats one as a protocol error.  The
+//   Pcm codec stays for its tests.
+//
 // Design: docs/architecture/2026-09-22-optional-microphone-capture-design.md
 // (Process and PCM contract).  Requirement R-R3-36.
 //
@@ -25,6 +33,11 @@
 //   2026-10-08: native audio plan Task 1 (V-HW-8): version 2 adds the
 //               ProbeHit and ProbeEnable records of the audio delay probe.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 13 (R-AUD-17, R-AUD-18): version 3
+//               adds AttachRing and RingAttached, the saved identity keys
+//               in Configure, the device-in-use reason and the device's
+//               latency and buffer in Status.  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -42,7 +55,7 @@
 
 namespace NereusSDR::CaptureProtocol {
 
-inline constexpr quint8 kVersion = 2;
+inline constexpr quint8 kVersion = 3;
 inline constexpr int kHeaderBytes = 12;          // "NCAP", u8 version, u8 type, u16 reserved(0), u32 payloadBytes, little-endian
 inline constexpr int kMaxJsonBytes = 4096;
 inline constexpr int kPcmHeaderBytes = 24;       // u32 generation, u32 frameCount, u64 framePosition, u64 sentMonotonicNs
@@ -53,7 +66,19 @@ inline constexpr int kSampleRate = 48'000;
 // Largest payload any record type may carry (a full PCM record).
 inline constexpr int kMaxPcmPayloadBytes = kPcmHeaderBytes + kMaxPcmFrames * 4;
 
-enum class RecordType : quint8 { Hello = 1, Status = 2, Pcm = 3, ProbeHit = 4, Configure = 16, Open = 17, Stop = 18, Shutdown = 19, ProbeEnable = 20 };
+enum class RecordType : quint8 {
+    Hello = 1,
+    Status = 2,
+    Pcm = 3,
+    ProbeHit = 4,
+    RingAttached = 5,
+    Configure = 16,
+    Open = 17,
+    Stop = 18,
+    Shutdown = 19,
+    ProbeEnable = 20,
+    AttachRing = 21
+};
 
 struct Record {
     RecordType type = RecordType::Hello;
@@ -111,12 +136,15 @@ QByteArray encodePcm(quint32 generation, quint64 framePosition, quint64 sentMono
 std::optional<PcmBlock> decodePcm(const QByteArray& payload);
 
 enum class HelperState { Permission, Opening, Ready, Failed, Stopped };
-enum class FailReason { None, PermissionDenied, DeviceNotFound, OpenFailed, StartFailed, InputLost, Internal };
+enum class FailReason { None, PermissionDenied, DeviceNotFound, OpenFailed, StartFailed, InputLost, Internal, DeviceInUse };
 
 inline constexpr int kMaxStringChars = 512;
 inline constexpr int kMinNativeRate = 8000;
 inline constexpr int kMaxNativeRate = 384000;
 inline constexpr int kMaxNativeChannels = 32;
+inline constexpr int kMaxLatencyUs = 10'000'000;     // Status latencyUs bound (10 s)
+inline constexpr int kMaxBufferFrames = 65'536;      // Status bufferFrames bound
+inline constexpr qint64 kMaxRingBytes = 64 * 1024 * 1024;   // AttachRing bytes bound
 
 struct Hello {
     int protocol = 0;
@@ -129,8 +157,19 @@ struct Configure {
     AudioDeviceConfig device;
 };
 
-struct Command {                         // Open and Stop
+struct Command {                         // Open, Stop and RingAttached
     quint32 generation = 0;
+};
+
+// The shared region and wake of one generation (CaptureShm.h names).
+// bytes 1..kMaxRingBytes; inRate the rate the window sized the ring for,
+// kMinNativeRate..kMaxNativeRate.
+struct AttachRing {
+    quint32 generation = 0;
+    QString memory;
+    QString wake;
+    qint64 bytes = 0;
+    int inRate = 0;
 };
 
 // nativeRate / nativeChannels: both 0 means "not known yet" and is allowed
@@ -144,6 +183,10 @@ struct Status {
     int nativeChannels = 0;
     FailReason reason = FailReason::None;
     QString detail;
+    // The input's latency as the engine reports it and the device buffer
+    // in frames at nativeRate; 0 when not known.
+    int latencyUs = 0;
+    int bufferFrames = 0;
 };
 
 // encodeX returns a complete record (empty when the message would not pass
@@ -158,6 +201,11 @@ std::optional<Configure> decodeConfigure(const QByteArray& json);
 QByteArray encodeOpen(const Command& command);
 QByteArray encodeStop(const Command& command);
 std::optional<Command> decodeCommand(const QByteArray& json);
+
+QByteArray encodeRingAttached(const Command& command);   // decodes with decodeCommand
+
+QByteArray encodeAttachRing(const AttachRing& attach);
+std::optional<AttachRing> decodeAttachRing(const QByteArray& json);
 
 QByteArray encodeStatus(const Status& status);
 std::optional<Status> decodeStatus(const QByteArray& json);

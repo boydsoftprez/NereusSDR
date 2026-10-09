@@ -11,11 +11,20 @@
 //
 // Design: docs/architecture/2026-09-22-optional-microphone-capture-design.md
 // Requirement R-R3-36.
+//
+// Modification history (NereusSDR):
+//   2026-10-09: native audio plan Task 13 (R-AUD-17): a QCoreApplication,
+//               so the native engines' streams (QObjects of the helper's
+//               main thread) get their queued events.  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CaptureHelper.h"
 
+#include <QCoreApplication>
+
 int main(int argc, char** argv)
 {
+    QCoreApplication app(argc, argv);
     return NereusSDR::runCaptureHelper(argc, argv);
 }

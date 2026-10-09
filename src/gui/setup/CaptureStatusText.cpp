@@ -7,6 +7,9 @@
 // Modification history (NereusSDR):
 //   2026-09-22: J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //               Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 13 (R-AUD-11): the device-in-use
+//               reason.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "gui/setup/CaptureStatusText.h"
@@ -37,6 +40,8 @@ QString failureText(const CaptureSupervisor::Status& status)
             .arg(status.configuredDevice);
     case Reason::InputLost:
         return QStringLiteral("The microphone stopped sending audio.");
+    case Reason::DeviceInUse:
+        return QStringLiteral("The selected microphone is in use by another program.");
     case Reason::Timeout:
         return QStringLiteral("The microphone did not respond in time.");
     case Reason::HelperMissing:

@@ -18,17 +18,28 @@
 //               API index follows its saved driverApi
 //               (captureHostApiIndex).  J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 13 (R-AUD-17): the helper attaches
+//               the window's shared ring and answers RingAttached; a Pcm
+//               record from the parent is a protocol error; the scripted
+//               fake streams its tone through the shared ring.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 
 #include <QElapsedTimer>
 #include <QProcess>
+#include <QRandomGenerator>
 
+#include <array>
 #include <cstring>
+#include <memory>
 #include <optional>
 
 #include "core/audio/CaptureProtocol.h"
+#include "core/audio/CaptureShm.h"
+#include "core/audio/DeviceRateMatcher.h"
+#include "core/audio/MatcherRing.h"
 #include "fakes/FakeCaptureChild.h"
 
 // Exercise the real entry point, as tst_daemon_signals does for nereusd.
@@ -132,6 +143,17 @@ bool nextTypeIs(Child& child, P::RecordType type, int timeoutMs)
 {
     const auto record = child.next(timeoutMs);
     return record.has_value() && record->type == type;
+}
+
+QByteArray attachRecord(quint32 generation, const CaptureShmNames& names, std::size_t bytes)
+{
+    P::AttachRing attach;
+    attach.generation = generation;
+    attach.memory = names.memory;
+    attach.wake = names.wake;
+    attach.bytes = static_cast<qint64>(bytes);
+    attach.inRate = 8000;
+    return P::encodeAttachRing(attach);
 }
 
 QByteArray openRecord(quint32 generation) { return P::encodeOpen(P::Command{generation}); }
@@ -298,39 +320,125 @@ private slots:
         QCOMPARE(helper.process().exitCode(), 0);
     }
 
+    // R-AUD-17: the helper attaches the window's region for the configured
+    // generation and answers RingAttached; an AttachRing for another
+    // generation is ignored.
+    void helperAttachesTheWindowsRing()
+    {
+        const CaptureShmNames names = makeCaptureShmNames(
+            QCoreApplication::applicationPid(), QRandomGenerator::global()->generate());
+        constexpr std::size_t kBytes = 64 * 1024;
+        const std::unique_ptr<CaptureShmRegion> region = CaptureShmRegion::create(names, kBytes);
+        QVERIFY(region);
+
+        Child helper;
+        QVERIFY(helper.start({QStringLiteral("--capture-helper")}));
+        QVERIFY(helper.next(3000).has_value());
+        helper.send(configureRecord(8, kListedDevice));
+        helper.send(attachRecord(7, names, kBytes));
+        QVERIFY(!helper.next(300).has_value());
+        QCOMPARE(helper.readerError(), P::RecordReader::Error::None);
+
+        helper.send(attachRecord(8, names, kBytes));
+        const auto record = helper.next(3000);
+        QVERIFY2(record.has_value(), helper.diagnostics().constData());
+        QCOMPARE(record->type, P::RecordType::RingAttached);
+        const auto attached = P::decodeCommand(record->payload);
+        QVERIFY(attached.has_value());
+        QCOMPARE(attached->generation, 8u);
+
+        helper.send(P::encodeShutdown());
+        QVERIFY(helper.finishes(3000));
+        QCOMPARE(helper.process().exitCode(), 0);
+    }
+
+    // A ring the helper cannot attach (no such names) fails the generation
+    // as Internal; the helper keeps running.
+    void helperFailsARingItCannotAttach()
+    {
+        const CaptureShmNames names = makeCaptureShmNames(
+            QCoreApplication::applicationPid(), QRandomGenerator::global()->generate());
+        Child helper;
+        QVERIFY(helper.start({QStringLiteral("--capture-helper")}));
+        QVERIFY(helper.next(3000).has_value());
+        helper.send(configureRecord(9, kListedDevice));
+        helper.send(attachRecord(9, names, 64 * 1024));
+        const auto failed = helper.nextStatus(3000);
+        QVERIFY2(failed.has_value(), helper.diagnostics().constData());
+        QCOMPARE(failed->generation, 9u);
+        QCOMPARE(failed->state, P::HelperState::Failed);
+        QCOMPARE(failed->reason, P::FailReason::Internal);
+
+        helper.send(P::encodeShutdown());
+        QVERIFY(helper.finishes(3000));
+        QCOMPARE(helper.process().exitCode(), 0);
+    }
+
+    // Version 3: a Pcm record from the parent is a protocol error, and the
+    // helper exits as for any malformed parent record.
+    void helperExitsOnAPcmRecordFromTheParent()
+    {
+        Child helper;
+        QVERIFY(helper.start({QStringLiteral("--capture-helper")}));
+        QVERIFY(helper.next(3000).has_value());
+        const std::array<float, 4> samples{};
+        helper.send(P::encodePcm(1, 0, 0, samples.data(), static_cast<int>(samples.size())));
+        QVERIFY(helper.finishes(1000));
+        QCOMPARE(helper.process().exitCode(), 0);
+    }
+
     // ── Scripted fake ──────────────────────────────────────────────────────
 
+    // R-AUD-17: the fake attaches the region, answers RingAttached, then
+    // writes its tone into a clock matcher ring it builds there.
     void fakeReadyStreamsTone()
     {
+        DeviceRateMatcher::Config sizing;
+        sizing.inRate = 8000;
+        sizing.outRate = 48000;
+        sizing.writeBlockFrames = 64;
+        sizing.callbackFrames = P::kMaxBufferFrames;
+        sizing.delayMs = 0;
+        const std::size_t bytes = DeviceRateMatcher::ringBytes(sizing);
+        QVERIFY(bytes > 0);
+        const CaptureShmNames names = makeCaptureShmNames(
+            QCoreApplication::applicationPid(), QRandomGenerator::global()->generate());
+        const std::unique_ptr<CaptureShmRegion> region = CaptureShmRegion::create(names, bytes);
+        QVERIFY(region);
+
         Child fake;
         QVERIFY(fake.start({QStringLiteral("--fake-capture-child"), QStringLiteral("ready")}));
         QVERIFY(nextTypeIs(fake, P::RecordType::Hello, 3000));
         fake.send(configureRecord(3, QString()));
+        fake.send(attachRecord(3, names, bytes));
         fake.send(openRecord(3));
+        const auto attached = fake.next(1000);
+        QVERIFY(attached.has_value());
+        QCOMPARE(attached->type, P::RecordType::RingAttached);
         QVERIFY(nextStateIs(fake, P::HelperState::Opening, 1000));
         const auto ready = fake.nextStatus(1000);
         QVERIFY(ready.has_value());
         QCOMPARE(ready->state, P::HelperState::Ready);
         QCOMPARE(ready->nativeRate, 48000);
-        for (quint64 expected = 0; expected < 3 * 480; expected += 480) {
-            const auto record = fake.next(1000);
-            QVERIFY(record.has_value());
-            QCOMPARE(record->type, P::RecordType::Pcm);
-            const auto pcm = P::decodePcm(record->payload);
-            QVERIFY(pcm.has_value());
-            QCOMPARE(pcm->generation, 3u);
-            QCOMPARE(pcm->framePosition, expected);
-            QCOMPARE(pcm->samples.size(), 480);
+        QCOMPARE(ready->latencyUs, 1500);
+        QCOMPARE(ready->bufferFrames, 480);
+
+        // Three writes of 480 frames reach the ring, each with a wake.
+        for (int i = 0; i < 3; ++i) {
+            QVERIFY(region->waitWake());
         }
+        const auto* header = static_cast<const MatcherRingHeader*>(region->data());
+        QCOMPARE(header->magic, kMatcherRingMagic);
+        MatcherRingHeader* ring =
+            attachMatcherRing(region->data(), matcherRingBytes(header->capacityFrames, 2));
+        QVERIFY(ring != nullptr);
+        QVERIFY(ring->written.load() >= 3 * 480);
+        QVERIFY(ring->lastWriteNs.load() > 0);
+        QVERIFY(!fake.next(50).has_value());                    // no Pcm record
+
         fake.send(stopRecord(3));
-        std::optional<P::Status> stopped;
-        while (!stopped) {
-            const auto record = fake.next(1000);
-            QVERIFY(record.has_value());
-            if (record->type == P::RecordType::Status) {
-                stopped = P::decodeStatus(record->payload);
-            }
-        }
+        const auto stopped = fake.nextStatus(1000);
+        QVERIFY(stopped.has_value());
         QCOMPARE(stopped->state, P::HelperState::Stopped);
         fake.send(P::encodeShutdown());
         QVERIFY(fake.finishes(2000));
@@ -349,6 +457,7 @@ private slots:
         QTest::newRow("input-lost") << QStringLiteral("input-lost");
         QTest::newRow("ignore-stop") << QStringLiteral("ignore-stop");
         QTest::newRow("stale") << QStringLiteral("stale");
+        QTest::newRow("busy") << QStringLiteral("busy");
     }
 
     void fakeScenarioShapes()
@@ -383,7 +492,6 @@ private slots:
             QVERIFY(nextStateIs(fake, P::HelperState::Opening, 1000));
             QVERIFY(timer.elapsed() >= 250);
             QVERIFY(nextStateIs(fake, P::HelperState::Ready, 1000));
-            QVERIFY(nextTypeIs(fake, P::RecordType::Pcm, 1000));
         } else if (scenario == QLatin1String("crash-after-ready")) {
             QVERIFY(nextStateIs(fake, P::HelperState::Opening, 1000));
             QVERIFY(nextStateIs(fake, P::HelperState::Ready, 1000));
@@ -413,13 +521,7 @@ private slots:
             QVERIFY(nextStateIs(fake, P::HelperState::Opening, 1000));
             QVERIFY(nextStateIs(fake, P::HelperState::Ready, 1000));
             fake.send(stopRecord(5));
-            QElapsedTimer timer;
-            timer.start();
-            while (timer.elapsed() < 300) {
-                const auto record = fake.next(100);
-                QVERIFY(record.has_value());
-                QCOMPARE(record->type, P::RecordType::Pcm);
-            }
+            QVERIFY(!fake.next(300).has_value());               // never Stopped
         } else if (scenario == QLatin1String("stale")) {
             const auto opening = fake.nextStatus(1000);
             QVERIFY(opening.has_value());
@@ -428,11 +530,12 @@ private slots:
             QVERIFY(ready.has_value());
             QCOMPARE(ready->state, P::HelperState::Ready);
             QCOMPARE(ready->generation, 4u);
-            const auto record = fake.next(1000);
-            QVERIFY(record.has_value());
-            const auto pcm = P::decodePcm(record->payload);
-            QVERIFY(pcm.has_value());
-            QCOMPARE(pcm->generation, 4u);
+        } else if (scenario == QLatin1String("busy")) {
+            QVERIFY(nextStateIs(fake, P::HelperState::Opening, 1000));
+            const auto failed = fake.nextStatus(1000);
+            QVERIFY(failed.has_value());
+            QCOMPARE(failed->state, P::HelperState::Failed);
+            QCOMPARE(failed->reason, P::FailReason::DeviceInUse);
         }
 
         // Every scenario still exits on stdin EOF.

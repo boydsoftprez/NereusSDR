@@ -1873,6 +1873,13 @@ target_compile_definitions(tst_audio_engine_native_routing PRIVATE NEREUS_BUILD_
 # incremental reader, PCM and JSON codecs, malformed-input rejections.
 nereus_add_test(tst_capture_protocol)
 
+# Native audio plan Task 13 (R-AUD-17, V-SW-6): the PC mic hand-off's
+# shared memory and wake.  The test re-executes itself as the writer
+# (--shm-ring-child), which attaches the region by name and passes a
+# numbered ramp of 1,000,000 frames through the clock matcher's ring in
+# lockstep with this side's reader.  No device is opened.
+nereus_add_test(tst_capture_shm_ring)
+
 # R-R3-36 Task 2: the nereus-audio-capture helper as a real process. The
 # test re-executes itself as the helper (--capture-helper, through
 # src/capture_main.cpp) and as the scripted fake (--fake-capture-child),

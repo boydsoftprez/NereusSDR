@@ -1,23 +1,65 @@
 // =================================================================
 // src/core/audio/CaptureAudioBus.cpp  (NereusSDR)
 // =================================================================
-// no-port-check: NereusSDR-original.  Lock-free reader ring behind the
-// capture helper; no Thetis logic.
+// no-port-check: NereusSDR-original.  Lock-free reader over the capture
+// helper's shared clock matcher ring; no Thetis logic.
+//
+// Modification history (NereusSDR):
+//   2026-10-09: native audio plan Task 13 (R-AUD-17, R-AUD-18): reads the
+//               helper's clock matcher ring through a MatcherReader; the
+//               Pcm-fed ring is gone.  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CaptureAudioBus.h"
 
+#include "core/audio/DeviceRateMatcher.h"
+#include "core/audio/MatcherRing.h"
+
 #include <algorithm>
+#include <array>
 #include <cmath>
-#include <cstring>
+#include <thread>
 
 namespace NereusSDR {
 
 namespace {
 
 constexpr int kBytesPerFrame = static_cast<int>(sizeof(float));
+constexpr int kScratchFrames = 1024;
 
 } // namespace
+
+struct CaptureAudioBus::Source {
+    explicit Source(MatcherRingHeader* r) : ring(r), reader(r) {}
+
+    MatcherRingHeader* ring;
+    MatcherReader reader;
+    std::array<float, static_cast<std::size_t>(kScratchFrames) * 2> stereo{};
+};
+
+CaptureAudioBus::CaptureAudioBus() = default;
+
+CaptureAudioBus::~CaptureAudioBus()
+{
+    detachRing();
+}
+
+template <typename Fn, typename T>
+T CaptureAudioBus::withSource(Fn&& fn, T fallback) const
+{
+    // A hazard count: detachRing() clears the pointer, then waits for the
+    // count to reach zero, so a source seen here stays alive until the
+    // count drops.  Both sides use sequentially consistent order.
+    m_busy.fetch_add(1);
+    Source* source = m_source.load();
+    T result = fallback;
+    if (source != nullptr) {
+        result = fn(*source);
+    }
+    m_busy.fetch_sub(1);
+    return result;
+}
 
 bool CaptureAudioBus::open(const AudioFormat& /*format*/)
 {
@@ -43,40 +85,26 @@ qint64 CaptureAudioBus::pull(char* data, qint64 maxBytes)
     if (data == nullptr || maxBytes < kBytesPerFrame || !m_available.load(std::memory_order_acquire)) {
         return 0;
     }
-    quint64 read = m_read.load(std::memory_order_relaxed);
-    const quint64 floor = m_discardFloor.load(std::memory_order_acquire);
-    if (read < floor) {
-        read = floor;
-    }
-    const quint64 written = m_written.load(std::memory_order_acquire);
-    if (written <= read) {
-        if (read != m_read.load(std::memory_order_relaxed)) {
-            m_read.store(read, std::memory_order_release);
-        }
-        return 0;
-    }
-    const quint64 wanted = static_cast<quint64>(maxBytes / kBytesPerFrame);
-    const quint64 frames = std::min(written - read, wanted);
-    const int start = static_cast<int>(read % kRingFrames);
-    const int first = std::min(static_cast<int>(frames), kRingFrames - start);
-    std::memcpy(data, &m_ring[static_cast<std::size_t>(start)],
-                static_cast<std::size_t>(first) * kBytesPerFrame);
-    if (static_cast<quint64>(first) < frames) {
-        std::memcpy(data + first * kBytesPerFrame, &m_ring[0],
-                    static_cast<std::size_t>(frames - static_cast<quint64>(first)) * kBytesPerFrame);
-    }
-    m_read.store(read + frames, std::memory_order_release);
-    return static_cast<qint64>(frames) * kBytesPerFrame;
+    const qint64 wanted = maxBytes / kBytesPerFrame;
+    return withSource(
+        [&](Source& source) -> qint64 {
+            auto* out = reinterpret_cast<float*>(data);
+            qint64 done = 0;
+            while (done < wanted) {
+                const int frames = static_cast<int>(std::min<qint64>(wanted - done, kScratchFrames));
+                source.reader.read(source.stereo.data(), frames);
+                for (int f = 0; f < frames; ++f) {
+                    out[done + f] = source.stereo[static_cast<std::size_t>(2 * f)];
+                }
+                done += frames;
+            }
+            return done * kBytesPerFrame;
+        },
+        qint64(0));
 }
 
 void CaptureAudioBus::flush()
 {
-    const quint64 written = m_written.load(std::memory_order_acquire);
-    quint64 floor = m_discardFloor.load(std::memory_order_relaxed);
-    while (floor < written
-           && !m_discardFloor.compare_exchange_weak(floor, written, std::memory_order_acq_rel,
-                                                    std::memory_order_relaxed)) {
-    }
 }
 
 float CaptureAudioBus::rxLevel() const
@@ -86,6 +114,9 @@ float CaptureAudioBus::rxLevel() const
 
 float CaptureAudioBus::txLevel() const
 {
+    if (!m_available.load(std::memory_order_acquire)) {
+        return 0.0f;
+    }
     return m_level.load(std::memory_order_acquire);
 }
 
@@ -103,64 +134,105 @@ AudioFormat CaptureAudioBus::negotiatedFormat() const
     return format;
 }
 
-int CaptureAudioBus::writeFrames(const float* samples, int frameCount)
+bool CaptureAudioBus::attachRing(MatcherRingHeader* ring)
 {
-    if (samples == nullptr || frameCount <= 0) {
-        return 0;
+    if (ring == nullptr || m_owned != nullptr) {
+        return false;
     }
-    float peak = 0.0f;
-    for (int i = 0; i < frameCount; ++i) {
-        peak = std::max(peak, std::fabs(samples[i]));
+    m_owned = std::make_unique<Source>(ring);
+    if (!m_owned->reader.valid()) {
+        m_owned.reset();
+        return false;
     }
-    m_level.store(peak, std::memory_order_release);
+    m_levelSeen = ring->written.load(std::memory_order_acquire);
+    m_source.store(m_owned.get());
+    return true;
+}
 
-    // Free space counts only frames the consumer has confirmed, never the
-    // discard floor: a consumer may still be copying frames below it.
-    const quint64 written = m_written.load(std::memory_order_relaxed);
-    const quint64 read = m_read.load(std::memory_order_acquire);
-    const quint64 used = written - std::min(read, written);
-    const int space = kRingFrames - static_cast<int>(std::min<quint64>(used, kRingFrames));
-    const int accepted = std::min(frameCount, space);
-    if (accepted < frameCount) {
-        m_dropped.fetch_add(static_cast<quint64>(frameCount - accepted), std::memory_order_relaxed);
+void CaptureAudioBus::detachRing()
+{
+    m_source.store(nullptr);
+    while (m_busy.load() != 0) {
+        std::this_thread::yield();
     }
-    if (accepted == 0) {
-        return 0;
-    }
-    const int start = static_cast<int>(written % kRingFrames);
-    const int first = std::min(accepted, kRingFrames - start);
-    std::memcpy(&m_ring[static_cast<std::size_t>(start)], samples,
-                static_cast<std::size_t>(first) * kBytesPerFrame);
-    if (first < accepted) {
-        std::memcpy(&m_ring[0], samples + first,
-                    static_cast<std::size_t>(accepted - first) * kBytesPerFrame);
-    }
-    m_written.store(written + static_cast<quint64>(accepted), std::memory_order_release);
-    return accepted;
+    m_owned.reset();
+    m_level.store(0.0f, std::memory_order_release);
 }
 
 void CaptureAudioBus::setAvailable(bool available)
 {
-    if (available) {
-        m_available.store(true, std::memory_order_release);
-        return;
+    m_available.store(available, std::memory_order_release);
+    if (!available) {
+        m_level.store(0.0f, std::memory_order_release);
     }
-    m_available.store(false, std::memory_order_release);
-    m_level.store(0.0f, std::memory_order_release);
-    flush();
 }
 
-quint64 CaptureAudioBus::droppedFrames() const
+void CaptureAudioBus::noteWake()
 {
-    return m_dropped.load(std::memory_order_relaxed);
+    withSource(
+        [&](Source& source) -> int {
+            const MatcherRingHeader& ring = *source.ring;
+            const std::uint64_t written = ring.written.load(std::memory_order_acquire);
+            if (written <= m_levelSeen) {
+                return 0;
+            }
+            // The newest frames only: the writer works past written, never
+            // on the frames below it, while the ring holds more than this.
+            const std::uint64_t window = std::min<std::uint64_t>(
+                {written - m_levelSeen, static_cast<std::uint64_t>(kLevelWindowFrames),
+                 static_cast<std::uint64_t>(ring.capacityFrames / 4)});
+            const std::uint64_t mask = static_cast<std::uint64_t>(ring.capacityFrames) - 1;
+            const float* frames = ring.frames();
+            float peak = 0.0f;
+            for (std::uint64_t i = written - window; i < written; ++i) {
+                peak = std::max(peak, std::fabs(frames[(i & mask) * 2]));
+            }
+            m_levelSeen = written;
+            m_level.store(peak, std::memory_order_release);
+            return 0;
+        },
+        0);
 }
 
-int CaptureAudioBus::bufferedFrames() const
+bool CaptureAudioBus::ringAttached() const
 {
-    const quint64 written = m_written.load(std::memory_order_acquire);
-    const quint64 read = std::max(m_read.load(std::memory_order_acquire),
-                                  m_discardFloor.load(std::memory_order_acquire));
-    return written > read ? static_cast<int>(written - read) : 0;
+    return withSource([](Source&) { return true; }, false);
+}
+
+std::optional<double> CaptureAudioBus::fillFrames() const
+{
+    return withSource(
+        [](Source& source) -> std::optional<double> {
+            return source.ring->fillFrames.load(std::memory_order_acquire);
+        },
+        std::optional<double>{});
+}
+
+quint64 CaptureAudioBus::overruns() const
+{
+    return withSource(
+        [](Source& source) -> quint64 {
+            return source.ring->overruns.load(std::memory_order_acquire);
+        },
+        quint64(0));
+}
+
+quint64 CaptureAudioBus::dryRuns() const
+{
+    return withSource(
+        [](Source& source) -> quint64 {
+            return source.ring->dryRuns.load(std::memory_order_acquire);
+        },
+        quint64(0));
+}
+
+std::int64_t CaptureAudioBus::lastWriteNs() const
+{
+    return withSource(
+        [](Source& source) -> std::int64_t {
+            return source.ring->lastWriteNs.load(std::memory_order_acquire);
+        },
+        std::int64_t(0));
 }
 
 } // namespace NereusSDR

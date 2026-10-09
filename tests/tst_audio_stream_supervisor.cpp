@@ -23,6 +23,10 @@
 //               startMicOnly() opens the mic alone; startOutputs() opens
 //               the outputs without reopening it.  J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 13 (R-AUD-11): a fallback on a
+//               default that is the chosen device plays as the chosen
+//               device, with no retry.  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -464,6 +468,65 @@ private slots:
         QCOMPARE(rig.sup->retryDelayMsForTest(AudioRole::Headphones), 250);
         rig.sup->fireRetryForTest(AudioRole::Headphones);
         QCOMPARE(rig.st(AudioRole::Headphones).state, AudioRoleState::Playing);
+    }
+
+    // Carried finding (Task 9): the chosen device is also the system
+    // default.  When it is taken and the fallback opens the default, that
+    // is the chosen device playing again (same engine, same config): it
+    // reads Playing on it and arms no retry, which could only collide with
+    // that open or reopen it with a gap.
+    void busyWhenChosenIsDefaultPlaysOnItWithoutRetry()
+    {
+        Rig rig;
+        addStandardOutputs(rig.catalogue);
+        rig.catalogue.setDefault(AudioDeviceDirection::Output, kUsbId);
+        rig.sup->setChoice(AudioRole::Speakers, chosen(kUsbId, kUsbName));
+        rig.start();
+        QCOMPARE(rig.st(AudioRole::Speakers).state, AudioRoleState::Playing);
+
+        rig.host.clear();
+        rig.sup->onStreamEvent(AudioRole::Speakers, streamEvent(AudioStreamEvent::Kind::DeviceBusy));
+        QCOMPARE(rig.host.opensFor(AudioRole::Speakers).size(), 1);
+        QVERIFY(!rig.host.opensFor(AudioRole::Speakers).last().device.has_value());
+        QCOMPARE(rig.st(AudioRole::Speakers).state, AudioRoleState::Playing);
+        QCOMPARE(rig.st(AudioRole::Speakers).reason, AudioRoleReason::None);
+        QCOMPARE(rig.st(AudioRole::Speakers).playingName, kUsbName);
+        QCOMPARE(rig.sup->retryDelayMsForTest(AudioRole::Speakers), -1);
+
+        // Its next list change keeps it: no reopen.
+        rig.host.clear();
+        rig.catalogue.changed();
+        QCoreApplication::processEvents();
+        QCOMPARE(rig.host.opensFor(AudioRole::Speakers).size(), 0);
+        QCOMPARE(rig.st(AudioRole::Speakers).state, AudioRoleState::Playing);
+    }
+
+    void busyAtFirstOpenOnDefaultChosenPlaysOnIt()
+    {
+        Rig rig;
+        addStandardOutputs(rig.catalogue);
+        rig.catalogue.setDefault(AudioDeviceDirection::Output, kUsbId);
+        rig.host.scripted.insert(kUsbId, {AudioOpenResult::InUse});
+        rig.sup->setChoice(AudioRole::Headphones, chosen(kUsbId, kUsbName));
+        rig.start();
+        QCOMPARE(rig.st(AudioRole::Headphones).state, AudioRoleState::Playing);
+        QCOMPARE(rig.st(AudioRole::Headphones).reason, AudioRoleReason::None);
+        QCOMPARE(rig.st(AudioRole::Headphones).playingName, kUsbName);
+        QCOMPARE(rig.sup->retryDelayMsForTest(AudioRole::Headphones), -1);
+
+        // A default that is held too stays in use on the schedule.
+        Rig held;
+        addStandardOutputs(held.catalogue);
+        held.catalogue.setDefault(AudioDeviceDirection::Output, kUsbId);
+        held.host.scripted.insert(kUsbId, {AudioOpenResult::InUse});
+        held.host.scripted.insert(QString(), {AudioOpenResult::InUse});
+        held.sup->setChoice(AudioRole::Headphones, chosen(kUsbId, kUsbName));
+        held.start();
+        QCOMPARE(held.st(AudioRole::Headphones).reason, AudioRoleReason::InUse);
+        QCOMPARE(held.sup->retryDelayMsForTest(AudioRole::Headphones), 250);
+        held.sup->fireRetryForTest(AudioRole::Headphones);
+        QCOMPARE(held.st(AudioRole::Headphones).state, AudioRoleState::Playing);
+        QCOMPARE(held.st(AudioRole::Headphones).playingName, kUsbName);
     }
 
     // R-AUD-09, R-AUD-10, D5: the mic and VAX go silent and are never moved

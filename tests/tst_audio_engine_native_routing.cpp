@@ -35,6 +35,10 @@
 //               start() opens the outputs without reopening the mic, and an
 //               output setting changed meanwhile opens once, on its choice.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 13 (R-AUD-11): a failed reopen whose
+//               fallback opens the default that is the chosen device
+//               reads Playing on it.  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -752,8 +756,10 @@ private slots:
         QCOMPARE(aliveAtCreate.back(), 1);
         QCOMPARE(rig.engine->roleStatus(AudioRole::Speakers).state, AudioRoleState::Playing);
 
-        // The same device again, and it fails: the role reads closed and
-        // falls back to the system default.
+        // The same device again, and it fails: the role closes it and
+        // falls back to the system default.  The default is this same
+        // device (Task 13 settled call): its open is the chosen device
+        // playing again, so the role reads Playing on it.
         rig.native->setFailingOutputs({QStringLiteral("built-in-uid")});
         QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("open failed")));
         QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("did not open")));
@@ -763,7 +769,9 @@ private slots:
         QCOMPARE(aliveAtCreate.at(3), 1);
         QVERIFY(rig.native->outputRequests().back().deviceId.isEmpty());
         QCOMPARE(rig.native->aliveOutputs(), 1);
-        QCOMPARE(rig.engine->roleStatus(AudioRole::Speakers).state, AudioRoleState::PlayingOnDefault);
+        QCOMPARE(rig.engine->roleStatus(AudioRole::Speakers).state, AudioRoleState::Playing);
+        QCOMPARE(rig.engine->roleStatus(AudioRole::Speakers).playingName,
+                 QStringLiteral("Built-in speakers"));
         rig.native->setOutputCreatedHook({});
         rig.engine->stop();
     }

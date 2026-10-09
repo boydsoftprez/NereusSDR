@@ -7,6 +7,8 @@
 // Modification history (NereusSDR):
 //   2026-10-08: native audio plan Task 1 (V-HW-8). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 13 (R-AUD-17): processStereo.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AudioDelayProbe.h"
@@ -82,13 +84,27 @@ AudioDelayProbeDetector::AudioDelayProbeDetector(int sampleRate)
 std::optional<std::int64_t> AudioDelayProbeDetector::process(const float* mono, int frames,
                                                               std::int64_t captureNsOfFrame0)
 {
-    if (mono == nullptr || frames <= 0) {
+    return processStrided(mono, frames, 1, captureNsOfFrame0);
+}
+
+std::optional<std::int64_t> AudioDelayProbeDetector::processStereo(const float* stereo, int frames,
+                                                                    std::int64_t captureNsOfFrame0)
+{
+    return processStrided(stereo, frames, 2, captureNsOfFrame0);
+}
+
+std::optional<std::int64_t> AudioDelayProbeDetector::processStrided(const float* samples, int frames,
+                                                                     int stride,
+                                                                     std::int64_t captureNsOfFrame0)
+{
+    if (samples == nullptr || frames <= 0 || stride < 1) {
         return std::nullopt;
     }
     std::optional<std::int64_t> hit;
     const auto windowFrames = static_cast<std::int64_t>(m_windowFrames);
     for (int i = 0; i < frames; ++i) {
-        const double x = std::isfinite(mono[i]) ? static_cast<double>(mono[i]) : 0.0;
+        const float sample = samples[static_cast<std::ptrdiff_t>(i) * stride];
+        const double x = std::isfinite(sample) ? static_cast<double>(sample) : 0.0;
         // The threshold comes from the input before this sample, and only
         // once a full RMS window has been seen.
         if (!hit && m_framesSeen >= windowFrames

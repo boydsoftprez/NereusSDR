@@ -14,6 +14,11 @@
 //   2026-10-09: early-review fix wave follow-up (R-AUD-08, R-AUD-14):
 //               startMicOnly() and startOutputs().  J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 13 (R-AUD-11): a chosen output whose
+//               fallback opens on the system default that is the chosen
+//               device itself takes that open as the chosen device's, with
+//               no retry.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/audio/AudioStreamSupervisor.h"
@@ -219,7 +224,9 @@ void AudioStreamSupervisor::onStreamEvent(AudioRole role, const AudioStreamEvent
         // R-AUD-09, R-AUD-10: silent, never another device.
         closeIfOpen(role);
     }
-    if (s.target && listedById(role, s.target->id)) {
+    // An open the fallback took as the chosen device's needs no retry.
+    const bool adopted = s.open && !s.onDefault;
+    if (!adopted && s.target && listedById(role, s.target->id)) {
         armRetry(role);
     }
     publish(role);
@@ -685,6 +692,19 @@ bool AudioStreamSupervisor::openSystemDefault(AudioRole role)
         s.openDevice.reset();
         if (kindOf(role) != ChoiceKind::Chosen) {
             s.silentReason = AudioRoleReason::None;
+        }
+        // Carried finding (Task 9, settled for JJ's veto): the system
+        // default is the chosen device itself.  The fallback opened it with
+        // the same engine and config, so it is the chosen device playing,
+        // exclusive where chosen; a retry of the chosen device would only
+        // collide with this open (in use) or reopen it with a gap.
+        const std::optional<AudioDeviceInfo> def = systemDefault(role);
+        if (kindOf(role) == ChoiceKind::Chosen && s.target && def && def->id == s.target->id) {
+            s.onDefault = false;
+            s.openDevice = *s.target;
+            s.trouble = AudioRoleReason::None;
+            s.silentReason = AudioRoleReason::None;
+            cancelRetry(role);
         }
         return true;
     }

@@ -28,6 +28,10 @@
 //                 first speakers choice is an unsaved "(none)";
 //                 prepareAudioDevices() starts the device layer without
 //                 opening an output.
+//   2026-10-09 : Native audio plan Task 13 (R-AUD-11, R-AUD-17, R-AUD-18)
+//                 by J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. m_micRequestFloor: a mic open waits for a status of
+//                 its own capture request; the mic's delay parts.
 //   2026-10-09 : Native audio plan Task 12 (R-AUD-11) by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code. makeBus()
 //                 reports an open another program refused, so the role
@@ -1496,11 +1500,15 @@ private:
     // announces a config only when no open did.
     quint64 m_speakersAnnouncements{0};
     // The PC mic role: the capture supervisor opens it.  Pending until
-    // its status for a generation above m_micGenerationFloor arrives.
+    // its status for a generation above m_micGenerationFloor arrives,
+    // answering a request at or above m_micRequestFloor (the supervisor's
+    // requestSerial() when this open was made): an earlier open's status
+    // never completes a later one.
     bool m_micPending{false};
     bool m_micOpen{false};
     bool m_micHandledBySupervisor{false};
     quint32 m_micGenerationFloor{0};
+    quint64 m_micRequestFloor{0};
     std::optional<AudioEngineKind> m_micEngine;
     // rescanOlderDrivers(): the roles it closed, awaiting the new list.
     quint64 m_rescanToken{0};
