@@ -1893,15 +1893,15 @@ endif()
 # 3 s start and stop waits) with fake engines only. REALTIME: the debounce
 # and default-change cases keep up with the wall clock.
 nereus_add_test(tst_audio_device_catalog REALTIME)
+if(WIN32)
+    # timeBeginPeriod: the 2 ms device thread asks for Windows' 1 ms timer.
+    target_link_libraries(tst_audio_device_catalog PRIVATE winmm)
+endif()
 
 nereus_add_test(tst_device_rate_matcher_threads REALTIME)
 if(UNIX AND NOT APPLE)
     target_link_libraries(tst_device_rate_matcher_threads PRIVATE ${CMAKE_DL_LIBS})
 endif()
-
-# R-R3-36 Task 5: AudioEngine and RadioModel PC microphone session demand.
-# start() opens no input; a hanging helper never delays start, connect or
-# disconnect; the local session holds a capture lease only while PC mic is
 # On Windows each image binds operator new to its own C++ runtime, so the
 # test's replaced operator new never sees an allocation made inside
 # NereusCore.dll.  The matcher is compiled into the test there, so its
@@ -1911,6 +1911,10 @@ if(WIN32)
     target_sources(tst_device_rate_matcher_threads PRIVATE
         ${CMAKE_SOURCE_DIR}/src/core/audio/DeviceRateMatcher.cpp)
 endif()
+
+# R-R3-36 Task 5: AudioEngine and RadioModel PC microphone session demand.
+# start() opens no input; a hanging helper never delays start, connect or
+# disconnect; the local session holds a capture lease only while PC mic is
 # selected; a daemon-flagged model never starts the helper. Re-executes
 # itself as the scripted fake helper (--fake-capture-child); no real
 # microphone is opened.
