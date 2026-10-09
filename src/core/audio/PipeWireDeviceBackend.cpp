@@ -7,6 +7,12 @@
 //   2026-10-09: native audio plan Task 10 (R-AUD-01, R-AUD-02, R-AUD-03,
 //               R-AUD-07, R-AUD-14). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 11 (R-AUD-01, R-AUD-31): running()
+//               reports the Linux engine selection when given one.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: Task 11 fix round 1 (R-AUD-03): and only while the daemon
+//               answers, even when forced. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/PipeWireDeviceBackend.h"
@@ -84,14 +90,21 @@ QList<AudioDeviceInfo> pipeWireDevicesFromNodes(const QList<PipeWireNodeRecord>&
     return devices;
 }
 
-PipeWireDeviceBackend::PipeWireDeviceBackend(std::unique_ptr<IPipeWireDeviceSystem> system)
+PipeWireDeviceBackend::PipeWireDeviceBackend(std::shared_ptr<IPipeWireDeviceSystem> system,
+                                             std::function<bool()> selected)
     : m_system(std::move(system))
+    , m_selected(std::move(selected))
 {
 }
 
 bool PipeWireDeviceBackend::running() const
 {
-    return m_system && m_system->running();
+    if (!m_system) {
+        return false;
+    }
+    // Not running while no server answers, whatever the selection says
+    // (a forced engine whose server is down is not running).
+    return m_system->running() && (!m_selected || m_selected());
 }
 
 QList<AudioDeviceInfo> PipeWireDeviceBackend::enumerate()

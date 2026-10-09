@@ -1675,6 +1675,21 @@ if(UNIX AND NOT APPLE)
     nereus_add_test(tst_pipewire_device_backend)
 endif()
 
+# ── Native audio plan Task 11: which Linux engine runs (R-AUD-01, R-AUD-02, ─
+# R-AUD-31). Pure: the probe to the choice, forced values included. Runs on
+# every platform (the selection holds no Linux headers).
+nereus_add_test(tst_linux_engine_selection CORE_ONLY)
+
+# ── Native audio plan Task 11: the PulseAudio engine (R-AUD-01, R-AUD-07, ──
+# R-AUD-14, R-AUD-31, R-AUD-32). Contract tests with a fake system: sinks and
+# sources to devices, monitors, pairs, the stream a device opens, the
+# subscribe notices, the matcher output's fill, the registry order and the
+# test-run barrier. No server is reached (the real adapter never connects in
+# a test run). Built only with libpulse, as the engine is.
+if(UNIX AND NOT APPLE AND PULSE_FOUND)
+    nereus_add_test(tst_pulse_audio_backend)
+endif()
+
 # ── R3 receiver audio fix wave (R-R3-44): PipeWire output frames per cycle ───
 # Pure helper (no PipeWire headers): an output stream fills and counts the
 # frames the graph asked for (pw_buffer::requested), not the whole buffer.

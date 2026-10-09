@@ -14,6 +14,12 @@
 //               via Anthropic Claude Code.
 //   2026-10-09: reconnect cases (Task 10 fix round 1). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 11: PulseAudio registers between
+//               PipeWire and the older drivers when libpulse is built in.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: Task 11 fix round 1 (R-AUD-03): a selected PipeWire whose
+//               daemon is away is not running. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 #ifdef NEREUS_HAVE_PIPEWIRE
 
@@ -762,6 +768,19 @@ private slots:
         runningSystem->nodeList = desktopNodes();
         auto runningBackend = std::make_shared<PipeWireDeviceBackend>(std::move(runningSystem));
         QCOMPARE(defaultAudioEngine({runningBackend}), AudioEngineKind::PipeWire);
+
+        // Selected (a forced value) but the daemon is away: not running
+        // (R-AUD-03); selected and answering: running; answering but not
+        // selected: not running.
+        bool selected = true;
+        auto awaySystem = std::make_shared<FakePipeWireDeviceSystem>();
+        awaySystem->isRunning.store(false);
+        PipeWireDeviceBackend forced(awaySystem, [&selected] { return selected; });
+        QVERIFY(!forced.running());
+        awaySystem->isRunning.store(true);
+        QVERIFY(forced.running());
+        selected = false;
+        QVERIFY(!forced.running());
     }
 
     // R-AUD-32: in a test run the real adapter never connects and every
@@ -1016,12 +1035,18 @@ private slots:
         QTest::qWait(kTestRetryMs * 3);   // the late report finds no system
     }
 
-    // R-AUD-01 on Linux: PipeWire ahead of the older drivers, outside the
-    // Core.  In a test run it is not running, so the default stays PortAudio.
+    // R-AUD-01 on Linux: PipeWire ahead of the older drivers (PulseAudio
+    // between them when built), outside the Core.  In a test run it is not
+    // running, so the default stays PortAudio.
     void registryOrderOnLinux()
     {
         const auto window = makeSystemAudioBackends(AudioBackendContext{});
+#ifdef NEREUS_HAVE_PULSEAUDIO
+        QCOMPARE(window.size(), std::size_t(3));
+        QCOMPARE(window.at(1)->id(), AudioBackendId::PulseAudio);
+#else
         QCOMPARE(window.size(), std::size_t(2));
+#endif
         QCOMPARE(window.front()->id(), AudioBackendId::PipeWire);
         QCOMPARE(window.back()->id(), AudioBackendId::PortAudio);
         QVERIFY(!window.front()->running());

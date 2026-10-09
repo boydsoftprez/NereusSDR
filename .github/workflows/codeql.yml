@@ -47,7 +47,7 @@ jobs:
             cmake ninja-build pkg-config g++ \
             libgl1-mesa-dev libfftw3-dev \
             libasound2-dev libjack-jackd2-dev \
-            libpipewire-0.3-dev \
+            libpipewire-0.3-dev libpulse-dev \
             libssl-dev
 
       - name: Install Qt

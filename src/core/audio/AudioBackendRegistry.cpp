@@ -17,6 +17,11 @@
 //               system; Linux registers PipeWire ahead of the older
 //               drivers, outside the Core. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 11 (R-AUD-01, R-AUD-02, R-AUD-31):
+//               Linux desktops register PipeWire, then PulseAudio, then the
+//               older drivers without the host APIs they replace; both
+//               native backends report the Linux engine selection.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AudioBackendRegistry.h"
@@ -30,9 +35,18 @@
 #include "core/audio/CoreAudioSystem.h"
 #elif defined(Q_OS_WIN)
 #include "core/audio/WasapiBackendWin.h"
-#elif defined(Q_OS_LINUX) && defined(NEREUS_HAVE_PIPEWIRE)
+#elif defined(Q_OS_LINUX)
+#include "core/AppSettings.h"
+#include "core/LogCategories.h"
+#include "core/audio/LinuxEngineSelection.h"
+#if defined(NEREUS_HAVE_PIPEWIRE)
 #include "core/audio/PipeWireDeviceBackend.h"
 #include "core/audio/PipeWireDeviceSystem.h"
+#endif
+#if defined(NEREUS_HAVE_PULSEAUDIO)
+#include "core/audio/PulseAudioBackend.h"
+#include "core/audio/PulseAudioSystem.h"
+#endif
 #endif
 
 #include <optional>
@@ -63,6 +77,24 @@ std::optional<AudioEngineKind> nativeDefaultFor(AudioBackendId id)
     return std::nullopt;
 }
 
+#if defined(Q_OS_LINUX)
+// Audio/LinuxBackendPreferred, as detectLinuxBackend reads it; "pipewire"
+// in a build without PipeWire is ignored, as it is there.
+QString linuxForcedEngine()
+{
+    QString forced = AppSettings::instance()
+                         .value(QStringLiteral("Audio/LinuxBackendPreferred"), QString())
+                         .toString();
+#if !defined(NEREUS_HAVE_PIPEWIRE)
+    if (forced == QStringLiteral("pipewire")) {
+        qCWarning(lcAudio) << "Audio/LinuxBackendPreferred is pipewire but this build has no PipeWire";
+        forced.clear();
+    }
+#endif
+    return forced;
+}
+#endif
+
 } // namespace
 
 std::vector<std::shared_ptr<IAudioEngineBackend>> makeSystemAudioBackends(const AudioBackendContext& context)
@@ -88,21 +120,59 @@ std::vector<std::shared_ptr<IAudioEngineBackend>> makeSystemAudioBackends(const 
                                                           currentOlderDriverPlatform(),
                                                           kIncludeReplacedHostApis));
 #else
-    // R-AUD-01, Linux: PipeWire, then PulseAudio (Task 11), then the older
-    // drivers.  The Core has no desktop session, so it registers neither
-    // (ALSA direct, Task 12); the window and the mic helper register both.
-#if defined(Q_OS_LINUX) && defined(NEREUS_HAVE_PIPEWIRE)
+    // R-AUD-01, Linux: PipeWire, then PulseAudio, then the older drivers.
+    // The Core has no desktop session, so it registers neither (ALSA
+    // direct, Task 12); the window and the mic helper register both.
+    bool includeReplacedHostApis = true;
+#if defined(Q_OS_LINUX)
     if (!context.daemon) {
-        backends.push_back(std::make_shared<PipeWireDeviceBackend>(makePipeWireDeviceSystem()));
+        // R-AUD-31: one build carries both engines; which one runs is the
+        // sound server that answers now (LinuxEngineSelection.h).  Both are
+        // always registered, so the one that is not running is shown greyed
+        // with its reason; the selection is read live, so PipeWire coming
+        // back is seen without a restart.
+#if defined(NEREUS_HAVE_PIPEWIRE)
+        std::shared_ptr<IPipeWireDeviceSystem> pipeWire = makePipeWireDeviceSystem();
+#endif
+#if defined(NEREUS_HAVE_PULSEAUDIO)
+        std::shared_ptr<IPulseAudioSystem> pulse = makePulseAudioSystem();
+#endif
+        auto selection = [
+#if defined(NEREUS_HAVE_PIPEWIRE)
+                             pipeWire,
+#endif
+#if defined(NEREUS_HAVE_PULSEAUDIO)
+                             pulse,
+#endif
+                             forced = linuxForcedEngine()]() {
+            LinuxSoundServerProbe probe;
+            probe.forced = forced;
+#if defined(NEREUS_HAVE_PIPEWIRE)
+            probe.pipewireAnswers = pipeWire->running();
+#endif
+#if defined(NEREUS_HAVE_PULSEAUDIO)
+            probe.pulseServerName = pulse->serverName();
+#endif
+            return chooseLinuxEngines(probe);
+        };
+#if defined(NEREUS_HAVE_PIPEWIRE)
+        backends.push_back(std::make_shared<PipeWireDeviceBackend>(
+            pipeWire, [selection] { return selection().pipewireRunning; }));
+#endif
+#if defined(NEREUS_HAVE_PULSEAUDIO)
+        backends.push_back(std::make_shared<PulseAudioBackend>(
+            pulse, [selection] { return selection().pulseRunning; }));
+#endif
+        static_cast<void>(selection);
+        // R-AUD-01: the older drivers follow without the host APIs the
+        // native engines replace (on Linux, olderDriverHostApis lists JACK
+        // and ALSA either way).
+        includeReplacedHostApis = false;
     }
 #endif
-    // Until Linux's native engines land, the older drivers
-    // also list the host APIs those engines replace, so nothing goes
-    // silent meanwhile.
-    constexpr bool kIncludeReplacedHostApis = true;
     backends.push_back(std::make_shared<PortAudioBackend>(&listPortAudioDevices,
                                                           currentOlderDriverPlatform(),
-                                                          kIncludeReplacedHostApis));
+                                                          includeReplacedHostApis));
 #endif
     return backends;
 }

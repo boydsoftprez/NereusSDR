@@ -16,10 +16,18 @@
 // pass straight to the catalogue.  A device with no id opens on the
 // system default sink or source.
 //
+// running() is whether the daemon answers and, when the registry gives a
+// Linux engine selection (LinuxEngineSelection.h), whether it picks
+// PipeWire: never running while the daemon is away, even when forced.
+//
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 10 (R-AUD-01, R-AUD-02, R-AUD-03,
 //               R-AUD-07, R-AUD-14). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 11 (R-AUD-01, R-AUD-31): the
+//               system is shared with the Linux engine selection, whose
+//               answer running() reports. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -44,7 +52,10 @@ QList<AudioDeviceInfo> pipeWireDevicesFromNodes(const QList<PipeWireNodeRecord>&
 
 class PipeWireDeviceBackend final : public IAudioEngineBackend {
 public:
-    explicit PipeWireDeviceBackend(std::unique_ptr<IPipeWireDeviceSystem> system);
+    // `selected`, when given, is the Linux engine selection's answer for
+    // PipeWire; running() needs it and the daemon answering.
+    explicit PipeWireDeviceBackend(std::shared_ptr<IPipeWireDeviceSystem> system,
+                                   std::function<bool()> selected = {});
 
     AudioBackendId id() const override { return AudioBackendId::PipeWire; }
     bool running() const override;
@@ -64,7 +75,8 @@ private:
     std::optional<PipeWireNodeRecord> nodeFor(const QString& deviceId,
                                               AudioDeviceDirection direction);
 
-    std::unique_ptr<IPipeWireDeviceSystem> m_system;
+    std::shared_ptr<IPipeWireDeviceSystem> m_system;
+    std::function<bool()> m_selected;
 };
 
 } // namespace NereusSDR
