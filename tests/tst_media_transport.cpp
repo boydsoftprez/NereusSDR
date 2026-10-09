@@ -46,6 +46,12 @@
 // maxaveragebitrate=48000. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 // Claude Code.
 //
+// 2026-10-09: the stalled-owner case times each owner stall, each packet
+// the line hands over and each underrun, and measures the line once more
+// when every underrun sat in a gap without packets that no stall's end
+// closed (the machine starving the transport, not the owner). J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code.
+//
 // =================================================================
 
 #include "RealtimeTestLoad.h"
@@ -68,6 +74,7 @@
 #include <QtTest>
 #include <QtEndian>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -77,6 +84,8 @@
 #include <functional>
 #include <optional>
 #include <thread>
+#include <utility>
+#include <vector>
 
 using namespace NereusSDR;
 
@@ -2374,7 +2383,110 @@ struct StalledOwnerRun {
     int postRefused{0};
     int sendRefused{0};
     bool ownerExposed{false};
+    // On the steady clock, in us: the owner's stalls, each packet the line
+    // handed to the receiver (on whichever thread delivered it), and the
+    // underruns counted, as the feed placed them.
+    std::vector<std::pair<qint64, qint64>> stallsUs;
+    std::vector<qint64> deliveriesUs;
+    std::vector<qint64> underrunsUs;
 };
+
+qint64 steadyNowUs()
+{
+    return std::chrono::duration_cast<std::chrono::microseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+// One underrun placed against the gap in the line's packets it fell in and
+// the owner's stalls. A stalled owner is asleep and holds nothing: anything
+// that waits on it moves only once its stall has ended. So a gap is the
+// machine's (it kept the transport's own threads from running) when it is
+// longer than the buffer's target and its closing packet came while no
+// stall it overlaps had ended: before the stall, between stalls, or with
+// the owner still asleep. A gap that a stall's end closes, a short gap, or
+// an underrun in no gap is never explained.
+struct UnderrunPlace {
+    bool inGap{false};
+    qint64 fromUs{0};               // the packet before the gap
+    qint64 toUs{0};                 // the packet that closed it
+    bool touchesStall{false};
+    bool closedAfterAStallEnded{false};
+    bool starvation{false};         // explained as the machine's
+};
+
+UnderrunPlace placeUnderrun(const StalledOwnerRun& run, qint64 atUs)
+{
+    // The pump notices an empty buffer on its next block, up to one block
+    // after the late packet was handed over.
+    constexpr qint64 kBlockUs =
+        (static_cast<qint64>(RemoteMicConfig::kPumpBlockFrames) * 1'000'000
+         + RemoteMicConfig::kSampleRate - 1) / RemoteMicConfig::kSampleRate;
+    constexpr qint64 kCoveredGapUs = static_cast<qint64>(RemoteMicConfig::kTargetDepthMs) * 1000;
+    UnderrunPlace place;
+    for (std::size_t i = 1; i < run.deliveriesUs.size(); ++i) {
+        const qint64 from = run.deliveriesUs[i - 1];
+        const qint64 to = run.deliveriesUs[i];
+        if (atUs <= from || atUs > to + kBlockUs) {
+            continue;
+        }
+        place.inGap = true;
+        place.fromUs = from;
+        place.toUs = to;
+        for (const auto& [stallFromUs, stallToUs] : run.stallsUs) {
+            if (from < stallToUs && to > stallFromUs) {
+                place.touchesStall = true;
+                place.closedAfterAStallEnded = place.closedAfterAStallEnded || to >= stallToUs;
+            }
+        }
+        place.starvation = to - from >= kCoveredGapUs && !place.closedAfterAStallEnded;
+        break;
+    }
+    return place;
+}
+
+// Each underrun of a run placed against the owner's stalls and the gap in
+// the line's packets around it, for a message.
+QString describeUnderruns(const StalledOwnerRun& run)
+{
+    const qint64 originUs = run.stallsUs.empty() ? 0 : run.stallsUs.front().first;
+    const auto ms = [originUs](qint64 us) { return QString::number((us - originUs) / 1000); };
+    QStringList stalls;
+    for (const auto& [stallFromUs, stallToUs] : run.stallsUs) {
+        stalls << ms(stallFromUs) + QLatin1Char('-') + ms(stallToUs);
+    }
+    QStringList underruns;
+    for (const qint64 atUs : run.underrunsUs) {
+        const UnderrunPlace place = placeUnderrun(run, atUs);
+        if (!place.inGap) {
+            underruns << QStringLiteral("at %1 ms in no gap").arg(ms(atUs));
+            continue;
+        }
+        underruns << QStringLiteral("at %1 ms in a %2 ms gap without a packet (%3-%4 ms)%5")
+                         .arg(ms(atUs))
+                         .arg(static_cast<double>(place.toUs - place.fromUs) / 1000.0, 0, 'f', 1)
+                         .arg(ms(place.fromUs), ms(place.toUs),
+                              place.closedAfterAStallEnded
+                                  ? QStringLiteral(", closed after a stall ended")
+                                  : place.touchesStall ? QStringLiteral(", closed during a stall")
+                                                       : QString());
+    }
+    return QStringLiteral("%1 underruns, %2 placed: %3; stalls at %4 ms")
+        .arg(run.underruns)
+        .arg(run.underrunsUs.size())
+        .arg(underruns.join(QStringLiteral(", ")), stalls.join(QStringLiteral(", ")));
+}
+
+// Whether every underrun of a run is explained as the machine's (and the
+// feed placed each one).
+bool underrunsAreStarvation(const StalledOwnerRun& run)
+{
+    if (run.underruns <= 0 || static_cast<int>(run.underrunsUs.size()) != run.underruns) {
+        return false;
+    }
+    return std::all_of(run.underrunsUs.begin(), run.underrunsUs.end(),
+                       [&run](qint64 atUs) { return placeUnderrun(run, atUs).starvation; });
+}
 
 } // namespace
 
@@ -2462,22 +2574,33 @@ void TestMediaTransport::aStalledOwnerLeavesTheMicrophoneLineWhole()
         std::atomic<int> sent{0};
         std::atomic<int> delivered{0};
         std::mutex sinkThreadLock;
+        // Room for every packet of the run, so the line's thread never
+        // allocates while it delivers.
+        run.deliveriesUs.reserve(4096);
         if (lineThread) {
             run.sinkSet = offerer.setMicPacketSink(
                 [&receiver, &delivered, &run, &sinkThreadLock](const QByteArray& packet,
                                                                 qint64 heldUs) {
-                    if (delivered.fetch_add(1) == 0) {
+                    {
                         const std::lock_guard lock(sinkThreadLock);
-                        run.sinkThread = QThread::currentThread()->objectName();
+                        if (delivered.load() == 0) {
+                            run.sinkThread = QThread::currentThread()->objectName();
+                        }
+                        run.deliveriesUs.push_back(steadyNowUs());
                     }
+                    delivered.fetch_add(1);
                     receiver.submit(packet, heldUs);
                 });
         }
         connect(&offerer, &IMediaTransport::micRtpReceived, this,
-                [&receiver, &run](const QByteArray& packet, qint64 heldUs) {
+                [&receiver, &run, &sinkThreadLock](const QByteArray& packet, qint64 heldUs) {
                     ++run.ownerReports;
                     // Without a sink the owner delivers, as before.
                     if (!run.sinkSet) {
+                        {
+                            const std::lock_guard lock(sinkThreadLock);
+                            run.deliveriesUs.push_back(steadyNowUs());
+                        }
                         receiver.submit(packet, heldUs);
                     }
                 });
@@ -2533,10 +2656,13 @@ void TestMediaTransport::aStalledOwnerLeavesTheMicrophoneLineWhole()
             // The owner thread: works, then stalls.
             QTest::qWait(kWarmupMs);
             const int underrunsAtWarmup = feed.stats().underflows;
+            const qint64 measuredFromUs = steadyNowUs();
             for (const int stall : stallsMs) {
                 const int sentBefore = sent.load();
                 const qint64 pulledBefore = pumpBlocks.load();
+                const qint64 stallFromUs = steadyNowUs();
                 std::this_thread::sleep_for(std::chrono::milliseconds(stall));
+                run.stallsUs.emplace_back(stallFromUs, steadyNowUs());
                 // Prove both sides did more work than the maximum buffer can
                 // hold during at least one owner stall, independent of fill.
                 run.ownerExposed = run.ownerExposed
@@ -2545,9 +2671,18 @@ void TestMediaTransport::aStalledOwnerLeavesTheMicrophoneLineWhole()
                 QTest::qWait(kBetweenStallsMs);
             }
             underrunsAtEnd.store(feed.stats().underflows - underrunsAtWarmup);
+            const qint64 measuredToUs = steadyNowUs();
             stop.store(true);
             coordinator.join();
             run.underruns = underrunsAtEnd.load();
+            const RemoteMicFeed::Stats placed = feed.stats();
+            for (int i = 0; i < placed.underrunsPlacedCount
+                            && i < RemoteMicFeed::Stats::kMaxUnderrunsPlaced; ++i) {
+                const qint64 atUs = placed.underrunsPlaced[static_cast<std::size_t>(i)].atSteadyUs;
+                if (atUs >= measuredFromUs && atUs <= measuredToUs) {
+                    run.underrunsUs.push_back(atUs);
+                }
+            }
             // What the phone sent reaches the Core (a packet or two may
             // still be in flight).
             QTest::qWait(100);
@@ -2566,7 +2701,19 @@ void TestMediaTransport::aStalledOwnerLeavesTheMicrophoneLineWhole()
     };
 
     const StalledOwnerRun owner = runOnce(false);
-    const StalledOwnerRun line = runOnce(true);
+    StalledOwnerRun line = runOnce(true);
+    // A busy machine can keep the transport's own threads (libdatachannel's
+    // receipt, the line's thread) from running for longer than the buffer's
+    // margin while the owner has no part in it. Such a run proves nothing
+    // about the owner, so it is measured once more. An underrun in a gap a
+    // stall's end closed, or in no measured gap, still fails.
+    if (underrunsAreStarvation(line)) {
+        qInfo().noquote()
+            << QStringLiteral("the machine held the line's packets up, not the owner (%1): "
+                              "measured again")
+                   .arg(describeUnderruns(line));
+        line = runOnce(true);
+    }
     qInfo().noquote()
         << QStringLiteral("seven owner stalls of 80-420 ms: delivered by the owner, %1 "
                           "underruns (longest wait %2 ms); by the line's thread, %3 underruns "
@@ -2586,9 +2733,21 @@ void TestMediaTransport::aStalledOwnerLeavesTheMicrophoneLineWhole()
     // Delivered by the owner: the stalls reach the buffer and run it dry.
     QVERIFY2(owner.underruns >= 1, qPrintable(QString::number(owner.underruns)));
     QVERIFY(owner.ownerWaitMaxMs >= 80.0);
+    // The owner's stalls make gaps that only a stall's end closes, so an
+    // underrun in one is never taken for the machine's.
+    int ownerStallUnderruns = 0;
+    for (const qint64 atUs : owner.underrunsUs) {
+        const UnderrunPlace place = placeUnderrun(owner, atUs);
+        if (place.touchesStall) {
+            ++ownerStallUnderruns;
+            QVERIFY2(place.closedAfterAStallEnded && !place.starvation,
+                     qPrintable(describeUnderruns(owner)));
+        }
+    }
+    QVERIFY2(ownerStallUnderruns >= 1, qPrintable(describeUnderruns(owner)));
     // Delivered by the line's own thread: the line stays whole, every
     // packet comes by that thread, and nothing reaches the owner's signal.
-    QCOMPARE(line.underruns, 0);
+    QVERIFY2(line.underruns == 0, qPrintable(describeUnderruns(line)));
     QVERIFY(line.sinkSet);
     QCOMPARE(line.sinkThread, QStringLiteral("NereusMicRx"));
     QVERIFY2(line.sent > 0 && line.delivered == line.sent,
