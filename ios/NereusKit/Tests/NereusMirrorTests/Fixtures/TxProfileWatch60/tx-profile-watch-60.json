@@ -174,14 +174,6 @@
                                         "antiVoxGainDb",
                                         "monitorVolume",
                                         "amCarrierLevel",
-                                        "twoToneFreq1",
-                                        "twoToneFreq2",
-                                        "twoToneLevel",
-                                        "twoTonePower",
-                                        "twoToneFreq2Delay",
-                                        "twoToneInvert",
-                                        "twoTonePulsed",
-                                        "twoToneDrivePowerSource",
                                         "userDigOut",
                                         "txEqEnabled",
                                         "txEqPreamp",
@@ -765,246 +757,6 @@
             },
             "saved": {
                 "AM_Carrier_Level": "75"
-            }
-        },
-        {
-            "delta": {
-                "key": "transmit",
-                "properties": [
-                    {
-                        "kind": "i64",
-                        "name": "twoToneFreq1",
-                        "ordinal": 77,
-                        "value": 900
-                    }
-                ],
-                "type": "delta"
-            },
-            "field": "twoToneFreq1",
-            "restored": {
-                "key": "transmit",
-                "properties": [
-                    {
-                        "kind": "i64",
-                        "name": "twoToneFreq1",
-                        "ordinal": 77,
-                        "value": 900
-                    }
-                ],
-                "type": "delta"
-            },
-            "saved": {
-                "TwoToneFreq1": "900"
-            }
-        },
-        {
-            "delta": {
-                "key": "transmit",
-                "properties": [
-                    {
-                        "kind": "i64",
-                        "name": "twoToneFreq2",
-                        "ordinal": 78,
-                        "value": 1700
-                    }
-                ],
-                "type": "delta"
-            },
-            "field": "twoToneFreq2",
-            "restored": {
-                "key": "transmit",
-                "properties": [
-                    {
-                        "kind": "i64",
-                        "name": "twoToneFreq2",
-                        "ordinal": 78,
-                        "value": 1700
-                    }
-                ],
-                "type": "delta"
-            },
-            "saved": {
-                "TwoToneFreq2": "1700"
-            }
-        },
-        {
-            "delta": {
-                "key": "transmit",
-                "properties": [
-                    {
-                        "kind": "f64",
-                        "name": "twoToneLevel",
-                        "ordinal": 79,
-                        "value": -9
-                    }
-                ],
-                "type": "delta"
-            },
-            "field": "twoToneLevel",
-            "restored": {
-                "key": "transmit",
-                "properties": [
-                    {
-                        "kind": "f64",
-                        "name": "twoToneLevel",
-                        "ordinal": 79,
-                        "value": -9
-                    }
-                ],
-                "type": "delta"
-            },
-            "saved": {
-                "TwoToneLevel": "-9"
-            }
-        },
-        {
-            "delta": {
-                "key": "transmit",
-                "properties": [
-                    {
-                        "kind": "i64",
-                        "name": "twoTonePower",
-                        "ordinal": 80,
-                        "value": 25
-                    }
-                ],
-                "type": "delta"
-            },
-            "field": "twoTonePower",
-            "restored": {
-                "key": "transmit",
-                "properties": [
-                    {
-                        "kind": "i64",
-                        "name": "twoTonePower",
-                        "ordinal": 80,
-                        "value": 25
-                    }
-                ],
-                "type": "delta"
-            },
-            "saved": {
-                "TwoTonePower": "25"
-            }
-        },
-        {
-            "delta": {
-                "key": "transmit",
-                "properties": [
-                    {
-                        "kind": "i64",
-                        "name": "twoToneFreq2Delay",
-                        "ordinal": 83,
-                        "value": 10
-                    }
-                ],
-                "type": "delta"
-            },
-            "field": "twoToneFreq2Delay",
-            "restored": {
-                "key": "transmit",
-                "properties": [
-                    {
-                        "kind": "i64",
-                        "name": "twoToneFreq2Delay",
-                        "ordinal": 83,
-                        "value": 10
-                    }
-                ],
-                "type": "delta"
-            },
-            "saved": {
-                "TwoToneFreq2Delay": "10"
-            }
-        },
-        {
-            "delta": {
-                "key": "transmit",
-                "properties": [
-                    {
-                        "kind": "bool",
-                        "name": "twoToneInvert",
-                        "ordinal": 82,
-                        "value": false
-                    }
-                ],
-                "type": "delta"
-            },
-            "field": "twoToneInvert",
-            "restored": {
-                "key": "transmit",
-                "properties": [
-                    {
-                        "kind": "bool",
-                        "name": "twoToneInvert",
-                        "ordinal": 82,
-                        "value": false
-                    }
-                ],
-                "type": "delta"
-            },
-            "saved": {
-                "TwoToneInvert": "False"
-            }
-        },
-        {
-            "delta": {
-                "key": "transmit",
-                "properties": [
-                    {
-                        "kind": "bool",
-                        "name": "twoTonePulsed",
-                        "ordinal": 81,
-                        "value": true
-                    }
-                ],
-                "type": "delta"
-            },
-            "field": "twoTonePulsed",
-            "restored": {
-                "key": "transmit",
-                "properties": [
-                    {
-                        "kind": "bool",
-                        "name": "twoTonePulsed",
-                        "ordinal": 81,
-                        "value": true
-                    }
-                ],
-                "type": "delta"
-            },
-            "saved": {
-                "TwoTonePulsed": "True"
-            }
-        },
-        {
-            "delta": {
-                "key": "transmit",
-                "properties": [
-                    {
-                        "kind": "enum",
-                        "name": "twoToneDrivePowerSource",
-                        "ordinal": 84,
-                        "value": 1
-                    }
-                ],
-                "type": "delta"
-            },
-            "field": "twoToneDrivePowerSource",
-            "restored": {
-                "key": "transmit",
-                "properties": [
-                    {
-                        "kind": "enum",
-                        "name": "twoToneDrivePowerSource",
-                        "ordinal": 84,
-                        "value": 1
-                    }
-                ],
-                "type": "delta"
-            },
-            "saved": {
-                "TwoToneDrivePowerOrigin": "TuneSlider"
             }
         },
         {
@@ -3159,13 +2911,13 @@
                     "kind": "f64",
                     "name": "twoToneLevel",
                     "ordinal": 79,
-                    "value": -6
+                    "value": 0
                 },
                 {
                     "kind": "i64",
                     "name": "twoTonePower",
                     "ordinal": 80,
-                    "value": 50
+                    "value": 10
                 },
                 {
                     "kind": "bool",

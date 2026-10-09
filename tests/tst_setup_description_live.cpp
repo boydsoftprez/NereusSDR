@@ -9,6 +9,8 @@
 // 2026-10-06: the cap is 25 (Audio > Outputs' radio speaker rows); a
 // version 25 phone sets the radio speaker. J.J. Boyd (KG4VCF), AI-assisted
 // via Anthropic Claude Code.
+// 2026-10-09: two-tone leaves the TX profile watch and is excluded from it.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 
 #include <algorithm>
@@ -85,22 +87,6 @@ const QList<TxProfileWatchField> kTxProfileWatchFields{
         {QStringLiteral("MonitorVolume")}},
     {"amCarrierLevel", MirrorWireKind::Int64,
         {QStringLiteral("AM_Carrier_Level")}},
-    {"twoToneFreq1", MirrorWireKind::Int64,
-        {QStringLiteral("TwoToneFreq1")}},
-    {"twoToneFreq2", MirrorWireKind::Int64,
-        {QStringLiteral("TwoToneFreq2")}},
-    {"twoToneLevel", MirrorWireKind::Float64,
-        {QStringLiteral("TwoToneLevel")}},
-    {"twoTonePower", MirrorWireKind::Int64,
-        {QStringLiteral("TwoTonePower")}},
-    {"twoToneFreq2Delay", MirrorWireKind::Int64,
-        {QStringLiteral("TwoToneFreq2Delay")}},
-    {"twoToneInvert", MirrorWireKind::Bool,
-        {QStringLiteral("TwoToneInvert")}},
-    {"twoTonePulsed", MirrorWireKind::Bool,
-        {QStringLiteral("TwoTonePulsed")}},
-    {"twoToneDrivePowerSource", MirrorWireKind::Enum,
-        {QStringLiteral("TwoToneDrivePowerOrigin")}},
     {"userDigOut", MirrorWireKind::Int64,
         {QStringLiteral("Mic_UserDigOut")}},
     {"txEqEnabled", MirrorWireKind::Bool,
@@ -253,9 +239,7 @@ QVariant txProfileEdit(const TxProfileWatchField& field,
     static const QHash<QByteArray, QVariant> edits{
         {"micGainDb", -3}, {"lineInBoost", -12.0}, {"voxThresholdDb", -30},
         {"voxHangTimeMs", 700}, {"antiVoxGainDb", 3}, {"monitorVolume", 0.625},
-        {"amCarrierLevel", 75}, {"twoToneFreq1", 900}, {"twoToneFreq2", 1700},
-        {"twoToneLevel", -9.0}, {"twoTonePower", 25}, {"twoToneFreq2Delay", 10},
-        {"twoToneDrivePowerSource", QVariant::fromValue(DrivePowerSource::TuneSlider)},
+        {"amCarrierLevel", 75},
         {"userDigOut", 5}, {"txEqPreamp", 5},
         {"txEqBandsJson", QStringLiteral("[-8,-12,-12,-1,1,4,9,12,-10,7]")},
         {"txEqFreqsJson", QStringLiteral("[50,63,125,250,500,1000,2000,4000,8000,14000]")},
@@ -379,10 +363,17 @@ private slots:
         QCOMPARE(watched.size(), kTxProfileWatchFields.size());
         // These are unavailable, ignored-on-load, global, or derived editor
         // views; none belongs in this ordinary saved-value watch contract.
+        // Two-tone is one Setup value, not profile content (Thetis TX
+        // profiles carry no two-tone fields, database.cs:4299
+        // AddTXProfileTable [v2.10.3.15]), so it never joins the watch.
         for (const QByteArray& excluded : {QByteArray("voxGainScalar"), QByteArray("micSource"),
                  QByteArray("lineInGain"), QByteArray("txEqNc"), QByteArray("txEqMp"),
                  QByteArray("txEqCtfmode"), QByteArray("txEqWintype"), QByteArray("cpdrOn"),
-                 QByteArray("txEqCurve"), QByteArray("cfcProfile")}) {
+                 QByteArray("txEqCurve"), QByteArray("cfcProfile"),
+                 QByteArray("twoToneFreq1"), QByteArray("twoToneFreq2"),
+                 QByteArray("twoToneLevel"), QByteArray("twoTonePower"),
+                 QByteArray("twoToneFreq2Delay"), QByteArray("twoToneInvert"),
+                 QByteArray("twoTonePulsed"), QByteArray("twoToneDrivePowerSource")}) {
             QVERIFY2(!watched.contains(excluded), excluded.constData());
         }
     }
@@ -575,7 +566,7 @@ private slots:
             QCOMPARE(savedStrings.size(), field.savedKeys.size());
             QVERIFY(manager->saveProfile("Edited", &tx));
             const QHash<QString, QVariant> captured = storedProfile("Edited");
-            QCOMPARE(captured.size(), 108);
+            QCOMPARE(captured.size(), 100);
             QJsonObject saved;
             for (int i = 0; i < field.savedKeys.size(); ++i) {
                 const QString key = field.savedKeys.at(i);

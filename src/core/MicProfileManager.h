@@ -9,9 +9,12 @@
 //   setup.cs:9615-9656 [v2.10.3.13] — btnTXProfileDelete_Click
 //
 // NereusSDR collapses the Thetis many-table TXProfile schema (~206 columns
-// in DB.ds.Tables["TXProfile"]) to the live-fields-only subset (93 keys =
-// 15 mic/VOX/MON + 7 two-tone + 1 drive-power-source enum + 22 EQ + 1
-// TX EQ blob + 3 Leveler + 2 ALC + 41 CFC/CPDR/CESSB/PhRot + 2 FilterLow/High).
+// in DB.ds.Tables["TXProfile"]) to the live-fields-only subset (100 keys:
+// mic/VOX/MON, EQ, TX EQ blob, Leveler, ALC, CFC/CPDR/CESSB/PhRot,
+// FilterLow/High, DEXP; see liveKeyList() in MicProfileManager.cpp).
+// Two-tone is not profile content: Thetis TX profiles carry no two-tone
+// fields (database.cs:4299 AddTXProfileTable [v2.10.3.15]); TransmitModel
+// persists it under hardware/<mac>/tx/TwoTone*.
 // 19 of Thetis's 21 factory profiles are deferred to 3M-3a sub-PRs that ship
 // CFC / DEXP backends; 3M-3a-i G adds the EQ + Leveler + ALC bundle on top of
 // the 3M-1c chunk-F base (which seeded only the "Default" profile).  The TX EQ
@@ -25,7 +28,7 @@
 //   hardware/<mac>/tx/profile/active                      = "Default"
 //   hardware/<mac>/tx/profile/<name>/MicGain              = "-6"
 //   hardware/<mac>/tx/profile/<name>/Mic_Input_Boost      = "True"
-//   ... (93 live keys per profile; same key names as
+//   ... (100 live keys per profile; same key names as
 //        TransmitModel::persistOne uses under hardware/<mac>/tx/<key>)
 //
 // AppSettings does not natively enumerate keys by prefix.  We keep a
@@ -59,6 +62,10 @@
 //                 the Core to select, save and delete; it never saves here.
 //                 NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-09 - Two-tone leaves TX profiles; the comments that listed it
+//                 as profile content and counted 93 keys now say 100 keys
+//                 without two-tone. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived handler logic
@@ -80,8 +87,8 @@ namespace NereusSDR {
 class TransmitModel;
 
 // ---------------------------------------------------------------------------
-// MicProfileManager — per-MAC profile bank for the mic / VOX / MON / two-tone
-// live-fields subset.
+// MicProfileManager — per-MAC profile bank for the mic / VOX / MON / EQ /
+// CFC / DEXP live-fields subset (two-tone is not profile content).
 //
 // Lifetime: lives on the main thread, owned by RadioModel (wired in Phase L).
 // All ops require a per-MAC scope set via setMacAddress() before any other
@@ -238,9 +245,8 @@ private:
     void removeProfileKeys(const QString& name);
 
     /// Capture current TransmitModel state into a live-field key→value hash.
-    /// 93 keys (51 mic/VOX/MON/two-tone/EQ/Lev/ALC/TXParaEQData + 41
-    /// CFC/CPDR/CESSB/PhRot + 2 FilterLow/FilterHigh); matches
-    /// defaultProfileValues() in shape.
+    /// 100 keys (the liveKeyList() in MicProfileManager.cpp; no two-tone);
+    /// matches defaultProfileValues() in shape.
     static QHash<QString, QVariant> captureLiveValues(const TransmitModel* tx);
 
     /// Apply a profile's key→value hash back to a TransmitModel via the
