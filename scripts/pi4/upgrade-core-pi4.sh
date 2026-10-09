@@ -134,6 +134,8 @@ rollback() {
         rm -rf /usr/local/share/NereusSDR/models/dfnet3 /usr/local/share/NereusSDR/models/rnnoise /usr/local/share/doc/nereussdr/deepfilter || restored=0
         if [[ -f "$backup/assets.tar" ]]; then tar -C / -xpf "$backup/assets.tar" || restored=0; fi
         restore_daemon_state || restored=0
+        if [[ "$audio_dropin_added" == 1 ]]; then rm -f "$audio_dropin" || restored=0; fi
+        if [[ "$serial_dropin_added" == 1 ]]; then rm -f "$serial_dropin" || restored=0; fi
         systemctl daemon-reload || restored=0
         if [[ "$restored" == 1 ]]; then
             systemctl start nereusd
@@ -145,6 +147,15 @@ rollback() {
     rm -rf "$unpack"
     exit "$result"
 }
+# Sound cards and serial accessories: the unit runs as a DynamicUser account
+# with no groups, so drop-ins grant the audio and dialout groups, as the
+# station images do (packaging/station-image/common/nereusd-audio.conf and
+# nereusd-serial.conf). A Core that lacks one gets it; an existing one is left
+# as found. Rollback removes only one this upgrade added.
+audio_dropin=/etc/systemd/system/nereusd.service.d/audio.conf
+audio_dropin_added=0
+serial_dropin=/etc/systemd/system/nereusd.service.d/serial.conf
+serial_dropin_added=0
 trap rollback EXIT
 
 echo '==== install'
@@ -179,6 +190,34 @@ for model in Default_large.bin Default_small.bin; do
     sync -f "/usr/local/share/NereusSDR/models/rnnoise/$model"
 done
 ldd /usr/local/bin/nereusd | grep -q 'not found' && { echo 'unresolved libraries'; exit 1; }
+if [[ ! -e "$audio_dropin" && ! -L "$audio_dropin" ]]; then
+    audio_dropin_added=1
+    install -d -m 755 /etc/systemd/system/nereusd.service.d
+    cat > "$audio_dropin" <<'AUDIO'
+# Sound cards on a Core: /dev/snd/* is root:audio on Debian, and a DynamicUser
+# account has no groups of its own.
+[Service]
+SupplementaryGroups=audio
+AUDIO
+    chmod 644 "$audio_dropin"
+    echo "added $audio_dropin"
+else
+    echo "$audio_dropin already exists; left unchanged"
+fi
+if [[ ! -e "$serial_dropin" && ! -L "$serial_dropin" ]]; then
+    serial_dropin_added=1
+    install -d -m 755 /etc/systemd/system/nereusd.service.d
+    cat > "$serial_dropin" <<'SERIAL'
+# Serial accessories on a station image: /dev/ttyUSB* and /dev/ttyACM* are
+# root:dialout on Debian, and a DynamicUser account has no groups of its own.
+[Service]
+SupplementaryGroups=dialout
+SERIAL
+    chmod 644 "$serial_dropin"
+    echo "added $serial_dropin"
+else
+    echo "$serial_dropin already exists; left unchanged"
+fi
 systemd-analyze verify /usr/lib/systemd/system/nereusd.service
 systemctl daemon-reload
 systemctl start nereusd

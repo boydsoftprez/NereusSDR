@@ -146,7 +146,10 @@ UMask=0077
 # deployment that wants local audio needs `SupplementaryGroups=audio` (or
 # the equivalent group for the target distro) added via a drop-in; not
 # granting it by default keeps the primary headless target's privilege
-# footprint smaller.
+# footprint smaller. The station images and the Pi 4 installers add that
+# drop-in (packaging/station-image/common/nereusd-audio.conf, installed as
+# /etc/systemd/system/nereusd.service.d/audio.conf), as they do the serial
+# one below; this unit itself still sets no group.
 #
 # Serial accessories (the Core's own CAT and keying endpoints on
 # /dev/ttyUSB* or /dev/ttyACM*) need the group that owns those devices,

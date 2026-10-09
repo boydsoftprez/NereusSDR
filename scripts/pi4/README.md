@@ -8,6 +8,17 @@ operator configuration and makes a complete daemon-settings snapshot after
 stopping the old Core. The stage must include the DFNR model/licences and both
 RNNoise models. Checkpoints are eight lowercase hexadecimal characters.
 
+Beside the unit, both installers write two drop-ins in
+`/etc/systemd/system/nereusd.service.d/`, because the unit runs as a
+`DynamicUser` account with no groups of its own: `audio.conf` adds the `audio`
+group so the Core can open sound cards, and `serial.conf` adds the `dialout`
+group so it can open serial accessories (`/dev/ttyUSB*`, `/dev/ttyACM*`). They
+have the same content as the station images'
+`packaging/station-image/common/nereusd-audio.conf` and `nereusd-serial.conf`.
+A first install writes both; an upgrade adds each one a Core lacks and leaves
+an existing one as found, and a failed upgrade removes only those that upgrade
+added.
+
 Both installers require `python3` and `flock` and hold
 `/run/lock/nereus-core-deploy.lock` before mutating deployment files. All other
 publishers and maintenance callers must hold that same lock. Publish uploads

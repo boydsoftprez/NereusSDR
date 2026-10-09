@@ -33,6 +33,8 @@ install -Dm 0644 "$assets/nereusd-firstboot.conf" \
     /etc/systemd/system/nereusd.service.d/firstboot.conf
 install -Dm 0644 "$assets/nereusd-serial.conf" \
     /etc/systemd/system/nereusd.service.d/serial.conf
+install -Dm 0644 "$assets/nereusd-audio.conf" \
+    /etc/systemd/system/nereusd.service.d/audio.conf
 install -d -m 0755 /var/lib/nereus-station
 touch /var/lib/nereus-station/first-boot-pending
 systemctl enable nereus-firstboot.service nereusd.service avahi-daemon.service
