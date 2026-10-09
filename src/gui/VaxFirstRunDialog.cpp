@@ -14,10 +14,20 @@
 //   2026-10-06 - R-SPK-21: Customize and "Why do I need this?" open Setup >
 //                Audio > Digital modes, which holds VAX now. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - native audio plan Task 18 (R-AUD-03, R-AUD-06): the
+//                lists come from the engine's device catalogue and follow
+//                it while the dialog is open; "Rescan now" rescans the
+//                older drivers and lists again. The suggested bindings
+//                and rows are the cables' render ends ("CABLE-A Input"),
+//                the end VAX writes to. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 #include "VaxFirstRunDialog.h"
 #include "StyleConstants.h"
+
+#include "core/AudioEngine.h"
+#include "core/audio/IAudioDeviceCatalog.h"
 
 #include <QFrame>
 #include <QHBoxLayout>
@@ -27,6 +37,7 @@
 #include <QSizePolicy>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <array>
 
 namespace NereusSDR {
@@ -305,11 +316,12 @@ QVector<QPair<int, QString>> VaxFirstRunDialog::computeSuggestedBindings() const
         if (channel > 4) {
             break;
         }
-        // Only bind input-side devices — VAX consumes a capture endpoint
-        // (WSJT-X reads the cable's Output; we write to the cable's
-        // Input). matchProduct sees both sides; skip outputs so we don't
-        // duplicate VAX bindings for the same underlying cable.
-        if (!cable.isInput) {
+        // Only bind the render end: VAX writes to the cable's Input (a
+        // playback device, isInput false) and WSJT-X reads its Output (a
+        // recording device). matchProduct sees both ends; skip the
+        // recording end so one cable gives one binding, never a binding
+        // VAX cannot play into.
+        if (cable.isInput) {
             continue;
         }
         bindings.append({channel, cable.deviceName});
@@ -320,13 +332,18 @@ QVector<QPair<int, QString>> VaxFirstRunDialog::computeSuggestedBindings() const
 
 void VaxFirstRunDialog::buildUI()
 {
-    auto* mainLayout = new QVBoxLayout(this);
-    mainLayout->setSpacing(0);
-    mainLayout->setContentsMargins(0, 0, 0, 0);
+    m_mainLayout = new QVBoxLayout(this);
+    m_mainLayout->setSpacing(0);
+    m_mainLayout->setContentsMargins(0, 0, 0, 0);
 
     // ── Header bar ─────────────────────────────────────────────────────
-    mainLayout->addWidget(buildHeaderBar());
+    m_mainLayout->addWidget(buildHeaderBar());
 
+    buildBodyAndFooter();
+}
+
+void VaxFirstRunDialog::buildBodyAndFooter()
+{
     // ── Body ──────────────────────────────────────────────────────────
     auto* bodyFrame = new QFrame(this);
     auto* bodyLayout = new QVBoxLayout(bodyFrame);
@@ -351,10 +368,138 @@ void VaxFirstRunDialog::buildUI()
             break;
     }
 
-    mainLayout->addWidget(bodyFrame);
+    m_body = bodyFrame;
+    m_mainLayout->addWidget(bodyFrame);
 
     // ── Footer ────────────────────────────────────────────────────────
-    mainLayout->addWidget(buildFooter());
+    m_footer = buildFooter();
+    m_mainLayout->addWidget(m_footer);
+}
+
+void VaxFirstRunDialog::rebuildBody()
+{
+    // The old body and footer leave the dialog now (so nothing finds their
+    // buttons) and are deleted once their events are done: a click on
+    // "Rescan now" may be what rebuilt them.
+    for (QWidget* old : {m_body, m_footer}) {
+        if (old != nullptr) {
+            m_mainLayout->removeWidget(old);
+            old->setParent(nullptr);
+            old->deleteLater();
+        }
+    }
+    m_body = nullptr;
+    m_footer = nullptr;
+    buildBodyAndFooter();
+}
+
+void VaxFirstRunDialog::setAudioEngine(AudioEngine* engine)
+{
+    if (m_catalogue) {
+        disconnect(m_catalogue, nullptr, this, nullptr);
+    }
+    m_engine = engine;
+    m_catalogue = engine != nullptr ? engine->catalogue() : nullptr;
+    m_rescanWaiting = false;
+    if (!m_catalogue) {
+        return;
+    }
+    if (m_scenario == FirstRunScenario::RescanNewCables) {
+        // The cables there now that the dialog was not given are known.
+        m_known.clear();
+        for (const DetectedCable& c : VirtualCableDetector::filterThirdParty(
+                 VirtualCableDetector::detect(*m_catalogue))) {
+            const bool given = std::any_of(m_detected.cbegin(), m_detected.cend(),
+                                           [&c](const DetectedCable& d) {
+                                               return d.deviceName == c.deviceName;
+                                           });
+            if (!given) {
+                m_known.append(c);
+            }
+        }
+    }
+    // R-AUD-03: a cable added or removed while the dialog is open shows.
+    connect(m_catalogue, &IAudioDeviceCatalog::devicesChanged, this,
+            &VaxFirstRunDialog::refreshFromCatalogue);
+    refreshFromCatalogue();
+}
+
+void VaxFirstRunDialog::refreshFromCatalogue()
+{
+    if (!m_catalogue) {
+        return;
+    }
+    const QVector<DetectedCable> all = VirtualCableDetector::detect(*m_catalogue);
+    QVector<DetectedCable> next;
+    FirstRunScenario scenario = m_scenario;
+    switch (m_scenario) {
+    case FirstRunScenario::WindowsCablesFound:
+    case FirstRunScenario::WindowsNoCables: {
+        next = VirtualCableDetector::filterThirdParty(all);
+        const bool anyRenderEnd = std::any_of(next.cbegin(), next.cend(),
+                                              [](const DetectedCable& c) { return !c.isInput; });
+        scenario = anyRenderEnd ? FirstRunScenario::WindowsCablesFound
+                                : FirstRunScenario::WindowsNoCables;
+        break;
+    }
+    case FirstRunScenario::MacNative:
+    case FirstRunScenario::LinuxNative:
+        for (const DetectedCable& c : all) {
+            if (c.product == VirtualCableProduct::NereusSdrVax) {
+                next.append(c);
+            }
+        }
+        break;
+    case FirstRunScenario::RescanNewCables:
+        for (const DetectedCable& c : VirtualCableDetector::filterThirdParty(all)) {
+            const bool known = std::any_of(m_known.cbegin(), m_known.cend(),
+                                           [&c](const DetectedCable& k) {
+                                               return k.deviceName == c.deviceName;
+                                           });
+            if (!known) {
+                next.append(c);
+            }
+        }
+        break;
+    }
+    const bool same = scenario == m_scenario && next.size() == m_detected.size()
+        && std::equal(next.cbegin(), next.cend(), m_detected.cbegin(),
+                      [](const DetectedCable& a, const DetectedCable& b) {
+                          return a.deviceName == b.deviceName && a.isInput == b.isInput
+                              && a.deviceId == b.deviceId;
+                      });
+    if (same) {
+        return;
+    }
+    m_detected = next;
+    m_scenario = scenario;
+    rebuildBody();
+}
+
+void VaxFirstRunDialog::onRescanNow()
+{
+    // R-AUD-06: the older drivers list their devices again, and the
+    // dialog lists once their new list is in.
+    if (m_engine && m_catalogue) {
+        if (!m_rescanWaiting) {
+            m_rescanWaiting = true;
+            connect(m_catalogue, &IAudioDeviceCatalog::olderDriversRescanned, this,
+                    [this]() {
+                        m_rescanWaiting = false;
+                        refreshFromCatalogue();
+                    },
+                    Qt::SingleShotConnection);
+        }
+        m_engine->rescanOlderDrivers();
+        return;
+    }
+    // No engine: one scan of the older drivers' list.
+    m_detected = VirtualCableDetector::scanThirdPartyOnly();
+    const bool anyRenderEnd = std::any_of(m_detected.cbegin(), m_detected.cend(),
+                                          [](const DetectedCable& c) { return !c.isInput; });
+    m_scenario = anyRenderEnd ? FirstRunScenario::WindowsCablesFound
+                              : FirstRunScenario::WindowsNoCables;
+    rebuildBody();
 }
 
 QWidget* VaxFirstRunDialog::buildHeaderBar()
@@ -394,12 +539,12 @@ QWidget* VaxFirstRunDialog::buildHeaderBar()
 
 void VaxFirstRunDialog::buildBodyWindowsCablesFound(QVBoxLayout* bodyLayout)
 {
-    // Count input-side detections so the intro matches the mockup's
-    // "4 virtual audio cables" phrasing without lying when the actual
-    // count differs.
+    // Count the render ends (one per cable) so the intro matches the
+    // mockup's "4 virtual audio cables" phrasing without lying when the
+    // actual count differs.
     int inputCount = 0;
     for (const auto& c : m_detected) {
-        if (c.isInput) {
+        if (!c.isInput) {
             ++inputCount;
         }
     }
@@ -418,8 +563,8 @@ void VaxFirstRunDialog::buildBodyWindowsCablesFound(QVBoxLayout* bodyLayout)
         .arg(inputCount == 1 ? QStringLiteral("") : QStringLiteral("s")));
     bodyLayout->addWidget(intro);
 
-    // Detection list — fill slots 1..4 from input-side detections in
-    // order. Slots without a detection get the "no more cables available"
+    // Detection list: fill slots 1..4 from the render ends in order.
+    // Slots without a detection get the "no more cables available"
     // placeholder row matching the mockup.
     auto* listFrame = new QFrame(this);
     listFrame->setObjectName(QStringLiteral("detList"));
@@ -433,7 +578,7 @@ void VaxFirstRunDialog::buildBodyWindowsCablesFound(QVBoxLayout* bodyLayout)
         if (slot > 4) {
             break;
         }
-        if (!cable.isInput) {
+        if (cable.isInput) {
             continue;
         }
         listLayout->addWidget(makeDetRowForCable(
@@ -647,9 +792,9 @@ void VaxFirstRunDialog::buildBodyWindowsNoCables(QVBoxLayout* bodyLayout)
     auto* rescanBtn = new QPushButton(QStringLiteral("Rescan now"), dashedCard);
     rescanBtn->setObjectName(QString::fromUtf8(kBtnRescanNow));
     rescanBtn->setStyleSheet(neutralButtonStyle());
-    // Task 11b owns rescan semantics — for Sub-Phase 11 the button is a
-    // no-op placeholder so the layout matches the mockup. Wiring lands
-    // in MainWindow::checkVaxFirstRun + Setup→Audio→VAX rescan flow.
+    // R-AUD-06: rescans the older drivers and lists again; a cable found
+    // turns this into the suggested bindings.
+    connect(rescanBtn, &QPushButton::clicked, this, &VaxFirstRunDialog::onRescanNow);
     dashedLayout->addWidget(rescanBtn);
     dashedLayout->addStretch();
 
@@ -867,7 +1012,7 @@ void VaxFirstRunDialog::buildBodyRescanNewCables(QVBoxLayout* bodyLayout)
 {
     int newCount = 0;
     for (const auto& c : m_detected) {
-        if (c.isInput) {
+        if (!c.isInput) {
             ++newCount;
         }
     }
@@ -902,7 +1047,7 @@ void VaxFirstRunDialog::buildBodyRescanNewCables(QVBoxLayout* bodyLayout)
         if (slot > 4) {
             break;
         }
-        if (!cable.isInput) {
+        if (cable.isInput) {
             continue;
         }
         listLayout->addWidget(makeDetRowForCable(

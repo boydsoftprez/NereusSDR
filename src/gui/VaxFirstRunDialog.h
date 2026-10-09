@@ -19,10 +19,16 @@
 // Modification history (NereusSDR):
 //   2026-04-20 — Written by J.J. Boyd (KG4VCF), with AI-assisted
 //                transformation via Anthropic Claude Code.
+//   2026-10-09 - native audio plan Task 18 (R-AUD-03, R-AUD-06):
+//                setAudioEngine() lists the cables from the engine's
+//                device catalogue and follows it live; "Rescan now"
+//                rescans the older drivers and lists again. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QDialog>
 #include <QPair>
+#include <QPointer>
 #include <QString>
 #include <QVector>
 
@@ -32,6 +38,9 @@ class QPushButton;
 class QVBoxLayout;
 
 namespace NereusSDR {
+
+class AudioEngine;
+class IAudioDeviceCatalog;
 
 enum class FirstRunScenario {
     WindowsCablesFound,   // A: Windows, 3rd-party virtual cables detected
@@ -49,6 +58,14 @@ public:
                       const QVector<DetectedCable>& detected,
                       QWidget* parent = nullptr);
 
+    // R-AUD-03 / R-AUD-06: the engine whose device catalogue the lists
+    // come from. While the dialog is open a cable added or removed shows
+    // at once (on Windows a first cable turns "no cables" into the
+    // suggested bindings), and "Rescan now" rescans the older drivers
+    // before listing again. Without an engine the dialog shows what it
+    // was given and "Rescan now" scans once.
+    void setAudioEngine(AudioEngine* engine);
+
 #ifdef NEREUS_BUILD_TESTS
     // Test seam — returns the scenario this dialog was constructed for.
     // Gated behind NEREUS_BUILD_TESTS so production builds don't expose
@@ -62,6 +79,8 @@ public:
     {
         return computeSuggestedBindings();
     }
+    // The cables the dialog shows now.
+    QVector<DetectedCable> detectedForTest() const { return m_detected; }
 #endif
 
 signals:
@@ -87,6 +106,12 @@ private:
     QVector<QPair<int, QString>> computeSuggestedBindings() const;
 
     void buildUI();  // dispatches by m_scenario to the 5 layouts
+    // The body and footer for m_scenario; rebuildBody() replaces them.
+    void buildBodyAndFooter();
+    void rebuildBody();
+    // The cables for this scenario from the catalogue, then the body again.
+    void refreshFromCatalogue();
+    void onRescanNow();
 
     // Per-scenario body builders. Each appends its widgets to `bodyLayout`
     // and returns the footer widget row the caller should install.
@@ -115,6 +140,16 @@ private:
 
     FirstRunScenario m_scenario;
     QVector<DetectedCable> m_detected;
+
+    QPointer<AudioEngine> m_engine;
+    QPointer<IAudioDeviceCatalog> m_catalogue;
+    // Scenario E: the cables known when the engine was attached, which
+    // are not new.
+    QVector<DetectedCable> m_known;
+    bool m_rescanWaiting{false};
+    QVBoxLayout* m_mainLayout{nullptr};
+    QWidget* m_body{nullptr};
+    QWidget* m_footer{nullptr};
 };
 
 } // namespace NereusSDR
