@@ -22,6 +22,9 @@
 //   2026-10-09 - Written for NereusSDR by J.J. Boyd (KG4VCF), with
 //                AI-assisted implementation via Anthropic Claude Code
 //                (native audio plan Task 21).
+//   2026-10-09 - Native audio plan Task 22: the card struct is
+//                CoreSpeakerCardInfo. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -386,7 +389,7 @@ private slots:
         const QString forgedState = coreSpeakerStateToJson(
             CoreSpeakerState{CoreSpeakerStateKind::Playing, kUsbName, kUsbName, true});
         const QString forgedDevices = coreSpeakerDevicesToJson(
-            {CoreSpeakerCard{QStringLiteral("x"), QStringLiteral("Forged"), AudioDeviceState::Present}});
+            {CoreSpeakerCardInfo{QStringLiteral("x"), QStringLiteral("Forged"), AudioDeviceState::Present}});
         appA->sendText(SessionMessages::encode(SessionMessages::propertyWrite(
             "radio", {utf8("coreSpeakerState", forgedState)}, 73)));
         appA->sendText(SessionMessages::encode(SessionMessages::propertyWrite(

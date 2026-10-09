@@ -26,6 +26,9 @@
 //                and mute and the speakers role, with the desktop rule; a
 //                remote window's follow the Core. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Native audio plan Task 22: the card struct is
+//                CoreSpeakerCardInfo, as the Setup widget is CoreSpeakerCard.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-04: Preserve native untyped Tune OFF release alongside guarded
@@ -21093,21 +21096,21 @@ void RadioModel::refreshCoreSpeaker()
     }
     const CoreSpeakerState state = coreSpeakerStateFor(status, m_coreSpeakerDesktop);
 
-    QList<CoreSpeakerCard> cards;
+    QList<CoreSpeakerCardInfo> cards;
     if (IAudioDeviceCatalog* catalogue = m_audioEngine->catalogue()) {
         const QList<AudioDeviceInfo> listed = catalogue->devices(
             audioBackendFor(m_audioEngine->defaultEngine()), AudioDeviceDirection::Output);
         for (const AudioDeviceInfo& info : listed) {
-            cards.append(CoreSpeakerCard{info.id, info.name, info.state});
+            cards.append(CoreSpeakerCardInfo{info.id, info.name, info.state});
         }
         // D23: a chosen card that is gone stays in the list, not connected.
         if (!m_coreSpeakerWaiting && !saved.isNone() && !saved.deviceId.isEmpty()) {
             const bool listedNow = std::any_of(cards.cbegin(), cards.cend(),
-                                               [&saved](const CoreSpeakerCard& card) {
+                                               [&saved](const CoreSpeakerCardInfo& card) {
                                                    return card.id == saved.deviceId;
                                                });
             if (!listedNow) {
-                cards.append(CoreSpeakerCard{saved.deviceId, saved.deviceName,
+                cards.append(CoreSpeakerCardInfo{saved.deviceId, saved.deviceName,
                                              AudioDeviceState::NotConnected});
             }
         }
@@ -21164,7 +21167,7 @@ bool RadioModel::applyStationCoreSpeakerValue(const QByteArray& name, const QVar
         return false;
     }
     if (name == "coreSpeakerDevices") {
-        const std::optional<QList<CoreSpeakerCard>> cards = coreSpeakerDevicesFromJson(value.toString());
+        const std::optional<QList<CoreSpeakerCardInfo>> cards = coreSpeakerDevicesFromJson(value.toString());
         if (!cards) {
             return false;
         }

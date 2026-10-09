@@ -25,6 +25,9 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 21 (R-AUD-25, R-AUD-28, R-AUD-30).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 22: the card struct is
+//               CoreSpeakerCardInfo, as the Setup widget is CoreSpeakerCard.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -50,11 +53,11 @@ struct CoreSpeakerState {
     friend bool operator==(const CoreSpeakerState&, const CoreSpeakerState&) = default;
 };
 
-struct CoreSpeakerCard {
+struct CoreSpeakerCardInfo {
     QString id;
     QString name;
     AudioDeviceState state = AudioDeviceState::Present;
-    friend bool operator==(const CoreSpeakerCard&, const CoreSpeakerCard&) = default;
+    friend bool operator==(const CoreSpeakerCardInfo&, const CoreSpeakerCardInfo&) = default;
 };
 
 struct CoreSpeakerDetails {
@@ -69,8 +72,8 @@ struct CoreSpeakerDetails {
 QString coreSpeakerStateToJson(const CoreSpeakerState& state);
 std::optional<CoreSpeakerState> coreSpeakerStateFromJson(const QString& json);
 
-QString coreSpeakerDevicesToJson(const QList<CoreSpeakerCard>& cards);
-std::optional<QList<CoreSpeakerCard>> coreSpeakerDevicesFromJson(const QString& json);
+QString coreSpeakerDevicesToJson(const QList<CoreSpeakerCardInfo>& cards);
+std::optional<QList<CoreSpeakerCardInfo>> coreSpeakerDevicesFromJson(const QString& json);
 
 QString coreSpeakerDeviceToJson(const QString& id, const QString& name);
 std::optional<QPair<QString, QString>> coreSpeakerDeviceFromJson(const QString& json);
