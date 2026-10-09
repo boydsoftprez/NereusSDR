@@ -108,7 +108,9 @@ public:
     // directory (or its parent, while it is missing) is watched.
     bool start();
     void stop();
-    // The directory itself is watched (not only its parent).  Any thread.
+    // The directory itself is watched (not only its parent), and every
+    // notice for its coming back has been posted: a node change made after
+    // this reads true posts a notice of its own.  Any thread.
     bool watchingDirectory() const;
 
 private:
