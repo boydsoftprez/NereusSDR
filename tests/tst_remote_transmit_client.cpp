@@ -37,6 +37,10 @@
 //               is one from its asking until the key ends, however it
 //               ends. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //               Code.
+//   2026-10-09: programAudioKey() also ends with reset() on a key that is
+//               on, with the Core ending the key on its own, with MOX off,
+//               and with the screen key's release. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -292,6 +296,50 @@ private slots:
         QVERIFY(client.programAudioKey());
         client.coreStopped(1, /*coreKeyed=*/false, 5);
         QVERIFY(!client.holdsTransmit());
+        QVERIFY(!client.programAudioKey());
+
+        // 2026-10-09: ended by the Core on its own (transmitting goes false).
+        client.keyForProgram(true, {});
+        answerCopies(client, core.sent.last(), true, {}, epochValue(6));
+        QVERIFY(client.programAudioKey());
+        client.setCoreTransmitting(true);
+        QVERIFY(client.programAudioKey());
+        client.setCoreTransmitting(false);
+        QVERIFY(!client.holdsTransmit());
+        QVERIFY(!client.programAudioKey());
+
+        // 2026-10-09: MOX off while the program keys through this window.
+        client.keyForProgram(true, {});
+        answerCopies(client, core.sent.last(), true, {}, epochValue(7));
+        QVERIFY(client.programAudioKey());
+        client.setScreenKey(false);
+        QCOMPARE(core.sent.last().verb, QByteArray("tx.unkey"));
+        QVERIFY(!client.micKeyDown());
+        QVERIFY(!client.programAudioKey());
+        answerCopies(client, core.sent.last(), true, {}, {});
+
+        // 2026-10-09: the operator's screen key released under the
+        // program's key ends it too.
+        client.setScreenKey(true);
+        answerCopies(client, core.sent.last(), true, {}, epochValue(8));
+        client.keyForProgram(true, {});
+        answerCopies(client, core.sent.last(), true, {}, epochValue(8));
+        QVERIFY(client.programAudioKey());
+        client.setScreenKey(false);
+        QCOMPARE(core.sent.last().verb, QByteArray("tx.unkey"));
+        QVERIFY(!client.micKeyDown());
+        QVERIFY(!client.programAudioKey());
+        answerCopies(client, core.sent.last(), true, {}, {});
+
+        // 2026-10-09: reset() (private; reached through the link going)
+        // ends a key that is on, as it does one still waiting below.
+        client.keyForProgram(true, {});
+        answerCopies(client, core.sent.last(), true, {}, epochValue(9));
+        QVERIFY(client.programAudioKey());
+        client.setAvailable(false);
+        QVERIFY(!client.micKeyDown());
+        QVERIFY(!client.programAudioKey());
+        client.setAvailable(true);
         QVERIFY(!client.programAudioKey());
 
         // The link lost while waiting for the answer.
