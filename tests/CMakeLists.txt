@@ -1807,6 +1807,10 @@ nereus_add_test(tst_audio_stream_supervisor)
 # drivers engine, with an injected device list: the host APIs offered on
 # each system, the entries and the defaults.  No PortAudio call.
 nereus_add_test(tst_port_audio_backend)
+# Native audio plan Task 7 fix (R-AUD-06): PortAudio's lock under Rescan,
+# on the real library with no stream opened.
+nereus_add_test(tst_port_audio_library_lock)
+target_compile_definitions(tst_port_audio_library_lock PRIVATE NEREUS_BUILD_TESTS)
 
 # Native audio Task 7 (R-AUD-02, R-AUD-06, R-AUD-15, R-AUD-34): AudioEngine
 # with fake engines, the catalogue and the stream supervisor: engine choice,

@@ -11,12 +11,17 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 4. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 7 fix: a saved PortAudio ID carries
+//               its host API, and a DirectSound ID never opens the MME
+//               device of the same name. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 
 #include "core/AudioDeviceConfig.h"
 #include "core/audio/AudioDeviceMatching.h"
+#include "core/audio/PortAudioBackend.h"
 
 using namespace NereusSDR;
 
@@ -155,6 +160,38 @@ private slots:
         QVERIFY(!matchSavedAudioDevice(
                      saved(AudioEngineKind::PortAudio, QStringLiteral("ds"), QStringLiteral("Other"), QStringLiteral("MME")), list)
                      .has_value());
+    }
+
+    // Bug 1 on the older drivers: a saved DirectSound ID with no DriverApi
+    // never matches the MME entry listed first under the same name.
+    void savedDirectSoundIdNeverOpensTheMmeDevice()
+    {
+        const QString mme = QStringLiteral("MME");
+        const QString ds = QStringLiteral("Windows DirectSound");
+        const QString mmeId = portAudioDeviceId(mme, kRealtek);
+        const QString dsId = portAudioDeviceId(ds, kRealtek);
+        QVERIFY(mmeId != dsId);
+        QCOMPARE(portAudioHostApiOfId(dsId), ds);
+        QCOMPARE(portAudioNameOfId(dsId), kRealtek);
+
+        const QList<AudioDeviceInfo> both = {
+            device(AudioBackendId::PortAudio, mmeId, kRealtek, mme),
+            device(AudioBackendId::PortAudio, dsId, kRealtek, ds),
+        };
+        const auto m = matchSavedAudioDevice(saved(AudioEngineKind::PortAudio, dsId, kRealtek), both);
+        QVERIFY(m.has_value());
+        QCOMPARE(m->device.id, dsId);
+        QCOMPARE(m->device.hostApi, ds);
+        QVERIFY(m->byId);
+
+        // DirectSound gone: neither the ID nor the name reaches MME.
+        const QList<AudioDeviceInfo> mmeOnly = {device(AudioBackendId::PortAudio, mmeId, kRealtek, mme)};
+        QVERIFY(!matchSavedAudioDevice(saved(AudioEngineKind::PortAudio, dsId, kRealtek), mmeOnly)
+                     .has_value());
+
+        // A bare name (no host API in it) is a name, as before.
+        QCOMPARE(portAudioHostApiOfId(kRealtek), QString());
+        QCOMPARE(portAudioNameOfId(QStringLiteral("Line | Out")), QStringLiteral("Line | Out"));
     }
 
     void unmigratedConfigMatchesAsOlderDrivers()

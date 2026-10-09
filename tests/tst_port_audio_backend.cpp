@@ -10,6 +10,9 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 7 (R-AUD-01, R-AUD-06, R-AUD-32).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: Task 7 fix: ids carry the host API; the same name under two
+//               host APIs gives two ids. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -111,7 +114,7 @@ private slots:
         QCOMPARE(devices.first().hostApi, kCoreAudio);
     }
 
-    void entriesCarryTheNameAsTheirId()
+    void entriesCarryTheirHostApiInTheirId()
     {
         PortAudioDeviceRecord duplex;
         duplex.hostApi = kMme;
@@ -123,7 +126,7 @@ private slots:
         QCOMPARE(devices.size(), 2);   // one output entry, one input entry
         for (const AudioDeviceInfo& device : devices) {
             QCOMPARE(device.backend, AudioBackendId::PortAudio);
-            QCOMPARE(device.id, QStringLiteral("USB Audio CODEC"));
+            QCOMPARE(device.id, QStringLiteral("MME|USB Audio CODEC"));
             QCOMPARE(device.name, QStringLiteral("USB Audio CODEC"));
             QCOMPARE(device.hostApi, kMme);
         }
@@ -131,6 +134,23 @@ private slots:
         QCOMPARE(devices.at(0).channelCount, 2);
         QCOMPARE(devices.at(1).direction, AudioDeviceDirection::Input);
         QCOMPARE(devices.at(1).channelCount, 1);
+    }
+
+    void sameNameUnderTwoHostApisGivesTwoIds()
+    {
+        const QString realtek = QStringLiteral("Speakers (Realtek(R) Audio)");
+        PortAudioBackend backend(listOf({outputRecord(kMme, realtek), outputRecord(kDirectSound, realtek)}),
+                                 OlderDriverPlatform::Windows, false);
+        const QList<AudioDeviceInfo> devices = backend.enumerate();
+        QCOMPARE(devices.size(), 2);
+        QVERIFY(devices.at(0).id != devices.at(1).id);
+        QCOMPARE(devices.at(0).id, portAudioDeviceId(kMme, realtek));
+        QCOMPARE(devices.at(1).id, portAudioDeviceId(kDirectSound, realtek));
+        for (const AudioDeviceInfo& device : devices) {
+            QCOMPARE(device.name, realtek);
+            QCOMPARE(portAudioHostApiOfId(device.id), device.hostApi);
+            QCOMPARE(portAudioNameOfId(device.id), realtek);
+        }
     }
 
     void defaultsAreTheFlaggedRecords()
@@ -146,9 +166,9 @@ private slots:
         PortAudioBackend backend(listOf(records), OlderDriverPlatform::Linux, false);
         const QList<AudioDeviceInfo> devices = backend.enumerate();
         QCOMPARE(backend.defaultDeviceId(AudioDeviceDirection::Output),
-                 std::optional<QString>(QStringLiteral("default")));
+                 std::optional<QString>(QStringLiteral("ALSA|default")));
         QCOMPARE(backend.defaultDeviceId(AudioDeviceDirection::Input),
-                 std::optional<QString>(QStringLiteral("USB Mic")));
+                 std::optional<QString>(QStringLiteral("ALSA|USB Mic")));
         int defaults = 0;
         for (const AudioDeviceInfo& device : devices) {
             if (device.isDefault) {

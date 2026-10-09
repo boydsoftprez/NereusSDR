@@ -11,6 +11,10 @@
 //               audio delay probe's detector on the input callback on or
 //               off; its hits go to the window as ProbeHit records.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 7 fix (R-AUD-06): Pa_Initialize and
+//               Pa_Terminate hold PortAudioLibrary's lock, as every
+//               PortAudio call outside a callback does. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CaptureHelper.h"
@@ -22,6 +26,7 @@
 #include "core/audio/AudioDelayProbe.h"
 #include "core/audio/CaptureProtocol.h"
 #include "core/audio/PortAudioBus.h"
+#include "core/audio/PortAudioLibrary.h"
 
 #include <QCoreApplication>
 #include <QString>
@@ -485,6 +490,7 @@ private:
         }
 
         if (!m_paInitialized) {
+            std::lock_guard<std::recursive_mutex> paLock(PortAudioLibrary::mutex());
             const PaError err = Pa_Initialize();
             if (err != paNoError) {
                 sendFailure(P::FailReason::OpenFailed,
@@ -626,6 +632,7 @@ private:
     {
         closeBus();
         if (m_paInitialized) {
+            std::lock_guard<std::recursive_mutex> paLock(PortAudioLibrary::mutex());
             Pa_Terminate();
             m_paInitialized = false;
         }

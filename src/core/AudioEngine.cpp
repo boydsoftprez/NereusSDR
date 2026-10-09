@@ -19,6 +19,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09  J.J. Boyd / KG4VCF  Native audio plan Task 7 fix (R-AUD-06,
+//                                    R-AUD-08): PortAudio's lifetime goes
+//                                    through PortAudioLibrary and Rescan
+//                                    keeps the engine's reference; an idle
+//                                    PC mic on a listed device reads
+//                                    Playing; a setter's first choice is
+//                                    the one opened (no second open).
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-09  J.J. Boyd / KG4VCF  Native audio plan Task 7 (R-AUD-02,
 //                                    R-AUD-05, R-AUD-06, R-AUD-15,
 //                                    R-AUD-32, R-AUD-34): engine backends,
@@ -243,6 +251,7 @@
 #include "audio/AudioDeviceCatalog.h"
 #include "audio/AudioDeviceMatching.h"
 #include "audio/AudioStreamSupervisor.h"
+#include "audio/PortAudioLibrary.h"
 #include "audio/CaptureAudioBus.h"
 #include "audio/PortAudioBus.h"
 #include "../models/RadioModel.h"
@@ -413,11 +422,11 @@ AudioEngine::AudioEngine(QObject* parent)
         m_deviceLayerReady = true;
         qCInfo(lcAudio) << "PortAudio not initialized: test run";
     } else {
+        // Native audio plan Task 7 fix (R-AUD-06): under PortAudioLibrary's
+        // lock, which Rescan's restart of PortAudio also holds.
         g_paInitializeCalls.fetch_add(1, std::memory_order_relaxed);
-        const PaError err = Pa_Initialize();
-        if (err != paNoError) {
-            qCWarning(lcAudio) << "Pa_Initialize failed:" << Pa_GetErrorText(err)
-                               << "(the audio subsystem will be inert)";
+        if (!PortAudioLibrary::acquire()) {
+            qCWarning(lcAudio) << "PortAudio did not start (the audio subsystem will be inert)";
             m_paInitialized = false;
         } else {
             m_paInitialized = true;
@@ -512,7 +521,7 @@ AudioEngine::~AudioEngine()
     }
     if (m_paInitialized) {
         g_paTerminateCalls.fetch_add(1, std::memory_order_relaxed);
-        Pa_Terminate();
+        PortAudioLibrary::release();
         m_paInitialized = false;
     }
 }
@@ -1533,9 +1542,10 @@ bool AudioEngine::ensureAudioDevices()
     connect(m_streamSupervisor.get(), &AudioStreamSupervisor::savedIdentityLearned, this,
             [this](AudioRole role, const QString& deviceId) { onSavedIdentityLearned(role, deviceId); });
 
-    m_streamSupervisor->setChoice(AudioRole::Speakers,
-                                  withDefaultEngine(AudioDeviceConfig::loadFromSettings(
-                                      rolePrefix(AudioRole::Speakers))));
+    m_streamSupervisor->setChoice(
+        AudioRole::Speakers,
+        withDefaultEngine(m_speakersChoiceBeforeDevices.value_or(
+            AudioDeviceConfig::loadFromSettings(rolePrefix(AudioRole::Speakers)))));
     m_streamSupervisor->setRoleEnabled(AudioRole::Headphones, m_headphonesEnabled);
     m_streamSupervisor->setChoice(AudioRole::Headphones, withDefaultEngine(m_headphonesConfig));
     m_streamSupervisor->setChoice(AudioRole::TxInput, withDefaultEngine(m_txInputConfig));
@@ -1547,7 +1557,10 @@ bool AudioEngine::ensureAudioDevices()
             const AudioRole role = vaxRole(channel);
             m_streamSupervisor->setRoleEnabled(role,
                                                m_vaxRoleEnabled[static_cast<std::size_t>(channel - 1)]);
-            m_streamSupervisor->setChoice(role, AudioDeviceConfig::loadFromSettings(rolePrefix(role)));
+            const std::optional<AudioDeviceConfig>& first =
+                m_vaxChoiceBeforeDevices[static_cast<std::size_t>(channel - 1)];
+            m_streamSupervisor->setChoice(
+                role, first.value_or(AudioDeviceConfig::loadFromSettings(rolePrefix(role))));
         }
     }
 #endif
@@ -1560,10 +1573,7 @@ bool AudioEngine::ensureAudioDevices()
 
 void AudioEngine::tearDownAudioDevices()
 {
-    if (m_rescanPending) {
-        m_rescanPending = false;
-        retakePortAudioAfterRescan();
-    }
+    m_rescanPending = false;
     ++m_rescanToken;
     m_rescanRoles.clear();
     m_rescanMic = false;
@@ -1785,6 +1795,15 @@ AudioOpenResult AudioEngine::openMicRole(AudioEngineKind engine,
         m_micOpen = true;
         return AudioOpenResult::Opened;
     }
+    // Nothing captures yet: the listed mic is the one the helper will open,
+    // so the role reads Playing on it (the transmit badge reads Silent as
+    // "PC mic not connected").  A failure once capture is demanded reaches
+    // the supervisor as a stream event.  A failed open of this same config
+    // still waits for its retry below and reads silent.
+    if (!m_captureSupervisor->hasDemand() && (changed || now.state != State::Failed)) {
+        m_micOpen = true;
+        return AudioOpenResult::Opened;
+    }
     // Only a status of a later generation than this answers the open:
     // the restart a change makes, the retry of a failure, or the open now
     // in flight for this same config.
@@ -1900,14 +1919,8 @@ void AudioEngine::rescanOlderDrivers()
     m_rescanRoles = std::move(fading);
     m_rescanMic = m_micEngine == AudioEngineKind::PortAudio && (m_micOpen || m_micPending);
 
-    // PortAudio lists again only once every reference to it is released:
-    // the engine's own goes until the new list is in.
-    if (m_paInitialized) {
-        g_paTerminateCalls.fetch_add(1, std::memory_order_relaxed);
-        Pa_Terminate();
-        m_paInitialized = false;
-        m_rescanReleasedPortAudio = true;
-    }
+    // The backend's rescan starts PortAudio again under PortAudioLibrary's
+    // lock, with this engine's reference kept (PortAudioLibrary.h).
     m_rescanPending = true;
     const quint64 token = ++m_rescanToken;
     qCInfo(lcAudio) << "Older drivers: rescanning;" << m_rescanRoles.size() << "outputs closed";
@@ -1918,29 +1931,12 @@ void AudioEngine::rescanOlderDrivers()
                        [this, token]() { finishOlderDriversRescan(token); });
 }
 
-void AudioEngine::retakePortAudioAfterRescan()
-{
-    if (!m_rescanReleasedPortAudio) {
-        return;
-    }
-    m_rescanReleasedPortAudio = false;
-    g_paInitializeCalls.fetch_add(1, std::memory_order_relaxed);
-    const PaError err = Pa_Initialize();
-    if (err != paNoError) {
-        qCWarning(lcAudio) << "Older drivers: PortAudio did not start again:" << Pa_GetErrorText(err);
-        m_paInitialized = false;
-        return;
-    }
-    m_paInitialized = true;
-}
-
 void AudioEngine::finishOlderDriversRescan(quint64 token)
 {
     if (!m_rescanPending || token != m_rescanToken) {
         return;
     }
     m_rescanPending = false;
-    retakePortAudioAfterRescan();
     const std::vector<AudioRole> roles = std::move(m_rescanRoles);
     m_rescanRoles.clear();
     if (m_streamSupervisor) {
@@ -2205,7 +2201,14 @@ void AudioEngine::setSpeakersConfig(const AudioDeviceConfig& cfg)
     // openRole(); the config is announced when no open announced one.
     if (m_deviceLayerReady && audioDevicesApply()) {
         const quint64 announcedBefore = m_speakersAnnouncements;
-        if (ensureAudioDevices()) {
+        // The first choice is this one, not the saved one before it: one
+        // open, never the saved device and then this.
+        if (!m_streamSupervisor) {
+            m_speakersChoiceBeforeDevices = cfg;
+        }
+        const bool supervised = ensureAudioDevices();
+        m_speakersChoiceBeforeDevices.reset();
+        if (supervised) {
             m_streamSupervisor->setChoice(AudioRole::Speakers, withDefaultEngine(cfg));
             if (m_speakersAnnouncements == announcedBefore) {
                 emit speakersConfigChanged(cfg);
@@ -2372,7 +2375,12 @@ void AudioEngine::setVaxConfig(int channel, const AudioDeviceConfig& cfg)
 #if defined(Q_OS_WIN)
     // Native audio plan Task 7: the stream supervisor's VAX role opens,
     // reopens or closes the channel's device (openRole / closeRole).
-    if (m_vaxOutputsAllowed && m_deviceLayerReady && ensureAudioDevices()) {
+    if (m_vaxOutputsAllowed && m_deviceLayerReady && !m_streamSupervisor) {
+        m_vaxChoiceBeforeDevices[static_cast<std::size_t>(idx)] = cfg;   // one open, on this choice
+    }
+    const bool supervisedVax = m_vaxOutputsAllowed && m_deviceLayerReady && ensureAudioDevices();
+    m_vaxChoiceBeforeDevices[static_cast<std::size_t>(idx)].reset();
+    if (supervisedVax) {
         m_streamSupervisor->setChoice(vaxRole(channel), cfg);
         emit vaxConfigChanged(channel, cfg);
         return;

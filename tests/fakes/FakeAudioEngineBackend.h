@@ -17,6 +17,9 @@
 //   2026-10-09: native audio plan Task 7 (R-AUD-06): fadeRequests() counts
 //               the fades asked of every output it made.  J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 7 fix: setOutputCreatedHook() tells
+//               a test of each output made.  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -177,9 +180,16 @@ public:
     {
         auto bus = std::make_unique<FakeMatcherAudioBus>(request, m_takesStereoMix);
         bus->setFadeCounterForTest(m_fadeRequests);
-        std::lock_guard<std::mutex> lock(m_mutex);
-        m_outputRequests.push_back(request);
-        m_lastOutput = bus.get();
+        std::function<void(const AudioStreamRequest&)> hook;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_outputRequests.push_back(request);
+            m_lastOutput = bus.get();
+            hook = m_outputCreatedHook;
+        }
+        if (hook) {
+            hook(request);
+        }
         return bus;
     }
 
@@ -281,6 +291,13 @@ public:
         std::lock_guard<std::mutex> lock(m_sinkMutex);
         return static_cast<bool>(m_noticeSink);
     }
+    // Called (outside the fake's lock) for every output createOutput() makes.
+    void setOutputCreatedHook(std::function<void(const AudioStreamRequest&)> hook)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_outputCreatedHook = std::move(hook);
+    }
+
     std::vector<AudioStreamRequest> outputRequests() const
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -343,6 +360,7 @@ private:
     std::vector<QThread*> m_enumerateThreads;
     std::vector<QThread*> m_defaultThreads;
     std::vector<AudioStreamRequest> m_outputRequests;
+    std::function<void(const AudioStreamRequest&)> m_outputCreatedHook;
     std::vector<InputRequest> m_inputRequests;
     std::vector<QString> m_controlPanelOpens;
     FakeMatcherAudioBus* m_lastOutput = nullptr;

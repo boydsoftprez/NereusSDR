@@ -21,6 +21,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09 : Native audio plan Task 7 fix (R-AUD-06, R-AUD-08) by J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//                 PortAudio starts and stops through PortAudioLibrary; a
+//                 setter's first choice replaces the saved one while the
+//                 device layer is built (one open).
 //   2026-10-09 : Native audio plan Task 7 (R-AUD-02, R-AUD-05, R-AUD-06,
 //                 R-AUD-15, R-AUD-32, R-AUD-34) by J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code. The engine builds
@@ -1353,7 +1358,6 @@ private:
     IAudioBus* roleBusLocked(AudioRole role) const;
     std::unique_ptr<IAudioBus>& roleBusSlot(AudioRole role);
     std::mutex& roleBusMutex(AudioRole role) const;
-    void retakePortAudioAfterRescan();
 
     // The input the TX path reads: an injected test bus when present,
     // otherwise the capture supervisor's stable reader.
@@ -1428,9 +1432,12 @@ private:
     // rescanOlderDrivers(): the roles it closed, awaiting the new list.
     quint64 m_rescanToken{0};
     bool m_rescanPending{false};
-    bool m_rescanReleasedPortAudio{false};
     bool m_rescanMic{false};
     std::vector<AudioRole> m_rescanRoles;
+    // A setter's choice while the device layer is being built, used in
+    // place of the saved one so the role opens once (Speakers, VAX 1-4).
+    std::optional<AudioDeviceConfig> m_speakersChoiceBeforeDevices;
+    std::array<std::optional<AudioDeviceConfig>, 4> m_vaxChoiceBeforeDevices;
     // Windows: the VAX channels' Enabled state for the supervisor's roles.
     std::array<bool, 4> m_vaxRoleEnabled{{true, true, true, true}};
 

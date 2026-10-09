@@ -21,7 +21,10 @@
 //      headphones mix. Fake devices only.
 //
 // Uses the NEREUS_BUILD_TESTS seam (setSpeakersBusForTest,
-// setHeadphonesBusForTest). R3 receiver audio fix wave follow-up
+// setHeadphonesBusForTest). Native audio plan Task 7 fix (2026-10-09,
+// J.J. Boyd KG4VCF, AI-assisted via Anthropic Claude Code): the outputs
+// open through the device layer the app runs (setAudioBackendsForTest with
+// a fake engine of matcher buses); the direct path ships in no build. R3 receiver audio fix wave follow-up
 // (2026-09-23, J.J. Boyd KG4VCF, AI-assisted via Anthropic Claude Code):
 // every device the engine opens is a fake (setDeviceBusFactoryForTest,
 // setVaxBusFactoryForTest) and the run is in test mode, so no case opens
@@ -43,6 +46,7 @@
 #include "models/SliceModel.h"
 
 #include "fakes/FakeAudioBus.h"
+#include "fakes/FakeDeviceLayer.h"
 
 #include <memory>
 #include <thread>
@@ -58,11 +62,14 @@ const float kSamples[kFrames * 2] = { 0.1f, 0.2f, 0.3f, 0.4f };
 // fake, and test mode (initTestCase) stops anything else from reaching this
 // computer's real speakers, microphone or VAX devices. `opened` counts the
 // fake devices made.
+//
+// Native audio plan Task 7 fix: the outputs open through the device layer
+// the app runs (engine backends, catalogue, stream supervisor), on a fake
+// older-drivers engine with matcher buses (FakeDeviceLayer.h).
 void useFakeDevices(AudioEngine* engine, int* opened)
 {
-    engine->setDeviceBusFactoryForTest([opened](const AudioDeviceConfig&, bool) {
+    Test::useFakeDeviceLayer(engine, [opened](const QString&) {
         if (opened) { ++*opened; }
-        return std::make_unique<FakeAudioBus>(QStringLiteral("FakeDevice"));
     });
     engine->setVaxBusFactoryForTest([opened](int channel) -> std::unique_ptr<IAudioBus> {
         if (opened) { ++*opened; }
@@ -285,9 +292,8 @@ private slots:
 
         AudioEngine engine;
         QStringList openedNames;
-        engine.setDeviceBusFactoryForTest([&openedNames](const AudioDeviceConfig& cfg, bool) {
-            openedNames << cfg.deviceName;
-            return std::make_unique<FakeAudioBus>(QStringLiteral("FakeDevice"));
+        Test::useFakeDeviceLayer(&engine, [&openedNames](const QString& name) {
+            openedNames << name;
         });
         useFakeVaxOnly(&engine);
         QSignalSpy spy(&engine, &AudioEngine::headphonesAvailableChanged);

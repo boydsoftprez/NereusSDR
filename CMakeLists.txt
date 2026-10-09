@@ -1150,6 +1150,7 @@ set(CORE_SOURCES
     src/core/audio/AudioStreamSupervisor.cpp
     src/core/audio/AudioBackendRegistry.cpp
     src/core/audio/PortAudioBackend.cpp
+    src/core/audio/PortAudioLibrary.cpp
     src/core/audio/IAudioStreamHost.h
     src/core/audio/IAudioDeviceCatalog.h
     src/core/audio/IAudioEngineBackend.h

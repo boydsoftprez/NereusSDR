@@ -32,6 +32,7 @@
 #include "core/audio/AudioBackendRegistry.h"
 #include "core/audio/CaptureSupervisor.h"
 #include "core/audio/IAudioDeviceCatalog.h"
+#include "core/audio/PortAudioBackend.h"
 
 #include "fakes/FakeAudioEngineBackend.h"
 #include "fakes/FakeCaptureChild.h"
@@ -48,6 +49,12 @@ namespace {
 constexpr int kWaitMs = 5000;
 
 const QString kCoreAudioApi = QStringLiteral("Core Audio");
+
+// An older-drivers device's id, as PortAudioBackend makes it.
+QString paId(const QString& name)
+{
+    return portAudioDeviceId(kCoreAudioApi, name);
+}
 
 AudioDeviceInfo deviceInfo(AudioBackendId backend, AudioDeviceDirection direction,
                            const QString& id, const QString& name,
@@ -102,15 +109,15 @@ struct Rig {
         older->setTakesStereoMix(false);
         older->setDevices(
             {deviceInfo(AudioBackendId::PortAudio, AudioDeviceDirection::Output,
-                        QStringLiteral("Desk headphones"), QStringLiteral("Desk headphones"),
+                        paId(QStringLiteral("Desk headphones")), QStringLiteral("Desk headphones"),
                         kCoreAudioApi),
              deviceInfo(AudioBackendId::PortAudio, AudioDeviceDirection::Output,
-                        QStringLiteral("Built-in speakers"), QStringLiteral("Built-in speakers"),
+                        paId(QStringLiteral("Built-in speakers")), QStringLiteral("Built-in speakers"),
                         kCoreAudioApi),
              deviceInfo(AudioBackendId::PortAudio, AudioDeviceDirection::Input,
-                        QStringLiteral("Desk mic"), QStringLiteral("Desk mic"), kCoreAudioApi)});
-        older->setDefault(AudioDeviceDirection::Output, QStringLiteral("Built-in speakers"));
-        older->setDefault(AudioDeviceDirection::Input, QStringLiteral("Desk mic"));
+                        paId(QStringLiteral("Desk mic")), QStringLiteral("Desk mic"), kCoreAudioApi)});
+        older->setDefault(AudioDeviceDirection::Output, paId(QStringLiteral("Built-in speakers")));
+        older->setDefault(AudioDeviceDirection::Input, paId(QStringLiteral("Desk mic")));
     }
 
     // VAX outputs are not under test here: none is published.
@@ -184,11 +191,11 @@ private slots:
         // A Setup change to an older-drivers device opens it on PortAudio,
         // on its host API.
         rig.engine->setSpeakersConfig(savedChoice(AudioEngineKind::PortAudio,
-                                                  QStringLiteral("Built-in speakers"),
+                                                  paId(QStringLiteral("Built-in speakers")),
                                                   QStringLiteral("Built-in speakers"),
                                                   kCoreAudioApi));
         QCOMPARE(rig.older->outputRequests().size(), std::size_t(1));
-        QCOMPARE(rig.older->outputRequests().front().deviceId, QStringLiteral("Built-in speakers"));
+        QCOMPARE(rig.older->outputRequests().front().deviceId, paId(QStringLiteral("Built-in speakers")));
         QCOMPARE(rig.older->outputRequests().front().hostApi, kCoreAudioApi);
         QCOMPARE(rig.native->outputRequests().size(), std::size_t(1));
         QCOMPARE(rig.engine->roleStatus(AudioRole::Speakers).state, AudioRoleState::Playing);
@@ -279,7 +286,7 @@ private slots:
     void delayPartsArePerRole()
     {
         Rig rig;
-        savedChoice(AudioEngineKind::PortAudio, QStringLiteral("Desk headphones"),
+        savedChoice(AudioEngineKind::PortAudio, paId(QStringLiteral("Desk headphones")),
                     QStringLiteral("Desk headphones"), kCoreAudioApi)
             .saveToSettings(QStringLiteral("audio/Headphones"));
         rig.build();
@@ -310,7 +317,7 @@ private slots:
         savedChoice(AudioEngineKind::CoreAudio, QStringLiteral("desk-uid"),
                     QStringLiteral("Desk speakers"))
             .saveToSettings(QStringLiteral("audio/Speakers"));
-        savedChoice(AudioEngineKind::PortAudio, QStringLiteral("Desk headphones"),
+        savedChoice(AudioEngineKind::PortAudio, paId(QStringLiteral("Desk headphones")),
                     QStringLiteral("Desk headphones"), kCoreAudioApi)
             .saveToSettings(QStringLiteral("audio/Headphones"));
         AppSettings::instance().setValue(QStringLiteral("audio/Headphones/Enabled"),
@@ -366,22 +373,135 @@ private slots:
         rig.engine->stop();
     }
 
+    // Bug 1 on the older drivers: a saved DirectSound ID opens the
+    // DirectSound device, never the MME device of the same name listed
+    // before it, and with DirectSound gone it never opens the MME one.
+    void savedDirectSoundIdNeverOpensTheMmeDevice()
+    {
+        const QString realtek = QStringLiteral("Speakers (Realtek(R) Audio)");
+        const QString mme = QStringLiteral("MME");
+        const QString ds = QStringLiteral("Windows DirectSound");
+        const QString mmeId = portAudioDeviceId(mme, realtek);
+        const QString dsId = portAudioDeviceId(ds, realtek);
+        const AudioDeviceInfo mmeEntry =
+            deviceInfo(AudioBackendId::PortAudio, AudioDeviceDirection::Output, mmeId, realtek, mme);
+        const AudioDeviceInfo dsEntry =
+            deviceInfo(AudioBackendId::PortAudio, AudioDeviceDirection::Output, dsId, realtek, ds);
+        AudioDeviceConfig choice = savedChoice(AudioEngineKind::PortAudio, dsId, realtek);
+        {
+            Rig rig;
+            rig.older->setDevices({mmeEntry, dsEntry});
+            choice.saveToSettings(QStringLiteral("audio/Speakers"));
+            rig.build();
+            rig.engine->start();
+            QCOMPARE(rig.older->outputRequests().size(), std::size_t(1));
+            QCOMPARE(rig.older->outputRequests().front().deviceId, dsId);
+            QCOMPARE(rig.engine->roleStatus(AudioRole::Speakers).state, AudioRoleState::Playing);
+            rig.engine->stop();
+        }
+        AppSettings::instance().clear();
+        {
+            Rig rig;
+            rig.older->setDevices({mmeEntry});
+            choice.saveToSettings(QStringLiteral("audio/Speakers"));
+            rig.build();
+            rig.engine->start();
+            for (const AudioStreamRequest& request : rig.older->outputRequests()) {
+                QVERIFY(request.deviceId != mmeId);
+            }
+            QCOMPARE(rig.engine->roleStatus(AudioRole::Speakers).reason, AudioRoleReason::NotConnected);
+            rig.engine->stop();
+        }
+    }
+
+    // A choice equal to the current one opens nothing again, on every role:
+    // no click and no delay at start.
+    void equalChoiceNeverReopens()
+    {
+        Rig rig;
+        const AudioDeviceConfig speakers = savedChoice(
+            AudioEngineKind::CoreAudio, QStringLiteral("desk-uid"), QStringLiteral("Desk speakers"));
+        speakers.saveToSettings(QStringLiteral("audio/Speakers"));
+        const AudioDeviceConfig headphones = savedChoice(
+            AudioEngineKind::PortAudio, paId(QStringLiteral("Desk headphones")),
+            QStringLiteral("Desk headphones"), kCoreAudioApi);
+        headphones.saveToSettings(QStringLiteral("audio/Headphones"));
+        AppSettings::instance().setValue(QStringLiteral("audio/Headphones/Enabled"),
+                                         QStringLiteral("True"));
+        const AudioDeviceConfig mic = savedChoice(AudioEngineKind::PortAudio, paId(QStringLiteral("Desk mic")),
+                                                  QStringLiteral("Desk mic"), kCoreAudioApi);
+        mic.saveToSettings(QStringLiteral("audio/TxInput"));
+        rig.build(fakeHelper(QStringLiteral("ready")));
+        rig.engine->start();
+        QCOMPARE(rig.native->outputRequests().size(), std::size_t(1));
+        QCOMPARE(rig.older->outputRequests().size(), std::size_t(1));
+        const CaptureSupervisor::Status micBefore = rig.engine->captureStatus();
+
+        rig.engine->setSpeakersConfig(speakers);
+        rig.engine->setHeadphonesConfig(headphones);
+        rig.engine->setHeadphonesEnabled(true);
+        rig.engine->setTxInputConfig(mic);
+        QCoreApplication::processEvents();
+        QCOMPARE(rig.native->outputRequests().size(), std::size_t(1));
+        QCOMPARE(rig.older->outputRequests().size(), std::size_t(1));
+        QCOMPARE(rig.engine->captureStatus().generation, micBefore.generation);
+        QCOMPARE(rig.engine->captureStatus().state, micBefore.state);
+        rig.engine->stop();
+    }
+
+    // The first choice given before the devices are up is the one opened:
+    // once, never the saved device first.
+    void firstChoiceOpensOnce()
+    {
+        Rig rig;
+        savedChoice(AudioEngineKind::CoreAudio, QStringLiteral("built-in-uid"),
+                    QStringLiteral("Built-in speakers"))
+            .saveToSettings(QStringLiteral("audio/Speakers"));
+        rig.build();
+        rig.engine->setSpeakersConfig(savedChoice(AudioEngineKind::CoreAudio, QStringLiteral("desk-uid"),
+                                                  QStringLiteral("Desk speakers")));
+        rig.engine->start();
+        QCOMPARE(rig.native->outputRequests().size(), std::size_t(1));
+        QCOMPARE(rig.native->outputRequests().front().deviceId, QStringLiteral("desk-uid"));
+        rig.engine->stop();
+    }
+
+    // An idle mic whose device is not listed reads Silent, not connected.
+    void idleMicNotListedReadsSilent()
+    {
+        Rig rig;
+        savedChoice(AudioEngineKind::PortAudio, paId(QStringLiteral("Gone mic")),
+                    QStringLiteral("Gone mic"), kCoreAudioApi)
+            .saveToSettings(QStringLiteral("audio/TxInput"));
+        rig.build(fakeHelper(QStringLiteral("ready")));
+        rig.engine->start();
+        const AudioRoleStatus status = rig.engine->roleStatus(AudioRole::TxInput);
+        QCOMPARE(status.state, AudioRoleState::Silent);
+        QCOMPARE(status.reason, AudioRoleReason::NotConnected);
+        QVERIFY(status.playingName.isEmpty());
+        rig.engine->stop();
+    }
+
     // The PC mic role: the matched config goes to the capture helper, and
     // its Ready completes the open.
     void micRoleOpensThroughTheCaptureHelper()
     {
         Rig rig;
-        savedChoice(AudioEngineKind::PortAudio, QStringLiteral("Desk mic"),
+        savedChoice(AudioEngineKind::PortAudio, paId(QStringLiteral("Desk mic")),
                     QStringLiteral("Desk mic"), kCoreAudioApi)
             .saveToSettings(QStringLiteral("audio/TxInput"));
         rig.build(fakeHelper(QStringLiteral("ready")));
         rig.engine->start();
-        // Nothing captures until someone demands it.
-        QCOMPARE(rig.engine->roleStatus(AudioRole::TxInput).state, AudioRoleState::Silent);
+        // Nothing captures until someone demands it; the listed mic reads
+        // Playing on itself meanwhile.
+        QCOMPARE(rig.engine->roleStatus(AudioRole::TxInput).state, AudioRoleState::Playing);
+        QCOMPARE(rig.engine->roleStatus(AudioRole::TxInput).playingName, QStringLiteral("Desk mic"));
+        QCOMPARE(rig.engine->captureStatus().state, CaptureSupervisor::Status::State::Closed);
         CaptureSupervisor::Lease lease =
             rig.engine->acquireCaptureDemand(CaptureSupervisor::Demand::TestMic);
-        QTRY_COMPARE_WITH_TIMEOUT(rig.engine->roleStatus(AudioRole::TxInput).state,
-                                  AudioRoleState::Playing, 10000);
+        QTRY_COMPARE_WITH_TIMEOUT(rig.engine->captureStatus().state,
+                                  CaptureSupervisor::Status::State::Ready, 10000);
+        QCOMPARE(rig.engine->roleStatus(AudioRole::TxInput).state, AudioRoleState::Playing);
         QCOMPARE(rig.engine->roleStatus(AudioRole::TxInput).playingName, QStringLiteral("Desk mic"));
         QCOMPARE(rig.engine->captureStatus().configuredDevice, QStringLiteral("Desk mic"));
         lease.release();
@@ -393,7 +513,7 @@ private slots:
     void micRoleLostInputGoesSilent()
     {
         Rig rig;
-        savedChoice(AudioEngineKind::PortAudio, QStringLiteral("Desk mic"),
+        savedChoice(AudioEngineKind::PortAudio, paId(QStringLiteral("Desk mic")),
                     QStringLiteral("Desk mic"), kCoreAudioApi)
             .saveToSettings(QStringLiteral("audio/TxInput"));
         rig.build(fakeHelper(QStringLiteral("input-lost")));

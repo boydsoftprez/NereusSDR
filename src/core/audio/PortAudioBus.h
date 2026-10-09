@@ -41,6 +41,10 @@
 //               stays on the saved host API (bug 1); requestFadeOut and
 //               fadedOut for Rescan. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 7 fix (R-AUD-06): every PortAudio
+//               call outside the callback holds PortAudioLibrary's lock,
+//               and an open stream is counted. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -161,6 +165,11 @@ public:
     // Pa_Terminate, and the enumeration helpers above answer empty lists.
     // Always false in a build without NEREUS_BUILD_TESTS.
     static bool portAudioBarredForTestRun();
+#ifdef NEREUS_BUILD_TESTS
+    // Lets one test use the PortAudio library itself (its lock and Rescan
+    // under load); that test opens no stream.  No other engine is let in.
+    static void allowPortAudioLibraryForTest(bool allowed);
+#endif
 
     bool open(const AudioFormat& format) override;
     void close() override;
@@ -282,6 +291,7 @@ private:
     int outputCallbackFramesNow() const;
 
     PaStream*       m_stream{nullptr};
+    bool            m_streamCounted{false};   // counted in PortAudioLibrary::openStreams()
     PortAudioConfig m_cfg;
     AudioFormat     m_negFormat;
     QString         m_backendName;

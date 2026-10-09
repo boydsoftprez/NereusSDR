@@ -6,12 +6,16 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 7 (R-AUD-01, R-AUD-06, R-AUD-32).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 7 fix (R-AUD-06): ids carry the
+//               host API; the listing and Rescan hold PortAudioLibrary's
+//               lock. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/audio/PortAudioBackend.h"
 
-#include "core/LogCategories.h"
 #include "core/audio/PortAudioBus.h"
+#include "core/audio/PortAudioLibrary.h"
 
 #include <portaudio.h>
 
@@ -30,7 +34,36 @@ const QString kJack = QStringLiteral("JACK Audio Connection Kit");
 const QString kAlsa = QStringLiteral("ALSA");
 const QString kCoreAudio = QStringLiteral("Core Audio");
 
+constexpr QChar kIdSeparator = QLatin1Char('|');
+
+bool isKnownHostApi(const QString& name)
+{
+    return name == kMme || name == kDirectSound || name == kWdmKs || name == kWasapi
+           || name == kJack || name == kAlsa || name == kCoreAudio;
+}
+
 } // namespace
+
+QString portAudioDeviceId(const QString& hostApi, const QString& name)
+{
+    return hostApi + kIdSeparator + name;
+}
+
+QString portAudioHostApiOfId(const QString& id)
+{
+    const qsizetype at = id.indexOf(kIdSeparator);
+    if (at <= 0) {
+        return {};
+    }
+    const QString hostApi = id.left(at);
+    return isKnownHostApi(hostApi) ? hostApi : QString();
+}
+
+QString portAudioNameOfId(const QString& id)
+{
+    const QString hostApi = portAudioHostApiOfId(id);
+    return hostApi.isEmpty() ? id : id.mid(hostApi.size() + 1);
+}
 
 OlderDriverPlatform currentOlderDriverPlatform()
 {
@@ -68,6 +101,8 @@ QList<PortAudioDeviceRecord> listPortAudioDevices()
     if (PortAudioBus::portAudioBarredForTestRun()) {
         return records;
     }
+    // R-AUD-06: one list, never half before and half after a Rescan.
+    std::lock_guard<std::recursive_mutex> paLock(PortAudioLibrary::mutex());
     const PaDeviceIndex defaultOutput = Pa_GetDefaultOutputDevice();
     const PaDeviceIndex defaultInput = Pa_GetDefaultInputDevice();
     const QVector<PortAudioBus::HostApiInfo> apis = PortAudioBus::hostApis();
@@ -123,7 +158,7 @@ QList<AudioDeviceInfo> PortAudioBackend::enumerate()
         }
         AudioDeviceInfo info;
         info.backend = AudioBackendId::PortAudio;
-        info.id = record.name;
+        info.id = portAudioDeviceId(record.hostApi, record.name);
         info.name = record.name;
         info.hostApi = record.hostApi;
         if (record.outputChannels > 0) {
@@ -131,7 +166,7 @@ QList<AudioDeviceInfo> PortAudioBackend::enumerate()
             info.channelCount = record.outputChannels;
             info.isDefault = record.isDefaultOutput;
             if (record.isDefaultOutput && !m_defaultOutput) {
-                m_defaultOutput = record.name;
+                m_defaultOutput = info.id;
             }
             devices.append(info);
         }
@@ -140,7 +175,7 @@ QList<AudioDeviceInfo> PortAudioBackend::enumerate()
             info.channelCount = record.inputChannels;
             info.isDefault = record.isDefaultInput;
             if (record.isDefaultInput && !m_defaultInput) {
-                m_defaultInput = record.name;
+                m_defaultInput = info.id;
             }
             devices.append(info);
         }
@@ -162,14 +197,20 @@ std::unique_ptr<IAudioBus> PortAudioBackend::createOutput(const AudioStreamReque
 {
     PortAudioConfig config;
     config.direction = AudioDirection::Output;
-    config.deviceName = request.deviceId;
+    // The id names its host API; a bare name (a choice saved before ids
+    // carried one) opens on the request's host API.
+    config.deviceName = portAudioNameOfId(request.deviceId);
+    QString hostApi = portAudioHostApiOfId(request.deviceId);
+    if (hostApi.isEmpty()) {
+        hostApi = request.hostApi;
+    }
     if (request.bufferFrames > 0) {
         config.bufferSamples = request.bufferFrames;
     }
     config.exclusiveMode = request.exclusive;
-    if (!request.hostApi.isEmpty()) {
+    if (!hostApi.isEmpty()) {
         for (const PortAudioBus::HostApiInfo& api : PortAudioBus::hostApis()) {
-            if (api.name == request.hostApi) {
+            if (api.name == hostApi) {
                 config.hostApiIndex = api.index;
                 break;
             }
@@ -193,13 +234,7 @@ void PortAudioBackend::rescan()
     if (PortAudioBus::portAudioBarredForTestRun()) {
         return;
     }
-    Pa_Terminate();
-    const PaError err = Pa_Initialize();
-    if (err != paNoError) {
-        qCWarning(lcAudio) << "Older drivers: PortAudio did not start again:" << Pa_GetErrorText(err);
-        return;
-    }
-    qCInfo(lcAudio) << "Older drivers: PortAudio started again to list the devices present now";
+    PortAudioLibrary::reinitialize();
 }
 
 } // namespace NereusSDR

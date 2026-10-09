@@ -15,6 +15,12 @@
 //               searches only the saved host API (bug 1); requestFadeOut()
 //               and fadedOut() on the output's matcher reader for Rescan.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 7 fix (R-AUD-06): every PortAudio
+//               call outside the callback (device resolution, open,
+//               close, the query helpers) holds PortAudioLibrary's lock,
+//               so Rescan never starts PortAudio again under them; an
+//               open stream is counted. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-09: native audio plan Task 6 (R-AUD-15, R-AUD-33): an output
 //               stream's ring is a DeviceRateMatcher; push() takes 48 kHz
 //               stereo, the callback reads it and writes the device's
@@ -53,6 +59,7 @@
 #include "AudioDelayProbe.h"
 #include "AudioTestBarrier.h"
 #include "DeviceSampleFormat.h"
+#include "PortAudioLibrary.h"
 
 #include <portaudio.h>
 
@@ -60,6 +67,7 @@
 #include <QtGlobal>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 
@@ -98,6 +106,8 @@ PaDeviceIndex resolveDevice(const PortAudioConfig& inCfg,
                             int requestedChannels,
                             bool strictNamed = false)
 {
+    // R-AUD-06: PortAudio's device list stays put while it is read.
+    std::lock_guard<std::recursive_mutex> paLock(PortAudioLibrary::mutex());
     const int deviceCount = Pa_GetDeviceCount();
     if (deviceCount <= 0) {
         return paNoDevice;
@@ -344,6 +354,8 @@ void PortAudioBus::setConfig(const PortAudioConfig& cfg) {
 }
 
 bool PortAudioBus::open(const AudioFormat& format) {
+    // R-AUD-06: held for the whole open; the callback never takes it.
+    std::lock_guard<std::recursive_mutex> paLock(PortAudioLibrary::mutex());
     if (m_stream) {
         close();
     }
@@ -586,6 +598,8 @@ bool PortAudioBus::open(const AudioFormat& format) {
         m_backendName.clear();
     }
     m_openedDeviceName = (di->name != nullptr) ? QString::fromUtf8(di->name) : QString();
+    PortAudioLibrary::streamOpened();
+    m_streamCounted = true;
     return true;
 }
 
@@ -597,10 +611,16 @@ int PortAudioBus::openedStreamChannels() const {
 }
 
 void PortAudioBus::close() {
+    // R-AUD-06: Pa_StopStream waits for the callback, which takes no lock.
+    std::lock_guard<std::recursive_mutex> paLock(PortAudioLibrary::mutex());
     if (m_stream) {
         Pa_StopStream(m_stream);
         Pa_CloseStream(m_stream);
         m_stream = nullptr;
+    }
+    if (m_streamCounted) {
+        m_streamCounted = false;
+        PortAudioLibrary::streamClosed();
     }
     // Release the input resampler + its scratch buffer.  Safe here
     // because Pa_StopStream above has joined the audio thread, so no
@@ -983,15 +1003,30 @@ int PortAudioBus::downmixToMono(const float* interleaved, int frames,
     return n;
 }
 
+namespace {
+std::atomic<bool> g_portAudioLibraryAllowedForTest{false};
+} // namespace
+
 bool PortAudioBus::portAudioBarredForTestRun()
 {
     // R-AUD-32: the one no-device rule every engine shares.
+    if (g_portAudioLibraryAllowedForTest.load(std::memory_order_relaxed)) {
+        return false;
+    }
     return audioDevicesBarredForTestRun();
 }
+
+#ifdef NEREUS_BUILD_TESTS
+void PortAudioBus::allowPortAudioLibraryForTest(bool allowed)
+{
+    g_portAudioLibraryAllowedForTest.store(allowed, std::memory_order_relaxed);
+}
+#endif
 
 QVector<PortAudioBus::HostApiInfo> PortAudioBus::hostApis() {
     QVector<HostApiInfo> out;
     if (portAudioBarredForTestRun()) { return out; }
+    std::lock_guard<std::recursive_mutex> paLock(PortAudioLibrary::mutex());   // R-AUD-06
     const int n = Pa_GetHostApiCount();
     for (int i = 0; i < n; ++i) {
         const PaHostApiInfo* h = Pa_GetHostApiInfo(i);
@@ -1003,6 +1038,7 @@ QVector<PortAudioBus::HostApiInfo> PortAudioBus::hostApis() {
 QVector<PortAudioBus::DeviceInfo> PortAudioBus::outputDevicesFor(int hostApiIndex) {
     QVector<DeviceInfo> out;
     if (portAudioBarredForTestRun()) { return out; }
+    std::lock_guard<std::recursive_mutex> paLock(PortAudioLibrary::mutex());   // R-AUD-06
     const int n = Pa_GetDeviceCount();
     for (int i = 0; i < n; ++i) {
         const PaDeviceInfo* d = Pa_GetDeviceInfo(i);
@@ -1020,6 +1056,7 @@ QVector<PortAudioBus::DeviceInfo> PortAudioBus::outputDevicesFor(int hostApiInde
 QVector<PortAudioBus::DeviceInfo> PortAudioBus::inputDevicesFor(int hostApiIndex) {
     QVector<DeviceInfo> out;
     if (portAudioBarredForTestRun()) { return out; }
+    std::lock_guard<std::recursive_mutex> paLock(PortAudioLibrary::mutex());   // R-AUD-06
     const int n = Pa_GetDeviceCount();
     for (int i = 0; i < n; ++i) {
         const PaDeviceInfo* d = Pa_GetDeviceInfo(i);

@@ -6,11 +6,15 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 4 (R-AUD-04, R-AUD-05). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 7 fix (R-AUD-04, bug 1): a saved
+//               PortAudio ID's host API limits the match to that host API.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AudioDeviceMatching.h"
 
 #include "core/AppSettings.h"
+#include "core/audio/PortAudioBackend.h"
 
 #include <QLatin1String>
 #include <QRegularExpression>
@@ -124,13 +128,19 @@ std::optional<AudioDeviceMatch> matchSavedAudioDevice(const AudioDeviceConfig& s
 
     // The same engine only, never across engines (bug 1).  On older drivers
     // the host API is part of the identity; an empty DriverApi is PortAudio's
-    // default host API, so any host API is accepted.
+    // default host API, so any host API is accepted.  A saved PortAudio ID
+    // names its host API too (portAudioDeviceId), so neither the ID nor the
+    // name ever reaches the same name under another host API.
+    QString hostApi = saved.driverApi;
+    if (portAudio && hostApi.isEmpty()) {
+        hostApi = portAudioHostApiOfId(saved.deviceId);
+    }
     QList<AudioDeviceInfo> pool;
     for (const AudioDeviceInfo& info : candidates) {
         if (info.backend != backend) {
             continue;
         }
-        if (portAudio && !saved.driverApi.isEmpty() && info.hostApi != saved.driverApi) {
+        if (portAudio && !hostApi.isEmpty() && info.hostApi != hostApi) {
             continue;
         }
         pool.append(info);
