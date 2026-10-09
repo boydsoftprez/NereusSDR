@@ -19,6 +19,17 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09  J.J. Boyd / KG4VCF  Native audio plan Task 7 (R-AUD-02,
+//                                    R-AUD-05, R-AUD-06, R-AUD-15,
+//                                    R-AUD-32, R-AUD-34): engine backends,
+//                                    the settings migration, the device
+//                                    catalogue and the stream supervisor;
+//                                    openRole / closeRole for speakers,
+//                                    headphones, the PC mic and Windows
+//                                    VAX; makeBus through the config's
+//                                    engine; Rescan for older drivers;
+//                                    delayParts(role).
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-09  J.J. Boyd / KG4VCF  Native audio plan Task 6 (R-AUD-15):
 //                                    a bus with a clock matcher takes the
 //                                    48 kHz stereo mix (no converter;
@@ -229,6 +240,9 @@
 #include "AppSettings.h"
 #include "LogCategories.h"
 #include "WdspEngine.h"       // rxChannel(0) lookup
+#include "audio/AudioDeviceCatalog.h"
+#include "audio/AudioDeviceMatching.h"
+#include "audio/AudioStreamSupervisor.h"
 #include "audio/CaptureAudioBus.h"
 #include "audio/PortAudioBus.h"
 #include "../models/RadioModel.h"
@@ -246,8 +260,11 @@
 #endif
 
 #include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QScopeGuard>
 #include <QStandardPaths>
+#include <QThread>
+#include <QTimer>
 
 #include <portaudio.h>
 
@@ -276,6 +293,48 @@ AudioFormat toAudioFormat(const AudioDeviceConfig& cfg)
 // AudioEngine, read by the test seam below.
 std::atomic<int> g_paInitializeCalls{0};
 std::atomic<int> g_paTerminateCalls{0};
+
+// Native audio plan Task 7: the settings prefix of each role.
+QString rolePrefix(AudioRole role)
+{
+    switch (role) {
+    case AudioRole::Speakers: return QStringLiteral("audio/Speakers");
+    case AudioRole::Headphones: return QStringLiteral("audio/Headphones");
+    case AudioRole::TxInput: return QStringLiteral("audio/TxInput");
+    case AudioRole::Vax1: return QStringLiteral("audio/Vax1");
+    case AudioRole::Vax2: return QStringLiteral("audio/Vax2");
+    case AudioRole::Vax3: return QStringLiteral("audio/Vax3");
+    case AudioRole::Vax4: return QStringLiteral("audio/Vax4");
+    }
+    return {};
+}
+
+std::size_t roleIndex(AudioRole role)
+{
+    return static_cast<std::size_t>(role);
+}
+
+// VAX 1..4 for a VAX role, 0 otherwise.
+int vaxChannelOf(AudioRole role)
+{
+    switch (role) {
+    case AudioRole::Vax1: return 1;
+    case AudioRole::Vax2: return 2;
+    case AudioRole::Vax3: return 3;
+    case AudioRole::Vax4: return 4;
+    default: return 0;
+    }
+}
+
+[[maybe_unused]] AudioRole vaxRole(int channel)
+{
+    switch (channel) {
+    case 2: return AudioRole::Vax2;
+    case 3: return AudioRole::Vax3;
+    case 4: return AudioRole::Vax4;
+    default: return AudioRole::Vax1;
+    }
+}
 
 } // namespace
 
@@ -309,6 +368,9 @@ AudioEngine::AudioEngine(QObject* parent)
             static_cast<size_t>(kMixScratchMinFrames) * 2, 0.0f);
     }
     m_mixScratchFrames.store(kMixScratchMinFrames, std::memory_order_seq_cst);
+    // Native audio plan Task 7: roleStatusChanged may be queued.
+    qRegisterMetaType<NereusSDR::AudioRole>();
+    qRegisterMetaType<NereusSDR::AudioRoleStatus>();
 #if defined(Q_OS_LINUX)
     // Cache the Linux audio backend detection result up front so Task 14's
     // dispatch (PipeWireBus vs. LinuxPipeBus pactl path) has a stable
@@ -659,13 +721,18 @@ void AudioEngine::start()
                                .value(QStringLiteral("audio/DspBlockSize"), QStringLiteral("0"))
                                .toString().toInt());
 
-    ensureSpeakersOpen();
-    // R-R3-45: the headphones output opens at startup too, when Setup,
-    // Audio, Devices has it enabled (audio/Headphones/Enabled). Before this
-    // it opened only on a Devices card change and nothing ever fed it.
-    if (m_headphonesEnabled
-        && !(m_headphonesBus && m_headphonesBus->isOpen())) {
-        reopenHeadphones();
+    // Native audio plan Task 7: the stream supervisor opens the speakers,
+    // the headphones (when enabled) and the PC mic role from their saved
+    // choices (R-AUD-02).  Without the device layer, the direct paths.
+    if (!ensureAudioDevices()) {
+        ensureSpeakersOpen();
+        // R-R3-45: the headphones output opens at startup too, when Setup,
+        // Audio, Devices has it enabled (audio/Headphones/Enabled). Before this
+        // it opened only on a Devices card change and nothing ever fed it.
+        if (m_headphonesEnabled
+            && !(m_headphonesBus && m_headphonesBus->isOpen())) {
+            reopenHeadphones();
+        }
     }
     // R-R3-36: no TX input is opened here. PC microphone capture starts only
     // when RadioModel (local session with PC mic selected) or Test Mic
@@ -724,6 +791,10 @@ void AudioEngine::stop()
 {
     // V-HW-8: the probe ends with the audio it measures.
     setDelayProbeEnabled(false);
+
+    // Native audio plan Task 7: the supervisor and the catalogue end
+    // before the buses they opened; the next start() builds them again.
+    tearDownAudioDevices();
 
     // Close every owned bus unconditionally — setVaxConfig / setHeadphonesConfig
     // etc. may populate bus slots even when start() was never called (test
@@ -846,11 +917,64 @@ std::unique_ptr<IAudioBus> AudioEngine::makeBus(const AudioDeviceConfig& cfg,
         }
         return fake;
     }
-    if (QStandardPaths::isTestModeEnabled()) {
+    // Native audio plan Task 7: a test's injected engine backends supply
+    // its output devices; the capture path never opens one here.
+    if (QStandardPaths::isTestModeEnabled() && (capture || !m_backendsInjectedForTest)) {
         qCInfo(lcAudio) << "Audio device not opened: test run with no test devices";
         return nullptr;
     }
 #endif
+    // Native audio plan Task 7 (R-AUD-02): an output opens through the
+    // engine backend for the config's engine.  A config with no engine
+    // (only before the migration) is PortAudio, as before.
+    if (!capture && !m_backends.empty()) {
+        const AudioEngineKind engine = cfg.engine.value_or(AudioEngineKind::PortAudio);
+        const AudioBackendId backendId = audioBackendFor(engine);
+        IAudioEngineBackend* backend = nullptr;
+        for (const std::shared_ptr<IAudioEngineBackend>& candidate : m_backends) {
+            if (candidate && candidate->id() == backendId) {
+                backend = candidate.get();
+                break;
+            }
+        }
+        if (backend != nullptr) {
+            AudioStreamRequest request;
+            request.direction = AudioDeviceDirection::Output;
+            request.deviceId = (!cfg.deviceId.isEmpty() && !cfg.isNone()) ? cfg.deviceId
+                                                                          : cfg.deviceName;
+            request.hostApi = cfg.driverApi;
+            if (request.hostApi.isEmpty() && cfg.hostApiIndex >= 0 && m_paInitialized) {
+                for (const PortAudioBus::HostApiInfo& api : PortAudioBus::hostApis()) {
+                    if (api.index == cfg.hostApiIndex) {
+                        request.hostApi = api.name;
+                        break;
+                    }
+                }
+            }
+            request.pair.firstChannel = std::max(1, cfg.firstChannel);
+            request.pair.channelCount = std::clamp(cfg.channels, 1, 2);
+            request.sampleRate = cfg.sampleRate;
+            request.bufferFrames = std::max(0, cfg.bufferSamples);
+            request.delayMs = std::max(0, cfg.delayMs);
+            request.exclusive = engine == AudioEngineKind::WindowsExclusive
+                                || (engine == AudioEngineKind::PortAudio && cfg.exclusiveMode);
+            std::unique_ptr<IAudioBus> bus = backend->createOutput(request);
+            if (!bus) {
+                qCWarning(lcAudio) << "Audio output not created on" << audioEngineLabel(engine);
+                return nullptr;
+            }
+            if (!bus->open(toAudioFormat(cfg))) {
+                qCWarning(lcAudio) << "IAudioBus open failed:" << bus->errorString();
+                return nullptr;
+            }
+            return bus;
+        }
+        if (engine != AudioEngineKind::PortAudio) {
+            qCWarning(lcAudio) << "Audio output not opened:" << audioEngineLabel(engine)
+                               << "is not available here";
+            return nullptr;
+        }
+    }
     auto bus = std::make_unique<PortAudioBus>();
     PortAudioConfig pcfg;
     pcfg.direction     = capture ? AudioDirection::Input
@@ -952,8 +1076,18 @@ std::unique_ptr<IAudioBus> AudioEngine::makeVaxBus(int channel)
     // Windows: TODO(sub-phase-9-byo): wire user-picked virtual cables via
     // setVaxConfig(). Returning nullptr here leaves the slot empty so the
     // rxBlockReady tee silently skips this channel until BYO config arrives.
-    (void)channel;
-    return nullptr;
+    //
+    // Native audio plan Task 7: a saved device opens through the backend
+    // for the channel's engine, as makeBus opens any output.  No saved
+    // device (or "(none)") leaves the slot empty: VAX never plays on the
+    // system default.
+    static_cast<void>(fmt);
+    const AudioDeviceConfig cfg =
+        AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/Vax%1").arg(channel));
+    if (cfg.isPlatformDefault() || cfg.isNone() || !m_deviceLayerReady) {
+        return nullptr;
+    }
+    return makeBus(cfg, /*capture=*/false);
 #endif
 }
 
@@ -1145,6 +1279,11 @@ void AudioEngine::ensureSpeakersOpen()
     if (!m_deviceLayerReady) {
         return;
     }
+    // Native audio plan Task 7 (R-AUD-34): with the device layer, the
+    // stream supervisor opens the speakers (a remote window's too).
+    if (ensureAudioDevices()) {
+        return;
+    }
 
     // Sub-Phase 12 Task 12.2: read persisted config instead of hardcoded
     // defaults. On a fresh install with no audio/Speakers/* keys,
@@ -1175,6 +1314,9 @@ void AudioEngine::installCaptureSupervisor(CaptureSupervisor::Options options)
     m_captureSupervisor = std::make_unique<CaptureSupervisor>(std::move(options));
     connect(m_captureSupervisor.get(), &CaptureSupervisor::statusChanged,
             this, &AudioEngine::captureStatusChanged);
+    // Native audio plan Task 7: the PC mic role follows the capture status.
+    connect(m_captureSupervisor.get(), &CaptureSupervisor::statusChanged, this,
+            [this](const CaptureSupervisor::Status& status) { onCaptureStatusForRole(status); });
     connect(m_captureSupervisor.get(), &CaptureSupervisor::probeHit,
             this, [this](qint64 captureNs) { onDelayProbeHit(captureNs); });
     m_captureSupervisor->configure(m_txInputConfig);
@@ -1233,7 +1375,7 @@ void AudioEngine::onDelayProbeHit(qint64 captureNs)
     // R-AUD-15: with a clock matcher on the speakers, the summary carries
     // the delay the matcher, resampler and device account for.
     {
-        const double readoutMs = speakersDelayParts().totalMs();
+        const double readoutMs = delayParts(AudioRole::Speakers).totalMs();
         m_delayProbeMatcher.setReadoutMs(readoutMs >= 0.0 ? std::optional<double>(readoutMs)
                                                           : std::nullopt);
     }
@@ -1280,6 +1422,538 @@ void AudioEngine::retryCapture()
     if (m_captureSupervisor) {
         m_captureSupervisor->retry();
     }
+}
+
+// ---------------------------------------------------------------------------
+// Native audio plan Task 7: engine backends, the device catalogue and the
+// stream supervisor (R-AUD-02, R-AUD-05, R-AUD-06, R-AUD-15, R-AUD-34).
+// ---------------------------------------------------------------------------
+
+void AudioEngine::setAudioBackendContext(const AudioBackendContext& context)
+{
+    m_backendContext = context;
+}
+
+#ifdef NEREUS_BUILD_TESTS
+void AudioEngine::setAudioBackendsForTest(std::vector<std::shared_ptr<IAudioEngineBackend>> backends)
+{
+    tearDownAudioDevices();
+    m_backendsInjectedForTest = !backends.empty();
+    m_backends = std::move(backends);
+}
+#endif
+
+IAudioDeviceCatalog* AudioEngine::catalogue() const
+{
+    return m_catalogue.get();
+}
+
+AudioRoleStatus AudioEngine::roleStatus(AudioRole role) const
+{
+    return m_streamSupervisor ? m_streamSupervisor->status(role) : AudioRoleStatus{};
+}
+
+bool AudioEngine::audioDevicesApply() const
+{
+    // The catalogue's thread and the supervisor's timers need an
+    // application object; an engine built without one keeps the direct
+    // device paths.
+    if (QCoreApplication::instance() == nullptr) {
+        return false;
+    }
+#ifdef NEREUS_BUILD_TESTS
+    // R-AUD-32: a test run lists and opens only the test's own engines.
+    if (QStandardPaths::isTestModeEnabled() && !m_backendsInjectedForTest) {
+        return false;
+    }
+#endif
+    return true;
+}
+
+AudioDeviceConfig AudioEngine::withDefaultEngine(const AudioDeviceConfig& cfg) const
+{
+    // R-AUD-02: "(platform default)" with no saved engine plays through
+    // this computer's default engine.
+    AudioDeviceConfig out = cfg;
+    if (!out.engine && out.isPlatformDefault()) {
+        out.engine = m_defaultEngine;
+    }
+    return out;
+}
+
+bool AudioEngine::ensureAudioDevices()
+{
+    if (m_streamSupervisor) {
+        return true;
+    }
+    if (!m_deviceLayerReady || !audioDevicesApply()) {
+        return false;
+    }
+    if (m_backends.empty()) {
+        m_backends = makeSystemAudioBackends(m_backendContext);
+    }
+    m_defaultEngine = defaultAudioEngine(m_backends);
+
+    // R-AUD-05: the saved device keys gain their engine before anything
+    // is matched.  An in-memory choice the migration rewrote is reloaded.
+    AudioMigrationContext migration;
+    if (m_defaultEngine != AudioEngineKind::PortAudio) {
+        migration.nativeEngine = m_defaultEngine;
+        migration.nativeRunning = true;   // defaultAudioEngine() takes running engines only
+    }
+#if defined(Q_OS_WIN)
+    migration.windows = true;
+#elif defined(Q_OS_LINUX)
+    migration.onLinux = true;
+#endif
+    const AudioDeviceConfig headphonesBefore =
+        AudioDeviceConfig::loadFromSettings(rolePrefix(AudioRole::Headphones));
+    const AudioDeviceConfig micBefore =
+        AudioDeviceConfig::loadFromSettings(rolePrefix(AudioRole::TxInput));
+    migrateAllAudioDeviceKeys(migration);
+    const AudioDeviceConfig headphonesAfter =
+        AudioDeviceConfig::loadFromSettings(rolePrefix(AudioRole::Headphones));
+    const AudioDeviceConfig micAfter =
+        AudioDeviceConfig::loadFromSettings(rolePrefix(AudioRole::TxInput));
+    if (!(headphonesBefore == headphonesAfter) && m_headphonesConfig == headphonesBefore) {
+        m_headphonesConfig = headphonesAfter;
+    }
+    if (!(micBefore == micAfter) && m_txInputConfig == micBefore) {
+        m_txInputConfig = micAfter;
+    }
+
+    m_catalogue = std::make_unique<AudioDeviceCatalog>(m_backends);
+    m_catalogue->start();
+    connect(m_catalogue.get(), &IAudioDeviceCatalog::olderDriversRescanned, this,
+            [this]() { finishOlderDriversRescan(m_rescanToken); });
+
+    m_streamSupervisor = std::make_unique<AudioStreamSupervisor>(*m_catalogue, *this);
+    connect(m_streamSupervisor.get(), &AudioStreamSupervisor::statusChanged,
+            this, &AudioEngine::roleStatusChanged);
+    connect(m_streamSupervisor.get(), &AudioStreamSupervisor::savedIdentityLearned, this,
+            [this](AudioRole role, const QString& deviceId) { onSavedIdentityLearned(role, deviceId); });
+
+    m_streamSupervisor->setChoice(AudioRole::Speakers,
+                                  withDefaultEngine(AudioDeviceConfig::loadFromSettings(
+                                      rolePrefix(AudioRole::Speakers))));
+    m_streamSupervisor->setRoleEnabled(AudioRole::Headphones, m_headphonesEnabled);
+    m_streamSupervisor->setChoice(AudioRole::Headphones, withDefaultEngine(m_headphonesConfig));
+    m_streamSupervisor->setChoice(AudioRole::TxInput, withDefaultEngine(m_txInputConfig));
+#if defined(Q_OS_WIN)
+    // VAX on Windows plays on the operator's chosen device; on the Mac and
+    // Linux VAX is NereusSDR's own device and keeps its buses.
+    if (m_vaxOutputsAllowed) {
+        for (int channel = 1; channel <= 4; ++channel) {
+            const AudioRole role = vaxRole(channel);
+            m_streamSupervisor->setRoleEnabled(role,
+                                               m_vaxRoleEnabled[static_cast<std::size_t>(channel - 1)]);
+            m_streamSupervisor->setChoice(role, AudioDeviceConfig::loadFromSettings(rolePrefix(role)));
+        }
+    }
+#endif
+    // Every choice is known: the supervisor starts now, so the outputs are
+    // open when this returns, as the direct paths left them.
+    QCoreApplication::sendPostedEvents(m_streamSupervisor.get(), QEvent::MetaCall);
+    qCInfo(lcAudio) << "Audio devices: default engine" << audioEngineLabel(m_defaultEngine);
+    return true;
+}
+
+void AudioEngine::tearDownAudioDevices()
+{
+    if (m_rescanPending) {
+        m_rescanPending = false;
+        retakePortAudioAfterRescan();
+    }
+    ++m_rescanToken;
+    m_rescanRoles.clear();
+    m_rescanMic = false;
+    m_streamSupervisor.reset();
+    if (m_catalogue) {
+        m_catalogue->stop();
+        m_catalogue.reset();
+    }
+    for (quint64& generation : m_roleBusGeneration) {
+        ++generation;
+    }
+    m_roleOpenEngine.fill(std::nullopt);
+    m_micPending = false;
+    m_micOpen = false;
+    m_micEngine.reset();
+    // The capture supervisor goes back to the saved choice, as before the
+    // device layer handled the mic.
+    if (m_micHandledBySupervisor) {
+        m_micHandledBySupervisor = false;
+        if (m_captureSupervisor) {
+            m_captureSupervisor->configure(m_txInputConfig);
+        }
+    }
+}
+
+std::mutex& AudioEngine::roleBusMutex(AudioRole role) const
+{
+    const int channel = vaxChannelOf(role);
+    if (channel != 0) {
+        return m_vaxBusMutex[static_cast<std::size_t>(channel - 1)];
+    }
+    return role == AudioRole::Headphones ? m_headphonesBusMutex : m_speakersBusMutex;
+}
+
+IAudioBus* AudioEngine::roleBusLocked(AudioRole role) const
+{
+    const int channel = vaxChannelOf(role);
+    if (channel != 0) {
+        return m_vaxBus[static_cast<std::size_t>(channel - 1)].get();
+    }
+    return role == AudioRole::Headphones ? m_headphonesBus.get() : m_speakersBus.get();
+}
+
+std::unique_ptr<IAudioBus>& AudioEngine::roleBusSlot(AudioRole role)
+{
+    const int channel = vaxChannelOf(role);
+    if (channel != 0) {
+        return m_vaxBus[static_cast<std::size_t>(channel - 1)];
+    }
+    return role == AudioRole::Headphones ? m_headphonesBus : m_speakersBus;
+}
+
+std::function<void(const AudioStreamEvent&)> AudioEngine::makeStreamEventSink(AudioRole role)
+{
+    // The bus may call this on its device thread: it only posts.
+    const quint64 generation = m_roleBusGeneration[roleIndex(role)];
+    return [this, role, generation](const AudioStreamEvent& event) {
+        QMetaObject::invokeMethod(
+            this,
+            [this, role, generation, event]() {
+                if (!m_streamSupervisor || m_roleBusGeneration[roleIndex(role)] != generation) {
+                    return;   // the bus that sent it has been replaced or closed
+                }
+                m_streamSupervisor->onStreamEvent(role, event);
+            },
+            Qt::QueuedConnection);
+    };
+}
+
+AudioOpenResult AudioEngine::openRole(AudioRole role, AudioEngineKind engine,
+                                      const std::optional<AudioDeviceInfo>& device,
+                                      const AudioDeviceConfig& config)
+{
+    if (role == AudioRole::TxInput) {
+        return openMicRole(engine, device, config);
+    }
+    const int vaxChannel = vaxChannelOf(role);
+    if (vaxChannel != 0 && (!m_vaxOutputsAllowed || !device)) {
+        return AudioOpenResult::Failed;   // VAX never plays on the system default
+    }
+
+    AudioDeviceConfig cfg = config;
+    cfg.engine = engine;
+    cfg.hostApiIndex = -1;
+    if (device) {
+        cfg.deviceId = device->id;
+        cfg.deviceName = device->name;
+        cfg.driverApi = device->hostApi;
+    } else {
+        cfg.deviceId.clear();
+        cfg.deviceName.clear();
+        cfg.driverApi.clear();
+    }
+
+    const std::size_t idx = roleIndex(role);
+    ++m_roleBusGeneration[idx];
+    bool opened = false;
+    QString backendName;
+    {
+        // Held across tear-down and rebuild, as before; the DSP thread's
+        // push try-locks it and drops a block rather than wait.
+        std::lock_guard<std::mutex> lock(roleBusMutex(role));
+        std::unique_ptr<IAudioBus>& slot = roleBusSlot(role);
+        slot.reset();
+        std::unique_ptr<IAudioBus> bus = makeBus(cfg, /*capture=*/false);
+        if (bus) {
+            bus->setStreamEventSink(makeStreamEventSink(role));
+            backendName = bus->backendName();
+            opened = true;
+        }
+        slot = std::move(bus);
+        if (role == AudioRole::Speakers) {
+            configureSpeakersConverter();
+            if (m_speakersBus) {
+                m_speakersFormat = m_speakersBus->negotiatedFormat();
+            }
+        } else if (role == AudioRole::Headphones) {
+            configureHeadphonesConverter();
+        }
+    }
+    m_roleOpenEngine[idx] = opened ? std::optional<AudioEngineKind>(engine) : std::nullopt;
+
+    if (role == AudioRole::Headphones) {
+        publishHeadphonesAvailable();
+    } else if (vaxChannel != 0) {
+        emit vaxBusOpenChanged(vaxChannel);
+    }
+    if (!opened) {
+        qCWarning(lcAudio) << "Audio role" << int(role) << "did not open"
+                           << (device ? device->name : QStringLiteral("the system default"))
+                           << "on" << audioEngineLabel(engine);
+        return AudioOpenResult::Failed;
+    }
+    qCInfo(lcAudio) << "Audio role" << int(role) << "opened"
+                    << (device ? device->name : QStringLiteral("the system default"))
+                    << "on" << audioEngineLabel(engine) << "[" << backendName << "]";
+    if (role == AudioRole::Speakers) {
+        ++m_speakersAnnouncements;
+        emit speakersConfigChanged(cfg);
+    }
+    return AudioOpenResult::Opened;
+}
+
+void AudioEngine::closeRole(AudioRole role)
+{
+    if (role == AudioRole::TxInput) {
+        // The demand leases stay as updatePcCaptureDemand holds them; the
+        // helper is told to open nothing.
+        m_micPending = false;
+        m_micOpen = false;
+        m_micEngine.reset();
+        if (!m_captureSupervisor) {
+            return;
+        }
+        m_micHandledBySupervisor = true;
+        AudioDeviceConfig none = m_captureSupervisor->config();
+        none.deviceId = QString::fromLatin1(kAudioDeviceNone);
+        none.deviceName.clear();
+        m_captureSupervisor->configure(none);
+        return;
+    }
+    const std::size_t idx = roleIndex(role);
+    ++m_roleBusGeneration[idx];
+    m_roleOpenEngine[idx].reset();
+    bool wasOpen = false;
+    {
+        std::lock_guard<std::mutex> lock(roleBusMutex(role));
+        std::unique_ptr<IAudioBus>& slot = roleBusSlot(role);
+        wasOpen = slot != nullptr;
+        slot.reset();
+        if (role == AudioRole::Speakers) {
+            configureSpeakersConverter();
+        } else if (role == AudioRole::Headphones) {
+            configureHeadphonesConverter();
+        }
+    }
+    if (role == AudioRole::Headphones) {
+        publishHeadphonesAvailable();
+    } else if (const int channel = vaxChannelOf(role); channel != 0 && wasOpen) {
+        emit vaxBusOpenChanged(channel);
+    }
+}
+
+AudioOpenResult AudioEngine::openMicRole(AudioEngineKind engine,
+                                         const std::optional<AudioDeviceInfo>& device,
+                                         const AudioDeviceConfig& config)
+{
+    // The PC mic is captured by the helper process: the matched config
+    // goes to the capture supervisor, and its status completes the open.
+    // Until Task 13 the helper opens by deviceName through PortAudio.
+    if (!m_captureSupervisor) {
+        return AudioOpenResult::Failed;
+    }
+    AudioDeviceConfig cfg = config;
+    cfg.engine = engine;
+    cfg.hostApiIndex = -1;
+    if (device) {
+        cfg.deviceId = device->id;
+        cfg.deviceName = device->name;
+        cfg.driverApi = device->hostApi;
+    } else {
+        cfg.deviceId.clear();
+        cfg.deviceName.clear();
+        cfg.driverApi.clear();
+    }
+    m_micHandledBySupervisor = true;
+    m_micEngine = engine;
+    m_micOpen = false;
+    m_micPending = false;
+
+    using State = CaptureSupervisor::Status::State;
+    const CaptureSupervisor::Status before = m_captureSupervisor->status();
+    const bool changed = !(m_captureSupervisor->config() == cfg);
+    if (changed) {
+        m_captureSupervisor->configure(cfg);
+    }
+    const CaptureSupervisor::Status now = m_captureSupervisor->status();
+    if (!changed && now.state == State::Ready) {
+        m_micOpen = true;
+        return AudioOpenResult::Opened;
+    }
+    // Only a status of a later generation than this answers the open:
+    // the restart a change makes, the retry of a failure, or the open now
+    // in flight for this same config.
+    if (changed) {
+        m_micGenerationFloor = before.generation;
+    } else if (now.state == State::Failed) {
+        m_micGenerationFloor = now.generation;
+        m_captureSupervisor->retry();
+    } else if (now.state == State::Opening || now.state == State::PreparingPermission) {
+        m_micGenerationFloor = now.generation > 0 ? now.generation - 1 : 0;
+    } else {
+        m_micGenerationFloor = now.generation;
+    }
+    m_micPending = true;
+    return AudioOpenResult::Pending;
+}
+
+void AudioEngine::onCaptureStatusForRole(const CaptureSupervisor::Status& status)
+{
+    if (!m_streamSupervisor) {
+        return;
+    }
+    using State = CaptureSupervisor::Status::State;
+    using Reason = CaptureSupervisor::Status::Reason;
+    if (m_micPending) {
+        if (status.generation <= m_micGenerationFloor) {
+            return;   // an earlier generation's, queued before this open
+        }
+        if (status.state == State::Ready) {
+            m_micPending = false;
+            m_micOpen = true;
+            m_streamSupervisor->onOpenFinished(AudioRole::TxInput, AudioOpenResult::Opened);
+        } else if (status.state == State::Failed) {
+            // Task 13 adds the helper's busy reason (InUse).
+            m_micPending = false;
+            m_streamSupervisor->onOpenFinished(AudioRole::TxInput,
+                                               status.reason == Reason::DeviceNotFound
+                                                   ? AudioOpenResult::NotFound
+                                                   : AudioOpenResult::Failed);
+        }
+        return;
+    }
+    if (m_micOpen && status.state == State::Failed) {
+        m_micOpen = false;
+        AudioStreamEvent event;
+        event.kind = (status.reason == Reason::InputLost || status.reason == Reason::DeviceNotFound)
+                         ? AudioStreamEvent::Kind::DeviceLost
+                         : AudioStreamEvent::Kind::ResetRequested;
+        m_streamSupervisor->onStreamEvent(AudioRole::TxInput, event);
+    }
+}
+
+void AudioEngine::onSavedIdentityLearned(AudioRole role, const QString& deviceId)
+{
+    // A name match: the device's ID is saved back, on a migrated profile
+    // only (saveToSettings writes the identity keys only with an engine).
+    const QString prefix = rolePrefix(role);
+    AudioDeviceConfig saved = AudioDeviceConfig::loadFromSettings(prefix);
+    if (!saved.engine || saved.isPlatformDefault() || saved.isNone() || saved.deviceId == deviceId) {
+        return;
+    }
+    saved.deviceId = deviceId;
+    saved.saveToSettings(prefix);
+    if (role == AudioRole::Headphones && m_headphonesConfig.engine) {
+        m_headphonesConfig.deviceId = deviceId;
+    } else if (role == AudioRole::TxInput && m_txInputConfig.engine) {
+        m_txInputConfig.deviceId = deviceId;
+    }
+}
+
+void AudioEngine::rescanOlderDrivers()
+{
+    // R-AUD-06: every role on PortAudio fades out and closes, PortAudio
+    // lists its devices again, and those roles reopen.  A role on another
+    // engine is never closed.
+    if (m_rescanPending || !ensureAudioDevices()) {
+        return;
+    }
+    static constexpr std::array<AudioRole, 6> kOutputRoles{
+        AudioRole::Speakers, AudioRole::Headphones, AudioRole::Vax1,
+        AudioRole::Vax2,     AudioRole::Vax3,       AudioRole::Vax4};
+    std::vector<AudioRole> fading;
+    for (AudioRole role : kOutputRoles) {
+        if (m_roleOpenEngine[roleIndex(role)] != AudioEngineKind::PortAudio) {
+            continue;
+        }
+        std::lock_guard<std::mutex> lock(roleBusMutex(role));
+        if (IAudioBus* bus = roleBusLocked(role)) {
+            bus->requestFadeOut();
+            fading.push_back(role);
+        }
+    }
+    // At most kRescanFadeMs; no lock is held while waiting.
+    QElapsedTimer fadeTimer;
+    fadeTimer.start();
+    for (;;) {
+        bool allFaded = true;
+        for (AudioRole role : fading) {
+            std::lock_guard<std::mutex> lock(roleBusMutex(role));
+            IAudioBus* bus = roleBusLocked(role);
+            if (bus != nullptr && !bus->fadedOut()) {
+                allFaded = false;
+            }
+        }
+        if (allFaded || fadeTimer.elapsed() >= kRescanFadeMs) {
+            break;
+        }
+        QThread::msleep(1);
+    }
+    for (AudioRole role : fading) {
+        closeRole(role);   // the supervisor still has it open; finish reopens it
+    }
+    m_rescanRoles = std::move(fading);
+    m_rescanMic = m_micEngine == AudioEngineKind::PortAudio && (m_micOpen || m_micPending);
+
+    // PortAudio lists again only once every reference to it is released:
+    // the engine's own goes until the new list is in.
+    if (m_paInitialized) {
+        g_paTerminateCalls.fetch_add(1, std::memory_order_relaxed);
+        Pa_Terminate();
+        m_paInitialized = false;
+        m_rescanReleasedPortAudio = true;
+    }
+    m_rescanPending = true;
+    const quint64 token = ++m_rescanToken;
+    qCInfo(lcAudio) << "Older drivers: rescanning;" << m_rescanRoles.size() << "outputs closed";
+    m_catalogue->rescanOlderDrivers();
+    // The catalogue answers well inside its start wait; the timer finishes
+    // a rescan whose answer never came.
+    QTimer::singleShot(AudioDeviceCatalog::kStartWaitMs, this,
+                       [this, token]() { finishOlderDriversRescan(token); });
+}
+
+void AudioEngine::retakePortAudioAfterRescan()
+{
+    if (!m_rescanReleasedPortAudio) {
+        return;
+    }
+    m_rescanReleasedPortAudio = false;
+    g_paInitializeCalls.fetch_add(1, std::memory_order_relaxed);
+    const PaError err = Pa_Initialize();
+    if (err != paNoError) {
+        qCWarning(lcAudio) << "Older drivers: PortAudio did not start again:" << Pa_GetErrorText(err);
+        m_paInitialized = false;
+        return;
+    }
+    m_paInitialized = true;
+}
+
+void AudioEngine::finishOlderDriversRescan(quint64 token)
+{
+    if (!m_rescanPending || token != m_rescanToken) {
+        return;
+    }
+    m_rescanPending = false;
+    retakePortAudioAfterRescan();
+    const std::vector<AudioRole> roles = std::move(m_rescanRoles);
+    m_rescanRoles.clear();
+    if (m_streamSupervisor) {
+        AudioStreamEvent reset;
+        reset.kind = AudioStreamEvent::Kind::ResetRequested;
+        for (AudioRole role : roles) {
+            m_streamSupervisor->onStreamEvent(role, reset);
+        }
+    }
+    if (m_rescanMic && m_captureSupervisor) {
+        m_captureSupervisor->retry();   // the helper lists the devices again
+    }
+    m_rescanMic = false;
 }
 
 bool AudioEngine::beginRemotePlayback(QString* error, RemotePlaybackOutput output)
@@ -1418,11 +2092,17 @@ std::optional<DeviceRateMatcherStats> AudioEngine::remotePlaybackMatcherStats(
     return m_speakersBus->matcherStats();
 }
 
-AudioDelayParts AudioEngine::speakersDelayParts() const
+AudioDelayParts AudioEngine::delayParts(AudioRole role) const
 {
-    std::lock_guard<std::mutex> lock(m_speakersBusMutex);
-    if (!m_speakersBus || !m_speakersBus->isOpen()) { return {}; }
-    return m_speakersBus->delayParts();
+    // R-AUD-15: the readout per role.  The PC mic's capture runs in the
+    // helper, which reports no parts here.
+    if (role == AudioRole::TxInput) {
+        return {};
+    }
+    std::lock_guard<std::mutex> lock(roleBusMutex(role));
+    IAudioBus* bus = roleBusLocked(role);
+    if (bus == nullptr || !bus->isOpen()) { return {}; }
+    return bus->delayParts();
 }
 
 std::optional<AudioFormat> AudioEngine::remotePlaybackFormat(RemotePlaybackOutput output)
@@ -1519,6 +2199,20 @@ void AudioEngine::setSpeakersConfig(const AudioDeviceConfig& cfg)
     // debounce for rapid buffer-size scrub lives in DeviceCard (buffer-size
     // combo only) — not here.  Mutex released before emit so handlers may
     // call setSpeakersConfig without deadlocking.
+    //
+    // Native audio plan Task 7: with the device layer the choice goes to
+    // the stream supervisor, which opens it (or falls back) through
+    // openRole(); the config is announced when no open announced one.
+    if (m_deviceLayerReady && audioDevicesApply()) {
+        const quint64 announcedBefore = m_speakersAnnouncements;
+        if (ensureAudioDevices()) {
+            m_streamSupervisor->setChoice(AudioRole::Speakers, withDefaultEngine(cfg));
+            if (m_speakersAnnouncements == announcedBefore) {
+                emit speakersConfigChanged(cfg);
+            }
+            return;
+        }
+    }
     applySpeakersConfig(cfg);
 }
 
@@ -1559,6 +2253,13 @@ void AudioEngine::setHeadphonesConfig(const AudioDeviceConfig& cfg)
     if (!m_deviceLayerReady) {
         return;
     }
+    // Native audio plan Task 7: through the stream supervisor, which opens
+    // it only while the role is enabled.
+    if (ensureAudioDevices()) {
+        m_streamSupervisor->setChoice(AudioRole::Headphones, withDefaultEngine(cfg));
+        emit headphonesConfigChanged(cfg);
+        return;
+    }
     // R-R3-45: the device opens only while the headphones are enabled.
     reopenHeadphones();
     emit headphonesConfigChanged(cfg);
@@ -1566,6 +2267,16 @@ void AudioEngine::setHeadphonesConfig(const AudioDeviceConfig& cfg)
 
 void AudioEngine::setHeadphonesEnabled(bool enabled)
 {
+    // Native audio plan Task 7: the supervisor's Headphones role.
+    if (m_deviceLayerReady && ensureAudioDevices()) {
+        const bool changed = m_headphonesEnabled != enabled;
+        m_headphonesEnabled = enabled;
+        m_streamSupervisor->setRoleEnabled(AudioRole::Headphones, enabled);
+        if (changed) {
+            emit headphonesEnabledChanged(enabled);
+        }
+        return;
+    }
     if (m_headphonesEnabled == enabled
         && (m_headphonesBus != nullptr) == enabled) {
         return;
@@ -1629,7 +2340,15 @@ void AudioEngine::setTxInputConfig(const AudioDeviceConfig& cfg)
     // input and, if capture is demanded, prepares the new one on its own
     // thread.
     m_txInputConfig = cfg;
-    if (m_captureSupervisor) {
+    // Native audio plan Task 7: the stream supervisor matches the choice
+    // and hands the matched config to the capture supervisor (openRole).
+    // Until it has handled the mic once, the choice also goes straight to
+    // the capture supervisor, as before.
+    const bool supervised = m_deviceLayerReady && ensureAudioDevices();
+    if (supervised) {
+        m_streamSupervisor->setChoice(AudioRole::TxInput, withDefaultEngine(cfg));
+    }
+    if (m_captureSupervisor && !(supervised && m_micHandledBySupervisor)) {
         m_captureSupervisor->configure(cfg);
     }
     emit txInputConfigChanged(cfg);
@@ -1650,6 +2369,15 @@ void AudioEngine::setVaxConfig(int channel, const AudioDeviceConfig& cfg)
     // announced once the bus lock is released, whichever branch returns.
     const auto announce = qScopeGuard([this, channel] { emit vaxBusOpenChanged(channel); });
     const int idx = channel - 1;
+#if defined(Q_OS_WIN)
+    // Native audio plan Task 7: the stream supervisor's VAX role opens,
+    // reopens or closes the channel's device (openRole / closeRole).
+    if (m_vaxOutputsAllowed && m_deviceLayerReady && ensureAudioDevices()) {
+        m_streamSupervisor->setChoice(vaxRole(channel), cfg);
+        emit vaxConfigChanged(channel, cfg);
+        return;
+    }
+#endif
     // R-R3-44: a remote window's VAX feeder writes this slot from its own
     // worker; it waits while the output is replaced.
     std::unique_lock<std::mutex> busLock(m_vaxBusMutex[idx]);
@@ -1699,6 +2427,15 @@ void AudioEngine::setVaxEnabled(int channel, bool on)
     // branch returns.
     const auto announce = qScopeGuard([this, channel] { emit vaxBusOpenChanged(channel); });
     const int idx = channel - 1;
+#if defined(Q_OS_WIN)
+    // Native audio plan Task 7: the supervisor's VAX role; a channel with
+    // no saved device stays closed (VAX never plays on the system default).
+    if (m_vaxOutputsAllowed && m_deviceLayerReady && ensureAudioDevices()) {
+        m_vaxRoleEnabled[static_cast<std::size_t>(idx)] = on;
+        m_streamSupervisor->setRoleEnabled(vaxRole(channel), on);
+        return;
+    }
+#endif
     // R-R3-44: see setVaxConfig().
     std::lock_guard<std::mutex> busLock(m_vaxBusMutex[idx]);
     if (!on) {
@@ -1763,6 +2500,13 @@ void AudioEngine::openVaxOutputs()
 
 void AudioEngine::openVaxOutputSlots()
 {
+#if defined(Q_OS_WIN)
+    // Native audio plan Task 7: the stream supervisor owns the Windows VAX
+    // outputs once it runs.
+    if (m_streamSupervisor) {
+        return;
+    }
+#endif
     for (int channel = 1; channel <= 4; ++channel) {
         const int idx = channel - 1;
         bool opened = false;
@@ -3572,6 +4316,10 @@ void AudioEngine::resetAudioSettings(bool operatorLocalOnly)
     // headphones close (the default is off) and forget their device.
     m_headphonesConfig = AudioDeviceConfig{};
     setHeadphonesEnabled(false);
+    // Native audio plan Task 7: the supervisor forgets the device too.
+    if (m_streamSupervisor) {
+        m_streamSupervisor->setChoice(AudioRole::Headphones, withDefaultEngine(m_headphonesConfig));
+    }
     emit headphonesConfigChanged(AudioDeviceConfig{});
     // R-R3-45: audio/TxMonitor/Output went too, so MON is back on the
     // speakers. Not through setTxMonitorOutput(), which would write the
@@ -3603,6 +4351,14 @@ void AudioEngine::resetAudioSettings(bool operatorLocalOnly)
         emit vaxBusOpenChanged(ch);  // R-R3-21: the output was rebuilt or closed
         emit vaxConfigChanged(ch, AudioDeviceConfig{});
     }
+#if defined(Q_OS_WIN)
+    // Native audio plan Task 7: no saved VAX device is left to open.
+    if (m_streamSupervisor) {
+        for (int ch = 1; ch <= 4; ++ch) {
+            m_streamSupervisor->setChoice(vaxRole(ch), AudioDeviceConfig{});
+        }
+    }
+#endif
 
     emit audioSettingsReset();
 

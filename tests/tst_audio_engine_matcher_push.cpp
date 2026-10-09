@@ -17,6 +17,10 @@
 // Modification history (NereusSDR):
 //   2026-10-09  J.J. Boyd / KG4VCF  Native audio plan Task 6 (R-AUD-15).
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-09  J.J. Boyd / KG4VCF  Native audio plan Task 7 (R-AUD-15):
+//                                    delayParts(AudioRole::Speakers)
+//                                    replaces speakersDelayParts().
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -284,7 +288,7 @@ private slots:
         }
     }
 
-    // speakersDelayParts() reports the matcher bus's parts, and -1 (no
+    // delayParts(Speakers) reports the matcher bus's parts, and -1 (no
     // matcher) for a bus without one.
     void speakersDelayPartsComeFromTheBus()
     {
@@ -293,7 +297,7 @@ private slots:
             auto bus = openMatcherBus(48000, true, &device);
             QVERIFY(bus);
             Rig rig = makeRig(std::move(bus));
-            const AudioDelayParts parts = rig.engine->speakersDelayParts();
+            const AudioDelayParts parts = rig.engine->delayParts(AudioRole::Speakers);
             QVERIFY(parts.matcherFillMs >= 0.0);
             QCOMPARE(parts.deviceBufferMs, 1000.0 * kCallbackFrames / 48000.0);
             QVERIFY(rig.engine->remotePlaybackMatcherStats().has_value());
@@ -306,7 +310,7 @@ private slots:
             format.sample = AudioFormat::Sample::Float32;
             QVERIFY(bus->open(format));
             Rig rig = makeRig(std::move(bus));
-            QCOMPARE(rig.engine->speakersDelayParts().matcherFillMs, -1.0);
+            QCOMPARE(rig.engine->delayParts(AudioRole::Speakers).matcherFillMs, -1.0);
             QVERIFY(!rig.engine->remotePlaybackMatcherStats().has_value());
             QVERIFY(!rig.engine->remotePlaybackIntoMatcher());
         }

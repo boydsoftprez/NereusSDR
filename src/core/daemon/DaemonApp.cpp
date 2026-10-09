@@ -155,6 +155,9 @@
 //               given its in-place budget before the Core retires it and
 //               finds the radio again. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 7 (R-AUD-02): the engine builds its
+//               audio engines for nereusd (setAudioBackendContext).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/cat/CatService.h"
@@ -295,6 +298,8 @@ bool DaemonApp::start(const DaemonConfig& cfg)
     // channels are on the operator's computer; outputs here would be
     // devices nothing on the Core host feeds.
     m_radioModel->audioEngine()->setVaxOutputsAllowed(false);
+    // Native audio plan Task 7: the audio engines for this process.
+    m_radioModel->audioEngine()->setAudioBackendContext({.daemon = true});
 #ifdef NEREUS_BUILD_TESTS
     m_radioModel->wdspEngine()->setSynchronousInitForTest(m_synchronousWdspForTest);
     if (m_radioInitializerForTest) {

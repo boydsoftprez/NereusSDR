@@ -11,6 +11,10 @@
 //   2026-10-08: native audio plan Task 1 (V-HW-8): ProbeEnable after Ready
 //               and ProbeHit forwarding for the audio delay probe.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 7 (R-AUD-02): the saved identity
+//               counts as a configuration change, and "(none)" opens no
+//               microphone. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/audio/CaptureSupervisor.h"
@@ -57,7 +61,12 @@ bool sameConfig(const AudioDeviceConfig& a, const AudioDeviceConfig& b)
         && a.exclusiveMode == b.exclusiveMode && a.hostApiIndex == b.hostApiIndex
         && a.driverApi == b.driverApi && a.bitDepth == b.bitDepth
         && a.eventDriven == b.eventDriven && a.bypassMixer == b.bypassMixer
-        && a.manualLatencyMs == b.manualLatencyMs;
+        && a.manualLatencyMs == b.manualLatencyMs
+        // Native audio plan Task 7: the saved identity, so "(none)" (only
+        // DeviceId differs from the platform default) is a change.
+        && a.engine == b.engine && a.deviceId == b.deviceId
+        && a.firstChannel == b.firstChannel && a.micChannel == b.micChannel
+        && a.delayMs == b.delayMs;
 }
 
 Reason reasonFromHelper(P::FailReason reason)
@@ -256,6 +265,17 @@ private:
     void startGeneration()
     {
         endGeneration();
+        // Native audio plan Task 7: "(none)" opens nothing.  The demand is
+        // kept; a later configure() with a device opens it.
+        if (m_config.isNone()) {
+            m_pendingSpawn = false;
+            m_status.configuredDevice.clear();
+            m_status.actualDevice.clear();
+            qCInfo(lcAudio) << "capture: no microphone chosen; nothing is opened";
+            beginStop();
+            publish(State::Closed, Reason::None);
+            return;
+        }
         ++m_generation;
         if (m_generation == 0) {
             m_generation = 1;

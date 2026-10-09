@@ -12,6 +12,8 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 3 (R-AUD-03). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 7 (R-AUD-06): olderDriversRescanned().
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -41,6 +43,9 @@ public:
 signals:
     void devicesChanged();
     void defaultChanged(NereusSDR::AudioDeviceDirection direction);
+    // R-AUD-06: a rescanOlderDrivers() has finished; the list it made has
+    // been adopted (devicesChanged, when it differs, came first).
+    void olderDriversRescanned();
 };
 
 } // namespace NereusSDR

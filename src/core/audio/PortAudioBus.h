@@ -37,6 +37,10 @@
 //               by the callback and written in the device's channels;
 //               delayParts, matcherStats and restartClockMatch.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 7 (R-AUD-06): matchNamedDevice
+//               stays on the saved host API (bug 1); requestFadeOut and
+//               fadedOut for Rescan. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -176,6 +180,9 @@ public:
     AudioDelayParts delayParts() const override;
     std::optional<DeviceRateMatcherStats> matcherStats() const override;
     void restartClockMatch() override;
+    // R-AUD-06: the output's matcher reader slews to silence (Rescan).
+    void requestFadeOut() override;
+    bool fadedOut() const override;
 
     float rxLevel() const override { return m_rxLevel.load(std::memory_order_acquire); }
     float txLevel() const override { return m_txLevel.load(std::memory_order_acquire); }
@@ -254,10 +261,12 @@ public:
 
     /// Which of `candidates` a configured device name resolves to, or -1.
     /// Order: exact on the configured host API (any API when hostApiIndex
-    /// is negative), substring on it, exact on another API, substring on
-    /// another API; case-insensitive, `wanted` trimmed.  With `strict`
-    /// only the two exact steps apply: a missing "USB Mic" must not open
-    /// "USB Mic 2" (the capture helper's no-silent-switch rule, R-R3-36).
+    /// is negative), then substring on it; case-insensitive, `wanted`
+    /// trimmed.  A device on another host API is never matched: a saved
+    /// "Windows WASAPI" name that only exists under MME does not open on
+    /// MME (native audio plan bug 1).  With `strict` only the exact step
+    /// applies: a missing "USB Mic" must not open "USB Mic 2" (the
+    /// capture helper's no-silent-switch rule, R-R3-36).
     static int matchNamedDevice(const QVector<NamedDeviceCandidate>& candidates,
                                 const QString& wanted, int hostApiIndex, bool strict);
 

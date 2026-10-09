@@ -11,6 +11,10 @@
 // macOS for the same end), not as a port.  No Thetis bytes ported.
 //
 // Modification history (NereusSDR):
+//   2026-10-09: native audio plan Task 7 (R-AUD-06): matchNamedDevice
+//               searches only the saved host API (bug 1); requestFadeOut()
+//               and fadedOut() on the output's matcher reader for Rescan.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09: native audio plan Task 6 (R-AUD-15, R-AUD-33): an output
 //               stream's ring is a DeviceRateMatcher; push() takes 48 kHz
 //               stereo, the callback reads it and writes the device's
@@ -709,6 +713,21 @@ void PortAudioBus::restartClockMatch()
     }
 }
 
+void PortAudioBus::requestFadeOut()
+{
+    if (m_outputReader.valid()) {
+        m_outputReader.requestFadeOut();
+    }
+}
+
+bool PortAudioBus::fadedOut() const
+{
+    if (!m_stream || !m_outputReader.valid()) {
+        return true;
+    }
+    return m_outputReader.fadedOut();
+}
+
 qint64 PortAudioBus::pull(char* data, qint64 maxBytes) {
     if (!m_stream) { return 0; }
     if (m_cfg.direction != AudioDirection::Input) { return 0; }
@@ -908,24 +927,25 @@ int PortAudioBus::paCallback(const void* in, void* out,
 int PortAudioBus::matchNamedDevice(const QVector<NamedDeviceCandidate>& candidates,
                                    const QString& wanted, int hostApiIndex, bool strict)
 {
+    // Native audio plan bug 1: only the saved host API is searched (any
+    // host API when none is saved).  A name found only under another host
+    // API is a different device; the caller falls back to that host API's
+    // default instead.
     const QString name = wanted.trimmed();
     int exactMatch = -1;
     int substringMatch = -1;
-    int crossApiExact = -1;
-    int crossApiSub = -1;
     for (int i = 0; i < candidates.size(); ++i) {
         const NamedDeviceCandidate& c = candidates[i];
         const bool sameApi = hostApiIndex < 0 || c.hostApi == hostApiIndex;
+        if (!sameApi) {
+            continue;
+        }
         const bool exact = c.name.compare(name, Qt::CaseInsensitive) == 0;
         const bool sub = c.name.contains(name, Qt::CaseInsensitive);
-        if (sameApi && exact && exactMatch < 0) {
+        if (exact && exactMatch < 0) {
             exactMatch = i;
-        } else if (sameApi && sub && substringMatch < 0) {
+        } else if (sub && substringMatch < 0) {
             substringMatch = i;
-        } else if (!sameApi && exact && crossApiExact < 0) {
-            crossApiExact = i;
-        } else if (!sameApi && sub && crossApiSub < 0) {
-            crossApiSub = i;
         }
     }
     if (exactMatch >= 0) {
@@ -935,12 +955,6 @@ int PortAudioBus::matchNamedDevice(const QVector<NamedDeviceCandidate>& candidat
     // merely contains the configured one ("USB Mic 2" for "USB Mic").
     if (!strict && substringMatch >= 0) {
         return substringMatch;
-    }
-    if (crossApiExact >= 0) {
-        return crossApiExact;
-    }
-    if (!strict && crossApiSub >= 0) {
-        return crossApiSub;
     }
     return -1;
 }

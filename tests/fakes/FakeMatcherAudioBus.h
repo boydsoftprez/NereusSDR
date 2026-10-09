@@ -20,6 +20,10 @@
 //               matcher to drop what is queued; outputPacing() as a
 //               PortAudio output reports it. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 7 (R-AUD-06): requestFadeOut()
+//               is counted (fadeRequestCount(), and a shared counter the
+//               backend reads after the bus is gone); fadedOut() is true.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -164,6 +168,21 @@ public:
         }
     }
 
+    // Task 7: the Rescan fade.  The fake fades at once.
+    void requestFadeOut() override
+    {
+        ++m_fadeRequests;
+        if (m_fadeCounter) {
+            m_fadeCounter->fetch_add(1);
+        }
+    }
+    bool fadedOut() const override { return true; }
+    void setFadeCounterForTest(std::shared_ptr<std::atomic<int>> counter)
+    {
+        m_fadeCounter = std::move(counter);
+    }
+    int fadeRequestCount() const { return m_fadeRequests; }
+
     void restartClockMatch() override
     {
         ++m_restarts;
@@ -230,6 +249,8 @@ private:
     std::atomic<std::int64_t> m_pumpedFrames{0};
     int m_pushes = 0;
     int m_restarts = 0;
+    int m_fadeRequests = 0;
+    std::shared_ptr<std::atomic<int>> m_fadeCounter;
     QByteArray m_bytes;
     std::mutex m_sinkMutex;
     std::function<void(const AudioStreamEvent&)> m_sink;

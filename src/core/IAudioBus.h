@@ -7,6 +7,11 @@
 // PortAudioBus (Windows + Mac/Linux fallback).
 //
 // Design spec: docs/architecture/2026-04-19-vax-design.md §3.2
+//
+// Modification history (NereusSDR):
+//   2026-10-09: native audio plan Task 7 (R-AUD-06): requestFadeOut() and
+//               fadedOut() for Rescan. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -111,6 +116,11 @@ public:
     virtual bool takesStereoMix() const { return false; }
     virtual std::optional<DeviceRateMatcherStats> matcherStats() const { return std::nullopt; }
     virtual void restartClockMatch() {}
+    // R-AUD-06: the output slews to silence at its next read and stays
+    // silent; fadedOut() is true once it is (or when the bus has nothing
+    // to fade).  Any thread.
+    virtual void requestFadeOut() {}
+    virtual bool fadedOut() const { return true; }
 };
 
 } // namespace NereusSDR

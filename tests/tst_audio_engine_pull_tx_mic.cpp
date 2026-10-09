@@ -20,6 +20,11 @@
 // 2026-09-22: R-R3-36 Task 5: with no injected bus the TX input is the
 // capture supervisor's reader, which yields nothing until capture is Ready.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//
+// 2026-10-09: native audio plan Task 7 (R-AUD-02, R-AUD-15): an engine with
+// no application object has no device layer: the mic role reads Off, the
+// mic has no delay parts, and the TX input stays silent. J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -164,6 +169,22 @@ private slots:
         QCOMPARE(engine.pullTxMic(dst.data(), 64), 0);
         QCOMPARE(engine.pcMicInputLevel(), 0.0f);
         QCOMPARE(engine.captureStatus().state, CaptureSupervisor::Status::State::Closed);
+    }
+
+    // Native audio plan Task 7: with no application object the engine
+    // builds no device layer, even after start(); the PC mic role reads
+    // Off, and its delay readout has no matcher.
+    void applessEngine_hasNoMicRole()
+    {
+        AudioEngine engine;
+        engine.start();
+        QVERIFY(engine.catalogue() == nullptr);
+        QCOMPARE(engine.roleStatus(AudioRole::TxInput).state, AudioRoleState::Off);
+        QCOMPARE(engine.delayParts(AudioRole::TxInput).matcherFillMs, -1.0);
+        QCOMPARE(engine.delayParts(AudioRole::TxInput).totalMs(), -1.0);
+        std::array<float, 64> dst{};
+        QCOMPARE(engine.pullTxMic(dst.data(), 64), 0);
+        engine.stop();
     }
 
     // ── 2. n <= 0: returns 0 ──────────────────────────────────────────────

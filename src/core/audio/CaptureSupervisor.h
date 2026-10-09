@@ -16,6 +16,9 @@
 //               ProbeEnable once the helper is Ready; probeHit() forwards
 //               the helper's ProbeHit records. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 7 (R-AUD-02): config() returns the
+//               config the last configure() applied. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -121,6 +124,8 @@ public:
 
     Lease acquire(Demand demand);           // owner thread only; inactive Lease after shutdown()
     void configure(const AudioDeviceConfig& config);
+    // The config the last configure() applied (native audio plan Task 7).
+    AudioDeviceConfig config() const { return m_config; }
     void retry();
     Status status() const;
     CaptureAudioBus* reader() const;        // same pointer for the supervisor's lifetime

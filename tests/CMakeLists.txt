@@ -1803,6 +1803,19 @@ nereus_add_test(tst_audio_device_migration)
 # timing bound, so the test is not REALTIME.
 nereus_add_test(tst_audio_stream_supervisor)
 
+# Native audio Task 7 (R-AUD-01, R-AUD-06, R-AUD-32): PortAudio as the older
+# drivers engine, with an injected device list: the host APIs offered on
+# each system, the entries and the defaults.  No PortAudio call.
+nereus_add_test(tst_port_audio_backend)
+
+# Native audio Task 7 (R-AUD-02, R-AUD-06, R-AUD-15, R-AUD-34): AudioEngine
+# with fake engines, the catalogue and the stream supervisor: engine choice,
+# the default engine, the role status, the delay readout per role, Rescan of
+# older drivers only, a remote window's speakers and the PC mic role through
+# the scripted fake capture helper.  No timing bound, so not REALTIME.
+nereus_add_test(tst_audio_engine_native_routing fakes/FakeCaptureChild.cpp)
+target_compile_definitions(tst_audio_engine_native_routing PRIVATE NEREUS_BUILD_TESTS)
+
 # R-R3-36 Task 1: capture helper record protocol. Framing, bounded
 # incremental reader, PCM and JSON codecs, malformed-input rejections.
 nereus_add_test(tst_capture_protocol)

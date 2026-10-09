@@ -14,6 +14,9 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 3 (R-AUD-03, R-AUD-32). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 7 (R-AUD-06): fadeRequests() counts
+//               the fades asked of every output it made.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -173,6 +176,7 @@ public:
     std::unique_ptr<IAudioBus> createOutput(const AudioStreamRequest& request) override
     {
         auto bus = std::make_unique<FakeMatcherAudioBus>(request, m_takesStereoMix);
+        bus->setFadeCounterForTest(m_fadeRequests);
         std::lock_guard<std::mutex> lock(m_mutex);
         m_outputRequests.push_back(request);
         m_lastOutput = bus.get();
@@ -293,6 +297,8 @@ public:
         return m_controlPanelOpens;
     }
     int rescanCount() const { return m_rescans.load(); }
+    // requestFadeOut() calls on every output this backend made.
+    int fadeRequests() const { return m_fadeRequests->load(); }
     // The most enumerate() / defaultDeviceId() calls ever in progress at
     // once; a held enumerate() counts until it returns.
     int maxConcurrentCalls() const
@@ -342,6 +348,7 @@ private:
     FakeMatcherAudioBus* m_lastOutput = nullptr;
     FakeAudioInputStream* m_lastInput = nullptr;
     std::atomic<int> m_rescans{0};
+    std::shared_ptr<std::atomic<int>> m_fadeRequests = std::make_shared<std::atomic<int>>(0);
 
     mutable std::mutex m_sinkMutex;
     std::function<void(AudioNotice)> m_noticeSink;

@@ -7,6 +7,9 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 3 (R-AUD-03). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 7 (R-AUD-06): a rescan of the older
+//               drivers ends with olderDriversRescanned(). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AudioDeviceCatalog.h"
@@ -202,6 +205,13 @@ public:
             }
         }
         relist();
+        // Queued after the list relist() handed over, so the owner adopts
+        // it before it hears the rescan is done.
+        std::lock_guard<std::mutex> lock(m_state->gateMutex);
+        if (AudioDeviceCatalog* owner = m_state->owner) {
+            QMetaObject::invokeMethod(owner, [owner]() { emit owner->olderDriversRescanned(); },
+                                      Qt::QueuedConnection);
+        }
     }
 
     void shutdown()
