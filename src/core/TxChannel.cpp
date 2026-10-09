@@ -588,7 +588,7 @@ bool TxChannel::txaOpenLive() const noexcept
 bool TxChannel::dexpOpenLive() const noexcept
 {
 #ifdef HAVE_WDSP
-    return txaOpenLive() && pdexp[m_channelId] != nullptr;
+    return txaOpenLive() && pdexp[kDexpId] != nullptr;
 #else
     return false;
 #endif
@@ -743,7 +743,7 @@ void TxChannel::refreshDexpPeakOnLane() const
         return;
     }
     double peak = 0.0;
-    GetDEXPPeakSignal(m_channelId, &peak);
+    GetDEXPPeakSignal(kDexpId, &peak);
     m_dexpPeakCache.store(peak, std::memory_order_relaxed);
 #endif
 }
@@ -802,7 +802,9 @@ TxChannel* TxChannel::s_voxKeyInstance = nullptr;
 void NEREUS_STDCALL TxChannel::s_pushVoxCallback(int id, int active)
 {
     TxChannel* inst = s_voxKeyInstance;
-    if (inst == nullptr || inst->m_channelId != id) {
+    // WDSP reports the DEXP id it was created with (dexp.c:330,339), which
+    // is the transmitter id kDexpId, not the WDSP channel id.
+    if (inst == nullptr || id != kDexpId) {
         return;
     }
     emit inst->voxActiveChanged(active != 0);
@@ -1020,10 +1022,10 @@ void TxChannel::registerVoxCallbackOnLane()
     // `DEXP a = pdexp[id]; ... a->pushvox = pushvox;`).  Same pattern as
     // setVoxRun / setDexpRun / all other DEXP setters in this file.
     if (txa[m_channelId].rsmpin.p == nullptr) return;
-    if (pdexp[m_channelId] == nullptr) return;
+    if (pdexp[kDexpId] == nullptr) return;
     // From Thetis wdsp/dexp.c:399-403 [v2.10.3.13] — SendCBPushDexpVox impl.
     // Cite: Thetis cmaster.cs:1134 [v2.10.3.15] — analogous registration.
-    SendCBPushDexpVox(m_channelId, &TxChannel::s_pushVoxCallback);
+    SendCBPushDexpVox(kDexpId, &TxChannel::s_pushVoxCallback);
 #endif
 }
 
@@ -1072,12 +1074,12 @@ void TxChannel::unregisterVoxCallbackOnLane()
         // Skip WDSP call; still clear the lookup pointer below.
     } else if (txa[m_channelId].rsmpin.p == nullptr) {
         // Skip WDSP call; still clear the lookup pointer below.
-    } else if (pdexp[m_channelId] == nullptr) {
+    } else if (pdexp[kDexpId] == nullptr) {
         // Skip WDSP call; still clear the lookup pointer below.
     } else {
         // Pass nullptr so any callback already in flight on the WDSP worker
         // thread becomes a no-op when it executes.
-        SendCBPushDexpVox(m_channelId, nullptr);
+        SendCBPushDexpVox(kDexpId, nullptr);
     }
 #endif
     if (s_voxKeyInstance == this) {
@@ -1147,14 +1149,14 @@ void TxChannel::pumpDexp(const double* interleavedIn)
     if (txa[m_channelId].rsmpin.p == nullptr) {
         return;
     }
-    if (pdexp[m_channelId] == nullptr) {
+    if (pdexp[kDexpId] == nullptr) {
         return;
     }
     // Copy the worker-thread-owned mic block into the WDSP-visible DEXP
     // buffer, then drive the per-block detector.  WDSP synchronises
     // internally via dexp.cs_update; no additional locking needed here.
     std::memcpy(m_dexpBuffer, interleavedIn, m_dexpBufferSizeDoubles * sizeof(double));
-    xdexp(m_channelId);
+    xdexp(kDexpId);
 #else
     // Non-HAVE_WDSP build: still copy into the buffer so the storage
     // exercise path matches between configs (the DEXP module isn't there
@@ -1171,10 +1173,10 @@ bool TxChannel::dexpTimingRunning() const
     }
 #endif
 #ifdef HAVE_WDSP
-    if (m_channelId < 0 || m_channelId >= MAX_CHANNELS || pdexp[m_channelId] == nullptr) {
+    if (m_channelId < 0 || m_channelId >= MAX_CHANNELS || pdexp[kDexpId] == nullptr) {
         return false;
     }
-    const DEXP a = pdexp[m_channelId];
+    const DEXP a = pdexp[kDexpId];
     if (!a->run_dexp && !a->run_vox) {
         return false;
     }
@@ -2364,8 +2366,8 @@ void TxChannel::setVoxRun(bool run)
         // into NereusSDR's WdspEngine::createTxChannel so pdexp[i] is now
         // non-null in production; the guard remains for unit-test builds
         // that don't drive WdspEngine::initialize().
-        if (pdexp[m_channelId] == nullptr) return;
-        SetDEXPRunVox(m_channelId, run ? 1 : 0);
+        if (pdexp[kDexpId] == nullptr) return;
+        SetDEXPRunVox(kDexpId, run ? 1 : 0);
     });
 #else
     Q_UNUSED(run);
@@ -2404,8 +2406,8 @@ void TxChannel::setVoxAttackThreshold(double thresh)
         // From Thetis cmaster.cs:187-188 [v2.10.3.13]
         if (!txaOpenLive()) return;
         // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for the full rationale.
-        if (pdexp[m_channelId] == nullptr) return;
-        SetDEXPAttackThreshold(m_channelId, thresh);
+        if (pdexp[kDexpId] == nullptr) return;
+        SetDEXPAttackThreshold(kDexpId, thresh);
     });
 #else
     Q_UNUSED(thresh);
@@ -2449,8 +2451,8 @@ void TxChannel::setVoxHangTime(double seconds)
         // From Thetis cmaster.cs:178-179 [v2.10.3.13]
         if (!txaOpenLive()) return;
         // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-        if (pdexp[m_channelId] == nullptr) return;
-        SetDEXPHoldTime(m_channelId, seconds);
+        if (pdexp[kDexpId] == nullptr) return;
+        SetDEXPHoldTime(kDexpId, seconds);
     });
 #else
     Q_UNUSED(seconds);
@@ -2485,8 +2487,8 @@ void TxChannel::setAntiVoxRun(bool run)
         // Anti-VOX setters live inside the same DEXP struct as VOX setters
         // (dexp.c:657 SetAntiVOXRun dereferences pdexp[id]), so the same guard
         // applies here.
-        if (pdexp[m_channelId] == nullptr) return;
-        SetAntiVOXRun(m_channelId, run ? 1 : 0);
+        if (pdexp[kDexpId] == nullptr) return;
+        SetAntiVOXRun(kDexpId, run ? 1 : 0);
     });
 #else
     Q_UNUSED(run);
@@ -2519,8 +2521,8 @@ void TxChannel::setAntiVoxGain(double gain)
         // From Thetis cmaster.cs:211-212 [v2.10.3.13]
         if (!txaOpenLive()) return;
         // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-        if (pdexp[m_channelId] == nullptr) return;
-        SetAntiVOXGain(m_channelId, gain);
+        if (pdexp[kDexpId] == nullptr) return;
+        SetAntiVOXGain(kDexpId, gain);
     });
 #else
     Q_UNUSED(gain);
@@ -2568,8 +2570,8 @@ void TxChannel::setAntiVoxSize(int size)
         // From Thetis cmaster.c:154 (create_dexp arg) -> dexp.c:666 (setter impl) [v2.10.3.13]
         if (!txaOpenLive()) return;
         // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-        if (pdexp[m_channelId] == nullptr) return;
-        SetAntiVOXSize(m_channelId, size);
+        if (pdexp[kDexpId] == nullptr) return;
+        SetAntiVOXSize(kDexpId, size);
     });
 #endif
 }
@@ -2601,8 +2603,8 @@ void TxChannel::setAntiVoxRate(double rate)
         // From Thetis cmaster.c:155 (create_dexp arg) -> dexp.c:677 (setter impl) [v2.10.3.13]
         if (!txaOpenLive()) return;
         // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-        if (pdexp[m_channelId] == nullptr) return;
-        SetAntiVOXRate(m_channelId, rate);
+        if (pdexp[kDexpId] == nullptr) return;
+        SetAntiVOXRate(kDexpId, rate);
     });
 #endif
 }
@@ -2636,8 +2638,8 @@ void TxChannel::setAntiVoxDetectorTau(double seconds)
         // From Thetis setup.cs:18995 (call-site) -> dexp.c:697 (impl) [v2.10.3.13]
         if (!txaOpenLive()) return;
         // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-        if (pdexp[m_channelId] == nullptr) return;
-        SetAntiVOXDetectorTau(m_channelId, seconds);
+        if (pdexp[kDexpId] == nullptr) return;
+        SetAntiVOXDetectorTau(kDexpId, seconds);
     });
 #endif
 }
@@ -2714,8 +2716,8 @@ void TxChannel::sendAntiVoxData(const float* interleaved, int nsamples)
         // From Thetis dexp.c:708-715 [v2.10.3.13] — SendAntiVOXData impl.
         if (!txaOpenLive()) return;
         // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-        if (pdexp[m_channelId] == nullptr) return;
-        ::SendAntiVOXData(m_channelId, nsamples, m_antiVoxScratch.data());
+        if (pdexp[kDexpId] == nullptr) return;
+        ::SendAntiVOXData(kDexpId, nsamples, m_antiVoxScratch.data());
         return;
     }
     // R-R3-39: the lane takes its own copy of the block. WDSP keeps only the
@@ -2727,7 +2729,7 @@ void TxChannel::sendAntiVoxData(const float* interleaved, int nsamples)
         if (!dexpOpenLive()) {
             return;
         }
-        ::SendAntiVOXData(m_channelId, nsamples, block.data());
+        ::SendAntiVOXData(kDexpId, nsamples, block.data());
     });
 #endif
 }
@@ -3065,8 +3067,8 @@ void TxChannel::setDexpRun(bool run)
         if (!txaOpenLive()) return;
         // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
         // SetDEXPRun (dexp.c:410) dereferences pdexp[id] under cs_update.
-        if (pdexp[m_channelId] == nullptr) return;
-        SetDEXPRun(m_channelId, run ? 1 : 0);
+        if (pdexp[kDexpId] == nullptr) return;
+        SetDEXPRun(kDexpId, run ? 1 : 0);
     });
 #else
     Q_UNUSED(run);
@@ -3124,10 +3126,10 @@ void TxChannel::setDexpDetectorTau(double tauMs)
         // From Thetis cmaster.cs:169-170 [v2.10.3.13]
         if (!txaOpenLive()) return;
         // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-        if (pdexp[m_channelId] == nullptr) return;
+        if (pdexp[kDexpId] == nullptr) return;
         // ms→seconds for WDSP, matching setup.cs:18930 [v2.10.3.13]:
         //   cmaster.SetDEXPDetectorTau(0, (double)udDEXPDetTau.Value / 1000.0);
-        SetDEXPDetectorTau(m_channelId, clamped / 1000.0);
+        SetDEXPDetectorTau(kDexpId, clamped / 1000.0);
     });
 #endif
 }
@@ -3175,10 +3177,10 @@ void TxChannel::setDexpAttackTime(double attackMs)
         // From Thetis cmaster.cs:172-173 [v2.10.3.13]
         if (!txaOpenLive()) return;
         // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-        if (pdexp[m_channelId] == nullptr) return;
+        if (pdexp[kDexpId] == nullptr) return;
         // ms→seconds for WDSP, matching setup.cs:18893 [v2.10.3.13]:
         //   cmaster.SetDEXPAttackTime(0, (double)udDEXPAttack.Value / 1000.0);
-        SetDEXPAttackTime(m_channelId, clamped / 1000.0);
+        SetDEXPAttackTime(kDexpId, clamped / 1000.0);
     });
 #endif
 }
@@ -3226,10 +3228,10 @@ void TxChannel::setDexpReleaseTime(double releaseMs)
         // From Thetis cmaster.cs:175-176 [v2.10.3.13]
         if (!txaOpenLive()) return;
         // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-        if (pdexp[m_channelId] == nullptr) return;
+        if (pdexp[kDexpId] == nullptr) return;
         // ms→seconds for WDSP, matching setup.cs:18905 [v2.10.3.13]:
         //   cmaster.SetDEXPReleaseTime(0, (double)udDEXPRelease.Value / 1000.0);
-        SetDEXPReleaseTime(m_channelId, clamped / 1000.0);
+        SetDEXPReleaseTime(kDexpId, clamped / 1000.0);
     });
 #endif
 }
@@ -3286,12 +3288,12 @@ void TxChannel::setDexpExpansionRatio(double ratioDb)
         // From Thetis cmaster.cs:181-182 [v2.10.3.13]
         if (!txaOpenLive()) return;
         // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-        if (pdexp[m_channelId] == nullptr) return;
+        if (pdexp[kDexpId] == nullptr) return;
         // dB→linear via Math.Pow(10, dB/20.0) — POSITIVE sign — matches Thetis
         // setup.cs:18918 [v2.10.3.13]:
         //   cmaster.SetDEXPExpansionRatio(0,
         //                                 Math.Pow(10.0, (double)udDEXPExpansionRatio.Value / 20.0));
-        SetDEXPExpansionRatio(m_channelId, std::pow(10.0, clamped / 20.0));
+        SetDEXPExpansionRatio(kDexpId, std::pow(10.0, clamped / 20.0));
     });
 #endif
 }
@@ -3349,12 +3351,12 @@ void TxChannel::setDexpHysteresisRatio(double ratioDb)
         // From Thetis cmaster.cs:184-185 [v2.10.3.13]
         if (!txaOpenLive()) return;
         // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-        if (pdexp[m_channelId] == nullptr) return;
+        if (pdexp[kDexpId] == nullptr) return;
         // dB→linear via Math.Pow(10, -dB/20.0) — NEGATIVE sign — matches Thetis
         // setup.cs:18924 [v2.10.3.13]:
         //   cmaster.SetDEXPHysteresisRatio(0,
         //                                  Math.Pow(10.0, -(double)udDEXPHysteresisRatio.Value / 20.0));
-        SetDEXPHysteresisRatio(m_channelId, std::pow(10.0, -clamped / 20.0));
+        SetDEXPHysteresisRatio(kDexpId, std::pow(10.0, -clamped / 20.0));
     });
 #endif
 }
@@ -3402,8 +3404,8 @@ void TxChannel::setDexpLowCut(double lowCutHz)
         // From Thetis cmaster.cs:190-191 [v2.10.3.13]
         if (!txaOpenLive()) return;
         // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-        if (pdexp[m_channelId] == nullptr) return;
-        SetDEXPLowCut(m_channelId, clamped);  // Hz, no conversion
+        if (pdexp[kDexpId] == nullptr) return;
+        SetDEXPLowCut(kDexpId, clamped);  // Hz, no conversion
     });
 #endif
 }
@@ -3451,8 +3453,8 @@ void TxChannel::setDexpHighCut(double highCutHz)
         // From Thetis cmaster.cs:193-194 [v2.10.3.13]
         if (!txaOpenLive()) return;
         // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-        if (pdexp[m_channelId] == nullptr) return;
-        SetDEXPHighCut(m_channelId, clamped);  // Hz, no conversion
+        if (pdexp[kDexpId] == nullptr) return;
+        SetDEXPHighCut(kDexpId, clamped);  // Hz, no conversion
     });
 #endif
 }
@@ -3503,8 +3505,8 @@ void TxChannel::setDexpRunSideChannelFilter(bool run)
         // From Thetis cmaster.cs:196-197 [v2.10.3.13]
         if (!txaOpenLive()) return;
         // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-        if (pdexp[m_channelId] == nullptr) return;
-        SetDEXPRunSideChannelFilter(m_channelId, run ? 1 : 0);
+        if (pdexp[kDexpId] == nullptr) return;
+        SetDEXPRunSideChannelFilter(kDexpId, run ? 1 : 0);
     });
 #else
     Q_UNUSED(run);
@@ -3562,8 +3564,8 @@ void TxChannel::setDexpRunAudioDelay(bool run)
         // From Thetis cmaster.cs:202-203 [v2.10.3.13]
         if (!txaOpenLive()) return;
         // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-        if (pdexp[m_channelId] == nullptr) return;
-        SetDEXPRunAudioDelay(m_channelId, run ? 1 : 0);
+        if (pdexp[kDexpId] == nullptr) return;
+        SetDEXPRunAudioDelay(kDexpId, run ? 1 : 0);
     });
 #else
     Q_UNUSED(run);
@@ -3613,10 +3615,10 @@ void TxChannel::setDexpAudioDelay(double delayMs)
         // From Thetis cmaster.cs:205-206 [v2.10.3.13]
         if (!txaOpenLive()) return;
         // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-        if (pdexp[m_channelId] == nullptr) return;
+        if (pdexp[kDexpId] == nullptr) return;
         // ms→seconds for WDSP, matching setup.cs:18961 [v2.10.3.13]:
         //   cmaster.SetDEXPAudioDelay(0, (double)udDEXPLookAhead.Value / 1000.0);
-        SetDEXPAudioDelay(m_channelId, clamped / 1000.0);
+        SetDEXPAudioDelay(kDexpId, clamped / 1000.0);
     });
 #endif
 }
@@ -4130,9 +4132,9 @@ double TxChannel::getDexpPeakSignal() const noexcept
     // setDexpRun null-guards (pdexp[m_channelId] == nullptr) so that
     // unopened TX channels return the Thetis-faithful idle default
     // (console.cs:28951 [v2.10.3.13]: `double audio_peak = 0.0;`).
-    if (pdexp[m_channelId] == nullptr) return 0.0;
+    if (pdexp[kDexpId] == nullptr) return 0.0;
     double peak = 0.0;
-    GetDEXPPeakSignal(m_channelId, &peak);
+    GetDEXPPeakSignal(kDexpId, &peak);
     return peak;
 #else
     return 0.0;
