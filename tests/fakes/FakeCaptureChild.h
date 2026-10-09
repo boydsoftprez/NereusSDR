@@ -11,8 +11,9 @@
 // tone at 0.5 every 10 ms, posting the wake after each write.  No
 // scenario but oversize and pcm-record sends a Pcm record.
 //
-// Every Ready reports "Fake microphone" at 48000 Hz, 1 channel, latency
-// 1500 us and a 480-frame buffer.
+// Every Ready reports the configured device's name ("Fake microphone" when
+// the default is configured) at 48000 Hz, 1 channel, latency 1500 us and a
+// 480-frame buffer.
 //
 // Scenarios (N is the generation of the Open being answered):
 //   ready                 Hello; on Open: Opening, Ready, then streaming.
@@ -42,6 +43,9 @@
 //                         valid 480-frame Pcm record.
 //   busy                  Hello; on Open: Opening, then Failed /
 //                         device-in-use.
+//   busy-while-marked     As busy while the file NEREUS_FAKE_CAPTURE_BUSY_FILE
+//                         names exists, else as ready: another program lets
+//                         the mic go when the test removes the file.
 //   bad-ring              Hello; on Open: Opening, Ready, then a wake with
 //                         the region's ring header zeroed.
 // Every scenario accepts ProbeEnable; only probe acts on it (V-HW-8).
@@ -61,6 +65,9 @@
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09: native audio plan Task 15 (R-AUD-19): the ASIO records.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 16 fix round 2: Ready names the
+//               configured device; busy-while-marked. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
