@@ -1,6 +1,9 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-09: An accepted remote transmit setting, notch flag or radio
+//               speaker write schedules the Core's coalesced settings save.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09: The schema version comment names v10. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-06: Setup description version 25 (Audio > Outputs' radio
@@ -1774,6 +1777,26 @@ bool isRadioSpeakerProperty(const QByteArray& name)
     return name == "radioSpeakerVolume" || name == "radioSpeakerMuted"
         || name == "speakerAmplifierMode" || name == "radioSpeakerAvailability"
         || name == "speakerAmplifierAvailable";
+}
+
+// Two-tone plan Task 3: an accepted write whose model keeps it in the
+// in-memory AppSettings only (TransmitModel::persistOne,
+// NotchModel::persist, RadioModel::saveRadioSpeaker), with no save of its
+// own. The Core then schedules its coalesced settings save, the one a
+// slice edit uses, so the change reaches the file before the Core exits.
+// A keying property is not a setting and asks for none.
+bool acceptedWriteAsksForSave(const QByteArray& objectKey, const QByteArray& name)
+{
+    if (objectKey == QByteArray(kTransmitKey)) {
+        return !isTransmitKeyingProperty(name);
+    }
+    if (objectKey == "notches") {
+        return true;
+    }
+    if (objectKey == QByteArray(kRadioKey)) {
+        return isRadioSpeakerProperty(name);
+    }
+    return false;
 }
 
 // The tuner properties whose remote write reaches the tuner itself
@@ -8186,6 +8209,16 @@ QList<SessionPropertyResult> StationServer::applyPropertyWrite(
     }
     if (adjust) {
         adjust(results);
+    }
+    // Two-tone plan Task 3: one save request per batch, only for a write
+    // that was taken; a refused one changed nothing to save.
+    if (!m_radioModel.isNull()
+        && std::any_of(results.cbegin(), results.cend(),
+                       [&message](const SessionPropertyResult& r) {
+                           return r.accepted
+                               && acceptedWriteAsksForSave(message.objectKey, r.property);
+                       })) {
+        m_radioModel->requestSettingsSave();
     }
     if (answer && negotiated && message.writeId != 0) {
         send(transport, SessionMessages::propertyResult(message.objectKey, message.writeId, results));

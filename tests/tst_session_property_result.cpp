@@ -5,6 +5,7 @@
 #include <QJsonObject>
 #include <QTemporaryDir>
 #include <QFile>
+#include <optional>
 #include "core/AppSettings.h"
 #include "core/CfcProfile.h"
 #include "core/session/SessionMessages.h"
@@ -15,11 +16,13 @@
 #include "core/settings/SettingsProxyServer.h"
 #include "models/Band.h"
 #include "models/RadioModel.h"
+#include "models/NotchModel.h"
 #include "models/PureSignalSettings.h"
 #include "models/SliceModel.h"
 #include "models/TransmitModel.h"
 #include "fakes/LoopbackTransport.h"
 #include "fakes/UpgradedCoreToken.h"
+#include "MultiDeviceHarness.h"
 
 using namespace NereusSDR;
 using Test::LoopbackTransport;
@@ -167,6 +170,28 @@ QString lastFilterPrefix(const SliceModel* slice, DSPMode mode)
 MirrorUpdate real(const char* name, double value)
 {
     return {0, name, MirrorWireKind::Float64, value};
+}
+// The radio MAC startTxSession gives the Core.
+const QString kTxSessionMac = QStringLiteral("AA:BB:CC:DD:EE:01");
+// A key held only in memory: still there after a reload means a save ran.
+const QString kUnsavedSentinel = QStringLiteral("PropertyResultUnsavedSentinel");
+QString txKey(const char* name)
+{
+    return QStringLiteral("hardware/%1/tx/%2").arg(kTxSessionMac, QLatin1String(name));
+}
+// The one result of the property result for `writeId` among what a
+// transport's textReceived spy saw; empty until it arrives.
+std::optional<SessionPropertyResult> propertyResultFor(const QSignalSpy& received, quint32 writeId)
+{
+    for (const auto& args : received) {
+        SessionMessage message;
+        if (SessionMessages::decode(args.at(0).toByteArray(), &message)
+            && message.kind == SessionMessageKind::PropertyResult
+            && message.writeId == writeId && message.propertyResults.size() == 1) {
+            return message.propertyResults.first();
+        }
+    }
+    return std::nullopt;
 }
 }
 
@@ -1005,6 +1030,113 @@ private slots:
         s.client->flushWritesForTest();
         QCOMPARE(propertyWrites(sent), 0);
         QCOMPARE(core.cfcParaEqData(), coreCurve);
+    }
+
+    // Two-tone plan Task 3: a remote transmit setting the Core accepts
+    // schedules the Core's coalesced settings save, so it reaches the file
+    // and not only the in-memory store.
+    void acceptedRemoteTransmitSettingIsSavedToTheCoreFile()
+    {
+        TxSession s;
+        startTxSession(s);
+        if (QTest::currentTestFailed()) { return; }
+        auto& settings = AppSettings::instance();
+        s.coreTx->loadFromSettings(kTxSessionMac);
+        s.station.flushPendingSettingsSave();
+        const double level = s.coreTx->twoToneLevel() - 3.0;
+        s.windowTx->setTwoToneLevel(level);
+        s.client->flushWritesForTest();
+        QTRY_COMPARE(s.coreTx->twoToneLevel(), level);
+
+        s.station.flushPendingSettingsSave();
+        QVERIFY(s.station.settingsSaveError().isEmpty());
+        settings.load();
+        QCOMPARE(settings.value(txKey("TwoToneLevel")).toString(), QString::number(level));
+    }
+
+    // Two-tone plan Task 3: a keying property is not a setting; an accepted
+    // write of one schedules no save. A paired device on a Core that takes
+    // remote transmit, so the write is accepted rather than refused as on a
+    // receive-only Core; a setting written next is saved, so a save could
+    // have run.
+    void acceptedRemoteKeyingWriteSchedulesNoSave()
+    {
+        auto& settings = AppSettings::instance();
+        Core core;
+        allowTransmit(core);
+        Device a;
+        core.pair(a);
+        LoopbackTransport* app = core.signIn(a, kTransmitter);
+        QVERIFY(admitted(app));
+        TransmitModel& tx = core.model->transmitModel();
+        tx.loadFromSettings(kTxSessionMac);
+        tx.setVoxEnabled(true);
+        core.model->flushPendingSettingsSave();
+        settings.setValue(kUnsavedSentinel, QStringLiteral("True"));
+
+        constexpr qint64 kVoxWriteId = 9101;
+        app->sendText(SessionMessages::encode(SessionMessages::propertyWrite(
+            "transmit", {MirrorUpdate{0, "voxEnabled", MirrorWireKind::Bool, QVariant(false)}},
+            kVoxWriteId)));
+        QTRY_VERIFY(!propertyResult(app, kVoxWriteId).isEmpty());
+        const QJsonObject vox = propertyResult(app, kVoxWriteId)
+                                    .value(QStringLiteral("results")).toArray().first().toObject();
+        QVERIFY2(vox.value(QStringLiteral("accepted")).toBool(),
+                 qPrintable(vox.value(QStringLiteral("reason")).toString()));
+        QVERIFY(!tx.voxEnabled());
+        core.model->flushPendingSettingsSave();
+        settings.load();
+        QVERIFY(!settings.contains(kUnsavedSentinel));
+
+        const double level = tx.twoToneLevel() - 3.0;
+        constexpr qint64 kLevelWriteId = 9102;
+        app->sendText(SessionMessages::encode(SessionMessages::propertyWrite(
+            "transmit", {f64("twoToneLevel", level)}, kLevelWriteId)));
+        QTRY_VERIFY(!propertyResult(app, kLevelWriteId).isEmpty());
+        QCOMPARE(tx.twoToneLevel(), level);
+        core.model->flushPendingSettingsSave();
+        settings.load();
+        QCOMPARE(settings.value(txKey("TwoToneLevel")).toString(), QString::number(level));
+    }
+
+    // Two-tone plan Task 3, the audit: the other objects whose accepted
+    // writes persist through AppSettings without a save of their own (the
+    // notch flags and the radio speaker) schedule the same save.
+    void acceptedRemoteNotchAndSpeakerWritesAreSavedToTheCoreFile()
+    {
+        TxSession s;
+        startTxSession(s);
+        if (QTest::currentTestFailed()) { return; }
+        auto& settings = AppSettings::instance();
+        s.station.flushPendingSettingsSave();
+
+        const bool notchesOn = !s.station.notchModel()->globalEnabled();
+        QSignalSpy received(s.guiEnd, &LoopbackTransport::textReceived);
+        constexpr quint32 kNotchWriteId = 9201;
+        s.guiEnd->sendText(SessionMessages::encode(SessionMessages::propertyWrite(
+            "notches", {MirrorUpdate{0, "globalEnabled", MirrorWireKind::Bool, QVariant(notchesOn)}},
+            kNotchWriteId)));
+        QTRY_VERIFY(propertyResultFor(received, kNotchWriteId).has_value());
+        QVERIFY2(propertyResultFor(received, kNotchWriteId)->accepted,
+                 qPrintable(propertyResultFor(received, kNotchWriteId)->reason));
+        s.station.flushPendingSettingsSave();
+        settings.load();
+        QCOMPARE(settings.value(QStringLiteral("NotchGlobalEnabled")).toString(),
+                 notchesOn ? QStringLiteral("True") : QStringLiteral("False"));
+
+        const int volume = s.station.radioSpeakerVolume() == 12 ? 13 : 12;
+        constexpr quint32 kSpeakerWriteId = 9202;
+        s.guiEnd->sendText(SessionMessages::encode(SessionMessages::propertyWrite(
+            "radio", {MirrorUpdate{0, "radioSpeakerVolume", MirrorWireKind::Int64, QVariant(volume)}},
+            kSpeakerWriteId)));
+        QTRY_VERIFY(propertyResultFor(received, kSpeakerWriteId).has_value());
+        QVERIFY2(propertyResultFor(received, kSpeakerWriteId)->accepted,
+                 qPrintable(propertyResultFor(received, kSpeakerWriteId)->reason));
+        QCOMPARE(s.station.radioSpeakerVolume(), volume);
+        s.station.flushPendingSettingsSave();
+        settings.load();
+        QCOMPARE(settings.hardwareValue(kTxSessionMac, QStringLiteral("RadioSpeaker/Volume")).toInt(),
+                 volume);
     }
 };
 
