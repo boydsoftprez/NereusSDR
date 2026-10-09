@@ -169,7 +169,7 @@ import Testing
                                   "sliceAccess": 3, "cfcProfile": 1, "paProfiles": 1,
                                   "levelCalibration": 1, "adcAttenuators": 1, "rx2Attenuator": 1, "radioMic": 1,
                                   "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1, "stationCat": 1,
-                                  "radioSpeaker": 1])
+                                  "radioSpeaker": 1, "coreSpeaker": 1])
     }
 
     /// JSON inside a string (section 16.1): an app's runner sends the
