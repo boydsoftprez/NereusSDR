@@ -1,5 +1,11 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-09: R-R3-44 load fix: setReceiverAudioClockForTest, the
+//               clock the receiver audio streams for apps on this computer
+//               stamp and release by, so a test running its source and
+//               devices on one clock runs their jitter hold on it too. No
+//               production caller; production is unchanged. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07: R-R3-21, R-R3-51: a no-packets restart while the Core
 //               transmits is the Core's expected receive silence, not an
 //               outage: the speakers and the headphones mix stop and wait
@@ -1304,6 +1310,8 @@ struct RemoteMediaController::Private {
     // released, so a test can order events against the step without
     // racing a real timer.
     bool audioRestartHeldForTest = false;
+    // R-R3-44: setReceiverAudioClockForTest; empty is the receiver's own.
+    RemoteAudioReceiver::Clock receiverAudioClockForTest;
     std::function<void()> heldAudioRestartStep;
     // R-R3-21: repeated restarts wait 1, 2, 4 s, reset by a healthy 10 s.
     RemoteAudioRestartBackoff audioRestartBackoff;
@@ -3744,6 +3752,11 @@ bool RemoteMediaController::audioRestartStepHeldForTest() const
     return bool(d->heldAudioRestartStep);
 }
 
+void RemoteMediaController::setReceiverAudioClockForTest(RemoteAudioReceiver::Clock clock)
+{
+    d->receiverAudioClockForTest = std::move(clock);
+}
+
 void RemoteMediaController::raiseAudioRestartForTest(RemoteAudioReceiver::Fault fault)
 {
     emit d->audio->restartRequested(QStringLiteral("Remote audio restart raised by a test"),
@@ -5523,7 +5536,7 @@ std::shared_ptr<RemoteTciAudioStage> RemoteMediaController::requestReceiverAudio
                 for (IReceiverPcmSink* consumer : std::as_const(fanout->sinks)) {
                     consumer->receiverAudioBlock(fanout->sliceId, pcm, frames);
                 }
-            }, stream.tciStage});
+            }, stream.tciStage}, nullptr, d->receiverAudioClockForTest);
         RemoteAudioReceiver* const receiver = stream.receiver.get();
         connect(receiver, &RemoteAudioReceiver::restartRequested, this,
                 [this, sliceId, receiver](const QString& reason, RemoteAudioReceiver::Fault fault) {
