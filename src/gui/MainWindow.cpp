@@ -17667,7 +17667,15 @@ void MainWindow::checkVaxFirstRun()
     const QString newCsv = VirtualCableDetector::fingerprintCsv(detected);
     const QString lastCsv = s.value(QStringLiteral("audio/LastDetectedCables"),
                                     QString()).toString();
+    // R-AUD-03: the names came from the catalogue or, without one, from the
+    // older PortAudio scan; a fingerprint is compared only with one from
+    // the same list, so an upgrade raises no false "new cable" notice.
+    const QString lastSource =
+        s.value(QStringLiteral("audio/LastDetectedCablesSource"), QString()).toString();
+    const QString source = VirtualCableDetector::fingerprintSource(
+        vaxEngine != nullptr && vaxEngine->catalogue() != nullptr);
     s.setValue(QStringLiteral("audio/LastDetectedCables"), newCsv);
+    s.setValue(QStringLiteral("audio/LastDetectedCablesSource"), source);
     s.save();
 
     FirstRunScenario scenario;
@@ -17686,7 +17694,8 @@ void MainWindow::checkVaxFirstRun()
     } else {
         // First-run already complete — only pop the dialog if NEW cables
         // have appeared since the last launch.
-        const auto fresh = VirtualCableDetector::diffNewCables(detected, lastCsv);
+        const auto fresh =
+            VirtualCableDetector::newCablesSince(detected, lastCsv, lastSource, source);
         if (fresh.isEmpty()) {
             return;
         }

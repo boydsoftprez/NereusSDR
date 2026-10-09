@@ -28,7 +28,9 @@
 //      connected)" with the R-AUD-10 sentence; the in-use sentence; the
 //      ASIO pairs under the one-driver rule, radio audio's pair greyed;
 //      the pair clash prompt; Rescan rescans the older drivers and offers
-//      what they found; the capture of Digital modes with a cable missing.
+//      what they found; the capture of Digital modes with a cable missing;
+//      a speakers change through the engine moves "(used by speakers)"
+//      with no list change.
 //      2026-10-09, J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //      Code.
 //
@@ -1149,6 +1151,48 @@ private slots:
                                 "the ASIO app's own mixer (a Voicemeeter strip, for example)."));
     }
 
+    // D13: a speakers change made through the engine (the Outputs page saves
+    // the choice, then hands it to the engine) moves "(used by speakers)" and
+    // the greyed pair at once, with no change to the device list.
+    void speakersChangeMovesUsedByWithoutListChange()
+    {
+        AudioVaxPage::setSystemForTest(SoundSystemLine::System::Windows);
+        saveSpeakersOnAsio(kFocusrite, 1);
+        RadioModel model;
+        PageRig rig({cable(QStringLiteral("cable-a-uid"), kCableA)}, /*withAsio=*/true);
+        rig.start(model);
+        AudioEngine* engine = model.localAudioDevices();
+        engine->start();
+        auto stop = qScopeGuard([engine]() { engine->stop(); });
+        AudioVaxPage page(&model);
+        QComboBox* combo = picker(page.channelCard(1));
+        QVERIFY(combo != nullptr);
+        const QString usedBy = QStringLiteral("  (used by speakers)");
+        const QString focus12 = pairText(kFocusrite, QStringLiteral("Outputs 1-2"));
+        const QString focus34 = pairText(kFocusrite, QStringLiteral("Outputs 3-4"));
+        QVERIFY2(combo->findText(focus12 + usedBy) > 0,
+                 qPrintable(itemTexts(combo).join(QLatin1Char('|'))));
+        QVERIFY(itemEnabled(combo, combo->findText(focus34)));
+
+        QSignalSpy listChanged(engine->catalogue(), &IAudioDeviceCatalog::devicesChanged);
+        QSignalSpy speakersChanged(engine, &AudioEngine::speakersConfigChanged);
+        saveSpeakersOnAsio(kFocusrite, 3);
+        engine->setSpeakersConfig(
+            AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/Speakers")));
+        QVERIFY(speakersChanged.count() > 0);
+        QCOMPARE(listChanged.count(), 0);
+
+        const QStringList texts = itemTexts(combo);
+        const int now = combo->findText(focus34 + usedBy);
+        QVERIFY2(now > 0, qPrintable(texts.join(QLatin1Char('|'))));
+        QVERIFY(!itemEnabled(combo, now));
+        QCOMPARE(combo->itemData(now, Qt::ToolTipRole).toString(),
+                 QStringLiteral("Radio audio and digital-mode audio never share a pair."));
+        const int before = combo->findText(focus12);
+        QVERIFY2(before > 0, qPrintable(texts.join(QLatin1Char('|'))));
+        QVERIFY(itemEnabled(combo, before));
+    }
+
     // R-AUD-19 under D13: a pair on a second ASIO driver asks to move
     // every ASIO use; Cancel writes nothing, OK moves the speakers too.
     void asioSecondDriverAsksFirst()
@@ -1242,6 +1286,8 @@ private slots:
             QStringLiteral("audio/LastDetectedCables"),
             VirtualCableDetector::fingerprintCsv(
                 VirtualCableDetector::detect(*model.localAudioDevices()->catalogue())));
+        AppSettings::instance().setValue(QStringLiteral("audio/LastDetectedCablesSource"),
+                                         VirtualCableDetector::fingerprintSource(true));
 
         // An older driver's cable, seen only once they list again.
         const QString mme = QStringLiteral("MME");

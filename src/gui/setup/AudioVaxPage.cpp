@@ -1904,12 +1904,17 @@ void AudioVaxPage::afterRescan(const QVector<DetectedCable>& current)
     auto& s = AppSettings::instance();
     const QString lastCsv =
         s.value(QStringLiteral("audio/LastDetectedCables"), QString()).toString();
-    const QVector<DetectedCable> newCables =
-        VirtualCableDetector::diffNewCables(current, lastCsv);
+    // R-AUD-03: compared only with a fingerprint from the same list (the
+    // catalogue, or the older PortAudio scan without one).
+    const QString source = VirtualCableDetector::fingerprintSource(m_catalogue != nullptr);
+    const QVector<DetectedCable> newCables = VirtualCableDetector::newCablesSince(
+        current, lastCsv,
+        s.value(QStringLiteral("audio/LastDetectedCablesSource"), QString()).toString(), source);
 
     // Update the stored fingerprint.
     s.setValue(QStringLiteral("audio/LastDetectedCables"),
                VirtualCableDetector::fingerprintCsv(current));
+    s.setValue(QStringLiteral("audio/LastDetectedCablesSource"), source);
     s.save();
 
     if (!newCables.isEmpty()) {
@@ -2068,6 +2073,18 @@ void AudioVaxPage::wirePillFeedback()
             card->loadFromSettings();
         }
     });
+
+    // D13: the pairs radio audio holds, and their "(used by speakers)" and
+    // "(used by headphones)", follow a speakers or headphones change made
+    // anywhere (the Outputs page, the title bar). Every caller saves the
+    // choice before it reaches the engine, so the pickers read it back.
+    // Channel 0 is no card, so every card's picker is filled again.
+    connect(m_engine, &AudioEngine::speakersConfigChanged, this,
+            [this](const AudioDeviceConfig&) { refreshOtherPickers(0); });
+    connect(m_engine, &AudioEngine::headphonesConfigChanged, this,
+            [this](const AudioDeviceConfig&) { refreshOtherPickers(0); });
+    connect(m_engine, &AudioEngine::headphonesEnabledChanged, this,
+            [this](bool) { refreshOtherPickers(0); });
 
     connect(m_engine, &AudioEngine::vaxConfigChanged, this,
             [this](int channel, AudioDeviceConfig cfg) {

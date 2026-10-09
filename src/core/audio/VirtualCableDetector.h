@@ -129,6 +129,23 @@ public:
     static QString fingerprintCsv(const QVector<DetectedCable>& cables);
     static QVector<DetectedCable> diffNewCables(const QVector<DetectedCable>& current,
                                                 const QString& lastCsv);
+
+    // R-AUD-03: which list a fingerprint's names came from. The device
+    // catalogue's names (Windows audio, Core Audio, PipeWire, PulseAudio
+    // and the older drivers) need not be the names the older PortAudio
+    // scan saw, so a fingerprint from the other list cannot say which
+    // cables are new. An empty `lastSource` is a fingerprint saved by a
+    // build before the catalogue, which always scanned through PortAudio.
+    static QString fingerprintSource(bool fromCatalogue);
+
+    // diffNewCables() against a fingerprint from the same list. Against
+    // one from the other list nothing counts as new: the caller saves the
+    // new fingerprint and its source, and the next launch compares like
+    // with like (no false "new cable" notice after an upgrade).
+    static QVector<DetectedCable> newCablesSince(const QVector<DetectedCable>& current,
+                                                 const QString& lastCsv,
+                                                 const QString& lastSource,
+                                                 const QString& source);
 };
 
 } // namespace NereusSDR
