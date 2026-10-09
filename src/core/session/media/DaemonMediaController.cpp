@@ -5780,13 +5780,15 @@ void DaemonMediaController::rebalanceSourceAfterDeparture(const MediaSourceKey& 
     if (!anySharedEndpointOn(key)) {
         return;
     }
-    // R-R3-01/R-R3-08/R-R3-09/R-R3-37: every pan still held to the departed
-    // neighbour's engine size is granted its own request. The engine then
-    // runs at the largest of those requests (a pan that asked for less gets
-    // at least what it asked for), and the renewed contexts carry the new
-    // grants. A pan never gains pixels its admitted display charge does not
-    // cover (the GUI asks again for the rest, as it does for a lone pan).
-    // When no pan is held, only the rate can fall, which renews no context.
+    // R-R3-01/R-R3-08/R-R3-09/R-R3-37: after a departure the engine runs at
+    // the largest request among the pans left on it, so none ends below what
+    // it asked for and none is held to the departed neighbour's size. Every
+    // pan whose recorded size differs records that size, up or down, and the
+    // renewed contexts carry the new grants. A pan that grows never gains
+    // pixels its admitted display charge does not cover (the GUI asks again
+    // for the rest, as it does for a lone pan); one that shrinks keeps its
+    // pixels and charge. When no pan's size changes, only the rate can fall,
+    // which renews no context.
     // Task 76: every device's pans on the engine, not only this one's.
     struct Regrant {
         EndpointEntry* entry = nullptr;
@@ -5803,6 +5805,8 @@ void DaemonMediaController::rebalanceSourceAfterDeparture(const MediaSourceKey& 
     forEachSharedEndpoint(key, [&](DaemonMediaController&, quint32, EndpointEntry& entry) {
         ++remaining;
         lone = &entry;
+        engineFftSize = std::max(engineFftSize, std::min(entry.grant.requestedFftSize,
+                                                         FFTEngine::maximumFftSize()));
     });
     const bool decimationRegrant = remaining == 1 && lone
         && lone->sourceDecimation != lone->requestedDecimation;
@@ -5810,33 +5814,30 @@ void DaemonMediaController::rebalanceSourceAfterDeparture(const MediaSourceKey& 
     if (decimationRegrant) {
         lone->sourceDecimation = lone->requestedDecimation;
     }
-    forEachSharedEndpoint(key, [&](DaemonMediaController&, quint32, EndpointEntry& entry) {
-        if (entry.grant.reason != SpectrumLimitReason::SharedEngine) {
-            return;
-        }
-        const int fftSize = std::min(entry.grant.requestedFftSize,
-                                     FFTEngine::maximumFftSize());
-        const int pixels = entry.chargeCoversRequest
-            ? entry.grant.requestedPixels : entry.request.pixels;
-        const auto displayCost = endpointDisplayCost(
-            pixels, entry.request.targetFps, entry.request.requestedWideSpanFactor > 1.0,
-            entry.extrasRequest.sections());
-        if (fftSize <= entry.sourceFftSize || !displayCost) {
-            return;
-        }
-        regrants.push_back({&entry, entry.sourceFftSize, entry.request.pixels,
-                            entry.displayCost});
-        engineFftSize = std::max(engineFftSize, fftSize);
-        entry.request.pixels = pixels;
-        entry.displayCost = *displayCost;
-    });
+    if (engineFftSize > 0) {
+        forEachSharedEndpoint(key, [&](DaemonMediaController&, quint32, EndpointEntry& entry) {
+            if (entry.sourceFftSize == engineFftSize) {
+                return;
+            }
+            regrants.push_back({&entry, entry.sourceFftSize, entry.request.pixels,
+                                entry.displayCost});
+            const bool grows = engineFftSize > entry.sourceFftSize;
+            entry.sourceFftSize = engineFftSize;
+            if (!grows) {
+                return;
+            }
+            const int pixels = entry.chargeCoversRequest
+                ? entry.grant.requestedPixels : entry.request.pixels;
+            const auto displayCost = endpointDisplayCost(
+                pixels, entry.request.targetFps, entry.request.requestedWideSpanFactor > 1.0,
+                entry.extrasRequest.sections());
+            if (displayCost) {
+                entry.request.pixels = pixels;
+                entry.displayCost = *displayCost;
+            }
+        });
+    }
     if (!regrants.empty()) {
-        // Every re-granted pan records the engine it now shares, as a pan
-        // that joins an engine does, so a later departure among them does
-        // not shrink the engine under the others.
-        for (const Regrant& regrant : regrants) {
-            regrant.entry->sourceFftSize = engineFftSize;
-        }
         if (!reconcileSource(key)) {
             // A source that cannot be reconfigured keeps every pan as it was.
             for (const Regrant& regrant : regrants) {
