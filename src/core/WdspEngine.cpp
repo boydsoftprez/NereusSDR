@@ -1559,9 +1559,11 @@ void WdspEngine::openTxChannelWdsp(int channelId, int inputBufferSize, int dspBu
     // From Thetis ChannelMaster cmaster.c:130-157 [v2.10.3.13] — verbatim
     // create_dexp call site.  Every argument matches the upstream value;
     // the only deviations are:
-    //   - id        : NereusSDR's WDSP channel id (1) instead of Thetis's
-    //                 transmitter index (0) — they happen to coincide for
-    //                 single-RX layouts but the semantics differ slightly
+    //   - id        : TxChannel::kDexpId, the transmitter index (0), as
+    //                 Thetis passes.  Issue #365: this used to be the WDSP
+    //                 channel id (5), past the end of WDSP's four-slot
+    //                 pdexp[] table; on Windows that slot aliased the RX
+    //                 channel table and xdexp crashed once RX 0 opened.
     //   - in / out  : NereusSDR's private dexpBuf (parallel-only — see
     //                 buffer architecture comment above) instead of
     //                 Thetis's pcm->in[in_id] (chain-inserted)
@@ -1569,7 +1571,7 @@ void WdspEngine::openTxChannelWdsp(int channelId, int inputBufferSize, int dspBu
     //                 the real callback later via SendCBPushDexpVox
     //                 (avoids ordering problems; see comment above)
     create_dexp(
-        channelId,                // transmitter id, txid
+        TxChannel::kDexpId,       // transmitter id, txid
         0,                        // dexp initially set to OFF
         inputBufferSize,          // input buffer size
         dexpBuf,                  // input buffer
@@ -1821,10 +1823,10 @@ void WdspEngine::destroyTxChannel(int channelId)
             // the channel BEFORE destroying its DEXP module.
             CloseChannel(channelId);
             ThreadPlacement::instance().forgetChannel(channelId);
-            destroy_dexp(channelId);
+            destroy_dexp(TxChannel::kDexpId);
             // destroy_dexp frees the object but does not clear WDSP's lookup slot.
             // Native wrapper guards use a null slot to recognize absent DEXP.
-            pdexp[channelId] = nullptr;
+            pdexp[TxChannel::kDexpId] = nullptr;
 #endif
             buffer.reset();
             retireTxChannel(std::move(channel));
@@ -1849,10 +1851,10 @@ void WdspEngine::destroyTxChannel(int channelId)
     // the channel BEFORE destroying its DEXP module.
     CloseChannel(channelId);
     ThreadPlacement::instance().forgetChannel(channelId);
-    destroy_dexp(channelId);
+    destroy_dexp(TxChannel::kDexpId);
     // destroy_dexp frees the object but does not clear WDSP's lookup slot.
     // Native wrapper guards use a null slot to recognize absent DEXP.
-    pdexp[channelId] = nullptr;
+    pdexp[TxChannel::kDexpId] = nullptr;
 #endif
 
     // Drop the DEXP buffer slot regardless of HAVE_WDSP — the non-HAVE_WDSP

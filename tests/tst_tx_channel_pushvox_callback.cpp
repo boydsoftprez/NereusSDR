@@ -72,7 +72,7 @@ private slots:
         QSignalSpy spy(&ch, &TxChannel::voxActiveChanged);
         QVERIFY(spy.isValid());
 
-        TxChannel::invokePushVoxForTest(kChannelId, /*active=*/1);
+        TxChannel::invokePushVoxForTest(TxChannel::kDexpId, /*active=*/1);
 
         QCOMPARE(spy.count(), 1);
         QCOMPARE(spy.first().at(0).toBool(), true);
@@ -88,7 +88,7 @@ private slots:
         QSignalSpy spy(&ch, &TxChannel::voxActiveChanged);
         QVERIFY(spy.isValid());
 
-        TxChannel::invokePushVoxForTest(kChannelId, /*active=*/0);
+        TxChannel::invokePushVoxForTest(TxChannel::kDexpId, /*active=*/0);
 
         QCOMPARE(spy.count(), 1);
         QCOMPARE(spy.first().at(0).toBool(), false);
@@ -105,9 +105,27 @@ private slots:
         QVERIFY(spy.isValid());
 
         // Pass a channel id that does NOT match the registered instance.
-        TxChannel::invokePushVoxForTest(kChannelId + 98, /*active=*/1);
+        TxChannel::invokePushVoxForTest(TxChannel::kDexpId + 98, /*active=*/1);
 
         QCOMPARE(spy.count(), 0);
+    }
+
+    // ---------------------------------------------------------------
+    // Issue #365: WDSP fires pushvox with the DEXP id (the transmitter
+    // id), never the WDSP channel id. The production TX channel is 5,
+    // the DEXP id is 0; the bridge must key on the DEXP id.
+    // ---------------------------------------------------------------
+    void s_pushVoxCallback_keysOnDexpIdNotChannelId() {
+        constexpr int kProductionTxChannelId = 5;
+        TxChannel ch(kProductionTxChannelId);
+        QSignalSpy spy(&ch, &TxChannel::voxActiveChanged);
+        QVERIFY(spy.isValid());
+
+        TxChannel::invokePushVoxForTest(kProductionTxChannelId, /*active=*/1);
+        QCOMPARE(spy.count(), 0);
+
+        TxChannel::invokePushVoxForTest(TxChannel::kDexpId, /*active=*/1);
+        QCOMPARE(spy.count(), 1);
     }
 
     // ---------------------------------------------------------------
@@ -119,10 +137,10 @@ private slots:
         QSignalSpy spy(&ch, &TxChannel::voxActiveChanged);
         QVERIFY(spy.isValid());
 
-        TxChannel::invokePushVoxForTest(kChannelId, /*active=*/1);  // attack
-        TxChannel::invokePushVoxForTest(kChannelId, /*active=*/0);  // release
-        TxChannel::invokePushVoxForTest(kChannelId, /*active=*/1);  // attack
-        TxChannel::invokePushVoxForTest(kChannelId, /*active=*/0);  // release
+        TxChannel::invokePushVoxForTest(TxChannel::kDexpId, /*active=*/1);  // attack
+        TxChannel::invokePushVoxForTest(TxChannel::kDexpId, /*active=*/0);  // release
+        TxChannel::invokePushVoxForTest(TxChannel::kDexpId, /*active=*/1);  // attack
+        TxChannel::invokePushVoxForTest(TxChannel::kDexpId, /*active=*/0);  // release
 
         QCOMPARE(spy.count(), 4);
         QCOMPARE(spy.at(0).at(0).toBool(), true);
@@ -148,8 +166,8 @@ private slots:
         // ch destroyed here — s_voxKeyInstance is now nullptr.
         // No QSignalSpy receiver remains; the bridge must short-circuit
         // BEFORE the emit, or the test would crash on a deleted object.
-        TxChannel::invokePushVoxForTest(kChannelId, /*active=*/1);
-        TxChannel::invokePushVoxForTest(kChannelId, /*active=*/0);
+        TxChannel::invokePushVoxForTest(TxChannel::kDexpId, /*active=*/1);
+        TxChannel::invokePushVoxForTest(TxChannel::kDexpId, /*active=*/0);
         // If we reach here without segfault, the dtor cleanup works.
         QVERIFY(true);
     }

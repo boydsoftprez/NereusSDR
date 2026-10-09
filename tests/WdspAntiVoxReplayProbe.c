@@ -2,9 +2,9 @@
 #include "comm.h"
 
 // dexp.c SetAntiVOXRun/SetAntiVOXDetectorTau use cs_update.
-double nereus_issue299_antivox_tau(int channel)
+double nereus_issue299_antivox_tau(int dexp_id)
 {
-    DEXP detector = pdexp[channel];
+    DEXP detector = pdexp[dexp_id];
     if (!detector) {
         return -1.0;
     }
@@ -14,9 +14,9 @@ double nereus_issue299_antivox_tau(int channel)
     return value;
 }
 
-int nereus_issue299_antivox_running(int channel)
+int nereus_issue299_antivox_running(int dexp_id)
 {
-    DEXP detector = pdexp[channel];
+    DEXP detector = pdexp[dexp_id];
     if (!detector) {
         return -1;
     }
