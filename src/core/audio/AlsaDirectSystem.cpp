@@ -121,7 +121,9 @@ struct AlsaNodeWatcher::Impl {
                 inotify_rm_watch(inotifyFd, parentWd);
                 parentWd = -1;
             }
-            watchingDir.store(true);
+            // watchingDir turns true only after the batch's notice is
+            // posted (run(), start()), so a caller that sees it true has
+            // every notice for the directory's return already.
             return;
         }
         watchingDir.store(false);
@@ -184,6 +186,7 @@ struct AlsaNodeWatcher::Impl {
             if (changed && sink) {
                 sink(AudioNotice::DevicesChanged);
             }
+            watchingDir.store(dirWd >= 0);
         }
     }
 #endif
@@ -225,6 +228,7 @@ bool AlsaNodeWatcher::start()
         return false;
     }
     d.watch();
+    d.watchingDir.store(d.dirWd >= 0);
     if (d.dirWd < 0 && d.parentWd < 0) {
         qCWarning(lcAudio) << "ALSA direct cannot watch" << d.directory << "or its parent";
     }

@@ -9,10 +9,14 @@
 //               helper's clock matcher ring through a MatcherReader; the
 //               Pcm-fed ring is gone.  J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-09: mic drain fix (R-AUD-17, R-R3-36): pull() is paced by the
+//               48 kHz clock; a drain until 0 now ends.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CaptureAudioBus.h"
 
+#include "core/audio/AudioDelayProbe.h"
 #include "core/audio/DeviceRateMatcher.h"
 #include "core/audio/MatcherRing.h"
 
@@ -36,9 +40,22 @@ struct CaptureAudioBus::Source {
     MatcherRingHeader* ring;
     MatcherReader reader;
     std::array<float, static_cast<std::size_t>(kScratchFrames) * 2> stereo{};
+    // pull()'s pacing, the pulling thread only.  Credit is in frames and
+    // runs from -kPaceSlackFrames to kPaceCreditCapFrames.
+    bool paced = false;
+    std::int64_t lastPullNs = 0;
+    double creditFrames = 0.0;
 };
 
-CaptureAudioBus::CaptureAudioBus() = default;
+CaptureAudioBus::CaptureAudioBus()
+    : m_clock(&audioProbeNowNs)
+{
+}
+
+void CaptureAudioBus::setClockForTest(Clock clock)
+{
+    m_clock = clock != nullptr ? clock : &audioProbeNowNs;
+}
 
 CaptureAudioBus::~CaptureAudioBus()
 {
@@ -85,9 +102,25 @@ qint64 CaptureAudioBus::pull(char* data, qint64 maxBytes)
     if (data == nullptr || maxBytes < kBytesPerFrame || !m_available.load(std::memory_order_acquire)) {
         return 0;
     }
-    const qint64 wanted = maxBytes / kBytesPerFrame;
+    const qint64 asked = maxBytes / kBytesPerFrame;
     return withSource(
         [&](Source& source) -> qint64 {
+            // The 48 kHz clock's frames since the last pull, plus the slack.
+            // Without this bound the reader, which pads a dry run, would
+            // hand a caller draining until 0 padding forever.
+            const std::int64_t now = m_clock();
+            if (source.paced) {
+                const double elapsedFrames =
+                    double(std::max<std::int64_t>(0, now - source.lastPullNs))
+                    * double(kSampleRate) / 1e9;
+                source.creditFrames = std::min(source.creditFrames + elapsedFrames,
+                                               double(kPaceCreditCapFrames));
+            }
+            source.paced = true;
+            source.lastPullNs = now;
+            const qint64 wanted = std::clamp<qint64>(
+                static_cast<qint64>(std::floor(source.creditFrames)) + kPaceSlackFrames, 0, asked);
+            source.creditFrames -= double(wanted);
             auto* out = reinterpret_cast<float*>(data);
             qint64 done = 0;
             while (done < wanted) {

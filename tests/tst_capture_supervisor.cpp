@@ -23,6 +23,10 @@
 //               the ASIO answers come back, and a helper started only to
 //               describe drivers stops after the answer.  J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: mic drain fix (R-AUD-17, R-R3-36): the reader is paced by
+//               the 48 kHz clock; a drain until 0 ends in a bounded number
+//               of pulls, and a paced caller still gets every frame.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -34,6 +38,8 @@
 #include <cstring>
 #include <functional>
 #include <memory>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 #include "core/audio/CaptureAudioBus.h"
@@ -147,8 +153,8 @@ bool waitProcessGone(qint64 pid, int timeoutMs)
 
 // Pulls at about the stream's own pace (240 frames each 5 ms, as the TX
 // worker drains it) until at least `frames` frames were read or the time
-// runs out.  The clock matcher returns every frame asked for, so an
-// unpaced loop would read its dry-run silence.
+// runs out.  The reader is paced by the 48 kHz clock, and past the
+// written frames it gives the matcher's dry-run silence.
 std::vector<float> pullFrames(CaptureAudioBus* reader, int frames, int timeoutMs)
 {
     std::vector<float> out;
@@ -164,6 +170,33 @@ std::vector<float> pullFrames(CaptureAudioBus* reader, int frames, int timeoutMs
         }
     }
     return out;
+}
+
+// A clock the reader's pacing reads in the reader tests.
+std::int64_t g_testNowNs = 1'000'000'000;
+std::int64_t testNow()
+{
+    return g_testNowNs;
+}
+constexpr std::int64_t kNsPer480Frames = 10'000'000;   // 10 ms at 48 kHz
+
+// Pulls `frames` frames per pull, the test clock advancing by stepNs
+// before each, `pulls` times; returns the frames each pull gave.
+std::vector<qint64> pacedPulls(CaptureAudioBus& reader, int frames, std::int64_t stepNs, int pulls,
+                               std::vector<float>* into = nullptr)
+{
+    std::vector<qint64> got;
+    std::vector<float> block(static_cast<std::size_t>(frames));
+    for (int i = 0; i < pulls; ++i) {
+        g_testNowNs += stepNs;
+        const qint64 bytes = reader.pull(reinterpret_cast<char*>(block.data()),
+                                         qint64(block.size() * sizeof(float)));
+        got.push_back(bytes / qint64(sizeof(float)));
+        if (into != nullptr) {
+            into->insert(into->end(), block.begin(), block.begin() + got.back());
+        }
+    }
+    return got;
 }
 
 // A clock matcher ring in local memory, as the helper builds one in the
@@ -257,21 +290,23 @@ private slots:
         QCOMPARE(reader.lastWriteNs(), std::int64_t(0));
     }
 
-    // R-AUD-17: the reader returns every frame asked for from the ring's
-    // left channel; past the written frames it is a counted dry run, and
-    // a pull larger than its scratch block is filled in pieces.
+    // R-AUD-17: a paced reader gets every frame it asks for from the
+    // ring's left channel; past the written frames it is a counted dry
+    // run, and a pull larger than its scratch block is filled in pieces.
     void readerReadsTheMatcherRing()
     {
         LocalRing ring;
         CaptureAudioBus reader;
+        reader.setClockForTest(&testNow);
         QVERIFY(reader.attachRing(ring.header()));
         reader.setAvailable(true);
         ring.write(0.25f, 6);                                       // 2880 frames
         QVERIFY(reader.lastWriteNs() > 1'000'000'000);
 
-        std::vector<float> out(2000, -1.0f);
-        QCOMPARE(reader.pull(reinterpret_cast<char*>(out.data()), qint64(out.size() * 4)),
-                 qint64(2000 * 4));
+        std::vector<float> out;
+        for (qint64 got : pacedPulls(reader, 480, kNsPer480Frames, 5, &out)) {
+            QCOMPARE(got, qint64(480));
+        }
         int nearQuarter = 0;
         for (float v : out) {
             QVERIFY(v >= -0.3f && v <= 0.3f);
@@ -280,13 +315,87 @@ private slots:
         QVERIFY2(nearQuarter > 500, qPrintable(QString::number(nearQuarter)));
 
         const quint64 dryBefore = reader.dryRuns();
-        std::vector<float> more(8000);
-        QCOMPARE(reader.pull(reinterpret_cast<char*>(more.data()), qint64(more.size() * 4)),
-                 qint64(8000 * 4));
+        std::vector<float> more;
+        for (qint64 got : pacedPulls(reader, 480, kNsPer480Frames, 17, &more)) {
+            QCOMPARE(got, qint64(480));
+        }
         QVERIFY(reader.dryRuns() > dryBefore);
         QCOMPARE(more.back(), 0.0f);                                // silence once dry
+
+        // After a late pull: the credit cap plus the slack, over two
+        // scratch blocks.
+        const std::vector<qint64> late = pacedPulls(reader, 2000, 4 * kNsPer480Frames, 1);
+        QCOMPARE(late.front(),
+                 qint64(CaptureAudioBus::kPaceCreditCapFrames + CaptureAudioBus::kPaceSlackFrames));
         reader.flush();                                             // changes nothing
         QVERIFY(reader.ringAttached());
+        reader.detachRing();
+    }
+
+    // R-AUD-17, R-R3-36: a caller that drains until pull() returns 0 (the
+    // remote window's microphone uplink) stops after the clock's frames,
+    // even though the reader pads a dry run.  Without the pacing this loop
+    // reads padding until its bound and fails.
+    void aDrainUntilZeroEnds()
+    {
+        LocalRing ring;
+        CaptureAudioBus reader;
+        reader.setClockForTest(&testNow);
+        QVERIFY(reader.attachRing(ring.header()));
+        reader.setAvailable(true);
+        ring.write(0.25f, 6);
+
+        static constexpr int kBoundPulls = 100;
+        const auto drain = [&reader]() {
+            std::vector<float> block(960);
+            qint64 total = 0;
+            for (int i = 0; i < kBoundPulls; ++i) {
+                const qint64 got = reader.pull(reinterpret_cast<char*>(block.data()),
+                                               qint64(block.size() * sizeof(float)));
+                if (got <= 0) {
+                    return std::make_pair(i, total);
+                }
+                total += got / qint64(sizeof(float));
+            }
+            return std::make_pair(kBoundPulls, total);
+        };
+
+        // The first drain: the slack only, then 0.
+        auto [pulls, frames] = drain();
+        QVERIFY2(pulls < kBoundPulls, "the drain never ended");
+        QCOMPARE(frames, qint64(CaptureAudioBus::kPaceSlackFrames));
+
+        // 20 ms later: the clock's 960 frames, then 0.
+        g_testNowNs += 2 * kNsPer480Frames;
+        std::tie(pulls, frames) = drain();
+        QVERIFY2(pulls < kBoundPulls, "the drain never ended");
+        QCOMPARE(frames, qint64(960));
+
+        // No time passed: nothing.
+        std::tie(pulls, frames) = drain();
+        QCOMPARE(pulls, 0);
+        QCOMPARE(frames, qint64(0));
+        reader.detachRing();
+    }
+
+    // The TX worker's cadence: 240 frames every 5 ms, and a pull that
+    // comes early by less than the slack, always a whole block.
+    void aPacedCallerGetsEveryBlock()
+    {
+        LocalRing ring;
+        CaptureAudioBus reader;
+        reader.setClockForTest(&testNow);
+        QVERIFY(reader.attachRing(ring.header()));
+        reader.setAvailable(true);
+        for (qint64 got : pacedPulls(reader, 240, kNsPer480Frames / 2, 200)) {
+            QCOMPARE(got, qint64(240));
+        }
+        // One pull 1 ms after the last, then one 9 ms after it.
+        QCOMPARE(pacedPulls(reader, 240, kNsPer480Frames / 10, 1).front(), qint64(240));
+        QCOMPARE(pacedPulls(reader, 240, 9 * kNsPer480Frames / 10, 1).front(), qint64(240));
+        for (qint64 got : pacedPulls(reader, 240, kNsPer480Frames / 2, 50)) {
+            QCOMPARE(got, qint64(240));
+        }
         reader.detachRing();
     }
 

@@ -581,8 +581,14 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(!watcher.watchingDirectory(), kWaitMs);
         QVERIFY(QDir().mkpath(snd));
         QTRY_VERIFY_WITH_TIMEOUT(watcher.watchingDirectory(), kWaitMs);
-        QVERIFY(touch(snd + QStringLiteral("/controlC3")));
+        // watchingDirectory() reads true only once the notice for the
+        // directory's return is posted, so the count read here holds it
+        // and the touch below must post one more of its own.  (The count
+        // used to be read after the touch, which could already hold the
+        // touch's notice, or share one batch with the return's.)
         const int before = log.count();
+        QVERIFY(before >= 3);
+        QVERIFY(touch(snd + QStringLiteral("/controlC3")));
         QTRY_VERIFY_WITH_TIMEOUT(log.count() > before, kWaitMs);
     }
 
