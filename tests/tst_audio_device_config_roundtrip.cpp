@@ -15,6 +15,10 @@
 //   6. Boolean fields (exclusiveMode / eventDriven / bypassMixer) both
 //      True and False round-trip correctly.
 //   7. Two prefixes are independent (Speakers vs Headphones).
+//   8. Native audio Task 4 (R-AUD-04): the saved identity keys Engine,
+//      DeviceId, FirstChannel, MicChannel and DelayMs round-trip; an old
+//      profile loads with engine nullopt; a save without engine writes
+//      none of them.
 //
 // Design spec:
 //   docs/architecture/2026-04-20-phase3o-subphase12-addendum.md §4
@@ -197,6 +201,106 @@ private slots:
         QCOMPARE(loadedSpeakers.sampleRate,   48000);
         QCOMPARE(loadedHeadphones.deviceName, QStringLiteral("Headphone Device"));
         QCOMPARE(loadedHeadphones.sampleRate, 96000);
+    }
+
+    // ── 8. Saved identity keys (R-AUD-04) ──────────────────────────────────
+
+    void identityKeysRoundTrip() {
+        struct Row { AudioEngineKind engine; const char* key; MicChannelPick mic; const char* micKey; };
+        const Row rows[] = {
+            {AudioEngineKind::PortAudio,        "PortAudio",        MicChannelPick::Left,  "Left"},
+            {AudioEngineKind::CoreAudio,        "CoreAudio",        MicChannelPick::Right, "Right"},
+            {AudioEngineKind::WindowsShared,    "WindowsShared",    MicChannelPick::Both,  "Both"},
+            {AudioEngineKind::WindowsExclusive, "WindowsExclusive", MicChannelPick::Left,  "Left"},
+            {AudioEngineKind::Asio,             "ASIO",             MicChannelPick::Right, "Right"},
+            {AudioEngineKind::PipeWire,         "PipeWire",         MicChannelPick::Both,  "Both"},
+            {AudioEngineKind::PulseAudio,       "PulseAudio",       MicChannelPick::Left,  "Left"},
+            {AudioEngineKind::AlsaDirect,       "AlsaDirect",       MicChannelPick::Left,  "Left"},
+        };
+        auto& s = AppSettings::instance();
+        for (const Row& row : rows) {
+            clearAudioKeys();
+            AudioDeviceConfig cfg;
+            cfg.engine       = row.engine;
+            cfg.deviceId     = QStringLiteral("id-") + QLatin1String(row.key);
+            cfg.deviceName   = QStringLiteral("Focusrite USB ASIO");
+            cfg.firstChannel = 3;
+            cfg.micChannel   = row.mic;
+            cfg.delayMs      = 10;
+            cfg.saveToSettings(QStringLiteral("audio/TxInput"));
+
+            QCOMPARE(s.value(QStringLiteral("audio/TxInput/Engine")).toString(), QLatin1String(row.key));
+            QCOMPARE(s.value(QStringLiteral("audio/TxInput/MicChannel")).toString(), QLatin1String(row.micKey));
+            QCOMPARE(s.value(QStringLiteral("audio/TxInput/FirstChannel")).toString(), QStringLiteral("3"));
+            QCOMPARE(s.value(QStringLiteral("audio/TxInput/DelayMs")).toString(), QStringLiteral("10"));
+
+            const AudioDeviceConfig loaded =
+                AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/TxInput"));
+            QVERIFY(loaded.engine == row.engine);
+            QCOMPARE(loaded.deviceId, cfg.deviceId);
+            QCOMPARE(loaded.deviceName, cfg.deviceName);
+            QCOMPARE(loaded.firstChannel, 3);
+            QVERIFY(loaded.micChannel == row.mic);
+            QCOMPARE(loaded.delayMs, 10);
+        }
+    }
+
+    void identityNoneAndDefaultRoundTrip() {
+        AudioDeviceConfig none;
+        none.engine = AudioEngineKind::CoreAudio;
+        none.deviceId = QString::fromLatin1(kAudioDeviceNone);
+        none.saveToSettings(QStringLiteral("audio/Headphones"));
+        const AudioDeviceConfig loadedNone =
+            AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/Headphones"));
+        QCOMPARE(loadedNone.deviceId, QStringLiteral("(none)"));
+        QVERIFY(loadedNone.isNone());
+        QVERIFY(!loadedNone.isPlatformDefault());
+
+        AudioDeviceConfig def;
+        def.engine = AudioEngineKind::CoreAudio;
+        def.saveToSettings(QStringLiteral("audio/Speakers"));
+        const AudioDeviceConfig loadedDef =
+            AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/Speakers"));
+        QVERIFY(loadedDef.engine == AudioEngineKind::CoreAudio);
+        QVERIFY(loadedDef.isPlatformDefault());
+        QVERIFY(!loadedDef.isNone());
+    }
+
+    void oldProfileLoadsWithEngineNullopt() {
+        // An old profile: the ten keys, no identity keys.
+        AudioDeviceConfig old;
+        old.driverApi  = QStringLiteral("MME");
+        old.deviceName = QStringLiteral("Speakers (Realtek(R) Audio)");
+        old.saveToSettings(QStringLiteral("audio/Speakers"));
+
+        auto& s = AppSettings::instance();
+        for (const char* k : {"Engine", "DeviceId", "FirstChannel", "MicChannel", "DelayMs"}) {
+            QVERIFY2(!s.contains(QStringLiteral("audio/Speakers/") + QLatin1String(k)), k);
+        }
+
+        const AudioDeviceConfig loaded =
+            AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/Speakers"));
+        QVERIFY(!loaded.engine.has_value());
+        QVERIFY(loaded.deviceId.isEmpty());
+        QCOMPARE(loaded.firstChannel, 1);
+        QVERIFY(loaded.micChannel == MicChannelPick::Left);
+        QCOMPARE(loaded.delayMs, 0);
+        QCOMPARE(loaded.driverApi, QStringLiteral("MME"));
+        QCOMPARE(loaded.deviceName, QStringLiteral("Speakers (Realtek(R) Audio)"));
+    }
+
+    void unknownIdentityValuesFallBackToDefaults() {
+        auto& s = AppSettings::instance();
+        s.setValue(QStringLiteral("audio/Speakers/Engine"),       QStringLiteral("coreaudio"));
+        s.setValue(QStringLiteral("audio/Speakers/FirstChannel"), QStringLiteral("0"));
+        s.setValue(QStringLiteral("audio/Speakers/MicChannel"),   QStringLiteral("Middle"));
+        s.setValue(QStringLiteral("audio/Speakers/DelayMs"),      QStringLiteral("-5"));
+        const AudioDeviceConfig loaded =
+            AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/Speakers"));
+        QVERIFY(!loaded.engine.has_value());
+        QCOMPARE(loaded.firstChannel, 1);
+        QVERIFY(loaded.micChannel == MicChannelPick::Left);
+        QCOMPARE(loaded.delayMs, 0);
     }
 };
 

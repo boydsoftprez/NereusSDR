@@ -1786,6 +1786,11 @@ target_compile_definitions(tst_rxapplet_att_range PRIVATE NEREUS_BUILD_TESTS)
 # combinations, and prefix independence (Speakers vs Headphones).
 nereus_add_test(tst_audio_device_config_roundtrip)
 
+# Native audio Task 4 (R-AUD-04, R-AUD-05, V-SW-2, V-SW-3): matching a saved
+# device against a live list, and the one-time migration to native engines.
+nereus_add_test(tst_audio_device_identity)
+nereus_add_test(tst_audio_device_migration)
+
 # R-R3-36 Task 1: capture helper record protocol. Framing, bounded
 # incremental reader, PCM and JSON codecs, malformed-input rejections.
 nereus_add_test(tst_capture_protocol)

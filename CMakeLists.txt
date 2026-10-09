@@ -1146,6 +1146,7 @@ set(CORE_SOURCES
     src/core/audio/AudioTestBarrier.cpp
     src/core/audio/DeviceSampleFormat.cpp
     src/core/audio/AudioDeviceCatalog.cpp
+    src/core/audio/AudioDeviceMatching.cpp
     src/core/audio/IAudioDeviceCatalog.h
     src/core/audio/IAudioEngineBackend.h
     src/core/audio/CaptureProtocol.cpp
