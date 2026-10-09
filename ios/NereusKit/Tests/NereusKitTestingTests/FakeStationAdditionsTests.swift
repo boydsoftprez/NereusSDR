@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
 import Foundation
+import LinkSessionTestSupport
 import LinkTestSupport
 import NereusKitTesting
 import NereusLink
@@ -63,7 +64,7 @@ struct FakeStationAdditionsTests {
     }
 
     private func invoke(_ rig: Rig, _ verb: String, _ arguments: [CommandArgument]) async throws -> CommandResult {
-        try await rig.commands.invoke(verb, arguments: arguments, timeout: .seconds(10))
+        try await rig.commands.invoke(verb, arguments: arguments, timeout: TestBackstop.hang)
     }
 
     @Test("without the additions the capabilities are a Core's before them and the verbs are unknown")
@@ -236,7 +237,7 @@ struct FakeStationAdditionsTests {
         #expect(rig.mirror.capabilityVersion("remoteTxVersion") == 1)
         #expect(rig.mirror.capabilities["txPermitted"] == .bool(true))
         func key(_ verb: String, _ arguments: [CommandArgument]) async throws -> CommandResult {
-            try await rig.commands.invoke(verb, arguments: arguments, copies: 3, timeout: .seconds(10))
+            try await rig.commands.invoke(verb, arguments: arguments, copies: 3, timeout: TestBackstop.hang)
         }
         let screen = [CommandArgument(name: "trigger", value: .text("screen"))]
         // An unkey with nothing on is accepted and changes nothing; the key after it keys.
@@ -287,7 +288,7 @@ struct FakeStationAdditionsTests {
         defer { rig.feeding.cancel() }
         #expect(rig.mirror.capabilityVersion("remoteTxVersion") == 2)
         func key(_ verb: String, _ arguments: [CommandArgument]) async throws -> CommandResult {
-            try await rig.commands.invoke(verb, arguments: arguments, copies: 3, timeout: .seconds(10))
+            try await rig.commands.invoke(verb, arguments: arguments, copies: 3, timeout: TestBackstop.hang)
         }
         let on = [CommandArgument(name: "on", value: .bool(true))]
         let off = [CommandArgument(name: "on", value: .bool(false))]
@@ -307,7 +308,7 @@ struct FakeStationAdditionsTests {
         let older = try await connected([.remoteTx])
         defer { older.feeding.cancel() }
         #expect(older.mirror.capabilityVersion("remoteTxVersion") == 1)
-        let unknown = try await older.commands.invoke("tx.tunerTune", arguments: on, copies: 3, timeout: .seconds(10))
+        let unknown = try await older.commands.invoke("tx.tunerTune", arguments: on, copies: 3, timeout: TestBackstop.hang)
         #expect(!unknown.accepted)
         await older.session.disconnect()
     }

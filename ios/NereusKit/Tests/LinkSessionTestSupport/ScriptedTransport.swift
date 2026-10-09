@@ -78,7 +78,7 @@ public final class ScriptedTransport: LinkTransport, @unchecked Sendable {
     /// Waits until the app has sent a frame the test has not taken yet,
     /// without polling; returns false only if none came by `timeout`.
     @discardableResult
-    public func waitForSent(within timeout: Duration = .seconds(30)) async -> Bool {
+    public func waitForSent(within timeout: Duration = TestBackstop.hang) async -> Bool {
         await waiters.wait(within: timeout) { [self] in !pending.isEmpty }
     }
 

@@ -159,7 +159,7 @@ import Testing
         let consumed = TestPhase<Void>()
         let observer = Task { await answered.value; consumed.finish(.success(())) }
         defer { observer.cancel() }
-        do { try await consumed.wait(until: ContinuousClock.now + .seconds(10)) }
+        do { try await consumed.wait(until: ContinuousClock.now + TestBackstop.hang) }
         catch {
             answered.cancel()
             await commands.handle(.stateChanged(.stopped))

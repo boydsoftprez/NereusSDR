@@ -66,13 +66,13 @@ public final class RendezvousTestService: @unchecked Sendable {
         public var pending: [String] { lock.withLock { sent } }
 
         /// The next text the app sent; nil if none came within `timeout`.
-        public func nextSent(within timeout: Duration = .seconds(30)) async -> String? {
+        public func nextSent(within timeout: Duration = TestBackstop.hang) async -> String? {
             _ = await waiters.wait(within: timeout) { [self] in !pending.isEmpty }
             return lock.withLock { sent.isEmpty ? nil : sent.removeFirst() }
         }
 
         /// The next message the app sent, decoded as the service reads it.
-        public func nextMessage(within timeout: Duration = .seconds(30)) async -> RendezvousMessage? {
+        public func nextMessage(within timeout: Duration = TestBackstop.hang) async -> RendezvousMessage? {
             guard let text = await nextSent(within: timeout) else {
                 return nil
             }
@@ -80,7 +80,7 @@ public final class RendezvousTestService: @unchecked Sendable {
         }
 
         /// True when the app closed the connection within `timeout`.
-        public func waitUntilClosed(within timeout: Duration = .seconds(30)) async -> Bool {
+        public func waitUntilClosed(within timeout: Duration = TestBackstop.hang) async -> Bool {
             await waiters.wait(within: timeout) { [self] in isClosedByApp }
         }
 
@@ -139,7 +139,7 @@ public final class RendezvousTestService: @unchecked Sendable {
     public var connections: [Connection] { lock.withLock { made } }
 
     /// The `index`th connection dialled (from 0), waiting for it.
-    public func connection(_ index: Int, within timeout: Duration = .seconds(30)) async -> Connection? {
+    public func connection(_ index: Int, within timeout: Duration = TestBackstop.hang) async -> Connection? {
         _ = await waiters.wait(within: timeout) { [self] in connections.count > index }
         let all = connections
         return all.count > index ? all[index] : nil

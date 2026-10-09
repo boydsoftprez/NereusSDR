@@ -45,7 +45,7 @@ import Testing
         var latest: SlowOpeningTransport? { lock.withLock { made.last } }
 
         func opening() async throws -> SlowOpeningTransport {
-            let deadline = ContinuousClock.now + .seconds(10)
+            let deadline = ContinuousClock.now + TestBackstop.hang
             let transport = try await creation.wait(until: deadline)
             try await transport.openingEntry.wait(until: deadline)
             return transport
@@ -135,14 +135,14 @@ import Testing
         let recorder = EventRecorder(session)
         let connecting = Task { await session.connect() }
         let started = ContinuousClock.now
-        while listener.receivedRequests.isEmpty && ContinuousClock.now - started < .seconds(10) {
+        while listener.receivedRequests.isEmpty && ContinuousClock.now - started < TestBackstop.hang {
             try await Task.sleep(for: .milliseconds(20))
         }
         try #require(!listener.receivedRequests.isEmpty, "the listener saw no opening, so nothing was waited on")
         #expect(await session.state == .connecting)
         let advanced = ContinuousClock.now
         await clock.advance(by: 30_000)
-        let ended = await recorder.wait(timeout: .seconds(10)) { events in
+        let ended = await recorder.wait(timeout: TestBackstop.hang) { events in
             events.contains(.stateChanged(.waitingToRetry(seconds: 1)))
         }
         #expect(ended)
@@ -336,7 +336,7 @@ import Testing
             }
         }
         let started = ContinuousClock.now
-        while listener.receivedRequests.isEmpty && ContinuousClock.now - started < .seconds(10) {
+        while listener.receivedRequests.isEmpty && ContinuousClock.now - started < TestBackstop.hang {
             try await Task.sleep(for: .milliseconds(20))
         }
         try #require(!listener.receivedRequests.isEmpty, "the listener saw no opening, so nothing was waited on")
@@ -358,15 +358,15 @@ import Testing
         }
         expired.finish(.success(()))
         await #expect(throws: TestPhase<Void>.Failure.noEntry) {
-            try await expired.wait(until: ContinuousClock.now + .seconds(10))
+            try await expired.wait(until: ContinuousClock.now + TestBackstop.hang)
         }
     }
 
     @Test func fixturePhaseExpiryAlsoSettlesAnAlreadyRegisteredObserver() async throws {
         let phase = TestPhase<Void>()
-        let earlier = Task { try await phase.wait(until: ContinuousClock.now + .seconds(10)) }
+        let earlier = Task { try await phase.wait(until: ContinuousClock.now + TestBackstop.hang) }
         defer { earlier.cancel() }
-        let entryDeadline = ContinuousClock.now + .seconds(2)
+        let entryDeadline = ContinuousClock.now + TestBackstop.hang
         while phase.pendingWaiterCount == 0 && ContinuousClock.now < entryDeadline { await Task.yield() }
         try #require(phase.pendingWaiterCount == 1)
         await #expect(throws: TestPhase<Void>.Failure.noEntry) {
@@ -379,7 +379,7 @@ import Testing
             catch { settled.finish(.success(error as? TestPhase<Void>.Failure == .noEntry)) }
         }
         defer { observer.cancel() }
-        #expect(try await settled.wait(until: ContinuousClock.now + .seconds(2)))
+        #expect(try await settled.wait(until: ContinuousClock.now + TestBackstop.hang))
     }
 
     @Test func fixturePhaseMissingEntryAndCancellationFailRatherThanHang() async throws {
@@ -390,10 +390,10 @@ import Testing
         // Late acknowledgement does not turn the failed phase into success.
         missing.finish(.success(()))
         await #expect(throws: TestPhase<Void>.Failure.noEntry) {
-            try await missing.wait(until: ContinuousClock.now + .seconds(10))
+            try await missing.wait(until: ContinuousClock.now + TestBackstop.hang)
         }
         let cancelled = TestPhase<Void>()
-        let waiting = Task { try await cancelled.wait(until: ContinuousClock.now + .seconds(10)) }
+        let waiting = Task { try await cancelled.wait(until: ContinuousClock.now + TestBackstop.hang) }
         waiting.cancel()
         await #expect(throws: TestPhase<Void>.Failure.cancelled) { try await waiting.value }
     }
@@ -402,7 +402,7 @@ import Testing
         let slow = SlowOpeningTransport(PairingTestTransport())
         slow.close()
         await #expect(throws: TestPhase<Void>.Failure.closed) {
-            try await slow.openingEntry.wait(until: ContinuousClock.now + .seconds(10))
+            try await slow.openingEntry.wait(until: ContinuousClock.now + TestBackstop.hang)
         }
     }
 
@@ -438,7 +438,7 @@ final class SlowOpeningTransport: LinkTransport, @unchecked Sendable {
     /// Waits, up to 10 s of real time, for the transport `latest` names to
     /// be inside its opening.
     static func opening(in latest: @escaping @Sendable () -> SlowOpeningTransport?) async -> SlowOpeningTransport? {
-        let giveUp = ContinuousClock.now + .seconds(10)
+        let giveUp = ContinuousClock.now + TestBackstop.hang
         while ContinuousClock.now < giveUp {
             if let transport = latest(), transport.isOpening {
                 return transport

@@ -4,6 +4,7 @@
 #if os(macOS)
 
 import Foundation
+import LinkSessionTestSupport
 import NereusLink
 import Testing
 @testable import NereusMedia
@@ -84,7 +85,7 @@ struct WebRelayControlInteropTests {
                     "the service offered no TURN credentials")
             #expect(dialer.mediaRelayContext() != nil)
             #expect(turn.count("ALLOCATED") == 0)
-            try await LocalRendezvous.waitUntil("encrypted web relay control frames", within: .seconds(10)) {
+            try await LocalRendezvous.waitUntil("encrypted web relay control frames", within: TestBackstop.hang) {
                 web.report().controlDatagrams > 0
             }
             let report = web.report()
@@ -103,7 +104,7 @@ struct WebRelayControlInteropTests {
         // native teardown. Reclaiming it proves disconnect cleanup without
         // relying on the front's cumulative connection count.
         let context = try #require(dialer.mediaRelayContext())
-        let deadline = ContinuousClock.now + .seconds(10)
+        let deadline = ContinuousClock.now + TestBackstop.hang
         var reclaimed: RelayICEClaim?
         while reclaimed == nil && ContinuousClock.now < deadline {
             reclaimed = try? await context.claimControl()

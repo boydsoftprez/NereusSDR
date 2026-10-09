@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
 import Foundation
+import LinkSessionTestSupport
 import LinkTestSupport
 import Testing
 @testable import NereusMedia
@@ -45,41 +46,49 @@ import Testing
 
     /// Plays `arrivals` until `expectedBlocks` packets have been played or
     /// concealed, checking the bounds after every pull.
-    static func run(_ arrivals: [Arrival], expectedBlocks: Int) throws -> Outcome {
+    static func run(_ arrivals: [Arrival], expectedBlocks: Int) async throws -> Outcome {
         let payload = try opusPayload()
-        let buffer = try AudioJitterBuffer()
-        buffer.reanchor(AudioStreamAnchor(generation: 1, ssrc: ssrc, firstSequence: 0, firstTimestamp: 0))
-        let ordered = arrivals.enumerated().sorted { ($0.element.atMs, $0.offset) < ($1.element.atMs, $1.offset) }
-            .map(\.element)
-        var next = 0
-        var outcome = Outcome()
-        let lastArrival = ordered.last?.atMs ?? 0
-        var time = 0
-        while outcome.played + outcome.concealedBlocks < expectedBlocks && time <= lastArrival + 2000 {
-            while next < ordered.count && ordered[next].atMs <= time {
-                buffer.push(packet(ordered[next].sequence, payload: payload))
-                next += 1
+        // About 1500 Opus decodes with no suspension point: a second here,
+        // several on the CI runner. On a cooperative worker the patterns
+        // that start together hold the pool for that long, so they run on
+        // their own thread (2026-10-09, as AudioPlaybackCoreTests.play).
+        return try await TestNativeThread.run { () -> Result<Outcome, any Error> in
+            Result {
+                let buffer = try AudioJitterBuffer()
+                buffer.reanchor(AudioStreamAnchor(generation: 1, ssrc: ssrc, firstSequence: 0, firstTimestamp: 0))
+                let ordered = arrivals.enumerated().sorted { ($0.element.atMs, $0.offset) < ($1.element.atMs, $1.offset) }
+                    .map(\.element)
+                var next = 0
+                var outcome = Outcome()
+                let lastArrival = ordered.last?.atMs ?? 0
+                var time = 0
+                while outcome.played + outcome.concealedBlocks < expectedBlocks && time <= lastArrival + 2000 {
+                    while next < ordered.count && ordered[next].atMs <= time {
+                        buffer.push(packet(ordered[next].sequence, payload: payload))
+                        next += 1
+                    }
+                    switch buffer.pull() {
+                    case .audio(let pcm):
+                        outcome.played += 1
+                        outcome.boundsHeld = outcome.boundsHeld && pcm.count == 1920 * 2
+                    case .concealed(let pcm):
+                        outcome.concealedBlocks += 1
+                        outcome.boundsHeld = outcome.boundsHeld && pcm.count == 1920 * 2
+                    case .silence:
+                        outcome.silentPulls += 1
+                    }
+                    outcome.boundsHeld = outcome.boundsHeld
+                        && (AudioJitterBuffer.minimumTargetMs...AudioJitterBuffer.maximumTargetMs).contains(buffer.targetMs)
+                        && buffer.depthMs <= AudioJitterBuffer.maximumTargetMs
+                    time += 40
+                }
+                outcome.underruns = buffer.underruns
+                outcome.lateDrops = buffer.lateDrops
+                outcome.concealed = buffer.concealed
+                outcome.finalTargetMs = buffer.targetMs
+                return outcome
             }
-            switch buffer.pull() {
-            case .audio(let pcm):
-                outcome.played += 1
-                outcome.boundsHeld = outcome.boundsHeld && pcm.count == 1920 * 2
-            case .concealed(let pcm):
-                outcome.concealedBlocks += 1
-                outcome.boundsHeld = outcome.boundsHeld && pcm.count == 1920 * 2
-            case .silence:
-                outcome.silentPulls += 1
-            }
-            outcome.boundsHeld = outcome.boundsHeld
-                && (AudioJitterBuffer.minimumTargetMs...AudioJitterBuffer.maximumTargetMs).contains(buffer.targetMs)
-                && buffer.depthMs <= AudioJitterBuffer.maximumTargetMs
-            time += 40
-        }
-        outcome.underruns = buffer.underruns
-        outcome.lateDrops = buffer.lateDrops
-        outcome.concealed = buffer.concealed
-        outcome.finalTargetMs = buffer.targetMs
-        return outcome
+        }.get()
     }
 
     /// SplitMix64, so the loss pattern is the same on every run.
@@ -106,9 +115,9 @@ import Testing
     /// concealment, nothing late. The 1500 playing pulls are six spells of
     /// 250 without an underrun, so the target falls 180, 160, 140, 120,
     /// 100, 80 and then stays at its floor of 80.
-    @Test func aSteadyStreamPlaysWithoutAnUnderrun() throws {
+    @Test func aSteadyStreamPlaysWithoutAnUnderrun() async throws {
         let arrivals = (0..<Self.packets).map { Arrival(atMs: 40 * $0 + 20, sequence: UInt16($0)) }
-        let outcome = try Self.run(arrivals, expectedBlocks: Self.packets)
+        let outcome = try await Self.run(arrivals, expectedBlocks: Self.packets)
         #expect(outcome.played == Self.packets)
         #expect(outcome.underruns == 0)
         #expect(outcome.concealed == 0)
@@ -131,12 +140,12 @@ import Testing
     /// arrived at least 110 ms before (the least margin is a late burst's
     /// first packet: 210 - 100), so no later pull finds the buffer empty.
     /// The depth is at most 10 packets, 400 ms. Underruns: 1.
-    @Test func aBurstyStreamUnderrunsOnceThenHolds() throws {
+    @Test func aBurstyStreamUnderrunsOnceThenHolds() async throws {
         let arrivals = (0..<Self.packets).map { n -> Arrival in
             let burst = n / 5
             return Arrival(atMs: 200 * burst + 190 + (burst % 4 == 3 ? 100 : 0), sequence: UInt16(n))
         }
-        let outcome = try Self.run(arrivals, expectedBlocks: Self.packets)
+        let outcome = try await Self.run(arrivals, expectedBlocks: Self.packets)
         #expect(outcome.played == Self.packets)
         #expect(outcome.underruns == 1)
         #expect(outcome.concealed == 0)
@@ -153,7 +162,7 @@ import Testing
     /// packet is held and the pull conceals it: every loss is concealed,
     /// none is an underrun, and none is late. The first and last ten
     /// packets are kept so the start and the end play as in the steady case.
-    @Test func twoPercentLossIsConcealedPacketForPacket() throws {
+    @Test func twoPercentLossIsConcealedPacketForPacket() async throws {
         var random = SplitMix64(state: 2026)
         var lost = Set<Int>()
         for n in 10..<(Self.packets - 10) where random.next() % 50 == 0 {
@@ -164,7 +173,7 @@ import Testing
         #expect(!lost.contains { lost.contains($0 + 1) && lost.contains($0 + 2) && lost.contains($0 + 3) })
         let arrivals = (0..<Self.packets).filter { !lost.contains($0) }
             .map { Arrival(atMs: 40 * $0 + 20, sequence: UInt16($0)) }
-        let outcome = try Self.run(arrivals, expectedBlocks: Self.packets)
+        let outcome = try await Self.run(arrivals, expectedBlocks: Self.packets)
         #expect(outcome.concealed == lost.count)
         #expect(outcome.concealedBlocks == lost.count)
         #expect(outcome.played == Self.packets - lost.count)
@@ -186,13 +195,13 @@ import Testing
     /// make 320 ms, and playing resumes at the 20320 ms pull, which now
     /// plays packet p at 320 + 40p, 300 ms after its arrival: no further
     /// underrun, and at most 8 packets (320 ms) held. Underruns: 1.
-    @Test func aThreeHundredMillisecondGapUnderrunsOnce() throws {
+    @Test func aThreeHundredMillisecondGapUnderrunsOnce() async throws {
         let arrivals = (0..<Self.packets).map { n -> Arrival in
             let due = 40 * n + 20
             return Arrival(atMs: (20001...20300).contains(due) ? 20300 : due, sequence: UInt16(n))
         }
         #expect(arrivals.filter { $0.atMs == 20300 }.map(\.sequence) == Array(500...507))
-        let outcome = try Self.run(arrivals, expectedBlocks: Self.packets)
+        let outcome = try await Self.run(arrivals, expectedBlocks: Self.packets)
         #expect(outcome.played == Self.packets)
         #expect(outcome.underruns == 1)
         #expect(outcome.concealed == 0)

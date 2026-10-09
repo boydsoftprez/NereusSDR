@@ -4,6 +4,7 @@
 import AVFoundation
 import CAudioRing
 import Foundation
+import LinkSessionTestSupport
 import Testing
 @testable import NereusMedia
 
@@ -29,47 +30,57 @@ import Testing
                      stallAfterFrames: Int? = nil) async throws -> (heard: Bool, mostHeldFrames: Int) {
         let payload = try AudioJitterBufferTests.opusPayload()
         core.reanchor(AudioStreamAnchor(generation: 1, ssrc: ssrc, firstSequence: 0, firstTimestamp: 0))
-        let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2))
-        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(callbackFrames)))
-        buffer.frameLength = AVAudioFrameCount(callbackFrames)
-        let total = seconds * 48_000
-        var now = 0
-        var nextFeed = 0
-        var nextPacket = 0
-        var heard = false
-        var mostHeld = 0
-        while now < total {
-            // Packets that have arrived by now: packet k is sent at k * 40 ms
-            // and arrives 0 to 30 ms after, by a fixed pattern.
-            let stalled = stallAfterFrames.map { now >= $0 } ?? false
-            while !stalled {
-                let lateFrames = (nextPacket * 7 % 31) * 48
-                let arrival = nextPacket * AudioJitterBuffer.packetFrames + lateFrames
-                guard arrival <= now else {
-                    break
-                }
-                core.receive(AudioJitterBufferTests.packet(UInt16(truncatingIfNeeded: nextPacket), ssrc: ssrc,
-                                                           payload: payload))
-                nextPacket += 1
+        // Each feed check waits on the feed queue for every packet handed to
+        // it so far (pumpNow is a feedQueue.sync), and the output runs here
+        // for up to 20 s of audio. On a cooperative worker that wait holds
+        // one of the pool's threads: the four tests that play at once held
+        // all three on the CI runner, and every other test's real-time bound
+        // ran out together (2026-10-09). The output runs on its own thread,
+        // as the real render callback runs on the audio I/O thread.
+        let played = await TestNativeThread.run { () -> (heard: Bool, mostHeldFrames: Int)? in
+            guard let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2),
+                  let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(callbackFrames)) else {
+                return nil
             }
-            while nextFeed <= now {
-                if !stalled {
-                    core.pumpNow()
-                    if now >= 48_000 {
-                        mostHeld = max(mostHeld, core.heldRingFrames)
+            buffer.frameLength = AVAudioFrameCount(callbackFrames)
+            let total = seconds * 48_000
+            var now = 0
+            var nextFeed = 0
+            var nextPacket = 0
+            var heard = false
+            var mostHeld = 0
+            while now < total {
+                // Packets that have arrived by now: packet k is sent at k * 40 ms
+                // and arrives 0 to 30 ms after, by a fixed pattern.
+                let stalled = stallAfterFrames.map { now >= $0 } ?? false
+                while !stalled {
+                    let lateFrames = (nextPacket * 7 % 31) * 48
+                    let arrival = nextPacket * AudioJitterBuffer.packetFrames + lateFrames
+                    guard arrival <= now else {
+                        break
                     }
+                    core.receive(AudioJitterBufferTests.packet(UInt16(truncatingIfNeeded: nextPacket), ssrc: ssrc,
+                                                               payload: payload))
+                    nextPacket += 1
                 }
-                nextFeed += feedFrames
+                while nextFeed <= now {
+                    if !stalled {
+                        core.pumpNow()
+                        if now >= 48_000 {
+                            mostHeld = max(mostHeld, core.heldRingFrames)
+                        }
+                    }
+                    nextFeed += feedFrames
+                }
+                core.render(frames: callbackFrames, into: buffer.mutableAudioBufferList)
+                if now >= 48_000, let left = buffer.floatChannelData?[0] {
+                    heard = heard || (0..<callbackFrames).contains { left[$0] != 0 }
+                }
+                now += callbackFrames
             }
-            core.render(frames: callbackFrames, into: buffer.mutableAudioBufferList)
-            if now >= 48_000, let left = buffer.floatChannelData?[0] {
-                heard = heard || (0..<callbackFrames).contains { left[$0] != 0 }
-            }
-            now += callbackFrames
-            // The simulated callback is complete; let other test tasks run.
-            await Task.yield()
+            return (heard, mostHeld)
         }
-        return (heard, mostHeld)
+        return try #require(played, "the output's format and buffer")
     }
 
     /// 5 ms and 10 ms pieces (the microphone's I/O buffer), and 1024

@@ -4,6 +4,7 @@
 #if os(macOS)
 
 import Foundation
+import LinkSessionTestSupport
 import NereusLink
 import Testing
 @testable import NereusMedia
@@ -350,7 +351,7 @@ struct MediaFloorCoreInteropTests {
             // Let OLD's bounded drain finish and its native ICE agent retire.
             try await Task.sleep(for: .seconds(3))
             let relayContextId = try #require(UUID(uuidString: oldId))
-            let deadline = ContinuousClock.now + .seconds(10)
+            let deadline = ContinuousClock.now + TestBackstop.hang
             var reclaimed: RelayICEClaim?
             while reclaimed == nil && ContinuousClock.now < deadline {
                 reclaimed = try? await relayContext.claimMedia(connectionId: relayContextId)
@@ -391,7 +392,7 @@ struct MediaFloorCoreInteropTests {
             print("MEDIA_FLOOR_TUNNEL moved=\(moved) selectedTunnel=\(second.selectedTunnel) newAudioPackets=\(second.receiveCounts.audio.accepted) newDisplayDatagrams=\(second.receiveCounts.display.accepted) postDrainFrames=\(seen.displayCount - afterDrainFrames) binaryOut=\(counted.counts.outbound) binaryIn=\(counted.counts.inbound) markerSent=\(tunnelMarkerSent) auth=\(seen.counts.auth) snapshots=\(seen.counts.snapshot)")
 
             await retireFixture()
-            let tunnelDeadline = ContinuousClock.now + .seconds(10)
+            let tunnelDeadline = ContinuousClock.now + TestBackstop.hang
             var tunnelReclaimed: MediaTunnelClaim?
             while tunnelReclaimed == nil && ContinuousClock.now < tunnelDeadline {
                 tunnelReclaimed = try? await tunnel.claimMedia(connectionId: UUID(uuidString: newId)!)

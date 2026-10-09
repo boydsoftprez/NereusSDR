@@ -78,7 +78,7 @@ final class PairingPeerProcess: LinkTransport, @unchecked Sendable {
     }
 
     /// The `peer.ready` line.
-    func ready(within timeout: Duration = .seconds(30)) async throws -> Ready {
+    func ready(within timeout: Duration = TestBackstop.hang) async throws -> Ready {
         _ = await waiters.wait(within: timeout) { [self] in lock.withLock { readyLine != nil } }
         guard let ready = lock.withLock({ readyLine }) else {
             throw Failure(description: "no peer.ready line within \(timeout)")
@@ -87,7 +87,7 @@ final class PairingPeerProcess: LinkTransport, @unchecked Sendable {
     }
 
     /// The `peer.done` line.
-    func done(within timeout: Duration = .seconds(30)) async throws -> Done {
+    func done(within timeout: Duration = TestBackstop.hang) async throws -> Done {
         _ = await waiters.wait(within: timeout) { [self] in lock.withLock { doneLine != nil } }
         guard let done = lock.withLock({ doneLine }) else {
             throw Failure(description: "no peer.done line within \(timeout)")

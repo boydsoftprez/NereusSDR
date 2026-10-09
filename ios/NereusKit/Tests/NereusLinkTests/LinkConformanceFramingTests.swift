@@ -282,7 +282,7 @@ final class EventLog: @unchecked Sendable {
 
     var events: [LinkTransportEvent] { lock.withLock { log } }
 
-    func waitFor(count: Int, within timeout: Duration = .seconds(10)) async -> Bool {
+    func waitFor(count: Int, within timeout: Duration = TestBackstop.hang) async -> Bool {
         await waiters.wait(within: timeout) { [self] in events.count >= count }
     }
 }

@@ -3,6 +3,7 @@
 
 import Darwin
 import Foundation
+import LinkSessionTestSupport
 import Network
 import Testing
 @testable import NereusLink
@@ -41,7 +42,7 @@ import Testing
         defer { reservation.close() }
         try #require(reservation.port != 0)
         let transport = WebSocketLinkTransport(endpoint: StationEndpoint(host: "127.0.0.1", port: reservation.port),
-                                               trust: .pairing, openDeadline: .seconds(10))
+                                               trust: .pairing, openDeadline: TestBackstop.hang)
         await #expect(throws: LinkTransportError.refused) {
             _ = try await transport.open { _ in }
         }

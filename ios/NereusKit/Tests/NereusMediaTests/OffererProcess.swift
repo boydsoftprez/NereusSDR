@@ -6,6 +6,7 @@
 #if os(macOS)
 
 import Foundation
+import LinkSessionTestSupport
 import LinkTestSupport
 import NereusLink
 
@@ -93,7 +94,7 @@ final class OffererProcess: @unchecked Sendable {
     /// and returns it.
     /// With `what`, only lines whose `what` is that, and with `count`,
     /// only those whose `count` has reached it.
-    func waitFor(_ type: String, occurrence: Int = 1, timeout: Duration = .seconds(10),
+    func waitFor(_ type: String, occurrence: Int = 1, timeout: Duration = TestBackstop.hang,
                  what: String? = nil, count: Int? = nil) async throws -> Line {
         let clock = ContinuousClock()
         let deadline = clock.now + timeout
