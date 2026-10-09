@@ -25,6 +25,10 @@
 //   2026-10-09: native audio plan Task 12 (R-AUD-01, R-AUD-25): the Linux
 //               Core registers ALSA direct alone (settled call 9).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 15 (R-AUD-01): Windows registers
+//               ASIO between Windows audio and the older drivers, outside
+//               the mic helper (which hosts the driver itself).  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AudioBackendRegistry.h"
@@ -37,6 +41,7 @@
 #include "core/audio/CoreAudioBackend.h"
 #include "core/audio/CoreAudioSystem.h"
 #elif defined(Q_OS_WIN)
+#include "core/audio/AsioBackend.h"
 #include "core/audio/WasapiBackendWin.h"
 #elif defined(Q_OS_LINUX)
 #include "core/AppSettings.h"
@@ -122,6 +127,12 @@ std::vector<std::shared_ptr<IAudioEngineBackend>> makeSystemAudioBackends(const 
     // drivers then list only what it does not replace: MME, DirectSound
     // and WDM-KS (olderDriverHostApis in PortAudioBackend.cpp).
     backends.push_back(std::make_shared<WasapiBackendWin>());
+    // R-AUD-01 (Task 15): ASIO next.  Its driver loads in the mic helper
+    // (D9), so the helper itself never lists it; elsewhere the backend
+    // stays empty until AudioEngine links it to its helper.
+    if (!context.helper) {
+        backends.push_back(std::make_shared<AsioBackend>());
+    }
     constexpr bool kIncludeReplacedHostApis = false;
     backends.push_back(std::make_shared<PortAudioBackend>(&listPortAudioDevices,
                                                           currentOlderDriverPlatform(),

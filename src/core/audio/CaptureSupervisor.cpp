@@ -23,6 +23,12 @@
 //               the first wake.  A Pcm record is a protocol error; the
 //               device-in-use reason and the request serial are new.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 15 (R-AUD-19, R-AUD-20, R-AUD-21):
+//               the ASIO records.  An ASIO demand keeps the helper running
+//               without a generation: mic demand going away then stops the
+//               generation only.  A helper started to describe drivers
+//               stops after the answer.  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CaptureSupervisor.h"
@@ -174,18 +180,23 @@ public:
     using Publish = std::function<void(const Status&)>;
     using PublishProbeHit = std::function<void(qint64)>;
     using PublishHop = std::function<void(quint32, double)>;
+    using PublishAsioCaps = std::function<void(const P::AsioCapsRecord&)>;
+    using PublishAsioState = std::function<void(const P::AsioState&)>;
 
     CaptureSupervisorWorker(const CaptureSupervisor::Options& options,
                             std::shared_ptr<CaptureAudioBus> reader,
                             std::shared_ptr<std::atomic<qint64>> helperPid,
                             Publish publish, PublishProbeHit publishProbeHit,
-                            PublishHop publishHop)
+                            PublishHop publishHop, PublishAsioCaps publishAsioCaps,
+                            PublishAsioState publishAsioState)
         : m_options(options)
         , m_reader(std::move(reader))
         , m_helperPid(std::move(helperPid))
         , m_publish(std::move(publish))
         , m_publishProbeHit(std::move(publishProbeHit))
         , m_publishHop(std::move(publishHop))
+        , m_publishAsioCaps(std::move(publishAsioCaps))
+        , m_publishAsioState(std::move(publishAsioState))
         , m_hops(std::make_shared<HopLog>())
         , m_helloTimer(new QTimer(this))
         , m_openTimer(new QTimer(this))
@@ -224,10 +235,20 @@ public:
             startGeneration();
             return;
         }
-        m_pendingSpawn = false;
+        if (!asioWanted()) {
+            m_pendingSpawn = false;
+        }
         const bool failed = (m_status.state == State::Failed);
         endGeneration();
         if (!m_process) {
+            if (!failed) {
+                publish(State::Closed, Reason::None);
+            }
+            return;
+        }
+        if (asioWanted()) {
+            // Task 15: the helper keeps playing ASIO; only the microphone stops.
+            stopGenerationOnly();
             if (!failed) {
                 publish(State::Closed, Reason::None);
             }
@@ -283,11 +304,78 @@ public:
         }
     }
 
+    // ── ASIO (Task 15) ───────────────────────────────────────────────────────
+
+    void setAsioDemanded(bool demanded)
+    {
+        if (m_shuttingDown || demanded == m_asioDemanded) {
+            return;
+        }
+        m_asioDemanded = demanded;
+        if (demanded) {
+            ensureProcess();
+            return;
+        }
+        m_asioOpen.reset();
+        stopIdleHelper();
+    }
+
+    void describeAsio(const QString& driver)
+    {
+        if (m_shuttingDown) {
+            return;
+        }
+        if (helperMissing()) {
+            P::AsioCapsRecord none;
+            none.driver = driver;
+            m_publishAsioCaps(none);
+            return;
+        }
+        ++m_asioDescribes;
+        sendAsio(P::encodeAsioDescribe(P::AsioDescribe{driver}));
+        ensureProcess();
+    }
+
+    void openAsio(const P::AsioOpen& open)
+    {
+        if (m_shuttingDown) {
+            return;
+        }
+        if (open.uses.isEmpty()) {
+            m_asioOpen.reset();
+        } else {
+            m_asioOpen = open;
+        }
+        if (helperMissing()) {
+            if (!open.uses.isEmpty()) {
+                publishAsioFailure(open.serial, QStringLiteral("the audio helper is not installed"));
+            }
+            return;
+        }
+        if (!m_process && open.uses.isEmpty()) {
+            return;                              // nothing plays, nothing to close
+        }
+        sendAsio(P::encodeAsioOpen(open));
+        ensureProcess();
+    }
+
+    void openAsioControlPanel()
+    {
+        if (m_shuttingDown || !m_process || m_dying) {
+            return;
+        }
+        sendAsio(P::encodeAsioControlPanel());
+    }
+
     // Stops everything; done() runs on this thread once no child is left.
     void beginShutdown(std::function<void()> done)
     {
         m_shuttingDown = true;
         m_demanded = false;
+        m_asioDemanded = false;
+        m_asioOpen.reset();
+        m_pendingAsio.clear();
+        m_asioDescribes = 0;
         m_pendingSpawn = false;
         endGeneration();
         if (!m_process) {
@@ -327,7 +415,11 @@ private:
             m_status.configuredDevice.clear();
             m_status.actualDevice.clear();
             qCInfo(lcAudio) << "capture: no microphone chosen; nothing is opened";
-            beginStop();
+            if (asioWanted()) {
+                stopGenerationOnly();
+            } else {
+                beginStop();
+            }
             publish(State::Closed, Reason::None);
             return;
         }
@@ -393,6 +485,124 @@ private:
         m_status.deviceLatencyMs = 0.0;
         m_status.deviceBufferMs = 0.0;
         m_status.hopMs.reset();
+    }
+
+    // ── ASIO helpers (Task 15) ───────────────────────────────────────────────
+
+    // The helper is wanted for ASIO: a held demand, or a request not yet
+    // answered.
+    bool asioWanted() const
+    {
+        return m_asioDemanded || m_asioDescribes > 0 || !m_pendingAsio.isEmpty();
+    }
+
+    // A running helper is kept (a Stop it was about to get is dropped);
+    // otherwise one is started, or started once the old one has gone.
+    void ensureProcess()
+    {
+        if (m_shuttingDown || helperMissing()) {
+            return;
+        }
+        if (!m_process) {
+            spawn();
+            return;
+        }
+        if (m_dying) {
+            m_pendingSpawn = true;
+            return;
+        }
+        if (m_awaitingStopped) {
+            m_awaitingStopped = false;
+            m_stopTimer->stop();
+        }
+    }
+
+    // Ends the microphone's generation in the helper and keeps it running.
+    void stopGenerationOnly()
+    {
+        if (m_process && !m_dying && m_helloReceived && m_stopGenerationOpen) {
+            write(P::encodeStop(P::Command{m_generation}));
+        }
+        m_stopGenerationOpen = false;
+    }
+
+    // Nothing holds the helper any more: it is stopped as before.
+    void stopIdleHelper()
+    {
+        if (m_demanded || asioWanted() || !m_process || m_dying) {
+            return;
+        }
+        beginStop();
+    }
+
+    void sendAsio(const QByteArray& record)
+    {
+        if (record.isEmpty()) {
+            qCWarning(lcAudio) << "capture: an ASIO request could not be encoded";
+            return;
+        }
+        if (m_process && m_helloReceived && !m_dying) {
+            write(record);
+            return;
+        }
+        m_pendingAsio.append(record);
+    }
+
+    void flushAsio()
+    {
+        const QList<QByteArray> pending = std::move(m_pendingAsio);
+        m_pendingAsio.clear();
+        for (const QByteArray& record : pending) {
+            write(record);
+        }
+    }
+
+    void publishAsioFailure(quint32 serial, const QString& detail)
+    {
+        P::AsioState state;
+        state.serial = serial;
+        state.state = P::AsioStateKind::Failed;
+        state.detail = detail.left(P::kMaxStringChars);
+        m_publishAsioState(state);
+    }
+
+    void handleAsioCaps(const QByteArray& payload)
+    {
+        const auto caps = P::decodeAsioCaps(payload);
+        if (!caps) {
+            protocolError(QStringLiteral("invalid ASIO caps"));
+            return;
+        }
+        if (m_asioDescribes > 0) {
+            --m_asioDescribes;
+        }
+        m_publishAsioCaps(*caps);
+        stopIdleHelper();
+    }
+
+    void handleAsioState(const QByteArray& payload)
+    {
+        const auto state = P::decodeAsioState(payload);
+        if (!state) {
+            protocolError(QStringLiteral("invalid ASIO state"));
+            return;
+        }
+        m_publishAsioState(*state);
+    }
+
+    // The helper ended: requests it never answered are dropped, and an
+    // ASIO open it held is reported failed, so the outputs reopen.
+    void asioAfterProcessGone()
+    {
+        m_asioDescribes = 0;
+        m_pendingAsio.clear();
+        if (m_asioOpen) {
+            const quint32 serial = m_asioOpen->serial;
+            m_asioOpen.reset();
+            if (!m_shuttingDown) {
+                publishAsioFailure(serial, QStringLiteral("the audio helper stopped"));
+            }
+        }
     }
 
     // ── Shared ring (R-AUD-17) ───────────────────────────────────────────────
@@ -783,6 +993,9 @@ private:
             if (m_open && !m_dying) {
                 sendConfigureOpen();
             }
+            if (!m_dying) {
+                flushAsio();
+            }
             return;
         }
         switch (record.type) {
@@ -798,6 +1011,12 @@ private:
             return;
         case P::RecordType::ProbeHit:
             handleProbeHit(record.payload);
+            return;
+        case P::RecordType::AsioCaps:
+            handleAsioCaps(record.payload);
+            return;
+        case P::RecordType::AsioState:
+            handleAsioState(record.payload);
             return;
         default:
             protocolError(QStringLiteral("unexpected record type %1").arg(static_cast<int>(record.type)));
@@ -955,6 +1174,9 @@ private:
         if (!expected && m_demanded && m_open) {
             failGeneration(hadHello ? Reason::HelperExited : Reason::HelperDidNotStart, false);
         }
+        if (!m_pendingSpawn) {
+            asioAfterProcessGone();
+        }
         afterProcessGone();
     }
 
@@ -965,6 +1187,8 @@ private:
         if (m_demanded && m_open) {
             failGeneration(Reason::HelperDidNotStart, false);
         }
+        m_pendingAsio.clear();
+        asioAfterProcessGone();
         afterProcessGone();
     }
 
@@ -995,11 +1219,14 @@ private:
             if (m_status.state != State::Failed) {
                 publish(State::Closed, Reason::None);
             }
-            return;
+            if (!m_pendingSpawn || !asioWanted()) {
+                m_pendingSpawn = false;
+                return;
+            }
         }
         if (m_pendingSpawn) {
             m_pendingSpawn = false;
-            if (m_open) {
+            if (m_open || asioWanted()) {
                 spawn();
             }
         }
@@ -1030,6 +1257,8 @@ private:
     Publish m_publish;
     PublishProbeHit m_publishProbeHit;
     PublishHop m_publishHop;
+    PublishAsioCaps m_publishAsioCaps;
+    PublishAsioState m_publishAsioState;
     std::shared_ptr<HopLog> m_hops;
 
     QTimer* m_helloTimer;                     // Qt parent ownership
@@ -1043,6 +1272,12 @@ private:
     bool m_shuttingDown = false;
     AudioDeviceConfig m_config;
     std::function<void()> m_shutdownDone;
+
+    // ASIO (Task 15).
+    bool m_asioDemanded = false;
+    int m_asioDescribes = 0;                  // describes not yet answered
+    std::optional<P::AsioOpen> m_asioOpen;    // the uses the helper plays
+    QList<QByteArray> m_pendingAsio;          // sent once the helper says hello
 
     // Child process.
     QProcess* m_process = nullptr;            // Qt parent ownership; deleteLater on exit
@@ -1137,6 +1372,8 @@ CaptureSupervisor::CaptureSupervisor(Options options, QObject* parent)
     , m_helperPid(std::make_shared<std::atomic<qint64>>(0))
 {
     qRegisterMetaType<NereusSDR::CaptureSupervisor::Status>();
+    qRegisterMetaType<NereusSDR::CaptureProtocol::AsioCapsRecord>();
+    qRegisterMetaType<NereusSDR::CaptureProtocol::AsioState>();
     if (m_options.program.isEmpty()) {
         // The installed helper beside this executable.  An empty result
         // leaves the program unset, which demand reports as HelperMissing.
@@ -1161,6 +1398,20 @@ CaptureSupervisor::CaptureSupervisor(Options options, QObject* parent)
             QMetaObject::invokeMethod(this, [this, generation, hopMs]() {
                 onWorkerHop(generation, hopMs);
             }, Qt::QueuedConnection);
+        },
+        [this](const P::AsioCapsRecord& caps) {
+            QMetaObject::invokeMethod(this, [this, caps]() {
+                if (!m_shutDown) {
+                    emit asioCaps(caps);
+                }
+            }, Qt::QueuedConnection);
+        },
+        [this](const P::AsioState& state) {
+            QMetaObject::invokeMethod(this, [this, state]() {
+                if (!m_shutDown) {
+                    emit asioState(state);
+                }
+            }, Qt::QueuedConnection);
         });
     m_worker->moveToThread(&m_thread);
     m_thread.start();
@@ -1181,6 +1432,8 @@ const char* demandName(CaptureSupervisor::Demand demand)
         return "Test Mic";
     case CaptureSupervisor::Demand::RemoteWindow:
         return "the remote window's microphone uplink";
+    case CaptureSupervisor::Demand::AsioDevice:
+        return "an ASIO device";
     case CaptureSupervisor::Demand::LocalSession:
         break;
     }
@@ -1198,7 +1451,15 @@ CaptureSupervisor::Lease CaptureSupervisor::acquire(Demand demand)
     m_leases.insert(id, demand);
     qCInfo(lcAudio) << "capture: demand acquired by" << demandName(demand)
                     << "(" << m_leases.size() << "active)";
-    if (m_leases.size() == 1) {
+    if (demand == Demand::AsioDevice) {
+        if (asioLeaseCount() == 1) {
+            CaptureSupervisorWorker* worker = m_worker.get();
+            QMetaObject::invokeMethod(worker, [worker]() { worker->setAsioDemanded(true); },
+                                      Qt::QueuedConnection);
+        }
+        return Lease(this, id);
+    }
+    if (micLeaseCount() == 1) {
         const quint64 request = ++m_requestSerial;
         CaptureSupervisorWorker* worker = m_worker.get();
         QMetaObject::invokeMethod(worker, [worker, request]() { worker->setDemanded(true, request); },
@@ -1217,11 +1478,65 @@ void CaptureSupervisor::releaseLease(quint64 id)
     m_leases.erase(it);
     qCInfo(lcAudio) << "capture: demand released by" << demandName(demand)
                     << "(" << m_leases.size() << "active)";
-    if (m_leases.isEmpty() && !m_shutDown) {
-        CaptureSupervisorWorker* worker = m_worker.get();
+    if (m_shutDown) {
+        return;
+    }
+    CaptureSupervisorWorker* worker = m_worker.get();
+    if (demand == Demand::AsioDevice) {
+        if (asioLeaseCount() == 0) {
+            QMetaObject::invokeMethod(worker, [worker]() { worker->setAsioDemanded(false); },
+                                      Qt::QueuedConnection);
+        }
+        return;
+    }
+    if (micLeaseCount() == 0) {
         QMetaObject::invokeMethod(worker, [worker]() { worker->setDemanded(false, 0); },
                                   Qt::QueuedConnection);
     }
+}
+
+int CaptureSupervisor::micLeaseCount() const
+{
+    return static_cast<int>(m_leases.size()) - asioLeaseCount();
+}
+
+int CaptureSupervisor::asioLeaseCount() const
+{
+    int count = 0;
+    for (const Demand demand : m_leases) {
+        count += demand == Demand::AsioDevice ? 1 : 0;
+    }
+    return count;
+}
+
+void CaptureSupervisor::describeAsio(const QString& driver)
+{
+    if (m_shutDown) {
+        return;
+    }
+    CaptureSupervisorWorker* worker = m_worker.get();
+    QMetaObject::invokeMethod(worker, [worker, driver]() { worker->describeAsio(driver); },
+                              Qt::QueuedConnection);
+}
+
+void CaptureSupervisor::openAsio(const CaptureProtocol::AsioOpen& open)
+{
+    if (m_shutDown) {
+        return;
+    }
+    CaptureSupervisorWorker* worker = m_worker.get();
+    QMetaObject::invokeMethod(worker, [worker, open]() { worker->openAsio(open); },
+                              Qt::QueuedConnection);
+}
+
+void CaptureSupervisor::openAsioControlPanel()
+{
+    if (m_shutDown) {
+        return;
+    }
+    CaptureSupervisorWorker* worker = m_worker.get();
+    QMetaObject::invokeMethod(worker, [worker]() { worker->openAsioControlPanel(); },
+                              Qt::QueuedConnection);
 }
 
 bool CaptureSupervisor::hasLease(quint64 id) const

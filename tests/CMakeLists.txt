@@ -1949,6 +1949,22 @@ if(WIN32)
         ${CMAKE_SOURCE_DIR}/src/core/audio/DeviceRateMatcher.cpp)
 endif()
 
+# Native audio plan Task 15 (V-SW-7): the ASIO session rules, the buffer
+# switch and the window's AsioBackend with FakeAsioDriver and a fake helper
+# link only; no ASIO driver, sound device or helper is touched.  On Windows
+# the session and what its buffer switch calls are compiled into the test,
+# for the allocation hook (as tst_device_rate_matcher_threads above).
+nereus_add_test(tst_asio_session)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(tst_asio_session PRIVATE ${CMAKE_DL_LIBS})
+endif()
+if(WIN32)
+    target_sources(tst_asio_session PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/core/audio/AsioSession.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/audio/DeviceSampleFormat.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/audio/DeviceRateMatcher.cpp)
+endif()
+
 # R-R3-36 Task 5: AudioEngine and RadioModel PC microphone session demand.
 # start() opens no input; a hanging helper never delays start, connect or
 # disconnect; the local session holds a capture lease only while PC mic is

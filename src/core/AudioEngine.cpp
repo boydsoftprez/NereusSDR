@@ -280,6 +280,11 @@
 //                 AI-assisted via Anthropic Claude Code. Every speakers open
 //                 bumps the workgroup generation the DSP thread follows.
 //                 NereusSDR-original.
+//   2026-10-09: native audio plan Task 15 (R-AUD-19, R-AUD-22) by J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code. The
+//                 ASIO backend reaches the mic helper through the capture
+//                 supervisor, and an ASIO output holds Demand::AsioDevice
+//                 so the helper runs with the PC mic off. NereusSDR-original.
 // =================================================================
 
 #include "AudioEngine.h"
@@ -288,6 +293,7 @@
 #include "AppSettings.h"
 #include "LogCategories.h"
 #include "WdspEngine.h"       // rxChannel(0) lookup
+#include "audio/AsioBackend.h"
 #include "audio/AudioDeviceCatalog.h"
 #include "audio/AudioDeviceMatching.h"
 #include "audio/AudioStreamSupervisor.h"
@@ -556,6 +562,11 @@ AudioEngine::~AudioEngine()
     // (m_pwLoop declared LAST → destroyed LAST) is the second line of defense.
     // See AudioEngine.h §"FORWARD CONTRACT #1 — DECLARED LAST".
     stop();
+    // The ASIO backend's link calls into this engine; it goes first.
+    if (AsioBackend* const asio = asioBackend()) {
+        asio->setHelperLink({});
+    }
+    m_asioLease.release();
     // Bounded (stop deadline plus slack); kills a helper that ignores Stop.
     if (m_captureSupervisor) {
         m_captureSupervisor->shutdown();
@@ -1371,8 +1382,26 @@ void AudioEngine::ensureSpeakersOpen()
 
 void AudioEngine::installCaptureSupervisor(CaptureSupervisor::Options options)
 {
+    m_asioLease.release();
     m_captureSupervisor.reset();
     m_captureSupervisor = std::make_unique<CaptureSupervisor>(std::move(options));
+    // Task 15: the helper's ASIO answers go to the ASIO backend; a held
+    // ASIO demand moves to the new supervisor.
+    connect(m_captureSupervisor.get(), &CaptureSupervisor::asioCaps, this,
+            [this](const CaptureProtocol::AsioCapsRecord& caps) {
+                if (AsioBackend* const asio = asioBackend()) {
+                    asio->onAsioCaps(caps);
+                }
+            });
+    connect(m_captureSupervisor.get(), &CaptureSupervisor::asioState, this,
+            [this](const CaptureProtocol::AsioState& state) {
+                if (AsioBackend* const asio = asioBackend()) {
+                    asio->onAsioState(state);
+                }
+            });
+    if (m_asioDemanded) {
+        m_asioLease = m_captureSupervisor->acquire(CaptureSupervisor::Demand::AsioDevice);
+    }
     connect(m_captureSupervisor.get(), &CaptureSupervisor::statusChanged,
             this, &AudioEngine::captureStatusChanged);
     // Native audio plan Task 7: the PC mic role follows the capture status.
@@ -1468,6 +1497,66 @@ CaptureSupervisor::Status AudioEngine::captureStatus() const
 bool AudioEngine::isCaptureReaderOpen() const
 {
     return m_captureSupervisor != nullptr && m_captureSupervisor->reader()->isOpen();
+}
+
+AsioBackend* AudioEngine::asioBackend() const
+{
+    for (const std::shared_ptr<IAudioEngineBackend>& backend : m_backends) {
+        if (backend && backend->id() == AudioBackendId::Asio) {
+            return dynamic_cast<AsioBackend*>(backend.get());
+        }
+    }
+    return nullptr;
+}
+
+// Task 15 (R-AUD-19, R-AUD-22): the ASIO backend reaches the helper through
+// the capture supervisor.  Its calls may come from any thread, so each is
+// queued to this engine's thread and finds the supervisor there.
+void AudioEngine::linkAsioBackend()
+{
+    AsioBackend* const asio = asioBackend();
+    if (asio == nullptr) {
+        return;
+    }
+    AsioHelperLink link;
+    link.describe = [this](const QString& driver) {
+        QMetaObject::invokeMethod(this, [this, driver]() {
+            if (m_captureSupervisor) {
+                m_captureSupervisor->describeAsio(driver);
+            }
+        }, Qt::QueuedConnection);
+    };
+    link.open = [this](const CaptureProtocol::AsioOpen& open) {
+        QMetaObject::invokeMethod(this, [this, open]() {
+            if (m_captureSupervisor) {
+                m_captureSupervisor->openAsio(open);
+            }
+        }, Qt::QueuedConnection);
+    };
+    link.openControlPanel = [this]() {
+        QMetaObject::invokeMethod(this, [this]() {
+            if (m_captureSupervisor) {
+                m_captureSupervisor->openAsioControlPanel();
+            }
+        }, Qt::QueuedConnection);
+    };
+    link.setDemanded = [this](bool demanded) {
+        QMetaObject::invokeMethod(this, [this, demanded]() { setAsioDemanded(demanded); },
+                                  Qt::QueuedConnection);
+    };
+    asio->setHelperLink(std::move(link));
+}
+
+void AudioEngine::setAsioDemanded(bool demanded)
+{
+    m_asioDemanded = demanded;
+    if (!demanded) {
+        m_asioLease.release();
+        return;
+    }
+    if (m_captureSupervisor && !m_asioLease.isActive()) {
+        m_asioLease = m_captureSupervisor->acquire(CaptureSupervisor::Demand::AsioDevice);
+    }
 }
 
 CaptureSupervisor::Lease AudioEngine::acquireCaptureDemand(CaptureSupervisor::Demand demand)
@@ -1586,6 +1675,7 @@ bool AudioEngine::ensureAudioDevices(DeviceStart start)
     if (m_backends.empty()) {
         m_backends = makeSystemAudioBackends(m_backendContext);
     }
+    linkAsioBackend();
     m_defaultEngine = defaultAudioEngine(m_backends);
 
     // R-AUD-05: the saved device keys gain their engine before anything
