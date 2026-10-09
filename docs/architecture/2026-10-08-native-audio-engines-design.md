@@ -1,6 +1,6 @@
 # Native audio engines and live device lists
 
-Status: draft for JJ's review, October 8, 2026. JJ settled the decisions
+Status: approved by JJ, October 8, 2026; plan in `2026-10-08-native-audio-engines-plan.md`. JJ settled the decisions
 below in a brainstorm on October 7 and 8, 2026, partly by looking at the
 mockups in `2026-10-08-native-audio-engines-design/`, and called for this
 spec on October 8. Nothing in it is built. It builds on the radio speaker
