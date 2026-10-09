@@ -1,5 +1,14 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-09: Review fixes: a run that carried a program's audio stays
+//               off the microphone until the line stops or a screen key or
+//               VOX wants it (programRun), so the unkey edge never sends
+//               it; a program key keeps a lease VOX or preview holds; the
+//               capture retries only when someone already held capture
+//               demand (hasCaptureDemand); the silence state resets with
+//               the line, the media connection and the quality.
+//               dropMediaPeerForTest. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-08: TCI program keys that bring their own audio (a trx with
 //               ",tci"): the microphone line carries the program's audio
 //               or silence at the line's real-time rate, paced by the
@@ -7,13 +16,6 @@
 //               a capture in Failed retries once when a key starts the
 //               line with the microphone. setMicClockForTest. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
-//   2026-10-09: Review fixes: a run that carried a program's audio stays
-//               off the microphone until the line stops or a screen key or
-//               VOX wants it (programRun), so the unkey edge never sends
-//               it; a program key keeps a lease VOX or preview holds; the
-//               capture retries only when the lease was already held; the
-//               silence state resets with the line and the quality.
-//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07: R-R3-21, R-R3-51: a no-packets restart while the Core
 //               transmits is the Core's expected receive silence, not an
 //               outage: the speakers and the headphones mix stop and wait
@@ -2632,6 +2634,12 @@ void RemoteMediaController::reconcileMicUplink()
     // VOX or preview already holds (its samples are drained and dropped).
     const bool keepLease = wanted && programAudio;
     const bool leaseWasActive = d->micLease.isActive();
+    // 2026-10-09: read before the acquire. A first lease opens a new
+    // generation by itself; with demand already held (this window's
+    // preview, Test Mic, a local session) only a retry does.
+    const bool demandBefore = d->model->audioEngine()->hasCaptureDemand();
+    const bool captureFailedBefore = d->model->audioEngine()->captureStatus().state
+        == CaptureSupervisor::Status::State::Failed;
     if (captureWanted && !leaseWasActive) {
         d->micLease = d->model->audioEngine()->acquireCaptureDemand(
             CaptureSupervisor::Demand::RemoteWindow);
@@ -2650,11 +2658,10 @@ void RemoteMediaController::reconcileMicUplink()
                                                    : "with the microphone");
             // 2026-10-08: a capture that failed earlier never comes back by
             // itself; a key that will send the microphone asks once.
-            // 2026-10-09: only when the lease was already held: acquiring
-            // it from no demand starts a new generation by itself.
-            retryCapture = !programAudio && leaseWasActive
-                && d->model->audioEngine()->captureStatus().state
-                       == CaptureSupervisor::Status::State::Failed;
+            // 2026-10-09: only when capture demand was already held:
+            // acquiring it from no demand starts a new generation by
+            // itself. Both are read before the acquire.
+            retryCapture = !programAudio && demandBefore && captureFailedBefore;
         } else {
             d->micPending.clear();
             d->programPending.clear();
@@ -2748,6 +2755,13 @@ void RemoteMediaController::setMicClockForTest(std::function<qint64()> clock)
 bool RemoteMediaController::micCaptureLeaseHeldForTest() const
 {
     return d->micLease.isActive();
+}
+
+void RemoteMediaController::dropMediaPeerForTest()
+{
+    if (d->peer) {
+        emit d->peer->closed();
+    }
 }
 
 void RemoteMediaController::queueProgramSilence(qint64 nowMs)

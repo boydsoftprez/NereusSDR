@@ -9,8 +9,8 @@
 //               once on a key that sends the microphone.
 //               setMicClockForTest. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
-//   2026-10-09: micCaptureLeaseHeldForTest. J.J. Boyd (KG4VCF),
-//               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: micCaptureLeaseHeldForTest, dropMediaPeerForTest. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07: R-R3-21, R-R3-51: raiseAudioRestartForTest, and a
 //               no-packets restart while the Core transmits waits for the
 //               unkey, which asks for audio at once. J.J. Boyd (KG4VCF),
@@ -512,6 +512,10 @@ public:
     /// Test only: whether the microphone line holds its capture lease
     /// (2026-10-09). No production caller.
     bool micCaptureLeaseHeldForTest() const;
+    /// Test only: the current media peer reports itself closed, as a lost
+    /// media connection does, while the control session stays up
+    /// (2026-10-09). No production caller.
+    void dropMediaPeerForTest();
     /// iPhone app plan Task 29 fix wave (review Important 1): media follows
     /// every move of the session. A move marks a replacement pending; it
     /// starts as soon as it can (the media connection ready, unkeyed, VOX
