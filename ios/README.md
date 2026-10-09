@@ -91,7 +91,7 @@ from an empty cache.
 
 `ios/scripts/archive.sh` makes the Release archive for TestFlight and the App
 Store, from phone main only: its build number is the commit count of HEAD
-(`build-number.sh`), its version is `project.yml`'s, and its name comes from
+plus 1000 (`build-number.sh`), its version is `project.yml`'s, and its name comes from
 `build-tag.sh`. It refuses uncommitted changes to tracked files and a build
 name that does not name HEAD, so every archive is a commit. It writes `ios/.build/archive/NereusSDR <version> (<build>).xcarchive`
 and stops if the archived app has no privacy manifest. It signs with the

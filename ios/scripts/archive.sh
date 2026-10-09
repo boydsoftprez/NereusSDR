@@ -9,7 +9,7 @@
 # The archive carries:
 #
 #   * its build number, CURRENT_PROJECT_VERSION, from build-number.sh: the
-#     commit count of HEAD (D132), so every archive from a newer commit
+#     commit count of HEAD plus 1000 (D132), so every archive from a newer commit
 #     carries a larger number, as TestFlight asks. An archive needs one, so
 #     this stops when there is no git repository to count;
 #   * its version, MARKETING_VERSION, as project.yml sets it;
