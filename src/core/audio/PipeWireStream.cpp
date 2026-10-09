@@ -8,6 +8,12 @@
 //                 frames the graph asked for (pw_buffer::requested), not
 //                 the whole buffer. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 10 (R-AUD-07, R-AUD-15): the
+//                 matcher output and input sink modes, audio.position and
+//                 stream.dont-remix from StreamConfig, the graph's quantum
+//                 from the position io and the device delay from
+//                 pw_stream_get_time_n. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 #ifdef NEREUS_HAVE_PIPEWIRE
 #include "core/audio/PipeWireStream.h"
@@ -15,18 +21,62 @@
 #include <QLoggingCategory>
 #include <pipewire/keys.h>
 
+#include <spa/param/audio/type-info.h>
+
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <pthread.h>
 #include <sched.h>
 #include <time.h>
 
+#include "core/audio/AudioDelayProbe.h"
+#include "core/audio/DeviceSampleFormat.h"
 #include "core/audio/PipeWireOutputFrames.h"
 #include "core/audio/PipeWireThreadLoop.h"
 
 Q_DECLARE_LOGGING_CATEGORY(lcPw)
 
 namespace NereusSDR {
+
+namespace {
+
+// The SPA channel for a position's short name ("FL", "AUX3"), from SPA's
+// own table; SPA_AUDIO_CHANNEL_UNKNOWN for a name it does not hold.
+uint32_t spaChannelForName(const QString& name)
+{
+    const QByteArray wanted = name.trimmed().toUtf8();
+    for (const spa_type_info* info = spa_type_audio_channel; info->name != nullptr; ++info) {
+        const char* shortName = std::strrchr(info->name, ':');
+        shortName = shortName ? shortName + 1 : info->name;
+        if (wanted == shortName) {
+            return info->type;
+        }
+    }
+    return SPA_AUDIO_CHANNEL_UNKNOWN;
+}
+
+} // namespace
+
+void pipeWireFillFromMatcher(MatcherReader& reader, float* scratch, int scratchFrames,
+                             float* dst, int frames, int channels, AudioChannelPair pair)
+{
+    if (dst == nullptr || frames <= 0 || channels <= 0) {
+        return;
+    }
+    if (!reader.valid() || scratch == nullptr || scratchFrames <= 0) {
+        std::memset(dst, 0, sizeof(float) * size_t(frames) * size_t(channels));
+        return;
+    }
+    int done = 0;
+    while (done < frames) {
+        const int n = std::min(frames - done, scratchFrames);
+        reader.read(scratch, n);
+        writeStereoToDevice(scratch, n, dst + std::ptrdiff_t(done) * channels,
+                            DeviceSampleFormat::Float32, channels, pair, true, nullptr);
+        done += n;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // configToProperties — pure, unit-testable (no daemon required).
@@ -72,7 +122,12 @@ pw_properties* configToProperties(const StreamConfig& cfg)
     // them WSJT-X / fldigi can see us in `wpctl status` but we don't
     // appear in their device dropdowns (which enumerate ALSA PCMs).
     pw_properties_setf(p, PW_KEY_AUDIO_CHANNELS, "%u", cfg.channels);
-    if (cfg.channels == 2) {
+    if (!cfg.audioPosition.isEmpty()) {
+        // Native audio plan Task 10 (R-AUD-07): a device stream on an
+        // interface takes the node's own positions.
+        pw_properties_set(p, "audio.position",
+                          cfg.audioPosition.join(QLatin1Char(',')).toUtf8().constData());
+    } else if (cfg.channels == 2) {
         pw_properties_set(p, "audio.position", "FL,FR");
     } else if (cfg.channels == 1) {
         pw_properties_set(p, "audio.position", "MONO");
@@ -83,6 +138,11 @@ pw_properties* configToProperties(const StreamConfig& cfg)
     // through the session manager / ALSA bridge."
     if (isVirtualSource) {
         pw_properties_set(p, "node.virtual", "true");
+    }
+
+    // Native audio plan Task 10 (R-AUD-07): the pair stays on its channels.
+    if (cfg.dontRemix) {
+        pw_properties_set(p, "stream.dont-remix", "true");
     }
 
     return p;
@@ -98,6 +158,56 @@ PipeWireStream::PipeWireStream(PipeWireThreadLoop* loop,
 PipeWireStream::~PipeWireStream() { close(); }
 
 // ---------------------------------------------------------------------------
+// Device modes (native audio plan Task 10)
+// ---------------------------------------------------------------------------
+void PipeWireStream::setMatcherReader(MatcherReader reader)
+{
+    if (m_stream) {
+        qCWarning(lcPw) << "setMatcherReader() after open():" << m_cfg.nodeName;
+        return;
+    }
+    m_matcherReader = std::move(reader);
+    m_matcherMode = m_matcherReader.valid();
+    m_stereoScratch.assign(size_t(2 * kPipeWireDeviceChunkFrames), 0.0f);
+}
+
+void PipeWireStream::setInputSink(IAudioInputSink* sink, MicChannelPick pick)
+{
+    if (m_stream) {
+        qCWarning(lcPw) << "setInputSink() after open():" << m_cfg.nodeName;
+        return;
+    }
+    m_inputSink = sink;
+    m_micPick = pick;
+    m_stereoScratch.assign(size_t(2 * kPipeWireDeviceChunkFrames), 0.0f);
+}
+
+int PipeWireStream::graphQuantumFrames() const
+{
+    return m_graphQuantum.load(std::memory_order_relaxed);
+}
+
+std::int64_t PipeWireStream::deviceDelayNs() const
+{
+    return m_deviceDelayNs.load(std::memory_order_relaxed);
+}
+
+void PipeWireStream::requestFadeOut()
+{
+    if (m_matcherReader.valid()) {
+        m_matcherReader.requestFadeOut();
+    }
+}
+
+bool PipeWireStream::fadedOut() const
+{
+    if (!m_stream || !m_matcherReader.valid()) {
+        return true;
+    }
+    return m_matcherReader.fadedOut();
+}
+
+// ---------------------------------------------------------------------------
 // open() — Step 1
 // ---------------------------------------------------------------------------
 bool PipeWireStream::open()
@@ -110,7 +220,7 @@ bool PipeWireStream::open()
         .destroy       = nullptr,
         .state_changed = &PipeWireStream::onStateChangedCb,
         .control_info  = nullptr,
-        .io_changed    = nullptr,
+        .io_changed    = &PipeWireStream::onIoChangedCb,
         .param_changed = &PipeWireStream::onParamChangedCb,
         .add_buffer    = nullptr,
         .remove_buffer = nullptr,
@@ -149,8 +259,18 @@ bool PipeWireStream::open()
     info.format     = SPA_AUDIO_FORMAT_F32_LE;
     info.channels   = m_cfg.channels;
     info.rate       = m_cfg.rate;
-    info.position[0] = SPA_AUDIO_CHANNEL_FL;
-    info.position[1] = SPA_AUDIO_CHANNEL_FR;
+    if (!m_cfg.audioPosition.isEmpty()) {
+        // Native audio plan Task 10 (R-AUD-07): the node's own positions.
+        const int n = std::min<int>(int(m_cfg.channels), SPA_AUDIO_MAX_CHANNELS);
+        for (int i = 0; i < n; ++i) {
+            info.position[i] = i < m_cfg.audioPosition.size()
+                ? spaChannelForName(m_cfg.audioPosition.at(i))
+                : uint32_t(SPA_AUDIO_CHANNEL_UNKNOWN);
+        }
+    } else {
+        info.position[0] = SPA_AUDIO_CHANNEL_FL;
+        info.position[1] = SPA_AUDIO_CHANNEL_FR;
+    }
     const spa_pod* params[1];
     params[0] = spa_format_audio_raw_build(&b, SPA_PARAM_EnumFormat, &info);
 
@@ -189,6 +309,7 @@ void PipeWireStream::close()
     m_stream = nullptr;
     spa_hook_remove(&m_listener);
     m_loop->unlock();
+    m_position.store(nullptr, std::memory_order_release);
     m_streamState.store(int(PW_STREAM_STATE_UNCONNECTED), std::memory_order_relaxed);
 }
 
@@ -326,16 +447,147 @@ void PipeWireStream::onParamChangedCb(void* /*userData*/, uint32_t /*id*/,
                                       const spa_pod* /*param*/)
 {
     // TODO(task 10): extract quantum when SPA_PARAM_Latency arrives.
+    // Native audio plan Task 10: the device modes read the graph's quantum
+    // from the position io's duration instead (onIoChangedCb,
+    // publishGraphTiming), which is the cycle the graph really runs.
+}
+
+// The graph's position io (SPA_IO_Position), read by the device modes'
+// process callbacks for the cycle's duration.  Null when it is removed.
+void PipeWireStream::onIoChangedCb(void* userData, uint32_t id, void* area,
+                                   uint32_t size)
+{
+    auto* self = static_cast<PipeWireStream*>(userData);
+    if (id != SPA_IO_Position) {
+        return;
+    }
+    auto* position = (area != nullptr && size >= sizeof(spa_io_position))
+        ? static_cast<spa_io_position*>(area) : nullptr;
+    self->m_position.store(position, std::memory_order_release);
 }
 
 void PipeWireStream::onProcessCb(void* userData)
 {
     auto* self = static_cast<PipeWireStream*>(userData);
     if (self->m_cfg.direction == StreamConfig::Output) {
+        if (self->m_matcherMode) {
+            self->onProcessMatcherOutput();
+            return;
+        }
         self->onProcessOutput();
     } else {
+        if (self->m_inputSink != nullptr) {
+            self->onProcessSinkInput();
+            return;
+        }
         self->onProcessInput();   // Task 11
     }
+}
+
+// ---------------------------------------------------------------------------
+// Device modes' process callbacks (native audio plan Task 10, R-AUD-15).
+// PipeWire's data thread, with PipeWire's own loop lock held around the
+// call.  They take no lock of ours, allocate nothing (the scratch was sized
+// before open()), log nothing and make no call but PipeWire's own buffer
+// and time calls; unlike the VAX paths they post no telemetry.
+// ---------------------------------------------------------------------------
+
+// The graph's quantum (the position's duration, else the frames this cycle
+// asked for) and the device delay, for the delay readout.
+void PipeWireStream::publishGraphTiming(const pw_buffer* b)
+{
+    const spa_io_position* position = m_position.load(std::memory_order_acquire);
+    uint64_t quantum = position ? position->clock.duration : 0;
+    if (quantum == 0 && b != nullptr) {
+        quantum = b->requested;
+    }
+    if (quantum > 0) {
+        m_graphQuantum.store(int(std::min<uint64_t>(quantum, 1u << 20)),
+                             std::memory_order_relaxed);
+    }
+    pw_time t{};
+    if (pw_stream_get_time_n(m_stream, &t, sizeof(t)) == 0 && t.rate.denom > 0) {
+        // pw_time::delay is in units of t.rate (as maybeEmitTelemetry reads it).
+        const double delayNs = double(t.delay) * 1e9 * double(t.rate.num)
+                             / double(t.rate.denom);
+        m_deviceDelayNs.store(std::int64_t(std::max(0.0, delayNs)),
+                              std::memory_order_relaxed);
+    }
+}
+
+void PipeWireStream::onProcessMatcherOutput()
+{
+    pw_buffer* b = pw_stream_dequeue_buffer(m_stream);
+    if (!b) { m_xruns.fetch_add(1, std::memory_order_relaxed); return; }
+
+    spa_buffer* sb = b->buffer;
+    if (!sb || !sb->datas[0].data || !sb->datas[0].chunk) {
+        // The same negotiation-phase guard as onProcessOutput.
+        pw_stream_queue_buffer(m_stream, b);
+        return;
+    }
+    const uint32_t frameBytes = uint32_t(sizeof(float) * m_cfg.channels);
+    const uint32_t frames = pipeWireOutputFrames(b->requested, sb->datas[0].maxsize, frameBytes);
+    if (frames == 0) {
+        pw_stream_queue_buffer(m_stream, b);
+        return;
+    }
+
+    pipeWireFillFromMatcher(m_matcherReader, m_stereoScratch.data(),
+                            kPipeWireDeviceChunkFrames,
+                            static_cast<float*>(sb->datas[0].data), int(frames),
+                            int(m_cfg.channels), m_cfg.pair);
+    m_outputConsumedFrames.fetch_add(frames, std::memory_order_relaxed);
+    m_outputCallbackFrames.store(int(frames), std::memory_order_relaxed);
+
+    sb->datas[0].chunk->offset = 0;
+    sb->datas[0].chunk->stride = int32_t(frameBytes);
+    sb->datas[0].chunk->size   = frames * frameBytes;
+    pw_stream_queue_buffer(m_stream, b);
+
+    publishGraphTiming(b);
+}
+
+void PipeWireStream::onProcessSinkInput()
+{
+    pw_buffer* b = pw_stream_dequeue_buffer(m_stream);
+    if (!b) { m_xruns.fetch_add(1, std::memory_order_relaxed); return; }
+
+    const spa_buffer* sb = b->buffer;
+    if (!sb || !sb->datas[0].data || !sb->datas[0].chunk) {
+        pw_stream_queue_buffer(m_stream, b);
+        return;
+    }
+    const uint32_t frameBytes = uint32_t(sizeof(float) * m_cfg.channels);
+    const uint32_t maxsize = sb->datas[0].maxsize;
+    const uint32_t offset = std::min(sb->datas[0].chunk->offset, maxsize);
+    const uint32_t size = std::min(sb->datas[0].chunk->size, maxsize - offset);
+    const int frames = frameBytes > 0 ? int(size / frameBytes) : 0;
+    if (frames <= 0 || m_cfg.rate == 0) {
+        pw_stream_queue_buffer(m_stream, b);
+        return;
+    }
+
+    publishGraphTiming(b);
+    const auto* src = static_cast<const uint8_t*>(sb->datas[0].data) + offset;
+    const double nsPerFrame = 1e9 / double(m_cfg.rate);
+    const std::int64_t delayNs = std::max<std::int64_t>(
+        0, m_deviceDelayNs.load(std::memory_order_relaxed));
+    // Frame 0 was captured the device delay plus this buffer's length ago.
+    const std::int64_t frame0Ns = audioProbeNowNs() - delayNs
+                                - std::int64_t(double(frames) * nsPerFrame);
+    float* const stereo = m_stereoScratch.data();
+    int done = 0;
+    while (done < frames) {
+        const int n = std::min(frames - done, kPipeWireDeviceChunkFrames);
+        readDeviceToStereo(src + size_t(done) * frameBytes, nullptr, true,
+                           DeviceSampleFormat::Float32, int(m_cfg.channels),
+                           m_cfg.pair, m_micPick, n, stereo);
+        m_inputSink->onInput(stereo, n, int(m_cfg.rate),
+                             frame0Ns + std::int64_t(double(done) * nsPerFrame));
+        done += n;
+    }
+    pw_stream_queue_buffer(m_stream, b);
 }
 
 // One-shot RT-scheduling probe on the pw data thread — this is the
