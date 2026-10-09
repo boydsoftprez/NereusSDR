@@ -97,6 +97,12 @@ name that does not name HEAD, so every archive is a commit. It writes `ios/.buil
 and stops if the archived app has no privacy manifest. It signs with the
 team’s certificate, so only the controller or JJ runs it.
 
+Upload the archive with Organizer's **App Store Connect** choice, or with
+`xcodebuild -exportArchive -exportOptionsPlist ios/Config/ExportOptions.plist`.
+Never choose **TestFlight Internal Only**: App Store Connect keeps such a build
+out of external testing groups, the public TestFlight link and App Store review
+for good, and the only way back is a new archive from a newer commit.
+
 ## Testing
 
 ```sh

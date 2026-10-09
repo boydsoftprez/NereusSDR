@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  NereusSDR for iOS: how an archive from ios/scripts/archive.sh is uploaded
+  SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+
+  Usage: xcodebuild -exportArchive -archivePath <archive>
+             -exportOptionsPlist ios/Config/ExportOptions.plist
+             -exportPath ios/.build/export -allowProvisioningUpdates
+
+  This is Organizer's "App Store Connect" choice, never "TestFlight Internal
+  Only" (testFlightInternalTestingOnly). App Store Connect keeps an
+  internal-only build out of external testing groups, the public TestFlight
+  link and App Store review for good, and a build number cannot be uploaded
+  twice, so a build sent that way has to be archived again from a newer
+  commit.
+
+  The build number stays the one archive.sh set (the commit count of HEAD),
+  so Xcode is not allowed to renumber it.
+-->
+<plist version="1.0">
+<dict>
+    <key>method</key>
+    <string>app-store-connect</string>
+    <key>destination</key>
+    <string>upload</string>
+    <key>signingStyle</key>
+    <string>automatic</string>
+    <key>manageAppVersionAndBuildNumber</key>
+    <false/>
+    <key>uploadSymbols</key>
+    <true/>
+</dict>
+</plist>

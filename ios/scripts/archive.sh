@@ -28,7 +28,10 @@
 #
 # The archive is written to ios/.build/archive/NereusSDR <version> (<build>).xcarchive,
 # with its derived data in ios/.build/archive-dd. Xcode's Organizer, or
-# xcodebuild -exportArchive, uploads it. Then the archived app is checked
+# xcodebuild -exportArchive with ios/Config/ExportOptions.plist, uploads it.
+# In Organizer, choose App Store Connect, never TestFlight Internal Only:
+# an internal-only build can never reach external testers, the public
+# TestFlight link or the App Store. Then the archived app is checked
 # for its privacy manifest, PrivacyInfo.xcprivacy, without which App Store
 # Connect refuses the upload (ITMS-91053); this stops if it is missing.
 #
@@ -111,3 +114,5 @@ app="$archive/Products/Applications/NereusSDR.app"
     || fail "the archived app has no PrivacyInfo.xcprivacy; App Store Connect would refuse it."
 
 echo "Archived NereusSDR $version ($number): $archive"
+echo "Upload it with Organizer's App Store Connect choice (not TestFlight Internal Only), or:"
+echo "  xcodebuild -exportArchive -archivePath \"$archive\" -exportOptionsPlist \"$ios_dir/Config/ExportOptions.plist\" -exportPath \"$ios_dir/.build/export\" -allowProvisioningUpdates"
