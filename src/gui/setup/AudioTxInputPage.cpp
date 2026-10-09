@@ -40,6 +40,9 @@
 // role's state. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // Fix round (R-AUD-09, R-AUD-11): the status line reads "PC mic not
 // connected" (or in use) in amber while the chosen mic is.
+// Fix round 2 (R-AUD-09, R-AUD-11, R-AUD-24): Retry microphone is greyed,
+// with its reason, for a mic not connected or in use, which resumes by
+// itself; it stays for other mic failures.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; no Thetis logic ported here.
@@ -359,8 +362,18 @@ void AudioTxInputPage::refreshCaptureStatus()
             missing.isEmpty() ? QString() : QStringLiteral("QLabel { color: #e0a030; }"));
     }
     if (m_retryCaptureBtn) {
-        m_retryCaptureBtn->setEnabled(
-            eng != nullptr && status.state == CaptureSupervisor::Status::State::Failed);
+        // R-AUD-09, R-AUD-11, R-AUD-24: a mic not connected or in use by
+        // another program resumes by itself when it comes back; "Retry stays
+        // for other mic failures".
+        using Reason = CaptureSupervisor::Status::Reason;
+        const bool resumesByItself = status.reason == Reason::DeviceNotFound
+                                     || status.reason == Reason::DeviceInUse;
+        const bool failed = status.state == CaptureSupervisor::Status::State::Failed;
+        m_retryCaptureBtn->setEnabled(eng != nullptr && failed && !resumesByItself);
+        m_retryCaptureBtn->setToolTip(
+            failed && resumesByItself
+                ? QStringLiteral("The mic resumes by itself when it comes back.")
+                : QString());
     }
 }
 
