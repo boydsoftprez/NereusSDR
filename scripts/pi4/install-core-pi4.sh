@@ -99,6 +99,18 @@ else
 fi
 if ldd /usr/local/bin/nereusd | grep -q 'not found'; then echo 'installed nereusd has unresolved libraries'; exit 1; fi
 /usr/local/bin/nereusd --help > "$keep/installed-help.txt"
+# Sound cards: the unit runs as a DynamicUser account with no groups, so a
+# drop-in grants the audio group, as the station images do
+# (packaging/station-image/common/nereusd-audio.conf).
+audio_dropin=/etc/systemd/system/nereusd.service.d/audio.conf
+install -d -m 755 /etc/systemd/system/nereusd.service.d
+cat > "$audio_dropin" <<'AUDIO'
+# Sound cards on a Core: /dev/snd/* is root:audio on Debian, and a DynamicUser
+# account has no groups of its own.
+[Service]
+SupplementaryGroups=audio
+AUDIO
+chmod 644 "$audio_dropin"
 systemd-analyze verify /usr/lib/systemd/system/nereusd.service
 sha256sum /usr/local/bin/nereusd /usr/local/lib/libNereusCore.so /usr/local/lib/librade.so.0.1 \
     /usr/lib/systemd/system/nereusd.service /etc/nereusd.conf \
