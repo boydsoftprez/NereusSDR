@@ -10,6 +10,11 @@
 //               priority refusal notice and the generic warning is not
 //               added on top of it (R-R3-41). AI-assisted implementation
 //               via Anthropic Claude Code.
+//   2026-10-09  J.J. Boyd (KG4VCF): rejoinAudioWorkgroup() and
+//               audioPriorityTokenInWorkgroup(), so the DSP thread follows
+//               the workgroup of the device the speakers play on (native
+//               audio plan Task 8, R-AUD-18). AI-assisted implementation
+//               via Anthropic Claude Code.
 // =================================================================
 #include "RealtimeAudioPriority.h"
 
@@ -172,6 +177,70 @@ AudioPriorityToken* elevateAudioThreadPriority()
     return token;
 }
 
+namespace {
+
+// Leave the token's workgroup, if it is in one.
+void leaveTokenWorkgroup(AudioPriorityToken* token)
+{
+    if (token->macWorkgroupHandle != nullptr
+        && token->macWorkgroupJoinToken != nullptr) {
+        auto* joinTok = static_cast<os_workgroup_join_token_s*>(
+            token->macWorkgroupJoinToken);
+        auto wg = static_cast<os_workgroup_t>(token->macWorkgroupHandle);
+        os_workgroup_leave(wg, joinTok);
+        delete joinTok;
+        os_release(wg);
+    }
+    token->macWorkgroupHandle = nullptr;
+    token->macWorkgroupJoinToken = nullptr;
+}
+
+} // namespace
+
+bool rejoinAudioWorkgroup(AudioPriorityToken* token, std::uint32_t audioObjectId)
+{
+    if (token == nullptr) {
+        return false;
+    }
+    leaveTokenWorkgroup(token);
+    if (audioObjectId == kAudioObjectUnknown) {
+        return false;
+    }
+    AudioObjectPropertyAddress wgAddr = {
+        kAudioDevicePropertyIOThreadOSWorkgroup,
+        kAudioObjectPropertyScopeGlobal,
+        kAudioObjectPropertyElementMain,
+    };
+    os_workgroup_t wg = nullptr;
+    UInt32 wgSize = sizeof(os_workgroup_t);
+    const OSStatus st = AudioObjectGetPropertyData(
+        static_cast<AudioObjectID>(audioObjectId), &wgAddr, 0, nullptr, &wgSize, &wg);
+    if (st != noErr || wg == nullptr) {
+        qCInfo(lcRtAudio) << "Speakers device has no IO workgroup (OSStatus" << st
+                          << "); the DSP thread stays out of any workgroup.";
+        return false;
+    }
+    auto* joinTok = new os_workgroup_join_token_s();
+    const int err = os_workgroup_join(wg, joinTok);
+    if (err != 0) {
+        qCWarning(lcRtAudio) << "os_workgroup_join failed errno=" << err
+                             << "the DSP thread stays out of any workgroup.";
+        delete joinTok;
+        os_release(wg);
+        return false;
+    }
+    token->macWorkgroupHandle = wg;
+    token->macWorkgroupJoinToken = joinTok;
+    qCInfo(lcRtAudio) << "DSP thread joined the speakers device's workgroup";
+    return true;
+}
+
+bool audioPriorityTokenInWorkgroup(const AudioPriorityToken* token)
+{
+    return token != nullptr && token->macWorkgroupHandle != nullptr
+           && token->macWorkgroupJoinToken != nullptr;
+}
+
 void leaveAudioThreadPriority(AudioPriorityToken* token)
 {
     if (token == nullptr) { return; }
@@ -270,6 +339,16 @@ AudioPriorityToken* elevateAudioThreadPriority()
     return token;
 }
 
+bool rejoinAudioWorkgroup(AudioPriorityToken* /*token*/, std::uint32_t /*audioObjectId*/)
+{
+    return true;   // R-AUD-18: audio workgroups are the Mac's
+}
+
+bool audioPriorityTokenInWorkgroup(const AudioPriorityToken* /*token*/)
+{
+    return false;
+}
+
 void leaveAudioThreadPriority(AudioPriorityToken* token)
 {
     if (token == nullptr) { return; }
@@ -359,6 +438,16 @@ AudioPriorityToken* elevateAudioThreadPriority()
     return token;
 }
 
+bool rejoinAudioWorkgroup(AudioPriorityToken* /*token*/, std::uint32_t /*audioObjectId*/)
+{
+    return true;   // R-AUD-18: audio workgroups are the Mac's
+}
+
+bool audioPriorityTokenInWorkgroup(const AudioPriorityToken* /*token*/)
+{
+    return false;
+}
+
 void leaveAudioThreadPriority(AudioPriorityToken* token)
 {
     if (token == nullptr) { return; }
@@ -408,6 +497,8 @@ namespace NereusSDR {
 
 AudioPriorityToken* elevateAudioThreadPriority() { return nullptr; }
 void leaveAudioThreadPriority(AudioPriorityToken*) {}
+bool rejoinAudioWorkgroup(AudioPriorityToken*, std::uint32_t) { return true; }
+bool audioPriorityTokenInWorkgroup(const AudioPriorityToken*) { return false; }
 void elevateGuiMainThreadPriority() {}
 void elevateComputeThreadPriority() {}
 void elevateLatencyCriticalThreadPriority(bool) {}

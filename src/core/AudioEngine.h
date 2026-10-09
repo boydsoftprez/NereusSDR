@@ -220,6 +220,11 @@
 //                 setLocalListen add a slice to a device's own sum at that
 //                 device's level. The VAX tee and the receiver taps no
 //                 longer undo the AF gain. NereusSDR-original.
+//   2026-10-09: native audio plan Task 8 (R-AUD-18) by J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//                 speakersWorkgroupGeneration() and speakersWorkgroupDevice():
+//                 the DSP thread follows the audio workgroup of the device
+//                 the speakers play on. NereusSDR-original.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -250,6 +255,7 @@ namespace NereusSDR { class PipeWireThreadLoop; }
 
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <vector>
 #include <functional>
 #include <memory>
@@ -592,6 +598,20 @@ public:
     AudioRoleStatus roleStatus(AudioRole role) const;
     AudioDelayParts delayParts(AudioRole role) const;
     AudioEngineKind defaultEngine() const { return m_defaultEngine; }
+    // R-AUD-18: the generation is bumped, and the device stored first,
+    // whenever the speakers bus opens on a device (a fall-back to the
+    // default and the return included).  The device is the bus's
+    // audioWorkgroupDevice(): an AudioObjectID on Core Audio, else 0.  The
+    // DSP thread loads the generation once per block and rejoins that
+    // device's workgroup when it changed.  Any thread.
+    std::uint32_t speakersWorkgroupGeneration() const
+    {
+        return m_speakersWorkgroupGeneration.load(std::memory_order_acquire);
+    }
+    std::uint32_t speakersWorkgroupDevice() const
+    {
+        return m_speakersWorkgroupDevice.load(std::memory_order_acquire);
+    }
     void rescanOlderDrivers();
     // Before start(); DaemonApp sets daemon = true.
     void setAudioBackendContext(const AudioBackendContext& context);
@@ -1419,6 +1439,10 @@ private:
     // from a replaced bus is dropped; the engine of the open bus.
     std::array<quint64, kAudioRoleCount> m_roleBusGeneration{};
     std::array<std::optional<AudioEngineKind>, kAudioRoleCount> m_roleOpenEngine{};
+    // R-AUD-18: see speakersWorkgroupGeneration().  Main thread writes.
+    void noteSpeakersWorkgroup(const IAudioBus* bus);
+    std::atomic<std::uint32_t> m_speakersWorkgroupGeneration{0};
+    std::atomic<std::uint32_t> m_speakersWorkgroupDevice{0};
     // speakersConfigChanged emits made by openRole(), so setSpeakersConfig
     // announces a config only when no open did.
     quint64 m_speakersAnnouncements{0};
