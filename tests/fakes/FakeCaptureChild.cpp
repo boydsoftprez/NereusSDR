@@ -11,6 +11,9 @@
 //   2026-10-09: native audio plan Task 13 (R-AUD-17): AttachRing, and the
 //               tone through a clock matcher in the shared ring.  J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 15 (R-AUD-19): every scenario
+//               answers the ASIO records for one fake driver.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "FakeCaptureChild.h"
@@ -86,6 +89,8 @@ struct Command {
     bool probeEnabled = false;
     CaptureShmNames ring;          // AttachRing
     qint64 ringBytes = 0;
+    QString asioDriver;            // AsioDescribe
+    P::AsioOpen asioOpen;          // AsioOpen
 };
 
 struct Queue {
@@ -134,7 +139,20 @@ void readParent(std::shared_ptr<Queue> queue)
                     std::_Exit(0);
                 }
                 command.probeEnabled = *enabled;
-            } else if (record->type != P::RecordType::Shutdown) {
+            } else if (record->type == P::RecordType::AsioDescribe) {
+                const auto describe = P::decodeAsioDescribe(record->payload);
+                if (!describe) {
+                    std::_Exit(0);
+                }
+                command.asioDriver = describe->driver;
+            } else if (record->type == P::RecordType::AsioOpen) {
+                const auto open = P::decodeAsioOpen(record->payload);
+                if (!open) {
+                    std::_Exit(0);
+                }
+                command.asioOpen = *open;
+            } else if (record->type != P::RecordType::Shutdown
+                       && record->type != P::RecordType::AsioControlPanel) {
                 std::_Exit(0);
             }
             std::lock_guard<std::mutex> lock(queue->mutex);
@@ -303,6 +321,12 @@ private:
                 open();
             }
             break;
+        case P::RecordType::AsioDescribe:
+            describeAsio(command.asioDriver);
+            break;
+        case P::RecordType::AsioOpen:
+            openAsio(command.asioOpen);
+            break;
         case P::RecordType::Stop:
             if (command.generation == m_generation && m_scenario != Scenario::IgnoreStop) {
                 m_streaming = false;
@@ -316,6 +340,54 @@ private:
         default:
             break;
         }
+    }
+
+    // Task 15: one fake ASIO driver, "Fake ASIO" (4 out, 2 in).  Opening
+    // it answers running at 256 frames and 48 kHz; no uses answers closed.
+    static AsioDriverCaps fakeAsioCaps()
+    {
+        AsioDriverCaps caps;
+        caps.name = QStringLiteral("Fake ASIO");
+        caps.outputChannels = 4;
+        caps.inputChannels = 2;
+        caps.sampleType = AsioSampleType::Float32Lsb;
+        caps.minBufferFrames = 64;
+        caps.maxBufferFrames = 2048;
+        caps.preferredBufferFrames = 256;
+        caps.granularity = -1;
+        caps.sampleRates = {44100.0, 48000.0};
+        caps.currentRate = 48000.0;
+        caps.inputLatencyFrames = 300;
+        caps.outputLatencyFrames = 400;
+        return caps;
+    }
+
+    static void describeAsio(const QString& driver)
+    {
+        P::AsioCapsRecord caps;
+        caps.drivers = {QStringLiteral("Fake ASIO")};
+        caps.driver = driver;
+        if (driver == QLatin1String("Fake ASIO")) {
+            caps.caps = fakeAsioCaps();
+        }
+        send(P::encodeAsioCaps(caps));
+    }
+
+    static void openAsio(const P::AsioOpen& open)
+    {
+        P::AsioState state;
+        state.serial = open.serial;
+        state.driver = open.driver;
+        if (open.uses.isEmpty()) {
+            state.state = P::AsioStateKind::Closed;
+        } else {
+            state.state = P::AsioStateKind::Running;
+            state.bufferFrames = 256;
+            state.rate = 48000.0;
+            state.inputLatencyFrames = 300;
+            state.outputLatencyFrames = 400;
+        }
+        send(P::encodeAsioState(state));
     }
 
     // hang-open only: once the Open is answered and every later command is

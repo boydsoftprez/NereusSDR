@@ -25,6 +25,12 @@
 //               the clock matcher in a shared-memory ring and posts its
 //               wake; Pcm records and the 10 ms pump are gone.  J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 15 (R-AUD-19, R-AUD-20, R-AUD-21,
+//               R-AUD-22): the helper hosts the one ASIO session; the
+//               window's outputs (AsioOpen) and a mic saved on ASIO are
+//               its uses, AsioDescribe lists the drivers and their caps,
+//               AsioControlPanel opens the driver's panel.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CaptureHelper.h"
@@ -35,11 +41,14 @@
 #include "core/MacMicPermission.h"
 #include "core/audio/AudioBackendRegistry.h"
 #include "core/audio/AudioDelayProbe.h"
+#include "core/audio/AsioSession.h"
+#include "core/audio/AsioSessionNotifier.h"
 #include "core/audio/AudioDeviceMatching.h"
 #include "core/audio/AudioTestBarrier.h"
 #include "core/audio/CaptureProtocol.h"
 #include "core/audio/CaptureShm.h"
 #include "core/audio/DeviceRateMatcher.h"
+#include "core/audio/IAsioDriver.h"
 #include "core/audio/IAudioEngineBackend.h"
 #include "core/audio/MatcherRing.h"
 #include "core/audio/PortAudioBus.h"
@@ -193,6 +202,14 @@ QStringList& testRunDevices()
     return names;
 }
 
+// R-AUD-19 (Task 15): setCaptureHelperAsio.  Written once before the
+// helper starts its threads, read only by the main thread.
+CaptureHelperAsio& asioHooks()
+{
+    static CaptureHelperAsio hooks;
+    return hooks;
+}
+
 constexpr auto kTickInterval = std::chrono::milliseconds(10);
 constexpr auto kInputLostAfter = std::chrono::milliseconds(500);
 // More queued parent commands than this is a misbehaving parent; the
@@ -212,6 +229,8 @@ struct ParentCommand {
     P::AttachRing attach;            // AttachRing only
     quint32 generation = 0;          // Open / Stop / AttachRing
     bool probeEnabled = false;       // ProbeEnable
+    P::AsioDescribe asioDescribe;    // AsioDescribe only
+    P::AsioOpen asioOpen;            // AsioOpen only
 };
 
 struct CommandQueue {
@@ -228,7 +247,8 @@ struct CommandQueue {
 }
 
 // Parses one parent record.  Anything but a valid Configure / AttachRing /
-// Open / Stop / Shutdown / ProbeEnable is a protocol error.
+// Open / Stop / Shutdown / ProbeEnable / AsioDescribe / AsioOpen /
+// AsioControlPanel is a protocol error.
 std::optional<ParentCommand> parseCommand(const P::Record& record)
 {
     ParentCommand command;
@@ -274,11 +294,34 @@ std::optional<ParentCommand> parseCommand(const P::Record& record)
         command.probeEnabled = *enabled;
         return command;
     }
+    case P::RecordType::AsioDescribe: {
+        const auto describe = P::decodeAsioDescribe(record.payload);
+        if (!describe) {
+            return std::nullopt;
+        }
+        command.asioDescribe = *describe;
+        return command;
+    }
+    case P::RecordType::AsioOpen: {
+        const auto open = P::decodeAsioOpen(record.payload);
+        if (!open) {
+            return std::nullopt;
+        }
+        command.asioOpen = *open;
+        return command;
+    }
+    case P::RecordType::AsioControlPanel:
+        if (record.payload.trimmed() != QByteArrayLiteral("{}")) {
+            return std::nullopt;
+        }
+        return command;
     case P::RecordType::Hello:
     case P::RecordType::Status:
     case P::RecordType::Pcm:
     case P::RecordType::ProbeHit:
     case P::RecordType::RingAttached:
+    case P::RecordType::AsioCaps:
+    case P::RecordType::AsioState:
         break;
     }
     return std::nullopt;
@@ -516,7 +559,10 @@ public:
     }
 
 private:
-    bool isOpen() const { return m_bus != nullptr || m_stream != nullptr; }
+    bool isOpen() const
+    {
+        return m_bus != nullptr || m_stream != nullptr || m_asioMic.has_value();
+    }
 
     void execute(const ParentCommand& command)
     {
@@ -553,6 +599,20 @@ private:
             }
             closeInput();
             sendStatus(P::HelperState::Stopped);
+            break;
+        case P::RecordType::AsioDescribe:
+            asioDescribe(command.asioDescribe.driver);
+            break;
+        case P::RecordType::AsioOpen:
+            asioOpen(command.asioOpen);
+            break;
+        case P::RecordType::AsioControlPanel:
+            // R-AUD-22: the running session's driver only.
+            if (m_asio && m_asio->isOpen()) {
+                m_asioDriver->openControlPanel();
+            } else {
+                qCInfo(lcAudio) << "capture helper: no ASIO session for the control panel";
+            }
             break;
         default:
             break;
@@ -649,6 +709,8 @@ private:
         const AudioEngineKind engine = m_device.engine.value_or(AudioEngineKind::PortAudio);
         if (engine == AudioEngineKind::PortAudio) {
             openOlderDriver();
+        } else if (engine == AudioEngineKind::Asio) {
+            openAsioMic();
         } else {
             openNative(engine);
         }
@@ -964,6 +1026,17 @@ private:
             m_bus->close();
             m_bus.reset();
         }
+        if (m_asioMic) {
+            // The session goes on with the window's outputs alone (they
+            // keep playing with the PC mic off), or closes.
+            m_asioMic.reset();
+            m_asioMicRate = 0;
+            const bool hadOutputs = !m_asioOutputs.empty();
+            const bool running = runAsioSession();
+            if (hadOutputs) {
+                sendAsioRun(running ? P::AsioStateKind::Restarted : P::AsioStateKind::Failed);
+            }
+        }
         // No callback runs now; the matcher, the detector and any unsent
         // hit go with it.  The ring's memory stays mapped for the window.
         m_tap.clear();
@@ -975,12 +1048,304 @@ private:
     void shutdown()
     {
         closeInput();
+        if (m_asio) {
+            m_asio->close();
+        }
+        m_asioOutputs.clear();
         m_region.reset();
         if (m_paInitialized) {
             std::lock_guard<std::recursive_mutex> paLock(PortAudioLibrary::mutex());
             Pa_Terminate();
             m_paInitialized = false;
         }
+    }
+
+    // ── ASIO (R-AUD-19 to R-AUD-22) ──────────────────────────────────────
+
+    // One window output of the session: its ring, attached here, and the
+    // reader the buffer switch reads it with.
+    struct AsioOutput {
+        P::AsioOpenUse use;
+        std::unique_ptr<CaptureShmRegion> region;
+        MatcherReader reader;
+    };
+
+    static bool asioBarred()
+    {
+        return audioDevicesBarredForTestRun() || PortAudioBus::portAudioBarredForTestRun();
+    }
+
+    // The session over the installed driver, made once; false when this
+    // helper hosts no ASIO (a test run, or no driver adapter installed).
+    bool ensureAsio()
+    {
+        if (asioBarred()) {
+            return false;
+        }
+        if (!m_asioMade) {
+            m_asioMade = true;
+            if (asioHooks().makeDriver) {
+                m_asioDriver = asioHooks().makeDriver();
+            }
+            if (m_asioDriver) {
+                m_asio = std::make_unique<AsioSession>(*m_asioDriver);
+                AsioSessionNotifier* const notifier = m_asio->notifier();
+                QObject::connect(notifier, &AsioSessionNotifier::restarted, notifier,
+                                 [this]() { onAsioRestarted(); });
+                QObject::connect(notifier, &AsioSessionNotifier::failed, notifier,
+                                 [this](const QString& detail) { onAsioFailed(detail); });
+            }
+        }
+        return m_asio != nullptr;
+    }
+
+    static QString asioUnavailable()
+    {
+        return asioBarred() ? QStringLiteral("a test run opens no ASIO driver")
+                            : QStringLiteral("ASIO is not available here");
+    }
+
+    // AsioDescribe: "" lists the drivers; a name adds its caps.  A driver
+    // other than the session's is loaded only while no session runs (one
+    // driver at a time, R-AUD-19), and unloaded again at once.
+    void asioDescribe(const QString& name)
+    {
+        P::AsioCapsRecord record;
+        record.driver = name;
+        if (ensureAsio()) {
+            record.drivers = m_asioDriver->installedDrivers().mid(0, P::kMaxAsioDrivers);
+            if (!name.isEmpty() && record.drivers.contains(name)) {
+                if (m_asio->isOpen()) {
+                    if (m_asio->driverName() == name) {
+                        record.caps = m_asio->caps();
+                    }
+                } else {
+                    record.caps = m_asioDriver->load(name);
+                    record.inUse = !record.caps
+                                   && m_asioDriver->lastFailure() == AsioDriverFailure::InUse;
+                    m_asioDriver->disposeAndUnload();
+                }
+            }
+        }
+        if (record.caps) {
+            record.caps->name = name;
+        }
+        write(P::encodeAsioCaps(record));
+    }
+
+    // AsioOpen: the window's whole list of outputs on the session.  The new
+    // rings are attached first; the old ones go only after the session has
+    // stopped reading them.
+    void asioOpen(const P::AsioOpen& open)
+    {
+        m_asioSerial = open.serial;
+        if (!ensureAsio()) {
+            sendAsioState(open.uses.isEmpty() ? P::AsioStateKind::Closed : P::AsioStateKind::Failed,
+                          open.driver, open.uses.isEmpty() ? QString() : asioUnavailable());
+            return;
+        }
+        if (m_asioMic && !open.uses.isEmpty() && m_asioMic->driver != open.driver) {
+            sendAsioState(P::AsioStateKind::InUse, open.driver,
+                          QStringLiteral("the microphone uses %1; one ASIO driver at a time")
+                              .arg(m_asioMic->driver));
+            return;
+        }
+        std::vector<std::unique_ptr<AsioOutput>> next;
+        for (const P::AsioOpenUse& use : open.uses) {
+            if (use.direction != AudioDeviceDirection::Output) {
+                // The window sends outputs only; the mic comes through
+                // Configure (Task 15 report).
+                qCWarning(lcAudio) << "capture helper: ignoring an ASIO input use from the window";
+                continue;
+            }
+            auto output = std::make_unique<AsioOutput>();
+            output->use = use;
+            output->region = CaptureShmRegion::attach({use.memory, use.wake},
+                                                      static_cast<std::size_t>(use.bytes));
+            MatcherRingHeader* const ring =
+                output->region ? attachMatcherRing(output->region->data(),
+                                                   static_cast<std::size_t>(use.bytes))
+                               : nullptr;
+            if (ring == nullptr) {
+                sendAsioState(P::AsioStateKind::Failed, open.driver,
+                              QStringLiteral("could not attach an output's shared ring"));
+                return;
+            }
+            output->reader = MatcherReader(ring);
+            if (!output->reader.valid()) {
+                sendAsioState(P::AsioStateKind::Failed, open.driver,
+                              QStringLiteral("an output's clock matcher cannot be read"));
+                return;
+            }
+            next.push_back(std::move(output));
+        }
+        m_asioOutputs.swap(next);
+        m_asioOutputDriver = open.driver;
+        m_asioFrames = open.bufferFrames;
+        m_asioRate = open.rate;
+        const bool running = runAsioSession();
+        next.clear();
+        if (m_asioOutputs.empty()) {
+            sendAsioState(P::AsioStateKind::Closed, open.driver, QString());
+        } else {
+            sendAsioRun(running ? P::AsioStateKind::Running : P::AsioStateKind::Failed);
+        }
+        checkAsioMicRate();
+    }
+
+    // The session with the window's outputs and the mic, if any; closed
+    // when neither uses it.  The buffer and rate are the window's latest
+    // open while it has outputs (R-AUD-20), else the mic's.
+    bool runAsioSession()
+    {
+        if (!m_asio) {
+            return false;
+        }
+        if (m_asioOutputs.empty() && !m_asioMic) {
+            m_asio->close();
+            return false;
+        }
+        const bool outputs = !m_asioOutputs.empty();
+        const QString driver = outputs ? m_asioOutputDriver : m_asioMic->driver;
+        const int frames = outputs ? m_asioFrames : m_asioMic->bufferFrames;
+        const double rate = outputs ? m_asioRate : m_asioMic->rate;
+        QList<AsioUse> uses;
+        QList<AsioEndpoint> endpoints;
+        for (const std::unique_ptr<AsioOutput>& output : m_asioOutputs) {
+            uses.append({output->use.role.value_or(AudioRole::Speakers), driver, output->use.pair,
+                         AudioDeviceDirection::Output});
+            AsioEndpoint endpoint;
+            endpoint.reader = &output->reader;
+            endpoints.append(endpoint);
+        }
+        if (m_asioMic) {
+            uses.append({AudioRole::TxInput, driver, m_asioMic->pair, AudioDeviceDirection::Input});
+            AsioEndpoint endpoint;
+            endpoint.sink = &m_tap;
+            endpoint.pick = m_asioMic->pick;
+            endpoints.append(endpoint);
+        }
+        return m_asio->open(driver, frames, rate, uses, endpoints);
+    }
+
+    // R-AUD-17 with ASIO: the mic is the session's input use; its matcher
+    // is built at the session's rate.
+    void openAsioMic()
+    {
+        if (!ensureAsio()) {
+            sendFailure(P::FailReason::OpenFailed, asioUnavailable());
+            return;
+        }
+        const std::optional<CaptureHelperAsioMic> plan =
+            asioHooks().planMic ? asioHooks().planMic(m_device) : std::nullopt;
+        if (!plan) {
+            sendFailure(P::FailReason::DeviceNotFound,
+                        QStringLiteral("no ASIO driver is chosen for the microphone"));
+            return;
+        }
+        if (!m_asioOutputs.empty() && plan->driver != m_asioOutputDriver) {
+            sendFailure(P::FailReason::DeviceInUse,
+                        QStringLiteral("%1 is in use by NereusSDR; one ASIO driver at a time")
+                            .arg(m_asioOutputDriver));
+            return;
+        }
+        m_asioMic = plan;
+        if (!runAsioSession()) {
+            const bool busy = m_asio->lastFailure() == AsioDriverFailure::InUse;
+            const QString why = m_asio->errorString();
+            m_asioMic.reset();
+            if (!m_asioOutputs.empty()) {
+                sendAsioRun(runAsioSession() ? P::AsioStateKind::Restarted
+                                             : P::AsioStateKind::Failed);
+            }
+            sendFailure(busy ? P::FailReason::DeviceInUse : P::FailReason::OpenFailed,
+                        why.isEmpty() ? QStringLiteral("the ASIO driver did not start") : why);
+            return;
+        }
+        if (!m_asioOutputs.empty()) {
+            // The window's outputs were stopped and started with the mic.
+            sendAsioRun(P::AsioStateKind::Restarted);
+        }
+        m_asioMicRate = static_cast<int>(std::lround(m_asio->sampleRate()));
+        const AsioDriverCaps caps = m_asio->caps();
+        const int latencyUs = m_asioMicRate > 0
+                                  ? static_cast<int>(std::min<std::int64_t>(
+                                      caps.inputLatencyFrames * 1000000 / m_asioMicRate,
+                                      P::kMaxLatencyUs))
+                                  : 0;
+        finishOpen(m_asioMicRate, plan->pair.channelCount, plan->driver, latencyUs,
+                   m_asio->bufferFrames());
+    }
+
+    // The mic's matcher runs at the rate it was built at; a session that
+    // now runs at another rate, or stopped, loses the mic (the window
+    // reopens it).
+    void checkAsioMicRate()
+    {
+        if (!m_asioMic || m_asioMicRate == 0) {
+            return;
+        }
+        const bool running = m_asio && m_asio->isOpen();
+        const int rate = running ? static_cast<int>(std::lround(m_asio->sampleRate())) : 0;
+        if (running && rate == m_asioMicRate) {
+            return;
+        }
+        qCWarning(lcAudio) << "capture helper: the ASIO session changed under the mic";
+        closeInput();
+        sendFailure(P::FailReason::InputLost,
+                    running ? QStringLiteral("the ASIO driver now runs at %1 Hz").arg(rate)
+                            : QStringLiteral("the ASIO driver stopped"));
+    }
+
+    // R-AUD-21: the session restarted itself after a reset.
+    void onAsioRestarted()
+    {
+        if (!m_asioOutputs.empty()) {
+            sendAsioRun(P::AsioStateKind::Restarted);
+        }
+        checkAsioMicRate();
+    }
+
+    void onAsioFailed(const QString& detail)
+    {
+        if (!m_asioOutputs.empty()) {
+            sendAsioState(P::AsioStateKind::Failed, m_asioOutputDriver, detail);
+        }
+        checkAsioMicRate();
+    }
+
+    // The session's state for the window's latest open.
+    void sendAsioRun(P::AsioStateKind kind)
+    {
+        if (kind == P::AsioStateKind::Failed || !m_asio || !m_asio->isOpen()) {
+            const bool busy = m_asio && m_asio->lastFailure() == AsioDriverFailure::InUse;
+            sendAsioState(busy ? P::AsioStateKind::InUse : P::AsioStateKind::Failed,
+                          m_asioOutputDriver,
+                          m_asio ? m_asio->errorString() : asioUnavailable());
+            return;
+        }
+        P::AsioState state;
+        state.serial = m_asioSerial;
+        state.state = kind;
+        state.driver = clampText(m_asio->driverName());
+        state.bufferFrames = m_asio->bufferFrames();
+        state.rate = m_asio->sampleRate();
+        const AsioDriverCaps caps = m_asio->caps();
+        state.inputLatencyFrames = static_cast<int>(
+            std::clamp<std::int64_t>(caps.inputLatencyFrames, 0, P::kMaxBufferFrames));
+        state.outputLatencyFrames = static_cast<int>(
+            std::clamp<std::int64_t>(caps.outputLatencyFrames, 0, P::kMaxBufferFrames));
+        write(P::encodeAsioState(state));
+    }
+
+    void sendAsioState(P::AsioStateKind kind, const QString& driver, const QString& detail)
+    {
+        P::AsioState state;
+        state.serial = m_asioSerial;
+        state.state = kind;
+        state.driver = clampText(driver);
+        state.detail = clampText(detail);
+        write(P::encodeAsioState(state));
     }
 
     void sendStatus(P::HelperState state)
@@ -1031,6 +1396,19 @@ private:
     std::int64_t m_lastWriteNs = 0;
     Clock::time_point m_lastProgress;
     Clock::time_point m_nextTick;
+    // ASIO.  The driver outlives the session; the session (declared last,
+    // so destroyed first) stops its callbacks before the rings, readers
+    // and tap it reads and writes go.
+    bool m_asioMade = false;
+    std::unique_ptr<IAsioDriver> m_asioDriver;
+    std::vector<std::unique_ptr<AsioOutput>> m_asioOutputs;
+    QString m_asioOutputDriver;
+    int m_asioFrames = 0;
+    double m_asioRate = 0.0;
+    quint32 m_asioSerial = 0;
+    std::optional<CaptureHelperAsioMic> m_asioMic;
+    int m_asioMicRate = 0;
+    std::unique_ptr<AsioSession> m_asio;
 };
 
 } // namespace
@@ -1038,6 +1416,11 @@ private:
 void setCaptureHelperTestDevices(const QStringList& names)
 {
     testRunDevices() = names;
+}
+
+void setCaptureHelperAsio(CaptureHelperAsio asio)
+{
+    asioHooks() = std::move(asio);
 }
 
 int runCaptureHelper(int argc, char** argv)

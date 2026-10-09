@@ -26,12 +26,19 @@
 //               hop, the device-in-use reason and the request it answers.
 //               Exported for the tests.  J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 15 (R-AUD-19, R-AUD-20, R-AUD-21):
+//               Demand::AsioDevice keeps the helper running for the ASIO
+//               outputs with no microphone open; describeAsio(),
+//               openAsio() and openAsioControlPanel() go to the helper,
+//               asioCaps() and asioState() come back.  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
 
 #include "core/AudioDeviceConfig.h"
 #include "core/NereusCoreExport.h"
+#include "core/audio/CaptureProtocol.h"
 
 #include <QHash>
 #include <QMetaType>
@@ -92,7 +99,10 @@ class NEREUS_CORE_EXPORT CaptureSupervisor final : public QObject {
 public:
     /// RemoteWindow (iPhone app plan Task 36): a remote window sending the
     /// microphone chosen in Audio > Devices to its Core, while it transmits.
-    enum class Demand { LocalSession, TestMic, RemoteWindow };
+    /// AsioDevice (native audio plan Task 15): an output or input on ASIO,
+    /// which runs in the helper.  It keeps the helper running and opens no
+    /// microphone; the other demands are the microphone's.
+    enum class Demand { LocalSession, TestMic, RemoteWindow, AsioDevice };
 
     struct Status {
         enum class State { Closed, PreparingPermission, Opening, Ready, Failed, Stopping };
@@ -169,8 +179,20 @@ public:
     // Diagnostics: the running helper's process id, 0 when none.
     qint64 helperProcessId() const;
 
-    // True while at least one Lease is active.  Owner thread only.
-    bool hasDemand() const { return !m_leases.isEmpty(); }
+    // True while at least one microphone Lease is active (any demand but
+    // AsioDevice).  Owner thread only.
+    bool hasDemand() const { return micLeaseCount() > 0; }
+
+    // ASIO (native audio plan Task 15).  Owner thread only.  Each starts
+    // the helper when none runs.  describeAsio("") asks for the installed
+    // drivers; a name asks for that driver's caps too (asioCaps()).  A
+    // helper started only to describe stops after the answer when nothing
+    // else holds it.  openAsio() replaces the uses the helper plays; an
+    // open with no uses closes the session.  The AsioState answers come
+    // through asioState().
+    void describeAsio(const QString& driver);
+    void openAsio(const CaptureProtocol::AsioOpen& open);
+    void openAsioControlPanel();
 
     // Audio delay probe (V-HW-8).  Enabled: ProbeEnable {"enabled":true}
     // goes to the helper once it is Ready for the current generation (and
@@ -183,9 +205,15 @@ signals:
     // A ProbeHit from the helper while the probe is enabled, on the owner
     // thread: the steady-clock time the click reached the input converter.
     void probeHit(qint64 captureNs);
+    // ASIO answers from the helper, on the owner thread (Task 15).  A
+    // helper that ends while an ASIO open is held reports Failed.
+    void asioCaps(const NereusSDR::CaptureProtocol::AsioCapsRecord& caps);
+    void asioState(const NereusSDR::CaptureProtocol::AsioState& state);
 
 private:
     void releaseLease(quint64 id);
+    int micLeaseCount() const;
+    int asioLeaseCount() const;
     bool hasLease(quint64 id) const;
     void onWorkerStatus(const Status& status);
     void onWorkerHop(quint32 generation, double hopMs);
@@ -215,3 +243,5 @@ private:
 } // namespace NereusSDR
 
 Q_DECLARE_METATYPE(NereusSDR::CaptureSupervisor::Status)
+Q_DECLARE_METATYPE(NereusSDR::CaptureProtocol::AsioCapsRecord)
+Q_DECLARE_METATYPE(NereusSDR::CaptureProtocol::AsioState)

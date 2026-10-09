@@ -1180,6 +1180,13 @@ set(CORE_SOURCES
     src/core/audio/CaptureHelper.cpp
     src/core/audio/CaptureAudioBus.cpp
     src/core/audio/CaptureSupervisor.cpp
+    # Native audio plan Task 15: the ASIO session rules (portable; the
+    # driver itself loads only in nereus-audio-capture on Windows) and the
+    # window's ASIO backend over the helper.
+    src/core/audio/IAsioDriver.h
+    src/core/audio/AsioSessionNotifier.h
+    src/core/audio/AsioSession.cpp
+    src/core/audio/AsioBackend.cpp
     src/core/audio/CaptureHelperLocator.cpp
     src/core/StationBinaryLocator.cpp
     src/core/audio/CompositeTxMicRouter.cpp

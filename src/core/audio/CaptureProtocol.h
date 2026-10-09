@@ -26,6 +26,20 @@
 //   never sends one and the window treats one as a protocol error.  The
 //   Pcm codec stays for its tests.
 //
+//   ASIO (version 4, R-AUD-19 to R-AUD-22, D33): the helper hosts the one
+//   ASIO driver of the session for every role on it.
+//     AsioDescribe     window to helper  {"driver"}: "" lists the drivers;
+//                      a name also loads an idle driver briefly for its caps
+//     AsioCaps         helper to window  the driver list and one driver's caps
+//     AsioOpen         window to helper  {"serial","driver","bufferFrames","rate",
+//                      "uses":[{"role","first","count","direction","memory",
+//                      "wake","bytes"}]}: every output use the window plays
+//                      on the driver, each with its ring; no uses closes them
+//     AsioState        helper to window  {"serial","state","driver","detail",
+//                      "bufferFrames","rate","inputLatency","outputLatency"}
+//     AsioControlPanel window to helper  {}
+//   ASIO payloads may be up to kMaxAsioJsonBytes long.
+//
 // Design: docs/architecture/2026-09-22-optional-microphone-capture-design.md
 // (Process and PCM contract).  Requirement R-R3-36.
 //
@@ -38,14 +52,22 @@
 //               in Configure, the device-in-use reason and the device's
 //               latency and buffer in Status.  J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 15 (R-AUD-19 to R-AUD-22): version 4
+//               adds the ASIO records.  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #pragma once
 
 #include "core/AudioDeviceConfig.h"
+#include "core/audio/AudioDeviceTypes.h"
+#include "core/audio/IAsioDriver.h"
+#include "core/audio/IAudioStreamHost.h"
 
 #include <QByteArray>
+#include <QList>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 #include <QtGlobal>
 
@@ -55,7 +77,7 @@
 
 namespace NereusSDR::CaptureProtocol {
 
-inline constexpr quint8 kVersion = 3;
+inline constexpr quint8 kVersion = 4;
 inline constexpr int kHeaderBytes = 12;          // "NCAP", u8 version, u8 type, u16 reserved(0), u32 payloadBytes, little-endian
 inline constexpr int kMaxJsonBytes = 4096;
 inline constexpr int kPcmHeaderBytes = 24;       // u32 generation, u32 frameCount, u64 framePosition, u64 sentMonotonicNs
@@ -72,12 +94,17 @@ enum class RecordType : quint8 {
     Pcm = 3,
     ProbeHit = 4,
     RingAttached = 5,
+    AsioCaps = 6,
+    AsioState = 7,
     Configure = 16,
     Open = 17,
     Stop = 18,
     Shutdown = 19,
     ProbeEnable = 20,
-    AttachRing = 21
+    AttachRing = 21,
+    AsioDescribe = 22,
+    AsioOpen = 23,
+    AsioControlPanel = 24
 };
 
 struct Record {
@@ -220,5 +247,67 @@ std::optional<std::int64_t> decodeProbeHit(const QByteArray& json);
 
 QByteArray encodeProbeEnable(bool enabled);
 std::optional<bool> decodeProbeEnable(const QByteArray& json);
+
+// ── ASIO (version 4) ──────────────────────────────────────────────────────
+
+inline constexpr int kMaxAsioJsonBytes = 16384;
+inline constexpr int kMaxAsioDrivers = 32;
+inline constexpr int kMaxAsioUses = 16;
+inline constexpr int kMaxAsioRates = 6;     // 44100, 48000, 88200, 96000, 176400, 192000
+inline constexpr int kMaxAsioChannels = 256;
+
+struct AsioDescribe {
+    QString driver;                      // empty: the installed drivers only
+};
+
+struct AsioCapsRecord {
+    QStringList drivers;                 // installed, in the registry's order
+    QString driver;                      // the described driver; empty for the list only
+    std::optional<AsioDriverCaps> caps;  // its caps, when it loaded
+    bool inUse = false;                  // it is held by another program
+};
+
+struct AsioOpenUse {
+    std::optional<AudioRole> role;       // the window's role, when it is known
+    AudioChannelPair pair;
+    AudioDeviceDirection direction = AudioDeviceDirection::Output;
+    QString memory;                      // the use's ring (CaptureShm names)
+    QString wake;
+    qint64 bytes = 0;
+};
+
+struct AsioOpen {
+    quint32 serial = 0;                  // echoed by the AsioState it causes
+    QString driver;
+    int bufferFrames = 0;                // 0: the driver's preferred size
+    double rate = 0.0;                   // 0: the driver's own rate
+    QList<AsioOpenUse> uses;             // none: the window plays nothing on ASIO
+};
+
+enum class AsioStateKind { Running, Restarted, InUse, Failed, Closed };
+
+struct AsioState {
+    quint32 serial = 0;                  // the AsioOpen it answers; 0 for none
+    AsioStateKind state = AsioStateKind::Closed;
+    QString driver;
+    QString detail;
+    int bufferFrames = 0;                // what the session runs at
+    double rate = 0.0;
+    int inputLatencyFrames = 0;
+    int outputLatencyFrames = 0;
+};
+
+QString asioRoleKey(AudioRole role);
+std::optional<AudioRole> asioRoleFromKey(const QString& key);
+
+QByteArray encodeAsioDescribe(const AsioDescribe& describe);
+std::optional<AsioDescribe> decodeAsioDescribe(const QByteArray& json);
+QByteArray encodeAsioCaps(const AsioCapsRecord& caps);
+std::optional<AsioCapsRecord> decodeAsioCaps(const QByteArray& json);
+QByteArray encodeAsioOpen(const AsioOpen& open);
+std::optional<AsioOpen> decodeAsioOpen(const QByteArray& json);
+QByteArray encodeAsioState(const AsioState& state);
+std::optional<AsioState> decodeAsioState(const QByteArray& json);
+QByteArray encodeAsioControlPanel();     // payload is the empty JSON object {}
 
 } // namespace NereusSDR::CaptureProtocol
