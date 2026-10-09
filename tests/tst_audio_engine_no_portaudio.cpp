@@ -21,6 +21,9 @@
 //               the system's engine is Core Audio, which lists nothing in
 //               a test run either. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-09: Windows test fix (R-AUD-02): on Windows the default is
+//               Windows audio, shared. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -85,6 +88,13 @@ private slots:
             QCOMPARE(engine.defaultEngine(), AudioEngineKind::CoreAudio);
             QVERIFY(engine.catalogue()
                         ->devices(AudioBackendId::CoreAudio, AudioDeviceDirection::Output)
+                        .isEmpty());
+#elif defined(Q_OS_WIN)
+            // R-AUD-02: Windows audio, shared, is the default, and in a
+            // test run it lists no device either.
+            QCOMPARE(engine.defaultEngine(), AudioEngineKind::WindowsShared);
+            QVERIFY(engine.catalogue()
+                        ->devices(AudioBackendId::Wasapi, AudioDeviceDirection::Output)
                         .isEmpty());
 #else
             QCOMPARE(engine.defaultEngine(), AudioEngineKind::PortAudio);
