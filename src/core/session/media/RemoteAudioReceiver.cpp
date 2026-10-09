@@ -660,8 +660,8 @@ RemoteAudioRateMatcherStats RemoteAudioReceiver::WorkerState::publishMatcherStat
         // in the shape the rate matcher's stats have.
         stats = RemoteAudioRateMatcherStats{};
         if (const auto bus = d->engine->remotePlaybackMatcherStats(d->output)) {
-            const quint64 dry = bus->dryRuns - std::min(bus->dryRuns, busDryRunsBase);
-            const quint64 over = bus->overruns - std::min(bus->overruns, busOverrunsBase);
+            const quint64 dry = bus->dryRuns - std::min<quint64>(bus->dryRuns, busDryRunsBase);
+            const quint64 over = bus->overruns - std::min<quint64>(bus->overruns, busOverrunsBase);
             stats.underflows = int(std::min<quint64>(dry, quint64(std::numeric_limits<int>::max())));
             stats.overflows = int(std::min<quint64>(over, quint64(std::numeric_limits<int>::max())));
             stats.currentRatio = bus->ratio;
