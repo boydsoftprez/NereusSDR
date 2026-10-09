@@ -41,7 +41,6 @@
 
 #include <functional>
 #include <optional>
-#include <optional>
 
 namespace NereusSDR {
 
