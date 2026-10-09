@@ -9,6 +9,7 @@
 #include "gui/meters/ItemGroup.h"
 #include <QJsonDocument>
 #include "gui/containers/ContainerContentRegistry.h"
+#include "NativeWindowFrames.h"
 using namespace NereusSDR;
 class TestBarFace : public QObject {
     Q_OBJECT
@@ -102,7 +103,7 @@ private slots:
             auto* mic=new BarPresetItem(&widget); mic->configureAsMic(); mic->setRect(0,0,1,.5);
             auto* alc=new BarPresetItem(&widget); alc->configureAsAlc(); alc->setRect(0,.5,1,.5);
             for(auto* face:{mic,alc}) { QVERIFY(face->applyConfiguration({{"titleColor","#ffff0000"},{"peakHold",true},{"ignoreHistoryMs",0}})); widget.addItem(face); }
-            widget.show(); QTest::qWait(150);
+            widget.show(); QVERIFY(QTest::qWaitForWindowExposed(&widget));
 #ifdef NEREUS_GPU_SPECTRUM
             QSignalSpy submitted(&widget,&QRhiWidget::frameSubmitted);
 #endif
@@ -115,7 +116,7 @@ private slots:
                 if(i>=60) { widget.setBindingUnavailable(113,"Synthetic source unavailable"); widget.setBindingUnavailable(114,"Synthetic source unavailable"); }
                 widget.advanceMeters(i*100); widget.update();
 #ifdef NEREUS_GPU_SPECTRUM
-                const int before=submitted.count(); QTRY_VERIFY_WITH_TIMEOUT(submitted.count()>before,2000);
+                const int before=submitted.count(); NEREUS_VERIFY_FRAME(NativeWindowFrames::waitForFrames(widget,submitted,before+1,2000));
                 QImage frame=widget.grabFramebuffer();
 #else
                 QTest::qWait(15); QImage frame=widget.grab().toImage();

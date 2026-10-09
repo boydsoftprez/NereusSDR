@@ -28,6 +28,7 @@
 #include "gui/meters/MeterPoller.h"
 #include "gui/meters/presets/CompositePresetItem.h"
 #include "gui/meters/presets/BarPresetItem.h"
+#include "NativeWindowFrames.h"
 using namespace NereusSDR;
 class TstContainerMeterNative : public QObject {
     Q_OBJECT
@@ -35,8 +36,11 @@ class TstContainerMeterNative : public QObject {
     QImage frame(MeterWidget& meter) {
 #ifdef NEREUS_GPU_SPECTRUM
         QSignalSpy submitted(&meter,&QRhiWidget::frameSubmitted);
-        meter.update();
-        if(!submitted.wait(3000) && submitted.isEmpty()) { return {}; }
+        const auto wait=NativeWindowFrames::requestFrame(meter,submitted,3000);
+        if(wait!=NativeWindowFrames::FrameWait::Submitted) {
+            qWarning()<<(wait==NativeWindowFrames::FrameWait::Hidden ? NativeWindowFrames::kHiddenFailure : NativeWindowFrames::kStalledFailure);
+            return {};
+        }
         return meter.grabFramebuffer();
 #else
         meter.update();QCoreApplication::processEvents();return meter.grab().toImage();

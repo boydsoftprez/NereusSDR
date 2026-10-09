@@ -31,6 +31,7 @@
 #include "gui/meters/MeterWidget.h"
 #include "gui/meters/MeterPoller.h"
 #include "gui/meters/presets/BarPresetItem.h"
+#include "NativeWindowFrames.h"
 using namespace NereusSDR;
 namespace {
 void gesture(QWidget* handle,QPoint delta,bool cancel=false) {
@@ -249,7 +250,7 @@ private slots:
         const QString capture=qEnvironmentVariable("CANVAS_CAPTURE_DIR");if(!capture.isEmpty()) {QVERIFY(QDir().mkpath(capture));}
         for(auto* meter:meters) {
 #ifdef NEREUS_GPU_SPECTRUM
-            QSignalSpy frames(meter,&QRhiWidget::frameSubmitted);meter->update();QTRY_VERIFY_WITH_TIMEOUT(frames.count()>0,3000);const QImage image=meter->grabFramebuffer();
+            QSignalSpy frames(meter,&QRhiWidget::frameSubmitted);NEREUS_VERIFY_FRAME(NativeWindowFrames::requestFrame(*meter,frames,3000));const QImage image=meter->grabFramebuffer();
 #else
             meter->update();QCoreApplication::processEvents();const QImage image=meter->grab().toImage();
 #endif

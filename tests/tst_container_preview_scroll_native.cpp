@@ -28,6 +28,7 @@
 #include "gui/containers/ContainerWorkspaceStore.h"
 #include "gui/meters/MeterPoller.h"
 #include "gui/meters/MeterWidget.h"
+#include "NativeWindowFrames.h"
 
 using namespace NereusSDR;
 
@@ -287,7 +288,7 @@ private slots:
 #ifdef NEREUS_GPU_SPECTRUM
         for (qsizetype i = 0; i < meters.size(); ++i) {
             if (dialogRect(meters[i], scroll->viewport()).intersects(scroll->viewport()->rect())) {
-                QTRY_VERIFY_WITH_TIMEOUT(initialFrames[i]->count() > 0, kFrameTimeoutMs);
+                NEREUS_VERIFY_FRAME(NativeWindowFrames::waitForFrames(*meters[i], *initialFrames[i], 1, kFrameTimeoutMs));
             }
 #if defined(Q_OS_MAC)
             QCOMPARE(meters[i]->api(), QRhiWidget::Api::Metal);
@@ -358,10 +359,9 @@ private slots:
             }
             QSignalSpy frames(meter, &QRhiWidget::frameSubmitted);
             QSignalSpy failures(meter, &QRhiWidget::renderFailed);
-            meter->update();
-            QTRY_VERIFY_WITH_TIMEOUT(frames.count() > 0 || failures.count() > 0, kFrameTimeoutMs);
+            const auto wait = NativeWindowFrames::requestFrame(*meter, frames, kFrameTimeoutMs);
             QCOMPARE(failures.count(), 0);
-            QVERIFY(frames.count() > 0);
+            NEREUS_VERIFY_FRAME(wait);
         }
         QVERIFY(saveTopology(captureDirectory, "final-after-frame-before-fresh-grab", dialog, *scroll, meters));
         const QImage submitted = nativeWindowCapture(dialog);

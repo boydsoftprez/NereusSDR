@@ -307,6 +307,15 @@ function(nereus_add_test name)
         LABELS "${_test_labels}"
         TIMEOUT 120)
 
+    # Native-window tests share the operator's desktop: one test's window
+    # can cover another's, and macOS draws nothing for a covered window, so
+    # a frame wait fails although nothing stalled (tst_meter_bar_face under
+    # `ctest -j10`, 2026-10-08). The lock runs them one at a time while the
+    # offscreen tests keep running in parallel. See NativeWindowFrames.h.
+    if(_nat_NATIVE_WINDOW)
+        set_property(TEST ${name} APPEND PROPERTY RESOURCE_LOCK "native-window-desktop")
+    endif()
+
     # Test executables sit in build/tests while the application DLLs sit in
     # build. Add that directory to PATH so Windows can load both shared
     # libraries. CMake before 3.22 has no ENVIRONMENT_MODIFICATION support.
