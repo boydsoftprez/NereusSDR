@@ -19,11 +19,19 @@
 //   2026-10-09: native audio plan Task 7 (R-AUD-02): config() returns the
 //               config the last configure() applied. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 13 (R-AUD-17, R-AUD-18): the audio
+//               comes through a shared clock matcher ring; Ready needs the
+//               helper's Ready and the ring's first wake; Status carries
+//               the device's rate, latency and buffer, the measured wake
+//               hop, the device-in-use reason and the request it answers.
+//               Exported for the tests.  J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
 
 #include "core/AudioDeviceConfig.h"
+#include "core/NereusCoreExport.h"
 
 #include <QHash>
 #include <QMetaType>
@@ -36,6 +44,7 @@
 
 #include <atomic>
 #include <memory>
+#include <optional>
 
 namespace NereusSDR {
 
@@ -59,9 +68,12 @@ struct CaptureSupervisorOptions {
 // at most stopTimeoutMs, then kill) and returns to Closed.  No demand means
 // no helper process.
 //
-// Ready requires the helper's Ready status for the current generation and
-// at least one valid PCM record of that generation.  Records of any other
-// generation are dropped.
+// Each generation gets its own shared-memory region and wake (CaptureShm),
+// handed to the helper with AttachRing; the helper builds the clock
+// matcher in it and posts the wake after every write.  Ready requires the
+// helper's Ready status for the current generation and the region's first
+// wake with a valid ring.  Records of any other generation are dropped; a
+// Pcm record is a protocol error.
 //
 // Failed persists; the supervisor never retries by itself.  retry(),
 // configure() with a different config, or a new demand after demand had
@@ -71,10 +83,10 @@ struct CaptureSupervisorOptions {
 //
 // Threading: construct, call and destroy on one owner thread (the GUI
 // thread in the application).  The QProcess lives on the supervisor's own
-// QThread; PCM goes straight from that thread into reader(); statusChanged
+// QThread; a wake thread per generation follows the ring; statusChanged
 // is emitted on the owner thread.  No public call waits on the helper,
 // except shutdown(), which is bounded by stopTimeoutMs + 500 ms.
-class CaptureSupervisor final : public QObject {
+class NEREUS_CORE_EXPORT CaptureSupervisor final : public QObject {
     Q_OBJECT
 
 public:
@@ -86,13 +98,32 @@ public:
         enum class State { Closed, PreparingPermission, Opening, Ready, Failed, Stopping };
         enum class Reason { None, PermissionDenied, DeviceNotFound, OpenFailed, StartFailed,
                             InputLost, Timeout, HelperMissing, HelperDidNotStart,
-                            HelperExited, ProtocolError };
+                            HelperExited, ProtocolError, DeviceInUse };
         State state = State::Closed;
         QString configuredDevice;   // empty = system default
         QString actualDevice;
         Reason reason = Reason::None;
         quint32 generation = 0;
-        friend bool operator==(const Status&, const Status&) = default;
+        // From the helper's Ready (0 until then): the device's own rate,
+        // the latency its engine reports and its buffer, in ms.
+        int nativeRate = 0;
+        double deviceLatencyMs = 0.0;
+        double deviceBufferMs = 0.0;
+        // The median time from the helper's ring write to the window's
+        // wake over the last delay window; a measurement, so it is not
+        // part of ==.  nullopt until the first window closes.
+        std::optional<double> hopMs;
+        // The requestSerial() this status answers (configure, retry or the
+        // first demand): a status of an earlier request is stale.
+        quint64 request = 0;
+        friend bool operator==(const Status& a, const Status& b)
+        {
+            return a.state == b.state && a.configuredDevice == b.configuredDevice
+                && a.actualDevice == b.actualDevice && a.reason == b.reason
+                && a.generation == b.generation && a.nativeRate == b.nativeRate
+                && a.deviceLatencyMs == b.deviceLatencyMs
+                && a.deviceBufferMs == b.deviceBufferMs && a.request == b.request;
+        }
     };
 
     // One unit of capture demand.  Move-only.  Releasing twice, or after the
@@ -127,6 +158,10 @@ public:
     // The config the last configure() applied (native audio plan Task 7).
     AudioDeviceConfig config() const { return m_config; }
     void retry();
+    // Counts the requests that start a generation: a configure() that
+    // changes the config, retry(), and the first demand.  Each status
+    // carries the serial of the request it answers (Status::request).
+    quint64 requestSerial() const { return m_requestSerial; }
     Status status() const;
     CaptureAudioBus* reader() const;        // same pointer for the supervisor's lifetime
     void shutdown();                        // idempotent; returns within stopTimeoutMs + 500 ms
@@ -153,6 +188,7 @@ private:
     void releaseLease(quint64 id);
     bool hasLease(quint64 id) const;
     void onWorkerStatus(const Status& status);
+    void onWorkerHop(quint32 generation, double hopMs);
     // Marks the owner's status copy non-Ready before a restart is queued,
     // so no caller sees the old Ready while the capture thread retires it.
     void markRestarting(const QString* configuredDevice);
@@ -167,6 +203,7 @@ private:
     AudioDeviceConfig m_config;
     bool m_shutDown = false;
     bool m_probeEnabled = false;
+    quint64 m_requestSerial = 0;
 
     mutable QMutex m_statusMutex;
     Status m_status;

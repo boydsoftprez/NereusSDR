@@ -19,6 +19,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09  J.J. Boyd / KG4VCF  Native audio plan Task 13 (R-AUD-11,
+//                                    R-AUD-17, R-AUD-18): the mic open
+//                                    answers only its own capture request;
+//                                    a mic another program holds reads in
+//                                    use; the mic's delay parts come from
+//                                    the helper's ring and Ready.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-09  J.J. Boyd / KG4VCF  Native audio plan Task 12 (R-AUD-11,
 //                                    R-AUD-25): the Linux Core's saved
 //                                    choices migrate to ALSA direct
@@ -283,6 +290,7 @@
 #include "audio/AudioStreamSupervisor.h"
 #include "audio/PortAudioLibrary.h"
 #include "audio/CaptureAudioBus.h"
+#include "audio/DeviceRateMatcher.h"
 #include "audio/PortAudioBus.h"
 #include "../models/RadioModel.h"
 #include "../models/SliceModel.h"
@@ -1893,9 +1901,10 @@ AudioOpenResult AudioEngine::openMicRole(AudioEngineKind engine,
 {
     // The PC mic is captured by the helper process: the matched config
     // goes to the capture supervisor, and its status completes the open.
-    // Until Task 13 the helper opens by deviceName through PortAudio, on
-    // the host API driverApi names (bug 1: never a device of the same
-    // name on another host API); hostApiIndex -1 leaves that to it.
+    // The helper opens it on the saved engine by its saved identity
+    // (Task 13); the older drivers still go by deviceName on the host API
+    // driverApi names (bug 1: never a device of the same name on another
+    // host API); hostApiIndex -1 leaves that to it.
     if (!m_captureSupervisor) {
         return AudioOpenResult::Failed;
     }
@@ -1949,6 +1958,11 @@ AudioOpenResult AudioEngine::openMicRole(AudioEngineKind engine,
     } else {
         m_micGenerationFloor = now.generation;
     }
+    // Carried finding (Task 5): the host reports only the latest open and
+    // onOpenFinished has no token, so the open answers only a status of
+    // the request made here (the configure or retry above, or the one in
+    // flight); an earlier open's status still in the queue is dropped.
+    m_micRequestFloor = m_captureSupervisor->requestSerial();
     m_micPending = true;
     return AudioOpenResult::Pending;
 }
@@ -1961,29 +1975,36 @@ void AudioEngine::onCaptureStatusForRole(const CaptureSupervisor::Status& status
     using State = CaptureSupervisor::Status::State;
     using Reason = CaptureSupervisor::Status::Reason;
     if (m_micPending) {
-        if (status.generation <= m_micGenerationFloor) {
-            return;   // an earlier generation's, queued before this open
+        if (status.generation <= m_micGenerationFloor || status.request < m_micRequestFloor) {
+            return;   // an earlier generation's or request's, queued before this open
         }
         if (status.state == State::Ready) {
             m_micPending = false;
             m_micOpen = true;
             m_streamSupervisor->onOpenFinished(AudioRole::TxInput, AudioOpenResult::Opened);
         } else if (status.state == State::Failed) {
-            // Task 13 adds the helper's busy reason (InUse).
+            // R-AUD-11: the helper's busy reason reads in use.
             m_micPending = false;
-            m_streamSupervisor->onOpenFinished(AudioRole::TxInput,
-                                               status.reason == Reason::DeviceNotFound
-                                                   ? AudioOpenResult::NotFound
-                                                   : AudioOpenResult::Failed);
+            AudioOpenResult result = AudioOpenResult::Failed;
+            if (status.reason == Reason::DeviceNotFound) {
+                result = AudioOpenResult::NotFound;
+            } else if (status.reason == Reason::DeviceInUse) {
+                result = AudioOpenResult::InUse;
+            }
+            m_streamSupervisor->onOpenFinished(AudioRole::TxInput, result);
         }
         return;
     }
     if (m_micOpen && status.state == State::Failed) {
         m_micOpen = false;
         AudioStreamEvent event;
-        event.kind = (status.reason == Reason::InputLost || status.reason == Reason::DeviceNotFound)
-                         ? AudioStreamEvent::Kind::DeviceLost
-                         : AudioStreamEvent::Kind::ResetRequested;
+        if (status.reason == Reason::InputLost || status.reason == Reason::DeviceNotFound) {
+            event.kind = AudioStreamEvent::Kind::DeviceLost;
+        } else if (status.reason == Reason::DeviceInUse) {
+            event.kind = AudioStreamEvent::Kind::DeviceBusy;
+        } else {
+            event.kind = AudioStreamEvent::Kind::ResetRequested;
+        }
         m_streamSupervisor->onStreamEvent(AudioRole::TxInput, event);
     }
 }
@@ -2232,9 +2253,32 @@ std::optional<DeviceRateMatcherStats> AudioEngine::remotePlaybackMatcherStats(
 AudioDelayParts AudioEngine::delayParts(AudioRole role) const
 {
     // R-AUD-15: the readout per role.  The PC mic's capture runs in the
-    // helper, which reports no parts here.
+    // helper: its clock matcher's fill comes from the shared ring, plus
+    // the measured hop from the helper's write to the window's wake; the
+    // resampler, device buffer and latency from the helper's Ready.
     if (role == AudioRole::TxInput) {
-        return {};
+        if (!m_micHandledBySupervisor || !m_captureSupervisor) {
+            return {};
+        }
+        const CaptureSupervisor::Status status = m_captureSupervisor->status();
+        const CaptureAudioBus* reader = m_captureSupervisor->reader();
+        if (status.state != CaptureSupervisor::Status::State::Ready || reader == nullptr
+            || !reader->isOpen()) {
+            return {};
+        }
+        const std::optional<double> fill = reader->fillFrames();
+        if (!fill) {
+            return {};
+        }
+        constexpr double kMsPerFrame = 1000.0 / double(CaptureAudioBus::kSampleRate);
+        AudioDelayParts parts;
+        parts.matcherFillMs = *fill * kMsPerFrame + status.hopMs.value_or(0.0);
+        parts.resamplerMs = double(DeviceRateMatcher::resamplerDelayFramesFor(
+                                status.nativeRate, CaptureAudioBus::kSampleRate))
+                            * kMsPerFrame;
+        parts.deviceBufferMs = status.deviceBufferMs;
+        parts.deviceLatencyMs = status.deviceLatencyMs;
+        return parts;
     }
     std::lock_guard<std::mutex> lock(roleBusMutex(role));
     IAudioBus* bus = roleBusLocked(role);

@@ -16,6 +16,10 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 9 (R-AUD-02, R-AUD-11, R-AUD-16).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 13 (R-AUD-11): openRefusedInUse(),
+//               so a device another program holds at open reads in use;
+//               the DeviceBusy posted there comes before any sink is set.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -51,6 +55,7 @@ public:
     QString backendName() const override;
     AudioFormat negotiatedFormat() const override;
     QString errorString() const override;
+    bool openRefusedInUse() const override;
 
     void setStreamEventSink(std::function<void(const AudioStreamEvent&)> sink) override;
     AudioDelayParts delayParts() const override;

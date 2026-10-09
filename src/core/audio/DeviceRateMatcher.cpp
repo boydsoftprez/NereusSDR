@@ -46,6 +46,10 @@
 //               the block, for the shared-memory ring's exact order check
 //               (V-SW-6).  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.  Native audio plan Task 13 (R-AUD-17).
+//   2026-10-09: resamplerDelayFramesFor(), the same varsamp delay for any
+//               rates, for the PC mic's window side.  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.  Native audio plan
+//               Task 13 (R-AUD-18).
 // =================================================================
 //
 // --- From rmatch.c ---
@@ -998,21 +1002,29 @@ double DeviceRateMatcher::fillFrames() const
 
 int DeviceRateMatcher::resamplerDelayFrames() const
 {
+    return resamplerDelayFramesFor(m_config.inRate, m_config.outRate);
+}
+
+int DeviceRateMatcher::resamplerDelayFramesFor(int inRate, int outRate)
+{
+    if (inRate <= 0 || outRate <= 0) {
+        return 0;
+    }
     // From Thetis Project Files/Source/wdsp/varsamp.c:41-60 [v2.10.3.15 @3759d09]
     double min_rate, norm_rate;
     // double max_rate;
-    if (m_config.outRate >= m_config.inRate)
+    if (outRate >= inRate)
     {
-        min_rate = (double)m_config.inRate;
+        min_rate = (double)inRate;
         // max_rate = (double)a->out_rate;
         norm_rate = min_rate;
     }
     else
     {
-        min_rate = (double)m_config.outRate;
+        min_rate = (double)outRate;
         // max_rate = (double)a->in_rate;
         // norm_rate = max_rate;
-        norm_rate = (double)m_config.inRate;
+        norm_rate = (double)inRate;
     }
     const int rsize = (int)(kVarsampTapsAtUnity * norm_rate / min_rate);
     // As RemoteAudioRateMatcher::filterDelayFrames: half the filter, less one.
