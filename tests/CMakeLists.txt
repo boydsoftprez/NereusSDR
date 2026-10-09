@@ -1754,7 +1754,11 @@ nereus_add_test(tst_audio_engine_master_mute)
 # widget→AudioEngine user path, the AudioEngine→widget echo path with
 # re-entry prevention, AppSettings round-trip (audio/Master/Volume,
 # audio/Master/Muted), and construction-time restore of saved values.
+# Native audio plan Task 19 (R-AUD-23, D20, V-UI-2): the speakers menu and
+# tooltip over fake engine backends; NEREUS_HEADER_CAPTURE_DIR saves the
+# menu and tooltip captures.
 nereus_add_test(tst_master_output_widget)
+target_compile_definitions(tst_master_output_widget PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3O Sub-Phase 10 Task 10c: TitleBar host strip ─────────────────────
 # 32 px strip that hosts the QMenuBar + MasterOutputWidget. Smoke only:
@@ -2009,8 +2013,10 @@ nereus_add_test(tst_audio_engine_no_portaudio)
 # ── Phase 3O Sub-Phase 12 Task 12.2 Step 0: MasterOutputWidget signal refresh ──
 # Verifies that speakersConfigChanged → onSpeakersConfigChanged syncs the widget's
 # device-name anchor without emitting outputDeviceChanged (sync-from-engine path,
-# not a user action). 5 test cases; runs on all platforms.
+# not a user action). 5 test cases; runs on all platforms. Native audio plan
+# Task 19: a fall-back the config names never moves the menu's tick.
 nereus_add_test(tst_master_output_widget_signal_refresh)
+target_compile_definitions(tst_master_output_widget_signal_refresh PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3O Sub-Phase 12 Task 12.2: DeviceCard widget ─────────────────────────
 # Verifies construction (Output, Input, enableCheckbox), currentConfig(),
