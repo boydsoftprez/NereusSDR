@@ -43,6 +43,11 @@
 // cards' Device row (the name on Mac and Linux, a cable picker on Windows
 // with "On" disabled until a cable is picked), "Used by" and "Activity";
 // "Detected virtual cables" with Rescan moved here from Advanced.
+//
+// 2026-10-09 (R-AUD-04): native audio plan Task 16 fix round. J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code. A cable picked by name
+// drops the previous device's id and channel pair. setSystemForTest() also
+// lays the channel cards out for that system (their engine without lists).
 // =================================================================
 
 #include "AudioVaxPage.h"
@@ -495,6 +500,11 @@ void VaxChannelCard::applyAutoDetectBinding(const QString& deviceName)
     //    other fields, then overwrite the device name with the picked cable.
     AudioDeviceConfig cfg = m_deviceCard->currentConfig();
     cfg.deviceName = deviceName;
+    // The identity is the picked cable's: the previous device's id and
+    // channel pair belonged to it, and a stale id would win over the name
+    // (R-AUD-04).  The engine learns the cable's id by name.
+    cfg.deviceId.clear();
+    cfg.firstChannel = 1;
 
     // 2) Persist all 10 fields to AppSettings under audio/Vax<N>/.
     cfg.saveToSettings(m_prefix);
@@ -1235,6 +1245,23 @@ SoundSystemLine::System AudioVaxPage::system()
 void AudioVaxPage::setSystemForTest(std::optional<SoundSystemLine::System> system)
 {
     systemOverride() = system;
+    // The channel cards are laid out for that system too: a card with no
+    // device lists shows its engine, not this build's.
+    std::optional<AudioEngineKind> engine;
+    if (system) {
+        switch (*system) {
+        case SoundSystemLine::System::Mac:
+            engine = AudioEngineKind::CoreAudio;
+            break;
+        case SoundSystemLine::System::Windows:
+            engine = AudioEngineKind::WindowsShared;
+            break;
+        case SoundSystemLine::System::Linux:
+            engine = AudioEngineKind::PipeWire;
+            break;
+        }
+    }
+    DeviceCard::setBuildDefaultEngineForTest(engine);
 }
 
 void AudioVaxPage::setDetectedCablesForTest(const QVector<DetectedCable>& cables)

@@ -161,6 +161,12 @@
 //                                    with the card's Driver API and Buffer
 //                                    size. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-09  J.J. Boyd / KG4VCF  Native audio plan Task 16 (R-AUD-01):
+//                                    the microphone card's Driver list is
+//                                    shown and greyed only with a device
+//                                    list reason, never by the transmit
+//                                    gate. AI-assisted via Anthropic
+//                                    Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -2115,8 +2121,14 @@ private slots:
         QVERIFY(dialog.findChild<QLabel*>(QStringLiteral("setupLocalUnavailable"))->isHidden());
         QVERIFY(dialog.findChild<QLabel*>(QStringLiteral("setupTransmitUnavailable"))->isHidden());
 
-        // This computer's microphone.
-        QVERIFY(page->driverApiCombo()->isEnabled());
+        // This computer's microphone. Its Driver list follows R-AUD-01, not
+        // the transmit gate: shown, greyed only with a device-list reason
+        // (here no engine backends exist, so the lists are not ready; on
+        // the Mac Core Audio is the only choice).
+        QVERIFY(!page->driverApiCombo()->isHidden());
+        QVERIFY(page->driverApiCombo()->toolTip() != txReason);
+        QVERIFY(page->driverApiCombo()->isEnabled()
+                || !page->driverApiCombo()->toolTip().isEmpty());
         QVERIFY(page->deviceCombo()->isEnabled());
         QVERIFY(page->bufferSizeCombo()->isEnabled());
         QVERIFY(page->testMicButton()->isEnabled());

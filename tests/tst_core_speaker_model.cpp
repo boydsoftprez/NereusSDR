@@ -25,6 +25,9 @@
 // Modification history (NereusSDR):
 //   2026-10-09 - New test (native audio plan Task 21). J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Task 16 fix round: the list fills before a radio connects
+//                and the audio_device seed still applies. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -720,6 +723,25 @@ private slots:
     }
 
     // A box without a desktop opens the Core's default card at start.
+    // Task 16 fix round: the Core speaker list fills before a radio
+    // connects, opening nothing, and the daemon's later audio_device seed
+    // (DaemonApp::applyConfigToSettings) still applies at start.
+    void listFillsBeforeStartAndTheSeedStillApplies()
+    {
+        CoreRig rig;
+        rig.radio.setCoreSpeakerDesktop(false, true);
+        rig.radio.setCoreSpeakerHost(true);
+        QCOMPARE(rig.cards().size(), 2);
+        QCOMPARE(rig.speakerOpens(), 0);
+        auto& s = AppSettings::instance();
+        QVERIFY(!s.contains(QStringLiteral("audio/Speakers/DeviceName")));
+        QVERIFY(!s.contains(QStringLiteral("audio/Speakers/Engine")));
+        s.setValue(QStringLiteral("audio/Speakers/DeviceName"), kUsbName);
+        rig.engine->start();
+        QTRY_COMPARE_WITH_TIMEOUT(rig.speakerOpens(), 1, kWaitMs);
+        QCOMPARE(rig.lastOpenedId(), kUsbId);
+    }
+
     void noDesktop_opensTheDefaultAtStart()
     {
         CoreRig rig;

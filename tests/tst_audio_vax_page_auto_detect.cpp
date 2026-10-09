@@ -18,6 +18,9 @@
 //   8. Auto-detect button widget is findable as a QPushButton child.
 //   9. AudioVaxPage constructs (no engine) without crashing.
 //  10. AudioVaxPage has four VaxChannelCard children with indices 1–4.
+//  11b. A cable picked by name drops the previous device's id and channel
+//      pair (R-AUD-04; native audio plan Task 16 fix round, 2026-10-09,
+//      J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code).
 //
 // Notes:
 //   - Tests use the NEREUS_BUILD_TESTS seam setDetectedCablesForTest()
@@ -331,6 +334,36 @@ private slots:
         // SampleRate must also be present (default 48000) — proves full config
         // was persisted, not just DeviceName.
         QVERIFY(!s.value(rateKey, QString()).toString().isEmpty());
+    }
+
+    // R-AUD-04: a cable picked by name replaces the whole identity; the
+    // previous device's id (which would win over the name) and its channel
+    // pair are not carried over.
+    void autoDetectBindingDropsTheStaleDeviceId()
+    {
+        clearAudioKeys();
+        AudioDeviceConfig old;
+        old.deviceId = QStringLiteral("old-cable-id");
+        old.deviceName = QStringLiteral("Old cable");
+        old.firstChannel = 3;
+        old.saveToSettings(QStringLiteral("audio/Vax2"));
+
+        VaxChannelCard card(2, nullptr);
+        card.loadFromSettings();
+        QSignalSpy spy(&card, &VaxChannelCard::configChanged);
+        const QString cableName = QStringLiteral("CABLE-A Output (VB-Audio Virtual Cable)");
+        card.bindDeviceNameForTest(cableName);
+
+        const AudioDeviceConfig saved =
+            AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/Vax2"));
+        QCOMPARE(saved.deviceName, cableName);
+        QVERIFY(saved.deviceId.isEmpty());
+        QCOMPARE(saved.firstChannel, 1);
+        QCOMPARE(spy.count(), 1);
+        const auto sent = spy.at(0).at(1).value<AudioDeviceConfig>();
+        QCOMPARE(sent.deviceName, cableName);
+        QVERIFY(sent.deviceId.isEmpty());
+        QCOMPARE(sent.firstChannel, 1);
     }
 
     // ── 12. autoDetectReassign_clearsSourceSlot (C3) ──────────────────────────

@@ -29,6 +29,14 @@
 // the Delay line. The saved ExclusiveMode, EventDriven and BypassMixer keys
 // are kept as they are and no longer written.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-09: Task 16 fix round (R-AUD-01, R-AUD-11, R-AUD-15). A chosen
+// device another program holds reads "<name> (in use by another
+// program)" in the closed Device field, which grows to fit it; the
+// Negotiated pill reads the role's playing format from its status and
+// stream (the mic's from the capture's Ready) whenever Setup opens; the
+// older drivers with no host API saved show on the "Older drivers"
+// heading, never a second row of that name.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "DeviceCard.h"
@@ -191,6 +199,9 @@ static constexpr int kDeviceIdRole = Qt::UserRole + 3;
 static constexpr int kFirstChannelRole = Qt::UserRole + 4;
 static constexpr int kBluetoothRole = Qt::UserRole + 5;
 static constexpr int kPairedRole = Qt::UserRole + 6;
+// The entry's list label, before the closed field marks the chosen device
+// in use by another program (R-AUD-11).
+static constexpr int kListLabelRole = Qt::UserRole + 7;
 
 // R-AUD-15: the Delay list ("Automatic" saves DelayMs 0).
 static constexpr std::array<int, 7> kDelayChoicesMs{0, 2, 3, 5, 10, 20, 40};
@@ -295,10 +306,19 @@ const IAudioDeviceCatalog& emptyCatalogue()
     return catalogue;
 }
 
+std::optional<AudioEngineKind>& buildDefaultOverride()
+{
+    static std::optional<AudioEngineKind> value;
+    return value;
+}
+
 // R-AUD-02's first native choice for this build, shown on the Driver list
 // of a card whose engine has no device catalogue to ask.
 AudioEngineKind buildDefaultEngine()
 {
+    if (buildDefaultOverride()) {
+        return *buildDefaultOverride();
+    }
 #if defined(Q_OS_MAC)
     return AudioEngineKind::CoreAudio;
 #elif defined(Q_OS_WIN)
@@ -444,6 +464,9 @@ void DeviceCard::buildLayout()
     m_deviceCombo = new QComboBox(m_body);
     m_deviceCombo->setStyleSheet(QLatin1String(kComboStyle));
     m_deviceCombo->setMinimumWidth(200);
+    // R-AUD-11: "<name> (in use by another program)" can arrive while the
+    // card is shown; the field follows its entries, never truncating it.
+    m_deviceCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     deviceForm->addRow(makeLabel(QStringLiteral("Device:")), m_deviceCombo);
 
     // ── TX-input extras (Input role only), in front ──────────────────────
@@ -773,6 +796,11 @@ void DeviceCard::setAudioEngine(AudioEngine* engine)
                 attachCatalogue();
                 refreshStatus();
             });
+    if (m_audioRole && *m_audioRole == AudioRole::TxInput) {
+        // R-AUD-15: the mic's pill follows the capture's Ready.
+        connect(m_engine, &AudioEngine::captureStatusChanged, this,
+                [this](const CaptureSupervisor::Status&) { renderPill(); });
+    }
     if (m_audioRole) {
         m_status = m_engine->roleStatus(*m_audioRole);
     }
@@ -813,6 +841,13 @@ void DeviceCard::takeSavedChoice(const AudioDeviceConfig& saved)
     m_selection = Selection{saved.deviceId, saved.deviceName, std::max(1, saved.firstChannel)};
 }
 
+#ifdef NEREUS_BUILD_TESTS
+void DeviceCard::setBuildDefaultEngineForTest(std::optional<AudioEngineKind> engine)
+{
+    buildDefaultOverride() = engine;
+}
+#endif
+
 AudioEngineKind DeviceCard::selectedEngine() const
 {
     if (m_driverEngine) {
@@ -841,8 +876,31 @@ void DeviceCard::refreshStatus()
         m_stateNote->setText(note);
     }
     m_stateNote->setVisible(!note.isEmpty());
+    markChosenInUse();
     refreshDelayNow();
     renderPill();
+}
+
+// R-AUD-11: a chosen device another program holds reads
+// "<name> (in use by another program)" in the closed field, as a missing
+// one reads "(not connected)".  Every other entry keeps its list label.
+void DeviceCard::markChosenInUse()
+{
+    const QString suffix = QStringLiteral(" (in use by another program)");
+    const int current = m_deviceCombo->currentIndex();
+    const bool inUse = m_engine && m_audioRole && m_status.reason == AudioRoleReason::InUse;
+    for (int i = 1; i < m_deviceCombo->count(); ++i) {
+        QString text = m_deviceCombo->itemData(i, kListLabelRole).toString();
+        if (text.isEmpty()) {
+            continue;
+        }
+        if (inUse && i == current && !text.endsWith(suffix)) {
+            text += suffix;
+        }
+        if (m_deviceCombo->itemText(i) != text) {
+            m_deviceCombo->setItemText(i, text);
+        }
+    }
 }
 
 void DeviceCard::refreshDelayNow()
@@ -895,6 +953,13 @@ void DeviceCard::populateDriverCombo()
     const AudioEngineKind engine = selectedEngine();
     const bool older = engine == AudioEngineKind::PortAudio;
     auto isChoice = [&](const AudioDriverEntry& e) {
+        if (older && m_driverHostApi.isEmpty() && !e.engine
+            && e.label == audioEngineLabel(AudioEngineKind::PortAudio)) {
+            // The older drivers with no host API saved (the build's default
+            // while no native engine runs): the "Older drivers" heading
+            // shows it, never a second row of the same name.
+            return true;
+        }
         return e.engine && *e.engine == engine && (!older || e.hostApi == m_driverHostApi);
     };
     bool listed = false;
@@ -1047,6 +1112,7 @@ void DeviceCard::populateDeviceCombo()
         m_deviceCombo->setItemData(i, e.pair.firstChannel, kFirstChannelRole);
         m_deviceCombo->setItemData(i, e.bluetooth, kBluetoothRole);
         m_deviceCombo->setItemData(i, !e.group.isEmpty(), kPairedRole);
+        m_deviceCombo->setItemData(i, e.label, kListLabelRole);
         if (kept) {
             m_deviceCombo->setItemData(i, true, kKeptEntryRole);
         }
@@ -1208,6 +1274,55 @@ void DeviceCard::renderPill()
         // Red pill — driver rejected the config.
         m_negotiatedPill->setStyleSheet(QLatin1String(kPillStyleError));
         m_negotiatedPill->setText(QStringLiteral("Error: ") + m_negotiatedError);
+        return;
+    }
+    if (m_engine && m_audioRole && *m_audioRole != AudioRole::TxInput) {
+        // R-AUD-15: the format the role plays now, from its status and its
+        // stream, whenever Setup opens; "(not applied)" while it plays
+        // nothing.
+        const bool playing = m_status.state == AudioRoleState::Playing
+            || m_status.state == AudioRoleState::PlayingOnDefault;
+        const std::optional<AudioFormat> format =
+            playing ? m_engine->roleFormat(*m_audioRole) : std::nullopt;
+        if (!format) {
+            m_negotiatedPill->setStyleSheet(QLatin1String(kPillStyleApplying));
+            m_negotiatedPill->setText(QStringLiteral("(not applied)"));
+            return;
+        }
+        QString name = m_status.playingName;
+        if (name.isEmpty()) {
+            name = m_status.chosenName.isEmpty() ? QStringLiteral("(default)") : m_status.chosenName;
+        }
+        m_negotiatedPill->setStyleSheet(QLatin1String(kPillStyleOk));
+        m_negotiatedPill->setText(QStringLiteral("%1 · %2 Hz · %3 ch · %4 samples")
+                                      .arg(name)
+                                      .arg(format->sampleRate)
+                                      .arg(format->channels)
+                                      .arg(m_status.chosen.bufferSamples));
+        return;
+    }
+    if (m_engine && m_audioRole && *m_audioRole == AudioRole::TxInput) {
+        // R-AUD-15: the PC mic captures in the helper process, whose Ready
+        // reports the device's rate (no channel count), so the pill reads
+        // that while the mic captures and "(not applied)" otherwise.
+        const CaptureSupervisor::Status capture = m_engine->captureStatus();
+        const bool capturing = m_status.state == AudioRoleState::Playing
+            && capture.state == CaptureSupervisor::Status::State::Ready && capture.nativeRate > 0;
+        if (!capturing) {
+            m_negotiatedPill->setStyleSheet(QLatin1String(kPillStyleApplying));
+            m_negotiatedPill->setText(QStringLiteral("(not applied)"));
+            return;
+        }
+        // The name the Delay line and the outputs' pills use.
+        QString name = m_status.playingName;
+        if (name.isEmpty()) {
+            name = capture.actualDevice.isEmpty() ? QStringLiteral("(default)") : capture.actualDevice;
+        }
+        m_negotiatedPill->setStyleSheet(QLatin1String(kPillStyleOk));
+        m_negotiatedPill->setText(QStringLiteral("%1 · %2 Hz · %3 samples")
+                                      .arg(name)
+                                      .arg(capture.nativeRate)
+                                      .arg(m_status.chosen.bufferSamples));
         return;
     }
     if (!m_negotiated) {

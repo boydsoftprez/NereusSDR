@@ -126,6 +126,25 @@ private slots:
             }
         }
     }
+
+    // Task 16 fix round (R-AUD-09, R-AUD-11): the mic role silent because
+    // its mic is missing or held reads so; anything else leaves the line to
+    // captureStatusText().
+    void micRoleStatusTextNamesMissingAndHeld()
+    {
+        AudioRoleStatus role;
+        role.state = AudioRoleState::Silent;
+        role.reason = AudioRoleReason::NotConnected;
+        QCOMPARE(micRoleStatusText(role), QStringLiteral("PC mic not connected"));
+        role.reason = AudioRoleReason::InUse;
+        QCOMPARE(micRoleStatusText(role), QStringLiteral("PC mic in use by another program"));
+        role.reason = AudioRoleReason::None;
+        QVERIFY(micRoleStatusText(role).isEmpty());
+        role.state = AudioRoleState::Playing;
+        role.reason = AudioRoleReason::InUse;
+        QVERIFY(micRoleStatusText(role).isEmpty());
+        QVERIFY(micRoleStatusText(AudioRoleStatus{}).isEmpty());
+    }
 };
 
 QTEST_APPLESS_MAIN(TstCaptureStatusText)

@@ -38,6 +38,10 @@
 //               checkboxes; devices come from the engine's device catalogue
 //               and follow it live; the role's status notes, the engine
 //               notes and the Delay line.
+//   2026-10-09: Task 16 fix round by J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code. setBuildDefaultEngineForTest(), so
+//               a page a test lays out for another system shows that
+//               system's engine on a card with no device lists.
 // =================================================================
 
 #include "core/AudioDeviceConfig.h"
@@ -164,6 +168,11 @@ public:
     // The role the card's prefix names (audio/Speakers, audio/Headphones,
     // audio/TxInput, audio/Vax1 to audio/Vax4).
     static std::optional<AudioRole> roleForPrefix(const QString& prefix);
+#ifdef NEREUS_BUILD_TESTS
+    // The engine a card with no device catalogue shows, for a test that
+    // lays a page out for another system (nullopt: this build's).
+    static void setBuildDefaultEngineForTest(std::optional<AudioEngineKind> engine);
+#endif
 
 signals:
     // Emitted on any control edit (excluding loadFromSettings).
@@ -198,6 +207,7 @@ private:
     void attachCatalogue();
     void takeSavedChoice(const AudioDeviceConfig& saved);
     void refreshStatus();
+    void markChosenInUse();
     void refreshDelayNow();
     void renderPill();
     void updateEngineNote();

@@ -14,6 +14,9 @@
 //               mic that is missing "is not connected", and the in-use
 //               text names the mic.  J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-09: Task 16 fix round (R-AUD-09, R-AUD-11): micRoleStatusText,
+//               after tx-mic-mockup.html's "PC mic not connected".  J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/setup/CaptureStatusText.h"
@@ -93,6 +96,20 @@ QString captureStatusText(const CaptureSupervisor::Status& status)
         return failureText(status);
     }
     return QStringLiteral("Microphone not in use");
+}
+
+QString micRoleStatusText(const AudioRoleStatus& role)
+{
+    if (role.state != AudioRoleState::Silent) {
+        return {};
+    }
+    if (role.reason == AudioRoleReason::NotConnected) {
+        return QStringLiteral("PC mic not connected");
+    }
+    if (role.reason == AudioRoleReason::InUse) {
+        return QStringLiteral("PC mic in use by another program");
+    }
+    return {};
 }
 
 } // namespace NereusSDR
