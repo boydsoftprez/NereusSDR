@@ -162,6 +162,14 @@ struct JuiceCloseTests {
         #expect(juice_begin_close(firstAgent) == 0)
         #expect(juice_begin_close(firstAgent) == 0, "duplicate close begins only one transaction")
         #expect(juice_close_status(firstAgent) == JUICE_CLOSE_PENDING)
+        // The deadline is libjuice's, on its own clock; a poll on a busy
+        // cooperative worker sees it as late as the pool lets that task run
+        // (8.9 s on the CI runner, 2026-10-09). The status is read on a
+        // thread of its own from here, and the time it first reads expired
+        // is what the bound checks.
+        let watch = CloseStatusWatch(firstAgent)
+        defer { watch.stop() }
+        let expiry = Task { await watch.firstExpiry(after: started) }
 
         #expect(juice_gather_candidates(secondAgent) == 0)
         try await LocalRendezvous.waitUntil("the second agent's allocation", within: .seconds(20)) {
@@ -170,10 +178,9 @@ struct JuiceCloseTests {
         try await LocalRendezvous.waitUntil("four bounded release requests", within: .seconds(6)) {
             turn.releaseTransactions.count == 4
         }
-        try await LocalRendezvous.waitUntil("the close deadline", within: .seconds(3)) {
-            juice_close_status(firstAgent) == JUICE_CLOSE_EXPIRED
-        }
-        #expect(ContinuousClock.now - started < .seconds(7))
+        let expiredAfter = try #require(await expiry.value, "the close deadline")
+        #expect(expiredAfter < .seconds(7))
+        #expect(juice_close_status(firstAgent) == JUICE_CLOSE_EXPIRED)
         #expect(turn.releaseTransactions.count == 4)
         #expect(turn.allocationCount("created") == 2)
         #expect(turn.allocationCount("released") == 0)
@@ -246,3 +253,41 @@ struct JuiceCloseTests {
 
 }
 #endif
+
+/// Reads one agent's close status on a thread of its own until it first
+/// reads expired. The read and the stop share a lock, so once ``stop()``
+/// returns the agent is not read again and the test may destroy it.
+private final class CloseStatusWatch: @unchecked Sendable {
+    private let lock = NSLock()
+    private let agent: OpaquePointer
+    private var stopped = false
+
+    init(_ agent: OpaquePointer) {
+        self.agent = agent
+    }
+
+    func stop() {
+        lock.withLock { stopped = true }
+    }
+
+    /// How long after `started` the status first read expired, or nil if
+    /// it never did within the hang backstop or the watch was stopped.
+    func firstExpiry(after started: ContinuousClock.Instant) async -> Duration? {
+        await TestNativeThread.run { [self] in
+            while ContinuousClock.now - started < TestBackstop.hang {
+                let expired = lock.withLock { () -> Bool? in
+                    stopped ? nil : juice_close_status(agent) == JUICE_CLOSE_EXPIRED
+                }
+                switch expired {
+                case nil:
+                    return nil
+                case true?:
+                    return ContinuousClock.now - started
+                case false?:
+                    usleep(1_000)
+                }
+            }
+            return nil
+        }
+    }
+}
