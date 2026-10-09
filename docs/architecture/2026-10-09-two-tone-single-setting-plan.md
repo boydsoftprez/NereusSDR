@@ -46,22 +46,15 @@ Copied from CLAUDE.md and CONTRIBUTING.md; every task keeps them.
 - Tests: read `docs/development/fast-test-loop.md` first. Build and run single
   test targets, never the whole suite. Run test binaries directly with
   `QT_QPA_PLATFORM=offscreen` as a prefix on the command; never export it.
-- Build directory: this worktree has none. Configure once into `build/` with
-  no downloads, reusing the trunk build's sources:
+- Build directory: `build/` is already configured (2026-10-09) with no
+  network fetches. Build targets in it; do not reconfigure from scratch. If a
+  reconfigure is ever needed, use exactly:
 
   ```
   D=/Users/j.j.boyd/NereusSDR/build/_deps
   cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-    -DFETCHCONTENT_FULLY_DISCONNECTED=ON \
+    -DNEREUS_DEPENDENCY_ARCHIVE_DIR=/Users/j.j.boyd/.config/nereus/work/deps-cache/nereus-core-pins-0368ff16/archives \
     -DFETCHCONTENT_SOURCE_DIR_LIBSPECBLEACH_UPSTREAM=$D/libspecbleach_upstream-src \
-    -DFETCHCONTENT_SOURCE_DIR_NEREUS_JSON=$D/nereus_json-src \
-    -DFETCHCONTENT_SOURCE_DIR_NEREUS_LIBDATACHANNEL=$D/nereus_libdatachannel-src \
-    -DFETCHCONTENT_SOURCE_DIR_NEREUS_LIBJUICE=$D/nereus_libjuice-src \
-    -DFETCHCONTENT_SOURCE_DIR_NEREUS_LIBSODIUM=$D/nereus_libsodium-src \
-    -DFETCHCONTENT_SOURCE_DIR_NEREUS_LIBSRTP=$D/nereus_libsrtp-src \
-    -DFETCHCONTENT_SOURCE_DIR_NEREUS_PLOG=$D/nereus_plog-src \
-    -DFETCHCONTENT_SOURCE_DIR_NEREUS_SPAKE2EE=$D/nereus_spake2ee-src \
-    -DFETCHCONTENT_SOURCE_DIR_NEREUS_USRSCTP=$D/nereus_usrsctp-src \
     -DFETCHCONTENT_SOURCE_DIR_PORTAUDIO=$D/portaudio-src \
     -DFETCHCONTENT_SOURCE_DIR_RNNOISE_UPSTREAM=$D/rnnoise_upstream-src \
     -DOPUS_URL=/Users/j.j.boyd/.config/nereus/work/deps-cache/nereus-core-pins-0368ff16/opus/opus-940d4e5-with-model.zip \
@@ -69,8 +62,9 @@ Copied from CLAUDE.md and CONTRIBUTING.md; every task keeps them.
     -DENABLE_DFNR=OFF > .crew/configure.log 2>&1
   ```
 
-  Then `grep -c "Performing download step" .crew/configure.log` must print 0.
-  A download or a missing source dir is reported, not worked around.
+  The archive directory's eight files match this branch's SHA-256 pins in
+  `cmake/NereusDependencyArchives.cmake`. Any network fetch is reported, not
+  worked around.
 - No device work. Nothing is deployed to the Rock or any bench Core; Core
   installs belong to the Core session or JJ. Hardware verification (JJ keys a
   two-tone with PS Auto on and watches calCount and feedbackLevel rise) is
