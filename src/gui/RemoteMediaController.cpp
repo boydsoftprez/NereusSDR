@@ -6,6 +6,10 @@
 //               devices on one clock runs their jitter hold on it too. No
 //               production caller; production is unchanged. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: R-AUD-17, R-R3-36: the microphone drain also stops at a
+//               short pull, so it ends after what is waiting even with a
+//               reader that fills every pull.  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-07: R-R3-21, R-R3-51: a no-packets restart while the Core
 //               transmits is the Core's expected receive silence, not an
 //               outage: the speakers and the headphones mix stop and wait
@@ -2631,6 +2635,12 @@ void RemoteMediaController::reconcileMicUplink()
         if (d->micRunning && !starting && !program) {
             d->micPending.insert(d->micPending.end(), d->micScratch.begin(),
                                  d->micScratch.begin() + got);
+        }
+        // A short pull means nothing more is waiting.  The PC mic reader
+        // is paced by its clock, so this loop ends either way; this keeps
+        // the GUI thread from spinning on any reader that pads.
+        if (got < static_cast<int>(d->micScratch.size())) {
+            break;
         }
     }
     if (!d->micRunning) {

@@ -29,11 +29,16 @@
 //   2026-10-09: native audio plan Task 16 (R-AUD-01, R-AUD-03, R-AUD-06,
 //               R-AUD-08 to R-AUD-11, R-AUD-14, R-AUD-15, R-AUD-16, D10).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 17 (R-AUD-07, R-AUD-19, R-AUD-20,
+//               settled call 28): the ASIO names, the shared note, the
+//               buffer sizes a driver allows and the format note.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/AudioDeviceConfig.h"
 #include "core/audio/AudioDelayParts.h"
 #include "core/audio/AudioDeviceTypes.h"
+#include "core/audio/IAsioDriver.h"
 #include "core/audio/IAudioStreamHost.h"
 
 #include <QList>
@@ -108,5 +113,25 @@ bool soundSystemMissing(const IAudioDeviceCatalog& catalogue);
 // Appends " Older drivers in use: <names>." (names joined with ", ") to a
 // description, adding the full stop it lacks; unchanged when none is.
 QString withOlderDriversInUse(const QString& description, const QStringList& olderDrivers);
+
+// ── ASIO (native audio plan Task 17) ─────────────────────────────────────
+// A role by its page's name: "Speakers", "Headphones", "Microphone",
+// "VAX 1" to "VAX 4".
+QString asioRoleName(AudioRole role);
+// Names joined with ", " and a last " and ".
+QString joinedNames(const QStringList& names);
+// R-AUD-20: "Buffer size and sample rate are shared with <names>, on the
+// same ASIO driver.", empty with no other role.
+QString asioSharedNote(const QList<AudioRole>& others);
+// R-AUD-20: the sizes a driver allows, smallest first: its one size when
+// min equals max; from min doubling to max with granularity -1; from min
+// by granularity to max (past kAsioBufferChoicesMax steps: min, its
+// doublings, preferred and the last step); min, preferred and max with
+// granularity 0.  Empty when the caps give no sizes.
+inline constexpr int kAsioBufferChoicesMax = 64;
+QList<int> asioBufferChoices(const AsioDriverCaps& caps);
+// Settled call 28: "<driver> uses a sample format NereusSDR can't play or
+// record."
+QString asioFormatNote(const QString& driver);
 
 } // namespace NereusSDR

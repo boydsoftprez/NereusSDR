@@ -28,6 +28,9 @@
 //   2026-10-09 - Task 16 fix round: the list fills before a radio connects
 //                and the audio_device seed still applies. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Native audio plan Task 22: the card struct is
+//                CoreSpeakerCardInfo. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -101,9 +104,9 @@ struct CoreRig {
         return coreSpeakerStateFromJson(radio.coreSpeakerState()).value_or(CoreSpeakerState{});
     }
 
-    QList<CoreSpeakerCard> cards() const
+    QList<CoreSpeakerCardInfo> cards() const
     {
-        return coreSpeakerDevicesFromJson(radio.coreSpeakerDevices()).value_or(QList<CoreSpeakerCard>{});
+        return coreSpeakerDevicesFromJson(radio.coreSpeakerDevices()).value_or(QList<CoreSpeakerCardInfo>{});
     }
 
     int speakerOpens() const
@@ -276,12 +279,12 @@ private slots:
 
     void json_devicesRoundTripAndAreStrict()
     {
-        const QList<CoreSpeakerCard> cards = {
-            CoreSpeakerCard{kUsbId, kUsbName, AudioDeviceState::Present},
-            CoreSpeakerCard{kBuiltInId, kBuiltInName, AudioDeviceState::InUse},
-            CoreSpeakerCard{QStringLiteral("Gone,0"), QStringLiteral("Gone"),
+        const QList<CoreSpeakerCardInfo> cards = {
+            CoreSpeakerCardInfo{kUsbId, kUsbName, AudioDeviceState::Present},
+            CoreSpeakerCardInfo{kBuiltInId, kBuiltInName, AudioDeviceState::InUse},
+            CoreSpeakerCardInfo{QStringLiteral("Gone,0"), QStringLiteral("Gone"),
                             AudioDeviceState::NotConnected}};
-        const std::optional<QList<CoreSpeakerCard>> back =
+        const std::optional<QList<CoreSpeakerCardInfo>> back =
             coreSpeakerDevicesFromJson(coreSpeakerDevicesToJson(cards));
         QVERIFY(back.has_value());
         QCOMPARE(*back, cards);
@@ -472,9 +475,9 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(rig.speakerOpens() >= 1, kWaitMs);
         QTRY_COMPARE_WITH_TIMEOUT(rig.state().kind, CoreSpeakerStateKind::Playing, kWaitMs);
         QTRY_COMPARE_WITH_TIMEOUT(rig.cards().size(), 2, kWaitMs);
-        QCOMPARE(rig.cards().at(0), (CoreSpeakerCard{kUsbId, kUsbName, AudioDeviceState::Present}));
+        QCOMPARE(rig.cards().at(0), (CoreSpeakerCardInfo{kUsbId, kUsbName, AudioDeviceState::Present}));
         QCOMPARE(rig.cards().at(1),
-                 (CoreSpeakerCard{kBuiltInId, kBuiltInName, AudioDeviceState::Present}));
+                 (CoreSpeakerCardInfo{kBuiltInId, kBuiltInName, AudioDeviceState::Present}));
         QCOMPARE(rig.radio.coreSpeakerDevice(), QStringLiteral(R"({"id":"","name":""})"));
         QVERIFY(!rig.state().desktop);
 

@@ -13,6 +13,10 @@
 //               reads the helper's clock matcher ring in shared memory
 //               instead of a ring fed from Pcm records.  J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: mic drain fix (R-AUD-17, R-R3-36): pull() is paced by
+//               the 48 kHz clock, so a caller draining until it returns 0
+//               ends; setClockForTest().  J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -37,11 +41,19 @@ struct MatcherRingHeader;
 //   open()  returns true and changes nothing; close() changes nothing.
 //   isOpen() is true only while the supervisor's current generation is
 //            Ready.
-//   pull()  returns Float32 mono 48 kHz bytes (whole frames only): every
-//           frame asked for while open (the clock matcher fills a dry run
-//           with its slew or silence), 0 while closed.  The mic is the
-//           ring's left channel.  Lock-free, no allocation; the TX worker
-//           is its only caller.
+//   pull()  returns Float32 mono 48 kHz bytes (whole frames only), 0 while
+//           closed.  The mic is the ring's left channel.  The reader is
+//           the clock matcher's output clock, so pull() is paced by 48 kHz:
+//           it returns at most the frames the clock has run since the
+//           previous pull, plus kPaceSlackFrames of early credit (and that
+//           credit stops growing at kPaceCreditCapFrames while nobody
+//           pulls).  A paced caller (the TX worker's 5 ms blocks) gets
+//           every frame it asks for, the matcher filling a dry run with its
+//           slew or silence; a caller that drains until pull() returns 0
+//           (the remote window's uplink) gets the clock's frames and then
+//           0, never an endless run of padding.  Lock-free, no allocation;
+//           one caller at a time (the TX worker, or the remote window's
+//           uplink, which runs with no local radio).
 //   push()  returns 0 (input only).
 //   txLevel() is the peak |x| of the frames the helper wrote at its latest
 //             wake (the newest kLevelWindowFrames at most), 0 while closed.
@@ -51,6 +63,11 @@ class CaptureAudioBus final : public IAudioBus {
 public:
     static constexpr int kSampleRate = 48'000;
     static constexpr int kLevelWindowFrames = 480;
+    // pull()'s pacing (see above): 10 ms of slack for a caller that pulls
+    // a little early, and 20 ms of credit kept across a late pull.
+    static constexpr int kPaceSlackFrames = 480;
+    static constexpr int kPaceCreditCapFrames = 960;
+    using Clock = std::int64_t (*)();   // nanoseconds, steady
 
     CaptureAudioBus();
     ~CaptureAudioBus() override;
@@ -90,6 +107,10 @@ public:
     quint64 dryRuns() const;
     std::int64_t lastWriteNs() const;   // audioProbeNowNs()'s clock; 0 with no write
 
+    // Tests: the clock pull() paces by (audioProbeNowNs by default).  Set
+    // it before the first pull.
+    void setClockForTest(Clock clock);
+
 private:
     struct Source;
 
@@ -104,6 +125,7 @@ private:
     std::atomic<bool> m_available{false};
     std::atomic<float> m_level{0.0f};
     std::uint64_t m_levelSeen = 0;                // wake thread only
+    Clock m_clock;
 };
 
 } // namespace NereusSDR

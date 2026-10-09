@@ -19,12 +19,16 @@
 //   2026-10-09: native audio plan early-review fix wave (R-AUD-08):
 //               opensOneStreamAtATime().  J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 17 (R-AUD-07, R-AUD-19 to R-AUD-22):
+//               AudioStreamRequest carries the role it plays.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #pragma once
 
 #include "core/IAudioBus.h"
 #include "core/audio/AudioDeviceTypes.h"
+#include "core/audio/IAudioStreamHost.h"
 
 #include <QList>
 #include <QString>
@@ -47,6 +51,7 @@ struct AudioStreamRequest {
     int bufferFrames = 0;         // 0: the engine's smallest
     int delayMs = 0;              // 0: automatic
     bool exclusive = false;       // Windows audio, exclusive
+    std::optional<AudioRole> role;   // the role it plays (ASIO tells the helper; Task 17)
 };
 
 class IAudioInputSink {           // called on the input device's callback thread

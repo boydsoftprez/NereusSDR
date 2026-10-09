@@ -7,6 +7,9 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 21 (R-AUD-25, R-AUD-28, R-AUD-30).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 22: the card struct is
+//               CoreSpeakerCardInfo, as the Setup widget is CoreSpeakerCard.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CoreSpeakerJson.h"
@@ -143,10 +146,10 @@ std::optional<CoreSpeakerState> coreSpeakerStateFromJson(const QString& json)
     return out;
 }
 
-QString coreSpeakerDevicesToJson(const QList<CoreSpeakerCard>& cards)
+QString coreSpeakerDevicesToJson(const QList<CoreSpeakerCardInfo>& cards)
 {
     QJsonArray a;
-    for (const CoreSpeakerCard& card : cards) {
+    for (const CoreSpeakerCardInfo& card : cards) {
         QJsonObject o;
         o.insert(QStringLiteral("id"), card.id);
         o.insert(QStringLiteral("name"), card.name);
@@ -156,14 +159,14 @@ QString coreSpeakerDevicesToJson(const QList<CoreSpeakerCard>& cards)
     return QString::fromUtf8(QJsonDocument(a).toJson(QJsonDocument::Compact));
 }
 
-std::optional<QList<CoreSpeakerCard>> coreSpeakerDevicesFromJson(const QString& json)
+std::optional<QList<CoreSpeakerCardInfo>> coreSpeakerDevicesFromJson(const QString& json)
 {
     QJsonParseError error;
     const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8(), &error);
     if (error.error != QJsonParseError::NoError || !doc.isArray()) {
         return std::nullopt;
     }
-    QList<CoreSpeakerCard> cards;
+    QList<CoreSpeakerCardInfo> cards;
     for (const QJsonValue& v : doc.array()) {
         if (!v.isObject()) {
             return std::nullopt;
@@ -183,7 +186,7 @@ std::optional<QList<CoreSpeakerCard>> coreSpeakerDevicesFromJson(const QString& 
         if (!cardState) {
             return std::nullopt;
         }
-        cards.append(CoreSpeakerCard{id.toString(), name.toString(), *cardState});
+        cards.append(CoreSpeakerCardInfo{id.toString(), name.toString(), *cardState});
     }
     return cards;
 }

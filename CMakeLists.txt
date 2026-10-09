@@ -2018,6 +2018,7 @@ set(GUI_SOURCES
     src/gui/setup/hardware/BandwidthMonitorTab.cpp
     src/gui/setup/AudioAdvancedPage.cpp
     src/gui/setup/AudioOutputsPage.cpp
+    src/gui/setup/CoreSpeakerCard.cpp
     src/gui/setup/AudioTxInputPage.cpp
     src/gui/setup/SoundSystemLine.cpp
     src/gui/setup/CaptureStatusText.cpp
@@ -2027,6 +2028,7 @@ set(GUI_SOURCES
     src/gui/setup/AudioDigitalModesPage.cpp
     src/gui/setup/AudioVaxPage.cpp
     src/gui/setup/AudioDriverList.cpp
+    src/gui/setup/AsioSwitchAllDialog.cpp
     src/gui/setup/DeviceCard.cpp
     src/gui/setup/DspSetupPages.cpp
     src/gui/setup/DspOptionsPage.cpp

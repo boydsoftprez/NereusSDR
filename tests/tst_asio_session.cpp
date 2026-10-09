@@ -10,6 +10,9 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 15 (V-SW-7). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 17: each use names its role, the
+//               session's buffer and rate. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -853,6 +856,39 @@ private slots:
         QVERIFY(link.opens.last().driver.isEmpty());
         QCOMPARE(link.demands, (QList<bool>{true, false}));
         QVERIFY(backend->sessionDriver().isEmpty());
+    }
+
+    // Native audio plan Task 17: each use names the role it plays, so the
+    // helper no longer reads every output as the speakers; the session's
+    // buffer and rate, and the control panel while no output runs.
+    void backendNamesEachUsesRole()
+    {
+        FakeLink link;
+        auto backend = linkedBackend(link);
+        backend->openControlPanel(kFocusrite);   // no output: the helper decides
+        QCOMPARE(link.controlPanels, 1);
+        QCOMPARE(backend->sessionBufferFrames(), 0);
+        AudioStreamRequest headphones = outputOn(kFocusrite, 3);
+        headphones.role = AudioRole::Headphones;
+        auto bus = backend->createOutput(headphones);
+        QVERIFY(bus->open(AudioFormat{}));
+        AudioStreamRequest vax = outputOn(kFocusrite, 1);
+        vax.role = AudioRole::Vax2;
+        auto second = backend->createOutput(vax);
+        QVERIFY(second->open(AudioFormat{}));
+        const CaptureProtocol::AsioOpen open = link.opens.last();
+        QCOMPARE(open.uses.size(), 2);
+        QCOMPARE(open.uses[0].role, std::optional<AudioRole>(AudioRole::Headphones));
+        QCOMPARE(open.uses[1].role, std::optional<AudioRole>(AudioRole::Vax2));
+        // tst_capture_protocol's asioOpenRoundTrip carries the roles over the wire.
+        QVERIFY(!CaptureProtocol::encodeAsioOpen(open).isEmpty());
+        backend->onAsioState(stateOf(open.serial, CaptureProtocol::AsioStateKind::Running, 512, 96000.0));
+        QCOMPARE(backend->sessionBufferFrames(), 512);
+        QCOMPARE(backend->sessionRate(), 96000.0);
+        second->close();
+        bus->close();
+        QCOMPARE(backend->sessionBufferFrames(), 0);
+        QCOMPARE(backend->sessionRate(), 0.0);
     }
 
     void backendMapsInUseToEveryRoleOnTheDriver()

@@ -2025,6 +2025,14 @@ target_compile_definitions(tst_master_output_widget_signal_refresh PRIVATE NEREU
 nereus_add_test(tst_device_card)
 target_compile_definitions(tst_device_card PRIVATE NEREUS_BUILD_TESTS)
 
+# Native audio plan Task 17 (R-AUD-07, R-AUD-19 to R-AUD-22): an interface's
+# pairs under its name, the same-pair note, the mic's side, the one-ASIO-
+# driver prompt, the shared ASIO buffer size and rate, the control panel
+# button, the restarted note and greyed pairs for an unusable sample
+# format, over fake engine backends and fake ASIO caps.
+nereus_add_test(tst_device_card_pairs_asio)
+target_compile_definitions(tst_device_card_pairs_asio PRIVATE NEREUS_BUILD_TESTS)
+
 # Native audio plan Task 16 (R-AUD-01, R-AUD-03, R-AUD-06, R-AUD-08 to
 # R-AUD-11, R-AUD-14, R-AUD-15): the Setup cards' Driver and Device lists,
 # state notes, delay readout, Sound system words and Rescan note, over a
@@ -8751,6 +8759,13 @@ nereus_add_test(tst_core_speaker_link
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
 target_compile_definitions(tst_core_speaker_link PRIVATE NEREUS_BUILD_TESTS)
+# Native audio plan Task 22 (R-AUD-27, R-AUD-30, D24, V-UI-4): the Core
+# speaker card on Outputs in a remote window: its texts, its states (greyed
+# while unreachable or with an older Core, no card, the chosen card missing or
+# in use, the desktop box), writes and follows without echo. Captures with
+# NEREUS_AUDIO_SETUP_CAPTURE_DIR.
+nereus_add_test(tst_core_speaker_card EXTRA_LABELS gui)
+target_compile_definitions(tst_core_speaker_card PRIVATE NEREUS_BUILD_TESTS)
 # Level Cal: the window's grid stops following the noise floor while a run
 # goes and is put back after (Thetis CalibrateLevel).
 nereus_add_test(tst_level_cal_grid_follow_guard)

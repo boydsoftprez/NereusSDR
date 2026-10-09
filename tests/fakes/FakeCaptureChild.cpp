@@ -14,6 +14,10 @@
 //   2026-10-09: native audio plan Task 15 (R-AUD-19): every scenario
 //               answers the ASIO records for one fake driver.  J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 16 fix round 2 (R-AUD-18): Ready
+//               names the configured device, as the real helper names the
+//               device it opened; the busy-while-marked scenario.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "FakeCaptureChild.h"
@@ -60,7 +64,7 @@ constexpr int kToneFrames = 480;
 enum class Scenario {
     Ready, HangOpen, NoHello, PermissionThenReady, CrashAfterReady,
     Malformed, Oversize, InputLost, IgnoreStop, Stale, Probe, Version1,
-    PcmRecord, Busy, BadRing
+    PcmRecord, Busy, BusyWhileMarked, BadRing
 };
 
 std::optional<Scenario> scenarioFromName(const QString& name)
@@ -79,6 +83,7 @@ std::optional<Scenario> scenarioFromName(const QString& name)
     if (name == QLatin1String("version-1")) { return Scenario::Version1; }
     if (name == QLatin1String("pcm-record")) { return Scenario::PcmRecord; }
     if (name == QLatin1String("busy")) { return Scenario::Busy; }
+    if (name == QLatin1String("busy-while-marked")) { return Scenario::BusyWhileMarked; }
     if (name == QLatin1String("bad-ring")) { return Scenario::BadRing; }
     return std::nullopt;
 }
@@ -91,6 +96,7 @@ struct Command {
     qint64 ringBytes = 0;
     QString asioDriver;            // AsioDescribe
     P::AsioOpen asioOpen;          // AsioOpen
+    QString deviceName;            // Configure: the chosen device, empty for the default
 };
 
 struct Queue {
@@ -119,6 +125,7 @@ void readParent(std::shared_ptr<Queue> queue)
                     std::_Exit(0);
                 }
                 command.generation = configure->generation;
+                command.deviceName = configure->device.deviceName;
             } else if (record->type == P::RecordType::Open || record->type == P::RecordType::Stop) {
                 const auto decoded = P::decodeCommand(record->payload);
                 if (!decoded) {
@@ -172,6 +179,14 @@ void send(const QByteArray& record)
     }
 }
 
+// The name a Ready reports: the configured device, as the real helper
+// reports the device it opened, or "Fake microphone" for the default.
+QString& readyDeviceName()
+{
+    static QString name;
+    return name;
+}
+
 void sendStatus(quint32 generation, P::HelperState state,
                 P::FailReason reason = P::FailReason::None, const QString& detail = {})
 {
@@ -181,7 +196,8 @@ void sendStatus(quint32 generation, P::HelperState state,
     status.reason = reason;
     status.detail = detail;
     if (state == P::HelperState::Ready) {
-        status.actualDevice = QStringLiteral("Fake microphone");
+        status.actualDevice = readyDeviceName().isEmpty() ? QStringLiteral("Fake microphone")
+                                                          : readyDeviceName();
         status.nativeRate = P::kSampleRate;
         status.nativeChannels = 1;
         status.latencyUs = 1500;
@@ -286,6 +302,7 @@ private:
         switch (command.type) {
         case P::RecordType::Configure:
             m_generation = command.generation;
+            readyDeviceName() = command.deviceName;
             m_streaming = false;
             m_readySent = false;
             m_readyAt.reset();
@@ -427,6 +444,15 @@ private:
             startStreaming();
             return;
         }
+        case Scenario::BusyWhileMarked:
+            if (!QFile::exists(qEnvironmentVariable("NEREUS_FAKE_CAPTURE_BUSY_FILE"))) {
+                sendStatus(m_generation, P::HelperState::Opening);
+                sendStatus(m_generation, P::HelperState::Ready);
+                m_readySent = true;
+                startStreaming();
+                return;
+            }
+            [[fallthrough]];
         case Scenario::Busy:
             sendStatus(m_generation, P::HelperState::Opening);
             sendStatus(m_generation, P::HelperState::Failed, P::FailReason::DeviceInUse,

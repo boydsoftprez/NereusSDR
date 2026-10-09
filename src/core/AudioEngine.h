@@ -256,11 +256,19 @@
 //                 ASIO backend reaches the mic helper through the capture
 //                 supervisor, and an ASIO output holds Demand::AsioDevice
 //                 so the helper runs with the PC mic off. NereusSDR-original.
+//   2026-10-09: native audio plan Task 17 (R-AUD-07, R-AUD-19 to R-AUD-22)
+//                 by J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. The ASIO session status for the Setup cards
+//                 (asioStatus(), asioStatusChanged), the one-driver switch
+//                 (planAsioSwitchFor(), applyAsioSwitch()), the shared
+//                 buffer and rate, the driver's control panel, and each
+//                 output's role on its stream request. NereusSDR-original.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
 #include "AudioDeviceConfig.h"
 #include "IAudioBus.h"
+#include "audio/AsioSession.h"
 #include "audio/AudioBackendRegistry.h"
 #include "audio/AudioDelayParts.h"
 #include "audio/AudioDelayProbe.h"
@@ -281,6 +289,8 @@
 namespace NereusSDR { class PipeWireThreadLoop; }
 #endif
 
+#include <QHash>
+#include <QList>
 #include <QObject>
 #include <QString>
 
@@ -291,6 +301,11 @@ namespace NereusSDR { class PipeWireThreadLoop; }
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
+
+class QTimer;
+
+namespace NereusSDR::CaptureProtocol { struct AsioState; }
 
 namespace NereusSDR {
 
@@ -301,6 +316,20 @@ class AudioStreamSupervisor;
 class IAudioDeviceCatalog;
 class IAudioEngineBackend;
 class AsioBackend;
+
+// Native audio plan Task 17: the ASIO session as the Setup cards show it
+// (R-AUD-19 to R-AUD-22).  One driver runs at a time; every role saved on
+// it shares its one buffer size and rate.
+struct AsioStatus {
+    QString driver;                    // empty: no ASIO in use
+    std::optional<AsioDriverCaps> caps;
+    int bufferFrames = 0;
+    double sampleRate = 0.0;
+    QList<AudioRole> users;            // every role on this driver
+    bool restartedRecently = false;    // true for 5 s after a restart (R-AUD-21)
+    bool formatUnsupported = false;    // settled call 28
+    friend bool operator==(const AsioStatus&, const AsioStatus&) = default;
+};
 
 // Synchronous observer for the final receiver master mix.  `samples` is
 // borrowed interleaved stereo float32 and is valid only for the duration of
@@ -639,6 +668,43 @@ public:
     // closed, and for the mic (Task 16 fix round).
     std::optional<AudioFormat> roleFormat(AudioRole role) const;
     AudioEngineKind defaultEngine() const { return m_defaultEngine; }
+
+    // ── ASIO for the Setup cards (native audio plan Task 17) ────────────
+    // The roles on ASIO are the saved choices whose Engine is "ASIO" (the
+    // headphones and a VAX channel only while their Enabled box is on);
+    // the cards save every pick before the engine hears of it.
+    // asioStatus() is the driver in use (the open session's, else the
+    // first role's), its caps, the buffer and rate it runs at (else the
+    // saved audio/Asio/BufferFrames and audio/Asio/SampleRate, inside its
+    // caps), every role on it, whether it restarted after a reset in the
+    // last kAsioRestartNoteMs (R-AUD-21), and whether its sample format is
+    // one NereusSDR cannot convert (settled call 28).  asioStatusChanged
+    // fires whenever any of that changes.
+    // planAsioSwitchFor() is planAsioSwitch() over the roles on ASIO, for
+    // a role picking a pair on `driver` (R-AUD-19).  applyAsioSwitch()
+    // saves each move (Engine, DeviceId, DeviceName, FirstChannel) and
+    // hands the role its new choice, which reopens it; the role that
+    // asked saves its own pick.  setAsioBufferAndRate() saves the shared
+    // buffer and rate (R-AUD-20) and every role on the driver takes them
+    // (its BufferSamples and SampleRate), reopening on them.
+    // openAsioControlPanel() opens the driver's own settings window in the
+    // helper (R-AUD-22).  Main thread.
+    static constexpr int kAsioRestartNoteMs = 5000;
+    AsioStatus asioStatus() const;
+    QList<AsioUse> asioUses() const;
+    std::optional<AsioDriverCaps> asioDriverCaps(const QString& driver) const;
+    AsioSwitchPlan planAsioSwitchFor(AudioRole role, const QString& driver,
+                                     AudioChannelPair pair) const;
+    void applyAsioSwitch(const AsioSwitchPlan& plan);   // saves and reopens every moved role
+    void setAsioBufferAndRate(int bufferFrames, double sampleRate);   // saves audio/Asio/BufferFrames and audio/Asio/SampleRate
+    void openAsioControlPanel();
+#ifdef NEREUS_BUILD_TESTS
+    // A driver's caps as the helper would describe them (nullopt removes).
+    void setAsioDriverCapsForTest(const QString& driver, std::optional<AsioDriverCaps> caps);
+    // An AsioState from the helper, as the capture supervisor delivers it.
+    void deliverAsioStateForTest(const CaptureProtocol::AsioState& state);
+    void setAsioRestartNoteMsForTest(int ms) { m_asioRestartNoteMs = ms; }
+#endif
     // Native audio plan Task 21 (R-AUD-30, D31): the Core box that starts
     // into a desktop leaves its cards alone until a Core speaker is picked.
     // With `waiting`, a "(none)" speakers choice reads WaitingForPick, not
@@ -1356,6 +1422,8 @@ signals:
     void vaxConfigChanged(int channel, NereusSDR::AudioDeviceConfig cfg);
     // Native audio plan Task 7: re-emits AudioStreamSupervisor::statusChanged.
     void roleStatusChanged(NereusSDR::AudioRole role, const NereusSDR::AudioRoleStatus& status);
+    // Native audio plan Task 17: asioStatus() changed.
+    void asioStatusChanged();
 
 #if defined(Q_OS_LINUX)
     void linuxBackendChanged(LinuxAudioBackend oldBackend,
@@ -1378,9 +1446,12 @@ private:
     // makeVaxBus() / makeVaxTxBus() instead.
     // `inUse`, when given, is set true when an engine output's open failed
     // because another program holds the device (R-AUD-11).
+    // `role`, when given, is the role the output plays (an ASIO use names
+    // it to the helper, Task 17).
     std::unique_ptr<IAudioBus> makeBus(const AudioDeviceConfig& cfg,
                                        bool capture,
-                                       bool* inUse = nullptr);
+                                       bool* inUse = nullptr,
+                                       std::optional<AudioRole> role = std::nullopt);
 
     // Sub-Phase 8.5: construct + open the platform-native VAX RX bus for
     // `channel` (1..4). macOS → CoreAudioHalBus(Role::VaxN). Linux →
@@ -1564,6 +1635,16 @@ private:
     AsioBackend* asioBackend() const;                  // main thread; nullptr off Windows
     void linkAsioBackend();                            // main thread
     void setAsioDemanded(bool demanded);               // main thread
+    // Native audio plan Task 17 (R-AUD-19 to R-AUD-22), main thread.
+    void onAsioSessionState(const CaptureProtocol::AsioState& state);
+    void noteAsioStatusMaybeChanged();
+    void applyRoleChoice(AudioRole role, const AudioDeviceConfig& cfg);
+#ifdef NEREUS_BUILD_TESTS
+    QHash<QString, AsioDriverCaps> m_asioCapsForTest;
+#endif
+    QTimer* m_asioRestartNote{nullptr};                // running: restartedRecently
+    int m_asioRestartNoteMs{kAsioRestartNoteMs};
+    std::optional<AsioStatus> m_lastAsioStatus;
     quint64 m_delayProbeHitCount{0};                   // main thread
 
     // (Phase 3M-1c D.1 added a kMicBlockFrames=720-sample mic-block
