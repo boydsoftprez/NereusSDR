@@ -72,14 +72,14 @@ final class PairingTestTransport: LinkTransport, @unchecked Sendable {
     var pending: [String] { lock.withLock { sent } }
 
     /// The next message the app sent, waiting for it; nil if none came in time.
-    func nextSent(within timeout: Duration = .seconds(30)) async -> LinkMessage? {
+    func nextSent(within timeout: Duration = TestBackstop.hang) async -> LinkMessage? {
         _ = await waiters.wait(within: timeout) { [self] in !pending.isEmpty }
         let text: String? = lock.withLock { sent.isEmpty ? nil : sent.removeFirst() }
         return text.flatMap { try? LinkCodec.decode($0) }
     }
 
     /// Waits until the app has closed the connection.
-    func waitUntilClosed(within timeout: Duration = .seconds(30)) async -> Bool {
+    func waitUntilClosed(within timeout: Duration = TestBackstop.hang) async -> Bool {
         await waiters.wait(within: timeout) { [self] in isClosedByApp }
     }
 

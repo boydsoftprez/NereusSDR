@@ -5,6 +5,7 @@
 import CJuice
 import CJuiceCloseTestSupport
 import Foundation
+import LinkSessionTestSupport
 import Testing
 
 @Suite("libjuice close", .serialized)
@@ -100,7 +101,7 @@ struct JuiceCloseTests {
         let agent = try #require(self.agent(turn: turn, user: "failed"))
         defer { juice_destroy(agent) }
         #expect(juice_gather_candidates(agent) == 0)
-        try await LocalRendezvous.waitUntil("a granted relay before failure", within: .seconds(10),
+        try await LocalRendezvous.waitUntil("a granted relay before failure", within: TestBackstop.hang,
                                             whileAlive: { turn.exitDiagnostic }) {
             turn.allocationCount("created") == 1
         }
@@ -126,7 +127,7 @@ struct JuiceCloseTests {
         let agent = try #require(self.agent(turn: turn, user: "thread", mode: JUICE_CONCURRENCY_MODE_THREAD))
         defer { juice_destroy(agent) }
         #expect(juice_gather_candidates(agent) == 0)
-        try await LocalRendezvous.waitUntil("thread-mode allocation", within: .seconds(10),
+        try await LocalRendezvous.waitUntil("thread-mode allocation", within: TestBackstop.hang,
                                             whileAlive: { turn.exitDiagnostic }) {
             turn.allocationCount("created") == 1
         }

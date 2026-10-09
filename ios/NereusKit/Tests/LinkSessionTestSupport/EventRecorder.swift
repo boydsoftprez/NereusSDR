@@ -80,7 +80,7 @@ public final class EventRecorder: @unchecked Sendable {
     /// (so `forward` has finished with each of them), without polling;
     /// returns false only if that has not happened by `timeout`.
     @discardableResult
-    public func handled(within timeout: Duration = .seconds(30),
+    public func handled(within timeout: Duration = TestBackstop.hang,
                         until condition: @escaping @Sendable ([StationSession.Event]) -> Bool) async -> Bool {
         await waiters.wait(within: timeout) { [self] in condition(events) }
     }
@@ -93,7 +93,7 @@ public final class EventRecorder: @unchecked Sendable {
     /// Waits in real time, up to `timeout`, for `condition` to hold; for
     /// tests over real sockets, where the far end answers when it answers.
     @discardableResult
-    public func wait(timeout: Duration = .seconds(10),
+    public func wait(timeout: Duration = TestBackstop.hang,
               until condition: @escaping @Sendable ([StationSession.Event]) -> Bool) async -> Bool {
         let deadline = ContinuousClock.now.advanced(by: timeout)
         while ContinuousClock.now < deadline {

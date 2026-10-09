@@ -36,7 +36,7 @@ import Testing
 
     /// Waits in real time for `condition`, up to ten seconds.
     private func eventually(_ condition: @Sendable () async -> Bool) async -> Bool {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+        let deadline = ContinuousClock.now.advanced(by: TestBackstop.hang)
         while ContinuousClock.now < deadline {
             if await condition() {
                 return true

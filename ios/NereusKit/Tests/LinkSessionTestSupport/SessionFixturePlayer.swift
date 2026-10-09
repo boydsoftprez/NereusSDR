@@ -254,7 +254,7 @@ public struct SessionFixturePlayer {
                 }
                 // A layer above the session may send from a task of its own,
                 // on the main actor or elsewhere.
-                _ = await transport.waitForSent(within: .seconds(30))
+                _ = await transport.waitForSent(within: TestBackstop.hang)
             }
             guard let sent = transport.takeSent() else {
                 fail("the client sent nothing; expected \(message.compactText)")

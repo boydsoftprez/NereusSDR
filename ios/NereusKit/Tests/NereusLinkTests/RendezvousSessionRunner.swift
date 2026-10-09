@@ -41,7 +41,7 @@ final class RendezvousSessionRunner {
             waiters.release()
         }
 
-        func next(within timeout: Duration = .seconds(10)) async -> RendezvousClient.Event? {
+        func next(within timeout: Duration = TestBackstop.hang) async -> RendezvousClient.Event? {
             _ = await waiters.wait(within: timeout) { [self] in lock.withLock { !events.isEmpty } }
             return lock.withLock { events.isEmpty ? nil : events.removeFirst() }
         }
