@@ -655,8 +655,20 @@ bool StationRotorController::nudgeRotor(RotorDirection direction, bool active,
         return false;
     }
 
+    // The newest press wins (JJ, 2026-10-08; re-review N3). A window
+    // whose hold another window's press took over is overtaken: its
+    // repeats are ignored until it lets go and presses again (or goes
+    // quiet for kHoldLapseMs, as a hold would lapse).
+    const auto overtaken = m_overtaken.find(sessionId);
+    if (overtaken != m_overtaken.end()
+        && overtaken.value().hasExpired(kHoldLapseMs)) {
+        m_overtaken.erase(overtaken);
+    }
+
     if (!active) {
-        // The window let go: its hold stops now.
+        // The window let go: its hold stops now. An overtaken window
+        // letting go leaves the winner's hold alone.
+        if (m_overtaken.remove(sessionId) > 0) { return true; }
         if (m_holdActive && m_holdSession == sessionId) {
             endHold();
             m_connection->stop();
@@ -665,11 +677,26 @@ bool StationRotorController::nudgeRotor(RotorDirection direction, bool active,
         return true;
     }
 
+    if (m_overtaken.contains(sessionId)) {
+        // A repeat from a window that was overtaken.
+        m_overtaken[sessionId].start();
+        return true;
+    }
+
+    if (m_holdActive && m_holdSession != sessionId) {
+        // A press from another window takes the hold over.
+        qCInfo(lcRotorController) << "a newer press takes the hold over";
+        QElapsedTimer heard;
+        heard.start();
+        m_overtaken.insert(m_holdSession, heard);
+        m_holdSession = sessionId;
+    }
+
     if (m_holdActive && m_holdDirection != direction) {
-        // A reversal (a quick change of mind, or two windows holding
-        // opposite ways): stop, and let the next repeat start the new
-        // direction a repeat later, rather than drive straight from one
-        // direction into the other (final review M2).
+        // A reversal (a quick change of mind, or a newer press the other
+        // way): stop, and let the next repeat start the new direction a
+        // repeat later, rather than drive straight from one direction
+        // into the other (final review M2).
         qCInfo(lcRotorController) << "hold reversed; stopping before the new direction";
         endHold();
         m_connection->stop();
@@ -684,7 +711,6 @@ bool StationRotorController::nudgeRotor(RotorDirection direction, bool active,
         m_holdActive = true;
         m_holdDirection = direction;
     }
-    // The latest window to press owns the hold.
     m_holdSession = sessionId;
     m_holdTimer.start(kHoldLapseMs);
     emit stateChanged();
@@ -693,6 +719,7 @@ bool StationRotorController::nudgeRotor(RotorDirection direction, bool active,
 
 void StationRotorController::sessionEnded(quint64 sessionId)
 {
+    m_overtaken.remove(sessionId);
     if (!m_holdActive || m_holdSession != sessionId) { return; }
     qCInfo(lcRotorController) << "the window holding a turn went away; stopping";
     endHold();

@@ -33,7 +33,9 @@
 #include "core/RotorConnection.h"
 #include "models/TunerModel.h"
 
+#include <QElapsedTimer>
 #include <QFutureWatcher>
+#include <QHash>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -189,7 +191,9 @@ public:
     // Never refused while connected; written ahead of anything queued.
     bool stopRotor(QString* reason);
     // `active` true starts a hold or keeps it going; false ends it. A
-    // hold that hears nothing for kHoldLapseMs stops.
+    // hold that hears nothing for kHoldLapseMs stops. The newest press
+    // wins: a press from another window takes the hold over, and the
+    // overtaken window's repeats are ignored until it lets go.
     bool nudgeRotor(RotorDirection direction, bool active, quint64 sessionId,
                     QString* reason);
     // Saves under Rotor/* and connects again; driver none disconnects and
@@ -251,6 +255,9 @@ private:
     bool m_holdActive{false};
     quint64 m_holdSession{0};
     RotorDirection m_holdDirection{RotorDirection::Cw};
+    // Windows whose hold a newer press took over, with when each was
+    // last heard (re-review N3).
+    QHash<quint64, QElapsedTimer> m_overtaken;
 };
 
 } // namespace NereusSDR

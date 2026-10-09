@@ -200,7 +200,9 @@ Behaviour:
 * **Hold to nudge has a dead man.** A window's CCW or CW (or Up/Down) hold
   sends start, then repeats it while held; the Core sends stop if the repeat
   lapses or that window disconnects. A dropped phone never leaves the
-  rotor turning.
+  rotor turning. When two windows hold, the newest press wins (JJ,
+  2026-10-08): the window it overtook is ignored until it lets go and
+  presses again (contract, "The newest press wins").
 * **Calibration offset and range** (rotor setup): an offset added to the
   read heading, the end stop (none, north or south) and the rotor's range
   (360, or 450 for rotors with overlap). The end stop and the overlap are

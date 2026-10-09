@@ -653,6 +653,102 @@ private slots:
         QCOMPARE(m_ctl->motion(), RotorMotion::Nudging);
     }
 
+    // ── The newest press wins (JJ, 2026-10-08; re-review N3) ────────
+
+    void theNewestPressWinsAndTheOvertakenWindowWaits()
+    {
+        // A is this process's own windows (session 0), B a remote window.
+        constexpr quint64 kA = 0;
+        constexpr quint64 kB = 9;
+        connectAt("090");
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Cw, true, kA, nullptr));
+        QCOMPARE(m_fake->take(), QByteArray("R\r"));
+
+        // B presses the other way: a stop, then B's next repeat turns CCW.
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Ccw, true, kB, nullptr));
+        QCOMPARE(m_fake->take(), QByteArray("S\r"));
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Cw, true, kA, nullptr));
+        QCOMPARE(m_fake->take(), QByteArray());   // A's repeat: ignored
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Ccw, true, kB, nullptr));
+        QCOMPARE(m_fake->take(), QByteArray("L\r"));
+        QCOMPARE(m_ctl->holdSessionId(), kB);
+
+        // A keeps holding CW: every repeat is ignored, B keeps turning.
+        for (int i = 0; i < 3; ++i) {
+            QVERIFY(m_ctl->nudgeRotor(RotorDirection::Cw, true, kA, nullptr));
+            QVERIFY(m_ctl->nudgeRotor(RotorDirection::Ccw, true, kB, nullptr));
+        }
+        QCOMPARE(m_fake->take(), QByteArray());
+        QCOMPARE(m_ctl->holdSessionId(), kB);
+        QCOMPARE(m_ctl->motion(), RotorMotion::Nudging);
+
+        // A lets go: B's hold is not stopped.
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Cw, false, kA, nullptr));
+        QCOMPARE(m_fake->take(), QByteArray());
+        QCOMPARE(m_ctl->holdSessionId(), kB);
+        QCOMPARE(m_ctl->motion(), RotorMotion::Nudging);
+
+        // A presses again: it takes the rotor back, the same way round.
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Cw, true, kA, nullptr));
+        QCOMPARE(m_fake->take(), QByteArray("S\r"));
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Ccw, true, kB, nullptr));
+        QCOMPARE(m_fake->take(), QByteArray());   // B is overtaken now
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Cw, true, kA, nullptr));
+        QCOMPARE(m_fake->take(), QByteArray("R\r"));
+        QCOMPARE(m_ctl->holdSessionId(), kA);
+
+        // B letting go leaves A turning; A letting go stops.
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Ccw, false, kB, nullptr));
+        QCOMPARE(m_fake->take(), QByteArray());
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Cw, false, kA, nullptr));
+        QCOMPARE(m_fake->take(), QByteArray("S\r"));
+        QCOMPARE(m_ctl->motion(), RotorMotion::Stopped);
+    }
+
+    void aNewerPressTheSameWayTakesOverWithoutAStop()
+    {
+        connectAt("090");
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Cw, true, 3, nullptr));
+        QCOMPARE(m_fake->take(), QByteArray("R\r"));
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Cw, true, 4, nullptr));
+        QCOMPARE(m_fake->take(), QByteArray());
+        QCOMPARE(m_ctl->holdSessionId(), quint64(4));
+        // 3's release is an overtaken window's: the rotor keeps turning.
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Cw, false, 3, nullptr));
+        QCOMPARE(m_fake->take(), QByteArray());
+        QCOMPARE(m_ctl->motion(), RotorMotion::Nudging);
+    }
+
+    void anOvertakenWindowThatGoesQuietPressesAfresh()
+    {
+        // Its release never came: once it has been quiet as long as a hold
+        // lapses, its next active true is a press, not an ignored repeat.
+        connectAt("090");
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Cw, true, 3, nullptr));
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Cw, true, 4, nullptr));
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Cw, false, 4, nullptr));
+        QCOMPARE(m_fake->take(), QByteArray("R\rS\r"));
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Ccw, true, 3, nullptr));
+        QCOMPARE(m_fake->take(), QByteArray());   // still overtaken
+        QTest::qWait(StationRotorController::kHoldLapseMs + 50);
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Ccw, true, 3, nullptr));
+        QCOMPARE(m_fake->take(), QByteArray("L\r"));
+        QCOMPARE(m_ctl->holdSessionId(), quint64(3));
+    }
+
+    void anOvertakenWindowGoingAwayIsForgotten()
+    {
+        connectAt("090");
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Cw, true, 3, nullptr));
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Cw, true, 4, nullptr));
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Cw, false, 4, nullptr));
+        m_fake->take();
+        m_ctl->sessionEnded(3);
+        // A session id seen again starts fresh.
+        QVERIFY(m_ctl->nudgeRotor(RotorDirection::Ccw, true, 3, nullptr));
+        QCOMPARE(m_fake->take(), QByteArray("L\r"));
+    }
+
     void theHoldingWindowGoingAwaySendsStop()
     {
         connectAt("090");

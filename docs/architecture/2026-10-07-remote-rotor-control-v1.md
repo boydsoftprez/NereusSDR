@@ -153,9 +153,19 @@ a live needle.
 **The hold dead man.** While a turn button is held, the window repeats
 `nudgeRotor` with `active` true every 250 ms. If no repeat arrives for
 750 ms, or that window's session ends, the Core sends stop. These two
-numbers are this design's choice, not a device fact. A hold in the other
-direction while one is under way (a reversal, or two windows holding
-opposite ways) sends stop only; the next repeat starts the new direction.
+numbers are this design's choice, not a device fact.
+
+**The newest press wins** (JJ, 2026-10-08). A press is `active` true from a
+window that holds no hold. A press from a window while another window holds
+takes the rotor over, every window alike, this process's own windows
+included. The window it took over from is overtaken: its repeats are
+ignored until it lets go (`active` false) and presses again, and its letting
+go does not stop the winner's hold. An overtaken window that goes quiet for
+750 ms without letting go is forgotten, as a hold would lapse, so its next
+`active` true is a press. A hold in the other direction while one is under
+way (a reversal by the same window, or a newer press the other way) sends
+stop only; the winner's next repeat starts the new direction. A newer press
+the same way changes the holder and sends nothing.
 
 **Who may turn the rotor.** Any window allowed to change station
 accessories (the same admission as the accessory settings commands: a
