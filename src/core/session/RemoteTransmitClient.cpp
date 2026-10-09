@@ -43,6 +43,10 @@
 //               this window's Tuner Genius autotune ended before its
 //               carrier keyed. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-08: TCI program keys that bring their own audio: keyForProgram
+//               records programAudio on the program key before it is
+//               published; programAudioKey(). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/RemoteTransmitClient.h"
@@ -469,7 +473,8 @@ void RemoteTransmitClient::setTwoTone(bool on)
     refreshKeepalive();
 }
 
-void RemoteTransmitClient::keyForProgram(std::function<void(const Answer&)> answer)
+void RemoteTransmitClient::keyForProgram(bool programAudio,
+                                         std::function<void(const Answer&)> answer)
 {
     if (microphoneRequired() && (!m_micSourceSettled || m_acceptedMicSource == RemoteMicSource::RadioMic)) {
         Answer refusedAnswer;
@@ -499,6 +504,9 @@ void RemoteTransmitClient::keyForProgram(std::function<void(const Answer&)> answ
     m_program = Key{};
     m_program.phase = Phase::Waiting;
     m_program.commandId = id;
+    // Recorded before publish(): micKeyDownChanged starts the microphone
+    // line, which reads programAudioKey() on that edge.
+    m_program.programAudio = programAudio;
     m_programAnswer = std::move(answer);
     publish();
 }
@@ -734,6 +742,11 @@ bool RemoteTransmitClient::micKeyDown() const
 bool RemoteTransmitClient::holdsTransmit() const
 {
     return m_screen.phase == Phase::On || m_program.phase == Phase::On;
+}
+
+bool RemoteTransmitClient::programAudioKey() const
+{
+    return m_program.phase != Phase::Idle && m_program.programAudio;
 }
 
 void RemoteTransmitClient::reset()

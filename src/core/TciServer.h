@@ -76,6 +76,12 @@
 //                that app leaving releases the key on the Core, or the
 //                Core's answer when it comes. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - TCI program keys that send silence: the forwarded key
+//                says whether the app's trx carried ",tci"
+//                (RemoteTransmit::key's programAudio), so the window's
+//                microphone line carries the app's audio or silence, never
+//                the microphone. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 
 #pragma once
 #ifdef HAVE_WEBSOCKETS
@@ -200,9 +206,11 @@ public:
         QString reason;
     };
     struct RemoteTransmit {
-        /// Sends tx.key {trigger:"tci"}; `answer` runs once, on this
-        /// object's thread, with the Core's verdict.
-        std::function<void(std::function<void(const RemoteKeyAnswer&)> answer)> key;
+        /// Sends tx.key {trigger:"tci"}. programAudio: the app's trx carried
+        /// ",tci", so its own audio follows on the TX audio stream. `answer`
+        /// runs once, on this object's thread, with the Core's verdict.
+        std::function<void(bool programAudio,
+                           std::function<void(const RemoteKeyAnswer&)> answer)> key;
         /// Sends tx.unkey {epoch}.
         std::function<void(quint32 epoch)> unkey;
         /// iPhone app plan Task 36 (R-IOS-13): the app's transmit audio,

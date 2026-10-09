@@ -1,5 +1,12 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-08: TCI program keys that bring their own audio (a trx with
+//               ",tci"): the microphone line carries the program's audio
+//               or silence at the line's real-time rate, paced by the
+//               clock, never the microphone, with or without a capture;
+//               a capture in Failed retries once when a key starts the
+//               line with the microphone. setMicClockForTest. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07: R-R3-21, R-R3-51: a no-packets restart while the Core
 //               transmits is the Core's expected receive silence, not an
 //               outage: the speakers and the headphones mix stop and wait
@@ -1388,6 +1395,14 @@ struct RemoteMediaController::Private {
     quint64 micPacketsSent = 0;
     std::vector<float> programPending;
     qint64 programUntilMs = -1;
+    // 2026-10-08: a program key that brings its own audio sends silence
+    // whenever its audio is not current, paced by the clock from
+    // silenceStartMs (-1: not sending silence now). silenceLeadGiven: the
+    // line's first silence of this key came with its lead.
+    qint64 silenceStartMs = -1;
+    qint64 silenceFrames = 0;
+    bool silenceLeadGiven = false;
+    std::function<qint64()> micClockForTest;
     std::unique_ptr<Resampler> programResampler;
     int programRateHz = 0;
     /// Fix wave 2 (Critical 1, the several-devices design, ruling 9.3):
@@ -2579,10 +2594,14 @@ void RemoteMediaController::reconcileMicUplink()
 {
     const bool wanted = micUplinkWanted();
     const RemoteTransmitClient* transmit = d->client ? d->client->remoteTransmit() : nullptr;
+    // 2026-10-08: a program key that brings its own audio (its trx carried
+    // ",tci"): the line carries that audio or silence, never the
+    // microphone, so it takes no capture demand of its own.
+    const bool programKey = transmit && transmit->programAudioKey();
     const bool preview = micLineOpen() && d->model && d->model->audioEngine()
         && d->model->transmitModel().micSource() == MicSource::Pc
         && transmit && transmit->acceptedMicSource() == RemoteMicSource::ClientAudio;
-    const bool captureWanted = wanted || preview;
+    const bool captureWanted = (wanted && !programKey) || preview;
     if (captureWanted && !d->micLease.isActive()) {
         d->micLease = d->model->audioEngine()->acquireCaptureDemand(
             CaptureSupervisor::Demand::RemoteWindow);
@@ -2592,43 +2611,136 @@ void RemoteMediaController::reconcileMicUplink()
     // Samples waiting before key-down belong to preview, even when the
     // key arrives between timer ticks. Drain them before sending fresh PCM.
     const bool starting = wanted && !d->micRunning;
+    bool retryCapture = false;
     if (wanted != d->micRunning) {
         d->micRunning = wanted;
         if (wanted) {
-            qCInfo(lcRemoteMedia) << "Microphone uplink started";
+            qCInfo(lcRemoteMedia) << "Microphone uplink started"
+                                  << (programKey ? "with the program's audio or silence"
+                                                 : "with the microphone");
+            // 2026-10-08: a capture that failed earlier never comes back by
+            // itself; a key that will send the microphone asks once.
+            retryCapture = !programKey
+                && d->model->audioEngine()->captureStatus().state
+                       == CaptureSupervisor::Status::State::Failed;
         } else {
             d->micPending.clear();
             d->programPending.clear();
             d->programUntilMs = -1;
+            d->silenceStartMs = -1;
+            d->silenceFrames = 0;
+            d->silenceLeadGiven = false;
             qCInfo(lcRemoteMedia) << "Microphone uplink stopped";
         }
     }
     const QPointer<RemoteMediaController> self(this);
+    if (retryCapture) {
+        qCInfo(lcRemoteMedia) << "Microphone capture had failed; retrying for this key";
+        d->model->audioEngine()->retryCapture();
+        if (!self) {
+            return;
+        }
+    }
     refreshAudioStatus();
-    if (!self || !d->micLease.isActive()) {
+    if (!self) {
+        return;
+    }
+    if (!programKey && !d->micLease.isActive()) {
         return;
     }
     // A program's audio, while it keeps coming, replaces the microphone:
     // what the microphone captured meanwhile is drained and dropped.
-    const bool program = d->clock.elapsed() < d->programUntilMs;
-    AudioEngine* engine = d->model->audioEngine();
-    for (;;) {
-        const int got = engine->pullTxMic(d->micScratch.data(),
-                                          static_cast<int>(d->micScratch.size()));
-        if (got <= 0) {
-            break;
-        }
-        // Idle preview continuously drains the capture ring without
-        // encoding or sending. It must never queue old voice for a key.
-        if (d->micRunning && !starting && !program) {
-            d->micPending.insert(d->micPending.end(), d->micScratch.begin(),
-                                 d->micScratch.begin() + got);
+    const qint64 nowMs = micNowMs();
+    const bool program = nowMs < d->programUntilMs;
+    if (d->micLease.isActive()) {
+        AudioEngine* engine = d->model->audioEngine();
+        for (;;) {
+            const int got = engine->pullTxMic(d->micScratch.data(),
+                                              static_cast<int>(d->micScratch.size()));
+            if (got <= 0) {
+                break;
+            }
+            // Idle preview continuously drains the capture ring without
+            // encoding or sending. It must never queue old voice for a key.
+            // 2026-10-08: nor does a program key that brings its own audio.
+            if (d->micRunning && !starting && !program && !programKey) {
+                d->micPending.insert(d->micPending.end(), d->micScratch.begin(),
+                                     d->micScratch.begin() + got);
+            }
         }
     }
     if (!d->micRunning) {
         return;
     }
+    if (programKey) {
+        // Nothing the microphone gave before this key may follow it.
+        d->micPending.clear();
+        if (program) {
+            // The program's own audio is this key's first: no lead later.
+            d->silenceStartMs = -1;
+            d->silenceLeadGiven = true;
+        } else {
+            queueProgramSilence(nowMs);
+        }
+        sendMicAudio(d->programPending);
+        return;
+    }
+    // A later program key's silence starts afresh, never from this one's.
+    d->silenceStartMs = -1;
     sendMicAudio(program ? d->programPending : d->micPending);
+}
+
+bool RemoteMediaController::micLineLossless() const
+{
+    return d->peer && d->peer->micLosslessNegotiated()
+        && d->audioProfileChoice == RemoteAudioProfile::Lossless && !d->losslessFallback;
+}
+
+qint64 RemoteMediaController::micNowMs() const
+{
+    return d->micClockForTest ? d->micClockForTest() : d->clock.elapsed();
+}
+
+void RemoteMediaController::setMicClockForTest(std::function<qint64()> clock)
+{
+    d->micClockForTest = std::move(clock);
+}
+
+void RemoteMediaController::queueProgramSilence(qint64 nowMs)
+{
+    // Paced by the clock, never by counting pump ticks: the pump is a
+    // QTimer and can stall.
+    const qint64 packet = micLineLossless() ? PcmAudioCodecConfig::kPacketFrames
+                                            : RemoteMicConfig::kOpusFrameSamples;
+    if (d->silenceStartMs < 0) {
+        d->silenceStartMs = nowMs;
+        d->silenceFrames = 0;
+        if (!d->silenceLeadGiven) {
+            // The line's first audio of this key: the Core's target depth
+            // at once, in whole packets, so its line-start wait and its
+            // fill are met without waiting for the pump.
+            d->silenceLeadGiven = true;
+            constexpr qint64 kTargetFrames =
+                qint64(RemoteMicConfig::kTargetDepthMs) * RemoteMicConfig::kFramesPerMs;
+            const qint64 lead = ((kTargetFrames + packet - 1) / packet) * packet;
+            d->silenceFrames = -lead;
+        }
+    }
+    const qint64 due = (nowMs - d->silenceStartMs) * RemoteMicConfig::kFramesPerMs;
+    qint64 owed = due - d->silenceFrames;
+    // After a stall, at most the Core's deepest buffer of silence in one
+    // pump; the rest is never sent, so a stall never floods the Core.
+    constexpr qint64 kMaxOwedFrames =
+        qint64(RemoteMicConfig::kMaxDepthMs) * RemoteMicConfig::kFramesPerMs;
+    if (owed > kMaxOwedFrames) {
+        owed = kMaxOwedFrames;
+        d->silenceFrames = due - owed;
+    }
+    if (owed <= 0) {
+        return;
+    }
+    d->programPending.insert(d->programPending.end(), static_cast<size_t>(owed), 0.0f);
+    d->silenceFrames += owed;
 }
 
 void RemoteMediaController::sendMicAudio(std::vector<float>& pending)
@@ -2636,8 +2748,7 @@ void RemoteMediaController::sendMicAudio(std::vector<float>& pending)
     const float* mono = pending.data();
     const int frames = static_cast<int>(pending.size());
     // Whole packets only; the rest waits for the next pump.
-    const bool lossless = d->peer && d->peer->micLosslessNegotiated()
-        && d->audioProfileChoice == RemoteAudioProfile::Lossless && !d->losslessFallback;
+    const bool lossless = micLineLossless();
     const int packetFrames = lossless ? PcmAudioCodecConfig::kPacketFrames
                                       : RemoteMicConfig::kOpusFrameSamples;
     const quint32 ssrc = d->peer ? d->peer->micAudioSsrc() : 0;
@@ -2699,7 +2810,7 @@ void RemoteMediaController::pushProgramAudio(const float* samples, int frames, i
         const auto* resampled = reinterpret_cast<const float*>(out.constData());
         mono.assign(resampled, resampled + out.size() / static_cast<qsizetype>(sizeof(float)));
     }
-    d->programUntilMs = d->clock.elapsed() + kProgramAudioHoldMs;
+    d->programUntilMs = micNowMs() + kProgramAudioHoldMs;
     if (!d->micRunning) {
         return;
     }
