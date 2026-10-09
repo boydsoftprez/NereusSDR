@@ -17,6 +17,9 @@
 //   2026-10-09: native audio plan Task 8 (R-AUD-01, R-AUD-02, R-AUD-07,
 //               R-AUD-11, R-AUD-14, R-AUD-32). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: Task 8 fix (R-AUD-17): the capture clock follows a probe
+//               clock that jumps an hour mid-stream within one callback.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -36,6 +39,7 @@
 #include <CoreAudio/HostTime.h>
 #endif
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -98,6 +102,15 @@ const AudioDeviceInfo* find(const QList<AudioDeviceInfo>& devices, const QString
     }
     return nullptr;
 }
+
+// Scripted clocks for CoreAudioCaptureClock: host ticks are nanoseconds
+// here, and the probe clock runs hours ahead of them, as on a Mac that
+// has slept since boot.
+std::atomic<std::int64_t> g_probeNs{0};
+std::atomic<std::uint64_t> g_hostTicks{0};
+std::int64_t scriptedProbeNow() { return g_probeNs.load(); }
+std::uint64_t scriptedHostNow() { return g_hostTicks.load(); }
+std::int64_t scriptedHostToNs(std::uint64_t ticks) { return static_cast<std::int64_t>(ticks); }
 
 class NullSink final : public IAudioInputSink {
 public:
@@ -398,6 +411,48 @@ private slots:
 #else
         QSKIP("The Core Audio host clock is the Mac's");
 #endif
+    }
+
+    // R-AUD-17: the Mac sleeps an hour with the mic open (the probe clock
+    // jumps, the host clock does not).  The next callback's capture time
+    // is on the new probe clock: no capture time keeps the old offset.
+    void captureClockFollowsAJumpWithinOneCallback()
+    {
+        constexpr std::int64_t kHourNs = 3'600'000'000'000;
+        constexpr std::int64_t kBlockNs = 10'000'000;      // a 480-frame block at 48 kHz
+        constexpr std::int64_t kLatencyNs = 2'000'000;
+        constexpr std::int64_t kHostDelayNs = 3'000'000;   // block stamp before the callback runs
+        const CoreAudioCaptureClock clock{&scriptedProbeNow, &scriptedHostNow, &scriptedHostToNs};
+
+        g_hostTicks = 1'000'000'000;
+        g_probeNs = 13 * kHourNs + 1'000'000'000;
+        auto callback = [&]() {
+            const std::uint64_t stamp = g_hostTicks.load() - kHostDelayNs;
+            return clock.captureNs(true, stamp, kLatencyNs);
+        };
+        auto advance = [](std::int64_t ns) {
+            g_hostTicks += static_cast<std::uint64_t>(ns);
+            g_probeNs += ns;
+        };
+
+        // Before the sleep: frame 0 is the stamp on the probe clock less
+        // the latency, block after block.
+        for (int i = 0; i < 5; ++i) {
+            QCOMPARE(callback(), g_probeNs.load() - kHostDelayNs - kLatencyNs);
+            advance(kBlockNs);
+        }
+
+        // The sleep: an hour on the probe clock only.
+        g_probeNs += kHourNs;
+        advance(kBlockNs);
+        const std::int64_t first = callback();
+        QCOMPARE(first, g_probeNs.load() - kHostDelayNs - kLatencyNs);
+        advance(kBlockNs);
+        QCOMPARE(callback() - first, kBlockNs);
+
+        // A block with no valid host time is stamped now.
+        QCOMPARE(clock.captureNs(false, 0, kLatencyNs), g_probeNs.load() - kLatencyNs);
+        QCOMPARE(clock.offsetNs(), g_probeNs.load() - static_cast<std::int64_t>(g_hostTicks.load()));
     }
 
     // R-AUD-01, R-AUD-02: the Mac registers Core Audio only, for every

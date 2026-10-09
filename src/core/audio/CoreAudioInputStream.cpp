@@ -6,6 +6,9 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 8 (R-AUD-07, R-AUD-11, R-AUD-14).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: Task 8 fix (R-AUD-17): the capture clock offset is
+//               re-measured in every callback. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CoreAudioInputStream.h"
@@ -34,17 +37,52 @@
 
 namespace NereusSDR {
 
+std::int64_t CoreAudioCaptureClock::offsetNs() const
+{
+    return probeNowNs() - hostToNs(hostNow());
+}
+
+std::int64_t CoreAudioCaptureClock::toProbeNs(std::uint64_t hostTime) const
+{
+    return hostToNs(hostTime) + offsetNs();
+}
+
+std::int64_t CoreAudioCaptureClock::captureNs(bool hostTimeValid, std::uint64_t hostTime,
+                                              std::int64_t latencyNs) const
+{
+    const std::uint64_t when = hostTimeValid ? hostTime : hostNow();
+    return toProbeNs(when) - latencyNs;
+}
+
 #ifdef Q_OS_MAC
+
+namespace {
+
+std::uint64_t systemHostNow()
+{
+    return AudioGetCurrentHostTime();
+}
+
+std::int64_t systemHostToNs(std::uint64_t hostTime)
+{
+    return static_cast<std::int64_t>(AudioConvertHostTimeToNanos(hostTime));
+}
+
+} // namespace
+
+CoreAudioCaptureClock coreAudioSystemCaptureClock()
+{
+    return CoreAudioCaptureClock{&audioProbeNowNs, &systemHostNow, &systemHostToNs};
+}
 
 std::int64_t coreAudioHostClockOffsetNs()
 {
-    return audioProbeNowNs()
-           - static_cast<std::int64_t>(AudioConvertHostTimeToNanos(AudioGetCurrentHostTime()));
+    return coreAudioSystemCaptureClock().offsetNs();
 }
 
 std::int64_t coreAudioHostTimeToProbeNs(std::uint64_t hostTime, std::int64_t offsetNs)
 {
-    return static_cast<std::int64_t>(AudioConvertHostTimeToNanos(hostTime)) + offsetNs;
+    return systemHostToNs(hostTime) + offsetNs;
 }
 
 struct CoreAudioInputStream::Impl {
@@ -57,7 +95,7 @@ struct CoreAudioInputStream::Impl {
     AudioComponentInstance unit = nullptr;
     int deviceRate = 0;
     std::int64_t latencyNs = 0;
-    std::int64_t clockOffsetNs = 0;   // audioProbeNowNs() minus host time, at open
+    CoreAudioCaptureClock clock = coreAudioSystemCaptureClock();
     AudioChannelPair clientPair{1, 2};
     std::vector<float> rendered;      // the pair as the unit renders it, allocated at open
     std::vector<float> stereo;        // after the mic pick
@@ -89,11 +127,12 @@ struct CoreAudioInputStream::Impl {
         }
         readDeviceToStereo(self->rendered.data(), nullptr, true, DeviceSampleFormat::Float32, 2,
                            self->clientPair, self->pick, static_cast<int>(n), self->stereo.data());
-        const UInt64 hostTime = (timeStamp != nullptr && (timeStamp->mFlags & kAudioTimeStampHostTimeValid))
-                                    ? timeStamp->mHostTime
-                                    : AudioGetCurrentHostTime();
-        const std::int64_t captureNs =
-            coreAudioHostTimeToProbeNs(hostTime, self->clockOffsetNs) - self->latencyNs;
+        // R-AUD-17: the offset to the probe clock is read on every block,
+        // so a sleep while the mic is open moves no later capture time.
+        const bool hostValid =
+            timeStamp != nullptr && (timeStamp->mFlags & kAudioTimeStampHostTimeValid) != 0;
+        const std::int64_t captureNs = self->clock.captureNs(
+            hostValid, hostValid ? timeStamp->mHostTime : 0, self->latencyNs);
         self->sink->onInput(self->stereo.data(), static_cast<int>(n), self->deviceRate, captureNs);
         return noErr;
     }
@@ -218,9 +257,11 @@ struct CoreAudioInputStream::Impl {
 
         latencyNs = coreAudioFramesToNs(coreaudio::latencyFrames(device, kAudioObjectPropertyScopeInput),
                                         nominal);
-        // The capture clock: host time and audioProbeNowNs() are read once
-        // here and their difference is applied to every block.
-        clockOffsetNs = coreAudioHostClockOffsetNs();
+        // The capture clock: the callback re-measures its offset to
+        // audioProbeNowNs() on every block (CoreAudioCaptureClock).  This
+        // first read also warms AudioConvertHostTimeToNanos's timebase
+        // off the device thread.
+        static_cast<void>(clock.offsetNs());
 
         watch.start(device, deviceRate, "com.nereussdr.coreaudio.input");
         status = AudioOutputUnitStart(unit);

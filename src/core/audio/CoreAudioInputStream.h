@@ -13,7 +13,8 @@
 // readDeviceToStereo does and calls IAudioInputSink::onInput with the
 // capture time of the block's first frame on audioProbeNowNs()'s clock:
 // AudioConvertHostTimeToNanos(mHostTime), plus the offset between the two
-// clocks measured once at open, less the input latency.  The device's
+// clocks re-measured in every callback (CoreAudioCaptureClock), less the
+// input latency.  The device's
 // alive, hog-mode and nominal-rate listeners post DeviceLost, DeviceBusy
 // and FormatChanged.  While audioDevicesBarredForTestRun() is true open()
 // fails (R-AUD-32).
@@ -21,6 +22,10 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 8 (R-AUD-07, R-AUD-11, R-AUD-14).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: Task 8 fix (R-AUD-17): the clock offset is re-measured in
+//               every callback through CoreAudioCaptureClock, so a sleep
+//               with the mic open no longer shifts capture times. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -36,14 +41,35 @@
 
 namespace NereusSDR {
 
-#ifdef Q_OS_MAC
-// The capture clock (R-AUD-07): audioProbeNowNs() minus
-// AudioConvertHostTimeToNanos(AudioGetCurrentHostTime()), read once.  The
-// stream measures it at open and adds it to every block's host time.
-std::int64_t coreAudioHostClockOffsetNs();
+// The capture clock (R-AUD-07, R-AUD-17).  The probe clock
+// (audioProbeNowNs(), steady_clock) counts the time the Mac sleeps and the
+// HAL's host clock does not, so their offset grows by every sleep.  The
+// input callback therefore re-measures it on each block: two clock reads
+// (the commpage, no system call, lock or allocation) and integer math.
+// The reads are plain function pointers so a test can substitute them.
+struct CoreAudioCaptureClock {
+    std::int64_t (*probeNowNs)() = nullptr;            // audioProbeNowNs
+    std::uint64_t (*hostNow)() = nullptr;              // AudioGetCurrentHostTime
+    std::int64_t (*hostToNs)(std::uint64_t) = nullptr; // AudioConvertHostTimeToNanos
 
-// A host time (mach host ticks) on audioProbeNowNs()'s clock, given the
-// offset above.  Callable from the input callback.
+    // probeNowNs() minus hostToNs(hostNow()), read now.
+    std::int64_t offsetNs() const;
+    // A host time on the probe clock, with the offset read now.
+    std::int64_t toProbeNs(std::uint64_t hostTime) const;
+    // The callback's capture time of frame 0: the block's host time (or
+    // now, when the time stamp has none) on the probe clock, less the
+    // input latency.
+    std::int64_t captureNs(bool hostTimeValid, std::uint64_t hostTime,
+                           std::int64_t latencyNs) const;
+};
+
+#ifdef Q_OS_MAC
+// The real clock reads.
+CoreAudioCaptureClock coreAudioSystemCaptureClock();
+
+// coreAudioSystemCaptureClock().offsetNs() and a host time mapped with a
+// given offset, for the 1 ms agreement check.
+std::int64_t coreAudioHostClockOffsetNs();
 std::int64_t coreAudioHostTimeToProbeNs(std::uint64_t hostTime, std::int64_t offsetNs);
 #endif
 
