@@ -14,6 +14,9 @@
 //               via Anthropic Claude Code.
 //   2026-10-09: reconnect cases (Task 10 fix round 1). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 11: PulseAudio registers between
+//               PipeWire and the older drivers when libpulse is built in.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 #ifdef NEREUS_HAVE_PIPEWIRE
 
@@ -1016,12 +1019,18 @@ private slots:
         QTest::qWait(kTestRetryMs * 3);   // the late report finds no system
     }
 
-    // R-AUD-01 on Linux: PipeWire ahead of the older drivers, outside the
-    // Core.  In a test run it is not running, so the default stays PortAudio.
+    // R-AUD-01 on Linux: PipeWire ahead of the older drivers (PulseAudio
+    // between them when built), outside the Core.  In a test run it is not
+    // running, so the default stays PortAudio.
     void registryOrderOnLinux()
     {
         const auto window = makeSystemAudioBackends(AudioBackendContext{});
+#ifdef NEREUS_HAVE_PULSEAUDIO
+        QCOMPARE(window.size(), std::size_t(3));
+        QCOMPARE(window.at(1)->id(), AudioBackendId::PulseAudio);
+#else
         QCOMPARE(window.size(), std::size_t(2));
+#endif
         QCOMPARE(window.front()->id(), AudioBackendId::PipeWire);
         QCOMPARE(window.back()->id(), AudioBackendId::PortAudio);
         QVERIFY(!window.front()->running());

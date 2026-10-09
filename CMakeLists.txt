@@ -833,6 +833,15 @@ if(UNIX AND NOT APPLE)
     else()
         message(STATUS "libpipewire-0.3 >= 0.3.50 not found — Linux audio limited to pactl path")
     endif()
+    # libpulse: the PulseAudio engine (native audio plan Task 11, R-AUD-31):
+    # one Linux build carries both engines and the sound server that answers
+    # at run time picks which one runs.  Without it the engine is not built.
+    pkg_check_modules(PULSE IMPORTED_TARGET libpulse)
+    if(PULSE_FOUND)
+        message(STATUS "libpulse ${PULSE_VERSION}: PulseAudio engine enabled")
+    else()
+        message(STATUS "libpulse not found: PulseAudio engine not built")
+    endif()
 endif()
 
 # --------------------------------------------------------------------------
@@ -1149,6 +1158,8 @@ set(CORE_SOURCES
     src/core/audio/AudioDeviceMatching.cpp
     src/core/audio/AudioStreamSupervisor.cpp
     src/core/audio/AudioBackendRegistry.cpp
+    # Native audio plan Task 11: which Linux engine runs (pure, every platform).
+    src/core/audio/LinuxEngineSelection.cpp
     src/core/audio/PortAudioBackend.cpp
     src/core/audio/PortAudioLibrary.cpp
     src/core/audio/WasapiPolicy.cpp
@@ -2507,6 +2518,18 @@ function(nereus_apply_core_deps target)
             # Native audio plan Task 10: the PipeWire engine (R-AUD-01).
             src/core/audio/PipeWireDeviceSystem.cpp
             src/core/audio/PipeWireDeviceBackend.cpp
+        )
+    endif()
+
+    # libpulse, gated by the pkg_check_modules block above (native audio
+    # plan Task 11, R-AUD-01, R-AUD-31): the PulseAudio engine.
+    if(PULSE_FOUND)
+        target_link_libraries(${target} PUBLIC PkgConfig::PULSE)
+        target_compile_definitions(${target} PUBLIC NEREUS_HAVE_PULSEAUDIO)
+        target_sources(${target} PRIVATE
+            src/core/audio/PulseAudioSystem.cpp
+            src/core/audio/PulseAudioBus.cpp
+            src/core/audio/PulseAudioBackend.cpp
         )
     endif()
 

@@ -7,6 +7,9 @@
 //   2026-10-09: native audio plan Task 10 (R-AUD-01, R-AUD-02, R-AUD-03,
 //               R-AUD-07, R-AUD-14). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 11 (R-AUD-01, R-AUD-31): running()
+//               reports the Linux engine selection when given one.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/PipeWireDeviceBackend.h"
@@ -84,14 +87,19 @@ QList<AudioDeviceInfo> pipeWireDevicesFromNodes(const QList<PipeWireNodeRecord>&
     return devices;
 }
 
-PipeWireDeviceBackend::PipeWireDeviceBackend(std::unique_ptr<IPipeWireDeviceSystem> system)
+PipeWireDeviceBackend::PipeWireDeviceBackend(std::shared_ptr<IPipeWireDeviceSystem> system,
+                                             std::function<bool()> selected)
     : m_system(std::move(system))
+    , m_selected(std::move(selected))
 {
 }
 
 bool PipeWireDeviceBackend::running() const
 {
-    return m_system && m_system->running();
+    if (!m_system) {
+        return false;
+    }
+    return m_selected ? m_selected() : m_system->running();
 }
 
 QList<AudioDeviceInfo> PipeWireDeviceBackend::enumerate()

@@ -12,8 +12,14 @@
 //   2026-04-23 — Created for the Linux PipeWire-native bridge.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-09: native audio plan Task 11 (R-AUD-01, R-AUD-31): the
+//               answer comes from the Linux engine selection
+//               (chooseLinuxEngines); Audio/LinuxBackendPreferred still
+//               forces it, and "pulse" forces Pactl as "pactl" does.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 #include "core/audio/LinuxAudioBackend.h"
+#include "core/audio/LinuxEngineSelection.h"
 
 #include <QFile>
 #include <QProcess>
@@ -61,29 +67,37 @@ namespace NereusSDR {
 LinuxAudioBackend detectLinuxBackend(const LinuxAudioBackendProbes& probes)
 {
     // Forced override (AppSettings debug key).
-    const QString forced = probes.forcedBackendOverride
-                             ? probes.forcedBackendOverride() : QString();
+    QString forced = probes.forcedBackendOverride
+                       ? probes.forcedBackendOverride() : QString();
+#ifndef NEREUS_HAVE_PIPEWIRE
     if (forced == QLatin1String("pipewire")) {
-#ifdef NEREUS_HAVE_PIPEWIRE
-        return LinuxAudioBackend::PipeWire;
-#else
         qCWarning(lcAudio) << "Audio/LinuxBackendPreferred=pipewire but build lacks"
                               " libpipewire — falling through to Pactl probe";
-        // fall through
-#endif
+        forced.clear();   // fall through
     }
-    if (forced == QLatin1String("pactl"))    { return LinuxAudioBackend::Pactl; }
-    if (forced == QLatin1String("none"))     { return LinuxAudioBackend::None; }
-    // Any other value (empty or garbage) falls through to probes.
-
-    if (probes.pipewireSocketReachable && probes.pipewireSocketReachable(500)) {
+#endif
+    // Any other value (empty or garbage) falls through to probes, which
+    // run only when the override does not decide on its own.
+    LinuxSoundServerProbe probe;
+    probe.forced = forced;
+    if (!linuxEngineForced(forced)) {
 #ifdef NEREUS_HAVE_PIPEWIRE
-        return LinuxAudioBackend::PipeWire;
+        probe.pipewireAnswers = probes.pipewireSocketReachable
+                                && probes.pipewireSocketReachable(500);
 #endif
         // Build lacks PipeWire support — socket found but we can't use it.
         // Fall through silently to the Pactl probe.
+        if (!probe.pipewireAnswers && probes.pactlBinaryRunnable
+            && probes.pactlBinaryRunnable(500)) {
+            // pactl answers: a PulseAudio-compatible server is there.
+            probe.pulseServerName = QStringLiteral("pulseaudio");
+        }
     }
-    if (probes.pactlBinaryRunnable && probes.pactlBinaryRunnable(500)) {
+    const LinuxEngineChoice choice = chooseLinuxEngines(probe);
+    if (choice.pipewireRunning) {
+        return LinuxAudioBackend::PipeWire;
+    }
+    if (choice.pulseRunning) {
         return LinuxAudioBackend::Pactl;
     }
     return LinuxAudioBackend::None;

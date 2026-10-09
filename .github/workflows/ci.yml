@@ -397,7 +397,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             cmake ninja-build pkg-config g++ mold \
             libgl1-mesa-dev libfftw3-dev libasound2-dev libjack-jackd2-dev \
-            libpipewire-0.3-dev libssl-dev \
+            libpipewire-0.3-dev libpulse-dev libssl-dev \
             autoconf automake libtool wget \
             python3-websockets python3-cryptography \
             iproute2 nftables coturn socat openssl unbound tayga
@@ -579,7 +579,7 @@ jobs:
             cmake ninja-build pkg-config g++ mold \
             libgl1-mesa-dev libfftw3-dev \
             libasound2-dev libjack-jackd2-dev \
-            libpipewire-0.3-dev \
+            libpipewire-0.3-dev libpulse-dev \
             libssl-dev \
             python3-websockets python3-cryptography \
             gdb \
