@@ -4,6 +4,10 @@
 //   2026-10-09: An accepted remote transmit setting, notch flag or radio
 //               speaker write schedules the Core's coalesced settings save.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: A clamped remote write that changed a saveable value
+//               (a radio speaker volume above the maximum) schedules the
+//               save too. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-09: The schema version comment names v10. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-06: Setup description version 25 (Audio > Outputs' radio
@@ -8211,13 +8215,25 @@ QList<SessionPropertyResult> StationServer::applyPropertyWrite(
         adjust(results);
     }
     // Two-tone plan Task 3: one save request per batch, only for a write
-    // that was taken; a refused one changed nothing to save.
+    // that was taken; a refused one changed nothing to save. A write the
+    // setter clamped is not accepted but did change the value (a radio
+    // speaker volume above the maximum), so a saveable property whose
+    // settled value moved asks for the save too.
+    const auto settledChanged = [&previous](const MirrorUpdate& value) {
+        return !previous.contains(value.name)
+            || !sameSettledValue(previous.value(value.name).value, value.value);
+    };
     if (!m_radioModel.isNull()
-        && std::any_of(results.cbegin(), results.cend(),
-                       [&message](const SessionPropertyResult& r) {
-                           return r.accepted
-                               && acceptedWriteAsksForSave(message.objectKey, r.property);
-                       })) {
+        && (std::any_of(results.cbegin(), results.cend(),
+                        [&message](const SessionPropertyResult& r) {
+                            return r.accepted
+                                && acceptedWriteAsksForSave(message.objectKey, r.property);
+                        })
+            || std::any_of(settled.cbegin(), settled.cend(),
+                           [&message, &settledChanged](const MirrorUpdate& value) {
+                               return acceptedWriteAsksForSave(message.objectKey, value.name)
+                                   && settledChanged(value);
+                           }))) {
         m_radioModel->requestSettingsSave();
     }
     if (answer && negotiated && message.writeId != 0) {

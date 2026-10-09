@@ -1141,6 +1141,34 @@ private slots:
                  volume);
     }
 
+    // Two-tone plan fix wave: a radio speaker volume above the maximum is
+    // clamped and applied, so its result is not accepted, yet the value
+    // changed; it is saved to the Core's file too.
+    void clampedRemoteSpeakerWriteIsSavedToTheCoreFile()
+    {
+        TxSession s;
+        startTxSession(s);
+        if (QTest::currentTestFailed()) { return; }
+        auto& settings = AppSettings::instance();
+        constexpr int kMaxVolume = 100;  // RadioModel.cpp kRadioSpeakerMaxVolume
+        s.station.setRadioSpeakerVolume(kMaxVolume - 10);
+        s.station.flushPendingSettingsSave();
+
+        QSignalSpy received(s.guiEnd, &LoopbackTransport::textReceived);
+        constexpr quint32 kSpeakerWriteId = 9301;
+        s.guiEnd->sendText(SessionMessages::encode(SessionMessages::propertyWrite(
+            "radio", {MirrorUpdate{0, "radioSpeakerVolume", MirrorWireKind::Int64,
+                                   QVariant(kMaxVolume + 50)}},
+            kSpeakerWriteId)));
+        QTRY_VERIFY(propertyResultFor(received, kSpeakerWriteId).has_value());
+        QVERIFY(!propertyResultFor(received, kSpeakerWriteId)->accepted);
+        QCOMPARE(s.station.radioSpeakerVolume(), kMaxVolume);
+        s.station.flushPendingSettingsSave();
+        settings.load();
+        QCOMPARE(settings.hardwareValue(kTxSessionMac, QStringLiteral("RadioSpeaker/Volume")).toInt(),
+                 kMaxVolume);
+    }
+
     // Two-tone plan fix wave: txProfile.select, .save and .delete from a
     // remote app change the Core's profile bank and ask for its coalesced
     // save, so each change is in the file, not only in memory.
