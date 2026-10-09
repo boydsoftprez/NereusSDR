@@ -32,6 +32,7 @@
 #include <QRegularExpression>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QThread>
 
 #include <cmath>
 #include <functional>
@@ -69,11 +70,17 @@ public:
         pending.clear();
         return out;
     }
-    // The stop before close: the budget each read wait was given, and the
+    // The stop before close: how long the write took (blocking, as a real
+    // port's wait does), the budget each read wait was given, and the
     // answers that arrive one per read wait.
+    int writeTakesMs{0};
     QList<int> readBudgets;
     QList<QByteArray> arriveOnWait;
     std::function<void()> onReadWait;
+    void waitForWritten(int) override
+    {
+        if (writeTakesMs > 0) { QThread::msleep(writeTakesMs); }
+    }
     bool waitForMoreToRead(int msecs) override
     {
         readBudgets.append(msecs);
@@ -216,6 +223,7 @@ private slots:
     void reconnectDuringAMoveStopsTheOldLink();
     void rotctldDisconnectDuringATurnSendsItsStop();
     void rotctldCloseWaitsForTheStopsOwnReply();
+    void rotctldCloseSharesOneDeadline();
     void driver4EndsRotctldOnlyAfterTheStopsReply();
     void teardownDuringAMoveSendsAStop();
     void quittingDuringAMoveSendsAStop();
@@ -1128,6 +1136,31 @@ void TestRotorConnection::rotctldCloseWaitsForTheStopsOwnReply()
     QCOMPARE(link->written, QByteArray("S\n"));
     QCOMPARE(link->readBudgets.size(), 3);
     QVERIFY(link->arriveOnWait.isEmpty());
+}
+
+void TestRotorConnection::rotctldCloseSharesOneDeadline()
+{
+    // Re-review N2: the write and the answer share kStopFlushMs, so the
+    // read wait gets what the write left, and the close gives up at the
+    // deadline when rotctld never answers.
+    RotorConfig c;
+    c.driver = RotorDriver::Rotctld;
+    c.host = QStringLiteral("127.0.0.1");
+    connectWith(c);
+    m_fake->take();
+    m_fake->feed("100.000000\n0.000000\n");
+    QVERIFY(m_conn->startMove(RotorDirection::Cw));
+    m_fake->take();
+    m_fake->feed("RPRT 0\n");
+    const QPointer<FakeTransport> link = m_fake;
+    link->writeTakesMs = 200;
+    // Nothing but a poll's answer, never the stop's.
+    link->arriveOnWait = {QByteArray("104.000000\n0.000000\n")};
+    m_conn->disconnectFromRotor();
+    QVERIFY(!link->readBudgets.isEmpty());
+    QVERIFY2(link->readBudgets.first() <= RotorConnection::kStopFlushMs - 200,
+             qPrintable(QString::number(link->readBudgets.first())));
+    QCOMPARE(RotorConnection::kStopFlushMs, 300);
 }
 
 void TestRotorConnection::driver4EndsRotctldOnlyAfterTheStopsReply()

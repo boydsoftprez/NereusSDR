@@ -239,8 +239,10 @@ Behaviour:
   stop after the host goes away. So whenever the Core closes a link while
   a turn or a move is under way (disconnect, a new setup, driver 0, the
   desktop's role switch, quitting), it writes the driver's stop and waits
-  up to 300 ms for it to leave (for rotctld, for its answer) before the
-  port or rotctld closes (final review, I2).
+  up to 300 ms in all for it to leave and, for rotctld, for its own
+  answer (`RPRT`, read past any answer still outstanding, such as a
+  poll's), before the port or rotctld closes (final review, I2; re-review
+  N1 and N2). The write and the answer share the one 300 ms deadline.
 
 ### Session objects and commands
 

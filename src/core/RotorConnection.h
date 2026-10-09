@@ -155,8 +155,9 @@ public:
     // never sent while one is outstanding.
     static constexpr int kPollStillMs = 1000;
     static constexpr int kPollTurningMs = 250;
-    // How long a stop sent as the link closes may take to leave (and, for
-    // rotctld, to be answered). A design value.
+    // How long a stop sent as the link closes may take, in all, to leave
+    // and (for rotctld) to be answered: one deadline across both waits.
+    // A design value (design, "Stop wins").
     static constexpr int kStopFlushMs = 300;
     // A poll unanswered this long is given up (serial) or the link is cut
     // and dialled again (rotctld, as Longpath's reply watchdog).
