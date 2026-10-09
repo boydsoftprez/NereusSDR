@@ -30,6 +30,8 @@ Pre-execution audit of every bundled or linked dependency against NereusSDR's GP
 
 Linking the Steinberg ASIO SDK into GPL-3 NereusSDR binaries violates both the ASIO SDK license (no redistribution of modified headers) and GPL-3 (non-free library linked into a GPL work; no system-library exception applies). Audacity hits the same wall and ships ASIO-disabled binaries for this exact reason.
 
+Superseded 2026-10-09: Steinberg dual-licensed the ASIO SDK 2.3.4 under GPL version 3; NereusSDR bundles it (third_party/asiosdk/).
+
 **Action:** Sub-Phase 13 (Direct ASIO Engine) and all references to `DirectAsioBus` / `AsioSdkHost` / Thetis `cmasio.c` ports are **removed from this plan.** PortAudio's built-in ASIO host API (available via the `PA_USE_ASIO` CMake option) covers the overwhelming majority of ASIO use cases without our project redistributing the SDK itself.
 
 If community demand ever justifies revisiting this, it lands as a **separate compliance proposal** (either option 2 — developer-build-only gate with CI enforcement — or a formal Steinberg commercial-license conversation). Not now.
