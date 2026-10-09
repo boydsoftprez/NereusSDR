@@ -617,6 +617,10 @@
 //   2026-10-06 - Radio speaker plan Task 11 (R-SPK-21): Tools > VAX Audio
 //                opens Setup > Audio > Digital modes, which holds VAX now.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Native audio plan Task 19 (R-AUD-23): the PC speakers
+//                menu's "Sound setup…" opens Setup at Audio, Outputs, and
+//                a pick from it reloads an open Outputs card. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -1030,6 +1034,7 @@ warren@wpratt.com
 #include "setup/DspOptionsPage.h"  // applyPersistedHighResFilter (R-R3-21)
 #include "setup/MultimeterPage.h"  // applyPersistedSettings (R-R3-21)
 #include "setup/HardwarePage.h"    // showAntennaTab (R-R3-21)
+#include "setup/DeviceCard.h"      // the Outputs card follows the header (R-AUD-23)
 #include "gui/DspAssetDialog.h"
 #include "models/PureSignalSettings.h"
 #include "core/session/PureSignalSessionFacade.h"
@@ -1424,7 +1429,16 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
         if (auto* engine = m_radioModel->localAudioDevices()) {
             engine->setSpeakersConfig(cfg);
         }
+        // R-AUD-23: the header saved the pick as the Outputs card saves
+        // one; an open Outputs card shows it at once.
+        for (DeviceCard* card : findChildren<DeviceCard*>(QStringLiteral("thisComputerGroup"))) {
+            card->loadFromSettings();
+        }
     });
+    // R-AUD-23: "Sound setup…" in the PC speakers menu opens Setup at
+    // Audio, Outputs.
+    connect(m_titleBar->masterOutput(), &MasterOutputWidget::soundSetupRequested,
+            this, [this]() { openSetupAtPage(QStringLiteral("Outputs")); });
 
     // Phase 3O Sub-Phase 10 Task 10d — the 💡 feature-request button
     // now lives inside TitleBar (consolidated from the old featureBar
