@@ -12,6 +12,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09 - PC mic status for the transmit badge (native audio plan
+//                Task 20; R-AUD-24, R-AUD-09, R-AUD-13). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-02  J.J. Boyd / KG4VCF. TX letters share the guarded flag
 //                Take and select action, with current access and target
 //                lifetime checks. AI-assisted via OpenAI Codex.
@@ -456,16 +459,7 @@ void TxApplet::buildUI()
         m_micSourceBadge = new QLabel(QStringLiteral("PC mic"), this);
         m_micSourceBadge->setAlignment(Qt::AlignCenter);
         m_micSourceBadge->setFixedHeight(16);
-        m_micSourceBadge->setStyleSheet(QStringLiteral(
-            "QLabel {"
-            " color: %1;"
-            " font-size: 9px;"
-            " border: 1px solid %2;"
-            " border-radius: 2px;"
-            " padding: 0px 4px;"
-            " background: %3;"
-            "}"
-        ).arg(Style::kTitleText, Style::kInsetBorder, Style::kInsetBg));
+        m_micSourceBadge->setStyleSheet(micSourceBadgeStyle(false));
         m_micSourceBadge->setAccessibleName(QStringLiteral("Mic source indicator"));
         m_micSourceBadge->setToolTip(QStringLiteral(
             "Active microphone source: PC mic or Radio mic.\n"
@@ -1830,6 +1824,9 @@ void TxApplet::wireControls()
             this, [this](MicSource) { refreshMicSourceBadge(); });
     connect(m_model, &RadioModel::remoteMicSourceStateChanged,
             this, &TxApplet::refreshMicSourceBadge);
+    // Native audio plan Task 20 (R-AUD-24): the PC mic's status.
+    connect(m_model, &RadioModel::pcMicStatusChanged,
+            this, &TxApplet::refreshMicSourceBadge);
 
     // ── Phase 3M-1c J.1 ─ TX Profile combo wiring ────────────────────────────
     // User-driven currentTextChanged → MicProfileManager::setActiveProfile.
@@ -2019,6 +2016,24 @@ void TxApplet::wireControls()
     syncFromModel();
 }
 
+// Native audio plan Task 20 (R-AUD-24): the badge's normal look, or the
+// area's amber warning look while the PC mic is missing or busy.
+QString TxApplet::micSourceBadgeStyle(bool amber)
+{
+    return QStringLiteral(
+        "QLabel {"
+        " color: %1;"
+        " font-size: 9px;"
+        " border: 1px solid %2;"
+        " border-radius: 2px;"
+        " padding: 0px 4px;"
+        " background: %3;"
+        "}"
+    ).arg(amber ? Style::kAmberText : Style::kTitleText,
+          amber ? Style::kAmberBorder : Style::kInsetBorder,
+          amber ? Style::kAmberBg : Style::kInsetBg);
+}
+
 void TxApplet::refreshMicSourceBadge()
 {
     if (!m_model || !m_micSourceBadge) { return; }
@@ -2034,12 +2049,47 @@ void TxApplet::refreshMicSourceBadge()
             source = MicSource::Pc;
         }
     }
-    m_micSourceBadge->setText(source == MicSource::Radio ? QStringLiteral("Radio mic")
-        : source == MicSource::Vax ? QStringLiteral("VAX") : QStringLiteral("PC mic"));
-    m_micSourceBadge->setToolTip(!reason.isEmpty() ? reason
+    QString text = source == MicSource::Radio ? QStringLiteral("Radio mic")
+        : source == MicSource::Vax ? QStringLiteral("VAX") : QStringLiteral("PC mic");
+    QString tip = !reason.isEmpty() ? reason
         : source == MicSource::Radio && !m_model->ownsLocalDsp()
             ? QStringLiteral("Radio microphone at the Core (no microphone stream from this computer).")
-            : QStringLiteral("Change microphone source via Settings > Audio > Microphone."));
+            : QStringLiteral("Change microphone source via Settings > Audio > Microphone.");
+
+    // Native audio plan Task 20 (R-AUD-24, R-AUD-09, settled call 35): a
+    // PC mic that is not connected, or held by another program, turns the
+    // badge amber and says so; it clears by itself when the device returns.
+    // R-AUD-13: a playing PC mic's tooltip names the device in use. Other
+    // failures (and a remote source the Core has not settled) keep the
+    // badge above. Display only: keying stays on R-R3-36's rule.
+    bool missing = false;
+    if (source == MicSource::Pc && reason.isEmpty()) {
+        const AudioRoleStatus mic = m_model->pcMicStatus();
+        const QString device = !mic.chosenName.isEmpty() ? mic.chosenName
+            : QStringLiteral("The microphone");
+        const QString rest = QStringLiteral(
+            " Transmit audio is silent until it comes back; NereusSDR never switches to "
+            "another mic by itself. Change the source in Settings > Audio > Microphone.");
+        if (mic.state == AudioRoleState::Silent && mic.reason == AudioRoleReason::NotConnected) {
+            missing = true;
+            text = QStringLiteral("PC mic not connected");
+            tip = device + QStringLiteral(" is not connected.") + rest;
+        } else if (mic.state == AudioRoleState::Silent && mic.reason == AudioRoleReason::InUse) {
+            missing = true;
+            text = QStringLiteral("PC mic in use by another program");
+            tip = device + QStringLiteral(" is in use by another program.") + rest;
+        } else if ((mic.state == AudioRoleState::Playing
+                    || mic.state == AudioRoleState::PlayingOnDefault)
+                   && !mic.playingName.isEmpty()) {
+            tip = QStringLiteral("PC mic: ") + mic.playingName;
+        }
+    }
+    m_micSourceBadge->setText(text);
+    m_micSourceBadge->setToolTip(tip);
+    if (missing != m_micSourceBadgeAmber) {
+        m_micSourceBadgeAmber = missing;
+        m_micSourceBadge->setStyleSheet(micSourceBadgeStyle(missing));
+    }
 }
 
 void TxApplet::syncFromModel()
