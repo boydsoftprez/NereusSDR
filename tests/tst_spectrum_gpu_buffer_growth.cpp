@@ -18,6 +18,14 @@
 // Fix wave 2026-09-30 (GUI-I2), J.J. Boyd (KG4VCF), AI-assisted via
 // Anthropic Claude Code: a 3D pan with no rows in its ring draws no mesh,
 // so it writes no mesh uniforms.
+//
+// 2026-10-08, J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code: a
+// hidden window is not a stall. "GPU frame 81 of 340 was not submitted
+// within 2 s (3D)" was macOS hiding the test window about a second after
+// launch (Qt logged it "changed to occluded"; the main thread sat in
+// -[CAMetalLayer nextDrawable] until then). Whichever case ran first failed,
+// 2D included. Frame waits now go through NativeWindowFrames.h, which raises
+// a hidden window and asks again; a run that lost its window restarts.
 
 #include <QTest>
 #include <QSignalSpy>
@@ -28,9 +36,11 @@
 #include <malloc/malloc.h>
 #endif
 
+#include "NativeWindowFrames.h"
 #include "gui/SpectrumWidget.h"
 
 using namespace NereusSDR;
+using NereusSDR::NativeWindowFrames::FrameWait;
 
 namespace {
 
@@ -44,6 +54,13 @@ constexpr int kMeasuredFrames = 300;
 // stay far below one frame's leak times the run. 4 MB is under a third of
 // the smallest leak this test caught.
 constexpr qint64 kGrowthBudgetBytes = 4 * 1024 * 1024;
+// One frame normally takes a few milliseconds; 2 s means the GPU path stopped.
+constexpr int kFrameTimeoutMs = 2000;
+// Runs restarted because the window was hidden part way through. Frames are
+// not drawn while hidden and the redraw on return can allocate, so a run
+// that lost its window starts again from warm-up rather than measuring
+// across the gap.
+constexpr int kMaxHiddenRestarts = 3;
 
 qint64 heapInUse()
 {
@@ -74,55 +91,77 @@ class TestSpectrumGpuBufferGrowth : public QObject {
 
 private:
     // Feeds one spectrum frame and waits for the widget to submit a GPU
-    // frame for it. False when no frame came within the timeout.
-    // An empty bins vector feeds nothing: the frame redraws what is there.
-    static bool renderOneFrame(SpectrumWidget& w, QSignalSpy& submitted,
-                               const QVector<float>& bins)
+    // frame for it. An empty bins vector feeds nothing: the frame redraws
+    // what is there. `raises` counts how often the hidden window was raised.
+    static FrameWait renderOneFrame(SpectrumWidget& w, QSignalSpy& submitted,
+                                    const QVector<float>& bins, int* raises)
     {
-        const int before = submitted.count();
         if (!bins.isEmpty()) {
             w.updateSpectrumLinear(0, bins, 2.0, -10.0);
         }
-        w.update();
-        return QTest::qWaitFor([&] { return submitted.count() > before; }, 2000);
+        return NativeWindowFrames::requestFrame(w, submitted, kFrameTimeoutMs, raises);
     }
 
     struct GrowthRun {
-        enum class Outcome { NoGpu, Stalled, Measured };
+        enum class Outcome { NoGpu, Stalled, Hidden, Measured };
         Outcome outcome{Outcome::NoGpu};
         qint64 growth{0};     // Measured: bytes, negative when the heap shrank
-        int stalledFrame{0};  // Stalled: the frame (from 1) that never came
+        int stalledFrame{0};  // Stalled or Hidden: the frame (from 1) that never came
     };
 
     // Measures the heap growth across kMeasuredFrames GPU frames. NoGpu only
-    // when the very first frame never arrives (the platform gave the widget
-    // no QRhi); a timeout after that is a stall, which the caller fails.
+    // when the very first frame never arrives on an exposed window (the
+    // platform gave the widget no QRhi); a timeout after that is a stall,
+    // which the caller fails. A window hidden part way through restarts the
+    // run; Hidden when it stays hidden or keeps being hidden.
     static GrowthRun measureGrowth(SpectrumWidget& w, bool feed)
     {
         GrowthRun run;
         QSignalSpy submitted(&w, &QRhiWidget::frameSubmitted);
         const QVector<float> bins = feed ? syntheticBins() : QVector<float>{};
-        qint64 before = 0;
-        for (int i = 0; i < kWarmupFrames + kMeasuredFrames; ++i) {
-            if (i == kWarmupFrames) {
-                before = heapInUse();
+        for (int restarts = 0; restarts <= kMaxHiddenRestarts; ++restarts) {
+            qint64 before = 0;
+            int hiddenAtFrame = 0;
+            for (int i = 0; i < kWarmupFrames + kMeasuredFrames; ++i) {
+                if (i == kWarmupFrames) {
+                    before = heapInUse();
+                }
+                int raises = 0;
+                const FrameWait wait = renderOneFrame(w, submitted, bins, &raises);
+                if (wait != FrameWait::Submitted) {
+                    if (wait == FrameWait::Hidden) {
+                        run.outcome = GrowthRun::Outcome::Hidden;
+                    } else {
+                        run.outcome = submitted.isEmpty() ? GrowthRun::Outcome::NoGpu
+                                                          : GrowthRun::Outcome::Stalled;
+                    }
+                    run.stalledFrame = i + 1;
+                    return run;
+                }
+                if (raises > 0) {
+                    hiddenAtFrame = i + 1;
+                    break;
+                }
             }
-            if (!renderOneFrame(w, submitted, bins)) {
-                run.outcome = (i == 0) ? GrowthRun::Outcome::NoGpu
-                                       : GrowthRun::Outcome::Stalled;
-                run.stalledFrame = i + 1;
-                return run;
+            if (hiddenAtFrame > 0) {
+                qInfo().noquote() << QStringLiteral(
+                    "window was hidden at frame %1 and raised again; restarting the run")
+                    .arg(hiddenAtFrame);
+                run.stalledFrame = hiddenAtFrame;
+                continue;
             }
+            const qint64 after = heapInUse();
+            run.growth = after - before;
+            run.outcome = GrowthRun::Outcome::Measured;
+            qInfo().noquote() << QStringLiteral(
+                "%1 GPU frames, %2 display pixels, QRhiWidget api %3: heap in use %4 -> %5 bytes (growth %6)")
+                .arg(kMeasuredFrames)
+                .arg(w.renderedPixels().size())
+                .arg(static_cast<int>(w.api()))
+                .arg(before).arg(after).arg(run.growth);
+            return run;
         }
-        const qint64 after = heapInUse();
-        run.growth = after - before;
-        run.outcome = GrowthRun::Outcome::Measured;
-        qInfo().noquote() << QStringLiteral(
-            "%1 GPU frames, %2 display pixels, QRhiWidget api %3: heap in use %4 -> %5 bytes (growth %6)")
-            .arg(kMeasuredFrames)
-            .arg(w.renderedPixels().size())
-            .arg(static_cast<int>(w.api()))
-            .arg(before).arg(after).arg(run.growth);
+        run.outcome = GrowthRun::Outcome::Hidden;
         return run;
     }
 
@@ -135,7 +174,16 @@ private:
             QSKIP("no QRhi on this platform; the GPU frame path did not run");
         }
         if (run.outcome == GrowthRun::Outcome::Stalled) {
-            QFAIL(qPrintable(QStringLiteral("GPU frame %1 of %2 was not submitted within 2 s (%3)")
+            QFAIL(qPrintable(QStringLiteral("GPU frame %1 of %2 was not submitted within %3 ms "
+                                            "while the window was exposed (%4)")
+                                 .arg(run.stalledFrame)
+                                 .arg(kWarmupFrames + kMeasuredFrames)
+                                 .arg(kFrameTimeoutMs)
+                                 .arg(QString::fromLatin1(what))));
+        }
+        if (run.outcome == GrowthRun::Outcome::Hidden) {
+            QFAIL(qPrintable(QStringLiteral("%1 Last hidden at frame %2 of %3 (%4).")
+                                 .arg(QString::fromLatin1(NativeWindowFrames::kHiddenFailure))
                                  .arg(run.stalledFrame)
                                  .arg(kWarmupFrames + kMeasuredFrames)
                                  .arg(QString::fromLatin1(what))));
