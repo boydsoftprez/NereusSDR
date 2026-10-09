@@ -1,0 +1,37 @@
+Steinberg ASIO SDK
+==================
+
+Version: 2.3.4
+Archive: ASIO-SDK_2.3.4_2025-10-15.zip
+Download URL: https://download.steinberg.net/sdk_downloads/ASIO-SDK_2.3.4_2025-10-15.zip
+  (reached from https://www.steinberg.net/asiosdk, which redirects there)
+Downloaded: 2026-10-09 (04:14 UTC)
+Archive size: 8910208 bytes
+Archive SHA-256: d5ebf0c20dd2c5f43771fd0c1418f4b361bf52434ee670097cfa6b3a335e2eca
+Vendored: 2026-10-09
+License: dual, the Steinberg ASIO License or the GNU General Public
+  License version 3 (see LICENSE.txt). NereusSDR takes it under GPL-3.0
+  (see LICENSE-NOTICE). The host helper files (host/asiodrivers.cpp,
+  host/asiodrivers.h, host/ginclude.h, host/pc/asiolist.cpp,
+  host/pc/asiolist.h) carry their own embedded BSD-style notice, which
+  LICENSE.txt says applies to them.
+
+Every file of the archive's top folder ASIOSDK/ is copied here byte for
+byte, PDFs and logo artwork included, with the ASIOSDK/ prefix dropped
+(ASIOSDK/common/asio.cpp is common/asio.cpp here). Nothing is edited.
+
+NereusSDR-added files (not from the archive):
+  VERSION.txt     this file
+  CMakeLists.txt  the Windows-only static library asiosdk_host, built from
+                  common/asio.cpp, host/asiodrivers.cpp and
+                  host/pc/asiolist.cpp
+
+To check the copy against the archive:
+  unzip -q ASIO-SDK_2.3.4_2025-10-15.zip -d /tmp/asio
+  diff -r /tmp/asio/ASIOSDK third_party/asiosdk
+(the only differences are the two NereusSDR-added files above).
+
+Do not edit the SDK files in place. To update, download the new release,
+check its licence, and overwrite every file here with the archive's,
+then update this file, docs/attribution/ASIO-SDK-PROVENANCE.md and
+packaging/third-party-licenses/asiosdk.txt and asiosdk-notices.txt.
