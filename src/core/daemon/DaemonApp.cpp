@@ -5,6 +5,10 @@
 // rationale (R1 Task 10).
 //
 // Modification history (NereusSDR):
+//   2026-10-09: native audio plan Task 21 (R-AUD-25, R-AUD-30, D31): the
+//               Core's RadioModel is the Core speaker's host, and on a box
+//               that starts into a desktop it waits for a pick. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-09-20: relay RadioModel connection state without dereferencing a
 //               RadioModel being destroyed, by J.J. Boyd (KG4VCF), with
 //               AI-assisted implementation via OpenAI Codex.
@@ -171,6 +175,10 @@
 
 #include "core/AppSettings.h"
 #include "core/AudioEngine.h"
+#if defined(NEREUS_HAVE_ALSA_DIRECT)
+#include "core/audio/AlsaDirectSystem.h"
+#include "core/audio/AudioTestBarrier.h"
+#endif
 #include "core/CoreInit.h"
 #include "core/FFTRouter.h"
 #include "core/LogCategories.h"
@@ -300,6 +308,21 @@ bool DaemonApp::start(const DaemonConfig& cfg)
     m_radioModel->audioEngine()->setVaxOutputsAllowed(false);
     // Native audio plan Task 7: the audio engines for this process.
     m_radioModel->audioEngine()->setAudioBackendContext({.daemon = true});
+    // Native audio plan Task 21: the Core speaker is this process's own
+    // sound card output, set from any window (D23). On a box that starts
+    // into a desktop (R-AUD-30, settled call 13) it waits for a pick unless
+    // one is saved or the config file names audio_device (D31, settled
+    // call 11).
+    bool startsIntoDesktop = false;
+#if defined(NEREUS_HAVE_ALSA_DIRECT)
+    if (!audioDevicesBarredForTestRun()) {
+        if (const std::unique_ptr<IAlsaDirectSystem> alsa = makeAlsaDirectSystem()) {
+            startsIntoDesktop = coreBoxStartsIntoDesktop(*alsa);
+        }
+    }
+#endif
+    m_radioModel->setCoreSpeakerDesktop(startsIntoDesktop, !cfg.audioDevice.isEmpty());
+    m_radioModel->setCoreSpeakerHost(true);
 #ifdef NEREUS_BUILD_TESTS
     m_radioModel->wdspEngine()->setSynchronousInitForTest(m_synchronousWdspForTest);
     if (m_radioInitializerForTest) {

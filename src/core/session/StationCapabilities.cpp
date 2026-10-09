@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09: Core speaker: coreSpeakerVersion, after radioSpeakerVersion
+//               and before coreBuildInfo (native audio plan Task 21,
+//               R-AUD-25). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-06: Radio speaker: radioSpeakerVersion, after
 //               radeReasonVersion and before coreBuildInfo (R-SPK-14).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -553,6 +557,12 @@ QList<MirrorUpdate> StationCapabilities::toUpdates() const
     if (radioSpeakerVersion > 0) {
         updates.append(intEntry("radioSpeakerVersion", radioSpeakerVersion));
     }
+    // Core speaker (native audio plan Task 21): radio's six coreSpeaker
+    // properties, after radioSpeakerVersion and before coreBuildInfo (which
+    // stays last), only for a peer that declared coreSpeaker.
+    if (coreSpeakerVersion > 0) {
+        updates.append(intEntry("coreSpeakerVersion", coreSpeakerVersion));
+    }
     if (coreBuildInfo) {
         const QByteArray json = coreBuildInfo->toJson();
         if (!json.isEmpty()) updates.append(stringEntry("coreBuildInfo", QString::fromUtf8(json)));
@@ -578,6 +588,7 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
     int radeReasonEntries = 0;
     int stationCatEntries = 0;
     int radioSpeakerEntries = 0;
+    int coreSpeakerEntries = 0;
     for (const MirrorUpdate& u : updates) {
         if (u.name == "mediaDirectVersion") {
             // The direct media ladder: one entry, an Int64 of 1 or more.
@@ -614,6 +625,15 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                 && u.value.typeId() == QMetaType::LongLong) {
                 const qlonglong version = u.value.toLongLong();
                 caps.stationCatVersion = version > 0 && version <= 65535
+                    ? static_cast<int>(version) : 0;
+            }
+        } else if (u.name == "coreSpeakerVersion") {
+            // Core speaker: one entry, an Int64 of 1 or more.
+            if (++coreSpeakerEntries == 1 && u.ordinal == 0
+                && u.kind == MirrorWireKind::Int64
+                && u.value.typeId() == QMetaType::LongLong) {
+                const qlonglong version = u.value.toLongLong();
+                caps.coreSpeakerVersion = version > 0 && version <= 65535
                     ? static_cast<int>(version) : 0;
             }
         } else if (u.name == "radioSpeakerVersion") {

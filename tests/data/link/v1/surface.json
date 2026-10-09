@@ -545,6 +545,11 @@
             "value": 1
         },
         {
+            "kind": "i64",
+            "name": "coreSpeakerVersion",
+            "value": 1
+        },
+        {
             "kind": "utf8",
             "name": "coreBuildInfo",
             "value": "{\"productVersion\":\"0.5.2\",\"sourceTag\":\"link-surface@fixture\"}"
@@ -5544,6 +5549,42 @@
                     "kind": "bool",
                     "name": "speakerAmplifierAvailable",
                     "ordinal": 42
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "i64",
+                    "name": "coreSpeakerVolume",
+                    "ordinal": 43
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "bool",
+                    "name": "coreSpeakerMuted",
+                    "ordinal": 44
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "utf8",
+                    "name": "coreSpeakerDevice",
+                    "ordinal": 45
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "coreSpeakerDevices",
+                    "ordinal": 46
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "coreSpeakerState",
+                    "ordinal": 47
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "utf8",
+                    "name": "coreSpeakerDetails",
+                    "ordinal": 48
                 }
             ]
         },

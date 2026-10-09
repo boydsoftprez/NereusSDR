@@ -17,6 +17,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09 - Core speaker (native audio plan Task 21; R-AUD-25,
+//                R-AUD-28, R-AUD-30, D23, D31): the six coreSpeaker
+//                properties, bound on the Core to the engine's master level
+//                and mute and the speakers role, with the desktop rule; a
+//                remote window's follow the Core. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-04: Preserve native untyped Tune OFF release alongside guarded
@@ -1362,6 +1368,8 @@ mw0lge@grange-lane.co.uk
 #include "core/ReceiverManager.h"
 #include "core/SharedInputLowPass.h"
 #include "core/AudioEngine.h"
+#include "core/audio/CoreSpeakerJson.h"
+#include "core/audio/IAudioDeviceCatalog.h"
 #include "core/WdspEngine.h"
 #include "core/RxChannel.h"
 #include "core/DspControlThread.h"
@@ -1643,6 +1651,18 @@ RadioModel::RadioModel(Role role, QObject* parent)
     , m_wdspEngine(new WdspEngine(this))
 {
     m_role = role;
+    // Core speaker (Task 21): the text forms before anything is known.
+    m_coreSpeakerDevice = coreSpeakerDeviceToJson(QString(), QString());
+    m_coreSpeakerDevices = coreSpeakerDevicesToJson({});
+    m_coreSpeakerState = coreSpeakerStateToJson(CoreSpeakerState{});
+    {
+        const AudioDeviceConfig defaults;
+        CoreSpeakerDetails details;
+        details.bufferFrames = defaults.bufferSamples;
+        details.delayMs = defaults.delayMs;
+        details.sampleRate = defaults.sampleRate;
+        m_coreSpeakerDetails = coreSpeakerDetailsToJson(details);
+    }
     // Ship default 2026-04-30: Clarity ON for fresh installs. Auto-tuning
     // the noise floor is the better first-launch experience than asking
     // the user to find and toggle the setting themselves.
@@ -20714,6 +20734,451 @@ void RadioModel::clearStationRadioSpeaker()
     m_stationRadioSpeakerAvailability = kRadioSpeakerNoRadio;
     m_stationSpeakerAmplifierAvailable = false;
     refreshRadioSpeakerReports();
+}
+
+// ── Core speaker (native audio plan Task 21) ────────────────────────────────
+
+namespace {
+
+constexpr int kCoreSpeakerMaxVolume = 100;
+// The settable details take the values Setup's speakers card offers:
+// DeviceCard.cpp kBufferSizes and kSampleRates, and R-AUD-15's delay
+// settings (0 is automatic).
+constexpr int kCoreSpeakerBufferFrames[] = {64, 128, 256, 512, 1024, 2048};
+constexpr int kCoreSpeakerDelayMs[] = {0, 2, 3, 5, 10, 20, 40};
+constexpr int kCoreSpeakerSampleRates[] = {44100, 48000, 88200, 96000, 176400, 192000, 384000};
+constexpr int kCoreSpeakerRefreshMs = 1000;
+
+template <std::size_t N>
+bool coreSpeakerOffers(const int (&values)[N], int value)
+{
+    return std::find(std::begin(values), std::end(values), value) != std::end(values);
+}
+
+QString coreSpeakerPrefix()
+{
+    return QStringLiteral("audio/Speakers");
+}
+
+QString masterVolumeKey()
+{
+    return QStringLiteral("audio/Master/Volume");
+}
+
+QString masterMutedKey()
+{
+    return QStringLiteral("audio/Master/Muted");
+}
+
+} // namespace
+
+void RadioModel::setCoreSpeakerText(QString& member, const QString& value,
+                                    void (RadioModel::*changed)(const QString&))
+{
+    if (member == value) {
+        return;
+    }
+    member = value;
+    emit (this->*changed)(value);
+}
+
+bool RadioModel::stationOffersCoreSpeaker() const
+{
+    return m_station != nullptr && m_station->coreSpeakerAvailable();
+}
+
+void RadioModel::setCoreSpeakerVolume(int volume)
+{
+    volume = std::clamp(volume, 0, kCoreSpeakerMaxVolume);
+    if (volume == m_coreSpeakerVolume) {
+        return;
+    }
+    if (m_role == Role::Remote) {
+        // A window of a Core that does not offer it changes nothing and
+        // sends nothing.
+        if (!stationOffersCoreSpeaker()) {
+            return;
+        }
+    } else if (!m_coreSpeakerHost || m_audioEngine == nullptr) {
+        return;
+    }
+    m_coreSpeakerVolume = volume;
+    if (m_role != Role::Remote) {
+        const float linear =
+            static_cast<float>(volume) / static_cast<float>(kCoreSpeakerMaxVolume);
+        AppSettings& settings = AppSettings::instance();
+        settings.setValue(masterVolumeKey(), QString::number(linear, 'f', 3));
+        settings.save();
+        // R-AUD-28: the master level scales only the speakers push.
+        m_audioEngine->setVolume(linear);
+    }
+    emit coreSpeakerVolumeChanged(volume);
+}
+
+void RadioModel::setCoreSpeakerMuted(bool muted)
+{
+    if (muted == m_coreSpeakerMuted) {
+        return;
+    }
+    if (m_role == Role::Remote) {
+        if (!stationOffersCoreSpeaker()) {
+            return;
+        }
+    } else if (!m_coreSpeakerHost || m_audioEngine == nullptr) {
+        return;
+    }
+    m_coreSpeakerMuted = muted;
+    if (m_role != Role::Remote) {
+        AppSettings& settings = AppSettings::instance();
+        settings.setValue(masterMutedKey(), muted ? QStringLiteral("True") : QStringLiteral("False"));
+        settings.save();
+        // R-AUD-28: the master mute gates only the speakers push.
+        m_audioEngine->setMasterMuted(muted);
+    }
+    emit coreSpeakerMutedChanged(muted);
+}
+
+void RadioModel::setCoreSpeakerDevice(const QString& json)
+{
+    const std::optional<QPair<QString, QString>> pick = coreSpeakerDeviceFromJson(json);
+    if (!pick) {
+        return;
+    }
+    if (m_role == Role::Remote) {
+        if (stationOffersCoreSpeaker()) {
+            setCoreSpeakerText(m_coreSpeakerDevice, coreSpeakerDeviceToJson(pick->first, pick->second),
+                               &RadioModel::coreSpeakerDeviceChanged);
+        }
+        return;
+    }
+    if (!m_coreSpeakerHost || m_audioEngine == nullptr) {
+        return;
+    }
+    const QString normalized = coreSpeakerDeviceToJson(pick->first, pick->second);
+    // While the Core waits for a pick (D31) every pick counts, "(none)"
+    // included (settled call 12): it is saved and the wait ends.
+    if (normalized == m_coreSpeakerDevice && !m_coreSpeakerWaiting) {
+        return;
+    }
+    // The engine a choice is saved with is known once the device layer runs.
+    m_audioEngine->prepareAudioDevices();
+    AudioDeviceConfig cfg = AudioDeviceConfig::loadFromSettings(coreSpeakerPrefix());
+    cfg.deviceId = pick->first;
+    cfg.deviceName = pick->first.isEmpty() || cfg.isNone() ? QString() : pick->second;
+    cfg.firstChannel = 1;
+    cfg.engine = m_audioEngine->defaultEngine();
+    cfg.saveToSettings(coreSpeakerPrefix());
+    AppSettings::instance().save();
+    if (m_coreSpeakerWaiting) {
+        m_coreSpeakerWaiting = false;
+        m_audioEngine->setSpeakersWaitForPick(false);
+    }
+    m_audioEngine->setSpeakersConfig(cfg);
+    refreshCoreSpeaker();
+}
+
+void RadioModel::setCoreSpeakerDetails(const QString& json)
+{
+    const std::optional<CoreSpeakerDetails> asked = coreSpeakerDetailsFromJson(json);
+    if (!asked) {
+        return;
+    }
+    if (m_role == Role::Remote) {
+        if (stationOffersCoreSpeaker()) {
+            setCoreSpeakerText(m_coreSpeakerDetails, coreSpeakerDetailsToJson(*asked),
+                               &RadioModel::coreSpeakerDetailsChanged);
+        }
+        return;
+    }
+    if (!m_coreSpeakerHost || m_audioEngine == nullptr) {
+        return;
+    }
+    // Only the buffer, the delay setting and the sample rate are the
+    // window's; the negotiated format and the delay now are the Core's.
+    // A value Setup does not offer is left as it was.
+    AudioDeviceConfig cfg = AudioDeviceConfig::loadFromSettings(coreSpeakerPrefix());
+    bool changed = false;
+    if (asked->bufferFrames != cfg.bufferSamples
+        && coreSpeakerOffers(kCoreSpeakerBufferFrames, asked->bufferFrames)) {
+        cfg.bufferSamples = asked->bufferFrames;
+        changed = true;
+    }
+    if (asked->delayMs != cfg.delayMs && coreSpeakerOffers(kCoreSpeakerDelayMs, asked->delayMs)) {
+        cfg.delayMs = asked->delayMs;
+        changed = true;
+    }
+    if (asked->sampleRate != cfg.sampleRate
+        && coreSpeakerOffers(kCoreSpeakerSampleRates, asked->sampleRate)) {
+        cfg.sampleRate = asked->sampleRate;
+        changed = true;
+    }
+    if (!changed) {
+        refreshCoreSpeaker();
+        return;
+    }
+    m_audioEngine->prepareAudioDevices();
+    // A box waiting for a pick saves no engine, so it keeps waiting at the
+    // next start (D31); its "(none)" stays the choice in effect.
+    if (!cfg.engine && !m_coreSpeakerWaiting) {
+        cfg.engine = m_audioEngine->defaultEngine();
+    }
+    cfg.saveToSettings(coreSpeakerPrefix());
+    AppSettings::instance().save();
+    AudioDeviceConfig inEffect = cfg;
+    if (m_coreSpeakerWaiting) {
+        inEffect.deviceId = QString::fromLatin1(kAudioDeviceNone);
+        inEffect.deviceName.clear();
+    }
+    m_audioEngine->setSpeakersConfig(inEffect);
+    refreshCoreSpeaker();
+}
+
+void RadioModel::setCoreSpeakerDesktop(bool desktop, bool configNamesDevice)
+{
+    m_coreSpeakerDesktop = desktop;
+    m_coreSpeakerConfigNamesDevice = configNamesDevice;
+}
+
+void RadioModel::setCoreSpeakerHost(bool host)
+{
+    if (m_role == Role::Remote || m_audioEngine == nullptr || host == m_coreSpeakerHost) {
+        return;
+    }
+    m_coreSpeakerHost = host;
+    if (!host) {
+        for (const QMetaObject::Connection& c : m_coreSpeakerConnections) {
+            disconnect(c);
+        }
+        m_coreSpeakerConnections.clear();
+        if (m_coreSpeakerCatalogue) {
+            disconnect(m_coreSpeakerCatalogue.data(), nullptr, this, nullptr);
+        }
+        m_coreSpeakerCatalogue = nullptr;
+        if (m_coreSpeakerTimer != nullptr) {
+            m_coreSpeakerTimer->stop();
+        }
+        return;
+    }
+
+    // Design choice 9: the level and mute are the Core's master level and
+    // mute; settled call 29: 50 when no level was ever saved.
+    AppSettings& settings = AppSettings::instance();
+    bool ok = false;
+    float linear = settings.value(masterVolumeKey(), QStringLiteral("0.500")).toString().toFloat(&ok);
+    if (!ok) {
+        linear = 0.5f;
+    }
+    linear = std::clamp(linear, 0.0f, 1.0f);
+    const int volume = static_cast<int>(std::lround(linear * static_cast<float>(kCoreSpeakerMaxVolume)));
+    const bool muted =
+        settings.value(masterMutedKey(), QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_audioEngine->setVolume(linear);
+    m_audioEngine->setMasterMuted(muted);
+    if (volume != m_coreSpeakerVolume) {
+        m_coreSpeakerVolume = volume;
+        emit coreSpeakerVolumeChanged(volume);
+    }
+    if (muted != m_coreSpeakerMuted) {
+        m_coreSpeakerMuted = muted;
+        emit coreSpeakerMutedChanged(muted);
+    }
+
+    // Another path that moves the engine's level (TCI's AF) is followed,
+    // not saved, as before.
+    m_coreSpeakerConnections.append(
+        connect(m_audioEngine, &AudioEngine::volumeChanged, this, [this](float v) {
+            const int pct =
+                static_cast<int>(std::lround(v * static_cast<float>(kCoreSpeakerMaxVolume)));
+            if (pct != m_coreSpeakerVolume) {
+                m_coreSpeakerVolume = pct;
+                emit coreSpeakerVolumeChanged(pct);
+            }
+        }));
+    m_coreSpeakerConnections.append(
+        connect(m_audioEngine, &AudioEngine::masterMutedChanged, this, [this](bool m) {
+            if (m != m_coreSpeakerMuted) {
+                m_coreSpeakerMuted = m;
+                emit coreSpeakerMutedChanged(m);
+            }
+        }));
+    m_coreSpeakerConnections.append(
+        connect(m_audioEngine, &AudioEngine::speakersConfigChanged, this,
+                [this](const AudioDeviceConfig& negotiated) {
+                    const QChar dot(0x00B7);
+                    m_coreSpeakerNegotiated = QStringLiteral("%1 Hz %2 %3 ch %2 %4 samples")
+                                                  .arg(negotiated.sampleRate)
+                                                  .arg(dot)
+                                                  .arg(negotiated.channels)
+                                                  .arg(negotiated.bufferSamples);
+                    refreshCoreSpeaker();
+                }));
+    m_coreSpeakerConnections.append(
+        connect(m_audioEngine, &AudioEngine::roleStatusChanged, this,
+                [this](AudioRole role, const AudioRoleStatus&) {
+                    if (role == AudioRole::Speakers) {
+                        refreshCoreSpeaker();
+                    }
+                }));
+
+    // D31 / R-AUD-30: a box that starts into a desktop leaves its cards to
+    // the desktop until a Core speaker is picked. A saved Engine, DeviceId
+    // or DeviceName, or the config file's audio_device (settled call 11),
+    // is a pick.
+    const AudioDeviceConfig saved = AudioDeviceConfig::loadFromSettings(coreSpeakerPrefix());
+    const bool picked = saved.engine.has_value() || !saved.deviceId.isEmpty()
+                        || !saved.deviceName.isEmpty() || m_coreSpeakerConfigNamesDevice;
+    m_coreSpeakerWaiting = m_coreSpeakerDesktop && !picked;
+    if (m_coreSpeakerWaiting) {
+        m_audioEngine->setSpeakersWaitForPick(true);
+        // No audio_device seeding follows, so the list can start now: a
+        // window picks from the Core's cards before any radio connects.
+        m_audioEngine->prepareAudioDevices();
+    }
+
+    if (m_coreSpeakerTimer == nullptr) {
+        m_coreSpeakerTimer = new QTimer(this);
+        m_coreSpeakerTimer->setInterval(kCoreSpeakerRefreshMs);
+        connect(m_coreSpeakerTimer, &QTimer::timeout, this, &RadioModel::refreshCoreSpeaker);
+    }
+    m_coreSpeakerTimer->start();
+    refreshCoreSpeaker();
+}
+
+void RadioModel::followCoreSpeakerCatalogue()
+{
+    IAudioDeviceCatalog* catalogue = m_audioEngine != nullptr ? m_audioEngine->catalogue() : nullptr;
+    if (static_cast<QObject*>(catalogue) == m_coreSpeakerCatalogue.data()) {
+        return;
+    }
+    if (m_coreSpeakerCatalogue) {
+        disconnect(m_coreSpeakerCatalogue.data(), nullptr, this, nullptr);
+    }
+    m_coreSpeakerCatalogue = catalogue;
+    if (catalogue != nullptr) {
+        connect(catalogue, &IAudioDeviceCatalog::devicesChanged, this, &RadioModel::refreshCoreSpeaker);
+    }
+}
+
+void RadioModel::refreshCoreSpeaker()
+{
+    if (!m_coreSpeakerHost || m_audioEngine == nullptr) {
+        return;
+    }
+    followCoreSpeakerCatalogue();
+    const AudioDeviceConfig saved = AudioDeviceConfig::loadFromSettings(coreSpeakerPrefix());
+
+    // The choice in effect: "(none)" while waiting for a pick.
+    const QString device = m_coreSpeakerWaiting
+        ? coreSpeakerDeviceToJson(QString::fromLatin1(kAudioDeviceNone), QString())
+        : coreSpeakerDeviceToJson(saved.deviceId, saved.isNone() ? QString() : saved.deviceName);
+
+    AudioRoleStatus status = m_audioEngine->roleStatus(AudioRole::Speakers);
+    if (m_coreSpeakerWaiting && m_audioEngine->catalogue() == nullptr) {
+        // No device layer to report it (a run without one): still waiting.
+        status.state = AudioRoleState::WaitingForPick;
+    }
+    const CoreSpeakerState state = coreSpeakerStateFor(status, m_coreSpeakerDesktop);
+
+    QList<CoreSpeakerCard> cards;
+    if (IAudioDeviceCatalog* catalogue = m_audioEngine->catalogue()) {
+        const QList<AudioDeviceInfo> listed = catalogue->devices(
+            audioBackendFor(m_audioEngine->defaultEngine()), AudioDeviceDirection::Output);
+        for (const AudioDeviceInfo& info : listed) {
+            cards.append(CoreSpeakerCard{info.id, info.name, info.state});
+        }
+        // D23: a chosen card that is gone stays in the list, not connected.
+        if (!m_coreSpeakerWaiting && !saved.isNone() && !saved.deviceId.isEmpty()) {
+            const bool listedNow = std::any_of(cards.cbegin(), cards.cend(),
+                                               [&saved](const CoreSpeakerCard& card) {
+                                                   return card.id == saved.deviceId;
+                                               });
+            if (!listedNow) {
+                cards.append(CoreSpeakerCard{saved.deviceId, saved.deviceName,
+                                             AudioDeviceState::NotConnected});
+            }
+        }
+    }
+
+    CoreSpeakerDetails details;
+    details.bufferFrames = saved.bufferSamples;
+    details.delayMs = saved.delayMs;
+    details.sampleRate = saved.sampleRate;
+    const bool playing = status.state == AudioRoleState::Playing
+                         || status.state == AudioRoleState::PlayingOnDefault;
+    details.negotiated = playing ? m_coreSpeakerNegotiated : QString();
+    const double delayNow = playing ? m_audioEngine->delayParts(AudioRole::Speakers).totalMs() : -1.0;
+    // Half a millisecond steps, so the readout does not send a delta for
+    // every wobble of the matcher's fill.
+    details.delayNowMs = delayNow < 0.0 ? -1.0 : std::round(delayNow * 2.0) / 2.0;
+
+    setCoreSpeakerText(m_coreSpeakerDevice, device, &RadioModel::coreSpeakerDeviceChanged);
+    setCoreSpeakerText(m_coreSpeakerDevices, coreSpeakerDevicesToJson(cards),
+                       &RadioModel::coreSpeakerDevicesChanged);
+    setCoreSpeakerText(m_coreSpeakerState, coreSpeakerStateToJson(state),
+                       &RadioModel::coreSpeakerStateChanged);
+    setCoreSpeakerText(m_coreSpeakerDetails, coreSpeakerDetailsToJson(details),
+                       &RadioModel::coreSpeakerDetailsChanged);
+}
+
+bool RadioModel::coreSpeakerAvailable() const
+{
+    if (m_coreSpeakerHost) {
+        return true;
+    }
+    return m_role == Role::Remote && stationOffersCoreSpeaker();
+}
+
+bool RadioModel::coreSpeakerNeedsNewerCore() const
+{
+    return m_role == Role::Remote && m_station != nullptr && m_station->coreSpeakerNeedsNewerCore();
+}
+
+QString RadioModel::coreSpeakerUnavailableReason() const
+{
+    if (coreSpeakerAvailable()) {
+        return QString();
+    }
+    if (coreSpeakerNeedsNewerCore()) {
+        return IStationLink::coreSpeakerUnavailableReason();
+    }
+    return tr("Connect to the Core to change these.");
+}
+
+bool RadioModel::applyStationCoreSpeakerValue(const QByteArray& name, const QVariant& value)
+{
+    if (m_role != Role::Remote || value.typeId() != QMetaType::QString) {
+        return false;
+    }
+    if (name == "coreSpeakerDevices") {
+        const std::optional<QList<CoreSpeakerCard>> cards = coreSpeakerDevicesFromJson(value.toString());
+        if (!cards) {
+            return false;
+        }
+        setCoreSpeakerText(m_coreSpeakerDevices, coreSpeakerDevicesToJson(*cards),
+                           &RadioModel::coreSpeakerDevicesChanged);
+        return true;
+    }
+    if (name == "coreSpeakerState") {
+        const std::optional<CoreSpeakerState> state = coreSpeakerStateFromJson(value.toString());
+        if (!state) {
+            return false;
+        }
+        setCoreSpeakerText(m_coreSpeakerState, coreSpeakerStateToJson(*state),
+                           &RadioModel::coreSpeakerStateChanged);
+        return true;
+    }
+    return false;
+}
+
+void RadioModel::clearStationCoreSpeaker()
+{
+    if (m_role != Role::Remote) {
+        return;
+    }
+    setCoreSpeakerText(m_coreSpeakerDevices, coreSpeakerDevicesToJson({}),
+                       &RadioModel::coreSpeakerDevicesChanged);
+    setCoreSpeakerText(m_coreSpeakerState, coreSpeakerStateToJson(CoreSpeakerState{}),
+                       &RadioModel::coreSpeakerStateChanged);
 }
 
 QString RadioModel::speakerAmplifierUnavailableReason() const

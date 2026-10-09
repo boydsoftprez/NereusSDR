@@ -208,6 +208,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09  J.J. Boyd / KG4VCF  Core speaker: coreSpeakerAvailable
+//                                    and coreSpeakerNeedsNewerCore
+//                                    (coreSpeakerVersion 1, native audio
+//                                    plan Task 21). AI-assisted via
+//                                    Anthropic Claude Code.
 //   2026-10-06  J.J. Boyd / KG4VCF  Radio speaker: radioSpeakerAvailable
 //                                    and radioSpeakerNeedsNewerCore
 //                                    (radioSpeakerVersion 1, R-SPK-14).
@@ -1519,6 +1524,13 @@ public:
     /// Signed in, this session's capabilities arrived, and they carry no
     /// radioSpeakerVersion 1.
     bool radioSpeakerNeedsNewerCore() const override;
+    /// Core speaker (native audio plan Task 21): the Core advertised
+    /// coreSpeakerVersion 1 on this session, so radio carries the Core
+    /// speaker's properties.
+    bool coreSpeakerAvailable() const override;
+    /// Signed in, this session's capabilities arrived, and they carry no
+    /// coreSpeakerVersion 1.
+    bool coreSpeakerNeedsNewerCore() const override;
     /// Parity Task 16 (dspInfoVersion 1). Verb "dsp.filterResponse". The
     /// answer goes to RadioModel::reportStationFilterResponse.
     CommandOutcome requestFilterResponse(int sliceId, bool highResolution) override;

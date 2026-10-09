@@ -1166,6 +1166,8 @@ set(CORE_SOURCES
     src/core/audio/AudioDeviceCatalog.cpp
     src/core/audio/AudioDeviceMatching.cpp
     src/core/audio/AudioStreamSupervisor.cpp
+    # Native audio plan Task 21: the Core speaker's link text forms.
+    src/core/audio/CoreSpeakerJson.cpp
     src/core/audio/AudioBackendRegistry.cpp
     # Native audio plan Task 11: which Linux engine runs (pure, every platform).
     src/core/audio/LinuxEngineSelection.cpp
