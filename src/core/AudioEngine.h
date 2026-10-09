@@ -21,6 +21,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09 : Native audio plan early-review fix wave and its follow-up
+//                 (R-AUD-02, R-AUD-06, R-AUD-08, R-AUD-12, R-AUD-14,
+//                 R-AUD-16) by J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code. m_roleOpenDeviceId and
+//                 backendOpensOneStreamAtATime() for the open-first rule;
+//                 kRescanSlewMs; ensureAudioDevices(DeviceStart) starts the
+//                 mic role alone for a capture demand before start().
 //   2026-10-09 : Native audio plan Task 7 fix (R-AUD-06, R-AUD-08) by J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //                 PortAudio starts and stops through PortAudioLibrary; a
@@ -1343,7 +1350,12 @@ private:
     // ── Native audio plan Task 7: the device layer ──────────────────────
     // True once the catalogue and the stream supervisor run; builds them
     // on the first call where the layer applies (see catalogue()).
-    bool ensureAudioDevices();
+    // MicOnly (a capture demand before start(), or a mic choice) starts
+    // the mic role alone when nothing has started; All also starts the
+    // outputs.  An output setter starts MicOnly, hands its choice over,
+    // then All, so the output opens once, on that choice.
+    enum class DeviceStart { All, MicOnly };
+    bool ensureAudioDevices(DeviceStart start = DeviceStart::All);
     bool audioDevicesApply() const;
     void tearDownAudioDevices();
     // The config with R-AUD-02's engine on "(platform default)".

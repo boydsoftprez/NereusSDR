@@ -19,6 +19,25 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09  J.J. Boyd / KG4VCF  Native audio plan early-review fix
+//                                    wave follow-up (R-AUD-08, R-AUD-14):
+//                                    a capture demand before start()
+//                                    starts the mic role alone; the
+//                                    outputs open at start(), or when an
+//                                    output setting changes, on their
+//                                    current choice and once.
+//                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-09  J.J. Boyd / KG4VCF  Native audio plan early-review fix
+//                                    wave (R-AUD-02, R-AUD-06, R-AUD-08,
+//                                    R-AUD-12, R-AUD-16): a failed open
+//                                    keeps the playing bus (closed first
+//                                    only for the same device or an engine
+//                                    that runs one stream at a time);
+//                                    Windows shared asks for bufferFrames
+//                                    0; Rescan waits out a large callback;
+//                                    the first capture demand opens the
+//                                    helper once, on the matched mic.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-09  J.J. Boyd / KG4VCF  Native audio plan Task 7 fix (R-AUD-06,
 //                                    R-AUD-08): PortAudio's lifetime goes
 //                                    through PortAudioLibrary and Rescan
@@ -1430,8 +1449,9 @@ CaptureSupervisor::Lease AudioEngine::acquireCaptureDemand(CaptureSupervisor::De
     // The first demand opens the helper once, on the matched mic: the
     // stream supervisor hands its config over before the demand starts a
     // generation, never the saved choice first and the matched one after.
+    // Only the mic role starts: the outputs open at start() (follow-up).
     if (m_deviceLayerReady && !m_micHandledBySupervisor) {
-        ensureAudioDevices();
+        ensureAudioDevices(DeviceStart::MicOnly);
     }
     return m_captureSupervisor->acquire(demand);
 }
@@ -1500,9 +1520,12 @@ AudioDeviceConfig AudioEngine::withDefaultEngine(const AudioDeviceConfig& cfg) c
     return out;
 }
 
-bool AudioEngine::ensureAudioDevices()
+bool AudioEngine::ensureAudioDevices(DeviceStart start)
 {
     if (m_streamSupervisor) {
+        if (start == DeviceStart::All) {
+            m_streamSupervisor->startOutputs();
+        }
         return true;
     }
     if (!m_deviceLayerReady || !audioDevicesApply()) {
@@ -1575,7 +1598,12 @@ bool AudioEngine::ensureAudioDevices()
     }
 #endif
     // Every choice is known: the supervisor starts now, so the outputs are
-    // open when this returns, as the direct paths left them.
+    // open when this returns, as the direct paths left them.  For MicOnly
+    // the mic role starts alone; the outputs wait for start() or an output
+    // setting (the posted start then does nothing).
+    if (start == DeviceStart::MicOnly) {
+        m_streamSupervisor->startMicOnly();
+    }
     QCoreApplication::sendPostedEvents(m_streamSupervisor.get(), QEvent::MetaCall);
     qCInfo(lcAudio) << "Audio devices: default engine" << audioEngineLabel(m_defaultEngine);
     return true;
@@ -2285,10 +2313,11 @@ void AudioEngine::setSpeakersConfig(const AudioDeviceConfig& cfg)
         if (!m_streamSupervisor) {
             m_speakersChoiceBeforeDevices = cfg;
         }
-        const bool supervised = ensureAudioDevices();
+        const bool supervised = ensureAudioDevices(DeviceStart::MicOnly);
         m_speakersChoiceBeforeDevices.reset();
         if (supervised) {
             m_streamSupervisor->setChoice(AudioRole::Speakers, withDefaultEngine(cfg));
+            ensureAudioDevices();   // the outputs start on this choice
             if (m_speakersAnnouncements == announcedBefore) {
                 emit speakersConfigChanged(cfg);
             }
@@ -2337,8 +2366,9 @@ void AudioEngine::setHeadphonesConfig(const AudioDeviceConfig& cfg)
     }
     // Native audio plan Task 7: through the stream supervisor, which opens
     // it only while the role is enabled.
-    if (ensureAudioDevices()) {
+    if (ensureAudioDevices(DeviceStart::MicOnly)) {
         m_streamSupervisor->setChoice(AudioRole::Headphones, withDefaultEngine(cfg));
+        ensureAudioDevices();   // the outputs start on this choice
         emit headphonesConfigChanged(cfg);
         return;
     }
@@ -2350,10 +2380,11 @@ void AudioEngine::setHeadphonesConfig(const AudioDeviceConfig& cfg)
 void AudioEngine::setHeadphonesEnabled(bool enabled)
 {
     // Native audio plan Task 7: the supervisor's Headphones role.
-    if (m_deviceLayerReady && ensureAudioDevices()) {
+    if (m_deviceLayerReady && ensureAudioDevices(DeviceStart::MicOnly)) {
         const bool changed = m_headphonesEnabled != enabled;
         m_headphonesEnabled = enabled;
         m_streamSupervisor->setRoleEnabled(AudioRole::Headphones, enabled);
+        ensureAudioDevices();   // the outputs start with this setting
         if (changed) {
             emit headphonesEnabledChanged(enabled);
         }
@@ -2426,7 +2457,7 @@ void AudioEngine::setTxInputConfig(const AudioDeviceConfig& cfg)
     // and hands the matched config to the capture supervisor (openRole).
     // Until it has handled the mic once, the choice also goes straight to
     // the capture supervisor, as before.
-    const bool supervised = m_deviceLayerReady && ensureAudioDevices();
+    const bool supervised = m_deviceLayerReady && ensureAudioDevices(DeviceStart::MicOnly);
     if (supervised) {
         m_streamSupervisor->setChoice(AudioRole::TxInput, withDefaultEngine(cfg));
     }
@@ -2457,10 +2488,12 @@ void AudioEngine::setVaxConfig(int channel, const AudioDeviceConfig& cfg)
     if (m_vaxOutputsAllowed && m_deviceLayerReady && !m_streamSupervisor) {
         m_vaxChoiceBeforeDevices[static_cast<std::size_t>(idx)] = cfg;   // one open, on this choice
     }
-    const bool supervisedVax = m_vaxOutputsAllowed && m_deviceLayerReady && ensureAudioDevices();
+    const bool supervisedVax =
+        m_vaxOutputsAllowed && m_deviceLayerReady && ensureAudioDevices(DeviceStart::MicOnly);
     m_vaxChoiceBeforeDevices[static_cast<std::size_t>(idx)].reset();
     if (supervisedVax) {
         m_streamSupervisor->setChoice(vaxRole(channel), cfg);
+        ensureAudioDevices();   // the outputs start on this choice
         emit vaxConfigChanged(channel, cfg);
         return;
     }
@@ -2517,9 +2550,10 @@ void AudioEngine::setVaxEnabled(int channel, bool on)
 #if defined(Q_OS_WIN)
     // Native audio plan Task 7: the supervisor's VAX role; a channel with
     // no saved device stays closed (VAX never plays on the system default).
-    if (m_vaxOutputsAllowed && m_deviceLayerReady && ensureAudioDevices()) {
+    if (m_vaxOutputsAllowed && m_deviceLayerReady && ensureAudioDevices(DeviceStart::MicOnly)) {
         m_vaxRoleEnabled[static_cast<std::size_t>(idx)] = on;
         m_streamSupervisor->setRoleEnabled(vaxRole(channel), on);
+        ensureAudioDevices();   // the outputs start with this setting
         return;
     }
 #endif

@@ -24,6 +24,11 @@
 //               asks for the smallest period, Rescan waits out a large
 //               callback, and the first mic demand opens the helper once.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: early-review fix wave follow-up (R-AUD-08, R-AUD-14): a
+//               capture demand before start() opens the mic role alone;
+//               start() opens the outputs without reopening the mic, and an
+//               output setting changed meanwhile opens once, on its choice.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -777,6 +782,71 @@ private slots:
         QCOMPARE(rig.engine->captureStatus().state, CaptureSupervisor::Status::State::Ready);
         QCOMPARE(rig.engine->roleStatus(AudioRole::TxInput).state, AudioRoleState::Playing);
         QCOMPARE(generations, std::vector<quint32>({first}));
+        lease.release();
+        rig.engine->stop();
+    }
+
+    // Follow-up to M2: Test Mic before the radio starts opens the mic role
+    // alone (no output takes a device from other programs); start() then
+    // opens the outputs and leaves the mic as it is.
+    void micDemandBeforeStartOpensNoOutput()
+    {
+        std::vector<quint32> generations;   // outlives the engine
+        Rig rig;
+        savedChoice(AudioEngineKind::PortAudio, paId(QStringLiteral("Desk mic")),
+                    QStringLiteral("Desk mic"), kCoreAudioApi)
+            .saveToSettings(QStringLiteral("audio/TxInput"));
+        rig.build(fakeHelper(QStringLiteral("ready")));
+        connect(rig.engine.get(), &AudioEngine::captureStatusChanged, this,
+                [&](const CaptureSupervisor::Status& status) {
+                    if (status.generation != 0
+                        && (generations.empty() || generations.back() != status.generation)) {
+                        generations.push_back(status.generation);
+                    }
+                });
+        CaptureSupervisor::Lease lease =
+            rig.engine->acquireCaptureDemand(CaptureSupervisor::Demand::TestMic);
+        QTRY_COMPARE_WITH_TIMEOUT(rig.engine->captureStatus().state,
+                                  CaptureSupervisor::Status::State::Ready, 10000);
+        QCOMPARE(rig.engine->roleStatus(AudioRole::TxInput).state, AudioRoleState::Playing);
+        QCoreApplication::processEvents();
+        QVERIFY(rig.native->outputRequests().empty());
+        QVERIFY(rig.older->outputRequests().empty());
+        QCOMPARE(rig.native->aliveOutputs() + rig.older->aliveOutputs(), 0);
+        const quint32 first = rig.engine->captureStatus().generation;
+
+        rig.engine->start();
+        QCoreApplication::processEvents();
+        QCOMPARE(rig.native->outputRequests().size(), std::size_t(1));
+        QCOMPARE(rig.engine->roleStatus(AudioRole::Speakers).state, AudioRoleState::Playing);
+        QCOMPARE(rig.engine->captureStatus().generation, first);
+        QCOMPARE(rig.engine->captureStatus().state, CaptureSupervisor::Status::State::Ready);
+        QCOMPARE(generations, std::vector<quint32>({first}));
+        lease.release();
+        rig.engine->stop();
+    }
+
+    // While only the mic role runs, a speaker choice opens the outputs
+    // once, on that choice, never the saved one first; start() then
+    // opens nothing again.
+    void outputChoiceWhileOnlyTheMicRunsOpensOnce()
+    {
+        Rig rig;
+        savedChoice(AudioEngineKind::CoreAudio, QStringLiteral("built-in-uid"),
+                    QStringLiteral("Built-in speakers"))
+            .saveToSettings(QStringLiteral("audio/Speakers"));
+        rig.build(fakeHelper(QStringLiteral("ready")));
+        CaptureSupervisor::Lease lease =
+            rig.engine->acquireCaptureDemand(CaptureSupervisor::Demand::TestMic);
+        QVERIFY(rig.native->outputRequests().empty());
+        rig.engine->setSpeakersConfig(savedChoice(AudioEngineKind::CoreAudio, QStringLiteral("desk-uid"),
+                                                  QStringLiteral("Desk speakers")));
+        QCOMPARE(rig.native->outputRequests().size(), std::size_t(1));
+        QCOMPARE(rig.native->outputRequests().front().deviceId, QStringLiteral("desk-uid"));
+        rig.engine->start();
+        QCoreApplication::processEvents();
+        QCOMPARE(rig.native->outputRequests().size(), std::size_t(1));
+        QCOMPARE(rig.engine->roleStatus(AudioRole::Speakers).playingName, QStringLiteral("Desk speakers"));
         lease.release();
         rig.engine->stop();
     }
