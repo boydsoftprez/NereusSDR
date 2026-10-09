@@ -584,6 +584,14 @@
 //                radioSpeakerToolTip (R-SPK-06, R-SPK-13, R-SPK-14,
 //                R-SPK-16). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-09 - Core speaker (native audio plan Task 21; R-AUD-25,
+//                R-AUD-28, R-AUD-30, D23, D31): coreSpeakerVolume,
+//                coreSpeakerMuted, coreSpeakerDevice, coreSpeakerDevices,
+//                coreSpeakerState and coreSpeakerDetails, bound on the Core
+//                (setCoreSpeakerHost) to the engine's master level and mute
+//                and the speakers role, with the desktop rule; a remote
+//                window's follow the Core (coreSpeakerVersion 1). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -704,6 +712,8 @@
 #include <QThread>
 #include <QPointer>
 #include <QVariant> // Remote Daemon R2 Task 8: applyMirroredValue(name, value)
+
+class QTimer;   // Core speaker's delay readout (native audio plan Task 21)
 
 #include <limits>   // 2026-05-22 NaN sentinel for m_lastEmittedRxMeterOffsetDb
 
@@ -990,6 +1000,17 @@ class NEREUS_CORE_EXPORT RadioModel : public QObject {
     // 0 no radio, 1 available, 2 available but needs an add-on board (HL2).
     Q_PROPERTY(int radioSpeakerAvailability READ radioSpeakerAvailability NOTIFY radioSpeakerAvailabilityChanged)
     Q_PROPERTY(bool speakerAmplifierAvailable READ speakerAmplifierAvailable NOTIFY speakerAmplifierAvailableChanged)
+    // Core speaker (native audio plan Task 21; R-AUD-25, R-AUD-28, D23):
+    // the Core's own sound card output. Level 0 to 100 and mute are the
+    // Core's master level and mute; device, devices, state and details are
+    // CoreSpeakerJson text (settled call 15). Declared after every
+    // existing property so no ordinal moves (ordinals 43 to 48).
+    Q_PROPERTY(int coreSpeakerVolume READ coreSpeakerVolume WRITE setCoreSpeakerVolume NOTIFY coreSpeakerVolumeChanged)
+    Q_PROPERTY(bool coreSpeakerMuted READ coreSpeakerMuted WRITE setCoreSpeakerMuted NOTIFY coreSpeakerMutedChanged)
+    Q_PROPERTY(QString coreSpeakerDevice READ coreSpeakerDevice WRITE setCoreSpeakerDevice NOTIFY coreSpeakerDeviceChanged)
+    Q_PROPERTY(QString coreSpeakerDevices READ coreSpeakerDevices NOTIFY coreSpeakerDevicesChanged)
+    Q_PROPERTY(QString coreSpeakerState READ coreSpeakerState NOTIFY coreSpeakerStateChanged)
+    Q_PROPERTY(QString coreSpeakerDetails READ coreSpeakerDetails WRITE setCoreSpeakerDetails NOTIFY coreSpeakerDetailsChanged)
 
 
 public:
@@ -3146,6 +3167,57 @@ public:
     // link ends.
     bool applyStationRadioSpeakerValue(const QByteArray& name, const QVariant& value);
     void clearStationRadioSpeaker();
+
+    // ── Core speaker (native audio plan Task 21; R-AUD-25, R-AUD-28,
+    // R-AUD-30, D23, D31, design choices 8 and 9) ─────────────────────────
+    // On the Core (setCoreSpeakerHost(true), nereusd): the level and mute
+    // are AudioEngine::setVolume / setMasterMuted, loaded from and saved to
+    // audio/Master/Volume ("0.720" form; 50 when never saved, settled call
+    // 29) and audio/Master/Muted; the device and the settable details
+    // (bufferFrames, delayMs, sampleRate) are the speakers role's
+    // audio/Speakers keys, applied through setSpeakersConfig. They change
+    // only what the Core's sound card plays (R-AUD-28). In a remote window
+    // the values are the Core's as it sent them, and the setters write
+    // through the mirror only while the Core offers them
+    // (coreSpeakerVersion 1). Anywhere else the setters change nothing.
+    // Owner thread.
+    int coreSpeakerVolume() const { return m_coreSpeakerVolume; }
+    void setCoreSpeakerVolume(int volume);
+    bool coreSpeakerMuted() const { return m_coreSpeakerMuted; }
+    void setCoreSpeakerMuted(bool muted);
+    // {"id":"...","name":"..."}: {"id":"","name":""} for the Core's
+    // default, {"id":"(none)","name":""} for "(none)" (settled call 12,
+    // also while the Core waits for a pick).
+    QString coreSpeakerDevice() const { return m_coreSpeakerDevice; }
+    void setCoreSpeakerDevice(const QString& json);
+    QString coreSpeakerDevices() const { return m_coreSpeakerDevices; }
+    QString coreSpeakerState() const { return m_coreSpeakerState; }
+    QString coreSpeakerDetails() const { return m_coreSpeakerDetails; }
+    void setCoreSpeakerDetails(const QString& json);
+    // The Core binds the six to its engine (DaemonApp). Call
+    // setCoreSpeakerDesktop first: on a box that starts into a desktop
+    // (R-AUD-30), with no saved speakers Engine, DeviceId or DeviceName
+    // and no audio_device in the config file (settled call 11), the Core
+    // waits for a pick (D31): "(none)" chosen without saving it, no card
+    // opened, the state waitingForPick.
+    void setCoreSpeakerDesktop(bool desktop, bool configNamesDevice);
+    void setCoreSpeakerHost(bool host);
+    bool coreSpeakerHost() const { return m_coreSpeakerHost; }
+    // The Core speaker can be set from here: on the Core, or in a remote
+    // window whose Core offers it.
+    bool coreSpeakerAvailable() const;
+    // A remote window whose signed-in Core does not offer it.
+    bool coreSpeakerNeedsNewerCore() const;
+    // Empty while available; "This Core can't set its speaker from here.
+    // Update the Core." for an older Core; "Connect to the Core to change
+    // these." while it cannot be reached.
+    QString coreSpeakerUnavailableReason() const;
+    // Remote role (coreSpeakerVersion 1): the Core's devices and state as
+    // it sent them, applied by StationClient. False for any other name, a
+    // value that does not decode, and on a model that is not remote.
+    // clearStationCoreSpeaker drops them when the link ends.
+    bool applyStationCoreSpeakerValue(const QByteArray& name, const QVariant& value);
+    void clearStationCoreSpeaker();
 
     // RADE end-of-over callsigns: the radio is sending FreeDV's end-of-over
     // frame after an operator's release (MoxController's end-of-over tail).
@@ -5730,6 +5802,13 @@ signals:
     void speakerAmplifierModeChanged(int mode);
     void radioSpeakerAvailabilityChanged(int availability);
     void speakerAmplifierAvailableChanged(bool available);
+    // Core speaker (native audio plan Task 21).
+    void coreSpeakerVolumeChanged(int volume);
+    void coreSpeakerMutedChanged(bool muted);
+    void coreSpeakerDeviceChanged(const QString& json);
+    void coreSpeakerDevicesChanged(const QString& json);
+    void coreSpeakerStateChanged(const QString& json);
+    void coreSpeakerDetailsChanged(const QString& json);
     void speakerAmplifierStatusChanged();
     void infoChanged();
     // Task 33: stopAllTx stopped a transmission. A non-empty message is for
@@ -6600,6 +6679,15 @@ private:
     // Remote role: the link says the Core offers the radio speaker
     // (IStationLink::radioSpeakerAvailable).
     bool stationOffersRadioSpeaker() const;
+    // Core speaker (Task 21): the link says the Core offers it
+    // (IStationLink::coreSpeakerAvailable).
+    bool stationOffersCoreSpeaker() const;
+    // On the Core: recompute device, devices, state and details from the
+    // engine and the saved keys, emitting what changed.
+    void refreshCoreSpeaker();
+    void followCoreSpeakerCatalogue();
+    void setCoreSpeakerText(QString& member, const QString& value,
+                            void (RadioModel::*changed)(const QString&));
     // Task 13: the radio's user digital inputs reach TxInhibitMonitor
     // (PollTXInhibit, console.cs:25849-25887 [v2.10.3.15]). Called from
     // wireConnectionSignals.
@@ -8173,6 +8261,24 @@ private:
     // Remote role: the Core's reports as it last sent them.
     int  m_stationRadioSpeakerAvailability{0};
     bool m_stationSpeakerAmplifierAvailable{false};
+    // Core speaker (Task 21). Owner thread. The text members hold the
+    // CoreSpeakerJson forms: the Core's own, or in a remote window the
+    // Core's as it sent them.
+    bool m_coreSpeakerHost{false};
+    bool m_coreSpeakerDesktop{false};
+    bool m_coreSpeakerConfigNamesDevice{false};
+    bool m_coreSpeakerWaiting{false};
+    int  m_coreSpeakerVolume{50};
+    bool m_coreSpeakerMuted{false};
+    QString m_coreSpeakerDevice;
+    QString m_coreSpeakerDevices;
+    QString m_coreSpeakerState;
+    QString m_coreSpeakerDetails;
+    // The format the speakers last opened with (speakersConfigChanged).
+    QString m_coreSpeakerNegotiated;
+    QPointer<QObject> m_coreSpeakerCatalogue;
+    QTimer* m_coreSpeakerTimer{nullptr};
+    QList<QMetaObject::Connection> m_coreSpeakerConnections;
     std::unique_ptr<RadioMicSource>        m_radioMicSource;
     // VAX TX consumer (added 2026-05-06, eager-borg-d64bed).  Pulls
     // audio from /nereussdr-vax-tx shared memory via AudioEngine and

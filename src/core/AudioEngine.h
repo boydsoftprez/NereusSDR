@@ -21,6 +21,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09 : Native audio plan Task 21 (R-AUD-30, D31) by J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//                 setSpeakersWaitForPick(): a "(none)" speakers choice reads
+//                 waiting for a pick, and before the device layer starts the
+//                 first speakers choice is an unsaved "(none)";
+//                 prepareAudioDevices() starts the device layer without
+//                 opening an output.
 //   2026-10-09 : Native audio plan Task 12 (R-AUD-11) by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code. makeBus()
 //                 reports an open another program refused, so the role
@@ -612,6 +619,20 @@ public:
     AudioRoleStatus roleStatus(AudioRole role) const;
     AudioDelayParts delayParts(AudioRole role) const;
     AudioEngineKind defaultEngine() const { return m_defaultEngine; }
+    // Native audio plan Task 21 (R-AUD-30, D31): the Core box that starts
+    // into a desktop leaves its cards alone until a Core speaker is picked.
+    // With `waiting`, a "(none)" speakers choice reads WaitingForPick, not
+    // Off (AudioStreamSupervisor::setNoneMeansWaitingForPick), and while the
+    // device layer has not started the speakers' first choice is "(none)",
+    // never saved; a later setSpeakersConfig() replaces it.  Main thread.
+    void setSpeakersWaitForPick(bool waiting);
+    bool speakersWaitForPick() const { return m_speakersWaitForPick; }
+    // Starts the device catalogue and the stream supervisor, as a setter
+    // does, without opening an output (the mic role alone starts, as for
+    // setSpeakersConfig).  False where the device layer does not apply.
+    // defaultEngine() is then the engine a choice is saved with.  Main
+    // thread.
+    bool prepareAudioDevices();
     // R-AUD-18: the generation is bumped, and the device stored first,
     // whenever the speakers bus opens on a device (a fall-back to the
     // default and the return included).  The device is the bus's
@@ -1489,6 +1510,8 @@ private:
     // A setter's choice while the device layer is being built, used in
     // place of the saved one so the role opens once (Speakers, VAX 1-4).
     std::optional<AudioDeviceConfig> m_speakersChoiceBeforeDevices;
+    // setSpeakersWaitForPick (Task 21, D31).
+    bool m_speakersWaitForPick{false};
     std::array<std::optional<AudioDeviceConfig>, 4> m_vaxChoiceBeforeDevices;
     // Windows: the VAX channels' Enabled state for the supervisor's roles.
     std::array<bool, 4> m_vaxRoleEnabled{{true, true, true, true}};

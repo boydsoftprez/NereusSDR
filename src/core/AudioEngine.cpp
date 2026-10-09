@@ -19,6 +19,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09 : Native audio plan Task 21 (R-AUD-30, D31) by J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//                 setSpeakersWaitForPick() and prepareAudioDevices().
 //   2026-10-09  J.J. Boyd / KG4VCF  Native audio plan Task 12 (R-AUD-11,
 //                                    R-AUD-25): the Linux Core's saved
 //                                    choices migrate to ALSA direct
@@ -1505,6 +1508,29 @@ IAudioDeviceCatalog* AudioEngine::catalogue() const
     return m_catalogue.get();
 }
 
+void AudioEngine::setSpeakersWaitForPick(bool waiting)
+{
+    m_speakersWaitForPick = waiting;
+    if (m_streamSupervisor) {
+        m_streamSupervisor->setNoneMeansWaitingForPick(AudioRole::Speakers, waiting);
+        return;
+    }
+    if (waiting) {
+        // D31: nothing opens until a pick, and nothing is saved for it.
+        AudioDeviceConfig none = AudioDeviceConfig::loadFromSettings(rolePrefix(AudioRole::Speakers));
+        none.deviceId = QString::fromLatin1(kAudioDeviceNone);
+        none.deviceName.clear();
+        m_speakersChoiceBeforeDevices = none;
+    } else if (m_speakersChoiceBeforeDevices && m_speakersChoiceBeforeDevices->isNone()) {
+        m_speakersChoiceBeforeDevices.reset();
+    }
+}
+
+bool AudioEngine::prepareAudioDevices()
+{
+    return ensureAudioDevices(DeviceStart::MicOnly);
+}
+
 AudioRoleStatus AudioEngine::roleStatus(AudioRole role) const
 {
     return m_streamSupervisor ? m_streamSupervisor->status(role) : AudioRoleStatus{};
@@ -1598,6 +1624,9 @@ bool AudioEngine::ensureAudioDevices(DeviceStart start)
     connect(m_streamSupervisor.get(), &AudioStreamSupervisor::savedIdentityLearned, this,
             [this](AudioRole role, const QString& deviceId) { onSavedIdentityLearned(role, deviceId); });
 
+    // Task 21 (D31): before the speakers' first choice, so a waiting
+    // "(none)" never reads Off.
+    m_streamSupervisor->setNoneMeansWaitingForPick(AudioRole::Speakers, m_speakersWaitForPick);
     m_streamSupervisor->setChoice(
         AudioRole::Speakers,
         withDefaultEngine(m_speakersChoiceBeforeDevices.value_or(
