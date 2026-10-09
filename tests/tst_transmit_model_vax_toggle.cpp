@@ -24,6 +24,9 @@
 //   2026-05-10 - Original test for NereusSDR by J.J. Boyd (KG4VCF),
 //                 with AI-assisted implementation via Anthropic Claude
 //                 Code.
+//   2026-10-09 - VAX TX availability per system (R-SPK-21, R-AUD-01).
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original test file.
@@ -185,6 +188,51 @@ private slots:
         TransmitModel m;
         m.loadFromSettings(mac);
         QCOMPARE(m.previousNonVaxMicSource(), MicSource::Radio);
+    }
+
+    // R-SPK-21, R-AUD-01: VAX TX exists on macOS and Linux only.
+    void vaxAvailable_followsThisSystem()
+    {
+        TransmitModel m;
+#if defined(Q_OS_WIN)
+        QVERIFY(!m.vaxSourceAvailable());
+#else
+        QVERIFY(m.vaxSourceAvailable());
+#endif
+        QCOMPARE(m.vaxSourceAvailable(), TransmitModel::kVaxSourceAvailableOnThisSystem);
+    }
+
+    // Without a VAX transmit device, a VAX pick and the VAX toggle fall
+    // back to Pc, as the HL2 lock does for Radio.
+    void vaxUnavailable_pickFallsBackToPc()
+    {
+        TransmitModel m;
+        m.setMicSource(MicSource::Radio);
+        m.setVaxSourceAvailable(false);
+        m.setMicSource(MicSource::Vax);
+        QCOMPARE(m.micSource(), MicSource::Pc);
+        m.toggleVaxSource(true);
+        QCOMPARE(m.micSource(), MicSource::Pc);
+    }
+
+    // A VAX choice already active falls back to Pc when it becomes
+    // unavailable; a saved VAX choice loads as Pc.
+    void vaxUnavailable_activeAndSavedFallBackToPc()
+    {
+        TransmitModel active;
+        active.setMicSource(MicSource::Vax);
+        QCOMPARE(active.micSource(), MicSource::Vax);
+        active.setVaxSourceAvailable(false);
+        QCOMPARE(active.micSource(), MicSource::Pc);
+
+        const QString mac = QStringLiteral("tst-vaxtog-aa-bb-cc-dd-ee-08");
+        clearState(mac);
+        AppSettings::instance().setValue(perMacMicKey(mac), QStringLiteral("Vax"));
+        TransmitModel saved;
+        saved.setVaxSourceAvailable(false);
+        saved.loadFromSettings(mac);
+        QCOMPARE(saved.micSource(), MicSource::Pc);
+        clearState(mac);
     }
 };
 

@@ -28,6 +28,10 @@
 // 2026-10-04: reset Qt6.11 Cocoa's popup accessibility cache before
 // refreshing the PC Mic device list. J.J. Boyd (KG4VCF),
 // AI-assisted via OpenAI Codex.
+// 2026-10-09 (R-SPK-21, R-AUD-01): VAX TX (virtual device) greyed on
+// Windows with the PC Mic route; each system's tooltip names its own
+// transmit device. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+// Code.
 // 2026-10-06: R-SPK-21 (Microphone), R-SPK-22. Titled "Microphone"; one PC
 // microphone card (the Devices page's DeviceCard on audio/TxInput, with
 // Test Mic, the capture status and Retry), a Mic gain group, and the
@@ -365,13 +369,21 @@ void AudioTxInputPage::refreshCaptureStatus()
         // R-AUD-09, R-AUD-11, R-AUD-24: a mic not connected or in use by
         // another program resumes by itself when it comes back; "Retry stays
         // for other mic failures".
+        // The role status says so through the engine's retries too: each
+        // retry opens a new capture, which is not Failed until the helper
+        // answers again, while the role stays silent with its reason.
         using Reason = CaptureSupervisor::Status::Reason;
-        const bool resumesByItself = status.reason == Reason::DeviceNotFound
-                                     || status.reason == Reason::DeviceInUse;
         const bool failed = status.state == CaptureSupervisor::Status::State::Failed;
+        const AudioRoleStatus mic = eng ? eng->roleStatus(AudioRole::TxInput) : AudioRoleStatus{};
+        const bool roleWaiting = mic.state == AudioRoleState::Silent
+                                 && (mic.reason == AudioRoleReason::NotConnected
+                                     || mic.reason == AudioRoleReason::InUse);
+        const bool resumesByItself = roleWaiting
+            || (failed && (status.reason == Reason::DeviceNotFound
+                           || status.reason == Reason::DeviceInUse));
         m_retryCaptureBtn->setEnabled(eng != nullptr && failed && !resumesByItself);
         m_retryCaptureBtn->setToolTip(
-            failed && resumesByItself
+            resumesByItself
                 ? QStringLiteral("The mic resumes by itself when it comes back.")
                 : QString());
     }
@@ -452,6 +464,39 @@ void AudioTxInputPage::applyHeldControlGate()
 // Build helpers
 // ---------------------------------------------------------------------------
 
+/*static*/ AudioTxInputPage::HostSystem AudioTxInputPage::thisSystem()
+{
+#if defined(Q_OS_WIN)
+    return HostSystem::Windows;
+#elif defined(Q_OS_MAC)
+    return HostSystem::Mac;
+#else
+    return HostSystem::Linux;
+#endif
+}
+
+// The device names are the ones the code publishes: "NereusSDR TX" is the
+// Mac VAX driver's input device (hal-plugin/NereusSDRVAX.cpp) and the
+// PulseAudio sink's description (LinuxPipeBus.cpp); "NereusSDR TX input"
+// is the PipeWire stream's node description (PipeWireBus.cpp).
+/*static*/ QString AudioTxInputPage::vaxSourceToolTip(HostSystem system)
+{
+    switch (system) {
+    case HostSystem::Mac:
+        return QStringLiteral(
+            "Transmits the audio a program such as FreeDV or WSJT-X plays to the "
+            "\"NereusSDR TX\" device. Set that program's audio output to NereusSDR TX.");
+    case HostSystem::Linux:
+        return QStringLiteral(
+            "Transmits the audio a program such as FreeDV or WSJT-X plays to the "
+            "\"NereusSDR TX\" sink. With PipeWire, connect the program's audio "
+            "output to the \"NereusSDR TX input\" stream.");
+    case HostSystem::Windows:
+        break;
+    }
+    return TransmitModel::vaxSourceUnavailableReason();
+}
+
 void AudioTxInputPage::buildPage(bool radioMicSelectable, HPSDRHW hw)
 {
     // ── Mic Source group box (I.1) ────────────────────────────────────────────
@@ -462,10 +507,15 @@ void AudioTxInputPage::buildPage(bool radioMicSelectable, HPSDRHW hw)
     m_pcMicBtn    = new QRadioButton(QStringLiteral("PC Mic"), srcGrp);
     m_radioMicBtn = new QRadioButton(QStringLiteral("Radio Mic"), srcGrp);
     m_vaxMicBtn   = new QRadioButton(QStringLiteral("VAX TX (virtual device)"), srcGrp);
-    m_vaxMicBtn->setToolTip(QStringLiteral(
-        "Use audio routed to the \"NereusSDR TX\" CoreAudio device by a "
-        "3rd-party app (FreeDV, WSJT-X, etc.) as the TX mic input. "
-        "Pulled from /nereussdr-vax-tx shared memory."));
+    // R-SPK-21, R-AUD-01: the VAX transmit device exists on macOS and Linux
+    // only; on Windows the choice is greyed with the route through PC Mic,
+    // and TransmitModel falls a saved VAX choice back to PC Mic (as an
+    // unselectable Radio Mic falls back through the HL2 lock).
+    const bool vaxAvailable = model() ? model()->transmitModel().vaxSourceAvailable()
+                                      : TransmitModel::kVaxSourceAvailableOnThisSystem;
+    m_vaxMicBtn->setEnabled(vaxAvailable);
+    m_vaxMicBtn->setToolTip(vaxAvailable ? vaxSourceToolTip(thisSystem())
+                                         : TransmitModel::vaxSourceUnavailableReason());
 
     m_buttonGroup = new QButtonGroup(this);
     m_buttonGroup->addButton(m_pcMicBtn,    static_cast<int>(MicSource::Pc));

@@ -121,6 +121,10 @@
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
 // Modification history (NereusSDR):
+//   2026-10-09 - VAX TX (virtual device) only where a VAX transmit device
+//                exists: greyed on Windows with the PC Mic route, a saved
+//                choice falls back to PC Mic (R-SPK-21, R-AUD-01).
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-09-30 - Fix wave GUI-I6: tunePowerForTxBandWriteInFlight, a
 //                window's Tune Power change on its way to the Core.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -2389,6 +2393,29 @@ public slots:
     /// Return true when the mic-source lock is active (hasMicJack == false).
     bool isMicSourceLocked() const noexcept { return m_micSourceLocked; }
 
+public:
+    // ── VAX TX availability (R-SPK-21, R-AUD-01) ────────────────
+    //
+    // NereusSDR-native. The VAX transmit device exists only where the
+    // engine builds a VAX TX bus (AudioEngine::makeVaxTxBus: macOS and
+    // Linux); Windows has none, so MicSource::Vax would transmit silence.
+    // While unavailable, setMicSource(MicSource::Vax) is coerced to
+    // MicSource::Pc, the way the HL2 lock coerces Radio, and a VAX choice
+    // already active (a saved one) falls back to Pc the same way. The
+    // default is this system's; the setter exists for tests. Not persisted.
+    static constexpr bool kVaxSourceAvailableOnThisSystem =
+#if defined(Q_OS_WIN)
+        false;
+#else
+        true;
+#endif
+    void setVaxSourceAvailable(bool available);
+    bool vaxSourceAvailable() const noexcept { return m_vaxSourceAvailable; }
+    /// The reason a greyed VAX TX choice shows (Windows).
+    static QString vaxSourceUnavailableReason();
+
+public slots:
+
     /// Quick toggle wired to the PhoneCwApplet VAX button. on=true sets
     /// MicSource::Vax. on=false restores previousNonVaxMicSource() (which
     /// the lock guard in setMicSource will coerce to Pc on HL2).
@@ -2904,6 +2931,7 @@ private:
     // silently coerces to Pc.  Runtime capability constraint; not persisted.
     MicSource m_micSource{MicSource::Pc};
     bool      m_micSourceLocked{false};  // L.3: set by RadioModel per hasMicJack
+    bool      m_vaxSourceAvailable{kVaxSourceAvailableOnThisSystem};  // R-SPK-21
     MicSource m_previousNonVaxMicSource{MicSource::Pc};
 
     // ── PC Mic session state (3M-1b I.2) ─────────────────────────────────

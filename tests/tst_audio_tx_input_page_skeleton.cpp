@@ -18,6 +18,11 @@
 //      is called programmatically (button disabled, model still holds Radio).
 //  11. TransmitModel signal emission: setMicSource emits micSourceChanged.
 //  12. TransmitModel idempotency: setMicSource(Pc) twice → only one signal emit.
+//  13. VAX TX (virtual device) per system (R-SPK-21, R-AUD-01, 2026-10-09):
+//      enabled with the system's device words on macOS and Linux; greyed
+//      with the PC Mic route where there is no VAX transmit device
+//      (Windows, and any build with the model's availability off); a saved
+//      VAX choice shows as PC Mic.
 
 #include <QtTest/QtTest>
 #include <QApplication>
@@ -31,6 +36,7 @@
 #include "gui/setup/AudioTxInputPage.h"
 #include "models/RadioModel.h"
 #include "models/TransmitModel.h"
+#include "OperatorWording.h"
 
 using namespace NereusSDR;
 
@@ -283,6 +289,74 @@ private slots:
 
         tx.setMicSource(MicSource::Radio);
         QCOMPARE(spy.count(), 1);  // must not have fired again
+    }
+
+    // ── 13. VAX TX per system (R-SPK-21, R-AUD-01) ───────────────────────────
+    // This build's system: enabled with its own device words on macOS and
+    // Linux, greyed with the PC Mic route on Windows.
+    void vaxTx_thisSystem()
+    {
+        RadioModel model;
+        AudioTxInputPage page(&model);
+        QRadioButton* btn = page.vaxMicButton();
+        QVERIFY(btn != nullptr);
+        QCOMPARE(btn->text(), QStringLiteral("VAX TX (virtual device)"));
+        const AudioTxInputPage::HostSystem sys = AudioTxInputPage::thisSystem();
+#if defined(Q_OS_WIN)
+        QCOMPARE(sys, AudioTxInputPage::HostSystem::Windows);
+        QVERIFY(!btn->isEnabled());
+        QCOMPARE(btn->toolTip(), TransmitModel::vaxSourceUnavailableReason());
+#else
+        QVERIFY(sys != AudioTxInputPage::HostSystem::Windows);
+        QVERIFY(btn->isEnabled());
+        QCOMPARE(btn->toolTip(), AudioTxInputPage::vaxSourceToolTip(sys));
+#endif
+    }
+
+    // The Windows branch, on any build: a model without a VAX transmit
+    // device greys the choice with the reason, and a saved VAX choice
+    // shows as PC Mic.
+    void vaxTx_unavailable_greyedWithReason()
+    {
+        RadioModel model;
+        model.transmitModel().setMicSource(MicSource::Vax);
+        model.transmitModel().setVaxSourceAvailable(false);
+        QCOMPARE(model.transmitModel().micSource(), MicSource::Pc);
+        AudioTxInputPage page(&model);
+        QRadioButton* btn = page.vaxMicButton();
+        QVERIFY(btn != nullptr);
+        QVERIFY(!btn->isEnabled());
+        QVERIFY(!btn->isHidden());   // greyed, never hidden
+        QCOMPARE(btn->toolTip(), QStringLiteral(
+            "Windows has no VAX transmit device. To transmit a program's audio, set "
+            "the program's output to a virtual cable, choose PC Mic and pick the "
+            "cable's recording end as the PC mic device."));
+        QVERIFY(OperatorWording::isPlain(btn->toolTip()));
+        QVERIFY(!btn->toolTip().contains(QStringLiteral("yet")));
+        QRadioButton* pc = findRadioButton(&page, QStringLiteral("PC Mic"));
+        QVERIFY(pc != nullptr && pc->isChecked());
+        QCOMPARE(AudioTxInputPage::vaxSourceToolTip(AudioTxInputPage::HostSystem::Windows),
+                 TransmitModel::vaxSourceUnavailableReason());
+    }
+
+    // Each system's words name the device the code publishes.
+    void vaxTx_toolTipPerSystem()
+    {
+        const QString macTip = AudioTxInputPage::vaxSourceToolTip(AudioTxInputPage::HostSystem::Mac);
+        QCOMPARE(macTip, QStringLiteral(
+            "Transmits the audio a program such as FreeDV or WSJT-X plays to the "
+            "\"NereusSDR TX\" device. Set that program's audio output to NereusSDR TX."));
+        const QString linuxTip = AudioTxInputPage::vaxSourceToolTip(AudioTxInputPage::HostSystem::Linux);
+        QCOMPARE(linuxTip, QStringLiteral(
+            "Transmits the audio a program such as FreeDV or WSJT-X plays to the "
+            "\"NereusSDR TX\" sink. With PipeWire, connect the program's audio "
+            "output to the \"NereusSDR TX input\" stream."));
+        for (const QString& tip : {macTip, linuxTip}) {
+            QVERIFY(OperatorWording::isPlain(tip));
+            QVERIFY(!tip.contains(QStringLiteral("CoreAudio")));
+            QVERIFY(!tip.contains(QStringLiteral("shared memory")));
+            QVERIFY(!tip.contains(QStringLiteral("yet")));
+        }
     }
 };
 
