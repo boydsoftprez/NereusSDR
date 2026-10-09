@@ -252,7 +252,6 @@ struct JuiceCloseTests {
     }
 
 }
-#endif
 
 /// Reads one agent's close status on a thread of its own until it first
 /// reads expired. The read and the stop share a lock, so once ``stop()``
@@ -291,3 +290,4 @@ private final class CloseStatusWatch: @unchecked Sendable {
         }
     }
 }
+#endif
