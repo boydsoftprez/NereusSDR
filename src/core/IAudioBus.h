@@ -14,6 +14,8 @@
 //               Anthropic Claude Code.
 //   2026-10-09: native audio plan Task 8 (R-AUD-18): audioWorkgroupDevice().
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 12 (R-AUD-11): openRefusedInUse().
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -106,6 +108,9 @@ public:
     virtual QString backendName() const = 0;
     virtual AudioFormat negotiatedFormat() const = 0;
     virtual QString errorString() const { return {}; }
+    // R-AUD-11: true after a failed open() when another program holds the
+    // device, so the role reads "in use" rather than "not connected".
+    virtual bool openRefusedInUse() const { return false; }
 
     // Native audio engines (R-AUD-03, R-AUD-15).  Every default keeps an
     // existing bus as it is.

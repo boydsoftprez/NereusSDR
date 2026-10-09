@@ -1690,6 +1690,18 @@ if(UNIX AND NOT APPLE AND PULSE_FOUND)
     nereus_add_test(tst_pulse_audio_backend)
 endif()
 
+# ── Native audio plan Task 12: ALSA direct on the Core (R-AUD-01, R-AUD-11, ─
+# R-AUD-25, R-AUD-30, R-AUD-32). Contract tests with a fake system and a fake
+# PCM: cards to devices, the default card, the inotify node filter and
+# watcher (on a temporary directory), the stream's format, period, writer
+# and error handling, the fall-back and return through the engine and the
+# supervisor, the Core's registry and migration, desktop detection and the
+# test-run barrier. No card is opened. Built only with ALSA, as the engine is.
+if(UNIX AND NOT APPLE AND ALSA_FOUND)
+    nereus_add_test(tst_alsa_direct_backend)
+    target_compile_definitions(tst_alsa_direct_backend PRIVATE NEREUS_BUILD_TESTS)
+endif()
+
 # ── R3 receiver audio fix wave (R-R3-44): PipeWire output frames per cycle ───
 # Pure helper (no PipeWire headers): an output stream fills and counts the
 # frames the graph asked for (pw_buffer::requested), not the whole buffer.

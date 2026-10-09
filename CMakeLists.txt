@@ -842,6 +842,15 @@ if(UNIX AND NOT APPLE)
     else()
         message(STATUS "libpulse not found: PulseAudio engine not built")
     endif()
+    # libasound: the ALSA direct engine, the Linux Core's only engine
+    # (native audio plan Task 12, R-AUD-25, D18).  PortAudio's ALSA host API
+    # needs it as well.  Without it the Core keeps the older drivers.
+    find_package(ALSA)
+    if(ALSA_FOUND)
+        message(STATUS "ALSA ${ALSA_VERSION_STRING}: ALSA direct engine enabled")
+    else()
+        message(STATUS "ALSA not found: ALSA direct engine not built")
+    endif()
 endif()
 
 # --------------------------------------------------------------------------
@@ -2531,6 +2540,18 @@ function(nereus_apply_core_deps target)
             src/core/audio/PulseAudioSystem.cpp
             src/core/audio/PulseAudioBus.cpp
             src/core/audio/PulseAudioBackend.cpp
+        )
+    endif()
+
+    # libasound, found above (native audio plan Task 12, R-AUD-01,
+    # R-AUD-25): the ALSA direct engine the Linux Core plays through.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ALSA_FOUND)
+        target_link_libraries(${target} PUBLIC ALSA::ALSA)
+        target_compile_definitions(${target} PUBLIC NEREUS_HAVE_ALSA_DIRECT)
+        target_sources(${target} PRIVATE
+            src/core/audio/AlsaDirectSystem.cpp
+            src/core/audio/AlsaDirectBus.cpp
+            src/core/audio/AlsaDirectBackend.cpp
         )
     endif()
 

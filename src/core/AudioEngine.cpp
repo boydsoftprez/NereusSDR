@@ -19,6 +19,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09  J.J. Boyd / KG4VCF  Native audio plan Task 12 (R-AUD-11,
+//                                    R-AUD-25): the Linux Core's saved
+//                                    choices migrate to ALSA direct
+//                                    (alsaDirectOnly); an output refused
+//                                    because another program holds the
+//                                    device opens as InUse.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-09  J.J. Boyd / KG4VCF  Native audio plan early-review fix
 //                                    wave follow-up (R-AUD-08, R-AUD-14):
 //                                    a capture demand before start()
@@ -935,8 +942,12 @@ void AudioEngine::reinitForSampleRate(int newWireRateHz)
 }
 
 std::unique_ptr<IAudioBus> AudioEngine::makeBus(const AudioDeviceConfig& cfg,
-                                                bool capture)
+                                                bool capture,
+                                                bool* inUse)
 {
+    if (inUse != nullptr) {
+        *inUse = false;
+    }
     // PortAudio path — used for speakers / mic / Windows-BYO VAX devices.
     // Platform-native VAX RX/TX virtual buses use makeVaxBus() /
     // makeVaxTxBus() (Sub-Phase 8.5).
@@ -1001,6 +1012,9 @@ std::unique_ptr<IAudioBus> AudioEngine::makeBus(const AudioDeviceConfig& cfg,
             }
             if (!bus->open(toAudioFormat(cfg))) {
                 qCWarning(lcAudio) << "IAudioBus open failed:" << bus->errorString();
+                if (inUse != nullptr) {
+                    *inUse = bus->openRefusedInUse();
+                }
                 return nullptr;
             }
             return bus;
@@ -1551,6 +1565,11 @@ bool AudioEngine::ensureAudioDevices(DeviceStart start)
     migration.windows = true;
 #elif defined(Q_OS_LINUX)
     migration.onLinux = true;
+#if defined(NEREUS_HAVE_ALSA_DIRECT)
+    // Settled call 33: ALSA direct is the Linux Core's only engine, so
+    // every saved choice there moves to it (the registry, settled call 9).
+    migration.alsaDirectOnly = m_backendContext.daemon;
+#endif
 #endif
     const AudioDeviceConfig headphonesBefore =
         AudioDeviceConfig::loadFromSettings(rolePrefix(AudioRole::Headphones));
@@ -1767,7 +1786,8 @@ AudioOpenResult AudioEngine::openRole(AudioRole role, AudioEngineKind engine,
         old.reset();
     }
 
-    std::unique_ptr<IAudioBus> bus = makeBus(cfg, /*capture=*/false);
+    bool inUse = false;
+    std::unique_ptr<IAudioBus> bus = makeBus(cfg, /*capture=*/false, &inUse);
     const bool opened = bus != nullptr;
     QString backendName;
     if (opened) {
@@ -1805,7 +1825,8 @@ AudioOpenResult AudioEngine::openRole(AudioRole role, AudioEngineKind engine,
         if (closeFirst && m_streamSupervisor) {
             m_streamSupervisor->onRoleClosed(role);
         }
-        return AudioOpenResult::Failed;
+        // R-AUD-11: held by another program reads "in use".
+        return inUse ? AudioOpenResult::InUse : AudioOpenResult::Failed;
     }
     qCInfo(lcAudio) << "Audio role" << int(role) << "opened"
                     << (device ? device->name : QStringLiteral("the system default"))
