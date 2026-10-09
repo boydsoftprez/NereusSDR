@@ -166,9 +166,10 @@ bool initialize(const QString& profile)
     // NetworkWatchdogEnabled once, since it was saved while nothing read it;
     // v8 (R-R3-49) drops the TCI rate limit saved in messages per second;
     // v9 (R-IOS-06, R-IOS-27) brings each slice's saved NR1 values into
-    // Thetis's NR spinbox ranges.
+    // Thetis's NR spinbox ranges; v10 takes two-tone out of TX profiles and
+    // resets a live two-tone level saved at the retired -6 dB to 0.
     // See AppSettings::ensureSettingsAtVersion for the upstream Thetis cites.
-    AppSettings::instance().ensureSettingsAtVersion(9);
+    AppSettings::instance().ensureSettingsAtVersion(10);
 
     // Restore logging category toggles from settings
     LogManager::instance().loadSettings();
