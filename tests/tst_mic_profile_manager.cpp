@@ -307,7 +307,7 @@ private slots:
         for (const QString& key : kTwoToneKeys) {
             QVERIFY2(!defs.contains(key), qPrintable(key));
         }
-        // 100 keys total: 14 mic/VOX/MON (3M-1c, less AntiVox_Source_VAX
+        // 100 keys total: 15 mic/VOX/MON (3M-1c, less AntiVox_Source_VAX
         // dropped in the 3M-3a-iv Option A refactor and the eight two-tone
         // keys that left profiles on 2026-10-09) + 27 EQ/Lev/ALC
         // (3M-3a-i G) + 1 TXParaEQData (3M-3a-ii follow-up Batch 6) +

@@ -18,8 +18,8 @@
 // 19 of Thetis's 21 factory profiles are deferred to 3M-3a sub-PRs that ship
 // CFC / DEXP backends; 3M-3a-i G adds the EQ + Leveler + ALC bundle on top of
 // the 3M-1c chunk-F base (which seeded only the "Default" profile).  The TX EQ
-// parametric blob (TXParaEQData) is the 51st live key; landed in Phase
-// 3M-3a-ii follow-up Batch 6.  FilterLow/FilterHigh (keys 92-93) added in
+// parametric blob (TXParaEQData) is the 39th live key; landed in Phase
+// 3M-3a-ii follow-up Batch 6.  FilterLow/FilterHigh (keys 88-89) added in
 // Plan 4 Cluster A.
 //
 // Per-MAC AppSettings layout (parallel to hardware/<mac>/tx/<key> from
@@ -66,6 +66,9 @@
 //                 as profile content and counted 93 keys now say 100 keys
 //                 without two-tone. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-09 - Fix wave: TXParaEQData and FilterLow/FilterHigh positions
+//                 recounted from liveKeyList() (39th, 88-89). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived handler logic
@@ -87,7 +90,7 @@ namespace NereusSDR {
 class TransmitModel;
 
 // ---------------------------------------------------------------------------
-// MicProfileManager — per-MAC profile bank for the mic / VOX / MON / EQ /
+// MicProfileManager: per-MAC profile bank for the mic / VOX / MON / EQ /
 // CFC / DEXP live-fields subset (two-tone is not profile content).
 //
 // Lifetime: lives on the main thread, owned by RadioModel (wired in Phase L).
