@@ -6,11 +6,19 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 7 (R-AUD-01, R-AUD-02). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 9: Windows audio registers first on
+//               Windows, the older drivers then without the host APIs it
+//               replaces (R-AUD-01, R-AUD-02). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AudioBackendRegistry.h"
 
 #include "core/audio/PortAudioBackend.h"
+
+#if defined(Q_OS_WIN)
+#include "core/audio/WasapiBackendWin.h"
+#endif
 
 #include <optional>
 
@@ -50,13 +58,24 @@ std::vector<std::shared_ptr<IAudioEngineBackend>> makeSystemAudioBackends(const 
     static_cast<void>(context);
 
     std::vector<std::shared_ptr<IAudioEngineBackend>> backends;
-    // Until the Mac's and Windows' native engines land, the older drivers
+#if defined(Q_OS_WIN)
+    // R-AUD-02: Windows audio (shared and exclusive) comes first; the older
+    // drivers then list only what it does not replace: MME, DirectSound
+    // and WDM-KS (olderDriverHostApis in PortAudioBackend.cpp).
+    backends.push_back(std::make_shared<WasapiBackendWin>());
+    constexpr bool kIncludeReplacedHostApis = false;
+    backends.push_back(std::make_shared<PortAudioBackend>(&listPortAudioDevices,
+                                                          currentOlderDriverPlatform(),
+                                                          kIncludeReplacedHostApis));
+#else
+    // Until the Mac's and Linux's native engines land, the older drivers
     // also list the host APIs those engines replace, so nothing goes
     // silent meanwhile.
     constexpr bool kIncludeReplacedHostApis = true;
     backends.push_back(std::make_shared<PortAudioBackend>(&listPortAudioDevices,
                                                           currentOlderDriverPlatform(),
                                                           kIncludeReplacedHostApis));
+#endif
     return backends;
 }
 
