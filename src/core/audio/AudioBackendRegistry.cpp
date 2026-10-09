@@ -13,6 +13,10 @@
 //               Windows, the older drivers then without the host APIs it
 //               replaces (R-AUD-01, R-AUD-02). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 10 (R-AUD-01): one branch per
+//               system; Linux registers PipeWire ahead of the older
+//               drivers, outside the Core. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AudioBackendRegistry.h"
@@ -26,6 +30,9 @@
 #include "core/audio/CoreAudioSystem.h"
 #elif defined(Q_OS_WIN)
 #include "core/audio/WasapiBackendWin.h"
+#elif defined(Q_OS_LINUX) && defined(NEREUS_HAVE_PIPEWIRE)
+#include "core/audio/PipeWireDeviceBackend.h"
+#include "core/audio/PipeWireDeviceSystem.h"
 #endif
 
 #include <optional>
@@ -81,6 +88,14 @@ std::vector<std::shared_ptr<IAudioEngineBackend>> makeSystemAudioBackends(const 
                                                           currentOlderDriverPlatform(),
                                                           kIncludeReplacedHostApis));
 #else
+    // R-AUD-01, Linux: PipeWire, then PulseAudio (Task 11), then the older
+    // drivers.  The Core has no desktop session, so it registers neither
+    // (ALSA direct, Task 12); the window and the mic helper register both.
+#if defined(Q_OS_LINUX) && defined(NEREUS_HAVE_PIPEWIRE)
+    if (!context.daemon) {
+        backends.push_back(std::make_shared<PipeWireDeviceBackend>(makePipeWireDeviceSystem()));
+    }
+#endif
     // Until Linux's native engines land, the older drivers
     // also list the host APIs those engines replace, so nothing goes
     // silent meanwhile.

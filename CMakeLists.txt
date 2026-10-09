@@ -2504,6 +2504,9 @@ function(nereus_apply_core_deps target)
             src/core/audio/PipeWireThreadLoop.cpp
             src/core/audio/PipeWireStream.cpp
             src/core/audio/PipeWireBus.cpp
+            # Native audio plan Task 10: the PipeWire engine (R-AUD-01).
+            src/core/audio/PipeWireDeviceSystem.cpp
+            src/core/audio/PipeWireDeviceBackend.cpp
         )
     endif()
 

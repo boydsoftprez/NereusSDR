@@ -1665,6 +1665,16 @@ if(UNIX AND NOT APPLE)
     nereus_add_test(tst_pipewire_stream_config)
 endif()
 
+# ── Native audio plan Task 10: the PipeWire engine (R-AUD-01, R-AUD-03, ─────
+# R-AUD-07, R-AUD-14, R-AUD-32). Contract tests with a fake system: nodes to
+# devices, pairs, the stream a pair opens, the registry listener's notices,
+# the matcher output's fill, the not-running engine and the test-run barrier.
+# No daemon is reached (the real adapter never connects in a test run).
+# Compiles to int main(){return 0;} without libpipewire (#else).
+if(UNIX AND NOT APPLE)
+    nereus_add_test(tst_pipewire_device_backend)
+endif()
+
 # ── R3 receiver audio fix wave (R-R3-44): PipeWire output frames per cycle ───
 # Pure helper (no PipeWire headers): an output stream fills and counts the
 # frames the graph asked for (pw_buffer::requested), not the whole buffer.
