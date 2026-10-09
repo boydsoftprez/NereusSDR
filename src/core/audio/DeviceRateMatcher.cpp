@@ -36,6 +36,12 @@
 //               varsamp), so nothing of the earlier audio plays after it.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //               Native audio plan Task 6 (R-AUD-15).
+//   2026-10-09: A restart starts the automatic sizing fresh (the largest
+//               write gap is measured again from the restart), and the
+//               fade-in after a dry run is armed from the dry-run count,
+//               after its padding, never from the reader's flag alone.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//               Native audio plan early-review fix wave (R-AUD-15).
 // =================================================================
 //
 // --- From rmatch.c ---
@@ -496,6 +502,11 @@ struct DeviceRateMatcher::Writer {
         controlFlag = false;
         m.m_controlActive.store(false, std::memory_order_relaxed);
         ring().ratio.store(var, std::memory_order_relaxed);
+        // The automatic size is chosen again from the gaps seen after the
+        // restart: an idle writer's gap before it does not count (D7).
+        // The size never shrinks (onControlStart only steps up).
+        maxGapNs = 0;
+        haveLastWrite = false;
     }
 
     // Drops what is queued: the reader jumps to the write index (blending
@@ -663,11 +674,18 @@ struct DeviceRateMatcher::Writer {
         if (stalled && readCallsNow != readCallsAtStall) {
             stalled = false;
             restartControl();
+            // The gaps are measured from this write on.
+            haveLastWrite = true;
+            lastWriteNs = nowNs;
         }
 
         replayReads(readNow, requestedNow, readCallsNow);
 
-        // A dry run: one step up (automatic), then silence up to the target.
+        // A dry run: one step up (automatic), then silence up to the target,
+        // and the audio after it fades in.  The fade-in is armed here, from
+        // the count loaded above, so it always follows its padding: the
+        // reader's upslewPending flag, set after the count, can be seen
+        // before the count is and is not used to arm it.
         if (dryRunsNow != dryRunsSeen) {
             dryRunsSeen = dryRunsNow;
             if (automatic && stepIndex + 1 < static_cast<int>(DeviceRateMatcher::kDelayStepsMs.size())) {
@@ -679,9 +697,7 @@ struct DeviceRateMatcher::Writer {
             if (fill < half) {
                 padSilence(half - fill, readNow);
             }
-        }
-
-        if (r.upslewPending.exchange(0, std::memory_order_acq_rel) != 0) {
+            r.upslewPending.store(0, std::memory_order_relaxed);
             ucnt = ntslew;
         }
 
@@ -885,12 +901,6 @@ void DeviceRateMatcher::write(const float* interleavedStereo, int frames, std::i
         return;
     }
     Writer& w = *m_writer;
-    if (w.haveLastWrite) {
-        w.maxGapNs = std::max(w.maxGapNs, nowNs - w.lastWriteNs);
-    }
-    w.haveLastWrite = true;
-    w.lastWriteNs = nowNs;
-
     const bool restart = m_restartRequested.exchange(false, std::memory_order_acq_rel);
     const bool flush = m_flushRequested.exchange(false, std::memory_order_acq_rel);
     if (restart) {
@@ -899,6 +909,14 @@ void DeviceRateMatcher::write(const float* interleavedStereo, int frames, std::i
     } else if (flush) {
         w.dropQueued();
     }
+
+    // The largest gap between writes, for the automatic size; after a
+    // restart, from the restart's own write on.
+    if (w.haveLastWrite) {
+        w.maxGapNs = std::max(w.maxGapNs, nowNs - w.lastWriteNs);
+    }
+    w.haveLastWrite = true;
+    w.lastWriteNs = nowNs;
 
     const int block = m_config.writeBlockFrames;
     int pos = 0;
