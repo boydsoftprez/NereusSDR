@@ -1811,6 +1811,13 @@ nereus_add_test(tst_capture_supervisor fakes/FakeCaptureChild.cpp)
 # scripted fake (--fake-capture-child probe). No real device is opened.
 nereus_add_test(tst_audio_delay_probe fakes/FakeCaptureChild.cpp)
 
+# Native audio plan Task 2 (R-AUD-15, V-SW-5): the lock-free clock matcher
+# (DeviceRateMatcher, ported from WDSP rmatch).  Deterministic: two
+# simulated clocks, no device; the drift checks compare the ratio with
+# WDSP's own rmatchV fed the same clocks (each simulation single-threaded,
+# the four run side by side to keep the wall time down).
+nereus_add_test(tst_device_rate_matcher)
+
 # R-R3-36 Task 5: AudioEngine and RadioModel PC microphone session demand.
 # start() opens no input; a hanging helper never delays start, connect or
 # disconnect; the local session holds a capture lease only while PC mic is

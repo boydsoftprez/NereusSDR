@@ -1129,6 +1129,7 @@ set(CORE_SOURCES
     src/core/audio/RadioMicSource.cpp
     src/core/audio/VaxTxMicSource.cpp
     src/core/audio/AudioDelayProbe.cpp
+    src/core/audio/DeviceRateMatcher.cpp
     src/core/audio/CaptureProtocol.cpp
     src/core/audio/CaptureHelper.cpp
     src/core/audio/CaptureAudioBus.cpp
