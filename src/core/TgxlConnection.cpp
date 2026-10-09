@@ -43,6 +43,10 @@
 //   2026-10-01: TGXL tune lane fix round: autotuneSent for every
 //               `autotune` written. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-09: Core journal volume: the status poll, ping and their
+//               answers log at debug; an S-frame logs at info only when
+//               its state or tuning flag changes. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 #include "TgxlConnection.h"
 #include "AppSettings.h"
@@ -55,6 +59,18 @@
 namespace NereusSDR {
 
 Q_LOGGING_CATEGORY(lcTgxl, "nereus.tgxl")
+
+namespace {
+
+// Commands a timer sends while connected: the status poll, the keepalive
+// status poke and the auto-ping. They log at debug; everything else is an
+// operator or setup command and logs at info.
+bool isPeriodicCommand(const QString& cmd)
+{
+    return cmd == QLatin1String("status") || cmd == QLatin1String("ping");
+}
+
+}  // namespace
 
 // Exponential backoff schedule for auto-reconnect, in seconds.
 // Parallel to PgxlConnection (design §6.4); cap at 60 s.
@@ -161,6 +177,7 @@ bool TgxlConnection::admitIdentity(quint64 socketAttemptToken,
     m_retryHost.clear();
     m_retryPort = 0;
     m_connected = true;
+    m_lastLoggedSFrameState.clear();
 
     // Native info uses `serial`; TunerModel's established direct-status
     // contract consumes `serial_num`. Publish the buffered identity only now,
@@ -726,6 +743,7 @@ void TgxlConnection::processLine(const QString& line,
         }
 
         m_connected = true;
+        m_lastLoggedSFrameState.clear();
         m_pollTimer.start();
         emit connected();
         return;
@@ -751,7 +769,8 @@ void TgxlConnection::processLine(const QString& line,
             if (hexOk && hexCode != 0) {
                 qCWarning(lcTgxl) << "RX R-frame seq=" << rseq << "hex=" << QString::number(hexCode, 16) << "body:" << body;
             } else {
-                qCInfo(lcTgxl) << "RX R-frame seq=" << rseq << "hex=" << (hexOk ? QString::number(hexCode, 16) : "PARSE_ERROR") << "body:" << body;
+                // Debug, not info: one per poll (Core journal volume).
+                qCDebug(lcTgxl) << "RX R-frame seq=" << rseq << "hex=" << (hexOk ? QString::number(hexCode, 16) : "PARSE_ERROR") << "body:" << body;
             }
 
             if (m_identityAdmissionRequired && !m_connected
@@ -939,8 +958,21 @@ void TgxlConnection::processLine(const QString& line,
         if (!kvs.isEmpty()) {
             // TGXL tune lane: the tuning flag too, so a cycle's sweep (or
             // its absence) is in the log.
-            qCInfo(lcTgxl) << "RX S-frame object=" << object << "state=" << kvs.value("state", kvs.value("status", "unknown"))
-                           << "tuning=" << kvs.value(QStringLiteral("tuning"), QStringLiteral("-"));
+            // Info only when this object's state or tuning flag changed; the
+            // 1 Hz status answer repeats them (Core journal volume, Rock 5C
+            // bench 2026-10-09). A sweep still shows as tuning=1 then 0.
+            const QString state = kvs.value("state", kvs.value("status", "unknown"));
+            const QString tuning = kvs.value(QStringLiteral("tuning"), QStringLiteral("-"));
+            const QString logged = state + QLatin1Char('|') + tuning;
+            const auto last = m_lastLoggedSFrameState.constFind(object);
+            if (last == m_lastLoggedSFrameState.constEnd() || *last != logged) {
+                m_lastLoggedSFrameState.insert(object, logged);
+                qCInfo(lcTgxl) << "RX S-frame object=" << object << "state=" << state
+                               << "tuning=" << tuning;
+            } else {
+                qCDebug(lcTgxl) << "RX S-frame object=" << object << "state=" << state
+                                << "tuning=" << tuning;
+            }
         }
 
         if (object == "state") {
@@ -970,7 +1002,13 @@ quint32 TgxlConnection::writeProtocolCommand(const QString& cmd)
     m_socket->write(line.toUtf8());
     qCDebug(lcTgxl) << "TgxlConnection: sent" << line.trimmed();
     // Phase 3P-II bench-diagnostic logging (remove after pairing protocol confirmed)
-    qCInfo(lcTgxl) << "TX seq=" << seq << "cmd:" << cmd;
+    // The 1 Hz status poll and the auto-ping log at debug, not info; at
+    // info they filled the Core's journal (Rock 5C bench 2026-10-09).
+    if (isPeriodicCommand(cmd)) {
+        qCDebug(lcTgxl) << "TX seq=" << seq << "cmd:" << cmd;
+    } else {
+        qCInfo(lcTgxl) << "TX seq=" << seq << "cmd:" << cmd;
+    }
     ++m_framesOut;
     m_bytesOut += quint64(line.size());
     if (cmd == QLatin1String("autotune")) {

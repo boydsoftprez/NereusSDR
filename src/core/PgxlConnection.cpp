@@ -44,6 +44,10 @@
 //   2026-09-30: Fix round 1: asSetupToken offers a name saved with
 //               spaces as one word. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-09: Core journal volume: the status poll, ping and their
+//               answers log at debug; an S-frame logs at info only when
+//               its state changes. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 #include "PgxlConnection.h"
 #include "AppSettings.h"
@@ -55,6 +59,18 @@
 namespace NereusSDR {
 
 Q_LOGGING_CATEGORY(lcPgxl, "nereus.pgxl")
+
+namespace {
+
+// Commands a timer sends while connected: the status poll, the keepalive
+// status poke and the auto-ping. They log at debug; everything else is an
+// operator or setup command and logs at info.
+bool isPeriodicCommand(const QString& cmd)
+{
+    return cmd == QLatin1String("status") || cmd == QLatin1String("ping");
+}
+
+}  // namespace
 
 // Exponential backoff schedule for auto-reconnect, in seconds.
 // From FlexRadio wiki spec + design §6.4: amp keeps connection state;
@@ -165,6 +181,7 @@ bool PgxlConnection::admitIdentity(quint64 socketAttemptToken,
     m_retryHost.clear();
     m_retryPort = 0;
     m_connected = true;
+    m_lastLoggedSFrameState.clear();
 
     // The info reply reaches statusUpdated only now, as a local window's
     // reply always has, after the Core approved this exact socket.
@@ -571,7 +588,13 @@ quint32 PgxlConnection::writeProtocolCommand(const QString& cmd)
     m_socket->write(line.toUtf8());
     qCDebug(lcPgxl) << "sent" << line.trimmed();
     // Phase 3P-II bench-diagnostic logging (remove after pairing protocol confirmed)
-    qCInfo(lcPgxl) << "TX seq=" << seq << "cmd:" << cmd;
+    // The 5 Hz status poll and the auto-ping log at debug, not info; at
+    // info they filled the Core's journal (Rock 5C bench 2026-10-09).
+    if (isPeriodicCommand(cmd)) {
+        qCDebug(lcPgxl) << "TX seq=" << seq << "cmd:" << cmd;
+    } else {
+        qCInfo(lcPgxl) << "TX seq=" << seq << "cmd:" << cmd;
+    }
     ++m_framesOut;
     m_bytesOut += quint64(line.size());
     emit testFrameWrittenForTesting(line.trimmed());  // test seam
@@ -1052,6 +1075,7 @@ void PgxlConnection::processLine(const QString& line, quint64 attemptGeneration)
             return;
         }
         m_connected = true;
+        m_lastLoggedSFrameState.clear();
         m_pollTimer.start();
         emit connected();
         return;
@@ -1074,7 +1098,8 @@ void PgxlConnection::processLine(const QString& line, quint64 attemptGeneration)
             if (hexOk && hexCode != 0) {
                 qCWarning(lcPgxl) << "RX R-frame seq=" << rseq << "hex=" << QString::number(hexCode, 16) << "body:" << body;
             } else {
-                qCInfo(lcPgxl) << "RX R-frame seq=" << rseq << "hex=" << (hexOk ? QString::number(hexCode, 16) : "PARSE_ERROR") << "body:" << body;
+                // Debug, not info: one per poll (Core journal volume).
+                qCDebug(lcPgxl) << "RX R-frame seq=" << rseq << "hex=" << (hexOk ? QString::number(hexCode, 16) : "PARSE_ERROR") << "body:" << body;
             }
 
             // R-R3-47: the identity `info` reply on the Core. Captured from
@@ -1220,7 +1245,15 @@ void PgxlConnection::processLine(const QString& line, quint64 attemptGeneration)
         }
         // Phase 3P-II bench-diagnostic logging (remove after pairing protocol confirmed)
         if (!kvs.isEmpty()) {
-            qCInfo(lcPgxl) << "RX S-frame state=" << kvs.value("state", "unknown");
+            // Info only when the state changed; the amp repeats it on every
+            // poll (Core journal volume, Rock 5C bench 2026-10-09).
+            const QString state = kvs.value("state", "unknown");
+            if (state != m_lastLoggedSFrameState) {
+                m_lastLoggedSFrameState = state;
+                qCInfo(lcPgxl) << "RX S-frame state=" << state;
+            } else {
+                qCDebug(lcPgxl) << "RX S-frame state=" << state;
+            }
         }
         if (!kvs.isEmpty())
             emit statusUpdated(kvs);

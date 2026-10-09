@@ -6791,6 +6791,11 @@ nereus_add_test(tst_pgxl_connection_parse)
 # [@0cd4559]. V/R/S frame parsing with state/status object discrimination.
 nereus_add_test(tst_tgxl_connection_parse)
 
+# The 4O3A amp paths (PGXL, TGXL, SmartSDR API listener) log polls,
+# replies and repeated S-frames at debug; state changes, operator
+# commands and errors stay at info or above (Core journal volume).
+nereus_add_test(tst_amp_log_volume)
+
 # Pins the UDP parser for LanDiscovery (4O3A PowerGeniusXL / TeragenXL
 # announcements on ports 9008 / 9010). NereusSDR-native FlexRadio regex
 # parsing. Tests: valid-announcement capture, malformed-line rejection,
