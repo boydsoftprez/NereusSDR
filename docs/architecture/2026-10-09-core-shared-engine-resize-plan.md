@@ -228,3 +228,17 @@ connects ~4271), src/gui/setup/DisplaySetupPages.cpp, tests.
 Hardware (both tasks): JJ's window on the G2 Core at 768 kHz: move the
 slider 65536 -> 16384 -> 65536 while zoomed out; the client log grants and
 the Core's replans follow each notch, and the FFT Size readout matches.
+
+## Task 3 withdrawn (cause A did not hold)
+
+The implementer's re-ask test passed on the unchanged code. A remote window
+already re-asks: `RemoteMediaController` runs a 100 ms planner timer
+(kPlannerIntervalMs, src/gui/RemoteMediaController.cpp ~1765-1767) wired to
+`refreshSubscriptions()`, which rebuilds every pan and mini request from the
+four settings and re-sends any that changed. So a change from this window,
+another device or a snapshot reaches the Core within 100 ms. The bench FFT
+Size readout of 262144 was the Core's true grant: the stuck engine of cause
+B (fixed by Task 2) and the re-request rule (Task 1). The readout keeps
+showing the grant; showing the chosen size instead would go stale when the
+Core grants the same size again. Task 3 is dropped; nothing of it is
+committed.
