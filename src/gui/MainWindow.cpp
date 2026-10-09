@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - J.J. Boyd (KG4VCF). Issue #357: a hosting window's TUNE
+//                (TX applet and container) reads the transmit model's TUNE,
+//                which the release press clears, so it goes back to "TUNE"
+//                on that press. AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Rotor control plan Task 5: compass meter items get this
 //                 window's rotor (RadioModel::rotorModel()) and turn it
 //                 through RadioModel. J.J. Boyd (KG4VCF), AI-assisted via
@@ -2612,7 +2616,12 @@ void MainWindow::refreshDesktopStationState()
                 [this](bool on) { requestDesktopTransmit(true, on); },
                 [this] { return desktopOwnsTransmit() && m_radioModel
                     && m_radioModel->moxController() && m_radioModel->moxController()->isMox(); },
-                [this] { return desktopOwnsTransmit() && m_radioModel && m_radioModel->isTune(); });
+                // Issue #357: the transmit model's TUNE, which the release
+                // press clears, not isTune(), which holds until the radio
+                // is back on receive and left the button red after that
+                // press.
+                [this] { return desktopOwnsTransmit() && m_radioModel
+                    && m_radioModel->transmitModel().isTune(); });
             // Fix wave (hosting 2-TONE parity): 2-TONE asks as MOX does.
             m_txApplet->setDesktopTwoToneHandler([this](bool on) {
                 requestDesktopKey(DesktopStationController::Key::TwoTone, on);
@@ -7555,8 +7564,9 @@ void MainWindow::buildUI()
             return desktopOwnsTransmit() && m_radioModel->moxController()
                 && m_radioModel->moxController()->isMox();
         };
+        // Issue #357: the TUNE the release press clears, as the TX applet's.
         hooks.desktopTuneOn = [this] {
-            return desktopOwnsTransmit() && m_radioModel->isTune();
+            return desktopOwnsTransmit() && m_radioModel->transmitModel().isTune();
         };
         hooks.requestDesktopMox = [this](bool on) { requestDesktopTransmit(false, on); };
         hooks.requestDesktopTune = [this](bool on) { requestDesktopTransmit(true, on); };
