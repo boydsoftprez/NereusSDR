@@ -1688,6 +1688,10 @@ nereus_add_test(tst_audio_engine_vax_tee)
 # channel count (44.1 to 192 kHz, stereo and mono). No real device opened.
 nereus_add_test(tst_audio_engine_speaker_format)
 
+# Native audio plan Task 6 (R-AUD-15): a bus that takes the stereo mix gets
+# the 48 kHz block into its clock matcher; no dry run after sizing at 200 ppm.
+nereus_add_test(tst_audio_engine_matcher_push)
+
 # ── R3 receiver audio fix wave (R-R3-42, R-R3-44): one notice per stop ───────
 nereus_add_test(tst_receiver_stop_notices)
 

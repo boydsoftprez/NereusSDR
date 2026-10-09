@@ -1889,10 +1889,11 @@ private slots:
         QVERIFY2(engine.beginRemotePlayback(&error), qPrintable(error));
         QCOMPARE(engine.remotePlaybackFormat(), std::optional<AudioFormat>(format));
 
-        // The ring a real PortAudio stream of this format gets, which the
-        // paced bus reports as its capacity.
-        const std::size_t ringSamples = PortAudioBus::outputRingSamples(rate, channels);
-        QCOMPARE(ringSamples, std::max<std::size_t>(9600, std::size_t(rate / 10 * channels)));
+        // The paced bus's capacity: 100 ms of this format, never less than
+        // 4800 frames of 48 kHz stereo (the ring PortAudio output streams
+        // had before their clock matcher, R-AUD-15).
+        const std::size_t ringSamples =
+            std::max<std::size_t>(9600, std::size_t(rate / 10 * channels));
         const auto pacing = engine.remotePlaybackPacing();
         QVERIFY(pacing);
         QCOMPARE(pacing->capacityFrames, int(ringSamples) / channels);

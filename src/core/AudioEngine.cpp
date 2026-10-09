@@ -19,6 +19,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09  J.J. Boyd / KG4VCF  Native audio plan Task 6 (R-AUD-15):
+//                                    a bus with a clock matcher takes the
+//                                    48 kHz stereo mix (no converter;
+//                                    silence while muted), remote playback
+//                                    into its matcher, the probe readout.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-08  J.J. Boyd / KG4VCF  Native audio plan Task 1 (V-HW-8):
 //                                    the audio delay probe's click on the
 //                                    speakers push, its Test Mic lease,
@@ -1224,6 +1230,13 @@ void AudioEngine::onDelayProbeHit(qint64 captureNs)
         m_delayProbeMatcher.addClick(clickNs);
         m_delayProbeMatchedClickNs = clickNs;
     }
+    // R-AUD-15: with a clock matcher on the speakers, the summary carries
+    // the delay the matcher, resampler and device account for.
+    {
+        const double readoutMs = speakersDelayParts().totalMs();
+        m_delayProbeMatcher.setReadoutMs(readoutMs >= 0.0 ? std::optional<double>(readoutMs)
+                                                          : std::nullopt);
+    }
     m_delayProbeMatcher.addHit(static_cast<std::int64_t>(captureNs));
     const QString summary = m_delayProbeMatcher.takeSummary();
     if (!summary.isEmpty()) {
@@ -1306,6 +1319,9 @@ bool AudioEngine::beginRemotePlayback(QString* error, RemotePlaybackOutput outpu
         return false;
     }
     m_speakersBus->flush();
+    // R-AUD-15: a clock matcher starts its control afresh for the remote
+    // stream (no-op for a bus without one).
+    m_speakersBus->restartClockMatch();
     m_remotePlaybackFormat = format;
     m_remotePlayback = true;
     return true;
@@ -1347,6 +1363,7 @@ bool AudioEngine::beginRemoteHeadphonesPlayback(QString* error)
         return false;
     }
     m_headphonesBus->flush();
+    m_headphonesBus->restartClockMatch();   // R-AUD-15, as the speakers
     m_remoteHeadphonesFormat = format;
     m_remoteHeadphonesPlayback = true;
     return true;
@@ -1358,13 +1375,54 @@ void AudioEngine::endRemotePlayback(RemotePlaybackOutput output)
         std::lock_guard<std::mutex> lock(m_headphonesBusMutex);
         m_remoteHeadphonesPlayback = false;
         m_remoteHeadphonesFormat = AudioFormat{};
-        if (m_headphonesBus) { m_headphonesBus->flush(); }
+        if (m_headphonesBus) {
+            m_headphonesBus->flush();
+            m_headphonesBus->restartClockMatch();   // R-AUD-15
+        }
         return;
     }
     std::lock_guard<std::mutex> lock(m_speakersBusMutex);
     m_remotePlayback = false;
     m_remotePlaybackFormat = AudioFormat{};
-    if (m_speakersBus) { m_speakersBus->flush(); }
+    if (m_speakersBus) {
+        m_speakersBus->flush();
+        // R-AUD-15: local playback that follows starts its own control.
+        m_speakersBus->restartClockMatch();
+    }
+}
+
+bool AudioEngine::remotePlaybackIntoMatcher(RemotePlaybackOutput output) const
+{
+    // R-AUD-15, settled call 30: the output's bus takes the 48 kHz stereo
+    // mix into its own clock matcher, so remote audio is written as it is
+    // released and the bus matches the device clock.
+    if (output == RemotePlaybackOutput::Headphones) {
+        std::lock_guard<std::mutex> lock(m_headphonesBusMutex);
+        return m_headphonesBus && m_headphonesBus->isOpen()
+            && m_headphonesBus->takesStereoMix();
+    }
+    std::lock_guard<std::mutex> lock(m_speakersBusMutex);
+    return m_speakersBus && m_speakersBus->isOpen() && m_speakersBus->takesStereoMix();
+}
+
+std::optional<DeviceRateMatcherStats> AudioEngine::remotePlaybackMatcherStats(
+    RemotePlaybackOutput output) const
+{
+    if (output == RemotePlaybackOutput::Headphones) {
+        std::lock_guard<std::mutex> lock(m_headphonesBusMutex);
+        if (!m_headphonesBus || !m_headphonesBus->isOpen()) { return std::nullopt; }
+        return m_headphonesBus->matcherStats();
+    }
+    std::lock_guard<std::mutex> lock(m_speakersBusMutex);
+    if (!m_speakersBus || !m_speakersBus->isOpen()) { return std::nullopt; }
+    return m_speakersBus->matcherStats();
+}
+
+AudioDelayParts AudioEngine::speakersDelayParts() const
+{
+    std::lock_guard<std::mutex> lock(m_speakersBusMutex);
+    if (!m_speakersBus || !m_speakersBus->isOpen()) { return {}; }
+    return m_speakersBus->delayParts();
 }
 
 std::optional<AudioFormat> AudioEngine::remotePlaybackFormat(RemotePlaybackOutput output)
@@ -1412,12 +1470,17 @@ bool AudioEngine::writeRemotePlayback(const QVector<float>& pcm, RemotePlaybackO
         std::lock_guard<std::mutex> lock(m_headphonesBusMutex);
         if (!m_remoteHeadphonesPlayback || !m_headphonesBus || !m_headphonesBus->isOpen()
             || m_headphonesBus->negotiatedFormat() != m_remoteHeadphonesFormat) { return false; }
-        const int channels = m_remoteHeadphonesFormat.channels;
+        // R-AUD-15: a bus with a clock matcher takes 48 kHz stereo, with
+        // no room check (the matcher makes its own room).
+        const bool intoMatcher = m_headphonesBus->takesStereoMix();
+        const int channels = intoMatcher ? 2 : m_remoteHeadphonesFormat.channels;
         if (channels <= 0 || pcm.size() % channels != 0
             || pcm.size() / channels > kMaxRemotePlaybackFrames) { return false; }
         const int frames = int(pcm.size() / channels);
-        const auto pacing = m_headphonesBus->outputPacing();
-        if (!pacing || pacing->capacityFrames - pacing->queuedFrames < frames) { return false; }
+        if (!intoMatcher) {
+            const auto pacing = m_headphonesBus->outputPacing();
+            if (!pacing || pacing->capacityFrames - pacing->queuedFrames < frames) { return false; }
+        }
         const auto bytes = static_cast<qint64>(pcm.size()) * qint64(sizeof(float));
         return m_headphonesBus->push(reinterpret_cast<const char*>(pcm.constData()), bytes)
             == bytes;
@@ -1431,13 +1494,21 @@ bool AudioEngine::writeRemotePlayback(const QVector<float>& pcm, RemotePlaybackO
     std::lock_guard<std::mutex> lock(m_speakersBusMutex);
     if (!m_remotePlayback || !m_speakersBus || !m_speakersBus->isOpen()
         || m_speakersBus->negotiatedFormat() != m_remotePlaybackFormat) { return false; }
-    const int channels = m_remotePlaybackFormat.channels;
+    // R-AUD-15: a bus with a clock matcher takes 48 kHz stereo, with no
+    // room check (the matcher makes its own room); muted, it is fed the
+    // block as silence so its clock keeps matching, as the local push.
+    const bool intoMatcher = m_speakersBus->takesStereoMix();
+    const int channels = intoMatcher ? 2 : m_remotePlaybackFormat.channels;
     if (channels <= 0 || pcm.size() % channels != 0
         || pcm.size() / channels > kMaxRemotePlaybackFrames) { return false; }
     const int frames = int(pcm.size() / channels);
-    if (m_masterMuted.load(std::memory_order_acquire)) { return true; }
-    const auto pacing = m_speakersBus->outputPacing();
-    if (!pacing || pacing->capacityFrames - pacing->queuedFrames < frames) { return false; }
+    if (m_masterMuted.load(std::memory_order_acquire)) {
+        if (!intoMatcher) { return true; }
+        std::fill(scaled.begin(), scaled.begin() + pcm.size(), 0.0f);
+    } else if (!intoMatcher) {
+        const auto pacing = m_speakersBus->outputPacing();
+        if (!pacing || pacing->capacityFrames - pacing->queuedFrames < frames) { return false; }
+    }
     const auto bytes = static_cast<qint64>(pcm.size()) * qint64(sizeof(float));
     return m_speakersBus->push(reinterpret_cast<const char*>(scaled.data()), bytes) == bytes;
 }
@@ -2718,7 +2789,10 @@ void AudioEngine::drainMixes(int frames, bool monitorOnly)
         if (hpLk.owns_lock()) {
             IAudioBus* headphonesBus = m_headphonesBus.get();
             if (headphonesBus != nullptr && headphonesBus->isOpen()) {
-                if (m_headphonesConverter.passthrough()) {
+                // R-AUD-15: a bus with a clock matcher takes the 48 kHz
+                // stereo mix itself and makes the device's format; the
+                // converter is for a bus without one.
+                if (headphonesBus->takesStereoMix() || m_headphonesConverter.passthrough()) {
                     headphonesBus->push(
                         reinterpret_cast<const char*>(hpMix.data()),
                         static_cast<qint64>(stereoFloats) * sizeof(float));
@@ -2824,7 +2898,9 @@ void AudioEngine::drainMixes(int frames, bool monitorOnly)
                 m_delayProbeOnLastBlock = probeOn;
                 const bool clickStarts =
                     probeOn && m_delayProbeClicker.process(mix.data(), mixed, 2);
-                if (m_speakersConverter.passthrough()) {
+                // R-AUD-15: a bus with a clock matcher takes the 48 kHz
+                // stereo mix itself; the converter is for a bus without.
+                if (speakersBus->takesStereoMix() || m_speakersConverter.passthrough()) {
                     if (clickStarts) {
                         m_delayProbeLastClickNs.store(audioProbeNowNs(),
                                                       std::memory_order_release);
@@ -2856,7 +2932,26 @@ void AudioEngine::drainMixes(int frames, bool monitorOnly)
         // the push specifically to keep that drop window short and
         // bounded; we no longer trace mutex misses since the bench
         // confirmed the contention is rare enough to be inaudible.
-    }}
+    } else {
+        // R-AUD-15: muted, a bus with a clock matcher is fed silence, the
+        // block after the mute, so its writer applies the mute's flush at
+        // once and its clock keeps matching the device (a matcher left
+        // without writes runs dry and steps its size up).  A bus without
+        // one is left as it always was: nothing is pushed.
+        std::unique_lock<std::mutex> speakersLk(m_speakersBusMutex,
+                                                std::try_to_lock);
+        if (speakersLk.owns_lock()) {
+            IAudioBus* speakersBus = m_speakersBus.get();
+            if (speakersBus != nullptr && speakersBus->isOpen()
+                && speakersBus->takesStereoMix()) {
+                std::fill(mix.begin(), mix.begin() + stereoFloats, 0.0f);
+                speakersBus->push(
+                    reinterpret_cast<const char*>(mix.data()),
+                    static_cast<qint64>(stereoFloats) * sizeof(float));
+            }
+        }
+    }
+}
 
 bool AudioEngine::isPcMicSelected() const noexcept
 {

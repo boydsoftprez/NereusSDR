@@ -13,9 +13,9 @@
 
 // R-R3-23: the bus plays in the format it was opened with (48 kHz stereo
 // float when never opened): its queue, clock, capacity and `heard` count
-// frames of that rate and channel count. Its capacity is the ring a
-// PortAudio output stream of that format has (PortAudioBus::
-// outputRingSamples): 4800 frames at 48 kHz stereo.
+// frames of that rate and channel count. Its capacity is 100 ms of that
+// format, never less than 4800 frames of 48 kHz stereo: the ring a
+// PortAudio output stream had before its clock matcher (R-AUD-15).
 class PacedAudioBus final : public NereusSDR::IAudioBus {
 public:
     bool open(const NereusSDR::AudioFormat& f) override { format = f; active = true; return true; }

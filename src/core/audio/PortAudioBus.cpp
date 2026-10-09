@@ -11,6 +11,14 @@
 // macOS for the same end), not as a port.  No Thetis bytes ported.
 //
 // Modification history (NereusSDR):
+//   2026-10-09: native audio plan Task 6 (R-AUD-15, R-AUD-33): an output
+//               stream's ring is a DeviceRateMatcher; push() takes 48 kHz
+//               stereo, the callback reads it and writes the device's
+//               channels with writeStereoToDevice; outputPacing,
+//               delayParts, matcherStats, restartClockMatch and flush come
+//               from the matcher.  Bug 6: the capture-name preference is
+//               guarded by Q_OS_MAC.  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-08: native audio plan Task 1 (V-HW-8): the input callback hands
 //               each block and its capture time to an optional hook (the
 //               audio delay probe's detector). J.J. Boyd (KG4VCF),
@@ -40,10 +48,12 @@
 #include "../Resampler.h"
 #include "AudioDelayProbe.h"
 #include "AudioTestBarrier.h"
+#include "DeviceSampleFormat.h"
 
 #include <portaudio.h>
 
 #include <QStandardPaths>
+#include <QtGlobal>
 
 #include <algorithm>
 #include <cmath>
@@ -122,7 +132,7 @@ PaDeviceIndex resolveDevice(const PortAudioConfig& inCfg,
     //   1. MacBook Pro / Built-in / Internal — strong hardware match
     //   2. anything else with "Microphone" but NOT "iPhone" (Continuity
     //      Camera mics are often unavailable when iPhone is disconnected)
-#ifdef __APPLE__
+#ifdef Q_OS_MAC
     if (!wantOutput && effectiveCfg.deviceName.isEmpty()) {
         QString tier1, tier2;
         for (int i = 0; i < deviceCount; ++i) {
@@ -238,6 +248,9 @@ PaDeviceIndex resolveDevice(const PortAudioConfig& inCfg,
 } // namespace
 
 PortAudioBus::PortAudioBus() {
+    // R-AUD-15: this ring now serves the input direction only; an output
+    // stream queues in its DeviceRateMatcher (prepareOutputMatcher).
+    // [original comment follows, written when the ring served output]
     // 100 ms stereo float ring (4800 stereo frames * 2 channels = 9600
     // floats) at the nominal 48 kHz device rate.  Sized as the
     // capacity ceiling, NOT the typical fill: with the DSP-thread
@@ -281,6 +294,47 @@ PortAudioBus::~PortAudioBus() {
     close();
 }
 
+bool PortAudioBus::prepareOutputMatcher(int deviceRate, int deviceChannels)
+{
+    releaseOutputMatcher();
+    DeviceRateMatcher::Config config;
+    config.inRate = 48000;
+    config.outRate = deviceRate;
+    config.callbackFrames = m_cfg.bufferSamples > 0 ? m_cfg.bufferSamples : kOutputChunkFrames;
+    config.delayMs = 0;
+    auto matcher = std::make_unique<DeviceRateMatcher>(config);
+    if (!matcher->valid() || deviceChannels <= 0) {
+        return false;
+    }
+    // Pin the matcher's ring as the old output ring was (2026-05-26
+    // KG4VCF: a compressed page costs a decompression stall on the audio
+    // thread).  Best effort; MemoryLock logs a failure.
+    NereusSDR::lockMemory(matcher->ring(), DeviceRateMatcher::ringBytes(config),
+                          "PortAudioBus::m_outputMatcher");
+    m_outputReader = matcher->makeReader();
+    m_outputScratch.assign(std::size_t(2 * kOutputChunkFrames), 0.0f);
+    m_outputDeviceChannels = deviceChannels;
+    m_outputDeviceRate = deviceRate;
+    m_outputMatcherBytes = DeviceRateMatcher::ringBytes(config);
+    m_outputMatcher = std::move(matcher);
+    return true;
+}
+
+void PortAudioBus::releaseOutputMatcher()
+{
+    // Only when no callback can run: before the stream starts, or after
+    // Pa_StopStream has joined the audio thread.
+    if (m_outputMatcher) {
+        NereusSDR::unlockMemory(m_outputMatcher->ring(), m_outputMatcherBytes);
+    }
+    m_outputReader = MatcherReader();
+    m_outputMatcher.reset();
+    m_outputScratch.clear();
+    m_outputDeviceChannels = 0;
+    m_outputDeviceRate = 0;
+    m_outputMatcherBytes = 0;
+}
+
 void PortAudioBus::setConfig(const PortAudioConfig& cfg) {
     m_cfg = cfg;
 }
@@ -294,15 +348,10 @@ bool PortAudioBus::open(const AudioFormat& format) {
     // with no queued audio or stale device-clock/discard state.
     m_ringRead.store(0, std::memory_order_relaxed);
     m_ringWrite.store(0, std::memory_order_relaxed);
-    m_outputDiscardBefore.store(0, std::memory_order_relaxed);
-    m_outputConsumedFrames.store(0, std::memory_order_relaxed);
     m_outputCallbackFrames.store(0, std::memory_order_relaxed);
     m_outputLatencyNs.store(-1, std::memory_order_relaxed);
     m_inputLatencyNs.store(-1, std::memory_order_relaxed);
-    m_lastOutL = 0.0f;
-    m_lastOutR = 0.0f;
-    m_crossfadeFramesRem = 0;
-    m_resumeAfterDiscard = false;
+    releaseOutputMatcher();
 
     const bool wantOutput = (m_cfg.direction == AudioDirection::Output);
     m_openFailure = OpenFailure::None;
@@ -417,18 +466,21 @@ bool PortAudioBus::open(const AudioFormat& format) {
     m_nativeSampleRate = openRate;
     m_inputStreamChannels = wantOutput ? 0 : effectiveChannels;
 
-    // R-R3-23: an output ring keeps 100 ms at the stream's own rate and
-    // channel count (never less than the default). No callback runs yet,
-    // and open() reset both cursors above, so the ring may be replaced.
-    if (wantOutput) {
-        const std::size_t ringSamples =
-            outputRingSamples(m_negFormat.sampleRate, m_negFormat.channels);
-        if (ringSamples != m_ring.size()) {
-            NereusSDR::unlockMemory(m_ring.data(), m_ring.size() * sizeof(float));
-            m_ring.assign(ringSamples, 0.0f);
-            NereusSDR::lockMemory(m_ring.data(), m_ring.size() * sizeof(float),
-                                  "PortAudioBus::m_ring");
-        }
+    // R-AUD-15: an output stream's queue is a clock matcher from the
+    // 48 kHz stereo mix to the stream's own rate and channels (this
+    // replaces R-R3-23's ring sized by outputRingSamples()).  No callback
+    // runs yet, so it may be built here.  A rate the matcher cannot run is
+    // an open failure.
+    if (wantOutput && !prepareOutputMatcher(openRate, effectiveChannels)) {
+        m_openFailure = OpenFailure::OpenFailed;
+        m_err = QStringLiteral("Clock matcher cannot run at %1 Hz").arg(openRate);
+        Pa_CloseStream(m_stream);
+        m_stream = nullptr;
+        m_negFormat = {};
+        m_backendName.clear();
+        m_inputStreamChannels = 0;
+        m_nativeSampleRate = 0;
+        return false;
     }
 
     if (needResample) {
@@ -504,6 +556,7 @@ bool PortAudioBus::open(const AudioFormat& format) {
         m_monoScratch.clear();
         m_inputStreamChannels = 0;
         m_nativeSampleRate = 0;
+        releaseOutputMatcher();
         return false;
     }
 
@@ -556,13 +609,8 @@ void PortAudioBus::close() {
     // inherit queued output, a prior discard floor, or device consumption.
     m_ringRead.store(0, std::memory_order_relaxed);
     m_ringWrite.store(0, std::memory_order_relaxed);
-    m_outputDiscardBefore.store(0, std::memory_order_relaxed);
-    m_outputConsumedFrames.store(0, std::memory_order_relaxed);
     m_outputCallbackFrames.store(0, std::memory_order_relaxed);
-    m_lastOutL = 0.0f;
-    m_lastOutR = 0.0f;
-    m_crossfadeFramesRem = 0;
-    m_resumeAfterDiscard = false;
+    releaseOutputMatcher();
     // Cumulative drop / underrun / PA-flag counters remain queryable
     // via ringOverrunEvents() / ringOverrunSamples() /
     // ringUnderrunEvents() and the m_paOutputUnderflowEvents /
@@ -571,105 +619,94 @@ void PortAudioBus::close() {
 }
 
 qint64 PortAudioBus::push(const char* data, qint64 bytes) {
-    if (!m_stream) { return 0; }
     if (m_cfg.direction != AudioDirection::Output) { return 0; }
-    const int floatCount = static_cast<int>(bytes / sizeof(float));
-    const qint64 ringSize = static_cast<qint64>(m_ring.size());
-    qint64 w = m_ringWrite.load(std::memory_order_relaxed);
+    // R-AUD-15: the mix goes into the clock matcher, which exists only
+    // while the stream is open.
+    if (!m_outputMatcher || data == nullptr || bytes <= 0) { return 0; }
+    const int frames = static_cast<int>(bytes / qint64(2 * sizeof(float)));
+    if (frames <= 0) { return 0; }
     const float* in = reinterpret_cast<const float*>(data);
-
-    // Drop-oldest accounting: if this push would put the writer more than
-    // one ring's worth ahead of the reader, the oldest unread samples
-    // about to be modulo-overwritten are effectively dropped.  We do NOT
-    // advance m_ringRead from here (that would race with paCallback's own
-    // store; only the audio thread writes to m_ringRead).  Instead the
-    // paCallback detects the same condition on its next entry and skips
-    // forward to the oldest still-valid sample.  Counting the event here
-    // gives diagnostics a single producer-side perspective.
-    const qint64 publishedRead = m_ringRead.load(std::memory_order_acquire);
-    const qint64 discardBefore = m_outputDiscardBefore.load(std::memory_order_acquire);
-    const qint64 readPos = std::max(publishedRead, discardBefore);
-    const qint64 afterWrite = w + floatCount;
-    if (afterWrite - readPos > ringSize) {
-        m_dropEvents.fetch_add(1, std::memory_order_relaxed);
-        m_dropSamples.fetch_add(
-            static_cast<quint64>(afterWrite - readPos - ringSize),
-            std::memory_order_relaxed);
-        // Counters are observable via ringOverrunEvents() /
-        // ringOverrunSamples().  paCallback performs the catch-up jump
-        // on its next entry; the crossfade ramp on resume keeps the
-        // event inaudible to the listener.
-    }
-
     float peak = 0.0f;
-    for (int i = 0; i < floatCount; ++i) {
-        m_ring[w % ringSize] = in[i];
-        w++;
+    for (int i = 0; i < frames * 2; ++i) {
         peak = std::max(peak, std::abs(in[i]));
     }
-    m_ringWrite.store(w, std::memory_order_release);
+    m_outputMatcher->write(in, frames, audioProbeNowNs());
     m_rxLevel.store(peak, std::memory_order_release);
     return bytes;
 }
 
 void PortAudioBus::flush() {
-    // Issue #201: drop any unread samples queued in the ring so they
-    // don't keep draining out the device after a mute click.  Output
-    // mode: callers (AudioEngine on mute) want unread samples dropped.
-    // Input mode: callers (a future Setup → Audio "drop stale capture"
-    // path) want unread captured samples dropped.  In both modes the
-    // operation is the same: equalize read/write cursors atomically.
-    //
-    // Output mode cannot write m_ringRead here: an in-flight callback owns
-    // that cursor and could later publish an older value. Instead publish a
-    // monotonic absolute floor. Every callback and pacing observation clamps
-    // its read position to this floor, including after a stale publication.
-    // Input retains the established equalize-cursors behavior.
-    if (m_ring.empty()) {
-        return;
-    }
-    const qint64 w = m_ringWrite.load(std::memory_order_acquire);
+    // Issue #201: drop any unread samples queued so they don't keep
+    // draining out the device after a mute click.  Output: the clock
+    // matcher drops what is queued at its writer's next write
+    // (R-AUD-15).  Input: equalize the ring's read/write cursors.
     if (m_cfg.direction == AudioDirection::Output) {
-        qint64 floor = m_outputDiscardBefore.load(std::memory_order_acquire);
-        while (floor < w
-               && !m_outputDiscardBefore.compare_exchange_weak(
-                   floor, w, std::memory_order_release, std::memory_order_acquire)) {
+        if (m_outputMatcher) {
+            m_outputMatcher->requestFlush();
         }
         return;
     }
-    if (!m_stream) {
+    if (m_ring.empty() || !m_stream) {
         return;
     }
+    const qint64 w = m_ringWrite.load(std::memory_order_acquire);
     m_ringRead.store(w, std::memory_order_release);
+}
+
+int PortAudioBus::outputCallbackFramesNow() const
+{
+    return std::max(m_cfg.bufferSamples,
+                    m_outputCallbackFrames.load(std::memory_order_acquire));
 }
 
 std::optional<IAudioBus::OutputPacing> PortAudioBus::outputPacing() const
 {
-    if (m_cfg.direction != AudioDirection::Output || m_ring.empty()
-        || m_negFormat.channels <= 0) {
+    if (m_cfg.direction != AudioDirection::Output || !m_outputMatcher) {
         return std::nullopt;
     }
-
-    const qint64 ringSamples = static_cast<qint64>(m_ring.size());
-    const int channels = m_negFormat.channels;
-    const qint64 publishedRead = m_ringRead.load(std::memory_order_acquire);
-    const qint64 discardBefore = m_outputDiscardBefore.load(std::memory_order_acquire);
-    const qint64 effectiveRead = std::max(publishedRead, discardBefore);
-    const qint64 write = m_ringWrite.load(std::memory_order_acquire);
-    const qint64 unreadSamples = std::clamp(write - effectiveRead,
-                                             qint64{0}, ringSamples);
-
+    // R-AUD-15: every frame the device asked for (dry-run fill included,
+    // as the old ring counted its silent frames), the matcher's fill and
+    // its automatic size, all at the device rate.
+    DeviceRateMatcher& matcher = *m_outputMatcher;
+    const MatcherRingHeader* ring = matcher.ring();
     OutputPacing pacing;
-    pacing.consumedFrames = m_outputConsumedFrames.load(std::memory_order_acquire);
-    pacing.queuedFrames = static_cast<int>(unreadSamples / channels);
-    pacing.capacityFrames = static_cast<int>(ringSamples / channels);
-    pacing.callbackFrames = std::max(m_cfg.bufferSamples,
-        m_outputCallbackFrames.load(std::memory_order_acquire));
+    pacing.consumedFrames = ring->requested.load(std::memory_order_acquire);
+    pacing.queuedFrames = std::max(0, static_cast<int>(std::lround(matcher.fillFrames())));
+    pacing.capacityFrames = static_cast<int>(ring->rsizeFrames.load(std::memory_order_acquire));
+    pacing.callbackFrames = outputCallbackFramesNow();
     if (const qint64 latencyNs = m_outputLatencyNs.load(std::memory_order_acquire);
         latencyNs > 0) {
         pacing.deviceLatencyNs = latencyNs;
     }
     return pacing;
+}
+
+AudioDelayParts PortAudioBus::delayParts() const
+{
+    if (m_cfg.direction != AudioDirection::Output || !m_outputMatcher
+        || m_outputDeviceRate <= 0) {
+        return {};
+    }
+    const double bufferMs = 1000.0 * static_cast<double>(outputCallbackFramesNow())
+                            / static_cast<double>(m_outputDeviceRate);
+    const qint64 latencyNs = m_outputLatencyNs.load(std::memory_order_acquire);
+    const double latencyMs = latencyNs > 0 ? static_cast<double>(latencyNs) / 1e6 : 0.0;
+    return m_outputMatcher->delayParts(bufferMs, latencyMs);
+}
+
+std::optional<DeviceRateMatcherStats> PortAudioBus::matcherStats() const
+{
+    if (!m_outputMatcher) {
+        return std::nullopt;
+    }
+    return m_outputMatcher->stats();
+}
+
+void PortAudioBus::restartClockMatch()
+{
+    if (m_outputMatcher) {
+        m_outputMatcher->requestRestart();
+    }
 }
 
 qint64 PortAudioBus::pull(char* data, qint64 maxBytes) {
@@ -722,149 +759,48 @@ int PortAudioBus::paCallback(const void* in, void* out,
 
     if (self->m_cfg.direction == AudioDirection::Output) {
         float* o = static_cast<float*>(out);
-        const int want = static_cast<int>(frames) * self->m_negFormat.channels;
-
-        qint64 r = self->m_ringRead.load(std::memory_order_relaxed);
-        const qint64 w = self->m_ringWrite.load(std::memory_order_acquire);
-        const qint64 discardBefore = self->m_outputDiscardBefore.load(
-            std::memory_order_acquire);
-        bool discarded = false;
-        if (r < discardBefore) {
-            r = discardBefore;
-            discarded = true;
-        }
         const int previousQuantum = self->m_outputCallbackFrames.load(std::memory_order_relaxed);
         if (frames > static_cast<unsigned long>(previousQuantum)) {
             self->m_outputCallbackFrames.store(static_cast<int>(frames), std::memory_order_release);
         }
-        self->m_outputConsumedFrames.fetch_add(
-            static_cast<quint64>(frames), std::memory_order_relaxed);
+        const int channels = self->m_outputDeviceChannels;
+        if (o == nullptr || channels <= 0) {
+            return paContinue;
+        }
+        if (!self->m_outputReader.valid()) {
+            std::memset(o, 0, sizeof(float) * static_cast<std::size_t>(frames)
+                                  * static_cast<std::size_t>(channels));
+            return paContinue;
+        }
 
-        // 2026-05-26 KG4VCF perf instrumentation: report the ring fill
-        // level (ms of unread audio still in the producer->consumer
-        // ring) BEFORE this callback drains its samples.  This is the
-        // speakers-output path on every platform (CoreAudioHalBus
-        // covers only the VAX digital-app channels); the perf overlay
-        // surfaces avg / min over a 2 s window.  If min craters
-        // toward 0 we are about to underrun even when paOutputUnderflow
-        // is still 0.
+        // 2026-05-26 KG4VCF perf instrumentation: report the fill level
+        // (ms of unread audio queued for the device) BEFORE this callback
+        // drains its samples.  R-AUD-15: the queue is the clock matcher's,
+        // whose fill the writer publishes at the device rate.
         {
-            const qint64 fillSamples = std::clamp(w - r, qint64{0}, ringSize);
-            const int    rateHz      = self->m_negFormat.sampleRate;
-            const int    fillChans   = self->m_negFormat.channels;
-            if (rateHz > 0 && fillChans > 0) {
-                const double samplesPerMs =
-                    static_cast<double>(rateHz)
-                    * static_cast<double>(fillChans) / 1000.0;
-                const double fillMs =
-                    static_cast<double>(fillSamples) / samplesPerMs;
-                NereusSDR::PerfMonitor::instance().recordAudioFillMs(fillMs);
+            const int rateHz = self->m_outputDeviceRate;
+            if (rateHz > 0) {
+                const double fillFrames = self->m_outputMatcher->fillFrames();
+                NereusSDR::PerfMonitor::instance().recordAudioFillMs(
+                    std::max(0.0, fillFrames) * 1000.0 / static_cast<double>(rateHz));
             }
         }
 
-        // Drop-oldest catch-up: if we have fallen so far behind that the
-        // writer stomped on our read position (w - r exceeds the ring
-        // size), the bytes at our current r have been overwritten with
-        // newer samples and reading them would produce scrambled audio.
-        // Jump forward to the oldest still-valid sample (w - ringSize)
-        // so we resume on contiguous, in-order audio.  The crossfade
-        // counter below smooths the discontinuity so the listener hears
-        // a brief volume dip instead of a hard click.
-        bool startCrossfade = false;
-        if (w - r > ringSize) {
-            r = w - ringSize;
-            startCrossfade = true;
+        // R-AUD-15: read stereo from the matcher (it slews a dry run and
+        // crossfades an overrun skip) and write it in the stream's own
+        // channels, a block of kOutputChunkFrames at a time.  No lock, no
+        // allocation: the scratch was sized before the stream started.
+        float* const scratch = self->m_outputScratch.data();
+        int done = 0;
+        const int total = static_cast<int>(frames);
+        while (done < total) {
+            const int n = std::min(total - done, kOutputChunkFrames);
+            self->m_outputReader.read(scratch, n);
+            writeStereoToDevice(scratch, n, o + static_cast<std::ptrdiff_t>(done) * channels,
+                                DeviceSampleFormat::Float32, channels, AudioChannelPair{},
+                                true, nullptr);
+            done += n;
         }
-
-        // Crossfade between the previous sample value and the new ring
-        // sample over kCrossfadeFrames stereo frames.  Triggered on
-        // drop-oldest catch-up AND on underrun-to-resume transitions.
-        // ~3 ms at 48 kHz / 2 channels — short enough to be inaudible as
-        // a "dip" but long enough to mask the click that a hard jump or
-        // silence-to-signal transition would otherwise produce.
-        const int channels = self->m_negFormat.channels;
-        float lastL = self->m_lastOutL;
-        float lastR = self->m_lastOutR;
-        int crossfadeRem = self->m_crossfadeFramesRem;
-        bool resumeAfterDiscard = self->m_resumeAfterDiscard;
-        if (discarded) {
-            // Never crossfade flushed samples back out. A later first fresh
-            // sample receives the normal zero-to-signal ramp below.
-            lastL = 0.0f;
-            lastR = 0.0f;
-            crossfadeRem = 0;
-            resumeAfterDiscard = true;
-        }
-        if (startCrossfade && crossfadeRem == 0) {
-            crossfadeRem = kCrossfadeFrames;
-        }
-
-        bool wasUnderrun = (r >= w);
-        // Track underrun leading edge so we count distinct events, not
-        // every silent frame in a run.  Initial state (callback fired
-        // with an empty ring) counts as one event.
-        bool sawSilenceStart = false;
-        if (wasUnderrun) {
-            self->m_underrunEvents.fetch_add(
-                1, std::memory_order_relaxed);
-            sawSilenceStart = true;
-        }
-        for (int i = 0; i < want; ++i) {
-            float target;
-            if (r < w) {
-                target = self->m_ring[r % ringSize];
-                r++;
-                // Underrun-to-resume edge: start a fresh crossfade to
-                // bring the listener gently from silence (or stale
-                // last-sample) up to the live signal.
-                if ((wasUnderrun || resumeAfterDiscard) && crossfadeRem == 0) {
-                    crossfadeRem = kCrossfadeFrames;
-                }
-                resumeAfterDiscard = false;
-                wasUnderrun = false;
-            } else {
-                target = 0.0f;  // underrun -> silence (with crossfade below)
-                if (!wasUnderrun && !sawSilenceStart) {
-                    // Transitioned from "had data" to "empty" mid-callback.
-                    self->m_underrunEvents.fetch_add(1, std::memory_order_relaxed);
-                    sawSilenceStart = true;
-                }
-                wasUnderrun = true;
-            }
-
-            // Per-channel last-sample tracking (stereo only path is
-            // exercised in practice; mono falls through cleanly).
-            float& last = ((i & 1) && channels >= 2) ? lastR : lastL;
-            if (crossfadeRem > 0) {
-                const float t = 1.0f - (static_cast<float>(crossfadeRem)
-                                        / static_cast<float>(kCrossfadeFrames));
-                o[i] = last + (target - last) * t;
-                // Decrement once per stereo frame (after the R sample).
-                if (channels < 2 || (i & 1) == 1) {
-                    crossfadeRem--;
-                }
-            } else {
-                o[i] = target;
-            }
-            last = o[i];
-        }
-        // A flush may have raced this callback after its initial floor
-        // observation. Clamp again before publication so this callback never
-        // makes the logical read position precede the discard boundary.
-        const qint64 finalDiscardBefore = self->m_outputDiscardBefore.load(
-            std::memory_order_acquire);
-        if (r < finalDiscardBefore) {
-            r = finalDiscardBefore;
-            lastL = 0.0f;
-            lastR = 0.0f;
-            crossfadeRem = 0;
-            resumeAfterDiscard = true;
-        }
-        self->m_ringRead.store(r, std::memory_order_release);
-        self->m_lastOutL = lastL;
-        self->m_lastOutR = lastR;
-        self->m_crossfadeFramesRem = crossfadeRem;
-        self->m_resumeAfterDiscard = resumeAfterDiscard;
     } else {
         // Input mode: read captured samples from `in`, write to ring,
         // update m_txLevel (the audio here is destined for transmit).
