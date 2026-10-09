@@ -584,10 +584,13 @@ public:
     // (matcherFillMs -1 without a matcher or a bus; the mic has none here,
     // R-AUD-15).  defaultEngine() is R-AUD-02's engine for a role on
     // "(platform default)".  rescanOlderDrivers() (R-AUD-06) closes every
-    // role on PortAudio after a fade of at most kRescanFadeMs, has
+    // role on PortAudio after a fade of at most the larger of
+    // kRescanFadeMs and the stream's callback period plus kRescanSlewMs
+    // (the matcher's fade is its slew, 3 ms at most), has
     // PortAudio list its devices again and reopens those roles; a role on
     // another engine is never closed.  Main thread.
     static constexpr int kRescanFadeMs = 20;
+    static constexpr double kRescanSlewMs = 3.0;
     IAudioDeviceCatalog* catalogue() const;
     AudioRoleStatus roleStatus(AudioRole role) const;
     AudioDelayParts delayParts(AudioRole role) const;
@@ -1358,6 +1361,8 @@ private:
     IAudioBus* roleBusLocked(AudioRole role) const;
     std::unique_ptr<IAudioBus>& roleBusSlot(AudioRole role);
     std::mutex& roleBusMutex(AudioRole role) const;
+    // The engine's backend reports opensOneStreamAtATime() (C1).
+    bool backendOpensOneStreamAtATime(AudioEngineKind engine) const;
 
     // The input the TX path reads: an injected test bus when present,
     // otherwise the capture supervisor's stable reader.
@@ -1419,6 +1424,10 @@ private:
     // from a replaced bus is dropped; the engine of the open bus.
     std::array<quint64, kAudioRoleCount> m_roleBusGeneration{};
     std::array<std::optional<AudioEngineKind>, kAudioRoleCount> m_roleOpenEngine{};
+    // The device the open bus plays: its id, or for the system default the
+    // catalogue's default at the open (empty when unknown).  openRole()
+    // closes first only to reopen this same device (C1, R-AUD-08).
+    std::array<QString, kAudioRoleCount> m_roleOpenDeviceId{};
     // speakersConfigChanged emits made by openRole(), so setSpeakersConfig
     // announces a config only when no open did.
     quint64 m_speakersAnnouncements{0};

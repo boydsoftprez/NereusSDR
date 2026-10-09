@@ -8,6 +8,9 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 5 (R-AUD-08 to R-AUD-14). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan early-review fix wave (R-AUD-08):
+//               onRoleClosed().  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AudioStreamSupervisor.h"
@@ -232,6 +235,16 @@ void AudioStreamSupervisor::onOpenFinished(AudioRole role, AudioOpenResult resul
     if (role == AudioRole::TxInput && result != AudioOpenResult::Pending) {
         releaseHeldOutputs();
     }
+}
+
+void AudioStreamSupervisor::onRoleClosed(AudioRole role)
+{
+    // The failed open that follows reads it as closed: the fallback opens
+    // the system default, and a role on the default retries.
+    RoleState& s = state(role);
+    s.open = false;
+    s.onDefault = false;
+    s.openDevice.reset();
 }
 
 AudioRoleStatus AudioStreamSupervisor::status(AudioRole role) const

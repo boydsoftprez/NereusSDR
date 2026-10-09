@@ -20,6 +20,12 @@
 //   2026-10-09: native audio plan Task 7 fix: setOutputCreatedHook() tells
 //               a test of each output made.  J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: early-review fix wave (R-AUD-06, R-AUD-08, R-AUD-16):
+//               outputs can fail to open by device id
+//               (setFailingOutputs), use a set callback size and fade
+//               time, and report which are still alive (outputAlive);
+//               opensOneStreamAtATime() is settable.  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -30,6 +36,7 @@
 
 #include <QList>
 #include <QString>
+#include <QStringList>
 #include <QThread>
 
 #include <algorithm>
@@ -178,12 +185,19 @@ public:
 
     std::unique_ptr<IAudioBus> createOutput(const AudioStreamRequest& request) override
     {
-        auto bus = std::make_unique<FakeMatcherAudioBus>(request, m_takesStereoMix);
+        auto bus = std::make_unique<FakeMatcherAudioBus>(request, m_takesStereoMix,
+                                                         m_callbackFrames);
         bus->setFadeCounterForTest(m_fadeRequests);
+        bus->setFadeTimeForTest(m_fadeTimeMs);
+        bus->setClosedUnfadedCounterForTest(m_closedUnfaded);
+        auto alive = std::make_shared<std::atomic<bool>>(true);
+        bus->setAliveFlagForTest(alive);
         std::function<void(const AudioStreamRequest&)> hook;
         {
             std::lock_guard<std::mutex> lock(m_mutex);
+            bus->setOpenResult(!m_failingOutputs.contains(request.deviceId));
             m_outputRequests.push_back(request);
+            m_outputAlive.push_back(alive);
             m_lastOutput = bus.get();
             hook = m_outputCreatedHook;
         }
@@ -211,6 +225,7 @@ public:
         m_controlPanelOpens.push_back(deviceId);
     }
     void rescan() override { m_rescans.fetch_add(1); }
+    bool opensOneStreamAtATime() const override { return m_oneStreamAtATime.load(); }
 
     // -- What the test sets ---------------------------------------------
     void setDevices(QList<AudioDeviceInfo> devices)
@@ -236,6 +251,16 @@ public:
         (direction == AudioDeviceDirection::Output ? m_defaultOutput : m_defaultInput) = std::move(id);
     }
     void setRunning(bool running) { m_running.store(running); }
+    // Outputs made for these request device ids fail to open ("" is the
+    // system default).  Applies to outputs made after the call.
+    void setFailingOutputs(QStringList deviceIds)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_failingOutputs = std::move(deviceIds);
+    }
+    void setCallbackFrames(int frames) { m_callbackFrames = frames; }
+    void setFadeTimeMs(int ms) { m_fadeTimeMs = ms; }
+    void setOpensOneStreamAtATime(bool one) { m_oneStreamAtATime.store(one); }
     void setTakesStereoMix(bool takes) { m_takesStereoMix = takes; }
     void setHasControlPanel(bool has) { m_hasControlPanel = has; }
 
@@ -314,6 +339,20 @@ public:
         return m_controlPanelOpens;
     }
     int rescanCount() const { return m_rescans.load(); }
+    // Whether the output made for outputRequests()[index] still exists.
+    bool outputAlive(std::size_t index) const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return index < m_outputAlive.size() && m_outputAlive[index]->load();
+    }
+    int aliveOutputs() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return static_cast<int>(std::count_if(m_outputAlive.begin(), m_outputAlive.end(),
+                                              [](const auto& alive) { return alive->load(); }));
+    }
+    // Outputs destroyed after a fade request, before their fade ended.
+    int closedUnfaded() const { return m_closedUnfaded->load(); }
     // requestFadeOut() calls on every output this backend made.
     int fadeRequests() const { return m_fadeRequests->load(); }
     // The most enumerate() / defaultDeviceId() calls ever in progress at
@@ -367,6 +406,12 @@ private:
     FakeAudioInputStream* m_lastInput = nullptr;
     std::atomic<int> m_rescans{0};
     std::shared_ptr<std::atomic<int>> m_fadeRequests = std::make_shared<std::atomic<int>>(0);
+    std::shared_ptr<std::atomic<int>> m_closedUnfaded = std::make_shared<std::atomic<int>>(0);
+    std::vector<std::shared_ptr<std::atomic<bool>>> m_outputAlive;
+    QStringList m_failingOutputs;
+    int m_callbackFrames = 128;
+    int m_fadeTimeMs = 0;
+    std::atomic<bool> m_oneStreamAtATime{false};
 
     mutable std::mutex m_sinkMutex;
     std::function<void(AudioNotice)> m_noticeSink;
