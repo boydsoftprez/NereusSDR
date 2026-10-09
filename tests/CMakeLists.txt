@@ -1817,6 +1817,13 @@ nereus_add_test(tst_audio_delay_probe fakes/FakeCaptureChild.cpp)
 # WDSP's own rmatchV fed the same clocks (each simulation single-threaded,
 # the four run side by side to keep the wall time down).
 nereus_add_test(tst_device_rate_matcher)
+# The same matcher on a real writer thread and reader thread (+-200 ppm):
+# no torn frames, and the reader thread allocates nothing and (on Linux)
+# takes no pthread mutex. REALTIME: both threads are paced by the wall clock.
+nereus_add_test(tst_device_rate_matcher_threads REALTIME)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(tst_device_rate_matcher_threads PRIVATE ${CMAKE_DL_LIBS})
+endif()
 
 # R-R3-36 Task 5: AudioEngine and RadioModel PC microphone session demand.
 # start() opens no input; a hanging helper never delays start, connect or
