@@ -8716,6 +8716,19 @@ nereus_add_test(tst_radio_speaker_link
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
 target_compile_definitions(tst_radio_speaker_link PRIVATE NEREUS_BUILD_TESTS)
+# Native audio plan Task 21 (R-AUD-25, R-AUD-28, R-AUD-30): the Core
+# speaker's JSON forms, its binding on the Core to the master level, mute and
+# speakers role, the taps it leaves alone, and the desktop rule.
+nereus_add_test(tst_core_speaker_model)
+target_compile_definitions(tst_core_speaker_model PRIVATE NEREUS_BUILD_TESTS)
+# Native audio plan Task 21 (R-AUD-25, R-AUD-27, R-AUD-28): the Core
+# speaker's six properties reach only a peer that declared coreSpeaker 1 on
+# a Core with its own speaker, a remote window's change lands on the Core,
+# and a window of an older Core shows it disabled and sends nothing.
+nereus_add_test(tst_core_speaker_link
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_core_speaker_link PRIVATE NEREUS_BUILD_TESTS)
 # Level Cal: the window's grid stops following the noise floor while a run
 # goes and is put back after (Thetis CalibrateLevel).
 nereus_add_test(tst_level_cal_grid_follow_guard)
