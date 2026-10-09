@@ -8,6 +8,8 @@
 // Modification history (NereusSDR):
 //   2026-09-22: J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //               Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 13 (R-AUD-11): device in use.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -75,6 +77,8 @@ private slots:
             << QStringLiteral("Microphone support stopped unexpectedly.");
         QTest::newRow("protocol-error") << State::Failed << Reason::ProtocolError << mic << QString()
             << QStringLiteral("Microphone support stopped unexpectedly.");
+        QTest::newRow("device-in-use") << State::Failed << Reason::DeviceInUse << mic << QString()
+            << QStringLiteral("The selected microphone is in use by another program.");
     }
 
     void wording()
@@ -100,7 +104,8 @@ private slots:
         const QList<Reason> reasons = {
             Reason::None, Reason::PermissionDenied, Reason::DeviceNotFound, Reason::OpenFailed,
             Reason::StartFailed, Reason::InputLost, Reason::Timeout, Reason::HelperMissing,
-            Reason::HelperDidNotStart, Reason::HelperExited, Reason::ProtocolError};
+            Reason::HelperDidNotStart, Reason::HelperExited, Reason::ProtocolError,
+            Reason::DeviceInUse};
         const QStringList banned = {QStringLiteral("helper"), QStringLiteral("protocol"),
                                     QStringLiteral("generation"), QStringLiteral("pipe"),
                                     QStringLiteral("process")};

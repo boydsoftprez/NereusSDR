@@ -17,6 +17,9 @@
 // Modification history (NereusSDR):
 //   2026-10-08: native audio plan Task 1 (V-HW-8). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 13 (R-AUD-17): the detector also
+//               takes the stereo block an input sink receives.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -83,8 +86,16 @@ public:
     // least kHoldOffMs after the previous click.
     std::optional<std::int64_t> process(const float* mono, int frames,
                                         std::int64_t captureNsOfFrame0);
+    // The same on interleaved stereo, as IAudioInputSink::onInput gets it,
+    // reading channel 0: the picked mic channel, which the sink carries
+    // in both channels (R-AUD-17).
+    std::optional<std::int64_t> processStereo(const float* stereo, int frames,
+                                              std::int64_t captureNsOfFrame0);
 
 private:
+    std::optional<std::int64_t> processStrided(const float* samples, int frames, int stride,
+                                               std::int64_t captureNsOfFrame0);
+
     int m_sampleRate;
     double m_windowFrames;
     std::int64_t m_holdOffFrames;

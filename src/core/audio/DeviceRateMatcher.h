@@ -22,6 +22,9 @@
 // Modification history (NereusSDR):
 //   2026-10-08: native audio plan Task 2 (R-AUD-15). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: resamplerDelayFramesFor() for the PC mic's window side.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//               Native audio plan Task 13 (R-AUD-18).
 // =================================================================
 
 #pragma once
@@ -97,6 +100,9 @@ public:
     int delayStepMs() const;
     double fillFrames() const;
     int resamplerDelayFrames() const;
+    // The same delay for any rates, for a reader in another process (the
+    // PC mic's window side).  0 for a rate that is not positive.
+    static int resamplerDelayFramesFor(int inRate, int outRate);
     AudioDelayParts delayParts(double deviceBufferMs, double deviceLatencyMs) const;
     DeviceRateMatcherStats stats() const;
 

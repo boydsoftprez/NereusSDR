@@ -42,6 +42,14 @@
 //               after its padding, never from the reader's flag alone.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //               Native audio plan early-review fix wave (R-AUD-15).
+//   2026-10-09: Tests only: a ratio forced to 1.0 at equal rates copies
+//               the block, for the shared-memory ring's exact order check
+//               (V-SW-6).  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.  Native audio plan Task 13 (R-AUD-17).
+//   2026-10-09: resamplerDelayFramesFor(), the same varsamp delay for any
+//               rates, for the PC mic's window side.  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.  Native audio plan
+//               Task 13 (R-AUD-18).
 // =================================================================
 //
 // --- From rmatch.c ---
@@ -620,6 +628,16 @@ struct DeviceRateMatcher::Writer {
 
     int resample(double useVar)
     {
+#ifdef NEREUS_BUILD_TESTS
+        // Tests only: a ratio forced to exactly 1.0 at equal rates copies the
+        // block, so a test can check frame order exactly (V-SW-6); varsamp
+        // at 1.0 still filters.
+        if (m.m_forceRatio.load(std::memory_order_relaxed) && useVar == 1.0
+            && cfg.inRate == cfg.outRate) {
+            std::copy(in.begin(), in.end(), resout.begin());
+            return cfg.writeBlockFrames;
+        }
+#endif
 #ifdef HAVE_WDSP
         return xvarsamp(v, useVar);
 #else
@@ -984,21 +1002,29 @@ double DeviceRateMatcher::fillFrames() const
 
 int DeviceRateMatcher::resamplerDelayFrames() const
 {
+    return resamplerDelayFramesFor(m_config.inRate, m_config.outRate);
+}
+
+int DeviceRateMatcher::resamplerDelayFramesFor(int inRate, int outRate)
+{
+    if (inRate <= 0 || outRate <= 0) {
+        return 0;
+    }
     // From Thetis Project Files/Source/wdsp/varsamp.c:41-60 [v2.10.3.15 @3759d09]
     double min_rate, norm_rate;
     // double max_rate;
-    if (m_config.outRate >= m_config.inRate)
+    if (outRate >= inRate)
     {
-        min_rate = (double)m_config.inRate;
+        min_rate = (double)inRate;
         // max_rate = (double)a->out_rate;
         norm_rate = min_rate;
     }
     else
     {
-        min_rate = (double)m_config.outRate;
+        min_rate = (double)outRate;
         // max_rate = (double)a->in_rate;
         // norm_rate = max_rate;
-        norm_rate = (double)m_config.inRate;
+        norm_rate = (double)inRate;
     }
     const int rsize = (int)(kVarsampTapsAtUnity * norm_rate / min_rate);
     // As RemoteAudioRateMatcher::filterDelayFrames: half the filter, less one.

@@ -12,6 +12,12 @@
 //   2026-10-08: native audio plan Task 1 (V-HW-8): the delay probe's
 //               ProbeEnable and ProbeHit, and a protocol 1 helper refused.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 13 (R-AUD-17, R-AUD-18): the reader
+//               over a clock matcher ring, the shared ring from the fake,
+//               a Pcm record and a bad ring as protocol errors, the
+//               device-in-use reason, the device facts in Ready, and a
+//               status of an earlier request told apart.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -19,6 +25,7 @@
 #include <QElapsedTimer>
 #include <QSignalSpy>
 
+#include <cstdint>
 #include <cstring>
 #include <functional>
 #include <memory>
@@ -26,6 +33,8 @@
 
 #include "core/audio/CaptureAudioBus.h"
 #include "core/audio/CaptureSupervisor.h"
+#include "core/audio/DeviceRateMatcher.h"
+#include "core/audio/MatcherRing.h"
 #include "fakes/FakeCaptureChild.h"
 
 #ifdef Q_OS_WIN
@@ -131,24 +140,60 @@ bool waitProcessGone(qint64 pid, int timeoutMs)
     return true;
 }
 
-// Pulls until at least `frames` frames were read or the time runs out.
+// Pulls at about the stream's own pace (240 frames each 5 ms, as the TX
+// worker drains it) until at least `frames` frames were read or the time
+// runs out.  The clock matcher returns every frame asked for, so an
+// unpaced loop would read its dry-run silence.
 std::vector<float> pullFrames(CaptureAudioBus* reader, int frames, int timeoutMs)
 {
     std::vector<float> out;
-    std::vector<float> block(256);
+    std::vector<float> block(240);
     QElapsedTimer timer;
     timer.start();
     while (static_cast<int>(out.size()) < frames && timer.elapsed() < timeoutMs) {
+        QTest::qWait(5);
         const qint64 got = reader->pull(reinterpret_cast<char*>(block.data()),
                                         static_cast<qint64>(block.size() * sizeof(float)));
         if (got > 0) {
             out.insert(out.end(), block.begin(), block.begin() + got / static_cast<qint64>(sizeof(float)));
-        } else {
-            QTest::qWait(5);
         }
     }
     return out;
 }
+
+// A clock matcher ring in local memory, as the helper builds one in the
+// shared region: 48 kHz in and out, 480-frame bursts.
+struct LocalRing {
+    LocalRing()
+    {
+        config.inRate = 48000;
+        config.outRate = 48000;
+        config.writeBlockFrames = 64;
+        config.callbackFrames = 480;
+        config.delayMs = 0;
+        bytes = DeviceRateMatcher::ringBytes(config);
+        memory.resize(bytes / sizeof(std::uint64_t) + 1);
+        matcher = std::make_unique<DeviceRateMatcher>(config, memory.data(), bytes);
+    }
+    MatcherRingHeader* header()
+    {
+        return attachMatcherRing(memory.data(), bytes);
+    }
+    // count blocks of 480 stereo frames at value, 10 ms apart.
+    void write(float value, int count)
+    {
+        std::vector<float> block(960, value);
+        for (int i = 0; i < count; ++i) {
+            nowNs += 10'000'000;
+            matcher->write(block.data(), 480, nowNs);
+        }
+    }
+    DeviceRateMatcher::Config config;
+    std::size_t bytes = 0;
+    std::vector<std::uint64_t> memory;
+    std::unique_ptr<DeviceRateMatcher> matcher;
+    std::int64_t nowNs = 1'000'000'000;
+};
 
 } // namespace
 
@@ -168,56 +213,76 @@ private slots:
         QCOMPARE(format.sampleRate, 48000);
         QCOMPARE(format.channels, 1);
         QVERIFY(format.sample == AudioFormat::Sample::Float32);
+        QVERIFY(!reader.ringAttached());
+        QVERIFY(!reader.fillFrames().has_value());
+        QVERIFY(!reader.attachRing(nullptr));
 
-        std::vector<float> samples(480, 0.25f);
-        samples[7] = -0.75f;
-        QCOMPARE(reader.writeFrames(samples.data(), 480), 480);
-        QCOMPARE(reader.txLevel(), 0.75f);
         char buffer[64];
-        QCOMPARE(reader.pull(buffer, sizeof(buffer)), qint64(0));   // unavailable
+        reader.setAvailable(true);
+        QCOMPARE(reader.pull(buffer, sizeof(buffer)), qint64(0));   // open, but no ring
+        reader.setAvailable(false);
+
+        LocalRing ring;
+        QVERIFY(ring.matcher->valid());
+        QVERIFY(ring.header() != nullptr);
+        QVERIFY(reader.attachRing(ring.header()));
+        QVERIFY(reader.ringAttached());
+        QVERIFY(!reader.attachRing(ring.header()));                 // one ring at a time
+        ring.write(0.25f, 10);
+        reader.noteWake();
+        QCOMPARE(reader.txLevel(), 0.0f);                           // unavailable
+        QCOMPARE(reader.pull(buffer, sizeof(buffer)), qint64(0));
 
         reader.setAvailable(true);
         QVERIFY(reader.isOpen());
+        QVERIFY2(reader.txLevel() > 0.2f && reader.txLevel() < 0.3f,
+                 qPrintable(QString::number(reader.txLevel())));
+        QVERIFY(reader.fillFrames().has_value());
         QCOMPARE(reader.pull(buffer, 6), qint64(4));                // whole frames only
         reader.close();
         QVERIFY(reader.isOpen());                                   // close() changes nothing
 
         reader.setAvailable(false);
         QCOMPARE(reader.txLevel(), 0.0f);
+        reader.detachRing();
+        QVERIFY(!reader.ringAttached());
         reader.setAvailable(true);
-        QCOMPARE(reader.pull(buffer, sizeof(buffer)), qint64(0));   // retired by withdrawal
+        QCOMPARE(reader.pull(buffer, sizeof(buffer)), qint64(0));   // no ring after detach
+        QCOMPARE(reader.overruns(), quint64(0));
+        QCOMPARE(reader.lastWriteNs(), std::int64_t(0));
     }
 
-    void readerRingHolds4800FramesAndCountsDrops()
+    // R-AUD-17: the reader returns every frame asked for from the ring's
+    // left channel; past the written frames it is a counted dry run, and
+    // a pull larger than its scratch block is filled in pieces.
+    void readerReadsTheMatcherRing()
     {
+        LocalRing ring;
         CaptureAudioBus reader;
+        QVERIFY(reader.attachRing(ring.header()));
         reader.setAvailable(true);
-        std::vector<float> block(1000);
-        for (int i = 0; i < 6; ++i) {
-            for (int n = 0; n < 1000; ++n) {
-                block[static_cast<std::size_t>(n)] = static_cast<float>(i * 1000 + n) / 10000.0f;
-            }
-            reader.writeFrames(block.data(), 1000);
+        ring.write(0.25f, 6);                                       // 2880 frames
+        QVERIFY(reader.lastWriteNs() > 1'000'000'000);
+
+        std::vector<float> out(2000, -1.0f);
+        QCOMPARE(reader.pull(reinterpret_cast<char*>(out.data()), qint64(out.size() * 4)),
+                 qint64(2000 * 4));
+        int nearQuarter = 0;
+        for (float v : out) {
+            QVERIFY(v >= -0.3f && v <= 0.3f);
+            nearQuarter += (std::fabs(v - 0.25f) < 0.01f) ? 1 : 0;
         }
-        QCOMPARE(CaptureAudioBus::kRingFrames, 4800);
-        QCOMPARE(reader.bufferedFrames(), 4800);
-        QCOMPARE(reader.droppedFrames(), quint64(1200));
+        QVERIFY2(nearQuarter > 500, qPrintable(QString::number(nearQuarter)));
 
-        std::vector<float> out(6000);
-        const qint64 got = reader.pull(reinterpret_cast<char*>(out.data()),
-                                       static_cast<qint64>(out.size() * sizeof(float)));
-        QCOMPARE(got, qint64(4800 * 4));
-        QCOMPARE(out[0], 0.0f);                          // oldest kept, newest dropped
-        QCOMPARE(out[4799], 4799.0f / 10000.0f);
-
-        // Wraps correctly once space is free, and flush() retires everything.
-        QCOMPARE(reader.writeFrames(block.data(), 1000), 1000);
-        reader.flush();
-        QCOMPARE(reader.bufferedFrames(), 0);
-        QCOMPARE(reader.pull(reinterpret_cast<char*>(out.data()), 4000), qint64(0));
-        QCOMPARE(reader.writeFrames(block.data(), 10), 10);
-        QCOMPARE(reader.pull(reinterpret_cast<char*>(out.data()), 4000), qint64(40));
-        QCOMPARE(out[0], block[0]);
+        const quint64 dryBefore = reader.dryRuns();
+        std::vector<float> more(8000);
+        QCOMPARE(reader.pull(reinterpret_cast<char*>(more.data()), qint64(more.size() * 4)),
+                 qint64(8000 * 4));
+        QVERIFY(reader.dryRuns() > dryBefore);
+        QCOMPARE(more.back(), 0.0f);                                // silence once dry
+        reader.flush();                                             // changes nothing
+        QVERIFY(reader.ringAttached());
+        reader.detachRing();
     }
 
     // ── Supervisor ───────────────────────────────────────────────────────────
@@ -262,18 +327,27 @@ private slots:
         QVERIFY(ready.generation >= 1);
         QCOMPARE(ready.actualDevice, QStringLiteral("Fake microphone"));
         QCOMPARE(ready.reason, Reason::None);
+        // The device facts from the helper's Ready (R-AUD-18).
+        QCOMPARE(ready.nativeRate, 48000);
+        QCOMPARE(ready.deviceLatencyMs, 1.5);
+        QCOMPARE(ready.deviceBufferMs, 10.0);
+        QCOMPARE(ready.request, supervisor.requestSerial());
+        QVERIFY(ready.request >= 1);
+        QVERIFY(reader->ringAttached());
         QVERIFY(recorder.sawState(State::Opening));
         QVERIFY(reader->isOpen());
         const qint64 pid = supervisor.helperProcessId();
         QVERIFY(pid > 0);
 
-        const std::vector<float> samples = pullFrames(reader, 960, 3000);
-        QVERIFY(samples.size() >= 960);
+        // The clock matcher starts with its target fill of silence (about
+        // 30 ms here); the tone follows it.
+        const std::vector<float> samples = pullFrames(reader, 4800, 5000);
+        QVERIFY(samples.size() >= 4800);
         float peak = 0.0f;
-        for (float s : samples) {
-            peak = std::max(peak, std::fabs(s));
+        for (std::size_t i = samples.size() - 960; i < samples.size(); ++i) {
+            peak = std::max(peak, std::fabs(samples[i]));
         }
-        QVERIFY2(peak > 0.4f && peak <= 0.5001f, qPrintable(QString::number(peak)));
+        QVERIFY2(peak > 0.4f && peak <= 0.51f, qPrintable(QString::number(peak)));
         QVERIFY(reader->txLevel() > 0.0f);
         QCOMPARE(supervisor.reader(), reader);
 
@@ -286,6 +360,7 @@ private slots:
         QVERIFY(timer.elapsed() < 2000);
         QVERIFY(recorder.sawState(State::Stopping));
         QVERIFY(!reader->isOpen());
+        QVERIFY(!reader->ringAttached());
         char buffer[64];
         QCOMPARE(reader->pull(buffer, sizeof(buffer)), qint64(0));
         QVERIFY(waitProcessGone(pid, 1000));
@@ -413,6 +488,10 @@ private slots:
         QTest::newRow("oversize") << QStringLiteral("oversize");
         // V-HW-8: protocol 2 rejects a protocol 1 helper, as before.
         QTest::newRow("version-1") << QStringLiteral("version-1");
+        // R-AUD-17: version 3 audio is in the ring only, and a ring the
+        // helper did not build is refused.
+        QTest::newRow("pcm-record") << QStringLiteral("pcm-record");
+        QTest::newRow("bad-ring") << QStringLiteral("bad-ring");
     }
 
     void protocolErrors()
@@ -439,6 +518,58 @@ private slots:
         QCOMPARE(supervisor.status().reason, Reason::InputLost);
         QVERIFY(!supervisor.reader()->isOpen());
         QCOMPARE(supervisor.reader()->txLevel(), 0.0f);
+    }
+
+    // R-AUD-11: a mic another program holds fails as DeviceInUse, never
+    // as a plain open failure.
+    void busyFailsAsDeviceInUse()
+    {
+        CaptureSupervisor supervisor(fakeOptions(QStringLiteral("busy")));
+        Recorder recorder(supervisor);
+        auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
+        QVERIFY(waitForState(supervisor, State::Failed, 5000));
+        QCOMPARE(supervisor.status().reason, Reason::DeviceInUse);
+        QVERIFY(!recorder.sawState(State::Ready));
+        QVERIFY(!supervisor.reader()->isOpen());
+    }
+
+    // Carried finding (Task 5): two configures back to back.  Every status
+    // that answers the later request is of the last generation, and every
+    // status of an earlier request is of an earlier generation, so a
+    // caller holding the later serial never takes the first open's result.
+    void backToBackConfiguresAnswerTheirOwnRequest()
+    {
+        CaptureSupervisor supervisor(fakeOptions(QStringLiteral("ready")));
+        auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
+        QVERIFY(waitForState(supervisor, State::Ready, 5000));
+        const quint64 start = supervisor.requestSerial();
+
+        Recorder recorder(supervisor);
+        AudioDeviceConfig a;
+        a.deviceName = QStringLiteral("Microphone A");
+        AudioDeviceConfig b;
+        b.deviceName = QStringLiteral("Microphone B");
+        supervisor.configure(a);
+        const quint64 serialA = supervisor.requestSerial();
+        supervisor.configure(b);
+        const quint64 serialB = supervisor.requestSerial();
+        QCOMPARE(serialA, start + 1);
+        QCOMPARE(serialB, start + 2);
+        QVERIFY(waitFor(supervisor, [serialB](const Status& s) {
+            return s.state == State::Ready && s.request == serialB;
+        }, 5000));
+        const quint32 last = supervisor.status().generation;
+        QCOMPARE(supervisor.status().configuredDevice, QStringLiteral("Microphone B"));
+        QVERIFY(!recorder.seen.empty());
+        for (const Status& s : recorder.seen) {
+            QVERIFY(s.request >= serialA);
+            if (s.request == serialB) {
+                QCOMPARE(s.generation, last);
+            } else {
+                QVERIFY2(s.generation < last, qPrintable(QString::number(s.generation)));
+                QVERIFY(s.configuredDevice != QStringLiteral("Microphone B"));
+            }
+        }
     }
 
     void ignoredStopIsKilledWithinBound()

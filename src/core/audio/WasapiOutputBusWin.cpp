@@ -7,6 +7,9 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 9 (R-AUD-02, R-AUD-11, R-AUD-16).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 13 (R-AUD-11): openRefusedInUse()
+//               reads the last open's result.  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/WasapiSystemWin.h"
@@ -387,6 +390,13 @@ AudioFormat WasapiOutputBusWin::negotiatedFormat() const
 QString WasapiOutputBusWin::errorString() const
 {
     return m_impl->error;
+}
+
+bool WasapiOutputBusWin::openRefusedInUse() const
+{
+    // R-AUD-11: the open's DeviceBusy is posted before the engine sets the
+    // event sink, so the open result carries it instead.
+    return !isOpen() && wasapiOpenResult(lastOpenResult()) == AudioOpenResult::InUse;
 }
 
 void WasapiOutputBusWin::setStreamEventSink(std::function<void(const AudioStreamEvent&)> sink)
