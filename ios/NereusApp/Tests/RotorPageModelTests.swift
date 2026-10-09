@@ -374,6 +374,38 @@ struct RotorPageModelTests {
         older.model.setupHidden()
     }
 
+    @Test("Setup's Rotor page shown before the Core's rotor arrives asks the moment it does")
+    func setupAsksWhenTheRotorArrives() async {
+        let rig = await Rig(rotor: nil)
+        rig.model.setupShown()
+        await drain()
+        #expect(rig.sent("refreshRotorPorts").isEmpty)
+        // The Core's rotor arrives: asked at once, not 20 s later.
+        rig.mirror.apply(.objectCreate(.init(key: RotorModel.objectKey, className: "RotorModel",
+                                             properties: Rig.connectedRotor)))
+        rig.model.refresh()
+        #expect(await turns { rig.sent("refreshRotorPorts").count == 1 })
+        // A refresh with nothing new asks nothing more.
+        rig.model.refresh()
+        await drain()
+        #expect(rig.sent("refreshRotorPorts").count == 1)
+        // The 20 s repeat runs from that ask.
+        await rig.clock.advance(by: 19_999)
+        await drain()
+        #expect(rig.sent("refreshRotorPorts").count == 1)
+        await rig.clock.advance(by: 1)
+        #expect(await turns { rig.sent("refreshRotorPorts").count == 2 })
+        rig.model.setupHidden()
+
+        // Off screen, the rotor arriving asks nothing.
+        let hidden = await Rig(rotor: nil)
+        hidden.mirror.apply(.objectCreate(.init(key: RotorModel.objectKey, className: "RotorModel",
+                                                properties: Rig.connectedRotor)))
+        hidden.model.refresh()
+        await drain()
+        #expect(hidden.recorded.commands.isEmpty)
+    }
+
     // MARK: The route
 
     @Test("the predicted route follows the end stop and the overlap, as the bench capture turned")

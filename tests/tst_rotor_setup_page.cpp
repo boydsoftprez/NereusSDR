@@ -22,6 +22,9 @@
 //                                    shared, and a running scan is waited
 //                                    out before they change.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Re-review N6: a remote page asks as
+//                                    soon as the Core's rotor arrives.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -247,6 +250,40 @@ private slots:
         // A Core that does not control a rotor is not asked.
         link.available = false;
         page.show();
+        QCOMPARE(link.refreshes, 2);
+        page.hide();
+    }
+
+    void remoteWindowAsksAsSoonAsTheCoresRotorArrives()
+    {
+        // Re-review N6: a page open before the Core's rotor capability
+        // arrives asks the moment it does, not at the next 20 s tick.
+        RadioModel window(RadioModel::Role::Remote);
+        RecordingRotorLink link;
+        link.available = false;
+        window.attachStation(&link);
+        window.reportStationLinkStateChanged();
+        RotorSetupPage page(&window);
+        page.show();
+        QCOMPARE(link.refreshes, 0);
+        link.available = true;
+        window.reportStationLinkStateChanged();
+        QCOMPARE(link.refreshes, 1);
+        // Further link reports with the capability unchanged ask nothing.
+        window.reportStationLinkStateChanged();
+        QCOMPARE(link.refreshes, 1);
+        // The link drops and comes back: asked again.
+        link.available = false;
+        window.reportStationLinkStateChanged();
+        link.available = true;
+        window.reportStationLinkStateChanged();
+        QCOMPARE(link.refreshes, 2);
+        // With no setup view open, the capability arriving asks nothing.
+        page.hide();
+        link.available = false;
+        window.reportStationLinkStateChanged();
+        link.available = true;
+        window.reportStationLinkStateChanged();
         QCOMPARE(link.refreshes, 2);
     }
 

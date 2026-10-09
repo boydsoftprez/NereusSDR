@@ -1076,6 +1076,10 @@
 //                computer reads its serial ports only while a setup view
 //                is open or a rotor is set up. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Re-review N6: a remote rotor setup view asks for the
+//                Core's ports as soon as the Core's rotor capability
+//                arrives. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
 //=================================================================
@@ -6105,27 +6109,29 @@ void RadioModel::setRotorSetupViewOpen(bool open)
         }
         return;
     }
-    const auto ask = [this] {
-        // Only a Core that controls a rotor is asked: any other would
-        // refuse, and its refusal would show every 20 s.
-        if (m_station && m_station->rotorControlAvailable()) {
-            m_station->requestRefreshRotorPorts();
-        }
-    };
     if (!m_rotorSetupAsk) {
         m_rotorSetupAsk = new QTimer(this);
         m_rotorSetupAsk->setInterval(RotorLink::RotorModel::kRemoteSetupAskMs);
-        connect(m_rotorSetupAsk, &QTimer::timeout, this, ask);
+        connect(m_rotorSetupAsk, &QTimer::timeout, this, &RadioModel::askCoreForRotorPorts);
     }
     if (m_rotorSetupViews == 0) {
         m_rotorSetupAsk->stop();
         return;
     }
     if (open) {
-        ask();
+        askCoreForRotorPorts();
     }
     if (!m_rotorSetupAsk->isActive()) {
         m_rotorSetupAsk->start();
+    }
+}
+
+void RadioModel::askCoreForRotorPorts()
+{
+    // Only a Core that controls a rotor is asked: any other would
+    // refuse, and its refusal would show every 20 s.
+    if (m_station && m_station->rotorControlAvailable()) {
+        m_station->requestRefreshRotorPorts();
     }
 }
 
@@ -9660,6 +9666,15 @@ void RadioModel::reportStationLinkStateChanged()
     if (!link || !link->stationLinkReady()) {
         m_pageShownAccessoryRequests.clear();
     }
+    // Re-review N6: a rotor setup view opened before the Core's rotor
+    // capability arrived asks for the Core's ports as soon as it does, not
+    // at the next 20 s tick; the tick then runs from this ask.
+    const bool rotorControl = !m_stationRotor && link && link->rotorControlAvailable();
+    if (rotorControl && !m_rotorControlSeen && m_rotorSetupViews > 0 && m_rotorSetupAsk) {
+        askCoreForRotorPorts();
+        m_rotorSetupAsk->start();
+    }
+    m_rotorControlSeen = rotorControl;
     emit stationLinkStateChanged();
 }
 

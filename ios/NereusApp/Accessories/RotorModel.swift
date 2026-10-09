@@ -239,6 +239,8 @@ final class RotorModel: ObservableObject {
     private var holdGeneration: UInt64 = 0
     private var setupAskTimer: (any LinkTimer)?
     private var setupAskGeneration: UInt64 = 0
+    /// Setup's Rotor page is on screen (setupShown to setupHidden).
+    private var setupOnScreen = false
     private var selectionGeneration: UInt64 = 0
     private var targetGeneration: UInt64 = 0
     private let outcomes = ControlOutcomeOwner()
@@ -456,15 +458,24 @@ final class RotorModel: ObservableObject {
     /// asks (`refreshRotorPorts`), so the page asks now and every 20 s while
     /// it stays. Quiet: nothing shows if the Core cannot be asked.
     func setupShown() {
-        setupAskGeneration &+= 1
-        askForPorts(setupAskGeneration)
+        setupOnScreen = true
+        restartSetupAsks()
     }
 
     /// Setup's Rotor page left the screen: no more asks.
     func setupHidden() {
+        setupOnScreen = false
         setupAskTimer?.cancel()
         setupAskTimer = nil
         setupAskGeneration &+= 1
+    }
+
+    /// Asks now and every 20 s from now.
+    private func restartSetupAsks() {
+        setupAskTimer?.cancel()
+        setupAskTimer = nil
+        setupAskGeneration &+= 1
+        askForPorts(setupAskGeneration)
     }
 
     private func askForPorts(_ generation: UInt64) {
@@ -761,6 +772,7 @@ final class RotorModel: ObservableObject {
     // MARK: Reading
 
     func refresh() {
+        let couldAskForPorts = setupReason == nil
         let connected = mirror.isSnapshotComplete && !mirror.isStale
         set(\.coreConnected, connected)
         set(\.version, mirror.capabilityVersion(Self.capability))
@@ -778,6 +790,12 @@ final class RotorModel: ObservableObject {
         }
         if selection != nil, turnReason != nil {
             dropSelection()
+        }
+        // Setup's Rotor page shown before the Core's rotor arrived (the
+        // capability, its `rotor` object, the snapshot) asks the moment it
+        // does, not at the next 20 s tick.
+        if setupOnScreen, !couldAskForPorts, setupReason == nil {
+            restartSetupAsks()
         }
     }
 

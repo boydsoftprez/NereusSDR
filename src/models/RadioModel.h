@@ -8500,6 +8500,12 @@ private:
     // the timer that asks the Core to keep reading its ports; Qt child.
     int     m_rotorSetupViews{0};
     QTimer* m_rotorSetupAsk{nullptr};
+    // Re-review N6: whether the Core controlled a rotor at the last link
+    // report, so a setup view open before the capability arrived asks the
+    // moment it does (reportStationLinkStateChanged).
+    bool    m_rotorControlSeen{false};
+    // One ask (`refreshRotorPorts`) of a Core that controls a rotor.
+    void askCoreForRotorPorts();
     StationTciModel*        m_stationTciModel{nullptr};
     // M6: owned here and destroyed first in ~RadioModel (they hold this
     // model's slices and receivers), not through Qt parenting.
