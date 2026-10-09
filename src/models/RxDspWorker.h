@@ -43,6 +43,11 @@
 //                 processSliceChunk, so every slice on the diversity target's
 //                 stream is fed from the mix. J.J. Boyd (KG4VCF), with
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-09 - Native audio plan Task 8 (R-AUD-18): followSpeakersWorkgroup,
+//                 so the DSP thread leaves and rejoins the audio workgroup of
+//                 the device the speakers play on whenever it changes.
+//                 NereusSDR-original. J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -98,6 +103,8 @@
 
 #include <array>
 #include <atomic>
+#include <cstdint>
+#include <functional>
 #include <memory>
 #include <unordered_map>
 #include <vector>
@@ -246,6 +253,16 @@ public:
         ExternalDiversityRouteHookForTest hook)
     {
         m_externalDiversityRouteHookForTest = hook;
+    }
+
+    // R-AUD-18: replaces rejoinAudioWorkgroup() in the workgroup follow,
+    // so a test sees each rejoin without a device.  Set it before the
+    // first batch.
+    using WorkgroupRejoinForTest =
+        std::function<bool(AudioPriorityToken*, std::uint32_t)>;
+    void setWorkgroupRejoinForTest(WorkgroupRejoinForTest rejoin)
+    {
+        m_workgroupRejoinForTest = std::move(rejoin);
     }
 #endif
 
@@ -460,6 +477,14 @@ private:
     // (also on the DSP thread, before the thread exits).  See
     // src/core/audio/RealtimeAudioPriority.h.
     AudioPriorityToken* m_audioPrioToken{nullptr};
+
+    // R-AUD-18: the AudioEngine speakers workgroup generation this thread
+    // last followed.  DSP thread only.
+    std::uint32_t m_seenWorkgroupGeneration{0};
+    void followSpeakersWorkgroup();
+#ifdef NEREUS_BUILD_TESTS
+    WorkgroupRejoinForTest m_workgroupRejoinForTest;
+#endif
 
     // ── Phase 3F Sub-Epic I Task 4: per-stream accumulation ─────────────
     //

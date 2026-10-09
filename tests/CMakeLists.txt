@@ -1611,6 +1611,13 @@ if(APPLE)
     nereus_add_test(tst_core_audio_hal_bus)
 endif()
 
+# Native audio plan Task 8 (R-AUD-01, R-AUD-02, R-AUD-07, R-AUD-11,
+# R-AUD-14, R-AUD-32): the Core Audio engine against a fake HAL system.
+# The real adapter is made but never opens a device (the test-run barrier).
+if(APPLE)
+    nereus_add_test(tst_core_audio_backend)
+endif()
+
 # Audited 2026-07-25: tst_linux_pipe_bus, tst_linux_backend_detection (below)
 # and tst_pipewire_stream_config, tst_pipewire_stream_integration (further
 # down, Phase 3O Sub-Phase 8 / Task 24) register only inside

@@ -20,6 +20,10 @@
 //   2026-10-09: native audio plan Task 7 fix: setOutputCreatedHook() tells
 //               a test of each output made.  J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 8 (R-AUD-18): setWorkgroupDevice()
+//               gives the outputs made for one device id an
+//               audioWorkgroupDevice(). J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-09: early-review fix wave (R-AUD-06, R-AUD-08, R-AUD-16):
 //               outputs can fail to open by device id
 //               (setFailingOutputs), use a set callback size and fade
@@ -34,6 +38,7 @@
 #include "core/audio/IAudioEngineBackend.h"
 #include "FakeMatcherAudioBus.h"
 
+#include <QHash>
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -195,6 +200,7 @@ public:
         std::function<void(const AudioStreamRequest&)> hook;
         {
             std::lock_guard<std::mutex> lock(m_mutex);
+            bus->setAudioWorkgroupDevice(m_workgroupDevices.value(request.deviceId, 0));
             bus->setOpenResult(!m_failingOutputs.contains(request.deviceId));
             m_outputRequests.push_back(request);
             m_outputAlive.push_back(alive);
@@ -263,6 +269,13 @@ public:
     void setOpensOneStreamAtATime(bool one) { m_oneStreamAtATime.store(one); }
     void setTakesStereoMix(bool takes) { m_takesStereoMix = takes; }
     void setHasControlPanel(bool has) { m_hasControlPanel = has; }
+    // The audioWorkgroupDevice() of every output made for deviceId ("" is
+    // the default); 0 when not set.
+    void setWorkgroupDevice(const QString& deviceId, std::uint32_t device)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_workgroupDevices.insert(deviceId, device);
+    }
 
     // Calls the notice sink on the calling thread, as a system notice would.
     void postNotice(AudioNotice notice)
@@ -391,6 +404,7 @@ private:
     QList<AudioDeviceInfo> m_devices;
     std::optional<QString> m_defaultOutput;
     std::optional<QString> m_defaultInput;
+    QHash<QString, std::uint32_t> m_workgroupDevices;
     bool m_holdEnumerate = false;
     int m_enumerateCalls = 0;
     int m_defaultCalls = 0;

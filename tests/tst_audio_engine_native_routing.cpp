@@ -18,6 +18,12 @@
 //   2026-10-09: native audio plan Task 7 (R-AUD-02, R-AUD-06, R-AUD-15,
 //               R-AUD-34). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-09: native audio plan Task 8 (R-AUD-01, R-AUD-02): the Mac's
+//               registry is Core Audio only. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 8 (R-AUD-18): the speakers
+//               workgroup generation and the DSP thread's rejoin. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09: early-review fix wave (R-AUD-02, R-AUD-06, R-AUD-08,
 //               R-AUD-16): a failed open leaves the playing bus playing,
 //               reopening the same device closes first, Windows shared
@@ -44,6 +50,8 @@
 #include "core/audio/CaptureSupervisor.h"
 #include "core/audio/IAudioDeviceCatalog.h"
 #include "core/audio/PortAudioBackend.h"
+#include "core/audio/RealtimeAudioPriority.h"
+#include "models/RxDspWorker.h"
 
 #include "fakes/FakeAudioEngineBackend.h"
 #include "fakes/FakeCaptureChild.h"
@@ -175,11 +183,104 @@ private slots:
         pipewire->setRunning(true);
         QCOMPARE(defaultAudioEngine({pipewire, older}), AudioEngineKind::PipeWire);
 
-        // The registry builds the older drivers here, until the native
-        // engine tasks add theirs.
+        // R-AUD-01: the Mac registers Core Audio only; the other systems
+        // build the older drivers last, until their engine tasks add theirs.
         const auto system = makeSystemAudioBackends(AudioBackendContext{});
         QVERIFY(!system.empty());
+#ifdef Q_OS_MAC
+        QCOMPARE(system.size(), std::size_t(1));
+        QCOMPARE(system.front()->id(), AudioBackendId::CoreAudio);
+        QCOMPARE(defaultAudioEngine(system), AudioEngineKind::CoreAudio);
+#else
         QCOMPARE(system.back()->id(), AudioBackendId::PortAudio);
+#endif
+    }
+
+    // R-AUD-18: every speakers open on a device bumps the workgroup
+    // generation and stores the device's workgroup id: the saved device,
+    // the fall-back to the default, and the return.
+    void speakersOpenBumpsTheWorkgroupGeneration()
+    {
+        Rig rig;
+        rig.native->setWorkgroupDevice(QStringLiteral("desk-uid"), 71);
+        rig.native->setWorkgroupDevice(QString(), 72);
+        savedChoice(AudioEngineKind::CoreAudio, QStringLiteral("desk-uid"),
+                    QStringLiteral("Desk speakers"))
+            .saveToSettings(QStringLiteral("audio/Speakers"));
+        rig.build();
+        QCOMPARE(rig.engine->speakersWorkgroupGeneration(), std::uint32_t(0));
+        QCOMPARE(rig.engine->speakersWorkgroupDevice(), std::uint32_t(0));
+        rig.engine->start();
+        QCOMPARE(rig.native->outputRequests().size(), std::size_t(1));
+        QCOMPARE(rig.engine->speakersWorkgroupGeneration(), std::uint32_t(1));
+        QCOMPARE(rig.engine->speakersWorkgroupDevice(), std::uint32_t(71));
+
+        // The device goes away: the speakers fall back to the default.
+        FakeMatcherAudioBus* desk = rig.native->lastOutput();
+        QVERIFY(desk != nullptr);
+        AudioStreamEvent lost;
+        lost.kind = AudioStreamEvent::Kind::DeviceLost;
+        desk->emitEventForTest(lost);
+        QTRY_COMPARE_WITH_TIMEOUT(rig.engine->roleStatus(AudioRole::Speakers).state,
+                                  AudioRoleState::PlayingOnDefault, kWaitMs);
+        QCOMPARE(rig.native->outputRequests().size(), std::size_t(2));
+        QCOMPARE(rig.engine->speakersWorkgroupGeneration(), std::uint32_t(2));
+        QCOMPARE(rig.engine->speakersWorkgroupDevice(), std::uint32_t(72));
+
+        // The chosen device is chosen again: the speakers return to it.
+        rig.engine->setSpeakersConfig(savedChoice(AudioEngineKind::CoreAudio,
+                                                  QStringLiteral("built-in-uid"),
+                                                  QStringLiteral("Built-in speakers")));
+        rig.engine->setSpeakersConfig(savedChoice(AudioEngineKind::CoreAudio,
+                                                  QStringLiteral("desk-uid"),
+                                                  QStringLiteral("Desk speakers")));
+        QTRY_COMPARE_WITH_TIMEOUT(rig.engine->roleStatus(AudioRole::Speakers).state,
+                                  AudioRoleState::Playing, kWaitMs);
+        QCOMPARE(rig.native->outputRequests().back().deviceId, QStringLiteral("desk-uid"));
+        const auto opens = static_cast<std::uint32_t>(rig.native->outputRequests().size());
+        QCOMPARE(rig.engine->speakersWorkgroupGeneration(), opens);
+        QCOMPARE(rig.engine->speakersWorkgroupDevice(), std::uint32_t(71));
+        rig.engine->stop();
+    }
+
+    // R-AUD-18: the DSP thread rejoins once per change of the generation,
+    // with the stored device, and never on a batch with no change.
+    void dspThreadRejoinsOncePerChange()
+    {
+        Rig rig;
+        rig.native->setWorkgroupDevice(QStringLiteral("desk-uid"), 71);
+        rig.native->setWorkgroupDevice(QStringLiteral("built-in-uid"), 73);
+        savedChoice(AudioEngineKind::CoreAudio, QStringLiteral("desk-uid"),
+                    QStringLiteral("Desk speakers"))
+            .saveToSettings(QStringLiteral("audio/Speakers"));
+        rig.build();
+
+        RxDspWorker worker;
+        worker.setEngines(nullptr, rig.engine.get());
+        std::vector<std::uint32_t> rejoins;
+        worker.setWorkgroupRejoinForTest([&rejoins](AudioPriorityToken*, std::uint32_t device) {
+            rejoins.push_back(device);
+            return true;
+        });
+        const QVector<float> empty;
+
+        // No speakers open yet: nothing to follow.
+        worker.processIqBatch(0, empty);
+        QVERIFY(rejoins.empty());
+
+        rig.engine->start();
+        worker.processIqBatch(0, empty);
+        worker.processIqBatch(0, empty);
+        QCOMPARE(rejoins, std::vector<std::uint32_t>({71}));
+
+        rig.engine->setSpeakersConfig(savedChoice(AudioEngineKind::CoreAudio,
+                                                  QStringLiteral("built-in-uid"),
+                                                  QStringLiteral("Built-in speakers")));
+        QCOMPARE(rig.native->outputRequests().back().deviceId, QStringLiteral("built-in-uid"));
+        worker.processIqBatch(0, empty);
+        worker.processIqBatch(0, empty);
+        QCOMPARE(rejoins, std::vector<std::uint32_t>({71, 73}));
+        rig.engine->stop();
     }
 
     // The saved Engine decides which backend opens the role.

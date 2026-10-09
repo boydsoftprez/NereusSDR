@@ -24,6 +24,9 @@
 //               is counted (fadeRequestCount(), and a shared counter the
 //               backend reads after the bus is gone); fadedOut() is true.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 8 (R-AUD-18): a settable
+//               audioWorkgroupDevice(). J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-09: early-review fix wave (R-AUD-06, R-AUD-08): a fade can
 //               take setFadeTimeForTest() ms; the bus marks a shared flag
 //               when it is destroyed (alive) and counts a close before its
@@ -152,6 +155,9 @@ public:
 
     bool takesStereoMix() const override { return m_takesStereoMix; }
 
+    std::uint32_t audioWorkgroupDevice() const override { return m_workgroupDevice; }
+    void setAudioWorkgroupDevice(std::uint32_t device) { m_workgroupDevice = device; }
+
     std::optional<DeviceRateMatcherStats> matcherStats() const override
     {
         if (!m_matcher) {
@@ -274,6 +280,7 @@ public:
 private:
     AudioStreamRequest m_request;
     bool m_takesStereoMix;
+    std::uint32_t m_workgroupDevice = 0;
     int m_callbackFrames;
     bool m_openResult = true;
     std::atomic<bool> m_open{false};

@@ -259,6 +259,10 @@
 //                 word instead of RadioModel::sliceById (a use-after-free
 //                 when a slice was removed while audio ran).
 //                 NereusSDR-original.
+//   2026-10-09: native audio plan Task 8 (R-AUD-18) by J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code. Every speakers open
+//                 bumps the workgroup generation the DSP thread follows.
+//                 NereusSDR-original.
 // =================================================================
 
 #include "AudioEngine.h"
@@ -1779,6 +1783,7 @@ AudioOpenResult AudioEngine::openRole(AudioRole role, AudioEngineKind engine,
             if (role == AudioRole::Speakers) {
                 configureSpeakersConverter();
                 m_speakersFormat = m_speakersBus->negotiatedFormat();
+                noteSpeakersWorkgroup(m_speakersBus.get());
             } else if (role == AudioRole::Headphones) {
                 configureHeadphonesConverter();
             }
@@ -1810,6 +1815,14 @@ AudioOpenResult AudioEngine::openRole(AudioRole role, AudioEngineKind engine,
         emit speakersConfigChanged(cfg);
     }
     return AudioOpenResult::Opened;
+}
+
+void AudioEngine::noteSpeakersWorkgroup(const IAudioBus* bus)
+{
+    // R-AUD-18: the device first, then the generation the DSP thread loads.
+    m_speakersWorkgroupDevice.store(bus != nullptr ? bus->audioWorkgroupDevice() : 0,
+                                    std::memory_order_release);
+    m_speakersWorkgroupGeneration.fetch_add(1, std::memory_order_acq_rel);
 }
 
 void AudioEngine::closeRole(AudioRole role)
