@@ -18,23 +18,65 @@
 #include <QTimer>
 
 #include <chrono>
+#include <condition_variable>
+#include <mutex>
 #include <utility>
 
 namespace NereusSDR {
 
-// Lets a backend's notice sink reach the worker from any thread, and stop
-// reaching it once the catalogue stops.
-struct AudioDeviceCatalog::NoticeGate {
-    std::mutex mutex;
+// What one run's thread shares with the catalogue.  Held by the
+// catalogue, the worker and every notice sink, so a thread that outlives
+// stop() never reaches freed memory.
+struct AudioDeviceCatalog::State {
+    std::vector<std::shared_ptr<IAudioEngineBackend>> backends;
+    std::atomic<int> debounceMs{kDebounceMs};
+    std::atomic<int> busyBackend{-1};   // the backend a call is in, or -1
+
+    // Guards both pointers.  The catalogue clears them in stop(); a post
+    // holds the mutex, so neither can be deleted under it.
+    std::mutex gateMutex;
+    AudioDeviceCatalog* owner = nullptr;
     QObject* worker = nullptr;
+
+    // The first list, handed to start() while it waits.
+    std::mutex firstMutex;
+    std::condition_variable firstCv;
+    std::optional<Listing> firstListing;
+    bool waitingForFirst = false;
 };
 
+namespace {
+
+QString backendName(AudioBackendId id)
+{
+    switch (id) {
+    case AudioBackendId::PortAudio:
+        return QStringLiteral("PortAudio");
+    case AudioBackendId::CoreAudio:
+        return QStringLiteral("CoreAudio");
+    case AudioBackendId::Wasapi:
+        return QStringLiteral("Wasapi");
+    case AudioBackendId::Asio:
+        return QStringLiteral("ASIO");
+    case AudioBackendId::PipeWire:
+        return QStringLiteral("PipeWire");
+    case AudioBackendId::PulseAudio:
+        return QStringLiteral("PulseAudio");
+    case AudioBackendId::AlsaDirect:
+        return QStringLiteral("AlsaDirect");
+    }
+    return QStringLiteral("unknown");
+}
+
+} // namespace
+
 // Lives on the catalogue's thread: the debounce timer and every call to a
-// backend's enumerate() and defaultDeviceId().
+// backend's enumerate() and defaultDeviceId().  Deleted on that thread
+// when it finishes.
 class AudioDeviceCatalog::Worker final : public QObject {
 public:
-    explicit Worker(AudioDeviceCatalog* owner)
-        : m_owner(owner)
+    explicit Worker(std::shared_ptr<State> state)
+        : m_state(std::move(state))
         , m_timer(this)
     {
         m_timer.setSingleShot(true);
@@ -46,22 +88,26 @@ public:
         if (notice == AudioNotice::DevicesChanged) {
             // A notice inside the window joins it; it never restarts it.
             if (!m_timer.isActive()) {
-                m_timer.start(m_owner->m_debounceMs.load());
+                m_timer.start(m_state->debounceMs.load());
             }
             return;
         }
         const AudioDeviceDirection direction = notice == AudioNotice::DefaultOutputChanged
             ? AudioDeviceDirection::Output
             : AudioDeviceDirection::Input;
-        IAudioEngineBackend& backend = *m_owner->m_backends[std::size_t(index)];
+        IAudioEngineBackend& backend = *m_state->backends[std::size_t(index)];
         std::optional<QString> id;
+        m_state->busyBackend.store(index);
         if (backend.running()) {
             id = backend.defaultDeviceId(direction);
         }
-        AudioDeviceCatalog* owner = m_owner;
-        QMetaObject::invokeMethod(owner, [owner, index, direction, id] {
-            owner->adoptDefault(index, direction, id);
-        }, Qt::QueuedConnection);
+        m_state->busyBackend.store(-1);
+        std::lock_guard<std::mutex> lock(m_state->gateMutex);
+        if (AudioDeviceCatalog* owner = m_state->owner) {
+            QMetaObject::invokeMethod(owner, [owner, index, direction, id] {
+                owner->adoptDefault(index, direction, id);
+            }, Qt::QueuedConnection);
+        }
     }
 
     void relist()
@@ -69,13 +115,15 @@ public:
         m_timer.stop();
         Listing listing;
         listing.generation = ++m_generation;
-        listing.backends.reserve(m_owner->m_backends.size());
-        for (const std::shared_ptr<IAudioEngineBackend>& backend : m_owner->m_backends) {
+        listing.backends.reserve(m_state->backends.size());
+        for (std::size_t i = 0; i < m_state->backends.size(); ++i) {
+            IAudioEngineBackend& backend = *m_state->backends[i];
+            m_state->busyBackend.store(int(i));
             BackendSnapshot snap;
-            snap.id = backend->id();
-            snap.running = backend->running();
+            snap.id = backend.id();
+            snap.running = backend.running();
             if (snap.running) {
-                const QList<AudioDeviceInfo> all = backend->enumerate();
+                const QList<AudioDeviceInfo> all = backend.enumerate();
                 for (const AudioDeviceInfo& info : all) {
                     if (info.direction == AudioDeviceDirection::Output) {
                         snap.outputs.append(info);
@@ -83,31 +131,37 @@ public:
                         snap.inputs.append(info);
                     }
                 }
-                snap.defaultOutput = backend->defaultDeviceId(AudioDeviceDirection::Output);
-                snap.defaultInput = backend->defaultDeviceId(AudioDeviceDirection::Input);
+                snap.defaultOutput = backend.defaultDeviceId(AudioDeviceDirection::Output);
+                snap.defaultInput = backend.defaultDeviceId(AudioDeviceDirection::Input);
             }
             listing.backends.push_back(std::move(snap));
         }
+        m_state->busyBackend.store(-1);
 
         {
-            std::lock_guard<std::mutex> lock(m_owner->m_firstMutex);
-            if (m_owner->m_waitingForFirst) {
-                m_owner->m_firstListing = listing;
-                m_owner->m_waitingForFirst = false;
-                m_owner->m_firstCv.notify_all();
+            std::lock_guard<std::mutex> lock(m_state->firstMutex);
+            if (m_state->waitingForFirst) {
+                m_state->firstListing = listing;
+                m_state->waitingForFirst = false;
+                m_state->firstCv.notify_all();
             }
         }
-        AudioDeviceCatalog* owner = m_owner;
-        QMetaObject::invokeMethod(owner, [owner, listing = std::move(listing)]() mutable {
-            owner->adoptListing(std::move(listing));
-        }, Qt::QueuedConnection);
+        std::lock_guard<std::mutex> lock(m_state->gateMutex);
+        if (AudioDeviceCatalog* owner = m_state->owner) {
+            QMetaObject::invokeMethod(owner, [owner, listing = std::move(listing)]() mutable {
+                owner->adoptListing(std::move(listing));
+            }, Qt::QueuedConnection);
+        }
     }
 
     void rescanOlderDrivers()
     {
-        for (const std::shared_ptr<IAudioEngineBackend>& backend : m_owner->m_backends) {
-            if (backend->id() == AudioBackendId::PortAudio) {
-                backend->rescan();
+        for (std::size_t i = 0; i < m_state->backends.size(); ++i) {
+            IAudioEngineBackend& backend = *m_state->backends[i];
+            if (backend.id() == AudioBackendId::PortAudio) {
+                m_state->busyBackend.store(int(i));
+                backend.rescan();
+                m_state->busyBackend.store(-1);
             }
         }
         relist();
@@ -120,7 +174,7 @@ public:
     }
 
 private:
-    AudioDeviceCatalog* m_owner;
+    std::shared_ptr<State> m_state;
     QTimer m_timer;
     std::uint64_t m_generation = 0;
 };
@@ -163,55 +217,74 @@ void AudioDeviceCatalog::start()
     if (m_thread) {
         return;
     }
+    m_state = std::make_shared<State>();
+    m_state->backends = m_backends;
+    m_state->debounceMs.store(m_debounceMs.load());
+    m_state->owner = this;
+
     m_thread = std::make_unique<QThread>();
     m_thread->setObjectName(QStringLiteral("AudioDeviceCatalog"));
-    m_worker = std::make_unique<Worker>(this);
-    m_worker->moveToThread(m_thread.get());
+    auto worker = std::make_unique<Worker>(m_state);
+    worker->moveToThread(m_thread.get());
+    m_worker = worker.release();   // deletes itself on its thread when the thread finishes
+    connect(m_thread.get(), &QThread::finished, m_worker, &QObject::deleteLater);
+    m_state->worker = m_worker;
 
-    m_gate = std::make_shared<NoticeGate>();
-    m_gate->worker = m_worker.get();
     for (std::size_t i = 0; i < m_backends.size(); ++i) {
         const int index = int(i);
-        std::shared_ptr<NoticeGate> gate = m_gate;
-        m_backends[i]->setNoticeSink([gate, index](AudioNotice notice) {
-            std::lock_guard<std::mutex> lock(gate->mutex);
-            if (gate->worker == nullptr) {
+        std::shared_ptr<State> state = m_state;
+        m_backends[i]->setNoticeSink([state, index](AudioNotice notice) {
+            std::lock_guard<std::mutex> lock(state->gateMutex);
+            if (state->worker == nullptr) {
                 return;
             }
-            auto* worker = static_cast<Worker*>(gate->worker);
-            QMetaObject::invokeMethod(worker, [worker, index, notice] {
-                worker->onNotice(index, notice);
+            auto* target = static_cast<Worker*>(state->worker);
+            QMetaObject::invokeMethod(target, [target, index, notice] {
+                target->onNotice(index, notice);
             }, Qt::QueuedConnection);
         });
     }
 
     {
-        std::lock_guard<std::mutex> lock(m_firstMutex);
-        m_firstListing.reset();
-        m_waitingForFirst = true;
+        std::lock_guard<std::mutex> lock(m_state->firstMutex);
+        m_state->waitingForFirst = true;
     }
     m_thread->start();
-    Worker* worker = m_worker.get();
-    QMetaObject::invokeMethod(worker, [worker] { worker->relist(); }, Qt::QueuedConnection);
+    Worker* target = m_worker;
+    QMetaObject::invokeMethod(target, [target] { target->relist(); }, Qt::QueuedConnection);
 
     std::optional<Listing> first;
     {
-        std::unique_lock<std::mutex> lock(m_firstMutex);
-        const bool listed = m_firstCv.wait_for(lock, std::chrono::milliseconds(kStartWaitMs),
-                                               [this] { return m_firstListing.has_value(); });
+        State& state = *m_state;
+        std::unique_lock<std::mutex> lock(state.firstMutex);
+        const bool listed = state.firstCv.wait_for(lock, std::chrono::milliseconds(kStartWaitMs),
+                                                   [&state] { return state.firstListing.has_value(); });
         if (listed) {
-            first = std::move(m_firstListing);
-            m_firstListing.reset();
+            first = std::move(state.firstListing);
+            state.firstListing.reset();
         } else {
             // The list still arrives through the main thread's queue.
-            m_waitingForFirst = false;
+            state.waitingForFirst = false;
             qCWarning(lcAudio) << "Audio device list took longer than"
-                               << kStartWaitMs << "ms; continuing without it";
+                               << kStartWaitMs << "ms; continuing without it; waiting on"
+                               << qPrintable(busyBackendName());
         }
     }
     if (first.has_value()) {
         adoptListing(std::move(*first));
     }
+}
+
+QString AudioDeviceCatalog::busyBackendName() const
+{
+    if (!m_state) {
+        return QStringLiteral("none");
+    }
+    const int busy = m_state->busyBackend.load();
+    if (busy < 0 || std::size_t(busy) >= m_state->backends.size()) {
+        return QStringLiteral("none");
+    }
+    return backendName(m_state->backends[std::size_t(busy)]->id());
 }
 
 void AudioDeviceCatalog::stop()
@@ -223,25 +296,40 @@ void AudioDeviceCatalog::stop()
         backend->setNoticeSink({});
     }
     {
-        std::lock_guard<std::mutex> lock(m_gate->mutex);
-        m_gate->worker = nullptr;
+        // After this the thread posts nothing to the catalogue, and no
+        // notice reaches the worker.
+        std::lock_guard<std::mutex> lock(m_state->gateMutex);
+        m_state->owner = nullptr;
+        m_state->worker = nullptr;
     }
-    Worker* worker = m_worker.get();
-    QMetaObject::invokeMethod(worker, [worker] { worker->shutdown(); }, Qt::QueuedConnection);
-    m_thread->wait();
-    m_worker.reset();
-    m_thread.reset();
-    m_gate.reset();
-    {
-        std::lock_guard<std::mutex> lock(m_firstMutex);
-        m_waitingForFirst = false;
-        m_firstListing.reset();
+    Worker* target = m_worker;
+    QMetaObject::invokeMethod(target, [target] { target->shutdown(); }, Qt::QueuedConnection);
+    if (m_thread->wait(kStopWaitMs)) {
+        m_thread.reset();
+    } else {
+        // A backend has not returned.  The thread finishes on its own when
+        // it does: the worker deletes itself then, the State and backends
+        // stay alive through the worker's share, and the thread object is
+        // deleted from the main thread's queue.
+        qCWarning(lcAudio) << "Audio device list did not stop within" << kStopWaitMs
+                           << "ms; leaving it to finish; waiting on" << qPrintable(busyBackendName());
+        QThread* orphan = m_thread.release();
+        connect(orphan, &QThread::finished, orphan, &QObject::deleteLater);
+        if (orphan->isFinished()) {
+            // It finished between the wait and the connection.
+            orphan->deleteLater();
+        }
     }
+    m_worker = nullptr;
+    m_state.reset();
 }
 
 void AudioDeviceCatalog::setDebounceIntervalForTest(int ms)
 {
     m_debounceMs.store(ms);
+    if (m_state) {
+        m_state->debounceMs.store(ms);
+    }
 }
 
 QList<AudioBackendId> AudioDeviceCatalog::backends() const
@@ -299,10 +387,10 @@ std::optional<AudioDeviceInfo> AudioDeviceCatalog::defaultDevice(AudioBackendId 
 
 void AudioDeviceCatalog::rescanOlderDrivers()
 {
-    if (!m_worker) {
+    if (m_worker == nullptr) {
         return;
     }
-    Worker* worker = m_worker.get();
+    Worker* worker = m_worker;
     QMetaObject::invokeMethod(worker, [worker] { worker->rescanOlderDrivers(); },
                               Qt::QueuedConnection);
 }

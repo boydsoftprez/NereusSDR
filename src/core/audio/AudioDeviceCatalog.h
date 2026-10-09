@@ -14,6 +14,12 @@
 // thread, where the getters read them and the signals are emitted.  The
 // catalogue never touches a stream.
 //
+// A backend that hangs never hangs the caller: start() waits at most
+// kStartWaitMs for the first list and stop() at most kStopWaitMs for the
+// thread.  A thread that outlives stop() owns everything it still
+// touches (the shared State, the backends, its worker) and frees it when
+// the backend returns; nothing it does reaches the catalogue again.
+//
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 3 (R-AUD-03). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
@@ -28,10 +34,8 @@
 #include <QString>
 
 #include <atomic>
-#include <condition_variable>
 #include <cstdint>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <vector>
 
@@ -44,6 +48,7 @@ class AudioDeviceCatalog final : public IAudioDeviceCatalog {
 public:
     static constexpr int kDebounceMs = 500;
     static constexpr int kStartWaitMs = 3000;   // start() waits at most this long for the first list
+    static constexpr int kStopWaitMs = 3000;    // stop() waits at most this long for the thread
 
     // backends in R-AUD-01 order; backends() returns them in this order.
     explicit AudioDeviceCatalog(std::vector<std::shared_ptr<IAudioEngineBackend>> backends,
@@ -75,11 +80,12 @@ private:
         std::vector<BackendSnapshot> backends;
     };
     class Worker;
-    struct NoticeGate;
+    struct State;
 
     void adoptListing(Listing listing);
     void adoptDefault(int index, AudioDeviceDirection direction, std::optional<QString> id);
     const BackendSnapshot* snapshotFor(AudioBackendId id) const;
+    QString busyBackendName() const;
 
     std::vector<std::shared_ptr<IAudioEngineBackend>> m_backends;
 
@@ -87,16 +93,13 @@ private:
     std::vector<BackendSnapshot> m_snapshot;
     std::uint64_t m_adoptedGeneration = 0;
 
+    // One run's thread, worker and the state they share.  The worker
+    // deletes itself on its own thread when the thread finishes; the
+    // thread is deleted here, or by itself when it outlived stop().
     std::unique_ptr<QThread> m_thread;
-    std::unique_ptr<Worker> m_worker;
-    std::shared_ptr<NoticeGate> m_gate;
+    Worker* m_worker = nullptr;
+    std::shared_ptr<State> m_state;
     std::atomic<int> m_debounceMs{kDebounceMs};
-
-    // The first list, handed to start() while it waits.
-    std::mutex m_firstMutex;
-    std::condition_variable m_firstCv;
-    std::optional<Listing> m_firstListing;
-    bool m_waitingForFirst = false;
 };
 
 } // namespace NereusSDR

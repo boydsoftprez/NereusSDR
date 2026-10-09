@@ -15,6 +15,7 @@
 
 #include <QtTest>
 
+#include "RealtimeTestLoad.h"
 #include "core/IAudioBus.h"
 #include "core/audio/AudioDeviceCatalog.h"
 #include "core/audio/AudioDeviceTypes.h"
@@ -88,6 +89,9 @@ class TstAudioDeviceCatalog : public QObject {
     Q_OBJECT
 
 private slots:
+    // The time-bounded catalogue cases keep up with the wall clock.
+    void cleanup() { NereusSDR::RealtimeTestLoad::printLoadAverageIfFailed(); }
+
     // -- Keys and labels ------------------------------------------------
     void engineKeysAndLabels()
     {
@@ -540,7 +544,7 @@ private slots:
         rig.engine->holdEnumerate();
         QSignalSpy changed(rig.catalog.get(), &IAudioDeviceCatalog::devicesChanged);
         QTest::ignoreMessage(QtWarningMsg,
-                             QRegularExpression(QStringLiteral("Audio device list took longer than 3000 ms")));
+                             QRegularExpression(QStringLiteral("Audio device list took longer than 3000 ms; continuing without it; waiting on CoreAudio")));
         QElapsedTimer clock;
         clock.start();
         rig.catalog->start();
@@ -552,6 +556,39 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(changed.count(), 1, 3000);
         QVERIFY(hasDevice(rig.catalog->devices(AudioBackendId::CoreAudio, AudioDeviceDirection::Output),
                           QStringLiteral("spk")));
+    }
+
+    void stopGivesUpOnHungBackend()
+    {
+        auto rig = std::make_unique<CatalogRig>(10);
+        rig->catalog->start();
+        std::shared_ptr<FakeAudioEngineBackend> engine = rig->engine;
+        engine->holdEnumerate();
+        engine->postNotice(AudioNotice::DevicesChanged);
+        // The re-list is inside enumerate() and stays there.
+        QTRY_COMPARE_WITH_TIMEOUT(engine->enumerateCalls(), 2, 3000);
+
+        QTest::ignoreMessage(QtWarningMsg,
+                             QRegularExpression(QStringLiteral("Audio device list did not stop within 3000 ms; leaving it to finish; waiting on CoreAudio")));
+        QElapsedTimer clock;
+        clock.start();
+        rig->catalog->stop();
+        const qint64 elapsed = clock.elapsed();
+        QVERIFY2(elapsed >= AudioDeviceCatalog::kStopWaitMs - 50, qPrintable(QString::number(elapsed)));
+        QVERIFY2(elapsed < AudioDeviceCatalog::kStopWaitMs + 1000, qPrintable(QString::number(elapsed)));
+        QVERIFY(!engine->hasNoticeSink());
+
+        // The catalogue goes away while its thread is still inside the
+        // backend; releasing the backend afterwards must touch nothing freed.
+        QSignalSpy destroyed(rig->catalog.get(), &QObject::destroyed);
+        rig.reset();
+        QCOMPARE(destroyed.count(), 1);
+        QVERIFY(engine.use_count() > 1);   // the orphaned thread still holds it
+        engine->releaseEnumerate();
+        // The thread finishes, its worker and State go, and the thread
+        // object is deleted from this thread's queue.
+        QTRY_COMPARE_WITH_TIMEOUT(engine.use_count(), long(1), 3000);
+        QTest::qWait(50);
     }
 
     void notRunningBackendListsNothing()

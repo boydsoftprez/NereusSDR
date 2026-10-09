@@ -1834,8 +1834,9 @@ endif()
 # Native audio plan Task 3 (R-AUD-03, R-AUD-07, R-AUD-32, V-SW-1): engine
 # keys and labels, the pair model, sample format conversion, the no-device
 # rule and the live device catalogue (its debounce, its own thread, the
-# 3 s start wait) with fake engines only.
-nereus_add_test(tst_audio_device_catalog)
+# 3 s start and stop waits) with fake engines only. REALTIME: the debounce
+# and default-change cases keep up with the wall clock.
+nereus_add_test(tst_audio_device_catalog REALTIME)
 
 nereus_add_test(tst_device_rate_matcher_threads REALTIME)
 if(UNIX AND NOT APPLE)
