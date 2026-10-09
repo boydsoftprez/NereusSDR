@@ -22,6 +22,9 @@
 //               older drivers without the host APIs they replace; both
 //               native backends report the Linux engine selection.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 12 (R-AUD-01, R-AUD-25): the Linux
+//               Core registers ALSA direct alone (settled call 9).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AudioBackendRegistry.h"
@@ -46,6 +49,10 @@
 #if defined(NEREUS_HAVE_PULSEAUDIO)
 #include "core/audio/PulseAudioBackend.h"
 #include "core/audio/PulseAudioSystem.h"
+#endif
+#if defined(NEREUS_HAVE_ALSA_DIRECT)
+#include "core/audio/AlsaDirectBackend.h"
+#include "core/audio/AlsaDirectSystem.h"
 #endif
 #endif
 
@@ -121,10 +128,17 @@ std::vector<std::shared_ptr<IAudioEngineBackend>> makeSystemAudioBackends(const 
                                                           kIncludeReplacedHostApis));
 #else
     // R-AUD-01, Linux: PipeWire, then PulseAudio, then the older drivers.
-    // The Core has no desktop session, so it registers neither (ALSA
-    // direct, Task 12); the window and the mic helper register both.
+    // The Core has no desktop session, so it registers neither: it plays
+    // straight to its sound card through ALSA direct, its only engine
+    // (D18, settled call 9).  The window and the mic helper register both.
     bool includeReplacedHostApis = true;
 #if defined(Q_OS_LINUX)
+#if defined(NEREUS_HAVE_ALSA_DIRECT)
+    if (context.daemon) {
+        backends.push_back(std::make_shared<AlsaDirectBackend>(makeAlsaDirectSystem()));
+        return backends;
+    }
+#endif
     if (!context.daemon) {
         // R-AUD-31: one build carries both engines; which one runs is the
         // sound server that answers now (LinuxEngineSelection.h).  Both are
