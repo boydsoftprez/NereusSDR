@@ -268,6 +268,12 @@ bool AudioStreamSupervisor::isOutput(AudioRole role)
     return role != AudioRole::TxInput;
 }
 
+bool AudioStreamSupervisor::isVax(AudioRole role)
+{
+    return role == AudioRole::Vax1 || role == AudioRole::Vax2 || role == AudioRole::Vax3
+           || role == AudioRole::Vax4;
+}
+
 bool AudioStreamSupervisor::fallsBackToDefault(AudioRole role)
 {
     return role == AudioRole::Speakers || role == AudioRole::Headphones;
@@ -302,6 +308,13 @@ AudioStreamSupervisor::ChoiceKind AudioStreamSupervisor::kindOf(AudioRole role) 
 {
     const RoleState& s = state(role);
     if (!s.enabled || !s.hasChoice || s.config.isNone()) {
+        return ChoiceKind::Off;
+    }
+    if (isVax(role) && s.config.isPlatformDefault()) {
+        // An empty VAX device never opens the system default: with no
+        // virtual cable that is the speakers, and raw VAX audio would
+        // play through them ahead of the master volume.  It reads as
+        // "(none)".
         return ChoiceKind::Off;
     }
     if (s.config.isPlatformDefault()) {
@@ -786,7 +799,8 @@ void AudioStreamSupervisor::publish(AudioRole role)
     }
 
     if (kind == ChoiceKind::Off) {
-        const bool waiting = s.enabled && s.hasChoice && s.config.isNone() && s.noneWaiting;
+        const bool noDevice = s.config.isNone() || (isVax(role) && s.config.isPlatformDefault());
+        const bool waiting = s.enabled && s.hasChoice && noDevice && s.noneWaiting;
         status.state = waiting ? AudioRoleState::WaitingForPick : AudioRoleState::Off;
     } else if (s.open && !s.onDefault && s.openDevice) {
         status.state = AudioRoleState::Playing;

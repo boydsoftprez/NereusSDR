@@ -27,6 +27,9 @@
 //   else nothing.  The mic is always opened on an explicit device, never
 //   on "whatever the engine's default is", so the engine cannot pick a
 //   Bluetooth mic by itself (D6).
+// - VAX 1 to 4 on an empty device never open anything (never the system
+//   default, which without a virtual cable is the speakers); they read
+//   as "(none)": Off, or WaitingForPick.
 // - A Bluetooth mic picked by name opens.  When it is the mic's choice at
 //   start, outputs wait for its open to finish, at most
 //   kBluetoothMicFirstWaitMs, so the headset's mic opens first (R-AUD-14).
@@ -123,6 +126,7 @@ private:
     };
 
     static bool isOutput(AudioRole role);
+    static bool isVax(AudioRole role);
     static bool fallsBackToDefault(AudioRole role);
     static AudioDeviceDirection directionOf(AudioRole role);
     static int indexOf(AudioRole role);

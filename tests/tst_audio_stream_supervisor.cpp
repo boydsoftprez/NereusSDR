@@ -769,6 +769,42 @@ private slots:
         QCOMPARE(rig.host.closes.size(), 0);
     }
 
+    // An empty VAX device never opens the system default (it would be the
+    // speakers without a virtual cable); it reads as "(none)".
+    void vaxOnPlatformDefaultNeverOpens_data()
+    {
+        QTest::addColumn<AudioRole>("role");
+        QTest::newRow("vax1") << AudioRole::Vax1;
+        QTest::newRow("vax2") << AudioRole::Vax2;
+        QTest::newRow("vax3") << AudioRole::Vax3;
+        QTest::newRow("vax4") << AudioRole::Vax4;
+    }
+    void vaxOnPlatformDefaultNeverOpens()
+    {
+        QFETCH(AudioRole, role);
+        Rig rig;
+        addStandardOutputs(rig.catalogue);
+        rig.sup->setChoice(role, platformDefault());
+        rig.start();
+        QCOMPARE(rig.host.opensFor(role).size(), 0);
+        QCOMPARE(rig.st(role).state, AudioRoleState::Off);
+        QVERIFY(rig.st(role).playingName.isEmpty());
+
+        rig.catalogue.add(output(kPodsOutId, kPodsName, AudioTransport::Bluetooth));
+        rig.catalogue.changed();
+        rig.catalogue.setDefault(AudioDeviceDirection::Output, kPodsOutId);
+        rig.catalogue.defaultMoved(AudioDeviceDirection::Output);
+        QCOMPARE(rig.host.opensFor(role).size(), 0);
+        QCOMPARE(rig.st(role).state, AudioRoleState::Off);
+
+        rig.sup->setNoneMeansWaitingForPick(role, true);
+        QCOMPARE(rig.st(role).state, AudioRoleState::WaitingForPick);
+        rig.sup->setNoneMeansWaitingForPick(role, false);
+        QCOMPARE(rig.st(role).state, AudioRoleState::Off);
+        QCOMPARE(rig.host.opensFor(role).size(), 0);
+        QCOMPARE(rig.host.closesFor(role), 0);
+    }
+
     void disabledRoleIsOff()
     {
         Rig rig;
