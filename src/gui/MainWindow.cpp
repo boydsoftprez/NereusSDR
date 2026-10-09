@@ -8940,14 +8940,11 @@ void MainWindow::buildUI()
     // inversely with bwHz:
     //   targetSize = baseline * sampleRate / bwHz
     //
-    // Cap at kAutoZoomMaxFftSize = 65536.  Set well below kMaxFftSize
-    // (262144) to bound the buffer-fill pause on every replan: at
-    // 768 kHz DDC, 65536 fills in 85 ms (barely perceptible).  262144
-    // would take 340 ms (jarring) and create a multi-frame avenger
-    // ghost in the waterfall as the smoothed state crosses fftSize
-    // resolutions.  Users who want larger FFTs explicitly opt in via
-    // the slider (one-time pause they chose); auto-zoom won't push
-    // above the cap automatically.
+    // Cap at ControlRanges::autoZoomMaxFftSize(sampleRate): about 0.7 s per
+    // transform (kAutoZoomMaxTransformSeconds), at most 262144; 65536 at
+    // 96 kHz.  The rationale lives with the constant in
+    // src/core/ControlRanges.h; a remote pan's plannedFftSize shares it
+    // through ControlRanges::autoZoomFftSize.
     //
     // Floor at the slider baseline (we never replan BELOW the user's
     // chosen value).
@@ -8958,9 +8955,8 @@ void MainWindow::buildUI()
     // Phase 3F Sub-Epic I Task 8: the primary engine, because this lambda is
     // wired to pan 0's SpectrumWidget (the signal is per-pan). Per-pan
     // auto-zoom on secondary pans is Phase 3F follow-up work.
-    constexpr int kAutoZoomMaxFftSize = 65536;
     connect(activeSpectrumWidget(), &SpectrumWidget::bandwidthChangeRequested,
-            this, [this, kAutoZoomMaxFftSize](double bwHz) {
+            this, [this](double bwHz) {
         FFTEngine* engine = primaryFftEngine();
         if (!engine || !activeSpectrumWidget()) { return; }
         const double sampleRate = activeSpectrumWidget()->sampleRate();
@@ -8988,16 +8984,16 @@ void MainWindow::buildUI()
         }
 
         // Round up to next power of 2.
+        const int autoZoomMax = ControlRanges::autoZoomMaxFftSize(sampleRate);
         int targetSize = 1024;
-        while (targetSize < desired && targetSize < kAutoZoomMaxFftSize) {
+        while (targetSize < desired && targetSize < autoZoomMax) {
             targetSize *= 2;
         }
         // Floor at baseline (slider's choice always honoured), then cap at
         // auto-zoom max.  When baseline > cap (user explicitly picked a
         // larger size via the slider), baseline wins and auto-zoom is a
         // no-op for that range.
-        targetSize = (std::max)(targetSize, baseline);
-        targetSize = (std::min)(targetSize, (std::max)(baseline, kAutoZoomMaxFftSize));
+        targetSize = ControlRanges::autoZoomFftSize(targetSize, baseline, sampleRate);
 
         // Hysteresis: only replan if outside [current * 2/3, current * 3/2].
         const int currentSize = engine->fftSize();

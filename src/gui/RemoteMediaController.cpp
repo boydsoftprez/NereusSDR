@@ -616,7 +616,10 @@ int plannedFftSize(SpectrumWidget* widget, SliceModel* slice, int* baseSizeOut =
         return 0;
     }
     // R-R3-08: a deep zoom requests its own tier; it cannot lengthen the
-    // shared Wide engine. Size is capped to the actual FFT engine limit.
+    // shared Wide engine. A zoom grows the size no further than a local
+    // pan's auto-zoom does at this rate (ControlRanges::autoZoomMaxFftSize,
+    // about 0.7 s per transform), unless the stored size is already larger;
+    // that is honoured exactly.
     double target = double(slice->sampleRateHz()) * pixels / span;
     const double hzPerBin = settings.value(
         QLatin1String(ControlRanges::kDisplayHzPerBinTargetKey),
@@ -624,7 +627,8 @@ int plannedFftSize(SpectrumWidget* widget, SliceModel* slice, int* baseSizeOut =
     if (std::isfinite(hzPerBin) && hzPerBin > 0) {
         target = std::max(target, slice->sampleRateHz() / hzPerBin);
     }
-    return std::max(baseSize, fftSizeFor(target));
+    return ControlRanges::autoZoomFftSize(fftSizeFor(target), baseSize,
+                                          double(slice->sampleRateHz()));
 }
 
 // Parity Task 17 (R-R3-12): the averaging constants for the rate the Core
