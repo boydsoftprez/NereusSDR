@@ -20,6 +20,9 @@
 //   2026-10-09: Task 11 fix round 1 (R-AUD-03): a selected PipeWire whose
 //               daemon is away is not running. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 12: the Linux Core registers ALSA
+//               direct alone when it is built in. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 #ifdef NEREUS_HAVE_PIPEWIRE
 
@@ -1060,7 +1063,12 @@ private slots:
         daemon.daemon = true;
         const auto core = makeSystemAudioBackends(daemon);
         QCOMPARE(core.size(), std::size_t(1));
+#if defined(NEREUS_HAVE_ALSA_DIRECT)
+        // Task 12: the Linux Core registers ALSA direct alone.
+        QCOMPARE(core.front()->id(), AudioBackendId::AlsaDirect);
+#else
         QCOMPARE(core.front()->id(), AudioBackendId::PortAudio);
+#endif
     }
 };
 

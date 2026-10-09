@@ -21,6 +21,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09 : Native audio plan Task 12 (R-AUD-11) by J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code. makeBus()
+//                 reports an open another program refused, so the role
+//                 reads in use.
 //   2026-10-09 : Native audio plan early-review fix wave and its follow-up
 //                 (R-AUD-02, R-AUD-06, R-AUD-08, R-AUD-12, R-AUD-14,
 //                 R-AUD-16) by J.J. Boyd (KG4VCF), AI-assisted via
@@ -1331,8 +1335,11 @@ private:
     // open the given bus slot. Used for the speakers / TX-mic / Windows-BYO
     // VAX paths; the platform-native VAX RX/TX virtual buses are minted via
     // makeVaxBus() / makeVaxTxBus() instead.
+    // `inUse`, when given, is set true when an engine output's open failed
+    // because another program holds the device (R-AUD-11).
     std::unique_ptr<IAudioBus> makeBus(const AudioDeviceConfig& cfg,
-                                       bool capture);
+                                       bool capture,
+                                       bool* inUse = nullptr);
 
     // Sub-Phase 8.5: construct + open the platform-native VAX RX bus for
     // `channel` (1..4). macOS → CoreAudioHalBus(Role::VaxN). Linux →
