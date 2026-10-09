@@ -67,10 +67,15 @@
 //                card line when it cannot work; "Detected virtual cables"
 //                with Rescan moved here from Advanced. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-09: Windows test fix (R-AUD-03): exported from the
+//               GUI DLL, so a signal of it is found from outside the DLL
+//               on Windows. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/audio/VirtualCableDetector.h"
 #include "gui/HGauge.h"
+#include "gui/NereusGuiExport.h"
 #include "gui/RemoteReceiverAudioNote.h"
 #include "gui/setup/DeviceCard.h"
 #include "gui/setup/SoundSystemLine.h"
@@ -99,7 +104,7 @@ class RadioModel;
 // applyAutoDetectBinding / clearBinding / currentDeviceName /
 // isChannelEnabled). The visible layout shows only the PipeWire-era
 // "exposed, not picked" spec §9.2 rows.
-class VaxChannelCard : public QGroupBox {
+class NEREUS_GUI_EXPORT VaxChannelCard : public QGroupBox {
     Q_OBJECT
 public:
     // channel — 1..4. prefix — e.g. "audio/Vax1".

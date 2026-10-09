@@ -50,10 +50,15 @@
 //               rate shared across cards, the restarted note, the ASIO
 //               control panel button and greyed pairs for a driver whose
 //               sample format NereusSDR cannot use.
+//   2026-10-09: Windows test fix (R-AUD-07, R-AUD-19): exported from the
+//               GUI DLL, so a signal of it is found from outside the DLL
+//               on Windows. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/AudioDeviceConfig.h"
 #include "core/audio/IAudioStreamHost.h"
+#include "gui/NereusGuiExport.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -86,7 +91,7 @@ class IAudioDeviceCatalog;
 //
 // Role::Output → 7 rows.
 // Role::Input  → 7 rows + monitor-during-TX + tone-check extras (TX card).
-class DeviceCard : public QGroupBox {
+class NEREUS_GUI_EXPORT DeviceCard : public QGroupBox {
     Q_OBJECT
 public:
     enum class Role { Output, Input };

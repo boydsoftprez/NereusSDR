@@ -72,6 +72,7 @@ namespace {
 const QString kFocusrite = QStringLiteral("Focusrite USB ASIO");
 const QString kMotu = QStringLiteral("MOTU M Series");
 const QString kOldBox = QStringLiteral("Old Box ASIO");
+constexpr char kUnwired[] = "a DeviceCard signal was not found (is DeviceCard exported from the GUI DLL?)";
 
 AudioDeviceInfo device(AudioBackendId backend, AudioDeviceDirection direction, const QString& id,
                        const QString& name, int channels)
@@ -201,8 +202,11 @@ struct Rig {
         QVERIFY(engine->catalogue() != nullptr);
     }
 
-    // A card as the pages wire it: its edits reach the engine.
-    std::unique_ptr<DeviceCard> card(const QString& prefix)
+    // A card as the pages wire it: its edits reach the engine.  False when
+    // a connect fails (on Windows a signal of a class the GUI DLL does not
+    // export is not found from the test), so the test fails at once rather
+    // than waiting out every QTRY for an engine that is never told.
+    [[nodiscard]] bool card(const QString& prefix, std::unique_ptr<DeviceCard>& out)
     {
         const bool input = prefix == QLatin1String("audio/TxInput");
         const bool enable = prefix == QLatin1String("audio/Headphones");
@@ -211,21 +215,23 @@ struct Rig {
                                               enable);
         AudioEngine* e = engine.get();
         const std::optional<AudioRole> role = DeviceCard::roleForPrefix(prefix);
-        QObject::connect(c.get(), &DeviceCard::configChanged, e,
-                         [e, role](const AudioDeviceConfig& cfg) {
-                             switch (*role) {
-                             case AudioRole::Speakers: e->setSpeakersConfig(cfg); break;
-                             case AudioRole::Headphones: e->setHeadphonesConfig(cfg); break;
-                             case AudioRole::TxInput: e->setTxInputConfig(cfg); break;
-                             default: e->setVaxConfig(1, cfg); break;
-                             }
-                         });
+        bool wired = static_cast<bool>(QObject::connect(
+            c.get(), &DeviceCard::configChanged, e, [e, role](const AudioDeviceConfig& cfg) {
+                switch (*role) {
+                case AudioRole::Speakers: e->setSpeakersConfig(cfg); break;
+                case AudioRole::Headphones: e->setHeadphonesConfig(cfg); break;
+                case AudioRole::TxInput: e->setTxInputConfig(cfg); break;
+                default: e->setVaxConfig(1, cfg); break;
+                }
+            }));
         if (enable) {
-            QObject::connect(c.get(), &DeviceCard::enabledChanged, e,
-                             [e](bool on) { e->setHeadphonesEnabled(on); });
+            wired = static_cast<bool>(QObject::connect(c.get(), &DeviceCard::enabledChanged, e,
+                                                       [e](bool on) { e->setHeadphonesEnabled(on); }))
+                && wired;
         }
         c->setAudioEngine(e);
-        return c;
+        out = std::move(c);
+        return wired;
     }
 
 private:
@@ -411,7 +417,8 @@ private slots:
         if (onAsio) {
             rig.engine->setAsioDriverCapsForTest(kFocusrite, caps(kFocusrite, 0, channels));
         }
-        auto card = rig.card(QStringLiteral("audio/Speakers"));
+        std::unique_ptr<DeviceCard> card;
+        QVERIFY2(rig.card(QStringLiteral("audio/Speakers"), card), kUnwired);
         QComboBox* devices = card->deviceCombo();
 
         // The heading: the interface's name, never picked.
@@ -461,8 +468,10 @@ private slots:
         AppSettings::instance().setValue(QStringLiteral("audio/Headphones/Enabled"),
                                          QStringLiteral("True"));
         rig.prepare();
-        auto speakers = rig.card(QStringLiteral("audio/Speakers"));
-        auto headphones = rig.card(QStringLiteral("audio/Headphones"));
+        std::unique_ptr<DeviceCard> speakers;
+        QVERIFY2(rig.card(QStringLiteral("audio/Speakers"), speakers), kUnwired);
+        std::unique_ptr<DeviceCard> headphones;
+        QVERIFY2(rig.card(QStringLiteral("audio/Headphones"), headphones), kUnwired);
         const QString note =
             QStringLiteral("Speakers and headphones are on the same pair, so they play together.");
         auto* spkNote = child<QLabel>(*speakers, "samePairNote");
@@ -497,7 +506,8 @@ private slots:
         save(QStringLiteral("audio/TxInput"), audioEngineKey(AudioEngineKind::CoreAudio),
              QStringLiteral("iface-uid"), 1);
         rig.prepare();
-        auto mic = rig.card(QStringLiteral("audio/TxInput"));
+        std::unique_ptr<DeviceCard> mic;
+        QVERIFY2(rig.card(QStringLiteral("audio/TxInput"), mic), kUnwired);
         auto* row = child<QWidget>(*mic, "micChannelRow");
         QVERIFY(row != nullptr);
         QVERIFY(!row->isHidden());
@@ -522,7 +532,8 @@ private slots:
         QCOMPARE(value(QStringLiteral("audio/TxInput/MicChannel")), QStringLiteral("Both"));
 
         // Loaded back.
-        auto again = rig.card(QStringLiteral("audio/TxInput"));
+        std::unique_ptr<DeviceCard> again;
+        QVERIFY2(rig.card(QStringLiteral("audio/TxInput"), again), kUnwired);
         QVERIFY(child<QRadioButton>(*again, "micChannelBoth")->isChecked());
     }
 
@@ -532,7 +543,8 @@ private slots:
         save(QStringLiteral("audio/TxInput"), audioEngineKey(AudioEngineKind::CoreAudio),
              QString::fromLatin1(kAudioDeviceNone), 1);
         rig.prepare();
-        auto mic = rig.card(QStringLiteral("audio/TxInput"));
+        std::unique_ptr<DeviceCard> mic;
+        QVERIFY2(rig.card(QStringLiteral("audio/TxInput"), mic), kUnwired);
         auto* row = child<QWidget>(*mic, "micChannelRow");
         QVERIFY(row != nullptr);
         QCOMPARE(mic->deviceCombo()->currentText(), QString::fromLatin1(kAudioDeviceNone));
@@ -582,7 +594,8 @@ private slots:
         AppSettings::instance().setValue(QStringLiteral("audio/Vax1/Enabled"), QStringLiteral("True"));
         saveAsio(QStringLiteral("audio/TxInput"), kFocusrite, 1);
         rig.prepare();
-        auto mic = rig.card(QStringLiteral("audio/TxInput"));
+        std::unique_ptr<DeviceCard> mic;
+        QVERIFY2(rig.card(QStringLiteral("audio/TxInput"), mic), kUnwired);
         const QString before = mic->deviceCombo()->currentText();
         QCOMPARE(before, kFocusrite);
         const QStringList keys = audioKeysAndValues();
@@ -613,8 +626,10 @@ private slots:
         AppSettings::instance().setValue(QStringLiteral("audio/Vax1/Enabled"), QStringLiteral("True"));
         saveAsio(QStringLiteral("audio/TxInput"), kFocusrite, 1);
         rig.prepare();
-        auto speakers = rig.card(QStringLiteral("audio/Speakers"));
-        auto mic = rig.card(QStringLiteral("audio/TxInput"));
+        std::unique_ptr<DeviceCard> speakers;
+        QVERIFY2(rig.card(QStringLiteral("audio/Speakers"), speakers), kUnwired);
+        std::unique_ptr<DeviceCard> mic;
+        QVERIFY2(rig.card(QStringLiteral("audio/TxInput"), mic), kUnwired);
         QCOMPARE(speakers->deviceCombo()->currentText(), kFocusrite + QStringLiteral(" · Outputs 3-4"));
         AppSettings::instance().setValue(QStringLiteral("audio/Speakers/ExclusiveMode"),
                                          QStringLiteral("True"));
@@ -648,7 +663,8 @@ private slots:
         Rig rig = Rig::windows();
         saveAsio(QStringLiteral("audio/Speakers"), kFocusrite, 1);
         rig.prepare();
-        auto speakers = rig.card(QStringLiteral("audio/Speakers"));
+        std::unique_ptr<DeviceCard> speakers;
+        QVERIFY2(rig.card(QStringLiteral("audio/Speakers"), speakers), kUnwired);
         QComboBox* buffer = speakers->bufferSizeCombo();
         QCOMPARE(comboTexts(buffer),
                  (QStringList{QStringLiteral("64 samples"), QStringLiteral("128 samples"),
@@ -686,9 +702,12 @@ private slots:
                                          QStringLiteral("True"));
         saveAsio(QStringLiteral("audio/TxInput"), kFocusrite, 1);
         rig.prepare();
-        auto speakers = rig.card(QStringLiteral("audio/Speakers"));
-        auto headphones = rig.card(QStringLiteral("audio/Headphones"));
-        auto mic = rig.card(QStringLiteral("audio/TxInput"));
+        std::unique_ptr<DeviceCard> speakers;
+        QVERIFY2(rig.card(QStringLiteral("audio/Speakers"), speakers), kUnwired);
+        std::unique_ptr<DeviceCard> headphones;
+        QVERIFY2(rig.card(QStringLiteral("audio/Headphones"), headphones), kUnwired);
+        std::unique_ptr<DeviceCard> mic;
+        QVERIFY2(rig.card(QStringLiteral("audio/TxInput"), mic), kUnwired);
 
         auto* spkShared = child<QLabel>(*speakers, "asioSharedNote");
         auto* hpShared = child<QLabel>(*headphones, "asioSharedNote");
@@ -732,7 +751,8 @@ private slots:
         fixed.preferredBufferFrames = 128;
         fixed.granularity = 0;
         rig.engine->setAsioDriverCapsForTest(kMotu, fixed);
-        auto speakers = rig.card(QStringLiteral("audio/Speakers"));
+        std::unique_ptr<DeviceCard> speakers;
+        QVERIFY2(rig.card(QStringLiteral("audio/Speakers"), speakers), kUnwired);
         QComboBox* buffer = speakers->bufferSizeCombo();
         QCOMPARE(comboTexts(buffer), QStringList{QStringLiteral("128 samples")});
         QVERIFY(!buffer->isHidden());
@@ -755,8 +775,10 @@ private slots:
         save(QStringLiteral("audio/Headphones"), audioEngineKey(AudioEngineKind::WindowsShared),
              QStringLiteral("spk-uid"), 1);
         rig.prepare();
-        auto speakers = rig.card(QStringLiteral("audio/Speakers"));
-        auto headphones = rig.card(QStringLiteral("audio/Headphones"));
+        std::unique_ptr<DeviceCard> speakers;
+        QVERIFY2(rig.card(QStringLiteral("audio/Speakers"), speakers), kUnwired);
+        std::unique_ptr<DeviceCard> headphones;
+        QVERIFY2(rig.card(QStringLiteral("audio/Headphones"), headphones), kUnwired);
         auto* button = child<QPushButton>(*speakers, "asioControlPanel");
         QVERIFY(button != nullptr);
         QCOMPARE(button->text(), QStringLiteral("ASIO control panel"));
@@ -780,7 +802,8 @@ private slots:
     {
         Rig rig = Rig::nativeRig(AudioBackendId::CoreAudio, 2);
         rig.prepare();
-        auto speakers = rig.card(QStringLiteral("audio/Speakers"));
+        std::unique_ptr<DeviceCard> speakers;
+        QVERIFY2(rig.card(QStringLiteral("audio/Speakers"), speakers), kUnwired);
         auto* button = child<QPushButton>(*speakers, "asioControlPanel");
         QVERIFY(button != nullptr);
         QVERIFY(!button->isHidden());
@@ -795,7 +818,8 @@ private slots:
         saveAsio(QStringLiteral("audio/Speakers"), kFocusrite, 1);
         rig.prepare();
         rig.engine->setAsioRestartNoteMsForTest(300);
-        auto speakers = rig.card(QStringLiteral("audio/Speakers"));
+        std::unique_ptr<DeviceCard> speakers;
+        QVERIFY2(rig.card(QStringLiteral("audio/Speakers"), speakers), kUnwired);
         auto* note = child<QLabel>(*speakers, "asioRestartedNote");
         QVERIFY(note != nullptr);
         QCOMPARE(note->text(), QStringLiteral("Restarted with the driver's new settings."));
@@ -825,7 +849,8 @@ private slots:
         Rig rig = Rig::windows();
         saveAsio(QStringLiteral("audio/Speakers"), kFocusrite, 1);
         rig.prepare();
-        auto speakers = rig.card(QStringLiteral("audio/Speakers"));
+        std::unique_ptr<DeviceCard> speakers;
+        QVERIFY2(rig.card(QStringLiteral("audio/Speakers"), speakers), kUnwired);
         QComboBox* devices = speakers->deviceCombo();
         const QString reason =
             QStringLiteral("Old Box ASIO uses a sample format NereusSDR can't play or record.");
@@ -919,14 +944,16 @@ private slots:
         AppSettings::instance().setValue(QStringLiteral("audio/Vax1/Enabled"), QStringLiteral("True"));
         saveAsio(QStringLiteral("audio/TxInput"), kFocusrite, 1);
         rig.prepare();
-        auto speakers = rig.card(QStringLiteral("audio/Speakers"));
+        std::unique_ptr<DeviceCard> speakers;
+        QVERIFY2(rig.card(QStringLiteral("audio/Speakers"), speakers), kUnwired);
         speakers->setTitle(QStringLiteral("This computer"));
         speakers->resize(620, speakers->sizeHint().height());
 
         // The pairs: the card and its open Device list.
         QWidget pairs;
         auto* pairsLayout = new QVBoxLayout(&pairs);
-        auto card = rig.card(QStringLiteral("audio/Speakers"));
+        std::unique_ptr<DeviceCard> card;
+        QVERIFY2(rig.card(QStringLiteral("audio/Speakers"), card), kUnwired);
         card->setTitle(QStringLiteral("This computer"));
         pairsLayout->addWidget(card.get());
         pairs.resize(620, pairs.sizeHint().height());
@@ -948,7 +975,8 @@ private slots:
         speakers->hide();
 
         // The prompt.
-        auto mic = rig.card(QStringLiteral("audio/TxInput"));
+        std::unique_ptr<DeviceCard> mic;
+        QVERIFY2(rig.card(QStringLiteral("audio/TxInput"), mic), kUnwired);
         mic->setTitle(QStringLiteral("PC microphone"));
         DialogAnswer answer;
         answerSwitchDialog(false, &answer, mic.get(), QStringLiteral("asio-switch-all-prompt"));

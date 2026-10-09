@@ -57,12 +57,17 @@
 //                saves the choice as the Outputs card does. setAudioEngine()
 //                and buildSpeakerMenuForTest(). J.J. Boyd (KG4VCF), with
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-09: Windows test fix (R-AUD-03): exported from the
+//               GUI DLL, so a signal of it is found from outside the DLL
+//               on Windows. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/AudioDeviceConfig.h"
 #include "core/audio/AudioDeviceTypes.h"
 #include "core/audio/IAudioDeviceCatalog.h"
 #include "core/audio/IAudioStreamHost.h"
+#include "gui/NereusGuiExport.h"
 
 #include <QPointer>
 #include <QString>
@@ -133,7 +138,7 @@ int applyForm(QPushButton* button, QLabel* word, QSlider* slider, QLabel* readou
 // ONLY on user action. The m_updatingFromModel guard plus a
 // QSignalBlocker on the speaker button prevents the engine→widget
 // echo from re-emitting into the engine.
-class MasterOutputWidget : public QWidget {
+class NEREUS_GUI_EXPORT MasterOutputWidget : public QWidget {
     Q_OBJECT
 public:
     explicit MasterOutputWidget(AudioEngine* audio, QWidget* parent = nullptr);
