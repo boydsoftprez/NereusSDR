@@ -14,10 +14,15 @@
 //               AI-assisted via Anthropic Claude Code.
 //   2026-10-09: native audio plan Task 7 (R-AUD-06): olderDriversRescanned().
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: Windows test fix (R-AUD-03): exported from the Core DLL,
+//               so a signal of it is found from outside the DLL on
+//               Windows. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include "core/audio/AudioDeviceTypes.h"
 
 #include <QList>
@@ -27,7 +32,7 @@
 
 namespace NereusSDR {
 
-class IAudioDeviceCatalog : public QObject {
+class NEREUS_CORE_EXPORT IAudioDeviceCatalog : public QObject {
     Q_OBJECT
 public:
     using QObject::QObject;

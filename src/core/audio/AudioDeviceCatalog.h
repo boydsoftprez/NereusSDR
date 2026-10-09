@@ -26,10 +26,15 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 3 (R-AUD-03). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: Windows test fix (R-AUD-03): exported from the Core DLL,
+//               so a signal of it is found from outside the DLL on
+//               Windows. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include "core/audio/IAudioDeviceCatalog.h"
 #include "core/audio/IAudioEngineBackend.h"
 
@@ -46,7 +51,7 @@ class QThread;
 
 namespace NereusSDR {
 
-class AudioDeviceCatalog final : public IAudioDeviceCatalog {
+class NEREUS_CORE_EXPORT AudioDeviceCatalog final : public IAudioDeviceCatalog {
     Q_OBJECT
 public:
     static constexpr int kDebounceMs = 500;
