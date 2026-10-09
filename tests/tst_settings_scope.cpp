@@ -666,6 +666,16 @@ private slots:
         }
         QTest::newRow("audio/Headphones/Enabled is OperatorLocal (this computer's device)")
             << QStringLiteral("audio/Headphones/Enabled") << int(SettingsScope::OperatorLocal);
+        // R-AUD-20: the one buffer size and rate of this computer's ASIO
+        // session. AudioEngine::setAsioBufferAndRate also writes them into
+        // the cards' BufferSamples and SampleRate above, so they share
+        // those keys' scope. Setup reads them through AudioEngine, so the
+        // sweep sees only the core side; these rows are their cover.
+        for (const char* key : {"audio/Asio/BufferFrames", "audio/Asio/SampleRate"}) {
+            QTest::newRow(qPrintable(QStringLiteral("%1 is OperatorLocal (this computer's ASIO session)")
+                                         .arg(QLatin1String(key))))
+                << QString::fromLatin1(key) << int(SettingsScope::OperatorLocal);
+        }
         // R-R3-45: where MON plays is this computer's choice too.
         QTest::newRow("audio/TxMonitor/Output is OperatorLocal (this computer's output)")
             << QStringLiteral("audio/TxMonitor/Output") << int(SettingsScope::OperatorLocal);

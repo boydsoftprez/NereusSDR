@@ -12,11 +12,15 @@
 // catalogue describes, then the older drivers in use; Windows reads
 // "Windows audio (WASAPI)" and PulseAudio is talked to directly.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: settings scope fix (R-AUD-07, R-AUD-20): the saved ASIO
+//               buffer size and rate and the headphones Enabled box are
+//               read through AudioEngine, so a Setup page does not read
+//               a key a core consumer reads. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "SoundSystemLine.h"
 
-#include "core/AppSettings.h"
 #include "core/AudioDeviceConfig.h"
 #include "core/AudioEngine.h"
 #include "core/audio/IAudioDeviceCatalog.h"
@@ -120,10 +124,7 @@ QList<AudioDeviceConfig> choicesInUse()
 {
     QList<AudioDeviceConfig> choices;
     choices.append(AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/Speakers")));
-    if (AppSettings::instance()
-            .value(QStringLiteral("audio/Headphones/Enabled"), QStringLiteral("False"))
-            .toString()
-        == QStringLiteral("True")) {
+    if (AudioEngine::savedHeadphonesEnabled()) {
         choices.append(AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/Headphones")));
     }
     choices.append(AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/TxInput")));

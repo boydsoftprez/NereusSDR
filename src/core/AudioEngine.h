@@ -263,6 +263,11 @@
 //                 (planAsioSwitchFor(), applyAsioSwitch()), the shared
 //                 buffer and rate, the driver's control panel, and each
 //                 output's role on its stream request. NereusSDR-original.
+//   2026-10-09: settings scope fix (R-AUD-07, R-AUD-20): the saved ASIO
+//               buffer size and rate and the headphones Enabled box are
+//               read through AudioEngine, so a Setup page does not read
+//               a key a core consumer reads. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -697,6 +702,13 @@ public:
                                      AudioChannelPair pair) const;
     void applyAsioSwitch(const AsioSwitchPlan& plan);   // saves and reopens every moved role
     void setAsioBufferAndRate(int bufferFrames, double sampleRate);   // saves audio/Asio/BufferFrames and audio/Asio/SampleRate
+    // The saved ASIO buffer size and rate (0 and 48000 when none saved)
+    // and the headphones card's saved Enabled box: this computer's
+    // choices.  A Setup page reads them here, never from the settings
+    // store, so the key has one reader in the core (tst_settings_scope).
+    static int savedAsioBufferFrames();
+    static double savedAsioSampleRate();
+    static bool savedHeadphonesEnabled();
     void openAsioControlPanel();
 #ifdef NEREUS_BUILD_TESTS
     // A driver's caps as the helper would describe them (nullopt removes).
