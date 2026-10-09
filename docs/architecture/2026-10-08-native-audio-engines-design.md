@@ -533,12 +533,16 @@ R-AUD-05. Migration, once, on the first start after the update (D11):
 
 | Saved before | After |
 |---|---|
-| no `DriverApi`, or MME on Windows | the system's native engine (R-AUD-02), same device |
+| no `DriverApi` (an empty Driver API, or a value that matched no host API) | the system's native engine (R-AUD-02), same device |
 | WASAPI, `ExclusiveMode` False | Windows audio, shared, same device |
 | WASAPI, `ExclusiveMode` True | Windows audio, exclusive, same device |
 | Core Audio (Mac) | Core Audio, same device |
 | ALSA with the device `pipewire`, `pulse` or `default` (PortAudio's way to reach the sound server) | the running native engine, on "(platform default)" |
-| MME, DirectSound, WDM-KS or JACK picked by name, or ALSA with a card's own device | unchanged, under Older drivers |
+| MME, DirectSound, WDM-KS or JACK chosen explicitly (even MME with no device name), or ALSA with a card's own device | unchanged, under Older drivers |
+
+Amended 2026-10-09 to match settled call 26 of the plan: an explicit MME,
+DirectSound, WDM-KS or JACK choice stays under Older drivers, even MME with
+no device name. Only an empty Driver API moves to the native engine.
 
 "Same device" is matched by name, with two allowances: an MME name, cut to
 31 characters, matches the Windows endpoint whose name starts with it; and

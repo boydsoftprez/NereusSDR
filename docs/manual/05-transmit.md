@@ -6,9 +6,11 @@ Transmit controls change shared radio state. Before keying, confirm the transmit
 
 ### Test the microphone and interpret the evidence
 
-Begin with a connected, transmit-capable radio and the intended slice selected. Open **File > Settings… > Audio > TX Input**. **Mic Source** offers **PC Mic**, **Radio Mic**, and **VAX TX (virtual device)**. The local desktop chooses the radio's source; a remote desktop chooses its authenticated session's input and waits for the Core's accepted readback. Choose **PC Mic** for a microphone captured by this computer, **Radio Mic** for a radio's supported hardware input, or **VAX TX** when an external digital program supplies audio through the virtual device. Radio Mic controls vary by radio family, and unavailable rows remain gated with their displayed reason.
+Begin with a connected, transmit-capable radio and the intended slice selected. Open **File > Settings… > Audio > Microphone**. **Source** offers **PC Mic**, **Radio Mic**, and **VAX TX (virtual device)**. The local desktop chooses the radio's source; a remote desktop chooses its authenticated session's input and waits for the Core's accepted readback. Choose **PC Mic** for a microphone captured by this computer, **Radio Mic** for a radio's supported hardware input, or **VAX TX** when an external digital program supplies audio through the virtual device. Radio Mic controls vary by radio family, and unavailable rows remain gated with their displayed reason.
 
-For PC Mic, open **File > Settings… > Audio > TX Input**. In **PC Mic**, choose the **Backend** and **Device** that contain the intended input. Use **Buffer** to adjust capture buffering only when the current route reports dropouts or unacceptable delay; its label shows samples and approximate milliseconds at 48 kHz. A smaller buffer reduces latency but may be less tolerant of a busy computer or backend. Check **Test Mic** and its VU indicator. If the stream is unavailable, open **Audio > Devices**, confirm the selected capture device under **TX Input (Microphone)** and the operating system's microphone permission, then press **Retry microphone** and test again. Adjust **Mic Gain** only when the meter shows a level mismatch; its range depends on the connected board. These controls test local capture without putting RF on the air. The microphone group and selected source have separate Core permission gates.
+For PC Mic, open **File > Settings… > Audio > Microphone**. In the **PC microphone** card, choose the **Device**, and under **Device details** the **Driver** that lists it. Use **Buffer size** to adjust capture buffering only when the current route reports dropouts or unacceptable delay; its label shows samples and approximate milliseconds at 48 kHz. **Delay** reads **Now N ms from <device> to the radio** once the mic is capturing. A smaller buffer reduces latency but may be less tolerant of a busy computer or driver. **Mic is on:** chooses **Left**, **Right** or **Both** channels of a stereo mic. Check **Test Mic** and its VU indicator. If the stream is unavailable, confirm the selected device, the operating system's microphone permission and that no other program holds the mic, then press **Retry microphone** and test again. Adjust **Mic Gain** only when the meter shows a level mismatch; its range depends on the connected board. These controls test local capture without putting RF on the air. The microphone group and selected source have separate Core permission gates.
+
+With PC Mic selected the TX applet's source badge reads **PC mic**. If the chosen microphone is missing or another program holds it, the badge turns amber and reads **PC mic not connected** or **PC mic in use by another program**; its tooltip names the device and says that transmit audio is silent until it comes back. NereusSDR never switches to another mic by itself, and capture resumes on its own when the device returns. Keying does not change: while the PC mic is not ready a voice-mode MOX request is refused with **Microphone is not ready. Check Audio settings and retry.**, and losing the mic during a transmission releases MOX. A Bluetooth headset used as the mic switches to phone-call quality for listening too; the card says so when you pick one, and recommends a wired or built-in mic for the best sound.
 
 When **Radio Mic** is selected, use only the group shown for the connected board. **Radio Mic (Hermes / Atlas)** offers **Mic In** or **Line In**, **+20 dB Mic Boost**, and **Line In Gain**. **Radio Mic (Orion-MkII)** offers **Mic Tip-Ring (Tip is Mic)**, **Mic Bias**, **Mic PTT Disabled**, and **+20 dB Mic Boost**. **Radio Mic (Saturn G2)** offers **3.5 mm Jack** or **XLR** plus its **Mic PTT Disabled**, **Mic Bias**, and **+20 dB Mic Boost** controls. Set these to match the microphone wiring and electrical requirements; Mic Bias or boost can be inappropriate for a particular microphone. Verify the selected source and test on an authorized, low-drive transmission. A control disabled with a reason is not configurable on this Core or radio. In the candidate, Hermes Lite 2 offers **Radio Mic** with an explicit audio-add-on requirement. A stock HL2 sends no microphone audio; selecting the row does not detect or supply the add-on. Verify the actual compatible audio hardware before using that input.
 
@@ -25,17 +27,17 @@ The **Phone / CW** applet is a quick radio-side control surface. Its source butt
 Use the evidence in order, and keep the transmitter unkeyed for the local
 check:
 
-1. In **File > Settings… > Audio > TX Input**, choose the actual source. For
-   **PC Mic**, choose its **Backend** and **Device**, enable **Test Mic**, and
+1. In **File > Settings… > Audio > Microphone**, choose the actual source. For
+   **PC Mic**, choose its **Driver** and **Device**, enable **Test Mic**, and
    speak at the intended distance. Read its VU and the **Mic Gain** value. This
    observes local capture; it does not test the radio's selected input, TX
    processing, modulation, or RF path. Stop **Test Mic** when done.
 2. If capture is missing or unstable, use the capture status and **Retry
-   microphone**; for a PC route also check **Audio > Devices**, its
-   **TX Input (Microphone)** selection, and operating-system permission. Do
+   microphone**; for a PC route also check the **PC microphone** card's
+   **Device** and operating-system permission, and read the amber badge in the TX applet. Do
    not infer a bad RF path from this local test.
 3. For **Radio Mic**, check the source and board-specific wiring controls in
-   **TX Input**; Test Mic is the PC capture check. Confirm the correct
+   **Microphone**; Test Mic is the PC capture check. Confirm the correct
    connector/input and its displayed gain/state before a keyed check.
 4. For transmitted audio evidence, use a controlled authorized transmission
    and the TX applet's **MON** or an independent receiving station. Check the
