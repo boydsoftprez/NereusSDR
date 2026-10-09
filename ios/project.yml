@@ -23,7 +23,7 @@ settings:
     SWIFT_STRICT_CONCURRENCY: complete
     MARKETING_VERSION: "2026.9.0"
     # The build number for a build from Xcode's own window. The scripts'
-    # builds (device-install.sh) set it to the commit count of HEAD, from
+    # builds (device-install.sh) set it to the commit count of HEAD plus 1000, from
     # scripts/build-number.sh, so it rises with every commit.
     CURRENT_PROJECT_VERSION: "1"
     CODE_SIGN_STYLE: Automatic

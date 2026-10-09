@@ -9,7 +9,7 @@
 # The archive carries:
 #
 #   * its build number, CURRENT_PROJECT_VERSION, from build-number.sh: the
-#     commit count of HEAD (D132), so every archive from a newer commit
+#     commit count of HEAD plus 1000 (D132), so every archive from a newer commit
 #     carries a larger number, as TestFlight asks. An archive needs one, so
 #     this stops when there is no git repository to count;
 #   * its version, MARKETING_VERSION, as project.yml sets it;
@@ -28,7 +28,10 @@
 #
 # The archive is written to ios/.build/archive/NereusSDR <version> (<build>).xcarchive,
 # with its derived data in ios/.build/archive-dd. Xcode's Organizer, or
-# xcodebuild -exportArchive, uploads it. Then the archived app is checked
+# xcodebuild -exportArchive with ios/Config/ExportOptions.plist, uploads it.
+# In Organizer, choose App Store Connect, never TestFlight Internal Only:
+# an internal-only build can never reach external testers, the public
+# TestFlight link or the App Store. Then the archived app is checked
 # for its privacy manifest, PrivacyInfo.xcprivacy, without which App Store
 # Connect refuses the upload (ITMS-91053); this stops if it is missing.
 #
@@ -111,3 +114,5 @@ app="$archive/Products/Applications/NereusSDR.app"
     || fail "the archived app has no PrivacyInfo.xcprivacy; App Store Connect would refuse it."
 
 echo "Archived NereusSDR $version ($number): $archive"
+echo "Upload it with Organizer's App Store Connect choice (not TestFlight Internal Only), or:"
+echo "  xcodebuild -exportArchive -archivePath \"$archive\" -exportOptionsPlist \"$ios_dir/Config/ExportOptions.plist\" -exportPath \"$ios_dir/.build/export\" -allowProvisioningUpdates"
