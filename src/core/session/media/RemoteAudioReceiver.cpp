@@ -8,6 +8,7 @@
 #include "core/session/media/RemoteAudioRateMatcher.h"
 #include "core/session/media/RtpReceptionStats.h"
 #include <algorithm>
+#include <limits>
 #include <cmath>
 #include <atomic>
 #include <bit>
@@ -91,7 +92,8 @@ struct ReceivedAudioPacket { QByteArray bytes; quint32 timestamp; qint64 arrival
 // the test-only step mode the test's own. Nothing else touches it.
 struct RemoteAudioReceiver::WorkerState {
     WorkerState(RemoteAudioReceiver* receiver, quint32 ssrc, quint32 firstTimestamp,
-                quint64 generation, RemoteAudioProfile profile, AudioFormat speakerFormat);
+                quint64 generation, RemoteAudioProfile profile, AudioFormat speakerFormat,
+                bool intoMatcher);
     // The setup before the first wake. False: the worker ends (a fault was
     // reported).
     bool setup();
@@ -99,6 +101,10 @@ struct RemoteAudioReceiver::WorkerState {
     // work, as the worker thread does (the step mode does not wait). False:
     // the worker ends (stopped, or a fault was reported).
     bool pass(bool waitForWork);
+    // R-AUD-15: the rest of a wake when the output's bus has its own clock
+    // matcher (intoMatcher): released by the jitter hold alone, written as
+    // 48 kHz stereo.
+    bool passIntoMatcher(qint64 now);
 
     // The speaker queue the worker keeps: two blocks, or the device's
     // callback and one block when that is more.
@@ -129,6 +135,15 @@ struct RemoteAudioReceiver::WorkerState {
     std::unique_ptr<IRemotePcmWorkerStage::Run> stageRun;
     const bool lossless;
     const bool sinkMode;
+    // R-AUD-15: the output's bus takes the 48 kHz stereo stream into its
+    // own clock matcher; `matcher` below is then unused.
+    const bool intoMatcher;
+    // The bus matcher's dry runs and overruns when this context's playback
+    // began (its first write): the context's underflows and overflows
+    // count from them, so the device running dry while the jitter hold
+    // waits for the first release is not counted.
+    quint64 busDryRunsBase = 0;
+    quint64 busOverrunsBase = 0;
     const int packetFrames;
     // R-R3-23: the speaker side runs at the device's rate. One worker
     // block is 10 ms of it (480 frames at 48 kHz, 441 at 44.1 kHz, 960
@@ -561,15 +576,18 @@ bool RemoteAudioReceiver::start(quint32 ssrc, quint32 firstTimestamp, RemoteAudi
     d->telemetrySequence.fetch_add(1);
     const quint64 generation = d->generation;
     d->stopWorker.store(false);
+    // R-AUD-15: whether the output's bus matches the clock itself.
+    const bool intoMatcher = !d->sink && d->engine->remotePlaybackIntoMatcher(d->output);
     if (d->stepMode) {
         // Test-only step mode: no worker thread. The setup runs here, and
         // each runWorkerPassForTest() runs one pass, on the caller's thread.
-        d->workerState.emplace(this, ssrc, firstTimestamp, generation, profile, speakerFormat);
+        d->workerState.emplace(this, ssrc, firstTimestamp, generation, profile, speakerFormat,
+                               intoMatcher);
         if (!d->workerState->setup()) { d->workerState.reset(); }
         return true;
     }
     d->worker = std::thread([this, ssrc, firstTimestamp, generation, profile,
-                             speakerFormat] {
+                             speakerFormat, intoMatcher] {
         // R-R3-21: this thread feeds the speaker's 20 ms queue, so it runs
         // in the latency-critical class, as the local DSP feeders do
         // (RxDspWorker, TxWorkerThread). At the default class a busy Mac
@@ -580,7 +598,8 @@ bool RemoteAudioReceiver::start(quint32 ssrc, quint32 firstTimestamp, RemoteAudi
         static std::atomic<bool> priorityLogged{false};
         elevateLatencyCriticalThreadPriority(!priorityLogged.exchange(true));
         // The worker's state lives, runs and ends on this thread.
-        d->workerState.emplace(this, ssrc, firstTimestamp, generation, profile, speakerFormat);
+        d->workerState.emplace(this, ssrc, firstTimestamp, generation, profile, speakerFormat,
+                               intoMatcher);
         if (d->workerState->setup()) {
             while (d->workerState->pass(true)) {
             }
@@ -593,10 +612,12 @@ bool RemoteAudioReceiver::start(quint32 ssrc, quint32 firstTimestamp, RemoteAudi
 RemoteAudioReceiver::WorkerState::WorkerState(RemoteAudioReceiver* receiver, quint32 ssrcIn,
                                               quint32 firstTimestampIn, quint64 generationIn,
                                               RemoteAudioProfile profileIn,
-                                              AudioFormat speakerFormatIn)
+                                              AudioFormat speakerFormatIn,
+                                              bool intoMatcherIn)
     : q(receiver), d(receiver->d.get()), ssrc(ssrcIn), firstTimestamp(firstTimestampIn),
       generation(generationIn), profile(profileIn), speakerFormat(speakerFormatIn),
       lossless(profile == RemoteAudioProfile::Lossless), sinkMode(bool(d->sink)),
+      intoMatcher(intoMatcherIn),
       packetFrames(packetFramesFor(profile)), deviceRate(speakerFormat.sampleRate),
       deviceChannels(speakerFormat.channels), blockFrames(std::max(1, deviceRate / 100)),
       packetDeviceFrames(int((qint64(packetFrames) * deviceRate
@@ -633,7 +654,22 @@ void RemoteAudioReceiver::WorkerState::publishSpeakerQueue(
 
 RemoteAudioRateMatcherStats RemoteAudioReceiver::WorkerState::publishMatcherStats()
 {
-    const auto stats = matcher.stats();
+    RemoteAudioRateMatcherStats stats = matcher.stats();
+    if (intoMatcher) {
+        // R-AUD-15: the bus's matcher counters, from this context's start,
+        // in the shape the rate matcher's stats have.
+        stats = RemoteAudioRateMatcherStats{};
+        if (const auto bus = d->engine->remotePlaybackMatcherStats(d->output)) {
+            const quint64 dry = bus->dryRuns - std::min(bus->dryRuns, busDryRunsBase);
+            const quint64 over = bus->overruns - std::min(bus->overruns, busOverrunsBase);
+            stats.underflows = int(std::min<quint64>(dry, quint64(std::numeric_limits<int>::max())));
+            stats.overflows = int(std::min<quint64>(over, quint64(std::numeric_limits<int>::max())));
+            stats.currentRatio = bus->ratio;
+            stats.ringCapacityFrames = bus->rsizeFrames;
+            stats.ringFillFrames = int(std::lround(std::max(0.0, bus->fillFrames)));
+            stats.controlActive = bus->controlActive;
+        }
+    }
     const quint64 underflows = std::max(0, stats.underflows);
     const quint64 overflows = std::max(0, stats.overflows);
     d->underflows.store(stats.underflows);
@@ -783,6 +819,25 @@ bool RemoteAudioReceiver::WorkerState::setup()
             notify(QStringLiteral("Could not initialize the remote audio decoder"),
                    Fault::DecoderUnavailable, true);
             return false;
+        }
+    } else if (intoMatcher) {
+        // R-AUD-15: the bus's matcher sizes its own queue, so neither the
+        // speaker target nor a rate matcher of the receiver's is set up.
+        if (!initialPacing) {
+            notify(QStringLiteral("Speaker device timing is unavailable"),
+                   Fault::SpeakerTimingUnavailable, true);
+            return false;
+        }
+        publishSpeakerQueue(initialPacing);
+        if (decoder && !decoder->isReady()) {
+            notify(QStringLiteral("Could not initialize the remote audio decoder"),
+                   Fault::DecoderUnavailable, true);
+            return false;
+        }
+        // Taken again at the first write (passIntoMatcher).
+        if (const auto bus = d->engine->remotePlaybackMatcherStats(d->output)) {
+            busDryRunsBase = bus->dryRuns;
+            busOverrunsBase = bus->overruns;
         }
     } else {
         if (!initialPacing) {
@@ -1011,7 +1066,14 @@ bool RemoteAudioReceiver::WorkerState::pass(bool waitForWork)
     // R-R3-21: the rate matcher's fill above its working level
     // (half its ring, where WDSP rmatch starts and steers) is delay
     // too; shedding as the hold eases counts it.
-    {
+    if (intoMatcher) {
+        // R-AUD-15: the bus matcher's fill above its target (half its
+        // automatic size, where it starts and steers), at the device rate.
+        if (const auto bus = d->engine->remotePlaybackMatcherStats(d->output)) {
+            jitter.setDownstreamExcessNs(qint64(
+                (bus->fillFrames - double(bus->rsizeFrames) / 2.0) * 1e9 / double(deviceRate)));
+        }
+    } else {
         const auto fill = matcher.stats();
         jitter.setDownstreamExcessNs(
             qint64(fill.ringFillFrames - fill.ringCapacityFrames / 2) * 1'000'000'000
@@ -1029,6 +1091,9 @@ bool RemoteAudioReceiver::WorkerState::pass(bool waitForWork)
         if (!decoder) { continue; }
         if (shed.isEmpty()) { decoder->decodeMissing(); }
         else { decoder->decodeRtp(shed, ssrc); }
+    }
+    if (intoMatcher) {
+        return passIntoMatcher(now);
     }
     // At most the bounded jitter window per wake, never an
     // unbounded catch-up burst.
@@ -1193,6 +1258,108 @@ bool RemoteAudioReceiver::WorkerState::pass(bool waitForWork)
             .arg(stats.underflows).arg(stats.overflows), Fault::ClockBuffer);
         return false;
     }
+    return true;
+}
+
+bool RemoteAudioReceiver::WorkerState::passIntoMatcher(qint64 now)
+{
+    // R-AUD-15, settled call 30: released by the jitter hold alone, as the
+    // PCM sink is (the Core's RTP clock paces the release, the bus's
+    // matcher the device), at most the window per wake. Each release is
+    // written at once as 48 kHz stereo; the matcher makes its own room.
+    for (int i = 0; i < jitter.maxPackets(); ++i) {
+        const auto frame = jitter.takeReady(now);
+        if (!frame) { break; }
+        const QVector<float> audio = decodePacket(frame->packet);
+        if (audio.isEmpty()) {
+            notify(QStringLiteral("Remote audio decode failed"), Fault::DecodeFailed);
+            return false;
+        }
+        if (!playing) {
+            if (const auto bus = d->engine->remotePlaybackMatcherStats(d->output)) {
+                busDryRunsBase = bus->dryRuns;
+                busOverrunsBase = bus->overruns;
+            }
+        }
+        if (!d->engine->writeRemotePlayback(audio, d->output)) {
+            notify(QStringLiteral("Could not write remote audio to the speaker device"),
+                   Fault::SpeakerWriteFailed, true);
+            return false;
+        }
+        if (frame->concealed()) { ++d->concealed; }
+        else { ++d->decoded; }
+        noteReleased(frame->timestamp, frame->concealed(), now);
+        playing = true;
+        if (!released) {
+            // Playback has begun; the normal overflow rule applies.
+            released = true;
+            std::lock_guard<std::mutex> lock(d->mutex);
+            d->startPhase = false;
+        }
+    }
+    d->reorderQueuedPackets.store(jitter.queuedPackets());
+    if (!playing) {
+        publishSpeakerQueue(d->engine->remotePlaybackPacing(d->output));
+        return true;
+    }
+    const auto pacing = d->engine->remotePlaybackPacing(d->output);
+    if (!pacing) {
+        notify(QStringLiteral("Speaker device timing became unavailable"),
+               Fault::SpeakerTimingUnavailable, true);
+        return false;
+    }
+    // The device's progress, and the 500 ms stall rule, as the other path.
+    if (!speakerStartedAt && pacing->consumedFrames > deviceConsumedBase) {
+        speakerStartedAt = now;
+    }
+    if (pacing->consumedFrames != lastDeviceFrames) {
+        lastDeviceFrames = pacing->consumedFrames;
+        lastDeviceProgress = now;
+        if (pacing->consumedFrames != telemetryDeviceFrames) {
+            telemetryDeviceFrames = pacing->consumedFrames;
+            d->deviceConsumedFrames.store(telemetryDeviceFrames - deviceConsumedBase);
+            d->lastDeviceProgressNs.store(now);
+            d->hasLastDeviceProgress.store(true);
+        }
+    } else if (now - lastDeviceProgress > 500'000'000) {
+        notify(QStringLiteral("Speaker device stopped consuming audio"),
+               Fault::SpeakerStalled, true);
+        return false;
+    }
+    // The bus's matcher counters. Its dry runs and overruns are its own to
+    // repair (a slew, a crossfaded skip, a size step), so they are counted,
+    // not a reason to ask for a fresh context.
+    const auto stats = publishMatcherStats();
+    if (stats.controlActive) {
+        d->driftRatio.store(stats.currentRatio);
+        d->hasDriftRatio.store(true);
+    }
+    // R-R3-35: the newest written sample is heard after the matcher fill,
+    // then the device. The matcher is the whole queue.
+    const qint64 readStart = d->now();
+    const auto finalPacing = d->engine->remotePlaybackPacing(d->output);
+    const qint64 readEnd = d->now();
+    publishSpeakerQueue(finalPacing);
+    if ((finalPacing && pushedEnd) || unpublishedRelease) {
+        std::lock_guard<std::mutex> lock(d->pointsMutex);
+        if (finalPacing && pushedEnd) {
+            RemoteAudioPlayoutPoint point;
+            point.rtpTimestamp = *pushedEnd;
+            point.measuredNs = readStart + (readEnd - readStart) / 2;
+            point.matcherFillFrames = std::max(0, finalPacing->queuedFrames);
+            point.speakerQueuedFrames = 0;
+            point.deviceLatencyNs = finalPacing->deviceLatencyNs;
+            point.deviceRateHz = deviceRate;
+            point.pipelineDelayFrames = pipelineDelayFrames;
+            point.callbackFrames = std::max(0, finalPacing->callbackFrames);
+            point.readWindowNs = readEnd - readStart;
+            point.codecDelayFrames = codecDelayFrames;
+            point.matcherRatio = stats.currentRatio;
+            d->playout = point;
+        }
+        if (unpublishedRelease) { d->release = *unpublishedRelease; }
+    }
+    unpublishedRelease.reset();
     return true;
 }
 

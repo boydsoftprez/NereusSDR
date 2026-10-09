@@ -9,10 +9,12 @@
 // Plan:        docs/architecture/2026-04-19-phase3o-vax-plan.md (3.2–3.4)
 //
 // Supports both render (Output) and capture (Input) modes via
-// PortAudioConfig::direction. Output: push() feeds the ring, the audio
-// callback drains it to the device. Input: the audio callback captures
-// from the device into the ring, pull() drains it. Host-API / device
-// enumeration helpers are available statically (Task 3.3).
+// PortAudioConfig::direction. Output: push() takes the 48 kHz stereo float
+// mix into a DeviceRateMatcher (the clock matcher, R-AUD-15), and the
+// audio callback reads it and writes the device's own channels. Input: the
+// audio callback captures from the device into the ring, pull() drains it.
+// Host-API / device enumeration helpers are available statically
+// (Task 3.3).
 //
 // Modification history (NereusSDR):
 //   2026-09-22: strict named-input resolution, open-failure stage and
@@ -30,11 +32,17 @@
 //               hook for the audio delay probe's detector, with each
 //               block's capture time. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 6 (R-AUD-15): an output's ring is a
+//               DeviceRateMatcher fed 48 kHz stereo (takesStereoMix), read
+//               by the callback and written in the device's channels;
+//               delayParts, matcherStats and restartClockMatch.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
 
 #include "core/IAudioBus.h"
+#include "core/audio/DeviceRateMatcher.h"
 
 #include <algorithm>
 #include <atomic>
@@ -154,10 +162,20 @@ public:
     void close() override;
     bool isOpen() const override { return m_stream != nullptr; }
 
+    // Output: `data` is interleaved 48 kHz stereo float (takesStereoMix),
+    // written into the clock matcher whatever the device's rate and
+    // channel count. Input: unused (returns 0).
     qint64 push(const char* data, qint64 bytes) override;
     qint64 pull(char* data, qint64 maxBytes) override;
     void   flush() override;
     std::optional<OutputPacing> outputPacing() const override;
+
+    // R-AUD-15: an output stream holds a DeviceRateMatcher; an input
+    // stream keeps its ring and reports none of these.
+    bool takesStereoMix() const override { return m_cfg.direction == AudioDirection::Output; }
+    AudioDelayParts delayParts() const override;
+    std::optional<DeviceRateMatcherStats> matcherStats() const override;
+    void restartClockMatch() override;
 
     float rxLevel() const override { return m_rxLevel.load(std::memory_order_acquire); }
     float txLevel() const override { return m_txLevel.load(std::memory_order_acquire); }
@@ -166,12 +184,11 @@ public:
     AudioFormat negotiatedFormat() const override { return m_negFormat; }
     QString     errorString() const override { return m_err; }
 
-    // Diagnostics: drop-oldest overrun accounting.  Output-mode push()
-    // counts the event + samples lost every time the writer outruns the
-    // reader by more than the ring's size.  paCallback then performs the
-    // catch-up jump on its next entry.  Reset by clearDropStats().  Both
-    // counters are loaded with relaxed semantics; they are observational
-    // only and not safety-critical.
+    // Diagnostics.  R-AUD-15: an output's overruns and dry runs are the
+    // clock matcher's (matcherStats()); these counters stay for the input
+    // ring and for callers that read them, and an output no longer moves
+    // them.  Reset by clearDropStats().  Loaded with relaxed semantics;
+    // observational only and not safety-critical.
     quint32 ringOverrunEvents() const {
         return m_dropEvents.load(std::memory_order_relaxed);
     }
@@ -220,16 +237,14 @@ public:
     static int downmixToMono(const float* interleaved, int frames,
                              int channels, float* out, int outCapacity);
 
-    /// Floats in an output stream's ring: kDefaultRingSamples (100 ms of
-    /// 48 kHz stereo, as every stream has had), or 100 ms at the stream's
-    /// own rate and channel count when that is more (R-R3-23: faster
-    /// speakers than 48 kHz stereo). An input stream keeps the default.
+    /// Floats in an input stream's ring: 100 ms of 48 kHz stereo.  An
+    /// output stream has no ring of its own: its DeviceRateMatcher holds
+    /// the queue (R-AUD-15).
     static constexpr std::size_t kDefaultRingSamples = 4800 * 2;
-    static std::size_t outputRingSamples(int sampleRate, int channels) {
-        const std::size_t perTenth = std::size_t(std::max(0, sampleRate) / 10)
-            * std::size_t(std::max(1, channels));
-        return std::max(kDefaultRingSamples, perTenth);
-    }
+
+    /// Frames the output callback reads from the matcher and converts per
+    /// step; a larger device block is done in steps of this.
+    static constexpr int kOutputChunkFrames = 512;
 
     /// One direction-valid device offered to matchNamedDevice().
     struct NamedDeviceCandidate {
@@ -248,6 +263,14 @@ public:
 
 private:
     friend class ::TstPortAudioBus;
+
+    // R-AUD-15: builds the output's clock matcher (48 kHz in, the device's
+    // rate out), its reader and the callback's scratch, for a stream of
+    // `deviceChannels` at `deviceRate`.  Main thread, before the stream
+    // starts.  False when the matcher cannot run at that rate.
+    bool prepareOutputMatcher(int deviceRate, int deviceChannels);
+    void releaseOutputMatcher();
+    int outputCallbackFramesNow() const;
 
     PaStream*       m_stream{nullptr};
     PortAudioConfig m_cfg;
@@ -298,18 +321,24 @@ private:
     // larger block must be visible rather than silently truncating.
     std::atomic<quint64> m_downmixDroppedFrames{0};
 
-    // Ring buffer for push/pull. SPSC, lock-free via std::atomic.
-    // Output mode: push() (DSP thread) writes, audio callback reads.
-    // Input mode:  audio callback writes, pull() (caller thread) reads.
+    // Input ring for pull(). SPSC, lock-free via std::atomic: the audio
+    // callback writes, pull() (caller thread) reads.
     std::vector<float>  m_ring;
     std::atomic<qint64> m_ringRead{0};
     std::atomic<qint64> m_ringWrite{0};
 
-    // Output flushes publish an absolute sample position below which audio
-    // is permanently discarded. Only the callback writes m_ringRead, so an
-    // in-flight callback cannot resurrect flushed audio with a stale store.
-    std::atomic<qint64> m_outputDiscardBefore{0};
-    std::atomic<quint64> m_outputConsumedFrames{0};
+    // R-AUD-15: the output's clock matcher.  push() (the DSP thread, or a
+    // remote receiver's worker) is its writer; the callback reads it with
+    // m_outputReader into m_outputScratch (kOutputChunkFrames stereo
+    // frames) and writes the device's m_outputDeviceChannels.  Built by
+    // open() before the stream starts and released by close() after it
+    // stops, so the callback never sees them change.
+    std::unique_ptr<DeviceRateMatcher> m_outputMatcher;
+    MatcherReader m_outputReader;
+    std::vector<float> m_outputScratch;
+    int m_outputDeviceChannels{0};
+    int m_outputDeviceRate{0};
+    std::size_t m_outputMatcherBytes{0};
     std::atomic<int> m_outputCallbackFrames{0};
     // R-R3-35: the open output stream's latency as PortAudio reports it
     // (Pa_GetStreamInfo outputLatency), in ns; -1 when unknown or closed.
@@ -322,15 +351,9 @@ private:
     std::atomic<float> m_rxLevel{0.0f};
     std::atomic<float> m_txLevel{0.0f};
 
-    // Drop-oldest accounting (see ringOverrunEvents above).  Producer-only
-    // writers (push() on the DSP thread); observers read.
+    // Drop and underrun accounting (see ringOverrunEvents above).
     std::atomic<quint32> m_dropEvents{0};
     std::atomic<quint64> m_dropSamples{0};
-
-    // Underrun accounting: paCallback increments on the leading edge of
-    // every silence run (ring empty when audio device asked for samples).
-    // Counts distinct events, not silent frames.  Bench diagnostic for
-    // the audio jitter / crackle hunt.
     std::atomic<quint32> m_underrunEvents{0};
 
     // PortAudio backend-reported anomalies via the callback's flags
@@ -341,20 +364,6 @@ private:
     // looks like.
     std::atomic<quint32> m_paOutputUnderflowEvents{0};
     std::atomic<quint32> m_paOutputOverflowEvents{0};
-
-    // Crossfade state for discontinuity smoothing in paCallback.  Only
-    // read / written from the audio callback (single-threaded by
-    // PortAudio contract), so plain non-atomic floats are safe.
-    // m_lastOutL / m_lastOutR hold the last sample emitted to each
-    // channel; the crossfade ramps from those values up to the next
-    // ring sample over kCrossfadeFrames stereo frames whenever a
-    // drop-oldest catch-up OR an underrun-to-resume transition is
-    // detected.
-    static constexpr int kCrossfadeFrames = 128;  // ~2.7 ms at 48 kHz
-    float m_lastOutL{0.0f};
-    float m_lastOutR{0.0f};
-    int   m_crossfadeFramesRem{0};
-    bool  m_resumeAfterDiscard{false};
 
     static int paCallback(const void* in, void* out,
                           unsigned long frames,

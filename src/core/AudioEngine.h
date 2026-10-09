@@ -21,6 +21,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09 : Native audio plan Task 6 (R-AUD-15) by J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code. A bus that takes
+//                 the stereo mix gets the 48 kHz block without the speaker
+//                 format converter (silence while muted);
+//                 remotePlaybackIntoMatcher(), remotePlaybackMatcherStats(),
+//                 speakersDelayParts() and the probe's readout;
+//                 vaxOutputTakesStereoMix() and restartVaxOutputClockMatch()
+//                 for the remote VAX feeder.
 //   2026-10-08 : Native audio plan Task 1 (V-HW-8) by J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code. The audio delay
 //                 probe: setDelayProbeEnabled() adds a click to the speakers
@@ -528,6 +536,19 @@ public:
     bool writeRemotePlayback(const QVector<float>& pcm,
                              RemotePlaybackOutput output = RemotePlaybackOutput::Speakers);
 
+    // R-AUD-15 (settled call 30): true when the output's bus takes the
+    // 48 kHz stereo mix into its own clock matcher.  Remote playback then
+    // writes 48 kHz stereo through writeRemotePlayback() as the jitter
+    // hold releases it (no room check), whatever remotePlaybackFormat()
+    // reports for the device.  remotePlaybackMatcherStats() is that bus's
+    // matcher counters; speakersDelayParts() the speakers bus's delay
+    // parts (matcherFillMs -1 without a matcher).  Any thread.
+    bool remotePlaybackIntoMatcher(
+        RemotePlaybackOutput output = RemotePlaybackOutput::Speakers) const;
+    std::optional<DeviceRateMatcherStats> remotePlaybackMatcherStats(
+        RemotePlaybackOutput output = RemotePlaybackOutput::Speakers) const;
+    AudioDelayParts speakersDelayParts() const;
+
     // R-R3-45: stores the headphones device and, when the headphones are
     // enabled, reopens the output on it. Emits headphonesConfigChanged.
     void setHeadphonesConfig(const AudioDeviceConfig& cfg);
@@ -700,6 +721,12 @@ public:
     // reports it (IAudioBus::outputHasReader); nullopt otherwise or when
     // the channel has no output. Owner thread.
     std::optional<bool> vaxOutputHasReader(int channel);
+    // R-AUD-15: whether the channel's output takes the 48 kHz stereo mix
+    // into its own clock matcher (the Windows VAX bus), and a restart of
+    // that matcher's control (no-op without one). Feeder worker; both take
+    // the channel's lock.
+    bool vaxOutputTakesStereoMix(int channel);
+    void restartVaxOutputClockMatch(int channel);
 
 #ifdef NEREUS_BUILD_TESTS
     // R-R3-44 test seam: makeVaxBus() (channel 1..4) and makeVaxTxBus()
@@ -1268,7 +1295,7 @@ private:
     // rxBlockReady() uses try_lock and drops the block if it can't acquire
     // (≤1 ms of silence is inaudible vs. a use-after-free). NOT held in the
     // audio callback path (acquires try_lock only; never blocks).
-    std::mutex m_speakersBusMutex;
+    mutable std::mutex m_speakersBusMutex;
 
     std::unique_ptr<IAudioBus> m_speakersBus;
     bool m_remotePlayback{false}; // protected by m_speakersBusMutex
@@ -1276,7 +1303,7 @@ private:
     // R-R3-45: the headphones output. Replaced only on the owner thread
     // under m_headphonesBusMutex; the DSP thread's push takes it with
     // try_lock and drops the block rather than wait, like the speakers.
-    std::mutex m_headphonesBusMutex;
+    mutable std::mutex m_headphonesBusMutex;
     std::unique_ptr<IAudioBus> m_headphonesBus;
     AudioDeviceConfig m_headphonesConfig;  // owner thread
     bool m_headphonesEnabled{false};       // owner thread

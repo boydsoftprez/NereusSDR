@@ -31,6 +31,11 @@
 //               (KG4VCF), with AI-assisted transformation via Anthropic
 //               Claude Code.  Native audio plan Task 2 (R-AUD-15, D2, D7,
 //               D34).
+//   2026-10-09: A flush also clears the resampler's history
+//               (flush_varsamp, as reset_rmatch starts from a fresh
+//               varsamp), so nothing of the earlier audio plays after it.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//               Native audio plan Task 6 (R-AUD-15).
 // =================================================================
 //
 // --- From rmatch.c ---
@@ -98,7 +103,8 @@ warren@wpratt.com
 
 #ifdef HAVE_WDSP
 extern "C" {
-// Exact declarations from third_party/wdsp/src/varsamp.h:61-68 (WDSP 2.10).
+// Exact declarations from third_party/wdsp/src/varsamp.h:61-68 (WDSP 2.10),
+// flush_varsamp from varsamp.h:66.
 // The struct stays opaque here, as RemoteAudioRateMatcher.cpp keeps WDSP's
 // private types out of the C++ side.
 typedef struct _varsamp varsamp, *VARSAMP;
@@ -107,6 +113,7 @@ VARSAMP create_varsamp(int run, int size, double* in, double* out,
                        double gain, double var, int varmode);
 void destroy_varsamp(VARSAMP a);
 int xvarsamp(VARSAMP a, double var);
+void flush_varsamp(VARSAMP a);
 }
 #endif
 
@@ -493,9 +500,21 @@ struct DeviceRateMatcher::Writer {
 
     // Drops what is queued: the reader jumps to the write index (blending
     // into it), finds silence up to the target, and the next audio fades in.
+    // Nothing of the earlier audio is left: the staged frames and the
+    // resampler's history go too.
     void dropQueued()
     {
         stageFrames = 0;
+        // From Thetis Project Files/Source/wdsp/rmatch.c:247-254 [v2.10.3.15 @3759d09]
+        // reset_rmatch rebuilds its varsamp (decalc_rmatch, calc_rmatch), so a
+        // reset rmatch resamples from an empty history.  NereusSDR keeps the
+        // resampler and clears its history in place, on the writer's thread.
+#ifdef HAVE_WDSP
+        // From WDSP varsamp.c:106
+        if (v != nullptr) {
+            flush_varsamp(v);
+        }
+#endif
         const std::uint64_t readNow = ring().read.load(std::memory_order_acquire);
         const std::uint64_t written = ring().written.load(std::memory_order_relaxed);
         ring().skipTo.store(written, std::memory_order_release);
