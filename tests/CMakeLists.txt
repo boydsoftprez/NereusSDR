@@ -1817,6 +1817,17 @@ nereus_add_test(tst_audio_delay_probe fakes/FakeCaptureChild.cpp)
 # WDSP's own rmatchV fed the same clocks (each simulation single-threaded,
 # the four run side by side to keep the wall time down).
 nereus_add_test(tst_device_rate_matcher)
+# TIMEOUT 600: four 10-minute simulations (V-SW-5) through varsamp, about
+# 60 s on the Mac and up to about 360 s in a loaded Linux container.
+# QTEST_FUNCTION_TIMEOUT 540000 for this test only: the drift function runs
+# all four and alone takes about 330 s there, past the 240 s watchdog the
+# Linux CI job sets for the rest, and 540 s stays under the TIMEOUT so the
+# crash handler can still print the stacks.
+if(TEST tst_device_rate_matcher)
+    set_tests_properties(tst_device_rate_matcher PROPERTIES TIMEOUT 600)
+    set_property(TEST tst_device_rate_matcher APPEND PROPERTY ENVIRONMENT
+        "QTEST_FUNCTION_TIMEOUT=540000")
+endif()
 # The same matcher on a real writer thread and reader thread (+-200 ppm):
 # no torn frames, and the reader thread allocates nothing and (on Linux)
 # takes no pthread mutex. REALTIME: both threads are paced by the wall clock.

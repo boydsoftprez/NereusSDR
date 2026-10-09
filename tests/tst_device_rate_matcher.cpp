@@ -7,8 +7,9 @@
 // matcher's writer and reader on two simulated clocks, with no timer and no
 // device, and compares its ratio with WDSP's own rmatchV fed the same
 // clocks.  Each simulation is single-threaded and deterministic; the four
-// drift simulations (two offsets, ours and rmatchV) run side by side on
-// worker threads only to keep the wall time down.
+// independent drift simulations (two offsets, ours and rmatchV) run on
+// worker threads, and the threads only run them side by side to keep the
+// wall time down.  No simulation shares state with another.
 //
 // Modification history (NereusSDR):
 //   2026-10-08: native audio plan Task 2 (R-AUD-15, V-SW-5). J.J. Boyd

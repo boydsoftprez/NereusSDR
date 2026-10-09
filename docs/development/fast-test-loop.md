@@ -85,7 +85,8 @@ test, and two that deliberately avoid instantiating GUI classes).
 Every test carries `TIMEOUT 120` by default, so a hung test fails instead
 of blocking forever. A few still override it in `tests/CMakeLists.txt`, each
 with its reason beside it: `tst_remote_audio_clock` (700 s, two simulated
-hours through WDSP's resampler), `tst_rendezvous_client`,
+hours through WDSP's resampler), `tst_device_rate_matcher` (600 s, four
+10-minute simulations through varsamp), `tst_rendezvous_client`,
 `tst_remote_vax_feeder`, `tst_remote_media_controller`, `tst_media_tunnel`,
 the media-wait set (`tst_remote_audio_session`, `tst_media_replace`,
 `tst_remote_telemetry`, `tst_remote_connection_controls`) and the link
