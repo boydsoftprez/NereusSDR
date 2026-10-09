@@ -3,6 +3,8 @@
 The suite has **598 registered tests** (four are Linux/PipeWire-only and
 register only on Linux).
 
+Audio tests use the fakes in `tests/fakes/` and never open a sound device.
+
 The application is built as a single shared library (`NereusSDRLib`) that
 every test links dynamically, so a test executable is about **90 KB**, not a
 private 40 MB copy of the whole app. Re-measured 2026-08-02 on an Apple

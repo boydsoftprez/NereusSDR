@@ -29,7 +29,9 @@
 // The feeders here are pumped by the test with a harness clock; in the
 // end-to-end level tests that clock is this computer's VAX 1 device's
 // (VaxDeviceOnFeederClock), so a busy machine cannot make the device look
-// paused or play the rate matcher dry. Nothing opens this computer's
+// paused or play the rate matcher dry; the receiver audio streams feeding
+// it hold and conceal on the Core's audio clock, and the tests' deadlines
+// for audio are on that clock too (awaitAudio). Nothing opens this computer's
 // speakers, microphone or VAX devices.
 //
 // =================================================================
@@ -66,6 +68,15 @@
 //                                    device step waits for audio still on
 //                                    its way, so machine load cannot fill
 //                                    every window with a restart.
+//                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-09  J.J. Boyd / KG4VCF  Load fix: the receiver audio streams
+//                                    for this computer's VAX hold and conceal
+//                                    on the Core's audio clock, as the device
+//                                    and feeder already run, and the level
+//                                    tests' deadlines for audio count that
+//                                    clock, so a busy machine neither
+//                                    conceals audio still on its way nor
+//                                    uses the deadlines up.
 //                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -439,6 +450,136 @@ QList<quint64> linkLosses(const RemoteMediaController& media, const QList<int>& 
     return losses;
 }
 
+// This computer's VAX 1 in the end-to-end level tests: the app reading it
+// and the feeder that writes it run on one clock, the device's, as a real
+// VAX device's own clock thread and the feeder's worker do. A real device
+// plays on, and the feeder judges it, by the same wall clock; here the
+// device is the test's PacedAudioBus, which plays only when the test
+// renders it, so the feeder is given the device's clock (frames rendered at
+// 48 kHz) instead of the wall clock, and is pumped by the test, 5 ms of that
+// clock at a time, as its worker pumps.
+//
+// One step per source block (the Core's 10 ms of audio): the device plays
+// one block and the clock moves 10 ms. A step waits while the rate matcher
+// holds less than kWaitBelowFrames: the audio for it is still on its way
+// (the link, the receive worker, this thread's own delivery of the media
+// packets), and a step taken now would only play the matcher dry. The
+// step is not made up later, so the device then plays at the source's rate
+// again, one block later, and the matcher's fill is back where it was once
+// the late audio arrives. So what this computer's VAX plays depends on what
+// the link delivered, never on when this busy machine got round to it.
+// A real device does not wait: on a busy computer the matcher runs dry and
+// the feeder restarts it, a gap the operator hears, and plays on (the
+// recovery is aQuietCoreIsWaitedFor's and anOutputNobodyReadsIsNotAFault's).
+//
+// The receiver audio streams that feed the feeder (one per slice, made by
+// RemoteMediaController) hold each packet a fixed time and conceal one that
+// has not come by its deadline. On their own steady clock, a busy computer
+// that feeds the Core's audio slower than real time has them conceal audio
+// still on its way, to real-time rate: the surplus overflows the rate
+// matcher before its control starts, and every concealed or late packet is
+// a link loss in the window. So they are given sourceClock(): the Core's
+// audio fed, 10 ms a block, the clock the source itself runs on. Not the
+// device's clock, which stops while a step waits for audio from them.
+class VaxDeviceOnFeederClock {
+public:
+    static constexpr int kBlockFrames = Test::RemoteAudioSessionHarness::kFrames;
+    static constexpr qint64 kPumpNs = RemoteVaxFeeder::kPumpIntervalNs;
+    static constexpr qint64 kBlockNs = qint64(kBlockFrames) * 1'000'000'000 / 48'000;
+    static_assert(kBlockNs == 2 * kPumpNs, "a device block is two of the feeder's pumps");
+    // One output block for the step's take, and one more of margin.
+    static constexpr int kWaitBelowFrames = 2 * RemoteVaxFeeder::kOutputBlockFrames;
+
+    explicit VaxDeviceOnFeederClock(PacedAudioBus* device) : m_device(device) {}
+
+    // The router's feeders, on this clock, pumped by step(), never by a
+    // worker of their own.
+    RemoteVaxRouter::FeederFactory feederFactory(AudioEngine* engine)
+    {
+        return [this, engine](int channel) {
+            auto feeder = std::make_unique<RemoteVaxFeeder>(
+                channel, VaxOutputPort::forEngine(engine, channel), [this] { return m_nowNs; });
+            if (channel == 1) {
+                m_feeder = feeder.get();
+            }
+            return feeder;
+        };
+    }
+
+    // Once per source block, after it was fed.
+    void step()
+    {
+        ++m_sourceBlocks;
+        m_sourceNs->fetch_add(kBlockNs);
+        if (m_feeder == nullptr) {
+            m_device->render(kBlockFrames);
+            m_nowNs += kBlockNs;
+            return;
+        }
+        // What arrived since the last pump, at this same instant.
+        m_feeder->pump();
+        const RemoteVaxFeederStats stats = m_feeder->stats();
+        if (stats.state == RemoteVaxFeederStats::State::Playing
+            && stats.matcherFillFrames < kWaitBelowFrames) {
+            ++m_waits;
+            return;
+        }
+        m_device->render(kBlockFrames);
+        m_nowNs += kPumpNs;
+        m_feeder->pump();
+        m_nowNs += kPumpNs;
+        m_feeder->pump();
+    }
+
+    // Steps that waited for audio still on its way.
+    int waits() const { return m_waits; }
+
+    // Source blocks fed: the Core's audio clock, 10 ms a block.
+    qint64 sourceBlocks() const { return m_sourceBlocks; }
+
+    // The Core's audio clock for the receiver audio streams, which read it
+    // on their receive workers. It shares the count, so it stays valid
+    // however long a stream outlives this object.
+    RemoteAudioReceiver::Clock sourceClock() const
+    {
+        return [ns = m_sourceNs] { return ns->load(); };
+    }
+
+private:
+    PacedAudioBus* m_device;
+    RemoteVaxFeeder* m_feeder = nullptr;
+    qint64 m_nowNs = 0;
+    int m_waits = 0;
+    qint64 m_sourceBlocks = 0;
+    std::shared_ptr<std::atomic<qint64>> m_sourceNs = std::make_shared<std::atomic<qint64>>(0);
+};
+
+// The level tests' deadlines for audio, on the Core's audio clock: 20 s of
+// the Core's audio fed, as the wall-clock deadlines these replace allowed an
+// unloaded computer. On a busy computer the source is fed slower than real
+// time, and the receive streams and this computer's VAX follow it, so 20 s
+// of this computer's time can pass with much less of the Core's audio fed
+// (300 blocks took 3.3 s under load in a Linux container). A deadline in
+// source blocks is used up only as the Core's audio is fed, and still
+// ends: the source is fed on every tick of this thread's timer.
+constexpr qint64 kAudioDeadlineBlocks = 2000;
+static_assert(kAudioDeadlineBlocks * VaxDeviceOnFeederClock::kBlockNs == 20'000'000'000,
+              "20 s of the Core's audio");
+
+// Waits until `done`, at most kAudioDeadlineBlocks of the Core's audio.
+template <typename Done>
+bool awaitAudio(const VaxDeviceOnFeederClock& clock, Done&& done)
+{
+    const qint64 until = clock.sourceBlocks() + kAudioDeadlineBlocks;
+    while (!done()) {
+        if (clock.sourceBlocks() >= until) {
+            return done();
+        }
+        QTest::qWait(5);
+    }
+    return true;
+}
+
 // A window of `samples` taken while the feeder plays steadily: after a
 // lossless fallback, or after the link lost packets in the first window.
 // The slice counts as receiving Opus once the stream is accepted, before its
@@ -448,14 +589,16 @@ QList<quint64> linkLosses(const RemoteMediaController& media, const QList<int>& 
 // restart (rmatch.c:514, :356, :461), so a window that opens and closes with
 // a ratio, and never lost it, holds no switchover and no restart. One that
 // lost it, or in which the link lost packets, is taken again.
-void takeSteadyWindow(const RemoteVaxFeeder& feeder, const RemoteMediaController& media,
+void takeSteadyWindow(const VaxDeviceOnFeederClock& clock, const RemoteVaxFeeder& feeder,
+                      const RemoteMediaController& media,
                       const QList<int>& slices, const PacedAudioBus& remoteVax,
                       const CollectingBus& stationVax, qsizetype samples,
                       qsizetype& remoteStart, qsizetype& localStart)
 {
     constexpr int kAttempts = 3;
     for (int attempt = 0; attempt < kAttempts; ++attempt) {
-        QTRY_VERIFY_WITH_TIMEOUT(feeder.stats().ratio.has_value(), 20000);
+        QVERIFY2(awaitAudio(clock, [&feeder] { return feeder.stats().ratio.has_value(); }),
+                 "the rate matcher's control runs within 20 s of the Core's audio");
         const int restarts = feeder.stats().restarts;
         const QList<quint64> losses = linkLosses(media, slices);
         remoteStart = remoteVax.heard.size();
@@ -465,8 +608,10 @@ void takeSteadyWindow(const RemoteVaxFeeder& feeder, const RemoteMediaController
             steady = steady && feeder.stats().ratio.has_value();
             return remoteVax.heard.size() >= remoteStart + samples;
         };
-        QTRY_VERIFY_WITH_TIMEOUT(heardWindow(), 20000);
-        QTRY_VERIFY_WITH_TIMEOUT(stationVax.samples().size() >= localStart + samples, 20000);
+        QVERIFY2(awaitAudio(clock, heardWindow),
+                 "this computer's VAX plays the window within 20 s of the Core's audio");
+        QVERIFY2(awaitAudio(clock, [&] { return stationVax.samples().size() >= localStart + samples; }),
+                 "the Core's own VAX plays the window within 20 s of its audio");
         const RemoteVaxFeederStats stats = feeder.stats();
         const bool linkDelivered = linkLosses(media, slices) == losses;
         if (steady && stats.ratio.has_value() && stats.restarts == restarts && linkDelivered) {
@@ -498,85 +643,6 @@ RemoteVaxRouter::ReceiverAudio sourceFor(RemoteMediaController& media)
     };
     return source;
 }
-
-// This computer's VAX 1 in the end-to-end level tests: the app reading it
-// and the feeder that writes it run on one clock, the device's, as a real
-// VAX device's own clock thread and the feeder's worker do. A real device
-// plays on, and the feeder judges it, by the same wall clock; here the
-// device is the test's PacedAudioBus, which plays only when the test
-// renders it, so the feeder is given the device's clock (frames rendered at
-// 48 kHz) instead of the wall clock, and is pumped by the test, 5 ms of that
-// clock at a time, as its worker pumps.
-//
-// One step per source block (the Core's 10 ms of audio): the device plays
-// one block and the clock moves 10 ms. A step waits while the rate matcher
-// holds less than kWaitBelowFrames: the audio for it is still on its way
-// (the link, the receive worker, this thread's own delivery of the media
-// packets), and a step taken now would only play the matcher dry. The
-// step is not made up later, so the device then plays at the source's rate
-// again, one block later, and the matcher's fill is back where it was once
-// the late audio arrives. So what this computer's VAX plays depends on what
-// the link delivered, never on when this busy machine got round to it.
-// A real device does not wait: on a busy computer the matcher runs dry and
-// the feeder restarts it, a gap the operator hears, and plays on (the
-// recovery is aQuietCoreIsWaitedFor's and anOutputNobodyReadsIsNotAFault's).
-class VaxDeviceOnFeederClock {
-public:
-    static constexpr int kBlockFrames = Test::RemoteAudioSessionHarness::kFrames;
-    static constexpr qint64 kPumpNs = RemoteVaxFeeder::kPumpIntervalNs;
-    static constexpr qint64 kBlockNs = qint64(kBlockFrames) * 1'000'000'000 / 48'000;
-    static_assert(kBlockNs == 2 * kPumpNs, "a device block is two of the feeder's pumps");
-    // One output block for the step's take, and one more of margin.
-    static constexpr int kWaitBelowFrames = 2 * RemoteVaxFeeder::kOutputBlockFrames;
-
-    explicit VaxDeviceOnFeederClock(PacedAudioBus* device) : m_device(device) {}
-
-    // The router's feeders, on this clock, pumped by step(), never by a
-    // worker of their own.
-    RemoteVaxRouter::FeederFactory feederFactory(AudioEngine* engine)
-    {
-        return [this, engine](int channel) {
-            auto feeder = std::make_unique<RemoteVaxFeeder>(
-                channel, VaxOutputPort::forEngine(engine, channel), [this] { return m_nowNs; });
-            if (channel == 1) {
-                m_feeder = feeder.get();
-            }
-            return feeder;
-        };
-    }
-
-    // Once per source block, after it was fed.
-    void step()
-    {
-        if (m_feeder == nullptr) {
-            m_device->render(kBlockFrames);
-            m_nowNs += kBlockNs;
-            return;
-        }
-        // What arrived since the last pump, at this same instant.
-        m_feeder->pump();
-        const RemoteVaxFeederStats stats = m_feeder->stats();
-        if (stats.state == RemoteVaxFeederStats::State::Playing
-            && stats.matcherFillFrames < kWaitBelowFrames) {
-            ++m_waits;
-            return;
-        }
-        m_device->render(kBlockFrames);
-        m_nowNs += kPumpNs;
-        m_feeder->pump();
-        m_nowNs += kPumpNs;
-        m_feeder->pump();
-    }
-
-    // Steps that waited for audio still on its way.
-    int waits() const { return m_waits; }
-
-private:
-    PacedAudioBus* m_device;
-    RemoteVaxFeeder* m_feeder = nullptr;
-    qint64 m_nowNs = 0;
-    int m_waits = 0;
-};
 
 } // namespace
 
@@ -1620,6 +1686,7 @@ private slots:
         // The Core's audio, block by block, and this computer's devices
         // playing it: the speakers, and VAX 1 on its feeder's clock.
         VaxDeviceOnFeederClock vaxDevice(remoteVax);
+        remoteMedia.setReceiverAudioClockForTest(vaxDevice.sourceClock());
         QTimer source;
         source.setInterval(10);
         source.setTimerType(Qt::PreciseTimer);
@@ -1649,7 +1716,7 @@ private slots:
         QCOMPARE(receiverRequests(coreControls, h.sliceB).size(), 0);
 
         if (delayedRoute) {
-            QTRY_VERIFY_WITH_TIMEOUT(remoteVax->heard.size() >= 2 * 48000 * 2, 20000);
+            QVERIFY(awaitAudio(vaxDevice, [remoteVax] { return remoteVax->heard.size() >= 2 * 48000 * 2; }));
         }
 
         // The operator puts slice B on VAX 1 in the remote window.
@@ -1665,8 +1732,10 @@ private slots:
         // and time before the operator routes audio are not playback samples.
         // Keep the original one-second settling interval within this window;
         // any subsequent silence or discontinuity still affects the level.
-        QTRY_VERIFY_WITH_TIMEOUT(router.feeder(1)->stats().state == RemoteVaxFeederStats::State::Playing
-                                 && router.feeder(1)->stats().writtenFrames > 0, 20000);
+        QVERIFY(awaitAudio(vaxDevice, [&router] {
+            return router.feeder(1)->stats().state == RemoteVaxFeederStats::State::Playing
+                && router.feeder(1)->stats().writtenFrames > 0;
+        }));
         qsizetype remoteStart = remoteVax->heard.size();
         qsizetype localStart = stationVax->samples().size();
         constexpr qsizetype measurementSamples = 3 * 48000 * 2;
@@ -1676,13 +1745,17 @@ private slots:
         bool matcherSteady = true;
         if (fallbackFirst) {
             // Opus after the fallback: measured on steady playback.
-            takeSteadyWindow(*router.feeder(1), remoteMedia, {h.sliceB}, *remoteVax, *stationVax,
+            takeSteadyWindow(vaxDevice, *router.feeder(1), remoteMedia, {h.sliceB}, *remoteVax, *stationVax,
                              measurementSamples, remoteStart, localStart);
         } else {
             const QList<quint64> losses = linkLosses(remoteMedia, {h.sliceB});
             const int restarts = router.feeder(1)->stats().restarts;
-            QTRY_VERIFY_WITH_TIMEOUT(remoteVax->heard.size() >= remoteStart + measurementSamples, 20000);
-            QTRY_VERIFY_WITH_TIMEOUT(stationVax->samples().size() >= localStart + measurementSamples, 20000);
+            QVERIFY(awaitAudio(vaxDevice, [&] {
+                return remoteVax->heard.size() >= remoteStart + measurementSamples;
+            }));
+            QVERIFY(awaitAudio(vaxDevice, [&] {
+                return stationVax->samples().size() >= localStart + measurementSamples;
+            }));
             linkDelivered = linkLosses(remoteMedia, {h.sliceB}) == losses;
             // A rate matcher restart in the window (the feeder ran dry, as
             // on a busy computer) leaves a gap in what it measured, as a
@@ -1701,7 +1774,7 @@ private slots:
             // delivers, on lossless or, if the trial fails, on Opus.
             qInfo() << "the window held a link loss or a rate matcher restart; measuring again"
                     << "link delivered" << linkDelivered << "matcher steady" << matcherSteady;
-            takeSteadyWindow(*router.feeder(1), remoteMedia, {h.sliceB}, *remoteVax, *stationVax,
+            takeSteadyWindow(vaxDevice, *router.feeder(1), remoteMedia, {h.sliceB}, *remoteVax, *stationVax,
                              measurementSamples, remoteStart, localStart);
             if (QTest::currentTestFailed()) {
                 return;
@@ -1724,7 +1797,7 @@ private slots:
             // steady playback.
             QTRY_VERIFY_WITH_TIMEOUT(receivesIn(remoteMedia, h.sliceB, RemoteAudioProfile::Opus),
                                      10000);
-            takeSteadyWindow(*router.feeder(1), remoteMedia, {h.sliceB}, *remoteVax, *stationVax,
+            takeSteadyWindow(vaxDevice, *router.feeder(1), remoteMedia, {h.sliceB}, *remoteVax, *stationVax,
                              measurementSamples, remoteStart, localStart);
             if (QTest::currentTestFailed()) {
                 return;
@@ -1854,6 +1927,7 @@ private slots:
         // The Core's audio, block by block, and this computer's devices
         // playing it: the speakers, and VAX 1 on its feeder's clock.
         VaxDeviceOnFeederClock vaxDevice(remoteVax);
+        remoteMedia.setReceiverAudioClockForTest(vaxDevice.sourceClock());
         QTimer source;
         source.setInterval(10);
         source.setTimerType(Qt::PreciseTimer);
@@ -1881,7 +1955,7 @@ private slots:
                                vaxDevice.feederFactory(remoteEngine), /*startWorkers=*/false);
         router.setReceiverAudio(sourceFor(remoteMedia));
         if (delayedRoute) {
-            QTRY_VERIFY_WITH_TIMEOUT(remoteVax->heard.size() >= 2 * 48000 * 2, 20000);
+            QVERIFY(awaitAudio(vaxDevice, [remoteVax] { return remoteVax->heard.size() >= 2 * 48000 * 2; }));
         }
         h.remote.sliceById(h.sliceA)->setVaxChannel(1);
         h.remote.sliceById(h.sliceB)->setVaxChannel(1);
@@ -1898,8 +1972,10 @@ private slots:
         // and time before the operator routes audio are not playback samples.
         // Keep the original one-second settling interval within this window;
         // any subsequent silence or discontinuity still affects the level.
-        QTRY_VERIFY_WITH_TIMEOUT(router.feeder(1)->stats().state == RemoteVaxFeederStats::State::Playing
-                                 && router.feeder(1)->stats().writtenFrames > 0, 20000);
+        QVERIFY(awaitAudio(vaxDevice, [&router] {
+            return router.feeder(1)->stats().state == RemoteVaxFeederStats::State::Playing
+                && router.feeder(1)->stats().writtenFrames > 0;
+        }));
         qsizetype remoteStart = remoteVax->heard.size();
         qsizetype localStart = stationVax->samples().size();
         constexpr qsizetype measurementSamples = 3 * 48000 * 2;
@@ -1908,13 +1984,17 @@ private slots:
         bool matcherSteady = true;
         if (fallbackFirst) {
             // Opus after the fallback: measured on steady playback.
-            takeSteadyWindow(*router.feeder(1), remoteMedia, both, *remoteVax, *stationVax,
+            takeSteadyWindow(vaxDevice, *router.feeder(1), remoteMedia, both, *remoteVax, *stationVax,
                              measurementSamples, remoteStart, localStart);
         } else {
             const QList<quint64> losses = linkLosses(remoteMedia, both);
             const int restarts = router.feeder(1)->stats().restarts;
-            QTRY_VERIFY_WITH_TIMEOUT(remoteVax->heard.size() >= remoteStart + measurementSamples, 20000);
-            QTRY_VERIFY_WITH_TIMEOUT(stationVax->samples().size() >= localStart + measurementSamples, 20000);
+            QVERIFY(awaitAudio(vaxDevice, [&] {
+                return remoteVax->heard.size() >= remoteStart + measurementSamples;
+            }));
+            QVERIFY(awaitAudio(vaxDevice, [&] {
+                return stationVax->samples().size() >= localStart + measurementSamples;
+            }));
             linkDelivered = linkLosses(remoteMedia, both) == losses;
             // A rate matcher restart in the window (the feeder ran dry, as
             // on a busy computer) leaves a gap in what it measured, as a
@@ -1930,7 +2010,7 @@ private slots:
             // the link; measure what it delivers.
             qInfo() << "the window held a link loss or a rate matcher restart; measuring again"
                     << "link delivered" << linkDelivered << "matcher steady" << matcherSteady;
-            takeSteadyWindow(*router.feeder(1), remoteMedia, both, *remoteVax, *stationVax,
+            takeSteadyWindow(vaxDevice, *router.feeder(1), remoteMedia, both, *remoteVax, *stationVax,
                              measurementSamples, remoteStart, localStart);
             if (QTest::currentTestFailed()) {
                 return;
@@ -1956,7 +2036,7 @@ private slots:
                 QTRY_VERIFY_WITH_TIMEOUT(receivesIn(remoteMedia, slice, RemoteAudioProfile::Opus),
                                          10000);
             }
-            takeSteadyWindow(*router.feeder(1), remoteMedia, both, *remoteVax, *stationVax,
+            takeSteadyWindow(vaxDevice, *router.feeder(1), remoteMedia, both, *remoteVax, *stationVax,
                              measurementSamples, remoteStart, localStart);
             if (QTest::currentTestFailed()) {
                 return;

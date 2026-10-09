@@ -95,6 +95,41 @@ the way `ISpectrumSink` did.
 
 Cross-thread communication uses auto-queued signals exclusively.
 
+## Audio engines and device lists
+
+Audio output and input go through one engine per system, chosen by the
+operator under Setup > Audio, with PortAudio kept for the older drivers.
+
+* **Engines** (`src/core/audio/`): Core Audio on macOS; Windows audio, shared
+  and exclusive, and ASIO on Windows; PipeWire and PulseAudio on a Linux
+  desktop; ALSA direct on the headless Linux Core. A saved device stores its
+  engine, id, name, first channel (for an interface pair), mic channel and
+  delay; the older keys stay readable and a one-time migration moves them.
+* **Device catalogue** (`AudioDeviceCatalog`): lists every engine's devices
+  on a thread of its own, never in a device callback. System notices (a
+  device added, removed or made the default) are debounced there, and the
+  main thread reads the result, so every list updates without Rescan.
+* **Stream supervisor** (`AudioStreamSupervisor`): main thread. Decides which
+  device each role opens (speakers, headphones, PC mic, VAX 1 to 4), retries,
+  and reports each role's state. Speakers and headphones play on the system
+  default while their device is missing or busy; the PC mic and VAX channels
+  never move to another device on their own.
+* **Clock matcher** (`DeviceRateMatcher`, `MatcherRing`): one per output
+  device, between the DSP side and the device's clock. The two sides share a
+  lock-free ring; the device callback takes no lock, allocates nothing and
+  makes no system call. It also feeds the delay readout.
+* **PC mic hand-off**: the microphone is owned by the `nereus-audio-capture`
+  helper process. The window and the helper share a ring in shared memory
+  (`CaptureShm`) with a wake signal, so a stuck device open never stalls the
+  window. Keying with the mic missing is unchanged: voice-mode MOX is refused
+  while the PC mic is not ready.
+* **Core speaker**: a Core with a sound card plays its own speaker through
+  its own engine; its volume, mute, device and state are mirrored to windows
+  and phones that declare the `coreSpeaker` feature.
+
+Design and requirements:
+[2026-10-08-native-audio-engines-design.md](2026-10-08-native-audio-engines-design.md).
+
 ## Data Flow: RX Path
 
 ```

@@ -3,6 +3,12 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 //
 // Modification history (NereusSDR):
+//   2026-10-09: R-R3-44 load fix: setReceiverAudioClockForTest, the
+//               clock the receiver audio streams for apps on this computer
+//               stamp and release by, so a test running its source and
+//               devices on one clock runs their jitter hold on it too. No
+//               production caller; production is unchanged. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09: Windows test fix (R-AUD-03): exported from the GUI DLL,
 //               so a signal of it is found from outside the DLL on
 //               Windows. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -500,6 +506,14 @@ public:
     /// as it does itself, so a test can raise a fault a real stream cannot
     /// produce on demand. No production caller.
     void raiseAudioRestartForTest(RemoteAudioReceiver::Fault fault);
+    /// Test only (R-R3-44): the clock the receiver audio streams for apps
+    /// on this computer (requestReceiverAudio) stamp arrivals and release
+    /// by, for streams made after this call. Empty, the default, is the
+    /// receiver's own steady clock. A test whose source and devices run on
+    /// one clock gives it here, so the streams' jitter hold runs on that
+    /// clock as well. It is read on each stream's receive worker, so it
+    /// must be safe to call from any thread. No production caller.
+    void setReceiverAudioClockForTest(RemoteAudioReceiver::Clock clock);
     /// iPhone app plan Task 29 fix wave (review Important 1): media follows
     /// every move of the session. A move marks a replacement pending; it
     /// starts as soon as it can (the media connection ready, unkeyed, VOX

@@ -2,8 +2,11 @@
 // Detects known Windows virtual-audio-cable products by regex-matching OS
 // device name strings. NereusSDR-original; no Thetis/AetherSDR port.
 #pragma once
+#include <QList>
 #include <QString>
 #include <QVector>
+
+#include "AudioDeviceTypes.h"
 
 namespace NereusSDR {
 
@@ -24,7 +27,15 @@ struct DetectedCable {
     QString deviceName;
     bool isInput;  // false = render / output
     int channel;   // 1..N for multi-cable families; 0 if N/A
+    // Where the cable came from (R-AUD-03): the catalogue entry's id,
+    // backend and (older drivers) host API. scan() leaves the id and host
+    // API empty and the backend PortAudio.
+    QString deviceId = QString();
+    AudioBackendId backend = AudioBackendId::PortAudio;
+    QString hostApi = QString();
 };
+
+class IAudioDeviceCatalog;
 
 class VirtualCableDetector {
 public:
@@ -33,6 +44,23 @@ public:
 
     // Enumerates OS audio devices via PortAudio and returns matches.
     static QVector<DetectedCable> scan();
+
+    // Pure (R-AUD-03): the cables among a list of catalogue devices. An
+    // input device gives isInput true; an output gives false. Each keeps
+    // the device's id and backend.
+    static QList<DetectedCable> detect(const QList<AudioDeviceInfo>& devices);
+
+    // The devices the cable lists read from the catalogue: every running
+    // backend but ASIO (its pairs are listed apart), one entry per device
+    // name and direction, a native backend's entry before PortAudio's.
+    static QList<AudioDeviceInfo> cableSourceDevices(const IAudioDeviceCatalog& catalogue);
+
+    // detect(cableSourceDevices(catalogue)).
+    static QList<DetectedCable> detect(const IAudioDeviceCatalog& catalogue);
+
+    // The engine a VAX channel saves for a cable from its backend (D12:
+    // Windows audio, shared, for a WASAPI cable).
+    static AudioEngineKind engineFor(const DetectedCable& cable);
 
     // Test-friendly pure filter — drops NereusSdrVax entries from an
     // arbitrary DetectedCable vector. Used by scanThirdPartyOnly() and
@@ -101,6 +129,23 @@ public:
     static QString fingerprintCsv(const QVector<DetectedCable>& cables);
     static QVector<DetectedCable> diffNewCables(const QVector<DetectedCable>& current,
                                                 const QString& lastCsv);
+
+    // R-AUD-03: which list a fingerprint's names came from. The device
+    // catalogue's names (Windows audio, Core Audio, PipeWire, PulseAudio
+    // and the older drivers) need not be the names the older PortAudio
+    // scan saw, so a fingerprint from the other list cannot say which
+    // cables are new. An empty `lastSource` is a fingerprint saved by a
+    // build before the catalogue, which always scanned through PortAudio.
+    static QString fingerprintSource(bool fromCatalogue);
+
+    // diffNewCables() against a fingerprint from the same list. Against
+    // one from the other list nothing counts as new: the caller saves the
+    // new fingerprint and its source, and the next launch compares like
+    // with like (no false "new cable" notice after an upgrade).
+    static QVector<DetectedCable> newCablesSince(const QVector<DetectedCable>& current,
+                                                 const QString& lastCsv,
+                                                 const QString& lastSource,
+                                                 const QString& source);
 };
 
 } // namespace NereusSDR

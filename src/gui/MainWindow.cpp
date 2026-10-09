@@ -621,6 +621,11 @@
 //                menu's "Sound setup…" opens Setup at Audio, Outputs, and
 //                a pick from it reloads an open Outputs card. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Native audio plan Task 18 (R-AUD-03, R-AUD-06): the VAX
+//                first-run dialog lists the cables from the engine's
+//                device catalogue and follows it; "Apply suggested" saves
+//                each binding (engine, id, name, On) under audio/VaxN.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -1053,6 +1058,7 @@ warren@wpratt.com
 #include "gui/chrome/ChromeBarItems.h"
 #include "core/AudioDeviceConfig.h"
 #include "core/AudioEngine.h"
+#include "core/audio/IAudioDeviceCatalog.h"
 #include "core/audio/VirtualCableDetector.h"
 #include "core/audio/RealtimeAudioPriority.h"
 
@@ -1185,13 +1191,19 @@ void initializeOwnedPanView(SpectrumWidget* spectrum, double frequencyHz)
 // entries on Mac/Linux (native HAL plugin / pipe-source). Centralising
 // the platform split here keeps checkVaxFirstRun() focused on
 // scenario-selection + dialog wiring.
-QVector<DetectedCable> detectedForFirstRun()
+// R-AUD-03 (native audio plan Task 18): from the engine's device
+// catalogue when it has one, else a PortAudio scan.
+QVector<DetectedCable> detectedForFirstRun(AudioEngine* engine)
 {
+    IAudioDeviceCatalog* catalogue = engine != nullptr ? engine->catalogue() : nullptr;
+    const QVector<DetectedCable> all = catalogue != nullptr
+        ? VirtualCableDetector::detect(*catalogue)
+        : VirtualCableDetector::scan();
 #if defined(Q_OS_WIN)
-    return VirtualCableDetector::scanThirdPartyOnly();
+    return VirtualCableDetector::filterThirdParty(all);
 #else
     QVector<DetectedCable> out;
-    for (const auto& c : VirtualCableDetector::scan()) {
+    for (const auto& c : all) {
         if (c.product == VirtualCableProduct::NereusSdrVax) {
             out.push_back(c);
         }
@@ -17646,14 +17658,24 @@ void MainWindow::checkVaxFirstRun()
 
     // Platform-specific scan — see detectedForFirstRun() in the anonymous
     // namespace at the top of this file for the platform split rationale.
-    const QVector<DetectedCable> detected = detectedForFirstRun();
+    // This computer's VAX outputs, live in a remote window too (R-R3-44).
+    AudioEngine* const vaxEngine = m_radioModel->localAudioDevices();
+    const QVector<DetectedCable> detected = detectedForFirstRun(vaxEngine);
 
     // Always refresh the stored fingerprint so a cable being removed +
     // later reinstalled doesn't permanently re-flag itself as "new".
     const QString newCsv = VirtualCableDetector::fingerprintCsv(detected);
     const QString lastCsv = s.value(QStringLiteral("audio/LastDetectedCables"),
                                     QString()).toString();
+    // R-AUD-03: the names came from the catalogue or, without one, from the
+    // older PortAudio scan; a fingerprint is compared only with one from
+    // the same list, so an upgrade raises no false "new cable" notice.
+    const QString lastSource =
+        s.value(QStringLiteral("audio/LastDetectedCablesSource"), QString()).toString();
+    const QString source = VirtualCableDetector::fingerprintSource(
+        vaxEngine != nullptr && vaxEngine->catalogue() != nullptr);
     s.setValue(QStringLiteral("audio/LastDetectedCables"), newCsv);
+    s.setValue(QStringLiteral("audio/LastDetectedCablesSource"), source);
     s.save();
 
     FirstRunScenario scenario;
@@ -17672,7 +17694,8 @@ void MainWindow::checkVaxFirstRun()
     } else {
         // First-run already complete — only pop the dialog if NEW cables
         // have appeared since the last launch.
-        const auto fresh = VirtualCableDetector::diffNewCables(detected, lastCsv);
+        const auto fresh =
+            VirtualCableDetector::newCablesSince(detected, lastCsv, lastSource, source);
         if (fresh.isEmpty()) {
             return;
         }
@@ -17682,6 +17705,9 @@ void MainWindow::checkVaxFirstRun()
 
     auto* dlg = new VaxFirstRunDialog(scenario, payload, this);
     dlg->setAttribute(Qt::WA_DeleteOnClose);
+    // R-AUD-03 / R-AUD-06: the lists follow the catalogue while it is open,
+    // and "Rescan now" rescans the older drivers.
+    dlg->setAudioEngine(vaxEngine);
 
     // "Apply suggested" / "Apply to VAX 3 & 4" — user accepted the
     // recommended bindings. Log-but-ignore any AudioEngine wiring failure;
@@ -17730,6 +17756,25 @@ void MainWindow::checkVaxFirstRun()
             }
             AudioDeviceConfig cfg;
             cfg.deviceName = b.second;
+            // R-AUD-03 / D12: the cable as the catalogue lists it (its
+            // engine and id), saved as the Digital modes page saves a pick,
+            // so the binding survives a restart.
+            if (IAudioDeviceCatalog* catalogue = engine->catalogue()) {
+                for (const DetectedCable& cable : VirtualCableDetector::detect(*catalogue)) {
+                    if (!cable.isInput && cable.deviceName == b.second) {
+                        cfg.engine = VirtualCableDetector::engineFor(cable);
+                        cfg.deviceId = cable.deviceId;
+                        if (cfg.engine == AudioEngineKind::PortAudio) {
+                            cfg.driverApi = cable.hostApi;
+                        }
+                        break;
+                    }
+                }
+            }
+            const QString prefix = QStringLiteral("audio/Vax%1").arg(slot);
+            cfg.saveToSettings(prefix);
+            settings.setValue(prefix + QStringLiteral("/Enabled"), QStringLiteral("True"));
+            settings.save();
             engine->setVaxConfig(slot, cfg);
             engine->setVaxEnabled(slot, true);
             ++slot;

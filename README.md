@@ -268,23 +268,30 @@ sudo apt install qt6-base-dev qt6-base-private-dev \
   cmake ninja-build pkg-config \
   libfftw3-dev libgl1-mesa-dev \
   libasound2-dev libjack-jackd2-dev \
-  libpipewire-0.3-dev libssl-dev
+  libpipewire-0.3-dev libpulse-dev libssl-dev
 
 # Arch / CachyOS / Manjaro
 sudo pacman -S qt6-base qt6-multimedia qt6-svg qt6-websockets qt6-serialport \
   cmake ninja pkgconf fftw \
-  alsa-lib jack2 pipewire openssl
+  alsa-lib jack2 pipewire libpulse openssl
 
 # macOS (Homebrew)
 brew install qt@6 ninja cmake pkgconf fftw openssl@3
 ```
 
-The bundled PortAudio is built with `PA_USE_ALSA=ON` and `PA_USE_JACK=ON` on Linux,
-so the ALSA and JACK development headers are required at compile time even if you
-don't use those audio backends at runtime. `libpipewire-0.3-dev` (≥ 0.3.50) is
-strongly recommended on PipeWire-default distributions (Ubuntu 24.04+, Fedora 39+,
-Arch) — without it the Linux audio path falls back from the native libpipewire-0.3
-bridge to the older pactl route.
+Each system plays and records through its own sound system: Core Audio on
+macOS; Windows audio (shared or exclusive) and ASIO on Windows; PipeWire or
+PulseAudio on a Linux desktop, and ALSA direct on the headless Linux Core.
+PortAudio stays for the older drivers (MME, DirectSound, WDM-KS, JACK and ALSA).
+On Linux the build needs `libpipewire-0.3-dev` (0.3.50 or later) for the
+PipeWire engine, `libpulse-dev` for the PulseAudio engine and
+`libasound2-dev` for the ALSA engine, and the bundled PortAudio is built with
+`PA_USE_ALSA=ON` and `PA_USE_JACK=ON`, so the ALSA and JACK development
+headers are required at compile time even if you don't use those older
+drivers. Without `libpipewire-0.3-dev` the Linux VAX path falls back from the
+native libpipewire-0.3 bridge to the older pactl route. On Windows, ASIO
+comes from the ASIO SDK vendored in `third_party/asiosdk/`, so nothing extra
+is installed to build it.
 
 OpenSSL 3.0 or later is required for Core certificates. Install `libssl-dev`
 on Debian/Ubuntu or `openssl@3` through Homebrew on macOS. Windows dependency
@@ -342,10 +349,10 @@ NereusSDR builds on these projects, with original station Core, remote-console
 and native mobile work alongside its upstream foundations. Contributor notices
 are preserved in source files and the [provenance record](docs/attribution/THETIS-PROVENANCE.md).
 
-- **[Thetis](https://github.com/ramdor/Thetis)** — The canonical Apache Labs / OpenHPSDR SDR console (C# / WinForms). NereusSDR's feature source.
-- **[AetherSDR](https://github.com/ten9876/AetherSDR)** — Native FlexRadio client (C++20 / Qt6). NereusSDR's architectural template.
-- **[WDSP](https://github.com/TAPR/OpenHPSDR-wdsp)** — Warren Pratt NR0V's DSP library. The signal processing engine.
-- **[OpenHPSDR](https://openhpsdr.org/)** — The open-source high-performance SDR project and protocol specifications.
+- **[Thetis](https://github.com/ramdor/Thetis)** - The canonical Apache Labs / OpenHPSDR SDR console (C# / WinForms). NereusSDR's feature source.
+- **[AetherSDR](https://github.com/ten9876/AetherSDR)** - Native FlexRadio client (C++20 / Qt6). NereusSDR's architectural template.
+- **[WDSP](https://github.com/TAPR/OpenHPSDR-wdsp)** - Warren Pratt NR0V's DSP library. The signal processing engine.
+- **[OpenHPSDR](https://openhpsdr.org/)** - The open-source high-performance SDR project and protocol specifications.
 
 ---
 

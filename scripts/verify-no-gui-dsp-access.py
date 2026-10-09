@@ -131,10 +131,12 @@ LOCAL_AUDIO_ALLOWLIST = {
     # container VAX 1 / VAX 2 buttons, which open and close this computer's
     # VAX outputs as Setup > Audio > VAX does (R-R3-49); and the VAX
     # first-run check's Apply, which binds this computer's VAX outputs to
-    # its new virtual cables in a remote window too (R-R3-44, parity Task 11);
+    # its new virtual cables in a remote window too (R-R3-44, parity Task 11),
+    # and the check itself, whose cable lists and Rescan now follow this
+    # computer's device catalogue (R-AUD-03, R-AUD-06);
     # and this computer's MON output choice, which a remote window sends the
     # Core as the transmit monitor's route (R-IOS-13, parity Task 32).
-    "src/gui/MainWindow.cpp": 6,
+    "src/gui/MainWindow.cpp": 7,
     # The TX applet's MON output pair (Speakers / Phones): this computer's
     # monitor routing, a window-scope setting, live in a remote window as
     # in a local one (R-R3-49, parity Task 2).
