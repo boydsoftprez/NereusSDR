@@ -598,6 +598,9 @@ if(APPLE)
     set_source_files_properties(tst_qt_cocoa_accessibility_ownership.cpp
         PROPERTIES LANGUAGE OBJCXX SKIP_PRECOMPILE_HEADERS ON)
     nereus_add_test(tst_qt_cocoa_accessibility_ownership NATIVE_WINDOW)
+    # Native audio plan Task 16: the audio card case uses the engine's
+    # test backends.
+    target_compile_definitions(tst_qt_cocoa_accessibility_ownership PRIVATE NEREUS_BUILD_TESTS)
 endif()
 nereus_add_test(tst_meter_composite_dispatch)
 nereus_add_test(tst_meter_responsive_fonts NATIVE_WINDOW)
@@ -1998,6 +2001,13 @@ nereus_add_test(tst_master_output_widget_signal_refresh)
 # updateNegotiatedPill(), AppSettings round-trip, configChanged emission,
 # and enabledChanged emission. 10 test cases.
 nereus_add_test(tst_device_card)
+target_compile_definitions(tst_device_card PRIVATE NEREUS_BUILD_TESTS)
+
+# Native audio plan Task 16 (R-AUD-01, R-AUD-03, R-AUD-06, R-AUD-08 to
+# R-AUD-11, R-AUD-14, R-AUD-15): the Setup cards' Driver and Device lists,
+# state notes, delay readout, Sound system words and Rescan note, over a
+# fake device catalogue.
+nereus_add_test(tst_audio_driver_list)
 
 # ── Phase 3O Sub-Phase 12 Task 12.3: AudioVaxPage + VaxChannelCard ─────────────
 # Verifies VaxChannelCard construction (1–4), loadFromSettings, pill update,

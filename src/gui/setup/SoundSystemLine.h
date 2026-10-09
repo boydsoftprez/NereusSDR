@@ -28,10 +28,16 @@
 //   2026-10-06 - Written for the radio speaker and Audio Setup plan, Task 9.
 //                J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                Anthropic Claude Code.
+//   2026-10-09 - Native audio plan Task 16 (R-AUD-01): the line names the
+//                engine the device catalogue describes and the older
+//                drivers in use. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/LinuxAudioBackend.h"
 
+#include <QPointer>
+#include <QStringList>
 #include <QWidget>
 
 class QLabel;
@@ -39,14 +45,19 @@ class QLabel;
 namespace NereusSDR {
 
 class AudioEngine;
+class IAudioDeviceCatalog;
 
 // SoundSystemLine (objectName "soundSystemLine")
 //
 //   [dot] Sound system: <text>
 //
-// Mac: "Core Audio". Windows: "Windows audio" and the driver the devices use
-// unless one is picked. Linux: PipeWire, PulseAudio through pactl, or "None
-// found" in red with what to start, following AudioEngine::linuxBackendChanged.
+// R-AUD-01: once the engine has its device catalogue, the line names the
+// engine it describes (soundSystemDescription()) and then the older drivers
+// the device cards use ("Older drivers in use: MME, JACK."). Before that,
+// or for a catalogue that does not say which system it is, the line names
+// this build's system: Mac "Core Audio", Windows "Windows audio (WASAPI)",
+// Linux PipeWire, PulseAudio or "None found" in red with what to start,
+// following AudioEngine::linuxBackendChanged.
 // The text label is "soundSystemText", the dot "soundSystemDot".
 class SoundSystemLine : public QWidget {
     Q_OBJECT
@@ -62,19 +73,26 @@ public:
     static QString describe(System system, LinuxAudioBackend backend);
     // True when nothing was found (Linux, no backend): shown in red.
     static bool isProblem(System system, LinuxAudioBackend backend);
+    // The older drivers the saved Speakers, Headphones (while Enabled) and
+    // Microphone choices use, by their short names ("MME", "JACK").
+    static QStringList olderDriversInUse();
+    // The ASIO driver a saved choice uses, empty when none does.
+    static QString asioDriverInUse();
 
     // The words now shown after "Sound system:".
     QString text() const;
     bool showsProblem() const { return m_problem; }
 
 public slots:
-    // Re-reads the engine (on Linux, its detected backend).
+    // Re-reads the engine (its device catalogue, or on Linux before that,
+    // its detected backend) and the saved choices.
     void refresh();
 
 private:
-    void show(System system, LinuxAudioBackend backend);
+    void show(const QString& described, bool problem);
 
     AudioEngine* m_engine{nullptr};
+    QPointer<IAudioDeviceCatalog> m_catalogue;
     QLabel*      m_dot{nullptr};
     QLabel*      m_text{nullptr};
     QString      m_described;

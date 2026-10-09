@@ -27,6 +27,10 @@
 //   2026-10-06 - Written for the radio speaker and Audio Setup plan, Task 9
 //                (R-SPK-21, R-SPK-22, R-SPK-24). J.J. Boyd (KG4VCF), with
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-09 - Native audio plan Task 16 (R-AUD-01, R-AUD-03, R-AUD-06):
+//                the cards follow the engine's device catalogue; Rescan
+//                devices rescans the older drivers. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/SetupPage.h"
@@ -36,6 +40,7 @@ class QCheckBox;
 class QLabel;
 class QPushButton;
 class QSlider;
+class QTimer;
 class QWidget;
 
 namespace NereusSDR {
@@ -97,8 +102,10 @@ private:
     void syncPcFromEngine();
     void syncRadioSpeaker();
     void rescan();
+    void updateRescanState();
 
     AudioEngine*     m_engine{nullptr};
+    QTimer*          m_cataloguePickup{nullptr};
     SoundSystemLine* m_soundSystem{nullptr};
 
     // This computer

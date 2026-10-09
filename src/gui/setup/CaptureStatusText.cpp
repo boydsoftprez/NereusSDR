@@ -10,6 +10,10 @@
 //   2026-10-09: native audio plan Task 13 (R-AUD-11): the device-in-use
 //               reason.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-09: native audio plan Task 16 (R-AUD-09, R-AUD-11): a named
+//               mic that is missing "is not connected", and the in-use
+//               text names the mic.  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "gui/setup/CaptureStatusText.h"
@@ -36,12 +40,16 @@ QString failureText(const CaptureSupervisor::Status& status)
         if (status.configuredDevice.isEmpty()) {
             return QStringLiteral("The system default microphone is not available.");
         }
-        return QStringLiteral("The selected microphone \"%1\" is not available.")
+        return QStringLiteral("The selected microphone \"%1\" is not connected.")
             .arg(status.configuredDevice);
     case Reason::InputLost:
         return QStringLiteral("The microphone stopped sending audio.");
     case Reason::DeviceInUse:
-        return QStringLiteral("The selected microphone is in use by another program.");
+        if (status.configuredDevice.isEmpty()) {
+            return QStringLiteral("The system default microphone is in use by another program.");
+        }
+        return QStringLiteral("The selected microphone \"%1\" is in use by another program.")
+            .arg(status.configuredDevice);
     case Reason::Timeout:
         return QStringLiteral("The microphone did not respond in time.");
     case Reason::HelperMissing:
