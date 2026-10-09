@@ -18,6 +18,10 @@
 //               counted due times and could not fail, checks the ring's
 //               read counters instead.  J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-09: Windows test fix (R-AUD-15): the matcher is compiled into
+//               this test on Windows, where a DLL's allocations never
+//               reach the test's operator new.  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -110,7 +114,9 @@ void countedFreeAligned(void* p)
 
 } // namespace
 
-// Replaced for this test binary; every image in the process calls these.
+// Replaced for this test binary.  On the Mac and Linux every image in the
+// process calls these; on Windows only this executable's own code does,
+// so there the matcher is compiled into it (tests/CMakeLists.txt).
 void* operator new(std::size_t size) { return countedAllocate(size); }
 void* operator new[](std::size_t size) { return countedAllocate(size); }
 void* operator new(std::size_t size, const std::nothrow_t&) noexcept { return countedAllocate(size); }
@@ -363,7 +369,7 @@ private slots:
     void writerAndReaderThreads();
 };
 
-// The hooks are live: an allocation inside NereusSDRLib on a watched
+// The hooks are live: an allocation inside the matcher on a watched
 // thread is counted (and, on Linux, a pthread mutex lock), and the same on
 // an unwatched thread is not.
 void TestDeviceRateMatcherThreads::hooksSeeTheWatchedThread()

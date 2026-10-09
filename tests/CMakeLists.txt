@@ -1902,6 +1902,15 @@ endif()
 # R-R3-36 Task 5: AudioEngine and RadioModel PC microphone session demand.
 # start() opens no input; a hanging helper never delays start, connect or
 # disconnect; the local session holds a capture lease only while PC mic is
+# On Windows each image binds operator new to its own C++ runtime, so the
+# test's replaced operator new never sees an allocation made inside
+# NereusCore.dll.  The matcher is compiled into the test there, so its
+# reader allocates through the test's own operator new, as every image
+# does on the Mac and Linux.
+if(WIN32)
+    target_sources(tst_device_rate_matcher_threads PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/core/audio/DeviceRateMatcher.cpp)
+endif()
 # selected; a daemon-flagged model never starts the helper. Re-executes
 # itself as the scripted fake helper (--fake-capture-child); no real
 # microphone is opened.
