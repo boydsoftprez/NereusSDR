@@ -28,7 +28,6 @@
 #include "core/RotorRoute.h"
 #include "core/SpotSourceHost.h"
 
-#include <QCollator>
 #include <QFile>
 #include <QLoggingCategory>
 #include <QPromise>
@@ -448,10 +447,37 @@ QStringList StationRotorController::orderSerialPorts(const QList<SerialPortCandi
         QStringList& group = isUsb ? usb : other;
         if (!group.contains(port.name)) { group.append(port.name); }
     }
-    QCollator collator;
-    collator.setNumericMode(true);
-    const auto byName = [&collator](const QString& a, const QString& b) {
-        return collator.compare(a, b) < 0;
+    // Digits compare as numbers (ttyUSB2 before ttyUSB10, COM3 before
+    // COM10). Done by hand: QCollator's numeric mode needs ICU, which the
+    // Linux Qt builds lack, and without it compares the digits as text.
+    const auto byName = [](const QString& a, const QString& b) {
+        int i = 0;
+        int j = 0;
+        while (i < a.size() && j < b.size()) {
+            if (a[i].isDigit() && b[j].isDigit()) {
+                int iEnd = i;
+                int jEnd = j;
+                while (iEnd < a.size() && a[iEnd].isDigit()) { ++iEnd; }
+                while (jEnd < b.size() && b[jEnd].isDigit()) { ++jEnd; }
+                // Leading zeros aside, a longer run is the larger number.
+                int iNum = i;
+                int jNum = j;
+                while (iNum < iEnd - 1 && a[iNum] == QLatin1Char('0')) { ++iNum; }
+                while (jNum < jEnd - 1 && b[jNum] == QLatin1Char('0')) { ++jNum; }
+                const QStringView na = QStringView(a).mid(iNum, iEnd - iNum);
+                const QStringView nb = QStringView(b).mid(jNum, jEnd - jNum);
+                if (na.size() != nb.size()) { return na.size() < nb.size(); }
+                const int c = na.compare(nb);
+                if (c != 0) { return c < 0; }
+                i = iEnd;
+                j = jEnd;
+                continue;
+            }
+            if (a[i] != b[j]) { return a[i] < b[j]; }
+            ++i;
+            ++j;
+        }
+        return (a.size() - i) < (b.size() - j);
     };
     std::sort(usb.begin(), usb.end(), byName);
     std::sort(other.begin(), other.end(), byName);
