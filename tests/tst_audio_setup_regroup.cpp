@@ -81,6 +81,12 @@
 //                system's engine on any test build (the Linux build showed
 //                PipeWire on a Mac and a Windows layout). J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Task 16 fix round 2 (R-AUD-08, R-AUD-11, R-AUD-15): the
+//                Device lists with "(not connected)", "(in use by another
+//                program)" and a saved "(none)"; the open Delay list; Delay
+//                greyed with its reason and live with no radio; the ASIO
+//                and Core cards in full; Linux with neither engine running.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -2339,6 +2345,126 @@ private:
             shootList(device, QStringLiteral("list-device-mac-mic-open"));
             QCOMPARE(opens(fake.native), 0);
         }
+        captureFixRound2();
+    }
+
+    // Task 16 fix round 2. A card saves one device, so a saved "(none)"
+    // and a saved device that has gone never share a list: one list shows
+    // "(not connected)" beside a device another program holds, the other
+    // "(none)" beside it. Then the open Delay list; Delay greyed with its
+    // reason while the lists are not ready (a page with no device lists)
+    // and live with no radio once they are; the ASIO and Core cards in
+    // full; Linux with neither engine running as a full page.
+    void captureFixRound2()
+    {
+        const QString speakers = QStringLiteral("audio/Speakers");
+        {
+            clearAudioKeys();
+            savedAs(AudioEngineKind::CoreAudio, QStringLiteral("gone-uid"),
+                    QStringLiteral("Desk monitor"))
+                .saveToSettings(speakers);
+            const FakeSystem fake = fakeSystem(FakeOs::Mac);
+            auto engine = engineOn({fake.native});
+            auto card = cardOn(engine.get(), speakers, DeviceCard::Role::Output, true);
+            QComboBox* device = deviceCombo(card.get());
+            QVERIFY(device != nullptr);
+            QVERIFY(device->findText(QStringLiteral("Desk monitor (not connected)")) > 0);
+            QVERIFY(device->findText(QStringLiteral("Studio monitor (in use by another program)")) > 0);
+            shootList(device, QStringLiteral("list-device-mac-speakers-missing-open"));
+            // No radio, the lists ready: Delay is live (R-AUD-15).
+            auto* delay = child<QComboBox>(card.get(), "deviceDelayCombo");
+            QVERIFY(delay->isEnabled());
+            QVERIFY(delay->toolTip().isEmpty());
+            QCOMPARE(delay->itemText(0), QStringLiteral("Automatic"));
+            shootList(delay, QStringLiteral("list-delay-mac-open"));
+            QCOMPARE(opens(fake.native), 0);
+        }
+        {
+            clearAudioKeys();
+            savedAs(AudioEngineKind::CoreAudio, QString::fromLatin1(kAudioDeviceNone),
+                    QString::fromLatin1(kAudioDeviceNone))
+                .saveToSettings(speakers);
+            const FakeSystem fake = fakeSystem(FakeOs::Mac);
+            auto engine = engineOn({fake.native});
+            auto card = cardOn(engine.get(), speakers, DeviceCard::Role::Output, false);
+            QComboBox* device = deviceCombo(card.get());
+            QVERIFY(device != nullptr);
+            QCOMPARE(device->itemText(1), QString::fromLatin1(kAudioDeviceNone));
+            QVERIFY(device->findText(QStringLiteral("Studio monitor (in use by another program)")) > 1);
+            shootList(device, QStringLiteral("list-device-mac-speakers-none-open"));
+            QCOMPARE(opens(fake.native), 0);
+        }
+        // The lists not ready (an engine with no device layer): Delay greyed
+        // with its reason, the card in full and the tooltip as Qt draws it.
+        {
+            clearAudioKeys();
+            auto engine = std::make_unique<AudioEngine>();
+            engine->setVaxOutputsAllowed(false);
+            QVERIFY(engine->catalogue() == nullptr);
+            auto card = cardOn(engine.get(), speakers, DeviceCard::Role::Output, true);
+            auto* delay = child<QComboBox>(card.get(), "deviceDelayCombo");
+            QVERIFY(!delay->isEnabled());
+            QCOMPARE(delay->toolTip(), QStringLiteral("The device lists are not ready."));
+            saveCapture(card.get(), QStringLiteral("card-delay-greyed-not-ready-unfolded"));
+            shootTip(delay, delay->toolTip(), QStringLiteral("card-delay-greyed-not-ready-reason"));
+        }
+        // Windows with ASIO picked, the card in full.
+        {
+            clearAudioKeys();
+            savedAs(AudioEngineKind::Asio, QStringLiteral("focusrite-asio"),
+                    QStringLiteral("Focusrite USB ASIO"))
+                .saveToSettings(speakers);
+            const FakeSystem fake = fakeSystem(FakeOs::Windows);
+            auto asio = std::make_shared<FakeAudioEngineBackend>(AudioBackendId::Asio);
+            asio->setDevices({fakeDevice(AudioBackendId::Asio, AudioDeviceDirection::Output,
+                                         QStringLiteral("focusrite-asio"),
+                                         QStringLiteral("Focusrite USB ASIO"))});
+            auto engine = engineOn({fake.native, asio, fake.older});
+            auto card = cardOn(engine.get(), speakers, DeviceCard::Role::Output, true);
+            QCOMPARE(child<QComboBox>(card.get(), "deviceDriverCombo")->currentText(),
+                     QStringLiteral("ASIO"));
+            QCOMPARE(deviceCombo(card.get())->currentText(), QStringLiteral("Focusrite USB ASIO"));
+            saveCapture(card.get(), QStringLiteral("card-windows-asio-unfolded"));
+            QCOMPARE(opens(fake.native) + opens(asio) + opens(fake.older), 0);
+        }
+        // The Core: "ALSA, direct", the card in full.
+        {
+            clearAudioKeys();
+            auto alsa = std::make_shared<FakeAudioEngineBackend>(AudioBackendId::AlsaDirect);
+            alsa->setDevices({fakeDevice(AudioBackendId::AlsaDirect, AudioDeviceDirection::Output,
+                                         QStringLiteral("hw:1,0"), QStringLiteral("USB Audio")),
+                              fakeDevice(AudioBackendId::AlsaDirect, AudioDeviceDirection::Output,
+                                         QStringLiteral("hw:0,0"), QStringLiteral("Built-in Audio"))});
+            alsa->setDefault(AudioDeviceDirection::Output, QStringLiteral("hw:0,0"));
+            auto engine = engineOn({alsa});
+            auto card = cardOn(engine.get(), speakers, DeviceCard::Role::Output, true);
+            QCOMPARE(child<QComboBox>(card.get(), "deviceDriverCombo")->currentText(),
+                     QStringLiteral("ALSA, direct"));
+            saveCapture(card.get(), QStringLiteral("card-core-alsa-unfolded"));
+            QCOMPARE(opens(alsa), 0);
+        }
+        // Linux with neither PipeWire nor PulseAudio running: the full page.
+        {
+            clearAudioKeys();
+            const FakeSystem fake = fakeSystem(FakeOs::LinuxPulseAudio);
+            fake.native->setRunning(false);
+            RadioModel model;
+            startOnFakeSystem(model, fake);
+            AudioOutputsPage page(&model);
+            page.resize(760, 1500);
+            for (DeviceCard* card : page.findChildren<DeviceCard*>()) {
+                card->setDetailsExpanded(true);
+            }
+            page.show();
+            QApplication::processEvents();
+            QCOMPARE(child<QComboBox>(child<DeviceCard>(&page, "thisComputerGroup"),
+                                      "deviceDriverCombo")
+                         ->itemText(1),
+                     QStringLiteral("PulseAudio (not running)"));
+            saveCapture(&page, QStringLiteral("outputs-linux-neither-unfolded"));
+            model.localAudioDevices()->stop();
+        }
+        clearAudioKeys();
     }
 };
 
