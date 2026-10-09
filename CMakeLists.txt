@@ -2165,6 +2165,7 @@ if(NEREUSSDR_LTO_AVAILABLE)
         ${GUI_SOURCES}
         ${RESOURCES}
     )
+    target_compile_definitions(NereusGui_LTO PUBLIC NEREUS_GUI_STATIC)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_sources(NereusGui_LTO PRIVATE src/gui/VaxLinuxFirstRunDialog.cpp)
     endif()

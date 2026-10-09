@@ -52,6 +52,11 @@
 //                                    matcher's control, as band energy; new
 //                                    row lossless-trial-fails-in-window.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-09  J.J. Boyd / KG4VCF  Windows test fix: a rate matcher
+//                                    restart in the first window is
+//                                    measured again on steady playback, as
+//                                    a link loss is. AI-assisted via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -1579,27 +1584,34 @@ private slots:
         // Taken by takeSteadyWindow(), under the rate matcher's control.
         bool steadyWindow = fallbackFirst;
         bool linkDelivered = true;
+        bool matcherSteady = true;
         if (fallbackFirst) {
             // Opus after the fallback: measured on steady playback.
             takeSteadyWindow(*router.feeder(1), remoteMedia, {h.sliceB}, *remoteVax, *stationVax,
                              measurementSamples, remoteStart, localStart);
         } else {
             const QList<quint64> losses = linkLosses(remoteMedia, {h.sliceB});
+            const int restarts = router.feeder(1)->stats().restarts;
             QTRY_VERIFY_WITH_TIMEOUT(remoteVax->heard.size() >= remoteStart + measurementSamples, 20000);
             QTRY_VERIFY_WITH_TIMEOUT(stationVax->samples().size() >= localStart + measurementSamples, 20000);
             linkDelivered = linkLosses(remoteMedia, {h.sliceB}) == losses;
+            // A rate matcher restart in the window (the feeder ran dry, as
+            // on a busy computer) leaves a gap in what it measured, as a
+            // link loss does; takeSteadyWindow() measures again for both.
+            matcherSteady = router.feeder(1)->stats().restarts == restarts;
         }
         if (QTest::currentTestFailed()) {
             return;
         }
         int fallbacks = losslessFallbacks(remoteErrors);
-        if (fallbacks == 0 && !linkDelivered) {
+        if (fallbacks == 0 && !(linkDelivered && matcherSteady)) {
             // The link lost packets in the window: it measured the link,
             // whose loss the lossless trial is still judging (its first
             // window closes RemoteAudioLinkTrial::kWindowMs after playback
             // starts), not this computer's VAX. Measure what the link
             // delivers, on lossless or, if the trial fails, on Opus.
-            qInfo() << "the link lost packets in the window; measuring again";
+            qInfo() << "the window held a link loss or a rate matcher restart; measuring again"
+                    << "link delivered" << linkDelivered << "matcher steady" << matcherSteady;
             takeSteadyWindow(*router.feeder(1), remoteMedia, {h.sliceB}, *remoteVax, *stationVax,
                              measurementSamples, remoteStart, localStart);
             if (QTest::currentTestFailed()) {
@@ -1803,24 +1815,31 @@ private slots:
         constexpr qsizetype measurementSamples = 3 * 48000 * 2;
         bool steadyWindow = fallbackFirst;
         bool linkDelivered = true;
+        bool matcherSteady = true;
         if (fallbackFirst) {
             // Opus after the fallback: measured on steady playback.
             takeSteadyWindow(*router.feeder(1), remoteMedia, both, *remoteVax, *stationVax,
                              measurementSamples, remoteStart, localStart);
         } else {
             const QList<quint64> losses = linkLosses(remoteMedia, both);
+            const int restarts = router.feeder(1)->stats().restarts;
             QTRY_VERIFY_WITH_TIMEOUT(remoteVax->heard.size() >= remoteStart + measurementSamples, 20000);
             QTRY_VERIFY_WITH_TIMEOUT(stationVax->samples().size() >= localStart + measurementSamples, 20000);
             linkDelivered = linkLosses(remoteMedia, both) == losses;
+            // A rate matcher restart in the window (the feeder ran dry, as
+            // on a busy computer) leaves a gap in what it measured, as a
+            // link loss does; takeSteadyWindow() measures again for both.
+            matcherSteady = router.feeder(1)->stats().restarts == restarts;
         }
         if (QTest::currentTestFailed()) {
             return;
         }
         int fallbacks = losslessFallbacks(remoteErrors);
-        if (fallbacks == 0 && !linkDelivered) {
+        if (fallbacks == 0 && !(linkDelivered && matcherSteady)) {
             // As in sliceBOnVax1PlaysAtTheLocalLevel: the window measured
             // the link; measure what it delivers.
-            qInfo() << "the link lost packets in the window; measuring again";
+            qInfo() << "the window held a link loss or a rate matcher restart; measuring again"
+                    << "link delivered" << linkDelivered << "matcher steady" << matcherSteady;
             takeSteadyWindow(*router.feeder(1), remoteMedia, both, *remoteVax, *stationVax,
                              measurementSamples, remoteStart, localStart);
             if (QTest::currentTestFailed()) {

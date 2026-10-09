@@ -3,6 +3,10 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 //
 // Modification history (NereusSDR):
+//   2026-10-09: Windows test fix (R-AUD-03): exported from the GUI DLL,
+//               so a signal of it is found from outside the DLL on
+//               Windows. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-07: R-R3-21, R-R3-51: raiseAudioRestartForTest, and a
 //               no-packets restart while the Core transmits waits for the
 //               unkey, which asks for audio at once. J.J. Boyd (KG4VCF),
@@ -100,6 +104,7 @@
 #include "core/session/media/RemoteAudioContext.h"
 #include "core/session/media/RemoteAudioReceiver.h"
 #include "core/session/media/RemoteSpectrumContext.h"
+#include "gui/NereusGuiExport.h"
 #include "gui/PanStatusText.h"
 #include "gui/RemoteAudioStatus.h"
 #include <QHash>
@@ -144,7 +149,7 @@ struct RemoteDisplayTelemetry {
 /// Owns the GUI's media session and one bounded subscription per logical pan.
 /// Layout reparenting does not retire a pan; removing it from the stack does.
 /// Display data never passes through the control/property mirror.
-class RemoteMediaController final : public QObject {
+class NEREUS_GUI_EXPORT RemoteMediaController final : public QObject {
     Q_OBJECT
 public:
     using AllocationClock = std::function<qint64()>;

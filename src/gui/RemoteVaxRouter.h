@@ -37,9 +37,15 @@
 //   2026-09-23: R-R3-44 fix wave follow-up: each slice's stop is raised
 //                 once, naming the slice. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-09: Windows test fix (R-AUD-03): exported from the GUI DLL,
+//               so a signal of it is found from outside the DLL on
+//               Windows. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #pragma once
+
+#include "gui/NereusGuiExport.h"
 
 #include <QList>
 #include <QObject>
@@ -61,7 +67,7 @@ class RadioModel;
 class RemoteVaxFeeder;
 struct RemoteStationOptions;
 
-class RemoteVaxRouter final : public QObject {
+class NEREUS_GUI_EXPORT RemoteVaxRouter final : public QObject {
     Q_OBJECT
 public:
     static constexpr int kChannels = 4;

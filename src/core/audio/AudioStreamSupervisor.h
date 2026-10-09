@@ -49,12 +49,17 @@
 //   2026-10-09: early-review fix wave follow-up (R-AUD-08, R-AUD-14):
 //               startMicOnly() and startOutputs().  J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: Windows test fix (R-AUD-03): exported from the Core DLL,
+//               so a signal of it is found from outside the DLL on
+//               Windows. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #pragma once
 
 #include "core/AudioDeviceConfig.h"
 #include "core/IAudioBus.h"
+#include "core/NereusCoreExport.h"
 #include "core/audio/AudioDeviceTypes.h"
 #include "core/audio/IAudioDeviceCatalog.h"
 #include "core/audio/IAudioStreamHost.h"
@@ -68,7 +73,7 @@
 
 namespace NereusSDR {
 
-class AudioStreamSupervisor final : public QObject {
+class NEREUS_CORE_EXPORT AudioStreamSupervisor final : public QObject {
     Q_OBJECT
 public:
     static constexpr std::array<int, 4> kRetryMs{250, 500, 1000, 2000};  // then every 2000 ms while present

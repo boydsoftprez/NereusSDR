@@ -38,8 +38,13 @@
 //   2026-10-01: Control logging lane: MediaIcePath's candidate
 //               transports and rttMs(). Logging only. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: Windows test fix: exported from the Core DLL, so a
+//               transport outside the DLL (a test's wrapper) connects to
+//               its signals on Windows. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include "core/session/IceConfiguration.h"
 #include "core/session/NetworkPathSnapshot.h"
 
@@ -164,7 +169,7 @@ struct MediaTransportTelemetry {
     quint64 submittedIqPayloadBytes = 0;
 };
 
-class IMediaTransport : public QObject {
+class NEREUS_CORE_EXPORT IMediaTransport : public QObject {
     Q_OBJECT
 
 public:

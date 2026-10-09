@@ -11,6 +11,10 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 3 (R-AUD-03, R-AUD-07, R-AUD-32).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: Windows test fix (R-AUD-03): the device thread asks for
+//               Windows' 1 ms timer, and the rounds check says what it
+//               counted. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -40,6 +44,11 @@
 #include <thread>
 #include <vector>
 
+#if defined(Q_OS_WIN)
+#include <windows.h>
+#include <timeapi.h>
+#endif
+
 using namespace NereusSDR;
 
 namespace {
@@ -66,6 +75,28 @@ bool hasDevice(const QList<AudioDeviceInfo>& list, const QString& id)
     }
     return false;
 }
+
+// Windows sleeps in steps of its system timer, 15.6 ms unless a program
+// asks for 1 ms; the device thread below paces itself at 2 ms, as a device
+// callback would run, so it asks for 1 ms while it runs.  Elsewhere a
+// no-op.  (Measured on Windows 11: Sleep(2) takes 15.6 ms, and 2.8 ms
+// after timeBeginPeriod(1).)
+struct OneMillisecondTimer {
+#if defined(Q_OS_WIN)
+    OneMillisecondTimer() { m_set = timeBeginPeriod(1) == TIMERR_NOERROR; }
+    ~OneMillisecondTimer()
+    {
+        if (m_set) {
+            timeEndPeriod(1);
+        }
+    }
+    OneMillisecondTimer(const OneMillisecondTimer&) = delete;
+    OneMillisecondTimer& operator=(const OneMillisecondTimer&) = delete;
+
+private:
+    bool m_set = false;
+#endif
+};
 
 struct CatalogRig {
     std::shared_ptr<FakeAudioEngineBackend> engine = std::make_shared<FakeAudioEngineBackend>();
@@ -471,6 +502,7 @@ private slots:
         bus->setStreamEventSink([&events](const AudioStreamEvent&) { events.fetch_add(1); });
 
         // A device thread: writes a block and reads a block every 2 ms.
+        const OneMillisecondTimer timer;
         constexpr int kBlock = 96;
         std::atomic<bool> run{true};
         std::atomic<qint64> worstGapMs{0};
@@ -488,7 +520,9 @@ private slots:
                     worstGapMs.store(g);
                 }
                 rounds.fetch_add(1);
-                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                // QThread::msleep is Sleep() on Windows, which honours the
+                // 1 ms timer; MinGW's std::this_thread::sleep_for does not.
+                QThread::msleep(2);
             }
         });
 
@@ -509,7 +543,10 @@ private slots:
 
         QVERIFY(rig.engine->enumerateCalls() >= 3);
         QVERIFY(bus->isOpen());
-        QVERIFY(rounds.load() - roundsBefore > 50);
+        QVERIFY2(rounds.load() - roundsBefore > 50,
+                 qPrintable(QStringLiteral("%1 rounds, worst gap %2 ms")
+                                .arg(rounds.load() - roundsBefore)
+                                .arg(worstGapMs.load())));
         QVERIFY(fake->pumpedFrames() > pumpedBefore);
         QCOMPARE(events.load(), 0);
         QVERIFY2(worstGapMs.load() < 100, qPrintable(QString::number(worstGapMs.load())));
