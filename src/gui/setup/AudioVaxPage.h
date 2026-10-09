@@ -67,8 +67,18 @@
 //                card line when it cannot work; "Detected virtual cables"
 //                with Rescan moved here from Advanced. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - native audio plan Task 18 (R-AUD-03, R-AUD-06, R-AUD-10,
+//                R-AUD-11, D12, D13): the cables and the Windows pickers
+//                come from the engine's device catalogue and follow it
+//                live; the Windows picker lists Windows audio cables and
+//                ASIO pairs (one driver at a time); a card shows its
+//                channel's state sentence; Rescan rescans the older
+//                drivers. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
+#include "core/audio/IAudioDeviceCatalog.h"
+#include "core/audio/IAudioStreamHost.h"
 #include "core/audio/VirtualCableDetector.h"
 #include "gui/HGauge.h"
 #include "gui/RemoteReceiverAudioNote.h"
@@ -77,6 +87,7 @@
 
 #include <QCheckBox>
 #include <QLabel>
+#include <QPointer>
 #include <QPushButton>
 #include <QVector>
 
@@ -124,6 +135,24 @@ public:
     // persists all 10 AppSettings fields, refreshes DeviceCard UI,
     // emits configChanged to the engine, and updates badge visibility.
     void applyAutoDetectBinding(const QString& deviceName);
+
+    // R-AUD-03 / D12: one picked device in one operation, as
+    // applyAutoDetectBinding() does for a name: saves the engine, id,
+    // name, first channel and (older drivers) host API under audio/VaxN,
+    // then emits configChanged.
+    void applyBinding(AudioEngineKind engine, const QString& deviceId,
+                      const QString& deviceName, int firstChannel,
+                      const QString& hostApi = QString());
+
+    // R-AUD-03, D12, D13: the engine whose device catalogue fills the
+    // Windows Device picker (the cables, then each ASIO driver's pairs)
+    // and whose one-driver rule an ASIO pick follows. Without an engine,
+    // or before it has a catalogue, the picker lists the cables only.
+    void setAudioEngine(AudioEngine* engine);
+
+    // R-AUD-10 / R-AUD-11: the engine's state for this channel. While it
+    // has a sentence (not connected, in use) that is the card's line.
+    void setRoleStatus(const AudioRoleStatus& status);
 
     // Tear down this channel completely: wipes all 10 AppSettings fields,
     // refreshes DeviceCard UI, emits configChanged({}) + enabledChanged(false)
@@ -233,6 +262,17 @@ private:
     // Fills the Windows picker from m_cableChoices and selects the bound
     // cable. Emits nothing.
     void fillPicker();
+    // The picker from the catalogue (Windows layout with an engine): the
+    // cables under "Virtual cables", each ASIO driver's pairs under its
+    // name, then the saved choice as "<name> (not connected)" when it is
+    // missing.
+    void fillPickerFromCatalogue(IAudioDeviceCatalog& catalogue);
+    // A catalogue pick: asks before taking a cable or pair another
+    // channel uses and before a second ASIO driver (R-AUD-19).
+    void onCataloguePick(int index);
+    // The catalogue while the Windows layout has an engine, else null.
+    IAudioDeviceCatalog* pickerCatalogue() const;
+    AudioRole vaxRole() const;
     // Tooltips and button states that depend on the system and binding.
     void refreshPlatformTexts();
 
@@ -261,6 +301,11 @@ private:
     QLabel*      m_nodeDescLabel{nullptr};   // "Device:" value (Mac, Linux)
     QComboBox*   m_devicePicker{nullptr};    // "Device:" cable picker (Windows)
     QVector<DetectedCable> m_cableChoices;
+    QPointer<AudioEngine> m_engine;
+    std::optional<AudioRoleStatus> m_roleStatus;   // from the engine
+    // The saved choice is missing from the catalogue picker; its label.
+    QString      m_missingLabel;
+    QLabel*      m_asioNote{nullptr};        // an ASIO pair: how apps reach it
     QLabel*      m_cardStatus{nullptr};      // why the channel cannot work
     QLabel*      m_formatLabel{nullptr};     // "Format:" static value
     QLabel*      m_consumerLabel{nullptr};   // "Used by:" value
@@ -352,6 +397,14 @@ private:
     // pickers and the status line.
     void applyCables(const QVector<DetectedCable>& cables);
     void onRescan();
+    // R-AUD-03: the engine's catalogue, once it has one: the cables come
+    // from it and follow it live (no Rescan needed).
+    void attachCatalogue();
+    // After a rescan: the cables found, and any new ones offered through
+    // the first-run dialog.
+    void afterRescan(const QVector<DetectedCable>& current);
+    // The other channels' pickers again, after `channel` changed.
+    void refreshOtherPickers(int channel);
     // R-R3-21: 20 Hz level poll while the page is showing, the VAX
     // applet's cadence (VaxApplet::pollLevels).
     void pollLevels();
@@ -366,6 +419,8 @@ private:
     QLabel*                     m_cablesLabel{nullptr};
     QPushButton*                m_rescanButton{nullptr};
     QVector<DetectedCable>      m_cables;
+    QPointer<IAudioDeviceCatalog> m_catalogue;
+    bool                        m_rescanWaiting{false};  // a Rescan awaits the new list
     QTimer*                     m_levelTimer{nullptr};
 };
 
