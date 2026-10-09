@@ -18,6 +18,10 @@
 //   2026-10-08  J.J. Boyd / KG4VCF  Final review I3: the page has the ports
 //                                    read only while it is on screen.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Re-review N4: the lister's ports are
+//                                    shared, and a running scan is waited
+//                                    out before they change.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -31,6 +35,9 @@
 #include <QSpinBox>
 #include <QTableWidget>
 #include <QAbstractSpinBox>
+#include <QSignalSpy>
+
+#include <memory>
 
 #include "core/AppSettings.h"
 #include "core/RotorConnection.h"
@@ -144,6 +151,17 @@ QStringList items(const QComboBox* combo)
 void selectData(QComboBox* combo, const QVariant& value)
 {
     combo->setCurrentIndex(combo->findData(value));
+}
+
+// Re-review N4: the host scan runs the lister on a pool thread. Before a
+// test changes what the lister answers, or returns, it waits for a scan
+// still running to finish (its hostScanned), so nothing is read while it
+// is written or after it has gone.
+bool waitForHostScan(StationRotorController* controller)
+{
+    QSignalSpy scanned(controller, &StationRotorController::hostScanned);
+    if (!controller->hostScanRunning()) { return true; }
+    return scanned.wait(5000);
 }
 
 void verifyPlain(const RotorSetupPage& page)
@@ -393,8 +411,10 @@ private slots:
         radio.enableStationRotor();
         StationRotorController* controller = radio.stationRotorController();
         QVERIFY(controller != nullptr);
-        QStringList ports{QStringLiteral("COM4"), QStringLiteral("COM7")};
-        controller->setSerialPortListerForTesting([&ports] { return ports; });
+        // Shared with the lister, which a scan copies onto a pool thread.
+        const auto ports = std::make_shared<QStringList>(
+            QStringList{QStringLiteral("COM4"), QStringLiteral("COM7")});
+        controller->setSerialPortListerForTesting([ports] { return *ports; });
         controller->connection()->setTransportFactoryForTesting([](const RotorTransportTarget&) {
             return std::unique_ptr<RotorTransport>(std::make_unique<SilentTransport>());
         });
@@ -430,7 +450,8 @@ private slots:
         QCOMPARE(page.serialPortComboForTesting()->currentText(), QStringLiteral("COM7"));
 
         // The port goes away: the rotor's own refusal shows at once.
-        ports = QStringList{QStringLiteral("COM4")};
+        QVERIFY(waitForHostScan(controller));
+        *ports = QStringList{QStringLiteral("COM4")};
         page.offsetSpinForTesting()->setValue(1.0);
         page.saveButtonForTesting()->click();
         QCOMPARE(page.messageTextForTesting(), kUnknownPort);
@@ -454,6 +475,7 @@ private slots:
         QVERIFY(radio.rotorModel()->hostRefreshActive());
         page.hide();
         QVERIFY(!radio.rotorModel()->hostRefreshActive());
+        QVERIFY(waitForHostScan(controller));
     }
 
     // Bench fix: in the Settings window at the size JJ uses, every field

@@ -21,6 +21,9 @@
 //   2026-10-08: Final review fixes: a start that fails is said in plain
 //               words (startFailedReason), Qt's text logged. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08: Re-review N4: the test override is read and written under
+//               a lock, as the host scan reads it on a pool thread.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 // --- From RotctldProcess.cpp ---
@@ -43,6 +46,7 @@
 #include <QFileInfo>
 #include <QHostAddress>
 #include <QLoggingCategory>
+#include <QMutex>
 #include <QStandardPaths>
 #include <QTcpServer>
 
@@ -64,7 +68,14 @@ QString startFailedReason(QProcess::ProcessError error)
                           "model in Setup.");
 }
 
-// findBinary()'s test override (setBinaryOverrideForTesting).
+// findBinary()'s test override (setBinaryOverrideForTesting). The host
+// scan calls findBinary() on a pool thread while a test may set or reset
+// the override, so it is read and written under a lock (re-review N4).
+QMutex& binaryOverrideLock()
+{
+    static QMutex lock;
+    return lock;
+}
 std::optional<QString>& binaryOverride()
 {
     static std::optional<QString> path;
@@ -180,13 +191,17 @@ RotctldProcess::~RotctldProcess()
 
 void RotctldProcess::setBinaryOverrideForTesting(std::optional<QString> path)
 {
+    const QMutexLocker locker(&binaryOverrideLock());
     binaryOverride() = std::move(path);
 }
 
 // From Longpath src/core/RotctldProcess.cpp:113-136 [@551576e]
 QString RotctldProcess::findBinary()
 {
-    if (binaryOverride().has_value()) { return *binaryOverride(); }
+    {
+        const QMutexLocker locker(&binaryOverrideLock());
+        if (binaryOverride().has_value()) { return *binaryOverride(); }
+    }
 
     // PATH first: an operator who installed Hamlib somewhere unusual
     // and put it on PATH has already answered this question.
