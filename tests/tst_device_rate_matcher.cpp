@@ -14,6 +14,9 @@
 // Modification history (NereusSDR):
 //   2026-10-08: native audio plan Task 2 (R-AUD-15, V-SW-5). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 6 (R-AUD-15): a flush leaves
+//               nothing of the earlier audio. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -268,6 +271,7 @@ private slots:
     void forcedDryRunStepsUpOnce();
     void forcedOverrunStaysSmooth();
     void flushRestartAndFade();
+    void flushLeavesNothingOfTheEarlierAudio();
 };
 
 void TestDeviceRateMatcher::ringLayoutAndAttach()
@@ -540,6 +544,91 @@ void TestDeviceRateMatcher::flushRestartAndFade()
     matcher.write(in.data(), kWriteFrames, 30 * 1'333'333LL);
     reader.read(out.data(), kReadFrames);
     QVERIFY(std::all_of(out.begin(), out.end(), [](float v) { return v == 0.0f; }));
+}
+
+// A loud tone, a flush, then silence.  The reader takes the flush's skip on
+// its next read and blends from the tone it was playing into the silence
+// over ntslew + 1 frames (rmatch's blend(), the declick that keeps the cut
+// from clicking).  From the frame after that blend every sample is exactly
+// 0.0f: the padded silence is zeros, and with the resampler's history
+// flushed the resampled silence is zeros too.  Exact, not a threshold: the
+// blend's last weight is cslew[ntslew] = 1.0, so its own last frame is
+// already 0.0 * tone + 1.0 * 0.0.
+void TestDeviceRateMatcher::flushLeavesNothingOfTheEarlierAudio()
+{
+    constexpr float kLoud = 0.9f;
+    constexpr std::int64_t kWritePeriodNs = 1'333'333;   // 64 frames at 48 kHz
+    DeviceRateMatcher matcher(DeviceRateMatcher::Config{});
+    MatcherReader reader = matcher.makeReader();
+    const int blendFrames = static_cast<int>(matcher.ring()->slewFrames) + 1;
+    QVERIFY(blendFrames > 1 && blendFrames <= kReadFrames);
+
+    std::vector<float> tone(static_cast<std::size_t>(kWriteFrames) * 2);
+    const std::vector<float> silence(static_cast<std::size_t>(kWriteFrames) * 2, 0.0f);
+    std::vector<float> out(static_cast<std::size_t>(kReadFrames) * 2);
+    std::vector<float> after;
+    std::uint64_t toneFrame = 0;
+    std::int64_t nowNs = 0;
+    int writes = 0;
+    float tonePeak = 0.0f;
+    auto step = [&](bool loud, bool collect) {
+        if (loud) {
+            for (int f = 0; f < kWriteFrames; ++f, ++toneFrame) {
+                const double phase = 2.0 * std::numbers::pi * static_cast<double>(toneFrame % 48) / 48.0;
+                tone[static_cast<std::size_t>(2 * f + 0)] = kLoud * static_cast<float>(std::sin(phase));
+                tone[static_cast<std::size_t>(2 * f + 1)] = -kLoud * static_cast<float>(std::sin(phase));
+            }
+        }
+        matcher.write(loud ? tone.data() : silence.data(), kWriteFrames, nowNs);
+        nowNs += kWritePeriodNs;
+        if (++writes % 2 == 0) {
+            reader.read(out.data(), kReadFrames);
+            if (collect) {
+                after.insert(after.end(), out.begin(), out.end());
+            } else {
+                for (float v : out) {
+                    tonePeak = std::max(tonePeak, std::abs(v));
+                }
+            }
+        }
+    };
+    for (int i = 0; i < 375; ++i) {   // 0.5 s of the tone
+        step(true, false);
+    }
+    QVERIFY2(tonePeak > 0.8f, qPrintable(QString::number(tonePeak)));
+
+    matcher.requestFlush();
+    for (int i = 0; i < 150; ++i) {   // 0.2 s of silence after the flush
+        step(false, true);
+    }
+    QVERIFY(after.size() >= static_cast<std::size_t>(kReadFrames) * 2 * 50);
+    QCOMPARE(matcher.stats().dryRuns, std::uint64_t{0});
+
+    // The blend: the tone's fade, under its raised-cosine envelope.
+    for (int f = 0; f < blendFrames; ++f) {
+        const double weight = 0.5 * (1.0 + std::cos(std::numbers::pi * f / (blendFrames - 1)));
+        for (int c = 0; c < 2; ++c) {
+            const float v = after[static_cast<std::size_t>(2 * f + c)];
+            QVERIFY2(std::abs(v) <= kLoud * weight + 1e-6,
+                     qPrintable(QStringLiteral("blend frame %1: %2").arg(f).arg(v)));
+        }
+    }
+    // Then nothing of the tone at all.
+    std::size_t nonZero = 0;
+    std::size_t firstNonZero = 0;
+    float peakAfter = 0.0f;
+    for (std::size_t i = static_cast<std::size_t>(blendFrames) * 2; i < after.size(); ++i) {
+        if (after[i] != 0.0f) {
+            if (nonZero == 0) {
+                firstNonZero = i / 2;
+            }
+            ++nonZero;
+            peakAfter = std::max(peakAfter, std::abs(after[i]));
+        }
+    }
+    QVERIFY2(nonZero == 0,
+             qPrintable(QStringLiteral("%1 non-zero samples after the blend, the first at frame %2, peak %3")
+                            .arg(nonZero).arg(firstNonZero).arg(peakAfter)));
 }
 
 QTEST_GUILESS_MAIN(TestDeviceRateMatcher)

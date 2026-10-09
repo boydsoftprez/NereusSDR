@@ -227,10 +227,10 @@ private slots:
     }
 
     // Muted, a matcher bus is fed silence: the mute's flush drops what is
-    // queued, the device is silent once the matcher's fade and its
-    // resampler's last filter output have passed (well inside 20 blocks,
-    // 27 ms), and the matcher does not run dry for want of writes. A bus
-    // without a matcher is pushed nothing, as always.
+    // queued, the device plays the matcher's blend out of the tone for one
+    // callback (128 frames, ntslew + 1) and then exact zeros, and the
+    // matcher does not run dry for want of writes. A bus without a matcher
+    // is pushed nothing, as always.
     void muteFeedsSilenceToAMatcherBus()
     {
         {
@@ -263,8 +263,8 @@ private slots:
             const quint64 dryBefore = device->matcherStats()->dryRuns;
             const int pushesBefore = device->pushCount();
             rig.engine->setMasterMuted(true);
-            run(750, &peak, 20);      // one second muted
-            QVERIFY2(peak < 1e-4f, qPrintable(QString::number(peak)));
+            run(750, &peak, 2);       // one second muted, from the second callback
+            QVERIFY2(peak == 0.0f, qPrintable(QString::number(peak)));
             QCOMPARE(device->pushCount(), pushesBefore + 750);
             QCOMPARE(device->matcherStats()->dryRuns, dryBefore);
         }
