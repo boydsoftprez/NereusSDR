@@ -42,6 +42,10 @@
 //               after its padding, never from the reader's flag alone.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //               Native audio plan early-review fix wave (R-AUD-15).
+//   2026-10-09: Tests only: a ratio forced to 1.0 at equal rates copies
+//               the block, for the shared-memory ring's exact order check
+//               (V-SW-6).  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.  Native audio plan Task 13 (R-AUD-17).
 // =================================================================
 //
 // --- From rmatch.c ---
@@ -620,6 +624,16 @@ struct DeviceRateMatcher::Writer {
 
     int resample(double useVar)
     {
+#ifdef NEREUS_BUILD_TESTS
+        // Tests only: a ratio forced to exactly 1.0 at equal rates copies the
+        // block, so a test can check frame order exactly (V-SW-6); varsamp
+        // at 1.0 still filters.
+        if (m.m_forceRatio.load(std::memory_order_relaxed) && useVar == 1.0
+            && cfg.inRate == cfg.outRate) {
+            std::copy(in.begin(), in.end(), resout.begin());
+            return cfg.writeBlockFrames;
+        }
+#endif
 #ifdef HAVE_WDSP
         return xvarsamp(v, useVar);
 #else

@@ -8,9 +8,15 @@
 //   2026-10-08: native audio plan Task 1 (V-HW-8): ProbeHit and
 //               ProbeEnable codecs (protocol version 2). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 13 (R-AUD-17, R-AUD-18): version 3
+//               codecs (AttachRing, RingAttached, the Configure identity
+//               keys, device-in-use, the Status latency and buffer).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CaptureProtocol.h"
+
+#include "core/audio/DeviceRateMatcher.h"
 
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -40,6 +46,8 @@ bool isKnownType(quint8 raw)
     case RecordType::Stop:
     case RecordType::Shutdown:
     case RecordType::ProbeEnable:
+    case RecordType::RingAttached:
+    case RecordType::AttachRing:
         return true;
     }
     return false;
@@ -192,6 +200,7 @@ constexpr ReasonName kReasonNames[] = {
     {FailReason::StartFailed, "start-failed"},
     {FailReason::InputLost, "input-lost"},
     {FailReason::Internal, "internal"},
+    {FailReason::DeviceInUse, "device-in-use"},
 };
 
 QString stateName(HelperState state)
@@ -452,6 +461,11 @@ QByteArray encodeConfigure(const Configure& configure)
     obj.insert(QStringLiteral("eventDriven"), d.eventDriven);
     obj.insert(QStringLiteral("bypassMixer"), d.bypassMixer);
     obj.insert(QStringLiteral("manualLatencyMs"), d.manualLatencyMs);
+    obj.insert(QStringLiteral("engine"), d.engine ? audioEngineKey(*d.engine) : QString());
+    obj.insert(QStringLiteral("deviceId"), d.deviceId);
+    obj.insert(QStringLiteral("firstChannel"), d.firstChannel);
+    obj.insert(QStringLiteral("micChannel"), micChannelKey(d.micChannel));
+    obj.insert(QStringLiteral("delayMs"), d.delayMs);
     return checkedRecord(RecordType::Configure, toJson(obj), decodeConfigure);
 }
 
@@ -463,7 +477,10 @@ std::optional<Configure> decodeConfigure(const QByteArray& json)
         QStringLiteral("bufferSamples"), QStringLiteral("exclusiveMode"),
         QStringLiteral("hostApiIndex"), QStringLiteral("driverApi"),
         QStringLiteral("bitDepth"),     QStringLiteral("eventDriven"),
-        QStringLiteral("bypassMixer"),  QStringLiteral("manualLatencyMs")};
+        QStringLiteral("bypassMixer"),  QStringLiteral("manualLatencyMs"),
+        QStringLiteral("engine"),       QStringLiteral("deviceId"),
+        QStringLiteral("firstChannel"), QStringLiteral("micChannel"),
+        QStringLiteral("delayMs")};
     const auto obj = parseExactObject(json, kKeys);
     if (!obj) {
         return std::nullopt;
@@ -480,9 +497,36 @@ std::optional<Configure> decodeConfigure(const QByteArray& json)
     const auto eventDriven = readBool(*obj, QStringLiteral("eventDriven"));
     const auto bypassMixer = readBool(*obj, QStringLiteral("bypassMixer"));
     const auto manualLatencyMs = readInt(*obj, QStringLiteral("manualLatencyMs"));
+    const auto engineText = readString(*obj, QStringLiteral("engine"));
+    const auto deviceId = readString(*obj, QStringLiteral("deviceId"));
+    const auto firstChannel = readInteger(*obj, QStringLiteral("firstChannel"), 1,
+                                          kMaxNativeChannels);
+    const auto micText = readString(*obj, QStringLiteral("micChannel"));
+    const auto delayMs = readInt(*obj, QStringLiteral("delayMs"));
     if (!generation || !deviceName || !sampleRate || !channels || !bufferSamples
         || !exclusiveMode || !hostApiIndex || !driverApi || !bitDepth || !eventDriven
-        || !bypassMixer || !manualLatencyMs) {
+        || !bypassMixer || !manualLatencyMs || !engineText || !deviceId || !firstChannel
+        || !micText || !delayMs) {
+        return std::nullopt;
+    }
+    // engine: an Engine settings key, or empty when the saved config has none.
+    std::optional<AudioEngineKind> engine;
+    if (!engineText->isEmpty()) {
+        engine = audioEngineFromKey(*engineText);
+        if (!engine) {
+            return std::nullopt;
+        }
+    }
+    const auto micChannel = micChannelFromKey(*micText);
+    if (!micChannel) {
+        return std::nullopt;
+    }
+    // delayMs: 0 (automatic) or one of the matcher's steps.
+    bool delayKnown = (*delayMs == 0);
+    for (const int step : DeviceRateMatcher::kDelayStepsMs) {
+        delayKnown = delayKnown || (*delayMs == step);
+    }
+    if (!delayKnown) {
         return std::nullopt;
     }
     Configure configure;
@@ -498,6 +542,11 @@ std::optional<Configure> decodeConfigure(const QByteArray& json)
     configure.device.eventDriven = *eventDriven;
     configure.device.bypassMixer = *bypassMixer;
     configure.device.manualLatencyMs = *manualLatencyMs;
+    configure.device.engine = engine;
+    configure.device.deviceId = *deviceId;
+    configure.device.firstChannel = static_cast<int>(*firstChannel);
+    configure.device.micChannel = *micChannel;
+    configure.device.delayMs = *delayMs;
     return configure;
 }
 
@@ -538,6 +587,52 @@ std::optional<Command> decodeCommand(const QByteArray& json)
     Command command;
     command.generation = *generation;
     return command;
+}
+
+QByteArray encodeRingAttached(const Command& command)
+{
+    return checkedRecord(RecordType::RingAttached, commandJson(command), decodeCommand);
+}
+
+// ── AttachRing (version 3) ─────────────────────────────────────────────────
+
+QByteArray encodeAttachRing(const AttachRing& attach)
+{
+    QJsonObject obj;
+    obj.insert(QStringLiteral("generation"), static_cast<double>(attach.generation));
+    obj.insert(QStringLiteral("memory"), attach.memory);
+    obj.insert(QStringLiteral("wake"), attach.wake);
+    obj.insert(QStringLiteral("bytes"), static_cast<double>(attach.bytes));
+    obj.insert(QStringLiteral("inRate"), attach.inRate);
+    return checkedRecord(RecordType::AttachRing, toJson(obj), decodeAttachRing);
+}
+
+std::optional<AttachRing> decodeAttachRing(const QByteArray& json)
+{
+    static const QSet<QString> kKeys = {
+        QStringLiteral("generation"), QStringLiteral("memory"), QStringLiteral("wake"),
+        QStringLiteral("bytes"), QStringLiteral("inRate")};
+    const auto obj = parseExactObject(json, kKeys);
+    if (!obj) {
+        return std::nullopt;
+    }
+    const auto generation = readGeneration(*obj);
+    const auto memory = readString(*obj, QStringLiteral("memory"));
+    const auto wake = readString(*obj, QStringLiteral("wake"));
+    const auto bytes = readInteger(*obj, QStringLiteral("bytes"), 1, kMaxRingBytes);
+    const auto inRate = readInteger(*obj, QStringLiteral("inRate"), kMinNativeRate,
+                                    kMaxNativeRate);
+    if (!generation || !memory || !wake || !bytes || !inRate || memory->isEmpty()
+        || wake->isEmpty() || *memory == *wake) {
+        return std::nullopt;
+    }
+    AttachRing attach;
+    attach.generation = *generation;
+    attach.memory = *memory;
+    attach.wake = *wake;
+    attach.bytes = *bytes;
+    attach.inRate = static_cast<int>(*inRate);
+    return attach;
 }
 
 QByteArray encodeShutdown()
@@ -608,6 +703,8 @@ QByteArray encodeStatus(const Status& status)
     obj.insert(QStringLiteral("nativeChannels"), status.nativeChannels);
     obj.insert(QStringLiteral("reason"), reason);
     obj.insert(QStringLiteral("detail"), status.detail);
+    obj.insert(QStringLiteral("latencyUs"), status.latencyUs);
+    obj.insert(QStringLiteral("bufferFrames"), status.bufferFrames);
     return checkedRecord(RecordType::Status, toJson(obj), decodeStatus);
 }
 
@@ -617,9 +714,16 @@ std::optional<Status> decodeStatus(const QByteArray& json)
         QStringLiteral("generation"), QStringLiteral("state"),
         QStringLiteral("actualDevice"), QStringLiteral("nativeRate"),
         QStringLiteral("nativeChannels"), QStringLiteral("reason"),
-        QStringLiteral("detail")};
+        QStringLiteral("detail"), QStringLiteral("latencyUs"),
+        QStringLiteral("bufferFrames")};
     const auto obj = parseExactObject(json, kKeys);
     if (!obj) {
+        return std::nullopt;
+    }
+    const auto latencyUs = readInteger(*obj, QStringLiteral("latencyUs"), 0, kMaxLatencyUs);
+    const auto bufferFrames = readInteger(*obj, QStringLiteral("bufferFrames"), 0,
+                                          kMaxBufferFrames);
+    if (!latencyUs || !bufferFrames) {
         return std::nullopt;
     }
     const auto generation = readGeneration(*obj);
@@ -652,6 +756,8 @@ std::optional<Status> decodeStatus(const QByteArray& json)
     status.nativeChannels = static_cast<int>(*nativeChannels);
     status.reason = *reason;
     status.detail = *detail;
+    status.latencyUs = static_cast<int>(*latencyUs);
+    status.bufferFrames = static_cast<int>(*bufferFrames);
     return status;
 }
 

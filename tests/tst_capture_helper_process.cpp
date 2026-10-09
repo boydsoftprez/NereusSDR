@@ -18,17 +18,25 @@
 //               API index follows its saved driverApi
 //               (captureHostApiIndex).  J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 13 (R-AUD-17): the helper attaches
+//               the window's shared ring and answers RingAttached; a Pcm
+//               record from the parent is a protocol error.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 
 #include <QElapsedTimer>
 #include <QProcess>
+#include <QRandomGenerator>
 
+#include <array>
 #include <cstring>
+#include <memory>
 #include <optional>
 
 #include "core/audio/CaptureProtocol.h"
+#include "core/audio/CaptureShm.h"
 #include "fakes/FakeCaptureChild.h"
 
 // Exercise the real entry point, as tst_daemon_signals does for nereusd.
@@ -132,6 +140,17 @@ bool nextTypeIs(Child& child, P::RecordType type, int timeoutMs)
 {
     const auto record = child.next(timeoutMs);
     return record.has_value() && record->type == type;
+}
+
+QByteArray attachRecord(quint32 generation, const CaptureShmNames& names, std::size_t bytes)
+{
+    P::AttachRing attach;
+    attach.generation = generation;
+    attach.memory = names.memory;
+    attach.wake = names.wake;
+    attach.bytes = static_cast<qint64>(bytes);
+    attach.inRate = 8000;
+    return P::encodeAttachRing(attach);
 }
 
 QByteArray openRecord(quint32 generation) { return P::encodeOpen(P::Command{generation}); }
@@ -294,6 +313,73 @@ private slots:
         QVERIFY(helper.start({QStringLiteral("--capture-helper")}));
         QVERIFY(helper.next(3000).has_value());
         helper.send(QByteArray("XCAP\x01\x10\x00\x00\x00\x00\x00\x00", 12));
+        QVERIFY(helper.finishes(1000));
+        QCOMPARE(helper.process().exitCode(), 0);
+    }
+
+    // R-AUD-17: the helper attaches the window's region for the configured
+    // generation and answers RingAttached; an AttachRing for another
+    // generation is ignored.
+    void helperAttachesTheWindowsRing()
+    {
+        const CaptureShmNames names = makeCaptureShmNames(
+            QCoreApplication::applicationPid(), QRandomGenerator::global()->generate());
+        constexpr std::size_t kBytes = 64 * 1024;
+        const std::unique_ptr<CaptureShmRegion> region = CaptureShmRegion::create(names, kBytes);
+        QVERIFY(region);
+
+        Child helper;
+        QVERIFY(helper.start({QStringLiteral("--capture-helper")}));
+        QVERIFY(helper.next(3000).has_value());
+        helper.send(configureRecord(8, kListedDevice));
+        helper.send(attachRecord(7, names, kBytes));
+        QVERIFY(!helper.next(300).has_value());
+        QCOMPARE(helper.readerError(), P::RecordReader::Error::None);
+
+        helper.send(attachRecord(8, names, kBytes));
+        const auto record = helper.next(3000);
+        QVERIFY2(record.has_value(), helper.diagnostics().constData());
+        QCOMPARE(record->type, P::RecordType::RingAttached);
+        const auto attached = P::decodeCommand(record->payload);
+        QVERIFY(attached.has_value());
+        QCOMPARE(attached->generation, 8u);
+
+        helper.send(P::encodeShutdown());
+        QVERIFY(helper.finishes(3000));
+        QCOMPARE(helper.process().exitCode(), 0);
+    }
+
+    // A ring the helper cannot attach (no such names) fails the generation
+    // as Internal; the helper keeps running.
+    void helperFailsARingItCannotAttach()
+    {
+        const CaptureShmNames names = makeCaptureShmNames(
+            QCoreApplication::applicationPid(), QRandomGenerator::global()->generate());
+        Child helper;
+        QVERIFY(helper.start({QStringLiteral("--capture-helper")}));
+        QVERIFY(helper.next(3000).has_value());
+        helper.send(configureRecord(9, kListedDevice));
+        helper.send(attachRecord(9, names, 64 * 1024));
+        const auto failed = helper.nextStatus(3000);
+        QVERIFY2(failed.has_value(), helper.diagnostics().constData());
+        QCOMPARE(failed->generation, 9u);
+        QCOMPARE(failed->state, P::HelperState::Failed);
+        QCOMPARE(failed->reason, P::FailReason::Internal);
+
+        helper.send(P::encodeShutdown());
+        QVERIFY(helper.finishes(3000));
+        QCOMPARE(helper.process().exitCode(), 0);
+    }
+
+    // Version 3: a Pcm record from the parent is a protocol error, and the
+    // helper exits as for any malformed parent record.
+    void helperExitsOnAPcmRecordFromTheParent()
+    {
+        Child helper;
+        QVERIFY(helper.start({QStringLiteral("--capture-helper")}));
+        QVERIFY(helper.next(3000).has_value());
+        const std::array<float, 4> samples{};
+        helper.send(P::encodePcm(1, 0, 0, samples.data(), static_cast<int>(samples.size())));
         QVERIFY(helper.finishes(1000));
         QCOMPARE(helper.process().exitCode(), 0);
     }
