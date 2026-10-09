@@ -591,6 +591,47 @@ private slots:
         QTest::qWait(50);
     }
 
+    void restartSkipsBackendStillInsideAnOldCall()
+    {
+        CatalogRig rig(10);
+        rig.catalog->start();
+        rig.engine->holdEnumerate();
+        rig.engine->postNotice(AudioNotice::DevicesChanged);
+        QTRY_COMPARE_WITH_TIMEOUT(rig.engine->enumerateCalls(), 2, 3000);
+
+        QTest::ignoreMessage(QtWarningMsg,
+                             QRegularExpression(QStringLiteral("Audio device list did not stop within 3000 ms")));
+        rig.catalog->stop();
+
+        // The left-behind thread is still inside enumerate(): the new run
+        // lists the backend as not running and never calls it.
+        QTest::ignoreMessage(QtWarningMsg,
+                             QRegularExpression(QStringLiteral("Audio device list skips CoreAudio while an earlier call into it has not returned")));
+        QElapsedTimer clock;
+        clock.start();
+        rig.catalog->start();
+        QVERIFY2(clock.elapsed() < 1000, qPrintable(QString::number(clock.elapsed())));
+        QVERIFY(!rig.catalog->backendRunning(AudioBackendId::CoreAudio));
+        QVERIFY(rig.catalog->devices(AudioBackendId::CoreAudio, AudioDeviceDirection::Output).isEmpty());
+        QCOMPARE(rig.catalog->backends(), QList<AudioBackendId>{AudioBackendId::CoreAudio});
+        const int defaultsBefore = rig.engine->defaultCalls();
+        rig.engine->postNotice(AudioNotice::DefaultOutputChanged);
+        rig.engine->postNotice(AudioNotice::DevicesChanged);
+        QTest::qWait(150);
+        QCOMPARE(rig.engine->enumerateCalls(), 2);
+        QCOMPARE(rig.engine->defaultCalls(), defaultsBefore);
+
+        // Once the old call returns, the next rescan lists the backend.
+        rig.engine->releaseEnumerate();
+        QTest::qWait(100);
+        rig.catalog->rescanOlderDrivers();
+        QTRY_VERIFY_WITH_TIMEOUT(rig.catalog->backendRunning(AudioBackendId::CoreAudio), 3000);
+        QVERIFY(hasDevice(rig.catalog->devices(AudioBackendId::CoreAudio, AudioDeviceDirection::Output),
+                          QStringLiteral("spk")));
+        QCOMPARE(rig.engine->enumerateCalls(), 3);
+        QCOMPARE(rig.engine->maxConcurrentCalls(), 1);
+    }
+
     void notRunningBackendListsNothing()
     {
         CatalogRig rig;

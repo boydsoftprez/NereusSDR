@@ -26,6 +26,7 @@
 #include <QString>
 #include <QThread>
 
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -146,8 +147,10 @@ public:
         std::unique_lock<std::mutex> lock(m_mutex);
         m_enumerateThreads.push_back(QThread::currentThread());
         ++m_enumerateCalls;
+        enterCallLocked();
         m_cv.notify_all();
         m_cv.wait(lock, [this] { return !m_holdEnumerate; });
+        --m_callsInFlight;
         return m_devices;
     }
 
@@ -156,6 +159,8 @@ public:
         std::lock_guard<std::mutex> lock(m_mutex);
         m_defaultThreads.push_back(QThread::currentThread());
         ++m_defaultCalls;
+        enterCallLocked();
+        --m_callsInFlight;
         return direction == AudioDeviceDirection::Output ? m_defaultOutput : m_defaultInput;
     }
 
@@ -288,6 +293,13 @@ public:
         return m_controlPanelOpens;
     }
     int rescanCount() const { return m_rescans.load(); }
+    // The most enumerate() / defaultDeviceId() calls ever in progress at
+    // once; a held enumerate() counts until it returns.
+    int maxConcurrentCalls() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_maxCallsInFlight;
+    }
     // The last bus or input made; valid while its owner keeps it.
     FakeMatcherAudioBus* lastOutput() const
     {
@@ -301,6 +313,12 @@ public:
     }
 
 private:
+    void enterCallLocked()
+    {
+        ++m_callsInFlight;
+        m_maxCallsInFlight = std::max(m_maxCallsInFlight, m_callsInFlight);
+    }
+
     const AudioBackendId m_id;
     std::atomic<bool> m_running{true};
     bool m_takesStereoMix = true;
@@ -314,6 +332,8 @@ private:
     bool m_holdEnumerate = false;
     int m_enumerateCalls = 0;
     int m_defaultCalls = 0;
+    int m_callsInFlight = 0;
+    int m_maxCallsInFlight = 0;
     std::vector<QThread*> m_enumerateThreads;
     std::vector<QThread*> m_defaultThreads;
     std::vector<AudioStreamRequest> m_outputRequests;

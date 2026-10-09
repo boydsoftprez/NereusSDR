@@ -18,7 +18,10 @@
 // kStartWaitMs for the first list and stop() at most kStopWaitMs for the
 // thread.  A thread that outlives stop() owns everything it still
 // touches (the shared State, the backends, its worker) and frees it when
-// the backend returns; nothing it does reaches the catalogue again.
+// the backend returns; nothing it does reaches the catalogue again, and it
+// calls no backend after that call.  Until it returns, a later start() or
+// rescan lists that backend as not running and never calls it, so no
+// backend is ever called from two threads at once.
 //
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 3 (R-AUD-03). J.J. Boyd (KG4VCF),
@@ -81,6 +84,7 @@ private:
     };
     class Worker;
     struct State;
+    struct BackendClaim;
 
     void adoptListing(Listing listing);
     void adoptDefault(int index, AudioDeviceDirection direction, std::optional<QString> id);
@@ -88,6 +92,12 @@ private:
     QString busyBackendName() const;
 
     std::vector<std::shared_ptr<IAudioEngineBackend>> m_backends;
+    // One per backend, kept across runs: a backend a thread left behind by
+    // stop() is still inside is skipped (listed as not running) until that
+    // call returns.
+    std::vector<std::shared_ptr<BackendClaim>> m_claims;
+    std::shared_ptr<std::atomic<std::uint64_t>> m_generations =
+        std::make_shared<std::atomic<std::uint64_t>>(0);
 
     // Main thread only.
     std::vector<BackendSnapshot> m_snapshot;
