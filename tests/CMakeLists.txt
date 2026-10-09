@@ -1791,6 +1791,14 @@ nereus_add_test(tst_audio_device_config_roundtrip)
 nereus_add_test(tst_audio_device_identity)
 nereus_add_test(tst_audio_device_migration)
 
+# Native audio Task 5 (R-AUD-08 to R-AUD-14, V-SW-4, V-SW-1 retry part): the
+# stream supervisor with a fake catalogue and a fake host: fallback and
+# return, busy, the mic and VAX never moved, default following held while
+# transmitting and never to Bluetooth, the retry schedule, the Bluetooth mic
+# opened first.  Retries run on manual fires or on scaled timers with no
+# timing bound, so the test is not REALTIME.
+nereus_add_test(tst_audio_stream_supervisor)
+
 # R-R3-36 Task 1: capture helper record protocol. Framing, bounded
 # incremental reader, PCM and JSON codecs, malformed-input rejections.
 nereus_add_test(tst_capture_protocol)

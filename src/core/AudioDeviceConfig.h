@@ -19,6 +19,10 @@
 // Native audio plan Task 4 (2026-10-09, R-AUD-04): saved identity fields
 // Engine, DeviceId, FirstChannel, MicChannel and DelayMs.  J.J. Boyd
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
+//
+// Native audio plan Task 5 (2026-10-09): defaulted operator== for the
+// stream supervisor's AudioRoleStatus.  J.J. Boyd (KG4VCF), AI-assisted
+// via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AudioDeviceTypes.h"
@@ -73,6 +77,9 @@ struct AudioDeviceConfig {
 
     bool isPlatformDefault() const;          // deviceId and deviceName both empty, not none
     bool isNone() const;                     // deviceId == kAudioDeviceNone
+
+    // Every field compared (AudioRoleStatus, native audio plan Task 5).
+    friend bool operator==(const AudioDeviceConfig&, const AudioDeviceConfig&) = default;
 
     // ── Settings round-trip helpers (10 fields) ─────────────────────────────
     // loadFromSettings reads audio/<prefix>/{DriverApi,DeviceName,...} keys.
