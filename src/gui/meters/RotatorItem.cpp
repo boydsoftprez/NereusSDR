@@ -1072,14 +1072,16 @@ void RotatorItem::paintControl(QPainter& p, const QRect& rect)
 
     const auto azTip = [&](float degrees) {
         // Convert degrees to radians, and -90 to top
-        const float rad = qDegreesToRadians(degrees - 90.0f);
-        return QPointF(f.az.x() + f.radiusTipAz * std::cos(rad),
-                       f.az.y() + f.radiusTipAz * std::sin(rad));
+        const double rad = qDegreesToRadians(static_cast<double>(degrees) - 90.0);
+        const double r = f.radiusTipAz;
+        return QPointF(f.az.x() + r * std::cos(rad),
+                       f.az.y() + r * std::sin(rad));
     };
     const auto eleTip = [&](float degrees) {
-        const float rad = qDegreesToRadians(-degrees);
-        return QPointF(f.ele.x() + f.radiusTipEle * std::cos(rad),
-                       f.ele.y() + f.radiusTipEle * std::sin(rad));
+        const double rad = qDegreesToRadians(-static_cast<double>(degrees));
+        const double r = f.radiusTipEle;
+        return QPointF(f.ele.x() + r * std::cos(rad),
+                       f.ele.y() + r * std::sin(rad));
     };
 
     // The would-be target while dragging.
