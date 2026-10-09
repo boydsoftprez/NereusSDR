@@ -68,6 +68,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 namespace NereusSDR::ControlRanges {
 
@@ -239,28 +240,57 @@ inline constexpr int kDisplayBinWidthDecimals = 3;
 inline constexpr int kDisplayFftPlanMinSize = 1024;
 inline constexpr int kDisplayFftPlanMaxSize = 262144;
 
-// The largest FFT a zoom (or the Hz/bin target) grows a pan's FFT to, on a
-// local pan (MainWindow's bandwidthChangeRequested auto-zoom) and a remote
-// pan (RemoteMediaController's plannedFftSize) alike. NereusSDR-native.
+// How far a zoom (or the Hz/bin target) grows a pan's FFT, on a local pan
+// (MainWindow's bandwidthChangeRequested auto-zoom) and a remote pan
+// (RemoteMediaController's plannedFftSize) alike: a time per transform, the
+// same at every sample rate. NereusSDR-native (JJ's ruling, 2026-10-09;
+// supersedes the fixed 65536 cap of 2026-05-08).
 //
-// Set well below kDisplayFftPlanMaxSize (262144) to bound the buffer-fill
-// pause on every replan: at 768 kHz DDC, 65536 fills in 85 ms (barely
-// perceptible). 262144 would take 340 ms (jarring) and create a multi-frame
-// avenger ghost in the waterfall as the smoothed state crosses fftSize
-// resolutions. Users who want larger FFTs explicitly opt in via the slider
-// (one-time pause they chose); auto-zoom won't push above the cap
-// automatically.
-inline constexpr int kAutoZoomMaxFftSize = 65536;
+// Auto-zoom keeps about `baseline` points on screen at every zoom
+// (size = baseline * rate / span), so the time per transform at a given zoom
+// (size / rate = baseline / span) does not depend on the rate. A fixed point
+// count therefore cut in at a different zoom on every rate: 65536 is 0.68 s
+// at 96 kHz but 43 ms at 1.536 MHz, where a deep zoom went blocky from a
+// 96 kHz-wide view. A time limit gives the same deep-zoom look at every rate,
+// with the engine maximum (kDisplayFftPlanMaxSize) on top. The longer buffer
+// fill on a replan at deep zoom on high rates is accepted. Users who want
+// larger FFTs pick them on the slider; auto-zoom won't push above the cap
+// unless the slider already did.
+//
+//   48 kHz 32768, 96 kHz 65536, 192 kHz 131072 (0.68 s each),
+//   384 kHz 262144 (0.68 s), 768 kHz 262144 (0.34 s), 1.536 MHz 262144 (0.17 s)
+inline constexpr double kAutoZoomMaxTransformSeconds = 0.7;
+
+// The largest FFT size a zoom grows to at `sampleRateHz`: the largest power
+// of two <= sampleRateHz * kAutoZoomMaxTransformSeconds, clamped to
+// [kDisplayFftPlanMinSize, kDisplayFftPlanMaxSize]. A rate that is not
+// finite or not positive gives kDisplayFftPlanMinSize; both callers return
+// early on such rates before asking.
+constexpr int autoZoomMaxFftSize(double sampleRateHz) noexcept
+{
+    // !(x > 0) is also true for NaN; the upper test rejects infinity
+    // (std::isfinite is not constexpr in C++20).
+    if (!(sampleRateHz > 0.0)
+        || !(sampleRateHz <= std::numeric_limits<double>::max())) {
+        return kDisplayFftPlanMinSize;
+    }
+    const double limit = sampleRateHz * kAutoZoomMaxTransformSeconds;
+    int size = kDisplayFftPlanMinSize;
+    while (size < kDisplayFftPlanMaxSize && double(size) * 2.0 <= limit) {
+        size *= 2;
+    }
+    return size;
+}
 
 // The FFT size a zoom asks for: `desiredPow2` (the power of two the zoom or
 // Hz/bin target wants) floored at the user's `baseline` (the slider's choice
-// is always honoured) and capped at kAutoZoomMaxFftSize. When the baseline
-// is above the cap (the user picked a larger size), the baseline wins and a
-// zoom does not grow past it.
-constexpr int autoZoomFftSize(int desiredPow2, int baseline) noexcept
+// is always honoured) and capped at autoZoomMaxFftSize(sampleRateHz). When
+// the baseline is above the cap (the user picked a larger size), the
+// baseline wins and a zoom does not grow past it.
+constexpr int autoZoomFftSize(int desiredPow2, int baseline, double sampleRateHz) noexcept
 {
     return std::min(std::max(desiredPow2, baseline),
-                    std::max(baseline, kAutoZoomMaxFftSize));
+                    std::max(baseline, autoZoomMaxFftSize(sampleRateHz)));
 }
 
 // FFT window: the "Window" combo, in Thetis's order, each item's value its

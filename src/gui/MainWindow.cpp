@@ -8940,9 +8940,11 @@ void MainWindow::buildUI()
     // inversely with bwHz:
     //   targetSize = baseline * sampleRate / bwHz
     //
-    // Cap at ControlRanges::kAutoZoomMaxFftSize = 65536 (the rationale
-    // lives with the constant in src/core/ControlRanges.h; a remote pan's
-    // plannedFftSize shares it through ControlRanges::autoZoomFftSize).
+    // Cap at ControlRanges::autoZoomMaxFftSize(sampleRate): about 0.7 s per
+    // transform (kAutoZoomMaxTransformSeconds), at most 262144; 65536 at
+    // 96 kHz.  The rationale lives with the constant in
+    // src/core/ControlRanges.h; a remote pan's plannedFftSize shares it
+    // through ControlRanges::autoZoomFftSize.
     //
     // Floor at the slider baseline (we never replan BELOW the user's
     // chosen value).
@@ -8982,15 +8984,16 @@ void MainWindow::buildUI()
         }
 
         // Round up to next power of 2.
+        const int autoZoomMax = ControlRanges::autoZoomMaxFftSize(sampleRate);
         int targetSize = 1024;
-        while (targetSize < desired && targetSize < ControlRanges::kAutoZoomMaxFftSize) {
+        while (targetSize < desired && targetSize < autoZoomMax) {
             targetSize *= 2;
         }
         // Floor at baseline (slider's choice always honoured), then cap at
         // auto-zoom max.  When baseline > cap (user explicitly picked a
         // larger size via the slider), baseline wins and auto-zoom is a
         // no-op for that range.
-        targetSize = ControlRanges::autoZoomFftSize(targetSize, baseline);
+        targetSize = ControlRanges::autoZoomFftSize(targetSize, baseline, sampleRate);
 
         // Hysteresis: only replan if outside [current * 2/3, current * 3/2].
         const int currentSize = engine->fftSize();

@@ -6301,9 +6301,11 @@ private slots:
     }
 
     // A deep zoom (or the Hz/bin target) grows a remote pan's FFT no
-    // further than a local pan's auto-zoom does: 65536
-    // (ControlRanges::kAutoZoomMaxFftSize), not the engine's 262144, unless
-    // the stored size is already larger; that is asked for exactly.
+    // further than a local pan's auto-zoom does: about 0.7 s per transform
+    // (ControlRanges::autoZoomMaxFftSize), 131072 at the fixture's
+    // 192 kHz, not the engine's 262144, unless the stored size is already
+    // at or above it; that is asked for exactly.  2026-10-09: the capped
+    // rows asked 65536 under the fixed cap of 2026-05-08.
     void subscribeCapsAZoomedPansFftSizeLikeALocalPan_data()
     {
         QTest::addColumn<double>("spanHz");
@@ -6312,11 +6314,11 @@ private slots:
         QTest::addColumn<int>("fftSize");
         QTest::addColumn<QString>("tier");
         QTest::newRow("300 Hz zoom, stored 4096") << 300.0 << QStringLiteral("4096")
-            << QStringLiteral("0") << 65536 << QStringLiteral("fine");
+            << QStringLiteral("0") << 131072 << QStringLiteral("fine");
         QTest::newRow("300 Hz zoom, stored 131072") << 300.0 << QStringLiteral("131072")
             << QStringLiteral("0") << 131072 << QStringLiteral("wide");
         QTest::newRow("Hz/bin 0.5, stored 4096") << 24000.0 << QStringLiteral("4096")
-            << QStringLiteral("0.5") << 65536 << QStringLiteral("fine");
+            << QStringLiteral("0.5") << 131072 << QStringLiteral("fine");
     }
 
     void subscribeCapsAZoomedPansFftSizeLikeALocalPan()
@@ -6380,12 +6382,12 @@ private slots:
         const QJsonObject asked = lastControl(controls, QStringLiteral("subscribe"));
         SliceModel* mirrored = remote.sliceById(stationSlice->sliceIndex());
         QVERIFY(mirrored);
-        // Every row's uncapped size would be 262144 (or 131072 at least):
-        // the rate is at least 48 kHz and the pan at least 300 px wide.
-        QVERIFY2(mirrored->sampleRateHz() >= 48000,
-                 qPrintable(QString::number(mirrored->sampleRateHz())));
+        // Every row's uncapped size would be 262144: the rate is 192 kHz
+        // (cap 131072) and the pan at least 300 px wide.
+        QCOMPARE(mirrored->sampleRateHz(), 192000);
         QCOMPARE(asked.value(QStringLiteral("fftSize")).toInt(), fftSize);
         QCOMPARE(asked.value(QStringLiteral("tier")).toString(), tier);
+        QCOMPARE(ControlRanges::autoZoomMaxFftSize(mirrored->sampleRateHz()), 131072);
 
         client.disconnectFromStation(QStringLiteral("test complete"));
     }
