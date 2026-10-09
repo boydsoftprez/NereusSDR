@@ -1142,6 +1142,12 @@ set(CORE_SOURCES
     src/core/audio/VaxTxMicSource.cpp
     src/core/audio/AudioDelayProbe.cpp
     src/core/audio/DeviceRateMatcher.cpp
+    src/core/audio/AudioDeviceTypes.cpp
+    src/core/audio/AudioTestBarrier.cpp
+    src/core/audio/DeviceSampleFormat.cpp
+    src/core/audio/AudioDeviceCatalog.cpp
+    src/core/audio/IAudioDeviceCatalog.h
+    src/core/audio/IAudioEngineBackend.h
     src/core/audio/CaptureProtocol.cpp
     src/core/audio/CaptureHelper.cpp
     src/core/audio/CaptureAudioBus.cpp

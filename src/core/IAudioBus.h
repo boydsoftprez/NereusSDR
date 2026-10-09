@@ -11,8 +11,11 @@
 
 #pragma once
 
+#include "core/audio/AudioDelayParts.h"
+
 #include <QString>
 
+#include <functional>
 #include <optional>
 
 namespace NereusSDR {
@@ -26,6 +29,15 @@ struct AudioFormat {
         return sampleRate == o.sampleRate && channels == o.channels && sample == o.sample;
     }
     bool operator!=(const AudioFormat& o) const { return !(*this == o); }
+};
+
+// A stream event a backend reports (native audio plan, R-AUD-03): the
+// device went away, another program holds it, its format changed, or the
+// system asks for the stream to be rebuilt.  Posted to the main thread.
+struct AudioStreamEvent {
+    enum class Kind { DeviceLost, DeviceBusy, FormatChanged, ResetRequested };
+    Kind kind = Kind::DeviceLost;
+    QString detail;
 };
 
 class IAudioBus {
@@ -86,6 +98,19 @@ public:
     virtual QString backendName() const = 0;
     virtual AudioFormat negotiatedFormat() const = 0;
     virtual QString errorString() const { return {}; }
+
+    // Native audio engines (R-AUD-03, R-AUD-15).  Every default keeps an
+    // existing bus as it is.
+    //
+    // The sink may be called from a device thread; it only posts.
+    virtual void setStreamEventSink(std::function<void(const AudioStreamEvent&)> /*sink*/) {}
+    // The delay readout's parts; matcherFillMs -1 when the bus has no
+    // clock matcher.
+    virtual AudioDelayParts delayParts() const { return {}; }
+    // True: push() takes 48 kHz stereo float into a DeviceRateMatcher.
+    virtual bool takesStereoMix() const { return false; }
+    virtual std::optional<DeviceRateMatcherStats> matcherStats() const { return std::nullopt; }
+    virtual void restartClockMatch() {}
 };
 
 } // namespace NereusSDR

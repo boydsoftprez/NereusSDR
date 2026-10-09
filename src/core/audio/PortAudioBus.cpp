@@ -39,6 +39,7 @@
 #include "../PerfMonitor.h"
 #include "../Resampler.h"
 #include "AudioDelayProbe.h"
+#include "AudioTestBarrier.h"
 
 #include <portaudio.h>
 
@@ -1034,11 +1035,8 @@ int PortAudioBus::downmixToMono(const float* interleaved, int frames,
 
 bool PortAudioBus::portAudioBarredForTestRun()
 {
-#ifdef NEREUS_BUILD_TESTS
-    return QStandardPaths::isTestModeEnabled();
-#else
-    return false;
-#endif
+    // R-AUD-32: the one no-device rule every engine shares.
+    return audioDevicesBarredForTestRun();
 }
 
 QVector<PortAudioBus::HostApiInfo> PortAudioBus::hostApis() {
