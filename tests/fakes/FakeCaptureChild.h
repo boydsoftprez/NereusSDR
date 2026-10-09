@@ -45,6 +45,9 @@
 //   bad-ring              Hello; on Open: Opening, Ready, then a wake with
 //                         the region's ring header zeroed.
 // Every scenario accepts ProbeEnable; only probe acts on it (V-HW-8).
+// Every scenario answers AsioDescribe with one driver, "Fake ASIO" (4
+// outputs, 2 inputs), AsioOpen with running (256 frames, 48 kHz) or, with
+// no uses, closed, and accepts AsioControlPanel (Task 15).
 // Every scenario exits with code 0 on stdin EOF, and on Shutdown unless
 // it is ignoring commands.  An unknown scenario exits with code 2.
 //
@@ -56,6 +59,8 @@
 //               tone through a clock matcher ring in the window's shared
 //               region; pcm-record, busy and bad-ring scenarios.  J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 15 (R-AUD-19): the ASIO records.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once

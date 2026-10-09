@@ -23,6 +23,10 @@
 //               record from the parent is a protocol error; the scripted
 //               fake streams its tone through the shared ring.  J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 15 (R-AUD-19, R-AUD-32): the helper
+//               in a test run hosts no ASIO driver: it lists none, fails
+//               an open and ignores the control panel.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -368,6 +372,79 @@ private slots:
         QCOMPARE(failed->generation, 9u);
         QCOMPARE(failed->state, P::HelperState::Failed);
         QCOMPARE(failed->reason, P::FailReason::Internal);
+
+        helper.send(P::encodeShutdown());
+        QVERIFY(helper.finishes(3000));
+        QCOMPARE(helper.process().exitCode(), 0);
+    }
+
+    // R-AUD-19, R-AUD-32: a test run's helper never makes an ASIO driver.
+    // It lists none, describes a named one without caps, fails an open
+    // with outputs (echoing its serial), closes an empty one, and ignores
+    // the control panel; it keeps running throughout.
+    void helperInATestRunHostsNoAsio()
+    {
+        Child helper;
+        QVERIFY(helper.start({QStringLiteral("--capture-helper")}));
+        QVERIFY(helper.next(3000).has_value());
+
+        helper.send(P::encodeAsioDescribe({QString()}));
+        auto record = helper.next(3000);
+        QVERIFY2(record.has_value(), helper.diagnostics().constData());
+        QCOMPARE(record->type, P::RecordType::AsioCaps);
+        auto caps = P::decodeAsioCaps(record->payload);
+        QVERIFY(caps.has_value());
+        QVERIFY(caps->drivers.isEmpty());
+        QVERIFY(caps->driver.isEmpty());
+        QVERIFY(!caps->caps.has_value());
+
+        helper.send(P::encodeAsioDescribe({QStringLiteral("Focusrite USB ASIO")}));
+        record = helper.next(3000);
+        QVERIFY(record.has_value());
+        QCOMPARE(record->type, P::RecordType::AsioCaps);
+        caps = P::decodeAsioCaps(record->payload);
+        QVERIFY(caps.has_value());
+        QCOMPARE(caps->driver, QStringLiteral("Focusrite USB ASIO"));
+        QVERIFY(!caps->caps.has_value());
+        QVERIFY(!caps->inUse);
+
+        P::AsioOpen open;
+        open.serial = 5;
+        open.driver = QStringLiteral("Focusrite USB ASIO");
+        open.bufferFrames = 256;
+        open.rate = 48000.0;
+        P::AsioOpenUse use;
+        use.role = AudioRole::Speakers;
+        use.pair = AudioChannelPair{3, 2};
+        use.memory = QStringLiteral("nereus-test-asio-memory");
+        use.wake = QStringLiteral("nereus-test-asio-wake");
+        use.bytes = 4096;
+        open.uses.append(use);
+        helper.send(P::encodeAsioOpen(open));
+        record = helper.next(3000);
+        QVERIFY(record.has_value());
+        QCOMPARE(record->type, P::RecordType::AsioState);
+        auto state = P::decodeAsioState(record->payload);
+        QVERIFY(state.has_value());
+        QCOMPARE(state->serial, 5u);
+        QCOMPARE(state->state, P::AsioStateKind::Failed);
+        QCOMPARE(state->detail, QStringLiteral("a test run opens no ASIO driver"));
+
+        helper.send(P::encodeAsioControlPanel());
+        QVERIFY(!helper.next(300).has_value());
+        QCOMPARE(helper.readerError(), P::RecordReader::Error::None);
+
+        open.serial = 6;
+        open.driver.clear();
+        open.uses.clear();
+        helper.send(P::encodeAsioOpen(open));
+        record = helper.next(3000);
+        QVERIFY(record.has_value());
+        QCOMPARE(record->type, P::RecordType::AsioState);
+        state = P::decodeAsioState(record->payload);
+        QVERIFY(state.has_value());
+        QCOMPARE(state->serial, 6u);
+        QCOMPARE(state->state, P::AsioStateKind::Closed);
 
         helper.send(P::encodeShutdown());
         QVERIFY(helper.finishes(3000));

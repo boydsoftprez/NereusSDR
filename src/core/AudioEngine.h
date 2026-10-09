@@ -251,6 +251,11 @@
 //                 speakersWorkgroupGeneration() and speakersWorkgroupDevice():
 //                 the DSP thread follows the audio workgroup of the device
 //                 the speakers play on. NereusSDR-original.
+//   2026-10-09: native audio plan Task 15 (R-AUD-19, R-AUD-22) by J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code. The
+//                 ASIO backend reaches the mic helper through the capture
+//                 supervisor, and an ASIO output holds Demand::AsioDevice
+//                 so the helper runs with the PC mic off. NereusSDR-original.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -295,6 +300,7 @@ class AudioDeviceCatalog;
 class AudioStreamSupervisor;
 class IAudioDeviceCatalog;
 class IAudioEngineBackend;
+class AsioBackend;
 
 // Synchronous observer for the final receiver master mix.  `samples` is
 // borrowed interleaved stereo float32 and is valid only for the duration of
@@ -1551,6 +1557,13 @@ private:
     std::int64_t m_delayProbeMatchedClickNs{0};        // main thread
     AudioDelayProbeMatcher m_delayProbeMatcher;
     CaptureSupervisor::Lease m_delayProbeLease;        // main thread
+    // Native audio plan Task 15 (R-AUD-19): held while any ASIO output is
+    // open, so the helper that hosts the driver runs with the PC mic off.
+    CaptureSupervisor::Lease m_asioLease;              // main thread
+    bool m_asioDemanded{false};                        // main thread
+    AsioBackend* asioBackend() const;                  // main thread; nullptr off Windows
+    void linkAsioBackend();                            // main thread
+    void setAsioDemanded(bool demanded);               // main thread
     quint64 m_delayProbeHitCount{0};                   // main thread
 
     // (Phase 3M-1c D.1 added a kMicBlockFrames=720-sample mic-block

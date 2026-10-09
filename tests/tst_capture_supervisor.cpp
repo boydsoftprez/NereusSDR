@@ -18,6 +18,11 @@
 //               device-in-use reason, the device facts in Ready, and a
 //               status of an earlier request told apart.  J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 15 (R-AUD-19, R-AUD-21): an ASIO
+//               demand keeps the helper running with no microphone open,
+//               the ASIO answers come back, and a helper started only to
+//               describe drivers stops after the answer.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -753,6 +758,107 @@ private slots:
         QCOMPARE(supervisor.status().state, State::Ready);
         lease.release();
         QVERIFY(waitForState(supervisor, State::Closed, 3000));
+    }
+
+    // Task 15 (R-AUD-19): the ASIO outputs play in the helper, so an ASIO
+    // demand runs it with no microphone open, and the microphone's demand
+    // coming and going leaves it running.
+    void asioDemandKeepsTheHelperWithoutTheMic()
+    {
+        CaptureSupervisor supervisor(fakeOptions(QStringLiteral("ready")));
+        QSignalSpy states(&supervisor, &CaptureSupervisor::asioState);
+        QSignalSpy caps(&supervisor, &CaptureSupervisor::asioCaps);
+        auto asio = supervisor.acquire(CaptureSupervisor::Demand::AsioDevice);
+        QVERIFY(asio.isActive());
+        QVERIFY(!supervisor.hasDemand());                       // not a microphone demand
+        const qint64 pid = waitForPid(supervisor, 3000);
+        QVERIFY(pid > 0);
+
+        CaptureProtocol::AsioOpen open;
+        open.serial = 7;
+        open.driver = QStringLiteral("Fake ASIO");
+        open.bufferFrames = 256;
+        open.rate = 48000.0;
+        CaptureProtocol::AsioOpenUse speakers;
+        speakers.pair = AudioChannelPair{3, 2};
+        speakers.direction = AudioDeviceDirection::Output;
+        speakers.memory = QStringLiteral("/nereus-asio-test-m");
+        speakers.wake = QStringLiteral("/nereus-asio-test-w");
+        speakers.bytes = 4096;
+        open.uses = {speakers};
+        supervisor.openAsio(open);
+        QTRY_VERIFY_WITH_TIMEOUT(states.size() >= 1, 3000);
+        const auto running = qvariant_cast<CaptureProtocol::AsioState>(states.at(0).at(0));
+        QCOMPARE(running.serial, quint32(7));
+        QVERIFY(running.state == CaptureProtocol::AsioStateKind::Running);
+        QCOMPARE(running.bufferFrames, 256);
+        QCOMPARE(running.rate, 48000.0);
+        QCOMPARE(supervisor.status().state, State::Closed);     // no microphone opened
+
+        auto mic = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
+        QVERIFY(waitForState(supervisor, State::Ready, 5000));
+        QCOMPARE(supervisor.helperProcessId(), pid);
+        mic.release();
+        QVERIFY(waitForState(supervisor, State::Closed, 3000));
+        QTest::qWait(300);
+        QCOMPARE(supervisor.helperProcessId(), pid);            // still playing ASIO
+        QVERIFY(!processIsGone(pid));
+
+        supervisor.describeAsio(QStringLiteral("Fake ASIO"));
+        QTRY_VERIFY_WITH_TIMEOUT(caps.size() >= 1, 3000);
+        const auto record = qvariant_cast<CaptureProtocol::AsioCapsRecord>(caps.at(0).at(0));
+        QCOMPARE(record.drivers, QStringList{QStringLiteral("Fake ASIO")});
+        QCOMPARE(record.driver, QStringLiteral("Fake ASIO"));
+        QVERIFY(record.caps.has_value());
+        QCOMPARE(record.caps->outputChannels, 4);
+        QCOMPARE(supervisor.helperProcessId(), pid);            // the demand still holds it
+
+        asio.release();
+        QVERIFY(waitProcessGone(pid, 3000));
+        QTRY_COMPARE_WITH_TIMEOUT(supervisor.helperProcessId(), qint64(0), 3000);
+    }
+
+    // A helper started only to list the drivers stops after its answer.
+    void describeAloneStopsTheHelperAfterTheAnswer()
+    {
+        CaptureSupervisor supervisor(fakeOptions(QStringLiteral("ready")));
+        QSignalSpy caps(&supervisor, &CaptureSupervisor::asioCaps);
+        supervisor.describeAsio(QString());
+        const qint64 pid = waitForPid(supervisor, 3000);
+        QVERIFY(pid > 0);
+        QTRY_VERIFY_WITH_TIMEOUT(caps.size() >= 1, 3000);
+        const auto record = qvariant_cast<CaptureProtocol::AsioCapsRecord>(caps.at(0).at(0));
+        QCOMPARE(record.drivers, QStringList{QStringLiteral("Fake ASIO")});
+        QVERIFY(record.driver.isEmpty());
+        QVERIFY(!record.caps.has_value());
+        QVERIFY(waitProcessGone(pid, 3000));
+        QCOMPARE(supervisor.status().state, State::Closed);
+    }
+
+    // A missing helper answers at once: no drivers, and an open fails.
+    void asioWithoutTheHelperAnswersAtOnce()
+    {
+        CaptureSupervisor unconfigured;
+        QSignalSpy caps(&unconfigured, &CaptureSupervisor::asioCaps);
+        QSignalSpy states(&unconfigured, &CaptureSupervisor::asioState);
+        unconfigured.describeAsio(QString());
+        QTRY_VERIFY_WITH_TIMEOUT(caps.size() >= 1, 2000);
+        QVERIFY(qvariant_cast<CaptureProtocol::AsioCapsRecord>(caps.at(0).at(0)).drivers.isEmpty());
+
+        CaptureProtocol::AsioOpen open;
+        open.serial = 3;
+        open.driver = QStringLiteral("Fake ASIO");
+        CaptureProtocol::AsioOpenUse use;
+        use.memory = QStringLiteral("/nereus-asio-test-m");
+        use.wake = QStringLiteral("/nereus-asio-test-w");
+        use.bytes = 4096;
+        open.uses = {use};
+        unconfigured.openAsio(open);
+        QTRY_VERIFY_WITH_TIMEOUT(states.size() >= 1, 2000);
+        const auto failed = qvariant_cast<CaptureProtocol::AsioState>(states.at(0).at(0));
+        QCOMPARE(failed.serial, quint32(3));
+        QVERIFY(failed.state == CaptureProtocol::AsioStateKind::Failed);
+        QCOMPARE(unconfigured.helperProcessId(), qint64(0));
     }
 
     // Without setProbeEnabled no ProbeEnable is sent and no hit arrives.

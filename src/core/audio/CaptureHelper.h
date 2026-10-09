@@ -15,9 +15,15 @@
 //   2026-10-09: native audio plan Task 13 (R-AUD-17): the mic goes through
 //               the shared ring, no PCM records.  J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 15 (R-AUD-19, R-AUD-20, R-AUD-21,
+//               R-AUD-22): setCaptureHelperAsio(), the helper hosts the
+//               one ASIO session for the mic and the window's outputs.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
+
+#include "core/audio/AudioDeviceTypes.h"
 
 #include <QByteArray>
 #include <QPair>
@@ -26,7 +32,14 @@
 #include <QVector>
 #include <QtGlobal>
 
+#include <functional>
+#include <memory>
+#include <optional>
+
 namespace NereusSDR {
+
+struct AudioDeviceConfig;
+class IAsioDriver;
 
 // Reads protocol records on stdin, writes protocol records on stdout and
 // logs on stderr.  Sends Hello first.  A stdin reader thread parses the
@@ -54,6 +67,29 @@ void setCaptureHelperTestDevices(const QStringList& names);
 // the saved index stands, as PortAudioBackend::createOutput does.
 int captureHostApiIndex(const QString& driverApi, int savedHostApiIndex,
                         const QVector<QPair<int, QString>>& hostApis);
+
+// R-AUD-19 to R-AUD-22 (Task 15): how the helper hosts ASIO.  The
+// Windows helper (capture_main.cpp) installs the Steinberg SDK adapter
+// (AsioDriverWin) and the cmASIO set-up of the mic (cmasio.cpp); nothing
+// is installed elsewhere, so the helper lists no ASIO driver and every
+// ASIO open fails.  The window's outputs (AsioOpen) and a mic saved on
+// ASIO are uses of the one session.  Call before runCaptureHelper; a test
+// run (audioDevicesBarredForTestRun) never makes the driver.
+struct CaptureHelperAsioMic {
+    QString driver;                          // the ASIO driver's name
+    int bufferFrames = 0;                    // 0: the driver's preferred size
+    double rate = 0.0;                       // 0: the driver's own rate
+    AudioChannelPair pair;                   // the input pair
+    MicChannelPick pick = MicChannelPick::Both;
+};
+
+struct CaptureHelperAsio {
+    std::function<std::unique_ptr<IAsioDriver>()> makeDriver;
+    // The mic's set-up from its saved config; nullopt with no driver named.
+    std::function<std::optional<CaptureHelperAsioMic>(const AudioDeviceConfig& mic)> planMic;
+};
+
+void setCaptureHelperAsio(CaptureHelperAsio asio);
 
 // Process-level pipe plumbing shared by the helper and its scripted test
 // double.  Not for use inside NereusSDR itself.

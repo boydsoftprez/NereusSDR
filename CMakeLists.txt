@@ -1182,6 +1182,13 @@ set(CORE_SOURCES
     src/core/audio/CaptureHelper.cpp
     src/core/audio/CaptureAudioBus.cpp
     src/core/audio/CaptureSupervisor.cpp
+    # Native audio plan Task 15: the ASIO session rules (portable; the
+    # driver itself loads only in nereus-audio-capture on Windows) and the
+    # window's ASIO backend over the helper.
+    src/core/audio/IAsioDriver.h
+    src/core/audio/AsioSessionNotifier.h
+    src/core/audio/AsioSession.cpp
+    src/core/audio/AsioBackend.cpp
     src/core/audio/CaptureHelperLocator.cpp
     src/core/StationBinaryLocator.cpp
     src/core/audio/CompositeTxMicRouter.cpp
@@ -2338,6 +2345,16 @@ endif()
 # --------------------------------------------------------------------------
 add_executable(nereus-audio-capture src/capture_main.cpp)
 target_link_libraries(nereus-audio-capture PRIVATE NereusCore)
+# Native audio plan Task 15 (R-AUD-01, R-AUD-22): on Windows the helper
+# hosts the ASIO driver: the Steinberg SDK adapter and the cmASIO set-up
+# of the mic live in this target alone, never in NereusCore or a test.
+if(WIN32)
+    target_sources(nereus-audio-capture PRIVATE
+        src/core/audio/AsioDriverWin.cpp
+        src/core/audio/cmasio.cpp)
+    target_link_libraries(nereus-audio-capture PRIVATE asiosdk_host)
+    target_compile_definitions(nereus-audio-capture PRIVATE NEREUS_CAPTURE_HELPER_ASIO)
+endif()
 # The desktop app always carries the helper built from the same revision.
 add_dependencies(NereusSDR nereus-audio-capture)
 if(APPLE)
