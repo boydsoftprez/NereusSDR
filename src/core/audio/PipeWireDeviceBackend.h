@@ -16,8 +16,9 @@
 // pass straight to the catalogue.  A device with no id opens on the
 // system default sink or source.
 //
-// running() reports the Linux engine selection when the registry gives
-// one (LinuxEngineSelection.h), else whether the daemon answers.
+// running() is whether the daemon answers and, when the registry gives a
+// Linux engine selection (LinuxEngineSelection.h), whether it picks
+// PipeWire: never running while the daemon is away, even when forced.
 //
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 10 (R-AUD-01, R-AUD-02, R-AUD-03,
@@ -52,7 +53,7 @@ QList<AudioDeviceInfo> pipeWireDevicesFromNodes(const QList<PipeWireNodeRecord>&
 class PipeWireDeviceBackend final : public IAudioEngineBackend {
 public:
     // `selected`, when given, is the Linux engine selection's answer for
-    // PipeWire; running() reports it.
+    // PipeWire; running() needs it and the daemon answering.
     explicit PipeWireDeviceBackend(std::shared_ptr<IPipeWireDeviceSystem> system,
                                    std::function<bool()> selected = {});
 

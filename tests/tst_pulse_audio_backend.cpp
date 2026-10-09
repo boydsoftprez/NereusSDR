@@ -6,11 +6,15 @@
 // R-AUD-14, R-AUD-31, R-AUD-32) with a fake system: sinks and sources to
 // devices, monitors, pairs, the stream a device opens, the subscribe
 // notices, the matcher output's fill, the selection the backend reports,
-// the registry order and the test-run barrier.  No sound server is
-// reached: the real adapter never connects in a test run.
+// the registry order and the test-run barrier, and (R-AUD-03) the system
+// coming back after its server restarts, over a fake connection.  No sound
+// server is reached: the real adapter never connects in a test run.
 //
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 11. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
+//   2026-10-09: Task 11 fix round 1 (R-AUD-03): reconnect cases over a
+//               fake connection and server. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
 // =================================================================
 #ifdef NEREUS_HAVE_PULSEAUDIO
@@ -29,9 +33,12 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 using namespace NereusSDR;
@@ -207,6 +214,169 @@ struct NoticeLog {
         return out;
     }
 };
+
+
+// A connection seam fake: running or not when made, listing the desktop's
+// records while it runs; lose() is the server going away, as the real
+// connection's context state callback does it: not running, the state
+// cleared (one DevicesChanged), then the lost handler.
+class FakePulseConnection final : public IPulseConnection {
+public:
+    explicit FakePulseConnection(bool up) : isRunning(up)
+    {
+        if (up) {
+            records = desktopRecords();
+            serverState.serverInfo(QStringLiteral("pulseaudio"),
+                                   QStringLiteral("alsa_output.pci-0000_00_1f.3.analog-stereo"),
+                                   QStringLiteral("alsa_input.pci-0000_00_1f.3.analog-stereo"));
+        }
+    }
+
+    bool running() const override { return isRunning.load(); }
+    PulseServerState& state() override { return serverState; }
+    QList<PulseDeviceRecord> devices() override
+    {
+        return running() ? records : QList<PulseDeviceRecord>{};
+    }
+    void setLostHandler(std::function<void()> handler) override
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        lostHandler = std::move(handler);
+    }
+    std::unique_ptr<IAudioBus> createOutput(const PulseDeviceRecord&,
+                                            const AudioStreamRequest& request) override
+    {
+        opens.fetch_add(1);
+        return std::make_unique<FakeMatcherAudioBus>(request);
+    }
+    std::unique_ptr<IAudioInputStream> createInput(const PulseDeviceRecord&,
+                                                   const AudioStreamRequest&, MicChannelPick,
+                                                   IAudioInputSink*) override
+    {
+        opens.fetch_add(1);
+        return std::make_unique<FakeInputStream>();
+    }
+
+    void lose()
+    {
+        isRunning.store(false);
+        serverState.clear();
+        std::function<void()> handler;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            handler = lostHandler;
+        }
+        if (handler) {
+            handler();
+        }
+    }
+
+    bool hasLostHandler()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return bool(lostHandler);
+    }
+
+    std::atomic<bool> isRunning;
+    std::atomic<int> opens{0};
+    PulseServerState serverState;
+    QList<PulseDeviceRecord> records;
+    std::mutex mutex;
+    std::function<void()> lostHandler;
+};
+
+// A desktop whose server the test starts and stops.  hold() makes every
+// try wait at a gate until release(), as a server that is up but hangs
+// before it answers; no case sleeps for it.
+struct FakePulseServer {
+    std::atomic<bool> up{true};
+    std::atomic<int> tries{0};
+    std::atomic<int> heldTries{0};
+    std::atomic<int> inFlight{0};
+    std::atomic<int> maxInFlight{0};
+    std::mutex gateMutex;
+    std::condition_variable gate;
+    bool holding = false;
+    std::mutex mutex;
+    std::vector<std::shared_ptr<FakePulseConnection>> made;
+
+    // A try still on its worker uses this server: let it go and wait.
+    ~FakePulseServer()
+    {
+        release();
+        while (inFlight.load() > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+
+    void hold()
+    {
+        std::lock_guard<std::mutex> lock(gateMutex);
+        holding = true;
+    }
+    void release()
+    {
+        {
+            std::lock_guard<std::mutex> lock(gateMutex);
+            holding = false;
+        }
+        gate.notify_all();
+    }
+
+    PulseConnector connector()
+    {
+        return [this]() -> std::shared_ptr<IPulseConnection> {
+            tries.fetch_add(1);
+            const int now = inFlight.fetch_add(1) + 1;
+            int seen = maxInFlight.load();
+            while (now > seen && !maxInFlight.compare_exchange_weak(seen, now)) {
+            }
+            {
+                std::unique_lock<std::mutex> lock(gateMutex);
+                if (holding) {
+                    heldTries.fetch_add(1);
+                    gate.wait(lock, [this] { return !holding; });
+                }
+            }
+            auto connection = std::make_shared<FakePulseConnection>(up.load());
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                made.push_back(connection);
+            }
+            inFlight.fetch_sub(1);
+            return connection;
+        };
+    }
+
+    std::shared_ptr<FakePulseConnection> last()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return made.empty() ? nullptr : made.back();
+    }
+};
+
+// Short in the test so the waits stay short; the real interval is
+// kPulseReconnectIntervalMs.
+constexpr int kTestRetryMs = 20;
+
+// The system's own log lines, expected where a case makes them.
+void expectLost()
+{
+    QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("PulseAudio went away")));
+}
+void expectBack()
+{
+    QTest::ignoreMessage(QtInfoMsg, QRegularExpression(QStringLiteral("PulseAudio answers again")));
+}
+void expectNotRunning()
+{
+    QTest::ignoreMessage(QtInfoMsg, QRegularExpression(QStringLiteral("PulseAudio is not running")));
+}
+
+int countOf(const QList<AudioNotice>& notices, AudioNotice notice)
+{
+    return int(std::count(notices.begin(), notices.end(), notice));
+}
 
 } // namespace
 
@@ -572,6 +742,14 @@ private slots:
         stopped->isRunning.store(false);
         PulseAudioBackend plain(std::move(stopped));
         QVERIFY(!plain.running());
+
+        // Selected (a forced value) but no server answers: not running
+        // (R-AUD-03), so the default falls through to the older drivers.
+        auto down = std::make_unique<FakePulseAudioSystem>();
+        down->isRunning.store(false);
+        auto forced = std::make_shared<PulseAudioBackend>(std::move(down), [] { return true; });
+        QVERIFY(!forced->running());
+        QCOMPARE(defaultAudioEngine({forced}), AudioEngineKind::PortAudio);
     }
 
     // R-AUD-02 on Linux: PipeWire, else PulseAudio, else PortAudio.
@@ -600,6 +778,10 @@ private slots:
         QVERIFY(audioDevicesBarredForTestRun());
         std::unique_ptr<IPulseAudioSystem> system = makePulseAudioSystem();
         QVERIFY(!system->running());
+        // Nor does it retry.
+        auto* reconnecting = dynamic_cast<ReconnectingPulseAudioSystem*>(system.get());
+        QVERIFY(reconnecting != nullptr);
+        QVERIFY(!reconnecting->retrying());
         QCOMPARE(system->serverName(), std::nullopt);
         QVERIFY(system->devices().isEmpty());
         QVERIFY(system->defaultName(AudioDeviceDirection::Output).isEmpty());
@@ -629,6 +811,238 @@ private slots:
         PulseAudioBackend backend(makePulseAudioSystem());
         QVERIFY(!backend.running());
         QVERIFY(backend.enumerate().isEmpty());
+    }
+
+    // R-AUD-03: the server goes away and comes back.  The list empties with
+    // one DevicesChanged and the engine is not running, even when forced;
+    // the system tries again on a timer on its own thread (never a busy
+    // loop) while the server stays down; when it answers the devices are
+    // listed again, DevicesChanged and the default notices let the
+    // supervisor reopen them, with no restart.
+    void reconnectsWhenTheServerReturns()
+    {
+        FakePulseServer server;
+        auto owned = std::make_unique<ReconnectingPulseAudioSystem>(server.connector(), kTestRetryMs);
+        ReconnectingPulseAudioSystem* system = owned.get();
+        PulseAudioBackend backend(std::move(owned), [] { return true; });   // forced
+        NoticeLog log;
+        backend.setNoticeSink(log.sink());
+
+        QVERIFY(backend.running());
+        QVERIFY(!system->retrying());
+        QCOMPARE(system->serverName(), std::optional<QString>(QStringLiteral("pulseaudio")));
+        QCOMPARE(backend.enumerate().size(), desktopRecords().size() - 1);   // less the monitor
+        QCOMPARE(server.tries.load(), 1);
+
+        // A stream open on the first connection when the server goes.
+        std::shared_ptr<FakePulseConnection> first = server.last();
+        std::unique_ptr<IAudioBus> playing = backend.createOutput(AudioStreamRequest{});
+        QVERIFY(playing != nullptr);
+        QCOMPARE(first->opens.load(), 1);
+
+        // The server stops: as the real context state callback does, off
+        // this thread.
+        server.up.store(false);
+        expectLost();
+        std::thread mainloopThread([first] { first->lose(); });
+        mainloopThread.join();
+        QVERIFY(!backend.running());
+        QVERIFY(backend.enumerate().isEmpty());
+        QCOMPARE(system->serverName(), std::nullopt);
+        QVERIFY(system->defaultName(AudioDeviceDirection::Output).isEmpty());
+        QCOMPARE(countOf(log.take(), AudioNotice::DevicesChanged), 1);
+
+        // The retry is queued to this thread, then keeps trying on the
+        // timer while the server stays down.
+        QElapsedTimer down;
+        down.start();
+        QTRY_VERIFY(server.tries.load() >= 4);
+        const qint64 downMs = down.elapsed();
+        QVERIFY(system->retrying());
+        QVERIFY(!backend.running());
+        QVERIFY(backend.enumerate().isEmpty());
+        QVERIFY(log.take().isEmpty());   // a failed try posts nothing
+        // A timer, not a loop: no more tries than the interval allows (a
+        // late timer under load only makes fewer).
+        QVERIFY2(server.tries.load() <= 2 + int(down.elapsed() / kTestRetryMs) + 1,
+                 qPrintable(QStringLiteral("%1 tries in %2 ms").arg(server.tries.load()).arg(downMs)));
+        QCOMPARE(server.maxInFlight.load(), 1);
+
+        // The server answers again.
+        expectBack();
+        server.up.store(true);
+        QTRY_VERIFY(backend.running());
+        QVERIFY(!system->retrying());
+        QCOMPARE(backend.enumerate().size(), desktopRecords().size() - 1);
+        QCOMPARE(system->serverName(), std::optional<QString>(QStringLiteral("pulseaudio")));
+        QCOMPARE(system->defaultName(AudioDeviceDirection::Output),
+                 QStringLiteral("alsa_output.pci-0000_00_1f.3.analog-stereo"));
+        const QList<AudioNotice> notices = log.take();
+        QCOMPARE(countOf(notices, AudioNotice::DevicesChanged), 1);
+        QCOMPARE(countOf(notices, AudioNotice::DefaultOutputChanged), 1);
+        QCOMPARE(countOf(notices, AudioNotice::DefaultInputChanged), 1);
+
+        // The old connection is detached: it posts nothing and its loss no
+        // longer reaches the system; its stream still holds it.
+        QVERIFY(!first->hasLostHandler());
+        first->serverState.subscriptionEvent(PulseFacility::Sink, PulseEventType::New);
+        QVERIFY(log.take().isEmpty());
+
+        // Opens go to the new connection.
+        std::shared_ptr<FakePulseConnection> second = server.last();
+        QVERIFY(second != first);
+        QVERIFY(backend.createOutput(AudioStreamRequest{}) != nullptr);
+        QCOMPARE(second->opens.load(), 1);
+        QCOMPARE(first->opens.load(), 1);
+
+        // Lost again: the cycle repeats.
+        const int before = server.tries.load();
+        server.up.store(false);
+        expectLost();
+        second->lose();
+        QTRY_VERIFY(server.tries.load() > before);
+        expectBack();
+        server.up.store(true);
+        QTRY_VERIFY(backend.running());
+    }
+
+    // No server at start: the system keeps trying and lists the devices
+    // once it answers.
+    void connectsWhenTheServerStartsLate()
+    {
+        FakePulseServer server;
+        server.up.store(false);
+        expectNotRunning();
+        ReconnectingPulseAudioSystem system(server.connector(), kTestRetryMs);
+        QVERIFY(!system.running());
+        QCOMPARE(system.serverName(), std::nullopt);
+        QVERIFY(system.retrying());
+        QTRY_VERIFY(server.tries.load() >= 3);
+        QVERIFY(!system.running());
+        expectBack();
+        server.up.store(true);
+        QTRY_VERIFY(system.running());
+        QCOMPARE(system.devices().size(), desktopRecords().size());
+    }
+
+    // stop() during a pending retry cancels it at once and the connector
+    // is never called again; a late loss from the old connection does
+    // nothing.
+    void stopDuringARetryDoesNotReconnect()
+    {
+        FakePulseServer server;
+        server.up.store(false);
+        expectNotRunning();
+        ReconnectingPulseAudioSystem system(server.connector(), kTestRetryMs);
+        QTRY_VERIFY(server.tries.load() >= 2);
+        QVERIFY(system.retrying());
+
+        QElapsedTimer timer;
+        timer.start();
+        system.stop();
+        const qint64 stopMs = timer.elapsed();
+        QVERIFY2(stopMs < kPulseReconnectIntervalMs, qPrintable(QString::number(stopMs)));
+        QVERIFY(!system.retrying());
+
+        // The server comes back: nothing reconnects.
+        const int after = server.tries.load();
+        server.up.store(true);
+        QTest::qWait(kTestRetryMs * 5);
+        QCOMPARE(server.tries.load(), after);
+        QVERIFY(!system.running());
+        QVERIFY(!server.last()->hasLostHandler());
+        server.last()->lose();   // detached: nothing happens
+        QTest::qWait(kTestRetryMs * 2);
+        QCOMPARE(server.tries.load(), after);
+        system.stop();   // a second stop() is harmless
+    }
+
+    // A try against a server that hangs runs on a worker: this thread stays
+    // free, one try runs at a time, and the try's connection is adopted
+    // here when it ends.
+    void aHungTryLeavesTheThreadFree()
+    {
+        FakePulseServer server;
+        server.up.store(false);
+        expectNotRunning();
+        ReconnectingPulseAudioSystem system(server.connector(), kTestRetryMs);
+        server.hold();
+        server.up.store(true);
+        QTRY_VERIFY(server.heldTries.load() >= 1);
+        const int triesAtHold = server.tries.load();
+
+        // This thread's event loop runs while the try hangs.
+        bool fired = false;
+        QTimer::singleShot(0, [&fired] { fired = true; });
+        QTRY_VERIFY_WITH_TIMEOUT(fired, 100);
+        QTest::qWait(kTestRetryMs * 5);   // timers fire; no second try starts
+        QCOMPARE(server.inFlight.load(), 1);
+        QCOMPARE(server.tries.load(), triesAtHold);
+        QVERIFY(!system.running());
+        QVERIFY(system.retrying());
+
+        expectBack();
+        server.release();
+        QTRY_VERIFY(system.running());
+        QCOMPARE(server.maxInFlight.load(), 1);
+        QCOMPARE(system.devices().size(), desktopRecords().size());
+        QVERIFY(server.last()->hasLostHandler());
+    }
+
+    // stop() during a hung try returns without waiting for it; the try's
+    // connection, when it ends, is discarded, never adopted.  Destroying
+    // the system during a hung try is the same.
+    void stopDuringAHungTryDiscardsIt()
+    {
+        FakePulseServer server;
+        server.up.store(false);
+        expectNotRunning();
+        auto system = std::make_unique<ReconnectingPulseAudioSystem>(server.connector(),
+                                                                     kTestRetryMs);
+        NoticeLog log;
+        system->setNoticeSink(log.sink());
+        server.hold();
+        server.up.store(true);
+        QTRY_VERIFY(server.heldTries.load() >= 1);
+
+        QElapsedTimer timer;
+        timer.start();
+        system->stop();
+        const qint64 stopMs = timer.elapsed();
+        QVERIFY2(stopMs < kPulseReconnectIntervalMs, qPrintable(QString::number(stopMs)));
+        QVERIFY(!system->retrying());
+        QCOMPARE(server.inFlight.load(), 1);   // still hung: never waited for
+
+        server.release();
+        QTRY_VERIFY(server.inFlight.load() == 0);
+        QTest::qWait(kTestRetryMs * 3);   // a report, were one queued, would run here
+        QVERIFY(!system->running());
+        QVERIFY(system->devices().isEmpty());
+        std::shared_ptr<FakePulseConnection> late = server.last();
+        QVERIFY(late->running());
+        QVERIFY(!late->hasLostHandler());
+        late->serverState.subscriptionEvent(PulseFacility::Source, PulseEventType::New);
+        QVERIFY(log.take().isEmpty());
+        const int triesAfter = server.tries.load();
+        QTest::qWait(kTestRetryMs * 3);
+        QCOMPARE(server.tries.load(), triesAfter);
+
+        // Destroyed while a try hangs on its worker.
+        server.up.store(false);
+        expectNotRunning();
+        auto doomed = std::make_unique<ReconnectingPulseAudioSystem>(server.connector(),
+                                                                     kTestRetryMs);
+        const int heldBefore = server.heldTries.load();
+        server.hold();
+        server.up.store(true);
+        QTRY_VERIFY(server.heldTries.load() > heldBefore);
+        timer.restart();
+        doomed.reset();
+        QVERIFY2(timer.elapsed() < kPulseReconnectIntervalMs,
+                 qPrintable(QString::number(timer.elapsed())));
+        server.release();
+        QTRY_VERIFY(server.inFlight.load() == 0);
+        QTest::qWait(kTestRetryMs * 3);   // the late report finds no system
     }
 
     // R-AUD-01 on Linux desktops: PipeWire then PulseAudio then the older

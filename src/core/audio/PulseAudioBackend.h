@@ -17,15 +17,19 @@
 // straight to the catalogue.  A device with no id opens on the server's
 // default sink or source.
 //
-// running() reports the Linux engine selection when the registry gives
-// one (LinuxEngineSelection.h: PulseAudio runs only when the server that
-// answers is not PipeWire's own PulseAudio service), else whether the
-// server answers.
+// running() is whether the server answers and, when the registry gives a
+// Linux engine selection (LinuxEngineSelection.h: PulseAudio runs only
+// when the server that answers is not PipeWire's own PulseAudio service),
+// whether it picks PulseAudio: never running while the server is away,
+// even when forced (R-AUD-03).
 //
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 11 (R-AUD-01, R-AUD-02, R-AUD-07,
 //               R-AUD-14, R-AUD-31). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-09: Task 11 fix round 1 (R-AUD-03): not running while the
+//               server is away, even when forced. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -51,7 +55,7 @@ QList<AudioDeviceInfo> pulseDevicesFromRecords(const QList<PulseDeviceRecord>& r
 class PulseAudioBackend final : public IAudioEngineBackend {
 public:
     // `selected`, when given, is the Linux engine selection's answer for
-    // PulseAudio; running() reports it.
+    // PulseAudio; running() needs it and the server answering.
     explicit PulseAudioBackend(std::shared_ptr<IPulseAudioSystem> system,
                                std::function<bool()> selected = {});
 

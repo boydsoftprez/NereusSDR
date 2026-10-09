@@ -7,6 +7,10 @@
 //   2026-10-09: native audio plan Task 11 (R-AUD-01, R-AUD-07, R-AUD-31,
 //               R-AUD-32). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-09: Task 11 fix round 1 (R-AUD-03): ReconnectingPulseAudioSystem,
+//               after ReconnectingPipeWireDeviceSystem; the real connection
+//               reports its loss. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/PulseAudioSystem.h"
@@ -16,12 +20,15 @@
 #include "core/audio/PulseAudioBus.h"
 
 #include <QElapsedTimer>
+#include <QMetaObject>
 #include <QMutexLocker>
+#include <QThread>
 
 #include <pulse/pulseaudio.h>
 
 #include <algorithm>
 #include <atomic>
+#include <thread>
 #include <utility>
 
 namespace NereusSDR {
@@ -149,6 +156,284 @@ QString PulseServerState::defaultName(AudioDeviceDirection direction) const
 }
 
 // ---------------------------------------------------------------------------
+// ReconnectingPulseAudioSystem (the shape of ReconnectingPipeWireDeviceSystem)
+// ---------------------------------------------------------------------------
+
+// The engine's notice sink.  Each current connection's state posts through
+// it; it outlives the system while a connection still holds it.
+struct ReconnectingPulseAudioSystem::Forward {
+    std::mutex mutex;
+    std::function<void(AudioNotice)> sink;
+
+    void post(AudioNotice notice)
+    {
+        std::function<void(AudioNotice)> s;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            s = sink;
+        }
+        if (s) {
+            s(notice);
+        }
+    }
+};
+
+// A lost handler's way back to the system's thread, and the guard on every
+// timer and queued call into the system.  stop() clears the target under
+// `mutex`, so no handler or try queues anything after it; it sets `stopped`
+// under `runMutex`, which a running timer, report or loss holds, so nothing
+// runs in the system once stop() returns, even when the system is
+// destroyed on another thread while its own thread is in one of them.
+struct ReconnectingPulseAudioSystem::Relay {
+    std::mutex mutex;
+    QObject* target = nullptr;
+
+    std::mutex runMutex;
+    bool stopped = false;
+};
+
+ReconnectingPulseAudioSystem::ReconnectingPulseAudioSystem(PulseConnector connector,
+                                                           int retryIntervalMs)
+    : m_connector(std::move(connector))
+    , m_retryIntervalMs(retryIntervalMs)
+    , m_forward(std::make_shared<Forward>())
+    , m_relay(std::make_shared<Relay>())
+    , m_retryTimer(std::make_unique<QTimer>())
+{
+    m_retryTimer->setSingleShot(true);
+    std::shared_ptr<Relay> relay = m_relay;
+    QObject::connect(m_retryTimer.get(), &QTimer::timeout, m_retryTimer.get(), [this, relay] {
+        std::lock_guard<std::mutex> run(relay->runMutex);
+        if (!relay->stopped) {
+            retryNow();
+        }
+    });
+    {
+        std::lock_guard<std::mutex> lock(m_relay->mutex);
+        m_relay->target = m_retryTimer.get();
+    }
+    std::shared_ptr<IPulseConnection> first = m_connector ? m_connector() : nullptr;
+    if (first) {
+        adopt(first);
+    }
+    if (!first || !first->running()) {
+        if (m_retryIntervalMs > 0) {
+            qCInfo(lcAudio) << "PulseAudio is not running; its engine is offered as not running"
+                            << "and tries again every" << m_retryIntervalMs << "ms";
+        }
+        scheduleRetry();
+    }
+}
+
+ReconnectingPulseAudioSystem::~ReconnectingPulseAudioSystem()
+{
+    stop();
+}
+
+void ReconnectingPulseAudioSystem::stop()
+{
+    if (m_stopped) {
+        return;
+    }
+    m_stopped = true;
+    {
+        std::lock_guard<std::mutex> lock(m_relay->mutex);
+        m_relay->target = nullptr;
+    }
+    {
+        // Waits only for a call already running on the system's thread
+        // (adopting a finished try, or a loss), which never waits on the
+        // server; a pending try, or one still on its worker, is never
+        // waited for.
+        std::lock_guard<std::mutex> run(m_relay->runMutex);
+        m_relay->stopped = true;
+    }
+    if (m_retryTimer) {
+        QObject::disconnect(m_retryTimer.get(), nullptr, nullptr, nullptr);
+        if (m_retryTimer->thread() == QThread::currentThread()) {
+            m_retryTimer.reset();   // stops a pending try; queued lost events go with it
+        } else {
+            // Destroyed off its thread: the timer is stopped and deleted
+            // on its own.
+            m_retryTimer.release()->deleteLater();
+        }
+    }
+    if (std::shared_ptr<IPulseConnection> connection = current()) {
+        connection->setLostHandler({});
+        connection->state().setNoticeSink({});
+    }
+}
+
+bool ReconnectingPulseAudioSystem::retrying() const
+{
+    return !m_stopped && (m_tryRunning || (m_retryTimer && m_retryTimer->isActive()));
+}
+
+std::shared_ptr<IPulseConnection> ReconnectingPulseAudioSystem::current() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_current;
+}
+
+void ReconnectingPulseAudioSystem::adopt(const std::shared_ptr<IPulseConnection>& connection)
+{
+    std::shared_ptr<IPulseConnection> old;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        old = std::exchange(m_current, connection);
+    }
+    if (old) {
+        // Its streams keep it alive until they close; it posts nothing more.
+        old->setLostHandler({});
+        old->state().setNoticeSink({});
+    }
+    std::weak_ptr<IPulseConnection> weak = connection;
+    std::shared_ptr<Relay> relay = m_relay;
+    connection->setLostHandler([this, relay, weak] {
+        std::lock_guard<std::mutex> lock(relay->mutex);
+        if (relay->target != nullptr) {
+            // Runs only while the target (owned by this system) lives.
+            QMetaObject::invokeMethod(
+                relay->target,
+                [this, relay, weak] {
+                    std::lock_guard<std::mutex> run(relay->runMutex);
+                    if (!relay->stopped) {
+                        onLost(weak);
+                    }
+                },
+                Qt::QueuedConnection);
+        }
+    });
+    std::shared_ptr<Forward> forward = m_forward;
+    connection->state().setNoticeSink([forward](AudioNotice notice) { forward->post(notice); });
+}
+
+void ReconnectingPulseAudioSystem::onLost(const std::weak_ptr<IPulseConnection>& lost)
+{
+    if (m_stopped || lost.lock() != current()) {
+        return;   // an old connection, already replaced
+    }
+    if (m_retryIntervalMs > 0) {
+        qCWarning(lcAudio) << "PulseAudio went away; trying again every" << m_retryIntervalMs << "ms";
+    }
+    scheduleRetry();
+}
+
+void ReconnectingPulseAudioSystem::scheduleRetry()
+{
+    if (m_stopped || m_tryRunning || m_retryIntervalMs <= 0 || !m_connector || !m_retryTimer
+        || m_retryTimer->isActive()) {
+        return;
+    }
+    m_retryTimer->start(m_retryIntervalMs);
+}
+
+void ReconnectingPulseAudioSystem::retryNow()
+{
+    if (m_stopped || m_tryRunning) {
+        return;
+    }
+    std::shared_ptr<IPulseConnection> active = current();
+    if (active && active->running()) {
+        return;
+    }
+    // The try runs on a worker of its own, so a server that is up but slow
+    // never holds this thread.  The worker holds no pointer to the system:
+    // it reports back through the relay, and a report that arrives after
+    // stop() is never run (its connection is dropped with it).
+    m_tryRunning = true;
+    std::thread([this, connector = m_connector, relay = m_relay] {
+        std::shared_ptr<IPulseConnection> next = connector();
+        std::lock_guard<std::mutex> lock(relay->mutex);
+        if (relay->target == nullptr) {
+            return;   // stopped: discarded here, never adopted
+        }
+        QMetaObject::invokeMethod(
+            relay->target,
+            [this, relay, next] {
+                std::lock_guard<std::mutex> run(relay->runMutex);
+                if (!relay->stopped) {
+                    finishTry(next);
+                }
+            },
+            Qt::QueuedConnection);
+    }).detach();
+}
+
+void ReconnectingPulseAudioSystem::finishTry(const std::shared_ptr<IPulseConnection>& next)
+{
+    m_tryRunning = false;
+    if (m_stopped) {
+        return;
+    }
+    if (!next || !next->running()) {
+        scheduleRetry();
+        return;
+    }
+    std::shared_ptr<IPulseConnection> active = current();
+    if (active && active->running()) {
+        return;   // nothing to replace
+    }
+    adopt(next);
+    qCInfo(lcAudio) << "PulseAudio answers again; its devices are listed";
+    // The supervisor reopens the chosen devices on the new list.
+    m_forward->post(AudioNotice::DevicesChanged);
+    m_forward->post(AudioNotice::DefaultOutputChanged);
+    m_forward->post(AudioNotice::DefaultInputChanged);
+    if (!next->running()) {
+        scheduleRetry();   // lost again before its handler was set
+    }
+}
+
+bool ReconnectingPulseAudioSystem::running()
+{
+    std::shared_ptr<IPulseConnection> connection = current();
+    return connection && connection->running();
+}
+
+std::optional<QString> ReconnectingPulseAudioSystem::serverName()
+{
+    std::shared_ptr<IPulseConnection> connection = current();
+    if (!connection || !connection->running()) {
+        return std::nullopt;
+    }
+    return connection->state().serverName();
+}
+
+QList<PulseDeviceRecord> ReconnectingPulseAudioSystem::devices()
+{
+    std::shared_ptr<IPulseConnection> connection = current();
+    return connection ? connection->devices() : QList<PulseDeviceRecord>{};
+}
+
+QString ReconnectingPulseAudioSystem::defaultName(AudioDeviceDirection direction)
+{
+    std::shared_ptr<IPulseConnection> connection = current();
+    return connection ? connection->state().defaultName(direction) : QString();
+}
+
+void ReconnectingPulseAudioSystem::setNoticeSink(std::function<void(AudioNotice)> sink)
+{
+    std::lock_guard<std::mutex> lock(m_forward->mutex);
+    m_forward->sink = std::move(sink);
+}
+
+std::unique_ptr<IAudioBus> ReconnectingPulseAudioSystem::createOutput(
+    const PulseDeviceRecord& device, const AudioStreamRequest& request)
+{
+    std::shared_ptr<IPulseConnection> connection = current();
+    return connection ? connection->createOutput(device, request) : nullptr;
+}
+
+std::unique_ptr<IAudioInputStream> ReconnectingPulseAudioSystem::createInput(
+    const PulseDeviceRecord& device, const AudioStreamRequest& request, MicChannelPick pick,
+    IAudioInputSink* sink)
+{
+    std::shared_ptr<IPulseConnection> connection = current();
+    return connection ? connection->createInput(device, request, pick, sink) : nullptr;
+}
+
+// ---------------------------------------------------------------------------
 // The real adapter
 // ---------------------------------------------------------------------------
 namespace {
@@ -244,7 +529,9 @@ void onSourceInfo(pa_context* /*context*/, const pa_source_info* info, int eol, 
 
 // One context on one threaded mainloop: everything the adapter and its
 // streams share.
-class PulseConnection final : public PulseStreamHost {
+class PulseConnection final : public IPulseConnection,
+                              public PulseStreamHost,
+                              public std::enable_shared_from_this<PulseConnection> {
 public:
     PulseConnection() = default;
     ~PulseConnection() override { disconnect(); }
@@ -259,8 +546,31 @@ public:
     pa_context* context() const override { return m_context; }
     bool running() const override { return m_running.load(std::memory_order_acquire); }
 
-    PulseServerState& state() { return m_state; }
-    QList<PulseDeviceRecord> devices();
+    PulseServerState& state() override { return m_state; }
+    QList<PulseDeviceRecord> devices() override;
+    void setLostHandler(std::function<void()> handler) override
+    {
+        std::lock_guard<std::mutex> lock(m_lostMutex);
+        m_lostHandler = std::move(handler);
+    }
+    std::unique_ptr<IAudioBus> createOutput(const PulseDeviceRecord& device,
+                                            const AudioStreamRequest& request) override
+    {
+        AudioStreamRequest output = request;
+        output.direction = AudioDeviceDirection::Output;
+        return makePulseOutputBus(shared_from_this(), pulseStreamConfig(device, output),
+                                  request.delayMs);
+    }
+    std::unique_ptr<IAudioInputStream> createInput(const PulseDeviceRecord& device,
+                                                   const AudioStreamRequest& request,
+                                                   MicChannelPick pick,
+                                                   IAudioInputSink* sink) override
+    {
+        AudioStreamRequest input = request;
+        input.direction = AudioDeviceDirection::Input;
+        return makePulseInputStream(shared_from_this(), pulseStreamConfig(device, input), pick,
+                                    sink);
+    }
 
 private:
     static void onContextState(pa_context* context, void* userdata);
@@ -273,6 +583,9 @@ private:
     std::atomic<bool> m_running{false};
     bool m_infoArrived = false;   // under the mainloop lock
     PulseServerState m_state;
+
+    std::mutex m_lostMutex;
+    std::function<void()> m_lostHandler;
 };
 
 bool PulseConnection::connect()
@@ -322,8 +635,7 @@ bool PulseConnection::connect()
     }
     if (!answered) {
         pa_threaded_mainloop_unlock(m_mainloop);
-        disconnect();
-        qCInfo(lcAudio) << "PulseAudio is not running; its engine is offered as not running";
+        disconnect();   // the system says so once, not on every retry
         return false;
     }
     pa_context_set_subscribe_callback(m_context, &PulseConnection::onSubscribe, this);
@@ -398,9 +710,16 @@ void PulseConnection::onContextState(pa_context* context, void* userdata)
     if (!PA_CONTEXT_IS_GOOD(pa_context_get_state(context))
         && self->m_running.exchange(false, std::memory_order_acq_rel)) {
         // The server went away; every stream on this context fails with it
-        // and posts its own DeviceLost.
-        qCWarning(lcAudio) << "PulseAudio connection lost";
+        // and posts its own DeviceLost.  The handler only queues a retry.
         self->m_state.clear();
+        std::function<void()> handler;
+        {
+            std::lock_guard<std::mutex> lock(self->m_lostMutex);
+            handler = self->m_lostHandler;
+        }
+        if (handler) {
+            handler();
+        }
     }
     pa_threaded_mainloop_signal(self->m_mainloop, 0);
 }
@@ -428,61 +747,21 @@ void PulseConnection::onSubscribe(pa_context* context, pa_subscription_event_typ
     }
 }
 
-class PulseAudioSystemImpl final : public IPulseAudioSystem {
-public:
-    explicit PulseAudioSystemImpl(std::shared_ptr<PulseConnection> connection)
-        : m_connection(std::move(connection))
-    {
-    }
-
-    bool running() override { return m_connection->running(); }
-    std::optional<QString> serverName() override
-    {
-        if (!m_connection->running()) {
-            return std::nullopt;
-        }
-        return m_connection->state().serverName();
-    }
-    QList<PulseDeviceRecord> devices() override { return m_connection->devices(); }
-    QString defaultName(AudioDeviceDirection direction) override
-    {
-        return m_connection->state().defaultName(direction);
-    }
-    void setNoticeSink(std::function<void(AudioNotice)> sink) override
-    {
-        m_connection->state().setNoticeSink(std::move(sink));
-    }
-    std::unique_ptr<IAudioBus> createOutput(const PulseDeviceRecord& device,
-                                            const AudioStreamRequest& request) override
-    {
-        AudioStreamRequest output = request;
-        output.direction = AudioDeviceDirection::Output;
-        return makePulseOutputBus(m_connection, pulseStreamConfig(device, output), request.delayMs);
-    }
-    std::unique_ptr<IAudioInputStream> createInput(const PulseDeviceRecord& device,
-                                                   const AudioStreamRequest& request,
-                                                   MicChannelPick pick,
-                                                   IAudioInputSink* sink) override
-    {
-        AudioStreamRequest input = request;
-        input.direction = AudioDeviceDirection::Input;
-        return makePulseInputStream(m_connection, pulseStreamConfig(device, input), pick, sink);
-    }
-
-private:
-    std::shared_ptr<PulseConnection> m_connection;
-};
-
 } // namespace
 
 std::unique_ptr<IPulseAudioSystem> makePulseAudioSystem()
 {
-    auto connection = std::make_shared<PulseConnection>();
-    // R-AUD-32: a test run never reaches a sound server.
-    if (!audioDevicesBarredForTestRun()) {
-        connection->connect();
-    }
-    return std::make_unique<PulseAudioSystemImpl>(std::move(connection));
+    // R-AUD-32: a test run never reaches a sound server, and never retries.
+    const bool barred = audioDevicesBarredForTestRun();
+    PulseConnector connector = [barred]() -> std::shared_ptr<IPulseConnection> {
+        auto connection = std::make_shared<PulseConnection>();
+        if (!barred) {
+            connection->connect();
+        }
+        return connection;
+    };
+    return std::make_unique<ReconnectingPulseAudioSystem>(std::move(connector),
+                                                          barred ? 0 : kPulseReconnectIntervalMs);
 }
 
 } // namespace NereusSDR

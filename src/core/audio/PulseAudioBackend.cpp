@@ -7,6 +7,9 @@
 //   2026-10-09: native audio plan Task 11 (R-AUD-01, R-AUD-02, R-AUD-07,
 //               R-AUD-14, R-AUD-31). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-09: Task 11 fix round 1 (R-AUD-03): not running while the
+//               server is away, even when forced. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/PulseAudioBackend.h"
@@ -76,7 +79,9 @@ bool PulseAudioBackend::running() const
     if (!m_system) {
         return false;
     }
-    return m_selected ? m_selected() : m_system->running();
+    // Not running while no server answers, whatever the selection says
+    // (a forced engine whose server is down is not running).
+    return m_system->running() && (!m_selected || m_selected());
 }
 
 QList<AudioDeviceInfo> PulseAudioBackend::enumerate()
