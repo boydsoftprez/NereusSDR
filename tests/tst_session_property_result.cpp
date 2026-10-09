@@ -8,6 +8,8 @@
 #include <optional>
 #include "core/AppSettings.h"
 #include "core/CfcProfile.h"
+#include "core/MicProfileManager.h"
+#include "core/PaProfileManager.h"
 #include "core/session/SessionMessages.h"
 #include "core/session/StationClient.h"
 #include "core/session/StationServer.h"
@@ -1137,6 +1139,117 @@ private slots:
         settings.load();
         QCOMPARE(settings.hardwareValue(kTxSessionMac, QStringLiteral("RadioSpeaker/Volume")).toInt(),
                  volume);
+    }
+
+    // Two-tone plan fix wave: txProfile.select, .save and .delete from a
+    // remote app change the Core's profile bank and ask for its coalesced
+    // save, so each change is in the file, not only in memory.
+    void remoteTxProfileCommandsAreSavedToTheCoreFile()
+    {
+        auto& settings = AppSettings::instance();
+        Core core;
+        allowTransmit(core);
+        core.model->transmitModel().loadFromSettings(kTxSessionMac);
+        core.model->scopeTxProfiles(kTxSessionMac);
+        MicProfileManager* bank = core.model->micProfileManager();
+        QVERIFY(bank != nullptr);
+        QVERIFY(bank->profileNames().contains(QStringLiteral("AM")));
+        Device a;
+        core.pair(a);
+        LoopbackTransport* app = core.signIn(a, kTransmitter);
+        QVERIFY(admitted(app));
+        const auto name = [](const QString& n) {
+            return MirrorUpdate{0, "name", MirrorWireKind::Utf8, n};
+        };
+        const auto taken = [&core, app](const QByteArray& verb, const QList<MirrorUpdate>& args) {
+            const QJsonObject result = core.invoke(app, verb, args);
+            return result.value(QStringLiteral("accepted")).toBool()
+                ? QString() : result.value(QStringLiteral("reason")).toString(QStringLiteral("(no answer)"));
+        };
+        const QString profileKey = QStringLiteral("hardware/%1/tx/profile/").arg(kTxSessionMac);
+
+        core.model->flushPendingSettingsSave();
+        QCOMPARE(taken("txProfile.select", {name(QStringLiteral("AM"))}), QString());
+        QCOMPARE(bank->activeProfileName(), QStringLiteral("AM"));
+        core.model->flushPendingSettingsSave();
+        settings.load();
+        QCOMPARE(settings.value(profileKey + QStringLiteral("active")).toString(),
+                 QStringLiteral("AM"));
+
+        const QString saved = QStringLiteral("Remote Saved");
+        QCOMPARE(taken("txProfile.save", {name(saved)}), QString());
+        core.model->flushPendingSettingsSave();
+        settings.load();
+        QVERIFY(settings.value(profileKey + QStringLiteral("_names")).toString().contains(saved));
+
+        QCOMPARE(taken("txProfile.delete", {name(saved)}), QString());
+        core.model->flushPendingSettingsSave();
+        settings.load();
+        QVERIFY(!settings.value(profileKey + QStringLiteral("_names")).toString().contains(saved));
+    }
+
+    // Two-tone plan fix wave, the sibling transmit verbs that keep their
+    // change in memory only: tx.twoTonePreset, setTunePowerForTxBand and
+    // the paProfile verbs ask for the same save.
+    void remoteTransmitSettingCommandsAreSavedToTheCoreFile()
+    {
+        auto& settings = AppSettings::instance();
+        Core core;
+        allowTransmit(core);
+        TransmitModel& tx = core.model->transmitModel();
+        // The per-MAC scopes a radio connection gives (RadioModel's connect
+        // path): the per-band tune power and the transmit settings.
+        tx.setMacAddress(kTxSessionMac);
+        tx.load();
+        tx.loadFromSettings(kTxSessionMac);
+        PaProfileManager* paBank = core.model->paProfileManager();
+        QVERIFY(paBank != nullptr);
+        paBank->setMacAddress(kTxSessionMac);
+        paBank->load(core.model->hardwareProfile().model);
+        Device a;
+        core.pair(a);
+        QHash<QByteArray, int> features = kTransmitter;
+        features.insert("paProfiles", 1);
+        features.insert("setupDescription", 1);
+        LoopbackTransport* app = core.signIn(a, features);
+        QVERIFY(admitted(app));
+        const auto taken = [&core, app](const QByteArray& verb, const QList<MirrorUpdate>& args) {
+            const QJsonObject result = core.invoke(app, verb, args);
+            return result.value(QStringLiteral("accepted")).toBool()
+                ? QString() : result.value(QStringLiteral("reason")).toString(QStringLiteral("(no answer)"));
+        };
+
+        core.model->flushPendingSettingsSave();
+        QCOMPARE(taken("tx.twoTonePreset",
+                       {MirrorUpdate{0, "name", MirrorWireKind::Utf8, QStringLiteral("stealth")}}),
+                 QString());
+        QCOMPARE(tx.twoToneFreq1(), 70);
+        core.model->flushPendingSettingsSave();
+        settings.load();
+        QCOMPARE(settings.value(txKey("TwoToneFreq1")).toString(), QStringLiteral("70"));
+
+        // allowTransmit puts the transmit slice on 20 m.
+        const int watts = tx.tunePowerForBand(Band::Band20m) == 21 ? 22 : 21;
+        QCOMPARE(taken("setTunePowerForTxBand",
+                       {MirrorUpdate{0, "watts", MirrorWireKind::Int64, qlonglong(watts)}}),
+                 QString());
+        QCOMPARE(tx.tunePowerForBand(Band::Band20m), watts);
+        core.model->flushPendingSettingsSave();
+        settings.load();
+        QCOMPARE(settings.value(QStringLiteral("hardware/%1/tunePowerByBand/%2")
+                                    .arg(kTxSessionMac)
+                                    .arg(static_cast<int>(Band::Band20m))).toString(),
+                 QString::number(watts));
+
+        const QString pa = QStringLiteral("Remote PA");
+        QCOMPARE(taken("paProfile.new", {MirrorUpdate{0, "name", MirrorWireKind::Utf8, pa}}),
+                 QString());
+        QCOMPARE(paBank->activeProfileName(), pa);
+        core.model->flushPendingSettingsSave();
+        settings.load();
+        QCOMPARE(settings.value(QStringLiteral("hardware/%1/pa/profile/active").arg(kTxSessionMac))
+                     .toString(),
+                 pa);
     }
 };
 

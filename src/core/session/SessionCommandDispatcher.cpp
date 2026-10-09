@@ -321,6 +321,12 @@
 //                                    setup view's ask for the Core's serial
 //                                    ports. AI-assisted via Anthropic Claude
 //                                    Code.
+//   2026-10-09  J.J. Boyd / KG4VCF  Two-tone plan fix wave: a taken
+//                                    txProfile.*, paProfile.*,
+//                                    setTunePowerForTxBand or
+//                                    tx.twoTonePreset asks for the Core's
+//                                    coalesced settings save. AI-assisted
+//                                    via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/SessionCommandDispatcher.h"
@@ -1465,6 +1471,10 @@ void SessionCommandDispatcher::dispatch(const SessionMessage& invoke)
         auto& transmit = m_radioModel->transmitModel();
         transmit.setTwoToneFrequencies(name == QLatin1String("defaults") ? 700 : 70,
                                        name == QLatin1String("defaults") ? 1900 : 190);
+        // Two-tone plan fix wave: the frequencies are kept in the in-memory
+        // settings only (TransmitModel::persistOne); the Core's coalesced
+        // save writes them to its file.
+        m_radioModel->requestSettingsSave();
         emitResult(invoke.commandVerb, invoke.commandId, true, {}, {"transmit"});
         return;
     }
@@ -4274,6 +4284,10 @@ void SessionCommandDispatcher::handleTunePowerForTxBand(const SessionMessage& in
                                     : reason, {});
         return;
     }
+    // Two-tone plan fix wave: the per-band tune power reaches the file
+    // through the Core's coalesced save (TransmitModel::save from
+    // saveSliceState), which nothing else asks for here.
+    m_radioModel->requestSettingsSave();
     emitResult(verb, invoke.commandId, true, QString(), {});
 }
 
@@ -4313,6 +4327,10 @@ void SessionCommandDispatcher::handleTxProfile(const SessionMessage& invoke)
                                     : reason, {});
         return;
     }
+    // Two-tone plan fix wave: MicProfileManager and TransmitModel keep the
+    // profile bank, the active profile and its values in the in-memory
+    // settings only; the Core's coalesced save writes them to its file.
+    m_radioModel->requestSettingsSave();
     emitResult(verb, invoke.commandId, true, QString(), {});
 }
 
@@ -4410,6 +4428,9 @@ void SessionCommandDispatcher::handlePaProfile(const SessionMessage& invoke)
                                     : reason, {});
         return;
     }
+    // Two-tone plan fix wave: PaProfileManager keeps the bank in the
+    // in-memory settings only; the Core's coalesced save writes it.
+    m_radioModel->requestSettingsSave();
     emitResult(verb, invoke.commandId, true, QString(), {});
 }
 
