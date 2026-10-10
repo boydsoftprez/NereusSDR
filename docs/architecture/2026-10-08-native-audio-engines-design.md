@@ -496,7 +496,14 @@ R-AUD-01. Each system's Driver list, in this order:
 - Linux with PipeWire: "PipeWire", then "Older drivers": JACK, ALSA.
   PipeWire also serves programs written for PulseAudio, so there is no
   separate PulseAudio entry; a PulseAudio server that reports itself as
-  PipeWire counts as PipeWire.
+  PipeWire counts as PipeWire only when NereusSDR's PipeWire engine is
+  built and answering. Otherwise the PulseAudio engine runs on it.
+
+  Amended 2026-10-09 after the final review: a PulseAudio server that
+  reports itself as PipeWire no longer counts as PipeWire by its name
+  alone. When NereusSDR's PipeWire engine is not built, or built and not
+  answering, the PulseAudio engine runs, so the computer is never left
+  with neither engine while PipeWire's own PulseAudio service plays.
 - Linux with PulseAudio: "PipeWire (not running)" greyed, "PulseAudio",
   then the older drivers. With neither running, both show greyed with
   "(not running)" and the older drivers remain.
