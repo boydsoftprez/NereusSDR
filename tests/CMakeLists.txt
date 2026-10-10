@@ -9691,6 +9691,12 @@ endif()
 # uploads and its draws from these helpers. NereusSDR-original.
 nereus_add_test(tst_gpu_buffer_write_bind_plan)
 
+# The same dynamic-overlay rule without a GPU: SpectrumWidget's
+# DynamicOverlayRows, which renderGpuFrame() takes its clear and upload
+# height from, covers every row an earlier frame may have left (a created
+# texture, a taller band) as well as the current band. NereusSDR-original.
+nereus_add_test(tst_spectrum_dynamic_overlay_rows)
+
 # ── 3D stacked-trace spectrum plan, Task 11: 3D dBm scale ────────────────
 # Pins drawDbmScale3D(): floor-anchored (dssFloorDbm() + rounded 3D Span),
 # not Ref-anchored like the 2D scale, so its rendered output must move when
