@@ -80,7 +80,7 @@ void calc_varsamp (VARSAMP a)
 	// keep them side by side. p runs to R: hshift reads row hidx + 1, and hidx <= R - 1.
 	{
 		int p, m;
-		a->ht = (double *)malloc0 ((a->R + 1) * a->rsize * sizeof (double));
+		a->ht = (double *)malloc0 ((size_t)(a->R + 1) * a->rsize * sizeof (double));
 		for (p = 0; p <= a->R; p++)
 			for (m = 0; m < a->rsize; m++)
 				a->ht[p * a->rsize + m] = a->h[p + m * a->R];

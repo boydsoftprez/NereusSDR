@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-10  J.J. Boyd / KG4VCF  Core speaker: its properties left out
+//                                    by a host with no speaker of its own
+//                                    are not counted as schema skew.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-09  J.J. Boyd / KG4VCF  Core speaker: the hello declares
 //                                    coreSpeaker 1; radio's Core speaker
 //                                    level, mute, device and details apply
@@ -4158,6 +4162,13 @@ void StationClient::compareSchema(const QByteArray& className,
                 MirrorPolicy::featureGateFor(className, name);
             if (gate != nullptr
                 && m_declaredFeatures.value(QByteArray(gate->feature)) < gate->minVersion) {
+                continue;
+            }
+            // The Core speaker's properties come only from a Core that has
+            // its own speaker (StationServer::peerGetsCoreSpeaker). A
+            // desktop that hosts a station leaves them out for every
+            // window, so their absence is that host's answer, not skew.
+            if (gate != nullptr && qstrcmp(gate->feature, "coreSpeaker") == 0) {
                 continue;
             }
             m_schemaOnlyLocal.insert(skewKey(className, name));
