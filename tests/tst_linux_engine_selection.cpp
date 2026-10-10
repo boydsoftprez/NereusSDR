@@ -8,6 +8,9 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 11. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-09: final review fix (R-AUD-31): PipeWire's PulseAudio service
+//               runs PulseAudio while PipeWire does not answer. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -58,11 +61,15 @@ private slots:
         expectChoice(probe(false, QStringLiteral("pulseaudio")), false, true);
     }
 
-    // PipeWire's own PulseAudio service counts as PipeWire (R-AUD-01).
-    void pulseOnPipeWireCountsAsPipeWire()
+    // PipeWire's own PulseAudio service counts as PipeWire only while
+    // PipeWire itself answers (pipewireAnswers above).  When it does not
+    // (a build without libpipewire, or a native connection that fails
+    // while pipewire-pulse answers) the PulseAudio engine runs, so the
+    // server that answers is never shown as not running (R-AUD-31).
+    void pulseOnPipeWireRunsPulseAudioWhilePipeWireDoesNotAnswer()
     {
-        expectChoice(probe(false, QStringLiteral("PulseAudio (on PipeWire 1.0.5)")), true, false);
-        expectChoice(probe(false, QStringLiteral("pulseaudio (on pipewire 0.3.65)")), true, false);
+        expectChoice(probe(false, QStringLiteral("PulseAudio (on PipeWire 1.0.5)")), false, true);
+        expectChoice(probe(false, QStringLiteral("pulseaudio (on pipewire 0.3.65)")), false, true);
     }
 
     // Neither answering: both are not running, so the older drivers remain
