@@ -6,9 +6,13 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 17 (R-AUD-19). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio fix wave (R-AUD-19): askAsioSwitchAll().
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/setup/AsioSwitchAllDialog.h"
+
+#include "gui/setup/AudioDriverList.h"
 
 #include <QHBoxLayout>
 #include <QLabel>
@@ -69,6 +73,22 @@ AsioSwitchAllDialog::AsioSwitchAllDialog(const QString& device, const QString& d
     connect(cancel, &QPushButton::clicked, this, &QDialog::reject);
     connect(ok, &QPushButton::clicked, this, &QDialog::accept);
     setMinimumWidth(420);
+}
+
+bool askAsioSwitchAll(const AsioSwitchPlan& plan, AudioRole role, const QString& driverName,
+                      QWidget* parent)
+{
+    if (plan.moves.isEmpty()) {
+        return true;
+    }
+    QList<QPair<QString, QString>> moves;
+    for (const AsioUse& move : plan.moves) {
+        moves.append({asioRoleName(move.role),
+                      move.pair.channelCount > 0 ? audioPairLabel(move.direction, move.pair)
+                                                 : QStringLiteral("(no channels)")});
+    }
+    AsioSwitchAllDialog dialog(asioRoleName(role), driverName, moves, parent);
+    return dialog.exec() == QDialog::Accepted;
 }
 
 } // namespace NereusSDR

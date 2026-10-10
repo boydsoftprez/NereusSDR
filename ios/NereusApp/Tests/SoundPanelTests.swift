@@ -474,12 +474,14 @@ struct SoundPanelTests {
         #expect(core.isShown && core.volume == nil)
     }
 
-    @Test("the state's text reads in any key order and refuses anything else")
+    @Test("the state's text reads in any key order and refuses anything else, an extra key too")
     func coreSpeakerStateDecodes() {
         let state = CoreSpeakerModel.State.decode(#"{"state":"inUse","playing":"A","desktop":true,"chosen":"B"}"#)
         #expect(state == CoreSpeakerModel.State(state: .inUse, playing: "A", chosen: "B", desktop: true))
         #expect(CoreSpeakerModel.State.decode(#"{"chosen":"","desktop":false,"playing":"","state":"asleep"}"#) == nil)
         #expect(CoreSpeakerModel.State.decode(#"{"chosen":"","playing":"","state":"playing"}"#) == nil)
+        // A key the state does not have is refused, as the desktop refuses it (the link spec).
+        #expect(CoreSpeakerModel.State.decode(#"{"chosen":"","desktop":false,"playing":"A","state":"playing","extra":1}"#) == nil)
         #expect(CoreSpeakerModel.State.decode("") == nil)
     }
 

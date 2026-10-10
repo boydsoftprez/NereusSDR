@@ -357,33 +357,47 @@ private slots:
     {
         QTest::addColumn<int>("kind");
         QTest::addColumn<QString>("playing");
+        QTest::addColumn<QString>("chosen");
         QTest::addColumn<QString>("listed");
         QTest::addColumn<QString>("note");
         QTest::newRow("not-connected")
-            << int(CoreSpeakerStateKind::NotConnected) << kJack
+            << int(CoreSpeakerStateKind::NotConnected) << kJack << kUsb
             << QStringLiteral("USB Audio Device (not connected)")
             << QStringLiteral("USB Audio Device is not connected at the Core. Playing on the "
                               "Core's default, bcm2835 Headphones, until it comes back.");
         QTest::newRow("not-connected-no-other")
-            << int(CoreSpeakerStateKind::NotConnected) << QString()
+            << int(CoreSpeakerStateKind::NotConnected) << QString() << kUsb
             << QStringLiteral("USB Audio Device (not connected)")
             << QStringLiteral("USB Audio Device is not connected at the Core, and the Core has no "
                               "other sound card, so it is silent until it comes back.");
         QTest::newRow("in-use")
-            << int(CoreSpeakerStateKind::InUse) << kJack
+            << int(CoreSpeakerStateKind::InUse) << kJack << kUsb
             << QStringLiteral("USB Audio Device (in use by another program)")
             << QStringLiteral("USB Audio Device is in use by another program at the Core. Playing "
                               "on the Core's default, bcm2835 Headphones, until it comes back.");
         QTest::newRow("in-use-no-other")
-            << int(CoreSpeakerStateKind::InUse) << QString()
+            << int(CoreSpeakerStateKind::InUse) << QString() << kUsb
             << QStringLiteral("USB Audio Device (in use by another program)")
             << QStringLiteral("USB Audio Device is in use by another program at the Core, and the "
                               "Core has no other sound card, so it is silent until it comes back.");
+        // On "(the Core's default)" the Core names no chosen card, and does
+        // not name its default: the note says which card without a name.
+        QTest::newRow("default-in-use")
+            << int(CoreSpeakerStateKind::InUse) << QString() << QString()
+            << QStringLiteral("(the Core's default)")
+            << QStringLiteral("The Core's default sound card is in use by another program, so "
+                              "the Core is silent until it comes back.");
+        QTest::newRow("default-not-connected")
+            << int(CoreSpeakerStateKind::NotConnected) << QString() << QString()
+            << QStringLiteral("(the Core's default)")
+            << QStringLiteral("The Core's default sound card is not connected, so the Core is "
+                              "silent until it comes back.");
     }
     void chosenCardMissing()
     {
         QFETCH(int, kind);
         QFETCH(QString, playing);
+        QFETCH(QString, chosen);
         QFETCH(QString, listed);
         QFETCH(QString, note);
         const auto k = static_cast<CoreSpeakerStateKind>(kind);
@@ -396,8 +410,12 @@ private slots:
                      k == CoreSpeakerStateKind::InUse ? AudioDeviceState::InUse
                                                       : AudioDeviceState::NotConnected});
         w.cards(list);
-        w.device(kUsbId, kUsb);
-        w.state(k, playing, kUsb);
+        if (chosen.isEmpty()) {
+            w.device(QString(), QString());
+        } else {
+            w.device(kUsbId, kUsb);
+        }
+        w.state(k, playing, chosen);
         CoreSpeakerCard card(&w.model, nullptr);
         auto* stateNote = child<QLabel>(&card, "coreSpeakerStateNote");
         QVERIFY(!stateNote->isHidden());
@@ -645,6 +663,9 @@ private slots:
                      {kUsbId, kUsb, AudioDeviceState::InUse}});
             w.state(CoreSpeakerStateKind::InUse, kJack, kUsb);
             shootCard(w.model, QStringLiteral("core-speaker-chosen-in-use"), false);
+            w.device(QString(), QString());
+            w.state(CoreSpeakerStateKind::InUse, QString(), QString());
+            shootCard(w.model, QStringLiteral("core-speaker-default-in-use"), false);
         }
         {
             Window w;

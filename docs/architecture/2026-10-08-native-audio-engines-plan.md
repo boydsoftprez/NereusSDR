@@ -1729,7 +1729,9 @@ settled calls 21 and 23. V-HW-5 stays untested on hardware.
       QString forced;                    // Audio/LinuxBackendPreferred, as today
   };
   struct LinuxEngineChoice { bool pipewireRunning; bool pulseRunning; };
-  // A PulseAudio server whose name contains "PipeWire" counts as PipeWire (R-AUD-01).
+  // PipeWire runs only when NereusSDR's PipeWire engine answers; otherwise any
+  // PulseAudio server, PipeWire's own PulseAudio service included, runs the
+  // PulseAudio engine (R-AUD-01).
   LinuxEngineChoice chooseLinuxEngines(const LinuxSoundServerProbe&);
   ```
 - Produces (`PulseAudioSystem.h`): `struct PulseDeviceRecord { QString name; QString description; bool isSink; bool isMonitor; QStringList channelMap; QString busProperty; int alsaCard = -1; int alsaDevice = -1; }`
@@ -1741,11 +1743,17 @@ settled calls 21 and 23. V-HW-5 stays untested on hardware.
 **Acceptance:**
 - Selection: PipeWire answering gives PipeWire running and PulseAudio not; PipeWire not
   answering with a server named "pulseaudio" gives PulseAudio running; a server named
-  "PulseAudio (on PipeWire 1.0.5)" gives PipeWire; neither gives both not running (the
+  "PulseAudio (on PipeWire 1.0.5)" gives PipeWire when PipeWire answers, and PulseAudio
+  when PipeWire does not answer or NereusSDR is built without the PipeWire engine;
+  neither gives both not running (the
   older drivers remain, migration is `Postponed`, settled call 23); `forced` "pipewire"
   or "pulse" behaves as `detectLinuxBackend` does today
   (`LinuxAudioBackend.cpp:61-90`, its eight combinations in `tst_linux_audio_backend`
   still pass).
+- Amended 2026-10-09 after the final review: a PulseAudio server named for PipeWire
+  counts as PipeWire only when NereusSDR's PipeWire engine is built and answering;
+  otherwise the PulseAudio engine runs (`LinuxEngineSelection.cpp`
+  `chooseLinuxEngines`).
 - Registry on Linux desktops: PipeWire then PulseAudio then PortAudio
   (`includeReplacedHostApis` false); both native backends are always registered, and
   `running()` reports the selection, so the UI shows "PipeWire (not running)" or both

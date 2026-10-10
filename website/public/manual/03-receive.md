@@ -19,7 +19,7 @@ values are the captured station's settings.
    necessary before changing its receive settings.
 3. Open the flag's speaker tab. Select **SPEAKERS** or **PHONES** for the
    intended output, unmute it and set a comfortable **AF** level. Those
-   output names use the devices selected in **Setup > Audio > Devices**.
+   output names use the devices selected in **Setup > Audio > Outputs** (the **This computer** and **Headphones** cards).
 4. Check mode, filter and offsets before evaluating a signal. A leftover
    RIT offset or an inappropriate filter can make a correctly entered VFO
    frequency sound wrong.

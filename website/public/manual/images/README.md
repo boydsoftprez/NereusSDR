@@ -49,6 +49,16 @@ repository and website compatibility.
 | `desktop-rx.jpg` | 1 mode; 2 tuning step; 3 filter display/presets; 4 AGC/AUTO; 5 RIT/XIT. |
 | `desktop-tx.jpg` | 1 RF Power; 2 Tune Pwr; 3 TUNE; 4 MOX; 5 monitor output/volume; 6 processing; 7 profile; 8 TX bandwidth. |
 
+## Native audio captures
+
+Rendered on 9 October 2026 by the native audio engines plan's widget and phone-panel tests: the Setup pages offscreen on a Mac with fake device lists, and the Sound panel in the iOS simulator with scripted Core state. No sound device was opened and no radio was connected, so they show wording and layout, not a working stream. The Outputs and Digital modes captures are trimmed to their content.
+
+| Image | State illustrated |
+| --- | --- |
+| [desktop-audio-outputs.png](desktop-audio-outputs.png) | Audio > Outputs on a Mac, no radio: This computer, Headphones off, Radio speaker greyed, Rescan devices greyed. |
+| [desktop-modes-audio.png](desktop-modes-audio.png) | Audio > Digital modes on a Mac: four VAX cards off, TCI settings. |
+| [iphone-sound-core-speaker.png](iphone-sound-core-speaker.png) | Sound panel with Radio speaker 40, Core speaker 60, AirPods route. |
+
 ## Phone and iPad captures
 
 The audio-quality acceptance run on 1 October 2026 built source

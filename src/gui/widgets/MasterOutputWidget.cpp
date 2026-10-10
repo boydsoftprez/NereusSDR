@@ -36,10 +36,16 @@
 //                "Sound setup…", and a pick saved as the Outputs card saves
 //                it. J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                Anthropic Claude Code.
+//   2026-10-09 - Native audio fix wave (R-AUD-19, R-SPK-17): a pick on a
+//                second ASIO driver asks first through askAsioSwitchAll(),
+//                as the Setup card does; kPcSlider greys while disabled.
+//                J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                Anthropic Claude Code.
 // =================================================================
 
 #include "MasterOutputWidget.h"
 
+#include "gui/setup/AsioSwitchAllDialog.h"
 #include "gui/setup/AudioDriverList.h"
 #include "gui/styles/PopupMenuStyle.h"
 #include "gui/widgets/AppIcon.h"
@@ -188,7 +194,14 @@ const char* const kWordLabel =
     "QLabel { color: #8aa8c0; font-size: 9px; font-weight: 600; }"
     "QLabel:disabled { color: #4a5a6a; }";
 
-const char* const kPcSlider = kSliderStyle;
+// The header's own slider (kSliderStyle) is never disabled; a Setup card
+// that greys its PC slider gets RADIO's disabled look.
+const char* const kPcSlider =
+    "QSlider::groove:horizontal { background: #1a2a3a; height: 4px; border-radius: 2px; }"
+    "QSlider::handle:horizontal { background: #00b4d8; width: 10px; margin: -3px 0; border-radius: 5px; }"
+    "QSlider::sub-page:horizontal { background: #00b4d8; border-radius: 2px; }"
+    "QSlider::handle:horizontal:disabled { background: #4a5a6a; }"
+    "QSlider::sub-page:horizontal:disabled { background: #1a2a3a; }";
 
 const char* const kRadioSlider =
     "QSlider::groove:horizontal { background: #1a2a3a; height: 4px; border-radius: 2px; }"
@@ -716,6 +729,7 @@ QMenu* MasterOutputWidget::buildSpeakerMenu()
         pick.deviceId = platformDefault ? QString() : e.deviceId;
         pick.deviceName = name;
         pick.firstChannel = std::max(1, e.pair.firstChannel);
+        pick.channelCount = e.pair.channelCount > 0 ? e.pair.channelCount : 2;
         connect(action, &QAction::triggered, this, [this, pick]() { selectOutputDevice(pick); });
     }
 
@@ -746,6 +760,23 @@ void MasterOutputWidget::selectOutputDevice(const SpeakerPick& pick)
         : current.deviceId == pick.deviceId;
     if (sameEngine && sameDevice && std::max(1, current.firstChannel) == pick.firstChannel) {
         return;   // the choice already
+    }
+
+    // R-AUD-19: a pair on a second ASIO driver lists every role that moves
+    // with it and asks first, as the Setup card does
+    // (DeviceCard::confirmAsioSwitch). Cancel: nothing saved or announced.
+    if (m_audio && pick.engine == AudioEngineKind::Asio && !pick.deviceId.isEmpty()
+        && pick.deviceId != QLatin1String(kAudioDeviceNone)) {
+        const AsioSwitchPlan plan = m_audio->planAsioSwitchFor(
+            AudioRole::Speakers, pick.deviceId,
+            AudioChannelPair{pick.firstChannel, pick.channelCount});
+        const QString driverName = pick.deviceName.isEmpty() ? pick.deviceId : pick.deviceName;
+        if (!askAsioSwitchAll(plan, AudioRole::Speakers, driverName, this)) {
+            return;
+        }
+        if (!plan.moves.isEmpty()) {
+            m_audio->applyAsioSwitch(plan);   // the other roles; the pick saves itself below
+        }
     }
 
     // R-AUD-04: saved as the Outputs card saves a pick (DeviceCard's

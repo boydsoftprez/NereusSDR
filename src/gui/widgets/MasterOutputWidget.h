@@ -90,7 +90,8 @@ namespace HeaderVolumeStyle {
 extern const char* const kIconButton;
 // The short word label ("PC", "RADIO"), dimmed while disabled.
 extern const char* const kWordLabel;
-// The PC slider: #1a2a3a groove, #00b4d8 handle and fill.
+// The PC slider: #1a2a3a groove, #00b4d8 handle and fill, and no fill
+// with a dim handle while disabled (as RADIO's).
 extern const char* const kPcSlider;
 // The RADIO slider: the same groove with the amber #e0a030 handle and
 // fill, and no fill with a dim handle while disabled.
@@ -208,6 +209,7 @@ private:
         QString deviceId;     // empty: "(platform default)"
         QString deviceName;
         int firstChannel = 1;
+        int channelCount = 2;   // the pair's width (ASIO: for the one-driver plan)
     };
 
     // R-R3-23: the menu's action for one device. Saves the choice under
@@ -217,7 +219,9 @@ private:
     // audio/Speakers when the engine reports the new speakers, which the
     // emit leads to synchronously, so announcing before saving made the
     // remote audio status name the previous device. Picking the current
-    // choice does nothing.
+    // choice does nothing. A pair on a second ASIO driver asks first, as
+    // the Setup card does (R-AUD-19): "Switch all" moves the other roles
+    // and the pick goes on; Cancel writes and announces nothing.
     void selectOutputDevice(const SpeakerPick& pick);
 
     QMenu* buildSpeakerMenu();
