@@ -21,6 +21,10 @@
 //   2026-10-09: native audio plan Task 20 round 3 (R-AUD-24): the
 //               busy-while-marked-then-pending scenario. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan final fix wave (V-HW-8): the probe
+//               scenario marks a disable with a "Probe off" AsioCaps
+//               record.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "FakeCaptureChild.h"
@@ -337,6 +341,13 @@ private:
                 ++m_probeEnables;
                 m_probeHits = 0;
                 m_nextProbeHit = Clock::now();
+            } else {
+                // The test's mark that the disable reached the helper: hits
+                // stop here, so nothing waits a fixed time for them.
+                P::AsioCapsRecord off;
+                off.drivers = {QStringLiteral("Fake ASIO")};
+                off.driver = QStringLiteral("Probe off");
+                send(P::encodeAsioCaps(off));
             }
             break;
         case P::RecordType::Open:
