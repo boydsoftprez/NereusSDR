@@ -47,6 +47,9 @@
 // Fix round 2 (R-AUD-09, R-AUD-11, R-AUD-24): Retry microphone is greyed,
 // with its reason, for a mic not connected or in use, which resumes by
 // itself; it stays for other mic failures.
+// 2026-10-10: the PC microphone card's Driver row is in front, above
+// Device (DeviceCard's move; a comment here follows it). J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; no Thetis logic ported here.
@@ -602,9 +605,9 @@ void AudioTxInputPage::buildPage(bool radioMicSelectable, HPSDRHW hw)
 void AudioTxInputPage::buildPcMicGroup(QVBoxLayout* parentLayout)
 {
     // R-SPK-21 / R-SPK-22: the Devices page's microphone card, on the same
-    // audio/TxInput keys, is the PC microphone section. Device stays in
-    // front; Driver API, Sample rate, Bit depth, Channels, Buffer size,
-    // Options and Negotiated fold under Device details. The card's Monitor
+    // audio/TxInput keys, is the PC microphone section. Driver and Device
+    // stay in front; Sample rate, Bit depth, Channels, Buffer size, Delay
+    // and Negotiated fold under Device details. The card's Monitor
     // TX input and tone check rows follow UnbuiltFeatures as before.
     m_pcMicCard = new DeviceCard(QStringLiteral("audio/TxInput"),
                                  DeviceCard::Role::Input, false, this);

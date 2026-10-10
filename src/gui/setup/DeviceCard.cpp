@@ -57,6 +57,11 @@
 //               roleFormatNow(), which leave the role's bus lock to the
 //               DSP thread while it plays. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-10: the Driver row sits in front, above the Device row, on
+//               every card; the driver decides which devices are listed,
+//               and behind the "Device details" fold it was not found
+//               (ASIO on the Windows mic card). The other rows stay folded.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "DeviceCard.h"
@@ -505,12 +510,15 @@ std::optional<AudioRole> DeviceCard::roleForPrefix(const QString& prefix)
 }
 
 // ---------------------------------------------------------------------------
-// buildLayout: the Device row, then the folded "Device details" section
+// buildLayout: the Driver and Device rows, then the folded "Device details"
+// section
 // ---------------------------------------------------------------------------
-// R-SPK-21 / D14: the Device row stays in front; Driver, Sample rate, Bit
+// R-SPK-21 / D14: the Driver and Device rows stay in front (Driver since
+// 2026-10-10: it decides which devices are listed); Sample rate, Bit
 // depth, Channels, Buffer size, Delay, Negotiated and the engine note fold
 // under "Device details", folded by default. The Driver combo is created
-// first, so it stays the card's first QComboBox child as before.
+// first, so it stays the card's first QComboBox child as before, and comes
+// before Device in the tab order.
 void DeviceCard::buildLayout()
 {
     auto* outer = new QVBoxLayout(this);
@@ -530,6 +538,14 @@ void DeviceCard::buildLayout()
     bodyLayout->setSpacing(4);
     outer->addWidget(m_body);
 
+    // ── Driver (always in front, above Device), R-AUD-01 / D10 ───────────
+    // Created before the details section, so it stays the card's first
+    // QComboBox child. Filled by populateDriverCombo() from the engine's device
+    // catalogue.
+    m_driverApiCombo = new QComboBox(m_body);
+    m_driverApiCombo->setObjectName(QStringLiteral("deviceDriverCombo"));
+    m_driverApiCombo->setStyleSheet(QLatin1String(kComboStyle));
+
     m_details = new QWidget(m_body);
     m_details->setObjectName(QStringLiteral("deviceDetails"));
 
@@ -547,14 +563,9 @@ void DeviceCard::buildLayout()
         return l;
     };
 
-    // ── Driver (Device details), R-AUD-01 / D10 ──────────────────────────
-    // Filled by populateDriverCombo() from the engine's device catalogue.
-    m_driverApiCombo = new QComboBox(m_details);
-    m_driverApiCombo->setObjectName(QStringLiteral("deviceDriverCombo"));
-    m_driverApiCombo->setStyleSheet(QLatin1String(kComboStyle));
-
     // ── Device (always in front) ─────────────────────────────────────────
     auto* deviceForm = makeForm();
+    deviceForm->addRow(makeLabel(QStringLiteral("Driver:")), m_driverApiCombo);
     m_deviceCombo = new QComboBox(m_body);
     m_deviceCombo->setStyleSheet(QLatin1String(kComboStyle));
     m_deviceCombo->setMinimumWidth(200);
@@ -669,7 +680,6 @@ void DeviceCard::buildLayout()
     m_detailsForm = detailsForm;
     m_details->setLayout(detailsForm);
     detailsForm->setContentsMargins(12, 0, 0, 0);
-    detailsForm->addRow(makeLabel(QStringLiteral("Driver:")), m_driverApiCombo);
 
     // Sample rate + Auto-match checkbox
     {

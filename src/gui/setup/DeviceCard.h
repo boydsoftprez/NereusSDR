@@ -54,6 +54,9 @@
 //               GUI DLL, so a signal of it is found from outside the DLL
 //               on Windows. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-10: the Driver row sits in front, above the Device row; the
+//               other rows stay under "Device details". J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/AudioDeviceConfig.h"
@@ -141,10 +144,11 @@ public:
     }
 
     // ── R-SPK-21 / D14: Device details ──────────────────────────────────
-    // Driver, Sample rate (with Auto-match), Bit depth, Channels, Buffer
-    // size (with milliseconds), Delay, Negotiated and the engine note sit in
-    // a "Device details" section (objectName "deviceDetails", toggled by
-    // the "deviceDetailsToggle" button), folded by default.
+    // Sample rate (with Auto-match), Bit depth, Channels, Buffer size (with
+    // milliseconds), Delay, Negotiated and the engine note sit in a "Device
+    // details" section (objectName "deviceDetails", toggled by the
+    // "deviceDetailsToggle" button), folded by default. Driver and Device
+    // stay in front of it, Driver first.
     bool detailsExpanded() const;
     void setDetailsExpanded(bool expanded);
 

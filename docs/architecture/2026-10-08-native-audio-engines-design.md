@@ -519,6 +519,10 @@ directly."; then "Older drivers in use: <names>." when a card uses one.
 The three WASAPI checkboxes are gone (D10). R-SPK-24's Driver API and
 checkbox rows are replaced by this requirement.
 
+2026-10-10: JJ moved the Driver list (D10) out of Device details. On every
+card it is always visible, above the Device list, because the driver choice
+decides which devices are listed; the other Device details rows stay folded.
+
 R-AUD-02. With no saved choice, speakers, headphones and the PC mic use
 the system's first native choice: Core Audio, Windows audio shared,
 PipeWire (PulseAudio where PipeWire is not running), ALSA direct on the

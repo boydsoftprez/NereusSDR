@@ -20,8 +20,8 @@
 //  12. R-R3-36: a configured device that is not present and a configured
 //      buffer size the list lacks survive an unrelated edit on the card.
 //  13. R-R3-36: reloading replaces those kept entries instead of adding more.
-//  14. R-SPK-21 / D14: everything but Device folds under "Device details",
-//      folded by default; the toggle unfolds it.
+//  14. R-SPK-21 / D14: everything but Driver and Device folds under
+//      "Device details", folded by default; the toggle unfolds it.
 //  15. D10: the WASAPI checkboxes are gone; their saved keys stay as they
 //      were and are never written.
 //  16. R-SPK-21: a card greyed until Enabled greys Device and Device
@@ -38,6 +38,8 @@
 //      default on the "Older drivers" heading; an in-use device in the
 //      closed Device field; the Negotiated pill when Setup opens after the
 //      engine started.
+//  19. The Driver row is in front, above the Device row, with the fold
+//      closed (JJ, 2026-10-10: the driver decides which devices are listed).
 //
 // Design spec:
 //   docs/architecture/2026-04-20-phase3o-subphase12-addendum.md §2.1
@@ -50,6 +52,9 @@
 //   2026-10-09: Task 16 fix round, case 18 (R-AUD-01, R-AUD-03, R-AUD-11,
 //               R-AUD-15). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-10: case 19, and case 14 follows it: the Driver row sits above
+//               the "Device details" fold. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -616,8 +621,9 @@ private slots:
         QVERIFY(!card.detailsExpanded());
         QVERIFY(details->isHidden());
 
-        // Every row but Device is inside the fold; Device is in front.
-        const QStringList folded{QStringLiteral("Driver:"), QStringLiteral("Sample rate:"),
+        // Every row but Driver and Device is inside the fold; those two are
+        // in front.
+        const QStringList folded{QStringLiteral("Sample rate:"),
                                  QStringLiteral("Channels:"), QStringLiteral("Buffer size:"),
                                  QStringLiteral("Delay:"), QStringLiteral("Negotiated:")};
         QStringList foundInDetails;
@@ -628,6 +634,7 @@ private slots:
             QVERIFY2(foundInDetails.contains(text), qPrintable(text));
         }
         QVERIFY(!foundInDetails.contains(QStringLiteral("Device:")));
+        QVERIFY(!foundInDetails.contains(QStringLiteral("Driver:")));
         QVERIFY(!foundInDetails.contains(QStringLiteral("Options:")));
         QVERIFY(!foundInDetails.contains(QStringLiteral("Driver API:")));
         QVERIFY(details->isAncestorOf(comboNamed(card, "deviceDelayCombo")));
@@ -635,9 +642,10 @@ private slots:
         QVERIFY(details->isAncestorOf(labelNamed(card, "engineNote")));
         // The state note is in front, under the Device row.
         QVERIFY(!details->isAncestorOf(labelNamed(card, "deviceStateNote")));
-        // The driver API combo stays the card's first combo, inside the fold.
+        // The Driver combo stays the card's first combo, in front of the fold.
         QComboBox* first = card.findChildren<QComboBox*>().first();
-        QVERIFY(details->isAncestorOf(first));
+        QCOMPARE(first, comboNamed(card, "deviceDriverCombo"));
+        QVERIFY(!details->isAncestorOf(first));
 
         toggle->click();
         QVERIFY(card.detailsExpanded());
@@ -645,6 +653,62 @@ private slots:
         card.setDetailsExpanded(false);
         QVERIFY(details->isHidden());
         QVERIFY(!toggle->isChecked());
+    }
+
+    // ── 19. The Driver row is in front, above Device ──────────────────────
+    // JJ, 2026-10-10: the driver choice decides which devices are listed,
+    // so it is never behind the fold (ASIO on the Windows mic card).
+
+    void driverRowIsVisibleAboveDeviceWithTheFoldClosed_data() {
+        QTest::addColumn<QString>("prefix");
+        QTest::addColumn<bool>("input");
+        QTest::newRow("speakers") << QStringLiteral("audio/Speakers") << false;
+        QTest::newRow("mic") << QStringLiteral("audio/TxInput") << true;
+    }
+
+    void driverRowIsVisibleAboveDeviceWithTheFoldClosed() {
+        QFETCH(QString, prefix);
+        QFETCH(bool, input);
+        DeviceCard card(prefix, input ? DeviceCard::Role::Input : DeviceCard::Role::Output, false);
+        // Laid out without a window: grab() sends the pending resizes.
+        card.resize(card.sizeHint());
+        card.grab();
+        QVERIFY(!card.detailsExpanded());
+
+        QComboBox* driver = card.driverApiCombo();
+        QComboBox* device = card.deviceCombo();
+        QVERIFY(driver != nullptr);
+        QVERIFY(device != nullptr);
+        QCOMPARE(driver->objectName(), QStringLiteral("deviceDriverCombo"));
+        QVERIFY(device->isVisibleTo(&card));
+        QVERIFY2(driver->isVisibleTo(&card), "the Driver list is behind the closed fold");
+
+        // Its "Driver:" label is in front with it.
+        bool labelShown = false;
+        for (QLabel* label : card.findChildren<QLabel*>()) {
+            labelShown = labelShown
+                || (label->text() == QStringLiteral("Driver:") && label->isVisibleTo(&card));
+        }
+        QVERIFY(labelShown);
+
+        // Driver first, then Device: on the card and in the tab order.
+        const QRect driverRect(driver->mapTo(&card, QPoint(0, 0)), driver->size());
+        const QRect deviceRect(device->mapTo(&card, QPoint(0, 0)), device->size());
+        QVERIFY2(driverRect.bottom() < deviceRect.top(),
+                 qPrintable(QStringLiteral("driver bottom %1, device top %2")
+                                .arg(driverRect.bottom())
+                                .arg(deviceRect.top())));
+        QWidget* next = driver->nextInFocusChain();
+        while (next != driver && qobject_cast<QComboBox*>(next) == nullptr) {
+            next = next->nextInFocusChain();
+        }
+        QCOMPARE(next, device);
+
+        // The fold still opens and closes under them; Driver stays put.
+        card.setDetailsExpanded(true);
+        QVERIFY(driver->isVisibleTo(&card));
+        card.setDetailsExpanded(false);
+        QVERIFY(driver->isVisibleTo(&card));
     }
 
     // ── 15. The WASAPI checkboxes are gone; their keys stay (D10) ─────────
