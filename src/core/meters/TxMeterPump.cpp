@@ -18,6 +18,9 @@
 //               stage readings the container meters show too. J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
+//   2026-10-10: readFrom works the six peak readings too (MIC, ALC, COMP,
+//               EQ, Leveler, CFC peak; txReadingsVersion 4). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/meters/TxMeterPump.h"
@@ -103,6 +106,24 @@ TxMeterReadings TxMeterPump::readFrom(const RadioStatus& status,
         readings.cfcGainDb = thetisTxReading(ThetisTxReading::CfcG, readRaw);
         readings.alcGainDb = thetisTxReading(ThetisTxReading::AlcG, readRaw);
         readings.alcGroupDb = thetisTxReading(ThetisTxReading::AlcGroup, readRaw);
+        // txReadingsVersion 4: the six peak readings a local window's
+        // container meter bars show as their main value (MeterPoller's
+        // kTxReadings: TxMicPeak, TxAlcPeak, TxCompPeak, TxEqPeak,
+        // TxLevelerPeak and TxCfcPeak), each worked by thetisTxReading as
+        // Thetis's MOX branch works it.
+        // From Thetis console.cs:46970-46983 [v2.10.3.15]:
+        //   updateMetersReading(Reading.MIC_PK, (float)Math.Max(-195.0f, -WDSP.CalculateTXMeter(1, WDSP.MeterType.MIC_PK)), 0);
+        //   updateMetersReading(Reading.EQ_PK, (float)Math.Max(-30.0f, -WDSP.CalculateTXMeter(1, WDSP.MeterType.EQ_PK)), 0);
+        //   updateMetersReading(Reading.LEVELER_PK, (float)Math.Max(-30.0f, -WDSP.CalculateTXMeter(1, WDSP.MeterType.LEVELER_PK)), 0);
+        //   updateMetersReading(Reading.CFC_PK, (float)Math.Max(-30.0f, -WDSP.CalculateTXMeter(1, WDSP.MeterType.CFC_PK)), 0);
+        //   updateMetersReading(Reading.COMP_PK, (float)Math.Max(-30.0f, -WDSP.CalculateTXMeter(1, WDSP.MeterType.COMP_PK)), 0);
+        //   updateMetersReading(Reading.ALC_PK, (float)Math.Max(-195.0f, -WDSP.CalculateTXMeter(1, WDSP.MeterType.ALC_PK)), 0);
+        readings.micPeakDb = thetisTxReading(ThetisTxReading::MicPk, readRaw);
+        readings.alcPeakDb = thetisTxReading(ThetisTxReading::AlcPk, readRaw);
+        readings.compressionPeakDb = thetisTxReading(ThetisTxReading::CompPk, readRaw);
+        readings.eqPeakDb = thetisTxReading(ThetisTxReading::EqPk, readRaw);
+        readings.levelerPeakDb = thetisTxReading(ThetisTxReading::LevelerPk, readRaw);
+        readings.cfcPeakDb = thetisTxReading(ThetisTxReading::CfcPk, readRaw);
     }
     return readings;
 }

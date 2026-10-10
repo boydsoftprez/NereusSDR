@@ -1,4 +1,8 @@
 // no-port-check: NereusSDR-original composite/source contract tests.
+// Modification history (NereusSDR):
+//   2026-10-10: a remote bar's peak follows a Core that sends the peak
+//               readings (txReadingsVersion 4). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include "gui/meters/MeterWidget.h"
 #include "gui/meters/MeterItem.h"
@@ -205,6 +209,17 @@ private slots:
         for (int peak : MeterPoller::remoteTxPeakBindingsNotSent()) {
             QCOMPARE(w.bindingUnavailableReason(peak),MeterPoller::remoteTxMeterNotSentText());
         }
+        // A Core that sends the peaks (txReadingsVersion 4): the bar's two
+        // channels are the peak and the average, each its own value.
+        p.setRemoteTxPeakReadingsAvailable([] { return true; });
+        for (int peak : MeterPoller::remoteTxPeakBindingsNotSent()) {
+            QVERIFY(w.bindingUnavailableReason(peak).isEmpty());
+        }
+        QVERIFY(state.applyStationValue("micPeakDb",-3.0));
+        QVERIFY(QMetaObject::invokeMethod(&p,"poll",Qt::DirectConnection));
+        QCOMPARE(face->readings.value(MeterBinding::TxMicPeak),-3.0);
+        QCOMPARE(face->readings.value(MeterBinding::TxMic),-12.0);
+        QCOMPARE(added->readings.value(MeterBinding::TxMicPeak),-3.0);
     }
     void independentTxMappingAndFloors() {
         struct Pair { int average, peak; TxMeterType averageSource, peakSource; };

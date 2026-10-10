@@ -237,6 +237,8 @@
 //   2026-10-08 - Rotor control plan Task 4b: remoteRotorControlVersion,
 //                after accessoryTxVersion, sent when it is not 0. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - txReadingsVersion 4: the six transmit peak readings.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QByteArray>
@@ -794,6 +796,10 @@ struct StationCapabilities {
     /// 3 also carries the seven stage readings a local window's container
     /// meters show (eqDb, levelerDb, levelerGainDb, cfcDb, cfcGainDb,
     /// alcGainDb, alcGroupDb; A9), read with the other meters.
+    /// 4 also carries the six peak readings a local window's container
+    /// meter bars show as their main value (micPeakDb, alcPeakDb,
+    /// compressionPeakDb, eqPeakDb, levelerPeakDb, cfcPeakDb), read with
+    /// the other meters.
     int txReadingsVersion = 0;
 
     /// Whether the DAEMON currently holds a live radio connection. A

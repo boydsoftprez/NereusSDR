@@ -522,6 +522,8 @@
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08: Final review I3: requestRefreshRotorPorts. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10: txPeakReadingsAvailable (txReadingsVersion 4). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // 2026-10-01: Authenticated Core address inventory and reconnect learning.
@@ -6069,6 +6071,11 @@ bool StationClient::txReadingsAvailable() const
 bool StationClient::txStageReadingsAvailable() const
 {
     return txReadingsAvailable() && m_capabilities.txReadingsVersion >= 3;
+}
+
+bool StationClient::txPeakReadingsAvailable() const
+{
+    return txReadingsAvailable() && m_capabilities.txReadingsVersion >= 4;
 }
 
 void StationClient::setCfcCompressionWanted(bool wanted)

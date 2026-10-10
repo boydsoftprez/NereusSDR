@@ -1161,7 +1161,7 @@ table.
 | `remoteTxVersion` | 2 |
 | `txWatchPathVersion` | not advertised by this fixture |
 | `txStateVersion` | 2 |
-| `txReadingsVersion` | 3 |
+| `txReadingsVersion` | 4 |
 | `mediaTunnelVersion` | 1 |
 | `mediaRelayRoutingVersion` | 1 |
 | `settingsHygieneVersion` | 2 |
@@ -2195,7 +2195,7 @@ When a feature is off, its version is 0:
   the read-only `txState` object (section 18.8) to that peer; any other
   peer never sees it or its schema.
 - `txReadingsVersion` (remote-window parity Task 33, R-R3-49, R-R3-32):
-  sent right after `txStateVersion` and only with it. 2 on a Core with its
+  sent right after `txStateVersion` and only with it. 4 on a Core with its
   own radio model and record streams (`recordStreamVersion` at least 1), 0
   otherwise. At 1 `txState` also carries `forwardAdcRaw` and
   `reflectedAdcRaw`, the radio's raw forward and reflected power readings,
@@ -2212,6 +2212,13 @@ When a feature is off, its version is 0:
   (section 18.8). A window below 3 shows each of those meters disabled
   with "This Core does not send this reading. Updating the Core may
   help.", never hidden and never a 0.
+  At 4 `txState` also carries the six peak readings a local window's
+  container meter bars show as their main value, `micPeakDb`, `alcPeakDb`,
+  `compressionPeakDb`, `eqPeakDb`, `levelerPeakDb` and `cfcPeakDb`
+  (section 18.8), so a bar such as MIC shows the same peak in a remote
+  window as in a local one, with the average beside it. A window below 4
+  shows each peak meter disabled with the same sentence, never hidden and
+  never a 0; the averages are unchanged.
 
 `txPermitted` (iPhone app plan Task 34) is true only for a session the
 station transmit gate permits (section 18.1): false until
@@ -3313,7 +3320,7 @@ An enum property lists the values its domain allows.
 | 87 | `txEqCurve` | `utf8` | outbound |  |
 | 88 | `cfcProfile` | `utf8` | outbound |  |
 
-**TransmitState** (44 properties)
+**TransmitState** (50 properties)
 
 | Ordinal | Property | Wire kind | Direction | Enum values |
 | --- | --- | --- | --- | --- |
@@ -3361,6 +3368,12 @@ An enum property lists the values its domain allows.
 | 41 | `cfcGainDb` | `f64` | outbound |  |
 | 42 | `alcGainDb` | `f64` | outbound |  |
 | 43 | `alcGroupDb` | `f64` | outbound |  |
+| 44 | `micPeakDb` | `f64` | outbound |  |
+| 45 | `alcPeakDb` | `f64` | outbound |  |
+| 46 | `compressionPeakDb` | `f64` | outbound |  |
+| 47 | `eqPeakDb` | `f64` | outbound |  |
+| 48 | `levelerPeakDb` | `f64` | outbound |  |
+| 49 | `cfcPeakDb` | `f64` | outbound |  |
 
 **TunerModel** (21 properties)
 
@@ -3697,6 +3710,8 @@ Notes on the keys:
   At `txReadingsVersion` 3, `eqDb`, `levelerDb`, `levelerGainDb`, `cfcDb`,
   `cfcGainDb`, `alcGainDb` and `alcGroupDb` (f64) follow
   `reflectedAdcVolts`.
+  At `txReadingsVersion` 4, `micPeakDb`, `alcPeakDb`, `compressionPeakDb`,
+  `eqPeakDb`, `levelerPeakDb` and `cfcPeakDb` (f64) follow `alcGroupDb`.
 - **`vax`** (iPhone app plan Task 25, R-IOS-18; `StationVax`,
   `vaxVersion` 1): the VAX channels of the computer the Core runs on, as its
   VAX applet shows them (`VaxApplet.cpp`). Sent only at agreed minor 11 to a
@@ -8560,6 +8575,7 @@ is refused as any outbound property's is.
 | `compressionDb` | The COMP reading (f64, dB; parity Task 33 follow-up, `txReadingsVersion` 1), as the Core's own Compression meters show it: Thetis's reading, the transmit channel's `TXA_COMP_AV` floored at -30 dB (console.cs:46979, dsp.cs:1013-1014 [v2.10.3.15]), so -30 with the speech processor off; -400, no reading, while the Core has no transmit channel. Read with the other meters |
 | `forwardRawPowerWatts`, `forwardAdcVolts`, `reflectedAdcVolts` | Core-scaled raw forward power (W) and forward/reverse ADC voltage (V), f64, `txReadingsVersion` 2. The Core calls the same `PaTelemetryScaling` functions as native PA Values with its current radio model, on the existing PA sample/meter cadence and radio change. All three are outbound only and reset with the session |
 | `eqDb`, `levelerDb`, `levelerGainDb`, `cfcDb`, `cfcGainDb`, `alcGainDb`, `alcGroupDb` | The seven stage readings a local window's container meters show (f64, dB; A9, `txReadingsVersion` 3), each Thetis's reading as its MOX branch works it from the transmit channel (console.cs:46971-46986 [v2.10.3.15]): EQ and Leveler `TXA_EQ_AV` and `TXA_LVLR_AV` floored at -30 dB, Leveler gain `TXA_LVLR_GAIN` negated and floored at 0, CFC `TXA_CFC_AV` floored at -30, CFC gain `TXA_CFC_GAIN` floored at 0, ALC gain `TXA_ALC_GAIN` plus 3 floored at -195, and ALC group `TXA_ALC_PK` floored at -30 plus `TXA_ALC_GAIN` plus 3 floored at 0. -400, no reading, while the Core has no transmit channel. Read and sent with the other meters, and reset with the session |
+| `micPeakDb`, `alcPeakDb`, `compressionPeakDb`, `eqPeakDb`, `levelerPeakDb`, `cfcPeakDb` | The six peak readings a local window's container meter bars show as their main value, beside the average (f64, dB; `txReadingsVersion` 4), each Thetis's reading as its MOX branch works it from the transmit channel (console.cs:46970-46983 [v2.10.3.15]): MIC peak and ALC peak `TXA_MIC_PK` and `TXA_ALC_PK` floored at -195 dB, and COMP, EQ, Leveler and CFC peak `TXA_COMP_PK`, `TXA_EQ_PK`, `TXA_LVLR_PK` and `TXA_CFC_PK` floored at -30. -400, no reading, while the Core has no transmit channel. Read and sent with the other meters, and reset with the session |
 
 The AM Mod Monitor's readings (peaks, holds, carrier, lamps and envelope
 trace) are not `txState` properties: they travel as the `txAmModulation`
@@ -8587,7 +8603,11 @@ meters and the Phone/CW compression gauge read). On a Core below
 `txReadingsVersion` 1 Compression shows no reading with "This Core does not
 send this reading. Updating the Core may help." Each container meter bound
 to a reading `txState` does not carry (EQ, Leveler, Leveler Gain, CFC, CFC
-Gain, ALC Gain, ALC Group) shows no reading with its reason, never 0.
+Gain, ALC Gain, ALC Group below `txReadingsVersion` 3; MIC, ALC, COMP, EQ,
+Leveler and CFC peak below 4) shows no reading with its reason, never 0.
+From 4 a bar's peak reads `micPeakDb`, `alcPeakDb`, `compressionPeakDb`,
+`eqPeakDb`, `levelerPeakDb` or `cfcPeakDb`, as a local window's reads its
+own transmit channel's.
 
 **PA Values in a remote window** reads `forwardPowerWatts`,
 `reflectedPowerWatts` and `swr` for its power rows and `forwardAdcRaw`

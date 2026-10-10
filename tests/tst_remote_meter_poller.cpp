@@ -13,6 +13,9 @@
 //               the Core's, sent in txState; TxComp waits for
 //               txReadingsVersion 1. J.J. Boyd (KG4VCF), with
 //               AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-10: the six transmit peak meters follow the Core's
+//               txReadingsVersion: 3 names the reason, 4 reads the peak.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QTest>
 #include <QSignalSpy>
 
@@ -38,6 +41,57 @@ using namespace NereusSDR;
 class TestRemoteMeterPoller : public QObject {
     Q_OBJECT
 private slots:
+    // A bar such as MIC shows the peak as its main value and the average
+    // beside it. From a Core at txReadingsVersion 3 the peak is disabled
+    // with the reason and the average reads; at 4 each reads its own value.
+    void peakMetersFollowTheCoresReadingsVersion() {
+        RadioModel model(RadioModel::Role::Remote);
+        model.setStationConnectionState(ConnectionState::Connected);
+        TransmitState state;
+        MeterPoller poller;
+        poller.setRemoteRadioModel(&model, [] { return true; });
+        poller.setRadioStatus(&model.radioStatus());
+        poller.setRemoteTxReadingsAvailable([&] { return model.stationTxReadingsVersion() >= 1; });
+        poller.setRemoteTxStageReadingsAvailable([&] { return model.stationTxReadingsVersion() >= 3; });
+        poller.setRemoteTxPeakReadingsAvailable([&] { return model.stationTxReadingsVersion() >= 4; });
+        poller.setRemoteTransmitState(&state, [] { return QString(); });
+        MeterWidget bars;
+        auto* peak = new TextItem(&bars); peak->setBindingId(MeterBinding::TxMicPeak); bars.addItem(peak);
+        auto* average = new TextItem(&bars); average->setBindingId(MeterBinding::TxMic); bars.addItem(average);
+        poller.addTarget(&bars);
+        QVERIFY(state.applyStationValue("keyed", true));
+        QVERIFY(state.applyStationValue("micLevelDb", -12.0));
+        QVERIFY(state.applyStationValue("micPeakDb", -3.0));
+
+        StationCapabilities caps; caps.radioConnected = true; caps.board = HPSDRHW::Saturn;
+        caps.hpsdrModel = HPSDRModel::ANAN_G2; caps.macAddress = "AA:BB:CC:DD:EE:01";
+        caps.txReadingsVersion = 3; model.applyStationCapabilities(caps);
+        QCOMPARE(model.stationTxReadingsVersion(), 3);
+        QVERIFY(QMetaObject::invokeMethod(&poller, "poll", Qt::DirectConnection));
+        for (int binding : MeterPoller::remoteTxPeakBindingsNotSent()) {
+            QCOMPARE(bars.bindingUnavailableReason(binding), MeterPoller::remoteTxMeterNotSentText());
+        }
+        QCOMPARE(peak->value(), -400.0);
+        QVERIFY(bars.bindingUnavailableReason(MeterBinding::TxMic).isEmpty());
+        QCOMPARE(average->value(), -12.0);
+        QCOMPARE(bars.items().size(), 2);   // disabled, never hidden
+
+        caps.txReadingsVersion = 4; model.applyStationCapabilities(caps);
+        QVERIFY(QMetaObject::invokeMethod(&poller, "poll", Qt::DirectConnection));
+        for (int binding : MeterPoller::remoteTxPeakBindingsNotSent()) {
+            QVERIFY2(bars.bindingUnavailableReason(binding).isEmpty(), qPrintable(QString::number(binding)));
+        }
+        QCOMPARE(peak->value(), -3.0);
+        QCOMPARE(average->value(), -12.0);
+        QVERIFY(peak->value() != average->value());
+
+        // Back on an older Core the peak is dropped, not left showing.
+        caps.txReadingsVersion = 3; model.applyStationCapabilities(caps);
+        QVERIFY(QMetaObject::invokeMethod(&poller, "poll", Qt::DirectConnection));
+        QCOMPARE(bars.bindingUnavailableReason(MeterBinding::TxMicPeak), MeterPoller::remoteTxMeterNotSentText());
+        QCOMPARE(peak->value(), -400.0);
+        QCOMPARE(average->value(), -12.0);
+    }
     void ananSupportFollowsResolvedRemoteProvider() {
         using Support=MeterItem::BindingSupport;
         RadioModel model(RadioModel::Role::Remote); MeterPoller poller; bool ready=false;

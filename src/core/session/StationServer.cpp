@@ -1000,6 +1000,8 @@
 //   2026-10-08: Final review I3: refreshRotorPorts admitted with the other
 //               rotor verbs. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-10: txReadingsVersion 4: the six transmit peak readings. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationServer.h"
@@ -13894,11 +13896,13 @@ int StationServer::txReadingsVersion() const
     // stream, which a Core without record streams does not keep. Version 2
     // adds the Core-scaled PA values from that local radio's raw samples;
     // version 3 (A9) the seven stage readings the container meters show,
-    // read from that radio's transmit channel with the other meters.
+    // read from that radio's transmit channel with the other meters;
+    // version 4 the six peak readings those meters' bars show as their main
+    // value, read the same way.
     return !m_radioModel.isNull() && m_radioModel->role() != RadioModel::Role::Remote
             && m_recordStreams.find(QString::fromLatin1(TransmitState::kCfcStream))
             != m_recordStreams.end()
-        ? 3
+        ? 4
         : 0;
 }
 

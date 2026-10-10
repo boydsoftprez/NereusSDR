@@ -645,6 +645,9 @@
 //                device catalogue and follows it; "Apply suggested" saves
 //                each binding (engine, id, name, On) under audio/VaxN.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - A remote window's six transmit peak meters read the Core's
+//                peak readings (txReadingsVersion 4). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -2911,6 +2914,11 @@ void MainWindow::wireRemoteTransmitMeters()
         // txReadingsVersion 3.
         m_meterPoller->setRemoteTxStageReadingsAvailable([this]() {
             return m_stationClient != nullptr && m_stationClient->txStageReadingsAvailable();
+        });
+        // The six peak readings the container meter bars show as their
+        // main value, txReadingsVersion 4.
+        m_meterPoller->setRemoteTxPeakReadingsAvailable([this]() {
+            return m_stationClient != nullptr && m_stationClient->txPeakReadingsAvailable();
         });
         m_meterPoller->setRemoteTransmitState(state, [this]() -> QString {
             if (m_stationClient == nullptr || !m_stationClient->isHandshakeComplete()) {

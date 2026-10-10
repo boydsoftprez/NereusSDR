@@ -479,6 +479,8 @@
 //   2026-10-08: Rotor control plan Task 4b: the `rotor` object mirrored
 //               and the seven rotor requests. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-10: txPeakReadingsAvailable (txReadingsVersion 4). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -1132,6 +1134,11 @@ public:
     /// 3): `txState`'s eqDb, levelerDb, levelerGainDb, cfcDb, cfcGainDb,
     /// alcGainDb and alcGroupDb.
     bool txStageReadingsAvailable() const;
+    /// The Core also sends the six peak readings a local window's container
+    /// meter bars show as their main value (txReadingsVersion 4):
+    /// `txState`'s micPeakDb, alcPeakDb, compressionPeakDb, eqPeakDb,
+    /// levelerPeakDb and cfcPeakDb.
+    bool txPeakReadingsAvailable() const;
     /// Parity Task 33: whether this window shows the CFC bar chart. While
     /// true (and the Core sends it) the window subscribes to the Core's
     /// txCfcCompression stream, again after each reconnect; false

@@ -18,6 +18,9 @@
 //                                    container stage meters
 //                                    (txReadingsVersion 3). AI-assisted via
 //                                    Anthropic Claude Code.
+//   2026-10-10  J.J. Boyd / KG4VCF  The six transmit peak readings
+//                                    (txReadingsVersion 4). AI-assisted via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -252,6 +255,9 @@ private slots:
     void pumpWorksTheStageReadingsAsALocalWindow();
     void remoteStageMetersMatchALocalWindow();
     void coreSendsItsStageReadingsKeyed();
+    void pumpWorksThePeakReadingsAsThetis();
+    void remotePeakMetersMatchALocalWindow();
+    void coreSendsItsPeakReadingsKeyed();
     void newWordingIsPlain();
 
 private:
@@ -308,11 +314,12 @@ void TstRemoteTxReadings::capabilityComesRightAfterTxStateVersion()
 
     Session s(m_securityDir.path(), this);
     QVERIFY(s.connect());
-    QCOMPARE(s.server->txReadingsVersion(), 3);
-    QCOMPARE(s.client->capabilities().txReadingsVersion, 3);
+    QCOMPARE(s.server->txReadingsVersion(), 4);
+    QCOMPARE(s.client->capabilities().txReadingsVersion, 4);
     QVERIFY(s.client->txReadingsAvailable());
     QVERIFY(s.client->txStageReadingsAvailable());
-    QCOMPARE(s.window.stationTxReadingsVersion(), 3);
+    QVERIFY(s.client->txPeakReadingsAvailable());
+    QCOMPARE(s.window.stationTxReadingsVersion(), 4);
     QCOMPARE(s.window.stationTransmitState(), s.client->transmitState());
 
     QTemporaryDir scratch;
@@ -367,7 +374,7 @@ void TstRemoteTxReadings::corePublishesScaledPaReadings()
 {
     Session s(m_securityDir.path(), this);
     QVERIFY(s.connect());
-    QCOMPARE(s.client->capabilities().txReadingsVersion, 3);
+    QCOMPARE(s.client->capabilities().txReadingsVersion, 4);
     const double watts = scaleFwdPowerWatts(HPSDRModel::ANAN_G2, 2600);
     const double forwardVolts = scaleFwdRevVoltage(HPSDRModel::ANAN_G2, 2600);
     const double reflectedVolts = scaleFwdRevVoltage(HPSDRModel::ANAN_G2, 300);
@@ -1129,6 +1136,219 @@ void TstRemoteTxReadings::coreSendsItsStageReadingsKeyed()
         QCOMPARE(s.server->transmitState()->property(stage.name).toDouble(),
                  expected.*stage.field);
     }
+    s.unkeyCore();
+    QTRY_VERIFY(!s.core->isTransmitting());
+}
+
+namespace {
+
+// The six peak readings: each binding with its `txState` name, the average
+// binding the same bar shows beside it, the WDSP meter Thetis reads it
+// from, a GetTXAMeter reading for that meter and Thetis's floor for it.
+struct PeakReading {
+    int bindingId;
+    const char* name;
+    double TxMeterReadings::*field;
+    int averageBindingId;
+    TxMeterType source;
+    double raw;
+    double floor;
+};
+const PeakReading kPeakReadings[] = {
+    { MeterBinding::TxMicPeak, "micPeakDb", &TxMeterReadings::micPeakDb,
+      MeterBinding::TxMic, TxMeterType::MicPeak, -3.0, -195.0 },
+    { MeterBinding::TxAlcPeak, "alcPeakDb", &TxMeterReadings::alcPeakDb,
+      MeterBinding::TxAlc, TxMeterType::AlcPeak, -1.5, -195.0 },
+    { MeterBinding::TxCompPeak, "compressionPeakDb", &TxMeterReadings::compressionPeakDb,
+      MeterBinding::TxComp, TxMeterType::CompPeak, -4.25, -30.0 },
+    { MeterBinding::TxEqPeak, "eqPeakDb", &TxMeterReadings::eqPeakDb,
+      MeterBinding::TxEq, TxMeterType::EqPeak, -6.0, -30.0 },
+    { MeterBinding::TxLevelerPeak, "levelerPeakDb", &TxMeterReadings::levelerPeakDb,
+      MeterBinding::TxLeveler, TxMeterType::LevelerPeak, -8.5, -30.0 },
+    { MeterBinding::TxCfcPeak, "cfcPeakDb", &TxMeterReadings::cfcPeakDb,
+      MeterBinding::TxCfc, TxMeterType::CfcPeak, -10.0, -30.0 },
+};
+
+// Every average meter's GetTXAMeter reading in rawPeakMeter.
+constexpr double kRawAverage = -20.0;
+
+// Each peak meter's own reading; every other meter reads kRawAverage.
+double rawPeakMeter(TxMeterType meter)
+{
+    for (const PeakReading& peak : kPeakReadings) {
+        if (peak.source == meter) {
+            return peak.raw;
+        }
+    }
+    return kRawAverage;
+}
+
+} // namespace
+
+// The Core works each peak reading as Thetis's MOX branch does
+// (console.cs:46970-46983 [v2.10.3.15]: max(floor, -CalculateTXMeter), and
+// CalculateTXMeter returns the GetTXAMeter reading negated), which is how
+// a local window's poll works its own (MeterPoller::txReadingForBinding).
+void TstRemoteTxReadings::pumpWorksThePeakReadingsAsThetis()
+{
+    RadioStatus status;
+    const TxMeterReadings none = TxMeterPump::read(status, nullptr);
+    for (const PeakReading& peak : kPeakReadings) {
+        QCOMPARE(none.*peak.field, TxMeterReadings::kNoReadingDb);
+    }
+    const std::function<double(TxMeterType)> readRaw = rawPeakMeter;
+    const TxMeterReadings readings = TxMeterPump::readFrom(status, readRaw);
+    for (const PeakReading& peak : kPeakReadings) {
+        // The sign: the reading is the meter's own value, not its negative.
+        QVERIFY2(readings.*peak.field == peak.raw, peak.name);
+        QVERIFY2(readings.*peak.field
+                     == MeterPoller::txReadingForBinding(peak.bindingId, readRaw),
+                 peak.name);
+    }
+    // The averages are still the averages, and differ from the peaks.
+    QCOMPARE(readings.micLevelDb, kRawAverage);
+    QCOMPARE(readings.alcDb, kRawAverage);
+    QCOMPARE(readings.compressionDb, kRawAverage);
+    QCOMPARE(readings.eqDb, kRawAverage);
+    QCOMPARE(readings.levelerDb, kRawAverage);
+    QCOMPARE(readings.cfcDb, kRawAverage);
+    QVERIFY(readings.micPeakDb != readings.micLevelDb);
+    // The floor: -195 for MIC and ALC peak, -30 for the other four.
+    const TxMeterReadings silent =
+        TxMeterPump::readFrom(status, [](TxMeterType) { return -400.0; });
+    for (const PeakReading& peak : kPeakReadings) {
+        QVERIFY2(silent.*peak.field == peak.floor, peak.name);
+    }
+
+    // A window's copy takes each by name and drops it with the session.
+    TransmitState state;
+    QSignalSpy meters(&state, &TransmitState::metersChanged);
+    for (const PeakReading& peak : kPeakReadings) {
+        QVERIFY(state.applyStationValue(peak.name, peak.raw));
+        QCOMPARE(state.property(peak.name).toDouble(), peak.raw);
+        QCOMPARE(state.meters().*peak.field, peak.raw);
+    }
+    QCOMPARE(meters.size(), static_cast<int>(std::size(kPeakReadings)));
+    state.clearStationValues();
+    for (const PeakReading& peak : kPeakReadings) {
+        QCOMPARE(state.property(peak.name).toDouble(), TxMeterReadings::kNoReadingDb);
+    }
+}
+
+// A remote window's six peak meters show what a local window's show for
+// the same transmit channel readings, beside the average each bar also
+// shows; a Core below txReadingsVersion 4 leaves each peak disabled with
+// the reason, never hidden, and its averages still read.
+void TstRemoteTxReadings::remotePeakMetersMatchALocalWindow()
+{
+    MeterWidget localMeters;
+    QHash<int, TextItem*> localItems;
+    MeterPoller localPoller;
+    RadioModel window(RadioModel::Role::Remote);
+    window.setStationConnectionState(ConnectionState::Connected);
+    QVERIFY(window.addSliceWithStationId(0) >= 0);
+    window.setActiveSlice(0);
+    TransmitState state;
+    RemoteMeters remote(window, state);
+    remote.poller.setRemoteTxStageReadingsAvailable([]() { return true; });
+    MeterWidget remoteMeters;
+    remoteMeters.resize(200, 200);
+    QHash<int, TextItem*> remoteItems;
+    for (const PeakReading& peak : kPeakReadings) {
+        for (int bindingId : {peak.bindingId, peak.averageBindingId}) {
+            auto* localItem = new TextItem(&localMeters);
+            localItem->setBindingId(bindingId);
+            localMeters.addItem(localItem);
+            localItems.insert(bindingId, localItem);
+            auto* remoteItem = new TextItem(&remoteMeters);
+            remoteItem->setBindingId(bindingId);
+            remoteMeters.addItem(remoteItem);
+            remoteItems.insert(bindingId, remoteItem);
+        }
+    }
+    localPoller.addTarget(&localMeters);
+    remote.poller.addTarget(&remoteMeters);
+    const int itemCount = 2 * static_cast<int>(std::size(kPeakReadings));
+
+    // The Core's readings and the local window's, from the same meters.
+    const std::function<double(TxMeterType)> readRaw = rawPeakMeter;
+    const TxMeterReadings core = TxMeterPump::readFrom(RadioStatus{}, readRaw);
+    QVERIFY(state.applyStationValue("keyed", true));
+    QVERIFY(state.applyStationValue("micLevelDb", core.micLevelDb));
+    QVERIFY(state.applyStationValue("alcDb", core.alcDb));
+    QVERIFY(state.applyStationValue("compressionDb", core.compressionDb));
+    QVERIFY(state.applyStationValue("eqDb", core.eqDb));
+    QVERIFY(state.applyStationValue("levelerDb", core.levelerDb));
+    QVERIFY(state.applyStationValue("cfcDb", core.cfcDb));
+    for (const PeakReading& peak : kPeakReadings) {
+        QVERIFY(state.applyStationValue(peak.name, core.*peak.field));
+        localPoller.handOutTxReadingForTest(peak.bindingId, peak.raw);
+        localPoller.handOutTxReadingForTest(peak.averageBindingId, kRawAverage);
+    }
+
+    // A Core at txReadingsVersion 3 (no peak hook, then a hook that says
+    // no): each peak is disabled with the reason and shows no reading,
+    // and each average still reads.
+    for (int pass = 0; pass < 2; ++pass) {
+        if (pass == 1) {
+            remote.poller.setRemoteTxPeakReadingsAvailable([]() { return false; });
+        }
+        tick(remote.poller);
+        for (const PeakReading& peak : kPeakReadings) {
+            QCOMPARE(remoteMeters.bindingUnavailableReason(peak.bindingId),
+                     TransmitState::txReadingNotSentText());
+            QVERIFY2(remoteItems.value(peak.bindingId)->value() == TxMeterReadings::kNoReadingDb,
+                     peak.name);
+            QVERIFY2(remoteMeters.bindingUnavailableReason(peak.averageBindingId).isEmpty(),
+                     peak.name);
+            QVERIFY2(remoteItems.value(peak.averageBindingId)->value() == kRawAverage, peak.name);
+        }
+        QCOMPARE(remoteMeters.items().size(), itemCount);
+    }
+
+    // A Core at 4: available, and keyed each reads the Core's peak, which
+    // is the local window's, and not the average.
+    bool peaks = false;
+    remote.poller.setRemoteTxPeakReadingsAvailable([&peaks]() { return peaks; });
+    tick(remote.poller);
+    QCOMPARE(remoteMeters.bindingUnavailableReason(MeterBinding::TxMicPeak),
+             TransmitState::txReadingNotSentText());
+    // The poll notices the Core's answer change without a forced refresh.
+    peaks = true;
+    tick(remote.poller);
+    for (const PeakReading& peak : kPeakReadings) {
+        QVERIFY2(remoteMeters.bindingUnavailableReason(peak.bindingId).isEmpty(), peak.name);
+        const double remotePeak = remoteItems.value(peak.bindingId)->value();
+        const double remoteAverage = remoteItems.value(peak.averageBindingId)->value();
+        QVERIFY2(remotePeak == peak.raw, peak.name);
+        QVERIFY2(remotePeak == localItems.value(peak.bindingId)->value(), peak.name);
+        QVERIFY2(remoteAverage == kRawAverage, peak.name);
+        QVERIFY2(remoteAverage == localItems.value(peak.averageBindingId)->value(), peak.name);
+        QVERIFY2(remotePeak != remoteAverage, peak.name);
+    }
+    QCOMPARE(remoteMeters.items().size(), itemCount);
+}
+
+// Over the link, keyed, the window's copy follows the Core's peak readings
+// as its pump reads them.
+void TstRemoteTxReadings::coreSendsItsPeakReadingsKeyed()
+{
+    Session s(m_securityDir.path(), this);
+    const std::function<double(TxMeterType)> readRaw = rawPeakMeter;
+    const TxMeterReadings expected = TxMeterPump::readFrom(RadioStatus{}, readRaw);
+    s.server->transmitState()->meterPump()->setSource([expected]() { return expected; });
+    QVERIFY(s.connect());
+    QVERIFY(s.client->txPeakReadingsAvailable());
+    TransmitState* windowTx = s.client->transmitState();
+    s.keyCore();
+    QTRY_VERIFY(s.core->isTransmitting());
+    for (const PeakReading& peak : kPeakReadings) {
+        QTRY_COMPARE(windowTx->property(peak.name).toDouble(), peak.raw);
+        QCOMPARE(s.server->transmitState()->property(peak.name).toDouble(), peak.raw);
+    }
+    // The average the same bar shows arrives beside it, and differs.
+    QTRY_COMPARE(windowTx->micLevelDb(), kRawAverage);
+    QVERIFY(windowTx->micPeakDb() != windowTx->micLevelDb());
     s.unkeyCore();
     QTRY_VERIFY(!s.core->isTransmitting());
 }

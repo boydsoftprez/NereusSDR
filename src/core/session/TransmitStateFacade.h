@@ -118,6 +118,9 @@
 //               compression readings the meter pump already took. Logging
 //               only. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //               Code.
+//   2026-10-10: The six peak readings (micPeakDb .. cfcPeakDb) appended
+//               (txReadingsVersion 4). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -200,6 +203,14 @@ class NEREUS_CORE_EXPORT TransmitState final : public QObject {
     Q_PROPERTY(double cfcGainDb READ cfcGainDb NOTIFY metersChanged)
     Q_PROPERTY(double alcGainDb READ alcGainDb NOTIFY metersChanged)
     Q_PROPERTY(double alcGroupDb READ alcGroupDb NOTIFY metersChanged)
+    // txReadingsVersion 4: the container meter bars' six peak readings,
+    // appended so every earlier ordinal stays.
+    Q_PROPERTY(double micPeakDb READ micPeakDb NOTIFY metersChanged)
+    Q_PROPERTY(double alcPeakDb READ alcPeakDb NOTIFY metersChanged)
+    Q_PROPERTY(double compressionPeakDb READ compressionPeakDb NOTIFY metersChanged)
+    Q_PROPERTY(double eqPeakDb READ eqPeakDb NOTIFY metersChanged)
+    Q_PROPERTY(double levelerPeakDb READ levelerPeakDb NOTIFY metersChanged)
+    Q_PROPERTY(double cfcPeakDb READ cfcPeakDb NOTIFY metersChanged)
 
 public:
     // The link's stopReason values.
@@ -273,6 +284,12 @@ public:
     double cfcGainDb() const { return m_meters.cfcGainDb; }
     double alcGainDb() const { return m_meters.alcGainDb; }
     double alcGroupDb() const { return m_meters.alcGroupDb; }
+    double micPeakDb() const { return m_meters.micPeakDb; }
+    double alcPeakDb() const { return m_meters.alcPeakDb; }
+    double compressionPeakDb() const { return m_meters.compressionPeakDb; }
+    double eqPeakDb() const { return m_meters.eqPeakDb; }
+    double levelerPeakDb() const { return m_meters.levelerPeakDb; }
+    double cfcPeakDb() const { return m_meters.cfcPeakDb; }
     TxMeterReadings meters() const { return m_meters; }
     bool txEnding() const { return m_txEnding; }
     QString stopReason() const { return m_stopReason; }

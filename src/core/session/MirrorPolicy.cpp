@@ -223,6 +223,9 @@
 //                 Code.
 //   2026-10-08 - Rotor control plan Task 4b: RotorModel, all Outbound.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - TransmitState's six peak readings (micPeakDb .. cfcPeakDb)
+//                 Outbound (txReadingsVersion 4). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/MirrorPolicy.h"
@@ -1149,6 +1152,13 @@ const MirrorPolicy::Entry kEntries[] = {
     { "TransmitState", "cfcGainDb", MirrorDirection::Outbound },
     { "TransmitState", "alcGainDb", MirrorDirection::Outbound },
     { "TransmitState", "alcGroupDb", MirrorDirection::Outbound },
+    // txReadingsVersion 4: the container meter bars' peak readings.
+    { "TransmitState", "micPeakDb", MirrorDirection::Outbound },
+    { "TransmitState", "alcPeakDb", MirrorDirection::Outbound },
+    { "TransmitState", "compressionPeakDb", MirrorDirection::Outbound },
+    { "TransmitState", "eqPeakDb", MirrorDirection::Outbound },
+    { "TransmitState", "levelerPeakDb", MirrorDirection::Outbound },
+    { "TransmitState", "cfcPeakDb", MirrorDirection::Outbound },
 
     // Normal PS3 configuration is distinct from operational arming/actions.
     { "PureSignalSettings", "autoCalEnabled", MirrorDirection::Bidirectional },

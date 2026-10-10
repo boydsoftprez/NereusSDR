@@ -372,7 +372,7 @@
         {
             "kind": "i64",
             "name": "txReadingsVersion",
-            "value": 3
+            "value": 4
         },
         {
             "kind": "i64",
@@ -8840,6 +8840,42 @@
                     "kind": "f64",
                     "name": "alcGroupDb",
                     "ordinal": 43
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "f64",
+                    "name": "micPeakDb",
+                    "ordinal": 44
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "f64",
+                    "name": "alcPeakDb",
+                    "ordinal": 45
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "f64",
+                    "name": "compressionPeakDb",
+                    "ordinal": 46
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "f64",
+                    "name": "eqPeakDb",
+                    "ordinal": 47
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "f64",
+                    "name": "levelerPeakDb",
+                    "ordinal": 48
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "f64",
+                    "name": "cfcPeakDb",
+                    "ordinal": 49
                 }
             ]
         },
