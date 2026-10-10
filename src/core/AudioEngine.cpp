@@ -19,6 +19,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09  J.J. Boyd / KG4VCF  hasCaptureDemand(): the capture
+//                                    supervisor's hasDemand().
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-09 : Native audio plan Task 16 fix round (R-AUD-01, R-AUD-03)
 //                 by J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code. catalogue() builds the device catalogue on first
@@ -1657,6 +1660,11 @@ CaptureSupervisor::Lease AudioEngine::acquireCaptureDemand(CaptureSupervisor::De
         ensureAudioDevices(DeviceStart::MicOnly);
     }
     return m_captureSupervisor->acquire(demand);
+}
+
+bool AudioEngine::hasCaptureDemand() const
+{
+    return m_captureSupervisor && m_captureSupervisor->hasDemand();
 }
 
 void AudioEngine::retryCapture()

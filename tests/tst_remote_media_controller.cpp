@@ -1,5 +1,25 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-09: Fix round 2: a key retries a Failed capture that another
+//               demand holds open; a lost media connection during a
+//               program key leaves the next key its lead. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: Review fixes for program keys that bring their own audio:
+//               the unkey edge sends no microphone; a link loss leaves the
+//               next key its lead; a Failed capture from no demand starts
+//               one generation; a program key keeps a lease VOX holds; the
+//               lapse case has a plain row that hears the tone; the failed
+//               capture case sends silence with no lease and ends its
+//               program key at the Core. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
+//   2026-10-08: TCI program keys that bring their own audio: with no
+//               microphone the line carries silence at real time and the
+//               Core admits the key; the microphone never reaches the line
+//               before, during or after the program's audio; a screen key
+//               after it sends the microphone again; a failed capture
+//               retries once for a key that sends the microphone; a pump
+//               stall sends a bounded catch-up. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-07: R-R3-21, R-R3-51: the silence while the Core transmits
 //               holds the speakers' and the headphones' no-packets
 //               restarts without a backoff step, and the unkey asks for
@@ -151,6 +171,8 @@
 #include "fakes/CapacityLimitedTransport.h"
 #include "fakes/LoopbackTransport.h"
 #include "core/session/media/RemoteMicReceiver.h"
+#include "core/session/media/PcmAudioCodec.h"
+#include "core/session/RemoteTransmitClient.h"
 #include "OperatorWording.h"
 #include "gui/OperatorReasonText.h"
 #include "fakes/RemoteAudioSessionHarness.h"
@@ -522,6 +544,74 @@ double pumpRms(RemoteMicFeed* feed, int blocks, int measure)
         }
     }
     return count > 0 ? std::sqrt(sum / count) : 0.0;
+}
+
+// 2026-10-08: `blocks` pump blocks of the Core's transmit ring, in order.
+std::vector<float> pullFeed(RemoteMicFeed* feed, int blocks)
+{
+    std::vector<float> out;
+    std::vector<float> block(RemoteMicConfig::kPumpBlockFrames);
+    for (int b = 0; b < blocks; ++b) {
+        feed->pull(block.data(), RemoteMicConfig::kPumpBlockFrames);
+        out.insert(out.end(), block.begin(), block.end());
+    }
+    return out;
+}
+
+// 2026-10-08: a program keys only while this window holds transmit; the
+// window takes it with a TUNE press and release (TUNE needs no
+// microphone), as an operator would before starting the program.
+bool takeTransmit(Test::RemoteAudioSessionHarness& h)
+{
+    h.remote.setTune(true);
+    if (!QTest::qWaitFor([&h] { return h.station.moxController()->isMox(); }, 5000)) {
+        return false;
+    }
+    h.remote.setTune(false);
+    if (!QTest::qWaitFor([&h] { return !h.station.moxController()->isMox(); }, 5000)) {
+        return false;
+    }
+    return h.server.transmitHolder()->isHeldBy(h.windowKey->fingerprint());
+}
+
+// 2026-10-08: a program keying through this window's TCI server (its trx
+// with ",tci" when `programAudio`), answered by the in-process Core.
+std::optional<RemoteTransmitClient::Answer> keyProgram(Test::RemoteAudioSessionHarness& h,
+                                                       bool programAudio)
+{
+    std::optional<RemoteTransmitClient::Answer> answer;
+    h.client.remoteTransmit()->keyForProgram(programAudio,
+        [&answer](const RemoteTransmitClient::Answer& a) { answer = a; });
+    QElapsedTimer waited;
+    waited.start();
+    while (!answer && waited.elapsed() < 5000) {
+        QTest::qWait(10);
+    }
+    return answer;
+}
+
+// 2026-10-09: `frames` of a 1 kHz tone at `amplitude`, 48 kHz mono float,
+// as a capture bus gives them.
+QByteArray toneBytes(int frames, float amplitude)
+{
+    QByteArray bytes(frames * int(sizeof(float)), Qt::Uninitialized);
+    auto* out = reinterpret_cast<float*>(bytes.data());
+    for (int i = 0; i < frames; ++i) {
+        out[i] = amplitude * static_cast<float>(
+            std::sin(2.0 * 3.14159265358979323846 * 1000.0 * i / 48000.0));
+    }
+    return bytes;
+}
+
+// 2026-10-08: a program's audio, `chunks` of 20 ms at 48 kHz, each sample
+// `level` (never negative, unlike the test microphone's tone).
+void pushProgramChunks(RemoteMediaController& media, int chunks, float level)
+{
+    const std::vector<float> program(960, level);
+    for (int chunk = 0; chunk < chunks; ++chunk) {
+        media.pushProgramAudio(program.data(), 960, 1, 48000);
+        QTest::qWait(20);
+    }
 }
 
 // Every audio status the controller announced, in order.
@@ -10192,6 +10282,743 @@ private slots:
         h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
+    // ---- 2026-10-08: TCI program keys that bring their own audio ----
+
+    // Case A: a program key with its own audio (",tci") and a microphone
+    // that delivers nothing: the line starts with the key and carries
+    // silence at the line's real-time rate, every sample of it zero at the
+    // Core, and the Core admits the key. Without ",tci" the same window is
+    // refused for no sound, as a screen key would be.
+    void aProgramAudioKeyWithNoMicrophoneIsAdmittedOnSilence_data()
+    {
+        QTest::addColumn<bool>("programAudio");
+        QTest::addColumn<bool>("lossless");
+        QTest::newRow("tci opus") << true << false;
+        QTest::newRow("tci lossless") << true << true;
+        QTest::newRow("plain") << false << false;
+    }
+
+    void aProgramAudioKeyWithNoMicrophoneIsAdmittedOnSilence()
+    {
+        QFETCH(bool, programAudio);
+        QFETCH(bool, lossless);
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        h.pairWindow = true;
+        h.makeTransmitReady();
+        auto microphone = std::make_unique<FakeAudioBus>();
+        QVERIFY(microphone->open(AudioFormat{48000, 1, AudioFormat::Sample::Float32}));
+        h.remote.audioEngine()->setTxInputBusForTest(std::move(microphone));
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        media.setAudioProfileChoice(lossless ? RemoteAudioProfile::Lossless
+                                             : RemoteAudioProfile::Opus);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(daemon.micReceiver() != nullptr, 5000);
+        QTRY_VERIFY(h.client.capabilities().txPermitted);
+        QVERIFY(takeTransmit(h));
+
+        const std::optional<RemoteTransmitClient::Answer> answer = keyProgram(h, programAudio);
+        QVERIFY(answer.has_value());
+        if (!programAudio) {
+            QVERIFY(!answer->accepted);
+            QCOMPARE(answer->code, QStringLiteral("micNotReady"));
+            QVERIFY(!h.station.moxController()->isMox());
+            h.client.disconnectFromStation(QStringLiteral("test complete"));
+            return;
+        }
+        QVERIFY2(answer->accepted, qPrintable(answer->reason));
+        QTRY_VERIFY_WITH_TIMEOUT(h.station.moxController()->isMox(), 5000);
+        QCOMPARE(h.station.keyedBy().trigger, QByteArrayLiteral("tci"));
+        QVERIFY(media.micUplinkRunning());
+
+        // Real time: one packet per packet's length of wall clock.
+        const int packetMs = lossless ? PcmAudioCodecConfig::kPacketFrames / 48
+                                      : RemoteMicConfig::kOpusFrameSamples / 48;
+        const quint64 before = media.micPacketsSent();
+        QElapsedTimer span;
+        span.start();
+        QTest::qWait(600);
+        const qint64 expected = span.elapsed() / packetMs;
+        const qint64 sent = qint64(media.micPacketsSent() - before);
+        // Within two pump intervals of real time at either end.
+        const qint64 slack = 2 * RemoteMediaController::kMicPumpIntervalMs / packetMs + 1;
+        QVERIFY2(sent >= expected - slack && sent <= expected + slack,
+                 qPrintable(QStringLiteral("%1 packets in %2 ms").arg(sent).arg(span.elapsed())));
+
+        // Every sample the Core decoded is zero: exactly, over lossless;
+        // over Opus, within the codec's own noise of digital silence
+        // (measured near -89 dBFS), far below any microphone.
+        RemoteMicFeed* feed = h.station.remoteMicFeed();
+        QVERIFY(feed != nullptr && feed->inUse());
+        QVERIFY(feed->framesSinceInUse() >= 4 * RemoteMicConfig::kTargetDepthFrames);
+        float loudest = 0.0f;
+        for (float v : pullFeed(feed, 400)) { loudest = std::max(loudest, std::abs(v)); }
+        if (lossless) {
+            QCOMPARE(loudest, 0.0f);
+        } else {
+            QVERIFY2(loudest < 1.0e-3f, qPrintable(QString::number(loudest)));
+        }
+
+        h.client.remoteTransmit()->unkeyForProgram(answer->epoch);
+        QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
+        QVERIFY(!media.micUplinkRunning());
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // Case B: a program key with its own audio and a microphone delivering
+    // a tone: no tone sample reaches the Core before, during or after the
+    // program's audio, only silence and the program. The same key without
+    // ",tci" sends the tone, so the check can fail.
+    void aProgramAudioKeyNeverSendsTheMicrophone_data()
+    {
+        QTest::addColumn<bool>("programAudio");
+        QTest::newRow("tci") << true;
+        QTest::newRow("plain") << false;
+    }
+
+    void aProgramAudioKeyNeverSendsTheMicrophone()
+    {
+        QFETCH(bool, programAudio);
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        h.pairWindow = true;
+        h.makeTransmitReady();
+        attachRemoteMicrophone(h, 0.3f, 1000.0);
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        media.setAudioProfileChoice(RemoteAudioProfile::Lossless);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(daemon.micReceiver() != nullptr, 5000);
+        QTRY_VERIFY(h.client.capabilities().txPermitted);
+        QVERIFY(takeTransmit(h));
+
+        const std::optional<RemoteTransmitClient::Answer> answer = keyProgram(h, programAudio);
+        QVERIFY(answer.has_value());
+        QVERIFY2(answer->accepted, qPrintable(answer->reason));
+        QTRY_VERIFY_WITH_TIMEOUT(h.station.moxController()->isMox(), 5000);
+        QTest::qWait(200);
+        pushProgramChunks(media, 15, 0.25f);
+        // Ends inside the program's hold: what follows it is not this case.
+        h.client.remoteTransmit()->unkeyForProgram(answer->epoch);
+        RemoteMicFeed* feed = h.station.remoteMicFeed();
+        QVERIFY(feed != nullptr);
+        const std::vector<float> heard = pullFeed(feed, 900);
+        const float lowest = *std::min_element(heard.begin(), heard.end());
+        const float highest = *std::max_element(heard.begin(), heard.end());
+        QVERIFY2(highest > 0.2f, qPrintable(QString::number(highest)));   // the program came
+        if (programAudio) {
+            QVERIFY2(lowest > -0.05f, qPrintable(QString::number(lowest)));
+        } else {
+            QVERIFY2(lowest < -0.2f, qPrintable(QString::number(lowest)));
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // Case C: the program's audio stops for longer than its hold during
+    // the key: the line keeps going with silence, never the tone. The same
+    // key without ",tci" hears the tone in the lapse, so the check can fail.
+    void aProgramAudioLapseSendsSilenceNotTheMicrophone_data()
+    {
+        QTest::addColumn<bool>("programAudio");
+        QTest::newRow("tci") << true;
+        QTest::newRow("plain") << false;
+    }
+
+    void aProgramAudioLapseSendsSilenceNotTheMicrophone()
+    {
+        QFETCH(bool, programAudio);
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        h.pairWindow = true;
+        h.makeTransmitReady();
+        attachRemoteMicrophone(h, 0.3f, 1000.0);
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        media.setAudioProfileChoice(RemoteAudioProfile::Lossless);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(daemon.micReceiver() != nullptr, 5000);
+        QTRY_VERIFY(h.client.capabilities().txPermitted);
+        QVERIFY(takeTransmit(h));
+
+        const std::optional<RemoteTransmitClient::Answer> answer = keyProgram(h, programAudio);
+        QVERIFY(answer.has_value());
+        QVERIFY2(answer->accepted, qPrintable(answer->reason));
+        QTRY_VERIFY_WITH_TIMEOUT(h.station.moxController()->isMox(), 5000);
+        pushProgramChunks(media, 10, 0.25f);
+        // The lapse: past the hold, the line goes on at real time.
+        QTest::qWait(RemoteMediaController::kProgramAudioHoldMs + 50);
+        const quint64 lapseStart = media.micPacketsSent();
+        QTest::qWait(300);
+        const quint64 lapsed = media.micPacketsSent() - lapseStart;
+        QVERIFY2(lapsed >= 300 / (PcmAudioCodecConfig::kPacketFrames / 48) - 5,
+                 qPrintable(QString::number(lapsed)));
+        pushProgramChunks(media, 5, 0.25f);
+        h.client.remoteTransmit()->unkeyForProgram(answer->epoch);
+        RemoteMicFeed* feed = h.station.remoteMicFeed();
+        QVERIFY(feed != nullptr);
+        const std::vector<float> heard = pullFeed(feed, 1200);
+        const float lowest = *std::min_element(heard.begin(), heard.end());
+        if (programAudio) {
+            QVERIFY2(lowest > -0.05f, qPrintable(QString::number(lowest)));
+        } else {
+            QVERIFY2(lowest < -0.2f, qPrintable(QString::number(lowest)));
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // Case D: after a program key with its own audio ends, a screen key
+    // sends the microphone again; nothing stays silenced.
+    void aScreenKeyAfterAProgramAudioKeySendsTheMicrophone()
+    {
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        h.pairWindow = true;
+        h.makeTransmitReady();
+        attachRemoteMicrophone(h, 0.3f, 1000.0);
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(daemon.micReceiver() != nullptr, 5000);
+        QTRY_VERIFY(h.client.capabilities().txPermitted);
+        QVERIFY(takeTransmit(h));
+
+        const std::optional<RemoteTransmitClient::Answer> answer = keyProgram(h, true);
+        QVERIFY(answer.has_value());
+        QVERIFY2(answer->accepted, qPrintable(answer->reason));
+        QTRY_VERIFY_WITH_TIMEOUT(h.station.moxController()->isMox(), 5000);
+        h.client.remoteTransmit()->unkeyForProgram(answer->epoch);
+        QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
+        QVERIFY(!media.micUplinkRunning());
+        QVERIFY(!h.client.remoteTransmit()->programAudioKey());
+
+        RemoteMicFeed* feed = h.station.remoteMicFeed();
+        QVERIFY(feed != nullptr);
+        const QByteArray micDevice = daemon.micDeviceId();
+        h.station.setRemoteMicPriming(micDevice, true);
+        QVERIFY(feed->inUse());
+        media.setMicKeyDown(true);
+        QVERIFY(media.micUplinkRunning());
+        QTRY_VERIFY_WITH_TIMEOUT(feed->framesSinceInUse() >= 4 * RemoteMicConfig::kTargetDepthFrames,
+                                 5000);
+        const double mic = pumpRms(feed, 40, 20);
+        QVERIFY2(mic > 0.1, qPrintable(QString::number(mic)));
+        media.setMicKeyDown(false);
+        h.station.setRemoteMicPriming(micDevice, false);
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // Case F: a capture in Failed is retried once when a key starts the
+    // line with the microphone, never on later pumps and never for a
+    // program key that brings its own audio.
+    void aFailedCaptureRetriesOnceForAKeyThatSendsTheMicrophone()
+    {
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        h.pairWindow = true;
+        h.makeTransmitReady();
+        AudioEngine* engine = h.remote.audioEngine();
+        CaptureSupervisor::Options options;
+        options.program = QDir(h.directory.path()).filePath(QStringLiteral("no-capture-helper"));
+        engine->setCaptureSupervisorOptionsForTest(options);
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        QTRY_VERIFY(h.client.capabilities().txPermitted);
+        // Demand that outlives every key, so only a retry starts a new
+        // generation.
+        CaptureSupervisor::Lease held = engine->acquireCaptureDemand(
+            CaptureSupervisor::Demand::TestMic);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state,
+                                  CaptureSupervisor::Status::State::Failed, 5000);
+        const quint32 failed = engine->captureStatus().generation;
+
+        // A program key with its own audio: no retry. With the local
+        // preview off the line holds no capture lease at all, and the key
+        // still sends its silence.
+        h.remote.transmitModel().setMicSource(MicSource::Vax);
+        QTRY_VERIFY(!media.micCaptureLeaseHeldForTest());
+        QVERIFY(takeTransmit(h));
+        const quint64 beforeProgram = media.micPacketsSent();
+        const std::optional<RemoteTransmitClient::Answer> answer = keyProgram(h, true);
+        QVERIFY(answer.has_value());
+        QVERIFY2(answer->accepted, qPrintable(answer->reason));
+        QVERIFY(media.micUplinkRunning());
+        QVERIFY(!media.micCaptureLeaseHeldForTest());
+        QTRY_VERIFY_WITH_TIMEOUT(media.micPacketsSent() >= beforeProgram + 10, 5000);
+        QCOMPARE(engine->captureStatus().generation, failed);
+        QCOMPARE(engine->captureStatus().state, CaptureSupervisor::Status::State::Failed);
+        h.client.remoteTransmit()->unkeyForProgram(answer->epoch);
+        QTRY_VERIFY(!media.micUplinkRunning());
+        // The program key ended at the Core before the next leg.
+        QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
+        QVERIFY(!h.client.remoteTransmit()->micKeyDown());
+
+        // The preview back on: the lease is held again before the key, so
+        // the key's start is what retries.
+        h.remote.transmitModel().setMicSource(MicSource::Pc);
+        QTRY_VERIFY(media.micCaptureLeaseHeldForTest());
+        QCOMPARE(engine->captureStatus().generation, failed);
+
+        // A key that sends the microphone: one retry, on its start.
+        media.setMicKeyDown(true);
+        QVERIFY(media.micUplinkRunning());
+        QTRY_VERIFY_WITH_TIMEOUT(engine->captureStatus().generation > failed, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state,
+                                  CaptureSupervisor::Status::State::Failed, 5000);
+        const quint32 retried = engine->captureStatus().generation;
+        // Many pumps later, still that one retry.
+        QTest::qWait(30 * RemoteMediaController::kMicPumpIntervalMs);
+        QCOMPARE(engine->captureStatus().generation, retried);
+        media.setMicKeyDown(false);
+        held.release();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // Case G: a program key's silence is paced by the clock, not by pump
+    // ticks: it starts with the Core's target depth at once, follows real
+    // time, sends at most the Core's deepest buffer after a 300 ms stall,
+    // and is back at real time after it.
+    void programSilenceIsPacedByTheClockAndBoundedAfterAStall()
+    {
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        h.pairWindow = true;
+        h.makeTransmitReady();
+        auto microphone = std::make_unique<FakeAudioBus>();
+        QVERIFY(microphone->open(AudioFormat{48000, 1, AudioFormat::Sample::Float32}));
+        h.remote.audioEngine()->setTxInputBusForTest(std::move(microphone));
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        media.setAudioProfileChoice(RemoteAudioProfile::Opus);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(daemon.micReceiver() != nullptr, 5000);
+        QTRY_VERIFY(h.client.capabilities().txPermitted);
+        QVERIFY(takeTransmit(h));
+        qint64 nowMs = 100000;
+        media.setMicClockForTest([&nowMs] { return nowMs; });
+        constexpr int kPacketMs = RemoteMicConfig::kOpusFrameSamples / 48;   // 20 ms
+
+        // The start: the Core's target depth (30 ms) at once, in whole
+        // packets: two, before any pump.
+        const quint64 idle = media.micPacketsSent();
+        std::optional<RemoteTransmitClient::Answer> answer;
+        h.client.remoteTransmit()->keyForProgram(true,
+            [&answer](const RemoteTransmitClient::Answer& a) { answer = a; });
+        QVERIFY(media.micUplinkRunning());
+        QCOMPARE(media.micPacketsSent() - idle, quint64(2));
+        // Pumps with the clock standing still send nothing more.
+        QTest::qWait(5 * RemoteMediaController::kMicPumpIntervalMs);
+        QCOMPARE(media.micPacketsSent() - idle, quint64(2));
+        QElapsedTimer waited;
+        waited.start();
+        while (!answer && waited.elapsed() < 5000) {
+            nowMs += 10;
+            QTest::qWait(10);
+        }
+        QVERIFY(answer.has_value());
+        QVERIFY2(answer->accepted, qPrintable(answer->reason));
+
+        // Real time on the clock: one packet per 20 ms of it.
+        const auto sentOver = [&](int steps) {
+            const quint64 before = media.micPacketsSent();
+            for (int i = 0; i < steps; ++i) {
+                nowMs += 10;
+                QTest::qWait(2 * RemoteMediaController::kMicPumpIntervalMs);
+            }
+            return qint64(media.micPacketsSent() - before);
+        };
+        qint64 steady = sentOver(20);
+        QVERIFY2(steady >= 200 / kPacketMs - 1 && steady <= 200 / kPacketMs + 1,
+                 qPrintable(QString::number(steady)));
+
+        // A 300 ms stall: the next pump sends at most kMaxDepthMs of
+        // silence (six packets), not the 300 ms the clock moved.
+        const quint64 beforeStall = media.micPacketsSent();
+        nowMs += 300;
+        QTest::qWait(5 * RemoteMediaController::kMicPumpIntervalMs);
+        const qint64 caughtUp = qint64(media.micPacketsSent() - beforeStall);
+        QVERIFY2(caughtUp >= RemoteMicConfig::kMaxDepthMs / kPacketMs - 1
+                     && caughtUp <= RemoteMicConfig::kMaxDepthMs / kPacketMs,
+                 qPrintable(QString::number(caughtUp)));
+
+        // Back at real time.
+        steady = sentOver(20);
+        QVERIFY2(steady >= 200 / kPacketMs - 1 && steady <= 200 / kPacketMs + 1,
+                 qPrintable(QString::number(steady)));
+
+        media.setMicClockForTest({});
+        h.client.remoteTransmit()->unkeyForProgram(answer->epoch);
+        QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-09 (review item 1): the end of a program key reaches the line
+    // as key-down off, then holds-transmit off. Between them, with the
+    // program's audio lapsed past its hold and the capture holding a tone,
+    // nothing is sent: no microphone sample follows the program key.
+    void aProgramAudioUnkeySendsNoMicrophone()
+    {
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        h.pairWindow = true;
+        h.makeTransmitReady();
+        auto microphone = std::make_unique<FakeAudioBus>();
+        QVERIFY(microphone->open(AudioFormat{48000, 1, AudioFormat::Sample::Float32}));
+        FakeAudioBus* capture = microphone.get();
+        h.remote.audioEngine()->setTxInputBusForTest(std::move(microphone));
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        media.setAudioProfileChoice(RemoteAudioProfile::Lossless);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(daemon.micReceiver() != nullptr, 5000);
+        QTRY_VERIFY(h.client.capabilities().txPermitted);
+        QVERIFY(takeTransmit(h));
+        // The local preview holds the capture, as it does by default.
+        QTRY_VERIFY(media.micCaptureLeaseHeldForTest());
+
+        const std::optional<RemoteTransmitClient::Answer> answer = keyProgram(h, true);
+        QVERIFY(answer.has_value());
+        QVERIFY2(answer->accepted, qPrintable(answer->reason));
+        QTRY_VERIFY_WITH_TIMEOUT(h.station.moxController()->isMox(), 5000);
+        pushProgramChunks(media, 5, 0.25f);
+        QTest::qWait(RemoteMediaController::kProgramAudioHoldMs + 100);
+
+        // 200 ms of tone waiting in the capture as the key ends.
+        capture->setPullData(toneBytes(9600, 0.3f));
+        const quint64 before = media.micPacketsSent();
+        h.client.remoteTransmit()->unkeyForProgram(answer->epoch);
+        QVERIFY(!media.micUplinkRunning());
+        QCOMPARE(media.micPacketsSent(), before);
+
+        RemoteMicFeed* feed = h.station.remoteMicFeed();
+        QVERIFY(feed != nullptr);
+        const std::vector<float> heard = pullFeed(feed, 1200);
+        const float lowest = *std::min_element(heard.begin(), heard.end());
+        QVERIFY2(lowest > -0.05f, qPrintable(QString::number(lowest)));
+        QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-09 (review item 2): the link lost in the middle of a program
+    // key's silence; the next program key starts with the Core's target
+    // depth (two Opus packets), not a capped burst of the old key's debt.
+    void aLinkLossDuringProgramSilenceLeavesTheNextKeyItsLead()
+    {
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        h.pairWindow = true;
+        h.makeTransmitReady();
+        auto microphone = std::make_unique<FakeAudioBus>();
+        QVERIFY(microphone->open(AudioFormat{48000, 1, AudioFormat::Sample::Float32}));
+        h.remote.audioEngine()->setTxInputBusForTest(std::move(microphone));
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        media.setAudioProfileChoice(RemoteAudioProfile::Opus);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(daemon.micReceiver() != nullptr, 5000);
+        QTRY_VERIFY(h.client.capabilities().txPermitted);
+        QVERIFY(takeTransmit(h));
+        qint64 nowMs = 100000;
+        media.setMicClockForTest([&nowMs] { return nowMs; });
+
+        std::optional<RemoteTransmitClient::Answer> answer;
+        h.client.remoteTransmit()->keyForProgram(true,
+            [&answer](const RemoteTransmitClient::Answer& a) { answer = a; });
+        QVERIFY(media.micUplinkRunning());
+        QElapsedTimer waited;
+        waited.start();
+        while (!answer && waited.elapsed() < 5000) {
+            nowMs += 10;
+            QTest::qWait(10);
+        }
+        QVERIFY(answer.has_value());
+        QVERIFY2(answer->accepted, qPrintable(answer->reason));
+        for (int i = 0; i < 10; ++i) {
+            nowMs += 10;
+            QTest::qWait(2 * RemoteMediaController::kMicPumpIntervalMs);
+        }
+
+        // The link goes in the middle of the key.
+        h.stationLink->closeLink(QStringLiteral("link lost"));
+        QTRY_VERIFY_WITH_TIMEOUT(!media.micUplinkRunning(), 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
+        nowMs += 5000;
+
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(daemon.micReceiver() != nullptr, 5000);
+        QTRY_VERIFY(h.client.capabilities().txPermitted);
+        QVERIFY(takeTransmit(h));
+        const quint64 idle = media.micPacketsSent();
+        std::optional<RemoteTransmitClient::Answer> next;
+        h.client.remoteTransmit()->keyForProgram(true,
+            [&next](const RemoteTransmitClient::Answer& a) { next = a; });
+        QVERIFY(media.micUplinkRunning());
+        QCOMPARE(media.micPacketsSent() - idle, quint64(2));
+        QTest::qWait(5 * RemoteMediaController::kMicPumpIntervalMs);
+        QCOMPARE(media.micPacketsSent() - idle, quint64(2));
+
+        media.setMicClockForTest({});
+        QTRY_VERIFY_WITH_TIMEOUT(next.has_value(), 5000);
+        if (next->accepted) {
+            h.client.remoteTransmit()->unkeyForProgram(next->epoch);
+            QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
+        }
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-09 (review item 3): a capture in Failed with no demand at
+    // all: a key that sends the microphone takes the lease, which opens a
+    // new generation by itself; no retry opens a second one.
+    void aFailedCaptureFromNoDemandStartsOneGeneration()
+    {
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        h.pairWindow = true;
+        h.makeTransmitReady();
+        AudioEngine* engine = h.remote.audioEngine();
+        CaptureSupervisor::Options options;
+        options.program = QDir(h.directory.path()).filePath(QStringLiteral("no-capture-helper"));
+        engine->setCaptureSupervisorOptionsForTest(options);
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        QTRY_VERIFY(h.client.capabilities().txPermitted);
+        // The preview's own generation has failed by now.
+        QTRY_VERIFY_WITH_TIMEOUT(engine->captureStatus().generation > 0
+                                     && engine->captureStatus().state
+                                            == CaptureSupervisor::Status::State::Failed,
+                                 5000);
+        // No local preview: nothing of this window demands the capture.
+        h.remote.transmitModel().setMicSource(MicSource::Vax);
+        QTRY_VERIFY(!media.micCaptureLeaseHeldForTest());
+        {
+            // A demand of its own opens (and fails) a generation, then goes.
+            const quint32 previewed = engine->captureStatus().generation;
+            CaptureSupervisor::Lease probe = engine->acquireCaptureDemand(
+                CaptureSupervisor::Demand::TestMic);
+            QTRY_VERIFY_WITH_TIMEOUT(engine->captureStatus().generation > previewed, 5000);
+            QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state,
+                                      CaptureSupervisor::Status::State::Failed, 5000);
+        }
+        QTest::qWait(50);
+        QCOMPARE(engine->captureStatus().state, CaptureSupervisor::Status::State::Failed);
+        const quint32 failed = engine->captureStatus().generation;
+
+        media.setMicKeyDown(true);
+        QVERIFY(media.micUplinkRunning());
+        QVERIFY(media.micCaptureLeaseHeldForTest());
+        QTRY_VERIFY_WITH_TIMEOUT(engine->captureStatus().generation > failed, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state,
+                                  CaptureSupervisor::Status::State::Failed, 5000);
+        QTest::qWait(30 * RemoteMediaController::kMicPumpIntervalMs);
+        QCOMPARE(engine->captureStatus().generation, failed + 1);
+        media.setMicKeyDown(false);
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-09 (fix round 2): a capture in Failed held open by another
+    // demand (Test Mic here) while this window holds no lease: a key that
+    // sends the microphone takes a lease, which opens nothing by itself,
+    // so the key retries once: exactly one new generation.
+    void aFailedCaptureHeldByAnotherDemandRetriesOnceForAKey()
+    {
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        h.pairWindow = true;
+        h.makeTransmitReady();
+        AudioEngine* engine = h.remote.audioEngine();
+        CaptureSupervisor::Options options;
+        options.program = QDir(h.directory.path()).filePath(QStringLiteral("no-capture-helper"));
+        engine->setCaptureSupervisorOptionsForTest(options);
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        QTRY_VERIFY(h.client.capabilities().txPermitted);
+        // The preview's own generation has failed by now.
+        QTRY_VERIFY_WITH_TIMEOUT(engine->captureStatus().generation > 0
+                                     && engine->captureStatus().state
+                                            == CaptureSupervisor::Status::State::Failed,
+                                 5000);
+        // No local preview: this window holds no lease.
+        h.remote.transmitModel().setMicSource(MicSource::Vax);
+        QTRY_VERIFY(!media.micCaptureLeaseHeldForTest());
+        const quint32 previewed = engine->captureStatus().generation;
+        CaptureSupervisor::Lease other = engine->acquireCaptureDemand(
+            CaptureSupervisor::Demand::TestMic);
+        QTRY_VERIFY_WITH_TIMEOUT(engine->captureStatus().generation > previewed, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state,
+                                  CaptureSupervisor::Status::State::Failed, 5000);
+        const quint32 failed = engine->captureStatus().generation;
+
+        media.setMicKeyDown(true);
+        QVERIFY(media.micUplinkRunning());
+        QVERIFY(media.micCaptureLeaseHeldForTest());
+        QTRY_VERIFY_WITH_TIMEOUT(engine->captureStatus().generation > failed, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state,
+                                  CaptureSupervisor::Status::State::Failed, 5000);
+        QTest::qWait(30 * RemoteMediaController::kMicPumpIntervalMs);
+        QCOMPARE(engine->captureStatus().generation, failed + 1);
+        media.setMicKeyDown(false);
+        other.release();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-09 (fix round 2): only the media connection is lost in the
+    // middle of a program key's silence; the control session and the key
+    // survive it, and the line stops with the media. The window then
+    // recovers as it does (a new session); the next program key starts
+    // with the Core's target depth (two Opus packets), not a capped burst
+    // of the old key's debt.
+    void aMediaLossDuringProgramSilenceLeavesTheNextKeyItsLead()
+    {
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        h.pairWindow = true;
+        h.makeTransmitReady();
+        auto microphone = std::make_unique<FakeAudioBus>();
+        QVERIFY(microphone->open(AudioFormat{48000, 1, AudioFormat::Sample::Float32}));
+        h.remote.audioEngine()->setTxInputBusForTest(std::move(microphone));
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        media.setAudioProfileChoice(RemoteAudioProfile::Opus);
+        QSignalSpy recoveries(&media, &RemoteMediaController::recoveryRequested);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(daemon.micReceiver() != nullptr, 5000);
+        QTRY_VERIFY(h.client.capabilities().txPermitted);
+        QVERIFY(takeTransmit(h));
+        qint64 nowMs = 100000;
+        media.setMicClockForTest([&nowMs] { return nowMs; });
+
+        std::optional<RemoteTransmitClient::Answer> answer;
+        h.client.remoteTransmit()->keyForProgram(true,
+            [&answer](const RemoteTransmitClient::Answer& a) { answer = a; });
+        QVERIFY(media.micUplinkRunning());
+        QElapsedTimer waited;
+        waited.start();
+        while (!answer && waited.elapsed() < 5000) {
+            nowMs += 10;
+            QTest::qWait(10);
+        }
+        QVERIFY(answer.has_value());
+        QVERIFY2(answer->accepted, qPrintable(answer->reason));
+        for (int i = 0; i < 10; ++i) {
+            nowMs += 10;
+            QTest::qWait(2 * RemoteMediaController::kMicPumpIntervalMs);
+        }
+
+        // Only the media connection goes; the session and the key stay.
+        media.dropMediaPeerForTest();
+        QCOMPARE(recoveries.size(), 1);
+        QVERIFY(!media.micUplinkRunning());
+        QVERIFY(h.client.isHandshakeComplete());
+        QVERIFY(h.client.remoteTransmit()->programAudioKey());
+        nowMs += 5000;
+
+        // The window's recovery: a new session (RemoteConnectionController
+        // answers recoveryRequested with a disconnect and a reconnect).
+        h.client.disconnectFromStation(QStringLiteral("station media connection closed"));
+        QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(daemon.micReceiver() != nullptr, 5000);
+        QTRY_VERIFY(h.client.capabilities().txPermitted);
+        QVERIFY(takeTransmit(h));
+        const quint64 idle = media.micPacketsSent();
+        std::optional<RemoteTransmitClient::Answer> next;
+        h.client.remoteTransmit()->keyForProgram(true,
+            [&next](const RemoteTransmitClient::Answer& a) { next = a; });
+        QVERIFY(media.micUplinkRunning());
+        QCOMPARE(media.micPacketsSent() - idle, quint64(2));
+        QTest::qWait(5 * RemoteMediaController::kMicPumpIntervalMs);
+        QCOMPARE(media.micPacketsSent() - idle, quint64(2));
+
+        media.setMicClockForTest({});
+        QTRY_VERIFY_WITH_TIMEOUT(next.has_value(), 5000);
+        if (next->accepted) {
+            h.client.remoteTransmit()->unkeyForProgram(next->epoch);
+            QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
+        }
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-09 (review item 6): VOX armed holds the capture lease; a
+    // program key with its own audio comes and goes and the lease stays
+    // held throughout, with no capture generation restarted.
+    void aProgramAudioKeyKeepsTheLeaseVoxHolds()
+    {
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        h.pairWindow = true;
+        h.makeTransmitReady();
+        AudioEngine* engine = h.remote.audioEngine();
+        CaptureSupervisor::Options options;
+        options.program = QDir(h.directory.path()).filePath(QStringLiteral("no-capture-helper"));
+        engine->setCaptureSupervisorOptionsForTest(options);
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(daemon.micReceiver() != nullptr, 5000);
+        QTRY_VERIFY(h.client.capabilities().txPermitted);
+        // The preview's own generation has failed by now.
+        QTRY_VERIFY_WITH_TIMEOUT(engine->captureStatus().generation > 0
+                                     && engine->captureStatus().state
+                                            == CaptureSupervisor::Status::State::Failed,
+                                 5000);
+        // No local preview: only VOX holds the lease.
+        h.remote.transmitModel().setMicSource(MicSource::Vax);
+        QTRY_VERIFY(!media.micCaptureLeaseHeldForTest());
+        QVERIFY(takeTransmit(h));
+        const quint32 previewed = engine->captureStatus().generation;
+
+        // VOX takes the lease from no demand: one new generation, Failed.
+        media.setVoxArmed(true);
+        QVERIFY(media.micUplinkRunning());
+        QVERIFY(media.micCaptureLeaseHeldForTest());
+        QTRY_VERIFY_WITH_TIMEOUT(engine->captureStatus().generation > previewed, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state,
+                                  CaptureSupervisor::Status::State::Failed, 5000);
+        const quint32 generation = engine->captureStatus().generation;
+
+        std::optional<RemoteTransmitClient::Answer> answer;
+        h.client.remoteTransmit()->keyForProgram(true,
+            [&answer](const RemoteTransmitClient::Answer& a) { answer = a; });
+        QVERIFY(h.client.remoteTransmit()->programAudioKey());
+        QVERIFY(media.micCaptureLeaseHeldForTest());
+        QTRY_VERIFY_WITH_TIMEOUT(answer.has_value(), 5000);
+        QVERIFY2(answer->accepted, qPrintable(answer->reason));
+        QTest::qWait(20 * RemoteMediaController::kMicPumpIntervalMs);
+        QVERIFY(media.micCaptureLeaseHeldForTest());
+        h.client.remoteTransmit()->unkeyForProgram(answer->epoch);
+        QVERIFY(media.micCaptureLeaseHeldForTest());
+        QVERIFY(media.micUplinkRunning());
+        QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
+        QTest::qWait(30 * RemoteMediaController::kMicPumpIntervalMs);
+        QVERIFY(media.micCaptureLeaseHeldForTest());
+        QCOMPARE(engine->captureStatus().generation, generation);
+        QCOMPARE(engine->captureStatus().state, CaptureSupervisor::Status::State::Failed);
+
+        media.setVoxArmed(false);
+        QVERIFY(!media.micUplinkRunning());
+        QVERIFY(!media.micCaptureLeaseHeldForTest());
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
     // R-R3-45: every new string the headphones add is in the operator's words.
     void headphonesWordingIsPlain()
     {
@@ -10251,6 +11078,18 @@ const QStringList kAudioFunctions{
     QStringLiteral("micLineOnlyWithACoreThatTakesTheMicrophone"),
     QStringLiteral("micUplinkRunsOnlyWhileTransmittingOrVoxArmed"),
     QStringLiteral("microphoneAndProgramReachTheCoresRing"),
+    QStringLiteral("aProgramAudioKeyWithNoMicrophoneIsAdmittedOnSilence"),
+    QStringLiteral("aProgramAudioKeyNeverSendsTheMicrophone"),
+    QStringLiteral("aProgramAudioLapseSendsSilenceNotTheMicrophone"),
+    QStringLiteral("aScreenKeyAfterAProgramAudioKeySendsTheMicrophone"),
+    QStringLiteral("aFailedCaptureRetriesOnceForAKeyThatSendsTheMicrophone"),
+    QStringLiteral("programSilenceIsPacedByTheClockAndBoundedAfterAStall"),
+    QStringLiteral("aProgramAudioUnkeySendsNoMicrophone"),
+    QStringLiteral("aLinkLossDuringProgramSilenceLeavesTheNextKeyItsLead"),
+    QStringLiteral("aFailedCaptureFromNoDemandStartsOneGeneration"),
+    QStringLiteral("aProgramAudioKeyKeepsTheLeaseVoxHolds"),
+    QStringLiteral("aFailedCaptureHeldByAnotherDemandRetriesOnceForAKey"),
+    QStringLiteral("aMediaLossDuringProgramSilenceLeavesTheNextKeyItsLead"),
     QStringLiteral("headphonesWordingIsPlain"),
     QStringLiteral("transmitSilenceWaitsForTheUnkeyAndResumesAtOnce"),
     QStringLiteral("transmitSilenceFromAnOlderCoreBacksOffAsBefore"),

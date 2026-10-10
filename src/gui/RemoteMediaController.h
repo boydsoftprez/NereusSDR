@@ -13,6 +13,14 @@
 //               so a signal of it is found from outside the DLL on
 //               Windows. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-08: TCI program keys that bring their own audio: the
+//               microphone line carries that audio or silence paced at
+//               48 kHz, never the microphone; a failed capture retries
+//               once on a key that sends the microphone.
+//               setMicClockForTest. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-09: micCaptureLeaseHeldForTest, dropMediaPeerForTest. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07: R-R3-21, R-R3-51: raiseAudioRestartForTest, and a
 //               no-packets restart while the Core transmits waits for the
 //               unkey, which asks for audio at once. J.J. Boyd (KG4VCF),
@@ -422,6 +430,8 @@ public:
     /// How often the uplink moves captured audio to the line.
     static constexpr int kMicPumpIntervalMs = 10;
     /// How long after the last program audio the microphone is heard again.
+    /// A program key that brings its own audio (programAudioKey()) never
+    /// hears the microphone: silence follows its audio instead.
     static constexpr int kProgramAudioHoldMs = 200;
     /// R-R3-37: how long a pan in budget mode may wait for the Core's first
     /// answer before it says "Waiting for the Core". A Core that answers
@@ -514,6 +524,17 @@ public:
     /// clock as well. It is read on each stream's receive worker, so it
     /// must be safe to call from any thread. No production caller.
     void setReceiverAudioClockForTest(RemoteAudioReceiver::Clock clock);
+    /// Test only: the clock, in ms, that paces a program key's silence and
+    /// times its audio hold (the controller's own elapsed clock when unset),
+    /// so a test can stall the pump without waiting. No production caller.
+    void setMicClockForTest(std::function<qint64()> clock);
+    /// Test only: whether the microphone line holds its capture lease
+    /// (2026-10-09). No production caller.
+    bool micCaptureLeaseHeldForTest() const;
+    /// Test only: the current media peer reports itself closed, as a lost
+    /// media connection does, while the control session stays up
+    /// (2026-10-09). No production caller.
+    void dropMediaPeerForTest();
     /// iPhone app plan Task 29 fix wave (review Important 1): media follows
     /// every move of the session. A move marks a replacement pending; it
     /// starts as soon as it can (the media connection ready, unkeyed, VOX
@@ -658,6 +679,13 @@ private:
     void noteMicLine();
     /// Sends the whole packets `pending` holds and keeps the rest.
     void sendMicAudio(std::vector<float>& pending);
+    /// The microphone line sends lossless packets now (else Opus).
+    bool micLineLossless() const;
+    /// The microphone line's clock in ms (setMicClockForTest).
+    qint64 micNowMs() const;
+    /// 2026-10-08: a program key's silence owed by `nowMs`, at 48 kHz,
+    /// appended to the program's pending audio.
+    void queueProgramSilence(qint64 nowMs);
     void receiveClockEcho(const QJsonObject& payload, qint64 receivedNs);
     bool send(QJsonObject payload);
     // iPhone app plan Task 29: a peer's callbacks as the current peer, one

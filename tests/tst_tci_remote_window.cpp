@@ -60,6 +60,11 @@
 //                                    the Core's list, and mon_volume
 //                                    changes the Core's monitor level.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  TCI program keys that send silence:
+//                                    the forwarded key says whether the
+//                                    app's trx carried ",tci"
+//                                    (programAudio). AI-assisted via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 #ifdef HAVE_WEBSOCKETS
@@ -376,14 +381,18 @@ int alignedStart(const QVector<float>& earlier, const QVector<float>& later)
 // a key when the test says.
 struct FakeCoreTransmit {
     int keys = 0;
+    /// Each key's programAudio, in order.
+    QList<bool> programAudio;
     QList<quint32> unkeys;
     std::function<void(const TciServer::RemoteKeyAnswer&)> pending;
 
     TciServer::RemoteTransmit forwarder()
     {
         TciServer::RemoteTransmit forward;
-        forward.key = [this](std::function<void(const TciServer::RemoteKeyAnswer&)> answer) {
+        forward.key = [this](bool withProgramAudio,
+                             std::function<void(const TciServer::RemoteKeyAnswer&)> answer) {
             ++keys;
+            programAudio << withProgramAudio;
             pending = std::move(answer);
         };
         forward.unkey = [this](quint32 epoch) { unkeys << epoch; };
@@ -1123,6 +1132,39 @@ private slots:
         }
         QTRY_COMPARE_WITH_TIMEOUT(core.unkeys, QList<quint32>{21u}, 3000);
         QCOMPARE(tci.remoteKeyEpoch(), 0u);
+        tci.stop();
+    }
+
+    // 2026-10-08: trx:0,true,tci; says the app's own audio follows on the
+    // TX audio stream (programAudio true); trx:0,true; does not (false).
+    void aProgramKeySaysWhetherItsAudioFollows_data()
+    {
+        QTest::addColumn<QString>("trx");
+        QTest::addColumn<bool>("programAudio");
+        QTest::newRow("tci") << QStringLiteral("trx:0,true,tci;") << true;
+        QTest::newRow("plain") << QStringLiteral("trx:0,true;") << false;
+    }
+
+    void aProgramKeySaysWhetherItsAudioFollows()
+    {
+        QFETCH(QString, trx);
+        QFETCH(bool, programAudio);
+        RadioModel remote(RadioModel::Role::Remote);
+        TciServer tci(&remote);
+        FakeCoreTransmit core;
+        tci.setRemoteTransmit(core.forwarder());
+        QVERIFY(tci.start(0));
+        QWebSocket app;
+        QSignalSpy text(&app, &QWebSocket::textMessageReceived);
+        QVERIFY(connectClient(app, tci.port()));
+        QTRY_VERIFY_WITH_TIMEOUT(texts(text).contains(QStringLiteral("ready;")), 3000);
+        app.sendTextMessage(trx);
+        QTRY_COMPARE_WITH_TIMEOUT(core.keys, 1, 3000);
+        QCOMPARE(core.programAudio, QList<bool>{programAudio});
+        core.accept(31);
+        app.sendTextMessage(QStringLiteral("trx:0,false;"));
+        QTRY_COMPARE_WITH_TIMEOUT(core.unkeys, QList<quint32>{31u}, 3000);
+        app.close();
         tci.stop();
     }
 

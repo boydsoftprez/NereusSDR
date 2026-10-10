@@ -9,6 +9,9 @@
 //   2026-09-25 - Created for the desktop remote window's transmit
 //                (R-IOS-13, R-R3-42). J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-08 - TCI program keys that send silence: programAudio passes
+//                through to keyForProgram. J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/RemoteTransmitForwarder.h"
@@ -28,14 +31,16 @@ TciServer::RemoteTransmit remoteTransmitForwarder(RemoteTransmitClient* transmit
     const QPointer<RemoteTransmitClient> client(transmit);
     const QPointer<RemoteMediaController> uplink(media);
     TciServer::RemoteTransmit forward;
-    forward.key = [client](std::function<void(const TciServer::RemoteKeyAnswer&)> answer) {
+    forward.key = [client](bool programAudio,
+                           std::function<void(const TciServer::RemoteKeyAnswer&)> answer) {
         if (client.isNull()) {
             TciServer::RemoteKeyAnswer refused;
             refused.reason = QString::fromLatin1(RemoteTransmitClient::kNoLinkReason);
             if (answer) { answer(refused); }
             return;
         }
-        client->keyForProgram([answer = std::move(answer)](const RemoteTransmitClient::Answer& r) {
+        client->keyForProgram(programAudio, [answer = std::move(answer)](
+                                                const RemoteTransmitClient::Answer& r) {
             TciServer::RemoteKeyAnswer converted;
             converted.accepted = r.accepted;
             converted.epoch = r.epoch;
