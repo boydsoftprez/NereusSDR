@@ -268,6 +268,11 @@
 //               read through AudioEngine, so a Setup page does not read
 //               a key a core consumer reads. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: final review fix (R-AUD-06, R-AUD-15): Rescan's fade wait
+//               runs from a timer, not a busy wait; speakersDelayNowMs()
+//               reads the delay the DSP thread publishes, so the Core's
+//               1 s refresh never takes the speakers lock from it.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -307,6 +312,7 @@ namespace NereusSDR { class PipeWireThreadLoop; }
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <utility>
 
 class QTimer;
 
@@ -663,7 +669,9 @@ public:
     // kRescanFadeMs and the stream's callback period plus kRescanSlewMs
     // (the matcher's fade is its slew, 3 ms at most), has
     // PortAudio list its devices again and reopens those roles; a role on
-    // another engine is never closed.  Main thread.
+    // another engine is never closed.  It returns at once: the fade is
+    // waited out from a timer, so the window keeps running meanwhile.
+    // Main thread.
     static constexpr int kRescanFadeMs = 20;
     static constexpr double kRescanSlewMs = 3.0;
     IAudioDeviceCatalog* catalogue();
@@ -672,6 +680,13 @@ public:
     // The format an output role's bus plays now; nullopt while it is
     // closed, and for the mic (Task 16 fix round).
     std::optional<AudioFormat> roleFormat(AudioRole role) const;
+    // The speakers' delay now in ms (delayParts(Speakers).totalMs(), -1
+    // with none).  While the DSP thread plays, the value it published with
+    // its last block, read without the speakers lock (the lock would cost
+    // that thread a block); otherwise read under the lock.  Main thread.
+    double speakersDelayNowMs() const;
+    // A published value older than this is not used.
+    static constexpr std::int64_t kPublishedDelayFreshNs = 250'000'000;
     AudioEngineKind defaultEngine() const { return m_defaultEngine; }
 
     // ── ASIO for the Setup cards (native audio plan Task 17) ────────────
@@ -1526,6 +1541,11 @@ private:
     void onCaptureStatusForRole(const CaptureSupervisor::Status& status);
     void onSavedIdentityLearned(AudioRole role, const QString& deviceId);
     void finishOlderDriversRescan(quint64 token);
+    // Rescan's fade wait, polled from a 1 ms timer; closes the roles and
+    // starts the catalogue's rescan once every fade ends or the wait does.
+    void continueOlderDriversRescan(quint64 token);
+    // DSP thread: stores the speakers bus's delay now (speakersDelayNowMs).
+    void publishSpeakersDelay(const IAudioBus& bus);
     // Speakers, headphones and VAX only; the caller holds roleBusMutex().
     IAudioBus* roleBusLocked(AudioRole role) const;
     std::unique_ptr<IAudioBus>& roleBusSlot(AudioRole role);
@@ -1620,6 +1640,17 @@ private:
     bool m_rescanPending{false};
     bool m_rescanMic{false};
     std::vector<AudioRole> m_rescanRoles;
+    // While the fades run: each fading role with its bus generation then
+    // (a role reopened or closed meanwhile is left alone), the wait, and
+    // since when.
+    std::vector<std::pair<AudioRole, quint64>> m_rescanFading;
+    double m_rescanFadeWaitMs{0.0};
+    std::int64_t m_rescanFadeStartNs{0};
+    // R-AUD-15: the speakers' delay now, stored by the DSP thread under its
+    // own try-lock of the speakers bus, with the time it was stored (0
+    // before the first).  See speakersDelayNowMs().
+    std::atomic<double> m_speakersPublishedDelayMs{-1.0};
+    std::atomic<std::int64_t> m_speakersPublishedAtNs{0};
     // A setter's choice while the device layer is being built, used in
     // place of the saved one so the role opens once (Speakers, VAX 1-4).
     std::optional<AudioDeviceConfig> m_speakersChoiceBeforeDevices;

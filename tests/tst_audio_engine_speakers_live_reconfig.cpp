@@ -19,6 +19,10 @@
 //      start() opens it when audio/Headphones/Enabled is set and not
 //      otherwise; the Enabled box opens and closes it; it plays the
 //      headphones mix. Fake devices only.
+//   9. Native audio final review fix (2026-10-09, J.J. Boyd KG4VCF,
+//      AI-assisted via Anthropic Claude Code; R-AUD-15): the Core
+//      speaker's delay readout, polled on the main thread while the DSP
+//      thread plays, costs that thread no block.
 //
 // Uses the NEREUS_BUILD_TESTS seam (setSpeakersBusForTest,
 // setHeadphonesBusForTest). Native audio plan Task 7 fix (2026-10-09,
@@ -48,6 +52,10 @@
 #include "fakes/FakeAudioBus.h"
 #include "fakes/FakeDeviceLayer.h"
 
+#include <QElapsedTimer>
+#include <QThread>
+
+#include <atomic>
 #include <memory>
 #include <thread>
 
@@ -96,6 +104,40 @@ void useFakeVaxOnly(AudioEngine* engine)
         return bus;
     });
 }
+
+// A speakers bus whose delayParts() takes 2 ms on the main thread, as a
+// slow read under the speakers lock would; pushes are counted for the
+// DSP thread that makes them.
+class SlowDelayBus final : public FakeAudioBus {
+public:
+    explicit SlowDelayBus(QThread* mainThread)
+        : FakeAudioBus(QStringLiteral("SlowDelaySpeakers"))
+        , m_mainThread(mainThread)
+    {
+    }
+
+    qint64 push(const char* data, qint64 bytes) override
+    {
+        m_pushes.fetch_add(1);
+        return bytes > 0 && data != nullptr ? bytes : 0;
+    }
+
+    AudioDelayParts delayParts() const override
+    {
+        if (QThread::currentThread() == m_mainThread) {
+            QThread::msleep(2);
+        }
+        AudioDelayParts parts;
+        parts.matcherFillMs = 10.0;
+        return parts;
+    }
+
+    int pushes() const { return m_pushes.load(); }
+
+private:
+    QThread* m_mainThread;
+    std::atomic<int> m_pushes{0};
+};
 
 } // namespace
 
@@ -363,6 +405,58 @@ private slots:
         }
         QCOMPARE(h.speakers->pushCount(), 10);
         QCOMPARE(headphones->pushCount(), 10);
+        AppSettings::instance().clear();
+    }
+
+    // ── 9. R-AUD-15: the Core speaker's delay readout ──────────────────────
+    //
+    // RadioModel's 1 s Core speaker refresh reads speakersDelayNowMs().
+    // Read under the speakers lock it would make the DSP thread's try-lock
+    // fail and drop a block; while that thread plays it is read from what
+    // the thread published.  Every block sent is pushed.
+    void coreSpeakerDelayReadCostsTheDspNoBlock() {
+        AppSettings::instance().clear();
+        auto radio = std::make_unique<RadioModel>();
+        AudioEngine* engine = radio->audioEngine();
+        useFakeDevices(engine, nullptr);
+        radio->configureStreamPool(/*userDdcCount*/ 5, /*maxSlices*/ 5,
+                                   /*defaultRateHz*/ 192000);
+        auto owned = std::make_unique<SlowDelayBus>(QThread::currentThread());
+        AudioFormat fmt;
+        fmt.sampleRate = 48000;
+        fmt.channels = 2;
+        fmt.sample = AudioFormat::Sample::Float32;
+        owned->open(fmt);
+        SlowDelayBus* bus = owned.get();
+        engine->setSpeakersBusForTest(std::move(owned));
+        const int s = radio->addSlice();
+
+        constexpr int kBlocks = 400;
+        std::atomic<bool> done{false};
+        std::thread dsp([&] {
+            for (int i = 0; i < kBlocks; ++i) {
+                engine->rxBlockReady(s, kSamples, kFrames);
+                QThread::usleep(250);
+            }
+            done.store(true);
+        });
+        QElapsedTimer started;
+        started.start();
+        while (bus->pushes() == 0 && started.elapsed() < 5000) {
+            QThread::usleep(100);
+        }
+        int polls = 0;
+        double last = -1.0;
+        while (!done.load()) {
+            last = engine->speakersDelayNowMs();
+            ++polls;
+            QThread::usleep(100);
+        }
+        dsp.join();
+
+        QVERIFY(polls > 10);
+        QCOMPARE(last, 10.0);
+        QCOMPARE(bus->pushes(), kBlocks);
         AppSettings::instance().clear();
     }
 };

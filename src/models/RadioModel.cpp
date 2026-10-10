@@ -1052,6 +1052,10 @@
 //                radioSpeakerToolTip (R-SPK-06, R-SPK-13, R-SPK-14,
 //                R-SPK-16). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-09 - Native audio final review fix (R-AUD-15): the Core
+//                speaker's delay now is read through speakersDelayNowMs(),
+//                which takes no lock the DSP thread contends for. J.J.
+//                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -21123,7 +21127,7 @@ void RadioModel::refreshCoreSpeaker()
     const bool playing = status.state == AudioRoleState::Playing
                          || status.state == AudioRoleState::PlayingOnDefault;
     details.negotiated = playing ? m_coreSpeakerNegotiated : QString();
-    const double delayNow = playing ? m_audioEngine->delayParts(AudioRole::Speakers).totalMs() : -1.0;
+    const double delayNow = playing ? m_audioEngine->speakersDelayNowMs() : -1.0;
     // Half a millisecond steps, so the readout does not send a delta for
     // every wobble of the matcher's fill.
     details.delayNowMs = delayNow < 0.0 ? -1.0 : std::round(delayNow * 2.0) / 2.0;

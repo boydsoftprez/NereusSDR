@@ -39,6 +39,11 @@
 //               fallback opens the default that is the chosen device
 //               reads Playing on it.  J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-09: final review fix (R-AUD-06, R-AUD-08): Rescan returns
+//               before its fade ends and a stop during the fade rescans
+//               nothing; on Windows a VAX bus opened before the stream
+//               supervisor closes before the supervisor opens that role.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -447,12 +452,18 @@ private slots:
         QVERIFY(desk != nullptr && desk->isOpen());
 
         QSignalSpy rescanned(rig.engine->catalogue(), &IAudioDeviceCatalog::olderDriversRescanned);
+        QSignalSpy available(rig.engine.get(), &AudioEngine::headphonesAvailableChanged);
         rig.engine->rescanOlderDrivers();
         QCOMPARE(rig.older->fadeRequests(), 1);
-        QVERIFY(!rig.engine->headphonesAvailable());   // closed until the new list is in
-        QVERIFY(rescanned.wait(kWaitMs));
+        // The fade is waited out from a timer: Rescan returns while the
+        // output still plays, and closes it once the fade ends.
+        QVERIFY(rig.engine->headphonesAvailable());
+        QTRY_COMPARE_WITH_TIMEOUT(rescanned.count(), 1, kWaitMs);
         QTRY_COMPARE_WITH_TIMEOUT(rig.older->outputRequests().size(), std::size_t(2), kWaitMs);
         QVERIFY(rig.engine->headphonesAvailable());
+        QCOMPARE(available.count(), 2);   // closed until the new list was in, then open
+        QCOMPARE(available.at(0).at(0).toBool(), false);
+        QCOMPARE(available.at(1).at(0).toBool(), true);
         QCOMPARE(rig.older->rescanCount(), 1);
         QCOMPARE(rig.engine->roleStatus(AudioRole::Headphones).state, AudioRoleState::Playing);
 
@@ -847,12 +858,93 @@ private slots:
         QSignalSpy rescanned(rig.engine->catalogue(), &IAudioDeviceCatalog::olderDriversRescanned);
         rig.engine->rescanOlderDrivers();
         QCOMPARE(rig.older->fadeRequests(), 1);
-        QVERIFY(!rig.older->outputAlive(0));
+        QVERIFY(rig.older->outputAlive(0));   // the call returned before the fade ended
+        QTRY_VERIFY_WITH_TIMEOUT(!rig.older->outputAlive(0), kWaitMs);
         QCOMPARE(rig.older->closedUnfaded(), 0);
-        QVERIFY(rescanned.wait(kWaitMs));
+        QTRY_COMPARE_WITH_TIMEOUT(rescanned.count(), 1, kWaitMs);
         QTRY_COMPARE_WITH_TIMEOUT(rig.older->outputRequests().size(), std::size_t(2), kWaitMs);
         rig.engine->stop();
     }
+
+    // A stop while Rescan's fade runs: the role is not closed again and
+    // PortAudio is not listed again.
+    void stopDuringTheRescanFadeRescansNothing()
+    {
+        Rig rig;
+        rig.older->setTakesStereoMix(true);
+        rig.older->setCallbackFrames(2048);
+        rig.older->setFadeTimeMs(30);
+        savedChoice(AudioEngineKind::PortAudio, paId(QStringLiteral("Desk headphones")),
+                    QStringLiteral("Desk headphones"), kCoreAudioApi)
+            .saveToSettings(QStringLiteral("audio/Headphones"));
+        AppSettings::instance().setValue(QStringLiteral("audio/Headphones/Enabled"),
+                                         QStringLiteral("True"));
+        rig.build();
+        rig.engine->setHeadphonesEnabled(true);
+        rig.engine->start();
+        rig.engine->rescanOlderDrivers();
+        QCOMPARE(rig.older->fadeRequests(), 1);
+        rig.engine->stop();
+        QTest::qWait(200);
+        QCOMPARE(rig.older->rescanCount(), 0);
+        QCOMPARE(rig.older->outputRequests().size(), std::size_t(1));
+    }
+
+#if defined(Q_OS_WIN)
+    // A VAX bus opened before the stream supervisor ran (openVaxOutputs)
+    // is unknown to it; on an engine that runs one stream at a time the
+    // supervisor's open of that role closes it first, so the device never
+    // has two streams.
+    void directVaxBusClosesBeforeTheSupervisedOpen()
+    {
+        std::vector<int> aliveAtCreate;   // outlives the engine
+        auto wasapi = std::make_shared<FakeAudioEngineBackend>(AudioBackendId::Wasapi);
+        wasapi->setOpensOneStreamAtATime(true);
+        wasapi->setDevices({deviceInfo(AudioBackendId::Wasapi, AudioDeviceDirection::Output,
+                                       QStringLiteral("cable-1"), QStringLiteral("CABLE Input"))});
+        auto older = std::make_shared<FakeAudioEngineBackend>(AudioBackendId::PortAudio);
+        older->setTakesStereoMix(false);
+        older->setDevices({deviceInfo(AudioBackendId::PortAudio, AudioDeviceDirection::Output,
+                                      paId(QStringLiteral("Desk speakers")),
+                                      QStringLiteral("Desk speakers"), kCoreAudioApi)});
+        savedChoice(AudioEngineKind::PortAudio, paId(QStringLiteral("Desk speakers")),
+                    QStringLiteral("Desk speakers"), kCoreAudioApi)
+            .saveToSettings(QStringLiteral("audio/Speakers"));
+        savedChoice(AudioEngineKind::WindowsShared, QStringLiteral("cable-1"),
+                    QStringLiteral("CABLE Input"))
+            .saveToSettings(QStringLiteral("audio/Vax1"));
+
+        AudioEngine engine;
+        engine.setAudioBackendsForTest({wasapi, older});
+        engine.setVaxBusFactoryForTest([wasapi](int channel) -> std::unique_ptr<IAudioBus> {
+            if (channel != 1) {
+                return nullptr;
+            }
+            AudioStreamRequest request;
+            request.deviceId = QStringLiteral("cable-1");
+            std::unique_ptr<IAudioBus> bus = wasapi->createOutput(request);
+            if (!bus->open(AudioFormat{})) {
+                return nullptr;
+            }
+            return bus;
+        });
+        wasapi->setOutputCreatedHook([&aliveAtCreate, wasapi](const AudioStreamRequest&) {
+            aliveAtCreate.push_back(wasapi->aliveOutputs());
+        });
+        engine.openVaxOutputs();
+        QCOMPARE(aliveAtCreate, std::vector<int>({1}));
+
+        engine.start();
+        QCOMPARE(aliveAtCreate, std::vector<int>({1, 1}));   // one close, then one open
+        QVERIFY(!wasapi->outputAlive(0));
+        QCOMPARE(wasapi->aliveOutputs(), 1);
+        QCOMPARE(wasapi->outputRequests().size(), std::size_t(2));
+        QCOMPARE(wasapi->outputRequests().back().deviceId, QStringLiteral("cable-1"));
+        QCOMPARE(engine.roleStatus(AudioRole::Vax1).state, AudioRoleState::Playing);
+        wasapi->setOutputCreatedHook({});
+        engine.stop();
+    }
+#endif
 
     // M2: a capture demand before the radio starts (Test Mic) opens the
     // helper once, on the matched mic, never the saved choice and then the
