@@ -287,6 +287,13 @@
 //               comments say so. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
 // =================================================================
+//   2026-10-10: headless Core speaker (JJ's ruling, R-AUD-27) by J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//               setSpeakersPlayEverySlice(): the speakers bus plays every
+//               receiving slice, whatever the local output mask leaves
+//               out, from a sum of its own (m_everySliceScratch), so the
+//               master tap, the headphones and every owner mix are
+//               unchanged. nereusd sets it. NereusSDR-original.
 
 #include "core/NereusCoreExport.h"
 #include "AudioDeviceConfig.h"
@@ -898,6 +905,29 @@ public:
     quint32 localOutputSliceMask() const
     {
         return m_localOutputSliceMask.load(std::memory_order_acquire);
+    }
+
+    // Headless Core speaker (JJ's ruling 2026-10-10, R-AUD-27): with
+    // `every`, the speakers bus plays every receiving slice routed to the
+    // speakers, whoever controls it, each at its own AF level, pan and
+    // mute, then the master volume and mute: the local output mask no
+    // longer picks what the speakers bus plays. A Core with no window of
+    // its own (nereusd) sets it, because nobody sits at a station device
+    // there to listen in to another device's slice, so ruling 9.2 left its
+    // speaker silent whenever remote windows had the slices. Only the
+    // speakers bus changes: the master tap, the headphones bus and tap,
+    // every owner mix, the radio's speaker out and the VAX tee are built
+    // as without it, and the transmit monitor plays as it did. False by
+    // default: a desktop that hosts a station keeps ruling 9.2, which
+    // keeps other devices' slices off the host's speakers. Any thread;
+    // the audio thread reads it once per drain.
+    void setSpeakersPlayEverySlice(bool every)
+    {
+        m_speakersPlayEverySlice.store(every, std::memory_order_release);
+    }
+    bool speakersPlayEverySlice() const
+    {
+        return m_speakersPlayEverySlice.load(std::memory_order_acquire);
     }
 
     // iPhone app Task 76 (ruling 9.2): one mix per owner. A device's media
@@ -1835,6 +1865,7 @@ private:
     std::vector<float> m_hpMixScratch;
     std::vector<float> m_programScratch;
     std::vector<float> m_radioOutScratch; // the radio's speaker out (radio codec)
+    std::vector<float> m_everySliceScratch; // a headless Core's speaker (2026-10-10)
     std::vector<float> m_avMixScratch;   // anti-VOX reference
     std::vector<float> m_vaxScratch;     // one VAX channel's mix
     std::atomic<int> m_mixScratchFrames{0};
@@ -1891,6 +1922,8 @@ private:
     std::array<OwnerMixSlot, kMaxOwnerMixes> m_ownerMixes;
     mutable std::mutex m_ownerMixControlMutex;
     std::atomic<quint32> m_localOutputSliceMask{0xFFFFFFFFu};
+    // 2026-10-10: see setSpeakersPlayEverySlice().
+    std::atomic<bool> m_speakersPlayEverySlice{false};
     // Slice control plan Task 6: the local output's listening, as an
     // owner's.
     std::atomic<quint32> m_localListenMask{0};

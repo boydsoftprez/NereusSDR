@@ -723,6 +723,23 @@ size, delay and the negotiated format. The card:
   no other card, "<name> is not connected at the Core, and the Core has no
   other sound card, so it is silent until it comes back."
 
+What the Core speaker plays (JJ's ruling, 2026-10-10). On a headless Core
+(`nereusd`, which has no window of its own) the Core speaker plays every
+receiver routed to the speakers, whichever window or phone controls it,
+each at its slice's AF level, pan and mute, with the Core speaker's
+Volume and Mute on top (R-AUD-28). The first bench run on a Rock 5C
+played silence: the several-devices rule (ruling 9.2) has a Core's local
+output play only the station device's slices, plus any slice the station
+device listens in to, and a headless Core has no screen to listen in
+from, so with remote windows controlling the slices nothing was left. A
+desktop NereusSDR that hosts a station keeps ruling 9.2 unchanged: there
+it keeps other devices' receivers off the host's own speakers, and the
+host listens in from its own window when it wants one. The Core speaker
+has a sum of its own in the mixer, so the station's program, each
+window's and the phone's own mix, the headphones mix, the radio's speaker
+and the transmit monitor are what they were, and VAX is not part of the
+ruling: the VAX slice mask follows owners as before.
+
 R-AUD-28. The Core speaker's level and mute change only what the Core's
 sound card plays: never the audio sent to windows, the phone, TCI or the
 radio.

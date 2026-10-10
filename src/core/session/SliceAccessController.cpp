@@ -38,6 +38,11 @@
 //   2026-09-30: TX badge take: takeWhileTransmittingWords gives a window
 //               the on-air refusal's words. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-10: headless Core speaker (JJ's ruling, R-AUD-27): the comment
+//               on the station device's local listening says what a
+//               headless Core's speaker plays instead. No change to the
+//               listening. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/session/SliceAccessController.h"
@@ -451,6 +456,13 @@ void SliceAccessController::publishLocalListen(int sliceId)
     // The Core's own output plays the station device's slices already
     // (RadioModel's local output mask); a slice another device controls
     // that the station device listens to plays at the station's level.
+    //
+    // JJ's ruling 2026-10-10 (R-AUD-27): that is the desktop host's rule.
+    // A headless Core (nereusd) has no screen to listen in from, so its
+    // speakers bus plays every receiver at the slice's own AF level and
+    // mute, from a sum this listening is never added to
+    // (AudioEngine::setSpeakersPlayEverySlice): a slice is not summed
+    // there twice, and nothing here changes on a headless Core.
     const SliceOwnership* own = ownership();
     const QByteArray& station = SliceOwnership::stationDevice();
     const QByteArray controller =

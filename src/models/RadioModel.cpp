@@ -17,6 +17,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-10 - Headless Core speaker (JJ's ruling, R-AUD-27): the comment
+//                on the local output mask says where ruling 9.2 holds and
+//                where a headless Core's speaker leaves it. No change to
+//                the masks. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 //   2026-10-09 - PC mic status for the transmit badge (native audio plan
 //                Task 20; R-AUD-24, R-AUD-09, R-AUD-13). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
@@ -1809,6 +1814,16 @@ RadioModel::RadioModel(Role role, QObject* parent)
             m_audioEngine->setVaxSliceMask(mask);
             // iPhone app Task 76 (ruling 9.2): the Core's local output
             // plays the station device's mix, the same slices.
+            //
+            // JJ's ruling 2026-10-10 (R-AUD-27): that holds for a desktop
+            // that hosts a station, where it keeps other devices' slices
+            // off the host's speakers. A headless Core (nereusd) has no
+            // station device anyone sits at, so its speakers bus plays
+            // every receiver instead, from a sum of its own
+            // (AudioEngine::setSpeakersPlayEverySlice, set by DaemonApp).
+            // The mask is set the same either way: it still picks the
+            // master tap's, the headphones' and the headphones tap's
+            // slices, and the VAX mask above is not part of that ruling.
             m_audioEngine->setLocalOutputSliceMask(mask);
         };
         connect(m_sliceOwnership, &SliceOwnership::markChanged, this, vaxFollowsOwners);

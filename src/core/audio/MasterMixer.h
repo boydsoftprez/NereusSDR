@@ -80,6 +80,12 @@
 //                 radio's own speaker out, every receiving slice as
 //                 Thetis's mixer 0. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-10 -- Headless Core speaker (JJ's ruling, R-AUD-27):
+//                 tryDrain's everySliceOut, the speakers sum of every
+//                 receiving slice whatever the local mask, beside the
+//                 local sums and never in them. NereusSDR-original.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 // =================================================================
 
 // --- From aamix.c ---
@@ -372,13 +378,25 @@ public:
                  bool localOutOfMask = true, bool onlyWithoutMembers = false,
                  std::uint32_t localListenMask = 0,
                  const float* localListenLevels = nullptr,
-                 float* radioOut = nullptr);
+                 float* radioOut = nullptr,
+                 float* everySliceOut = nullptr);
     // Radio codec (JJ's ruling 2026-09-30): `radioOut`, when not null, is
     // the radio's own speaker out, as Thetis's audio mixer 0: every
     // receiving slice whatever localMask says, each at its own gain, pan
     // and mute, both routes summed, plus the transmit monitor's slot
     // exactly while it is in the local sums (localOutOfMask). maxFrames * 2
     // floats; same ramps and up-slew as the other sums.
+    //
+    // Headless Core speaker (JJ's ruling 2026-10-10): `everySliceOut`, when
+    // not null, is the speakers sum as it would be with every bit of
+    // localMask set: every receiving slice routed to the speakers, whoever
+    // controls it, at its own gain, AF level, pan and mute, plus the
+    // transmit monitor's slot exactly while it is in the local sums
+    // (localOutOfMask). A slice routed to the headphones is not in it, as
+    // it is not in speakersOut, and no listen level is: a slice is summed
+    // here once, at its controller's level. It is a sum of its own:
+    // speakersOut, headphonesOut, every owner's sums and radioOut are what
+    // they are without it. maxFrames * 2 floats.
 
     // Test seam: ramp length in frames (default kDefaultRampFrames).
     void setRampFrames(int frames);

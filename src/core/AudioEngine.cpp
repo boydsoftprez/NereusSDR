@@ -328,6 +328,11 @@
 //               block writer again at its end; the room check is the
 //               receiver's. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-10: headless Core speaker (JJ's ruling, R-AUD-27): with
+//               setSpeakersPlayEverySlice(), drainMixes hands the speakers
+//               bus the mixer's every-slice sum in place of the masked
+//               one, after every tap has had its block. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "AudioEngine.h"
@@ -482,6 +487,7 @@ AudioEngine::AudioEngine(QObject* parent)
     m_hpMixScratch.assign(static_cast<size_t>(kMixScratchMinFrames) * 2, 0.0f);
     m_programScratch.assign(static_cast<size_t>(kMixScratchMinFrames) * 2, 0.0f);
     m_radioOutScratch.assign(static_cast<size_t>(kMixScratchMinFrames) * 2, 0.0f);
+    m_everySliceScratch.assign(static_cast<size_t>(kMixScratchMinFrames) * 2, 0.0f);
     m_avMixScratch.assign(static_cast<size_t>(kMixScratchMinFrames) * 2, 0.0f);
     m_vaxScratch.assign(static_cast<size_t>(kMixScratchMinFrames) * 2, 0.0f);
     for (int k = 0; k < kMaxOwnerMixes; ++k) {
@@ -4335,11 +4341,20 @@ void AudioEngine::drainMixes(int frames, bool monitorOnly)
     std::vector<float>& radioSum = m_radioOutScratch;
     const bool radioTapped =
         m_radioOutputTap.tap.load(std::memory_order_acquire) != nullptr;
+    // Headless Core speaker (JJ's ruling 2026-10-10): a third sum beside
+    // the local ones, every receiving slice routed to the speakers whatever
+    // the local mask says, for the speakers bus alone. Built only while
+    // setSpeakersPlayEverySlice() is on; read once, so one drain is all one
+    // rule.
+    std::vector<float>& everySum = m_everySliceScratch;
+    const bool speakersPlayEvery =
+        m_speakersPlayEverySlice.load(std::memory_order_acquire);
     const int mixed = m_masterMix.tryDrain(
         mix.data(), hpMix.data(), drainFrames,
         m_localOutputSliceMask.load(std::memory_order_acquire), owners.data(), ownerCount,
         m_txMonitorLocal.load(std::memory_order_acquire), monitorOnly, localListen,
-        localListenLevels.data(), radioTapped ? radioSum.data() : nullptr);
+        localListenLevels.data(), radioTapped ? radioSum.data() : nullptr,
+        speakersPlayEvery ? everySum.data() : nullptr);
 
     // Drain the anti-VOX reference in the same call stack, so both mixes are
     // paced by their own barrier over the same period.
@@ -4488,6 +4503,19 @@ void AudioEngine::drainMixes(int frames, bool monitorOnly)
                 }
             }
         }
+    }
+
+    // Headless Core speaker (JJ's ruling 2026-10-10, R-AUD-27): from here
+    // on `mix` is only what the speakers bus plays. The master tap, the
+    // headphones tap and bus and every owner tap have had their blocks
+    // above, built from the masked sums, so they are what they were. A
+    // Core with no window plays every receiver: the every-slice sum, each
+    // slice at its own AF level, pan and mute, takes the masked sum's
+    // place, and the master volume and mute below (the Core speaker's)
+    // apply to it. A copy within the scratch sized off this thread: no
+    // allocation, no lock.
+    if (speakersPlayEvery) {
+        std::copy(everySum.begin(), everySum.begin() + stereoFloats, mix.begin());
     }
 
     const float vol = m_masterVolume.load(std::memory_order_acquire);
@@ -5202,6 +5230,7 @@ void AudioEngine::ensureMixScratchFrames(int frames)
     m_hpMixScratch.assign(floats, 0.0f);
     m_programScratch.assign(floats, 0.0f);
     m_radioOutScratch.assign(floats, 0.0f);
+    m_everySliceScratch.assign(floats, 0.0f);
     m_avMixScratch.assign(floats, 0.0f);
     m_vaxScratch.assign(floats, 0.0f);
     for (int k = 0; k < kMaxOwnerMixes; ++k) {

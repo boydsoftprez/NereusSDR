@@ -5,6 +5,10 @@
 // rationale (R1 Task 10).
 //
 // Modification history (NereusSDR):
+//   2026-10-10: headless Core speaker (JJ's ruling, R-AUD-27): the Core's
+//               speaker plays every receiver
+//               (AudioEngine::setSpeakersPlayEverySlice). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09: native audio plan Task 21 (R-AUD-25, R-AUD-30, D31): the
 //               Core's RadioModel is the Core speaker's host, and on a box
 //               that starts into a desktop it waits for a pick. J.J. Boyd
@@ -306,6 +310,14 @@ bool DaemonApp::start(const DaemonConfig& cfg)
     // channels are on the operator's computer; outputs here would be
     // devices nothing on the Core host feeds.
     m_radioModel->audioEngine()->setVaxOutputsAllowed(false);
+    // JJ's ruling 2026-10-10 (R-AUD-27): the Core speaker plays every
+    // receiver, each at its slice's AF level and mute. This process has no
+    // window, so nobody is at a station device to listen in to a slice a
+    // remote window controls, and ruling 9.2 (the local output plays the
+    // station device's slices only) left the Core's sound card silent. A
+    // desktop that hosts a station never sets this and keeps ruling 9.2.
+    // VAX is not part of it: the VAX slice mask follows owners as before.
+    m_radioModel->audioEngine()->setSpeakersPlayEverySlice(true);
     // Native audio plan Task 7: the audio engines for this process.
     m_radioModel->audioEngine()->setAudioBackendContext({.daemon = true});
     // Native audio plan Task 21: the Core speaker is this process's own
