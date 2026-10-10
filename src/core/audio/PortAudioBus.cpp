@@ -11,6 +11,11 @@
 // macOS for the same end), not as a port.  No Thetis bytes ported.
 //
 // Modification history (NereusSDR):
+//   2026-10-09: final review fix (R-AUD-06): open() and the query helpers
+//               wait for PortAudioLibrary's lock within its bound (an open
+//               fails, a query returns the list it last read); close()
+//               takes the lock only with a stream to close. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09: native audio plan Task 7 (R-AUD-06): matchNamedDevice
 //               searches only the saved host API (bug 1); requestFadeOut()
 //               and fadedOut() on the output's matcher reader for Rescan.
@@ -63,6 +68,7 @@
 
 #include <portaudio.h>
 
+#include <QHash>
 #include <QStandardPaths>
 #include <QtGlobal>
 
@@ -70,6 +76,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <mutex>
 
 namespace NereusSDR {
 
@@ -355,7 +362,14 @@ void PortAudioBus::setConfig(const PortAudioConfig& cfg) {
 
 bool PortAudioBus::open(const AudioFormat& format) {
     // R-AUD-06: held for the whole open; the callback never takes it.
-    std::lock_guard<std::recursive_mutex> paLock(PortAudioLibrary::mutex());
+    // Within its bound: a driver call that has not returned (Rescan's
+    // restart of PortAudio) fails the open, and its owner retries later.
+    const std::unique_lock<std::recursive_mutex> paLock = PortAudioLibrary::lockBounded();
+    if (!paLock.owns_lock()) {
+        m_openFailure = OpenFailure::OpenFailed;
+        m_err = QStringLiteral("PortAudio is busy in a driver call that has not returned");
+        return false;
+    }
     if (m_stream) {
         close();
     }
@@ -612,7 +626,14 @@ int PortAudioBus::openedStreamChannels() const {
 
 void PortAudioBus::close() {
     // R-AUD-06: Pa_StopStream waits for the callback, which takes no lock.
-    std::lock_guard<std::recursive_mutex> paLock(PortAudioLibrary::mutex());
+    // Taken only with a stream to close.  While one is open Rescan never
+    // restarts PortAudio (reinitialize() refuses), so this wait is only
+    // ever for a short query, never for a driver call that has not
+    // returned.
+    std::unique_lock<std::recursive_mutex> paLock(PortAudioLibrary::mutex(), std::defer_lock);
+    if (m_stream || m_streamCounted) {
+        paLock.lock();
+    }
     if (m_stream) {
         Pa_StopStream(m_stream);
         Pa_CloseStream(m_stream);
@@ -1005,6 +1026,13 @@ int PortAudioBus::downmixToMono(const float* interleaved, int frames,
 
 namespace {
 std::atomic<bool> g_portAudioLibraryAllowedForTest{false};
+
+// R-AUD-06: the lists the query helpers last read, returned while a
+// driver call that has not returned holds PortAudioLibrary's lock.
+std::mutex g_queryCacheMutex;
+QVector<PortAudioBus::HostApiInfo> g_hostApiCache;
+QHash<int, QVector<PortAudioBus::DeviceInfo>> g_outputDeviceCache;
+QHash<int, QVector<PortAudioBus::DeviceInfo>> g_inputDeviceCache;
 } // namespace
 
 bool PortAudioBus::portAudioBarredForTestRun()
@@ -1026,19 +1054,31 @@ void PortAudioBus::allowPortAudioLibraryForTest(bool allowed)
 QVector<PortAudioBus::HostApiInfo> PortAudioBus::hostApis() {
     QVector<HostApiInfo> out;
     if (portAudioBarredForTestRun()) { return out; }
-    std::lock_guard<std::recursive_mutex> paLock(PortAudioLibrary::mutex());   // R-AUD-06
+    // R-AUD-06: within the lock's bound, else the list last read.
+    const std::unique_lock<std::recursive_mutex> paLock = PortAudioLibrary::lockBounded();
+    if (!paLock.owns_lock()) {
+        std::lock_guard<std::mutex> cacheLock(g_queryCacheMutex);
+        return g_hostApiCache;
+    }
     const int n = Pa_GetHostApiCount();
     for (int i = 0; i < n; ++i) {
         const PaHostApiInfo* h = Pa_GetHostApiInfo(i);
         if (h) { out.push_back({i, QString::fromUtf8(h->name)}); }
     }
+    std::lock_guard<std::mutex> cacheLock(g_queryCacheMutex);
+    g_hostApiCache = out;
     return out;
 }
 
 QVector<PortAudioBus::DeviceInfo> PortAudioBus::outputDevicesFor(int hostApiIndex) {
     QVector<DeviceInfo> out;
     if (portAudioBarredForTestRun()) { return out; }
-    std::lock_guard<std::recursive_mutex> paLock(PortAudioLibrary::mutex());   // R-AUD-06
+    // R-AUD-06: within the lock's bound, else the list last read.
+    const std::unique_lock<std::recursive_mutex> paLock = PortAudioLibrary::lockBounded();
+    if (!paLock.owns_lock()) {
+        std::lock_guard<std::mutex> cacheLock(g_queryCacheMutex);
+        return g_outputDeviceCache.value(hostApiIndex);
+    }
     const int n = Pa_GetDeviceCount();
     for (int i = 0; i < n; ++i) {
         const PaDeviceInfo* d = Pa_GetDeviceInfo(i);
@@ -1050,13 +1090,20 @@ QVector<PortAudioBus::DeviceInfo> PortAudioBus::outputDevicesFor(int hostApiInde
             static_cast<int>(d->defaultSampleRate), d->hostApi
         });
     }
+    std::lock_guard<std::mutex> cacheLock(g_queryCacheMutex);
+    g_outputDeviceCache.insert(hostApiIndex, out);
     return out;
 }
 
 QVector<PortAudioBus::DeviceInfo> PortAudioBus::inputDevicesFor(int hostApiIndex) {
     QVector<DeviceInfo> out;
     if (portAudioBarredForTestRun()) { return out; }
-    std::lock_guard<std::recursive_mutex> paLock(PortAudioLibrary::mutex());   // R-AUD-06
+    // R-AUD-06: within the lock's bound, else the list last read.
+    const std::unique_lock<std::recursive_mutex> paLock = PortAudioLibrary::lockBounded();
+    if (!paLock.owns_lock()) {
+        std::lock_guard<std::mutex> cacheLock(g_queryCacheMutex);
+        return g_inputDeviceCache.value(hostApiIndex);
+    }
     const int n = Pa_GetDeviceCount();
     for (int i = 0; i < n; ++i) {
         const PaDeviceInfo* d = Pa_GetDeviceInfo(i);
@@ -1067,6 +1114,8 @@ QVector<PortAudioBus::DeviceInfo> PortAudioBus::inputDevicesFor(int hostApiIndex
             static_cast<int>(d->defaultSampleRate), d->hostApi
         });
     }
+    std::lock_guard<std::mutex> cacheLock(g_queryCacheMutex);
+    g_inputDeviceCache.insert(hostApiIndex, out);
     return out;
 }
 
