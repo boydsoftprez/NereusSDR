@@ -25,8 +25,8 @@
 //     its own pair; cmASIO plays one stereo pair from a base channel.
 //   - The saved mic config stands in for the registry cmASIO reads: the
 //     driver is the mic's device, the base input channel its first
-//     channel, the input mode its MicChannel.  Both is averaged to one
-//     channel by the session's pick, where combinebuff adds the two.
+//     channel, the input mode its MicChannel.  Both adds the two
+//     channels, as combinebuff does.
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -34,6 +34,9 @@
 //               create_cmasio's set-up order, base channels and input
 //               mode for the mic helper on Windows. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan final fix wave (R-AUD-07): the note on
+//               Both corrected; it adds the two channels.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // --- From cmasio.h ---

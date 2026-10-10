@@ -9,6 +9,9 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 15 (V-SW-7). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan final fix wave (R-AUD-21): a message
+//               posted from inside createBuffers.  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -49,6 +52,9 @@ public:
     // The next load() of name returns these caps (a driver whose settings
     // changed in its control panel).
     void setCaps(const AsioDriverCaps& caps) { m_drivers.insert(caps.name, caps); }
+    // The next createBuffers() posts this message before it returns, as a
+    // driver may send a reset while it makes its buffers.
+    void sendMessageDuringNextCreateBuffers(AsioMessage message) { m_messageInCreate = message; }
 
     QStringList installedDrivers() override
     {
@@ -99,6 +105,12 @@ public:
             for (auto& half : m_outputBuffers[channel]) {
                 half.assign(bytes, std::byte{0});
             }
+        }
+        // A driver that posts a message from inside ASIOCreateBuffers.
+        if (m_messageInCreate) {
+            const AsioMessage message = *m_messageInCreate;
+            m_messageInCreate.reset();
+            fireMessage(message);
         }
         return true;
     }
@@ -220,6 +232,7 @@ private:
     std::map<int, std::array<std::vector<std::byte>, 2>> m_outputBuffers;
     std::function<void(int)> m_bufferSwitch;
     std::function<void(AsioMessage)> m_message;
+    std::optional<AsioMessage> m_messageInCreate;
     mutable QMutex m_logMutex;
     QStringList m_calls;
 };

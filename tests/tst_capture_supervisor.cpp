@@ -27,6 +27,11 @@
 //               the 48 kHz clock; a drain until 0 ends in a bounded number
 //               of pulls, and a paced caller still gets every frame.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan final fix wave (V-HW-8): the probe test
+//               waits for the fake's mark of the disable, not a fixed
+//               time; a helper that exits at once is found by its last
+//               process id (waitForStartedPid).  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -121,6 +126,18 @@ qint64 waitForPid(const CaptureSupervisor& supervisor, int timeoutMs)
         QTest::qWait(5);
     }
     return supervisor.helperProcessId();
+}
+
+// The process id of a helper that may answer and exit before a poll of
+// helperProcessId() sees it (a protocol error, a describe alone).
+qint64 waitForStartedPid(const CaptureSupervisor& supervisor, int timeoutMs)
+{
+    QElapsedTimer timer;
+    timer.start();
+    while (supervisor.lastHelperProcessId() == 0 && timer.elapsed() < timeoutMs) {
+        QTest::qWait(5);
+    }
+    return supervisor.lastHelperProcessId();
 }
 
 bool processIsGone(qint64 pid)
@@ -614,7 +631,7 @@ private slots:
         CaptureSupervisor supervisor(fakeOptions(scenario));
         Recorder recorder(supervisor);
         auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
-        const qint64 pid = waitForPid(supervisor, 3000);
+        const qint64 pid = waitForStartedPid(supervisor, 3000);
         QVERIFY(pid > 0);
         QVERIFY(waitForState(supervisor, State::Failed, 3000));
         QCOMPARE(supervisor.status().reason, Reason::ProtocolError);
@@ -855,11 +872,21 @@ private slots:
         QCOMPARE(hits.at(1).at(0).toLongLong(), qint64(1001));
         QCOMPARE(supervisor.status().state, State::Ready);
 
+        // The fake marks the disable with a "Probe off" caps record once
+        // it has stopped its hits; no fixed wait.
+        QSignalSpy marks(&supervisor, &CaptureSupervisor::asioCaps);
+        const auto probeOff = [&marks]() {
+            for (const QList<QVariant>& args : marks) {
+                if (args.at(0).value<CaptureProtocol::AsioCapsRecord>().driver
+                    == QLatin1String("Probe off")) {
+                    return true;
+                }
+            }
+            return false;
+        };
         supervisor.setProbeEnabled(false);
-        QTest::qWait(150);
+        QTRY_VERIFY_WITH_TIMEOUT(probeOff(), 3000);
         hits.clear();
-        QTest::qWait(250);
-        QCOMPARE(hits.size(), 0);
 
         supervisor.setProbeEnabled(true);                       // the helper is Ready now
         QTRY_VERIFY_WITH_TIMEOUT(hits.size() >= 1, 3000);
@@ -933,7 +960,7 @@ private slots:
         CaptureSupervisor supervisor(fakeOptions(QStringLiteral("ready")));
         QSignalSpy caps(&supervisor, &CaptureSupervisor::asioCaps);
         supervisor.describeAsio(QString());
-        const qint64 pid = waitForPid(supervisor, 3000);
+        const qint64 pid = waitForStartedPid(supervisor, 3000);
         QVERIFY(pid > 0);
         QTRY_VERIFY_WITH_TIMEOUT(caps.size() >= 1, 3000);
         const auto record = qvariant_cast<CaptureProtocol::AsioCapsRecord>(caps.at(0).at(0));

@@ -29,6 +29,14 @@
 //               generation only.  A helper started to describe drivers
 //               stops after the answer.  J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-09: native audio plan final fix wave (R-R3-36): the latest
+//               helper's process id is kept after it ends
+//               (lastHelperProcessId).  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-09: native audio plan final fix wave (R-R3-36): a hello, open
+//               or stop deadline that fires before its interval has passed
+//               on the steady clock waits out the rest.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CaptureSupervisor.h"
@@ -186,12 +194,14 @@ public:
     CaptureSupervisorWorker(const CaptureSupervisor::Options& options,
                             std::shared_ptr<CaptureAudioBus> reader,
                             std::shared_ptr<std::atomic<qint64>> helperPid,
+                            std::shared_ptr<std::atomic<qint64>> lastHelperPid,
                             Publish publish, PublishProbeHit publishProbeHit,
                             PublishHop publishHop, PublishAsioCaps publishAsioCaps,
                             PublishAsioState publishAsioState)
         : m_options(options)
         , m_reader(std::move(reader))
         , m_helperPid(std::move(helperPid))
+        , m_lastHelperPid(std::move(lastHelperPid))
         , m_publish(std::move(publish))
         , m_publishProbeHit(std::move(publishProbeHit))
         , m_publishHop(std::move(publishHop))
@@ -385,6 +395,7 @@ public:
         m_shutdownDone = std::move(done);
         beginStop();
         if (!m_stopTimer->isActive()) {
+            m_stopClock.start();
             m_stopTimer->start(m_options.stopTimeoutMs);
         }
     }
@@ -729,6 +740,7 @@ private:
         connect(process, &QProcess::started, this, [this, process]() {
             if (process == m_process) {
                 m_helperPid->store(process->processId());
+                m_lastHelperPid->store(process->processId());
             }
         });
         connect(process, &QProcess::readyReadStandardOutput, this, [this, process]() {
@@ -754,11 +766,13 @@ private:
         });
         process->setProgram(m_options.program);
         process->setArguments(m_options.arguments);
+        m_helloClock.start();
         m_helloTimer->start(m_options.helloTimeoutMs);
         process->start();
         // A program that cannot start may already have been released above.
         if (process == m_process && process->processId() > 0) {
             m_helperPid->store(process->processId());
+            m_lastHelperPid->store(process->processId());
         }
     }
 
@@ -787,6 +801,7 @@ private:
         } else {
             sendShutdown();
         }
+        m_stopClock.start();
         m_stopTimer->start(m_options.stopTimeoutMs);
     }
 
@@ -887,9 +902,25 @@ private:
         m_openTimer->start(static_cast<int>(m_openRemainingMs));
     }
 
+    // A deadline timer may fire before its interval has passed on the steady
+    // clock (Windows rounds timer waits to its tick).  A deadline means the
+    // whole interval went by, so an early firing waits out the rest.
+    static bool rearmIfEarly(QTimer* timer, const QElapsedTimer& clock, qint64 intervalMs)
+    {
+        const qint64 left = intervalMs - clock.elapsed();
+        if (left > 0) {
+            timer->start(static_cast<int>(left));
+            return true;
+        }
+        return false;
+    }
+
     void onHelloTimeout()
     {
         if (!m_process || m_helloReceived) {
+            return;
+        }
+        if (rearmIfEarly(m_helloTimer, m_helloClock, m_options.helloTimeoutMs)) {
             return;
         }
         qCWarning(lcAudio) << "capture: helper sent no hello within" << m_options.helloTimeoutMs << "ms";
@@ -902,7 +933,10 @@ private:
 
     void onOpenTimeout()
     {
-        if (!m_open) {
+        if (!m_open || m_openPaused) {
+            return;
+        }
+        if (rearmIfEarly(m_openTimer, m_openClock, m_openRemainingMs)) {
             return;
         }
         qCWarning(lcAudio) << "capture: no microphone samples within" << m_options.openTimeoutMs
@@ -913,6 +947,9 @@ private:
     void onStopTimeout()
     {
         if (!m_process) {
+            return;
+        }
+        if (rearmIfEarly(m_stopTimer, m_stopClock, m_options.stopTimeoutMs)) {
             return;
         }
         qCWarning(lcAudio) << "capture: helper did not stop within" << m_options.stopTimeoutMs
@@ -1254,6 +1291,7 @@ private:
     CaptureSupervisor::Options m_options;
     std::shared_ptr<CaptureAudioBus> m_reader;
     std::shared_ptr<std::atomic<qint64>> m_helperPid;
+    std::shared_ptr<std::atomic<qint64>> m_lastHelperPid;
     Publish m_publish;
     PublishProbeHit m_publishProbeHit;
     PublishHop m_publishHop;
@@ -1299,6 +1337,8 @@ private:
     qint64 m_openRemainingMs = 0;
     bool m_openPaused = false;
     QElapsedTimer m_openClock;
+    QElapsedTimer m_helloClock;               // started with m_helloTimer
+    QElapsedTimer m_stopClock;                // started with m_stopTimer
 
     // The generation's shared ring (R-AUD-17).
     std::unique_ptr<CaptureShmRegion> m_region;
@@ -1370,6 +1410,7 @@ CaptureSupervisor::CaptureSupervisor(Options options, QObject* parent)
     , m_options(std::move(options))
     , m_reader(std::make_shared<CaptureAudioBus>())
     , m_helperPid(std::make_shared<std::atomic<qint64>>(0))
+    , m_lastHelperPid(std::make_shared<std::atomic<qint64>>(0))
 {
     qRegisterMetaType<NereusSDR::CaptureSupervisor::Status>();
     qRegisterMetaType<NereusSDR::CaptureProtocol::AsioCapsRecord>();
@@ -1381,7 +1422,7 @@ CaptureSupervisor::CaptureSupervisor(Options options, QObject* parent)
     }
     m_thread.setObjectName(QStringLiteral("CaptureSupervisor"));
     m_worker = std::make_unique<CaptureSupervisorWorker>(
-        m_options, m_reader, m_helperPid, [this](const Status& status) {
+        m_options, m_reader, m_helperPid, m_lastHelperPid, [this](const Status& status) {
             // Runs on the I/O thread; hand the status to the owner thread.
             QMetaObject::invokeMethod(this, [this, status]() { onWorkerStatus(status); },
                                       Qt::QueuedConnection);
@@ -1595,6 +1636,11 @@ CaptureAudioBus* CaptureSupervisor::reader() const
 qint64 CaptureSupervisor::helperProcessId() const
 {
     return m_helperPid->load();
+}
+
+qint64 CaptureSupervisor::lastHelperProcessId() const
+{
+    return m_lastHelperPid->load();
 }
 
 // R-R3-36: with demand held, configure() and retry() make the capture

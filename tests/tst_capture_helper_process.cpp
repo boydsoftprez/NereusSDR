@@ -27,6 +27,10 @@
 //               in a test run hosts no ASIO driver: it lists none, fails
 //               an open and ignores the control panel.  J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan final fix wave (R-AUD-07): the older
+//               drivers' mic adds the two channels for Both
+//               (pickOlderDriverMic).  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -184,6 +188,41 @@ private slots:
         // A host API not listed now: the saved index stands.
         QCOMPARE(captureHostApiIndex(QStringLiteral("ASIO"), -1, windows), -1);
         QCOMPARE(captureHostApiIndex(QStringLiteral("Windows DirectSound"), 0, {}), 0);
+    }
+
+    // R-AUD-07: the older drivers' mic picks as every engine does; Both
+    // adds the two channels (Thetis combinebuff), never their average.
+    void olderDriverMicBothAddsTheChannels()
+    {
+        // Two frames of a 3-channel device: (0.5, 0.25, 0.125) each.
+        const std::array<float, 6> block{0.5f, 0.25f, 0.125f, 0.5f, 0.25f, 0.125f};
+        std::array<float, 4> stereo{};
+        const auto heard = [&](int channels, int first, MicChannelPick pick) {
+            stereo.fill(-9.0f);
+            pickOlderDriverMic(block.data(), 2, channels, first, pick, stereo.data());
+            for (float s : stereo) {
+                if (s != stereo[0]) {
+                    return -1.0f;   // the two sides or frames differ
+                }
+            }
+            return stereo[0];
+        };
+        QCOMPARE(heard(3, 1, MicChannelPick::Both), 0.75f);
+        QCOMPARE(heard(3, 1, MicChannelPick::Left), 0.5f);
+        QCOMPARE(heard(3, 1, MicChannelPick::Right), 0.25f);
+        QCOMPARE(heard(3, 2, MicChannelPick::Both), 0.375f);
+        // A pair from the last channel, or past it: that channel, once.
+        QCOMPARE(heard(3, 3, MicChannelPick::Both), 0.125f);
+        QCOMPARE(heard(3, 9, MicChannelPick::Right), 0.125f);
+        // A one-channel device: its channel, once.
+        const std::array<float, 2> mono{0.5f, 0.5f};
+        stereo.fill(-9.0f);
+        pickOlderDriverMic(mono.data(), 2, 1, 1, MicChannelPick::Both, stereo.data());
+        QCOMPARE(stereo, (std::array<float, 4>{0.5f, 0.5f, 0.5f, 0.5f}));
+        // No block: silence.
+        stereo.fill(-9.0f);
+        pickOlderDriverMic(nullptr, 2, 2, 1, MicChannelPick::Both, stereo.data());
+        QCOMPARE(stereo, (std::array<float, 4>{}));
     }
 
     void helperSendsHelloFirstWithinDeadline()
