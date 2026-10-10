@@ -33,6 +33,9 @@
 //   2026-10-09: native audio plan Task 19 (R-AUD-23, R-AUD-03, R-AUD-08,
 //               R-AUD-11, R-AUD-12, D20, V-UI-2). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio fix wave (R-AUD-19): a header pick on a
+//               second ASIO driver asks first, as the Setup card does.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -43,6 +46,7 @@
 #include <QLayout>
 #include <QComboBox>
 #include <QDir>
+#include <QImage>
 #include <QMenu>
 #include <QToolTip>
 #include <QWidgetAction>
@@ -51,13 +55,18 @@
 #include "core/AudioDeviceConfig.h"
 #include "core/AudioEngine.h"
 #include "core/audio/PortAudioBackend.h"
+#include "gui/setup/AsioSwitchAllDialog.h"
 #include "gui/setup/DeviceCard.h"
 #include "gui/widgets/AppIcon.h"
 #include "gui/widgets/MasterOutputWidget.h"
 
 #include "fakes/FakeAudioEngineBackend.h"
 
+#include <cmath>
+#include <functional>
 #include <memory>
+#include <utility>
+#include <vector>
 
 using namespace NereusSDR;
 
@@ -95,6 +104,7 @@ struct Rig {
     std::shared_ptr<FakeAudioEngineBackend> older =
         std::make_shared<FakeAudioEngineBackend>(AudioBackendId::PortAudio);
     std::shared_ptr<FakeAudioEngineBackend> asio;
+    std::vector<std::pair<QString, AsioDriverCaps>> asioCaps;   // set before start()
     std::unique_ptr<AudioEngine> engine;
 
     explicit Rig(AudioBackendId nativeId = AudioBackendId::CoreAudio)
@@ -124,6 +134,9 @@ struct Rig {
         }
         backends.push_back(older);
         engine->setAudioBackendsForTest(backends);
+        for (const auto& [driver, c] : asioCaps) {
+            engine->setAsioDriverCapsForTest(driver, c);
+        }
         engine->start();
         QVERIFY(engine->catalogue() != nullptr);
     }
@@ -162,6 +175,156 @@ void trigger(MasterOutputWidget& w, const QString& text)
         }
     }
     QFAIL(qPrintable(QStringLiteral("no menu row ") + text));
+}
+
+// Triggers the row with this text under the interface heading `group`.
+void triggerInGroup(MasterOutputWidget& w, const QString& group, const QString& text)
+{
+    std::unique_ptr<QMenu> menu(w.buildSpeakerMenuForTest());
+    QString inGroup;
+    for (QAction* a : menu->actions()) {
+        const QString kind = a->property("speakerMenuEntry").toString();
+        if (kind == QLatin1String("group")) {
+            inGroup = a->text();
+            continue;
+        }
+        if (inGroup == group && a->text() == text) {
+            QVERIFY2(a->isEnabled(), qPrintable(text));
+            a->trigger();
+            return;
+        }
+    }
+    QFAIL(qPrintable(QStringLiteral("no menu row ") + text + QStringLiteral(" under ") + group));
+}
+
+AsioDriverCaps asioCaps(const QString& name, int inputs, int outputs)
+{
+    AsioDriverCaps c;
+    c.name = name;
+    c.inputChannels = inputs;
+    c.outputChannels = outputs;
+    c.sampleType = AsioSampleType::Int32Lsb;
+    c.minBufferFrames = 64;
+    c.maxBufferFrames = 1024;
+    c.preferredBufferFrames = 256;
+    c.granularity = -1;
+    c.sampleRates = {44100.0, 48000.0, 96000.0};
+    c.currentRate = 48000.0;
+    return c;
+}
+
+QStringList audioKeysAndValues()
+{
+    QStringList out;
+    AppSettings& s = AppSettings::instance();
+    for (const QString& k : s.allKeys()) {
+        if (k.startsWith(QStringLiteral("audio/"))) {
+            out << k + QLatin1Char('=') + s.value(k).toString();
+        }
+    }
+    out.sort();
+    return out;
+}
+
+// What the one-driver prompt showed, and whether it showed.
+struct SwitchAnswer {
+    bool seen = false;
+    QString text;
+    QStringList moves;
+};
+
+// Answers the next AsioSwitchAllDialog once it is on screen (its exec()
+// is running): records it, then presses Switch all or Cancel. The same
+// seam as the Setup card's tests (tst_device_card_pairs_asio). The answer
+// is shared with the poll, so a poll that finds no dialog outlives no test.
+std::shared_ptr<SwitchAnswer> answerSwitchDialog(bool switchAll)
+{
+    auto answer = std::make_shared<SwitchAnswer>();
+    auto poll = std::make_shared<std::function<void(int)>>();
+    *poll = [=](int tries) {
+        for (QWidget* top : QApplication::topLevelWidgets()) {
+            auto* dialog = qobject_cast<AsioSwitchAllDialog*>(top);
+            if (dialog == nullptr || !dialog->isVisible()) {
+                continue;
+            }
+            answer->seen = true;
+            const QString dir = qEnvironmentVariable("NEREUS_AUDIO_SETUP_CAPTURE_DIR");
+            if (!dir.isEmpty()) {
+                QDir().mkpath(dir);
+                const QPixmap shot = dialog->grab();
+                shot.save(QStringLiteral("%1/header-asio-switch-all-prompt@%2x.png")
+                              .arg(dir)
+                              .arg(qRound(shot.devicePixelRatio())));
+            }
+            if (auto* t = dialog->findChild<QLabel*>(QStringLiteral("asioSwitchAllText"))) {
+                answer->text = t->text();
+            }
+            for (QLabel* line : dialog->findChildren<QLabel*>(QStringLiteral("asioSwitchAllMove"))) {
+                answer->moves << line->text();
+            }
+            auto* press = dialog->findChild<QPushButton*>(
+                switchAll ? QStringLiteral("asioSwitchAllOk") : QStringLiteral("asioSwitchAllCancel"));
+            if (press != nullptr) {
+                press->click();
+            } else {
+                dialog->reject();
+            }
+            return;
+        }
+        if (tries < 200) {
+            QTimer::singleShot(10, qApp, [poll, tries]() { (*poll)(tries + 1); });
+        }
+    };
+    QTimer::singleShot(0, qApp, [poll]() { (*poll)(0); });
+    return answer;
+}
+
+// Windows with two ASIO drivers: the speakers and the mic on the
+// Focusrite, the MOTU free.
+const QString kFocusrite = QStringLiteral("Focusrite USB ASIO");
+const QString kMotu = QStringLiteral("MOTU M Series");
+
+void twoAsioDrivers(Rig& rig)
+{
+    rig.asio = std::make_shared<FakeAudioEngineBackend>(AudioBackendId::Asio);
+    AudioDeviceInfo focusriteIn = deviceInfo(AudioBackendId::Asio, kFocusrite, kFocusrite, 2);
+    focusriteIn.direction = AudioDeviceDirection::Input;
+    AudioDeviceInfo motuIn = deviceInfo(AudioBackendId::Asio, kMotu, kMotu, 4);
+    motuIn.direction = AudioDeviceDirection::Input;
+    rig.asio->setDevices({deviceInfo(AudioBackendId::Asio, kFocusrite, kFocusrite, 10), focusriteIn,
+                          deviceInfo(AudioBackendId::Asio, kMotu, kMotu, 4), motuIn});
+    rig.asioCaps = {{kFocusrite, asioCaps(kFocusrite, 2, 10)}, {kMotu, asioCaps(kMotu, 4, 4)}};
+    saveChoice(AudioEngineKind::Asio, kFocusrite, kFocusrite, 1);
+    AudioDeviceConfig mic;
+    mic.engine = AudioEngineKind::Asio;
+    mic.deviceId = kFocusrite;
+    mic.deviceName = kFocusrite;
+    mic.firstChannel = 1;
+    mic.saveToSettings(QStringLiteral("audio/TxInput"));
+}
+
+// Pixels of `colour` (within a few steps per channel) in a slider styled
+// with `style`, drawn at half way, enabled or not.
+int pixelsOf(const char* style, bool enabled, QColor colour)
+{
+    QSlider slider(Qt::Horizontal);
+    slider.setRange(0, 100);
+    slider.setValue(50);
+    slider.setFixedSize(100, 16);
+    slider.setStyleSheet(QLatin1String(style));
+    slider.setEnabled(enabled);
+    const QImage image = slider.grab().toImage();
+    int count = 0;
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            const QColor c = image.pixelColor(x, y);
+            if (std::abs(c.red() - colour.red()) <= 6 && std::abs(c.green() - colour.green()) <= 6
+                && std::abs(c.blue() - colour.blue()) <= 6) {
+                ++count;
+            }
+        }
+    }
+    return count;
 }
 
 QString tooltipOf(MasterOutputWidget& w)
@@ -886,6 +1049,79 @@ private slots:
             captureMenu(w, QStringLiteral("header-menu-asio-pairs"));
             rig.engine->stop();
         }
+    }
+    // ── 23. A pick on a second ASIO driver asks first (R-AUD-19) ───────────
+    // The header runs the Setup card's one-driver prompt: Cancel keeps
+    // everything as it was; Switch all moves the mic with the speakers.
+
+    void secondAsioDriverCancelKeepsEverything() {
+        Rig rig(AudioBackendId::Wasapi);
+        twoAsioDrivers(rig);
+        rig.start();
+        MasterOutputWidget w(rig.engine.get());
+        QSignalSpy picked(&w, &MasterOutputWidget::outputDeviceChanged);
+        const QStringList before = audioKeysAndValues();
+
+        const auto answer = answerSwitchDialog(false);
+        triggerInGroup(w, kMotu, QStringLiteral("    Outputs 1-2"));
+        QVERIFY(answer->seen);
+        QCOMPARE(answer->text,
+                 QStringLiteral("NereusSDR can use one ASIO driver at a time. Switching Speakers "
+                                "to MOTU M Series also moves:"));
+        QCOMPARE(answer->moves, (QStringList{QStringLiteral("Microphone: Inputs 1-2")}));
+        QCOMPARE(picked.count(), 0);
+        QCOMPARE(audioKeysAndValues(), before);
+        rig.engine->stop();
+    }
+
+    void secondAsioDriverSwitchAllMovesEveryRole() {
+        Rig rig(AudioBackendId::Wasapi);
+        twoAsioDrivers(rig);
+        rig.start();
+        MasterOutputWidget w(rig.engine.get());
+        QSignalSpy picked(&w, &MasterOutputWidget::outputDeviceChanged);
+
+        const auto answer = answerSwitchDialog(true);
+        triggerInGroup(w, kMotu, QStringLiteral("    Outputs 3-4"));
+        QVERIFY(answer->seen);
+        auto& s = AppSettings::instance();
+        QCOMPARE(s.value(QStringLiteral("audio/Speakers/DeviceId")).toString(), kMotu);
+        QCOMPARE(s.value(QStringLiteral("audio/Speakers/FirstChannel")).toString(),
+                 QStringLiteral("3"));
+        QCOMPARE(s.value(QStringLiteral("audio/TxInput/DeviceId")).toString(), kMotu);
+        QCOMPARE(s.value(QStringLiteral("audio/TxInput/FirstChannel")).toString(),
+                 QStringLiteral("1"));
+        QCOMPARE(picked.count(), 1);
+        QCOMPARE(picked.at(0).at(0).toString(), kMotu);
+        rig.engine->stop();
+    }
+
+    void sameAsioDriverDoesNotAsk() {
+        Rig rig(AudioBackendId::Wasapi);
+        twoAsioDrivers(rig);
+        rig.start();
+        MasterOutputWidget w(rig.engine.get());
+        QSignalSpy picked(&w, &MasterOutputWidget::outputDeviceChanged);
+
+        const auto answer = answerSwitchDialog(false);
+        triggerInGroup(w, kFocusrite, QStringLiteral("    Outputs 3-4"));
+        QVERIFY(!answer->seen);
+        QCOMPARE(picked.count(), 1);
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("audio/Speakers/FirstChannel")).toString(),
+                 QStringLiteral("3"));
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("audio/TxInput/DeviceId")).toString(),
+                 kFocusrite);
+        rig.engine->stop();
+    }
+    // ── 24. The PC slider style greys while disabled, as RADIO's does ──────
+    // (R-SPK-17): no cyan handle or fill, the dim handle instead.
+
+    void pcSliderStyleGreysWhileDisabled() {
+        const QColor cyan(0x00, 0xb4, 0xd8);
+        const QColor dim(0x4a, 0x5a, 0x6a);
+        QVERIFY(pixelsOf(HeaderVolumeStyle::kPcSlider, true, cyan) > 20);
+        QCOMPARE(pixelsOf(HeaderVolumeStyle::kPcSlider, false, cyan), 0);
+        QVERIFY(pixelsOf(HeaderVolumeStyle::kPcSlider, false, dim) > 20);
     }
 };
 

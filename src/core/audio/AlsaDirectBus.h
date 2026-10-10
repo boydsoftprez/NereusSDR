@@ -23,8 +23,9 @@
 // delay is the device latency, the period the device buffer.  -EPIPE (an
 // underrun) is recovered with snd_pcm_prepare and counted; -ESTRPIPE
 // (suspend) resumes, else prepares; -ENODEV (the card was unplugged), or
-// an error snd_pcm_prepare cannot clear, posts DeviceLost once and ends
-// the thread.  close() drops the PCM, which wakes a blocked write, and
+// an error snd_pcm_prepare cannot clear, ends the thread, marks the
+// stream not open and posts DeviceLost once (kept until a sink is set when
+// none is yet).  close() drops the PCM, which wakes a blocked write, and
 // joins the thread.
 //
 // The PCM sits behind IAlsaPcm and AlsaPcmOpener, so the stream's open,
@@ -36,6 +37,8 @@
 //   2026-10-09: native audio plan Task 12 (R-AUD-11, R-AUD-15, R-AUD-25,
 //               R-AUD-32). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-09: final review fixes (R-AUD-07, R-AUD-25). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -104,7 +107,8 @@ using AlsaPcmOpener = std::function<AlsaPcmOpenResult(const QString& pcmName,
 QString alsaPcmName(const AlsaCardRecord& record);
 
 // The PCM a request asks for: 48000 Hz (the card's nearest is taken),
-// the card's channels (two at most asked), the request's buffer frames as
+// channels enough for the request's pair (two at least, the card's count
+// at most), the request's buffer frames as
 // the period (kAlsaDefaultPeriodFrames when it names none), kAlsaPeriods.
 AlsaPcmRequest alsaPcmRequest(const AlsaCardRecord& record, const AudioStreamRequest& request);
 

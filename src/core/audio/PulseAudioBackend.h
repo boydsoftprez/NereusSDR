@@ -18,10 +18,13 @@
 // default sink or source.
 //
 // running() is whether the server answers and, when the registry gives a
-// Linux engine selection (LinuxEngineSelection.h: PulseAudio runs only
-// when the server that answers is not PipeWire's own PulseAudio service),
-// whether it picks PulseAudio: never running while the server is away,
-// even when forced (R-AUD-03).
+// Linux engine selection (LinuxEngineSelection.h: PulseAudio runs while
+// PipeWire itself does not answer), whether it picks PulseAudio: never
+// running while the server is away, even when forced (R-AUD-03).
+//
+// An open resolves its device from the records the last enumerate() read
+// (the catalogue's thread), so opening a role on the main thread asks the
+// server nothing; only an id those records do not hold asks it live.
 //
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 11 (R-AUD-01, R-AUD-02, R-AUD-07,
@@ -29,6 +32,9 @@
 //               Anthropic Claude Code.
 //   2026-10-09: Task 11 fix round 1 (R-AUD-03): not running while the
 //               server is away, even when forced. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: final review fix (R-AUD-03): opens resolve from the last
+//               listing, a live query only on a miss. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -42,6 +48,7 @@
 
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 
 namespace NereusSDR {
@@ -77,8 +84,16 @@ private:
     std::optional<PulseDeviceRecord> deviceFor(const QString& deviceId,
                                                AudioDeviceDirection direction);
 
+    // The listed record `wanted` names for `direction` in `records`.
+    static std::optional<PulseDeviceRecord> findListed(const QList<PulseDeviceRecord>& records,
+                                                       const QString& wanted,
+                                                       AudioDeviceDirection direction);
+
     std::shared_ptr<IPulseAudioSystem> m_system;
     std::function<bool()> m_selected;
+    // What the last enumerate() read; opens resolve from it.
+    std::mutex m_recordsMutex;
+    QList<PulseDeviceRecord> m_lastRecords;
 };
 
 } // namespace NereusSDR

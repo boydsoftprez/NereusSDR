@@ -822,8 +822,9 @@ private slots:
         AudioOutputsPage page(&remote);
         const Radio r = radioOf(&page);
         QCOMPARE(r.note->text(),
-                 QStringLiteral("This is the speaker at the Core. Changes here reach every window "
-                                "and the phone. Each slice's AF level and mute still apply."));
+                 QStringLiteral("This is the radio's own speaker, at the Core. Changes here reach "
+                                "every window and the phone. Each slice's AF level and mute still "
+                                "apply."));
         // D24: the Core speaker card sits between Headphones and Radio
         // speaker, once.
         QCOMPARE(countNamed(&page, QStringLiteral("coreSpeakerGroup")), 1);

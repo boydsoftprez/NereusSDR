@@ -31,8 +31,14 @@
 //               GUI DLL, so a signal of it is found from outside the DLL
 //               on Windows. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-09: native audio fix wave (R-AUD-19): askAsioSwitchAll(), the
+//               prompt the Setup cards and the header's speakers menu
+//               share. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
+#include "core/audio/AsioSession.h"
+#include "core/audio/IAudioStreamHost.h"
 #include "gui/NereusGuiExport.h"
 
 #include <QDialog>
@@ -53,5 +59,14 @@ public:
     AsioSwitchAllDialog(const QString& device, const QString& driver,
                         const QList<QPair<QString, QString>>& moves, QWidget* parent);
 };
+
+// R-AUD-19: a pick that puts a second ASIO driver in use asks first. With
+// `plan` moving other roles, shows the dialog for `role` switching to
+// `driverName` (one line per move) and returns whether "Switch all" was
+// pressed; with no move, true without asking. The caller applies the plan
+// (AudioEngine::applyAsioSwitch) and saves its own pick; on false it
+// writes nothing.
+NEREUS_GUI_EXPORT bool askAsioSwitchAll(const AsioSwitchPlan& plan, AudioRole role,
+                                        const QString& driverName, QWidget* parent);
 
 } // namespace NereusSDR

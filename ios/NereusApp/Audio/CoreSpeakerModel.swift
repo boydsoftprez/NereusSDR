@@ -52,9 +52,16 @@ final class CoreSpeakerModel: ObservableObject {
         /// The Core's computer starts into a desktop.
         let desktop: Bool
 
-        /// The state in `text`, or nil when it is not one.
+        /// The four keys the state has, no more and no fewer.
+        static let keys: Set<String> = ["state", "playing", "chosen", "desktop"]
+
+        /// The state in `text`, or nil when it is not one. A key missing or
+        /// extra makes it not one, as the desktop reads it (the link spec's
+        /// Core speaker notes).
         static func decode(_ text: String) -> State? {
-            guard let data = text.data(using: .utf8) else {
+            guard let data = text.data(using: .utf8),
+                  let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  Set(object.keys) == keys else {
                 return nil
             }
             return try? JSONDecoder().decode(State.self, from: data)

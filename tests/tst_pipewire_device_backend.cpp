@@ -341,6 +341,8 @@ constexpr int kTestRetryMs = 20;
 
 // A daemon that is up but this slow to answer each try.
 constexpr int kSlowConnectMs = 2000;
+// How soon this thread's event loop must run inside the slow try.
+constexpr int kThreadFreeBoundMs = kSlowConnectMs / 2;
 
 // The system's own log lines, expected where a case makes them.
 void expectLost()
@@ -965,12 +967,12 @@ private slots:
         QTRY_VERIFY(server.slowTries.load() >= 1);
         const int triesAtStart = server.tries.load();
 
+        // This thread's event loop runs inside the slow try: bound by half
+        // of it, so a busy machine's late timer never fails the case while
+        // a thread held for the whole try still does.
         bool fired = false;
-        QElapsedTimer timer;
-        timer.start();
         QTimer::singleShot(0, [&fired] { fired = true; });
-        QTRY_VERIFY_WITH_TIMEOUT(fired, 100);
-        QVERIFY2(timer.elapsed() < 100, qPrintable(QString::number(timer.elapsed())));
+        QTRY_VERIFY_WITH_TIMEOUT(fired, kThreadFreeBoundMs);
         QCOMPARE(server.inFlight.load(), 1);   // still inside the slow try
         QVERIFY(!system.running());
         QVERIFY(system.retrying());

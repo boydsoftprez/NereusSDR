@@ -2541,7 +2541,8 @@ function(nereus_apply_core_deps target)
     # PipeWire sources compile conditionally.
     if(PIPEWIRE_FOUND)
         target_link_libraries(${target} PUBLIC ${PIPEWIRE_LIBRARIES})
-        target_include_directories(${target} PUBLIC ${PIPEWIRE_INCLUDE_DIRS})
+        # SYSTEM: the spa headers' own warnings stay out of ours.
+        target_include_directories(${target} SYSTEM PUBLIC ${PIPEWIRE_INCLUDE_DIRS})
         target_compile_options(${target} PUBLIC ${PIPEWIRE_CFLAGS_OTHER})
         target_compile_definitions(${target} PUBLIC NEREUS_HAVE_PIPEWIRE)
         target_sources(${target} PRIVATE

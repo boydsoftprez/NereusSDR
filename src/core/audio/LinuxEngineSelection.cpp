@@ -6,6 +6,9 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 11 (R-AUD-01, R-AUD-02, R-AUD-31).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: final review fix (R-AUD-31): PipeWire's PulseAudio service
+//               runs the PulseAudio engine while PipeWire does not answer.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/LinuxEngineSelection.h"
@@ -20,9 +23,6 @@ const QString kForcePipeWire = QStringLiteral("pipewire");
 const QString kForcePactl = QStringLiteral("pactl");
 const QString kForcePulse = QStringLiteral("pulse");
 const QString kForceNone = QStringLiteral("none");
-
-// pipewire-pulse names itself "PulseAudio (on PipeWire 1.0.5)".
-const QString kPipeWireInServerName = QStringLiteral("PipeWire");
 
 } // namespace
 
@@ -46,10 +46,11 @@ LinuxEngineChoice chooseLinuxEngines(const LinuxSoundServerProbe& probe)
     if (probe.pipewireAnswers) {
         return {true, false};
     }
+    // PipeWire does not answer (or this build has no PipeWire engine): a
+    // server that answers runs the PulseAudio engine, PipeWire's own
+    // PulseAudio service too, so one engine always plays while a server
+    // answers.
     if (probe.pulseServerName.has_value()) {
-        if (probe.pulseServerName->contains(kPipeWireInServerName, Qt::CaseInsensitive)) {
-            return {true, false};
-        }
         return {false, true};
     }
     return {false, false};

@@ -49,6 +49,9 @@
 //               read through AudioEngine, so a Setup page does not read
 //               a key a core consumer reads. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio fix wave (R-AUD-19): the one-driver prompt
+//               through askAsioSwitchAll(), shared with the header menu.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "DeviceCard.h"
@@ -1812,18 +1815,11 @@ bool DeviceCard::confirmAsioSwitch(int index)
     if (plan.moves.isEmpty()) {
         return true;
     }
-    QList<QPair<QString, QString>> moves;
-    for (const AsioUse& move : plan.moves) {
-        moves.append({asioRoleName(move.role),
-                      move.pair.channelCount > 0 ? audioPairLabel(move.direction, move.pair)
-                                                 : QStringLiteral("(no channels)")});
-    }
     QString name = m_deviceCombo->itemData(index).toString();
     if (name.isEmpty()) {
         name = driver;
     }
-    AsioSwitchAllDialog dialog(asioRoleName(*m_audioRole), name, moves, this);
-    if (dialog.exec() != QDialog::Accepted) {
+    if (!askAsioSwitchAll(plan, *m_audioRole, name, this)) {
         return false;
     }
     m_switchingAsio = true;
