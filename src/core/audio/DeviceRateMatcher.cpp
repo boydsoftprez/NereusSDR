@@ -50,6 +50,19 @@
 //               rates, for the PC mic's window side.  J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.  Native audio plan
 //               Task 13 (R-AUD-18).
+//   2026-10-10: A writer of whole packets (setWritePacketFrames; remote
+//               playback's 1920 and 192 frames): the size is never below a
+//               step whose ring holds a packet, the automatic size starts
+//               at the callback plus a packet, the silence after a
+//               restart, a flush or a dry run stops half a packet short of
+//               the target, and stats() carries the frames queued now and
+//               the fill a packet's write may reach.  A packet writer's
+//               control (packetControl) steers by the fill a packet meets
+//               when it did not wait for room, counts its feed-forward over
+//               whole spans between such packets, and starts again after a
+//               dry run.  The block writer is as it was.  Bench regression
+//               (R-AUD-15).  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 //
 // --- From rmatch.c ---
@@ -419,6 +432,7 @@ struct DeviceRateMatcher::Writer {
         , propmav(kPropRingMin, kPropRingMax, 0.0)
         , automatic(sizes.automatic)
         , stepIndex(sizes.firstStepIndex)
+        , configStepIndex(sizes.firstStepIndex)
     {
         // From Thetis Project Files/Source/wdsp/rmatch.c:133-168 [v2.10.3.15 @3759d09]
         nomRatio = (double)cfg.outRate / (double)cfg.inRate;
@@ -460,6 +474,80 @@ struct DeviceRateMatcher::Writer {
         rsize = rsizeFor(DeviceRateMatcher::kDelayStepsMs[stepIndex], cfg, maxNewsamps);
         m.m_delayStepMs.store(DeviceRateMatcher::kDelayStepsMs[stepIndex], std::memory_order_relaxed);
         ring().rsizeFrames.store(static_cast<std::uint32_t>(rsize), std::memory_order_relaxed);
+        publishPacketMarks();
+    }
+
+    // NereusSDR: a packet writer's size and high-water mark for stats().
+    // In steady playback the fill swings half a packet each side of the
+    // target (rsize / 2), so a packet's write may reach the target plus
+    // half a packet, plus the device's callback and one write block of
+    // slack: nothing of a steady stream waits at that mark.  A burst is
+    // written up to the mark and no further, so what a burst adds to the
+    // delay while it lasts is that slack and no more.
+    void publishPacketMarks()
+    {
+        int mark = 0;
+        if (packetFrames > 0) {
+            mark = std::min(rsize, rsize / 2 + packetOutMax - packetOutNominal / 2
+                                       + cfg.callbackFrames + maxNewsamps);
+        }
+        m.m_packetFrames.store(packetFrames, std::memory_order_relaxed);
+        m.m_packetOutFrames.store(packetOutMax, std::memory_order_relaxed);
+        m.m_packetHighWaterFrames.store(mark, std::memory_order_relaxed);
+    }
+
+    // NereusSDR: the first size for a packet writer.  Never below the
+    // smallest step whose ring holds one packet at the control's largest
+    // ratio, the device's callback and one write block; a manual size
+    // below that is raised to it.  The automatic size starts as the block
+    // writer's does, at the device's callback plus one write, the write
+    // being the packet.
+    int packetStepIndex() const
+    {
+        const auto& steps = DeviceRateMatcher::kDelayStepsMs;
+        const int last = static_cast<int>(steps.size()) - 1;
+        int floorIndex = last;
+        for (int i = 0; i <= last; ++i) {
+            if (rsizeFor(steps[static_cast<std::size_t>(i)], cfg, maxNewsamps)
+                >= packetOutMax + cfg.callbackFrames + maxNewsamps) {
+                floorIndex = i;
+                break;
+            }
+        }
+        if (!automatic) {
+            return std::max(floorIndex, configStepIndex);
+        }
+        const double startMs = 1000.0 * cfg.callbackFrames / cfg.outRate
+            + 1000.0 * packetFrames / cfg.inRate;
+        return std::max(floorIndex, stepIndexAtOrAbove(startMs));
+    }
+
+    // NereusSDR: the writer's packet changed (setWritePacketFrames).  The
+    // stream that follows is a new one: its size is its own first size,
+    // whatever the stream before grew to, and the dry runs the device made
+    // while it waited for the first packet are not this stream's.
+    void applyWritePacket(int frames)
+    {
+        packetFrames = frames;
+        if (packetFrames > 0) {
+            const int chunks = (packetFrames + cfg.writeBlockFrames - 1) / cfg.writeBlockFrames;
+            packetOutMax = chunks * maxNewsamps;
+            packetOutNominal = static_cast<int>(std::ceil(static_cast<double>(packetFrames) * nomRatio));
+            setStep(packetStepIndex());
+            dryRunsSeen = ring().dryRuns.load(std::memory_order_acquire);
+        } else {
+            packetOutMax = 0;
+            packetOutNominal = 0;
+            setStep(configStepIndex);
+        }
+    }
+
+    // The silence a restart, a flush or a dry run leaves ahead of the next
+    // audio: the target, or for a packet writer half a packet short of it,
+    // where the fill stands just before a packet in steady playback.
+    int padTargetFrames() const
+    {
+        return std::max(0, rsize / 2 - packetOutNominal / 2);
     }
 
     // Publishes the write index; the reader acquires it before reading.
@@ -508,6 +596,10 @@ struct DeviceRateMatcher::Writer {
         readSamps = 0;
         writeSamps = 0;
         controlFlag = false;
+        spanOpen = false;
+        packetOwnTime = false;
+        packetDeviation = 0;
+        sinceOwnTimeFrames = 0;
         m.m_controlActive.store(false, std::memory_order_relaxed);
         ring().ratio.store(var, std::memory_order_relaxed);
         // The automatic size is chosen again from the gaps seen after the
@@ -537,7 +629,18 @@ struct DeviceRateMatcher::Writer {
         const std::uint64_t readNow = ring().read.load(std::memory_order_acquire);
         const std::uint64_t written = ring().written.load(std::memory_order_relaxed);
         ring().skipTo.store(written, std::memory_order_release);
-        padSilence(static_cast<std::uint64_t>(rsize / 2), readNow);
+        std::uint64_t pad = static_cast<std::uint64_t>(padTargetFrames());
+        if (packetFrames > 0) {
+            // NereusSDR: the packet that follows is written before the
+            // reader has taken the skip, so what is dropped still stands
+            // in the ring's memory: the silence leaves room there for the
+            // whole packet.
+            const std::uint64_t capacity = ring().capacityFrames;
+            const std::uint64_t used = written - std::min(written, readNow);
+            const std::uint64_t need = used + static_cast<std::uint64_t>(packetOutMax);
+            pad = std::min(pad, capacity > need ? capacity - need : 0);
+        }
+        padSilence(pad, readNow);
         ucnt = ntslew;
     }
 
@@ -600,8 +703,94 @@ struct DeviceRateMatcher::Writer {
             }
         }
         if (controlFlag) {
-            control(change, deviation);
+            if (packetFrames > 0) {
+                packetControl(isRead, change);
+            } else {
+                control(change, deviation);
+            }
         }
+    }
+
+    // NereusSDR: the control for a packet writer.  control() above hears a
+    // write block and a device read in turn and steers the mean fill; a
+    // packet writer's blocks come a packet at a time, and a burst's packets
+    // at the device's own pace (the writer keeps them until there is
+    // room), so neither the mean fill nor the frames counted across a
+    // burst say what the clocks do.  Both terms are control()'s, fed by
+    // what does:
+    //
+    // The proportional term's deviation is the packet's (processChunk):
+    // the fill a packet met when it came in its own time, plus half a
+    // packet, against the target.
+    //
+    // The feed-forward counts whole spans, from one packet that came in
+    // its own time to the next.  Every frame the source sent in a span was
+    // written in it and the fill ends where it began, so the device's
+    // frames over the span's are the clocks' ratio, whether the span is
+    // one packet or a batch from the link.  A span is counted when it
+    // closes, its reads and writes in turn as the block writer's come.  A
+    // span longer than a second of audio is a backlog standing behind the
+    // writer (after a stall): its frames were written at the device's pace
+    // and only repeat the ratio in use, so it is left out and the
+    // feed-forward holds.
+    void packetControl(bool isRead, int change)
+    {
+        if (!isRead && packetBlock == 0 && packetOwnTime) {
+            if (spanOpen
+                && spanWriteBlocks * static_cast<std::uint64_t>(cfg.writeBlockFrames)
+                    <= static_cast<std::uint64_t>(cfg.inRate)) {
+                countSpan();
+            }
+            spanOpen = true;
+            spanWriteBlocks = 0;
+            spanReadCalls = 0;
+            spanReadFrames = 0;
+        }
+        if (spanOpen) {
+            if (isRead) {
+                ++spanReadCalls;
+                spanReadFrames += static_cast<std::uint64_t>(-change);
+            } else {
+                ++spanWriteBlocks;
+            }
+        }
+        // From Thetis Project Files/Source/wdsp/rmatch.c:264-272 [v2.10.3.15 @3759d09]
+        // control()'s proportional term and its limits.
+        avDeviation = propmav.x(packetDeviation);
+        var = feedForward - prGain * avDeviation;
+        if (var > kVarMax) {
+            var = kVarMax;
+        }
+        if (var < kVarMin) {
+            var = kVarMin;
+        }
+    }
+
+    // The closed span's events into the feed-forward: each write block,
+    // and the reads shared out evenly among them.
+    void countSpan()
+    {
+        const std::uint64_t per = spanReadCalls > 0 ? spanReadFrames / spanReadCalls : 0;
+        std::uint64_t counted = 0;
+        for (std::uint64_t block = 1; block <= spanWriteBlocks; ++block) {
+            feedForwardEvent(cfg.writeBlockFrames);
+            const std::uint64_t upTo = spanReadCalls * block / spanWriteBlocks;
+            for (; counted < upTo; ++counted) {
+                const std::uint64_t frames = (counted + 1 == spanReadCalls)
+                    ? spanReadFrames - per * (spanReadCalls - 1) : per;
+                feedForwardEvent(-static_cast<int>(frames));
+            }
+        }
+    }
+
+    // From Thetis Project Files/Source/wdsp/rmatch.c:258-263 [v2.10.3.15 @3759d09]
+    // control()'s feed-forward term, for one event.
+    void feedForwardEvent(int change)
+    {
+        double current_ratio;
+        current_ratio = ffmav.x(change);
+        current_ratio *= invNomRatio;
+        feedForward = kFfAlpha * current_ratio + (1.0 - kFfAlpha) * feedForward;
     }
 
     // Replays the reads since the last write into the control.
@@ -697,6 +886,33 @@ struct DeviceRateMatcher::Writer {
             lastWriteNs = nowNs;
         }
 
+        // NereusSDR: a packet writer's deviation, one for the packet and
+        // the reads ahead of it (packetControl).  What the clocks move is
+        // the fill a packet meets when it comes in its own time (it did
+        // not wait for room, and the device has read since the packet
+        // before): that, plus half a packet, is held at the target (the
+        // mean fill, in steady playback).  The other packets of a burst
+        // say nothing new and stand at the last such packet's deviation.
+        // When no packet has come in its own time for a second of audio a
+        // backlog is standing behind the writer, which holds the fill the
+        // mark's slack above its working level: that slack is then the
+        // deviation, so the backlog is played out.
+        if (packetFrames > 0) {
+            if (packetBlock == 0) {
+                packetOwnTime = !packetWaited && readCallsNow != readCallsAtLast;
+                if (packetOwnTime) {
+                    const std::uint64_t writtenNow = r.written.load(std::memory_order_relaxed);
+                    const std::int64_t met = static_cast<std::int64_t>(
+                        writtenNow - std::min(writtenNow, effectiveRead(readNow)));
+                    packetDeviation = static_cast<int>(met + packetOutNominal / 2 - rsize / 2);
+                    sinceOwnTimeFrames = 0;
+                } else if (sinceOwnTimeFrames > static_cast<std::uint64_t>(cfg.inRate)) {
+                    packetDeviation = cfg.callbackFrames + maxNewsamps;
+                }
+            }
+            sinceOwnTimeFrames += static_cast<std::uint64_t>(cfg.writeBlockFrames);
+        }
+
         replayReads(readNow, requestedNow, readCallsNow);
 
         // A dry run: one step up (automatic), then silence up to the target,
@@ -706,12 +922,23 @@ struct DeviceRateMatcher::Writer {
         // before the count is and is not used to arm it.
         if (dryRunsNow != dryRunsSeen) {
             dryRunsSeen = dryRunsNow;
+            // NereusSDR: a packet writer's dry run is its source stopping
+            // (a stalled link or worker), not the clocks drifting.  The
+            // frames the device asked for meanwhile would read as a faster
+            // device for as long as the feed-forward average holds them,
+            // and the backlog that follows is written at the device's
+            // pace, so the control starts again from the audio after it.
+            if (packetFrames > 0) {
+                restartControl();
+                haveLastWrite = true;
+                lastWriteNs = nowNs;
+            }
             if (automatic && stepIndex + 1 < static_cast<int>(DeviceRateMatcher::kDelayStepsMs.size())) {
                 setStep(stepIndex + 1);
             }
             const std::uint64_t written = r.written.load(std::memory_order_relaxed);
             const std::uint64_t fill = written - std::min(written, effectiveRead(readNow));
-            const std::uint64_t half = static_cast<std::uint64_t>(rsize / 2);
+            const std::uint64_t half = static_cast<std::uint64_t>(padTargetFrames());
             if (fill < half) {
                 padSilence(half - fill, readNow);
             }
@@ -822,7 +1049,31 @@ struct DeviceRateMatcher::Writer {
     std::uint64_t readCallsAtStall = 0;
     bool automatic = true;
     int stepIndex = 0;
+    int configStepIndex = 0;      // the configuration's own first size
     int rsize = 0;
+    // The packet writer (0: the block writer): the packet in input frames,
+    // and in device frames at the nominal ratio and at the most the
+    // resampler makes of it.
+    std::uint32_t packetGeneration = 0;
+    int packetFrames = 0;
+    int packetOutNominal = 0;
+    int packetOutMax = 0;
+    // The write block of the packet being written.
+    int packetBlock = 0;
+    // Whether the packet being written waited for room, and its deviation
+    // for the control.
+    bool packetWaited = false;
+    // Whether it came in its own time, the deviation the control hears,
+    // and the input frames written since a packet last did.
+    bool packetOwnTime = false;
+    int packetDeviation = 0;
+    std::uint64_t sinceOwnTimeFrames = 0;
+    // The span being measured for the feed-forward (packetControl): its
+    // write blocks, and the device's reads and the frames they asked for.
+    bool spanOpen = false;
+    std::uint64_t spanWriteBlocks = 0;
+    std::uint64_t spanReadCalls = 0;
+    std::uint64_t spanReadFrames = 0;
     bool haveLastWrite = false;
     std::int64_t lastWriteNs = 0;
     std::int64_t maxGapNs = 0;
@@ -919,7 +1170,19 @@ void DeviceRateMatcher::write(const float* interleavedStereo, int frames, std::i
         return;
     }
     Writer& w = *m_writer;
-    const bool restart = m_restartRequested.exchange(false, std::memory_order_acq_rel);
+    // A new packet size starts the stream afresh, as a restart does.
+    const std::uint32_t packetGeneration = m_writePacketGeneration.load(std::memory_order_acquire);
+    const bool packetChanged = packetGeneration != w.packetGeneration;
+    if (packetChanged) {
+        w.packetGeneration = packetGeneration;
+        w.applyWritePacket(m_writePacketRequested.load(std::memory_order_acquire));
+        m_writePacketApplied.store(packetGeneration, std::memory_order_release);
+    }
+    // One write is one packet: its first block, and whether it waited.
+    w.packetBlock = 0;
+    w.packetWaited = m_writePacketWaited.load(std::memory_order_acquire);
+    const bool restart = m_restartRequested.exchange(false, std::memory_order_acq_rel)
+        || packetChanged;
     const bool flush = m_flushRequested.exchange(false, std::memory_order_acq_rel);
     if (restart) {
         w.restartControl();
@@ -950,6 +1213,9 @@ void DeviceRateMatcher::write(const float* interleavedStereo, int frames, std::i
         if (w.stageFrames == block) {
             w.processChunk(nowNs);
             w.stageFrames = 0;
+            if (w.packetFrames > 0) {
+                ++w.packetBlock;
+            }
         }
     }
 }
@@ -962,6 +1228,17 @@ void DeviceRateMatcher::requestFlush()
 void DeviceRateMatcher::requestRestart()
 {
     m_restartRequested.store(true, std::memory_order_release);
+}
+
+void DeviceRateMatcher::setWritePacketFrames(int frames, bool waited)
+{
+    m_writePacketWaited.store(waited, std::memory_order_release);
+    const int packet = std::clamp(frames, 0, kMaxWritePacketFrames);
+    // The value first, then the count: a writer that sees the new count
+    // reads the new value.
+    if (m_writePacketRequested.exchange(packet, std::memory_order_acq_rel) != packet) {
+        m_writePacketGeneration.fetch_add(1, std::memory_order_acq_rel);
+    }
 }
 
 MatcherReader DeviceRateMatcher::makeReader()
@@ -1059,6 +1336,24 @@ DeviceRateMatcherStats DeviceRateMatcher::stats() const
     s.capacityFrames = static_cast<int>(m_ring->capacityFrames);
     s.delayStepMs = delayStepMs();
     s.controlActive = m_controlActive.load(std::memory_order_relaxed);
+    // The frames queued now; a skip the reader has not taken counts as
+    // taken, as the writer counts it.
+    const std::uint64_t written = m_ring->written.load(std::memory_order_acquire);
+    std::uint64_t read = m_ring->read.load(std::memory_order_acquire);
+    const std::uint64_t skip = m_ring->skipTo.load(std::memory_order_acquire);
+    if (skip != kMatcherNoSkip && skip > read) {
+        read = skip;
+    }
+    s.queuedFrames = static_cast<int>(std::min<std::uint64_t>(
+        written - std::min(written, read), m_ring->capacityFrames));
+    // A packet size the writer has not applied yet reads as none: the
+    // size is then the stream's before it.
+    if (m_writePacketApplied.load(std::memory_order_acquire)
+        == m_writePacketGeneration.load(std::memory_order_acquire)) {
+        s.packetFrames = m_packetFrames.load(std::memory_order_relaxed);
+        s.packetOutFrames = m_packetOutFrames.load(std::memory_order_relaxed);
+        s.packetHighWaterFrames = m_packetHighWaterFrames.load(std::memory_order_relaxed);
+    }
     return s;
 }
 

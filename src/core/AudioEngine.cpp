@@ -323,6 +323,11 @@
 //               answer finishes the Rescan that asked for it, so a late
 //               answer from an earlier Rescan never ends a later one.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10: bench regression (R-AUD-15): remote playback tells the
+//               bus's clock matcher its packet with each write, and the
+//               block writer again at its end; the room check is the
+//               receiver's. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "AudioEngine.h"
@@ -2483,6 +2488,7 @@ void AudioEngine::endRemotePlayback(RemotePlaybackOutput output)
         m_remoteHeadphonesFormat = AudioFormat{};
         if (m_headphonesBus) {
             m_headphonesBus->flush();
+            m_headphonesBus->setClockMatchWritePacket(0, false);   // the block writer again
             m_headphonesBus->restartClockMatch();   // R-AUD-15
         }
         return;
@@ -2492,7 +2498,9 @@ void AudioEngine::endRemotePlayback(RemotePlaybackOutput output)
     m_remotePlaybackFormat = AudioFormat{};
     if (m_speakersBus) {
         m_speakersBus->flush();
-        // R-AUD-15: local playback that follows starts its own control.
+        // R-AUD-15: local playback that follows starts its own control,
+        // at the block writer's own size.
+        m_speakersBus->setClockMatchWritePacket(0, false);
         m_speakersBus->restartClockMatch();
     }
 }
@@ -2501,7 +2509,8 @@ bool AudioEngine::remotePlaybackIntoMatcher(RemotePlaybackOutput output) const
 {
     // R-AUD-15, settled call 30: the output's bus takes the 48 kHz stereo
     // mix into its own clock matcher, so remote audio is written as it is
-    // released and the bus matches the device clock.
+    // released (once the matcher has room for the packet) and the bus
+    // matches the device clock.
     if (output == RemotePlaybackOutput::Headphones) {
         std::lock_guard<std::mutex> lock(m_headphonesBusMutex);
         return m_headphonesBus && m_headphonesBus->isOpen()
@@ -3007,7 +3016,8 @@ std::optional<IAudioBus::OutputPacing> AudioEngine::remotePlaybackPacing(
     return m_speakersBus->outputPacing();
 }
 
-bool AudioEngine::writeRemotePlayback(const QVector<float>& pcm, RemotePlaybackOutput output)
+bool AudioEngine::writeRemotePlayback(const QVector<float>& pcm, RemotePlaybackOutput output,
+                                      bool waitedForRoom)
 {
     // Bounded worker-side scratch; never called by the device callback.
     // The block is interleaved in the format begin accepted (one or two
@@ -3021,8 +3031,11 @@ bool AudioEngine::writeRemotePlayback(const QVector<float>& pcm, RemotePlaybackO
         std::lock_guard<std::mutex> lock(m_headphonesBusMutex);
         if (!m_remoteHeadphonesPlayback || !m_headphonesBus || !m_headphonesBus->isOpen()
             || m_headphonesBus->negotiatedFormat() != m_remoteHeadphonesFormat) { return false; }
-        // R-AUD-15: a bus with a clock matcher takes 48 kHz stereo, with
-        // no room check (the matcher makes its own room).
+        // R-AUD-15: a bus with a clock matcher takes 48 kHz stereo. The
+        // block is one packet: the matcher is told its length and keeps a
+        // size that holds it. The room check is the caller's
+        // (remotePlaybackMatcherStats()); the matcher makes no room for a
+        // burst.
         const bool intoMatcher = m_headphonesBus->takesStereoMix();
         const int channels = intoMatcher ? 2 : m_remoteHeadphonesFormat.channels;
         if (channels <= 0 || pcm.size() % channels != 0
@@ -3031,6 +3044,8 @@ bool AudioEngine::writeRemotePlayback(const QVector<float>& pcm, RemotePlaybackO
         if (!intoMatcher) {
             const auto pacing = m_headphonesBus->outputPacing();
             if (!pacing || pacing->capacityFrames - pacing->queuedFrames < frames) { return false; }
+        } else {
+            m_headphonesBus->setClockMatchWritePacket(frames, waitedForRoom);
         }
         const auto bytes = static_cast<qint64>(pcm.size()) * qint64(sizeof(float));
         return m_headphonesBus->push(reinterpret_cast<const char*>(pcm.constData()), bytes)
@@ -3045,9 +3060,12 @@ bool AudioEngine::writeRemotePlayback(const QVector<float>& pcm, RemotePlaybackO
     std::lock_guard<std::mutex> lock(m_speakersBusMutex);
     if (!m_remotePlayback || !m_speakersBus || !m_speakersBus->isOpen()
         || m_speakersBus->negotiatedFormat() != m_remotePlaybackFormat) { return false; }
-    // R-AUD-15: a bus with a clock matcher takes 48 kHz stereo, with no
-    // room check (the matcher makes its own room); muted, it is fed the
-    // block as silence so its clock keeps matching, as the local push.
+    // R-AUD-15: a bus with a clock matcher takes 48 kHz stereo. The block
+    // is one packet: the matcher is told its length and keeps a size that
+    // holds it, and the room check is the caller's
+    // (remotePlaybackMatcherStats()); the matcher makes no room for a
+    // burst. Muted, it is fed the block as silence so its clock keeps
+    // matching, as the local push.
     const bool intoMatcher = m_speakersBus->takesStereoMix();
     const int channels = intoMatcher ? 2 : m_remotePlaybackFormat.channels;
     if (channels <= 0 || pcm.size() % channels != 0
@@ -3059,6 +3077,9 @@ bool AudioEngine::writeRemotePlayback(const QVector<float>& pcm, RemotePlaybackO
     } else if (!intoMatcher) {
         const auto pacing = m_speakersBus->outputPacing();
         if (!pacing || pacing->capacityFrames - pacing->queuedFrames < frames) { return false; }
+    }
+    if (intoMatcher) {
+        m_speakersBus->setClockMatchWritePacket(frames, waitedForRoom);
     }
     const auto bytes = static_cast<qint64>(pcm.size()) * qint64(sizeof(float));
     return m_speakersBus->push(reinterpret_cast<const char*>(scaled.data()), bytes) == bytes;

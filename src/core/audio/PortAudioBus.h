@@ -45,6 +45,10 @@
 //               call outside the callback holds PortAudioLibrary's lock,
 //               and an open stream is counted. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-10: setClockMatchWritePacket(): a writer of whole packets
+//               (remote playback) tells the bus's clock matcher its packet
+//               (R-AUD-15, bench regression). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -189,6 +193,7 @@ public:
     AudioDelayParts delayParts() const override;
     std::optional<DeviceRateMatcherStats> matcherStats() const override;
     void restartClockMatch() override;
+    void setClockMatchWritePacket(int frames, bool waited) override;
     // R-AUD-06: the output's matcher reader slews to silence (Rescan).
     void requestFadeOut() override;
     bool fadedOut() const override;

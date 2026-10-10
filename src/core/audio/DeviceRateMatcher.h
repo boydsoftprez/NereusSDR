@@ -25,6 +25,10 @@
 //   2026-10-09: resamplerDelayFramesFor() for the PC mic's window side.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //               Native audio plan Task 13 (R-AUD-18).
+//   2026-10-10: setWritePacketFrames(): a writer of whole packets (remote
+//               playback) gets a size that holds one, and stats() says
+//               whether one fits (R-AUD-15, bench regression). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -93,6 +97,31 @@ public:
     void requestFlush();     // any thread; the writer drops what is queued at its next write
     void requestRestart();   // any thread; the writer restarts the control at its next write
 
+    // A writer that writes whole packets says how long one is, in input
+    // frames (remote playback: 1920 for Opus, 192 for lossless); 0 is the
+    // block writer the matcher is built for.  Any thread; applied at the
+    // writer's next write, which then starts afresh as a restart does.
+    // With a packet the size is never below a step whose ring holds the
+    // packet, the device's callback and one write block, and the automatic
+    // size starts at the device's callback plus one packet.  Silence after
+    // a restart, a flush or a dry run then stops half a packet short of the
+    // target, so the packet that follows fits.  The matcher still makes no
+    // room for a burst: the writer asks stats() whether a packet fits
+    // (queuedFrames + packetOutFrames at or below packetHighWaterFrames)
+    // and keeps the burst until it does.
+    //
+    // `waited` says the packet about to be written was kept back for room
+    // (it is part of a burst), so the fill it meets was set by the room
+    // check and says nothing of the clocks.  The control then steers by
+    // the packets that came in their own time: the fill each of them met,
+    // plus half a packet, is held at the target, and the device's rate is
+    // counted from one such packet to the next.  A dry run restarts a
+    // packet writer's control: the source stopped, so the rates measured
+    // across it are not the clocks'.  Calling it again with another value,
+    // 0 included, starts the next stream from its own first size.
+    static constexpr int kMaxWritePacketFrames = 65536;
+    void setWritePacketFrames(int frames, bool waited = false);
+
     MatcherReader makeReader();
     MatcherRingHeader* ring();
 
@@ -124,6 +153,15 @@ private:
     std::atomic<bool> m_flushRequested{false};
     std::atomic<bool> m_restartRequested{false};
     std::atomic<int> m_delayStepMs{0};
+    // The packet writer: what was asked (with a count of the changes) and
+    // what the writer has applied.
+    std::atomic<int> m_writePacketRequested{0};
+    std::atomic<bool> m_writePacketWaited{false};
+    std::atomic<std::uint32_t> m_writePacketGeneration{0};
+    std::atomic<std::uint32_t> m_writePacketApplied{0};
+    std::atomic<int> m_packetFrames{0};
+    std::atomic<int> m_packetOutFrames{0};
+    std::atomic<int> m_packetHighWaterFrames{0};
     std::atomic<bool> m_controlActive{false};
     std::atomic<bool> m_forceRatio{false};
     std::atomic<double> m_forcedRatio{1.0};

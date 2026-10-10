@@ -39,6 +39,10 @@
 //               Claude Code.
 //   2026-10-09: final review fixes (R-AUD-07, R-AUD-25). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10: setClockMatchWritePacket(): a writer of whole packets
+//               (remote playback) tells the bus's clock matcher its packet
+//               (R-AUD-15, bench regression). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -161,6 +165,7 @@ public:
     bool takesStereoMix() const override { return true; }
     std::optional<DeviceRateMatcherStats> matcherStats() const override;
     void restartClockMatch() override;
+    void setClockMatchWritePacket(int frames, bool waited) override;
     void requestFadeOut() override;
     bool fadedOut() const override;
 

@@ -1,5 +1,11 @@
 #pragma once
 // no-port-check: NereusSDR-original remote audio lifecycle and worker wiring.
+//
+// Modification history (NereusSDR):
+//   2026-10-10: into a bus's own clock matcher, a packet is written only
+//               when the matcher has room for it (R-AUD-15, bench
+//               regression). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 #include "core/NereusCoreExport.h"
 #include "core/session/media/PcmAudioCodec.h"
 #include "core/session/media/IRemotePcmWorkerStage.h"
@@ -200,11 +206,14 @@ struct RemoteAudioReceiverTelemetry {
 // the two channels mixed as (left + right) / 2.
 // R-AUD-15 (settled call 30): when the output's bus has its own clock
 // matcher (AudioEngine::remotePlaybackIntoMatcher()), the receiver
-// releases audio by the jitter hold alone, as the PCM sink does, writes
-// the 48 kHz stereo stream into that matcher and runs no rate matcher of
-// its own; the bus's matcher counters are its underflow and overflow
-// counts, and the matcher fill above its working level is delay the
-// adaptive hold sheds.
+// releases audio by the jitter hold, writes the 48 kHz stereo stream into
+// that matcher a whole packet at a time and runs no rate matcher of its
+// own. The matcher is sized to hold one packet; a burst (a batch from the
+// link, or the packets a held-up worker finds waiting) stays in the
+// bounded jitter queue until the matcher has room for the next packet,
+// so the matcher never overruns. The bus's matcher counters are its
+// underflow and overflow counts, and the matcher fill above its working
+// level is delay the adaptive hold sheds.
 class NEREUS_CORE_EXPORT RemoteAudioReceiver final : public QObject {
     Q_OBJECT
 public:

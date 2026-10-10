@@ -23,6 +23,7 @@
 #include "fakes/PacedAudioBus.h"
 #include "OperatorWording.h"
 #include <functional>
+#include <limits>
 using namespace NereusSDR;
 namespace {
 // A fake device callback thread with std::jthread's shape: the body polls a
@@ -142,6 +143,146 @@ double blockRms(const QVector<float>& block)
     for (float sample : block) { sum += double(sample) * sample; }
     return block.isEmpty() ? 0.0 : std::sqrt(sum / block.size());
 }
+// R-AUD-15: remote playback into a speakers bus's own clock matcher, on
+// virtual time, one millisecond a tick. No device, no network and no wall
+// clock: the receiver runs in step mode on the rig's clock, the fake bus
+// holds a real DeviceRateMatcher, and the fake device reads 128 frames as
+// each 128 frames of time pass. Packet k is sent at k packet times; the
+// link delivers whole batches (a batch arrives when its last packet was
+// sent), or nothing while it is held back.
+class MatcherPlaybackRig {
+public:
+    static constexpr quint32 kSsrc = 0x4e520a10;
+    static constexpr int kCallbackFrames = 128;
+
+    explicit MatcherPlaybackRig(RemoteAudioProfile profile, int batch = 1, int deviceDelayMs = 0)
+        : m_profile(profile), m_batch(batch),
+          m_receiver(&m_engine, nullptr, [this] { return m_now; }),
+          errors(&m_receiver, &RemoteAudioReceiver::errorOccurred),
+          restarts(&m_receiver, &RemoteAudioReceiver::restartRequested)
+    {
+        m_engine.setVolume(1.0f);
+        AudioStreamRequest request;
+        request.sampleRate = 48000;
+        request.delayMs = deviceDelayMs;
+        auto bus = std::make_unique<FakeMatcherAudioBus>(request, true, kCallbackFrames);
+        AudioFormat format;
+        format.sampleRate = 48000;
+        format.channels = 2;
+        format.sample = AudioFormat::Sample::Float32;
+        m_opened = bus->open(format);
+        bus->writeClockForTest = [this] { return std::int64_t(m_now); };
+        device = bus.get();
+        m_engine.setSpeakersBusForTest(std::move(bus));
+        m_receiver.setStepModeForTest(true);
+    }
+
+    int packetFrames() const
+    {
+        return m_profile == RemoteAudioProfile::Lossless ? PcmAudioCodecConfig::kPacketFrames
+                                                         : OpusAudioCodecConfig::kFrameSamples;
+    }
+    int packetMs() const { return packetFrames() / 48; }
+
+    // A context from the next packet on (the first, or a fresh one after
+    // stop()).
+    bool start()
+    {
+        return m_opened && m_engine.remotePlaybackIntoMatcher()
+            && m_receiver.start(kSsrc, quint32(m_nextPacket) * quint32(packetFrames()), m_profile);
+    }
+    void stop() { m_receiver.stop(); }
+
+    // One millisecond. `linkDelivers` false: the link holds its packets
+    // back. `workerRuns` false: the receive worker does not get to run.
+    // False once the worker has ended.
+    bool tick(bool linkDelivers = true, bool workerRuns = true)
+    {
+        m_now += 1'000'000;
+        ++m_ms;
+        if (linkDelivers) {
+            const qint64 sent = m_ms / packetMs() + 1;
+            const qint64 deliverable = sent - sent % m_batch;
+            while (m_nextPacket < deliverable) {
+                m_receiver.submit(packet(m_nextPacket));
+                ++m_nextPacket;
+            }
+        }
+        bool alive = true;
+        if (workerRuns) { alive = m_receiver.runWorkerPassForTest(); }
+        m_owedFrames += 48;
+        while (m_owedFrames >= kCallbackFrames) {
+            device->pumpForTest(kCallbackFrames);
+            m_owedFrames -= kCallbackFrames;
+        }
+        return alive;
+    }
+    // `ms` ticks; false if the worker ended.
+    bool run(qint64 ms, bool linkDelivers = true, bool workerRuns = true)
+    {
+        for (qint64 i = 0; i < ms; ++i) {
+            if (!tick(linkDelivers, workerRuns)) { return false; }
+        }
+        return true;
+    }
+
+    // The context's counts as the app's diagnostics read them, and the
+    // bus matcher's own overruns since it was built.
+    int underflows() const { return m_receiver.telemetry().underflows; }
+    int overflows() const { return m_receiver.telemetry().overflows; }
+    quint64 busOverruns() const
+    {
+        const auto stats = device->matcherStats();
+        return stats ? stats->overruns : std::numeric_limits<quint64>::max();
+    }
+    qint64 sentPackets() const { return m_nextPacket; }
+    quint64 heardPackets() const
+    {
+        return m_receiver.decodedPackets() + m_receiver.concealedPackets();
+    }
+    QString faults() const
+    {
+        QStringList all;
+        for (const auto& fault : errors) { all << fault.first().toString(); }
+        for (const auto& fault : restarts) { all << fault.first().toString(); }
+        return all.join(QStringLiteral("; "));
+    }
+    AudioEngine& engine() { return m_engine; }
+
+    FakeMatcherAudioBus* device = nullptr;
+
+private:
+    QByteArray packet(qint64 index)
+    {
+        if (m_profile == RemoteAudioProfile::Lossless) {
+            return losslessTonePacket(int(index), kSsrc);
+        }
+        QVector<float> pcm(OpusAudioCodecConfig::kFrameSamples * 2);
+        for (int i = 0; i < OpusAudioCodecConfig::kFrameSamples; ++i) {
+            const double t = double(index * OpusAudioCodecConfig::kFrameSamples + i) / 48000;
+            pcm[2 * i] = float(0.2 * std::sin(t * 2 * 3.141592653589793 * 997));
+            pcm[2 * i + 1] = pcm[2 * i];
+        }
+        return m_encoder.encode(pcm, quint16(index),
+                                quint32(index) * quint32(OpusAudioCodecConfig::kFrameSamples),
+                                kSsrc).packet;
+    }
+
+    const RemoteAudioProfile m_profile;
+    const int m_batch;
+    AudioEngine m_engine;
+    qint64 m_now = 1'000'000'000;
+    qint64 m_ms = 0;
+    qint64 m_nextPacket = 0;
+    int m_owedFrames = 0;
+    bool m_opened = false;
+    OpusAudioEncoder m_encoder;
+    RemoteAudioReceiver m_receiver;
+
+public:
+    QSignalSpy errors;
+    QSignalSpy restarts;
+};
 } // namespace
 class TstRemoteAudioReceiver : public QObject {
     Q_OBJECT
@@ -1860,10 +2001,12 @@ private slots:
     }
 
     // R-AUD-15, settled call 30: on a speakers bus with its own clock
-    // matcher the receiver releases by the jitter hold alone and writes the
-    // 48 kHz stereo stream into that matcher; it runs no rate matcher of
-    // its own, its counters are the bus matcher's, and begin and end
-    // restart the bus's clock match. Step mode on virtual time; the fake
+    // matcher the receiver releases by the jitter hold, and when that
+    // matcher has room for the whole packet (bench regression 2026-10-10:
+    // no longer by the hold alone), and writes the 48 kHz stereo stream
+    // into that matcher; it runs no rate matcher of its own, its counters
+    // are the bus matcher's, and begin and end restart the bus's clock
+    // match. Step mode on virtual time; the fake
     // device reads 128 frames as each 128 frames of time pass.
     void playsIntoTheSpeakersOwnMatcher()
     {
@@ -1968,6 +2111,134 @@ private slots:
                  RemoteAudioReceiver::Fault::SpeakerStalled);
         receiver.stop();
         QCOMPARE(device->restartCount(), restartsAtStart + 1);
+    }
+
+    // R-AUD-15, bench regression 2026-10-10: the bus's matcher takes whole
+    // packets (1920 frames of Opus, 192 of lossless) without one overrun,
+    // steady, after the receive side was held up for 250 ms and its
+    // backlog came as one batch, and when the link delivers seven packets
+    // at a time. A busy system makes a dry run only while it delivers
+    // nothing for longer than the audio that is buffered (the stall);
+    // steady playback and batches make none.
+    void matcherPlaybackTakesWholePacketsAndBursts_data()
+    {
+        QTest::addColumn<bool>("lossless");
+        QTest::addColumn<int>("batch");
+        QTest::addColumn<int>("stallMs");
+        QTest::newRow("Opus, steady") << false << 1 << 0;
+        QTest::newRow("lossless, steady") << true << 1 << 0;
+        QTest::newRow("Opus, a 250 ms stall then its backlog at once") << false << 1 << 250;
+        QTest::newRow("lossless, a 250 ms stall then its backlog at once") << true << 1 << 250;
+        QTest::newRow("Opus, batches of 7") << false << 7 << 0;
+        QTest::newRow("lossless, batches of 7") << true << 7 << 0;
+    }
+    void matcherPlaybackTakesWholePacketsAndBursts()
+    {
+        QFETCH(bool, lossless);
+        QFETCH(int, batch);
+        QFETCH(int, stallMs);
+        constexpr qint64 kBeforeMs = 10'000;
+        constexpr qint64 kSettleMs = 1'000;
+        constexpr qint64 kAfterMs = 21'000;
+        MatcherPlaybackRig rig(lossless ? RemoteAudioProfile::Lossless : RemoteAudioProfile::Opus,
+                               batch);
+        QVERIFY(rig.start());
+
+        QVERIFY2(rig.run(kBeforeMs), qPrintable(rig.faults()));
+        QCOMPARE(rig.busOverruns(), quint64(0));
+        QCOMPARE(rig.overflows(), 0);
+        QCOMPARE(rig.underflows(), 0);
+
+        int dryAfterStall = 0;
+        if (stallMs > 0) {
+            // Nothing arrives and the worker does not run; the device
+            // plays on. Then the whole backlog arrives in one tick.
+            QVERIFY2(rig.run(stallMs, false, false), qPrintable(rig.faults()));
+            QVERIFY2(rig.run(kSettleMs), qPrintable(rig.faults()));
+            QCOMPARE(rig.busOverruns(), quint64(0));
+            QCOMPARE(rig.overflows(), 0);
+            dryAfterStall = rig.underflows();
+            // The stall outlasted the buffered audio: it was heard.
+            QVERIFY2(dryAfterStall >= 1, "the stall did not run the device dry");
+        }
+
+        QVERIFY2(rig.run(kAfterMs), qPrintable(rig.faults()));
+        QCoreApplication::processEvents();
+        QVERIFY2(rig.errors.isEmpty() && rig.restarts.isEmpty(), qPrintable(rig.faults()));
+        QCOMPARE(rig.busOverruns(), quint64(0));
+        QCOMPARE(rig.overflows(), 0);
+        // No dry run beyond the stall's own.
+        QCOMPARE(rig.underflows(), dryAfterStall);
+        if (batch == 1 && stallMs == 0) {
+            // A steady stream keeps the matcher's first size for a packet
+            // writer: the smallest that holds a packet at the device.
+            const auto stats = rig.device->matcherStats();
+            QVERIFY(stats);
+            QCOMPARE(stats->delayStepMs, lossless ? 10 : 40);
+        }
+        // The stream played: every packet sent but the last 400 ms of them
+        // (the hold, the backlog a stall leaves) was decoded or concealed.
+        const qint64 unheardAllowance = 400 / rig.packetMs() + batch;
+        QVERIFY2(qint64(rig.heardPackets()) >= rig.sentPackets() - unheardAllowance,
+                 qPrintable(QStringLiteral("%1 of %2").arg(rig.heardPackets())
+                                .arg(rig.sentPackets())));
+        rig.stop();
+    }
+
+    // R-AUD-15, bench regression 2026-10-10: the matcher keeps a size that
+    // holds a packet through a fresh context, a restart of its clock match
+    // in mid-stream (as a device event asks for one) and a mute's flush.
+    // None of them makes an overrun, and the stream plays on.
+    void matcherPlaybackKeepsItsSizeThroughRestarts_data()
+    {
+        QTest::addColumn<bool>("lossless");
+        QTest::newRow("Opus") << false;
+        QTest::newRow("lossless") << true;
+    }
+    void matcherPlaybackKeepsItsSizeThroughRestarts()
+    {
+        QFETCH(bool, lossless);
+        constexpr qint64 kPhaseMs = 4'000;
+        MatcherPlaybackRig rig(lossless ? RemoteAudioProfile::Lossless : RemoteAudioProfile::Opus);
+        // A packet at the device, and the device's callback, fit the ring.
+        const auto holdsAPacket = [&rig] {
+            const auto stats = rig.device->matcherStats();
+            return stats && stats->rsizeFrames
+                >= rig.packetFrames() + MatcherPlaybackRig::kCallbackFrames;
+        };
+        QVERIFY(rig.start());
+        QVERIFY2(rig.run(kPhaseMs), qPrintable(rig.faults()));
+        QCOMPARE(rig.busOverruns(), quint64(0));
+        QCOMPARE(rig.underflows(), 0);
+        QVERIFY(holdsAPacket());
+
+        // A fresh context, as a restart request or a profile change makes.
+        rig.stop();
+        QVERIFY(rig.start());
+        QVERIFY2(rig.run(kPhaseMs), qPrintable(rig.faults()));
+        QCOMPARE(rig.busOverruns(), quint64(0));
+        QCOMPARE(rig.underflows(), 0);
+        QVERIFY(holdsAPacket());
+
+        // The bus restarts its clock match in mid-stream.
+        rig.device->restartClockMatch();
+        QVERIFY2(rig.run(kPhaseMs), qPrintable(rig.faults()));
+        QCOMPARE(rig.busOverruns(), quint64(0));
+        QCOMPARE(rig.underflows(), 0);
+        QVERIFY(holdsAPacket());
+
+        // Mute and unmute: each flushes the bus.
+        rig.engine().setMasterMuted(true);
+        QVERIFY2(rig.run(500), qPrintable(rig.faults()));
+        rig.engine().setMasterMuted(false);
+        QVERIFY2(rig.run(kPhaseMs), qPrintable(rig.faults()));
+        QCoreApplication::processEvents();
+        QVERIFY2(rig.errors.isEmpty() && rig.restarts.isEmpty(), qPrintable(rig.faults()));
+        QCOMPARE(rig.busOverruns(), quint64(0));
+        QCOMPARE(rig.overflows(), 0);
+        QCOMPARE(rig.underflows(), 0);
+        QVERIFY(holdsAPacket());
+        rig.stop();
     }
 
     // R-R3-23: remote playback begins on every rate and channel count the

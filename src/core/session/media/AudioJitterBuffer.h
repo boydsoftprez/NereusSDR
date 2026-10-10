@@ -1,5 +1,10 @@
 #pragma once
 // no-port-check: NereusSDR-original. Bounded ordering for validated audio RTP.
+//
+// Modification history (NereusSDR):
+//   2026-10-10: hasReady(), so a consumer can check its room before it
+//               takes a packet (R-AUD-15, bench regression). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QByteArray>
 #include <QtGlobal>
 #include <algorithm>
@@ -121,6 +126,11 @@ public:
     void reset(quint32 firstTimestamp);
     Admission insert(const QByteArray& packet, quint32 timestamp, qint64 arrivalNs);
     std::optional<Playout> takeReady(qint64 nowNs);
+    /// Whether takeReady(nowNs) would release an interval now (a packet,
+    /// or a missing one's concealment), without taking it or moving the
+    /// queue: call tick() first, as takeReady() does. For a consumer that
+    /// must have room downstream before it takes anything.
+    bool hasReady(qint64 nowNs) const;
     /// Releases only the exact expected packet when downstream PCM is about
     /// to underrun. Future packets never conceal a missing head through this
     /// path. Its original due time remains the empty-queue missing deadline;
@@ -197,6 +207,7 @@ private:
     void setHold(qint64 holdNs);
     void easeHold(qint64 nowNs);
     void shedExcess(qint64 nowNs);
+    std::optional<qint64> nextDueNs() const;
     std::map<quint64, Entry> m_packets;
     std::deque<Released> m_released;
     qint64 m_holdNs{kHoldNs};

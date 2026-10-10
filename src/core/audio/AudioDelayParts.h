@@ -12,6 +12,10 @@
 // Modification history (NereusSDR):
 //   2026-10-08: native audio plan Task 2 (R-AUD-15). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-10: DeviceRateMatcherStats carries the frames queued now and a
+//               packet writer's size and high-water mark, for remote
+//               playback's room check (R-AUD-15). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -45,6 +49,17 @@ struct DeviceRateMatcherStats {
     int capacityFrames = 0;
     int delayStepMs = 0;
     bool controlActive = false;
+    // The frames queued at this moment (fillFrames is the control's
+    // average once the control runs).
+    int queuedFrames = 0;
+    // A packet writer (DeviceRateMatcher::setWritePacketFrames): its packet
+    // in input frames (0: none, or a new size not yet applied), the most
+    // device frames one packet makes, and the fill a packet's write may
+    // reach.  A packet has room when queuedFrames + packetOutFrames is at
+    // or below packetHighWaterFrames.
+    int packetFrames = 0;
+    int packetOutFrames = 0;
+    int packetHighWaterFrames = 0;
 };
 
 } // namespace NereusSDR

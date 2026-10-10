@@ -7,6 +7,10 @@
 //   2026-10-09: native audio plan Task 8 (R-AUD-07, R-AUD-11, R-AUD-15,
 //               R-AUD-18). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-10: setClockMatchWritePacket(): a writer of whole packets
+//               (remote playback) tells the bus's clock matcher its packet
+//               (R-AUD-15, bench regression). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CoreAudioOutputBus.h"
@@ -400,6 +404,13 @@ void CoreAudioOutputBus::restartClockMatch()
 {
     if (d->matcher) {
         d->matcher->requestRestart();
+    }
+}
+
+void CoreAudioOutputBus::setClockMatchWritePacket(int frames, bool waited)
+{
+    if (d->matcher) {
+        d->matcher->setWritePacketFrames(frames, waited);
     }
 }
 

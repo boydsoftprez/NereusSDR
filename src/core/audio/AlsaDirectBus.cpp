@@ -11,6 +11,10 @@
 //               reads closed and a loss before the sink is kept for it;
 //               the request asks for the pair's channels. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10: setClockMatchWritePacket(): a writer of whole packets
+//               (remote playback) tells the bus's clock matcher its packet
+//               (R-AUD-15, bench regression). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AlsaDirectBus.h"
@@ -486,6 +490,13 @@ void AlsaDirectBus::restartClockMatch()
 {
     if (m_impl->matcher) {
         m_impl->matcher->requestRestart();
+    }
+}
+
+void AlsaDirectBus::setClockMatchWritePacket(int frames, bool waited)
+{
+    if (m_impl->matcher) {
+        m_impl->matcher->setWritePacketFrames(frames, waited);
     }
 }
 

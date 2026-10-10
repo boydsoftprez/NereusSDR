@@ -1,4 +1,11 @@
 // no-port-check: NereusSDR-original remote audio lifecycle and worker wiring.
+//
+// Modification history (NereusSDR):
+//   2026-10-10: bench regression (R-AUD-15): into a bus's own clock
+//               matcher, a packet is written only when the matcher has
+//               room for it; a burst waits in the bounded jitter queue, as
+//               it does on the receiver's own rate matcher. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "core/session/media/RemoteAudioReceiver.h"
 #include "core/AudioEngine.h"
 #include "core/audio/RealtimeAudioPriority.h"
@@ -102,9 +109,11 @@ struct RemoteAudioReceiver::WorkerState {
     // the worker ends (stopped, or a fault was reported).
     bool pass(bool waitForWork);
     // R-AUD-15: the rest of a wake when the output's bus has its own clock
-    // matcher (intoMatcher): released by the jitter hold alone, written as
-    // 48 kHz stereo.
+    // matcher (intoMatcher): released by the jitter hold once the matcher
+    // has room for the packet, written as 48 kHz stereo.
     bool passIntoMatcher(qint64 now);
+    // R-AUD-15: whether the bus's matcher has room for one more packet.
+    bool matcherTakesPacket() const;
 
     // The speaker queue the worker keeps: two blocks, or the device's
     // callback and one block when that is more.
@@ -144,6 +153,10 @@ struct RemoteAudioReceiver::WorkerState {
     // waits for the first release is not counted.
     quint64 busDryRunsBase = 0;
     quint64 busOverrunsBase = 0;
+    // R-AUD-15: the next packet was due and the bus's matcher had no room
+    // for it. The matcher is told when that packet is written, so its
+    // control steers by the packets that did not wait.
+    bool matcherRefused = false;
     const int packetFrames;
     // R-R3-23: the speaker side runs at the device's rate. One worker
     // block is 10 ms of it (480 frames at 48 kHz, 441 at 44.1 kHz, 960
@@ -821,8 +834,9 @@ bool RemoteAudioReceiver::WorkerState::setup()
             return false;
         }
     } else if (intoMatcher) {
-        // R-AUD-15: the bus's matcher sizes its own queue, so neither the
-        // speaker target nor a rate matcher of the receiver's is set up.
+        // R-AUD-15: the bus's matcher sizes its own queue (for this
+        // context's packet, from the first write), so neither the speaker
+        // target nor a rate matcher of the receiver's is set up.
         if (!initialPacing) {
             notify(QStringLiteral("Speaker device timing is unavailable"),
                    Fault::SpeakerTimingUnavailable, true);
@@ -1261,15 +1275,44 @@ bool RemoteAudioReceiver::WorkerState::pass(bool waitForWork)
     return true;
 }
 
+bool RemoteAudioReceiver::WorkerState::matcherTakesPacket() const
+{
+    const auto bus = d->engine->remotePlaybackMatcherStats(d->output);
+    // The first write of a context, or the first to a bus that was opened
+    // again: the write itself tells the matcher the packet, and the
+    // matcher starts afresh with room for it.
+    if (!bus || bus->packetFrames != packetFrames) { return true; }
+    // An empty matcher always takes a packet.
+    if (bus->queuedFrames <= 0) { return true; }
+    // Room for the most the matcher makes of one packet below its mark. A
+    // steady stream always has it (the mark is the matcher's working level
+    // plus half a packet and a callback of slack); a burst is written up
+    // to it and no further.
+    return bus->queuedFrames + bus->packetOutFrames <= bus->packetHighWaterFrames;
+}
+
 bool RemoteAudioReceiver::WorkerState::passIntoMatcher(qint64 now)
 {
-    // R-AUD-15, settled call 30: released by the jitter hold alone, as the
-    // PCM sink is (the Core's RTP clock paces the release, the bus's
-    // matcher the device), at most the window per wake. Each release is
-    // written at once as 48 kHz stereo; the matcher makes its own room.
+    // R-AUD-15, settled call 30 as amended 2026-10-10: released by the
+    // jitter hold (the Core's RTP clock paces the release, the bus's
+    // matcher the device), at most the window per wake, each release
+    // written whole as 48 kHz stereo. The matcher is sized to hold a
+    // packet and makes no room for more: a network burst, or the packets
+    // a held-up worker finds due together, stay in the bounded jitter
+    // queue until the device has drained room for the next one, as on the
+    // receiver's own rate matcher. Writing them at once overran the
+    // matcher on every packet of a burst (bench, 2026-10-10).
     for (int i = 0; i < jitter.maxPackets(); ++i) {
+        // tick() ran this wake (pass()), so the queue's answer is current.
+        if (!jitter.hasReady(now)) { break; }
+        if (!matcherTakesPacket()) {
+            matcherRefused = true;
+            break;
+        }
         const auto frame = jitter.takeReady(now);
         if (!frame) { break; }
+        const bool waited = matcherRefused;
+        matcherRefused = false;
         const QVector<float> audio = decodePacket(frame->packet);
         if (audio.isEmpty()) {
             notify(QStringLiteral("Remote audio decode failed"), Fault::DecodeFailed);
@@ -1281,7 +1324,7 @@ bool RemoteAudioReceiver::WorkerState::passIntoMatcher(qint64 now)
                 busOverrunsBase = bus->overruns;
             }
         }
-        if (!d->engine->writeRemotePlayback(audio, d->output)) {
+        if (!d->engine->writeRemotePlayback(audio, d->output, waited)) {
             notify(QStringLiteral("Could not write remote audio to the speaker device"),
                    Fault::SpeakerWriteFailed, true);
             return false;

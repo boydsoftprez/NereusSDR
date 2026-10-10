@@ -32,6 +32,11 @@
 //               when it is destroyed (alive) and counts a close before its
 //               fade ended (closedUnfaded).  J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-10: setClockMatchWritePacket() reaches the matcher, as a
+//               native engine's bus, and writeClockForTest times the
+//               writes for a test on its own clock (R-AUD-15, bench
+//               regression). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #pragma once
@@ -123,12 +128,17 @@ public:
         ++m_pushes;
         if (m_matcher) {
             const int frames = int(bytes / qint64(2 * sizeof(float)));
-            m_matcher->write(reinterpret_cast<const float*>(data), frames, audioProbeNowNs());
+            m_matcher->write(reinterpret_cast<const float*>(data), frames,
+                             writeClockForTest ? writeClockForTest() : audioProbeNowNs());
             return bytes;
         }
         m_bytes.append(data, int(bytes));
         return bytes;
     }
+
+    // The time of each write, for a test that runs on its own clock; unset,
+    // the wall clock as a native engine's bus.  Set before the first push.
+    std::function<std::int64_t()> writeClockForTest;
 
     qint64 pull(char*, qint64) override { return 0; }
 
@@ -231,6 +241,13 @@ public:
         ++m_restarts;
         if (m_matcher) {
             m_matcher->requestRestart();
+        }
+    }
+
+    void setClockMatchWritePacket(int frames, bool waited) override
+    {
+        if (m_matcher) {
+            m_matcher->setWritePacketFrames(frames, waited);
         }
     }
 

@@ -282,6 +282,10 @@
 //               so each catalogue answer finishes the Rescan that asked
 //               for it. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-10: bench regression (R-AUD-15): remote playback into a bus's
+//               clock matcher checks the matcher's room itself; the
+//               comments say so. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -643,15 +647,25 @@ public:
         RemotePlaybackOutput output = RemotePlaybackOutput::Speakers);
     std::optional<IAudioBus::OutputPacing> remotePlaybackPacing(
         RemotePlaybackOutput output = RemotePlaybackOutput::Speakers);
+    // `waitedForRoom`: into a bus's own clock matcher, the caller kept
+    // this packet back until the matcher had room (see below).
     bool writeRemotePlayback(const QVector<float>& pcm,
-                             RemotePlaybackOutput output = RemotePlaybackOutput::Speakers);
+                             RemotePlaybackOutput output = RemotePlaybackOutput::Speakers,
+                             bool waitedForRoom = false);
 
     // R-AUD-15 (settled call 30): true when the output's bus takes the
     // 48 kHz stereo mix into its own clock matcher.  Remote playback then
-    // writes 48 kHz stereo through writeRemotePlayback() as the jitter
-    // hold releases it (no room check), whatever remotePlaybackFormat()
-    // reports for the device.  remotePlaybackMatcherStats() is that bus's
-    // matcher counters.  Any thread.
+    // writes 48 kHz stereo through writeRemotePlayback(), one whole packet
+    // a call, as the jitter hold releases it, whatever
+    // remotePlaybackFormat() reports for the device.  Each write tells the
+    // matcher the packet's length, so its size holds one; the caller
+    // checks the room first (remotePlaybackMatcherStats(): queuedFrames +
+    // packetOutFrames at or below packetHighWaterFrames) and keeps a burst
+    // until there is room, because the matcher makes none, and says with
+    // the write whether the packet waited, so the matcher's control steers
+    // by the packets that came in their own time.
+    // remotePlaybackMatcherStats() is that bus's matcher counters and
+    // sizes.  Any thread.
     bool remotePlaybackIntoMatcher(
         RemotePlaybackOutput output = RemotePlaybackOutput::Speakers) const;
     std::optional<DeviceRateMatcherStats> remotePlaybackMatcherStats(

@@ -54,6 +54,10 @@
 //               nereus-audio-capture helper (R-R3-36). J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
+//   2026-10-10: setClockMatchWritePacket(): a writer of whole packets
+//               (remote playback) tells the bus's clock matcher its packet
+//               (R-AUD-15, bench regression). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PortAudioBus.h"
@@ -751,6 +755,13 @@ void PortAudioBus::restartClockMatch()
 {
     if (m_outputMatcher) {
         m_outputMatcher->requestRestart();
+    }
+}
+
+void PortAudioBus::setClockMatchWritePacket(int frames, bool waited)
+{
+    if (m_outputMatcher) {
+        m_outputMatcher->setWritePacketFrames(frames, waited);
     }
 }
 

@@ -15,6 +15,10 @@
 //   2026-10-09: native audio plan final fix wave (R-AUD-07): a running
 //               session loses a bus whose pair the driver lacks.  J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10: setClockMatchWritePacket(): a writer of whole packets
+//               (remote playback) tells the bus's clock matcher its packet
+//               (R-AUD-15, bench regression). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AsioBackend.h"
@@ -196,6 +200,13 @@ public:
     {
         if (m_matcher) {
             m_matcher->requestRestart();
+        }
+    }
+
+    void setClockMatchWritePacket(int frames, bool waited) override
+    {
+        if (m_matcher) {
+            m_matcher->setWritePacketFrames(frames, waited);
         }
     }
 
