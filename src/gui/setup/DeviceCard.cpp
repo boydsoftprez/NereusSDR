@@ -52,6 +52,11 @@
 //   2026-10-09: native audio fix wave (R-AUD-19): the one-driver prompt
 //               through askAsioSwitchAll(), shared with the header menu.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio final review fix (R-AUD-15): the delay
+//               readout and the Negotiated line read delayPartsNow() and
+//               roleFormatNow(), which leave the role's bus lock to the
+//               DSP thread while it plays. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #include "DeviceCard.h"
@@ -1101,7 +1106,9 @@ void DeviceCard::refreshDelayNow()
         && (m_status.state == AudioRoleState::Playing
             || m_status.state == AudioRoleState::PlayingOnDefault)) {
         // The device actually playing, the system default included.
-        text = audioDelayLine(*m_audioRole, m_engine->delayParts(*m_audioRole),
+        // Once a second: the values the DSP thread published, not the
+        // role's bus lock, which would cost it a block (R-AUD-15).
+        text = audioDelayLine(*m_audioRole, m_engine->delayPartsNow(*m_audioRole),
                               m_status.playingName);
     }
     if (m_delayNow->text() != text) {
@@ -1540,7 +1547,7 @@ void DeviceCard::renderPill()
         const bool playing = m_status.state == AudioRoleState::Playing
             || m_status.state == AudioRoleState::PlayingOnDefault;
         const std::optional<AudioFormat> format =
-            playing ? m_engine->roleFormat(*m_audioRole) : std::nullopt;
+            playing ? m_engine->roleFormatNow(*m_audioRole) : std::nullopt;
         if (!format) {
             m_negotiatedPill->setStyleSheet(QLatin1String(kPillStyleApplying));
             m_negotiatedPill->setText(QStringLiteral("(not applied)"));

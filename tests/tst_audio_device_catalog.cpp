@@ -613,7 +613,9 @@ private slots:
         const qint64 elapsed = clock.elapsed();
         QVERIFY2(elapsed >= AudioDeviceCatalog::kStopWaitMs - 50, qPrintable(QString::number(elapsed)));
         QVERIFY2(elapsed < AudioDeviceCatalog::kStopWaitMs + 1000, qPrintable(QString::number(elapsed)));
-        QVERIFY(!engine->hasNoticeSink());
+        // Not cleared while the thread is still inside the backend: the
+        // thread clears it once the call returns.
+        QVERIFY(engine->hasNoticeSink());
 
         // The catalogue goes away while its thread is still inside the
         // backend; releasing the backend afterwards must touch nothing freed.
@@ -625,7 +627,36 @@ private slots:
         // The thread finishes, its worker and State go, and the thread
         // object is deleted from this thread's queue.
         QTRY_COMPARE_WITH_TIMEOUT(engine.use_count(), long(1), 3000);
+        QVERIFY(!engine->hasNoticeSink());
+        QCOMPARE(engine->sinkSetsDuringCalls(), 0);
         QTest::qWait(50);
+    }
+
+    // A Rescan asked for before stop() left the thread behind never runs:
+    // that thread calls no backend after its call returns.
+    void stoppedRunRescansNothing()
+    {
+        auto native = std::make_shared<FakeAudioEngineBackend>(AudioBackendId::CoreAudio);
+        auto older = std::make_shared<FakeAudioEngineBackend>(AudioBackendId::PortAudio);
+        {
+            std::vector<std::shared_ptr<IAudioEngineBackend>> backends{native, older};
+            AudioDeviceCatalog catalog(std::move(backends));
+            catalog.setDebounceIntervalForTest(10);
+            catalog.start();
+            native->holdEnumerate();
+            native->postNotice(AudioNotice::DevicesChanged);
+            QTRY_COMPARE_WITH_TIMEOUT(native->enumerateCalls(), 2, 3000);
+            catalog.rescanOlderDrivers();   // queued behind the held list
+            QTest::ignoreMessage(QtWarningMsg,
+                                 QRegularExpression(QStringLiteral("Audio device list did not stop within 3000 ms")));
+            catalog.stop();
+        }
+        native->releaseEnumerate();
+        QTRY_COMPARE_WITH_TIMEOUT(native.use_count(), long(1), 3000);
+        QTRY_COMPARE_WITH_TIMEOUT(older.use_count(), long(1), 3000);
+        QCOMPARE(older->rescanCount(), 0);
+        QCOMPARE(native->enumerateCalls(), 2);
+        QCOMPARE(native->sinkSetsDuringCalls(), 0);
     }
 
     void restartSkipsBackendStillInsideAnOldCall()
@@ -644,10 +675,14 @@ private slots:
         // lists the backend as not running and never calls it.
         QTest::ignoreMessage(QtWarningMsg,
                              QRegularExpression(QStringLiteral("Audio device list skips CoreAudio while an earlier call into it has not returned")));
+        QSignalSpy defaults(rig.catalog.get(), &IAudioDeviceCatalog::defaultChanged);
         QElapsedTimer clock;
         clock.start();
         rig.catalog->start();
         QVERIFY2(clock.elapsed() < 1000, qPrintable(QString::number(clock.elapsed())));
+        // The skipped backend keeps the default it last listed.
+        QTest::qWait(50);
+        QCOMPARE(defaults.count(), 0);
         QVERIFY(!rig.catalog->backendRunning(AudioBackendId::CoreAudio));
         QVERIFY(rig.catalog->devices(AudioBackendId::CoreAudio, AudioDeviceDirection::Output).isEmpty());
         QCOMPARE(rig.catalog->backends(), QList<AudioBackendId>{AudioBackendId::CoreAudio});
@@ -658,9 +693,15 @@ private slots:
         QCOMPARE(rig.engine->enumerateCalls(), 2);
         QCOMPARE(rig.engine->defaultCalls(), defaultsBefore);
 
-        // Once the old call returns, the next rescan lists the backend.
+        // Once the old call returns, the new run hears the backend's
+        // notices, and the next rescan lists it.
         rig.engine->releaseEnumerate();
         QTest::qWait(100);
+        QCOMPARE(rig.engine->sinkSetsDuringCalls(), 0);
+        rig.engine->setDefault(AudioDeviceDirection::Output, QStringLiteral("other"));
+        rig.engine->postNotice(AudioNotice::DefaultOutputChanged);
+        QTRY_COMPARE_WITH_TIMEOUT(defaults.count(), 1, 3000);
+        rig.engine->setDefault(AudioDeviceDirection::Output, QStringLiteral("spk"));
         rig.catalog->rescanOlderDrivers();
         QTRY_VERIFY_WITH_TIMEOUT(rig.catalog->backendRunning(AudioBackendId::CoreAudio), 3000);
         QVERIFY(hasDevice(rig.catalog->devices(AudioBackendId::CoreAudio, AudioDeviceDirection::Output),

@@ -16,10 +16,13 @@
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09: native audio plan Task 12 (R-AUD-11): openRefusedInUse().
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio final review fix (R-AUD-15): instanceId().
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include "core/audio/AudioDelayParts.h"
 
 #include <QString>
@@ -133,6 +136,16 @@ public:
     // while this bus plays the speakers: its AudioObjectID on Core Audio,
     // 0 elsewhere.
     virtual std::uint32_t audioWorkgroupDevice() const { return 0; }
+
+    // R-AUD-15: unique to this bus object for the program's life, counted
+    // from 1, so a value the DSP thread publishes for one bus is never
+    // read as a later bus's that happens to get the same address.
+    std::uint64_t instanceId() const noexcept { return m_instanceId; }
+
+private:
+    static NEREUS_CORE_EXPORT std::uint64_t nextInstanceId() noexcept;   // AudioEngine.cpp
+
+    std::uint64_t m_instanceId = nextInstanceId();
 };
 
 } // namespace NereusSDR

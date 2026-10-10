@@ -302,9 +302,22 @@
 //               read through AudioEngine, so a Setup page does not read
 //               a key a core consumer reads. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: final review fix (R-AUD-06, R-AUD-08, R-AUD-15): a VAX
+//               bus opened before the stream supervisor ran is closed
+//               before the supervisor opens that role, and VAX on Windows
+//               never falls back to the system default; Rescan waits out
+//               its fades from a timer; the DSP thread publishes the
+//               speakers' delay for speakersDelayNowMs(). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09: native audio plan final fix wave (R-AUD-20, R-AUD-21):
 //               a driver reset's new buffer size and rate are saved, so
 //               the next open asks for them.  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: final review fix round 2 (R-AUD-15): the DSP thread
+//               publishes the delay parts and format of every output it
+//               plays (speakers, headphones, VAX 1 to 4), for
+//               delayPartsNow() and roleFormatNow(), so Setup's cards read
+//               them without the role's bus lock. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -349,6 +362,7 @@
 #include <cmath>
 #include <bit>
 #include <array>
+#include <thread>
 #include <vector>
 
 namespace NereusSDR {
@@ -1847,6 +1861,7 @@ void AudioEngine::tearDownAudioDevices()
     m_rescanPending = false;
     ++m_rescanToken;
     m_rescanRoles.clear();
+    m_rescanFading.clear();
     m_rescanMic = false;
     m_streamSupervisor.reset();
     if (m_catalogue) {
@@ -1970,11 +1985,18 @@ AudioOpenResult AudioEngine::openRole(AudioRole role, AudioEngineKind engine,
         }
     }
     bool closeFirst = false;
+    bool closesSupervisedBus = false;
     {
         std::lock_guard<std::mutex> lock(roleBusMutex(role));
         if (roleBusSlot(role) && m_roleOpenEngine[idx] == engine) {
             const bool sameDevice = !targetId.isEmpty() && m_roleOpenDeviceId[idx] == targetId;
             closeFirst = sameDevice || backendOpensOneStreamAtATime(engine);
+            closesSupervisedBus = closeFirst;
+        } else if (vaxChannel != 0 && roleBusSlot(role) && !m_roleOpenEngine[idx]) {
+            // A VAX bus opened before the supervisor ran (openVaxOutputs,
+            // setVaxConfig): the supervisor never knew of it, and it may
+            // hold this same device, so it closes before the open.
+            closeFirst = true;
         }
     }
     if (closeFirst) {
@@ -2032,7 +2054,7 @@ AudioOpenResult AudioEngine::openRole(AudioRole role, AudioEngineKind engine,
         qCWarning(lcAudio) << "Audio role" << int(role) << "did not open"
                            << (device ? device->name : QStringLiteral("the system default"))
                            << "on" << audioEngineLabel(engine);
-        if (closeFirst && m_streamSupervisor) {
+        if (closesSupervisedBus && m_streamSupervisor) {
             m_streamSupervisor->onRoleClosed(role);
         }
         // R-AUD-11: held by another program reads "in use".
@@ -2260,34 +2282,67 @@ void AudioEngine::rescanOlderDrivers()
             }
         }
     }
-    // No lock is held while waiting.
-    QElapsedTimer fadeTimer;
-    fadeTimer.start();
-    for (;;) {
-        bool allFaded = true;
-        for (AudioRole role : fading) {
-            std::lock_guard<std::mutex> lock(roleBusMutex(role));
-            IAudioBus* bus = roleBusLocked(role);
-            if (bus != nullptr && !bus->fadedOut()) {
-                allFaded = false;
-            }
-        }
-        if (allFaded || static_cast<double>(fadeTimer.elapsed()) >= fadeWaitMs) {
-            break;
-        }
-        QThread::msleep(1);
-    }
+    // No lock is held while waiting, and the main thread keeps running:
+    // the wait is polled from a timer.
+    m_rescanPending = true;
+    const quint64 token = ++m_rescanToken;
+    m_rescanFading.clear();
     for (AudioRole role : fading) {
-        closeRole(role);   // the supervisor still has it open; finish reopens it
+        m_rescanFading.emplace_back(role, m_roleBusGeneration[roleIndex(role)]);
     }
-    m_rescanRoles = std::move(fading);
+    m_rescanFadeWaitMs = fadeWaitMs;
+    m_rescanFadeStartNs = audioProbeNowNs();
+    if (m_rescanFading.empty()) {
+        continueOlderDriversRescan(token);
+        return;
+    }
+    QTimer::singleShot(1, this, [this, token]() { continueOlderDriversRescan(token); });
+}
+
+void AudioEngine::continueOlderDriversRescan(quint64 token)
+{
+    if (!m_rescanPending || token != m_rescanToken) {
+        return;   // stopped, or a later Rescan took over
+    }
+    // A role whose bus was reopened or closed meanwhile is not the bus that
+    // faded: it is left alone.
+    const auto unchanged = [this](const std::pair<AudioRole, quint64>& entry) {
+        return m_roleBusGeneration[roleIndex(entry.first)] == entry.second;
+    };
+    bool allFaded = true;
+    for (const std::pair<AudioRole, quint64>& entry : m_rescanFading) {
+        if (!unchanged(entry)) {
+            continue;
+        }
+        std::lock_guard<std::mutex> lock(roleBusMutex(entry.first));
+        IAudioBus* bus = roleBusLocked(entry.first);
+        if (bus != nullptr && !bus->fadedOut()) {
+            allFaded = false;
+        }
+    }
+    const double waitedMs = double(audioProbeNowNs() - m_rescanFadeStartNs) / 1e6;
+    if (!allFaded && waitedMs < m_rescanFadeWaitMs) {
+        QTimer::singleShot(1, this, [this, token]() { continueOlderDriversRescan(token); });
+        return;
+    }
+    std::vector<AudioRole> closed;
+    for (const std::pair<AudioRole, quint64>& entry : m_rescanFading) {
+        if (unchanged(entry)) {
+            closeRole(entry.first);   // the supervisor still has it open; finish reopens it
+            closed.push_back(entry.first);
+        }
+    }
+    m_rescanFading.clear();
+    m_rescanRoles = std::move(closed);
     m_rescanMic = m_micEngine == AudioEngineKind::PortAudio && (m_micOpen || m_micPending);
 
     // The backend's rescan starts PortAudio again under PortAudioLibrary's
     // lock, with this engine's reference kept (PortAudioLibrary.h).
-    m_rescanPending = true;
-    const quint64 token = ++m_rescanToken;
     qCInfo(lcAudio) << "Older drivers: rescanning;" << m_rescanRoles.size() << "outputs closed";
+    if (!m_catalogue) {
+        finishOlderDriversRescan(token);
+        return;
+    }
     m_catalogue->rescanOlderDrivers();
     // The catalogue answers well inside its start wait; the timer finishes
     // a rescan whose answer never came.
@@ -2808,6 +2863,102 @@ AudioDelayParts AudioEngine::delayParts(AudioRole role) const
     return bus->delayParts();
 }
 
+// R-AUD-15: IAudioBus::instanceId()'s counter, here so that every image
+// linking NereusCore draws from the one count.
+std::uint64_t IAudioBus::nextInstanceId() noexcept
+{
+    static std::atomic<std::uint64_t> next{1};
+    return next.fetch_add(1, std::memory_order_relaxed);
+}
+
+AudioEngine::OutputReading AudioEngine::readOutputNow(AudioRole role) const
+{
+    // R-AUD-15 (final review fix): Setup's cards and the Core's speaker
+    // refresh read on a timer.  Taking the role's bus lock while the DSP
+    // thread plays it would make that thread's try-lock fail and cost a
+    // block, so the values it published with its last block are read
+    // instead.
+    Q_ASSERT(QThread::currentThread() == thread());
+    OutputReading reading;
+    if (role == AudioRole::TxInput) {
+        return reading;
+    }
+    // This thread is the only one that replaces or frees a role's bus, so
+    // the pointer is read here without the lock; only its id is used.
+    const IAudioBus* current = roleBusLocked(role);
+    if (current == nullptr) {
+        return reading;
+    }
+    const std::uint64_t id = current->instanceId();
+
+    const PublishedOutput& out = m_publishedOutput[roleIndex(role)];
+    bool whole = false;
+    std::uint64_t busId = 0;
+    std::int64_t atNs = 0;
+    OutputReading published;
+    constexpr int kReadAttempts = 8;
+    for (int attempt = 0; attempt < kReadAttempts && !whole; ++attempt) {
+        const std::uint32_t before = out.sequence.load(std::memory_order_acquire);
+        if ((before & 1u) != 0) {
+            std::this_thread::yield();   // a store is under way
+            continue;
+        }
+        busId = out.busId.load(std::memory_order_relaxed);
+        atNs = out.atNs.load(std::memory_order_relaxed);
+        published.parts.matcherFillMs = out.matcherFillMs.load(std::memory_order_relaxed);
+        published.parts.resamplerMs = out.resamplerMs.load(std::memory_order_relaxed);
+        published.parts.deviceBufferMs = out.deviceBufferMs.load(std::memory_order_relaxed);
+        published.parts.deviceLatencyMs = out.deviceLatencyMs.load(std::memory_order_relaxed);
+        AudioFormat format;
+        format.sampleRate = out.sampleRate.load(std::memory_order_relaxed);
+        format.channels = out.channels.load(std::memory_order_relaxed);
+        format.sample = static_cast<AudioFormat::Sample>(out.sample.load(std::memory_order_relaxed));
+        published.format = format;
+        std::atomic_thread_fence(std::memory_order_acquire);
+        whole = out.sequence.load(std::memory_order_relaxed) == before;
+    }
+    // A read that lands while the DSP thread stores (it may be preempted
+    // there) uses the last whole one, at most a few blocks old.
+    LastPublishedReading& last = m_lastPublishedReading[roleIndex(role)];
+    if (whole && atNs != 0) {
+        last = LastPublishedReading{published, busId, atNs};
+    }
+    const bool forThisBus = last.atNs != 0 && last.busId == id;
+    if (forThisBus && audioProbeNowNs() - last.atNs < kPublishedDelayFreshNs) {
+        return last.reading;
+    }
+    // Nothing plays this bus now (or it opened since the last block): no
+    // block to cost.  A try-lock all the same, so this never waits.
+    std::unique_lock<std::mutex> lock(roleBusMutex(role), std::try_to_lock);
+    if (lock.owns_lock()) {
+        const IAudioBus* bus = roleBusLocked(role);
+        if (bus != nullptr && bus->isOpen()) {
+            reading.parts = bus->delayParts();
+            reading.format = bus->negotiatedFormat();
+        }
+        return reading;
+    }
+    return forThisBus ? last.reading : reading;
+}
+
+AudioDelayParts AudioEngine::delayPartsNow(AudioRole role) const
+{
+    if (role == AudioRole::TxInput) {
+        return delayParts(role);   // the helper's figures; no bus lock
+    }
+    return readOutputNow(role).parts;
+}
+
+std::optional<AudioFormat> AudioEngine::roleFormatNow(AudioRole role) const
+{
+    return readOutputNow(role).format;
+}
+
+double AudioEngine::speakersDelayNowMs() const
+{
+    return delayPartsNow(AudioRole::Speakers).totalMs();
+}
+
 std::optional<AudioFormat> AudioEngine::remotePlaybackFormat(RemotePlaybackOutput output)
 {
     if (output == RemotePlaybackOutput::Headphones) {
@@ -3190,8 +3341,9 @@ void AudioEngine::setVaxEnabled(int channel, bool on)
     if (!m_deviceLayerReady) {
         return;
     }
-    AudioDeviceConfig defaults;
-    m_vaxBus[idx] = makeBus(defaults, /*capture=*/false);
+    // Final review fix: the channel's saved device, as start() opens it;
+    // none saved leaves it closed (VAX never plays on the system default).
+    m_vaxBus[idx] = makeVaxBus(channel);
 #endif
 }
 
@@ -4037,6 +4189,9 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
         // The mix is still drained, so it stays in step.
         std::unique_lock<std::mutex> vaxLk(m_vaxBusMutex[vaxIdx], std::try_to_lock);
         IAudioBus* vaxBus = vaxLk.owns_lock() ? m_vaxBus[vaxIdx].get() : nullptr;
+        if (vaxBus != nullptr && vaxBus->isOpen()) {
+            publishRoleOutput(vaxRole(vaxCh), *vaxBus);
+        }
         // Normally one block. More only after a slice on the channel was
         // late: then the backlog every slice has queued goes out at once.
         int mixedVax = 0;
@@ -4276,6 +4431,7 @@ void AudioEngine::drainMixes(int frames, bool monitorOnly)
         if (hpLk.owns_lock()) {
             IAudioBus* headphonesBus = m_headphonesBus.get();
             if (headphonesBus != nullptr && headphonesBus->isOpen()) {
+                publishRoleOutput(AudioRole::Headphones, *headphonesBus);
                 // R-AUD-15: a bus with a clock matcher takes the 48 kHz
                 // stereo mix itself and makes the device's format; the
                 // converter is for a bus without one.
@@ -4374,6 +4530,7 @@ void AudioEngine::drainMixes(int frames, bool monitorOnly)
         if (speakersLk.owns_lock()) {
             IAudioBus* speakersBus = m_speakersBus.get();
             if (speakersBus != nullptr && speakersBus->isOpen()) {
+                publishRoleOutput(AudioRole::Speakers, *speakersBus);
                 // V-HW-8: the delay probe's click, into this block only,
                 // after every gain and mute. One atomic load; off, the
                 // block is untouched. A click starting in this block is
@@ -4429,6 +4586,9 @@ void AudioEngine::drainMixes(int frames, bool monitorOnly)
                                                 std::try_to_lock);
         if (speakersLk.owns_lock()) {
             IAudioBus* speakersBus = m_speakersBus.get();
+            if (speakersBus != nullptr && speakersBus->isOpen()) {
+                publishRoleOutput(AudioRole::Speakers, *speakersBus);
+            }
             if (speakersBus != nullptr && speakersBus->isOpen()
                 && speakersBus->takesStereoMix()) {
                 std::fill(mix.begin(), mix.begin() + stereoFloats, 0.0f);
@@ -4438,6 +4598,29 @@ void AudioEngine::drainMixes(int frames, bool monitorOnly)
             }
         }
     }
+}
+
+void AudioEngine::publishRoleOutput(AudioRole role, const IAudioBus& bus)
+{
+    // DSP thread, under its own try-lock of the role's bus, so one writer
+    // at a time.  Every bus's delayParts() reads atomics only, and its
+    // format is fixed while it is open: stores only, no lock, no wait.
+    const AudioDelayParts parts = bus.delayParts();
+    const AudioFormat format = bus.negotiatedFormat();
+    PublishedOutput& out = m_publishedOutput[roleIndex(role)];
+    const std::uint32_t sequence = out.sequence.load(std::memory_order_relaxed);
+    out.sequence.store(sequence + 1, std::memory_order_relaxed);   // odd: under way
+    std::atomic_thread_fence(std::memory_order_release);
+    out.busId.store(bus.instanceId(), std::memory_order_relaxed);
+    out.matcherFillMs.store(parts.matcherFillMs, std::memory_order_relaxed);
+    out.resamplerMs.store(parts.resamplerMs, std::memory_order_relaxed);
+    out.deviceBufferMs.store(parts.deviceBufferMs, std::memory_order_relaxed);
+    out.deviceLatencyMs.store(parts.deviceLatencyMs, std::memory_order_relaxed);
+    out.sampleRate.store(format.sampleRate, std::memory_order_relaxed);
+    out.channels.store(format.channels, std::memory_order_relaxed);
+    out.sample.store(static_cast<int>(format.sample), std::memory_order_relaxed);
+    out.atNs.store(audioProbeNowNs(), std::memory_order_relaxed);
+    out.sequence.store(sequence + 2, std::memory_order_release);
 }
 
 bool AudioEngine::isPcMicSelected() const noexcept

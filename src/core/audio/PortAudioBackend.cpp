@@ -10,6 +10,10 @@
 //               host API; the listing and Rescan hold PortAudioLibrary's
 //               lock. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-09: final review fix (R-AUD-06): the listing reads PortAudio
+//               under a LongHold and makes its records after the lock is
+//               released. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/audio/PortAudioBackend.h"
@@ -20,6 +24,7 @@
 #include <portaudio.h>
 
 #include <utility>
+#include <vector>
 
 namespace NereusSDR {
 
@@ -101,12 +106,27 @@ QList<PortAudioDeviceRecord> listPortAudioDevices()
     if (PortAudioBus::portAudioBarredForTestRun()) {
         return records;
     }
-    // R-AUD-06: one list, never half before and half after a Rescan.
-    std::lock_guard<std::recursive_mutex> paLock(PortAudioLibrary::mutex());
-    const PaDeviceIndex defaultOutput = Pa_GetDefaultOutputDevice();
-    const PaDeviceIndex defaultInput = Pa_GetDefaultInputDevice();
-    const QVector<PortAudioBus::HostApiInfo> apis = PortAudioBus::hostApis();
-    for (const PortAudioBus::HostApiInfo& api : apis) {
+    // R-AUD-06: one list, never half before and half after a Rescan.  Only
+    // PortAudio's own answers are read under the lock; the records are
+    // made after it is released.
+    struct HostApiDevices {
+        PortAudioBus::HostApiInfo api;
+        QVector<PortAudioBus::DeviceInfo> outputs;
+        QVector<PortAudioBus::DeviceInfo> inputs;
+    };
+    std::vector<HostApiDevices> listed;
+    PaDeviceIndex defaultOutput = paNoDevice;
+    PaDeviceIndex defaultInput = paNoDevice;
+    {
+        const PortAudioLibrary::LongHold hold;
+        defaultOutput = Pa_GetDefaultOutputDevice();
+        defaultInput = Pa_GetDefaultInputDevice();
+        for (const PortAudioBus::HostApiInfo& api : PortAudioBus::hostApis()) {
+            listed.push_back({api, PortAudioBus::outputDevicesFor(api.index),
+                              PortAudioBus::inputDevicesFor(api.index)});
+        }
+    }
+    for (const HostApiDevices& entry : listed) {
         // One record per device: a device with outputs and inputs is listed
         // by both helpers under the same index.
         QList<int> indices;
@@ -116,7 +136,7 @@ QList<PortAudioDeviceRecord> listPortAudioDevices()
             }
             indices.append(device.index);
             PortAudioDeviceRecord record;
-            record.hostApi = api.name;
+            record.hostApi = entry.api.name;
             record.name = device.name;
             record.outputChannels = device.maxOutputChannels;
             record.inputChannels = device.maxInputChannels;
@@ -124,10 +144,10 @@ QList<PortAudioDeviceRecord> listPortAudioDevices()
             record.isDefaultInput = device.index == defaultInput;
             records.append(record);
         };
-        for (const PortAudioBus::DeviceInfo& device : PortAudioBus::outputDevicesFor(api.index)) {
+        for (const PortAudioBus::DeviceInfo& device : entry.outputs) {
             recordFor(device);
         }
-        for (const PortAudioBus::DeviceInfo& device : PortAudioBus::inputDevicesFor(api.index)) {
+        for (const PortAudioBus::DeviceInfo& device : entry.inputs) {
             recordFor(device);
         }
     }

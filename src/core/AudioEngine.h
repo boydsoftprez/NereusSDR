@@ -268,6 +268,16 @@
 //               read through AudioEngine, so a Setup page does not read
 //               a key a core consumer reads. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: final review fix (R-AUD-06, R-AUD-15): Rescan's fade wait
+//               runs from a timer, not a busy wait; speakersDelayNowMs()
+//               reads the delay the DSP thread publishes, so the Core's
+//               1 s refresh never takes the speakers lock from it.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: final review fix round 2 (R-AUD-15): the DSP thread
+//               publishes every output role's delay parts and format;
+//               delayPartsNow() and roleFormatNow() read them for Setup's
+//               cards without the role's bus lock. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -307,6 +317,7 @@ namespace NereusSDR { class PipeWireThreadLoop; }
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <utility>
 
 class QTimer;
 
@@ -663,7 +674,9 @@ public:
     // kRescanFadeMs and the stream's callback period plus kRescanSlewMs
     // (the matcher's fade is its slew, 3 ms at most), has
     // PortAudio list its devices again and reopens those roles; a role on
-    // another engine is never closed.  Main thread.
+    // another engine is never closed.  It returns at once: the fade is
+    // waited out from a timer, so the window keeps running meanwhile.
+    // Main thread.
     static constexpr int kRescanFadeMs = 20;
     static constexpr double kRescanSlewMs = 3.0;
     IAudioDeviceCatalog* catalogue();
@@ -672,6 +685,21 @@ public:
     // The format an output role's bus plays now; nullopt while it is
     // closed, and for the mic (Task 16 fix round).
     std::optional<AudioFormat> roleFormat(AudioRole role) const;
+    // For readers on a timer (Setup's cards, the Core's speaker refresh):
+    // delayParts() and roleFormat() without the role's bus lock, which
+    // would cost the DSP thread the block it was pushing.  While the DSP
+    // thread plays the role's bus, the values it published for that bus
+    // with its last block; otherwise (nothing plays it, or a bus opened
+    // since) read under a try-lock, which never waits: when another
+    // thread holds the lock, the last values published for this bus, or
+    // none.  The mic's delay is delayParts(TxInput), which takes no bus
+    // lock.  Owner (main) thread.
+    AudioDelayParts delayPartsNow(AudioRole role) const;
+    std::optional<AudioFormat> roleFormatNow(AudioRole role) const;
+    // delayPartsNow(Speakers).totalMs(): -1 with none.
+    double speakersDelayNowMs() const;
+    // A published value older than this is not used.
+    static constexpr std::int64_t kPublishedDelayFreshNs = 250'000'000;
     AudioEngineKind defaultEngine() const { return m_defaultEngine; }
 
     // ── ASIO for the Setup cards (native audio plan Task 17) ────────────
@@ -1526,6 +1554,18 @@ private:
     void onCaptureStatusForRole(const CaptureSupervisor::Status& status);
     void onSavedIdentityLearned(AudioRole role, const QString& deviceId);
     void finishOlderDriversRescan(quint64 token);
+    // Rescan's fade wait, polled from a 1 ms timer; closes the roles and
+    // starts the catalogue's rescan once every fade ends or the wait does.
+    void continueOlderDriversRescan(quint64 token);
+    // DSP thread, under its try-lock of the role's bus: stores the bus's
+    // delay parts and format for delayPartsNow() and roleFormatNow().
+    void publishRoleOutput(AudioRole role, const IAudioBus& bus);
+    // What delayPartsNow() and roleFormatNow() share.
+    struct OutputReading {
+        AudioDelayParts parts;
+        std::optional<AudioFormat> format;
+    };
+    OutputReading readOutputNow(AudioRole role) const;
     // Speakers, headphones and VAX only; the caller holds roleBusMutex().
     IAudioBus* roleBusLocked(AudioRole role) const;
     std::unique_ptr<IAudioBus>& roleBusSlot(AudioRole role);
@@ -1620,6 +1660,39 @@ private:
     bool m_rescanPending{false};
     bool m_rescanMic{false};
     std::vector<AudioRole> m_rescanRoles;
+    // While the fades run: each fading role with its bus generation then
+    // (a role reopened or closed meanwhile is left alone), the wait, and
+    // since when.
+    std::vector<std::pair<AudioRole, quint64>> m_rescanFading;
+    double m_rescanFadeWaitMs{0.0};
+    std::int64_t m_rescanFadeStartNs{0};
+    // R-AUD-15: each output role's delay parts and format, stored by the
+    // DSP thread under its own try-lock of the role's bus, for the bus
+    // with that instanceId(), with the time they were stored (0 before
+    // the first).  One writer at a time (the try-lock); a sequence count,
+    // odd while a store is under way, lets a reader see one block's
+    // values whole without waiting on the writer.  See delayPartsNow().
+    struct PublishedOutput {
+        std::atomic<std::uint32_t> sequence{0};
+        std::atomic<std::uint64_t> busId{0};
+        std::atomic<double> matcherFillMs{-1.0};
+        std::atomic<double> resamplerMs{0.0};
+        std::atomic<double> deviceBufferMs{0.0};
+        std::atomic<double> deviceLatencyMs{0.0};
+        std::atomic<int> sampleRate{0};
+        std::atomic<int> channels{0};
+        std::atomic<int> sample{0};
+        std::atomic<std::int64_t> atNs{0};
+    };
+    std::array<PublishedOutput, kAudioRoleCount> m_publishedOutput{};
+    // The last whole reading of m_publishedOutput per role, for a read
+    // that lands while a store is under way.  Owner thread only.
+    struct LastPublishedReading {
+        OutputReading reading;
+        std::uint64_t busId{0};
+        std::int64_t atNs{0};
+    };
+    mutable std::array<LastPublishedReading, kAudioRoleCount> m_lastPublishedReading{};
     // A setter's choice while the device layer is being built, used in
     // place of the saved one so the role opens once (Speakers, VAX 1-4).
     std::optional<AudioDeviceConfig> m_speakersChoiceBeforeDevices;

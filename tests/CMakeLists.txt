@@ -1930,9 +1930,6 @@ if(TEST tst_device_rate_matcher)
     set_property(TEST tst_device_rate_matcher APPEND PROPERTY ENVIRONMENT
         "QTEST_FUNCTION_TIMEOUT=540000")
 endif()
-# The same matcher on a real writer thread and reader thread (+-200 ppm):
-# no torn frames, and the reader thread allocates nothing and (on Linux)
-# takes no pthread mutex. REALTIME: both threads are paced by the wall clock.
 # Native audio plan Task 3 (R-AUD-03, R-AUD-07, R-AUD-32, V-SW-1): engine
 # keys and labels, the pair model, sample format conversion, the no-device
 # rule and the live device catalogue (its debounce, its own thread, the
@@ -1944,6 +1941,9 @@ if(WIN32)
     target_link_libraries(tst_audio_device_catalog PRIVATE winmm)
 endif()
 
+# The same matcher on a real writer thread and reader thread (+-200 ppm):
+# no torn frames, and the reader thread allocates nothing and (on Linux)
+# takes no pthread mutex. REALTIME: both threads are paced by the wall clock.
 nereus_add_test(tst_device_rate_matcher_threads REALTIME)
 if(UNIX AND NOT APPLE)
     target_link_libraries(tst_device_rate_matcher_threads PRIVATE ${CMAKE_DL_LIBS})

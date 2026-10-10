@@ -21,7 +21,12 @@
 // the backend returns; nothing it does reaches the catalogue again, and it
 // calls no backend after that call.  Until it returns, a later start() or
 // rescan lists that backend as not running and never calls it, so no
-// backend is ever called from two threads at once.
+// backend is ever called from two threads at once.  That holds for the
+// notice sinks too: a sink is set or cleared only by the thread that has
+// claimed its backend, so stop() leaves the sink of a backend still in a
+// call to that thread, which clears it once the call returns, and a later
+// run's sink is set as that thread lets the backend go.  A backend
+// skipped that way keeps the defaults it last listed.
 //
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 3 (R-AUD-03). J.J. Boyd (KG4VCF),
@@ -30,6 +35,10 @@
 //               so a signal of it is found from outside the DLL on
 //               Windows. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-09: final review fix (R-AUD-03, R-AUD-06): notice sinks are
+//               set and cleared under the backend's claim; a stopped run
+//               rescans nothing. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -82,6 +91,9 @@ private:
         QList<AudioDeviceInfo> inputs;
         std::optional<QString> defaultOutput;
         std::optional<QString> defaultInput;
+        // Skipped while an earlier call into it has not returned: the
+        // defaults last listed stand.
+        bool held = false;
     };
     struct Listing {
         std::uint64_t generation = 0;
