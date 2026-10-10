@@ -585,6 +585,9 @@ nereus_add_test(tst_container_legacy_import)
 nereus_add_test(tst_container_persistence)
 nereus_add_test(tst_container_arrangement)
 nereus_add_test(tst_container_application_quit)
+# Removing a popped-out container from its own settings dialog, and the
+# shells an emptied container leaves (offscreen; JJ crash 2026-10-09).
+nereus_add_test(tst_container_popout_removal)
 nereus_add_test(tst_container_position_restore)
 nereus_add_test(tst_container_follow_selected_rx)
 nereus_add_test(tst_container_stack_responsive)
@@ -9878,12 +9881,31 @@ if(NEREUS_GPU_SPECTRUM)
     nereus_add_test(tst_spectrum_gpu_buffer_growth NATIVE_WINDOW EXTRA_LABELS gpu)
 endif()
 
+# ── GPU dynamic overlay leaves no earlier frame below the spectrum ───────
+# The noise floor, peak-hold trace and peak blobs are painted into a
+# per-frame overlay texture covering the whole widget, which was cleared
+# and uploaded only over the current spectrum height. After the spectrum
+# got shorter (setSpectrumFrac, divider drag, re-layout) the lines drawn
+# while it was taller stayed over the frequency scale and the waterfall.
+# Grabs real GPU frames before and after the spectrum shrinks, so it needs a
+# native window and carries the `gpu` label; skips where no QRhi comes up.
+# NereusSDR-original.
+if(NEREUS_GPU_SPECTRUM)
+    nereus_add_test(tst_spectrum_gpu_dynamic_overlay_clear NATIVE_WINDOW EXTRA_LABELS gpu)
+endif()
+
 # The same rule without a GPU, on every platform CI runs: every combination
 # of planSpectrumTraceFrame()'s inputs binds each trace buffer it writes and
 # draws no fill or peak left from another trace, and MeterWidget's geometry
 # buffer is written only when it is bound. renderGpuFrame() takes both its
 # uploads and its draws from these helpers. NereusSDR-original.
 nereus_add_test(tst_gpu_buffer_write_bind_plan)
+
+# The same dynamic-overlay rule without a GPU: SpectrumWidget's
+# DynamicOverlayRows, which renderGpuFrame() takes its clear and upload
+# height from, covers every row an earlier frame may have left (a created
+# texture, a taller band) as well as the current band. NereusSDR-original.
+nereus_add_test(tst_spectrum_dynamic_overlay_rows)
 
 # ── 3D stacked-trace spectrum plan, Task 11: 3D dBm scale ────────────────
 # Pins drawDbmScale3D(): floor-anchored (dssFloorDbm() + rounded 3D Span),

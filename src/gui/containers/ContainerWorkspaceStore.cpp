@@ -1,4 +1,8 @@
 // no-port-check: NereusSDR-original transactional client presentation store.
+// Modification history (NereusSDR):
+//   2026-10-09 - commit removes a pop-out shell that an edit emptied, so
+//                 no blank shell stays open. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 #include "ContainerWorkspaceStore.h"
 #include "ContainerDocumentCodec.h"
 #include "LegacyContainerImporter.h"
@@ -85,6 +89,15 @@ CommitResult ContainerWorkspaceStore::commit(const WorkspaceDocument& document, 
     }
     WorkspaceDocument saved = document;
     saved.revision = m_document.revision + 1;
+    // A pop-out shell exists only to hold what was popped out. Whatever
+    // empties it (Remove object in Container Settings, Move to Container)
+    // removes it, so no blank window stays open (JJ 2026-10-09).
+    for (int i = saved.containers.size() - 1; i >= 0; --i) {
+        const auto& shell = saved.containers[i];
+        if (shell.popOutShell && shell.contents.isEmpty() && shell.id != saved.mainContainerId) {
+            saved.containers.removeAt(i);
+        }
+    }
     const QByteArray encoded = ContainerDocumentCodec::encode(saved);
     const QVariant oldWorkspace = m_settings.value(kWorkspaceKey);
     const bool backupPresent = m_settings.contains(kBackupKey);
