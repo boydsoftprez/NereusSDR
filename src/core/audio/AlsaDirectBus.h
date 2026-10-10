@@ -132,7 +132,9 @@ AudioChannelPair alsaStreamPair(AudioChannelPair requested, int channels);
 
 class AlsaDirectBus final : public IAudioBus {
 public:
-    AlsaDirectBus(AlsaCardRecord card, AudioStreamRequest request, AlsaPcmOpener opener);
+    // `hold` is kept until the stream is destroyed (AlsaOutputMaker).
+    AlsaDirectBus(AlsaCardRecord card, AudioStreamRequest request, AlsaPcmOpener opener,
+                  std::shared_ptr<void> hold = {});
     ~AlsaDirectBus() override;   // close()
 
     AlsaDirectBus(const AlsaDirectBus&) = delete;

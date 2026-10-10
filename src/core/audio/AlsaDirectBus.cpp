@@ -112,6 +112,7 @@ struct AlsaDirectBus::Impl {
     AlsaCardRecord card;
     AudioStreamRequest request;
     AlsaPcmOpener opener;
+    std::shared_ptr<void> hold;   // kept while the stream lives
 
     // Set by open() before the writer starts; read by the writer only.
     std::unique_ptr<IAlsaPcm> pcm;
@@ -259,12 +260,14 @@ struct AlsaDirectBus::Impl {
     }
 };
 
-AlsaDirectBus::AlsaDirectBus(AlsaCardRecord card, AudioStreamRequest request, AlsaPcmOpener opener)
+AlsaDirectBus::AlsaDirectBus(AlsaCardRecord card, AudioStreamRequest request, AlsaPcmOpener opener,
+                             std::shared_ptr<void> hold)
     : m_impl(std::make_unique<Impl>())
 {
     m_impl->card = std::move(card);
     m_impl->request = std::move(request);
     m_impl->opener = std::move(opener);
+    m_impl->hold = std::move(hold);
 }
 
 AlsaDirectBus::~AlsaDirectBus()

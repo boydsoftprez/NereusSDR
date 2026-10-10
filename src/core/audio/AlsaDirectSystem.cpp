@@ -10,6 +10,9 @@
 //   2026-10-09: final review fixes (R-AUD-07, R-AUD-25): IN_ATTRIB and one
 //               more listing after -EACCES; channel counts from the card.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10: final review fixes round 2 (R-AUD-30): a box that starts
+//               into a desktop probes only the card the Core plays on.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AlsaDirectSystem.h"
@@ -54,11 +57,15 @@ constexpr unsigned kAlsaMaxListedChannels = 64;
 
 bool coreBoxStartsIntoDesktop(IAlsaDirectSystem& system)
 {
-    const QString target = system.defaultTargetPath();
-    if (target.isEmpty()) {
+    return defaultTargetIsDesktop(system.defaultTargetPath());
+}
+
+bool defaultTargetIsDesktop(const QString& targetPath)
+{
+    if (targetPath.isEmpty()) {
         return false;
     }
-    return QFileInfo(target).fileName() == kGraphicalTarget;
+    return QFileInfo(targetPath).fileName() == kGraphicalTarget;
 }
 
 QList<DeviceSampleFormat> alsaFormatOrder()
@@ -366,7 +373,8 @@ void AlsaNodeWatcher::relistOnceAfter(int ms)
 // ---------------------------------------------------------------------------
 // The card listing.
 // ---------------------------------------------------------------------------
-AlsaCardListing listAlsaPlaybackCards(IAlsaCardApi& api, QHash<QString, int>& knownChannels)
+AlsaCardListing listAlsaPlaybackCards(IAlsaCardApi& api, QHash<QString, int>& knownChannels,
+                                      const std::function<bool(const QString&)>& probe)
 {
     AlsaCardListing listing;
     for (const int card : api.cardNumbers()) {
@@ -388,7 +396,8 @@ AlsaCardListing listAlsaPlaybackCards(IAlsaCardApi& api, QHash<QString, int>& kn
             record.device = device;
             record.bus = bus;
             const QString id = alsaDeviceId(record);
-            const int channels = api.playbackChannelsMax(card, device);
+            // Not probed: as a busy probe, the count read before stands.
+            const int channels = !probe || probe(id) ? api.playbackChannelsMax(card, device) : -EBUSY;
             if (channels > 0) {
                 record.channels = channels;
                 knownChannels.insert(id, channels);
@@ -547,11 +556,13 @@ std::shared_ptr<IAlsaCardApi> makeAlsaCardApi()
 // The system.
 // ---------------------------------------------------------------------------
 AlsaDirectCardSystem::AlsaDirectCardSystem(std::shared_ptr<IAlsaCardApi> api, QString watchDirectory,
-                                           AlsaOutputMaker makeOutput, int refusedRelistMs)
+                                           AlsaOutputMaker makeOutput, int refusedRelistMs,
+                                           bool startsIntoDesktop)
     : m_api(std::move(api))
     , m_watchDirectory(std::move(watchDirectory))
     , m_makeOutput(std::move(makeOutput))
     , m_refusedRelistMs(refusedRelistMs)
+    , m_startsIntoDesktop(startsIntoDesktop)
 {
 }
 
@@ -567,7 +578,14 @@ QList<AlsaCardRecord> AlsaDirectCardSystem::playbackCards()
     if (!m_api) {
         return {};
     }
-    AlsaCardListing listing = listAlsaPlaybackCards(*m_api, m_knownChannels);
+    std::function<bool(const QString&)> probe;
+    if (m_startsIntoDesktop) {
+        // D31: the desktop's cards are left alone; only the card of the
+        // Core's live stream (none while nothing is picked) is probed.
+        const QString picked = m_pickHold.expired() ? QString() : m_pickedId;
+        probe = [picked](const QString& id) { return !picked.isEmpty() && id == picked; };
+    }
+    AlsaCardListing listing = listAlsaPlaybackCards(*m_api, m_knownChannels, probe);
     if (listing.refused && m_watcher) {
         m_watcher->relistOnceAfter(m_refusedRelistMs);
     }
@@ -595,7 +613,24 @@ void AlsaDirectCardSystem::setNoticeSink(std::function<void(AudioNotice)> sink)
 std::unique_ptr<IAudioBus> AlsaDirectCardSystem::createOutput(const AlsaCardRecord& card,
                                                               const AudioStreamRequest& request)
 {
-    return m_makeOutput ? m_makeOutput(card, request) : nullptr;
+    AlsaCardRecord picked = card;
+    std::shared_ptr<void> hold = std::make_shared<int>(0);
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        const QString id = alsaDeviceId(card);
+        if (m_startsIntoDesktop && m_api && !m_knownChannels.contains(id)) {
+            // The pick's card is the Core's now: its count is read once,
+            // here, before its stream opens it.
+            const int channels = m_api->playbackChannelsMax(card.card, card.device);
+            if (channels > 0) {
+                m_knownChannels.insert(id, channels);
+                picked.channels = channels;
+            }
+        }
+        m_pickedId = id;
+        m_pickHold = hold;
+    }
+    return m_makeOutput ? m_makeOutput(picked, request, std::move(hold)) : nullptr;
 }
 
 QString AlsaDirectCardSystem::defaultTargetPath()
@@ -609,11 +644,16 @@ std::unique_ptr<IAlsaDirectSystem> makeAlsaDirectSystem()
     // In a test run nothing is watched; the API lists nothing and every
     // open fails as well.
     const QString directory = audioDevicesBarredForTestRun() ? QString() : kDevSnd;
+    const bool desktop =
+        defaultTargetIsDesktop(systemdDefaultTargetPath(systemdDefaultTargetCandidates()));
     return std::make_unique<AlsaDirectCardSystem>(
         makeAlsaCardApi(), directory,
-        [](const AlsaCardRecord& card, const AudioStreamRequest& request) -> std::unique_ptr<IAudioBus> {
-            return std::make_unique<AlsaDirectBus>(card, request, makeAlsaHwPcmOpener());
-        });
+        [](const AlsaCardRecord& card, const AudioStreamRequest& request,
+           std::shared_ptr<void> hold) -> std::unique_ptr<IAudioBus> {
+            return std::make_unique<AlsaDirectBus>(card, request, makeAlsaHwPcmOpener(),
+                                                   std::move(hold));
+        },
+        kAlsaRefusedRelistMs, desktop);
 #else
     return nullptr;
 #endif

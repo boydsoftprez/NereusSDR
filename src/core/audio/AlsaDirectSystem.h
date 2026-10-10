@@ -27,6 +27,14 @@
 // audioDevicesBarredForTestRun() is true it lists nothing, watches nothing
 // and every open fails, so no test reaches a card.
 //
+// On a box that starts into a desktop the Core leaves every card to the
+// desktop until a Core speaker is picked (D31, R-AUD-30), the channel
+// probe too: a probe open can hold a card at the moment the desktop's
+// sound server opens it, which then fails with -EBUSY.  There only the
+// card the Core plays on is probed: once when its stream is made, and in
+// each listing while that stream lives.  Every other card lists with the
+// count read before, else 2.  A box without a desktop probes every card.
+//
 // udev gives a new card's nodes their group (or the seat's ACL) a moment
 // after the kernel makes them root-only.  The watcher sees that change
 // (IN_ATTRIB), and a listing that a card's node refused (-EACCES) asks the
@@ -41,6 +49,9 @@
 //               more listing after -EACCES; channel counts from the card;
 //               the listing behind IAlsaCardApi. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-10: final review fixes round 2 (R-AUD-30): a box that starts
+//               into a desktop probes only the card the Core plays on.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -85,6 +96,8 @@ public:
 // graphical.target, read from /etc/systemd/system/default.target, else
 // /lib/systemd/system/default.target, else /usr/lib/systemd/system/default.target.
 bool coreBoxStartsIntoDesktop(IAlsaDirectSystem& system);
+// The same test on a path systemdDefaultTargetPath() gave.
+bool defaultTargetIsDesktop(const QString& targetPath);
 // Settled call 14: S32_LE, S24_3LE, S24_LE, S16_LE.
 QList<DeviceSampleFormat> alsaFormatOrder();
 
@@ -180,26 +193,32 @@ struct AlsaCardListing {
 // does not open is skipped (refused when it answered -EACCES).  A PCM's
 // channels are its probed maximum; while the probe cannot open it (busy,
 // often because we play on it) the count last read for its ID in
-// `knownChannels` stands, else 2.  Each count read is stored there.
-AlsaCardListing listAlsaPlaybackCards(IAlsaCardApi& api, QHash<QString, int>& knownChannels);
+// `knownChannels` stands, else 2.  Each count read is stored there.  When
+// `probe` is set, only the PCMs whose ID it answers true for are probed;
+// the others list with the count read before, else 2.
+AlsaCardListing listAlsaPlaybackCards(IAlsaCardApi& api, QHash<QString, int>& knownChannels,
+                                      const std::function<bool(const QString&)>& probe = {});
 
 // The machine's ALSA.
 std::shared_ptr<IAlsaCardApi> makeAlsaCardApi();
 
 // Makes a card's output stream (the real one an AlsaDirectBus on the real
-// opener).
-using AlsaOutputMaker =
-    std::function<std::unique_ptr<IAudioBus>(const AlsaCardRecord&, const AudioStreamRequest&)>;
+// opener).  The stream keeps `hold` for as long as it lives: while it does,
+// its card is the one the Core plays on.
+using AlsaOutputMaker = std::function<std::unique_ptr<IAudioBus>(
+    const AlsaCardRecord&, const AudioStreamRequest&, std::shared_ptr<void> hold)>;
 
 // The ALSA direct system over an IAlsaCardApi: the real adapter, and a
 // test's over a fake API, a temporary directory and fake streams.  The
 // watcher runs on `watchDirectory` while a notice sink is set (none for
 // an empty directory).  A listing a card refused asks the watcher for one
-// more after `refusedRelistMs`.
+// more after `refusedRelistMs`.  With `startsIntoDesktop` only the card
+// of the live stream it made is probed (see the top of this file).
 class AlsaDirectCardSystem final : public IAlsaDirectSystem {
 public:
     AlsaDirectCardSystem(std::shared_ptr<IAlsaCardApi> api, QString watchDirectory,
-                         AlsaOutputMaker makeOutput, int refusedRelistMs = kAlsaRefusedRelistMs);
+                         AlsaOutputMaker makeOutput, int refusedRelistMs = kAlsaRefusedRelistMs,
+                         bool startsIntoDesktop = false);
     ~AlsaDirectCardSystem() override;
 
     QList<AlsaCardRecord> playbackCards() override;
@@ -214,8 +233,13 @@ private:
     QString m_watchDirectory;
     AlsaOutputMaker m_makeOutput;
     int m_refusedRelistMs;
+    bool m_startsIntoDesktop;
     std::mutex m_mutex;
     QHash<QString, int> m_knownChannels;
+    // The card of the last stream made, the Core's while `m_pickHold` (the
+    // stream's hold) lives.
+    QString m_pickedId;
+    std::weak_ptr<void> m_pickHold;
     std::unique_ptr<AlsaNodeWatcher> m_watcher;
 };
 
