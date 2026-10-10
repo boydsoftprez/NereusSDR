@@ -44,6 +44,9 @@
 //               nothing; on Windows a VAX bus opened before the stream
 //               supervisor closes before the supervisor opens that role.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10: final review fix round 3 (R-AUD-06): a late answer from
+//               a Rescan the timer finished does not end the next Rescan.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -56,6 +59,7 @@
 #include "core/AudioDeviceConfig.h"
 #include "core/AudioEngine.h"
 #include "core/audio/AudioBackendRegistry.h"
+#include "core/audio/AudioDeviceCatalog.h"
 #include "core/audio/CaptureSupervisor.h"
 #include "core/audio/IAudioDeviceCatalog.h"
 #include "core/audio/PortAudioBackend.h"
@@ -65,8 +69,11 @@
 #include "fakes/FakeAudioEngineBackend.h"
 #include "fakes/FakeCaptureChild.h"
 
+#include <atomic>
+#include <condition_variable>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <vector>
 
@@ -893,6 +900,89 @@ private slots:
         QCOMPARE(rig.older->rescanCount(), 0);
         QCOMPARE(rig.older->outputRequests().size(), std::size_t(2));
         QVERIFY(rig.older->outputAlive(1));
+        rig.engine->stop();
+    }
+
+    // Round 3: a driver holds the first Rescan past the catalogue's start
+    // wait, so the timer finishes it and its output reopens.  A second
+    // Rescan's fade is running when the first one's answer finally comes:
+    // that answer is not the second's, so the second still closes its
+    // faded output, lists PortAudio again and reopens it.
+    void lateRescanAnswerDoesNotEndTheNextRescan()
+    {
+        struct HeldOnce {
+            std::mutex mutex;
+            std::condition_variable cv;
+            std::atomic<bool> entered{false};
+            bool released = false;
+            int calls = 0;
+            void call()
+            {
+                std::unique_lock<std::mutex> lock(mutex);
+                if (++calls > 1) {
+                    return;
+                }
+                entered.store(true);
+                cv.notify_all();
+                cv.wait(lock, [this] { return released; });
+            }
+            void release()
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                released = true;
+                cv.notify_all();
+            }
+        };
+        // Shared with the hook: on a failed check the catalogue's thread
+        // may still be inside it after this function returns.
+        auto held = std::make_shared<HeldOnce>();
+        struct LetGo {
+            std::shared_ptr<HeldOnce> held;
+            ~LetGo() { held->release(); }
+        } letGo{held};
+
+        Rig rig;
+        rig.older->setTakesStereoMix(true);
+        rig.older->setCallbackFrames(2048);
+        rig.older->setFadeTimeMs(30);
+        rig.older->setRescanHook([held] { held->call(); });
+        savedChoice(AudioEngineKind::PortAudio, paId(QStringLiteral("Desk headphones")),
+                    QStringLiteral("Desk headphones"), kCoreAudioApi)
+            .saveToSettings(QStringLiteral("audio/Headphones"));
+        AppSettings::instance().setValue(QStringLiteral("audio/Headphones/Enabled"),
+                                         QStringLiteral("True"));
+        rig.build();
+        rig.engine->setHeadphonesEnabled(true);
+        rig.engine->start();
+        QCOMPARE(rig.older->outputRequests().size(), std::size_t(1));
+        QSignalSpy rescanned(rig.engine->catalogue(), &IAudioDeviceCatalog::olderDriversRescanned);
+
+        // The output the first Rescan reopens has a callback of about
+        // 0.34 s, so the second Rescan's fade waits that long.
+        rig.older->setCallbackFrames(16384);
+        rig.older->setFadeTimeMs(5000);
+        rig.engine->rescanOlderDrivers();
+        QTRY_VERIFY_WITH_TIMEOUT(held->entered.load(), kWaitMs);
+        QTRY_COMPARE_WITH_TIMEOUT(rig.older->outputRequests().size(), std::size_t(2),
+                                  AudioDeviceCatalog::kStartWaitMs + kWaitMs);
+        QCOMPARE(rescanned.count(), 0);
+        QVERIFY(rig.older->outputAlive(1));
+
+        rig.engine->rescanOlderDrivers();
+        QCOMPARE(rig.older->fadeRequests(), 2);
+        held->release();
+        // The first Rescan's answer, inside the second one's fade.
+        QTRY_COMPARE_WITH_TIMEOUT(rescanned.count(), 1, kWaitMs);
+        QVERIFY(rig.older->outputAlive(1));
+        QCOMPARE(rig.older->rescanCount(), 1);
+
+        // The second Rescan goes on: its output closes, PortAudio is
+        // listed again and the output reopens.
+        QTRY_VERIFY_WITH_TIMEOUT(!rig.older->outputAlive(1), kWaitMs);
+        QTRY_COMPARE_WITH_TIMEOUT(rig.older->rescanCount(), 2, kWaitMs);
+        QTRY_COMPARE_WITH_TIMEOUT(rescanned.count(), 2, kWaitMs);
+        QTRY_COMPARE_WITH_TIMEOUT(rig.older->outputRequests().size(), std::size_t(3), kWaitMs);
+        QVERIFY(rig.older->outputAlive(2));
         rig.engine->stop();
     }
 
