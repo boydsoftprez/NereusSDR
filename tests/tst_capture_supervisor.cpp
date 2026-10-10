@@ -29,8 +29,9 @@
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09: native audio plan final fix wave (V-HW-8): the probe test
 //               waits for the fake's mark of the disable, not a fixed
-//               time.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
-//               Claude Code.
+//               time; a helper that exits at once is found by its last
+//               process id (waitForStartedPid).  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -125,6 +126,18 @@ qint64 waitForPid(const CaptureSupervisor& supervisor, int timeoutMs)
         QTest::qWait(5);
     }
     return supervisor.helperProcessId();
+}
+
+// The process id of a helper that may answer and exit before a poll of
+// helperProcessId() sees it (a protocol error, a describe alone).
+qint64 waitForStartedPid(const CaptureSupervisor& supervisor, int timeoutMs)
+{
+    QElapsedTimer timer;
+    timer.start();
+    while (supervisor.lastHelperProcessId() == 0 && timer.elapsed() < timeoutMs) {
+        QTest::qWait(5);
+    }
+    return supervisor.lastHelperProcessId();
 }
 
 bool processIsGone(qint64 pid)
@@ -618,7 +631,7 @@ private slots:
         CaptureSupervisor supervisor(fakeOptions(scenario));
         Recorder recorder(supervisor);
         auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
-        const qint64 pid = waitForPid(supervisor, 3000);
+        const qint64 pid = waitForStartedPid(supervisor, 3000);
         QVERIFY(pid > 0);
         QVERIFY(waitForState(supervisor, State::Failed, 3000));
         QCOMPARE(supervisor.status().reason, Reason::ProtocolError);
@@ -947,7 +960,7 @@ private slots:
         CaptureSupervisor supervisor(fakeOptions(QStringLiteral("ready")));
         QSignalSpy caps(&supervisor, &CaptureSupervisor::asioCaps);
         supervisor.describeAsio(QString());
-        const qint64 pid = waitForPid(supervisor, 3000);
+        const qint64 pid = waitForStartedPid(supervisor, 3000);
         QVERIFY(pid > 0);
         QTRY_VERIFY_WITH_TIMEOUT(caps.size() >= 1, 3000);
         const auto record = qvariant_cast<CaptureProtocol::AsioCapsRecord>(caps.at(0).at(0));

@@ -32,6 +32,9 @@
 //               openAsio() and openAsioControlPanel() go to the helper,
 //               asioCaps() and asioState() come back.  J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan final fix wave (R-R3-36):
+//               lastHelperProcessId(), for a helper that exits at once.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -178,6 +181,10 @@ public:
 
     // Diagnostics: the running helper's process id, 0 when none.
     qint64 helperProcessId() const;
+    // Diagnostics: the latest helper's process id, kept after it ends (a
+    // helper that answers and exits at once is still seen); 0 before the
+    // first.
+    qint64 lastHelperProcessId() const;
 
     // True while at least one microphone Lease is active (any demand but
     // AsioDevice).  Owner thread only.
@@ -224,6 +231,7 @@ private:
     Options m_options;
     std::shared_ptr<CaptureAudioBus> m_reader;
     std::shared_ptr<std::atomic<qint64>> m_helperPid;
+    std::shared_ptr<std::atomic<qint64>> m_lastHelperPid;
     QThread m_thread;
     std::unique_ptr<CaptureSupervisorWorker> m_worker;   // lives on m_thread
     QHash<quint64, Demand> m_leases;
