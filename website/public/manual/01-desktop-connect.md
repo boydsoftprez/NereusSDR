@@ -103,17 +103,74 @@ Use **Rename** to give the Core a recognizable station name. For phone enrollmen
 
 ## Choose this computer's receive and transmit audio routes
 
-Open **File > Settings… > Audio > Devices**. Under **Speakers**, choose the playback device for receive audio. Enable and choose **Headphones** only when you need a separate headphone destination. These are this computer's output routes; they do not choose a radio input or alter another connected device's output. Check **Negotiated** for the format the audio engine actually opened. If the route is silent, check the device's OS volume, application mute, and the selected slice's audio mute before changing radio controls.
+Open **File > Settings… > Audio > Outputs**. The **Sound system** line at the top names what this computer plays through: **Core Audio** on a Mac, **Windows audio (WASAPI)** on Windows (with **ASIO** and its driver named when one is in use), and **PipeWire** or **PulseAudio** on Linux. If neither is running on Linux it reads **None found. Start PipeWire or PulseAudio, then click Rescan devices.** If a card uses an older driver, the line adds **Older drivers in use:** and their names.
 
-Computer playback and microphone capture are separate from the radio's speaker/headphone path. This computer's master volume controls its own output; the radio output follows its supported slice-audio/monitor controls.
+The page has a card for each output. **This computer** is the speakers: set **Volume**, **Mute** and **Device** here. It is the same control as **PC** in the header. **Headphones** is a separate destination; tick **Enabled** to use it. The PC volume does not change the headphones. **Radio speaker** is the radio's own speaker output. In a window connected to a remote Core a **Core speaker** card sits between them; see [the Core speaker](08-shared-core.md#play-the-core-speaker). These are this computer's output routes. They do not choose a radio input or change another connected device's output.
 
-Under **TX Input (Microphone)**, select the computer capture device when using **PC Mic**. The page reports capture status and provides **Retry microphone** if the stream failed. If the device is missing, first check operating-system microphone permission, then reselect the device and retry. This confirms capture at the computer; it does not authorize the Core to transmit. The mic source itself is selected separately at **File > Settings… > Audio > TX Input**. The supported source choices are **PC Mic**, **Radio Mic**, and **VAX TX (virtual device)**. Radio-specific controls appear only when supported. See [Set up and transmit](05-transmit.md) for the mic test, gain, TX ownership, and keying sequence.
+[![Desktop Outputs page with the Sound system line and the This computer, Headphones and Radio speaker cards](images/desktop-audio-outputs.png)](images/desktop-audio-outputs.png)
+
+*Audio Outputs, rendered for the native audio build on a Mac with no radio connected. The Driver box is greyed because Core Audio is the only choice there. Rescan devices is greyed with its reason beside it. The Negotiated fields show (not applied) because no stream was open.*
+
+### Pick the driver, then the device
+
+Open **Device details** on a card and read **Driver**. It lists only what exists on this computer, and a choice that does not apply is greyed with its reason when you point at it.
+
+| System | Driver list |
+| --- | --- |
+| Mac | **Core Audio**, greyed: **The only sound system on the Mac.** |
+| Windows | **Windows audio, shared**, **Windows audio, exclusive**, **ASIO** (greyed with **No ASIO driver is installed on this computer.** when none is installed), then the older drivers under **Older drivers**: **MME**, **DirectSound** and **WDM-KS**. |
+| Linux desktop | **PipeWire**; **PulseAudio** is listed only while PipeWire is not running. A sound system that is not running reads **PipeWire (not running)** or **PulseAudio (not running)**, greyed with **<name> is not running on this computer.** Older drivers (**JACK**, **ALSA**) follow under **Older drivers**. |
+| Headless Linux Core | **ALSA, direct**, greyed: **The Core runs without a desktop, so it plays straight to the sound card.** |
+
+Windows exclusive adds the note **Other apps cannot play through this device while NereusSDR has it.** An older driver adds **An older driver: more delay, and its list updates only with Rescan devices.** Prefer the system's own engine unless a device only works on an older driver.
+
+**Device** follows the chosen driver. **(platform default)** is first, then each device the driver reports. A device with more than two channels lists each pair as its own entry, grouped under the interface, for example **Outputs 3-4**. A device you plug in or remove appears or disappears within about a second, with no Rescan and without interrupting sound on another device.
+
+If the device you chose is gone, speakers and headphones keep playing on the system default and the card says so in amber:
+
+- **<name> is not connected. Playing on the system default, <default name>, until it comes back.**
+- **<name> is in use by another program. Playing on the system default, <default name>, until it comes back.**
+
+The choice is never changed for you. It moves back when the device returns. The list entry reads **<name> (not connected)** or **<name> (in use by another program)** until then. With no other device to fall back on the card says **<name> is not connected.** and sound stays silent.
+
+If two cards choose the same pair of an interface, the page says **Speakers and headphones are on the same pair, so they play together.**
+
+### Delay and ASIO details
+
+**Delay** is **Automatic** or **2**, **3**, **5**, **10**, **20** or **40 ms**, with a live readout such as **Now 25 ms from the radio to <device>**. It reads **Now -- ms** until a stream plays. Automatic lets NereusSDR pick the delay; the fixed values set it yourself. Check **Negotiated** for the format the engine actually opened.
+
+On ASIO, **Buffer size** and **Sample rate** belong to the driver and are shared with every role on that driver. A line says **Buffer size and sample rate are shared with <roles>, on the same ASIO driver.** A buffer size the driver fixes shows **Set in the ASIO control panel**, and **ASIO control panel** opens the driver's own window; it is greyed until an ASIO driver is chosen, with **ASIO drivers are Windows only.** as its reason outside Windows. After a driver change the card says **Restarted with the driver's new settings.** A driver whose sample format NereusSDR cannot play or record says **<driver> uses a sample format NereusSDR can't play or record.** and its pairs are greyed.
+
+NereusSDR uses one ASIO driver at a time. If you pick a pair on a second driver, **One ASIO driver at a time** lists the other roles that move with it. **Switch all to <driver>** moves them all; **Cancel** keeps everything as it was. To keep a device where it is, cancel and give it a Windows audio device or cable first.
+
+### Rescan devices
+
+**Rescan devices** matters only for the older drivers. Their lists update only when you press it, and their streams close and reopen. The note beside it says so: **Only the older drivers need this.** plus which lists update by themselves. On the Mac it is greyed and reads **Core Audio lists update by themselves, so there is nothing to rescan.**
+
+### Choose the microphone
+
+Computer playback and microphone capture are separate from the radio's speaker output. Open **File > Settings… > Audio > Microphone**, choose **PC Mic**, and set the **PC microphone** card: **Driver**, **Device** and **Mic is on:** **Left**, **Right** or **Both**, which is greyed with its reason when the mic is off or has one channel. The **Delay** line reads **Now N ms from <device> to the radio**. The page shows capture status and **Retry microphone** if the stream failed. See [Set up and transmit](05-transmit.md) for the mic test, gain, TX ownership and keying sequence.
+
+A microphone that is missing or held by another program never switches to another mic. The card says **<name> is not connected. The mic stays silent until it comes back; NereusSDR never switches to another mic on its own.** (or **is in use by another program**), and capture resumes by itself when the device returns. The TX applet's badge reads **PC mic not connected** or **PC mic in use by another program** in amber.
+
+A Bluetooth headset switches to phone-call quality, for listening too, while it is your mic. When you pick one by name the card says **Bluetooth headsets switch to phone-call quality, for listening too, while they are your mic. For the best sound, listen on <name> and talk on a wired or built-in mic.** NereusSDR never opens a Bluetooth mic unless you pick it by name.
+
+### Choose cables for digital modes
+
+Open **File > Settings… > Audio > Digital modes**. The **VAX** part has a card for each of **VAX 1** to **VAX 4**.
+
+- **Mac and Linux:** each channel is made for you and other programs (WSJT-X, fldigi and so on) see an audio device named **NereusSDR VAX 1** to **4**. No virtual cable is needed. If the Mac driver did not load, the page says **The NereusSDR VAX driver did not load. Allow it in System Settings > Privacy & Security or reinstall NereusSDR, then restart NereusSDR.**
+- **Windows:** each channel uses a virtual audio cable you install (VB-CABLE, Voicemeeter or VAC). Pick one cable per channel in **Device**, under **Virtual cables**, then turn the channel **On**. WSJT-X and others use the other end of that cable. With no cable the page says **No virtual cable found. Install one, then click Rescan.** and **Device** reads **(pick a cable)** with **Pick a cable first.** on the card. A cable already used by another channel asks **Use this cable here?** before it moves. ASIO pairs are listed under their driver's name. A pair the radio's speakers or headphones use is greyed with **Radio audio and digital-mode audio never share a pair.** and an ASIO pair carries the note **Most digital-mode apps cannot open ASIO, so pass this pair on in the ASIO app's own mixer (a Voicemeeter strip, for example).**
+
+**Rescan** at the foot of the VAX list looks again for cables. **Detected virtual cables** names what was found. If NereusSDR notices a new cable the first-run window **Virtual cables detected** offers **Apply suggested**, **Customize…** or **Skip**, and **Rescan now** under **Already have one?** after you install one.
+
+[![Desktop Digital modes page with the VAX 1 to 4 cards and the TCI audio settings](images/desktop-modes-audio.png)](images/desktop-modes-audio.png)
+
+*Digital modes, rendered for the native audio build on a Mac. No VAX channel is on and no program is using one. Each card's Used by line reads Not reported on this computer here because no program had opened a channel.*
+
+**Used by:** reads **An app is reading this channel** or **No app is reading this channel** where the system reports it. See [Digital audio and external applications](09-tools.md) for routing a slice to a channel.
 
 If Linux audio will not open, **Help > Diagnose audio backend** is the available Linux-specific diagnostic. It reports backend information and provides a starting point for checking PipeWire or PulseAudio selection; it is not a general connection test. For broader link diagnosis, use **Tools > Network Diagnostics** after the radio or Core target has been selected.
-
-[![Desktop Audio Devices page with separate Speakers, Headphones and TX Input cards](images/desktop-audio-devices-original.png)](images/desktop-audio-devices-original.png)
-
-*Audio Devices, desktop development build 0.5.2. Read each route separately: Speakers and Headphones are playback; TX Input is capture. The Negotiated fields in this image do not establish an open stream. The Linux backend strip is unavailable in this macOS capture. These are existing operator settings, not setup defaults.*
 
 ## Choose audio quality for this window's Core connection
 

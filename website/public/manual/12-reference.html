@@ -12,20 +12,32 @@
 </thead>
 <tbody>
 <tr>
-<td>Select playback and microphone devices</td>
-<td><strong>Setup &gt; Audio &gt; Devices</strong></td>
-<td><strong>Setup &gt; Audio</strong> device controls</td>
+<td>Select speakers and headphones</td>
+<td><strong>Setup &gt; Audio &gt; Outputs</strong>; <strong>PC</strong> in the header (right-click for the speakers menu)</td>
+<td><strong>Sound</strong></td>
+<td>This computer / this phone</td>
+</tr>
+<tr>
+<td>Radio speaker and Core speaker</td>
+<td><strong>Setup &gt; Audio &gt; Outputs</strong>; <strong>RADIO</strong> in the header</td>
+<td><strong>Sound</strong></td>
+<td>Radio and Core; shared with every window and the phone</td>
+</tr>
+<tr>
+<td>Select the microphone</td>
+<td><strong>Setup &gt; Audio &gt; Microphone</strong></td>
+<td><strong>Setup &gt; Audio &gt; On this phone</strong></td>
 <td>This computer / this phone</td>
 </tr>
 <tr>
 <td>Configure VAX audio</td>
-<td><strong>Tools &gt; VAX Audio...</strong> or <strong>Setup &gt; Audio &gt; VAX</strong></td>
+<td><strong>Tools &gt; VAX Audio...</strong> or <strong>Setup &gt; Audio &gt; Digital modes</strong></td>
 <td><strong>Tools &gt; VAX Audio</strong></td>
 <td>Desktop: this computer, including remote windows. Phone: Core computer.</td>
 </tr>
 <tr>
 <td>Configure TCI audio streams</td>
-<td><strong>Setup &gt; Audio &gt; TCI</strong></td>
+<td><strong>Setup &gt; Audio &gt; Digital modes</strong></td>
 <td><strong>Tools &gt; TCI Server</strong> for Core server options</td>
 <td>Desktop audio setup is this computer; iOS server is Core</td>
 </tr>
@@ -102,8 +114,8 @@
 <td>Choosing a different radio changes the Core's shared radio and reconnects devices; this is not the same as choosing a saved Core target.</td>
 </tr>
 <tr>
-<td>TX input and microphone route</td>
-<td><strong>Setup &gt; Audio &gt; TX Input</strong></td>
+<td>Microphone source and route</td>
+<td><strong>Setup &gt; Audio &gt; Microphone</strong></td>
 <td>Main <strong>TX</strong>, <strong>Modes</strong> transmit section; <strong>Setup &gt; Audio &gt; On this phone</strong> for the phone microphone</td>
 <td>Mixed input/device and Core transmit settings</td>
 </tr>
@@ -181,7 +193,7 @@
 <p>To switch radios, choose an inactive radio, review the confirmation, then tap <strong>Choose</strong>. The confirmation says the Core switches and every connected device, including this phone, reconnects. After the phone reconnects, read the Core/link and radio identity before continuing; do not assume a successful tap changed the selected radio. If the Core refuses the request, its words appear in <strong>Refusal</strong>. A disconnect or missing capability disables the action with its reason. Choosing the current <strong>In use</strong> radio is not a switch.</p>
 <p>Use <strong>Change model</strong> only to change the model saved for a listed radio. Pick one of the Core-provided models; the checkmark marks the model the Core currently reports. The Core saves that choice for its next connection to that radio, so it does not switch the Core immediately. When the older Core does not list model choices, or lists only one, the page gives the reason instead of guessing. To remove an inactive saved radio from the Core, tap <strong>Forget</strong>, read the confirmation that also removes that radio's saved model, then tap <strong>Forget</strong> to confirm. A later scan may list the radio again while it is on the network. Check the resulting list or the Core's refusal before proceeding. These actions affect the Core's station, not just the phone's saved <strong>Your Cores</strong> list.</p>
 <h3 id="adjust-the-cores-vax-levels-from-the-phone">Adjust the Core's VAX levels from the phone</h3>
-<p>Open <strong>Tools &gt; VAX Audio</strong>. This page controls VAX channels on the Core's computer, not audio devices on the phone. Each of <strong>VAX 1–4</strong> identifies its virtual device and feeding slice or slices, then provides <strong>Level</strong>, a 0–100% slider, a level meter, and <strong>Mute</strong>. Set a channel level to change what digital-mode apps receive from that VAX channel. <strong>Mute</strong> silences that channel for its applications; it does not mute the speakers. Watch the meter and device/slice labels to make sure the intended receive path is selected. The <strong>VAX microphone</strong> section identifies the transmit slice and has its own <strong>Level</strong> slider and meter. That level changes the Core's VAX microphone input, not this phone's microphone route. Wait for values/meters to refresh; if a request is refused, the page displays the Core's reason. The TX-level slider is disabled unless this phone may transmit. Missing channel or meter data shows an older-Core/unavailable reason rather than a zero value. VAX application routing and platform availability are in <a href="/manual/09-tools.html">Digital audio and external applications</a>.</p>
+<p>Open <strong>Tools &gt; VAX Audio</strong>. This page controls VAX channels on the Core's computer, not audio devices on the phone. Each of <strong>VAX 1 to 4</strong> identifies its virtual device and feeding slice or slices, then provides <strong>Level</strong>, a 0 to 100% slider, a level meter, and <strong>Mute</strong>. Set a channel level to change what digital-mode apps receive from that VAX channel. <strong>Mute</strong> silences that channel for its applications; it does not mute the speakers. Watch the meter and device/slice labels to make sure the intended receive path is selected. The <strong>VAX microphone</strong> section identifies the transmit slice and has its own <strong>Level</strong> slider and meter. That level changes the Core's VAX microphone input, not this phone's microphone route. Wait for values/meters to refresh; if a request is refused, the page displays the Core's reason. The TX-level slider is disabled unless this phone may transmit. Missing channel or meter data shows an older-Core/unavailable reason rather than a zero value. VAX application routing and platform availability are in <a href="/manual/09-tools.html">Digital audio and external applications</a>.</p>
 <h3 id="use-ipad-screen-arrangements-and-the-meter">Use iPad screen arrangements and the meter</h3>
 <p>Follow the <a href="/manual/07-iphone-operate.html#worked-session-two-slices-on-an-ipad">two-slice iPad listening session</a> for the operating order. The details below explain the layout and meter choices used by that session.</p>
 <p>On an iPad, the band screen uses three arrangements. With a regular-width window whose shorter side is at least 600 points, landscape uses the <strong>applet column</strong>: the band on the left and a 320-point column on the right, with the S-meter at the top and RX then TX controls below in one scroll view. Use the toolbar corner button to hide or show that column. In portrait at that size, the band stays full width and the S-meter, RX and TX are three columns below it; RX and TX scroll separately. Turning the iPad to landscape switches back to the applet column. A narrow split-view window or compact-width environment falls back to the phone arrangement, even on an iPad.</p>
@@ -226,7 +238,7 @@ until that readback is ready.</p>
 </tr>
 <tr>
 <td><strong>Audio</strong></td>
-<td>Devices; TX Input where available; VAX; TCI; Advanced; TX Profile.</td>
+<td>Outputs (speakers, headphones, radio speaker, Core speaker); Microphone; Digital modes (VAX and TCI); Advanced; TX Profile.</td>
 <td><a href="/manual/05-transmit.html">Transmit</a>, <a href="/manual/09-tools.html">digital routing</a>, <a href="/manual/14-voice-profiles.html">profiles</a>.</td>
 </tr>
 <tr>

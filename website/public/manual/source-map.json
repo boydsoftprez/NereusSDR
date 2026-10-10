@@ -2,20 +2,20 @@
   "downloads": [
     {
       "output": "manual/01-desktop-connect.md",
-      "output_sha256": "b13a93a39996ab4ad30b2479b21973d5ad0c318a6522ae53f2a566fd852fff8e",
-      "sha256": "b13a93a39996ab4ad30b2479b21973d5ad0c318a6522ae53f2a566fd852fff8e",
+      "output_sha256": "b20f4c28d639eb7f4f7c0f95f5ef7478160cf4f940af0d8f01012b1f963d13ee",
+      "sha256": "b20f4c28d639eb7f4f7c0f95f5ef7478160cf4f940af0d8f01012b1f963d13ee",
       "source": "docs/manual/01-desktop-connect.md"
     },
     {
       "output": "manual/02-desktop-window.md",
-      "output_sha256": "eed826020543cad54e4555a1adbcb008aba773a884cee9b5f4b7f832cee2f543",
-      "sha256": "eed826020543cad54e4555a1adbcb008aba773a884cee9b5f4b7f832cee2f543",
+      "output_sha256": "ade31d9b89347d665ead8616ace1ab4039ef2904a28f52a840c23ff8504db00a",
+      "sha256": "ade31d9b89347d665ead8616ace1ab4039ef2904a28f52a840c23ff8504db00a",
       "source": "docs/manual/02-desktop-window.md"
     },
     {
       "output": "manual/03-receive.md",
-      "output_sha256": "6bb0f620f707de79d2a1ecf2b5ac85a4d999d99cc986efa0f5e990133d274166",
-      "sha256": "6bb0f620f707de79d2a1ecf2b5ac85a4d999d99cc986efa0f5e990133d274166",
+      "output_sha256": "2685dc37ac00c5046d4979dfec114cb25676f7184e6470090af9c710fc22ef40",
+      "sha256": "2685dc37ac00c5046d4979dfec114cb25676f7184e6470090af9c710fc22ef40",
       "source": "docs/manual/03-receive.md"
     },
     {
@@ -26,8 +26,8 @@
     },
     {
       "output": "manual/05-transmit.md",
-      "output_sha256": "e23a999efdb5359b48c6ed2978e909f4bc662cc74f4ceb0f476cd0eb1f734bec",
-      "sha256": "e23a999efdb5359b48c6ed2978e909f4bc662cc74f4ceb0f476cd0eb1f734bec",
+      "output_sha256": "b437d333f25c4075631c48cc23634298a34b0849f451e8e91b1384ffd1ef73f8",
+      "sha256": "b437d333f25c4075631c48cc23634298a34b0849f451e8e91b1384ffd1ef73f8",
       "source": "docs/manual/05-transmit.md"
     },
     {
@@ -38,20 +38,20 @@
     },
     {
       "output": "manual/07-iphone-operate.md",
-      "output_sha256": "b708228e668e2a7f8b22951d56f384a399385507c570e6d27a452a2c714ee8cc",
-      "sha256": "b708228e668e2a7f8b22951d56f384a399385507c570e6d27a452a2c714ee8cc",
+      "output_sha256": "81cf21ed63debf7d1f1584f88cea8611e32af072fbc2cc1d8a8523e1d1919d3d",
+      "sha256": "81cf21ed63debf7d1f1584f88cea8611e32af072fbc2cc1d8a8523e1d1919d3d",
       "source": "docs/manual/07-iphone-operate.md"
     },
     {
       "output": "manual/08-shared-core.md",
-      "output_sha256": "1cb374937783d66d86cc237484800273a246c1c546cd98d6c519ec14a9a84595",
-      "sha256": "1cb374937783d66d86cc237484800273a246c1c546cd98d6c519ec14a9a84595",
+      "output_sha256": "fc31920f11c12a1334610d7f939d748ece26cffe005a33e5bdb2a77ce3416fe2",
+      "sha256": "fc31920f11c12a1334610d7f939d748ece26cffe005a33e5bdb2a77ce3416fe2",
       "source": "docs/manual/08-shared-core.md"
     },
     {
       "output": "manual/09-tools.md",
-      "output_sha256": "7c7aaf9fe47809636c07ecde45ac5bb38e9bbdee984270ace0dd3288c438c7be",
-      "sha256": "7c7aaf9fe47809636c07ecde45ac5bb38e9bbdee984270ace0dd3288c438c7be",
+      "output_sha256": "60e1ac43a48c43f5cd3d14e6dce759f036554099bfdcf43c69a32b516e5b0028",
+      "sha256": "60e1ac43a48c43f5cd3d14e6dce759f036554099bfdcf43c69a32b516e5b0028",
       "source": "docs/manual/09-tools.md"
     },
     {
@@ -62,14 +62,14 @@
     },
     {
       "output": "manual/11-troubleshooting.md",
-      "output_sha256": "a579b5639468c91818121564247d9cd5f0ca121653fed390efd8d2ae6327f1c3",
-      "sha256": "a579b5639468c91818121564247d9cd5f0ca121653fed390efd8d2ae6327f1c3",
+      "output_sha256": "322cd7a83b9593f5014d81e39c847305789137135df2cce58bd6e470cf6d2aff",
+      "sha256": "322cd7a83b9593f5014d81e39c847305789137135df2cce58bd6e470cf6d2aff",
       "source": "docs/manual/11-troubleshooting.md"
     },
     {
       "output": "manual/12-reference.md",
-      "output_sha256": "e60e54727da1bd5a60cf3d6f8e0a2d70f101b8214e740416faae2e00d7276a95",
-      "sha256": "e60e54727da1bd5a60cf3d6f8e0a2d70f101b8214e740416faae2e00d7276a95",
+      "output_sha256": "d55e2bd6e5ed022fc356d5d4c33971c043f0274711abb9cc1fe7ad02f80e65ab",
+      "sha256": "d55e2bd6e5ed022fc356d5d4c33971c043f0274711abb9cc1fe7ad02f80e65ab",
       "source": "docs/manual/12-reference.md"
     },
     {
@@ -80,14 +80,14 @@
     },
     {
       "output": "manual/14-voice-profiles.md",
-      "output_sha256": "4fc582d6984c614ae77e37c4850f80c5962603ca3abd2411d87a62c3bfb7d9c2",
-      "sha256": "4fc582d6984c614ae77e37c4850f80c5962603ca3abd2411d87a62c3bfb7d9c2",
+      "output_sha256": "86f002bb06a53f7c12ef1bea17d7a918a57ca3c97c5fe0170bffc4a4e7b10e7d",
+      "sha256": "86f002bb06a53f7c12ef1bea17d7a918a57ca3c97c5fe0170bffc4a4e7b10e7d",
       "source": "docs/manual/14-voice-profiles.md"
     },
     {
       "output": "manual/15-rade-freedv.md",
-      "output_sha256": "db4f36811193b61e49ec00732404b6554636359318d3ced9cffc266afcd9cbb5",
-      "sha256": "db4f36811193b61e49ec00732404b6554636359318d3ced9cffc266afcd9cbb5",
+      "output_sha256": "d265b7aaa2819389735298494a0828df2d57c39b653de8868df96b7270eb9529",
+      "sha256": "d265b7aaa2819389735298494a0828df2d57c39b653de8868df96b7270eb9529",
       "source": "docs/manual/15-rade-freedv.md"
     },
     {
@@ -134,14 +134,14 @@
     },
     {
       "output": "manual/coverage.md",
-      "output_sha256": "188bb6ac5466ac2e4527a5d93afd61823315c7517312cf5365ea371c83c389b4",
-      "sha256": "188bb6ac5466ac2e4527a5d93afd61823315c7517312cf5365ea371c83c389b4",
+      "output_sha256": "4caa8036d4c3d40ebe9e7348e073dfa327738e13a6c890e46e7ffe4716190100",
+      "sha256": "4caa8036d4c3d40ebe9e7348e073dfa327738e13a6c890e46e7ffe4716190100",
       "source": "docs/manual/coverage.md"
     },
     {
       "output": "manual/images/README.md",
-      "output_sha256": "f70c46afc27457ee9ed9481fb4f3a4093819b573643334e0110f5398747a7bf4",
-      "sha256": "f70c46afc27457ee9ed9481fb4f3a4093819b573643334e0110f5398747a7bf4",
+      "output_sha256": "665a842c6ce5fd7403cc164f173a53ddc4ed4be8edb3bddd8b78d180d6ef44a1",
+      "sha256": "665a842c6ce5fd7403cc164f173a53ddc4ed4be8edb3bddd8b78d180d6ef44a1",
       "source": "docs/manual/images/README.md"
     },
     {
@@ -154,8 +154,8 @@
   "images": [
     {
       "output": "manual/images/README.md",
-      "output_sha256": "f70c46afc27457ee9ed9481fb4f3a4093819b573643334e0110f5398747a7bf4",
-      "sha256": "f70c46afc27457ee9ed9481fb4f3a4093819b573643334e0110f5398747a7bf4",
+      "output_sha256": "665a842c6ce5fd7403cc164f173a53ddc4ed4be8edb3bddd8b78d180d6ef44a1",
+      "sha256": "665a842c6ce5fd7403cc164f173a53ddc4ed4be8edb3bddd8b78d180d6ef44a1",
       "source": "docs/manual/images/README.md"
     },
     {
@@ -171,6 +171,12 @@
       "source": "docs/manual/images/desktop-audio-devices-original.png"
     },
     {
+      "output": "manual/images/desktop-audio-outputs.png",
+      "output_sha256": "ebb3ebc6ec33266de6837db978e71d6ace14693f485512fee6c5844868206218",
+      "sha256": "ebb3ebc6ec33266de6837db978e71d6ace14693f485512fee6c5844868206218",
+      "source": "docs/manual/images/desktop-audio-outputs.png"
+    },
+    {
       "output": "manual/images/desktop-cfc-original.png",
       "output_sha256": "3808fac63f9157b602ad88f547c533531050f3b696d44c3a63fde3815ff3fb40",
       "sha256": "3808fac63f9157b602ad88f547c533531050f3b696d44c3a63fde3815ff3fb40",
@@ -181,6 +187,12 @@
       "output_sha256": "be9b74eb82f651accce0c2439a4016895df2ab34c2306937e7f7cf7cde0c60cc",
       "sha256": "be9b74eb82f651accce0c2439a4016895df2ab34c2306937e7f7cf7cde0c60cc",
       "source": "docs/manual/images/desktop-freedv-source-original.png"
+    },
+    {
+      "output": "manual/images/desktop-modes-audio.png",
+      "output_sha256": "270c26877d16766f8b5d1194ee25b592bb6449a7812f43b1f371b4bbb932d4e1",
+      "sha256": "270c26877d16766f8b5d1194ee25b592bb6449a7812f43b1f371b4bbb932d4e1",
+      "source": "docs/manual/images/desktop-modes-audio.png"
     },
     {
       "output": "manual/images/desktop-overview-original.png",
@@ -315,6 +327,12 @@
       "source": "docs/manual/images/iphone-shared-slices-original.png"
     },
     {
+      "output": "manual/images/iphone-sound-core-speaker.png",
+      "output_sha256": "73d3f96e7495763ca1cb0c52a33e118cff5ffc1074b25664e5ecd3ab1d2b8aee",
+      "sha256": "73d3f96e7495763ca1cb0c52a33e118cff5ffc1074b25664e5ecd3ab1d2b8aee",
+      "source": "docs/manual/images/iphone-sound-core-speaker.png"
+    },
+    {
       "output": "manual/images/iphone-sound-original.png",
       "output_sha256": "9cd9f8e256db7272ef39efc925b1649ce1771ea8ef6e9909f53c513c463157eb",
       "sha256": "9cd9f8e256db7272ef39efc925b1649ce1771ea8ef6e9909f53c513c463157eb",
@@ -348,20 +366,20 @@
     },
     {
       "output": "manual/01-desktop-connect.html",
-      "output_sha256": "a3eca268dde02be8ebdfb55d1850d06225a2cd22d321e95a649db5f39c30f6c2",
-      "sha256": "b13a93a39996ab4ad30b2479b21973d5ad0c318a6522ae53f2a566fd852fff8e",
+      "output_sha256": "501c9d8cef172e1d7540bf71918daf292106afe9bbe15f12c52b07a7a942a29c",
+      "sha256": "b20f4c28d639eb7f4f7c0f95f5ef7478160cf4f940af0d8f01012b1f963d13ee",
       "source": "docs/manual/01-desktop-connect.md"
     },
     {
       "output": "manual/02-desktop-window.html",
-      "output_sha256": "1224059838c362dc6dafd1c83065e1cac07a6aa44ff6d08dc965dc87e4e39781",
-      "sha256": "eed826020543cad54e4555a1adbcb008aba773a884cee9b5f4b7f832cee2f543",
+      "output_sha256": "be519826a728ab2ee4f9d51abce427d492169695b86805adadef12800b94c153",
+      "sha256": "ade31d9b89347d665ead8616ace1ab4039ef2904a28f52a840c23ff8504db00a",
       "source": "docs/manual/02-desktop-window.md"
     },
     {
       "output": "manual/03-receive.html",
-      "output_sha256": "629828f364d75df67352f4750ddd3a16505448e4d67fdb7799264bad17466672",
-      "sha256": "6bb0f620f707de79d2a1ecf2b5ac85a4d999d99cc986efa0f5e990133d274166",
+      "output_sha256": "2dd18f51e86a6ceb37b5fd2bd73acb16990a9bc3d5b8ccaaa3cca35257ad0019",
+      "sha256": "2685dc37ac00c5046d4979dfec114cb25676f7184e6470090af9c710fc22ef40",
       "source": "docs/manual/03-receive.md"
     },
     {
@@ -372,8 +390,8 @@
     },
     {
       "output": "manual/05-transmit.html",
-      "output_sha256": "e9c53635778592053d63bb42d4c464f565d7cc052f79b165ec8e47a5b70c1565",
-      "sha256": "e23a999efdb5359b48c6ed2978e909f4bc662cc74f4ceb0f476cd0eb1f734bec",
+      "output_sha256": "9e81c95f50a5e4fecf36a211b3bde62a4fecd800b5a748c1d52f58b3b918e3af",
+      "sha256": "b437d333f25c4075631c48cc23634298a34b0849f451e8e91b1384ffd1ef73f8",
       "source": "docs/manual/05-transmit.md"
     },
     {
@@ -384,20 +402,20 @@
     },
     {
       "output": "manual/07-iphone-operate.html",
-      "output_sha256": "e968330eaeda998d35d6bb3e61bf1340b8f692aeac7b6123d4d897354a38b0a0",
-      "sha256": "b708228e668e2a7f8b22951d56f384a399385507c570e6d27a452a2c714ee8cc",
+      "output_sha256": "3b591228effa48bc2204883ee8b7baf49aae3091dbab3fc9ad7389ad5f7342ba",
+      "sha256": "81cf21ed63debf7d1f1584f88cea8611e32af072fbc2cc1d8a8523e1d1919d3d",
       "source": "docs/manual/07-iphone-operate.md"
     },
     {
       "output": "manual/08-shared-core.html",
-      "output_sha256": "4e4b2508985e59de60d4287b21605e216c68a0549ee48a25adc0dea88ce56ec2",
-      "sha256": "1cb374937783d66d86cc237484800273a246c1c546cd98d6c519ec14a9a84595",
+      "output_sha256": "144c9ad2fabd986733302b2e82d3bfcc844b5951c1ede4897c1f884bbfaa491f",
+      "sha256": "fc31920f11c12a1334610d7f939d748ece26cffe005a33e5bdb2a77ce3416fe2",
       "source": "docs/manual/08-shared-core.md"
     },
     {
       "output": "manual/09-tools.html",
-      "output_sha256": "132cce3351f142f7ad4d4c4125cdfb4a98d7705af8024aa4357d28c5284fc813",
-      "sha256": "7c7aaf9fe47809636c07ecde45ac5bb38e9bbdee984270ace0dd3288c438c7be",
+      "output_sha256": "ca2ac7e997eec419603b589010338fc94f00ebefabe81491c4ebacbbcb243546",
+      "sha256": "60e1ac43a48c43f5cd3d14e6dce759f036554099bfdcf43c69a32b516e5b0028",
       "source": "docs/manual/09-tools.md"
     },
     {
@@ -408,14 +426,14 @@
     },
     {
       "output": "manual/11-troubleshooting.html",
-      "output_sha256": "f79dea0d7dce00fa4f417a28e6b8efd1ec4dc395512448ffe09a1182bb5744ed",
-      "sha256": "a579b5639468c91818121564247d9cd5f0ca121653fed390efd8d2ae6327f1c3",
+      "output_sha256": "322302e1d93545acb2f021a7e36d100a99fd294e654730fc06c6e4922006cff5",
+      "sha256": "322cd7a83b9593f5014d81e39c847305789137135df2cce58bd6e470cf6d2aff",
       "source": "docs/manual/11-troubleshooting.md"
     },
     {
       "output": "manual/12-reference.html",
-      "output_sha256": "7f5e840439520171457142dc49c676e6953e8260f54ab95be9d8b8d55f2bed10",
-      "sha256": "e60e54727da1bd5a60cf3d6f8e0a2d70f101b8214e740416faae2e00d7276a95",
+      "output_sha256": "341086eedefaa04200e978a67028a6f8ceec9a80a4b9faec50a1c8d041898c75",
+      "sha256": "d55e2bd6e5ed022fc356d5d4c33971c043f0274711abb9cc1fe7ad02f80e65ab",
       "source": "docs/manual/12-reference.md"
     },
     {
@@ -426,14 +444,14 @@
     },
     {
       "output": "manual/14-voice-profiles.html",
-      "output_sha256": "04fc4c4ebe22daa6d033ebe69bda75b058c89384dd7600f30d0a569e4790f316",
-      "sha256": "4fc582d6984c614ae77e37c4850f80c5962603ca3abd2411d87a62c3bfb7d9c2",
+      "output_sha256": "67db55741bb17f8f42e49536d4b1eee1baf651cdcfb3034ddbb47d127decbcfc",
+      "sha256": "86f002bb06a53f7c12ef1bea17d7a918a57ca3c97c5fe0170bffc4a4e7b10e7d",
       "source": "docs/manual/14-voice-profiles.md"
     },
     {
       "output": "manual/15-rade-freedv.html",
-      "output_sha256": "ddc13359af43ae44f633477f8e6fb6e30dab067833ac0e06e536c38a35f37010",
-      "sha256": "db4f36811193b61e49ec00732404b6554636359318d3ced9cffc266afcd9cbb5",
+      "output_sha256": "59fdef998bf736fab81c241f7b2fd041f6959e30cbd3bf95b296d24af84796d7",
+      "sha256": "d265b7aaa2819389735298494a0828df2d57c39b653de8868df96b7270eb9529",
       "source": "docs/manual/15-rade-freedv.md"
     },
     {
