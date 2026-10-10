@@ -147,7 +147,7 @@ If a device goes away unexpectedly, its connection row can show it as away/stale
 
 A Core computer with a sound card can play the receive audio through its own speaker, for listening where the Core sits. The **Core speaker** is shared: its volume, mute and device are the Core's, and a change from any desktop window or phone reaches every window and the phone. Each slice's AF level and mute still apply on top of it.
 
-On a desktop connected to a remote Core, open **File > Settings… > Audio > Outputs**. The **Core speaker** card sits between **Headphones** and **Radio speaker**. A window that runs the radio itself has no separate Core, so it has no card; **This computer** is the speaker there.
+On a desktop connected to a remote Core, open **File > Settings… > Audio > Outputs**. The **Core speaker** card sits between **Headphones** and **Radio speaker**. A window that runs the radio itself has no separate Core, so it has no card; **This computer** is the speaker there. In a remote window the **Radio speaker** card's note starts **This is the radio's own speaker, at the Core.** That card sets the radio's speaker output, not the Core computer's sound card.
 
 1. Set **Volume** and, to silence it, tick **Mute Core speaker**. The change shows in every other window and on the phone.
 2. Choose **Device**. **(the Core's default)** follows the Core computer's own default, **(none)** plays nothing, and each sound card plugged into the Core is listed by name. A card plugged in later appears by itself. Open **Device details** for **Driver** (**ALSA, direct** on a Core with no desktop), **Sample rate**, **Channels**, **Buffer size**, **Delay** and **Negotiated**.
