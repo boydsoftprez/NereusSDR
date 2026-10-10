@@ -26,6 +26,11 @@
 //                 defaults to the new ones, out-of-range values clamped).
 //                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                 Anthropic Claude Code.
+//   2026-10-08 - importFileForNextLaunch(): Import All Settings saves the
+//                 chosen file and holds later saves until restart, as
+//                 Thetis's DB.Merged does, so the running window no longer
+//                 writes its old values back over the import. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -77,6 +82,7 @@
 #include "AppSettings.h"
 
 #include "core/ControlRanges.h"
+#include "core/LogCategories.h"
 #include "core/settings/ISettingsBackend.h"
 
 #include <QDateTime>
@@ -478,6 +484,9 @@ bool parseSettingsXml(const QString& sanitizedXml,
     return true;
 }
 
+// The largest settings XML an import accepts.
+constexpr qint64 kMaxImportXmlBytes = 16 * 1024 * 1024;
+
 bool parseImportXml(const QByteArray& input, QMap<QString, QString>& settings,
                     QMap<QString, QString>& stationSettings, QString& stationName,
                     QString* error)
@@ -491,7 +500,7 @@ bool parseImportXml(const QByteArray& input, QMap<QString, QString>& settings,
     if (input.isEmpty()) {
         return reject(QStringLiteral("Settings XML is empty"));
     }
-    if (input.size() > 16 * 1024 * 1024) {
+    if (input.size() > kMaxImportXmlBytes) {
         return reject(QStringLiteral("Settings XML exceeds 16 MiB"));
     }
     QXmlStreamReader xml(input);
@@ -777,6 +786,11 @@ bool AppSettings::save(QString* error)
     if (error) {
         error->clear();
     }
+    // importFileForNextLaunch(): the file on disk is the import the next
+    // launch loads, and this running store's values must not replace it.
+    if (m_savesHeldUntilRestart) {
+        return true;
+    }
     const QByteArray localXml = serializeLocalXml(m_settings, m_stationSettings,
                                                    m_stationName, error);
     if (localXml.isEmpty()) {
@@ -910,6 +924,52 @@ bool AppSettings::importLocalXml(const QByteArray& input, QString* error)
     m_settings.swap(settings);
     m_stationSettings.swap(stationSettings);
     m_stationName.swap(stationName);
+    return true;
+}
+
+// Thetis holds its database the same way after an import:
+// ImportAndMergeDatabase sets _merged (database.cs:11199), and while it is
+// set SaveVarsDictionary, SaveVars and the console's SaveState return early
+// (database.cs:9908, database.cs:9950, console.cs:3332) [v2.10.3.15]. Thetis
+// also swaps the merged database into memory and restarts itself; here the
+// running window keeps its values, since it reads them live, and the
+// operator restarts as before.
+bool AppSettings::importFileForNextLaunch(const QString& path, QString* error)
+{
+    if (error) {
+        error->clear();
+    }
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        if (error) {
+            *error = QStringLiteral("The file could not be read: %1").arg(file.errorString());
+        }
+        return false;
+    }
+    // One byte past the limit is enough for the parser to refuse the file.
+    const QByteArray raw = file.read(kMaxImportXmlBytes + 1);
+    if (file.error() != QFileDevice::NoError) {
+        if (error) {
+            *error = QStringLiteral("The file could not be read: %1").arg(file.errorString());
+        }
+        return false;
+    }
+    file.close();
+    // sanitizeXmlForLoad() leaves a well-formed file unchanged and repairs
+    // the element names a build before 2026-04-30 wrote unescaped.
+    const QByteArray xml = sanitizeXmlForLoad(QString::fromUtf8(raw)).toUtf8();
+    AppSettings replacement(m_filePath);
+    if (!parseImportXml(xml, replacement.m_settings, replacement.m_stationSettings,
+                        replacement.m_stationName, error)) {
+        return false;
+    }
+    // save() keeps the file this replaces as the one-deep .bak.
+    if (!replacement.save(error)) {
+        return false;
+    }
+    m_savesHeldUntilRestart = true;
+    qCInfo(lcApp) << "Settings imported from" << path << "into" << m_filePath
+                  << "- saving is held until NereusSDR restarts";
     return true;
 }
 

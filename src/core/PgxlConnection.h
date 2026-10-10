@@ -272,6 +272,10 @@ private:
     // and scheduleReconnect() fires unconditionally from onDisconnected.
     bool       m_userInitiatedDisconnect{false};
     QString    m_version;
+    // Last S-frame state logged at info.
+    // The amp repeats an unchanged state on every poll; only a change
+    // is logged at info (Core journal volume). Cleared on connect.
+    QString    m_lastLoggedSFrameState;
 
     // Tier 2 state.
     QTimer  m_keepaliveTimer;

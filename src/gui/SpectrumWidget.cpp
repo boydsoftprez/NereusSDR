@@ -8,6 +8,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08  J.J. Boyd / KG4VCF. Rotor control plan Task 8: "Turn beam
+//                 to CALL (330°)" under "Tune to CALL" in the spot menu
+//                 (greyed with the reason with no rotor or no bearing), the
+//                 menu moved into buildSpotContextMenu, and spotTuned from
+//                 every spot tune for auto-turn. AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-05  J.J. Boyd / KG4VCF. Refresh slice flags and floating
 //                 controls when the RF view changes, including accepted
 //                 remote crops on GPU. AI-assisted via OpenAI Codex.
@@ -270,6 +276,7 @@
 #include <tuple>
 #include "core/session/media/SpectrumEndpoint.h"
 #include "SpectrumOverlayMenu.h"
+#include "core/StationRotorController.h"  // rotor control plan Task 8: noRotorReason
 #include "core/WidebandFftEngine.h"
 #include "core/spectrum/WidebandDisplayReference.h"
 #include "core/session/media/DssWideRow.h"
@@ -9172,7 +9179,8 @@ void SpectrumWidget::showSpotClusterPopup(const SpotCluster& cluster, const QPoi
             // NereusSDR signal contract: frequencyClicked(double hz).
             // AetherSDR emits MHz; multiply by 1e6 to match the Hz signature.
             const double freqHz = spot.freqMhz * 1.0e6;
-            requestTune(freqHz);
+            // Rotor control plan Task 8: through tuneToSpot, for auto-turn.
+            tuneToSpot(freqHz, spot.callsign, spot.bearingDeg);
             if (spot.source == "Memory") {
                 emit spotTriggered(spot.index);
             }
@@ -10005,43 +10013,10 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
                 }
             }
             if (hitMarkerIdx >= 0 && hitMarkerIdx < m_spotMarkers.size()) {
-                const auto& sm = m_spotMarkers[hitMarkerIdx];
-                const int   spotIndex = sm.index;
-                const QString call    = sm.callsign;
-                const double freqHz   = sm.freqMhz * 1.0e6;
-                const QString source  = sm.source;
-
+                // Rotor control plan Task 8: the menu is built by
+                // buildSpotContextMenu, so a test can read it.
                 QMenu menu(this);
-                if (source == QStringLiteral("Memory")) {
-                    const QString title = call.isEmpty()
-                        ? QStringLiteral("Apply Memory")
-                        : QString("Apply %1").arg(call);
-                    menu.addAction(title, this,
-                        [this, freqHz, spotIndex]() {
-                            requestTune(freqHz);
-                            emit spotTriggered(spotIndex);
-                        });
-                } else {
-                    menu.addAction(QString("Tune to %1").arg(call), this,
-                        [this, freqHz]() {
-                            requestTune(freqHz);
-                        });
-                    menu.addAction(QStringLiteral("Copy Callsign"), this,
-                        [call]() {
-                            QApplication::clipboard()->setText(call);
-                        });
-                    menu.addAction(QStringLiteral("Lookup on QRZ"), this,
-                        [call]() {
-                            QDesktopServices::openUrl(
-                                QUrl(QStringLiteral("https://www.qrz.com/db/")
-                                     + call));
-                        });
-                    menu.addSeparator();
-                    menu.addAction(QStringLiteral("Remove Spot"), this,
-                        [this, spotIndex]() {
-                            emit spotRemoveRequested(spotIndex);
-                        });
-                }
+                buildSpotContextMenu(hitMarkerIdx, menu);
                 menu.exec(event->globalPosition().toPoint());
                 event->accept();
                 return;
@@ -10253,7 +10228,14 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
             if (hr.rect.contains(pos)) {
                 // NereusSDR signal contract: frequencyClicked(double hz).
                 // AetherSDR emits MHz; multiply by 1e6 to match Hz signature.
-                requestTune(hr.freqMhz * 1.0e6);
+                // Rotor control plan Task 8: through tuneToSpot, for
+                // auto-turn.
+                if (hr.markerIndex >= 0 && hr.markerIndex < m_spotMarkers.size()) {
+                    const SpotMarker& sm = m_spotMarkers[hr.markerIndex];
+                    tuneToSpot(hr.freqMhz * 1.0e6, sm.callsign, sm.bearingDeg);
+                } else {
+                    requestTune(hr.freqMhz * 1.0e6);
+                }
                 // Notify the radio that a spot was clicked (#341)
                 if (hr.markerIndex >= 0 && hr.markerIndex < m_spotMarkers.size()) {
                     emit spotTriggered(m_spotMarkers[hr.markerIndex].index);
@@ -11053,6 +11035,84 @@ void SpectrumWidget::applyViewWindow(double centreHz, double bandwidthHz)
     // Structural, not remembered: any zoom or pan path added later inherits
     // this because it cannot change the window without coming through here.
     notifyTxViewWindow();
+}
+
+// Rotor control plan Task 8: the spot label's right-click menu, moved here
+// from the right-click handler unchanged (AetherSDR
+// SpectrumWidget.cpp:1779-1822 [@0cd4559]) with "Turn beam to CALL (330°)"
+// added under "Tune to CALL". Turn beam is shown greyed with the reason
+// when this window has no rotor or the spot has no bearing (disabled,
+// never hidden).
+void SpectrumWidget::buildSpotContextMenu(int markerIdx, QMenu& menu)
+{
+    if (markerIdx < 0 || markerIdx >= m_spotMarkers.size()) {
+        return;
+    }
+    const SpotMarker sm = m_spotMarkers[markerIdx];
+    const int   spotIndex = sm.index;
+    const QString call    = sm.callsign;
+    const double freqHz   = sm.freqMhz * 1.0e6;
+    const double bearing  = sm.bearingDeg;
+    const QString source  = sm.source;
+
+    if (source == QStringLiteral("Memory")) {
+        const QString title = call.isEmpty()
+            ? QStringLiteral("Apply Memory")
+            : QString("Apply %1").arg(call);
+        menu.addAction(title, this,
+            [this, freqHz, spotIndex]() {
+                requestTune(freqHz);
+                emit spotTriggered(spotIndex);
+            });
+        return;
+    }
+    menu.addAction(QString("Tune to %1").arg(call), this,
+        [this, freqHz, call, bearing]() {
+            tuneToSpot(freqHz, call, bearing);
+        });
+    // The reason a greyed Turn beam gives shows as its tooltip.
+    menu.setToolTipsVisible(true);
+    QAction* turn = nullptr;
+    if (m_spotBeamTurner) {
+        const SpotBeamTurner::Action a = m_spotBeamTurner->turnAction(call, bearing);
+        QPointer<SpotBeamTurner> turner = m_spotBeamTurner;
+        turn = menu.addAction(a.text, this, [turner, call, bearing]() {
+            if (turner) {
+                turner->turnBeam(call, bearing);
+            }
+        });
+        turn->setEnabled(a.enabled);
+        turn->setToolTip(a.reason);
+    } else {
+        turn = menu.addAction(QStringLiteral("Turn beam to %1").arg(call));
+        turn->setEnabled(false);
+        turn->setToolTip(StationRotorController::noRotorReason());
+    }
+    turn->setObjectName(QStringLiteral("spotTurnBeamAction"));
+    menu.addAction(QStringLiteral("Copy Callsign"), this,
+        [call]() {
+            QApplication::clipboard()->setText(call);
+        });
+    menu.addAction(QStringLiteral("Lookup on QRZ"), this,
+        [call]() {
+            QDesktopServices::openUrl(
+                QUrl(QStringLiteral("https://www.qrz.com/db/")
+                     + call));
+        });
+    menu.addSeparator();
+    menu.addAction(QStringLiteral("Remove Spot"), this,
+        [this, spotIndex]() {
+            emit spotRemoveRequested(spotIndex);
+        });
+}
+
+void SpectrumWidget::tuneToSpot(double hz, const QString& call, double bearingDeg)
+{
+    // requestTune holds the tune while keyed; a tune that did not go out is
+    // not a tune to the spot, so auto-turn does not hear of it.
+    if (m_moxOverlay) { return; }
+    requestTune(hz);
+    emit spotTuned(call, bearingDeg);
 }
 
 void SpectrumWidget::requestTune(double hz)

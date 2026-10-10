@@ -1052,6 +1052,46 @@
 //                radioSpeakerToolTip (R-SPK-06, R-SPK-13, R-SPK-14,
 //                R-SPK-16). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-08 - Rotor control plan Task 3c: the Core's rotor
+//                (StationRotorController) made beside the other station
+//                accessories, placing callsigns with the spots' cty.dat.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 4a: the Core loads its cty.dat
+//                once (DxccColorProvider::ensureCtyDatLoaded) before the
+//                rotor, so nereusd places callsigns; a remote window keeps
+//                each Core spot's bearingDeg in the spot model. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 4b: the `rotor` object
+//                (RotorLink::RotorModel), bound to the Core's controller.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 4c: the rotor moves into its own
+//                enableStationRotor(), which nereusd reaches through
+//                enableStationAccessoryIdentity() as before and a desktop
+//                running its own radio calls alone. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 5: requestRotorTarget and
+//                requestStopRotor, the GUI's rotor commands, routed to the
+//                local controller or the remote Core. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 6: rotorControlAvailable,
+//                requestTurnRotorToCall, requestNudgeRotor and
+//                lastRotorCommandId for the Rotor applet. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 7: requestConfigureRotor and
+//                requestRotorPresets for the Rotor Setup page. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 8: the Spot List's Bearing
+//                column (the Core's bearing on each row it serves, else
+//                worked out from this window's cty.dat and grid square).
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Final review I3: setRotorSetupViewOpen, so the rotor's
+//                computer reads its serial ports only while a setup view
+//                is open or a rotor is set up. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Re-review N6: a remote rotor setup view asks for the
+//                Core's ports as soon as the Core's rotor capability
+//                arrives. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 //   2026-10-09 - Native audio final review fix (R-AUD-15): the Core
 //                speaker's delay now is read through speakersDelayNowMs(),
 //                which takes no lock the DSP thread contends for. J.J.
@@ -1441,6 +1481,7 @@ mw0lge@grange-lane.co.uk
 #include "core/LanDiscovery.h"
 #include "core/StationPgxlController.h"
 #include "core/StationRfKitController.h"
+#include "core/StationRotorController.h"
 #include "core/StationTciController.h"
 #include "core/cat/StationCatController.h"
 #include "core/cat/CatControl.h"
@@ -1456,6 +1497,7 @@ mw0lge@grange-lane.co.uk
 #include "models/AmplifierModel.h"
 #include "models/RfKitModel.h"
 #include "models/StationTciModel.h"
+#include "models/RotorModel.h"
 #include "models/StationCatModel.h"
 #include "models/AccessoryDataModel.h"
 #include "models/AccessorySettingsModel.h"
@@ -3202,6 +3244,8 @@ RadioModel::RadioModel(Role role, QObject* parent)
     m_rfKitModel = new RfKitModel(this);
     // R-R3-48: the Core's station TCI server state (`stationTci`).
     m_stationTciModel = new StationTciModel(this);
+    // Rotor control plan Task 4b: the Core's rotor (`rotor`).
+    m_rotorModel = new RotorLink::RotorModel(this);
     // CAT setup from a connected desktop (stationCatVersion 1): the Core's
     // CAT as the `stationCat` object, filled from CatService on the Core.
     m_stationCatModel = new StationCatModel(this);
@@ -4020,6 +4064,14 @@ RadioModel::RadioModel(Role role, QObject* parent)
     m_freeDvStationModel  = std::make_unique<FreeDVStationModel>(this);
     m_rxDecodeModel       = std::make_unique<RxDecodeModel>(/*maxSize*/ 200, this);
     m_dxccColorProvider   = std::make_unique<DxccColorProvider>(this);
+    // Rotor control plan Task 8: a Spot List row the Core did not give a
+    // bearing (this computer's own sources) gets one worked out here, from
+    // the window's cty.dat and the station's grid square, as the Core
+    // works out a spot record's bearingDeg.
+    m_spotTableModel->setBearingResolver([this](const QString& call) {
+        return SpotSourceHost::spotBearingDeg(call, m_dxccColorProvider.get(),
+                                              SpotSourceHost::freedvGridSquare());
+    });
 
     // 2026-05-12 bench fix: seed FreeDVStationModel::setOurGridSquare
     // from the User/GridSquare AppSettings key.  Without this the
@@ -5226,6 +5278,11 @@ void RadioModel::applyStationRecordBatch(const RecordBatch& batch)
                 .toString();
         kvs[QStringLiteral("priority")] =
             QString::number(f.value(QStringLiteral("dxccPriority")).toInt());
+        // Rotor control plan Task 4a: the Core's short-path bearing to the
+        // spot, -1 when it has none (no grid square, a call it cannot place,
+        // or a Core that sends no bearingDeg).
+        kvs[QStringLiteral("bearing_deg")] = QString::number(
+            f.value(QStringLiteral("bearingDeg")).toDouble(-1.0), 'g', 10);
         const bool isNew = !m_stationSpotIndex.contains(u.id);
         if (isNew) {
             m_stationSpotIndex.insert(u.id, m_spotModel->mintIndex());
@@ -5241,6 +5298,9 @@ void RadioModel::applyStationRecordBatch(const RecordBatch& batch)
             row.comment = kvs.value(QStringLiteral("comment"));
             row.utcTime = when.isValid() ? when.toUTC().time() : QDateTime::currentDateTimeUtc().time();
             row.source = source;
+            // Rotor control plan Task 8: the Core's bearing, for the Spot
+            // List's Bearing column and its Turn beam.
+            row.bearingDeg = f.value(QStringLiteral("bearingDeg")).toDouble(-1.0);
             m_spotTableModel->addSpot(row);
         }
     }
@@ -5912,7 +5972,208 @@ void RadioModel::enableStationAccessoryIdentity()
             }
         });
     }
+    // Rotor control plan Task 4c: the rotor, made the same way a desktop
+    // running its own radio makes it.
+    enableStationRotor();
     applyStationBind();
+}
+
+void RadioModel::enableStationRotor()
+{
+    // Rotor control plan Task 4c: one controller per process's local
+    // model, and none in a window on a remote Core (that window follows
+    // the Core's `rotor` object instead).
+    if (m_role != Role::Local || m_stationRotor) { return; }
+    // Rotor control plan Task 3c: the antenna rotor, set up from the Core's
+    // own Rotor/* settings; with no rotor set up it stays idle. Turning to a
+    // callsign places it with the one cty.dat table the spots use.
+    // Rotor control plan Task 4a: the Core loads that table here, once, from
+    // its own resources; nereusd has no window to load it (the window's
+    // start calls the same ensureCtyDatLoaded, which then parses nothing).
+    if (m_dxccColorProvider && !m_dxccColorProvider->ensureCtyDatLoaded()) {
+        qCWarning(lcSpots) << "DXCC country table (:/cty.dat) did not load;"
+                           << "the Core cannot place callsigns for the rotor or spot bearings";
+    }
+    m_stationRotor = new StationRotorController(this);
+    {
+        QPointer<DxccColorProvider> dxcc(m_dxccColorProvider.get());
+        m_stationRotor->setCallsignLocator(
+            [dxcc](const QString& call) -> std::optional<GeoPosition> {
+                if (!dxcc) { return std::nullopt; }
+                return dxcc->positionForCallsign(call);
+            });
+    }
+    m_stationRotor->start();
+    // Rotor control plan Task 4b: what every window reads (`rotor`).
+    m_rotorModel->bindController(m_stationRotor);
+}
+
+// Rotor control plan Task 5: a window's rotor commands, wherever the rotor
+// runs. The local controller first: a desktop running its own radio owns
+// the rotor (Task 4c) even when a phone or another window is signed in.
+bool RadioModel::requestRotorTarget(double azimuthDeg, double elevationDeg, QString* reason)
+{
+    m_lastRotorCommandId = 0;
+    if (m_stationRotor) {
+        return m_stationRotor->setRotorTarget(azimuthDeg, elevationDeg, reason);
+    }
+    if (m_station) {
+        const IStationLink::CommandOutcome sent =
+            m_station->requestRotorTarget(azimuthDeg, elevationDeg);
+        if (!sent.sent && reason) { *reason = sent.reason; }
+        if (sent.sent) { m_lastRotorCommandId = sent.commandId; }
+        return sent.sent;
+    }
+    if (reason) { *reason = IStationLink::rotorUnavailableReason(); }
+    return false;
+}
+
+bool RadioModel::requestStopRotor(QString* reason)
+{
+    m_lastRotorCommandId = 0;
+    if (m_stationRotor) {
+        return m_stationRotor->stopRotor(reason);
+    }
+    if (m_station) {
+        const IStationLink::CommandOutcome sent = m_station->requestStopRotor();
+        if (!sent.sent && reason) { *reason = sent.reason; }
+        if (sent.sent) { m_lastRotorCommandId = sent.commandId; }
+        return sent.sent;
+    }
+    if (reason) { *reason = IStationLink::rotorUnavailableReason(); }
+    return false;
+}
+
+// Rotor control plan Task 6: the rest of the GUI's rotor commands, routed
+// as above.
+bool RadioModel::rotorControlAvailable(QString* reason) const
+{
+    if (m_stationRotor || (m_station && m_station->rotorControlAvailable())) {
+        return true;
+    }
+    if (reason) { *reason = IStationLink::rotorUnavailableReason(); }
+    return false;
+}
+
+bool RadioModel::requestTurnRotorToCall(const QString& call, bool longPath, QString* reason)
+{
+    m_lastRotorCommandId = 0;
+    if (m_stationRotor) {
+        return m_stationRotor->turnRotorToCall(call, longPath, reason);
+    }
+    if (m_station) {
+        const IStationLink::CommandOutcome sent =
+            m_station->requestTurnRotorToCall(call, longPath);
+        if (!sent.sent && reason) { *reason = sent.reason; }
+        if (sent.sent) { m_lastRotorCommandId = sent.commandId; }
+        return sent.sent;
+    }
+    if (reason) { *reason = IStationLink::rotorUnavailableReason(); }
+    return false;
+}
+
+bool RadioModel::requestNudgeRotor(Nudge direction, bool active, QString* reason)
+{
+    m_lastRotorCommandId = 0;
+    if (m_stationRotor) {
+        // This process's own windows are session 0 to the Core (the owner
+        // StationServer::sessionIdOfOwner gives anything that is not a
+        // remote session); the 750 ms lapse still stops a hold they drop.
+        constexpr quint64 kLocalWindowsSession = 0;
+        return m_stationRotor->nudgeRotor(static_cast<RotorDirection>(direction), active,
+                                          kLocalWindowsSession, reason);
+    }
+    if (m_station) {
+        const IStationLink::CommandOutcome sent =
+            m_station->requestNudgeRotor(static_cast<int>(direction), active);
+        if (!sent.sent && reason) { *reason = sent.reason; }
+        if (sent.sent) { m_lastRotorCommandId = sent.commandId; }
+        return sent.sent;
+    }
+    if (reason) { *reason = IStationLink::rotorUnavailableReason(); }
+    return false;
+}
+
+// Rotor control plan Task 7: the rotor setup and presets, routed as above.
+bool RadioModel::requestConfigureRotor(const Setup& setup, QString* reason)
+{
+    m_lastRotorCommandId = 0;
+    if (m_stationRotor) {
+        // The contract's tables, the same check the Core makes on a remote
+        // window's configureRotor before anything reaches the controller
+        // (remote rotor control v1, "Refusals").
+        const std::optional<RotorConfig> config = StationRotorController::configFromSetup(
+            setup.driver, setup.serialPort, setup.baud, setup.host, setup.port,
+            setup.hamlibModel, setup.axes, setup.endStop, setup.rangeDeg, setup.offsetDeg);
+        if (!config) {
+            if (reason) { *reason = StationRotorController::setupInvalidReason(); }
+            return false;
+        }
+        return m_stationRotor->configureRotor(*config, reason);
+    }
+    if (m_station) {
+        const IStationLink::CommandOutcome sent = m_station->requestConfigureRotor(
+            setup.driver, setup.serialPort, setup.baud, setup.host, setup.port,
+            setup.hamlibModel, setup.axes, setup.endStop, setup.rangeDeg, setup.offsetDeg);
+        if (!sent.sent && reason) { *reason = sent.reason; }
+        if (sent.sent) { m_lastRotorCommandId = sent.commandId; }
+        return sent.sent;
+    }
+    if (reason) { *reason = IStationLink::rotorUnavailableReason(); }
+    return false;
+}
+
+bool RadioModel::requestRotorPresets(const QString& presets, QString* reason)
+{
+    m_lastRotorCommandId = 0;
+    if (m_stationRotor) {
+        return m_stationRotor->setRotorPresets(presets, reason);
+    }
+    if (m_station) {
+        const IStationLink::CommandOutcome sent = m_station->requestRotorPresets(presets);
+        if (!sent.sent && reason) { *reason = sent.reason; }
+        if (sent.sent) { m_lastRotorCommandId = sent.commandId; }
+        return sent.sent;
+    }
+    if (reason) { *reason = IStationLink::rotorUnavailableReason(); }
+    return false;
+}
+
+void RadioModel::setRotorSetupViewOpen(bool open)
+{
+    m_rotorSetupViews = open ? m_rotorSetupViews + 1 : qMax(0, m_rotorSetupViews - 1);
+    if (m_stationRotor) {
+        if (open) {
+            m_rotorModel->setupViewOpened();
+        } else {
+            m_rotorModel->setupViewClosed();
+        }
+        return;
+    }
+    if (!m_rotorSetupAsk) {
+        m_rotorSetupAsk = new QTimer(this);
+        m_rotorSetupAsk->setInterval(RotorLink::RotorModel::kRemoteSetupAskMs);
+        connect(m_rotorSetupAsk, &QTimer::timeout, this, &RadioModel::askCoreForRotorPorts);
+    }
+    if (m_rotorSetupViews == 0) {
+        m_rotorSetupAsk->stop();
+        return;
+    }
+    if (open) {
+        askCoreForRotorPorts();
+    }
+    if (!m_rotorSetupAsk->isActive()) {
+        m_rotorSetupAsk->start();
+    }
+}
+
+void RadioModel::askCoreForRotorPorts()
+{
+    // Only a Core that controls a rotor is asked: any other would
+    // refuse, and its refusal would show every 20 s.
+    if (m_station && m_station->rotorControlAvailable()) {
+        m_station->requestRefreshRotorPorts();
+    }
 }
 
 void RadioModel::enableStationTci(const QString& bindOverride)
@@ -9446,6 +9707,15 @@ void RadioModel::reportStationLinkStateChanged()
     if (!link || !link->stationLinkReady()) {
         m_pageShownAccessoryRequests.clear();
     }
+    // Re-review N6: a rotor setup view opened before the Core's rotor
+    // capability arrived asks for the Core's ports as soon as it does, not
+    // at the next 20 s tick; the tick then runs from this ask.
+    const bool rotorControl = !m_stationRotor && link && link->rotorControlAvailable();
+    if (rotorControl && !m_rotorControlSeen && m_rotorSetupViews > 0 && m_rotorSetupAsk) {
+        askCoreForRotorPorts();
+        m_rotorSetupAsk->start();
+    }
+    m_rotorControlSeen = rotorControl;
     emit stationLinkStateChanged();
 }
 

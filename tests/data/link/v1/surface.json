@@ -421,6 +421,11 @@
         },
         {
             "kind": "i64",
+            "name": "remoteRotorControlVersion",
+            "value": 1
+        },
+        {
+            "kind": "i64",
             "name": "radioAntennaRowsVersion",
             "value": 1
         },
@@ -1696,6 +1701,155 @@
             "capabilityVersion": 1,
             "minMinor": 11,
             "verb": "clearAccessoryFaults"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "f64",
+                    "name": "azimuthDeg",
+                    "optional": false
+                },
+                {
+                    "kind": "f64",
+                    "name": "elevationDeg",
+                    "optional": false
+                }
+            ],
+            "capability": "remoteRotorControlVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "setRotorTarget"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "call",
+                    "optional": false
+                },
+                {
+                    "kind": "bool",
+                    "name": "longPath",
+                    "optional": false
+                }
+            ],
+            "capability": "remoteRotorControlVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "turnRotorToCall"
+        },
+        {
+            "arguments": [
+            ],
+            "capability": "remoteRotorControlVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "stopRotor"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "enum",
+                    "name": "direction",
+                    "optional": false
+                },
+                {
+                    "kind": "bool",
+                    "name": "active",
+                    "optional": false
+                }
+            ],
+            "capability": "remoteRotorControlVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "nudgeRotor"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "enum",
+                    "name": "driver",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "serialPort",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "baud",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "host",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "port",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "hamlibModel",
+                    "optional": false
+                },
+                {
+                    "kind": "enum",
+                    "name": "axes",
+                    "optional": false
+                },
+                {
+                    "kind": "enum",
+                    "name": "endStop",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "rangeDeg",
+                    "optional": false
+                },
+                {
+                    "kind": "f64",
+                    "name": "offsetDeg",
+                    "optional": false
+                }
+            ],
+            "capability": "remoteRotorControlVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "configureRotor"
+        },
+        {
+            "arguments": [
+            ],
+            "capability": "remoteRotorControlVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "disconnectRotor"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "presets",
+                    "optional": false
+                }
+            ],
+            "capability": "remoteRotorControlVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "setRotorPresets"
+        },
+        {
+            "arguments": [
+            ],
+            "capability": "remoteRotorControlVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "refreshRotorPorts"
         },
         {
             "arguments": [
@@ -5795,6 +5949,197 @@
                 }
             ]
         },
+        "RotorModel": {
+            "properties": [
+                {
+                    "direction": "outbound",
+                    "enumValues": [
+                        0,
+                        1,
+                        2,
+                        3,
+                        4,
+                        5,
+                        6,
+                        7
+                    ],
+                    "kind": "enum",
+                    "name": "connectionPhase",
+                    "ordinal": 0
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "connectionError",
+                    "ordinal": 1
+                },
+                {
+                    "direction": "outbound",
+                    "enumValues": [
+                        0,
+                        1,
+                        2,
+                        3,
+                        4
+                    ],
+                    "kind": "enum",
+                    "name": "driver",
+                    "ordinal": 2
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "label",
+                    "ordinal": 3
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "serialPort",
+                    "ordinal": 4
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "i64",
+                    "name": "baud",
+                    "ordinal": 5
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "host",
+                    "ordinal": 6
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "i64",
+                    "name": "port",
+                    "ordinal": 7
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "serialPorts",
+                    "ordinal": 8
+                },
+                {
+                    "direction": "outbound",
+                    "enumValues": [
+                        0,
+                        1
+                    ],
+                    "kind": "enum",
+                    "name": "axes",
+                    "ordinal": 9
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "i64",
+                    "name": "rangeDeg",
+                    "ordinal": 10
+                },
+                {
+                    "direction": "outbound",
+                    "enumValues": [
+                        0,
+                        1,
+                        2
+                    ],
+                    "kind": "enum",
+                    "name": "endStop",
+                    "ordinal": 11
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "f64",
+                    "name": "spanPositionDeg",
+                    "ordinal": 12
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "f64",
+                    "name": "travelDeg",
+                    "ordinal": 13
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "bool",
+                    "name": "routeKnown",
+                    "ordinal": 14
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "f64",
+                    "name": "offsetDeg",
+                    "ordinal": 15
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "i64",
+                    "name": "hamlibModel",
+                    "ordinal": 16
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "bool",
+                    "name": "rotctldAvailable",
+                    "ordinal": 17
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "bool",
+                    "name": "positionFresh",
+                    "ordinal": 18
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "f64",
+                    "name": "azimuthDeg",
+                    "ordinal": 19
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "f64",
+                    "name": "elevationDeg",
+                    "ordinal": 20
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "f64",
+                    "name": "targetAzimuthDeg",
+                    "ordinal": 21
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "f64",
+                    "name": "targetElevationDeg",
+                    "ordinal": 22
+                },
+                {
+                    "direction": "outbound",
+                    "enumValues": [
+                        0,
+                        1,
+                        2
+                    ],
+                    "kind": "enum",
+                    "name": "motion",
+                    "ordinal": 23
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "presets",
+                    "ordinal": 24
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "fault",
+                    "ordinal": 25
+                }
+            ]
+        },
         "SetupDescription": {
             "properties": [
                 {
@@ -8703,6 +9048,10 @@
         {
             "class": "AccessorySettingsModel",
             "key": "accessorySettings"
+        },
+        {
+            "class": "RotorModel",
+            "key": "rotor"
         },
         {
             "class": "StationDevicesFacade",

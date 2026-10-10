@@ -221,6 +221,8 @@
 //   2026-10-07 - CAT setup from a connected desktop: StationCatModel, every
 //                 property Outbound. J.J. Boyd (KG4VCF). AI tooling: Claude
 //                 Code.
+//   2026-10-08 - Rotor control plan Task 4b: RotorModel, all Outbound.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/MirrorPolicy.h"
@@ -972,6 +974,36 @@ const MirrorPolicy::Entry kEntries[] = {
     { "AccessorySettingsModel", "tgxlAnswer", MirrorDirection::Outbound },
     { "AccessorySettingsModel", "tgxlAnswerAccepted", MirrorDirection::Outbound },
     { "AccessorySettingsModel", "tgxlAnswerCount", MirrorDirection::Outbound },
+
+    // Rotor control plan Task 4b (remoteRotorControlVersion 1): the Core's
+    // antenna rotor, read-only. A window turns, sets up and stops it only
+    // through the rotor commands.
+    { "RotorModel", "connectionPhase", MirrorDirection::Outbound },
+    { "RotorModel", "connectionError", MirrorDirection::Outbound },
+    { "RotorModel", "driver", MirrorDirection::Outbound },
+    { "RotorModel", "label", MirrorDirection::Outbound },
+    { "RotorModel", "serialPort", MirrorDirection::Outbound },
+    { "RotorModel", "baud", MirrorDirection::Outbound },
+    { "RotorModel", "host", MirrorDirection::Outbound },
+    { "RotorModel", "port", MirrorDirection::Outbound },
+    { "RotorModel", "serialPorts", MirrorDirection::Outbound },
+    { "RotorModel", "axes", MirrorDirection::Outbound },
+    { "RotorModel", "rangeDeg", MirrorDirection::Outbound },
+    { "RotorModel", "endStop", MirrorDirection::Outbound },
+    { "RotorModel", "spanPositionDeg", MirrorDirection::Outbound },
+    { "RotorModel", "travelDeg", MirrorDirection::Outbound },
+    { "RotorModel", "routeKnown", MirrorDirection::Outbound },
+    { "RotorModel", "offsetDeg", MirrorDirection::Outbound },
+    { "RotorModel", "hamlibModel", MirrorDirection::Outbound },
+    { "RotorModel", "rotctldAvailable", MirrorDirection::Outbound },
+    { "RotorModel", "positionFresh", MirrorDirection::Outbound },
+    { "RotorModel", "azimuthDeg", MirrorDirection::Outbound },
+    { "RotorModel", "elevationDeg", MirrorDirection::Outbound },
+    { "RotorModel", "targetAzimuthDeg", MirrorDirection::Outbound },
+    { "RotorModel", "targetElevationDeg", MirrorDirection::Outbound },
+    { "RotorModel", "motion", MirrorDirection::Outbound },
+    { "RotorModel", "presets", MirrorDirection::Outbound },
+    { "RotorModel", "fault", MirrorDirection::Outbound },
 
     // iPhone app Task 13 (R-IOS-08, deviceAdminVersion 1): the Core's paired
     // devices, label, claim, token and key backup, read-only. A device

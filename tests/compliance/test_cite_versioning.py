@@ -48,6 +48,16 @@ FIXTURE_MULTI_FILE = """\
 static constexpr float kX = 1.0f;
 """
 
+FIXTURE_LONGPATH_BAD = """\
+// From Longpath src/core/BeamHeading.cpp:51 -- plan()
+int plan();
+"""
+
+FIXTURE_LONGPATH_GOOD = """\
+// From Longpath src/core/BeamHeading.cpp:69-89 [@551576e] -- plan()
+int plan();
+"""
+
 
 def write_tmp(body: str) -> Path:
     tmp = tempfile.NamedTemporaryFile(
@@ -98,7 +108,13 @@ def main() -> int:
     print("Good: multi-file cite with single tag → should pass")
     g4 = _run_case(cnp, FIXTURE_MULTI_FILE, expect_flag=False)
 
-    passed = all([bad, g1, g2, g3, g4])
+    print("Bad: unstamped Longpath cite → should flag")
+    lp_bad = _run_case(cnp, FIXTURE_LONGPATH_BAD, expect_flag=True)
+
+    print("Good: Longpath cite with [@551576e] → should pass")
+    lp_good = _run_case(cnp, FIXTURE_LONGPATH_GOOD, expect_flag=False)
+
+    passed = all([bad, g1, g2, g3, g4, lp_bad, lp_good])
     print(f"\n{'ALL PASS' if passed else 'FAIL'}")
     return 0 if passed else 1
 

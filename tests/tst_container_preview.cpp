@@ -40,6 +40,7 @@
 #include "gui/meters/presets/BarPresetItem.h"
 #include "gui/meters/presets/CompositePresetItem.h"
 #include "gui/meters/WebImageItem.h"
+#include "NativeWindowFrames.h"
 using namespace NereusSDR;
 namespace {
 // Observe actual glyph ink rather than duplicating private button-grid geometry.
@@ -271,8 +272,8 @@ private slots:
             const QString path=capture+"/"+QString::fromLatin1(QTest::currentDataTag()); QVERIFY(QDir().mkpath(path));
 #ifdef NEREUS_GPU_SPECTRUM
             QSignalSpy previewFrames(previewMeter,&QRhiWidget::frameSubmitted),liveFrames(liveMeter,&QRhiWidget::frameSubmitted);
-            previewMeter->update(); liveMeter->update();
-            QTRY_VERIFY_WITH_TIMEOUT(previewFrames.count()>0 && liveFrames.count()>0,3000);
+            NEREUS_VERIFY_FRAME(NativeWindowFrames::requestFrame(*previewMeter,previewFrames,3000));
+            NEREUS_VERIFY_FRAME(NativeWindowFrames::requestFrame(*liveMeter,liveFrames,3000));
             QVERIFY(previewMeter->grabFramebuffer().save(path+"/group-preview.png"));
             QVERIFY(liveMeter->grabFramebuffer().save(path+"/group-live.png"));
 #else
@@ -297,8 +298,8 @@ private slots:
         second->raise();native->raise();root.show();
 #ifdef NEREUS_GPU_SPECTRUM
         QSignalSpy framesA(first,&QRhiWidget::frameSubmitted),framesB(second,&QRhiWidget::frameSubmitted);
-        first->update();second->update();
-        QTRY_VERIFY_WITH_TIMEOUT(framesA.count()>0 && framesB.count()>0,4000);
+        NEREUS_VERIFY_FRAME(NativeWindowFrames::requestFrame(*first,framesA,4000));
+        NEREUS_VERIFY_FRAME(NativeWindowFrames::requestFrame(*second,framesB,4000));
         const QImage faceA=first->grabFramebuffer(),faceB=second->grabFramebuffer();
 #else
         const QImage faceA=first->grab().toImage(),faceB=second->grab().toImage();
@@ -450,7 +451,7 @@ private slots:
         viewport.resize(width,preview->minimumHeight()+2); viewport.verticalScrollBar()->setValue(0); QTest::qWait(150);
         for(int i=0;i<meters.size();++i) {
 #ifdef NEREUS_GPU_SPECTRUM
-            QSignalSpy frames(meters[i],&QRhiWidget::frameSubmitted); meters[i]->update(); QTRY_VERIFY_WITH_TIMEOUT(frames.count()>0,3000);
+            QSignalSpy frames(meters[i],&QRhiWidget::frameSubmitted); NEREUS_VERIFY_FRAME(NativeWindowFrames::requestFrame(*meters[i],frames,3000));
             const QImage image=meters[i]->grabFramebuffer();
 #else
             const QImage image=meters[i]->grab().toImage();
@@ -466,7 +467,7 @@ private slots:
             if(!capture.isEmpty()) { QVERIFY(image.save(capture+QString("/preview-row-%1.png").arg(i))); }
         }
 #ifdef NEREUS_GPU_SPECTRUM
-        auto* surface=live.meterSurfaces().first(); QSignalSpy frames(surface,&QRhiWidget::frameSubmitted); surface->update(); QTRY_VERIFY_WITH_TIMEOUT(frames.count()>0,3000);
+        auto* surface=live.meterSurfaces().first(); QSignalSpy frames(surface,&QRhiWidget::frameSubmitted); NEREUS_VERIFY_FRAME(NativeWindowFrames::requestFrame(*surface,frames,3000));
         const QImage liveImage=surface->grabFramebuffer();
 #else
         const QImage liveImage=live.meterSurfaces().first()->grab().toImage();
@@ -491,7 +492,7 @@ private slots:
         d.contents[0].context["sliceId"]=99; preview.setDocument(d); bar=qobject_cast<BarPresetItem*>(preview.findChild<MeterWidget*>()->items()[0]); QVERIFY(!bar->hasPrimaryReading());
         d.contents[0].context["sliceId"]=1; value=-60; preview.setDocument(d); auto* meter=preview.findChild<MeterWidget*>(); bar=qobject_cast<BarPresetItem*>(meter->items()[0]); QVERIFY(bar->hasPrimaryReading()); QCOMPARE(bar->value(),-60.0);
 #ifdef NEREUS_GPU_SPECTRUM
-        QSignalSpy frames(meter,&QRhiWidget::frameSubmitted); meter->update(); QTRY_VERIFY_WITH_TIMEOUT(frames.count()>0,3000); const QImage image=meter->grabFramebuffer();
+        QSignalSpy frames(meter,&QRhiWidget::frameSubmitted); NEREUS_VERIFY_FRAME(NativeWindowFrames::requestFrame(*meter,frames,3000)); const QImage image=meter->grabFramebuffer();
 #else
         const QImage image=meter->grab().toImage();
 #endif
@@ -600,7 +601,7 @@ private slots:
         composite->vfoDisplay()->frequencyChangeRequested(100); composite->modeButtons()->modeClicked(0); QCOMPARE(frequency.count(),0); QCOMPARE(mode.count(),0);
         dialog.resize(1200,850); dialog.show();
 #ifdef NEREUS_GPU_SPECTRUM
-        QSignalSpy frames(meter,&QRhiWidget::frameSubmitted); meter->update(); QTRY_VERIFY_WITH_TIMEOUT(frames.count()>0,3000); QVERIFY(!meter->grabFramebuffer().isNull());
+        QSignalSpy frames(meter,&QRhiWidget::frameSubmitted); NEREUS_VERIFY_FRAME(NativeWindowFrames::requestFrame(*meter,frames,3000)); QVERIFY(!meter->grabFramebuffer().isNull());
 #endif
         const auto capture=qEnvironmentVariable("TASK8_CAPTURE_DIR"); if(!capture.isEmpty()) { QVERIFY(QDir().mkpath(capture)); QVERIFY(dialog.grab().save(capture+"/main-slice-b-preview.png")); }
         model->setConnectionStateForTest(ConnectionState::Disconnected); poller->frameAdvanced(500); QVERIFY(!composite->vfoDisplay()->unavailableText().isEmpty());

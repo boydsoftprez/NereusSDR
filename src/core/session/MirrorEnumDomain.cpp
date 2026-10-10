@@ -37,6 +37,9 @@
 //                AI-assisted via Anthropic Claude Code.
 //   2026-09-28 - Band::Band2m (R-IOS-26, R-R3-49). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 4b: RotorModel's driver, axes,
+//                endStop and motion. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/MirrorEnumDomain.h"
@@ -45,6 +48,7 @@
 #include "models/AccessoryDataModel.h"
 #include "models/AmplifierModel.h"
 #include "models/RfKitModel.h"
+#include "models/RotorModel.h"
 #include "models/Band.h"
 #include "models/SliceModel.h"
 #include "models/TransmitModel.h"
@@ -173,6 +177,31 @@ const DomainTable& table()
             AccessoryDataModel::InterlockMode::Disabled,
             AccessoryDataModel::InterlockMode::Warn,
             AccessoryDataModel::InterlockMode::Block,
+        });
+
+        // Rotor control plan Task 4b: the `rotor` object's tables (remote
+        // rotor control v1, "Enum tables"). Its connection phase is
+        // TunerModel::ConnectionPhase, declared above.
+        declare<RotorLink::RotorModel::Driver>(&t, {
+            RotorLink::RotorModel::Driver::None,
+            RotorLink::RotorModel::Driver::Gs232a,
+            RotorLink::RotorModel::Driver::Gs232b,
+            RotorLink::RotorModel::Driver::Rotctld,
+            RotorLink::RotorModel::Driver::RotctldStarted,
+        });
+        declare<RotorLink::RotorModel::Axes>(&t, {
+            RotorLink::RotorModel::Axes::Azimuth,
+            RotorLink::RotorModel::Axes::AzimuthElevation,
+        });
+        declare<RotorLink::RotorModel::EndStop>(&t, {
+            RotorLink::RotorModel::EndStop::None,
+            RotorLink::RotorModel::EndStop::North,
+            RotorLink::RotorModel::EndStop::South,
+        });
+        declare<RotorLink::RotorModel::Motion>(&t, {
+            RotorLink::RotorModel::Motion::Stopped,
+            RotorLink::RotorModel::Motion::Turning,
+            RotorLink::RotorModel::Motion::Nudging,
         });
 
         // R-R3-49 (parity Task 2): the tune drive source on `transmit`.

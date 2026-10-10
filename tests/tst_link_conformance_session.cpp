@@ -288,6 +288,10 @@
 //   2026-10-02: Diversity v1 producer corpus export and offline Orion MkII
 //               codec planning, with bounded app incarnation placeholders.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-08: Rotor control plan Task 4b: with coreAccessories the
+//               Core's rotor sees no serial ports and no rotctld, so the
+//               rotor object reads the same on every machine.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -309,8 +313,11 @@
 
 #include "core/ModelPaths.h"
 #include "core/AppSettings.h"
+#include "core/LogCategories.h"
 #include "core/ConnectionState.h"
 #include "core/MoxController.h"
+#include "core/RotctldProcess.h"
+#include "core/StationRotorController.h"
 #include "core/StepAttenuatorController.h"
 #include "core/accessories/AlexController.h"
 #include "core/dsp/DspAssetService.h"
@@ -329,6 +336,7 @@
 #include "core/settings/SettingsScope.h"
 #include "models/Band.h"
 #include "models/RadioModel.h"
+#include "models/RotorModel.h"
 #include "models/SliceModel.h"
 
 #include "LinkFixtures.h"
@@ -478,6 +486,10 @@ struct Station {
     }
 };
 
+// The log categories LogManager starts with, read in initTestCase before
+// any fixture runs.
+QStringList defaultLogCategories;
+
 QString buildStation(const QJsonObject& setup, Station* station, quint16 major)
 {
     for (auto it = setup.constBegin(); it != setup.constEnd(); ++it) {
@@ -491,6 +503,11 @@ QString buildStation(const QJsonObject& setup, Station* station, quint16 major)
     // RadioModel keeps state in AppSettings::instance() (notches, accessory
     // choices, DSP asset selections). Each fixture starts from an empty
     // profile, so one fixture's writes never reach the next.
+    // LogManager is a process-wide singleton whose selection (radio's
+    // logCategories) support.setLogCategories changes; put back the one it
+    // started with first, so the LogCategory_* keys it writes are cleared
+    // below.
+    LogManager::instance().setEnabledList(defaultLogCategories);
     AppSettings::instance().clear();
     station->settings = std::make_unique<AppSettings>(
         station->dir.filePath(QStringLiteral("NereusSDR.settings")));
@@ -559,7 +576,15 @@ QString buildStation(const QJsonObject& setup, Station* station, quint16 major)
 
     RadioModel& model = *station->model;
     if (setup.value(QStringLiteral("coreAccessories")).toBool(false)) {
+        // The Core's rotor finds no rotctld and no serial ports, on every
+        // machine the runner runs on, and never opens one.
+        RotctldProcess::setBinaryOverrideForTesting(QString());
         model.enableStationAccessoryIdentity();
+        if (StationRotorController* rotor = model.stationRotorController()) {
+            rotor->setSerialPortListerForTesting([] { return QStringList(); });
+            // The rotor object looks again with the lister in place.
+            model.rotorModel()->bindController(rotor);
+        }
     }
     if (setup.value(QStringLiteral("stationTci")).toBool(false)) {
         model.enableStationTci(QStringLiteral("127.0.0.1"));
@@ -1244,6 +1269,8 @@ void TstLinkConformanceSession::initTestCase()
     AppSettings::setProfileOverride(profile);
     QCOMPARE(AppSettings::instance().filePath(), AppSettings::resolveSettingsPath(profile));
     AppSettings::instance().clear();
+    defaultLogCategories =
+        LogManager::instance().enabledList().split(QLatin1Char(','), Qt::SkipEmptyParts);
     // Whether this machine's build carries the bundled NR3 model files
     // decides what the dspAssets object says about them. Fixtures are the
     // same on every machine, so none is found here.
@@ -1618,19 +1645,6 @@ void TstLinkConformanceSession::exportDiversitySessionCorpus()
                 }
                 if (message.value("type") == "object.create" && message.value("class") != "RadioModel") {
                     message.insert("properties", "$any");
-                }
-                // The log categories are the process's, not this station's:
-                // an earlier fixture in the same run may have changed them.
-                if (message.value("type") == "object.create" && message.value("class") == "RadioModel") {
-                    QJsonArray properties = message.value("properties").toArray();
-                    for (qsizetype i = 0; i < properties.size(); ++i) {
-                        QJsonObject property = properties[i].toObject();
-                        if (property.value("name") == "logCategories") {
-                            property.insert("value", "$string");
-                            properties[i] = property;
-                        }
-                    }
-                    message.insert("properties", properties);
                 }
                 steps.append(QJsonObject{{"from", "station"}, {"message", message}});
             }

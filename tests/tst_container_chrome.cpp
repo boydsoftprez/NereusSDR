@@ -32,6 +32,7 @@
 #include "gui/meters/MeterWidget.h"
 #include "gui/meters/MeterItem.h"
 #include "gui/meters/MeterPoller.h"
+#include "NativeWindowFrames.h"
 using namespace NereusSDR;
 class TstContainerChrome : public QObject
 {
@@ -58,8 +59,7 @@ class TstContainerChrome : public QObject
 #endif
 
             QSignalSpy frames(meter, &QRhiWidget::frameSubmitted);
-            meter->update();
-            QTRY_VERIFY_WITH_TIMEOUT(frames.count() > 0, 3000);
+            NEREUS_VERIFY_FRAME(NativeWindowFrames::requestFrame(*meter, frames, 3000));
             QVERIFY(!meter->grabFramebuffer().isNull());
 #endif
         }

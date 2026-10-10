@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
 import Foundation
+import LinkSessionTestSupport
 import NereusLink
 import Testing
 @testable import NereusMedia
@@ -67,7 +68,7 @@ import Testing
         let description: String
     }
 
-    private static func waitUntil(_ what: String, timeout: Duration = .seconds(10),
+    private static func waitUntil(_ what: String, timeout: Duration = TestBackstop.hang,
                                   _ condition: () -> Bool) async throws {
         let clock = ContinuousClock()
         let deadline = clock.now + timeout

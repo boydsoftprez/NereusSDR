@@ -23,6 +23,9 @@
 // Modified 2026-10-01 by J.J. Boyd (KG4VCF): TGXL tune lane round 4, a
 // new client's or a sub's push emits only for tune=1; AI-assisted via
 // Anthropic Claude Code.
+// Modified 2026-10-09 by J.J. Boyd (KG4VCF): per-frame RX lines and
+// unchanged S-frames log at debug, not info, so the Core's journal keeps
+// hours instead of minutes; AI-assisted via Anthropic Claude Code.
 
 #include "SmartSdrApiListener.h"
 
@@ -821,7 +824,10 @@ void SmartSdrApiListener::onClientDataReady()
     QByteArray chunk = sock->readAll();
     if (chunk.isEmpty()) { return; }
 
-    qCInfo(lcSmartSdr) << "RX raw from" << peerHost << ":" << peerPort
+    // qCDebug not qCInfo: amps send a command every ~30 ms, and two info
+    // lines per command filled the Core's journal (Rock 5C bench
+    // 2026-10-09). Commands that change state log at info in dispatchLine.
+    qCDebug(lcSmartSdr) << "RX raw from" << peerHost << ":" << peerPort
                        << "(" << chunk.size() << "bytes):"
                        << chunk.toHex(' ').left(120)
                        << "| ascii:" << QString::fromUtf8(chunk).left(80);
@@ -842,7 +848,7 @@ void SmartSdrApiListener::onClientDataReady()
         const QString line = QString::fromUtf8(rawLine).trimmed();
         if (line.isEmpty()) { continue; }
 
-        qCInfo(lcSmartSdr) << "RX from" << peerHost << ":" << peerPort
+        qCDebug(lcSmartSdr) << "RX from" << peerHost << ":" << peerPort
                             << "line:" << line;
         emit lineReceived(peerHost, peerPort, line);
         dispatchLine(sock, line);
@@ -1255,8 +1261,19 @@ void SmartSdrApiListener::sendStatus(QTcpSocket* sock, const QString& handle,
     const QByteArray frame =
         QStringLiteral("S%1|%2\n").arg(handle).arg(body).toUtf8();
     sock->write(frame);
-    qCInfo(lcSmartSdr) << "TX S-frame to" << sock->peerAddress().toString()
-                       << "handle=" << handle << "body=" << body;
+    // The 1 Hz push resends unchanged slice and transmit bodies to every
+    // client; logging each at info filled the Core's journal (Rock 5C bench
+    // 2026-10-09). Info only when the body changed for this client.
+    const QString object = body.section(QLatin1Char(' '), 0, 0);
+    auto it = m_clients.find(sock);
+    if (it != m_clients.end() && it->lastLoggedStatus.value(object) != body) {
+        it->lastLoggedStatus.insert(object, body);
+        qCInfo(lcSmartSdr) << "TX S-frame to" << sock->peerAddress().toString()
+                           << "handle=" << handle << "body=" << body;
+    } else {
+        qCDebug(lcSmartSdr) << "TX S-frame to" << sock->peerAddress().toString()
+                            << "handle=" << handle << "body=" << body;
+    }
 }
 
 void SmartSdrApiListener::broadcastSliceState()

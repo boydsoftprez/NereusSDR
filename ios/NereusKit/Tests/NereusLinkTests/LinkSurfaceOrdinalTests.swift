@@ -17,7 +17,7 @@ import Testing
 
     @Test func newestCapabilitiesSitWhereTheSurfacePinsThem() throws {
         let capabilities = try #require(try Self.surface()["capabilities"] as? [[String: Any]])
-        #expect(capabilities.count == 111)
+        #expect(capabilities.count == 112)
         #expect(capabilities[69]["value"] == nil, "The loopback capture cannot advertise a live TX watch value")
         // The merged b44d638 surface inserts diversityControlVersion after
         // diversityPatternVersion. Capture b20ad1186 also includes the existing
@@ -26,35 +26,40 @@ import Testing
         // Station CAT setup inserts stationCatVersion and the radio speaker
         // inserts radioSpeakerVersion before coreBuildInfo, and the Core
         // speaker then coreSpeakerVersion, with coreBuildInfo staying last.
+        // The Core's rotor inserts remoteRotorControlVersion after
+        // accessoryTxVersion (index 84), moving every later entry one
+        // place.
         let expected: [(index: Int, name: String, kind: String)] = [
             (69, "txWatchPathVersion", "i64"),
-            (89, "diversityControlVersion", "i64"),
-            (96, "paProfileVersion", "i64"),
-            (98, "txInhibitReasonVersion", "i64"),
-            (99, "paTransmitBandVersion", "i64"),
-            (100, "sliceAccessVersion", "i64"),
-            (101, "mediaDirectVersion", "i64"),
-            (102, "mediaStunUrls", "utf8"),
-            (103, "rx2AttenuatorVersion", "i64"),
-            (104, "radioMicVersion", "i64"),
-            (105, "rxFilterLowPassVersion", "i64"),
-            (106, "radeReasonVersion", "i64"),
-            (107, "stationCatVersion", "i64"),
+            (84, "remoteRotorControlVersion", "i64"),
+            (90, "diversityControlVersion", "i64"),
+            (97, "paProfileVersion", "i64"),
+            (99, "txInhibitReasonVersion", "i64"),
+            (100, "paTransmitBandVersion", "i64"),
+            (101, "sliceAccessVersion", "i64"),
+            (102, "mediaDirectVersion", "i64"),
+            (103, "mediaStunUrls", "utf8"),
+            (104, "rx2AttenuatorVersion", "i64"),
+            (105, "radioMicVersion", "i64"),
+            (106, "rxFilterLowPassVersion", "i64"),
+            (107, "radeReasonVersion", "i64"),
+            (108, "stationCatVersion", "i64"),
             // The radio speaker (feature `radioSpeaker` 1) goes before the
             // build info, which is read by name.
-            (108, "radioSpeakerVersion", "i64"),
+            (109, "radioSpeakerVersion", "i64"),
             // The Core speaker (feature `coreSpeaker` 1) goes before the
-            // build info too, which moves to 110.
-            (109, "coreSpeakerVersion", "i64"),
-            (110, "coreBuildInfo", "utf8"),
+            // build info too, which moves to 111.
+            (110, "coreSpeakerVersion", "i64"),
+            (111, "coreBuildInfo", "utf8"),
         ]
         // Core trunk b26112687: sliceAccessVersion reads 3 (the Core's own
         // slice can be taken); nothing moved.
-        #expect((capabilities[100]["value"] as? NSNumber)?.intValue == 3)
-        #expect((capabilities[89]["value"] as? NSNumber)?.intValue == 1)
-        #expect((capabilities[104]["value"] as? NSNumber)?.intValue == 2)
-        #expect((capabilities[107]["value"] as? NSNumber)?.intValue == 1)
-        #expect(Set(capabilities.compactMap { $0["name"] as? String }).count == 111)
+        #expect((capabilities[101]["value"] as? NSNumber)?.intValue == 3)
+        #expect((capabilities[90]["value"] as? NSNumber)?.intValue == 1)
+        #expect((capabilities[105]["value"] as? NSNumber)?.intValue == 2)
+        #expect((capabilities[84]["value"] as? NSNumber)?.intValue == 1)
+        #expect((capabilities[108]["value"] as? NSNumber)?.intValue == 1)
+        #expect(Set(capabilities.compactMap { $0["name"] as? String }).count == 112)
         for entry in expected {
             try #require(capabilities.count > entry.index)
             #expect(capabilities[entry.index]["name"] as? String == entry.name, "\(entry.name)")

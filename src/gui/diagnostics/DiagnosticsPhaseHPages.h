@@ -32,6 +32,9 @@
 //                 Core's recent log in a remote window, and this
 //                 computer's labelled; Refresh reads both again. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Import All Settings' picker, question and result are
+//                 overridable, as Export's are, for tests. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -127,6 +130,10 @@ protected:
     virtual QString chooseExportDestination(bool remote);
     virtual QString chooseRadioExportDestination(const QString& mac);
     virtual void showExportResult(bool success, const QString& text);
+    // Import's picker, question and result, at the boundary for the same reason.
+    virtual QString chooseImportSource();
+    virtual bool confirmImport(const QString& source);
+    virtual void showImportResult(bool success, const QString& text);
     void closeEvent(QCloseEvent* event) override;
     void hideEvent(QHideEvent* event) override;
 

@@ -32,6 +32,7 @@
 #include "gui/meters/presets/BarPresetItem.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
+#include "NativeWindowFrames.h"
 using namespace NereusSDR;
 class TstContainerContentHostNative : public QObject {
     Q_OBJECT
@@ -40,7 +41,7 @@ class TstContainerContentHostNative : public QObject {
         QVERIFY(meter && meter->isVisible());
 #ifdef NEREUS_GPU_SPECTRUM
         QSignalSpy frames(meter,&QRhiWidget::frameSubmitted);
-        meter->update(); QTRY_VERIFY_WITH_TIMEOUT(frames.count()>0,3000);
+        NEREUS_VERIFY_FRAME(NativeWindowFrames::requestFrame(*meter,frames,3000));
         const QImage image=meter->grabFramebuffer();
 #else
         meter->update(); QCoreApplication::processEvents(); const QImage image=meter->grab().toImage();
@@ -144,7 +145,7 @@ private slots:
         QSignalSpy cadence(poller,&MeterPoller::frameAdvanced);
 #ifdef NEREUS_GPU_SPECTRUM
         QSignalSpy clockFrames(clockMeter,&QRhiWidget::frameSubmitted);
-        QTRY_VERIFY_WITH_TIMEOUT(clockFrames.count()>2,2000); // driven by Main's shared poller offline
+        NEREUS_VERIFY_FRAME(NativeWindowFrames::waitForFrames(*clockMeter,clockFrames,3,2000)); // driven by Main's shared poller offline
 #endif
         QTRY_VERIFY_WITH_TIMEOUT(cadence.count()>2,1000);
         auto* signalFace=qobject_cast<BarPresetItem*>(host->entryRows()[2].item.data()); QVERIFY(signalFace); QVERIFY(!signalFace->hasPrimaryReading());

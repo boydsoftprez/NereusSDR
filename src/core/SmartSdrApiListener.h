@@ -323,6 +323,10 @@ private:
         // PTT_REQUESTED ACK chain (the amp has stepped out of the TX
         // path). Default is true on `interlock create` per the wiki.
         bool    interlockEnabled{true};
+        // Last S-frame body logged at info, keyed by its object word
+        // (`slice`, `transmit`). The 1 Hz push repeats an unchanged body;
+        // only a changed body is logged at info (Core journal volume).
+        QHash<QString, QString> lastLoggedStatus;
     };
 
     void sendBanner(QTcpSocket* sock, const QString& handle);

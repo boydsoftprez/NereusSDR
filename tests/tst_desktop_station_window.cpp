@@ -3,6 +3,12 @@
 //   2026-10-02  J.J. Boyd / KG4VCF. Real window/fake Core TX-letter Take
 //                regressions: cancellation, current refusal, unchanged RX
 //                history, and target lifetime. AI-assisted via OpenAI Codex.
+//   2026-10-08  J.J. Boyd / KG4VCF. Issue #357: the hosting window's TUNE
+//                (TX applet and container TUN) clears on the release press.
+//                AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF. Rotor control plan Task 8: the Rotor
+//                applet is shown by default. AI-assisted via Anthropic
+//                Claude Code.
 
 #include "gui/HostingSliceActions.h"
 #include "gui/MainWindow.h"
@@ -25,6 +31,7 @@
 #include "gui/meters/OtherButtonItem.h"
 #include "gui/applets/RxApplet.h"
 #include "gui/applets/TxApplet.h"
+#include "gui/applets/AppletVisibilityController.h"
 #include "gui/multidevice/NoticeCard.h"
 #include "gui/multidevice/TakeTransmitDialog.h"
 #include "core/session/SliceAccessController.h"
@@ -305,6 +312,20 @@ double ownStreamShift(RadioModel* model, SliceModel* slice)
 class TstDesktopStationWindow final : public QObject {
     Q_OBJECT
 private slots:
+    // Rotor control plan Task 8: the Rotor applet is shown by default, like
+    // the amplifier and tuner; with no rotor it stays, greyed with the
+    // reason.
+    void theRotorAppletIsShownByDefault()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("station.settings")));
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        auto* visibility = window.findChild<AppletVisibilityController*>();
+        QVERIFY(visibility);
+        QVERIFY(visibility->isVisible(QStringLiteral("Rotor")));
+    }
+
     void hostedDashboardClearsWhenDesktopLosesLastReceiver()
     {
         if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
@@ -1373,6 +1394,63 @@ private slots:
         QVERIFY(!pending || !pending->isVisible());
         QVERIFY(!controller.enabled());
         QCOMPARE(tx->tuneButton()->isChecked(), model->isTune());
+    }
+
+    // Issue #357: the hosting window's TUNE goes back to "TUNE" on the
+    // press that stops it. TUNE's end runs after the radio is back on
+    // receive, and the TX applet and a container's TUN read that late
+    // flag, so the button stayed red until a third press.
+    void hostTuneReleasePressClearsTheButton()
+    {
+        if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("station.settings")));
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        RadioModel* model = window.radioModel();
+        model->setBoardForTest(HPSDRHW::Saturn);
+        model->configureStreamPool(5, 5, 192000);
+        model->setConnectionStateForTest(ConnectionState::Connected);
+        const int sliceId = model->addSlice(QStringLiteral("pan-0"));
+        QVERIFY(sliceId >= 0);
+        DesktopStationController controller(model, optionsFor(settings, directory.path()));
+        window.setDesktopStationController(&controller);
+        QVERIFY(controller.start(true));
+        TxApplet* tx = window.findChild<TxApplet*>();
+        QVERIFY(tx && tx->tuneButton());
+        auto* manager = window.findChild<ContainerManager*>();
+        QVERIFY(manager);
+        ContainerWidget* container = manager->createContainer(sliceId + 1, DockMode::Floating);
+        auto* meter = new MeterWidget();
+        container->setContent(meter);
+        auto* buttons = new OtherButtonItem();
+        meter->addItem(buttons);
+        container->wireInteractiveItem(buttons);
+        const auto destroy = qScopeGuard([manager, container] {
+            manager->destroyContainer(container->id());
+        });
+        using Id = OtherButtonItem::ButtonId;
+
+        tx->tuneButton()->click();
+        QTRY_VERIFY(model->isTune());
+        QTRY_VERIFY(tx->tuneButton()->isChecked());
+        QCOMPARE(tx->tuneButton()->text(), QStringLiteral("TUNING..."));
+        QTRY_VERIFY(buttons->buttonState(Id::Tun));
+
+        // The press that stops it. TUNE's end is still to come.
+        tx->tuneButton()->click();
+        QVERIFY(model->isTune());
+        QVERIFY(!tx->tuneButton()->isChecked());
+        QCOMPARE(tx->tuneButton()->text(), QStringLiteral("TUNE"));
+        QVERIFY(!buttons->buttonState(Id::Tun));
+
+        // It stays there once TUNE's end has run.
+        QTRY_VERIFY(!model->isTune());
+        QVERIFY(!model->mox());
+        QVERIFY(!tx->tuneButton()->isChecked());
+        QCOMPARE(tx->tuneButton()->text(), QStringLiteral("TUNE"));
+        QVERIFY(!buttons->buttonState(Id::Tun));
+        controller.stop();
     }
 
     // Fix wave (hosting 2-TONE parity): while another device holds

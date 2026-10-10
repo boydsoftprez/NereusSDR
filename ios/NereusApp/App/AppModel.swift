@@ -265,7 +265,8 @@ final class AppModel: ObservableObject {
         main.modMonitor = ModMonitorModel(mirror: mirror, commands: commands, records: records, settings: settings,
                                           slices: main.slices, phone: phoneSettings)
         spots = SpotsModel(records: records, mirror: mirror, commands: commands, settings: settings,
-                           slices: main.slices, catalogFeed: main.catalogFeed, phone: phoneSettings)
+                           slices: main.slices, catalogFeed: main.catalogFeed, phone: phoneSettings,
+                           rotor: main.rotor)
         freedv = FreeDVReporterModel(records: records, mirror: mirror, commands: commands, settings: settings,
                                      spots: spots, slices: main.slices, catalogFeed: main.catalogFeed,
                                      phone: phoneSettings)

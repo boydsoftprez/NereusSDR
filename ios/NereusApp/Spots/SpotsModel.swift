@@ -44,6 +44,21 @@ final class SpotsModel: ObservableObject {
         /// The slice mode the Core worked out for the spot (the slice's
         /// `dspMode` value); nil when the Core names none.
         var resolvedMode: Int? = nil
+        /// The short-path bearing from the station to the spot, 0 to under
+        /// 360, as the Core works it out (remote rotor control, Bearings on
+        /// spots); -1 when not known: no grid square at the Core, a callsign
+        /// it cannot place, or a Core that does not send bearings.
+        var bearingDeg: Double = -1
+
+        /// The short-path bearing, or nil when not known.
+        var shortPathDeg: Double? {
+            bearingDeg.isFinite && bearingDeg >= 0 && bearingDeg < 360 ? bearingDeg : nil
+        }
+
+        /// The long-path bearing, the short path's reciprocal; nil when not known.
+        var longPathDeg: Double? {
+            shortPathDeg.map { RotorModel.compass($0 + 180) }
+        }
     }
 
     /// Each spot source Spot Hub lists, in the desktop's order.
@@ -143,6 +158,10 @@ final class SpotsModel: ObservableObject {
     static let notConnectedReason = "The Core is not connected."
     static let lockedReason = "The active slice is locked. Unlock it to tune to a spot."
     static let noSliceReason = "There is no slice to tune."
+    /// The auto-turn setting's lines (Tools tab, Rotor setting).
+    static let turnBeamOnTuneTitle = "Turn the beam when I tune to a spot"
+    static let turnBeamOnTuneOffDetail = "Off: only Turn beam moves the rotor"
+    static let turnBeamOnTuneOnDetail = "On: tuning to a spot also turns the beam to it"
 
     // MARK: The Core's settings
 
@@ -237,6 +256,10 @@ final class SpotsModel: ObservableObject {
     /// hides, when their list is open.
     @Published var openDetails: Spot?
     @Published var openHidden: [Spot]?
+    /// Tuning to a spot also turns the beam to it (this phone's own setting, off by default).
+    @Published private(set) var turnBeamOnTune: Bool
+    /// The Core's rotor, which Turn beam and auto-turn ask to turn.
+    let rotor: RotorModel
 
     static let logger = Logger(subsystem: "NereusSDR", category: "spots")
 
@@ -253,12 +276,14 @@ final class SpotsModel: ObservableObject {
     private var watchedSources: ObjectIdentifier?
 
     static let displayKey = "spots.display"
+    /// This phone's auto-turn choice ("turn the beam when I tune to a spot"), off by default.
+    static let turnBeamOnTuneKey = "rotor.turnOnTune"
     static let sourcesKey = "spotSources"
     /// FreeDV Reporter's name on `spotSources` (link section 7.1).
     static let freeDvSourceName = "freedvReporter"
 
     init(records: RecordStreamClient?, mirror: MirrorStore, commands: CommandClient?, settings: SettingsProxyClient?,
-         slices: BandSlicesModel, catalogFeed: CatalogFeed, phone: PhoneSettings) {
+         slices: BandSlicesModel, catalogFeed: CatalogFeed, phone: PhoneSettings, rotor: RotorModel) {
         self.records = records
         self.mirror = mirror
         self.commands = commands
@@ -266,7 +291,9 @@ final class SpotsModel: ObservableObject {
         self.slices = slices
         self.catalogFeed = catalogFeed
         self.phone = phone
+        self.rotor = rotor
         display = Self.readDisplay(phone)
+        turnBeamOnTune = phone.bool(Self.turnBeamOnTuneKey, default: false)
         records?.want(RecordStreamClient.spotsStream, backlog: Self.spotsBacklog, by: self)
         records?.$streams.sink { [weak self] streams in
             self?.read(streams)
@@ -296,7 +323,9 @@ final class SpotsModel: ObservableObject {
 
     private func read(_ streams: [String: RecordStreamClient.Stream]) {
         let records = streams[RecordStreamClient.spotsStream]?.records ?? []
-        let next = records.reversed().map(Self.spot)
+        // Bearings are read only from a Core that advertises remote rotor control; otherwise not known.
+        let bearings = mirror.capabilityVersion(RotorModel.capability) >= 1
+        let next = records.reversed().map { Self.spot($0, bearings: bearings) }
         if next != spots {
             spots = next
         }
@@ -320,7 +349,9 @@ final class SpotsModel: ObservableObject {
         }
     }
 
-    static func spot(_ record: LinkMessage.RecordBatch.Record) -> Spot {
+    /// One `spots` record. `bearings` is whether the Core advertises
+    /// `remoteRotorControlVersion` 1; without it `bearingDeg` reads -1.
+    static func spot(_ record: LinkMessage.RecordBatch.Record, bearings: Bool = false) -> Spot {
         let fields = record.fields
         func text(_ name: String) -> String {
             if case .string(let value)? = fields[name] {
@@ -339,7 +370,8 @@ final class SpotsModel: ObservableObject {
                     source: text("source"), spotter: text("spotter"), comment: text("comment"),
                     band: number("band").map { Int($0) }, dxccColour: text("dxccColour"),
                     dxccPriority: Int(number("dxccPriority") ?? 0),
-                    resolvedMode: RecordStreamClient.resolvedMode(of: record))
+                    resolvedMode: RecordStreamClient.resolvedMode(of: record),
+                    bearingDeg: bearings ? (number("bearingDeg") ?? -1) : -1)
     }
 
     private func watchSources() {
@@ -487,10 +519,29 @@ final class SpotsModel: ObservableObject {
             return
         }
         slices.tap(to: spot.frequencyHz)
+        turnBeamIfChosen(spot)
         guard display.autoMode, autoModeReason == nil, let mode = spot.resolvedMode, mode != active.mode else {
             return
         }
         slices.setMode(mode, sliceId: active.id)
+    }
+
+    /// With auto-turn on, a spot tuned to also turns the beam to its short
+    /// path, when the rotor can turn and the bearing is known. With it off,
+    /// tuning never moves the rotor.
+    private func turnBeamIfChosen(_ spot: Spot) {
+        guard turnBeamOnTune, rotor.beamReason(bearing: spot.shortPathDeg) == nil else {
+            return
+        }
+        rotor.turnBeam(toBearing: spot.shortPathDeg)
+    }
+
+    func setTurnBeamOnTune(_ on: Bool) {
+        guard on != turnBeamOnTune else {
+            return
+        }
+        turnBeamOnTune = on
+        phone.setBool(on, for: Self.turnBeamOnTuneKey)
     }
 
     func showDetails(_ spot: Spot) {

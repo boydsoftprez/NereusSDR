@@ -6,6 +6,7 @@
 #if os(macOS)
 
 import Foundation
+import LinkSessionTestSupport
 import LinkTestSupport
 import Testing
 @testable import NereusMedia
@@ -187,7 +188,7 @@ struct MediaPeerInteropTests {
 
     /// The next `count` elements of `stream`, or a failure after `timeout`.
     private static func take<Element: Sendable>(_ count: Int, from stream: AsyncStream<Element>,
-                                                timeout: Duration = .seconds(10)) async throws -> [Element] {
+                                                timeout: Duration = TestBackstop.hang) async throws -> [Element] {
         try await withThrowingTaskGroup(of: [Element]?.self) { group in
             group.addTask {
                 var taken: [Element] = []

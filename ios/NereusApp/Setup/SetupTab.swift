@@ -162,6 +162,8 @@ struct SetupTab: View {
             DisplayOnThisPhonePage(main: main)
         case .pttButtons:
             PttButtonsPage(timeOut: timeOut)
+        case .rotor:
+            RotorSetupPage(model: main.rotor)
         case .dataUse:
             DataUsePage(settings: app.phoneSettings, meter: app.longSession.meter)
         case .coreLogs:

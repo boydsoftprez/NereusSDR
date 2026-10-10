@@ -42,6 +42,7 @@
 #include "gui/meters/MeterPoller.h"
 #include "gui/meters/presets/BarPresetItem.h"
 #include "gui/meters/presets/CompositePresetItem.h"
+#include "NativeWindowFrames.h"
 using namespace NereusSDR;
 class TstContainerSettingsWorkflow:public QObject {
  Q_OBJECT
@@ -454,7 +455,7 @@ private slots:
     for(int timestamp=0;timestamp<=500;timestamp+=100) {poller.frameAdvanced(timestamp);}
     QVERIFY(mic->primaryValue()>-10);
 #ifdef NEREUS_GPU_SPECTRUM
-    QSignalSpy frames(meter,&QRhiWidget::frameSubmitted);meter->update();QTRY_VERIFY_WITH_TIMEOUT(frames.count()>0,3000);QVERIFY(!meter->grabFramebuffer().isNull());
+    QSignalSpy frames(meter,&QRhiWidget::frameSubmitted);NEREUS_VERIFY_FRAME(NativeWindowFrames::requestFrame(*meter,frames,3000));QVERIFY(!meter->grabFramebuffer().isNull());
 #else
     QCoreApplication::processEvents();
 #endif

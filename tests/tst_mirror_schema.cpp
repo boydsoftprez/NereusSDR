@@ -46,6 +46,8 @@
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-10-07: CAT setup from a connected desktop: StationCatModel joins it.
 // J.J. Boyd (KG4VCF). AI tooling: Claude Code.
+// 2026-10-08: Rotor control plan Task 4b: RotorModel joins it. J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-10-09: native audio plan Task 21 (R-AUD-25, R-AUD-27): radio's six
 // Core speaker properties. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 // Claude Code.
@@ -78,6 +80,7 @@
 #include "models/RfKitModel.h"
 #include "models/StationCatModel.h"
 #include "models/StationTciModel.h"
+#include "models/RotorModel.h"
 #include "models/AccessoryDataModel.h"
 #include "models/AccessorySettingsModel.h"
 #include "core/session/StationCatalog.h"
@@ -972,7 +975,9 @@ private:
                  // iPhone app plan Task 25 (R-IOS-18): the Core's computer's VAX.
                  &StationVax::staticMetaObject,
                  // R-R3-49 / R-IOS-18: the Core's PA Gain profiles, read-only.
-                 &PaProfilesFacade::staticMetaObject };
+                 &PaProfilesFacade::staticMetaObject,
+                 // Rotor control plan Task 4b: the Core's rotor, read-only.
+                 &RotorLink::RotorModel::staticMetaObject };
     }
 };
 

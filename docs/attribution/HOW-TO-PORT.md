@@ -161,7 +161,9 @@ Moved from CLAUDE.md. Before reading any upstream source file, state:
     ```
     grep -l "<nereussdr-path>" docs/attribution/THETIS-PROVENANCE.md
     ```
-   For freedv-gui ports, also check `docs/attribution/FREEDV-GUI-PROVENANCE.md`.
+   For freedv-gui ports, also check `docs/attribution/FREEDV-GUI-PROVENANCE.md`;
+   for Longpath ports, `docs/attribution/LONGPATH-PROVENANCE.md` (cite as
+   `// From Longpath <path>:<line> [@shortsha]`, pinned `551576e`).
    If the file is not registered, the port is a **new attribution event**.
 4. **Plan**: if (3) returned nothing, add the verbatim upstream header AND a
    PROVENANCE row in the same commit that introduces the ported logic.

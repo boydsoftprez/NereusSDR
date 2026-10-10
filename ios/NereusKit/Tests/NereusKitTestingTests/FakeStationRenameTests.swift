@@ -91,7 +91,7 @@ struct FakeStationRenameTests {
                 return CommandArgument(name: name, value: .text(value))
             }
             let result = try await rig.commands.invoke(FakeStation.renameVerb, arguments: arguments,
-                                                       timeout: .seconds(10))
+                                                       timeout: TestBackstop.hang)
             let expected = try #require(step.answers.first { $0["type"] as? String == "command.result" })
             #expect(result.accepted == (expected["accepted"] as? Bool))
             #expect(result.reason == (expected["reason"] as? String))
@@ -123,7 +123,7 @@ struct FakeStationRenameTests {
         let first = try await connected(station)
         _ = try await first.commands.invoke(FakeStation.renameVerb, arguments: [
             CommandArgument(name: "label", value: .text("  KG4VCF/attic ")),
-        ], timeout: .seconds(10))
+        ], timeout: TestBackstop.hang)
         await first.session.disconnect()
         first.feeding.cancel()
         let second = try await connected(station)
@@ -141,7 +141,7 @@ struct FakeStationRenameTests {
         #expect(rig.mirror.object("devices") == nil)
         let result = try await rig.commands.invoke(FakeStation.renameVerb, arguments: [
             CommandArgument(name: "label", value: .text("KG4VCF")),
-        ], timeout: .seconds(10))
+        ], timeout: TestBackstop.hang)
         #expect(!result.accepted)
         #expect(result.reason == FakeStation.unknownVerbReason)
         await rig.session.disconnect()

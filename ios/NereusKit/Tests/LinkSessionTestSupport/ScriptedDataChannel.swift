@@ -129,7 +129,7 @@ public final class ScriptedDataChannel: SessionTransport, @unchecked Sendable {
 
     /// Waits until the app has sent a message the test has not taken yet.
     @discardableResult
-    public func waitForSent(within timeout: Duration = .seconds(30)) async -> Bool {
+    public func waitForSent(within timeout: Duration = TestBackstop.hang) async -> Bool {
         await waiters.wait(within: timeout) { [self] in !pending.isEmpty }
     }
 
@@ -202,7 +202,7 @@ public final class ScriptedDataChannel: SessionTransport, @unchecked Sendable {
     }
 
     private func waitForHandled() async {
-        _ = await waiters.wait(within: .seconds(30)) { [self] in
+        _ = await waiters.wait(within: TestBackstop.hang) { [self] in
             lock.withLock { handled >= caused || closedByApp }
         }
     }

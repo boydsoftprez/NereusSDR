@@ -27,7 +27,7 @@ import Testing
 
     @Test func theAppRunsTheFixturesMarkedForIt() throws {
         let fixtures = try Self.appFixtures()
-        #expect(fixtures.count == 86)
+        #expect(fixtures.count == 87)
         #expect(Set(fixtures.map(\.id)).count == fixtures.count)
         for id in Self.diversityProducerSessions {
             #expect(fixtures.contains { $0.id == id }, "\(id)")
@@ -86,6 +86,9 @@ import Testing
             #expect(fixtures.contains { $0.id == id }, "\(id)")
         }
         #expect(fixtures.contains { $0.id == "session-connect-connectable" })
+        // The Core's antenna rotor (remoteRotorControlVersion 1): the rotor
+        // object and its eight commands, played with no rotor set up.
+        #expect(fixtures.contains { $0.id == "session-verbs-rotor" })
         // The Settings Validation panel (settingsHygiene 2) and a Setup
         // description at version 1, run once the app declares them.
         for id in ["session-verbs-settings-hygiene", "session-settings-hygiene-token", "session-verbs-two-tone-preset"] {

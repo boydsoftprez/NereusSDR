@@ -476,6 +476,9 @@
 //   2026-10-07: requestCatLog and the `catLog` records for the CAT log
 //               window, with a backlog. J.J. Boyd (KG4VCF). AI tooling:
 //               Claude Code.
+//   2026-10-08: Rotor control plan Task 4b: the `rotor` object mirrored
+//               and the seven rotor requests. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -1076,6 +1079,8 @@ public:
     bool remoteRfKitControlAvailable() const override;
     // R-R3-47 / R-R3-22: see IStationLink.
     bool accessoryDataAvailable() const override;
+    // Rotor control plan Task 4b: see IStationLink.
+    bool rotorControlAvailable() const override;
     // R-R3-47 / R-R3-22: see IStationLink.
     bool pgxlDeviceSettingsAvailable() const override;
     bool tgxlDeviceSettingsAvailable() const override;
@@ -1418,6 +1423,18 @@ public:
                                             double swrGateMax) override;
     CommandOutcome requestPgxlPowerCap(bool enabled, int watts) override;
     CommandOutcome requestClearAccessoryFaults(const QString& device) override;
+    // Rotor control plan Task 4b: see IStationLink.
+    CommandOutcome requestRotorTarget(double azimuthDeg, double elevationDeg) override;
+    CommandOutcome requestTurnRotorToCall(const QString& call, bool longPath) override;
+    CommandOutcome requestStopRotor() override;
+    CommandOutcome requestNudgeRotor(int direction, bool active) override;
+    CommandOutcome requestConfigureRotor(int driver, const QString& serialPort, int baud,
+                                         const QString& host, int port, int hamlibModel,
+                                         int axes, int endStop, int rangeDeg,
+                                         double offsetDeg) override;
+    CommandOutcome requestDisconnectRotor() override;
+    CommandOutcome requestRefreshRotorPorts() override;
+    CommandOutcome requestRotorPresets(const QString& presets) override;
     CommandOutcome requestPgxlName(const QString& name) override;
     CommandOutcome requestPgxlHardware(const QString& setting, const QString& value) override;
     CommandOutcome requestPgxlNetwork(bool dhcp, const QString& address,

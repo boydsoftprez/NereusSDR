@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
 import Foundation
+import LinkSessionTestSupport
 import Testing
 @testable import NereusLink
 
@@ -20,7 +21,7 @@ import Testing
         let transport = WebSocketLinkTransport(endpoint: StationEndpoint(host: address, port: port), trust: .pairing)
         let opening = Task { try await transport.open { _ in } }
         let clock = ContinuousClock()
-        let giveUp = clock.now + .seconds(10)
+        let giveUp = clock.now + TestBackstop.hang
         while listener.receivedRequests.isEmpty && clock.now < giveUp {
             try await Task.sleep(for: .milliseconds(20))
         }

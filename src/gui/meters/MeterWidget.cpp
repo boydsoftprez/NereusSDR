@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Rotor control plan Task 5: a rotator dial repaints when
+//                 its rotor's heading moves (RotatorItem::repaintRequested).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-04 — Selected RX source identity and RX-only presentation reset by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Invalidate handled interaction layers by J.J. Boyd (KG4VCF),
@@ -182,6 +185,12 @@ void MeterWidget::addItem(MeterItem* item)
         item->setParent(this);
     }
     m_items.append(item);
+    // Rotor control plan Task 5: the rotor's heading arrives outside the
+    // meter poller; the dial asks to be repainted.
+    if (auto* rotator = qobject_cast<RotatorItem*>(item)) {
+        connect(rotator, &RotatorItem::repaintRequested, this,
+                [this, rotator]() { invalidatePresentation(rotator); });
+    }
     if (m_unitMode) { item->setUnitMode(*m_unitMode); }
     if (m_powerScale > 0) { item->setPowerScale(m_powerScale); }
     item->resetForTxTransition(m_mox);

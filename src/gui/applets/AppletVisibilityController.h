@@ -10,6 +10,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 — Bench fix: a registered applet missing from a loaded
+//                 workspace is added to it, and setVisible() on a missing
+//                 entry adds it, by J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-05-10 — Created in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -28,6 +32,7 @@ namespace NereusSDR {
 
 class ContainerWorkspaceStore;
 class ContainerContentRegistry;
+struct WorkspaceDocument;
 class AppletVisibilityController : public QObject {
     Q_OBJECT
 public:
@@ -77,6 +82,12 @@ signals:
 
 private:
     void syncWorkspace();
+    // Bench fix: places `type` in `document` with `visible` when it has no
+    // entry there (a workspace saved before the applet existed): at the
+    // end of the panel holding the station accessory applets, else the
+    // main container. False when the document has nowhere to put it.
+    bool placeInWorkspace(WorkspaceDocument& document, const QString& type, bool visible) const;
+    void commitVisibility(const QString& id, const WorkspaceDocument& document);
     QPointer<ContainerWorkspaceStore> m_store;
     QPointer<ContainerContentRegistry> m_registry;
     QString m_storageError;

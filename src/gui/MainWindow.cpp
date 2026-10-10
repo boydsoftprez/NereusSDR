@@ -11,6 +11,17 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - J.J. Boyd (KG4VCF). Issue #357: a hosting window's TUNE
+//                (TX applet and container) reads the transmit model's TUNE,
+//                which the release press clears, so it goes back to "TUNE"
+//                on that press. AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 5: compass meter items get this
+//                 window's rotor (RadioModel::rotorModel()) and turn it
+//                 through RadioModel. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 4a: cty.dat is the Core's resource,
+//                 loaded once per process (ensureCtyDatLoaded). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-04 — Selected RX source identity and RX-only presentation reset by
@@ -617,6 +628,14 @@
 //   2026-10-06 - Radio speaker plan Task 11 (R-SPK-21): Tools > VAX Audio
 //                opens Setup > Audio > Digital modes, which holds VAX now.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 6: the Rotor applet, always
+//                available and shown by default (JJ, 2026-10-08). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Rotor control plan Task 8: Turn beam on every pan's spot
+//                menu and in the Spot Hub through one SpotBeamTurner
+//                (refusals toasted), each spot's bearing on its marker, and
+//                auto-turn from every spot tune. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-09 - Native audio plan Task 19 (R-AUD-23): the PC speakers
 //                menu's "Sound setup…" opens Setup at Audio, Outputs, and
 //                a pick from it reloads an open Outputs card. J.J. Boyd
@@ -948,6 +967,7 @@ warren@wpratt.com
 #include "meters/AntennaButtonItem.h"
 #include "meters/TuneStepButtonItem.h"
 #include "meters/BandButtonItem.h"
+#include "meters/RotatorItem.h"
 #include "meters/OtherButtonItem.h"
 #include "models/FilterPresetStore.h"
 #include "gui/styles/PopupMenuStyle.h"
@@ -975,6 +995,7 @@ warren@wpratt.com
 #include "FreeDVReporterDialog.h"
 // Phase 3F Sub-Epic G T4: bench-minimum Diversity dialog (Tools menu).
 #include "DiversityDialog.h"
+#include "models/SpotBeamTurner.h"
 #include "models/SpotModel.h"
 #include "models/SpotModeResolver.h"
 #include "models/NotchModel.h"
@@ -1007,6 +1028,7 @@ warren@wpratt.com
 #include "core/cat/CatControl.h"
 #include "setup/CatLogWindow.h"
 #include "applets/TunerApplet.h"
+#include "applets/RotorApplet.h"
 // Phase 23: TCI server + applets (guarded so non-WebSocket builds still compile)
 #ifdef HAVE_WEBSOCKETS
 #  include "applets/TciApplet.h"
@@ -2620,7 +2642,12 @@ void MainWindow::refreshDesktopStationState()
                 [this](bool on) { requestDesktopTransmit(true, on); },
                 [this] { return desktopOwnsTransmit() && m_radioModel
                     && m_radioModel->moxController() && m_radioModel->moxController()->isMox(); },
-                [this] { return desktopOwnsTransmit() && m_radioModel && m_radioModel->isTune(); });
+                // Issue #357: the transmit model's TUNE, which the release
+                // press clears, not isTune(), which holds until the radio
+                // is back on receive and left the button red after that
+                // press.
+                [this] { return desktopOwnsTransmit() && m_radioModel
+                    && m_radioModel->transmitModel().isTune(); });
             // Fix wave (hosting 2-TONE parity): 2-TONE asks as MOX does.
             m_txApplet->setDesktopTwoToneHandler([this](bool on) {
                 requestDesktopKey(DesktopStationController::Key::TwoTone, on);
@@ -5943,6 +5970,13 @@ void MainWindow::wireSpectrumForPan(SpectrumWidget* sw, const QString& panId)
 
     configureSpectrumForPanForTest(sw, panId);
 
+    // Rotor control plan Task 8: Turn beam on this pan's spot menu, and
+    // auto-turn when the operator tunes to one of its spots.
+    if (SpotBeamTurner* turner = spotBeamTurner()) {
+        sw->setSpotBeamTurner(turner);
+        connect(sw, &SpectrumWidget::spotTuned, turner, &SpotBeamTurner::spotTuned);
+    }
+
     if (!m_radioModel->ownsLocalDsp()) {
         // This transient Qt property is retired by its first owned flag or
         // by a user gesture; it is never persisted and dies with the pane.
@@ -7301,6 +7335,9 @@ void MainWindow::buildUI()
                 m.timestampMs      = s.timestamp.isValid()
                                          ? s.timestamp.toMSecsSinceEpoch()
                                          : QDateTime::currentMSecsSinceEpoch();
+                // Rotor control plan Task 8: the Core's bearing, for Turn
+                // beam on the spot menu.
+                m.bearingDeg       = s.bearingDeg;
                 if (dxccColor && dxccColor->isEnabled()
                     && !m.callsign.isEmpty() && m.freqMhz > 0.0) {
                     m.dxccColor = dxccColor->colorForSpot(
@@ -7553,8 +7590,9 @@ void MainWindow::buildUI()
             return desktopOwnsTransmit() && m_radioModel->moxController()
                 && m_radioModel->moxController()->isMox();
         };
+        // Issue #357: the TUNE the release press clears, as the TX applet's.
         hooks.desktopTuneOn = [this] {
-            return desktopOwnsTransmit() && m_radioModel->isTune();
+            return desktopOwnsTransmit() && m_radioModel->transmitModel().isTune();
         };
         hooks.requestDesktopMox = [this](bool on) { requestDesktopTransmit(false, on); };
         hooks.requestDesktopTune = [this](bool on) { requestDesktopTransmit(true, on); };
@@ -7778,8 +7816,11 @@ void MainWindow::buildUI()
     // cty.dat is bundled as the ":/cty.dat" resource (resources.qrc), as
     // AetherSDR loads it at startup (MainWindow.cpp:1469 [@1e0718ad]);
     // without it every spot resolved to no country.
+    // Rotor control plan Task 4a: the resource is now NereusCore's
+    // (resources/cty.qrc), and the window shares the one table the Core's
+    // rotor and spot bearings read; ensureCtyDatLoaded parses it only once.
     if (DxccColorProvider* dxcc = m_radioModel->dxccColorProvider()) {
-        if (!dxcc->loadCtyDat()) {
+        if (!dxcc->ensureCtyDatLoaded()) {
             qCWarning(lcSpots) << "DXCC country table (:/cty.dat) did not load;"
                                << "spots will not be colored by country";
         }
@@ -8925,14 +8966,11 @@ void MainWindow::buildUI()
     // inversely with bwHz:
     //   targetSize = baseline * sampleRate / bwHz
     //
-    // Cap at kAutoZoomMaxFftSize = 65536.  Set well below kMaxFftSize
-    // (262144) to bound the buffer-fill pause on every replan: at
-    // 768 kHz DDC, 65536 fills in 85 ms (barely perceptible).  262144
-    // would take 340 ms (jarring) and create a multi-frame avenger
-    // ghost in the waterfall as the smoothed state crosses fftSize
-    // resolutions.  Users who want larger FFTs explicitly opt in via
-    // the slider (one-time pause they chose); auto-zoom won't push
-    // above the cap automatically.
+    // Cap at ControlRanges::autoZoomMaxFftSize(sampleRate): about 0.7 s per
+    // transform (kAutoZoomMaxTransformSeconds), at most 262144; 65536 at
+    // 96 kHz.  The rationale lives with the constant in
+    // src/core/ControlRanges.h; a remote pan's plannedFftSize shares it
+    // through ControlRanges::autoZoomFftSize.
     //
     // Floor at the slider baseline (we never replan BELOW the user's
     // chosen value).
@@ -8943,9 +8981,8 @@ void MainWindow::buildUI()
     // Phase 3F Sub-Epic I Task 8: the primary engine, because this lambda is
     // wired to pan 0's SpectrumWidget (the signal is per-pan). Per-pan
     // auto-zoom on secondary pans is Phase 3F follow-up work.
-    constexpr int kAutoZoomMaxFftSize = 65536;
     connect(activeSpectrumWidget(), &SpectrumWidget::bandwidthChangeRequested,
-            this, [this, kAutoZoomMaxFftSize](double bwHz) {
+            this, [this](double bwHz) {
         FFTEngine* engine = primaryFftEngine();
         if (!engine || !activeSpectrumWidget()) { return; }
         const double sampleRate = activeSpectrumWidget()->sampleRate();
@@ -8973,16 +9010,16 @@ void MainWindow::buildUI()
         }
 
         // Round up to next power of 2.
+        const int autoZoomMax = ControlRanges::autoZoomMaxFftSize(sampleRate);
         int targetSize = 1024;
-        while (targetSize < desired && targetSize < kAutoZoomMaxFftSize) {
+        while (targetSize < desired && targetSize < autoZoomMax) {
             targetSize *= 2;
         }
         // Floor at baseline (slider's choice always honoured), then cap at
         // auto-zoom max.  When baseline > cap (user explicitly picked a
         // larger size via the slider), baseline wins and auto-zoom is a
         // no-op for that range.
-        targetSize = (std::max)(targetSize, baseline);
-        targetSize = (std::min)(targetSize, (std::max)(baseline, kAutoZoomMaxFftSize));
+        targetSize = ControlRanges::autoZoomFftSize(targetSize, baseline, sampleRate);
 
         // Hysteresis: only replan if outside [current * 2/3, current * 3/2].
         const int currentSize = engine->fftSize();
@@ -9845,6 +9882,12 @@ void MainWindow::populateDefaultMeter()
                                     m_radioModel->tuneMemoryStore());
     panel->addApplet(m_tunerApplet);
 
+    // Rotor control plan Task 6: the Rotor applet. Whether a rotor is set
+    // up, connected, or controlled by this Core at all is the applet's to
+    // show (greyed, with the reason), so it is always available.
+    m_rotorApplet = new RotorApplet(m_radioModel, nullptr);
+    panel->addApplet(m_rotorApplet);
+
     // 2026-05-20 bench fix: rescale TunerApplet's fwd-power bar when
     // PGXL comes into the chain. TunerApplet defaults to 0-200 W
     // (barefoot) which pegs out the moment PGXL pushes its amplified
@@ -10071,6 +10114,7 @@ void MainWindow::populateDefaultMeter()
     m_appletsById[QStringLiteral("ModMon")]     = m_modMonApplet;
     m_appletsById[QStringLiteral("Amp")]        = m_ampApplet;
     m_appletsById[QStringLiteral("Tuner")]      = m_tunerApplet;
+    m_appletsById[QStringLiteral("Rotor")]      = m_rotorApplet;
     m_appletsById[QStringLiteral("RfKit")]      = m_rfKitApplet;
     m_appletsById[QStringLiteral("Cat")]        = m_catApplet;
 #ifdef HAVE_WEBSOCKETS
@@ -10117,6 +10161,10 @@ void MainWindow::populateDefaultMeter()
                                 QStringLiteral("Power Genius"), true);
     m_appletVis->registerApplet(QStringLiteral("Tuner"),
                                 QStringLiteral("Tuner Genius"), true);
+    // Rotor: shown by default like the amp and tuner (JJ, 2026-10-08); with
+    // no rotor it stays, greyed with the reason (disabled, never hidden).
+    m_appletVis->registerApplet(QStringLiteral("Rotor"),
+                                QStringLiteral("Rotor"),        true);
     m_appletVis->registerApplet(QStringLiteral("Cat"),QStringLiteral("CAT"),true);
     m_appletVis->registerApplet(QStringLiteral("RfKit"),
                                 QStringLiteral("RF-Kit RF2K-S"), true);
@@ -13232,6 +13280,12 @@ void MainWindow::onContainerItemAdded(MeterItem* item)
     // a new item only when those Setup pages next opened.
     MultimeterPage::applyPersistedSettingsTo(item);
     DspOptionsPage::applyPersistedHighResFilterTo(m_radioModel, item);
+    // Rotor control plan Task 5: a compass meter item shows this window's
+    // rotor and turns it on release (RadioModel routes the command to the
+    // local rotor or the remote Core).
+    if (auto* rotator = qobject_cast<RotatorItem*>(item); rotator && m_radioModel) {
+        rotator->setRotor(m_radioModel->rotorModel(), m_radioModel);
+    }
     refreshContainerControls(item);
     reconcileMiniDisplays();
 }
@@ -16403,6 +16457,22 @@ void MainWindow::openPureSignalDialog()
 //
 // Mirrors the modeless-singleton pattern at AetherSDR
 // src/gui/MainWindow.cpp openDxClusterDialog() [@0cd4559].
+// Rotor control plan Task 8: one SpotBeamTurner for the window, made on
+// first use (the first pan's wiring). A turn this window refuses itself is
+// toasted; a remote Core's refusal arrives on accessoryRequestRefused
+// (device "rotor") and is toasted there.
+SpotBeamTurner* MainWindow::spotBeamTurner()
+{
+    if (!m_spotBeamTurner && m_radioModel) {
+        m_spotBeamTurner = new SpotBeamTurner(m_radioModel, this);
+        connect(m_spotBeamTurner, &SpotBeamTurner::turnRefused, this,
+                [this](const QString& reason) {
+            showToast(OperatorReasonText::forDisplay(reason), ToastSeverity::Warning, 4000);
+        });
+    }
+    return m_spotBeamTurner;
+}
+
 void MainWindow::openSpotHub()
 {
     if (!m_radioModel) { return; }
@@ -16435,6 +16505,19 @@ void MainWindow::openSpotHub()
                         slice->setFrequency(freqMhz * 1.0e6);
                     }
                 });
+        // Rotor control plan Task 8: Turn beam in the Spot List, and
+        // auto-turn when the operator tunes to a row.
+        if (SpotBeamTurner* turner = spotBeamTurner()) {
+            m_spotHubDialog->setSpotBeamTurner(turner);
+            // Final review M7: auto-turn follows only a tune that happened,
+            // an active slice now at the spot's frequency.
+            m_spotHubDialog->setTunedCheck([this](double freqMhz) {
+                const SliceModel* slice = activeSliceForWindow();
+                return slice && std::abs(slice->frequency() - freqMhz * 1.0e6) < 1.0;
+            });
+            connect(m_spotHubDialog.data(), &SpotHubDialog::spotTuned,
+                    turner, &SpotBeamTurner::spotTuned);
+        }
         // Phase 3J-2 + 3R M2: Display tab knob round-trip.
         // SpotHubDialog F4 writes every knob change to AppSettings and
         // emits settingsChanged. SpectrumWidget::loadSpotDisplaySettings

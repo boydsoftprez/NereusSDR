@@ -561,7 +561,7 @@ struct CoreDisplayTests {
         let defaults = try #require(UserDefaults(suiteName: rig.suite))
         let spots = SpotsModel(records: nil, mirror: rig.mirror, commands: nil, settings: rig.settings,
                                slices: rig.main.slices, catalogFeed: rig.main.catalogFeed,
-                               phone: PhoneSettings(defaults: defaults))
+                               phone: PhoneSettings(defaults: defaults), rotor: rig.main.rotor)
         spots.write(SpotsModel.lifetimeKey, "120", for: nil)
         #expect(await settle { writes(rig).count == 2 })
         await clock.advance(by: 5_000)

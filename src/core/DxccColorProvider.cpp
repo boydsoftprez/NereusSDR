@@ -67,12 +67,29 @@
 //                                    preserved verbatim from
 //                                    upstream. AI tooling: Anthropic
 //                                    Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 4a.
+//                                    NereusSDR addition:
+//                                    ensureCtyDatLoaded registers
+//                                    the Core's cty resource and
+//                                    loads :/cty.dat once.
+//                                    AI tooling: Anthropic Claude
+//                                    Code.
 
 #include "DxccColorProvider.h"
 #include "AdifParser.h"
 
 #include <QFileInfo>
 #include <QMetaObject>
+
+// Rotor control plan Task 4a: cty.dat is compiled into NereusCore from
+// resources/cty.qrc (CMakeLists.txt), as the band plans are.
+// Q_INIT_RESOURCE must sit outside any namespace; calling it from the
+// loader ties the resource to the code that reads it, so no Core-only link
+// (nereusd) can leave it out. Registering it again is a no-op in Qt.
+static void initCtyDatResource()
+{
+    Q_INIT_RESOURCE(cty);
+}
 
 namespace NereusSDR {
 
@@ -147,6 +164,16 @@ DxccColorProvider::~DxccColorProvider()
 bool DxccColorProvider::loadCtyDat(const QString& resourcePath)
 {
     return m_ctyParser.loadFromResource(resourcePath);
+}
+
+// NereusSDR addition (rotor control plan Task 4a): one parse per process.
+bool DxccColorProvider::ensureCtyDatLoaded()
+{
+    if (m_ctyParser.isLoaded()) {
+        return true;
+    }
+    initCtyDatResource();
+    return loadCtyDat();
 }
 
 // From AetherSDR src/core/DxccColorProvider.cpp:79-85 [@0cd4559]

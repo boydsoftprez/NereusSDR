@@ -6,6 +6,7 @@
 #if os(macOS)
 
 import Foundation
+import LinkSessionTestSupport
 import LinkTestSupport
 import NereusLink
 import Testing
@@ -117,7 +118,7 @@ extension MediaPeerInteropTests {
         let dropsBefore = run.playback.counters.otherPayloadDrops
         #expect(dropsBefore == 0)
         run.offerer.send(["type": "send-l16", "count": 2])
-        let sent = try await run.offerer.waitFor("sent", occurrence: 1, timeout: .seconds(10), what: "l16",
+        let sent = try await run.offerer.waitFor("sent", occurrence: 1, timeout: TestBackstop.hang, what: "l16",
                                                  count: 2)
         #expect(sent.numbers["count"] == 2)
         let playback = run.playback
@@ -188,7 +189,7 @@ extension MediaPeerInteropTests {
             }
             #expect(client.uplink.sendMicrophone(try encoder.encode(pcm)))
         }
-        let tenth = try await offerer.waitFor("mic", timeout: .seconds(10), count: 10)
+        let tenth = try await offerer.waitFor("mic", timeout: TestBackstop.hang, count: 10)
         #expect(tenth.numbers["ssrc"].map(UInt32.init) == microphone)
         #expect(tenth.numbers["pt"] == Int(MediaPeer.opusPayloadType))
 

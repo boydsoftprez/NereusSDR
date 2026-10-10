@@ -102,6 +102,7 @@
 #include <thread>
 #include <utility>
 #include "core/AppSettings.h"
+#include "core/ControlRanges.h"
 #include "gui/setup/DisplaySetupPages.h"
 #include <QCheckBox>
 #include "core/MoxController.h"
@@ -6297,6 +6298,98 @@ private slots:
 
         client.disconnectFromStation(QStringLiteral("test complete"));
         remote.setFftEngine(nullptr);
+    }
+
+    // A deep zoom (or the Hz/bin target) grows a remote pan's FFT no
+    // further than a local pan's auto-zoom does: about 0.7 s per transform
+    // (ControlRanges::autoZoomMaxFftSize), 131072 at the fixture's
+    // 192 kHz, not the engine's 262144, unless the stored size is already
+    // at or above it; that is asked for exactly.  2026-10-09: the capped
+    // rows asked 65536 under the fixed cap of 2026-05-08.
+    void subscribeCapsAZoomedPansFftSizeLikeALocalPan_data()
+    {
+        QTest::addColumn<double>("spanHz");
+        QTest::addColumn<QString>("storedSize");
+        QTest::addColumn<QString>("hzPerBin");
+        QTest::addColumn<int>("fftSize");
+        QTest::addColumn<QString>("tier");
+        QTest::newRow("300 Hz zoom, stored 4096") << 300.0 << QStringLiteral("4096")
+            << QStringLiteral("0") << 131072 << QStringLiteral("fine");
+        QTest::newRow("300 Hz zoom, stored 131072") << 300.0 << QStringLiteral("131072")
+            << QStringLiteral("0") << 131072 << QStringLiteral("wide");
+        QTest::newRow("Hz/bin 0.5, stored 4096") << 24000.0 << QStringLiteral("4096")
+            << QStringLiteral("0.5") << 131072 << QStringLiteral("fine");
+    }
+
+    void subscribeCapsAZoomedPansFftSizeLikeALocalPan()
+    {
+        QFETCH(double, spanHz);
+        QFETCH(QString, storedSize);
+        QFETCH(QString, hzPerBin);
+        QFETCH(int, fftSize);
+        QFETCH(QString, tier);
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        auto& appSettings = AppSettings::instance();
+        const QString sizeKey = QLatin1String(ControlRanges::kDisplayFftSizeKey);
+        const QString hzPerBinKey = QLatin1String(ControlRanges::kDisplayHzPerBinTargetKey);
+        appSettings.setValue(sizeKey, storedSize);
+        appSettings.setValue(hzPerBinKey, hzPerBin);
+        const auto restore = qScopeGuard([&] {
+            appSettings.remove(sizeKey);
+            appSettings.remove(hzPerBinKey);
+        });
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::HermesLite);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        station.addSlice(QStringLiteral("pan-0"));
+        QVERIFY(!station.slices().isEmpty());
+        SliceModel* stationSlice = station.slices().first();
+        stationSlice->setStreamIndex(0);
+        stationSlice->setFrequency(14225000);
+        StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        PanadapterStack stack;
+        auto* applet = stack.addPanadapter(QStringLiteral("pan-0"));
+        applet->setActiveSliceIndex(stationSlice->sliceIndex());
+        auto* widget = applet->spectrumWidget();
+        widget->setExtendedViewAllowed(false);
+        widget->setDisplayWindowPreservingHistory(14225000, spanHz);
+        stack.resize(600, 400);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        QPointer<DisplayTransport> media;
+        RemoteMediaController controller(&client, &remote, &stack, nullptr,
+            [&media](QObject* owner) -> IMediaTransport* {
+                media = new DisplayTransport(owner);
+                return media;
+            });
+        QSignalSpy controls(&server, &StationServer::mediaControlReceived);
+        auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
+        auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        stationLink->linkTo(clientLink);
+        client.startSession(clientLink, server.token());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(client.mediaAvailable());
+        QTRY_VERIFY(media);
+        media->activate();
+        QTRY_VERIFY(countControl(controls, QStringLiteral("subscribe")) >= 1);
+
+        const QJsonObject asked = lastControl(controls, QStringLiteral("subscribe"));
+        SliceModel* mirrored = remote.sliceById(stationSlice->sliceIndex());
+        QVERIFY(mirrored);
+        // Every row's uncapped size would be 262144: the rate is 192 kHz
+        // (cap 131072) and the pan at least 300 px wide.
+        QCOMPARE(mirrored->sampleRateHz(), 192000);
+        QCOMPARE(asked.value(QStringLiteral("fftSize")).toInt(), fftSize);
+        QCOMPARE(asked.value(QStringLiteral("tier")).toString(), tier);
+        QCOMPARE(ControlRanges::autoZoomMaxFftSize(mirrored->sampleRateHz()), 131072);
+
+        client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
     // Parity Task 17 follow-up (R-R3-01, R-R3-04): with Clarity the

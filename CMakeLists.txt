@@ -1220,6 +1220,13 @@ set(CORE_SOURCES
     # and on the Core, and is the mirrored `spotSources` object.
     src/core/SpotSourceHost.cpp
     src/core/CtyDatParser.cpp
+    src/core/GreatCircle.cpp
+    src/core/RotorRoute.cpp
+    # Rotor control plan Task 3b: the Core's rotor link and rotctld starter
+    src/core/RotorConnection.cpp
+    src/core/RotctldProcess.cpp
+    # Rotor control plan Task 3c: the Core's rotor (settings, presets, hold)
+    src/core/StationRotorController.cpp
     src/core/AdifParser.cpp
     src/core/DxccWorkedStatus.cpp
     src/core/DxccColorProvider.cpp
@@ -1246,6 +1253,8 @@ set(CORE_SOURCES
     src/models/AmplifierModel.cpp
     src/models/RfKitModel.cpp
     src/models/StationTciModel.cpp
+    src/models/RotorModel.cpp
+    src/models/SpotBeamTurner.cpp
     src/models/StationCatModel.cpp
     # Phase 3P-II Phase 4 (Advanced UI + helpers)
     src/core/FaultLog.cpp
@@ -1818,6 +1827,8 @@ set(GUI_SOURCES
     src/gui/chrome/ChromeBarItems.cpp
     src/gui/widgets/StatusBadge.cpp
     src/gui/widgets/StatusBadge.h
+    src/gui/widgets/RotorDialWidget.cpp
+    src/gui/widgets/RotorDialWidget.h
     src/gui/widgets/AdcOverloadBadge.cpp
     src/gui/widgets/AdcOverloadBadge.h
     src/gui/widgets/OverflowChip.cpp
@@ -2051,6 +2062,7 @@ set(GUI_SOURCES
     src/gui/setup/ThisCorePage.cpp
     src/gui/setup/CoresSetupPage.cpp
     src/gui/setup/RfKitPage.cpp
+    src/gui/setup/RotorSetupPage.cpp
     src/gui/setup/TciLogWindow.cpp
     src/gui/setup/KeyboardSetupPages.cpp
     src/gui/setup/DiagnosticsSetupPages.cpp
@@ -2080,6 +2092,7 @@ set(GUI_SOURCES
     src/gui/applets/DvkApplet.cpp
     src/gui/applets/CatApplet.cpp
     src/gui/applets/TunerApplet.cpp
+    src/gui/applets/RotorApplet.cpp
     src/gui/applets/AmpApplet.cpp
     src/gui/applets/Rf2ksApplet.cpp
     src/gui/applets/TciApplet.cpp
@@ -2108,7 +2121,14 @@ qt_add_resources(RESOURCES resources.qrc)
 # iPhone app Task 14 (R-IOS-08): the pairing code's word list belongs to the
 # Core too (PairingCode, which calls Q_INIT_RESOURCE(pairing) likewise). The
 # iPhone app carries a byte-for-byte copy of the same file.
-qt_add_resources(CORE_RESOURCES resources/bandplans.qrc resources/pairing.qrc resources/setup.qrc resources/cat.qrc)
+# Rotor control plan Task 4a: the DXCC country table (:/cty.dat) belongs to
+# the Core as well. The Core places callsigns with it (the rotor's turn to a
+# call, each spot's bearing), and nereusd links NereusCore alone, so while it
+# sat in resources.qrc the headless Core placed no callsign at all.
+# DxccColorProvider::ensureCtyDatLoaded calls Q_INIT_RESOURCE(cty); the app
+# reads the same one copy through NereusCore.
+qt_add_resources(CORE_RESOURCES resources/bandplans.qrc resources/pairing.qrc resources/setup.qrc
+    resources/cat.qrc resources/cty.qrc)
 
 # --------------------------------------------------------------------------
 # App icon (per-platform) — from main (PR #11)

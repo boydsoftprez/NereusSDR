@@ -12,6 +12,13 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-08 - Rotor control plan Task 5: drag to turn and the stop
+//                 circle, ported from Thetis renderRotator() and
+//                 clsRotatorItem.SendRotatorMessage/MouseUp/MouseDown, sent
+//                 through RotorCommandSink instead of an MMIO template; the
+//                 target marker in amber; elevation fed and drawn; "Both"
+//                 laid out two faces wide as in Thetis. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -57,8 +64,14 @@ mw0lge@grange-lane.co.uk
 #include "MeterItem.h"
 #include <QColor>
 #include <QImage>
+#include <QPointF>
+#include <QPointer>
+#include <QTimer>
 
 namespace NereusSDR {
+
+class RotorCommandSink;
+namespace RotorLink { class RotorModel; }
 
 // From Thetis clsRotatorItem (MeterManager.cs:15042+)
 // Antenna rotator compass dial with AZ/ELE/BOTH modes.
@@ -68,7 +81,7 @@ class RotatorItem : public MeterItem {
 public:
     enum class RotatorMode { Az, Ele, Both };
 
-    explicit RotatorItem(QObject* parent = nullptr) : MeterItem(parent) {}
+    explicit RotatorItem(QObject* parent = nullptr);
 
     void setMode(RotatorMode m) { m_mode = m; }
     RotatorMode mode() const { return m_mode; }
@@ -112,10 +125,50 @@ public:
     QString backgroundImagePath() const { return m_bgImagePath; }
 
     // Elevation value (for BOTH mode — azimuth uses base m_value)
-    void setElevation(float ele) { m_elevation = ele; }
+    // Rotor control plan Task 5: smoothed into the drawn elevation the way
+    // Thetis's Update() smooths a Reading.ELE item (MeterManager.cs:16604).
+    void setElevation(float ele);
     float elevation() const { return m_elevation; }
 
     void setValue(double v) override;
+
+    // What the dial draws now (after smoothing).
+    float displayedAzimuth() const { return m_smoothedAz; }
+    float displayedElevation() const { return m_smoothedEle; }
+
+    // ── Rotor control plan Task 5: drag to turn ──
+    // The rotor this item shows and turns: `state` (RadioModel::rotorModel())
+    // feeds the heading and says whether a rotor is there to turn;
+    // `commands` (RadioModel) takes the turn and stop. `commands` must live
+    // as long as `state` (RadioModel owns both). nullptr, nullptr detaches:
+    // the dial then only displays, as before.
+    void setRotor(RotorLink::RotorModel* state, RotorCommandSink* commands);
+    // A rotor is connected and the commands can reach it. Without one a
+    // press or drag does nothing (the dial stays, showing what it last had).
+    bool rotorControllable() const;
+    bool elevationControllable() const;
+
+    // Thetis's "no angle" value (MeterManager.cs:36699).
+    static constexpr float kNoAngle = -999.0f;
+    // The heading a release would send now, or kNoAngle.
+    float dragDegrees() const { return m_dragDegrees; }
+    bool draggingElevation() const { return m_dragEle; }
+    // The heading last sent, shown in amber until the arrow comes within
+    // kArrivedDeg of it; kNoAngle when none.
+    float targetAzimuthMarker() const { return m_targetAz; }
+    float targetElevationMarker() const { return m_targetEle; }
+
+    // Hit areas, for the window and the tests: the centre of each face and
+    // its stop circle, in widget pixels.
+    QPointF azimuthCentre(int widgetW, int widgetH) const;
+    QPointF elevationCentre(int widgetW, int widgetH) const;
+    float stopCircleRadius(int widgetW, int widgetH) const;
+    float pointerRadius(int widgetW, int widgetH) const;
+
+    bool hitTest(const QPointF& pos, int widgetW, int widgetH) const override;
+    bool handleMousePress(QMouseEvent* event, int widgetW, int widgetH) override;
+    bool handleMouseRelease(QMouseEvent* event, int widgetW, int widgetH) override;
+    bool handleMouseMove(QMouseEvent* event, int widgetW, int widgetH) override;
 
     // Multi-layer
     bool participatesIn(Layer layer) const override;
@@ -126,7 +179,34 @@ public:
     QString serialize() const override;
     bool deserialize(const QString& data) override;
 
+signals:
+    // The dial changed outside a paint or a mouse event (a new heading
+    // from the rotor); MeterWidget repaints it.
+    void repaintRequested();
+
 private:
+    struct Faces {
+        float w{0.0f};
+        float h{0.0f};
+        QPointF az;
+        QPointF ele;
+        float radiusTipAz{0.0f};
+        float radiusExtraAz{0.0f};
+        float radiusTipEle{0.0f};
+        float radiusExtraEle{0.0f};
+        float radiusStop{0.0f};
+    };
+    Faces faces(const QRect& faceRect) const;
+    QRect faceRect(int widgetW, int widgetH) const;
+    void paintControl(QPainter& p, const QRect& faceRect);
+    void updateStopHover(const QPointF& pos, const Faces& f);
+    void updateDrag(const QPointF& pos, const Faces& f);
+    void sendStop();
+    void sendTarget();
+    void clearArrivedTargets();
+    void cancelControl();
+    void onRotorChanged();
+    void feedTick();
     void paintCompassFace(QPainter& p, const QRect& compassRect);
     void paintHeading(QPainter& p, const QRect& compassRect);
     void paintElevationArc(QPainter& p, const QRect& eleRect);
@@ -158,6 +238,27 @@ private:
     float m_smoothedAz{0.0f};
     float m_elevation{0.0f};
     float m_smoothedEle{0.0f};
+
+    // Rotor control plan Task 5: the rotor and the drag.
+    enum class DragFace { None, Az, Ele };
+    QPointer<RotorLink::RotorModel> m_rotor;
+    RotorCommandSink* m_commands{nullptr};
+    QMetaObject::Connection m_rotorState;
+    QMetaObject::Connection m_rotorPosition;
+    // The rotor's last heading, re-applied every kFeedIntervalMs until the
+    // smoothed dial reaches it (Thetis re-reads every UpdateInterval).
+    QTimer m_feed;
+    float m_rotorAz{-1.0f};
+    float m_rotorEle{-1.0f};
+    bool m_pressed{false};
+    bool m_overStop{false};
+    QPointF m_lastPos;
+    DragFace m_dragFace{DragFace::None};
+    bool m_showingEleDrag{false};
+    bool m_dragEle{false};
+    float m_dragDegrees{kNoAngle};
+    float m_targetAz{kNoAngle};
+    float m_targetEle{kNoAngle};
 };
 
 } // namespace NereusSDR

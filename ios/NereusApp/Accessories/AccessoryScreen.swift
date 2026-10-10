@@ -10,6 +10,8 @@ struct AccessoryScreen<Chip: View>: View {
     @ObservedObject var model: AccessoriesModel
     /// Transmit, for the Tuner Genius's TUNE.
     let transmit: TransmitModel
+    /// The rotor, for its page.
+    let rotor: RotorModel
     let route: AccessoriesSection.Route
     /// The page before, for the back button's words.
     let backTitle: String
@@ -47,6 +49,8 @@ struct AccessoryScreen<Chip: View>: View {
             AccessoryAdvancedPage(model: model, device: device, coreName: coreName)
         case .tuneMemory:
             TuneMemoryPage(model: model)
+        case .rotor:
+            RotorPage(model: rotor)
         }
     }
 }

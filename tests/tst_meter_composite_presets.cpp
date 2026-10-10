@@ -32,6 +32,7 @@
 #include "gui/containers/ContainerButtonDispatcher.h"
 #include "models/SliceModel.h"
 #include "models/Band.h"
+#include "NativeWindowFrames.h"
 using namespace NereusSDR;
 namespace {
 // Observe actual QPainter text output at the paint-device boundary. This avoids
@@ -264,7 +265,7 @@ private slots:
             const auto capture=[&](const QString& state) {
                 QImage native;
 #ifdef NEREUS_GPU_SPECTRUM
-                const int before=submitted.count(); widget.update(); QTRY_VERIFY_WITH_TIMEOUT(submitted.count()>before,2000); native=widget.grabFramebuffer();
+                NEREUS_VERIFY_FRAME(NativeWindowFrames::requestFrame(widget,submitted,2000)); native=widget.grabFramebuffer();
 #else
                 widget.update(); QCoreApplication::processEvents(); native=widget.grab().toImage();
 #endif
@@ -815,13 +816,13 @@ private slots:
     void primitiveClockSharesCadence() {
         ContainerContentRegistry registry; MeterWidget widget; widget.resize(360,120); auto* item=registry.createMeterItem(registry.makeEntry("CLOCK"),&widget); QVERIFY(item); widget.addItem(item); widget.show();
 #ifdef NEREUS_GPU_SPECTRUM
-        QSignalSpy submitted(&widget,&QRhiWidget::frameSubmitted); widget.advanceMeters(0); const int before=submitted.count(); widget.update(); QTRY_VERIFY_WITH_TIMEOUT(submitted.count()>before,2000); const QImage first=widget.grabFramebuffer();
+        QSignalSpy submitted(&widget,&QRhiWidget::frameSubmitted); widget.advanceMeters(0); NEREUS_VERIFY_FRAME(NativeWindowFrames::requestFrame(widget,submitted,2000)); const QImage first=widget.grabFramebuffer();
 #else
         widget.advanceMeters(0); QTest::qWait(50); const QImage first=widget.grab().toImage();
 #endif
         QVERIFY(!item->advanceMeter(100)); QTest::qWait(1100); widget.advanceMeters(1100);
 #ifdef NEREUS_GPU_SPECTRUM
-        const int next=submitted.count(); widget.update(); QTRY_VERIFY_WITH_TIMEOUT(submitted.count()>next,2000); const QImage last=widget.grabFramebuffer();
+        NEREUS_VERIFY_FRAME(NativeWindowFrames::requestFrame(widget,submitted,2000)); const QImage last=widget.grabFramebuffer();
 #else
         widget.update(); QTest::qWait(30); const QImage last=widget.grab().toImage();
 #endif
@@ -842,7 +843,7 @@ private slots:
                     for(int binding:item->readingBindings()) { const double value=binding==1 ? -110+frame*4 : binding==200 ? 13.8 : binding==201 ? 6 : binding==102 ? 1+frame*.15 : binding>=100 && binding<=101 ? frame*9 : binding==110 ? -30+frame*3 : -25+frame*3; widget.updateMeterValue(binding,value); }
                     widget.advanceMeters(frame*100);
 #ifdef NEREUS_GPU_SPECTRUM
-                    const int before=submitted.count(); widget.update(); QTRY_VERIFY_WITH_TIMEOUT(submitted.count()>before,2000); const QImage image=widget.grabFramebuffer();
+                    NEREUS_VERIFY_FRAME(NativeWindowFrames::requestFrame(widget,submitted,2000)); const QImage image=widget.grabFramebuffer();
 #else
                     widget.update(); QTest::qWait(10); const QImage image=widget.grab().toImage();
 #endif
@@ -869,7 +870,7 @@ private slots:
                 if(face && face->vfoDisplay()) {
                     face->setFrequency(7150123); widget.advanceMeters(1300);
 #ifdef NEREUS_GPU_SPECTRUM
-                    const int before=submitted.count(); widget.update(); QTRY_VERIFY_WITH_TIMEOUT(submitted.count()>before,2000); const QImage changed=widget.grabFramebuffer();
+                    NEREUS_VERIFY_FRAME(NativeWindowFrames::requestFrame(widget,submitted,2000)); const QImage changed=widget.grabFramebuffer();
 #else
                     widget.update(); QTest::qWait(15); const QImage changed=widget.grab().toImage();
 #endif
@@ -877,7 +878,7 @@ private slots:
                 }
                 if(face) { QJsonObject changes; if(face->editableFields().contains("backdropColor")) { changes["backdropColor"]="#ff102030"; } if(face->editableFields().contains("titleColor")) { changes["titleColor"]="#ffff0000"; } QVERIFY(face->applyConfiguration(changes)); widget.advanceMeters(1500);
 #ifdef NEREUS_GPU_SPECTRUM
-                    const int before=submitted.count(); widget.update(); QTRY_VERIFY_WITH_TIMEOUT(submitted.count()>before,2000); const QImage customized=widget.grabFramebuffer();
+                    NEREUS_VERIFY_FRAME(NativeWindowFrames::requestFrame(widget,submitted,2000)); const QImage customized=widget.grabFramebuffer();
 #else
                     widget.update(); QTest::qWait(15); const QImage customized=widget.grab().toImage();
 #endif
@@ -889,7 +890,7 @@ private slots:
                     if(type=="meter.ananMulti" && check==1) {
                         widget.resetForTxTransition(false); widget.updateMeterValue(MeterBinding::SignalAvg,-85); widget.advanceMeters(1650);
 #ifdef NEREUS_GPU_SPECTRUM
-                        const int before=submitted.count(); widget.update(); QTRY_VERIFY_WITH_TIMEOUT(submitted.count()>before,2000);
+                        NEREUS_VERIFY_FRAME(NativeWindowFrames::requestFrame(widget,submitted,2000));
 #else
                         widget.update(); QTest::qWait(15);
 #endif
@@ -905,7 +906,7 @@ private slots:
                     else { QVERIFY(qobject_cast<BarPresetItem*>(item)->applyConfiguration({{"titleColor","#ffff0000"}})); }
                     widget.advanceMeters(1600+check*100);
 #ifdef NEREUS_GPU_SPECTRUM
-                    const int before=submitted.count(); widget.update(); QTRY_VERIFY_WITH_TIMEOUT(submitted.count()>before,2000); const QImage changed=widget.grabFramebuffer();
+                    NEREUS_VERIFY_FRAME(NativeWindowFrames::requestFrame(widget,submitted,2000)); const QImage changed=widget.grabFramebuffer();
 #else
                     widget.update(); QTest::qWait(15); const QImage changed=widget.grab().toImage();
 #endif

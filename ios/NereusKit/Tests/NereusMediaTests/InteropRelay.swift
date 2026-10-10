@@ -6,6 +6,7 @@
 #if os(macOS)
 
 import Foundation
+import LinkSessionTestSupport
 @testable import NereusMedia
 
 /// Stands in for the session's signalling in the interop tests: the Core's
@@ -94,7 +95,7 @@ final class InteropRelay: @unchecked Sendable {
     }
 
     /// Waits until `condition` holds, polling, or throws at the deadline.
-    func waitUntil(_ what: String, timeout: Duration = .seconds(10),
+    func waitUntil(_ what: String, timeout: Duration = TestBackstop.hang,
                    _ condition: () -> Bool) async throws {
         let clock = ContinuousClock()
         let deadline = clock.now + timeout

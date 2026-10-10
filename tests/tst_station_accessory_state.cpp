@@ -40,6 +40,8 @@
 // 2026-09-25: checkpoint carry: parity Tasks 8 to 10's stations sign the
 // peer in with an upgraded Core's token (seedUpgradedCoreToken). J.J. Boyd
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-08: rotor control plan Task 4b: remoteRotorControlVersion now
+// travels last. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest/QtTest>
 #include <QFile>
 #include <QJsonArray>
@@ -686,6 +688,8 @@ private slots:
                     QByteArrayLiteral("remoteIqVersion"),
                     QByteArrayLiteral("txModMonitorVersion"),
                     QByteArrayLiteral("accessoryTxVersion"),
+                    // Rotor control plan Task 4b: the Core's rotor.
+                    QByteArrayLiteral("remoteRotorControlVersion"),
                 };
                 QList<QByteArray> actualTail;
                 QVERIFY(m.updates.size() >= expectedTail.size());

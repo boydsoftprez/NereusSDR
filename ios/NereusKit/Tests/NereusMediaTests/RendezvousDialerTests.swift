@@ -197,7 +197,7 @@ import Testing
         let opened = try await dialling.value
         #expect(opened.certificateSHA256 == core.certificateSHA256)
         #expect(opened.certificateSHA256.count == 32)
-        #expect(await connection.waitUntilClosed(within: .seconds(10)), "the phone left the service")
+        #expect(await connection.waitUntilClosed(within: TestBackstop.hang), "the phone left the service")
         relay.cancel()
         _ = await relay.value
         let phoneCandidates = connection.allSent.compactMap { text -> String? in
@@ -280,7 +280,7 @@ import Testing
 
         let opened = try await dialling.value
         #expect(opened.certificateSHA256 == core.certificateSHA256)
-        #expect(await connection.waitUntilClosed(within: .seconds(10)))
+        #expect(await connection.waitUntilClosed(within: TestBackstop.hang))
         opened.channel.close()
     }
 
@@ -311,7 +311,7 @@ import Testing
         try await sendCoreCandidates(connection, from: core)
         let opened = try await dialling.value
         #expect(opened.certificateSHA256 == core.certificateSHA256)
-        #expect(await connection.waitUntilClosed(within: .seconds(10)))
+        #expect(await connection.waitUntilClosed(within: TestBackstop.hang))
         #expect(opens.closings == 0, "the grant-bound leg outlives the introduction")
         let context = try #require(rig.dialer.mediaRelayContext())
         let peer = try #require(opened.channel as? ControlPeer)
@@ -610,7 +610,7 @@ import Testing
         // Nothing more from the Core: its candidates never come.
         await clock.advance(by: Int64(RendezvousDialer.dialDeadline.components.seconds * 1000))
         await #expect(throws: RendezvousDialError.notOpenedInTime) { try await dialling.value }
-        #expect(await connection.waitUntilClosed(within: .seconds(10)))
+        #expect(await connection.waitUntilClosed(within: TestBackstop.hang))
         #expect(rig.dialer.attemptTry?.outcome == .timedOut)
         // The record says the Core offered nothing (the deadline can pass
         // before this phone's own gathering reports).
@@ -638,7 +638,7 @@ import Testing
             return
         }
         transport.close()
-        #expect(await connection.waitUntilClosed(within: .seconds(10)))
+        #expect(await connection.waitUntilClosed(within: TestBackstop.hang))
         await #expect(throws: (any Error).self) { try await opening.value }
     }
 }

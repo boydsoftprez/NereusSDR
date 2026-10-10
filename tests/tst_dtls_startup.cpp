@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original causal regression using real pinned RTC.
 // Modification history: 2026-10-05, J.J. Boyd (KG4VCF), OpenAI Codex.
+// 2026-10-08, J.J. Boyd (KG4VCF), Anthropic Claude Code: the hooks hold the
+// gate by shared_ptr, so a case that returns while a processor thread is
+// still waking from the gate no longer destroys it under that thread.
 #include <QtTest>
 #include "fakes/dtls-startup/Access.h"
 #include "impl/tls.hpp"
@@ -20,9 +23,32 @@ struct Gate {
     rtc::impl::DtlsTransport* transport = nullptr;
     void release() { std::lock_guard lock(mutex); released = true; changed.notify_all(); }
     bool wait() { std::unique_lock lock(mutex); return changed.wait_for(lock, 2s, [&] { return entered; }); }
+    // Run by a hook on an RTC worker: records arrival, then blocks until release.
+    void pass(rtc::impl::DtlsTransport* observed)
+    {
+        std::unique_lock lock(mutex);
+        transport = observed;
+        entered = true;
+        changed.notify_all();
+        changed.wait(lock, [&] { return released; });
+    }
 };
-std::atomic<Gate*> startGate{nullptr};
-std::atomic<Gate*> initGate{nullptr};
+// The hooks run on RTC workers and copy the gate out under the slot's lock,
+// so each keeps its own reference while it waits. release() only wakes the
+// worker; under load the worker can still be inside condition_variable::wait
+// after the case has returned. A gate owned by the case's stack frame was
+// destroyed under it there ("condition_variable wait failed: Invalid
+// argument", then abort): 159 of 400 runs at 16 in parallel.
+class GateSlot {
+public:
+    void set(std::shared_ptr<Gate> gate) { std::lock_guard lock(m_mutex); m_gate = std::move(gate); }
+    std::shared_ptr<Gate> get() { std::lock_guard lock(m_mutex); return m_gate; }
+private:
+    std::mutex m_mutex;
+    std::shared_ptr<Gate> m_gate;
+};
+GateSlot startGate;
+GateSlot initGate;
 std::atomic<unsigned> startCount{0};
 std::atomic<bool> throwOnStart{false};
 bool drain(const std::shared_ptr<rtc::impl::PeerConnection>& peer)
@@ -70,11 +96,8 @@ struct Fixture {
 }
 void nereusDtlsStartupInit(rtc::impl::PeerConnection*)
 {
-    if (Gate* gate = initGate.load()) {
-        std::unique_lock lock(gate->mutex);
-        gate->entered = true;
-        gate->changed.notify_all();
-        gate->changed.wait(lock, [&] { return gate->released; });
+    if (const std::shared_ptr<Gate> gate = initGate.get()) {
+        gate->pass(nullptr);
     }
 }
 void nereusDtlsStartupStart(rtc::impl::DtlsTransport* transport)
@@ -84,12 +107,8 @@ void nereusDtlsStartupStart(rtc::impl::DtlsTransport* transport)
         // Exercise the pinned vendor's existing fatal-I/O error path.
         rtc::openssl::check_error(SSL_ERROR_SYSCALL, "fixture DTLS startup failure");
     }
-    if (Gate* gate = startGate.load()) {
-        std::unique_lock lock(gate->mutex);
-        gate->transport = transport;
-        gate->entered = true;
-        gate->changed.notify_all();
-        gate->changed.wait(lock, [&] { return gate->released; });
+    if (const std::shared_ptr<Gate> gate = startGate.get()) {
+        gate->pass(transport);
     }
 }
 class TstDtlsStartup : public QObject {
@@ -99,29 +118,29 @@ private slots:
     {
         startCount = 0;
         throwOnStart = false;
-        startGate = nullptr;
-        initGate = nullptr;
+        startGate.set(nullptr);
+        initGate.set(nullptr);
     }
     void connectedCallbackReturnsWhileSslMutexHeld()
     {
         Fixture fixture;
-        Gate gate;
-        startGate = &gate;
+        const auto gate = std::make_shared<Gate>();
+        startGate.set(gate);
         std::promise<void> returned;
         std::future<void> result = returned.get_future();
         std::thread callback([&] { fixture.event(JUICE_STATE_CONNECTED); returned.set_value(); });
-        const bool reached = gate.wait();
+        const bool reached = gate->wait();
         bool prompt = false;
         if (reached) {
-            std::unique_lock ssl(NereusDtlsStartupTestAccess::sslMutex(gate.transport));
-            gate.release();
+            std::unique_lock ssl(NereusDtlsStartupTestAccess::sslMutex(gate->transport));
+            gate->release();
             prompt = result.wait_for(500ms) == std::future_status::ready;
             // Always release S before joining, including the expected red run.
         } else {
-            gate.release();
+            gate->release();
         }
         callback.join();
-        startGate = nullptr;
+        startGate.set(nullptr);
         fixture.peer->close();
         QTRY_VERIFY_WITH_TIMEOUT(!fixture.peer->getDtlsTransport(), 3000);
         QVERIFY2(reached, "Actual OpenSSL DTLS startup must reach the observer.");
@@ -208,19 +227,19 @@ private slots:
     {
         QFETCH(bool, published);
         Fixture fixture;
-        Gate gate;
+        const auto gate = std::make_shared<Gate>();
         if (published) {
-            startGate = &gate;
+            startGate.set(gate);
         } else {
-            initGate = &gate;
+            initGate.set(gate);
         }
         fixture.event(JUICE_STATE_CONNECTED);
-        const bool reached = gate.wait();
+        const bool reached = gate->wait();
         fixture.peer->close();
-        gate.release();
+        gate->release();
         const bool progressed = drain(fixture.peer);
-        startGate = nullptr;
-        initGate = nullptr;
+        startGate.set(nullptr);
+        initGate.set(nullptr);
         const bool absent = !fixture.peer->getIceTransport() && !fixture.peer->getDtlsTransport()
                             && !fixture.peer->getSctpTransport();
         const auto state = fixture.peer->state.load();

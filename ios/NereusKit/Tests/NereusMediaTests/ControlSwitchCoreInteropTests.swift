@@ -4,6 +4,7 @@
 #if os(macOS)
 
 import Foundation
+import LinkSessionTestSupport
 import NereusLink
 import Testing
 @testable import NereusMedia
@@ -151,7 +152,7 @@ struct ControlSwitchCoreInteropTests {
             // Core closes OLD after the phone's barrier, releasing the old
             // ICE control claim while the direct session stays alive.
             let context = try #require(dialer.mediaRelayContext())
-            let deadline = ContinuousClock.now + .seconds(10)
+            let deadline = ContinuousClock.now + TestBackstop.hang
             var reclaimed: RelayICEClaim?
             while reclaimed == nil && ContinuousClock.now < deadline {
                 reclaimed = try? await context.claimControl()

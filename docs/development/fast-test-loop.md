@@ -198,6 +198,17 @@ Reserve `NATIVE_WINDOW` for tests that need a capability the offscreen
 platform lacks. If a test fails off-screen because the product itself
 misbehaves without a native window, fix the product instead.
 
+Native-window tests share your desktop, so ctest runs them one at a time
+(the `native-window-desktop` resource lock) while offscreen tests keep
+running in parallel. macOS draws nothing for a window it reports covered:
+another app's full-screen window, the app that was frontmost taking focus
+back a second after the test launches, or another test's window. A test
+that waits for a GPU frame (`QRhiWidget::frameSubmitted`) waits through
+`tests/NativeWindowFrames.h`, which raises a covered window and asks again.
+If the window stays covered the test fails with a message that says so,
+which is not a product stall; rerun it with the window unobstructed. A
+frame that never arrives while the window is exposed is a real failure.
+
 ## Building tests is opt-in
 
 Test executables are `EXCLUDE_FROM_ALL`, so a routine build only builds the
