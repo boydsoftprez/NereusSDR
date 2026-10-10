@@ -21,6 +21,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09 : hasCaptureDemand(), whether anyone holds capture demand, by
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//                 NereusSDR-original.
 //   2026-10-06 : Radio speaker plan Task 1 (R-SPK-01 to R-SPK-04) by J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //                 The radio's speaker out takes its own RADIO level and
@@ -553,6 +556,10 @@ public:
     // failure is). The MOX admission check requires it as well as Ready.
     bool isCaptureReaderOpen() const;
     CaptureSupervisor::Lease acquireCaptureDemand(CaptureSupervisor::Demand demand);
+    // 2026-10-09: whether any lease holds capture demand now. A first lease
+    // starts a new generation by itself; with demand already held, only
+    // retryCapture() starts one.
+    bool hasCaptureDemand() const;
     void retryCapture();
 
     // Per-VAX device configuration. On Mac/Linux the VAX slots are populated

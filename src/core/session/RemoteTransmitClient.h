@@ -190,7 +190,9 @@ public:
     void tunerTuneEnded();
 
     // ---- A program through this window's TCI server ("tci") ----
-    void keyForProgram(std::function<void(const Answer&)> answer);
+    /// programAudio: the program's trx carried ",tci", so its own audio
+    /// follows on the TX audio stream.
+    void keyForProgram(bool programAudio, std::function<void(const Answer&)> answer);
     void unkeyForProgram(quint32 epoch);
 
     // ---- From the link ----
@@ -214,6 +216,9 @@ public:
     bool micKeyDown() const;
     /// This window's key is on at the Core.
     bool holdsTransmit() const;
+    /// The program key (waiting or on) brings its own audio: the window's
+    /// microphone line carries that audio or silence, never the microphone.
+    bool programAudioKey() const;
     /// The operator's MOX key is on or waiting.
     bool screenKeyDown() const { return m_screen.phase != Phase::Idle; }
     /// The epoch of this window's key, or 0.
@@ -249,6 +254,8 @@ private:
         quint32 commandId{0};
         quint32 epoch{0};
         bool sawTransmitting{false};
+        /// A program key asked with ",tci": it brings its own audio.
+        bool programAudio{false};
     };
     enum class Kind { ScreenKey, ProgramKey, Release, Tune, TwoTone, MicSource };
     struct Pending {
