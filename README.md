@@ -92,6 +92,34 @@ commands, signature checks and startup troubleshooting. An ANAN-G2's built-in
 Pi also needs its Saturn-specific setup. The Ubuntu Core packages and the
 Trixie package are separate builds; choose the one matching your OS.
 
+#### Sound from the Core's own sound card
+
+Three things found on the maintainer's Rock 5C bench Core on 2026-10-10:
+
+- **Access comes from the `audio` group.** The service runs as an account
+  with no groups of its own, and Linux sound cards belong to the `audio`
+  group, so the Core can open one only when a small systemd drop-in,
+  `nereusd.service.d/audio.conf`, adds that group. The `.deb` packages ship
+  it, and the station images and the Pi 4 and Rock install scripts write it
+  as well. If an older install lacks it, create
+  `/etc/systemd/system/nereusd.service.d/audio.conf` containing the two lines
+  `[Service]` and `SupplementaryGroups=audio`, then run
+  `sudo systemctl daemon-reload` and `sudo systemctl restart nereusd`.
+- **A card can be open and playing while its own mixer has the output
+  switched off.** On the Rock 5C's on-board ES8316 codec (ALSA card
+  `rockchip-es8316`) the `Left DAC Switch` and `Right DAC Switch` controls
+  were off, so the headphone jack stayed silent. Turn them on with
+  `amixer -c <card> cset name='Left DAC Switch' on` and the same for
+  `Right DAC Switch`, then keep the setting with `alsactl store <card>`.
+  NereusSDR does not change a card's mixer.
+- **Real-time priority can be refused by the kernel.** The service is allowed
+  to ask for it (`LimitRTPRIO=99`), but a kernel built with
+  `CONFIG_RT_GROUP_SCHED=y` on cgroup v2 refuses real-time scheduling
+  (`SCHED_FIFO`) to every service. The Radxa vendor kernel
+  `6.1.115-vendor-rk35xx` is one. The Core then logs "Raised thread priority
+  was refused" and runs its signal processing at nice -10. To check a
+  kernel: `zcat /proc/config.gz | grep RT_GROUP_SCHED`.
+
 ### Take the console with you
 
 The native **iPhone and iPad app** provides live spectrum and waterfall,

@@ -454,6 +454,7 @@ jobs:
           dpkg-deb --contents "nereusd_${VERSION}_${ARCH}.deb" > package-contents.txt
           grep -q 'usr/bin/nereusd$' package-contents.txt
           grep -q 'systemd/system/nereusd.service$' package-contents.txt
+          grep -q 'systemd/system/nereusd.service.d/audio.conf$' package-contents.txt
           grep -q 'usr/share/nereusd/nereusd.conf.sample$' package-contents.txt
           dpkg-deb --info "nereusd_${VERSION}_${ARCH}.deb"
       - name: Upload Debian package

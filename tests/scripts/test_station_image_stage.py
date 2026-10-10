@@ -134,3 +134,54 @@ def test_daemon_component_installs_dfnr_model(tmp_path):
         subprocess.run(command, check=True)
         model = prefix / "share/NereusSDR/models/dfnet3/model.tar.gz"
         assert model.read_bytes() == b"station-model-test"
+
+
+def test_daemon_component_installs_audio_grant(tmp_path):
+    # The Core runs as a DynamicUser account with no groups, so it opens a
+    # sound card only with SupplementaryGroups=audio. Every install of the
+    # nereusd component (both Debian packages, every Pi and Rock stage) must
+    # carry that grant as a drop-in beside the unit. Exercise the repository's
+    # actual install rule with the real drop-in source.
+    grant = read("common/nereusd-audio.conf")
+    assert "[Service]\nSupplementaryGroups=audio\n" in grant
+    cmake = (ROOT / "CMakeLists.txt").read_text()
+    rules = re.findall(
+        r'install\(FILES packaging/station-image/common/nereusd-audio\.conf\s+'
+        r'DESTINATION "\$\{NEREUSD_SYSTEMD_UNIT_DIR\}/nereusd\.service\.d"'
+        r'[^)]*\)', cmake)
+    assert len(rules) == 1
+    source = tmp_path / "source"
+    (source / "packaging/station-image/common").mkdir(parents=True)
+    (source / "packaging/station-image/common/nereusd-audio.conf").write_text(grant)
+    (source / "CMakeLists.txt").write_text(
+        'cmake_minimum_required(VERSION 3.20)\n'
+        'project(StationAudioGrantInstall NONE)\n'
+        'set(NEREUSD_SYSTEMD_UNIT_DIR lib/systemd/system)\n'
+        + rules[0] + "\n")
+    build = tmp_path / "build"
+    subprocess.run(["cmake", "-S", str(source), "-B", str(build)], check=True)
+    for component in ("nereusd", None):
+        prefix = tmp_path / (component or "desktop")
+        command = ["cmake", "--install", str(build), "--prefix", str(prefix)]
+        if component:
+            command += ["--component", component]
+        subprocess.run(command, check=True)
+        dropin = prefix / "lib/systemd/system/nereusd.service.d/audio.conf"
+        if component:
+            assert dropin.read_text() == grant
+        else:
+            # A plain install is the desktop app; it ships no daemon files.
+            assert not dropin.exists()
+
+
+def test_packages_are_checked_for_the_audio_grant():
+    verifier = read("verify-package.sh")
+    assert "systemd/system/nereusd.service.d/audio.conf$" in verifier
+    assert "^SupplementaryGroups=audio$" in verifier
+    release = (ROOT / ".github/workflows/release.yml").read_text()
+    assert "systemd/system/nereusd.service.d/audio.conf$" in release
+    # The bare unit names no group: one that does not exist stops the unit,
+    # and a source install can land on a distro this repository never checked.
+    unit = (ROOT / "packaging/nereusd.service.in").read_text()
+    assert not re.search(r"^SupplementaryGroups=", unit, re.MULTILINE)
+    assert "nereusd.service.d/audio.conf" in unit

@@ -64,7 +64,12 @@ The image stage installs `avahi-daemon`, the sample `/etc/nereusd.conf`, and
 enables the existing `nereusd.service` with `DynamicUser=yes`, plus a drop-in
 that adds the `dialout` group so serial accessories can be opened and one
 that adds the `audio` group so sound cards can be opened
-(`/etc/systemd/system/nereusd.service.d/serial.conf` and `audio.conf`). A one-time
+(`/etc/systemd/system/nereusd.service.d/serial.conf` and `audio.conf`). The
+package itself also ships the audio grant, as
+`/usr/lib/systemd/system/nereusd.service.d/audio.conf`, so a plain install of
+the `.deb` on any board can open a sound card; `verify-package.sh` checks for
+it. The image's file under `/etc` has the same name and content and takes
+precedence. The package does not ship the serial grant. A one-time
 service sets the hostname `nereus-station` before the daemon starts. Avahi
 publishes `nereus-station.local`; the station's own Bonjour advertisement is
 handled by `nereusd`. With `radio_mac` empty, the daemon uses the sole visible

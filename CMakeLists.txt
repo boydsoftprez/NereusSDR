@@ -3426,6 +3426,25 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             DESTINATION "${CMAKE_INSTALL_DATADIR}/nereusd"
             COMPONENT nereusd
             EXCLUDE_FROM_ALL)
+    # Sound cards: the unit runs as a DynamicUser account with no groups, and
+    # /dev/snd/* is root:audio 0660, so the Core opens a sound card only with
+    # SupplementaryGroups=audio. Ship that grant as a vendor drop-in beside
+    # the unit, from the one file the station images also install, so no
+    # install of a package can miss it: both .deb packages are made from this
+    # component. (The Pi 4 and Rock stage installers copy named files only
+    # and write the same grant under /etc themselves.) It is a drop-in, not a line in
+    # nereusd.service.in, because a group that does not exist stops the unit
+    # from starting; `audio` always exists on Debian and Ubuntu (base-passwd),
+    # and a source install on a distro without it removes or overrides this
+    # one file. A drop-in of the same name under /etc (the station images and
+    # the Pi 4 and Rock installers write one) takes precedence over it and
+    # has the same content. The serial (dialout) grant is not shipped here:
+    # that group's name does differ between distros (see nereusd.service.in).
+    install(FILES packaging/station-image/common/nereusd-audio.conf
+            DESTINATION "${NEREUSD_SYSTEMD_UNIT_DIR}/nereusd.service.d"
+            RENAME audio.conf
+            COMPONENT nereusd
+            EXCLUDE_FROM_ALL)
     # Source-stage installers for both ARM stations use the same bounded
     # artifact cleanup. Ship the helper with every daemon stage so a fresh
     # install does not depend on a separately provisioned maintenance file.

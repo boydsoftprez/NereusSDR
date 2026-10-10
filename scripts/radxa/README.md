@@ -6,6 +6,22 @@ and `prune-core-artifacts.py` into `/var/lib/nereus-build/` on Radxa. Copy
 `out/` directory. The stage script checks and publishes artifacts; it never
 installs them or restarts the Core.
 
+Beside the unit, the installer makes sure two drop-ins exist in
+`/etc/systemd/system/nereusd.service.d/`, because the unit runs as a
+`DynamicUser` account with no groups of its own: `audio.conf` adds the `audio`
+group so the Core can open sound cards, and `serial.conf` adds the `dialout`
+group so it can open serial accessories. They have the same content as the
+station images' `packaging/station-image/common/nereusd-audio.conf` and
+`nereusd-serial.conf`, and the Pi 4 installers write the same two files. The
+Rock was first set up by hand with `nereusd-audio.conf` and
+`nereusd-serial.conf`; either name counts as present and is left as found, so
+a box never has two files for one grant. A failed installation removes only
+the drop-ins it added. Without the audio grant the Core speaker cannot open
+(found on the Rock 5C bench Core on 2026-10-10). For a silent headphone jack
+with the card open, and for refused real-time priority on the Radxa vendor
+kernel, see "Sound from the Core's own sound card" in the top-level
+`README.md`.
+
 All three deployment operations use `/run/lock/nereus-core-deploy.lock`.
 The pruning helper expects its caller to hold this lock.
 
@@ -49,6 +65,8 @@ Run its temporary-filesystem tests without a radio or device:
 
 ```sh
 python3 scripts/radxa/test_prune_core_artifacts.py
+python3 scripts/radxa/test_deploy_retention.py
+python3 scripts/radxa/test_install_group_dropins.py
 ```
 
 The daemon stage now carries the shared maintenance helper, which the installer
