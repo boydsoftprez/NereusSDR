@@ -56,6 +56,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using namespace NereusSDR;
@@ -364,6 +365,7 @@ public:
     int playbackChannelsMax(int number, int) override
     {
         std::lock_guard<std::mutex> lock(mutex);
+        probed.append(number);
         return cards.contains(number) ? cards.value(number).channels : -ENODEV;
     }
     bool cardOnUsb(int number) override
@@ -389,8 +391,16 @@ public:
         cards[number].channels = channels;
     }
 
+    // The cards the probe opened, in order.
+    QList<int> takeProbed()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return std::exchange(probed, {});
+    }
+
     std::mutex mutex;
     QMap<int, Card> cards;
+    QList<int> probed;
 };
 
 FakeAlsaCardApi::Card fakeCard(const QString& id, const QString& name, int channels = 2,
@@ -821,6 +831,73 @@ private slots:
     // R-AUD-07: a card's channels are its PCM's maximum, so an 8-channel
     // card offers four pairs.  While the probe cannot open the PCM (busy,
     // often our own stream) the count read before stands, else two.
+    // R-AUD-30 (D31): a box that starts into a desktop leaves the desktop's
+    // cards alone, the channel probe too, until a Core speaker is picked.
+    void desktopBoxWithNoPickNeverProbes()
+    {
+        auto api = std::make_shared<FakeAlsaCardApi>();
+        api->setCard(0, fakeCard(QStringLiteral("Headphones"), QStringLiteral("bcm2835 Headphones")));
+        api->setCard(2, fakeCard(QStringLiteral("Interface"), QStringLiteral("USB 8ch Interface"), 8, true));
+        auto system = std::make_shared<AlsaDirectCardSystem>(api, QString(), AlsaOutputMaker{},
+                                                             kAlsaRefusedRelistMs, true);
+        AlsaDirectBackend backend(system);
+        const QList<AudioDeviceInfo> listed = backend.enumerate();
+        QCOMPARE(listed.size(), 2);
+        QCOMPARE(findId(listed, QStringLiteral("Interface,0"))->channelCount, 2);
+        QCOMPARE(findId(backend.enumerate(), QStringLiteral("Headphones,0"))->channelCount, 2);
+        QCOMPARE(api->takeProbed(), QList<int>{});
+    }
+
+    // With a pick, only the picked card is probed: when its stream is made
+    // and in each listing while it lives.  Once it is gone none is.
+    void desktopBoxProbesOnlyThePickedCard()
+    {
+        auto api = std::make_shared<FakeAlsaCardApi>();
+        api->setCard(0, fakeCard(QStringLiteral("Headphones"), QStringLiteral("bcm2835 Headphones")));
+        api->setCard(2, fakeCard(QStringLiteral("Interface"), QStringLiteral("USB 8ch Interface"), 8, true));
+        FakeOpener opener;
+        QList<AlsaCardRecord> made;
+        AlsaOutputMaker maker = [&opener, &made](const AlsaCardRecord& record, const AudioStreamRequest& request,
+                                                 std::shared_ptr<void> hold) -> std::unique_ptr<IAudioBus> {
+            made.append(record);
+            return std::make_unique<AlsaDirectBus>(record, request, opener.opener(), std::move(hold));
+        };
+        auto system = std::make_shared<AlsaDirectCardSystem>(api, QString(), maker, kAlsaRefusedRelistMs, true);
+        AlsaDirectBackend backend(system);
+        QVERIFY(backend.enumerate().size() == 2);
+        QCOMPARE(api->takeProbed(), QList<int>{});
+
+        std::unique_ptr<IAudioBus> bus = backend.createOutput(outputRequest(QStringLiteral("Interface,0")));
+        QVERIFY(bus != nullptr);
+        QCOMPARE(api->takeProbed(), QList<int>{2});
+        QCOMPARE(made.size(), 1);
+        QCOMPARE(made.front().channels, 8);
+
+        const QList<AudioDeviceInfo> listed = backend.enumerate();
+        QCOMPARE(api->takeProbed(), QList<int>{2});
+        QCOMPARE(findId(listed, QStringLiteral("Interface,0"))->channelCount, 8);
+        QCOMPARE(findId(listed, QStringLiteral("Headphones,0"))->channelCount, 2);
+
+        // The stream gone (a "(none)" pick closes it): the card is the
+        // desktop's again; its count read before stands.
+        bus.reset();
+        QCOMPARE(findId(backend.enumerate(), QStringLiteral("Interface,0"))->channelCount, 8);
+        QCOMPARE(api->takeProbed(), QList<int>{});
+    }
+
+    // A box without a desktop owns its cards: every card is probed.
+    void boxWithoutDesktopProbesEveryCard()
+    {
+        auto api = std::make_shared<FakeAlsaCardApi>();
+        api->setCard(0, fakeCard(QStringLiteral("Headphones"), QStringLiteral("bcm2835 Headphones")));
+        api->setCard(2, fakeCard(QStringLiteral("Interface"), QStringLiteral("USB 8ch Interface"), 8, true));
+        auto system = std::make_shared<AlsaDirectCardSystem>(api, QString(), AlsaOutputMaker{},
+                                                             kAlsaRefusedRelistMs, false);
+        AlsaDirectBackend backend(system);
+        QCOMPARE(findId(backend.enumerate(), QStringLiteral("Interface,0"))->channelCount, 8);
+        QCOMPARE(api->takeProbed(), (QList<int>{0, 2}));
+    }
+
     void multichannelCardListsItsPairs()
     {
         auto api = std::make_shared<FakeAlsaCardApi>();
