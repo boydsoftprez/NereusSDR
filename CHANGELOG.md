@@ -59,6 +59,12 @@ Advanced, and each control appears on one page only.
 - Digital modes holds VAX and TCI.
 - Every page opens at the top. Your saved audio settings carry over unchanged.
 
+### Tuner Genius XL firmware 1.2.44
+
+- A Tuner Genius XL on firmware 1.2.44 connects again. That firmware adds a
+  field to the tuner's network announcement, which NereusSDR rejected, so the
+  tuner stayed disconnected after the upgrade.
+
 ### Fixes
 
 - Tuning from a remote console no longer makes the receive audio stutter. The

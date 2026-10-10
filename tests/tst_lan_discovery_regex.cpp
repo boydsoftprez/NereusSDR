@@ -20,6 +20,7 @@ class LanDiscoveryRegexTest : public QObject {
     Q_OBJECT
 private slots:
     void parsesValidAnnouncement();
+    void parsesAnnouncementWithTrailingFields();
     void rejectsMalformedLine();
     void dedupsBySerial();
     void desktopHearsEveryNetwork();
@@ -66,6 +67,27 @@ void LanDiscoveryRegexTest::parsesValidAnnouncement() {
     QCOMPARE(args.at(3).toString(), QString("3.8.9"));
     QCOMPARE(args.at(4).toString(), QString("PGXL5678"));
     QCOMPARE(args.at(5).toString(), QString("ShackAmp"));
+}
+
+// TGXL firmware v1.2.44 appends a boot field after the nickname (captured
+// from the bench tuner, 2026-10-10). The fields before it still parse.
+void LanDiscoveryRegexTest::parsesAnnouncementWithTrailingFields() {
+    NereusSDR::LanDiscovery d;
+    QSignalSpy spy(&d, &NereusSDR::LanDiscovery::deviceDiscovered);
+    d.injectDatagramForTesting(
+        "TunerGenius ip=192.168.109.234 v=1.2.44 serial=241288-1 nickname=Tuner_Genius_XL boot=000003",
+        9010);
+    QCOMPARE(spy.count(), 1);
+    auto args = spy.takeFirst();
+    QCOMPARE(args.at(0).toString(), QString("TunerGenius"));
+    QCOMPARE(args.at(1).toString(), QString("192.168.109.234"));
+    QCOMPARE(args.at(3).toString(), QString("1.2.44"));
+    QCOMPARE(args.at(4).toString(), QString("241288-1"));
+    QCOMPARE(args.at(5).toString(), QString("Tuner_Genius_XL"));
+    // Trailing text that is not key=value is still malformed.
+    d.injectDatagramForTesting(
+        "TunerGenius ip=192.168.109.234 v=1.2.44 serial=OTHER nickname=Tuner trailing junk", 9010);
+    QCOMPARE(spy.count(), 0);
 }
 
 void LanDiscoveryRegexTest::rejectsMalformedLine() {
