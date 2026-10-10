@@ -9671,6 +9671,19 @@ if(NEREUS_GPU_SPECTRUM)
     nereus_add_test(tst_spectrum_gpu_buffer_growth NATIVE_WINDOW EXTRA_LABELS gpu)
 endif()
 
+# ── GPU dynamic overlay leaves no earlier frame below the spectrum ───────
+# The noise floor, peak-hold trace and peak blobs are painted into a
+# per-frame overlay texture covering the whole widget, which was cleared
+# and uploaded only over the current spectrum height. After the spectrum
+# got shorter (setSpectrumFrac, divider drag, re-layout) the lines drawn
+# while it was taller stayed over the frequency scale and the waterfall.
+# Grabs real GPU frames before and after the spectrum shrinks, so it needs a
+# native window and carries the `gpu` label; skips where no QRhi comes up.
+# NereusSDR-original.
+if(NEREUS_GPU_SPECTRUM)
+    nereus_add_test(tst_spectrum_gpu_dynamic_overlay_clear NATIVE_WINDOW EXTRA_LABELS gpu)
+endif()
+
 # The same rule without a GPU, on every platform CI runs: every combination
 # of planSpectrumTraceFrame()'s inputs binds each trace buffer it writes and
 # draws no fill or peak left from another trace, and MeterWidget's geometry

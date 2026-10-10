@@ -1054,6 +1054,10 @@ public:
     // dssFloorDbm() directly so the floor-anchoring math is testable
     // without standing up the noise-floor pipeline.
     void setMeasuredNoiseFloorForTest(float dbm) { m_noiseFloor.setLerpAverage(dbm); }
+    // The spectrum's rect in the current layout (logical pixels), so a
+    // native test can tell spectrum rows of a grabbed frame from the
+    // frequency scale and waterfall rows below them.
+    QRect spectrumRectForTest() const { return spectrumLayout().spectrum; }
     // updateSpectrumLinear() is the only production writer of
     // m_lastFullBinsDbm (see its definition); this seam drives
     // buildDssWideRow()'s production call path (via pushDssRow()) without
