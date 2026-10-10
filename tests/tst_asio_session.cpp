@@ -13,6 +13,11 @@
 //   2026-10-09: native audio plan Task 17: each use names its role, the
 //               session's buffer and rate. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan final fix wave (R-AUD-07, R-AUD-21):
+//               outputs on one pair add together, a reset adopts the
+//               driver's size and rate, the mic on the last input, a use
+//               the driver lacks, a reset inside createBuffers.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -289,6 +294,17 @@ AudioStreamRequest outputOn(const QString& driver, int first)
     return request;
 }
 
+// The window's AsioBackend opens nothing in a test run (TestSandboxInit
+// turns test mode on); a backend test over the fake link lifts that for
+// its own length, whatever test ran before it.
+struct BackendOpensInThisTest {
+    const bool was = QStandardPaths::isTestModeEnabled();
+    BackendOpensInThisTest() { QStandardPaths::setTestModeEnabled(false); }
+    ~BackendOpensInThisTest() { QStandardPaths::setTestModeEnabled(was); }
+    BackendOpensInThisTest(const BackendOpensInThisTest&) = delete;
+    BackendOpensInThisTest& operator=(const BackendOpensInThisTest&) = delete;
+};
+
 // The stream events a bus posted, recorded.
 struct EventLog {
     QList<AudioStreamEvent::Kind> kinds;
@@ -472,9 +488,11 @@ private slots:
         const float block[4] = {0.1f, 0.1f, 0.1f, 0.1f};
         otherEngine.push(reinterpret_cast<const char*>(block), sizeof(block));
 
-        // The driver's control panel changed the size; the next load gives it.
+        // The driver's control panel changed the size and the rate; the
+        // next load gives them.
         AsioDriverCaps changed = driverCaps(kFocusrite, 4, 2);
         changed.preferredBufferFrames = 512;
+        changed.currentRate = 44100.0;
         driver.setCaps(changed);
         driver.clearCalls();
 
@@ -497,13 +515,18 @@ private slots:
         const int stop = calls.indexOf(QStringLiteral("stop"));
         const int unload = calls.indexOf(QStringLiteral("disposeAndUnload"));
         const int load = calls.indexOf(QStringLiteral("load:") + kFocusrite);
-        const int create = calls.indexOf(QStringLiteral("createBuffers:256"));
+        const int create = calls.indexOf(QStringLiteral("createBuffers:512"));
         const int start = calls.indexOf(QStringLiteral("start"));
         QVERIFY2(stop >= 0 && stop < unload && unload < load && load < create && create < start,
                  qPrintable(calls.join(QLatin1Char(','))));
-        // The session keeps its own size (256); the driver's new caps are
-        // what caps() reports.
+        // R-AUD-21: the session restarts with the driver's new settings,
+        // its preferred size (512) and its current rate (44100), and does
+        // not set the old rate again.
         QCOMPARE(session.caps().preferredBufferFrames, 512);
+        QCOMPARE(session.bufferFrames(), 512);
+        QCOMPARE(session.sampleRate(), 44100.0);
+        QVERIFY2(!calls.contains(QStringLiteral("setSampleRate:48000")),
+                 qPrintable(calls.join(QLatin1Char(','))));
 
         // The other engine never noticed.
         QVERIFY(otherEngine.isOpen());
@@ -524,6 +547,62 @@ private slots:
         QTRY_COMPARE(restarted.count(), 1);
         QCoreApplication::processEvents();
         QCOMPARE(session.restartCount(), 1);
+    }
+
+    // Settled call 13 at the session: a reset the driver posts from inside
+    // ASIOCreateBuffers reaches the session and restarts it once.
+    void resetDuringCreateBuffersRestarts()
+    {
+        FakeAsioDriver driver;
+        driver.addDriver(driverCaps(kFocusrite, 4, 2));
+        AsioSession session(driver);
+        QSignalSpy restarted(session.notifier(), &AsioSessionNotifier::restarted);
+        driver.sendMessageDuringNextCreateBuffers(AsioMessage::ResetRequest);
+        QVERIFY(session.open(kFocusrite, 256, 48000.0, focusriteUses()));
+        QTRY_COMPARE(restarted.count(), 1);
+        QCOMPARE(session.restartCount(), 1);
+        QVERIFY(session.isOpen());
+    }
+
+    // R-AUD-21: what the session runs at after a reset is what the helper
+    // reports in its Restarted state (sendAsioRun reads bufferFrames() and
+    // sampleRate()), and the window's buses reopen for it.
+    void resetSizeReachesTheWindowsBuses()
+    {
+        const BackendOpensInThisTest opens;
+        FakeAsioDriver driver;
+        driver.addDriver(driverCaps(kFocusrite, 4, 2));
+        AsioSession session(driver);
+        QSignalSpy restarted(session.notifier(), &AsioSessionNotifier::restarted);
+        QVERIFY(session.open(kFocusrite, 256, 48000.0, focusriteUses()));
+
+        FakeLink link;
+        auto backend = linkedBackend(link);
+        EventLog log;
+        auto speakers = backend->createOutput(outputOn(kFocusrite, 3));
+        speakers->setStreamEventSink(log.sink());
+        QVERIFY2(speakers->open(AudioFormat{}), qPrintable(speakers->errorString()));
+        QCOMPARE(link.opens.last().bufferFrames, 256);
+        const quint32 serial = link.opens.last().serial;
+        backend->onAsioState(stateOf(serial, CaptureProtocol::AsioStateKind::Running,
+                                     session.bufferFrames(), session.sampleRate()));
+        QVERIFY(log.kinds.isEmpty());
+
+        AsioDriverCaps changed = driverCaps(kFocusrite, 4, 2);
+        changed.preferredBufferFrames = 512;
+        driver.setCaps(changed);
+        driver.fireMessage(AsioMessage::ResetRequest);
+        QTRY_COMPARE(restarted.count(), 1);
+        QCOMPARE(session.bufferFrames(), 512);
+
+        backend->onAsioState(stateOf(serial, CaptureProtocol::AsioStateKind::Restarted,
+                                     session.bufferFrames(), session.sampleRate()));
+        QCOMPARE(log.kinds, QList<AudioStreamEvent::Kind>{AudioStreamEvent::Kind::FormatChanged});
+        QCOMPARE(backend->sessionBufferFrames(), 512);
+        // The bus the stream supervisor opens again runs at the driver's size.
+        auto again = backend->createOutput(outputOn(kFocusrite, 1));
+        QVERIFY2(again->open(AudioFormat{}), qPrintable(again->errorString()));
+        QCOMPARE(link.opens.last().bufferFrames, 512);
     }
 
     void resetThatCannotReloadFails()
@@ -597,6 +676,151 @@ private slots:
         QCOMPARE(vax.m_rate.load(), 48000);
         QCOMPARE(vax.m_stereo[0], 0.75f);
         QCOMPARE(vax.m_stereo[1], 0.75f);
+    }
+
+    // R-AUD-07: speakers and headphones on the same pair play together.
+    // Every channel in use starts at silence each switch and each use adds
+    // in; a use with no reader leaves its channels silent.
+    void outputsOnOnePairAddTogether()
+    {
+        constexpr int kFrames = 256;
+        FakeAsioDriver driver;
+        driver.addDriver(driverCaps(kFocusrite, 4, 2));
+        AsioSession session(driver);
+        auto speakers = constantMatcher(kFrames);
+        auto headphones = constantMatcher(kFrames);
+        MatcherReader speakersReader = speakers->makeReader();
+        MatcherReader headphonesReader = headphones->makeReader();
+        const QList<AsioUse> uses = {
+            use(AudioRole::Speakers, kFocusrite, 1, AudioDeviceDirection::Output),
+            use(AudioRole::Headphones, kFocusrite, 1, AudioDeviceDirection::Output),
+            use(AudioRole::Vax1, kFocusrite, 3, AudioDeviceDirection::Output)};
+        QList<AsioEndpoint> endpoints(3);
+        endpoints[0].reader = &speakersReader;
+        endpoints[1].reader = &headphonesReader;   // endpoints[2]: no reader
+        QVERIFY(session.open(kFocusrite, kFrames, 48000.0, uses, endpoints));
+        QCOMPARE(driver.lastOutputChannels(), (QList<int>{0, 1, 2, 3}));
+        const int last = kFrames - 1;
+
+        // Something left in the third pair's buffers is overwritten with silence.
+        for (int half = 0; half < 2; ++half) {
+            for (int channel = 2; channel < 4; ++channel) {
+                for (int f = 0; f < kFrames; ++f) {
+                    static_cast<float*>(driver.buffer(AudioDeviceDirection::Output, channel, half))[f] = 0.9f;
+                }
+            }
+        }
+        for (int i = 0; i < 8; ++i) {
+            feedConstant(*speakers, 0.25f, -0.5f, kFrames);
+            feedConstant(*headphones, 0.125f, 0.75f, kFrames);
+            driver.fireBufferSwitch(i & 1);
+        }
+        QCOMPARE(floatAt(driver.buffer(AudioDeviceDirection::Output, 0, 1), last), 0.375f);
+        QCOMPARE(floatAt(driver.buffer(AudioDeviceDirection::Output, 1, 1), last), 0.25f);
+        QCOMPARE(floatAt(driver.buffer(AudioDeviceDirection::Output, 2, 1), last), 0.0f);
+        QCOMPARE(floatAt(driver.buffer(AudioDeviceDirection::Output, 3, 1), last), 0.0f);
+
+        // One muted (silence from its matcher): the other is still heard, alone.
+        for (int i = 0; i < 8; ++i) {
+            feedConstant(*speakers, 0.0f, 0.0f, kFrames);
+            feedConstant(*headphones, 0.125f, 0.75f, kFrames);
+            driver.fireBufferSwitch(i & 1);
+        }
+        QCOMPARE(floatAt(driver.buffer(AudioDeviceDirection::Output, 0, 1), last), 0.125f);
+        QCOMPARE(floatAt(driver.buffer(AudioDeviceDirection::Output, 1, 1), last), 0.75f);
+        for (int i = 0; i < 8; ++i) {
+            feedConstant(*speakers, 0.25f, -0.5f, kFrames);
+            feedConstant(*headphones, 0.0f, 0.0f, kFrames);
+            driver.fireBufferSwitch(i & 1);
+        }
+        QCOMPARE(floatAt(driver.buffer(AudioDeviceDirection::Output, 0, 1), last), 0.25f);
+        QCOMPARE(floatAt(driver.buffer(AudioDeviceDirection::Output, 1, 1), last), -0.5f);
+    }
+
+    // A one-channel output (the last odd output) gets left plus right,
+    // halved, added to any other use on it.
+    void oneChannelOutputFoldsIntoTheMix()
+    {
+        constexpr int kFrames = 256;
+        FakeAsioDriver driver;
+        driver.addDriver(driverCaps(kFocusrite, 3, 2));
+        AsioSession session(driver);
+        auto speakers = constantMatcher(kFrames);
+        auto headphones = constantMatcher(kFrames);
+        MatcherReader speakersReader = speakers->makeReader();
+        MatcherReader headphonesReader = headphones->makeReader();
+        const QList<AsioUse> uses = {
+            AsioUse{AudioRole::Speakers, kFocusrite, AudioChannelPair{3, 1}, AudioDeviceDirection::Output},
+            AsioUse{AudioRole::Headphones, kFocusrite, AudioChannelPair{3, 1}, AudioDeviceDirection::Output}};
+        QList<AsioEndpoint> endpoints(2);
+        endpoints[0].reader = &speakersReader;
+        endpoints[1].reader = &headphonesReader;
+        QVERIFY(session.open(kFocusrite, kFrames, 48000.0, uses, endpoints));
+        for (int i = 0; i < 8; ++i) {
+            feedConstant(*speakers, 0.25f, -0.5f, kFrames);    // folds to -0.125
+            feedConstant(*headphones, 0.5f, 0.25f, kFrames);   // folds to 0.375
+            driver.fireBufferSwitch(i & 1);
+        }
+        QCOMPARE(floatAt(driver.buffer(AudioDeviceDirection::Output, 2, 1), kFrames - 1), 0.25f);
+    }
+
+    // R-AUD-07 with ASIO: a mic pair that starts on the driver's last input
+    // runs on that one channel, as the native engines open it; a pair not
+    // on the driver at all is dropped, and runningPair() says so.
+    void micOnTheLastInputRunsOnOneChannel_data()
+    {
+        QTest::addColumn<int>("inputs");
+        QTest::newRow("third of three inputs") << 3;
+        QTest::newRow("a one-input driver") << 1;
+    }
+
+    void micOnTheLastInputRunsOnOneChannel()
+    {
+        QFETCH(int, inputs);
+        constexpr int kFrames = 256;
+        FakeAsioDriver driver;
+        driver.addDriver(driverCaps(kFocusrite, 2, inputs));
+        AsioSession session(driver);
+        RecordingSink mic;
+        QList<AsioEndpoint> endpoints(1);
+        endpoints[0].sink = &mic;
+        endpoints[0].pick = MicChannelPick::Both;
+        const QList<AsioUse> uses = {use(AudioRole::TxInput, kFocusrite, inputs, AudioDeviceDirection::Input)};
+        QVERIFY(session.open(kFocusrite, kFrames, 48000.0, uses, endpoints));
+        QCOMPARE(driver.lastInputChannels(), QList<int>{inputs - 1});
+        QCOMPARE(session.runningPair(0), std::optional<AudioChannelPair>(AudioChannelPair{inputs, 1}));
+        for (int f = 0; f < kFrames; ++f) {
+            static_cast<float*>(driver.buffer(AudioDeviceDirection::Input, inputs - 1, 0))[f] = 0.5f;
+        }
+        driver.fireBufferSwitch(0);
+        QCOMPARE(mic.m_posts.load(), 1);
+        QCOMPARE(mic.m_stereo[0], 0.5f);   // the one channel, heard once on both sides
+        QCOMPARE(mic.m_stereo[1], 0.5f);
+    }
+
+    void useNotOnTheDriverIsDropped()
+    {
+        FakeAsioDriver driver;
+        driver.addDriver(driverCaps(kFocusrite, 2, 2));
+        AsioSession session(driver);
+        RecordingSink mic;
+        QList<AsioEndpoint> endpoints(3);
+        endpoints[2].sink = &mic;
+        const QList<AsioUse> uses = {
+            use(AudioRole::Speakers, kFocusrite, 1, AudioDeviceDirection::Output),
+            use(AudioRole::Headphones, kFocusrite, 3, AudioDeviceDirection::Output),
+            use(AudioRole::TxInput, kFocusrite, 5, AudioDeviceDirection::Input)};
+        // The outputs run; only the speakers' pair is on the driver.
+        QVERIFY(session.open(kFocusrite, 256, 48000.0, uses, endpoints));
+        QCOMPARE(session.runningPair(0), std::optional<AudioChannelPair>(AudioChannelPair{1, 2}));
+        QVERIFY(!session.runningPair(1).has_value());
+        QVERIFY(!session.runningPair(2).has_value());
+        QVERIFY(!session.runningPair(3).has_value());
+        QVERIFY(driver.lastInputChannels().isEmpty());
+        driver.fireBufferSwitch(0);
+        QCOMPARE(mic.m_posts.load(), 0);
+        session.close();
+        QVERIFY(!session.runningPair(0).has_value());
     }
 
     void callbacksGoThroughTheOneSessionPointer()
@@ -955,6 +1179,44 @@ private slots:
         QVERIFY(headphones->open(AudioFormat{}));
         QCOMPARE(link.opens.last().bufferFrames, 256);
         QCOMPARE(link.opens.last().rate, 96000.0);
+    }
+
+    // A saved Outputs 3-4 opened before the driver's caps came, on a driver
+    // with two outputs: the helper drops that use and sends the caps with
+    // its running state; the bus is lost with the reason, the other plays.
+    void backendLosesABusWhosePairTheDriverLacks()
+    {
+        const BackendOpensInThisTest opens;
+        FakeLink link;
+        AsioBackend backend;
+        backend.setPreferencesSource([] { return AsioSessionPreferences{}; });
+        backend.setHelperLink(link.make());
+        CaptureProtocol::AsioCapsRecord list;
+        list.drivers = {kFocusrite};
+        backend.onAsioCaps(list);
+        EventLog beyondLog;
+        EventLog firstLog;
+        auto beyond = backend.createOutput(outputOn(kFocusrite, 3));
+        auto first = backend.createOutput(outputOn(kFocusrite, 1));
+        beyond->setStreamEventSink(beyondLog.sink());
+        first->setStreamEventSink(firstLog.sink());
+        QVERIFY(beyond->open(AudioFormat{}));              // caps not known: allowed
+        QVERIFY(first->open(AudioFormat{}));
+        const quint32 serial = link.opens.last().serial;
+
+        CaptureProtocol::AsioCapsRecord described;
+        described.drivers = list.drivers;
+        described.driver = kFocusrite;
+        described.caps = driverCaps(kFocusrite, 2, 2);
+        backend.onAsioCaps(described);
+        backend.onAsioState(stateOf(serial, CaptureProtocol::AsioStateKind::Running));
+        QCOMPARE(beyondLog.kinds, QList<AudioStreamEvent::Kind>{AudioStreamEvent::Kind::DeviceLost});
+        QVERIFY(firstLog.kinds.isEmpty());
+
+        // Its reopen is refused with the reason.
+        beyond->close();
+        QVERIFY(!beyond->open(AudioFormat{}));
+        QCOMPARE(beyond->errorString(), QStringLiteral("The chosen channels are not on %1").arg(kFocusrite));
     }
 
     void backendLosesItsOutputsWithTheHelper()

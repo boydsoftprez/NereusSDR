@@ -17,6 +17,12 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 15 (R-AUD-19, R-AUD-20, R-AUD-21).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan final fix wave (R-AUD-07, R-AUD-21):
+//               outputs on one pair mix; a reset adopts the driver's new
+//               buffer size and rate; a mic on the driver's last input runs
+//               on that one channel; runningPair(); the session pointer is
+//               set before the buffers are made.  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -75,7 +81,10 @@ public:
     // Opens the driver with these uses, closing whatever ran before.  The
     // buffer size and rate are the session's: the latest open's values
     // apply to every use (R-AUD-20).  rate 0 keeps the driver's own.
-    // endpoints is parallel to uses (missing entries play silence).
+    // endpoints is parallel to uses (missing entries play silence).  Uses
+    // on the same output channels are added together (R-AUD-07).  An input
+    // pair that starts on the driver's last input runs on that one channel;
+    // a use whose channels are not on the driver is dropped (runningPair).
     bool open(const QString& driver, int bufferFrames, double rate, const QList<AsioUse>& uses,
               const QList<AsioEndpoint>& endpoints = {});
     void close();
@@ -94,6 +103,9 @@ public:
     double sampleRate() const;             // the rate the session runs at
     AsioDriverFailure lastFailure() const; // why the last open or restart failed
     QString errorString() const;
+    // The channels use `index` (of open()'s uses) runs on now; nullopt while
+    // the session is closed or when the use was dropped.
+    std::optional<AudioChannelPair> runningPair(int index) const;
 
     // The buffer switch, as the driver's callback calls it (through the
     // one static pointer the SDK's C callbacks need).  No lock, no
@@ -103,8 +115,14 @@ public:
 private:
     struct OutputOp {
         MatcherReader* reader = nullptr;
-        AudioChannelPair pair;
-        std::array<std::vector<void*>, 2> planes;   // only this use's pair is set
+        int leftSlot = -1;                // its first channel's mix slot
+        int rightSlot = -1;               // -1: a one-channel pair, folded to one
+    };
+    // One output channel some use plays on: its mix, written to the driver
+    // once per switch.
+    struct MixChannel {
+        int channel = 0;                                // 0-based
+        std::array<std::vector<void*>, 2> planes;       // only this channel is set
     };
     struct InputOp {
         IAudioInputSink* sink = nullptr;
@@ -143,7 +161,11 @@ private:
     std::int64_t m_inputLatencyNs = 0;
     std::vector<OutputOp> m_outputs;
     std::vector<InputOp> m_inputs;
+    std::vector<MixChannel> m_mixChannels;
+    std::vector<float> m_mix;         // m_mixChannels.size() buffers of m_frames, sized at start
     std::vector<float> m_stereo;      // one buffer of stereo, sized at start
+    QList<std::optional<AudioChannelPair>> m_runningPairs;   // parallel to m_uses
+    std::atomic<bool> m_switchReady{false};   // the ops above are complete
     int m_restarts = 0;
     AsioDriverFailure m_failure = AsioDriverFailure::None;
     QString m_error;
