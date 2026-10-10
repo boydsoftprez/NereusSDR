@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09 : DynamicOverlayRows and m_overlayDynamicRows, the GPU
+//                 dynamic overlay's row tracking, and spectrumRectForTest().
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 : Rotor control plan Task 8: SpotMarker::bearingDeg, the
 //                 spot menu's Turn beam (setSpotBeamTurner,
 //                 buildSpotContextMenu) and spotTuned for auto-turn.
@@ -1054,6 +1057,45 @@ public:
     // dssFloorDbm() directly so the floor-anchoring math is testable
     // without standing up the noise-floor pipeline.
     void setMeasuredNoiseFloorForTest(float dbm) { m_noiseFloor.setLerpAverage(dbm); }
+    // The spectrum's rect in the current layout (logical pixels), so a
+    // native test can tell spectrum rows of a grabbed frame from the
+    // frequency scale and waterfall rows below them.
+    QRect spectrumRectForTest() const { return spectrumLayout().spectrum; }
+
+    // Which rows of the GPU dynamic overlay texture (device pixels, from
+    // the top) renderGpuFrame() clears and uploads. The texture covers the
+    // whole widget but is rebuilt only over the spectrum band, so this
+    // keeps the rows that may still hold pixels from an earlier frame: all
+    // of a freshly created texture (its memory is undefined), or the band
+    // last uploaded. Each upload covers those rows as well as the current
+    // band, so a spectrum that got shorter leaves no line below it.
+    // NereusSDR-original; tst_spectrum_dynamic_overlay_rows drives it.
+    class DynamicOverlayRows {
+    public:
+        // The texture was (re)created with `textureRows` rows.
+        void textureCreated(int textureRows)
+        {
+            m_textureRows = qMax(1, textureRows);
+            m_staleRows = m_textureRows;
+        }
+        // True when the rows that may hold earlier pixels differ from the
+        // band, so the overlay is rebuilt even if no feature asked for it.
+        bool needsRebuild(int bandRows) const { return m_staleRows != clampRows(bandRows); }
+        // Rows to clear and upload this frame for a band of `bandRows`.
+        // After that upload only the band can hold pixels.
+        int beginUpload(int bandRows)
+        {
+            const int band = clampRows(bandRows);
+            const int rows = qMax(band, m_staleRows);
+            m_staleRows = band;
+            return rows;
+        }
+
+    private:
+        int clampRows(int rows) const { return qBound(1, rows, m_textureRows); }
+        int m_textureRows{1};
+        int m_staleRows{1};
+    };
     // updateSpectrumLinear() is the only production writer of
     // m_lastFullBinsDbm (see its definition); this seam drives
     // buildDssWideRow()'s production call path (via pushDssRow()) without
@@ -3834,6 +3876,9 @@ private:
     QImage m_overlayDynamic;
     bool   m_overlayDynamicDirty{true};
     bool   m_overlayDynamicNeedsUpload{true};
+    // Rows of m_ovDynGpuTex that may still hold an earlier frame's
+    // pixels; renderGpuFrame() clears and uploads them with the band.
+    DynamicOverlayRows m_overlayDynamicRows;
 
     // 2026-05-25 perf fix: timestamp of the last per-frame "dynamic
     // overlay" force-dirty in updateSpectrumLinear.  Rate-limits the
