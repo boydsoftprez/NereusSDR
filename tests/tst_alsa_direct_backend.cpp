@@ -6,15 +6,20 @@
 // R-AUD-30, R-AUD-32; settled calls 9, 10, 13, 14 and 33).
 //
 // Every case runs on fakes: a fake system (cards, the configured default,
-// notices, desktop target) and a fake PCM behind the stream's opener.  The
-// inotify watcher runs on a temporary directory.  No card is opened; the
-// real adapter and the real opener are checked only for the test-run
-// barrier.
+// notices, desktop target), a fake ALSA card API under the adapter's own
+// listing, and a fake PCM behind the stream's opener.  The inotify
+// watcher runs on a temporary directory.  No card is opened; the real
+// adapter, the real card API and the real opener are checked only for the
+// test-run barrier.
 //
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 12 (R-AUD-01, R-AUD-11, R-AUD-25,
 //               R-AUD-30, R-AUD-32). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-09: final review fixes (R-AUD-07, R-AUD-25): attribute
+//               changes and refused nodes, multichannel cards, a lost
+//               stream, and the catalogue case without a wall-clock bound.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -23,6 +28,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
+#include <QMap>
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QTemporaryDir>
@@ -36,6 +42,7 @@
 #include "core/audio/AudioBackendRegistry.h"
 #include "core/audio/AudioDeviceCatalog.h"
 #include "core/audio/AudioDeviceMatching.h"
+#include "core/audio/AudioDeviceTypes.h"
 #include "core/audio/AudioTestBarrier.h"
 #include "fakes/FakeMatcherAudioBus.h"
 
@@ -56,6 +63,9 @@ using namespace NereusSDR;
 namespace {
 
 constexpr int kWaitMs = 5000;
+// The refused-listing delay the tests' systems use (the real one waits
+// kAlsaRefusedRelistMs for udev).
+constexpr int kTestRelistMs = 50;
 
 AlsaCardRecord card(int number, const QString& id, const QString& name, int device = 0,
                     const QString& bus = QString())
@@ -315,6 +325,85 @@ public:
     QString defaultTarget;
     FakeOpener* pcmOpener = nullptr;
 };
+
+// The ALSA calls under the real adapter's listing.  A card's control read
+// answers its queued results first, then its standing one.
+class FakeAlsaCardApi final : public IAlsaCardApi {
+public:
+    struct Card {
+        AlsaCardControlInfo info;
+        std::deque<int> queuedResults;
+        int result = 0;        // 0, or -errno
+        int channels = 2;      // the probe's answer, or -errno
+        bool usb = false;
+    };
+
+    QList<int> cardNumbers() override
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return cards.keys();
+    }
+    int readControl(int number, AlsaCardControlInfo& info) override
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        auto it = cards.find(number);
+        if (it == cards.end()) {
+            return -ENODEV;
+        }
+        int rc = it->result;
+        if (!it->queuedResults.empty()) {
+            rc = it->queuedResults.front();
+            it->queuedResults.pop_front();
+        }
+        if (rc < 0) {
+            return rc;
+        }
+        info = it->info;
+        return 0;
+    }
+    int playbackChannelsMax(int number, int) override
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return cards.contains(number) ? cards.value(number).channels : -ENODEV;
+    }
+    bool cardOnUsb(int number) override
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return cards.value(number).usb;
+    }
+    std::optional<int> configuredDefaultCard() override { return std::nullopt; }
+
+    void setCard(int number, Card card)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        cards.insert(number, std::move(card));
+    }
+    void setResult(int number, int result)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        cards[number].result = result;
+    }
+    void setChannels(int number, int channels)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        cards[number].channels = channels;
+    }
+
+    std::mutex mutex;
+    QMap<int, Card> cards;
+};
+
+FakeAlsaCardApi::Card fakeCard(const QString& id, const QString& name, int channels = 2,
+                               bool usb = false)
+{
+    FakeAlsaCardApi::Card c;
+    c.info.cardId = id;
+    c.info.cardName = name;
+    c.info.playbackDevices = {0};
+    c.channels = channels;
+    c.usb = usb;
+    return c;
+}
 
 class NullInputSink final : public IAudioInputSink {
 public:
@@ -592,10 +681,13 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(log.count() > before, kWaitMs);
     }
 
-    // R-AUD-25: a card plugged in shows in the catalogue within the
-    // debounce plus 100 ms of its notice, and goes the same way.
+    // R-AUD-25: a card plugged in shows in the catalogue after its notice,
+    // and goes the same way.  The catalogue's own tests measure its
+    // debounce window; here the list follows the notice, and that window
+    // leaves room in R-AUD-25's second.
     void pluggedCardReachesTheCatalogue()
     {
+        QVERIFY(AudioDeviceCatalog::kDebounceMs < 1000);
         auto system = std::make_shared<FakeAlsaSystem>();
         system->setRecords({headphones()});
         auto backend = std::make_shared<AlsaDirectBackend>(system);
@@ -604,27 +696,168 @@ private slots:
         QCOMPARE(catalogue.devices(AudioBackendId::AlsaDirect, AudioDeviceDirection::Output).size(), 1);
         QVERIFY(catalogue.backendRunning(AudioBackendId::AlsaDirect));
 
-        const int bound = AudioDeviceCatalog::kDebounceMs + 100;
         system->setRecords({headphones(), usbCard()});
-        QElapsedTimer timer;
-        timer.start();
         system->post(AudioNotice::DevicesChanged);
         QTRY_COMPARE_WITH_TIMEOUT(
             catalogue.devices(AudioBackendId::AlsaDirect, AudioDeviceDirection::Output).size(), 2,
-            bound);
-        QVERIFY2(timer.elapsed() <= bound, qPrintable(QString::number(timer.elapsed())));
+            kWaitMs);
         const QList<AudioDeviceInfo> listed =
             catalogue.devices(AudioBackendId::AlsaDirect, AudioDeviceDirection::Output);
         QVERIFY(findId(listed, QStringLiteral("Device,0")) != nullptr);
 
         system->setRecords({headphones()});
-        timer.restart();
         system->post(AudioNotice::DevicesChanged);
         QTRY_COMPARE_WITH_TIMEOUT(
             catalogue.devices(AudioBackendId::AlsaDirect, AudioDeviceDirection::Output).size(), 1,
-            bound);
-        QVERIFY2(timer.elapsed() <= bound, qPrintable(QString::number(timer.elapsed())));
+            kWaitMs);
         catalogue.stop();
+    }
+
+    // udev sets a new node's group (or ACL) after the kernel makes it, and
+    // that raises only IN_ATTRIB: a watched node's attribute change posts
+    // DevicesChanged; another name's does not.
+    void watcherPostsForAttributeChanges()
+    {
+        QTemporaryDir root;
+        QVERIFY(root.isValid());
+        const QString snd = root.filePath(QStringLiteral("snd"));
+        QVERIFY(QDir().mkpath(snd));
+        const QString control = snd + QStringLiteral("/controlC4");
+        const QString timer = snd + QStringLiteral("/timer");
+        QVERIFY(touch(control));
+        QVERIFY(touch(timer));
+        NoticeLog log;
+        AlsaNodeWatcher watcher(snd, log.sink());
+        QVERIFY(watcher.start());
+        QVERIFY(watcher.watchingDirectory());
+
+        const QFileDevice::Permissions ownerRw = QFileDevice::ReadOwner | QFileDevice::WriteOwner;
+        const QFileDevice::Permissions groupRw = ownerRw | QFileDevice::ReadGroup | QFileDevice::WriteGroup;
+        // An ignored name's change, then a watched one's: one notice.
+        QVERIFY(QFile::setPermissions(timer, groupRw));
+        QVERIFY(QFile::setPermissions(control, groupRw));
+        QTRY_COMPARE_WITH_TIMEOUT(log.count(), 1, kWaitMs);
+        QVERIFY(QFile::setPermissions(timer, ownerRw));
+        QVERIFY(QFile::setPermissions(control, ownerRw));
+        QTRY_COMPARE_WITH_TIMEOUT(log.count(), 2, kWaitMs);
+        watcher.stop();
+    }
+
+    // R-AUD-25: a card whose node refuses the listing (-EACCES, udev not
+    // done) asks for one more listing; one that stays refused is not
+    // asked for again until a node event; the group arriving (IN_ATTRIB)
+    // brings it in.
+    void refusedCardIsListedAgain()
+    {
+        QTemporaryDir root;
+        QVERIFY(root.isValid());
+        const QString snd = root.filePath(QStringLiteral("snd"));
+        QVERIFY(QDir().mkpath(snd));
+        auto api = std::make_shared<FakeAlsaCardApi>();
+        api->setCard(0, fakeCard(QStringLiteral("Headphones"), QStringLiteral("bcm2835 Headphones")));
+        AlsaDirectCardSystem system(api, snd, AlsaOutputMaker{}, kTestRelistMs);
+        NoticeLog log;
+        system.setNoticeSink(log.sink());
+        QCOMPARE(system.playbackCards().size(), 1);
+
+        // Plugged in; udev has not given the node its group.
+        FakeAlsaCardApi::Card usb =
+            fakeCard(QStringLiteral("Device"), QStringLiteral("USB Audio Device"), 2, true);
+        usb.result = -EACCES;
+        api->setCard(2, usb);
+        QVERIFY(touch(snd + QStringLiteral("/controlC2")));
+        QTRY_COMPARE_WITH_TIMEOUT(log.count(), 1, kWaitMs);
+        QCOMPARE(system.playbackCards().size(), 1);
+        // The refused listing asked for one more.
+        QTRY_COMPARE_WITH_TIMEOUT(log.count(), 2, kWaitMs);
+        QCOMPARE(system.playbackCards().size(), 1);
+        // Still refused: no more until a node event.  (A wrong notice can
+        // only come later than this wait, never make a right one fail.)
+        QTest::qWait(kTestRelistMs * 5);
+        QCOMPARE(log.count(), 2);
+
+        // udev sets the group: the attribute change alone brings it in.
+        api->setResult(2, 0);
+        QVERIFY(QFile::setPermissions(snd + QStringLiteral("/controlC2"),
+                                      QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                                          | QFileDevice::ReadGroup | QFileDevice::WriteGroup));
+        QTRY_COMPARE_WITH_TIMEOUT(log.count(), 3, kWaitMs);
+        const QList<AlsaCardRecord> records = system.playbackCards();
+        QCOMPARE(records.size(), 2);
+        QCOMPARE(records.at(1).cardId, QStringLiteral("Device"));
+        QCOMPARE(records.at(1).bus, QStringLiteral("usb"));
+    }
+
+    // R-AUD-25 through the catalogue: a card refused once (-EACCES) and
+    // answering after shows in the list with no further node event.
+    void refusedCardReachesTheCatalogue()
+    {
+        QTemporaryDir root;
+        QVERIFY(root.isValid());
+        const QString snd = root.filePath(QStringLiteral("snd"));
+        QVERIFY(QDir().mkpath(snd));
+        auto api = std::make_shared<FakeAlsaCardApi>();
+        api->setCard(0, fakeCard(QStringLiteral("Headphones"), QStringLiteral("bcm2835 Headphones")));
+        auto system = std::make_shared<AlsaDirectCardSystem>(api, snd, AlsaOutputMaker{}, kTestRelistMs);
+        auto backend = std::make_shared<AlsaDirectBackend>(system);
+        AudioDeviceCatalog catalogue({backend});
+        catalogue.start();
+        QCOMPARE(catalogue.devices(AudioBackendId::AlsaDirect, AudioDeviceDirection::Output).size(), 1);
+
+        FakeAlsaCardApi::Card usb =
+            fakeCard(QStringLiteral("Device"), QStringLiteral("USB Audio Device"), 2, true);
+        usb.queuedResults = {-EACCES};
+        api->setCard(2, usb);
+        QVERIFY(touch(snd + QStringLiteral("/controlC2")));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            catalogue.devices(AudioBackendId::AlsaDirect, AudioDeviceDirection::Output).size(), 2,
+            kWaitMs);
+        QVERIFY(findId(catalogue.devices(AudioBackendId::AlsaDirect, AudioDeviceDirection::Output),
+                       QStringLiteral("Device,0"))
+                != nullptr);
+        catalogue.stop();
+    }
+
+    // R-AUD-07: a card's channels are its PCM's maximum, so an 8-channel
+    // card offers four pairs.  While the probe cannot open the PCM (busy,
+    // often our own stream) the count read before stands, else two.
+    void multichannelCardListsItsPairs()
+    {
+        auto api = std::make_shared<FakeAlsaCardApi>();
+        api->setCard(0, fakeCard(QStringLiteral("Headphones"), QStringLiteral("bcm2835 Headphones")));
+        api->setCard(2, fakeCard(QStringLiteral("Interface"), QStringLiteral("USB 8ch Interface"), 8, true));
+        auto system = std::make_shared<AlsaDirectCardSystem>(api, QString(), AlsaOutputMaker{});
+        AlsaDirectBackend backend(system);
+        const QList<AudioDeviceInfo> listed = backend.enumerate();
+        const AudioDeviceInfo* multi = findId(listed, QStringLiteral("Interface,0"));
+        QVERIFY(multi != nullptr);
+        QCOMPARE(multi->channelCount, 8);
+        QCOMPARE(audioChannelPairs(multi->channelCount).size(), 4);
+        QCOMPARE(findId(listed, QStringLiteral("Headphones,0"))->channelCount, 2);
+
+        // Busy: the count read before stands.
+        api->setChannels(2, -EBUSY);
+        QCOMPARE(findId(backend.enumerate(), QStringLiteral("Interface,0"))->channelCount, 8);
+        // Busy and never read: two.
+        api->setCard(3, fakeCard(QStringLiteral("Busy"), QStringLiteral("Busy Card"), -EBUSY));
+        QCOMPARE(findId(backend.enumerate(), QStringLiteral("Busy,0"))->channelCount, 2);
+
+        // The stream asks for the pair's channels, as many as the card has.
+        AlsaCardRecord eight = card(2, QStringLiteral("Interface"), QStringLiteral("USB 8ch Interface"));
+        eight.channels = 8;
+        AudioStreamRequest request = outputRequest();
+        request.pair = AudioChannelPair{3, 2};
+        QCOMPARE(alsaPcmRequest(eight, request).channels, 4);
+        request.pair = AudioChannelPair{7, 2};
+        QCOMPARE(alsaPcmRequest(eight, request).channels, 8);
+        request.pair = AudioChannelPair{5, 1};
+        QCOMPARE(alsaPcmRequest(eight, request).channels, 5);
+        QCOMPARE(alsaPcmRequest(eight, outputRequest()).channels, 2);
+        request.pair = AudioChannelPair{3, 2};
+        QCOMPARE(alsaPcmRequest(usbCard(), request).channels, 2);
+        AlsaCardRecord mono = usbCard();
+        mono.channels = 1;
+        QCOMPARE(alsaPcmRequest(mono, outputRequest()).channels, 1);
     }
 
     // Settled call 14 and the PCM a request asks for.
@@ -781,8 +1014,31 @@ private slots:
         pcm->queue({0, -ENODEV, 0, 0});
         QTRY_COMPARE_WITH_TIMEOUT(events.take().size(), 1, kWaitMs);
         QCOMPARE(events.take().front(), AudioStreamEvent::Kind::DeviceLost);
-        // The writer ended: the rest of the script stays unread.
+        // The writer ended: the rest of the script stays unread, and the
+        // stream no longer reads open.
         QCOMPARE(pcm->queued(), 2);
+        QVERIFY(!bus.isOpen());
+        bus.close();
+        QCOMPARE(events.take().size(), 1);
+    }
+
+    // A loss before the engine sets its sink (it does so after open()
+    // returns) is kept and sent when the sink is set, once.
+    void lossBeforeTheSinkIsKept()
+    {
+        FakeOpener opener;
+        opener.prefill = 3;
+        AlsaDirectBus bus(usbCard(), outputRequest(), opener.opener());
+        QVERIFY(bus.open(AudioFormat{}));
+        const std::shared_ptr<FakePcmState> pcm = opener.last();
+        pcm->queue({-ENODEV});
+        QTRY_VERIFY_WITH_TIMEOUT(!bus.isOpen(), kWaitMs);
+        EventLog events;
+        bus.setStreamEventSink(events.sink());
+        QCOMPARE(events.take(), (QList<AudioStreamEvent::Kind>{AudioStreamEvent::Kind::DeviceLost}));
+        EventLog again;
+        bus.setStreamEventSink(again.sink());
+        QVERIFY(again.take().isEmpty());
         bus.close();
         QCOMPARE(events.take().size(), 1);
     }
@@ -896,6 +1152,15 @@ private slots:
         const AlsaPcmOpenResult opened = makeAlsaHwPcmOpener()(QStringLiteral("hw:0,0"), AlsaPcmRequest{});
         QVERIFY(opened.pcm == nullptr);
         QVERIFY(opened.detail.contains(QStringLiteral("test run")));
+
+        // The card API under the adapter reads no card either.
+        const std::shared_ptr<IAlsaCardApi> api = makeAlsaCardApi();
+        QVERIFY(api != nullptr);
+        QVERIFY(api->cardNumbers().isEmpty());
+        AlsaCardControlInfo info;
+        QVERIFY(api->readControl(0, info) < 0);
+        QVERIFY(api->playbackChannelsMax(0, 0) < 0);
+        QVERIFY(!api->configuredDefaultCard().has_value());
     }
 
     // R-AUD-25, R-AUD-08 through the engine and the supervisor on the

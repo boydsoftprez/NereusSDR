@@ -7,6 +7,9 @@
 //   2026-10-09: native audio plan Task 12 (R-AUD-01, R-AUD-25, R-AUD-30,
 //               R-AUD-32). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-09: final review fixes (R-AUD-07, R-AUD-25): IN_ATTRIB and one
+//               more listing after -EACCES; channel counts from the card.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AlsaDirectSystem.h"
@@ -19,7 +22,11 @@
 #include <QFileInfo>
 #include <QRegularExpression>
 
+#include <algorithm>
 #include <atomic>
+#include <cerrno>
+#include <chrono>
+#include <cstdint>
 #include <mutex>
 #include <thread>
 #include <utility>
@@ -28,7 +35,6 @@
 #if defined(Q_OS_LINUX)
 #include <alsa/asoundlib.h>
 
-#include <cerrno>
 #include <poll.h>
 #include <sys/eventfd.h>
 #include <sys/inotify.h>
@@ -41,6 +47,8 @@ namespace {
 
 const QString kGraphicalTarget = QStringLiteral("graphical.target");
 const QString kDevSnd = QStringLiteral("/dev/snd");
+// A sanity cap on a probed channel maximum (some drivers answer UINT_MAX).
+constexpr unsigned kAlsaMaxListedChannels = 64;
 
 } // namespace
 
@@ -97,13 +105,23 @@ bool alsaNodeIsWatched(const QString& name)
 // The inotify watcher.
 // ---------------------------------------------------------------------------
 struct AlsaNodeWatcher::Impl {
+    using Clock = std::chrono::steady_clock;
+
     QString directory;
     std::function<void(AudioNotice)> sink;
     std::thread thread;
     std::atomic<bool> watchingDir{false};
+
+    // relistOnceAfter(): the one more notice asked for, and whether it has
+    // been used since the last node event's notice.
+    std::mutex retryMutex;
+    std::optional<Clock::time_point> retryAt;
+    bool retryUsed = false;
+    bool threadRunning = false;   // under retryMutex
 #if defined(Q_OS_LINUX)
     int inotifyFd = -1;
     int stopFd = -1;
+    int wakeFd = -1;     // relistOnceAfter() wakes the poll
     int dirWd = -1;      // the thread's after start()
     int parentWd = -1;
     QByteArray dirPath;
@@ -113,8 +131,10 @@ struct AlsaNodeWatcher::Impl {
     // The directory, else its parent while it is missing.
     void watch()
     {
+        // IN_ATTRIB: udev gives a new node its group or ACL after the
+        // kernel makes it root-only, and that change is all it raises.
         dirWd = inotify_add_watch(inotifyFd, dirPath.constData(),
-                                  IN_CREATE | IN_DELETE | IN_MOVED_TO | IN_MOVED_FROM
+                                  IN_CREATE | IN_DELETE | IN_MOVED_TO | IN_MOVED_FROM | IN_ATTRIB
                                       | IN_DELETE_SELF | IN_MOVE_SELF | IN_ONLYDIR);
         if (dirWd >= 0) {
             if (parentWd >= 0) {
@@ -133,15 +153,48 @@ struct AlsaNodeWatcher::Impl {
         }
     }
 
+    // The poll timeout: until the asked-for notice is due, else forever.
+    int pollTimeoutMs()
+    {
+        std::lock_guard<std::mutex> lock(retryMutex);
+        if (!retryAt) {
+            return -1;
+        }
+        const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(*retryAt - Clock::now());
+        return int(std::max<std::int64_t>(0, std::int64_t(left.count()) + 1));
+    }
+
+    // True when the asked-for notice is due now (it is then used).
+    bool takeDueRetry()
+    {
+        std::lock_guard<std::mutex> lock(retryMutex);
+        if (!retryAt || Clock::now() < *retryAt) {
+            return false;
+        }
+        retryAt.reset();
+        retryUsed = true;
+        return true;
+    }
+
+    // A node event posted its notice: a refused listing may ask again,
+    // and a pending ask is covered by the notice just posted.
+    void nodeNoticePosted()
+    {
+        std::lock_guard<std::mutex> lock(retryMutex);
+        retryAt.reset();
+        retryUsed = false;
+    }
+
     void run()
     {
         // Big enough for many events with names; allocated before the loop.
         std::vector<char> buffer(16 * (sizeof(inotify_event) + NAME_MAX + 1));
-        pollfd fds[2] = {{inotifyFd, POLLIN, 0}, {stopFd, POLLIN, 0}};
+        pollfd fds[3] = {{inotifyFd, POLLIN, 0}, {stopFd, POLLIN, 0}, {wakeFd, POLLIN, 0}};
         for (;;) {
             fds[0].revents = 0;
             fds[1].revents = 0;
-            const int ready = poll(fds, 2, -1);
+            fds[2].revents = 0;
+            const int ready = poll(fds, 3, pollTimeoutMs());
             if (ready < 0) {
                 if (errno == EINTR) {
                     continue;
@@ -151,39 +204,46 @@ struct AlsaNodeWatcher::Impl {
             if ((fds[1].revents & POLLIN) != 0) {
                 return;
             }
-            if ((fds[0].revents & POLLIN) == 0) {
-                continue;
+            if ((fds[2].revents & POLLIN) != 0) {
+                std::uint64_t count = 0;
+                const ssize_t drained = read(wakeFd, &count, sizeof(count));
+                static_cast<void>(drained);
             }
             bool changed = false;
-            for (;;) {
-                const ssize_t got = read(inotifyFd, buffer.data(), buffer.size());
-                if (got <= 0) {
-                    break;
-                }
-                ssize_t offset = 0;
-                while (offset + ssize_t(sizeof(inotify_event)) <= got) {
-                    const auto* event = reinterpret_cast<const inotify_event*>(buffer.data() + offset);
-                    offset += ssize_t(sizeof(inotify_event)) + ssize_t(event->len);
-                    const QByteArray name = event->len > 0 ? QByteArray(event->name) : QByteArray();
-                    if (event->wd == dirWd && dirWd >= 0) {
-                        if ((event->mask & (IN_IGNORED | IN_DELETE_SELF | IN_MOVE_SELF)) != 0) {
-                            // The directory went: wait for it in its parent.
-                            if ((event->mask & IN_IGNORED) == 0) {
-                                inotify_rm_watch(inotifyFd, dirWd);
+            if ((fds[0].revents & POLLIN) != 0) {
+                for (;;) {
+                    const ssize_t got = read(inotifyFd, buffer.data(), buffer.size());
+                    if (got <= 0) {
+                        break;
+                    }
+                    ssize_t offset = 0;
+                    while (offset + ssize_t(sizeof(inotify_event)) <= got) {
+                        const auto* event = reinterpret_cast<const inotify_event*>(buffer.data() + offset);
+                        offset += ssize_t(sizeof(inotify_event)) + ssize_t(event->len);
+                        const QByteArray name = event->len > 0 ? QByteArray(event->name) : QByteArray();
+                        if (event->wd == dirWd && dirWd >= 0) {
+                            if ((event->mask & (IN_IGNORED | IN_DELETE_SELF | IN_MOVE_SELF)) != 0) {
+                                // The directory went: wait for it in its parent.
+                                if ((event->mask & IN_IGNORED) == 0) {
+                                    inotify_rm_watch(inotifyFd, dirWd);
+                                }
+                                dirWd = -1;
+                                watch();
+                                changed = true;
+                            } else if (alsaNodeIsWatched(QString::fromLatin1(name))) {
+                                changed = true;
                             }
-                            dirWd = -1;
+                        } else if (event->wd == parentWd && parentWd >= 0 && name == dirName) {
                             watch();
-                            changed = true;
-                        } else if (alsaNodeIsWatched(QString::fromLatin1(name))) {
-                            changed = true;
+                            changed = changed || dirWd >= 0;
                         }
-                    } else if (event->wd == parentWd && parentWd >= 0 && name == dirName) {
-                        watch();
-                        changed = changed || dirWd >= 0;
                     }
                 }
             }
             if (changed && sink) {
+                sink(AudioNotice::DevicesChanged);
+                nodeNoticePosted();
+            } else if (takeDueRetry() && sink) {
                 sink(AudioNotice::DevicesChanged);
             }
             watchingDir.store(dirWd >= 0);
@@ -221,9 +281,14 @@ bool AlsaNodeWatcher::start()
         return false;
     }
     d.stopFd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
-    if (d.stopFd < 0) {
-        close(d.inotifyFd);
-        d.inotifyFd = -1;
+    d.wakeFd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    if (d.stopFd < 0 || d.wakeFd < 0) {
+        for (int* fd : {&d.stopFd, &d.wakeFd, &d.inotifyFd}) {
+            if (*fd >= 0) {
+                close(*fd);
+                *fd = -1;
+            }
+        }
         qCWarning(lcAudio) << "ALSA direct cannot watch" << d.directory << "for cards";
         return false;
     }
@@ -231,6 +296,12 @@ bool AlsaNodeWatcher::start()
     d.watchingDir.store(d.dirWd >= 0);
     if (d.dirWd < 0 && d.parentWd < 0) {
         qCWarning(lcAudio) << "ALSA direct cannot watch" << d.directory << "or its parent";
+    }
+    {
+        std::lock_guard<std::mutex> lock(d.retryMutex);
+        d.retryAt.reset();
+        d.retryUsed = false;
+        d.threadRunning = true;
     }
     d.thread = std::thread([&d] { d.run(); });
     return true;
@@ -243,15 +314,22 @@ void AlsaNodeWatcher::stop()
 {
 #if defined(Q_OS_LINUX)
     Impl& d = *m_impl;
+    {
+        std::lock_guard<std::mutex> lock(d.retryMutex);
+        d.threadRunning = false;
+        d.retryAt.reset();
+    }
     if (d.thread.joinable()) {
         const std::uint64_t one = 1;
         const ssize_t written = write(d.stopFd, &one, sizeof(one));
         static_cast<void>(written);
         d.thread.join();
     }
-    if (d.stopFd >= 0) {
-        close(d.stopFd);
-        d.stopFd = -1;
+    for (int* fd : {&d.stopFd, &d.wakeFd}) {
+        if (*fd >= 0) {
+            close(*fd);
+            *fd = -1;
+        }
     }
     if (d.inotifyFd >= 0) {
         close(d.inotifyFd);   // removes every watch
@@ -268,75 +346,164 @@ bool AlsaNodeWatcher::watchingDirectory() const
     return m_impl->watchingDir.load();
 }
 
+void AlsaNodeWatcher::relistOnceAfter(int ms)
+{
+#if defined(Q_OS_LINUX)
+    Impl& d = *m_impl;
+    std::lock_guard<std::mutex> lock(d.retryMutex);
+    if (!d.threadRunning || d.retryUsed || d.retryAt) {
+        return;
+    }
+    d.retryAt = Impl::Clock::now() + std::chrono::milliseconds(std::max(0, ms));
+    const std::uint64_t one = 1;
+    const ssize_t written = write(d.wakeFd, &one, sizeof(one));
+    static_cast<void>(written);
+#else
+    static_cast<void>(ms);
+#endif
+}
+
 // ---------------------------------------------------------------------------
-// The real adapter.
+// The card listing.
+// ---------------------------------------------------------------------------
+AlsaCardListing listAlsaPlaybackCards(IAlsaCardApi& api, QHash<QString, int>& knownChannels)
+{
+    AlsaCardListing listing;
+    for (const int card : api.cardNumbers()) {
+        AlsaCardControlInfo control;
+        const int rc = api.readControl(card, control);
+        if (rc < 0) {
+            if (rc == -EACCES) {
+                // udev has not given the node its group yet.
+                listing.refused = true;
+            }
+            continue;
+        }
+        const QString bus = api.cardOnUsb(card) ? QStringLiteral("usb") : QString();
+        for (const int device : control.playbackDevices) {
+            AlsaCardRecord record;
+            record.card = card;
+            record.cardId = control.cardId;
+            record.cardName = control.cardName;
+            record.device = device;
+            record.bus = bus;
+            const QString id = alsaDeviceId(record);
+            const int channels = api.playbackChannelsMax(card, device);
+            if (channels > 0) {
+                record.channels = channels;
+                knownChannels.insert(id, channels);
+            } else {
+                if (channels == -EACCES) {
+                    listing.refused = true;
+                }
+                record.channels = knownChannels.value(id, 2);
+            }
+            listing.records.append(record);
+        }
+    }
+    return listing;
+}
+
+// ---------------------------------------------------------------------------
+// The machine's ALSA.
 // ---------------------------------------------------------------------------
 namespace {
 
 #if defined(Q_OS_LINUX)
-class RealAlsaDirectSystem final : public IAlsaDirectSystem {
+class RealAlsaCardApi final : public IAlsaCardApi {
 public:
-    ~RealAlsaDirectSystem() override
+    QList<int> cardNumbers() override
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        m_watcher.reset();
-    }
-
-    QList<AlsaCardRecord> playbackCards() override
-    {
-        QList<AlsaCardRecord> records;
+        QList<int> cards;
         if (audioDevicesBarredForTestRun()) {
-            return records;
-        }
-        snd_ctl_card_info_t* cardInfo = nullptr;
-        snd_pcm_info_t* pcmInfo = nullptr;
-        if (snd_ctl_card_info_malloc(&cardInfo) < 0 || snd_pcm_info_malloc(&pcmInfo) < 0) {
-            snd_ctl_card_info_free(cardInfo);
-            return records;
+            return cards;
         }
         int card = -1;
         while (snd_card_next(&card) == 0 && card >= 0) {
-            const QByteArray ctlName = QByteArrayLiteral("hw:") + QByteArray::number(card);
-            snd_ctl_t* ctl = nullptr;
-            if (snd_ctl_open(&ctl, ctlName.constData(), SND_CTL_NONBLOCK) < 0) {
-                continue;
-            }
-            if (snd_ctl_card_info(ctl, cardInfo) < 0) {
-                snd_ctl_close(ctl);
-                continue;
-            }
-            const QString cardId = QString::fromUtf8(snd_ctl_card_info_get_id(cardInfo));
-            const QString cardName = QString::fromUtf8(snd_ctl_card_info_get_name(cardInfo));
-            const QString bus =
-                QFileInfo::exists(QStringLiteral("/proc/asound/card%1/usbid").arg(card))
-                    ? QStringLiteral("usb")
-                    : QString();
-            int device = -1;
-            while (snd_ctl_pcm_next_device(ctl, &device) == 0 && device >= 0) {
-                snd_pcm_info_set_device(pcmInfo, unsigned(device));
-                snd_pcm_info_set_subdevice(pcmInfo, 0);
-                snd_pcm_info_set_stream(pcmInfo, SND_PCM_STREAM_PLAYBACK);
-                if (snd_ctl_pcm_info(ctl, pcmInfo) < 0) {
-                    continue;   // capture only
+            cards.append(card);
+        }
+        return cards;
+    }
+
+    int readControl(int card, AlsaCardControlInfo& info) override
+    {
+        if (audioDevicesBarredForTestRun()) {
+            return -ENODEV;
+        }
+        snd_ctl_card_info_t* cardInfo = nullptr;
+        snd_pcm_info_t* pcmInfo = nullptr;
+        if (snd_ctl_card_info_malloc(&cardInfo) < 0) {
+            return -ENOMEM;
+        }
+        if (snd_pcm_info_malloc(&pcmInfo) < 0) {
+            snd_ctl_card_info_free(cardInfo);
+            return -ENOMEM;
+        }
+        const QByteArray ctlName = QByteArrayLiteral("hw:") + QByteArray::number(card);
+        snd_ctl_t* ctl = nullptr;
+        int rc = snd_ctl_open(&ctl, ctlName.constData(), SND_CTL_NONBLOCK);
+        if (rc >= 0) {
+            rc = snd_ctl_card_info(ctl, cardInfo);
+            if (rc >= 0) {
+                info.cardId = QString::fromUtf8(snd_ctl_card_info_get_id(cardInfo));
+                info.cardName = QString::fromUtf8(snd_ctl_card_info_get_name(cardInfo));
+                int device = -1;
+                while (snd_ctl_pcm_next_device(ctl, &device) == 0 && device >= 0) {
+                    snd_pcm_info_set_device(pcmInfo, unsigned(device));
+                    snd_pcm_info_set_subdevice(pcmInfo, 0);
+                    snd_pcm_info_set_stream(pcmInfo, SND_PCM_STREAM_PLAYBACK);
+                    if (snd_ctl_pcm_info(ctl, pcmInfo) < 0) {
+                        continue;   // capture only
+                    }
+                    info.playbackDevices.append(device);
                 }
-                AlsaCardRecord record;
-                record.card = card;
-                record.cardId = cardId;
-                record.cardName = cardName;
-                record.device = device;
-                record.channels = 2;
-                record.bus = bus;
-                records.append(record);
             }
             snd_ctl_close(ctl);
         }
         snd_pcm_info_free(pcmInfo);
         snd_ctl_card_info_free(cardInfo);
-        return records;
+        return rc < 0 ? rc : 0;
+    }
+
+    int playbackChannelsMax(int card, int device) override
+    {
+        if (audioDevicesBarredForTestRun()) {
+            return -ENODEV;
+        }
+        const QByteArray name = QStringLiteral("hw:%1,%2").arg(card).arg(device).toUtf8();
+        snd_pcm_t* pcm = nullptr;
+        // Non-blocking: a PCM a program plays on answers -EBUSY at once.
+        int rc = snd_pcm_open(&pcm, name.constData(), SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK);
+        if (rc < 0) {
+            return rc;
+        }
+        snd_pcm_hw_params_t* hw = nullptr;
+        rc = snd_pcm_hw_params_malloc(&hw);
+        if (rc >= 0) {
+            rc = snd_pcm_hw_params_any(pcm, hw);
+            unsigned channels = 0;
+            if (rc >= 0) {
+                rc = snd_pcm_hw_params_get_channels_max(hw, &channels);
+            }
+            if (rc >= 0) {
+                rc = int(std::min<unsigned>(channels, kAlsaMaxListedChannels));
+            }
+            snd_pcm_hw_params_free(hw);
+        }
+        snd_pcm_close(pcm);
+        return rc;
+    }
+
+    bool cardOnUsb(int card) override
+    {
+        return QFileInfo::exists(QStringLiteral("/proc/asound/card%1/usbid").arg(card));
     }
 
     std::optional<int> configuredDefaultCard() override
     {
+        if (audioDevicesBarredForTestRun()) {
+            return std::nullopt;
+        }
         snd_config_t* top = nullptr;
         if (snd_config_update_ref(&top) < 0 || top == nullptr) {
             return std::nullopt;
@@ -353,43 +520,100 @@ public:
         snd_config_unref(top);
         return result;
     }
-
-    void setNoticeSink(std::function<void(AudioNotice)> sink) override
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        m_watcher.reset();
-        if (!sink || audioDevicesBarredForTestRun()) {
-            return;
-        }
-        m_watcher = std::make_unique<AlsaNodeWatcher>(kDevSnd, std::move(sink));
-        if (!m_watcher->start()) {
-            m_watcher.reset();
-        }
-    }
-
-    std::unique_ptr<IAudioBus> createOutput(const AlsaCardRecord& card,
-                                            const AudioStreamRequest& request) override
-    {
-        return std::make_unique<AlsaDirectBus>(card, request, makeAlsaHwPcmOpener());
-    }
-
-    QString defaultTargetPath() override
-    {
-        return systemdDefaultTargetPath(systemdDefaultTargetCandidates());
-    }
-
-private:
-    std::mutex m_mutex;
-    std::unique_ptr<AlsaNodeWatcher> m_watcher;
+};
+#else
+class NoAlsaCardApi final : public IAlsaCardApi {
+public:
+    QList<int> cardNumbers() override { return {}; }
+    int readControl(int, AlsaCardControlInfo&) override { return -ENODEV; }
+    int playbackChannelsMax(int, int) override { return -ENODEV; }
+    bool cardOnUsb(int) override { return false; }
+    std::optional<int> configuredDefaultCard() override { return std::nullopt; }
 };
 #endif
 
 } // namespace
 
+std::shared_ptr<IAlsaCardApi> makeAlsaCardApi()
+{
+#if defined(Q_OS_LINUX)
+    return std::make_shared<RealAlsaCardApi>();
+#else
+    return std::make_shared<NoAlsaCardApi>();
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// The system.
+// ---------------------------------------------------------------------------
+AlsaDirectCardSystem::AlsaDirectCardSystem(std::shared_ptr<IAlsaCardApi> api, QString watchDirectory,
+                                           AlsaOutputMaker makeOutput, int refusedRelistMs)
+    : m_api(std::move(api))
+    , m_watchDirectory(std::move(watchDirectory))
+    , m_makeOutput(std::move(makeOutput))
+    , m_refusedRelistMs(refusedRelistMs)
+{
+}
+
+AlsaDirectCardSystem::~AlsaDirectCardSystem()
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_watcher.reset();
+}
+
+QList<AlsaCardRecord> AlsaDirectCardSystem::playbackCards()
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (!m_api) {
+        return {};
+    }
+    AlsaCardListing listing = listAlsaPlaybackCards(*m_api, m_knownChannels);
+    if (listing.refused && m_watcher) {
+        m_watcher->relistOnceAfter(m_refusedRelistMs);
+    }
+    return listing.records;
+}
+
+std::optional<int> AlsaDirectCardSystem::configuredDefaultCard()
+{
+    return m_api ? m_api->configuredDefaultCard() : std::nullopt;
+}
+
+void AlsaDirectCardSystem::setNoticeSink(std::function<void(AudioNotice)> sink)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_watcher.reset();
+    if (!sink || m_watchDirectory.isEmpty()) {
+        return;
+    }
+    m_watcher = std::make_unique<AlsaNodeWatcher>(m_watchDirectory, std::move(sink));
+    if (!m_watcher->start()) {
+        m_watcher.reset();
+    }
+}
+
+std::unique_ptr<IAudioBus> AlsaDirectCardSystem::createOutput(const AlsaCardRecord& card,
+                                                              const AudioStreamRequest& request)
+{
+    return m_makeOutput ? m_makeOutput(card, request) : nullptr;
+}
+
+QString AlsaDirectCardSystem::defaultTargetPath()
+{
+    return systemdDefaultTargetPath(systemdDefaultTargetCandidates());
+}
+
 std::unique_ptr<IAlsaDirectSystem> makeAlsaDirectSystem()
 {
 #if defined(Q_OS_LINUX)
-    return std::make_unique<RealAlsaDirectSystem>();
+    // In a test run nothing is watched; the API lists nothing and every
+    // open fails as well.
+    const QString directory = audioDevicesBarredForTestRun() ? QString() : kDevSnd;
+    return std::make_unique<AlsaDirectCardSystem>(
+        makeAlsaCardApi(), directory,
+        [](const AlsaCardRecord& card, const AudioStreamRequest& request) -> std::unique_ptr<IAudioBus> {
+            return std::make_unique<AlsaDirectBus>(card, request, makeAlsaHwPcmOpener());
+        });
 #else
     return nullptr;
 #endif

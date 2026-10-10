@@ -7,6 +7,10 @@
 //   2026-10-09: native audio plan Task 12 (R-AUD-11, R-AUD-15, R-AUD-25,
 //               R-AUD-32). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-09: final review fixes (R-AUD-07, R-AUD-25): a lost stream
+//               reads closed and a loss before the sink is kept for it;
+//               the request asks for the pair's channels. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AlsaDirectBus.h"
@@ -50,7 +54,12 @@ AlsaPcmRequest alsaPcmRequest(const AlsaCardRecord& record, const AudioStreamReq
 {
     AlsaPcmRequest out;
     out.rate = 48000;
-    out.channels = std::clamp(record.channels, 1, 2);
+    // Enough channels for the request's pair (two at least, so a stereo
+    // pair stays as today), as many as the card has at most.
+    const int cardChannels = std::max(1, record.channels);
+    const int pairLast = std::max(1, request.pair.firstChannel)
+                         + std::clamp(request.pair.channelCount, 1, 2) - 1;
+    out.channels = std::clamp(std::max(2, pairLast), 1, cardChannels);
     out.periodFrames = request.bufferFrames > 0 ? request.bufferFrames : kAlsaDefaultPeriodFrames;
     out.periods = kAlsaPeriods;
     return out;
@@ -119,6 +128,7 @@ struct AlsaDirectBus::Impl {
 
     std::atomic<bool> stop{false};
     std::atomic<bool> open{false};
+    std::atomic<bool> writerLost{false};
     std::atomic<int> underruns{0};
     std::atomic<std::int64_t> latencyNs{-1};
     std::atomic<std::uint64_t> consumedFrames{0};
@@ -126,6 +136,8 @@ struct AlsaDirectBus::Impl {
 
     std::mutex sinkMutex;
     std::function<void(const AudioStreamEvent&)> sink;
+    // A loss posted before a sink was set, sent when one is (under sinkMutex).
+    std::optional<AudioStreamEvent> pendingEvent;
 
     AudioFormat format;
     QString error;
@@ -134,17 +146,21 @@ struct AlsaDirectBus::Impl {
     void post(AudioStreamEvent::Kind kind, const QString& detail)
     {
         // The writer's exit path only, never while it plays.
+        AudioStreamEvent event;
+        event.kind = kind;
+        event.detail = detail;
         std::function<void(const AudioStreamEvent&)> s;
         {
             std::lock_guard<std::mutex> lock(sinkMutex);
             s = sink;
+            if (!s) {
+                // The engine sets its sink after open() returns; a loss in
+                // between waits for it.
+                pendingEvent = event;
+                return;
+            }
         }
-        if (s) {
-            AudioStreamEvent event;
-            event.kind = kind;
-            event.detail = detail;
-            s(event);
-        }
+        s(event);
     }
 
     void signalStarted(bool ok)
@@ -222,6 +238,10 @@ struct AlsaDirectBus::Impl {
         if (!startedSet) {
             signalStarted(false);
         } else if (lost) {
+            // No writer plays any more: the stream is not open (open()
+            // reads `writerLost` after it marks the stream open).
+            writerLost.store(true);
+            open.store(false);
             post(AudioStreamEvent::Kind::DeviceLost, QStringLiteral("The sound card went away"));
         }
         leaveAudioThreadPriority(priority);
@@ -298,6 +318,11 @@ bool AlsaDirectBus::open(const AudioFormat& format)
     d.consumedFrames.store(0);
     d.latencyNs.store(-1);
     d.stop.store(false);
+    d.writerLost.store(false);
+    {
+        std::lock_guard<std::mutex> lock(d.sinkMutex);
+        d.pendingEvent.reset();
+    }
     d.started = std::promise<bool>();
     d.startedSet = false;
     std::future<bool> started = d.started.get_future();
@@ -320,7 +345,11 @@ bool AlsaDirectBus::open(const AudioFormat& format)
     d.format.channels = 2;
     d.format.sample = AudioFormat::Sample::Float32;
     d.error.clear();
-    d.open.store(true, std::memory_order_release);
+    d.open.store(true);
+    if (d.writerLost.load()) {
+        // Lost between the start and here: the event waits for the sink.
+        d.open.store(false);
+    }
     return true;
 }
 
@@ -414,8 +443,19 @@ bool AlsaDirectBus::openRefusedInUse() const
 
 void AlsaDirectBus::setStreamEventSink(std::function<void(const AudioStreamEvent&)> sink)
 {
-    std::lock_guard<std::mutex> lock(m_impl->sinkMutex);
-    m_impl->sink = std::move(sink);
+    std::optional<AudioStreamEvent> pending;
+    std::function<void(const AudioStreamEvent&)> s;
+    {
+        std::lock_guard<std::mutex> lock(m_impl->sinkMutex);
+        m_impl->sink = std::move(sink);
+        if (m_impl->sink && m_impl->pendingEvent) {
+            pending = std::exchange(m_impl->pendingEvent, std::nullopt);
+            s = m_impl->sink;
+        }
+    }
+    if (pending) {
+        s(*pending);
+    }
 }
 
 // The device buffer is one period; the device latency the delay read at open.

@@ -10,6 +10,9 @@
 //   2026-10-09: Task 11 fix round 1 (R-AUD-03): not running while the
 //               server is away, even when forced. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: final review fix (R-AUD-03): opens resolve from the last
+//               listing. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/audio/PulseAudioBackend.h"
@@ -89,7 +92,12 @@ QList<AudioDeviceInfo> PulseAudioBackend::enumerate()
     if (!m_system) {
         return {};
     }
-    return pulseDevicesFromRecords(m_system->devices(),
+    QList<PulseDeviceRecord> records = m_system->devices();
+    {
+        std::lock_guard<std::mutex> lock(m_recordsMutex);
+        m_lastRecords = records;
+    }
+    return pulseDevicesFromRecords(records,
                                    m_system->defaultName(AudioDeviceDirection::Output),
                                    m_system->defaultName(AudioDeviceDirection::Input));
 }
@@ -116,19 +124,38 @@ void PulseAudioBackend::setNoticeSink(std::function<void(AudioNotice)> sink)
 std::optional<PulseDeviceRecord> PulseAudioBackend::deviceFor(const QString& deviceId,
                                                               AudioDeviceDirection direction)
 {
+    // The default's name is the connection's own state, not a query.
     const QString wanted = deviceId.isEmpty() ? m_system->defaultName(direction) : deviceId;
     if (!wanted.isEmpty()) {
-        for (const PulseDeviceRecord& record : m_system->devices()) {
-            if (record.name == wanted && pulseDeviceIsListed(record)
-                && directionOf(record) == direction) {
-                return record;
-            }
+        QList<PulseDeviceRecord> last;
+        {
+            std::lock_guard<std::mutex> lock(m_recordsMutex);
+            last = m_lastRecords;
+        }
+        if (std::optional<PulseDeviceRecord> found = findListed(last, wanted, direction)) {
+            return found;
+        }
+        // Not in the last listing (none yet, or a device since added): ask.
+        if (std::optional<PulseDeviceRecord> found = findListed(m_system->devices(), wanted, direction)) {
+            return found;
         }
     }
     if (deviceId.isEmpty()) {
         PulseDeviceRecord followDefault;   // an empty name follows the server default
         followDefault.isSink = direction == AudioDeviceDirection::Output;
         return followDefault;
+    }
+    return std::nullopt;
+}
+
+std::optional<PulseDeviceRecord> PulseAudioBackend::findListed(const QList<PulseDeviceRecord>& records,
+                                                               const QString& wanted,
+                                                               AudioDeviceDirection direction)
+{
+    for (const PulseDeviceRecord& record : records) {
+        if (record.name == wanted && pulseDeviceIsListed(record) && directionOf(record) == direction) {
+            return record;
+        }
     }
     return std::nullopt;
 }

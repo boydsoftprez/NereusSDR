@@ -107,7 +107,11 @@ public:
 
     bool running() override { return isRunning.load(); }
     std::optional<QString> serverName() override { return name; }
-    QList<PulseDeviceRecord> devices() override { return records; }
+    QList<PulseDeviceRecord> devices() override
+    {
+        deviceQueries.fetch_add(1);
+        return records;
+    }
     QString defaultName(AudioDeviceDirection direction) override
     {
         return direction == AudioDeviceDirection::Output ? defaultSink : defaultSource;
@@ -145,6 +149,7 @@ public:
     }
 
     std::atomic<bool> isRunning{true};
+    std::atomic<int> deviceQueries{0};   // devices() calls: each a server round trip in the real one
     std::optional<QString> name = QStringLiteral("pulseaudio");
     QList<PulseDeviceRecord> records;
     QString defaultSink;
@@ -361,6 +366,8 @@ struct FakePulseServer {
 // Short in the test so the waits stay short; the real interval is
 // kPulseReconnectIntervalMs.
 constexpr int kTestRetryMs = 20;
+// How soon this thread's event loop must run while a try is in flight.
+constexpr int kThreadFreeBoundMs = 1000;
 
 // The system's own log lines, expected where a case makes them.
 void expectLost()
@@ -572,6 +579,43 @@ private slots:
         QTest::ignoreMessage(QtWarningMsg,
                              "PulseAudio does not list the input \"alsa_output.pci-0000_00_1f.3.analog-stereo.monitor\"");
         QVERIFY(backend.createInput(monitor, MicChannelPick::Left, &sink) == nullptr);
+    }
+
+    // An open resolves its device from the last listing and asks the
+    // server nothing (opens run on the main thread); only a device the
+    // listing does not hold is asked for live.
+    void opensResolveFromTheLastListing()
+    {
+        auto owned = std::make_unique<FakePulseAudioSystem>();
+        FakePulseAudioSystem* system = owned.get();
+        system->records = desktopRecords();
+        system->defaultSink = QStringLiteral("bluez_sink.AA_BB_CC_DD_EE_FF.a2dp_sink");
+        PulseAudioBackend backend(std::move(owned));
+        QVERIFY(!backend.enumerate().isEmpty());
+        const int afterListing = system->deviceQueries.load();
+
+        AudioStreamRequest named;
+        named.deviceId = QStringLiteral("alsa_output.usb-Focusrite.multichannel-output");
+        QVERIFY(backend.createOutput(named) != nullptr);
+        QCOMPARE(system->outputs.back().device.name, named.deviceId);
+        QVERIFY(backend.createOutput(AudioStreamRequest{}) != nullptr);
+        QCOMPARE(system->outputs.back().device.name, system->defaultSink);
+        FakeInputSink sink;
+        AudioStreamRequest mic;
+        mic.direction = AudioDeviceDirection::Input;
+        mic.deviceId = QStringLiteral("alsa_input.pci-0000_00_1f.3.analog-stereo");
+        QVERIFY(backend.createInput(mic, MicChannelPick::Left, &sink) != nullptr);
+        QCOMPARE(system->deviceQueries.load(), afterListing);
+
+        // A device added since the listing: asked for once, live.
+        PulseDeviceRecord added = desktopRecords().front();
+        added.name = QStringLiteral("alsa_output.usb-New.analog-stereo");
+        system->records.append(added);
+        AudioStreamRequest fresh;
+        fresh.deviceId = added.name;
+        QVERIFY(backend.createOutput(fresh) != nullptr);
+        QCOMPARE(system->outputs.back().device.name, added.name);
+        QCOMPARE(system->deviceQueries.load(), afterListing + 1);
     }
 
     // The stream a device opens: buffer frames to tlength and minreq (128
@@ -974,10 +1018,12 @@ private slots:
         QTRY_VERIFY(server.heldTries.load() >= 1);
         const int triesAtHold = server.tries.load();
 
-        // This thread's event loop runs while the try hangs.
+        // This thread's event loop runs while the try hangs (it is held
+        // until released below, so any bound shows it; the slow PipeWire
+        // try's half is used for both).
         bool fired = false;
         QTimer::singleShot(0, [&fired] { fired = true; });
-        QTRY_VERIFY_WITH_TIMEOUT(fired, 100);
+        QTRY_VERIFY_WITH_TIMEOUT(fired, kThreadFreeBoundMs);
         QTest::qWait(kTestRetryMs * 5);   // timers fire; no second try starts
         QCOMPARE(server.inFlight.load(), 1);
         QCOMPARE(server.tries.load(), triesAtHold);
