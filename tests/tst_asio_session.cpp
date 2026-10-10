@@ -569,7 +569,7 @@ private slots:
     // sampleRate()), and the window's buses reopen for it.
     void resetSizeReachesTheWindowsBuses()
     {
-        const BackendOpensInThisTest opens;
+        const BackendOpensInThisTest liftTestMode;
         FakeAsioDriver driver;
         driver.addDriver(driverCaps(kFocusrite, 4, 2));
         AsioSession session(driver);
@@ -906,6 +906,7 @@ private slots:
 
     void backendIsBarredInATestRun()
     {
+        const bool was = QStandardPaths::isTestModeEnabled();
         QStandardPaths::setTestModeEnabled(true);
         FakeLink link;
         AsioBackend backend;
@@ -914,7 +915,7 @@ private slots:
         const bool listed = !backend.enumerate().isEmpty();
         auto bus = backend.createOutput(outputOn(kFocusrite, 1));
         const bool opened = bus->open(AudioFormat{});
-        QStandardPaths::setTestModeEnabled(false);
+        QStandardPaths::setTestModeEnabled(was);
         QVERIFY(!running);
         QVERIFY(!listed);
         QVERIFY(!opened);
@@ -926,6 +927,7 @@ private slots:
 
     void backendWithoutTheHelperOpensNothing()
     {
+        const BackendOpensInThisTest liftTestMode;
         AsioBackend backend;
         QVERIFY(!backend.running());
         QVERIFY(backend.enumerate().isEmpty());
@@ -937,6 +939,7 @@ private slots:
 
     void backendListsTheDescribedDrivers()
     {
+        const BackendOpensInThisTest liftTestMode;
         FakeLink link;
         AsioBackend backend;
         int notices = 0;
@@ -1010,6 +1013,7 @@ private slots:
 
     void backendSendsEveryUseOfTheSession()
     {
+        const BackendOpensInThisTest liftTestMode;
         FakeLink link;
         auto backend = linkedBackend(link);
         auto speakers = backend->createOutput(outputOn(kFocusrite, 3));
@@ -1087,6 +1091,7 @@ private slots:
     // buffer and rate, and the control panel while no output runs.
     void backendNamesEachUsesRole()
     {
+        const BackendOpensInThisTest liftTestMode;
         FakeLink link;
         auto backend = linkedBackend(link);
         backend->openControlPanel(kFocusrite);   // no output: the helper decides
@@ -1117,6 +1122,7 @@ private slots:
 
     void backendMapsInUseToEveryRoleOnTheDriver()
     {
+        const BackendOpensInThisTest liftTestMode;
         FakeLink link;
         auto backend = linkedBackend(link);
         EventLog speakersLog;
@@ -1153,6 +1159,7 @@ private slots:
 
     void backendReopensOnANewBufferOrRate()
     {
+        const BackendOpensInThisTest liftTestMode;
         FakeLink link;
         auto backend = linkedBackend(link);
         EventLog log;
@@ -1186,7 +1193,7 @@ private slots:
     // its running state; the bus is lost with the reason, the other plays.
     void backendLosesABusWhosePairTheDriverLacks()
     {
-        const BackendOpensInThisTest opens;
+        const BackendOpensInThisTest liftTestMode;
         FakeLink link;
         AsioBackend backend;
         backend.setPreferencesSource([] { return AsioSessionPreferences{}; });
@@ -1221,6 +1228,7 @@ private slots:
 
     void backendLosesItsOutputsWithTheHelper()
     {
+        const BackendOpensInThisTest liftTestMode;
         FakeLink link;
         auto backend = linkedBackend(link);
         EventLog log;
