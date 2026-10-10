@@ -57,6 +57,11 @@
 // a second driver asked first), and keeps a missing choice as "<name> (not
 // connected)"; a card's line is its channel's state sentence; Rescan
 // rescans the older drivers and waits for their new list.
+//
+// 2026-10-09 (R-AUD-19, R-AUD-07): native audio fix wave. J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code. The one-driver prompt
+// through askAsioSwitchAll(), shared with the Setup cards and the header;
+// the headphones Enabled box read through AudioEngine.
 // =================================================================
 
 #include "AudioVaxPage.h"
@@ -1078,7 +1083,7 @@ void VaxChannelCard::fillPickerFromCatalogue(IAudioDeviceCatalog& catalogue)
                    false});
     others.append({tr("headphones"),
                    AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/Headphones")),
-                   settingIsTrue(QStringLiteral("audio/Headphones/Enabled")), false});
+                   AudioEngine::savedHeadphonesEnabled(), false});
 
     QSignalBlocker block(m_devicePicker);
     m_devicePicker->clear();
@@ -1270,20 +1275,9 @@ void VaxChannelCard::onCataloguePick(int index)
     if (asio && m_engine) {
         plan = m_engine->planAsioSwitchFor(vaxRole(), id,
                                            AudioChannelPair{first, channels > 0 ? channels : 2});
-        if (!plan.moves.isEmpty()) {
-            QList<QPair<QString, QString>> moves;
-            for (const AsioUse& move : plan.moves) {
-                moves.append({asioRoleName(move.role),
-                              move.pair.channelCount > 0
-                                  ? audioPairLabel(move.direction, move.pair)
-                                  : QStringLiteral("(no channels)")});
-            }
-            AsioSwitchAllDialog dialog(asioRoleName(vaxRole()), name.isEmpty() ? id : name,
-                                       moves, this);
-            if (dialog.exec() != QDialog::Accepted) {
-                fillPicker();
-                return;
-            }
+        if (!askAsioSwitchAll(plan, vaxRole(), name.isEmpty() ? id : name, this)) {
+            fillPicker();
+            return;
         }
     }
     if (other) {

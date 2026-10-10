@@ -1759,6 +1759,11 @@ nereus_add_test(tst_audio_engine_master_mute)
 # menu and tooltip captures.
 nereus_add_test(tst_master_output_widget)
 target_compile_definitions(tst_master_output_widget PRIVATE NEREUS_BUILD_TESTS)
+# R-AUD-23 / R-AUD-04 (native audio fix wave): a pick in the header's
+# speakers menu reaches an open Outputs card through MainWindow. Fake engine
+# backends only; no audio device, no radio.
+nereus_add_test(tst_main_window_header_speaker_pick)
+target_compile_definitions(tst_main_window_header_speaker_pick PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3O Sub-Phase 10 Task 10c: TitleBar host strip ─────────────────────
 # 32 px strip that hosts the QMenuBar + MasterOutputWidget. Smoke only:
