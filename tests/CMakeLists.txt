@@ -1679,6 +1679,11 @@ endif()
 # 1 M-byte concurrent producer/consumer race for memory ordering.
 nereus_add_test(tst_audio_ring_spsc)
 
+# 2026-10-10: the remote window's microphone collector: a consumer that
+# stalls loses nothing the collector pulled meanwhile, a full queue drops
+# its oldest, and stop joins without waiting out the wake.
+nereus_add_test(tst_mic_uplink_collector EXTRA_LABELS core)
+
 # ── Phase 3O Sub-Phase 8 Task 8: PipeWireStream config-translation ───────────
 # Pure unit test: exercises configToProperties() for Output (virtual source),
 # Input (consumer), and targetNodeName routing. No running daemon required.

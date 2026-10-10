@@ -3,6 +3,11 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 //
 // Modification history (NereusSDR):
+//   2026-10-10: the microphone is collected by a real-time thread while
+//               the capture lease is held (MicUplinkCollector);
+//               setMicCollectorInlineForTest, collectMicNowForTest,
+//               pumpMicUplinkForTest, micCollectorThreadRunningForTest.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09: R-R3-44 load fix: setReceiverAudioClockForTest, the
 //               clock the receiver audio streams for apps on this computer
 //               stamp and release by, so a test running its source and
@@ -130,6 +135,7 @@
 #include <vector>
 
 namespace NereusSDR {
+class AudioEngine;
 class RemoteTciAudioStage;
 class StationClient;
 class RadioModel;
@@ -531,6 +537,23 @@ public:
     /// Test only: whether the microphone line holds its capture lease
     /// (2026-10-09). No production caller.
     bool micCaptureLeaseHeldForTest() const;
+    /// Test only (2026-10-10), for every controller in the process: while
+    /// set, the microphone's collector has no thread; the pump collects
+    /// inline before it drains (and collectMicNowForTest collects between
+    /// pumps), so a test that drives the pump with its own microphone and
+    /// clock stays on one thread. Off, the default, is production: the
+    /// collector's real-time thread. No production caller.
+    static void setMicCollectorInlineForTest(bool inlineMode);
+    /// Test only (2026-10-10): one step of the collector, as its thread
+    /// takes every 5 ms; the frames it collected. Does nothing unless the
+    /// collector is inline and the capture lease is held. No production
+    /// caller.
+    int collectMicNowForTest();
+    /// Test only (2026-10-10): one microphone pump, as the pump's timer
+    /// runs it. No production caller.
+    void pumpMicUplinkForTest();
+    /// Test only (2026-10-10): whether the collector's thread is running.
+    bool micCollectorThreadRunningForTest() const;
     /// Test only: the current media peer reports itself closed, as a lost
     /// media connection does, while the control session stays up
     /// (2026-10-09). No production caller.
@@ -675,6 +698,12 @@ private:
     // Task 36: the microphone uplink.
     bool micUplinkWanted() const;
     void reconcileMicUplink();
+    /// 2026-10-10: the microphone's collector thread: started while the
+    /// capture lease is held, joined before the lease or the engine goes.
+    void startMicCollector(AudioEngine* engine);
+    void stopMicCollector();
+    /// Logs, once, what the collector dropped during the key that ends.
+    void reportMicDropped();
     // Fix wave 2 (M8): emits micLineChanged when micLineOpen() moved.
     void noteMicLine();
     /// Sends the whole packets `pending` holds and keeps the rest.

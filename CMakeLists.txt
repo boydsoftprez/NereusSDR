@@ -1181,6 +1181,9 @@ set(CORE_SOURCES
     src/core/audio/CaptureShm.cpp
     src/core/audio/CaptureHelper.cpp
     src/core/audio/CaptureAudioBus.cpp
+    # 2026-10-10: the real-time thread that collects the microphone for a
+    # remote window's uplink.
+    src/core/audio/MicUplinkCollector.cpp
     src/core/audio/CaptureSupervisor.cpp
     # Native audio plan Task 15: the ASIO session rules (portable; the
     # driver itself loads only in nereus-audio-capture on Windows) and the

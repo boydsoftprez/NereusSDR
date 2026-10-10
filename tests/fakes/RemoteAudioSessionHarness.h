@@ -45,6 +45,11 @@
 // Core is transmitting.
 //
 // Modification history (NereusSDR):
+//   2026-10-10: the window's microphone collector runs inline (no thread)
+//               in every test that builds this harness, so a test's own
+//               microphone and clock stay on the test's thread
+//               (RemoteMediaController::setMicCollectorInlineForTest).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07: hideTxState, for the remote unkey audio resume tests
 //               (R-R3-21, R-R3-51). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
@@ -292,6 +297,9 @@ struct RemoteAudioSessionHarness {
         , server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(directory.path()))
     {
         Q_ASSERT(directory.isValid());
+        // 2026-10-10: tests inject microphones and clocks that live on the
+        // test's thread; the collector collects inline with the pump.
+        RemoteMediaController::setMicCollectorInlineForTest(true);
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(/*userDdcCount=*/5, /*maxSlices=*/5,
                                     /*defaultRateHz=*/192000);
