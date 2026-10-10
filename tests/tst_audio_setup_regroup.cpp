@@ -1223,6 +1223,8 @@ private slots:
     void sourcesNotPickedStayInViewGreyed()
     {
         RadioModel model;
+        // Tests the VAX path itself, which Windows does not offer.
+        model.transmitModel().setVaxSourceAvailable(true);
         model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
         AudioTxInputPage page(&model);
         QWidget* card = page.pcMicGroupBox();

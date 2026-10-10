@@ -2104,6 +2104,8 @@ private slots:
     {
         const QString txReason = QStringLiteral("Remote transmit is unavailable");
         RadioModel remote(RadioModel::Role::Remote);
+        // Tests the VAX path itself, which Windows does not offer.
+        remote.transmitModel().setVaxSourceAvailable(true);
         // An older client/Core path retains this computer's PC/VAX choices;
         // the radio input still requires the negotiated source command.
         StationClient client(&remote, nullptr);

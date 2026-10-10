@@ -62,6 +62,13 @@
 // with its reason (R-AUD-24), and when the other program lets the mic go
 // the test resumes by itself and the note clears (R-AUD-11).
 //  With NEREUS_AUDIO_SETUP_CAPTURE_DIR set, 23 and 24 save captures.
+// Native audio plan Task 20 round 3 (2026-10-09, same authorship):
+//  25.  While the engine's retry of a held mic is pending (the capture is
+//       Opening, not Failed), Retry microphone keeps its reason, greyed:
+//       it follows the mic's status (R-AUD-24, R-AUD-11).
+//  26.  VAX TX (virtual device) follows this build's own default, unforced:
+//       on Windows greyed with the PC Mic route and a saved VAX choice
+//       loads as PC Mic; elsewhere enabled (R-SPK-21, R-AUD-01).
 // Every capture demand here uses the scripted fake helper (this binary
 // re-executed with --fake-capture-child); no real microphone is opened.
 
@@ -822,6 +829,93 @@ private slots:
         page.testMicButton()->setChecked(false);
         QTRY_COMPARE_WITH_TIMEOUT(engine->captureHelperProcessIdForTest(), qint64(0), 5000);
         engine->stop();
+    }
+
+    // ── 25. Retry keeps its reason while the engine's retry is pending ───────
+
+    void retryKeepsReasonWhileRetryPending_data() { addMicSystemRows(); }
+
+    void retryKeepsReasonWhileRetryPending()
+    {
+        const MicSystem system = fetchMicSystem();
+        // Busy while this file exists; once it is gone the engine's next
+        // retry answers Opening and nothing more, so the retry stays pending.
+        QTemporaryDir held;
+        QVERIFY(held.isValid());
+        const QString heldFile = held.filePath(QStringLiteral("held"));
+        {
+            QFile marker(heldFile);
+            QVERIFY(marker.open(QIODevice::WriteOnly));
+        }
+        qputenv("NEREUS_FAKE_CAPTURE_BUSY_FILE", heldFile.toLocal8Bit());
+        const auto unsetHeld = qScopeGuard([] { qunsetenv("NEREUS_FAKE_CAPTURE_BUSY_FILE"); });
+        saveUsbMic(system.engine);
+        RadioModel model;
+        model.setCapsHasMicJackForTest(true);
+        // An open timeout far past the test's length holds the pending retry.
+        useFakeHelper(model, QStringLiteral("busy-while-marked-then-pending"), 600000);
+        startOnFakeMic(model, system.backend);
+        AudioEngine* engine = model.audioEngine();
+        AudioTxInputPage page(&model);
+        page.show();
+
+        page.testMicButton()->setChecked(true);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().reason, CaptureReason::DeviceInUse, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->roleStatus(AudioRole::TxInput).reason,
+                                  AudioRoleReason::InUse, 5000);
+
+        QVERIFY(QFile::remove(heldFile));
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, CaptureState::Opening, 8000);
+        // Held there: the capture is not Failed, and the mic is still in use.
+        QTest::qWait(300);
+        QCOMPARE(engine->captureStatus().state, CaptureState::Opening);
+        const AudioRoleStatus mic = engine->roleStatus(AudioRole::TxInput);
+        QCOMPARE(mic.state, AudioRoleState::Silent);
+        QCOMPARE(mic.reason, AudioRoleReason::InUse);
+        QCOMPARE(statusLabelOf(&page)->text(), QStringLiteral("PC mic in use by another program"));
+        QVERIFY(!retryButtonOf(&page)->isEnabled());
+        QCOMPARE(retryButtonOf(&page)->toolTip(),
+                 QStringLiteral("The mic resumes by itself when it comes back."));
+
+        page.testMicButton()->setChecked(false);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureHelperProcessIdForTest(), qint64(0), 5000);
+        engine->stop();
+    }
+
+    // ── 26. VAX TX follows this build's own default ──────────────────────────
+    // Nothing forces availability here: this is the case the Windows
+    // device-free list runs.
+
+    void vaxTx_followsThisBuildsDefault()
+    {
+        RadioModel model;
+        model.setCapsHasMicJackForTest(true);
+        AudioTxInputPage page(&model);
+        QRadioButton* vax = findRadioButton(&page, QStringLiteral("VAX TX (virtual device)"));
+        QVERIFY(vax != nullptr);
+        QVERIFY(!vax->isHidden());   // greyed, never hidden
+
+        const QString mac = QStringLiteral("tst-pcmic-vax-default-aa-bb-cc");
+        AppSettings::instance().setValue(QStringLiteral("hardware/%1/tx/Mic_Source").arg(mac),
+                                         QStringLiteral("Vax"));
+        TransmitModel saved;
+        saved.loadFromSettings(mac);
+#if defined(Q_OS_WIN)
+        QVERIFY(!vax->isEnabled());
+        QCOMPARE(vax->toolTip(),
+                 QStringLiteral("Windows has no VAX transmit device. To transmit a program's "
+                                "audio, set the program's output to a virtual cable, choose PC "
+                                "Mic and pick the cable's recording end as the PC mic device."));
+        QCOMPARE(saved.micSource(), MicSource::Pc);
+        vax->click();
+        QCOMPARE(model.transmitModel().micSource(), MicSource::Pc);
+#else
+        QVERIFY(vax->isEnabled());
+        QCOMPARE(vax->toolTip(),
+                 AudioTxInputPage::vaxSourceToolTip(AudioTxInputPage::thisSystem()));
+        QVERIFY(!vax->toolTip().contains(QStringLiteral("Windows")));
+        QCOMPARE(saved.micSource(), MicSource::Vax);
+#endif
     }
 
     // ── 18. Hide and destruction release the demand ───────────────────────────

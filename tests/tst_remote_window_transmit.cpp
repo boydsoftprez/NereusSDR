@@ -1388,6 +1388,8 @@ private slots:
         // ClientAudio is also the remote acceptance for VAX; model source
         // changes must release this computer's PC preview demand.
         h.remote.transmitModel().setMicSourceLocked(false);
+        // Tests the VAX path itself, which Windows does not offer.
+        h.remote.transmitModel().setVaxSourceAvailable(true);
         h.remote.transmitModel().setMicSource(MicSource::Vax);
         QTRY_COMPARE(engine->captureStatus().state, CaptureSupervisor::Status::State::Closed);
         h.remote.transmitModel().setMicSource(MicSource::Pc);
