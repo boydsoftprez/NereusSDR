@@ -15,6 +15,9 @@
 //               while another thread is inside it; a stopped run rescans
 //               nothing; a skipped backend keeps its default. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10: load fix (R-AUD-03): the debounce window's starts and
+//               length are counted for tests, and a test can end a window.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AudioDeviceCatalog.h"
@@ -59,6 +62,9 @@ struct AudioDeviceCatalog::State {
     // an earlier run's lists still in the main thread's queue.
     std::shared_ptr<std::atomic<std::uint64_t>> generations;   // set by stop(); the thread then calls no backend again
     std::atomic<int> debounceMs{kDebounceMs};
+    // For tests: the windows started, and the length of the last one.
+    std::atomic<int> windowsStarted{0};
+    std::atomic<int> lastWindowMs{-1};
     std::atomic<int> busyBackend{-1};   // the backend a call is in, or -1
     std::uint64_t runId = 0;            // this run, numbered from 1; set before the thread starts
 
@@ -159,6 +165,8 @@ public:
             // A notice inside the window joins it; it never restarts it.
             if (!m_timer.isActive()) {
                 m_timer.start(m_state->debounceMs.load());
+                m_state->lastWindowMs.store(m_timer.interval());
+                m_state->windowsStarted.fetch_add(1);
             }
             return;
         }
@@ -249,6 +257,13 @@ public:
             QMetaObject::invokeMethod(owner, [owner, listing = std::move(listing)]() mutable {
                 owner->adoptListing(std::move(listing));
             }, Qt::QueuedConnection);
+        }
+    }
+
+    void endWindowForTest()
+    {
+        if (m_timer.isActive() && !m_state->stopped.load()) {
+            relist();
         }
     }
 
@@ -491,6 +506,26 @@ void AudioDeviceCatalog::setDebounceIntervalForTest(int ms)
     if (m_state) {
         m_state->debounceMs.store(ms);
     }
+}
+
+int AudioDeviceCatalog::debounceWindowsStartedForTest() const
+{
+    return m_state ? m_state->windowsStarted.load() : 0;
+}
+
+int AudioDeviceCatalog::lastDebounceWindowMsForTest() const
+{
+    return m_state ? m_state->lastWindowMs.load() : -1;
+}
+
+void AudioDeviceCatalog::endDebounceWindowForTest()
+{
+    if (m_worker == nullptr) {
+        return;
+    }
+    Worker* worker = m_worker;
+    QMetaObject::invokeMethod(worker, [worker] { worker->endWindowForTest(); },
+                              Qt::QueuedConnection);
 }
 
 QList<AudioBackendId> AudioDeviceCatalog::backends() const

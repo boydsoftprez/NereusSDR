@@ -39,6 +39,10 @@
 //               set and cleared under the backend's claim; a stopped run
 //               rescans nothing. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-10: load fix (R-AUD-03): a test reads how often and how long
+//               the debounce window was started, and ends a window itself,
+//               so no debounce test rests on the wall clock. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -75,6 +79,14 @@ public:
     void start();                        // lists once; waits at most 3 s for the first list
     void stop();
     void setDebounceIntervalForTest(int ms);
+    // The windows this run has started, and the length the last one was
+    // started with (-1 before the first).  Zero and -1 while stopped.
+    int debounceWindowsStartedForTest() const;
+    int lastDebounceWindowMsForTest() const;
+    // Ends the open window now, as its timer would: one re-list.  Nothing
+    // when no window is open.  Runs on the catalogue's thread, after every
+    // notice posted before this call.
+    void endDebounceWindowForTest();
 
     QList<AudioBackendId> backends() const override;
     bool backendRunning(AudioBackendId id) const override;

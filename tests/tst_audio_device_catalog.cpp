@@ -15,6 +15,10 @@
 //               Windows' 1 ms timer, and the rounds check says what it
 //               counted. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-10: load fix (R-AUD-03): the debounce cases read the window
+//               from the catalogue and end it themselves, in place of
+//               upper bounds on the wall clock. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -97,6 +101,9 @@ private:
     bool m_set = false;
 #endif
 };
+
+// A debounce window no test outlasts: the test ends it.
+constexpr int kWindowHeldOpenMs = 3'600'000;
 
 struct CatalogRig {
     std::shared_ptr<FakeAudioEngineBackend> engine = std::make_shared<FakeAudioEngineBackend>();
@@ -387,7 +394,11 @@ private slots:
             3000);
         const qint64 elapsed = clock.elapsed();
         QVERIFY2(elapsed >= AudioDeviceCatalog::kDebounceMs - 20, qPrintable(QString::number(elapsed)));
-        QVERIFY2(elapsed <= AudioDeviceCatalog::kDebounceMs + 100, qPrintable(QString::number(elapsed)));
+        // No later than the window: one window, kDebounceMs long, and the
+        // list follows its timer.  Read from the catalogue, since a clock
+        // here also counts how long a loaded machine took to run this test.
+        QCOMPARE(rig.catalog->debounceWindowsStartedForTest(), 1);
+        QCOMPARE(rig.catalog->lastDebounceWindowMsForTest(), AudioDeviceCatalog::kDebounceMs);
         QCOMPARE(changed.count(), 1);
         QCOMPARE(rig.engine->enumerateCalls(), 2);
         for (QThread* t : rig.engine->enumerateThreads()) {
@@ -396,9 +407,11 @@ private slots:
         }
     }
 
+    // The window in the next two cases never ends by itself, however long
+    // a loaded machine takes over the notices: the test ends it.
     void tenNoticesRelistOnce()
     {
-        CatalogRig rig;
+        CatalogRig rig(kWindowHeldOpenMs);
         rig.catalog->start();
         QSignalSpy changed(rig.catalog.get(), &IAudioDeviceCatalog::devicesChanged);
         const int before = rig.engine->enumerateCalls();
@@ -407,30 +420,32 @@ private slots:
             rig.engine->postNotice(AudioNotice::DevicesChanged);
             QTest::qWait(20);
         }
+        QCOMPARE(rig.engine->enumerateCalls(), before);
+        QCOMPARE(changed.count(), 0);
+        rig.catalog->endDebounceWindowForTest();
         QTRY_COMPARE_WITH_TIMEOUT(changed.count(), 1, 3000);
-        // Long enough for a second window to have run, had one started.
-        QTest::qWait(AudioDeviceCatalog::kDebounceMs + 200);
+        // All ten joined the one window, and none was left to start another.
+        QCOMPARE(rig.catalog->debounceWindowsStartedForTest(), 1);
+        rig.catalog->endDebounceWindowForTest();
+        QTest::qWait(50);
         QCOMPARE(rig.engine->enumerateCalls() - before, 1);
         QCOMPARE(changed.count(), 1);
     }
 
     void laterNoticeDoesNotRestartWindow()
     {
-        CatalogRig rig;
+        CatalogRig rig(kWindowHeldOpenMs);
         rig.catalog->start();
         QSignalSpy changed(rig.catalog.get(), &IAudioDeviceCatalog::devicesChanged);
         const int before = rig.engine->enumerateCalls();
         rig.engine->addDevice(device(QStringLiteral("usb"), QStringLiteral("USB Codec")));
-        QElapsedTimer clock;
-        clock.start();
         rig.engine->postNotice(AudioNotice::DevicesChanged);
-        QTest::qWait(300);
+        QTRY_COMPARE_WITH_TIMEOUT(rig.catalog->debounceWindowsStartedForTest(), 1, 3000);
         rig.engine->postNotice(AudioNotice::DevicesChanged);
+        rig.catalog->endDebounceWindowForTest();
         QTRY_COMPARE_WITH_TIMEOUT(changed.count(), 1, 3000);
-        const qint64 elapsed = clock.elapsed();
-        // A restarted window would end near 800 ms.
-        QVERIFY2(elapsed < AudioDeviceCatalog::kDebounceMs + 200, qPrintable(QString::number(elapsed)));
-        QTest::qWait(AudioDeviceCatalog::kDebounceMs + 200);
+        // The later notice started the timer no second time.
+        QCOMPARE(rig.catalog->debounceWindowsStartedForTest(), 1);
         QCOMPARE(rig.engine->enumerateCalls() - before, 1);
     }
 
@@ -442,12 +457,10 @@ private slots:
         QSignalSpy defaults(rig.catalog.get(), &IAudioDeviceCatalog::defaultChanged);
         const int before = rig.engine->enumerateCalls();
         rig.engine->setDefault(AudioDeviceDirection::Output, QStringLiteral("hdmi"));
-        QElapsedTimer clock;
-        clock.start();
         rig.engine->postNotice(AudioNotice::DefaultOutputChanged);
         QTRY_COMPARE_WITH_TIMEOUT(defaults.count(), 1, 3000);
-        QVERIFY2(clock.elapsed() < AudioDeviceCatalog::kDebounceMs / 2,
-                 qPrintable(QString::number(clock.elapsed())));
+        // Answered with no window at all.
+        QCOMPARE(rig.catalog->debounceWindowsStartedForTest(), 0);
         QCOMPARE(defaults.front().front().value<AudioDeviceDirection>(), AudioDeviceDirection::Output);
         QCOMPARE(rig.engine->enumerateCalls(), before);
         const std::optional<AudioDeviceInfo> def = rig.catalog->defaultDevice(AudioBackendId::CoreAudio, AudioDeviceDirection::Output);
