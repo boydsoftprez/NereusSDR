@@ -35,6 +35,9 @@
 //   2026-10-09: native audio plan final fix wave (R-R3-36):
 //               lastHelperProcessId(), for a helper that exits at once.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan final fix wave (R-R3-36):
+//               fireDeadlinesNowForTest(), to fire a deadline early.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -185,6 +188,13 @@ public:
     // helper that answers and exits at once is still seen); 0 before the
     // first.
     qint64 lastHelperProcessId() const;
+
+    // For tests: runs the handler of each named deadline that is armed at
+    // once, as a timer firing before its interval would.  Returns the
+    // deadlines it ran.  Owner thread only; returns after the capture
+    // thread has run them.
+    enum DeadlineForTest { HelloDeadline = 1, OpenDeadline = 2, StopDeadline = 4 };
+    int fireDeadlinesNowForTest(int deadlines);
 
     // True while at least one microphone Lease is active (any demand but
     // AsioDevice).  Owner thread only.
