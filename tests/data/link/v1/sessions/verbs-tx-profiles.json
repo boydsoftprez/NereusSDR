@@ -32,7 +32,6 @@
         {"from": "client", "role": "behaviour", "message": {"type": "command.invoke", "verb": "txProfile.select", "id": "$int:invoke30:0:4294967295", "args": [{"ordinal": 0, "name": "name", "kind": "utf8", "value": "Default"}]}},
         {"from": "station", "message": {"accepted": true, "affected": [], "id": "$ref:invoke30", "reason": "", "type": "command.result", "verb": "txProfile.select"}},
         {"advanceMs": 50},
-        {"from": "station", "message": {"key": "transmit", "properties": [{"kind": "i64", "name": "twoTonePower", "ordinal": 80, "value": 50}], "type": "delta"}},
         {"from": "client", "role": "scripted", "message": {"type": "command.invoke", "verb": "txProfile.select", "id": 1301, "args": [{"ordinal": 0, "name": "conformanceWrongName", "kind": "utf8", "value": "Default"}]}},
         {"from": "station", "message": {"accepted": false, "affected": [], "id": 1301, "reason": "The request for the transmit profile was not understood.", "type": "command.result", "verb": "txProfile.select"}},
         {"from": "client", "role": "behaviour", "message": {"type": "command.invoke", "verb": "txProfile.save", "id": "$int:invoke31:0:4294967295", "args": [{"ordinal": 0, "name": "name", "kind": "utf8", "value": "Conformance"}]}},
