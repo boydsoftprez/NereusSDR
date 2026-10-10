@@ -76,8 +76,11 @@ void LanDiscovery::injectDatagramForTesting(const QString& payload, quint16 rece
 
 void LanDiscovery::parseAnnouncement(const QString& payload, quint16 port,
                                      const QHostAddress& sender) {
+    // Newer firmware appends fields after the nickname: TGXL v1.2.44 ends
+    // its announcement with " boot=000003" (heard on the bench, 2026-10-10).
+    // Trailing key=value fields are accepted and ignored.
     static const QRegularExpression rx(
-        R"(^(?<model>\S+)\s+ip=(?<ip>\d+\.\d+\.\d+\.\d+)\s+v=(?<v>\S+)\s+serial=(?<serial>\S+)\s+nickname=(?<nick>\S+)$)");
+        R"(^(?<model>\S+)\s+ip=(?<ip>\d+\.\d+\.\d+\.\d+)\s+v=(?<v>\S+)\s+serial=(?<serial>\S+)\s+nickname=(?<nick>\S+)(?:\s+\w+=\S*)*$)");
     auto m = rx.match(payload);
     if (!m.hasMatch()) return;
     // R-R3-22 / R-R3-47: on the Core, only the station network (and this
