@@ -278,6 +278,10 @@
 //               delayPartsNow() and roleFormatNow() read them for Setup's
 //               cards without the role's bus lock. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-10: final review fix round 3 (R-AUD-06): m_rescanRequestTokens,
+//               so each catalogue answer finishes the Rescan that asked
+//               for it. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -312,6 +316,7 @@ namespace NereusSDR { class PipeWireThreadLoop; }
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <vector>
 #include <functional>
 #include <memory>
@@ -1660,6 +1665,9 @@ private:
     bool m_rescanPending{false};
     bool m_rescanMic{false};
     std::vector<AudioRole> m_rescanRoles;
+    // R-AUD-06 (round 3): the Rescan token of each catalogue rescan asked
+    // for and not yet answered, oldest first.
+    std::deque<quint64> m_rescanRequestTokens;
     // While the fades run: each fading role with its bus generation then
     // (a role reopened or closed meanwhile is left alone), the wait, and
     // since when.

@@ -319,6 +319,10 @@
 //               delayPartsNow() and roleFormatNow(), so Setup's cards read
 //               them without the role's bus lock. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-10: final review fix round 3 (R-AUD-06): the catalogue's
+//               answer finishes the Rescan that asked for it, so a late
+//               answer from an earlier Rescan never ends a later one.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "AudioEngine.h"
@@ -1696,8 +1700,19 @@ bool AudioEngine::ensureCatalogue()
     m_defaultEngine = defaultAudioEngine(m_backends);
     m_catalogue = std::make_unique<AudioDeviceCatalog>(m_backends);
     m_catalogue->start();
-    connect(m_catalogue.get(), &IAudioDeviceCatalog::olderDriversRescanned, this,
-            [this]() { finishOlderDriversRescan(m_rescanToken); });
+    // R-AUD-06 (round 3): the catalogue answers its rescans in the order
+    // they were asked, one answer each, so each answer finishes the
+    // Rescan that asked for it.  An answer that comes after its Rescan
+    // finished on the timer finishes nothing: it is not the later one's.
+    m_rescanRequestTokens.clear();
+    connect(m_catalogue.get(), &IAudioDeviceCatalog::olderDriversRescanned, this, [this]() {
+        if (m_rescanRequestTokens.empty()) {
+            return;
+        }
+        const quint64 token = m_rescanRequestTokens.front();
+        m_rescanRequestTokens.pop_front();
+        finishOlderDriversRescan(token);
+    });
     // The cards show the saved choices on their engines.  Migrating writes
     // nothing for a role with nothing saved, so a later seed still applies.
     migrateSavedChoices();
@@ -1861,6 +1876,7 @@ void AudioEngine::tearDownAudioDevices()
     m_rescanPending = false;
     ++m_rescanToken;
     m_rescanRoles.clear();
+    m_rescanRequestTokens.clear();
     m_rescanFading.clear();
     m_rescanMic = false;
     m_streamSupervisor.reset();
@@ -2343,6 +2359,7 @@ void AudioEngine::continueOlderDriversRescan(quint64 token)
         finishOlderDriversRescan(token);
         return;
     }
+    m_rescanRequestTokens.push_back(token);
     m_catalogue->rescanOlderDrivers();
     // The catalogue answers well inside its start wait; the timer finishes
     // a rescan whose answer never came.
