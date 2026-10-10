@@ -31,6 +31,11 @@
 //                 Thetis's DB.Merged does, so the running window no longer
 //                 writes its old values back over the import. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - saveInBackground(): the timed settings save writes the
+//                 file on a writer thread, so the Core's main thread, which
+//                 also sends the receive audio, no longer waits for the
+//                 disk. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 //=================================================================
@@ -84,11 +89,14 @@
 #include "core/ControlRanges.h"
 #include "core/LogCategories.h"
 #include "core/settings/ISettingsBackend.h"
+#include "core/SettingsFileWriter.h"
 
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QBuffer>
@@ -100,6 +108,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
+#include <utility>
 
 namespace NereusSDR {
 
@@ -164,6 +174,8 @@ AppSettings::AppSettings()
 {
     initFilePath();
 }
+
+AppSettings::~AppSettings() = default;
 
 AppSettings::AppSettings(const QString& filePath)
     : m_filePath(filePath)
@@ -781,23 +793,24 @@ void AppSettings::load()
     m_stationSettings.clear();
 }
 
-bool AppSettings::save(QString* error)
+namespace {
+
+// One settings file is written at a time in this process: save(), the
+// writer thread's saveInBackground() jobs, and the imports, which write
+// through a second AppSettings on the same path.
+QMutex& settingsFileMutex()
 {
-    if (error) {
-        error->clear();
-    }
-    // importFileForNextLaunch(): the file on disk is the import the next
-    // launch loads, and this running store's values must not replace it.
-    if (m_savesHeldUntilRestart) {
-        return true;
-    }
-    const QByteArray localXml = serializeLocalXml(m_settings, m_stationSettings,
-                                                   m_stationName, error);
-    if (localXml.isEmpty()) {
-        return false;
-    }
+    static QMutex mutex;
+    return mutex;
+}
+
+// The file half of AppSettings::save(): rotates .bak, then replaces the
+// file. Runs on the caller's thread for save() and on the writer thread
+// for saveInBackground(); the caller holds settingsFileMutex().
+bool writeSettingsFile(const QString& filePath, const QByteArray& localXml, QString* error)
+{
     // Ensure directory exists
-    QDir().mkpath(QFileInfo(m_filePath).absolutePath());
+    QDir().mkpath(QFileInfo(filePath).absolutePath());
 
     // ── .bak rotation (issue #241) ──────────────────────────────────────
     //
@@ -813,11 +826,11 @@ bool AppSettings::save(QString* error)
     // that's the exact failure mode reported in issue #241 (NTFS journal
     // rollback over a non-atomic write left the user with no recovery
     // path at all).
-    if (QFileInfo::exists(m_filePath)) {
-        const QString bakPath    = m_filePath + QStringLiteral(".bak");
-        const QString bakTmpPath = m_filePath + QStringLiteral(".bak.tmp");
+    if (QFileInfo::exists(filePath)) {
+        const QString bakPath    = filePath + QStringLiteral(".bak");
+        const QString bakTmpPath = filePath + QStringLiteral(".bak.tmp");
         QFile::remove(bakTmpPath);  // tolerate stale .bak.tmp from a prior crash
-        if (QFile::copy(m_filePath, bakTmpPath)) {
+        if (QFile::copy(filePath, bakTmpPath)) {
             // QFile::rename refuses to clobber an existing destination, so
             // remove the previous .bak first. The window between remove()
             // and rename() is tolerable here: even if a crash hits between
@@ -845,9 +858,9 @@ bool AppSettings::save(QString* error)
     // entirely the new version, never a partial overlay. This makes the
     // "leading 28 × 4 KB sectors zeroed" failure mode from issue #241
     // structurally impossible.
-    QSaveFile file(m_filePath);
+    QSaveFile file(filePath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        qWarning() << "Could not save settings to" << m_filePath
+        qWarning() << "Could not save settings to" << filePath
                    << ":" << file.errorString();
         if (error) {
             *error = QStringLiteral("Settings could not be saved: %1").arg(file.errorString());
@@ -866,7 +879,7 @@ bool AppSettings::save(QString* error)
     }
 
     if (!file.commit()) {
-        qWarning() << "Could not commit settings to" << m_filePath
+        qWarning() << "Could not commit settings to" << filePath
                    << ":" << file.errorString();
         if (error) {
             *error = QStringLiteral("Settings could not be saved: %1").arg(file.errorString());
@@ -874,9 +887,90 @@ bool AppSettings::save(QString* error)
         return false;
     }
 
-    QFile::setPermissions(m_filePath,
+    QFile::setPermissions(filePath,
                           QFileDevice::ReadOwner | QFileDevice::WriteOwner);
     return true;
+}
+
+} // namespace
+
+bool AppSettings::save(QString* error)
+{
+    if (error) {
+        error->clear();
+    }
+    // importFileForNextLaunch(): the file on disk is the import the next
+    // launch loads, and this running store's values must not replace it.
+    if (m_savesHeldUntilRestart) {
+        return true;
+    }
+    const QByteArray localXml = serializeLocalXml(m_settings, m_stationSettings,
+                                                   m_stationName, error);
+    if (localXml.isEmpty()) {
+        return false;
+    }
+    // This save holds every value a background save still waiting for the
+    // writer thread would write, so that one is dropped (it sees a newer
+    // save and reports nothing). One already writing finishes first.
+    ++m_backgroundSave->newestSave;
+    QMutexLocker lock(&settingsFileMutex());
+    return writeSettingsFile(m_filePath, localXml, error);
+}
+
+quint64 AppSettings::saveInBackground()
+{
+    SettingsFileWriter* const writer = backgroundSaveNotifier();
+    const quint64 ticket = ++m_backgroundSave->newestSave;
+    if (m_savesHeldUntilRestart) {
+        // As save(): nothing is written, and that is success.
+        QMetaObject::invokeMethod(writer, [writer, ticket] {
+            writer->report(ticket, true, QString());
+        }, Qt::QueuedConnection);
+        return ticket;
+    }
+    // The maps are shared copies: taking them costs nothing here, and a
+    // later setValue() on this thread leaves the copies as they were.
+    writer->run([writer, ticket, state = m_backgroundSave, filePath = m_filePath,
+                 settings = m_settings, stationSettings = m_stationSettings,
+                 stationName = m_stationName] {
+        if (state->startHookForTesting) {
+            state->startHookForTesting();
+        }
+        if (state->newestSave.load() != ticket) {
+            return;
+        }
+        QString error;
+        const QByteArray localXml = serializeLocalXml(settings, stationSettings,
+                                                       stationName, &error);
+        bool saved = false;
+        {
+            QMutexLocker lock(&settingsFileMutex());
+            if (state->newestSave.load() != ticket) {
+                return;
+            }
+            saved = !localXml.isEmpty() && writeSettingsFile(filePath, localXml, &error);
+        }
+        writer->report(ticket, saved, error);
+    });
+    return ticket;
+}
+
+SettingsFileWriter* AppSettings::backgroundSaveNotifier()
+{
+    if (!m_fileWriter) {
+        m_fileWriter = std::make_unique<SettingsFileWriter>();
+    }
+    return m_fileWriter.get();
+}
+
+void AppSettings::setBackgroundSaveStartHookForTesting(std::function<void()> hook)
+{
+    // The writer thread reads the hook, so it is changed only while that
+    // thread has nothing to do.
+    if (m_fileWriter) {
+        m_fileWriter->waitUntilIdle();
+    }
+    m_backgroundSave->startHookForTesting = std::move(hook);
 }
 
 QByteArray AppSettings::exportLocalXml(QString* error) const
@@ -914,6 +1008,9 @@ bool AppSettings::importLocalXml(const QByteArray& input, QString* error)
     if (!parseImportXml(input, settings, stationSettings, stationName, error)) {
         return false;
     }
+    // The import replaces everything a background save still waiting for
+    // the writer thread would write; that one is dropped.
+    ++m_backgroundSave->newestSave;
     AppSettings replacement(m_filePath);
     replacement.m_settings = settings;
     replacement.m_stationSettings = stationSettings;
@@ -963,6 +1060,9 @@ bool AppSettings::importFileForNextLaunch(const QString& path, QString* error)
                         replacement.m_stationName, error)) {
         return false;
     }
+    // A background save still waiting for the writer thread must not land
+    // on top of the import; it is dropped.
+    ++m_backgroundSave->newestSave;
     // save() keeps the file this replaces as the one-deep .bak.
     if (!replacement.save(error)) {
         return false;

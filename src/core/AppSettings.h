@@ -25,6 +25,11 @@
 //                 running window no longer writes its old values back over
 //                 the import. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-10 - saveInBackground(): the timed settings save writes the
+//                 file on a writer thread, so the Core's main thread, which
+//                 also sends the receive audio, no longer waits for the
+//                 disk. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 //=================================================================
@@ -84,12 +89,15 @@
 #include <QMap>
 #include <QDateTime>
 #include <QHostAddress>
+#include <atomic>
 #include <functional>
+#include <memory>
 #include <optional>
 
 namespace NereusSDR {
 
 class ISettingsBackend;
+class SettingsFileWriter;
 
 // Saved-radio bundle (Phase 3I Task 15).
 // Combines RadioInfo with the client-side flags that only live in settings.
@@ -126,7 +134,8 @@ public:
     // The file need not exist; it is created on first save().
     explicit AppSettings(const QString& filePath);
 
-    ~AppSettings() = default;
+    // Waits for a background save already handed to the writer thread.
+    ~AppSettings();
     AppSettings(const AppSettings&) = delete;
     AppSettings& operator=(const AppSettings&) = delete;
 
@@ -135,6 +144,25 @@ public:
 
     // Atomic persistence; failure leaves in-memory preferences available for retry.
     bool save(QString* error = nullptr);
+
+    // The same save with the file work (building the XML, rotating .bak,
+    // writing, waiting for the disk) on a writer thread, for a caller that
+    // must not wait: the Core's main thread also sends the receive audio,
+    // and a save takes 140 to 470 ms on a Rock 5C (bench 2026-10-10). The
+    // values written are the ones held when this is called. Returns a
+    // ticket; backgroundSaveNotifier() emits finished(ticket, saved, error)
+    // on the caller's thread when the file is written or the write fails.
+    // A later save() or saveInBackground() replaces one that has not
+    // reached the disk yet, and the replaced one reports nothing. Call from
+    // the thread that owns this store.
+    quint64 saveInBackground();
+    // Created on first use, on the calling thread. Lives as long as this
+    // store.
+    SettingsFileWriter* backgroundSaveNotifier();
+    // Test seam: runs on the writer thread at the start of each background
+    // save, before it decides whether a later save has replaced it. Waits
+    // for the writer thread to finish what it has before changing the hook.
+    void setBackgroundSaveStartHookForTesting(std::function<void()> hook);
 
     // Exact local store, independent of any installed SettingsProxy. The
     // importer replaces the whole store only after its owner has stopped
@@ -815,6 +843,18 @@ private:
 
     // Set by importFileForNextLaunch(); never cleared (see its comment).
     bool    m_savesHeldUntilRestart{false};
+
+    // saveInBackground(): the newest save asked for, shared with the jobs
+    // on the writer thread so a job can tell that a later save replaced it.
+    struct BackgroundSaveState {
+        std::atomic<quint64> newestSave{0};
+        std::function<void()> startHookForTesting;
+    };
+    std::shared_ptr<BackgroundSaveState> m_backgroundSave{
+        std::make_shared<BackgroundSaveState>()};
+    // Declared last: destroyed first, which waits for the writer thread
+    // while the rest of this store is still whole.
+    std::unique_ptr<SettingsFileWriter> m_fileWriter;
 };
 
 } // namespace NereusSDR

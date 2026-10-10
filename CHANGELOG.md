@@ -65,6 +65,15 @@ Advanced, and each control appears on one page only.
   field to the tuner's network announcement, which NereusSDR rejected, so the
   tuner stayed disconnected after the upgrade.
 
+### Fixes
+
+- Tuning from a remote console no longer makes the receive audio stutter. The
+  Core saved its settings file half a second after a tuning step, on the same
+  thread that sends the audio, and nothing was sent until the disk finished
+  (a third of a second and more on a Rock 5C). The timed save now writes the
+  file on its own thread. Saves at quit, at disconnect and at station handover
+  still finish before the program goes on.
+
 ## [2026.10.0] - 2026-10-05
 
 **Your station. Wherever you operate.**
