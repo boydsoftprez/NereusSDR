@@ -37,6 +37,10 @@
 //               or stop deadline that fires before its interval has passed
 //               on the steady clock waits out the rest.  J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan final fix wave (R-R3-36):
+//               fireDeadlinesNowForTest() runs the armed deadlines'
+//               handlers at once, so a test can fire them early.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CaptureSupervisor.h"
@@ -287,6 +291,26 @@ public:
         } else {
             publish(m_status.state, m_status.reason);
         }
+    }
+
+    // For tests: each named deadline that is armed has its handler run now,
+    // as an early timer firing would.  Returns the deadlines it ran.
+    int fireDeadlinesNow(int deadlines)
+    {
+        int fired = 0;
+        if ((deadlines & CaptureSupervisor::HelloDeadline) && m_helloTimer->isActive()) {
+            fired |= CaptureSupervisor::HelloDeadline;
+            onHelloTimeout();
+        }
+        if ((deadlines & CaptureSupervisor::OpenDeadline) && m_openTimer->isActive()) {
+            fired |= CaptureSupervisor::OpenDeadline;
+            onOpenTimeout();
+        }
+        if ((deadlines & CaptureSupervisor::StopDeadline) && m_stopTimer->isActive()) {
+            fired |= CaptureSupervisor::StopDeadline;
+            onStopTimeout();
+        }
+        return fired;
     }
 
     void retry(quint64 request)
@@ -1641,6 +1665,19 @@ qint64 CaptureSupervisor::helperProcessId() const
 qint64 CaptureSupervisor::lastHelperProcessId() const
 {
     return m_lastHelperPid->load();
+}
+
+int CaptureSupervisor::fireDeadlinesNowForTest(int deadlines)
+{
+    if (m_shutDown) {
+        return 0;
+    }
+    int fired = 0;
+    CaptureSupervisorWorker* worker = m_worker.get();
+    QMetaObject::invokeMethod(worker, [worker, deadlines, &fired]() {
+        fired = worker->fireDeadlinesNow(deadlines);
+    }, Qt::BlockingQueuedConnection);
+    return fired;
 }
 
 // R-R3-36: with demand held, configure() and retry() make the capture

@@ -32,11 +32,18 @@
 //               time; a helper that exits at once is found by its last
 //               process id (waitForStartedPid).  J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan final fix wave (R-R3-36): the hello,
+//               open and stop deadlines fired early through
+//               fireDeadlinesNowForTest() fail nothing until the whole
+//               interval has passed.  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 
 #include <QElapsedTimer>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QSignalSpy>
 
 #include <cstdint>
@@ -117,6 +124,66 @@ struct Recorder {
     QObject context;
     std::vector<Status> seen;
 };
+
+// Counts the warnings that contain a text, from any thread, while it lives;
+// every message still reaches the test log.
+class WarningWatch {
+public:
+    explicit WarningWatch(QString text)
+        : m_previous(qInstallMessageHandler(&WarningWatch::handle))
+    {
+        QMutexLocker lock(&s_mutex);
+        s_text = std::move(text);
+        s_count = 0;
+        s_previous = m_previous;
+    }
+    ~WarningWatch() { qInstallMessageHandler(m_previous); }
+    WarningWatch(const WarningWatch&) = delete;
+    WarningWatch& operator=(const WarningWatch&) = delete;
+
+    int count() const
+    {
+        QMutexLocker lock(&s_mutex);
+        return s_count;
+    }
+
+private:
+    static void handle(QtMsgType type, const QMessageLogContext& context, const QString& message)
+    {
+        QtMessageHandler previous = nullptr;
+        {
+            QMutexLocker lock(&s_mutex);
+            if (type == QtWarningMsg && message.contains(s_text)) {
+                ++s_count;
+            }
+            previous = s_previous;
+        }
+        if (previous) {
+            previous(type, context, message);
+        }
+    }
+
+    QtMessageHandler m_previous;
+    static inline QMutex s_mutex;
+    static inline QString s_text;
+    static inline int s_count = 0;
+    static inline QtMessageHandler s_previous = nullptr;
+};
+
+// Fires the named deadline early once it is armed (R-R3-36); false if it
+// never armed within timeoutMs.
+bool fireOnceArmed(CaptureSupervisor& supervisor, int deadline, int timeoutMs)
+{
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < timeoutMs) {
+        if (supervisor.fireDeadlinesNowForTest(deadline) == deadline) {
+            return true;
+        }
+        QTest::qWait(1);
+    }
+    return false;
+}
 
 qint64 waitForPid(const CaptureSupervisor& supervisor, int timeoutMs)
 {
@@ -719,6 +786,77 @@ private slots:
         QVERIFY(waitForState(supervisor, State::Closed, 3000));
         const qint64 elapsed = timer.elapsed();
         QVERIFY2(elapsed >= 250 && elapsed < 300 + 500, qPrintable(QString::number(elapsed)));
+        QVERIFY(waitProcessGone(pid, 500));
+    }
+
+    // R-R3-36: a deadline whose handler runs before its interval has gone
+    // by (a timer firing early) fails nothing and warns nothing; the
+    // failure still comes once the whole interval has passed.
+    void earlyHelloDeadlineWaitsOutTheRest()
+    {
+        CaptureSupervisor::Options options = fakeOptions(QStringLiteral("no-hello"));
+        options.helloTimeoutMs = 1000;
+        CaptureSupervisor supervisor(options);
+        WarningWatch warned(QStringLiteral("sent no hello within"));
+        QElapsedTimer timer;
+        timer.start();
+        auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
+        QVERIFY(fireOnceArmed(supervisor, CaptureSupervisor::HelloDeadline, 900));
+        QCoreApplication::processEvents();
+        QVERIFY2(timer.elapsed() < 1000, qPrintable(QString::number(timer.elapsed())));
+        QCOMPARE(warned.count(), 0);
+        QVERIFY(supervisor.status().state != State::Failed);
+
+        QVERIFY(waitForState(supervisor, State::Failed, 5000));
+        QCOMPARE(supervisor.status().reason, Reason::HelperDidNotStart);
+        QVERIFY2(timer.elapsed() >= 1000, qPrintable(QString::number(timer.elapsed())));
+        QCOMPARE(warned.count(), 1);
+    }
+
+    void earlyOpenDeadlineWaitsOutTheRest()
+    {
+        CaptureSupervisor::Options options = fakeOptions(QStringLiteral("hang-open"));
+        options.openTimeoutMs = 1000;
+        CaptureSupervisor supervisor(options);
+        WarningWatch warned(QStringLiteral("no microphone samples within"));
+        QElapsedTimer timer;
+        timer.start();
+        auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
+        QVERIFY(fireOnceArmed(supervisor, CaptureSupervisor::OpenDeadline, 900));
+        QCoreApplication::processEvents();
+        QVERIFY2(timer.elapsed() < 1000, qPrintable(QString::number(timer.elapsed())));
+        QCOMPARE(warned.count(), 0);
+        QVERIFY(supervisor.status().state != State::Failed);
+
+        QVERIFY(waitForState(supervisor, State::Failed, 5000));
+        QCOMPARE(supervisor.status().reason, Reason::Timeout);
+        QVERIFY2(timer.elapsed() >= 1000, qPrintable(QString::number(timer.elapsed())));
+        QCOMPARE(warned.count(), 1);
+    }
+
+    void earlyStopDeadlineWaitsOutTheRest()
+    {
+        CaptureSupervisor::Options options = fakeOptions(QStringLiteral("ignore-stop"));
+        options.stopTimeoutMs = 1000;
+        CaptureSupervisor supervisor(options);
+        WarningWatch warned(QStringLiteral("did not stop within"));
+        auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
+        QVERIFY(waitForState(supervisor, State::Ready, 5000));
+        const qint64 pid = supervisor.helperProcessId();
+        QVERIFY(pid > 0);
+
+        QElapsedTimer timer;
+        timer.start();
+        lease.release();
+        QVERIFY(fireOnceArmed(supervisor, CaptureSupervisor::StopDeadline, 900));
+        QCoreApplication::processEvents();
+        QVERIFY2(timer.elapsed() < 1000, qPrintable(QString::number(timer.elapsed())));
+        QCOMPARE(warned.count(), 0);
+        QCOMPARE(supervisor.helperProcessId(), pid);            // not killed
+
+        QVERIFY(waitForState(supervisor, State::Closed, 5000));
+        QVERIFY2(timer.elapsed() >= 1000, qPrintable(QString::number(timer.elapsed())));
+        QCOMPARE(warned.count(), 1);
         QVERIFY(waitProcessGone(pid, 500));
     }
 
