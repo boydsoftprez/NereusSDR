@@ -200,6 +200,19 @@ private slots:
 
         StuckDriverCall stuck;
         std::thread driver([&stuck] { stuck.hold(); });
+        // A failed check returns early: the driver thread is still let go
+        // and joined, so the failure is reported rather than aborting.
+        struct LetGo {
+            StuckDriverCall& stuck;
+            std::thread& driver;
+            ~LetGo()
+            {
+                stuck.finish();
+                if (driver.joinable()) {
+                    driver.join();
+                }
+            }
+        } letGo{stuck, driver};
         QVERIFY(stuck.waitEntered());
 
         QTest::ignoreMessage(QtWarningMsg,
@@ -238,15 +251,21 @@ private slots:
     {
         auto native = std::make_shared<FakeAudioEngineBackend>(AudioBackendId::CoreAudio);
         auto older = std::make_shared<FakeAudioEngineBackend>(AudioBackendId::PortAudio);
-        StuckDriverCall stuck;
-        older->setRescanHook([&stuck] { stuck.hold(); });
+        // Shared with the hook: on a failed check the catalogue's thread
+        // may still be inside it after this function returns.
+        auto stuck = std::make_shared<StuckDriverCall>();
+        older->setRescanHook([stuck] { stuck->hold(); });
+        struct LetGo {
+            std::shared_ptr<StuckDriverCall> stuck;
+            ~LetGo() { stuck->finish(); }
+        } letGo{stuck};
 
         auto engine = std::make_unique<AudioEngine>();
         QCOMPARE(PortAudioLibrary::references(), 2);   // the engine's own
         engine->setVaxOutputsAllowed(false);
         engine->setAudioBackendsForTest({native, older});
         engine->rescanOlderDrivers();
-        QVERIFY(stuck.waitEntered());
+        QVERIFY(stuck->waitEntered());
 
         QTest::ignoreMessage(QtWarningMsg,
                              QRegularExpression(QStringLiteral("Audio device list did not stop within")));
@@ -263,7 +282,7 @@ private slots:
 
         // The call returns: the catalogue's thread finishes on its own,
         // and the engine's reference is the one left behind.
-        stuck.finish();
+        stuck->finish();
         QTRY_COMPARE_WITH_TIMEOUT(older.use_count(), long(1), 5000);
         QCOMPARE(older->rescanCount(), 1);
         older->setRescanHook({});

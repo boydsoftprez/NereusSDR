@@ -866,8 +866,8 @@ private slots:
         rig.engine->stop();
     }
 
-    // A stop while Rescan's fade runs: the role is not closed again and
-    // PortAudio is not listed again.
+    // A stop while Rescan's fade runs, then a start: the new run's role is
+    // not closed and PortAudio is not listed again.
     void stopDuringTheRescanFadeRescansNothing()
     {
         Rig rig;
@@ -884,10 +884,16 @@ private slots:
         rig.engine->start();
         rig.engine->rescanOlderDrivers();
         QCOMPARE(rig.older->fadeRequests(), 1);
+        // Stopped and started again inside the fade: the old Rescan's timer
+        // must not close the new run's output or list its drivers again.
         rig.engine->stop();
+        rig.engine->start();
+        QCOMPARE(rig.older->outputRequests().size(), std::size_t(2));
         QTest::qWait(200);
         QCOMPARE(rig.older->rescanCount(), 0);
-        QCOMPARE(rig.older->outputRequests().size(), std::size_t(1));
+        QCOMPARE(rig.older->outputRequests().size(), std::size_t(2));
+        QVERIFY(rig.older->outputAlive(1));
+        rig.engine->stop();
     }
 
 #if defined(Q_OS_WIN)
