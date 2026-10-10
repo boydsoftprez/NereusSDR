@@ -7,6 +7,11 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 22 (R-AUD-27, R-AUD-30, D24).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio fix wave (R-AUD-27, R-AUD-11): the trouble
+//               note on the Core's default names no card; the volume
+//               slider takes HeaderVolumeStyle::kPcSlider's own disabled
+//               look. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 // =================================================================
 
 #include "CoreSpeakerCard.h"
@@ -73,12 +78,6 @@ const char* const kReason = "QLabel { color: #8aa8c0; font-size: 11px; font-styl
 const char* const kDim =
     "QLabel { color: #607080; font-size: 11px; }"
     "QLabel:disabled { color: #405060; }";
-// The header's PC slider palette, greyed like the radio slider while disabled
-// (HeaderVolumeStyle::kPcSlider has no disabled rule, and the header never
-// greys it).
-const char* const kSliderDisabled =
-    "QSlider::handle:horizontal:disabled { background: #4a5a6a; }"
-    "QSlider::sub-page:horizontal:disabled { background: #1a2a3a; }";
 const char* const kCheck =
     "QCheckBox { color: #c8d8e8; font-size: 12px; }"
     "QCheckBox:disabled { color: #506070; }";
@@ -159,6 +158,21 @@ QString troubleNote(const CoreSpeakerState& state)
     const QString trouble = state.kind == CoreSpeakerStateKind::InUse
         ? CoreSpeakerCard::tr("is in use by another program at the Core")
         : CoreSpeakerCard::tr("is not connected at the Core");
+    if (state.chosenName.isEmpty()) {
+        // On "(the Core's default)" the Core names no chosen card and does
+        // not name its default, so the note names neither.
+        const QString defaultTrouble = state.kind == CoreSpeakerStateKind::InUse
+            ? CoreSpeakerCard::tr("is in use by another program")
+            : CoreSpeakerCard::tr("is not connected");
+        if (state.playingName.isEmpty()) {
+            return CoreSpeakerCard::tr("The Core's default sound card %1, so the Core is silent "
+                                       "until it comes back.")
+                .arg(defaultTrouble);
+        }
+        return CoreSpeakerCard::tr("The Core's default sound card %1. Playing on %2 until it "
+                                   "comes back.")
+            .arg(defaultTrouble, state.playingName);
+    }
     if (state.playingName.isEmpty()) {
         return CoreSpeakerCard::tr("%1 %2, and the Core has no other sound card, so it is silent "
                                    "until it comes back.")
@@ -203,8 +217,9 @@ void CoreSpeakerCard::buildLayout()
     m_volume->setObjectName(QStringLiteral("coreSpeakerVolume"));
     m_volume->setRange(0, kMaxVolume);
     m_volume->setFixedWidth(kSliderWidth);
-    m_volume->setStyleSheet(QLatin1String(HeaderVolumeStyle::kPcSlider)
-                            + QLatin1String(kSliderDisabled));
+    // The header's PC slider palette, greyed like the radio slider while
+    // disabled.
+    m_volume->setStyleSheet(QLatin1String(HeaderVolumeStyle::kPcSlider));
     m_volume->setAccessibleName(tr("Core speaker volume"));
     row->addWidget(m_volume);
     m_readout = new QLabel(this);

@@ -19,6 +19,10 @@
 // Core speaker card between Headphones and Radio speaker, in a window
 // connected to a Core only. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 // Claude Code.
+// 2026-10-09: native audio fix wave (R-AUD-27): in a remote window the
+// Radio speaker note names the radio, so it reads apart from the Core
+// speaker card above it. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+// Claude Code.
 // =================================================================
 
 #include "AudioOutputsPage.h"
@@ -333,8 +337,8 @@ void AudioOutputsPage::buildRadioSpeaker()
 
     const bool remote = model() && model()->role() == RadioModel::Role::Remote;
     m_radioNote = makeNote(remote
-        ? tr("This is the speaker at the Core. Changes here reach every window and "
-             "the phone. Each slice's AF level and mute still apply.")
+        ? tr("This is the radio's own speaker, at the Core. Changes here reach every "
+             "window and the phone. Each slice's AF level and mute still apply.")
         : tr("Same control as RADIO in the header. Plays the receiving slices; each "
              "slice's AF level and mute still apply."),
         "radioSpeakerNote", group);
