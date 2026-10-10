@@ -9,6 +9,10 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 15 (R-AUD-01, R-AUD-21, R-AUD-22).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan final fix wave (R-AUD-19): the driver
+//               list is read again on each listing while no driver is
+//               loaded, so a driver installed later is seen.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AsioDriverWin.h"
@@ -83,7 +87,8 @@ ASIOTime* onBufferSwitchTimeInfo(ASIOTime* params, long doubleBufferIndex,
 }
 
 // A rate the driver changed under the session is handled as a reset: the
-// session restarts and sets its own rate again (R-AUD-20, R-AUD-21).
+// session restarts at the driver's new rate and buffer size (R-AUD-20,
+// R-AUD-21).
 void onSampleRateDidChange(ASIOSampleRate /*rate*/)
 {
     AsioDriverWin::dispatchMessage(AsioMessage::ResetRequest);
@@ -137,15 +142,24 @@ AsioDriverWin::AsioDriverWin() = default;
 AsioDriverWin::~AsioDriverWin()
 {
     disposeAndUnload();
+    if (asioDrivers == m_list.get()) {
+        asioDrivers = nullptr;
+    }
 }
 
 QStringList AsioDriverWin::installedDrivers()
 {
-    // The SDK's list reads the registry and initialises COM on this
-    // thread; it lives for the process.  loadAsioDriver() and ASIOExit()
-    // find it through the SDK's global.
-    static const std::unique_ptr<AsioDrivers> s_list = std::make_unique<AsioDrivers>();
-    asioDrivers = s_list.get();
+    // The SDK's list reads the registry when it is made, and initialises
+    // COM on this thread when it finds a driver; its destructor balances
+    // that (asiolist.cpp:203,210).  While no driver is loaded it is made
+    // again, so a driver installed since is listed; the new list is made
+    // before the old one goes, so COM stays initialised throughout.
+    // loadAsioDriver() and ASIOExit() find it through the SDK's global.
+    if (!m_loaded || !m_list) {
+        std::unique_ptr<AsioDrivers> fresh = std::make_unique<AsioDrivers>();
+        m_list = std::move(fresh);
+    }
+    asioDrivers = m_list.get();
     std::array<std::array<char, kAsioNameBytes>, kMaxListedDrivers> storage{};
     std::array<char*, kMaxListedDrivers> names{};
     for (int i = 0; i < kMaxListedDrivers; ++i) {
