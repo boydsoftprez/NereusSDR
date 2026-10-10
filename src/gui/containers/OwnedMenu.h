@@ -1,6 +1,7 @@
 // =================================================================
 // src/gui/containers/OwnedMenu.h  (NereusSDR)
 // =================================================================
+// no-port-check: NereusSDR-original heap-owned container context menu.
 //
 // NereusSDR original. A context menu that its owner may be destroyed
 // under. A container's menu runs its own event loop, and an action in
