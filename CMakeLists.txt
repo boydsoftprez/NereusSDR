@@ -982,6 +982,7 @@ set(CORE_SOURCES
     src/core/cat/CatCommandCatalog.cpp
     src/core/AntennaLabels.cpp
     src/core/AppSettings.cpp
+    src/core/SettingsFileWriter.cpp
     src/core/settings/SettingsBackup.cpp
     src/core/settings/SettingsBackupTransfer.cpp
     src/core/BoardCapabilities.cpp

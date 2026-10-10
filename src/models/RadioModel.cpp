@@ -17,6 +17,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-10 — J.J. Boyd (KG4VCF). The timed settings save writes the
+//                 file on AppSettings' writer thread, off the thread that
+//                 sends the Core's receive audio. AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-04: Preserve native untyped Tune OFF release alongside guarded
@@ -1409,6 +1413,7 @@ mw0lge@grange-lane.co.uk
 // for Role::Local.
 #include "core/meters/SliceMeterPump.h"
 #include "core/AppSettings.h"
+#include "core/SettingsFileWriter.h"
 #include <QHostAddress>
 #include <chrono>
 #include <utility>
@@ -1685,6 +1690,8 @@ RadioModel::RadioModel(Role role, QObject* parent)
     , m_wdspEngine(new WdspEngine(this))
 {
     m_role = role;
+    connect(AppSettings::instance().backgroundSaveNotifier(), &SettingsFileWriter::finished,
+            this, &RadioModel::onBackgroundSettingsSaveFinished);
     // Ship default 2026-04-30: Clarity ON for fresh installs. Auto-tuning
     // the noise floor is the better first-launch experience than asking
     // the user to find and toggle the setting themselves.
@@ -25240,7 +25247,7 @@ void RadioModel::scheduleSettingsSave(SliceModel* slice)
     m_settingsSaveTimerArmed = true;
     QTimer::singleShot(500, this, [this]() {
         m_settingsSaveTimerArmed = false;
-        flushPendingSettingsSave();
+        flushPendingSettingsSaveInBackground();
     });
 }
 
@@ -25267,10 +25274,43 @@ void RadioModel::noteOfflineReceiverPropertyEdit()
 // re-save the same state, which is harmless.
 void RadioModel::flushPendingSettingsSave()
 {
+    flushPendingSettingsSave(SettingsSaveMode::Blocking);
+}
+
+void RadioModel::flushPendingSettingsSaveInBackground()
+{
+    flushPendingSettingsSave(SettingsSaveMode::Background);
+}
+
+void RadioModel::flushPendingSettingsSave(SettingsSaveMode mode)
+{
+    // A timed save may still be with the writer thread. A caller that
+    // wants the file written before it goes on (quit, disconnect, station
+    // handover) gets a save of its own, which replaces that one.
+    const bool backgroundSaveOutstanding = m_backgroundSettingsSaveTicket != 0;
+    if (mode == SettingsSaveMode::Blocking && backgroundSaveOutstanding
+        && !m_settingsSaveScheduled) {
+        m_backgroundSettingsSaveTicket = 0;
+        QString error;
+        if (!AppSettings::instance().save(&error)) {
+            qCWarning(lcConnection) << "Settings not saved:" << error;
+            error = tr("Settings could not be saved. Saving is tried again shortly.");
+            m_settingsSaveScheduled = true;
+            scheduleSettingsSaveRetry();
+        }
+        if (m_settingsSaveError != error) {
+            m_settingsSaveError = error;
+            emit settingsSaveErrorChanged(error);
+        }
+        return;
+    }
     if (m_receiveLayoutPendingAdmission || m_receiveLayoutProtected || !m_settingsSaveScheduled) {
         return;
     }
     m_settingsSaveScheduled = false;
+    // This flush takes over from any background save still awaited: its
+    // result is no longer the newest word on the file.
+    m_backgroundSettingsSaveTicket = 0;
     const QSet<int> dirty = std::exchange(m_dirtySettingsSliceIds, {});
     for (int id : dirty) {
         saveSliceState(sliceById(id));
@@ -25280,6 +25320,12 @@ void RadioModel::flushPendingSettingsSave()
     }
     QString error;
     bool saved = captureReceiveLayout(&error);
+    if (saved && mode == SettingsSaveMode::Background) {
+        // The file's result comes later; the reason shown stays as it is
+        // until then.
+        m_backgroundSettingsSaveTicket = AppSettings::instance().saveInBackground();
+        return;
+    }
     if (saved && !AppSettings::instance().save(&error)) {
         // settingsSaveError reaches a remote app as sent: plain words here,
         // the store's own reason (a file error) in the log. The receive
@@ -25293,17 +25339,47 @@ void RadioModel::flushPendingSettingsSave()
         // A later edit, orderly shutdown, or bounded retry can commit them.
         m_dirtySettingsSliceIds.unite(dirty);
         m_settingsSaveScheduled = true;
-        if (!m_settingsRetryScheduled) {
-            m_settingsRetryScheduled = true;
-            QTimer::singleShot(5000, this, [this]() {
-                m_settingsRetryScheduled = false;
-                flushPendingSettingsSave();
-            });
-        }
+        scheduleSettingsSaveRetry();
     }
     if (m_settingsSaveError != error) {
         m_settingsSaveError = error;
         emit settingsSaveErrorChanged(error);
+    }
+}
+
+void RadioModel::scheduleSettingsSaveRetry()
+{
+    if (m_settingsRetryScheduled) {
+        return;
+    }
+    m_settingsRetryScheduled = true;
+    QTimer::singleShot(5000, this, [this]() {
+        m_settingsRetryScheduled = false;
+        flushPendingSettingsSaveInBackground();
+    });
+}
+
+void RadioModel::onBackgroundSettingsSaveFinished(quint64 ticket, bool saved,
+                                                  const QString& error)
+{
+    // Another RadioModel's save, or one a later flush took over from.
+    if (ticket == 0 || ticket != m_backgroundSettingsSaveTicket) {
+        return;
+    }
+    m_backgroundSettingsSaveTicket = 0;
+    QString reason;
+    if (!saved) {
+        // As the blocking save: plain words for a remote app, the store's
+        // own reason in the log. The values stay in the store, so the
+        // retry writes them.
+        qCWarning(lcConnection) << "Settings not saved:" << error;
+        reason = tr("Settings could not be saved. Saving is tried again shortly.");
+        m_settingsSaveScheduled = true;
+        scheduleSettingsSaveRetry();
+    }
+    if (m_settingsSaveError != reason) {
+        m_settingsSaveError = reason;
+        emit settingsSaveErrorChanged(reason);
     }
 }
 

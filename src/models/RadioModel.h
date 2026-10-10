@@ -6798,6 +6798,12 @@ public:
     // tweak when they immediately close the app. No-op when nothing's
     // pending. Idempotent — calling repeatedly is safe.
     void flushPendingSettingsSave();
+    // The timed form of the save above: the values are taken on this
+    // thread and the file is written on AppSettings' writer thread. A save
+    // takes 140 to 470 ms on a Rock 5C, and the Core sends its receive
+    // audio from this thread (bench 2026-10-10: tuning stuttered in every
+    // remote window). The result arrives in onBackgroundSettingsSaveFinished.
+    void flushPendingSettingsSaveInBackground();
     /// iPhone app Task 73: the coalesced settings save, for a store the
     /// Core's session server changed (a device's saved slices).
     void requestSettingsSave() { scheduleSettingsSave(); }
@@ -7865,6 +7871,12 @@ private:
     QString m_receiveLayoutRestoreState;
     QString m_receiveLayoutRestoreMessage;
     bool m_settingsRetryScheduled{false};
+    // The background save whose result is still awaited; 0 when none is.
+    quint64 m_backgroundSettingsSaveTicket{0};
+    enum class SettingsSaveMode { Blocking, Background };
+    void flushPendingSettingsSave(SettingsSaveMode mode);
+    void scheduleSettingsSaveRetry();
+    void onBackgroundSettingsSaveFinished(quint64 ticket, bool saved, const QString& error);
     QString m_settingsSaveError;
     QSet<int> m_dirtySettingsSliceIds;
     // Phase 3P-I-a — dirty flag for AlexController persistence.
