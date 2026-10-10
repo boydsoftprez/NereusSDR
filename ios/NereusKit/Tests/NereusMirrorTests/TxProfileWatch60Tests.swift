@@ -185,8 +185,8 @@ struct TxProfileWatch60Tests {
 
     @Test func completeSnapshotRetainsEveryTypedValueBeforeFlowAttaches() async throws {
         let corpus = try Corpus(), rig = Rig()
-        try #require(corpus.mapping.count == 60 && Set(corpus.mapping.map(\.id)).count == 60)
-        try #require(corpus.cases.count == 60)
+        try #require(corpus.mapping.count == 52 && Set(corpus.mapping.map(\.id)).count == 52)
+        try #require(corpus.cases.count == 52)
         try await rig.connect(corpus, complete: false)
         #expect(!rig.mirror.isSnapshotComplete && rig.feed.description(for: "audio") == nil)
         let schema = try #require(corpus.initial.compactMap { message -> LinkMessage.Schema? in
@@ -231,7 +231,7 @@ struct TxProfileWatch60Tests {
         await rig.stop()
     }
 
-    @Test(arguments: Array(0..<60))
+    @Test(arguments: Array(0..<52))
     func isolatedActualEditsLatchDirtyAndCancelRetainsHistory(_ index: Int) async throws {
         let corpus = try Corpus()
         let edit = try corpus.isolatedEdit(index)

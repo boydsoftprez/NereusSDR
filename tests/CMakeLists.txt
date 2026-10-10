@@ -7185,6 +7185,11 @@ nereus_add_test(tst_settings_schema_v8_migration)
 # new ones, out-of-range values clamped, in-range values kept).
 nereus_add_test(tst_settings_schema_v9_migration)
 
+# Two-tone as one setting: SettingsSchemaVersion v9 -> v10 removes the
+# two-tone keys TX profiles carried and resets a live two-tone level saved
+# at the retired -6 dB default to Thetis's 0 dB, once.
+nereus_add_test(tst_settings_schema_v10_migration)
+
 # Phase 3F Sub-Epic B Task 1: SliceConfig + DdcAssignment shared structs.
 # 2 tests: slice_config_struct_has_required_fields,
 #          ddc_assignment_struct_has_required_fields.

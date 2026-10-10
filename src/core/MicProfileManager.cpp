@@ -37,6 +37,11 @@
 //   2026-09-30 - Radio codec: a profile's Mic_LineInGain no longer
 //                 overrides the index its Line_Input_Level gives. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Two-tone leaves TX profiles: the eight TwoTone* keys are
+//                 no longer saved, seeded or restored by a profile, as
+//                 Thetis TX profiles carry none (database.cs:4299
+//                 [v2.10.3.15]). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived handler logic
@@ -77,10 +82,11 @@ QString activeKey(const QString& mac)
 }
 
 // ---------------------------------------------------------------------------
-// 108 live-field keys captured per profile.  Order matches the table in the
+// 100 live-field keys captured per profile.  Order matches the table in the
 // chunk-F + 3M-3a-i / ii / iii task specs (tools/script-friendly: sorted by
 // group).
-//   23 mic/VOX/MON/two-tone   (3M-1c F)
+//   15 mic/VOX/MON            (3M-1c F; the eight two-tone keys left
+//                              profiles 2026-10-09)
 // + 27 EQ/Lev/ALC             (3M-3a-i G)
 // + 41 CFC/CPDR/CESSB/PhRot   (3M-3a-ii G)
 // +  1 TXParaEQData blob      (3M-3a-ii follow-up Batch 6)
@@ -116,15 +122,11 @@ const QStringList& liveKeyList()
         // key dropped alongside the antiVoxSourceVax property.
         QStringLiteral("MonitorVolume"),
         QStringLiteral("Mic_Source"),
-        // Two-tone (7 properties + 1 enum)
-        QStringLiteral("TwoToneFreq1"),
-        QStringLiteral("TwoToneFreq2"),
-        QStringLiteral("TwoToneLevel"),
-        QStringLiteral("TwoTonePower"),
-        QStringLiteral("TwoToneFreq2Delay"),
-        QStringLiteral("TwoToneInvert"),
-        QStringLiteral("TwoTonePulsed"),
-        QStringLiteral("TwoToneDrivePowerOrigin"),
+        // Two-tone is not profile content. Thetis TX profiles carry no
+        // two-tone fields (database.cs:4299 AddTXProfileTable [v2.10.3.15]);
+        // the level is a Setup value (setup.Designer.cs:62144-62173
+        // [v2.10.3.15]). TransmitModel persists the live two-tone settings
+        // under hardware/<mac>/tx/TwoTone*.
         // ── 3M-3a-i G — TX EQ + Leveler + ALC (27 keys) ───────────────────
         // EQ enable + preamp + 10 band gains + 10 band frequencies (22 keys).
         // Defaults from Thetis database.cs:4552-4594 [v2.10.3.13] (TXProfile
@@ -1196,19 +1198,11 @@ QHash<QString, QVariant> MicProfileManager::defaultProfileValues()
     out.insert(QStringLiteral("MonitorVolume"),        QStringLiteral("0.5"));           // audio.cs:417 [v2.10.3.13]
     out.insert(QStringLiteral("Mic_Source"),           QStringLiteral("Pc"));            // NereusSDR-native (always-safe)
 
-    // Two-tone (7) + drive-power source (1)
-    out.insert(QStringLiteral("TwoToneFreq1"),         QStringLiteral("700"));           // setup.cs:34226 [v2.10.3.13]
-    out.insert(QStringLiteral("TwoToneFreq2"),         QStringLiteral("1900"));          // setup.cs:34227 [v2.10.3.13]
-    // Match TransmitModel's full-envelope default: -6 dB prevents PS3
-    // collection from reaching the upper amplitude buckets.
-    // From Thetis setup.Designer.cs:62168-62172 [v2.10.3.15].
-    out.insert(QStringLiteral("TwoToneLevel"),         QStringLiteral("0"));
-    out.insert(QStringLiteral("TwoTonePower"),         QStringLiteral("50"));            // NereusSDR-original (Designer ships 10)
-    out.insert(QStringLiteral("TwoToneFreq2Delay"),    QStringLiteral("0"));             // setup.Designer.cs:61943-61947 [v2.10.3.13]
-    out.insert(QStringLiteral("TwoToneInvert"),        QStringLiteral("True"));          // setup.Designer.cs:61963 [v2.10.3.13]
-    out.insert(QStringLiteral("TwoTonePulsed"),        QStringLiteral("False"));         // setup.Designer.cs:61643-61653 [v2.10.3.13]
-    out.insert(QStringLiteral("TwoToneDrivePowerOrigin"),
-               QStringLiteral("DriveSlider"));                                            // console.cs:46553 [v2.10.3.13]
+    // Two-tone is not profile content. Thetis TX profiles carry no
+    // two-tone fields (database.cs:4299 AddTXProfileTable [v2.10.3.15]);
+    // the level is a Setup value (setup.Designer.cs:62144-62173
+    // [v2.10.3.15]). TransmitModel persists the live two-tone settings
+    // under hardware/<mac>/tx/TwoTone*.
 
     // ── 3M-3a-i G — TX EQ + Leveler + ALC defaults (27 keys) ─────────────
     // From Thetis database.cs:4552-4594 [v2.10.3.13] (TXProfile schema).
@@ -1345,16 +1339,11 @@ QHash<QString, QVariant> MicProfileManager::captureLiveValues(const TransmitMode
     out.insert(QStringLiteral("Mic_Source"),
                tx->micSource() == MicSource::Radio ? QStringLiteral("Radio") : QStringLiteral("Pc"));
 
-    // Two-tone (7) + drive-power source (1)
-    out.insert(QStringLiteral("TwoToneFreq1"),         QString::number(tx->twoToneFreq1()));
-    out.insert(QStringLiteral("TwoToneFreq2"),         QString::number(tx->twoToneFreq2()));
-    out.insert(QStringLiteral("TwoToneLevel"),         QString::number(tx->twoToneLevel()));
-    out.insert(QStringLiteral("TwoTonePower"),         QString::number(tx->twoTonePower()));
-    out.insert(QStringLiteral("TwoToneFreq2Delay"),    QString::number(tx->twoToneFreq2Delay()));
-    out.insert(QStringLiteral("TwoToneInvert"),        tx->twoToneInvert() ? QStringLiteral("True") : QStringLiteral("False"));
-    out.insert(QStringLiteral("TwoTonePulsed"),        tx->twoTonePulsed() ? QStringLiteral("True") : QStringLiteral("False"));
-    out.insert(QStringLiteral("TwoToneDrivePowerOrigin"),
-               drivePowerSourceToString(tx->twoToneDrivePowerSource()));
+    // Two-tone is not profile content. Thetis TX profiles carry no
+    // two-tone fields (database.cs:4299 AddTXProfileTable [v2.10.3.15]);
+    // the level is a Setup value (setup.Designer.cs:62144-62173
+    // [v2.10.3.15]). TransmitModel persists the live two-tone settings
+    // under hardware/<mac>/tx/TwoTone*.
 
     // ── 3M-3a-i G — TX EQ + Leveler + ALC live capture (27 keys) ─────────
     out.insert(QStringLiteral("TXEQEnabled"),
@@ -1492,16 +1481,11 @@ void MicProfileManager::applyValuesToModel(const QHash<QString, QVariant>& value
     const QString micSrc = take(QStringLiteral("Mic_Source"), QStringLiteral("Pc"));
     tx->setMicSource(micSrc == QLatin1String("Radio") ? MicSource::Radio : MicSource::Pc);
 
-    // Two-tone
-    tx->setTwoToneFreq1(take(QStringLiteral("TwoToneFreq1"), QStringLiteral("700")).toInt());
-    tx->setTwoToneFreq2(take(QStringLiteral("TwoToneFreq2"), QStringLiteral("1900")).toInt());
-    tx->setTwoToneLevel(take(QStringLiteral("TwoToneLevel"), QStringLiteral("0")).toDouble());
-    tx->setTwoTonePower(take(QStringLiteral("TwoTonePower"), QStringLiteral("50")).toInt());
-    tx->setTwoToneFreq2Delay(take(QStringLiteral("TwoToneFreq2Delay"), QStringLiteral("0")).toInt());
-    tx->setTwoToneInvert(take(QStringLiteral("TwoToneInvert"), QStringLiteral("True")) == QLatin1String("True"));
-    tx->setTwoTonePulsed(take(QStringLiteral("TwoTonePulsed"), QStringLiteral("False")) == QLatin1String("True"));
-    tx->setTwoToneDrivePowerSource(drivePowerSourceFromString(
-        take(QStringLiteral("TwoToneDrivePowerOrigin"), QStringLiteral("DriveSlider"))));
+    // Two-tone is not profile content. Thetis TX profiles carry no
+    // two-tone fields (database.cs:4299 AddTXProfileTable [v2.10.3.15]);
+    // the level is a Setup value (setup.Designer.cs:62144-62173
+    // [v2.10.3.15]). TransmitModel persists the live two-tone settings
+    // under hardware/<mac>/tx/TwoTone*.
 
     // ── 3M-3a-i G — TX EQ + Leveler + ALC apply-to-model (27 keys) ───────
     // Defaults match the EQ/Lev/ALC defaults in defaultProfileValues() above.

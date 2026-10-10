@@ -152,7 +152,7 @@ struct TxProfilesPanelTests {
         #expect(rig.dispatcher.state(of: active, in: "audio").editable)
         #expect(rig.dispatcher.state(of: save, in: "audio").editable)
         let metadata = try #require(active.modern?.profileUnsavedChanges)
-        #expect(metadata.watch.count == 60 && metadata.watch.first == "micGainDb")
+        #expect(metadata.watch.count == 52 && metadata.watch.first == "micGainDb")
         #expect(metadata.saveVerb == "txProfile.save")
         #expect(save.modern?.profilePrompt?.initial.object == "transmit")
         #expect(!rig.flow.dirty && rig.flow.currentName == "Alpha")

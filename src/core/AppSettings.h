@@ -25,6 +25,10 @@
 //                 running window no longer writes its old values back over
 //                 the import. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-09 - Schema v10: two-tone leaves TX profiles; the two-tone
+//                 keys saved inside profiles are removed and a live level
+//                 saved at the retired -6 dB default becomes 0, once.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -731,6 +735,8 @@ public:
     //   - v8 (R-R3-49): drops TciRateLimitMsgsPerSec (old msg/s unit) once
     //   - v9 (R-IOS-06, R-IOS-27): each slice's saved NR1 values into
     //     Thetis's NR spinbox ranges once (old defaults to new, clamps)
+    //   - v10: removes the two-tone keys under every TX profile and resets
+    //     a live TwoToneLevel saved at the retired -6 to 0, once
     //   - Sets SettingsSchemaVersion=currentVersion
     void ensureSettingsAtVersion(int currentVersion);
 

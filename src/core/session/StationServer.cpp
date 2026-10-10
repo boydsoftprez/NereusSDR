@@ -1,6 +1,15 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-09: An accepted remote transmit setting, notch flag or radio
+//               speaker write schedules the Core's coalesced settings save.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: A clamped remote write that changed a saveable value
+//               (a radio speaker volume above the maximum) schedules the
+//               save too. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
+//   2026-10-09: The schema version comment names v10. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-06: Setup description version 25 (Audio > Outputs' radio
 //               speaker rows, TX Input titled Microphone) is the cap
 //               (R-SPK-23). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -1774,6 +1783,26 @@ bool isRadioSpeakerProperty(const QByteArray& name)
         || name == "speakerAmplifierAvailable";
 }
 
+// Two-tone plan Task 3: an accepted write whose model keeps it in the
+// in-memory AppSettings only (TransmitModel::persistOne,
+// NotchModel::persist, RadioModel::saveRadioSpeaker), with no save of its
+// own. The Core then schedules its coalesced settings save, the one a
+// slice edit uses, so the change reaches the file before the Core exits.
+// A keying property is not a setting and asks for none.
+bool acceptedWriteAsksForSave(const QByteArray& objectKey, const QByteArray& name)
+{
+    if (objectKey == QByteArray(kTransmitKey)) {
+        return !isTransmitKeyingProperty(name);
+    }
+    if (objectKey == "notches") {
+        return true;
+    }
+    if (objectKey == QByteArray(kRadioKey)) {
+        return isRadioSpeakerProperty(name);
+    }
+    return false;
+}
+
 // The tuner properties whose remote write reaches the tuner itself
 // (TunerModel::applyMirroredValue sends operate, bypass or antenna
 // commands). A receive-only Core never lets a write get there.
@@ -2312,7 +2341,7 @@ QString peerNameForThisProcess()
 // Each side's own AppSettings schema version, read by the key name
 // AppSettings::ensureSettingsAtVersion() writes it under. Read rather than
 // hardcoded: the literal lives at exactly one place today (CoreInit.cpp's
-// ensureSettingsAtVersion(9) call), and duplicating it here would create a
+// ensureSettingsAtVersion(10) call), and duplicating it here would create a
 // second copy free to drift from the migrations that actually ran.
 qint32 settingsSchemaVersionOf(const AppSettings& settings)
 {
@@ -8184,6 +8213,28 @@ QList<SessionPropertyResult> StationServer::applyPropertyWrite(
     }
     if (adjust) {
         adjust(results);
+    }
+    // Two-tone plan Task 3: one save request per batch, only for a write
+    // that was taken; a refused one changed nothing to save. A write the
+    // setter clamped is not accepted but did change the value (a radio
+    // speaker volume above the maximum), so a saveable property whose
+    // settled value moved asks for the save too.
+    const auto settledChanged = [&previous](const MirrorUpdate& value) {
+        return !previous.contains(value.name)
+            || !sameSettledValue(previous.value(value.name).value, value.value);
+    };
+    if (!m_radioModel.isNull()
+        && (std::any_of(results.cbegin(), results.cend(),
+                        [&message](const SessionPropertyResult& r) {
+                            return r.accepted
+                                && acceptedWriteAsksForSave(message.objectKey, r.property);
+                        })
+            || std::any_of(settled.cbegin(), settled.cend(),
+                           [&message, &settledChanged](const MirrorUpdate& value) {
+                               return acceptedWriteAsksForSave(message.objectKey, value.name)
+                                   && settledChanged(value);
+                           }))) {
+        m_radioModel->requestSettingsSave();
     }
     if (answer && negotiated && message.writeId != 0) {
         send(transport, SessionMessages::propertyResult(message.objectKey, message.writeId, results));

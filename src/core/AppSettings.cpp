@@ -31,6 +31,10 @@
 //                 Thetis's DB.Merged does, so the running window no longer
 //                 writes its old values back over the import. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Schema v10: two-tone leaves TX profiles; the two-tone
+//                 keys saved inside profiles are removed and a live level
+//                 saved at the retired -6 dB default becomes 0, once.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1933,6 +1937,50 @@ void AppSettings::ensureSettingsAtVersion(int currentVersion)
             }
         }
         qDebug() << "Settings migration to schema v9 complete";
+    }
+
+    // v9 -> v10 migration: two-tone is one station setting, as in Thetis.
+    // Profiles saved before 74812ec8b carried a two-tone level of -6, which
+    // halves the two-tone envelope and keeps PureSignal from calibrating,
+    // and loading the profile put it back every time. Thetis's default is 0
+    // (From Thetis setup.Designer.cs:62168-62172 [v2.10.3.15] udTwoToneLevel)
+    // and Thetis TX profiles carry no two-tone values (From Thetis
+    // database.cs:4299 [v2.10.3.15] AddTXProfileTable). Once:
+    //   - the eight two-tone keys under every
+    //     hardware/<mac>/tx/profile/<name>/ are removed; nothing reads them
+    //     now, and deleting a profile walks only today's key list, so this
+    //     also clears what an older profile would otherwise strand;
+    //   - a live hardware/<mac>/tx/TwoToneLevel saved as exactly the retired
+    //     default becomes 0; any other level the operator chose stays.
+    if (storedVersion < 10 && currentVersion >= 10) {
+        qDebug() << "Migrating settings to schema v10 (two-tone leaves TX profiles)";
+        // The two-tone level default before 1972888fb / 74812ec8b.
+        constexpr double kRetiredTwoToneLevelDb = -6.0;
+        static const QRegularExpression profileTwoToneKey(QStringLiteral(
+            "^hardware/[^/]+/tx/profile/.+/(TwoToneFreq1|TwoToneFreq2|TwoToneLevel|"
+            "TwoTonePower|TwoToneFreq2Delay|TwoToneInvert|TwoTonePulsed|"
+            "TwoToneDrivePowerOrigin)$"));
+        static const QRegularExpression liveTwoToneLevelKey(
+            QStringLiteral("^hardware/[^/]+/tx/TwoToneLevel$"));
+        for (const QString& key : allKeys()) {
+            if (profileTwoToneKey.match(key).hasMatch()) {
+                remove(key);
+                qDebug() << "Settings v10: removed" << key;
+                continue;
+            }
+            if (!liveTwoToneLevelKey.match(key).hasMatch()) {
+                continue;
+            }
+            bool ok = false;
+            const double saved = value(key).toString().toDouble(&ok);
+            if (!ok || saved != kRetiredTwoToneLevelDb) {
+                continue;
+            }
+            // The same string TransmitModel::persistOne writes for 0.
+            setValue(key, QString::number(0.0));
+            qDebug() << "Settings v10:" << key << "from" << saved << "to" << 0.0;
+        }
+        qDebug() << "Settings migration to schema v10 complete";
     }
 
     setValue(versionKey, QString::number(currentVersion));

@@ -106,6 +106,10 @@
 //                 refuses a txEqParaEqData or cfcParaEqData value the curve
 //                 loader cannot read. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-09 - Two-tone fix wave: the loadFromSettings defaults comment
+//                 gives Level 0 (Thetis) and the schema v10 reset of a
+//                 saved -6. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 // --- From console.cs (Thetis v2.10.3.13) ---
@@ -2378,7 +2382,10 @@ void TransmitModel::loadFromSettings(const QString& mac)
     // ── Two-tone test properties (3M-1c B.2) ──────────────────────────────
     // Defaults per design spec §4.4 (option C):
     //   Freq1=700, Freq2=1900 — match Thetis Designer + btnTwoToneF_defaults.
-    //   Level=-6, Power=50    — NereusSDR-original safer (Designer 0/10).
+    //   Level=0               - Thetis udTwoToneLevel default
+    //                           (setup.Designer.cs:62168-62172 [v2.10.3.15]);
+    //                           settings schema v10 resets a saved -6 to 0.
+    //   Power=50              - NereusSDR-original safer (Designer 10).
     //   Freq2Delay=0          — match Thetis Designer.
     //   Invert=true           — Designer chkInvertTones.Checked = true.
     //   Pulsed=false          — Designer (no Checked= line).
