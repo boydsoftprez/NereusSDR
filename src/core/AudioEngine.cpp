@@ -19,6 +19,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09  J.J. Boyd / KG4VCF  hasCaptureDemand(): the capture
+//                                    supervisor's hasDemand().
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-06  J.J. Boyd / KG4VCF  Radio speaker plan Task 1 (R-SPK-01 to
 //                                    R-SPK-04): the radio tap takes the
 //                                    RADIO level and mute, the speakers
@@ -1188,6 +1191,11 @@ CaptureSupervisor::Lease AudioEngine::acquireCaptureDemand(CaptureSupervisor::De
         return CaptureSupervisor::Lease();
     }
     return m_captureSupervisor->acquire(demand);
+}
+
+bool AudioEngine::hasCaptureDemand() const
+{
+    return m_captureSupervisor && m_captureSupervisor->hasDemand();
 }
 
 void AudioEngine::retryCapture()

@@ -129,6 +129,12 @@
 //                that app leaving releases the key on the Core, or the
 //                Core's answer when it comes. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - TCI program keys that send silence: the forwarded key
+//                says whether the app's trx carried ",tci"
+//                (RemoteTransmit::key's programAudio), so the window's
+//                microphone line carries the app's audio or silence, never
+//                the microphone. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 
 #ifdef HAVE_WEBSOCKETS
 
@@ -3690,7 +3696,7 @@ void TciServer::handleRemoteTrx(QWebSocket* ws, const QString& peer, int rx, boo
     m_remoteKeyClient = asker;
     const quint64 generation = ++m_remoteKeyGeneration;
     qCInfo(lcTci) << "TciServer: trx from" << peer << "forwarded to the Core as a program's key";
-    m_remoteTransmit.key([this, asker, peer, rx, hasTciArg, generation, answerAsker](
+    m_remoteTransmit.key(hasTciArg, [this, asker, peer, rx, hasTciArg, generation, answerAsker](
                              const RemoteKeyAnswer& answer) {
         if (generation != m_remoteKeyGeneration || !m_remoteKeyPending) {
             // A stale answer (the server stopped or the forwarder changed):

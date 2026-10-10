@@ -725,6 +725,13 @@ private slots:
     void budgetChargesGrantedPixels();
     void regrantAfterNeighbourLeavesStaysWithinAdmittedCharge();
     void sharedEngineRegrantsEverySurvivorWhenItsSizerLeaves();
+    void sharedEngineReRequestMovesStaleEngine_data();
+    void sharedEngineReRequestMovesStaleEngine();
+    void sharedEngineHolderKeepsEngineOnReRequest();
+    void sharedEngineReRequestStopsAtNeighbourRequest();
+    void sharedEngineDepartureShrinksToRemainingRequest_data();
+    void sharedEngineDepartureShrinksToRemainingRequest();
+    void sharedEngineDepartureRunsAtLargestRemainingRequest();
     void subscribeDecimationReachesTheEndpointsEngine();
     void peerBelowTheGrantMinorCannotAskForDecimation();
     void destroyingControllerWithLiveBudgetSessionIsQuiet();
@@ -3833,14 +3840,326 @@ void TstDaemonMediaController::sharedEngineRegrantsEverySurvivorWhenItsSizerLeav
         QCOMPARE(h.controller.spectrumGrant(regranted)->reason, SpectrumLimitReason::None);
     }
 
-    // E3 leaves. E2 is not held back by anyone, so nothing renews.
+    // E3 leaves. The engine shrinks to the largest remaining request, E2's
+    // 4096, so E2 and E5 are each renewed once more; E4 is untouched.
     QVERIFY(h.client.sendMediaControl(unsubscription(3), h.client.sessionEpoch()));
     QTRY_COMPARE(h.controller.activeEndpointCount(), 3);
+    contextCount(2, e2Contexts + 2);
+    contextCount(5, e5Contexts + 2);
     settle();
-    QCOMPARE(messageCount(controls, QStringLiteral("context"), 2), e2Contexts + 1);
+    QCOMPARE(messageCount(controls, QStringLiteral("context"), 2), e2Contexts + 2);
     QCOMPARE(messageCount(controls, QStringLiteral("context"), 4), e4Contexts);
-    QCOMPARE(messageCount(controls, QStringLiteral("context"), 5), e5Contexts + 1);
+    QCOMPARE(messageCount(controls, QStringLiteral("context"), 5), e5Contexts + 2);
+    for (quint32 shrunk : {2U, 5U}) {
+        const QJsonObject context = messageFor(controls, QStringLiteral("context"), shrunk);
+        QCOMPARE(context.value(QStringLiteral("grantedFftSize")).toInt(), 4096);
+        QCOMPARE(context.value(QStringLiteral("limit")).toString(), QStringLiteral("none"));
+        QCOMPARE(h.controller.spectrumGrant(shrunk)->grantedFftSize, 4096);
+        QCOMPARE(h.controller.spectrumGrant(shrunk)->reason, SpectrumLimitReason::None);
+    }
+    h.finish();
+}
+
+// R-R3-01/R-R3-08: a re-request on the same engine may move it, but only
+// within what every other pan on it accepts (between the engine's size and
+// its own request). Two pans share a "wide" engine at one size and both ask
+// again at another: after the first asks, the second still holds the
+// engine at its own request, so the first is granted the old size ("shared"
+// when that is less than it asked for); once the second asks too, no pan asks for the old size and the
+// engine moves to the new one for both.
+void TstDaemonMediaController::sharedEngineReRequestMovesStaleEngine_data()
+{
+    QTest::addColumn<int>("before");
+    QTest::addColumn<int>("after");
+    QTest::newRow("lower") << 8192 << 2048;
+    QTest::newRow("raise") << 2048 << 8192;
+}
+
+void TstDaemonMediaController::sharedEngineReRequestMovesStaleEngine()
+{
+    QFETCH(int, before);
+    QFETCH(int, after);
+    Harness h;
+    h.establishSession();
+    QSignalSpy controls(&h.client, &StationClient::mediaControlReceived);
+    h.startReadyPeer();
+    const double centre = h.radio.streamCentreHz(h.streamIndex);
+    const auto contextAt = [&](quint32 endpointId, int revision, int fftSize) {
+        QTRY_VERIFY(([&] {
+            h.feedRadio();
+            const QJsonObject context = messageFor(controls, QStringLiteral("context"),
+                                                   endpointId);
+            return context.value(QStringLiteral("revision")).toInt() == revision
+                && context.value(QStringLiteral("grantedFftSize")).toInt() == fftSize;
+        })());
+    };
+    const auto limitOf = [&](quint32 endpointId) {
+        return messageFor(controls, QStringLiteral("context"), endpointId)
+            .value(QStringLiteral("limit")).toString();
+    };
+    const auto settle = [&] {
+        for (int i = 0; i < 20; ++i) { h.feedRadio(); QTest::qWait(10); }
+    };
+
+    QVERIFY(h.client.sendMediaControl(
+        tieredSubscription(1, 1, h.sliceId, centre, QStringLiteral("wide"), before),
+        h.client.sessionEpoch()));
+    contextAt(1, 1, before);
+    QVERIFY(h.client.sendMediaControl(
+        tieredSubscription(2, 1, h.sliceId, centre, QStringLiteral("wide"), before),
+        h.client.sessionEpoch()));
+    contextAt(2, 1, before);
+    QCOMPARE(limitOf(1), QStringLiteral("none"));
+    QCOMPARE(limitOf(2), QStringLiteral("none"));
+    settle();
+    const int e2Contexts = messageCount(controls, QStringLiteral("context"), 2);
+
+    // E1 asks again. E2 still asks for the engine's size, so it holds it.
+    // E1 is told the engine is shared only when it got less than it asked
+    // for (grantReason); granted more, it is not limited.
+    QVERIFY(h.client.sendMediaControl(
+        tieredSubscription(1, 2, h.sliceId, centre, QStringLiteral("wide"), after),
+        h.client.sessionEpoch()));
+    contextAt(1, 2, before);
+    const bool e1Held = before < after;
+    QCOMPARE(limitOf(1), e1Held ? QStringLiteral("shared") : QStringLiteral("none"));
+    QCOMPARE(h.controller.spectrumGrant(1)->grantedFftSize, before);
+    QCOMPARE(h.controller.spectrumGrant(1)->reason,
+             e1Held ? SpectrumLimitReason::SharedEngine : SpectrumLimitReason::None);
+    settle();
+    QCOMPARE(messageCount(controls, QStringLiteral("context"), 2), e2Contexts);
+    QCOMPARE(h.controller.spectrumGrant(2)->grantedFftSize, before);
     QCOMPARE(h.controller.spectrumGrant(2)->reason, SpectrumLimitReason::None);
+
+    // E2 asks again at the same size: nobody asks for the old size, so the
+    // engine moves, and E1's renewed context carries the new size too.
+    QVERIFY(h.client.sendMediaControl(
+        tieredSubscription(2, 2, h.sliceId, centre, QStringLiteral("wide"), after),
+        h.client.sessionEpoch()));
+    contextAt(2, 2, after);
+    contextAt(1, 2, after);
+    for (quint32 endpointId : {1U, 2U}) {
+        QCOMPARE(limitOf(endpointId), QStringLiteral("none"));
+        QCOMPARE(h.controller.spectrumGrant(endpointId)->grantedFftSize, after);
+        QCOMPARE(h.controller.spectrumGrant(endpointId)->reason, SpectrumLimitReason::None);
+    }
+    QCOMPARE(h.controller.activeSourceCount(), 1);
+    h.finish();
+}
+
+// R-R3-01: a pan still at exactly its own request holds the engine. E1
+// sized the "wide" engine at 1024; E2 joined asking 4096 and was held to
+// 1024. E2 asking again (at 4096, then 2048) moves nothing, and E1's
+// context is never renewed.
+void TstDaemonMediaController::sharedEngineHolderKeepsEngineOnReRequest()
+{
+    Harness h;
+    h.establishSession();
+    QSignalSpy controls(&h.client, &StationClient::mediaControlReceived);
+    h.startReadyPeer();
+    const double centre = h.radio.streamCentreHz(h.streamIndex);
+    const auto waitForE2Revision = [&](int revision) {
+        QTRY_VERIFY(([&] {
+            h.feedRadio();
+            return messageFor(controls, QStringLiteral("context"), 2)
+                .value(QStringLiteral("revision")).toInt() == revision;
+        })());
+    };
+
+    QVERIFY(h.client.sendMediaControl(
+        tieredSubscription(1, 1, h.sliceId, centre, QStringLiteral("wide"), 1024),
+        h.client.sessionEpoch()));
+    QTRY_VERIFY(([&] {
+        h.feedRadio();
+        return !messageFor(controls, QStringLiteral("context"), 1).isEmpty();
+    })());
+    const qint64 e1Generation = messageFor(controls, QStringLiteral("context"), 1)
+        .value(QStringLiteral("contextGeneration")).toInteger();
+    const auto e1Untouched = [&]() {
+        QCOMPARE(messageCount(controls, QStringLiteral("context"), 1), 1);
+        const QJsonObject latest = messageFor(controls, QStringLiteral("context"), 1);
+        QCOMPARE(latest.value(QStringLiteral("contextGeneration")).toInteger(), e1Generation);
+        QCOMPARE(latest.value(QStringLiteral("grantedFftSize")).toInt(), 1024);
+    };
+    const auto e2Held = [&]() {
+        const QJsonObject context = messageFor(controls, QStringLiteral("context"), 2);
+        QCOMPARE(context.value(QStringLiteral("grantedFftSize")).toInt(), 1024);
+        QCOMPARE(context.value(QStringLiteral("limit")).toString(), QStringLiteral("shared"));
+        QCOMPARE(h.controller.spectrumGrant(2)->grantedFftSize, 1024);
+        QCOMPARE(h.controller.spectrumGrant(2)->reason, SpectrumLimitReason::SharedEngine);
+    };
+
+    QVERIFY(h.client.sendMediaControl(
+        tieredSubscription(2, 1, h.sliceId, centre, QStringLiteral("wide"), 4096),
+        h.client.sessionEpoch()));
+    waitForE2Revision(1);
+    e2Held();
+    QVERIFY(h.client.sendMediaControl(
+        tieredSubscription(2, 2, h.sliceId, centre, QStringLiteral("wide"), 4096),
+        h.client.sessionEpoch()));
+    waitForE2Revision(2);
+    e2Held();
+    QVERIFY(h.client.sendMediaControl(
+        tieredSubscription(2, 3, h.sliceId, centre, QStringLiteral("wide"), 2048),
+        h.client.sessionEpoch()));
+    waitForE2Revision(3);
+    e2Held();
+    for (int i = 0; i < 20; ++i) { h.feedRadio(); QTest::qWait(10); }
+    e1Untouched();
+    QCOMPARE(h.controller.spectrumGrant(1)->grantedFftSize, 1024);
+    QCOMPARE(h.controller.spectrumGrant(1)->reason, SpectrumLimitReason::None);
+    h.finish();
+}
+
+// R-R3-01: a re-request moves the engine toward itself only as far as the
+// other pans accept. E1 sized the engine at 8192; E2 joined asking 4096 and
+// was given 8192. E1 asks again at 2048: E2 accepts anything from 8192 down
+// to its own 4096, so the engine stops at 4096. E1 gets more than it asked
+// for and E2 exactly its own request; neither is limited.
+void TstDaemonMediaController::sharedEngineReRequestStopsAtNeighbourRequest()
+{
+    Harness h;
+    h.establishSession();
+    QSignalSpy controls(&h.client, &StationClient::mediaControlReceived);
+    h.startReadyPeer();
+    const double centre = h.radio.streamCentreHz(h.streamIndex);
+    const auto contextAt = [&](quint32 endpointId, int revision, int fftSize) {
+        QTRY_VERIFY(([&] {
+            h.feedRadio();
+            const QJsonObject context = messageFor(controls, QStringLiteral("context"),
+                                                   endpointId);
+            return context.value(QStringLiteral("revision")).toInt() == revision
+                && context.value(QStringLiteral("grantedFftSize")).toInt() == fftSize;
+        })());
+    };
+
+    QVERIFY(h.client.sendMediaControl(
+        tieredSubscription(1, 1, h.sliceId, centre, QStringLiteral("wide"), 8192),
+        h.client.sessionEpoch()));
+    contextAt(1, 1, 8192);
+    QVERIFY(h.client.sendMediaControl(
+        tieredSubscription(2, 1, h.sliceId, centre, QStringLiteral("wide"), 4096),
+        h.client.sessionEpoch()));
+    contextAt(2, 1, 8192);
+    QCOMPARE(h.controller.spectrumGrant(2)->reason, SpectrumLimitReason::None);
+
+    QVERIFY(h.client.sendMediaControl(
+        tieredSubscription(1, 2, h.sliceId, centre, QStringLiteral("wide"), 2048),
+        h.client.sessionEpoch()));
+    contextAt(1, 2, 4096);
+    contextAt(2, 1, 4096);
+    for (quint32 endpointId : {1U, 2U}) {
+        QCOMPARE(messageFor(controls, QStringLiteral("context"), endpointId)
+                     .value(QStringLiteral("limit")).toString(), QStringLiteral("none"));
+        QCOMPARE(h.controller.spectrumGrant(endpointId)->grantedFftSize, 4096);
+        QCOMPARE(h.controller.spectrumGrant(endpointId)->reason, SpectrumLimitReason::None);
+    }
+    h.finish();
+}
+
+// R-R3-01/R-R3-08: after a departure the engine runs at the largest request
+// among the pans left on it, down as well as up. E1 sized the "wide" engine
+// at 8192; E2 joined asking 2048 and was given 8192 (more than it asked, so
+// not limited). E1 leaves, by closing or by moving to the "fine" engine, and
+// E2 is regranted its own 2048: the engine no longer runs at the size only
+// the departed pan wanted.
+void TstDaemonMediaController::sharedEngineDepartureShrinksToRemainingRequest_data()
+{
+    QTest::addColumn<bool>("tierChange");
+    QTest::newRow("unsubscribe") << false;
+    QTest::newRow("tierChange") << true;
+}
+
+void TstDaemonMediaController::sharedEngineDepartureShrinksToRemainingRequest()
+{
+    QFETCH(bool, tierChange);
+    Harness h;
+    h.establishSession();
+    QSignalSpy controls(&h.client, &StationClient::mediaControlReceived);
+    h.startReadyPeer();
+    const double centre = h.radio.streamCentreHz(h.streamIndex);
+    const auto contextAt = [&](quint32 endpointId, int revision, int fftSize) {
+        QTRY_VERIFY(([&] {
+            h.feedRadio();
+            const QJsonObject context = messageFor(controls, QStringLiteral("context"),
+                                                   endpointId);
+            return context.value(QStringLiteral("revision")).toInt() == revision
+                && context.value(QStringLiteral("grantedFftSize")).toInt() == fftSize;
+        })());
+    };
+
+    QVERIFY(h.client.sendMediaControl(
+        tieredSubscription(1, 1, h.sliceId, centre, QStringLiteral("wide"), 8192),
+        h.client.sessionEpoch()));
+    contextAt(1, 1, 8192);
+    QVERIFY(h.client.sendMediaControl(
+        tieredSubscription(2, 1, h.sliceId, centre, QStringLiteral("wide"), 2048),
+        h.client.sessionEpoch()));
+    contextAt(2, 1, 8192);
+    QCOMPARE(h.controller.spectrumGrant(2)->grantedFftSize, 8192);
+    QCOMPARE(h.controller.spectrumGrant(2)->reason, SpectrumLimitReason::None);
+
+    if (tierChange) {
+        QVERIFY(h.client.sendMediaControl(
+            tieredSubscription(1, 2, h.sliceId, centre, QStringLiteral("fine"), 8192),
+            h.client.sessionEpoch()));
+        QTRY_COMPARE(h.controller.activeSourceCount(), 2);
+        QCOMPARE(h.controller.spectrumGrant(1)->grantedTier, FftTier::Fine);
+    } else {
+        QVERIFY(h.client.sendMediaControl(unsubscription(1), h.client.sessionEpoch()));
+        QTRY_COMPARE(h.controller.activeEndpointCount(), 1);
+    }
+    contextAt(2, 1, 2048);
+    QCOMPARE(messageFor(controls, QStringLiteral("context"), 2)
+                 .value(QStringLiteral("limit")).toString(), QStringLiteral("none"));
+    QCOMPARE(h.controller.spectrumGrant(2)->grantedFftSize, 2048);
+    QCOMPARE(h.controller.spectrumGrant(2)->reason, SpectrumLimitReason::None);
+    h.finish();
+}
+
+// R-R3-01/R-R3-08: three pans on one "wide" engine, E1 the holder at 8192,
+// E2 asking 4096 and E3 asking 2048 (both given 8192). E1 leaves: the engine
+// runs at the largest remaining request, 4096, for both. E2 gets its own
+// request and E3 more than it asked for; neither is limited.
+void TstDaemonMediaController::sharedEngineDepartureRunsAtLargestRemainingRequest()
+{
+    Harness h;
+    h.establishSession();
+    QSignalSpy controls(&h.client, &StationClient::mediaControlReceived);
+    h.startReadyPeer();
+    const double centre = h.radio.streamCentreHz(h.streamIndex);
+    const auto contextAt = [&](quint32 endpointId, int fftSize) {
+        QTRY_VERIFY(([&] {
+            h.feedRadio();
+            return messageFor(controls, QStringLiteral("context"), endpointId)
+                .value(QStringLiteral("grantedFftSize")).toInt() == fftSize;
+        })());
+    };
+
+    QVERIFY(h.client.sendMediaControl(
+        tieredSubscription(1, 1, h.sliceId, centre, QStringLiteral("wide"), 8192),
+        h.client.sessionEpoch()));
+    contextAt(1, 8192);
+    QVERIFY(h.client.sendMediaControl(
+        tieredSubscription(2, 1, h.sliceId, centre, QStringLiteral("wide"), 4096),
+        h.client.sessionEpoch()));
+    contextAt(2, 8192);
+    QVERIFY(h.client.sendMediaControl(
+        tieredSubscription(3, 1, h.sliceId, centre, QStringLiteral("wide"), 2048),
+        h.client.sessionEpoch()));
+    contextAt(3, 8192);
+
+    QVERIFY(h.client.sendMediaControl(unsubscription(1), h.client.sessionEpoch()));
+    QTRY_COMPARE(h.controller.activeEndpointCount(), 2);
+    contextAt(2, 4096);
+    contextAt(3, 4096);
+    for (quint32 endpointId : {2U, 3U}) {
+        QCOMPARE(messageFor(controls, QStringLiteral("context"), endpointId)
+                     .value(QStringLiteral("limit")).toString(), QStringLiteral("none"));
+        QCOMPARE(h.controller.spectrumGrant(endpointId)->grantedFftSize, 4096);
+        QCOMPARE(h.controller.spectrumGrant(endpointId)->reason, SpectrumLimitReason::None);
+    }
+    QCOMPARE(h.controller.activeSourceCount(), 1);
     h.finish();
 }
 

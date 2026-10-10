@@ -1807,6 +1807,7 @@ set(GUI_SOURCES
     src/gui/containers/ContainerArrangeController.cpp
     src/gui/containers/ContainerEditSession.h
     src/gui/containers/ContainerEditSession.cpp
+    src/gui/containers/OwnedMenu.h
     src/gui/containers/ContainerPreviewWidget.h
     src/gui/containers/FreeCanvasSurface.cpp
     src/gui/containers/ContainerPreviewWidget.cpp
