@@ -10,6 +10,11 @@
 //   2026-10-09: native audio plan Task 7 (R-AUD-06): a rescan of the older
 //               drivers ends with olderDriversRescanned(). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: final review fix (R-AUD-03, R-AUD-06): a notice sink is
+//               set and cleared only while its backend is claimed, so never
+//               while another thread is inside it; a stopped run rescans
+//               nothing; a skipped backend keeps its default. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AudioDeviceCatalog.h"
@@ -20,8 +25,10 @@
 #include <QThread>
 #include <QTimer>
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <mutex>
 #include <utility>
 
@@ -29,6 +36,13 @@ namespace NereusSDR {
 
 struct AudioDeviceCatalog::BackendClaim {
     std::atomic<bool> inUse{false};
+    // The run whose notice sink the backend holds, 0 for none.  Read and
+    // written only by the thread that holds the claim.
+    std::uint64_t sinkRun = 0;
+    // A run that found the backend claimed when it started: whichever
+    // thread holds the claim sets that run's sink as it lets go.
+    std::mutex pendingMutex;
+    std::weak_ptr<State> pending;
 };
 
 // What one run's thread shares with the catalogue.  Held by the
@@ -46,6 +60,7 @@ struct AudioDeviceCatalog::State {
     std::shared_ptr<std::atomic<std::uint64_t>> generations;   // set by stop(); the thread then calls no backend again
     std::atomic<int> debounceMs{kDebounceMs};
     std::atomic<int> busyBackend{-1};   // the backend a call is in, or -1
+    std::uint64_t runId = 0;            // this run, numbered from 1; set before the thread starts
 
     // Guards both pointers.  The catalogue clears them in stop(); a post
     // holds the mutex, so neither can be deleted under it.
@@ -58,6 +73,40 @@ struct AudioDeviceCatalog::State {
     std::condition_variable firstCv;
     std::optional<Listing> firstListing;
     bool waitingForFirst = false;
+
+    // A call into backend `index` first claims it; false while another
+    // thread (a run stop() left behind, or this run's worker) is inside it.
+    bool claim(std::size_t index)
+    {
+        bool expected = false;
+        return claims[index]->inUse.compare_exchange_strong(expected, true);
+    }
+    void unclaim(std::size_t index)
+    {
+        BackendClaim& held = *claims[index];
+        std::shared_ptr<State> next;
+        {
+            std::lock_guard<std::mutex> lock(held.pendingMutex);
+            next = held.pending.lock();
+            held.pending.reset();
+        }
+        if (next && !next->stopped.load()) {
+            installSink(next, index);
+        }
+        held.inUse.store(false);
+    }
+
+    // Both with the claim held, so the backend is never called from two
+    // threads at once.  installSink() does nothing when the run's sink is
+    // already set.
+    static void installSink(const std::shared_ptr<State>& state, std::size_t index);
+    void clearSink(std::size_t index)
+    {
+        if (claims[index]->sinkRun == runId) {
+            backends[index]->setNoticeSink({});
+            claims[index]->sinkRun = 0;
+        }
+    }
 };
 
 namespace {
@@ -83,6 +132,9 @@ QString backendName(AudioBackendId id)
     return QStringLiteral("unknown");
 }
 
+// Numbers each run, so a sink is cleared only by the run that set it.
+std::atomic<std::uint64_t> g_nextRunId{0};
+
 } // namespace
 
 // Lives on the catalogue's thread: the debounce timer and every call to a
@@ -100,6 +152,9 @@ public:
 
     void onNotice(int index, AudioNotice notice)
     {
+        if (m_state->stopped.load()) {
+            return;   // left behind by stop(): call nothing more
+        }
         if (notice == AudioNotice::DevicesChanged) {
             // A notice inside the window joins it; it never restarts it.
             if (!m_timer.isActive()) {
@@ -152,11 +207,15 @@ public:
                                        << qPrintable(backendName(snap.id))
                                        << "while an earlier call into it has not returned";
                 }
+                snap.held = true;
                 listing.backends.push_back(std::move(snap));
                 continue;
             }
             m_warnedHeld[i] = false;
             m_state->busyBackend.store(int(i));
+            // Set here when start() found it claimed by a thread stop()
+            // left behind and that thread has let go since.
+            State::installSink(m_state, i);
             snap.running = backend.running();
             if (snap.running) {
                 const QList<AudioDeviceInfo> all = backend.enumerate();
@@ -196,6 +255,9 @@ public:
     void rescanOlderDrivers()
     {
         for (std::size_t i = 0; i < m_state->backends.size(); ++i) {
+            if (m_state->stopped.load()) {
+                return;   // left behind by stop(): call nothing more
+            }
             IAudioEngineBackend& backend = *m_state->backends[i];
             if (backend.id() == AudioBackendId::PortAudio && claim(i)) {
                 m_state->busyBackend.store(int(i));
@@ -217,21 +279,44 @@ public:
     void shutdown()
     {
         m_timer.stop();
+        // The sinks stop() could not clear: it found their backend claimed.
+        // A sink a later run has set since is that run's to clear.
+        for (std::size_t i = 0; i < m_state->backends.size(); ++i) {
+            if (claim(i)) {
+                m_state->clearSink(i);
+                unclaim(i);
+            }
+        }
         QThread::currentThread()->quit();
     }
 
 private:
-    bool claim(std::size_t index)
-    {
-        bool expected = false;
-        return m_state->claims[index]->inUse.compare_exchange_strong(expected, true);
-    }
-    void unclaim(std::size_t index) { m_state->claims[index]->inUse.store(false); }
+    bool claim(std::size_t index) { return m_state->claim(index); }
+    void unclaim(std::size_t index) { m_state->unclaim(index); }
 
     std::shared_ptr<State> m_state;
     QTimer m_timer;
     std::vector<bool> m_warnedHeld = std::vector<bool>(m_state->backends.size(), false);
 };
+
+void AudioDeviceCatalog::State::installSink(const std::shared_ptr<State>& state, std::size_t index)
+{
+    if (state->claims[index]->sinkRun == state->runId) {
+        return;
+    }
+    const int at = int(index);
+    state->backends[index]->setNoticeSink([state, at](AudioNotice notice) {
+        std::lock_guard<std::mutex> lock(state->gateMutex);
+        if (state->worker == nullptr) {
+            return;
+        }
+        auto* target = static_cast<Worker*>(state->worker);
+        QMetaObject::invokeMethod(target, [target, at, notice] {
+            target->onNotice(at, notice);
+        }, Qt::QueuedConnection);
+    });
+    state->claims[index]->sinkRun = state->runId;
+}
 
 namespace {
 
@@ -277,6 +362,7 @@ void AudioDeviceCatalog::start()
     m_state->claims = m_claims;
     m_state->generations = m_generations;
     m_state->debounceMs.store(m_debounceMs.load());
+    m_state->runId = g_nextRunId.fetch_add(1) + 1;
     m_state->owner = this;
 
     m_thread = std::make_unique<QThread>();
@@ -288,18 +374,22 @@ void AudioDeviceCatalog::start()
     m_state->worker = m_worker;
 
     for (std::size_t i = 0; i < m_backends.size(); ++i) {
-        const int index = int(i);
-        std::shared_ptr<State> state = m_state;
-        m_backends[i]->setNoticeSink([state, index](AudioNotice notice) {
-            std::lock_guard<std::mutex> lock(state->gateMutex);
-            if (state->worker == nullptr) {
-                return;
-            }
-            auto* target = static_cast<Worker*>(state->worker);
-            QMetaObject::invokeMethod(target, [target, index, notice] {
-                target->onNotice(index, notice);
-            }, Qt::QueuedConnection);
-        });
+        if (m_state->claim(i)) {
+            State::installSink(m_state, i);
+            m_state->unclaim(i);
+            continue;
+        }
+        // Still held by a thread stop() left behind: it sets this run's
+        // sink as it lets go.  Tried once more in case it let go before
+        // it could see the request.
+        {
+            BackendClaim& held = *m_claims[i];
+            std::lock_guard<std::mutex> lock(held.pendingMutex);
+            held.pending = m_state;
+        }
+        if (m_state->claim(i)) {
+            m_state->unclaim(i);   // sets the pending sink
+        }
     }
 
     {
@@ -349,8 +439,22 @@ void AudioDeviceCatalog::stop()
     if (!m_thread) {
         return;
     }
-    for (const std::shared_ptr<IAudioEngineBackend>& backend : m_backends) {
-        backend->setNoticeSink({});
+    // First, so no thread sets this run's sink from here on.
+    m_state->stopped.store(true);
+    for (std::size_t i = 0; i < m_backends.size(); ++i) {
+        {
+            BackendClaim& held = *m_claims[i];
+            std::lock_guard<std::mutex> lock(held.pendingMutex);
+            if (held.pending.lock() == m_state) {
+                held.pending.reset();
+            }
+        }
+        // Never while a thread is inside the backend: shutdown() clears
+        // the sinks of backends claimed here.
+        if (m_state->claim(i)) {
+            m_state->clearSink(i);
+            m_state->unclaim(i);
+        }
     }
     {
         // After this the thread posts nothing to the catalogue, and no
@@ -359,7 +463,6 @@ void AudioDeviceCatalog::stop()
         m_state->owner = nullptr;
         m_state->worker = nullptr;
     }
-    m_state->stopped.store(true);
     Worker* target = m_worker;
     QMetaObject::invokeMethod(target, [target] { target->shutdown(); }, Qt::QueuedConnection);
     if (m_thread->wait(kStopWaitMs)) {
@@ -467,6 +570,10 @@ void AudioDeviceCatalog::adoptListing(Listing listing)
     for (std::size_t i = 0; i < listing.backends.size(); ++i) {
         BackendSnapshot& next = listing.backends[i];
         const BackendSnapshot& prev = m_snapshot[i];
+        if (next.held) {
+            next.defaultOutput = prev.defaultOutput;
+            next.defaultInput = prev.defaultInput;
+        }
         applyDefault(next.outputs, next.defaultOutput);
         applyDefault(next.inputs, next.defaultInput);
         if (next.running != prev.running || next.outputs != prev.outputs

@@ -30,6 +30,10 @@
 //               time, and report which are still alive (outputAlive);
 //               opensOneStreamAtATime() is settable.  J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: final review fix (R-AUD-03, R-AUD-06): setRescanHook()
+//               runs inside rescan(); sinkSetsDuringCalls() counts notice
+//               sinks set while another call is inside the backend.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -184,6 +188,12 @@ public:
 
     void setNoticeSink(std::function<void(AudioNotice)> sink) override
     {
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            if (m_callsInFlight > 0 || m_rescansInFlight > 0) {
+                ++m_sinkSetsDuringCalls;
+            }
+        }
         std::lock_guard<std::mutex> lock(m_sinkMutex);
         m_noticeSink = std::move(sink);
     }
@@ -230,7 +240,21 @@ public:
         std::lock_guard<std::mutex> lock(m_mutex);
         m_controlPanelOpens.push_back(deviceId);
     }
-    void rescan() override { m_rescans.fetch_add(1); }
+    void rescan() override
+    {
+        std::function<void()> hook;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            ++m_rescansInFlight;
+            hook = m_rescanHook;
+        }
+        m_rescans.fetch_add(1);
+        if (hook) {
+            hook();
+        }
+        std::lock_guard<std::mutex> lock(m_mutex);
+        --m_rescansInFlight;
+    }
     bool opensOneStreamAtATime() const override { return m_oneStreamAtATime.load(); }
 
     // -- What the test sets ---------------------------------------------
@@ -336,6 +360,21 @@ public:
         m_outputCreatedHook = std::move(hook);
     }
 
+    // Runs inside every rescan() (outside the fake's lock), on the
+    // calling thread; it may block.
+    void setRescanHook(std::function<void()> hook)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_rescanHook = std::move(hook);
+    }
+    // setNoticeSink() calls made while an enumerate(), defaultDeviceId()
+    // or rescan() was in progress on another thread.
+    int sinkSetsDuringCalls() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_sinkSetsDuringCalls;
+    }
+
     std::vector<AudioStreamRequest> outputRequests() const
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -414,6 +453,9 @@ private:
     std::vector<QThread*> m_defaultThreads;
     std::vector<AudioStreamRequest> m_outputRequests;
     std::function<void(const AudioStreamRequest&)> m_outputCreatedHook;
+    std::function<void()> m_rescanHook;
+    int m_rescansInFlight = 0;
+    int m_sinkSetsDuringCalls = 0;
     std::vector<InputRequest> m_inputRequests;
     std::vector<QString> m_controlPanelOpens;
     FakeMatcherAudioBus* m_lastOutput = nullptr;
