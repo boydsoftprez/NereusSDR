@@ -302,6 +302,10 @@
 //               read through AudioEngine, so a Setup page does not read
 //               a key a core consumer reads. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan final fix wave (R-AUD-20, R-AUD-21):
+//               a driver reset's new buffer size and rate are saved, so
+//               the next open asks for them.  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "AudioEngine.h"
@@ -381,6 +385,28 @@ QString rolePrefix(AudioRole role)
     case AudioRole::Vax4: return QStringLiteral("audio/Vax4");
     }
     return {};
+}
+
+// R-AUD-20, R-AUD-21: after the driver's reset the session runs at the
+// driver's new buffer size and rate; they are saved as the ASIO size and
+// rate, and for each role on the driver, so the next open asks for them
+// rather than the old ones.  Any other state saves nothing.
+void saveAsioResetSize(const CaptureProtocol::AsioState& state, const QList<AudioRole>& users)
+{
+    if (state.state != CaptureProtocol::AsioStateKind::Restarted
+        || state.detail != QLatin1String(CaptureProtocol::kAsioResetDetail)
+        || state.bufferFrames <= 0 || state.rate <= 0.0) {
+        return;
+    }
+    AppSettings& s = AppSettings::instance();
+    s.setValue(QStringLiteral("audio/Asio/BufferFrames"), QString::number(state.bufferFrames));
+    s.setValue(QStringLiteral("audio/Asio/SampleRate"), QString::number(state.rate));
+    for (const AudioRole role : users) {
+        s.setValue(rolePrefix(role) + QStringLiteral("/BufferSamples"),
+                   QString::number(state.bufferFrames));
+        s.setValue(rolePrefix(role) + QStringLiteral("/SampleRate"),
+                   QString::number(static_cast<int>(std::lround(state.rate))));
+    }
 }
 
 std::size_t roleIndex(AudioRole role)
@@ -1423,6 +1449,7 @@ void AudioEngine::installCaptureSupervisor(CaptureSupervisor::Options options)
             });
     connect(m_captureSupervisor.get(), &CaptureSupervisor::asioState, this,
             [this](const CaptureProtocol::AsioState& state) {
+                saveAsioResetSize(state, asioStatus().users);
                 if (AsioBackend* const asio = asioBackend()) {
                     asio->onAsioState(state);
                 }
@@ -2740,6 +2767,7 @@ void AudioEngine::setAsioDriverCapsForTest(const QString& driver, std::optional<
 
 void AudioEngine::deliverAsioStateForTest(const CaptureProtocol::AsioState& state)
 {
+    saveAsioResetSize(state, asioStatus().users);
     onAsioSessionState(state);
 }
 #endif

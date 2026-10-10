@@ -15,6 +15,10 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 15 (R-AUD-01, R-AUD-21, R-AUD-22).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan final fix wave (R-AUD-19): the driver
+//               list is read again on each listing while no driver is
+//               loaded, so a driver installed later is seen.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -24,7 +28,11 @@
 #include <array>
 #include <atomic>
 #include <functional>
+#include <memory>
 #include <vector>
+
+// The SDK's driver list (third_party/asiosdk/host/asiodrivers.h).
+class AsioDrivers;
 
 namespace NereusSDR {
 
@@ -60,6 +68,9 @@ public:
 private:
     static std::atomic<AsioDriverWin*> s_current;
 
+    // The registry's driver list, read again on each listing while no
+    // driver is loaded; the SDK's global (asioDrivers) points at it.
+    std::unique_ptr<AsioDrivers> m_list;
     bool m_loaded = false;
     bool m_buffers = false;
     bool m_running = false;

@@ -26,6 +26,7 @@
 //      driver with one size shows it greyed with its reason.
 //   6. The ASIO control panel button, the restarted note for 5 s after a
 //      reset, and the greyed pairs of a driver with an unusable format.
+//      A reset's new buffer size and rate are saved.
 //   7. The pure helpers: asioBufferChoices, asioSharedNote, the dialog.
 //   8. V-UI-1 captures (NEREUS_AUDIO_SETUP_CAPTURE_DIR).
 //
@@ -35,6 +36,9 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 17 (R-AUD-07, R-AUD-19 to R-AUD-22).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan final fix wave (R-AUD-20, R-AUD-21):
+//               resetSizeIsSaved.  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -842,6 +846,37 @@ private slots:
         QVERIFY(!note->isHidden());
         QTRY_VERIFY_WITH_TIMEOUT(note->isHidden(), 3000);
         QVERIFY(!rig.engine->asioStatus().restartedRecently);
+    }
+
+    // R-AUD-20, R-AUD-21: the driver's reset brought a new buffer size and
+    // rate; they are saved, for the driver and for each role on it, so the
+    // next open asks for them.  A restart for the mic saves nothing.
+    void resetSizeIsSaved()
+    {
+        Rig rig = Rig::windows();
+        saveAsio(QStringLiteral("audio/Speakers"), kFocusrite, 1);
+        AppSettings& s = AppSettings::instance();
+        s.setValue(QStringLiteral("audio/Asio/BufferFrames"), QStringLiteral("256"));
+        s.setValue(QStringLiteral("audio/Asio/SampleRate"), QStringLiteral("48000"));
+        s.setValue(QStringLiteral("audio/Speakers/BufferSamples"), QStringLiteral("256"));
+        rig.prepare();
+        QVERIFY(rig.engine->asioStatus().users.contains(AudioRole::Speakers));
+
+        CaptureProtocol::AsioState state;
+        state.state = CaptureProtocol::AsioStateKind::Restarted;
+        state.driver = kFocusrite;
+        state.bufferFrames = 512;
+        state.rate = 96000.0;
+        rig.engine->deliverAsioStateForTest(state);
+        QCOMPARE(AudioEngine::savedAsioBufferFrames(), 256);
+        QCOMPARE(AudioEngine::savedAsioSampleRate(), 48000.0);
+
+        state.detail = QString::fromLatin1(CaptureProtocol::kAsioResetDetail);
+        rig.engine->deliverAsioStateForTest(state);
+        QCOMPARE(AudioEngine::savedAsioBufferFrames(), 512);
+        QCOMPARE(AudioEngine::savedAsioSampleRate(), 96000.0);
+        QCOMPARE(value(QStringLiteral("audio/Speakers/BufferSamples")), QStringLiteral("512"));
+        QCOMPARE(value(QStringLiteral("audio/Speakers/SampleRate")), QStringLiteral("96000"));
     }
 
     void unusableFormatGreysItsPairs()

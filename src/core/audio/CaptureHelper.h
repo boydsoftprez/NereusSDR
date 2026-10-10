@@ -19,6 +19,10 @@
 //               R-AUD-22): setCaptureHelperAsio(), the helper hosts the
 //               one ASIO session for the mic and the window's outputs.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan final fix wave (R-AUD-07):
+//               pickOlderDriverMic(), Both adds the two channels on the
+//               older drivers too.  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -67,6 +71,16 @@ void setCaptureHelperTestDevices(const QStringList& names);
 // the saved index stands, as PortAudioBackend::createOutput does.
 int captureHostApiIndex(const QString& driverApi, int savedHostApiIndex,
                         const QVector<QPair<int, QString>>& hostApis);
+
+// R-AUD-07: the older drivers' mic, one block of `channels` interleaved
+// floats picked to stereo by the rule the native engines and ASIO use
+// (readDeviceToStereo): Left copies the pair's first channel to both
+// sides, Right its second, Both adds the two (Thetis combinebuff,
+// ivac.c:694-698).  firstChannel is 1-based; a pair starting on the last
+// channel, or past it, is that last channel alone, heard once.  No lock,
+// no allocation: it runs in the input callback.
+void pickOlderDriverMic(const float* interleaved, int frames, int channels, int firstChannel,
+                        MicChannelPick pick, float* stereo);
 
 // R-AUD-19 to R-AUD-22 (Task 15): how the helper hosts ASIO.  The
 // Windows helper (capture_main.cpp) installs the Steinberg SDK adapter

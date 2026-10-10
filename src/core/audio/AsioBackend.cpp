@@ -12,6 +12,9 @@
 //               rate, preferencesChanged(), and the control panel while
 //               only the mic runs.  J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-09: native audio plan final fix wave (R-AUD-07): a running
+//               session loses a bus whose pair the driver lacks.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AsioBackend.h"
@@ -213,6 +216,11 @@ public:
         return use;
     }
     const QString& driverLocked() const { return m_request.deviceId; }
+    bool pairOnLocked(const AsioDriverCaps& caps) const
+    {
+        const int last = m_request.pair.firstChannel + m_request.pair.channelCount - 1;
+        return m_request.pair.firstChannel >= 1 && last <= caps.outputChannels;
+    }
     int framesLocked() const { return m_frames; }
     double rateLocked() const { return m_rate; }
     void setLatencyLocked(std::int64_t ns) { m_latencyNs.store(ns); }
@@ -304,11 +312,8 @@ bool AsioOutputBus::open(const AudioFormat& format)
             m_frames = prefs.bufferFrames > 0 ? prefs.bufferFrames : kAsioUnknownCapsFrames;
             m_rate = prefs.sampleRate;
         }
-        if (known != m_shared->caps.constEnd()) {
-            const int last = m_request.pair.firstChannel + m_request.pair.channelCount - 1;
-            if (m_request.pair.firstChannel < 1 || last > known->outputChannels) {
-                return fail(QStringLiteral("The chosen channels are not on %1").arg(driver));
-            }
+        if (known != m_shared->caps.constEnd() && !pairOnLocked(*known)) {
+            return fail(QStringLiteral("The chosen channels are not on %1").arg(driver));
         }
         if (m_frames <= 0 || m_rate <= 0.0) {
             return fail(QStringLiteral("%1 did not report a buffer size and rate").arg(driver));
@@ -507,7 +512,20 @@ void AsioBackend::onAsioState(const CaptureProtocol::AsioState& state)
             m_shared->runningRate = state.rate;
             const bool wasInUse = m_shared->inUse.remove(state.driver);
             const std::int64_t latency = framesToNs(state.outputLatencyFrames, state.rate);
+            const auto known = m_shared->caps.constFind(state.driver);
             for (AsioOutputBus* bus : m_shared->buses) {
+                // A bus opened before the driver's caps were known, on a
+                // pair the driver lacks: the helper dropped it, so it plays
+                // nothing.  It is lost (and its reopen is refused with the
+                // reason) rather than silent with no status.
+                if (known != m_shared->caps.constEnd() && !bus->pairOnLocked(*known)) {
+                    if (auto event = bus->eventLocked(
+                            AudioStreamEvent::Kind::DeviceLost,
+                            QStringLiteral("The chosen channels are not on %1").arg(state.driver))) {
+                        after.push_back(std::move(event));
+                    }
+                    continue;
+                }
                 bus->setLatencyLocked(latency);
                 // A buffer or rate the bus's matcher was not built for: it
                 // reopens with the session's (R-AUD-20, R-AUD-21).

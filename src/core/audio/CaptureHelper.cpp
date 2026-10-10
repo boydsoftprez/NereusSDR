@@ -35,6 +35,12 @@
 //               a Restarted state after a driver reset carries
 //               kAsioResetDetail.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-09: native audio plan final fix wave (R-AUD-07, R-AUD-21): the
+//               older drivers' Both adds the two channels (pickOlderDriverMic);
+//               an ASIO mic the session dropped fails its open; after a
+//               reset the session's new size and rate stand for later
+//               opens; a running state follows the session's caps.  J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CaptureHelper.h"
@@ -52,6 +58,7 @@
 #include "core/audio/CaptureProtocol.h"
 #include "core/audio/CaptureShm.h"
 #include "core/audio/DeviceRateMatcher.h"
+#include "core/audio/DeviceSampleFormat.h"
 #include "core/audio/IAsioDriver.h"
 #include "core/audio/IAudioEngineBackend.h"
 #include "core/audio/MatcherRing.h"
@@ -191,6 +198,22 @@ int captureHostApiIndex(const QString& driverApi, int savedHostApiIndex,
         }
     }
     return savedHostApiIndex;
+}
+
+void pickOlderDriverMic(const float* interleaved, int frames, int channels, int firstChannel,
+                        MicChannelPick pick, float* stereo)
+{
+    if (stereo == nullptr || frames <= 0) {
+        return;
+    }
+    if (interleaved == nullptr || channels < 1) {
+        std::fill(stereo, stereo + 2 * static_cast<std::ptrdiff_t>(frames), 0.0f);
+        return;
+    }
+    const int first = std::clamp(firstChannel, 1, channels);
+    const AudioChannelPair pair{first, first < channels ? 2 : 1};
+    readDeviceToStereo(interleaved, nullptr, true, DeviceSampleFormat::Float32, channels, pair,
+                       pick, frames, stereo);
 }
 
 namespace {
@@ -428,22 +451,10 @@ public:
             || sampleRate < 1) {
             return;
         }
-        const int a = std::min(m_firstIndex, channels - 1);
-        const int b = std::min(a + 1, channels - 1);
         for (int offset = 0; offset < frames; offset += kChunkFrames) {
             const int count = std::min(kChunkFrames, frames - offset);
-            for (int f = 0; f < count; ++f) {
-                const float* frame =
-                    interleaved + static_cast<std::ptrdiff_t>(offset + f) * channels;
-                float value = frame[a];
-                if (m_pick == MicChannelPick::Right) {
-                    value = frame[b];
-                } else if (m_pick == MicChannelPick::Both) {
-                    value = 0.5f * (frame[a] + frame[b]);
-                }
-                m_stereo[static_cast<std::size_t>(2 * f + 0)] = value;
-                m_stereo[static_cast<std::size_t>(2 * f + 1)] = value;
-            }
+            pickOlderDriverMic(interleaved + static_cast<std::ptrdiff_t>(offset) * channels, count,
+                               channels, m_firstIndex + 1, m_pick, m_stereo.data());
             matcher->write(m_stereo.data(), count, audioProbeNowNs());
             const std::int64_t chunkNs =
                 captureNsOfFrame0
@@ -1266,6 +1277,25 @@ private:
                         why.isEmpty() ? QStringLiteral("the ASIO driver did not start") : why);
             return;
         }
+        // The mic is the session's last use.  A pair the driver lacks was
+        // dropped (with the outputs still running): the open fails here
+        // with the reason, never Ready and then "no audio".
+        const std::optional<AudioChannelPair> micPair =
+            m_asio->runningPair(static_cast<int>(m_asioOutputs.size()));
+        if (!micPair) {
+            const QString driver = plan->driver;
+            const int first = plan->pair.firstChannel;
+            m_asioMic.reset();
+            if (!m_asioOutputs.empty()) {
+                sendAsioRun(runAsioSession() ? P::AsioStateKind::Restarted
+                                             : P::AsioStateKind::Failed);
+            } else {
+                m_asio->close();
+            }
+            sendFailure(P::FailReason::DeviceNotFound,
+                        QStringLiteral("%1 has no input %2").arg(driver).arg(first));
+            return;
+        }
         if (!m_asioOutputs.empty()) {
             // The window's outputs were stopped and started with the mic.
             sendAsioRun(P::AsioStateKind::Restarted);
@@ -1277,7 +1307,7 @@ private:
                                       caps.inputLatencyFrames * 1000000 / m_asioMicRate,
                                       P::kMaxLatencyUs))
                                   : 0;
-        finishOpen(m_asioMicRate, plan->pair.channelCount, plan->driver, latencyUs,
+        finishOpen(m_asioMicRate, micPair->channelCount, plan->driver, latencyUs,
                    m_asio->bufferFrames());
     }
 
@@ -1304,6 +1334,17 @@ private:
     // R-AUD-21: the session restarted itself after a reset.
     void onAsioRestarted()
     {
+        // The driver's new buffer size and rate are the session's now
+        // (AsioSession::restart); a later open keeps them until the window
+        // sends others, rather than going back to the old request.
+        if (m_asio && m_asio->isOpen()) {
+            m_asioFrames = m_asio->bufferFrames();
+            m_asioRate = m_asio->sampleRate();
+            if (m_asioMic) {
+                m_asioMic->bufferFrames = m_asioFrames;
+                m_asioMic->rate = m_asioRate;
+            }
+        }
         if (!m_asioOutputs.empty()) {
             sendAsioRun(P::AsioStateKind::Restarted, QString::fromLatin1(P::kAsioResetDetail));
         }
@@ -1328,6 +1369,15 @@ private:
                           m_asio ? m_asio->errorString() : asioUnavailable());
             return;
         }
+        // The running driver's caps first, so the window knows its channels
+        // when the state arrives: an output it opened on a pair the driver
+        // lacks (dropped by the session) is lost there, never silent.
+        P::AsioCapsRecord described;
+        described.drivers = m_asioDriver->installedDrivers().mid(0, P::kMaxAsioDrivers);
+        described.driver = clampText(m_asio->driverName());
+        described.caps = m_asio->caps();
+        described.caps->name = described.driver;
+        write(P::encodeAsioCaps(described));
         P::AsioState state;
         state.serial = m_asioSerial;
         state.state = kind;

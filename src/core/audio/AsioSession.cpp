@@ -9,6 +9,12 @@
 // Modification history (NereusSDR):
 //   2026-10-09: native audio plan Task 15 (R-AUD-19, R-AUD-20, R-AUD-21).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan final fix wave (R-AUD-07, R-AUD-21): the
+//               buffer switch adds every output on a channel into one mix;
+//               a reset restarts at the driver's new buffer size and rate;
+//               an input pair on the last input narrows to one channel;
+//               s_current is stored before createBuffers.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AsioSession.h"
@@ -31,6 +37,10 @@ std::atomic<AsioSession*> AsioSession::s_current{nullptr};
 
 namespace {
 
+// A one-channel pair gets left plus right, halved, as writeStereoToDevice
+// folds it (DeviceSampleFormat.cpp).
+constexpr float kMonoFold = 0.5f;
+
 bool pairFits(const AudioChannelPair& pair, int channels)
 {
     return pair.firstChannel >= 1 && pair.channelCount >= 1
@@ -45,6 +55,24 @@ QList<int> pairChannels(const AudioChannelPair& pair)
         channels.append(pair.firstChannel - 1 + c);
     }
     return channels;
+}
+
+// The channels a use runs on with this driver (R-AUD-07): an input pair
+// that starts on the driver's last input is that one channel, as the
+// native engines open a mic there; nullopt when the channels are not on
+// the driver.
+std::optional<AudioChannelPair> pairOnDriver(const AsioUse& use, const AsioDriverCaps& caps)
+{
+    const bool output = use.direction == AudioDeviceDirection::Output;
+    const int channels = output ? caps.outputChannels : caps.inputChannels;
+    AudioChannelPair pair = use.pair;
+    if (!output && pair.channelCount > 1 && pair.firstChannel == channels) {
+        pair.channelCount = 1;
+    }
+    if (!pairFits(pair, channels)) {
+        return std::nullopt;
+    }
+    return pair;
 }
 
 } // namespace
@@ -239,6 +267,14 @@ QString AsioSession::errorString() const
     return m_error;
 }
 
+std::optional<AudioChannelPair> AsioSession::runningPair(int index) const
+{
+    if (!m_running || index < 0 || index >= m_runningPairs.size()) {
+        return std::nullopt;
+    }
+    return m_runningPairs.at(index);
+}
+
 void AsioSession::dispatchBufferSwitch(int bufferIndex)
 {
     AsioSession* const session = s_current.load(std::memory_order_acquire);
@@ -257,20 +293,52 @@ void AsioSession::dispatchMessage(AsioMessage message)
 
 void AsioSession::bufferSwitch(int bufferIndex)
 {
+    // A driver may call before the ops are complete (or after they go):
+    // nothing runs then.
+    if (!m_switchReady.load(std::memory_order_acquire)) {
+        return;
+    }
     const std::size_t half = static_cast<std::size_t>(bufferIndex & 1);
     const int frames = m_frames;
     float* const stereo = m_stereo.data();
     if (frames <= 0 || stereo == nullptr) {
         return;
     }
-    for (OutputOp& op : m_outputs) {
-        if (op.reader != nullptr) {
-            op.reader->read(stereo, frames);
-        } else {
-            std::memset(stereo, 0, sizeof(float) * 2 * static_cast<std::size_t>(frames));
+    // R-AUD-07: every output channel in use starts at silence and each use
+    // on it adds in, so speakers and headphones on one pair play together.
+    // The mix is sized at start: no allocation here.
+    const std::size_t span = static_cast<std::size_t>(frames);
+    std::fill(m_mix.begin(), m_mix.end(), 0.0f);
+    for (const OutputOp& op : m_outputs) {
+        if (op.reader == nullptr || op.leftSlot < 0) {
+            continue;                    // plays silence
         }
-        writeStereoToDevice(stereo, frames, nullptr, m_format, m_caps.outputChannels, op.pair,
-                            false, op.planes[half].data());
+        op.reader->read(stereo, frames);
+        float* const left = m_mix.data() + static_cast<std::size_t>(op.leftSlot) * span;
+        if (op.rightSlot < 0) {
+            for (int f = 0; f < frames; ++f) {
+                left[f] += (stereo[2 * f] + stereo[2 * f + 1]) * kMonoFold;
+            }
+        } else {
+            float* const right = m_mix.data() + static_cast<std::size_t>(op.rightSlot) * span;
+            for (int f = 0; f < frames; ++f) {
+                left[f] += stereo[2 * f];
+                right[f] += stereo[2 * f + 1];
+            }
+        }
+    }
+    // Each channel's mix goes to the driver once, as a one-channel pair
+    // with the same value on both sides (the fold gives the value back).
+    for (std::size_t slot = 0; slot < m_mixChannels.size(); ++slot) {
+        const MixChannel& channel = m_mixChannels[slot];
+        const float* const mix = m_mix.data() + slot * span;
+        for (int f = 0; f < frames; ++f) {
+            stereo[2 * f] = mix[f];
+            stereo[2 * f + 1] = mix[f];
+        }
+        writeStereoToDevice(stereo, frames, nullptr, m_format, m_caps.outputChannels,
+                            AudioChannelPair{channel.channel + 1, 1}, false,
+                            channel.planes[half].data());
     }
     if (m_inputs.empty()) {
         return;
@@ -344,20 +412,27 @@ bool AsioSession::start()
     // Only the channels a use plays or records on get buffers.
     std::set<int> inputSet;
     std::set<int> outputSet;
+    m_runningPairs.clear();
     for (const AsioUse& use : m_uses) {
         const bool output = use.direction == AudioDeviceDirection::Output;
-        const int channels = output ? m_caps.outputChannels : m_caps.inputChannels;
-        if (!pairFits(use.pair, channels)) {
+        const std::optional<AudioChannelPair> pair = pairOnDriver(use, m_caps);
+        m_runningPairs.append(pair);
+        if (!pair) {
             qCWarning(lcAudio) << "ASIO: a use's channels" << use.pair.firstChannel << "+"
                                << use.pair.channelCount << "are not on" << m_driverName;
             continue;
         }
-        for (int channel : pairChannels(use.pair)) {
+        for (int channel : pairChannels(*pair)) {
             (output ? outputSet : inputSet).insert(channel);
         }
     }
     const QList<int> inputs(inputSet.begin(), inputSet.end());
     const QList<int> outputs(outputSet.begin(), outputSet.end());
+    // The one pointer the driver's callbacks reach the session through,
+    // stored before the buffers: a driver may post a reset from inside
+    // ASIOCreateBuffers (settled call 13).  The buffer switch waits for
+    // m_switchReady.
+    s_current.store(this, std::memory_order_release);
     if (!m_driver.createBuffers(inputs, outputs, frames)) {
         fail(m_driver.lastFailure() == AsioDriverFailure::InUse ? AsioDriverFailure::InUse
                                                                 : AsioDriverFailure::Failed,
@@ -368,45 +443,61 @@ bool AsioSession::start()
 
     m_outputs.clear();
     m_inputs.clear();
+    m_mixChannels.clear();
+    // Each output channel in use gets one mix slot, shared by every use on it.
+    std::vector<int> slotOf(static_cast<std::size_t>(std::max(0, m_caps.outputChannels)), -1);
+    const auto slotFor = [this, &slotOf](int channel) {
+        int& slot = slotOf[static_cast<std::size_t>(channel)];
+        if (slot < 0) {
+            MixChannel mix;
+            mix.channel = channel;
+            for (std::size_t half = 0; half < mix.planes.size(); ++half) {
+                mix.planes[half].assign(slotOf.size(), nullptr);
+                mix.planes[half][static_cast<std::size_t>(channel)] =
+                    m_driver.buffer(AudioDeviceDirection::Output, channel, static_cast<int>(half));
+            }
+            slot = static_cast<int>(m_mixChannels.size());
+            m_mixChannels.push_back(std::move(mix));
+        }
+        return slot;
+    };
     for (int i = 0; i < m_uses.size(); ++i) {
         const AsioUse& use = m_uses.at(i);
         const AsioEndpoint endpoint = i < m_endpoints.size() ? m_endpoints.at(i) : AsioEndpoint{};
-        const bool output = use.direction == AudioDeviceDirection::Output;
-        const int channels = output ? m_caps.outputChannels : m_caps.inputChannels;
-        if (!pairFits(use.pair, channels)) {
+        const std::optional<AudioChannelPair> pair = m_runningPairs.at(i);
+        if (!pair) {
             continue;
         }
-        std::array<std::vector<void*>, 2> planes;
-        for (std::size_t half = 0; half < planes.size(); ++half) {
-            planes[half].assign(static_cast<std::size_t>(channels), nullptr);
-            for (int channel : pairChannels(use.pair)) {
-                planes[half][static_cast<std::size_t>(channel)] =
-                    m_driver.buffer(use.direction, channel, static_cast<int>(half));
-            }
-        }
-        if (output) {
+        if (use.direction == AudioDeviceDirection::Output) {
             OutputOp op;
             op.reader = endpoint.reader;
-            op.pair = use.pair;
-            op.planes = std::move(planes);
-            m_outputs.push_back(std::move(op));
+            op.leftSlot = slotFor(pair->firstChannel - 1);
+            const bool mono = m_caps.outputChannels == 1 || pair->channelCount == 1;
+            op.rightSlot = mono ? -1 : slotFor(pair->firstChannel);
+            m_outputs.push_back(op);
         } else if (endpoint.sink != nullptr) {
             InputOp op;
             op.sink = endpoint.sink;
-            op.pair = use.pair;
+            op.pair = *pair;
             op.pick = endpoint.pick;
-            op.planes = std::move(planes);
+            for (std::size_t half = 0; half < op.planes.size(); ++half) {
+                op.planes[half].assign(static_cast<std::size_t>(m_caps.inputChannels), nullptr);
+                for (int channel : pairChannels(*pair)) {
+                    op.planes[half][static_cast<std::size_t>(channel)] =
+                        m_driver.buffer(use.direction, channel, static_cast<int>(half));
+                }
+            }
             m_inputs.push_back(std::move(op));
         }
     }
+    m_mix.assign(m_mixChannels.size() * static_cast<std::size_t>(frames), 0.0f);
     m_stereo.assign(static_cast<std::size_t>(frames) * 2, 0.0f);
     m_frames = frames;
     m_rate = rate;
     m_inputLatencyNs = static_cast<std::int64_t>(
         std::llround(1e9 * static_cast<double>(m_caps.inputLatencyFrames) / rate));
 
-    // The one pointer the driver's callbacks reach the session through.
-    s_current.store(this, std::memory_order_release);
+    m_switchReady.store(true, std::memory_order_release);
     if (!m_driver.start()) {
         fail(AsioDriverFailure::Failed, QStringLiteral("the ASIO driver did not start"));
         stopAndUnload();
@@ -420,6 +511,8 @@ bool AsioSession::start()
 
 void AsioSession::stopAndUnload()
 {
+    // A switch already past the check finishes before stop() returns.
+    m_switchReady.store(false, std::memory_order_release);
     if (m_running) {
         m_driver.stop();          // no callback runs once it returns
         m_running = false;
@@ -432,19 +525,26 @@ void AsioSession::stopAndUnload()
     }
     m_outputs.clear();
     m_inputs.clear();
+    m_mixChannels.clear();
     m_frames = 0;
 }
 
 // R-AUD-21, D14: a reset (or a buffer size change) restarts the session
-// with the driver's new settings; ASIO's own sample stops instead.
+// with the driver's new settings; ASIO's own sample stops instead.  The
+// driver's new preferred buffer size and its current rate are the
+// session's from here (they replace the latest open's request), so a size
+// or rate set in the driver's control panel stands; the window saves them.
 void AsioSession::restart()
 {
     m_resetPosted.store(false, std::memory_order_release);
     if (m_driverName.isEmpty() || !m_loaded) {
         return;
     }
-    qCInfo(lcAudio) << "ASIO: the driver asked for a reset; restarting" << m_driverName;
+    qCInfo(lcAudio) << "ASIO: the driver asked for a reset; restarting" << m_driverName
+                    << "with its own buffer size and rate";
     stopAndUnload();
+    m_requestedFrames = 0;     // the driver's preferred size
+    m_requestedRate = 0.0;     // the driver's current rate
     if (start()) {
         ++m_restarts;
         emit m_notifier->restarted();

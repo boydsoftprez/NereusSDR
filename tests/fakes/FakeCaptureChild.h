@@ -38,6 +38,8 @@
 //   probe                 As ready; a ProbeEnable before its Ready exits with
 //                         code 4.  While enabled, a ProbeHit every 50 ms with
 //                         captureNs 1000 x (times enabled) + (hits since).
+//                         A disable answers an AsioCaps record whose driver
+//                         is "Probe off", after which no hit is sent.
 //   version-1             A protocol 1 Hello in a version 1 record header.
 //   pcm-record            Hello; on Open: Opening, Ready, streaming and one
 //                         valid 480-frame Pcm record.
@@ -76,6 +78,9 @@
 //   2026-10-09: native audio plan Task 20 round 3 (R-AUD-24):
 //               busy-while-marked-then-pending. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan final fix wave (V-HW-8): the probe
+//               scenario marks a disable.  J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
