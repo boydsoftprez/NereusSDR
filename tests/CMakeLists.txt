@@ -4768,6 +4768,11 @@ nereus_add_test(tst_audio_engine_tx_monitor_state)
 #   volumeZero_thenNonZero_hasOutput — gain=0 produces silence; gain=1 produces audio
 #   monoExpandedToStereo_LequalsR   — mono sample → L=R in stereo mix
 #   disableAfterEnable_silencesNextBlock — re-disable silences subsequent blocks
+#   reachesMixerOnlyAtDspPump       — the transmit thread never touches the mixer
+#   192kBlocks_playAt48k            — 256 frames at 192 kHz → 64 frames, same tone
+#   rateChange_followsNewRate       — 192 kHz, 96 kHz, then 48 kHz sample for sample
+#   handoffFull_dropsWholeBlock     — a full hand-off drops whole blocks, in order
+#   feedAndDrainOnTwoThreads        — transmit thread feeds while the DSP thread drains
 #
 # Uses masterMixForTest() NEREUS_BUILD_TESTS seam to observe MasterMixer output.
 # Pre-code review §4.3 + §4.4.

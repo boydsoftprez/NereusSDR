@@ -181,6 +181,13 @@ warren@wpratt.com
 //     match by construction. Decoded RADE speech returns asynchronously
 //     at the same long-term rate; the rings absorb that scheduling skew.
 //
+//     The transmit monitor is the one input that is born at another rate
+//     (the transmit channel's output rate) and on another thread (the
+//     transmit thread). Both are settled before it reaches this mixer:
+//     AudioEngine::txMonitorBlockReady resamples it to 48 kHz and queues
+//     it, and AudioEngine::pumpTxMonitorHandoff accumulates it here on
+//     the DSP thread. So divergences 1 and 2 hold for it too.
+//
 //  3. Barrier membership is asymmetric: a slice JOINS implicitly on its
 //     first block, but LEAVES only when the slice lifecycle withdraws it
 //     through setSliceStreaming(false). That mirrors SetAAudioMixState

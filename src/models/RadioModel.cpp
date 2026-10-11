@@ -1101,6 +1101,11 @@
 //                speaker's delay now is read through speakersDelayNowMs(),
 //                which takes no lock the DSP thread contends for. J.J.
 //                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - Transmit monitor: the audio engine is told the transmit
+//                channel's output rate when the channel is made, so MON is
+//                resampled to the mix rate (it was mixed at 192 kHz on a
+//                Protocol 2 radio). J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -18673,6 +18678,13 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
             // the sip1 callback must feed the monitor in-band (zero latency).
             // From pre-code review §0.3: sip1OutputReady carries post-stage-16
             // samples to the monitor bus without extra buffering.
+            //
+            // The siphon is the channel's output, at the rate it was just
+            // created with, so the engine is told that rate first. Thetis
+            // registers the transmitter's mixer input the same way:
+            // From Thetis cmaster.c:295-296 [v2.10.3.15]
+            //   pcm->aamix_inrates[pcm->cmRCVR * pcm->cmSubRCVR + i] = pcm->xmtr[i].ch_outrate;
+            m_audioEngine->setTxMonitorSampleRate(txOutRate);
             connect(m_txChannel, &TxChannel::sip1OutputReady,
                     m_audioEngine, &AudioEngine::txMonitorBlockReady,
                     Qt::DirectConnection);

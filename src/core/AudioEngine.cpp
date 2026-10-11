@@ -336,6 +336,16 @@
 //               bus the mixer's every-slice sum in place of the masked
 //               one, after every tap has had its block. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10: transmit monitor at the transmit channel's rate (bench:
+//               MON unreadable on a Protocol 2 radio). txMonitorBlockReady
+//               took 192 kHz blocks into the 48 kHz mix unconverted, from
+//               the transmit thread, into a ring the DSP thread reads. It
+//               now resamples to the mix rate with WDSP's float resampler
+//               and queues the result; pumpTxMonitorHandoff, at the top of
+//               drainMixes, moves the queue into the mixer slot on the DSP
+//               thread. Structure studied from Thetis cmaster.c:295-296,
+//               565 and aamix.c:185-197, 246-251 [v2.10.3.15]. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "AudioEngine.h"
@@ -381,6 +391,18 @@
 #include <array>
 #include <thread>
 #include <vector>
+
+#ifdef HAVE_WDSP
+extern "C" {
+// WDSP's float resampler, for the transmit monitor (txMonitorBlockReady).
+// The void*-opaque FV wrappers live in resample.c:347-372 and are not
+// declared in resample.h; same forward declarations as TxChannel.cpp and
+// TciServer.cpp.
+void* create_resampleFV(int in_rate, int out_rate);
+void  xresampleFV(float* input, float* output, int numsamps, int* outsamps, void* ptr);
+void  destroy_resampleFV(void* ptr);
+}
+#endif
 
 namespace NereusSDR {
 
@@ -660,6 +682,14 @@ AudioEngine::~AudioEngine()
         PortAudioLibrary::release();
         m_paInitialized = false;
     }
+#ifdef HAVE_WDSP
+    // The transmit thread built it and has stopped by now: the transmit
+    // channel that feeds txMonitorBlockReady goes before this engine does.
+    if (m_txMonitorResampler != nullptr) {
+        destroy_resampleFV(m_txMonitorResampler);
+        m_txMonitorResampler = nullptr;
+    }
+#endif
 }
 
 void AudioEngine::setRadioModel(RadioModel* radio)
@@ -4264,6 +4294,10 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
 // runs them too. Called only from rxBlockReady, inside its mix region.
 void AudioEngine::drainMixes(int frames, bool monitorOnly)
 {
+    // The transmit monitor arrives from the transmit thread through a
+    // queue; move it into its mixer slot before the drain below reads it.
+    pumpTxMonitorHandoff();
+
     // Flush synchronously on the DSP thread. thread_local scratch so the
     // per-block vector reuse costs zero allocation after the first block
     // per thread. Channel count = 2 is intentionally hard-coded here:
@@ -5043,28 +5077,62 @@ void AudioEngine::setTxMonitorOutput(TxMonitorOutput output)
     emit txMonitorOutputChanged(output);
 }
 
+void AudioEngine::setTxMonitorSampleRate(int hz)
+{
+    if (hz <= 0) {
+        return;
+    }
+    m_txMonitorSampleRateHz.store(hz, std::memory_order_release);
+}
+
 // Plan: 3M-1b E.3. Pre-code review §4.3 + §4.4.
 //
-// Receives the TXA Sip1 siphon output from TxChannel::sip1OutputReady via
-// Qt::DirectConnection (audio thread, same callsite as rxBlockReady). When
-// TX monitor is enabled, expands the mono TXA block to interleaved stereo
-// (L = R = each sample) and accumulates into MasterMixer at kTxMonitorSlotId.
-// The per-slot gain is maintained by setTxMonitorVolume via
-// MasterMixer::setSliceGain; accumulate() reads it atomically, so no
-// per-sample multiply is needed here.
+// Receives the transmit channel's output (its I leg) from
+// TxChannel::sip1OutputReady via Qt::DirectConnection, on the transmit
+// thread. When TX monitor is enabled it brings the mono block to the mix
+// rate and queues it for the DSP thread; pumpTxMonitorHandoff() expands it
+// to interleaved stereo (L = R = each sample) and accumulates it into
+// MasterMixer at kTxMonitorSlotId. The per-slot gain is maintained by
+// setTxMonitorVolume via MasterMixer::setSliceGain; accumulate() reads it
+// atomically, so no per-sample multiply is needed here.
 //
-// MasterMixer::mixInto() is called as usual from rxBlockReady; the TX-monitor
-// contribution is included in the next RX flush (or as soon as mixInto() is
-// called by whichever RX block arrives first). At typical SSB block sizes the
-// two are synchronised; a small (~1 block) latency is acceptable and matches
-// Thetis's aaudio asynchronous mix path.
+// Two things this block is not, and the mixer needs both:
+//
+//  - It is not at the mix rate. It is the transmit channel's output, at
+//    the rate the radio takes its transmit I/Q: 192 kHz on Protocol 2, so
+//    256 frames for every 64 the mixer plays. Mixed in as it stands, it
+//    plays at a quarter of its speed and the ring discards three quarters
+//    of it. Thetis registers the transmitter's mixer input at that rate
+//    and resamples it in the mixer:
+//    From Thetis cmaster.c:295-296 [v2.10.3.15]
+//      for (i = 0; i < pcm->cmXMTR; i++)
+//          pcm->aamix_inrates[pcm->cmRCVR * pcm->cmSubRCVR + i] = pcm->xmtr[i].ch_outrate;
+//    From Thetis aamix.c:246-251 [v2.10.3.15]
+//      EnterCriticalSection (&a->cs_in[stream]);
+//      if (a->rsmp[stream]->run)
+//      {
+//          a->rsmp[stream]->in = data;
+//          indata = a->resampbuff[stream];
+//          xresample (a->rsmp[stream]);
+//      }
+//    Thetis's stream is I/Q, so it uses WDSP's complex resampler. Ours is
+//    one leg, so it uses the float one from the same file (resample.c),
+//    which designs its filter the same way: cutoff 0.45 of the lower rate.
+//
+//  - It is not on the DSP thread. MasterMixer's rings have one owner, the
+//    DSP thread that drains them. So nothing here touches the mixer: the
+//    block goes into m_txMonitorHandoff and the DSP thread takes it out.
+//
+// MON then joins the next drain. The hand-off is emptied at every drain,
+// so it adds no delay of its own; the resampler's filter adds about
+// 1.4 ms at 192 kHz, as Thetis's does.
 //
 // RT-safety contract:
-//   - atomic acquire loads for m_txMonitorEnabled; no lock, no alloc.
-//   - thread_local scratch vector for the stereo expansion; zero-alloc after
-//     the first call from a given thread.
-//   - MasterMixer::accumulate() is lock-free on the audio thread (map is
-//     structurally stable after ctor pre-registration; gains are atomics).
+//   - atomic acquire loads for m_txMonitorEnabled and the rate; no lock.
+//   - No allocation after the first block at a rate and size: the
+//     resampler and its output buffer are built once on this thread.
+//   - tryPushCopy never waits. A block that finds the hand-off full (the
+//     DSP thread has not drained for 85 ms) is dropped whole and counted.
 void AudioEngine::txMonitorBlockReady(const float* samples, int frames)
 {
     if (!m_txMonitorEnabled.load(std::memory_order_acquire)) {
@@ -5074,29 +5142,89 @@ void AudioEngine::txMonitorBlockReady(const float* samples, int frames)
         return;
     }
 
-    // Expand mono TXA samples to interleaved stereo (L=R) so MasterMixer
-    // sees the same format as RX blocks. thread_local so no allocation after
-    // the first block per DSP thread.
-    static thread_local std::vector<float> stereoScratch;
-    const int stereoFloats = frames * 2;
-    if (static_cast<int>(stereoScratch.size()) < stereoFloats) {
-        stereoScratch.resize(static_cast<size_t>(stereoFloats));
-    }
-    for (int i = 0; i < frames; ++i) {
-        stereoScratch[i * 2 + 0] = samples[i];  // L
-        stereoScratch[i * 2 + 1] = samples[i];  // R
+    const float* mono = samples;
+    int monoFrames = frames;
+    const int inRate = m_txMonitorSampleRateHz.load(std::memory_order_acquire);
+    if (inRate != kMasterMixSampleRateHz) {
+#ifdef HAVE_WDSP
+        if (m_txMonitorResampler != nullptr && m_txMonitorResamplerRateHz != inRate) {
+            destroy_resampleFV(m_txMonitorResampler);
+            m_txMonitorResampler = nullptr;
+        }
+        if (m_txMonitorResampler == nullptr) {
+            m_txMonitorResampler = create_resampleFV(inRate, kMasterMixSampleRateHz);
+            m_txMonitorResamplerRateHz = inRate;
+            if (m_txMonitorResampler == nullptr) {
+                return;
+            }
+        }
+        // xresampleF writes at most one output more than the rate ratio
+        // gives for the block (resample.c:309-340).
+        const qint64 maxOut =
+            static_cast<qint64>(frames) * kMasterMixSampleRateHz / inRate + 2;
+        if (static_cast<qint64>(m_txMonitorResampled.size()) < maxOut) {
+            m_txMonitorResampled.resize(static_cast<size_t>(maxOut));
+        }
+        int outFrames = 0;
+        xresampleFV(const_cast<float*>(samples), m_txMonitorResampled.data(),
+                    frames, &outFrames, m_txMonitorResampler);
+        if (outFrames <= 0) {
+            return;
+        }
+        mono = m_txMonitorResampled.data();
+        monoFrames = outFrames;
+#else
+        // No WDSP, so no transmit channel and nothing to convert with.
+        return;
+#endif
     }
 
-    // Accumulate into MasterMixer. The slot's gain (= m_txMonitorVolume)
-    // was written by setTxMonitorVolume via setSliceGain and is read
-    // atomically inside accumulate(). No separate multiply needed here.
-    //
+    const qint64 bytes =
+        static_cast<qint64>(monoFrames) * static_cast<qint64>(sizeof(float));
+    if (m_txMonitorHandoff.tryPushCopy(reinterpret_cast<const uint8_t*>(mono), bytes) == 0) {
+        m_txMonitorDroppedFrames.fetch_add(static_cast<quint64>(monoFrames),
+                                           std::memory_order_relaxed);
+    }
+}
+
+// DSP thread. The other half of txMonitorBlockReady: everything the
+// transmit thread has queued goes into the monitor's mixer slot, so this
+// drain mixes it. Called at the top of drainMixes, the only place the
+// mixer is drained.
+void AudioEngine::pumpTxMonitorHandoff()
+{
     // R-R3-45: the operator's MON output rides in as the route, so the
     // mixer builds MON into the speakers sum or the headphones sum, never
     // both. Only m_masterMix: MON is never in the anti-VOX reference.
-    m_masterMix.accumulate(kTxMonitorSlotId, stereoScratch.data(), frames,
-                           /*muted*/ false,
-                           m_txMonitorToHeadphones.load(std::memory_order_acquire));
+    const bool toHeadphones = m_txMonitorToHeadphones.load(std::memory_order_acquire);
+    // One pass over the hand-off's capacity at most, so a transmit thread
+    // that keeps filling it cannot hold this drain.
+    constexpr int kMaxChunks =
+        static_cast<int>(kTxMonitorHandoffBytes / sizeof(float)) / kTxMonitorPumpFrames;
+    for (int chunk = 0; chunk < kMaxChunks; ++chunk) {
+        const qint64 bytes = m_txMonitorHandoff.popInto(
+            reinterpret_cast<uint8_t*>(m_txMonitorPumpMono.data()),
+            static_cast<qint64>(sizeof(float)) * kTxMonitorPumpFrames);
+        const int frames = static_cast<int>(bytes / static_cast<qint64>(sizeof(float)));
+        if (frames <= 0) {
+            return;
+        }
+        // Expand mono to interleaved stereo (L=R) so MasterMixer sees the
+        // same format as RX blocks.
+        for (int i = 0; i < frames; ++i) {
+            const float sample = m_txMonitorPumpMono[static_cast<size_t>(i)];
+            m_txMonitorPumpStereo[static_cast<size_t>(i) * 2 + 0] = sample;  // L
+            m_txMonitorPumpStereo[static_cast<size_t>(i) * 2 + 1] = sample;  // R
+        }
+        // The slot's gain (= m_txMonitorVolume) was written by
+        // setTxMonitorVolume via setSliceGain and is read atomically inside
+        // accumulate(). No separate multiply needed here.
+        m_masterMix.accumulate(kTxMonitorSlotId, m_txMonitorPumpStereo.data(), frames,
+                               /*muted*/ false, toHeadphones);
+        if (frames < kTxMonitorPumpFrames) {
+            return;
+        }
+    }
 }
 
 void AudioEngine::setVaxRxGain(int channel, float gain)

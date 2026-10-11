@@ -297,6 +297,15 @@
 //               out, from a sum of its own (m_everySliceScratch), so the
 //               master tap, the headphones and every owner mix are
 //               unchanged. nereusd sets it. NereusSDR-original.
+//   2026-10-10: transmit monitor at the transmit channel's rate (bench:
+//               MON unreadable on a Protocol 2 radio) by J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//               setTxMonitorSampleRate(): the monitor block is converted
+//               to the mix rate on the transmit thread, as Thetis's mixer
+//               does for the transmitter's stream (cmaster.c:295-296,
+//               aamix.c:185-197 [v2.10.3.15]), and crosses to the DSP
+//               thread through m_txMonitorHandoff, so the mixer is only
+//               ever touched by the DSP thread.
 
 #include "core/NereusCoreExport.h"
 #include "AudioDeviceConfig.h"
@@ -305,6 +314,7 @@
 #include "audio/AudioBackendRegistry.h"
 #include "audio/AudioDelayParts.h"
 #include "audio/AudioDelayProbe.h"
+#include "audio/AudioRingSpsc.h"
 #include "audio/CaptureSupervisor.h"
 #include "audio/IAudioStreamHost.h"
 #include "audio/MasterMixer.h"
@@ -1101,6 +1111,15 @@ public:
     // Plan: 3M-1b E.3.
     MasterMixer& masterMixForTest() { return m_masterMix; }
 
+    // Test seams for the transmit monitor's hand-off. The pump is what the
+    // DSP thread runs at the top of every drain; a test that reads the
+    // mixer directly calls it first, on the thread that drains.
+    void pumpTxMonitorForTest() { pumpTxMonitorHandoff(); }
+    quint64 txMonitorDroppedFramesForTest() const
+    {
+        return m_txMonitorDroppedFrames.load(std::memory_order_acquire);
+    }
+
     // Test seam: expose m_antiVoxMix so tests can assert what the anti-VOX
     // reference sums, what it refuses to sum, and how often it releases a
     // block. Phase 3F Sub-Epic J Task 9.
@@ -1133,15 +1152,19 @@ public:
     void rxBlockReady(int sliceId, const float* samples, int frames);
 
     /// TX-monitor block consumer. Called via Qt::DirectConnection from
-    /// TxChannel::sip1OutputReady on the audio thread. When monitor is
-    /// enabled, expands the mono TXA samples to interleaved stereo (L=R),
-    /// applies m_txMonitorVolume, and accumulates into MasterMixer at
-    /// kTxMonitorSlotId so the user hears themselves through speakers.
-    /// When disabled, no-op.
+    /// TxChannel::sip1OutputReady on the transmit thread (TxWorkerThread).
+    /// When monitor is enabled, converts the mono block from the transmit
+    /// channel's output rate (setTxMonitorSampleRate) to the mix rate and
+    /// queues it for the DSP thread, which expands it to interleaved
+    /// stereo (L=R) and accumulates it into MasterMixer at
+    /// kTxMonitorSlotId at its next drain (pumpTxMonitorHandoff), so the
+    /// user hears themselves through speakers. The slot's gain is
+    /// m_txMonitorVolume. When disabled, no-op.
     ///
     /// **DirectConnection ONLY.** The samples pointer is valid only for
-    /// the duration of this synchronous call. Does not queue, store, or
-    /// allocate.
+    /// the duration of this synchronous call. One caller thread at a
+    /// time. Never touches the mixer and never blocks; allocates only on
+    /// the first block at a new rate or a larger size.
     ///
     /// Atomic contract: m_txMonitorEnabled and m_txMonitorVolume are both
     /// loaded with std::memory_order_acquire (same acq/rel pairing as
@@ -1149,6 +1172,28 @@ public:
     ///
     /// Plan: 3M-1b E.3. Pre-code review §4.3 + §4.4.
     void txMonitorBlockReady(const float* samples, int frames);
+
+    /// The sample rate of the blocks txMonitorBlockReady receives: the
+    /// transmit channel's output rate, 192 kHz on Protocol 2 and 48 kHz
+    /// on Protocol 1. The mix runs at kMasterMixSampleRateHz, so a block
+    /// at any other rate is resampled on its way in. Thetis does the same
+    /// inside its mixer, where the transmitter's input is registered at
+    /// the transmit channel's output rate and every input has a resampler:
+    /// From Thetis cmaster.c:295-296 [v2.10.3.15]
+    ///   pcm->aamix_inrates[pcm->cmRCVR * pcm->cmSubRCVR + i] = pcm->xmtr[i].ch_outrate;
+    /// From Thetis aamix.c:185-197 [v2.10.3.15]
+    ///   a->rsmp[i] = create_resample (run, size, 0, a->resampbuff[i], a->inrate[i], a->outrate, 0.0, 0, 1.0);
+    /// From Thetis cmaster.c:565 [v2.10.3.15]
+    ///   SetAAudioStreamRate (0, 0, mix_in_id, rate);  //	.Set Mixer input rate (sets size too)
+    ///
+    /// Any thread: it stores an atomic. The transmit thread reads it at
+    /// its next block and builds the resampler there, so no WDSP call is
+    /// made here. A rate of zero or less is ignored.
+    void setTxMonitorSampleRate(int hz);
+    int txMonitorSampleRate() const
+    {
+        return m_txMonitorSampleRateHz.load(std::memory_order_acquire);
+    }
 
     // Pull TX-mic audio samples from the bound TX-input bus.
     //
@@ -1957,6 +2002,10 @@ private:
     // while no slice is a barrier member (MON alone is queued), and never
     // the anti-VOX mixer, which MON is not in.
     void drainMixes(int frames, bool monitorOnly = false);
+    // DSP thread, at the top of drainMixes: moves the transmit monitor's
+    // queued 48 kHz audio from m_txMonitorHandoff into its mixer slot.
+    // Never blocks or allocates.
+    void pumpTxMonitorHandoff();
     // DSP thread. Hands each tap for `sliceId` the block as the slice's
     // receiver produced it: the AF level is applied in the mix, after the
     // taps (slice control plan Task 6).
@@ -2039,6 +2088,35 @@ private:
     std::atomic<bool>  m_txMonitorToHeadphones{false};
     // Task 32: MON on this computer's own outputs (setTxMonitorLocal).
     std::atomic<bool>  m_txMonitorLocal{true};
+
+    // The transmit monitor's way into the mix (setTxMonitorSampleRate).
+    // The monitor block is produced on the transmit thread; the mixer
+    // belongs to the DSP thread alone (MasterMixer.h, divergence 1). So
+    // the transmit thread resamples the block to the mix rate and queues
+    // it here, and the DSP thread moves the queue into the mixer slot at
+    // the top of each drain. Thetis guards each mixer input with a
+    // critical section instead (aamix.c:246 [v2.10.3.15], cs_in[stream]);
+    // a queue between the two threads does the same job with no lock on
+    // either.
+    std::atomic<int> m_txMonitorSampleRateHz{kMasterMixSampleRateHz};
+    // 16384 bytes of mono float: 4095 frames, 85 ms at 48 kHz, the size
+    // of the mixer's own ring (MasterMixer::kMinimumRingFrames). It is a
+    // margin for a late drain and is empty after every drain, so it adds
+    // no delay. A block that finds it full is dropped whole and counted.
+    static constexpr size_t kTxMonitorHandoffBytes = 16384;
+    AudioRingSpsc<kTxMonitorHandoffBytes> m_txMonitorHandoff;
+    std::atomic<quint64> m_txMonitorDroppedFrames{0};
+    // Transmit thread only, below. WDSP's float resampler (resample.c,
+    // create_resampleFV), built at the first block at a rate other than
+    // the mix rate and rebuilt when the rate changes.
+    void* m_txMonitorResampler{nullptr};
+    int   m_txMonitorResamplerRateHz{0};
+    std::vector<float> m_txMonitorResampled;
+    // DSP thread only: the pump's scratch, one chunk of mono and the same
+    // chunk as stereo.
+    static constexpr int kTxMonitorPumpFrames = 256;
+    std::array<float, kTxMonitorPumpFrames> m_txMonitorPumpMono{};
+    std::array<float, kTxMonitorPumpFrames * 2> m_txMonitorPumpStereo{};
 
     // Sub-Phase 9 Task 9.2a — per-channel VAX rx gain / mute and master
     // VAX tx gain. Main-thread writes via set*() setters, DSP-thread
