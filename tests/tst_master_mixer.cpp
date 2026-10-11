@@ -20,6 +20,9 @@
 //                 receiving slice whatever the local mask, and MON only
 //                 while it is local. J.J. Boyd / KG4VCF, with AI
 //                 assistance from Anthropic Claude Code.
+//   2026-10-10 -- Headless Core speaker (JJ's ruling): the every-slice
+//                 sum. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -98,6 +101,100 @@ private slots:
             const float expectSpk = monitorLocal ? 0.1f : 0.0f;
             QVERIFY(qAbs(radio[0] - expectRadio) < 1e-6f);
             QVERIFY(qAbs(spk[0] - expectSpk) < 1e-6f);
+        }
+    }
+
+    // ── Headless Core speaker (JJ's ruling 2026-10-10) ────────────────
+    //
+    // The every-slice sum is the speakers sum with no mask: a slice the
+    // local mask leaves out is in it at its own gain, AF level, pan and
+    // mute; a slice routed to the headphones is not; and the local sums
+    // are what they are without it.
+    void everySliceSumIsTheSpeakersSumWithNoMask() {
+        const auto run = [](bool withEvery, std::array<float, 2>& spk, std::array<float, 2>& hp,
+                            std::array<float, 2>& every) {
+            MasterMixer mix;
+            mix.setRampFrames(1);
+            mix.setSlewUpFrames(0);
+            mix.setSliceGain(0, 1.0f, 0.0f);
+            mix.setSliceGain(1, 1.0f, -1.0f);
+            mix.setSliceGain(2, 1.0f, 0.0f);
+            mix.setSliceGain(3, 1.0f, 0.0f);
+            std::array<float, 2> a = {0.5f, 0.5f};
+            std::array<float, 2> b = {0.25f, 0.25f};
+            std::array<float, 2> c = {0.125f, 0.125f};
+            std::array<float, 2> d = {0.0625f, 0.0625f};
+            // 0: in the mask. 1: out of it, half AF, hard left. 2: out of
+            // it, muted. 3: out of it, on the headphones.
+            mix.accumulate(0, a.data(), 1, /*muted*/ false, /*headphones*/ false);
+            mix.accumulate(1, b.data(), 1, false, false, /*level*/ 0.5f);
+            mix.accumulate(2, c.data(), 1, true, false);
+            mix.accumulate(3, d.data(), 1, false, true);
+            return mix.tryDrain(spk.data(), hp.data(), 1, /*localMask*/ 1u, nullptr, 0, true,
+                                false, 0u, nullptr, nullptr,
+                                withEvery ? every.data() : nullptr);
+        };
+        std::array<float, 2> spk{};
+        std::array<float, 2> hp{};
+        std::array<float, 2> every = {9.0f, 9.0f};
+        QCOMPARE(run(true, spk, hp, every), 1);
+        QCOMPARE(every[0], 0.625f);
+        QCOMPARE(every[1], 0.5f);
+        QCOMPARE(spk[0], 0.5f);
+        QCOMPARE(spk[1], 0.5f);
+        QCOMPARE(hp[0], 0.0f);
+        std::array<float, 2> spkWithout{};
+        std::array<float, 2> hpWithout{};
+        QCOMPARE(run(false, spkWithout, hpWithout, every), 1);
+        QCOMPARE(spkWithout, spk);
+        QCOMPARE(hpWithout, hp);
+    }
+
+    // A slice the local sums listen to (the station device's listening)
+    // is in the every-slice sum once, at its controller's level, and the
+    // listen level stays in the speakers sum alone.
+    void everySliceSumTakesNoListenLevel() {
+        MasterMixer mix;
+        mix.setRampFrames(1);
+        mix.setSlewUpFrames(0);
+        mix.setSliceGain(1, 1.0f, 0.0f);
+        std::array<float, 2> b = {0.5f, 0.5f};
+        mix.accumulate(1, b.data(), 1, false, false, /*level*/ 0.5f);
+        std::array<float, 32> listen{};
+        listen[1] = 0.25f;
+        std::array<float, 2> spk{};
+        std::array<float, 2> hp{};
+        std::array<float, 2> every{};
+        QCOMPARE(mix.tryDrain(spk.data(), hp.data(), 1, /*localMask*/ 0u, nullptr, 0, true,
+                              false, /*localListenMask*/ 2u, listen.data(), nullptr,
+                              every.data()),
+                 1);
+        QCOMPARE(spk[0], 0.125f);
+        QCOMPARE(every[0], 0.25f);
+        QCOMPARE(every[1], 0.25f);
+    }
+
+    // The transmit monitor's slot reaches the every-slice sum exactly
+    // while it is in the local sums.
+    void everySliceSumTakesMonitorOnlyWhileLocal() {
+        for (const bool monitorLocal : {true, false}) {
+            MasterMixer mix;
+            mix.setRampFrames(1);
+            mix.setSlewUpFrames(0);
+            mix.setSliceGain(0, 1.0f, 0.0f);
+            mix.setSliceGain(-2, 1.0f, 0.0f);
+            std::array<float, 2> a = {0.5f, 0.5f};
+            std::array<float, 2> m = {0.125f, 0.125f};
+            mix.accumulate(0, a.data(), 1, false, false);
+            mix.accumulate(-2, m.data(), 1, false, false);
+            std::array<float, 2> spk{};
+            std::array<float, 2> hp{};
+            std::array<float, 2> every{};
+            QCOMPARE(mix.tryDrain(spk.data(), hp.data(), 1, /*localMask*/ 0u, nullptr, 0,
+                                  monitorLocal, false, 0u, nullptr, nullptr, every.data()),
+                     1);
+            QCOMPARE(every[0], monitorLocal ? 0.625f : 0.5f);
+            QCOMPARE(spk[0], monitorLocal ? 0.125f : 0.0f);
         }
     }
 

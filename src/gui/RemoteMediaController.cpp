@@ -1,5 +1,24 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-10: Bench fix (a Windows window on a remote Core lost
+//               microphone audio on every key): the microphone is
+//               collected by a real-time thread (MicUplinkCollector)
+//               while the capture lease is held, and the pump drains
+//               its queue instead of pulling the microphone on the GUI
+//               thread, where a stall longer than 30 ms lost the rest.
+//               setMicCollectorInlineForTest, collectMicNowForTest,
+//               pumpMicUplinkForTest. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
+//   2026-10-09: R-R3-44 load fix: setReceiverAudioClockForTest, the
+//               clock the receiver audio streams for apps on this computer
+//               stamp and release by, so a test running its source and
+//               devices on one clock runs their jitter hold on it too. No
+//               production caller; production is unchanged. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: R-AUD-17, R-R3-36: the microphone drain also stops at a
+//               short pull, so it ends after what is waiting even with a
+//               reader that fills every pull.  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-09: Review fixes: a run that carried a program's audio stays
 //               off the microphone until the line stops or a screen key or
 //               VOX wants it (programRun), so the unkey edge never sends
@@ -175,6 +194,7 @@
 #include "core/AudioEngine.h"
 #include "core/Resampler.h"
 #include "core/audio/CaptureSupervisor.h"
+#include "core/audio/MicUplinkCollector.h"
 #include "core/session/PathRacer.h"
 #include "core/session/media/PcmAudioCodec.h"
 #include "core/session/media/RemoteAudioReceiver.h"
@@ -227,6 +247,7 @@
 #include <QUuid>
 #include <QtEndian>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <deque>
 #include <limits>
@@ -1324,6 +1345,8 @@ struct RemoteMediaController::Private {
     // released, so a test can order events against the step without
     // racing a real timer.
     bool audioRestartHeldForTest = false;
+    // R-R3-44: setReceiverAudioClockForTest; empty is the receiver's own.
+    RemoteAudioReceiver::Clock receiverAudioClockForTest;
     std::function<void()> heldAudioRestartStep;
     // R-R3-21: repeated restarts wait 1, 2, 4 s, reset by a healthy 10 s.
     RemoteAudioRestartBackoff audioRestartBackoff;
@@ -1403,6 +1426,16 @@ struct RemoteMediaController::Private {
     std::unique_ptr<RemoteMicEncoder> micEncoder;
     std::vector<float> micPending;
     std::vector<float> micScratch;
+    // 2026-10-10: the microphone's collector: its real-time thread pulls
+    // the microphone (AudioEngine::pullTxMic, whose one caller it is)
+    // while micLease is held, and the pump drains its queue. Made for
+    // micCollectorEngine on the first lease; stopped (joined) before the
+    // lease is released and before that engine goes.
+    std::unique_ptr<MicUplinkCollector> micCollector;
+    AudioEngine* micCollectorEngine = nullptr;
+    // What the collector had dropped when the line last started or
+    // reported: the rest is this key's.
+    quint64 micDroppedReported = 0;
     quint16 micSequence = 0;
     quint32 micTimestamp = 0;
     quint64 micPacketsSent = 0;
@@ -1757,6 +1790,16 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
     connect(d->micTimer, &QTimer::timeout, this, &RemoteMediaController::reconcileMicUplink);
     d->micEncoder = std::make_unique<RemoteMicEncoder>();
     resetMicrophoneQuality();
+    // 2026-10-10: the collector's thread reads the model's audio engine;
+    // it is joined before the model deletes that engine (a child of the
+    // model, deleted after this signal).
+    if (model) {
+        connect(model, &QObject::destroyed, this, [this] {
+            stopMicCollector();
+            d->micCollector.reset();
+            d->micCollectorEngine = nullptr;
+        });
+    }
     d->micScratch.resize(static_cast<size_t>(RemoteMicConfig::kOpusFrameSamples));
     // Desktop remote transmit (R-IOS-13): the uplink's production callers.
     // The window's transmit client says when its key is down and when its
@@ -2648,7 +2691,15 @@ void RemoteMediaController::reconcileMicUplink()
         d->micLease = d->model->audioEngine()->acquireCaptureDemand(
             CaptureSupervisor::Demand::RemoteWindow);
     } else if (!captureWanted && !keepLease && leaseWasActive) {
+        // 2026-10-10: the collector is joined before its lease goes.
+        stopMicCollector();
         d->micLease.release();
+    }
+    // 2026-10-10: the collector runs exactly while the lease is held.
+    if (d->micLease.isActive()) {
+        startMicCollector(d->model->audioEngine());
+    } else {
+        stopMicCollector();
     }
     // Samples waiting before key-down belong to preview, even when the
     // key arrives between timer ticks. Drain them before sending fresh PCM.
@@ -2666,7 +2717,9 @@ void RemoteMediaController::reconcileMicUplink()
             // acquiring it from no demand starts a new generation by
             // itself. Both are read before the acquire.
             retryCapture = !programAudio && demandBefore && captureFailedBefore;
+            d->micDroppedReported = d->micCollector ? d->micCollector->droppedFrames() : 0;
         } else {
+            reportMicDropped();
             d->micPending.clear();
             d->programPending.clear();
             d->programUntilMs = -1;
@@ -2696,11 +2749,16 @@ void RemoteMediaController::reconcileMicUplink()
     // what the microphone captured meanwhile is drained and dropped.
     const qint64 nowMs = micNowMs();
     const bool program = nowMs < d->programUntilMs;
-    if (d->micLease.isActive()) {
-        AudioEngine* engine = d->model->audioEngine();
+    if (d->micLease.isActive() && d->micCollector) {
+        // 2026-10-10: the collector's thread pulled the microphone; this
+        // drains what it queued. (Inline, a test's collector has no thread
+        // and collects here, as this pump itself did before.)
+        if (!d->micCollector->isRunning()) {
+            d->micCollector->collectOnce();
+        }
         for (;;) {
-            const int got = engine->pullTxMic(d->micScratch.data(),
-                                              static_cast<int>(d->micScratch.size()));
+            const int got = d->micCollector->drain(d->micScratch.data(),
+                                                   static_cast<int>(d->micScratch.size()));
             if (got <= 0) {
                 break;
             }
@@ -2710,6 +2768,11 @@ void RemoteMediaController::reconcileMicUplink()
             if (d->micRunning && !starting && !program && !programAudio) {
                 d->micPending.insert(d->micPending.end(), d->micScratch.begin(),
                                      d->micScratch.begin() + got);
+            }
+            // A short block means nothing more is waiting.  [2026-10-10:
+            // the queue is finite, so this loop ends either way.]
+            if (got < static_cast<int>(d->micScratch.size())) {
+                break;
             }
         }
     }
@@ -2759,6 +2822,90 @@ void RemoteMediaController::setMicClockForTest(std::function<qint64()> clock)
 bool RemoteMediaController::micCaptureLeaseHeldForTest() const
 {
     return d->micLease.isActive();
+}
+
+namespace {
+// setMicCollectorInlineForTest.
+std::atomic<bool> g_micCollectorInlineForTest{false};
+}
+
+void RemoteMediaController::setMicCollectorInlineForTest(bool inlineMode)
+{
+    g_micCollectorInlineForTest.store(inlineMode, std::memory_order_release);
+}
+
+bool RemoteMediaController::micCollectorThreadRunningForTest() const
+{
+    return d->micCollector && d->micCollector->isRunning();
+}
+
+int RemoteMediaController::collectMicNowForTest()
+{
+    if (!d->micCollector || d->micCollector->isRunning() || !d->micLease.isActive()) {
+        return 0;
+    }
+    return d->micCollector->collectOnce();
+}
+
+void RemoteMediaController::pumpMicUplinkForTest()
+{
+    reconcileMicUplink();
+}
+
+void RemoteMediaController::startMicCollector(AudioEngine* engine)
+{
+    if (engine == nullptr) {
+        stopMicCollector();
+        return;
+    }
+    if (!d->micCollector || d->micCollectorEngine != engine) {
+        d->micCollector.reset();
+        d->micCollectorEngine = engine;
+        d->micCollector = std::make_unique<MicUplinkCollector>(
+            [engine](float* dst, int frames) { return engine->pullTxMic(dst, frames); });
+        d->micDroppedReported = 0;
+    }
+    if (g_micCollectorInlineForTest.load(std::memory_order_acquire)) {
+        // A test's collector has no thread: the pump (or collectMicNowForTest)
+        // collects inline. Production never comes here.
+        if (d->micCollector->isRunning()) {
+            d->micCollector->stop();
+        }
+        return;
+    }
+    if (!d->micCollector->isRunning()) {
+        d->micCollector->start();
+        qCInfo(lcRemoteMedia) << "Microphone collector thread started";
+    }
+}
+
+void RemoteMediaController::stopMicCollector()
+{
+    if (!d->micCollector) {
+        return;
+    }
+    const bool wasRunning = d->micCollector->isRunning();
+    const bool realtime = d->micCollector->realtimePriorityHeld();
+    // Joins the thread and discards what it queued: nothing collected under
+    // this lease follows into the next.
+    d->micCollector->stop();
+    if (wasRunning) {
+        qCInfo(lcRemoteMedia) << "Microphone collector thread stopped"
+                              << (realtime ? "(it ran at real-time audio priority)"
+                                           : "(the system gave it no real-time priority)");
+    }
+}
+
+void RemoteMediaController::reportMicDropped()
+{
+    const quint64 dropped = d->micCollector ? d->micCollector->droppedFrames() : 0;
+    if (dropped > d->micDroppedReported) {
+        const quint64 frames = dropped - d->micDroppedReported;
+        qCWarning(lcRemoteMedia) << "Microphone uplink: this window was too busy to send"
+                                 << (frames * 1000 / MicUplinkCollector::kSampleRate)
+                                 << "ms of microphone audio during this key; the oldest was dropped";
+    }
+    d->micDroppedReported = dropped;
 }
 
 void RemoteMediaController::dropMediaPeerForTest()
@@ -3238,6 +3385,11 @@ void RemoteMediaController::stop()
     // Task 36: the microphone line goes with the media connection; the
     // capture helper closes.
     d->micTimer->stop();
+    // 2026-10-10: the collector is joined before its lease goes.
+    if (d->micRunning) {
+        reportMicDropped();
+    }
+    stopMicCollector();
     d->micLease.release();
     d->micRunning = false;
     d->micPending.clear();
@@ -3920,6 +4072,11 @@ void RemoteMediaController::holdAudioRestartForTest(bool held)
 bool RemoteMediaController::audioRestartStepHeldForTest() const
 {
     return bool(d->heldAudioRestartStep);
+}
+
+void RemoteMediaController::setReceiverAudioClockForTest(RemoteAudioReceiver::Clock clock)
+{
+    d->receiverAudioClockForTest = std::move(clock);
 }
 
 void RemoteMediaController::raiseAudioRestartForTest(RemoteAudioReceiver::Fault fault)
@@ -5701,7 +5858,7 @@ std::shared_ptr<RemoteTciAudioStage> RemoteMediaController::requestReceiverAudio
                 for (IReceiverPcmSink* consumer : std::as_const(fanout->sinks)) {
                     consumer->receiverAudioBlock(fanout->sliceId, pcm, frames);
                 }
-            }, stream.tciStage});
+            }, stream.tciStage}, nullptr, d->receiverAudioClockForTest);
         RemoteAudioReceiver* const receiver = stream.receiver.get();
         connect(receiver, &RemoteAudioReceiver::restartRequested, this,
                 [this, sliceId, receiver](const QString& reason, RemoteAudioReceiver::Fault fault) {

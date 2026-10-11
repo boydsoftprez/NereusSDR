@@ -48,6 +48,9 @@
 // J.J. Boyd (KG4VCF). AI tooling: Claude Code.
 // 2026-10-08: Rotor control plan Task 4b: RotorModel joins it. J.J. Boyd
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-09: native audio plan Task 21 (R-AUD-25, R-AUD-27): radio's six
+// Core speaker properties. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+// Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -885,6 +888,31 @@ private slots:
                 MirrorPolicy::featureGateFor("RadioModel", name);
             QVERIFY2(gate != nullptr, name);
             QCOMPARE(QByteArray(gate->feature), QByteArrayLiteral("radioSpeaker"));
+            QCOMPARE(gate->minVersion, 1);
+        }
+    }
+
+    // Core speaker (native audio plan Task 21): the level, mute, device and
+    // details are Bidirectional, the card list and state Outbound, and all
+    // six reach only a peer that declared coreSpeaker 1.
+    void coreSpeakerSettablesAreBidirectionalAndReportsOutbound()
+    {
+        for (const char* name : { "coreSpeakerVolume", "coreSpeakerMuted",
+                                  "coreSpeakerDevice", "coreSpeakerDetails" }) {
+            QVERIFY2(MirrorPolicy::hasExplicitEntry("RadioModel", name), name);
+            QVERIFY2(MirrorPolicy::inboundAllowed("RadioModel", name), name);
+        }
+        for (const char* name : { "coreSpeakerDevices", "coreSpeakerState" }) {
+            QVERIFY2(MirrorPolicy::hasExplicitEntry("RadioModel", name), name);
+            QVERIFY2(!MirrorPolicy::inboundAllowed("RadioModel", name), name);
+        }
+        for (const char* name : { "coreSpeakerVolume", "coreSpeakerMuted",
+                                  "coreSpeakerDevice", "coreSpeakerDevices",
+                                  "coreSpeakerState", "coreSpeakerDetails" }) {
+            const MirrorPolicy::FeatureGate* gate =
+                MirrorPolicy::featureGateFor("RadioModel", name);
+            QVERIFY2(gate != nullptr, name);
+            QCOMPARE(QByteArray(gate->feature), QByteArrayLiteral("coreSpeaker"));
             QCOMPARE(gate->minVersion, 1);
         }
     }

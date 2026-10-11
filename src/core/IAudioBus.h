@@ -7,12 +7,32 @@
 // PortAudioBus (Windows + Mac/Linux fallback).
 //
 // Design spec: docs/architecture/2026-04-19-vax-design.md §3.2
+//
+// Modification history (NereusSDR):
+//   2026-10-09: native audio plan Task 7 (R-AUD-06): requestFadeOut() and
+//               fadedOut() for Rescan. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 8 (R-AUD-18): audioWorkgroupDevice().
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 12 (R-AUD-11): openRefusedInUse().
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio final review fix (R-AUD-15): instanceId().
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10: setClockMatchWritePacket(): a writer of whole packets
+//               (remote playback) tells the bus's clock matcher its packet
+//               (R-AUD-15, bench regression). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
+#include "core/audio/AudioDelayParts.h"
+
 #include <QString>
 
+#include <cstdint>
+#include <functional>
 #include <optional>
 
 namespace NereusSDR {
@@ -26,6 +46,15 @@ struct AudioFormat {
         return sampleRate == o.sampleRate && channels == o.channels && sample == o.sample;
     }
     bool operator!=(const AudioFormat& o) const { return !(*this == o); }
+};
+
+// A stream event a backend reports (native audio plan, R-AUD-03): the
+// device went away, another program holds it, its format changed, or the
+// system asks for the stream to be rebuilt.  Posted to the main thread.
+struct AudioStreamEvent {
+    enum class Kind { DeviceLost, DeviceBusy, FormatChanged, ResetRequested };
+    Kind kind = Kind::DeviceLost;
+    QString detail;
 };
 
 class IAudioBus {
@@ -86,6 +115,47 @@ public:
     virtual QString backendName() const = 0;
     virtual AudioFormat negotiatedFormat() const = 0;
     virtual QString errorString() const { return {}; }
+    // R-AUD-11: true after a failed open() when another program holds the
+    // device, so the role reads "in use" rather than "not connected".
+    virtual bool openRefusedInUse() const { return false; }
+
+    // Native audio engines (R-AUD-03, R-AUD-15).  Every default keeps an
+    // existing bus as it is.
+    //
+    // The sink may be called from a device thread; it only posts.
+    virtual void setStreamEventSink(std::function<void(const AudioStreamEvent&)> /*sink*/) {}
+    // The delay readout's parts; matcherFillMs -1 when the bus has no
+    // clock matcher.
+    virtual AudioDelayParts delayParts() const { return {}; }
+    // True: push() takes 48 kHz stereo float into a DeviceRateMatcher.
+    virtual bool takesStereoMix() const { return false; }
+    virtual std::optional<DeviceRateMatcherStats> matcherStats() const { return std::nullopt; }
+    virtual void restartClockMatch() {}
+    // A writer of whole packets (remote playback) says, ahead of each
+    // write, how many 48 kHz frames one is and whether this one waited for
+    // room; 0 is the block writer again.  The matcher then keeps a size
+    // that holds a packet (DeviceRateMatcher::setWritePacketFrames).  The
+    // writer's thread; no effect on a bus without a clock matcher.
+    virtual void setClockMatchWritePacket(int /*frames*/, bool /*waited*/) {}
+    // R-AUD-06: the output slews to silence at its next read and stays
+    // silent; fadedOut() is true once it is (or when the bus has nothing
+    // to fade).  Any thread.
+    virtual void requestFadeOut() {}
+    virtual bool fadedOut() const { return true; }
+    // R-AUD-18: the device whose audio workgroup the DSP thread joins
+    // while this bus plays the speakers: its AudioObjectID on Core Audio,
+    // 0 elsewhere.
+    virtual std::uint32_t audioWorkgroupDevice() const { return 0; }
+
+    // R-AUD-15: unique to this bus object for the program's life, counted
+    // from 1, so a value the DSP thread publishes for one bus is never
+    // read as a later bus's that happens to get the same address.
+    std::uint64_t instanceId() const noexcept { return m_instanceId; }
+
+private:
+    static NEREUS_CORE_EXPORT std::uint64_t nextInstanceId() noexcept;   // AudioEngine.cpp
+
+    std::uint64_t m_instanceId = nextInstanceId();
 };
 
 } // namespace NereusSDR

@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-10: the microphone's collector: a pump stalled for 150 ms of
+//               the microphone's clock sends all of it afterwards; the
+//               collector's thread runs exactly while the capture lease
+//               is held. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-09: Fix round 2: a key retries a Failed capture that another
 //               demand holds open; a lost media connection during a
 //               program key leaves the next key its lead. J.J. Boyd
@@ -176,6 +181,7 @@
 #include "OperatorWording.h"
 #include "gui/OperatorReasonText.h"
 #include "fakes/RemoteAudioSessionHarness.h"
+#include "core/audio/CaptureAudioBus.h"
 #include "fakes/FakeAudioBus.h"
 #include "fakes/UpgradedCoreToken.h"
 
@@ -514,6 +520,58 @@ private:
     QElapsedTimer m_clock;
     qint64 m_lastPullMs{0};
     qint64 m_delivered{0};
+};
+
+// 2026-10-10: a microphone paced as the PC microphone's reader is
+// (CaptureAudioBus::pull), on a clock the test moves: a pull gives at most
+// the clock's frames since the last pull plus kPaceSlackFrames, and unused
+// credit stops at kPaceCreditCapFrames. 48 kHz mono float.
+class ClockPacedMicrophone final : public IAudioBus {
+public:
+    explicit ClockPacedMicrophone(const qint64* nowFrames) : m_nowFrames(nowFrames) {}
+    bool open(const AudioFormat& format) override
+    {
+        m_format = format;
+        m_open = true;
+        return true;
+    }
+    void close() override { m_open = false; }
+    bool isOpen() const override { return m_open; }
+    qint64 push(const char*, qint64) override { return 0; }
+    void flush() override {}
+    qint64 pull(char* data, qint64 maxBytes) override
+    {
+        if (!m_open || data == nullptr || maxBytes < 4) {
+            return 0;
+        }
+        if (!m_started) {
+            m_started = true;
+            m_lastFrames = *m_nowFrames;
+        }
+        m_credit = std::min<qint64>(m_credit + (*m_nowFrames - m_lastFrames),
+                                    CaptureAudioBus::kPaceCreditCapFrames);
+        m_lastFrames = *m_nowFrames;
+        const qint64 frames = std::clamp<qint64>(m_credit + CaptureAudioBus::kPaceSlackFrames,
+                                                 0, maxBytes / 4);
+        m_credit -= frames;
+        auto* out = reinterpret_cast<float*>(data);
+        for (qint64 i = 0; i < frames; ++i) {
+            out[i] = 0.25f;
+        }
+        return frames * 4;
+    }
+    float rxLevel() const override { return 0.0f; }
+    float txLevel() const override { return 0.0f; }
+    QString backendName() const override { return QStringLiteral("ClockPacedMicrophone"); }
+    AudioFormat negotiatedFormat() const override { return m_format; }
+
+private:
+    const qint64* m_nowFrames;
+    AudioFormat m_format;
+    bool m_open{false};
+    bool m_started{false};
+    qint64 m_lastFrames{0};
+    qint64 m_credit{0};
 };
 
 void attachRemoteMicrophone(Test::RemoteAudioSessionHarness& h, float amplitude, double hz)
@@ -10954,6 +11012,101 @@ private slots:
             QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
         }
         h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-10 (bench: a Windows window on a remote Core lost microphone
+    // audio on every key): the pump does not run for 150 ms of the
+    // microphone's clock while keyed. With nobody collecting meanwhile the
+    // microphone's pacing gives the late pump 30 ms of it; with the
+    // collector stepping every 5 ms, all 150 ms is sent afterwards.
+    void aStalledPumpSendsAllTheMicrophoneAudioTheCollectorPulled()
+    {
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        qint64 nowFrames = 0;
+        auto microphone = std::make_unique<ClockPacedMicrophone>(&nowFrames);
+        QVERIFY(microphone->open(AudioFormat{48000, 1, AudioFormat::Sample::Float32}));
+        h.remote.audioEngine()->setTxInputBusForTest(std::move(microphone));
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        media.setAudioProfileChoice(RemoteAudioProfile::Opus);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        constexpr int kPacketFrames = RemoteMicConfig::kOpusFrameSamples;   // 20 ms
+        constexpr int kStallMs = 150;
+
+        // From here on no event runs, so the pump's timer never does: the
+        // test runs the pump and the collector's steps itself.
+        media.setHoldsTransmit(true);
+        QVERIFY(media.micUplinkRunning());
+        QVERIFY(media.micCaptureLeaseHeldForTest());
+        QVERIFY(!media.micCollectorThreadRunningForTest());   // inline in tests
+        media.pumpMicUplinkForTest();
+        const quint64 start = media.micPacketsSent();
+
+        // Nobody collects during the stall: the late pump gets the pacing's
+        // credit and slack (30 ms), one packet, and the rest is lost.
+        nowFrames += kStallMs * 48;
+        media.pumpMicUplinkForTest();
+        const quint64 lost = media.micPacketsSent();
+        QCOMPARE(lost - start, quint64((CaptureAudioBus::kPaceCreditCapFrames
+                                        + CaptureAudioBus::kPaceSlackFrames) / kPacketFrames));
+        // The half packet that pump left waiting.
+        const int waiting = (CaptureAudioBus::kPaceCreditCapFrames
+                             + CaptureAudioBus::kPaceSlackFrames) % kPacketFrames;
+
+        // The collector steps every 5 ms of the same stall: the pump then
+        // sends every frame of the 150 ms.
+        int collected = 0;
+        for (int ms = 0; ms < kStallMs; ms += 5) {
+            nowFrames += 5 * 48;
+            collected += media.collectMicNowForTest();
+        }
+        QCOMPARE(collected, kStallMs * 48);
+        QCOMPARE(media.micPacketsSent(), lost);                // the pump has not run
+        media.pumpMicUplinkForTest();
+        QCOMPARE(media.micPacketsSent() - lost,
+                 quint64((waiting + kStallMs * 48) / kPacketFrames));
+        QVERIFY((waiting + kStallMs * 48) % kPacketFrames == 0);
+
+        media.setHoldsTransmit(false);
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-10: production, with no inline seam: the collector's thread
+    // runs exactly while the capture lease is held, the pump sends what it
+    // collected, and the thread is joined when the line goes.
+    void theMicrophoneIsCollectedOnItsOwnThreadWhileTheLeaseIsHeld()
+    {
+        const RestoreAudioChoice restore;
+        RemoteMediaController::setMicCollectorInlineForTest(false);
+        const auto inlineAgain = qScopeGuard([] {
+            RemoteMediaController::setMicCollectorInlineForTest(true);
+        });
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController::setMicCollectorInlineForTest(false);   // the harness set it
+        // Pulled only by the collector's thread from here on.
+        attachRemoteMicrophone(h, 0.3f, 1000.0);
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        media.setAudioProfileChoice(RemoteAudioProfile::Opus);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        QCOMPARE(media.micCollectorThreadRunningForTest(), media.micCaptureLeaseHeldForTest());
+
+        media.setHoldsTransmit(true);
+        QVERIFY(media.micUplinkRunning());
+        QVERIFY(media.micCaptureLeaseHeldForTest());
+        QVERIFY(media.micCollectorThreadRunningForTest());
+        const quint64 before = media.micPacketsSent();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micPacketsSent() >= before + 10, 10000);
+
+        media.setHoldsTransmit(false);
+        QVERIFY(!media.micUplinkRunning());
+        QCOMPARE(media.micCollectorThreadRunningForTest(), media.micCaptureLeaseHeldForTest());
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+        QTRY_VERIFY_WITH_TIMEOUT(!media.micCaptureLeaseHeldForTest(), 5000);
+        QVERIFY(!media.micCollectorThreadRunningForTest());
     }
 
     // 2026-10-09 (review item 6): VOX armed holds the capture lease; a

@@ -547,6 +547,9 @@
 //   2026-10-08: Rotor control plan Task 4b: remoteRotorControlVersion(),
 //               and sessionIdOfOwner() public for the command dispatcher.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: Core speaker: peerGetsCoreSpeaker (native audio plan Task
+//               21). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -1958,6 +1961,12 @@ private:
     /// on a Core with a radio model: that feature's properties reach it.
     bool peerGetsFeatureProperties(SessionTransport* transport,
                                    const QByteArray& feature) const;
+    /// Core speaker (native audio plan Task 21): coreSpeaker 1 as
+    /// peerGetsFeatureProperties, on a Core whose model has its own speaker
+    /// (RadioModel::coreSpeakerHost): radio's six Core speaker properties
+    /// and coreSpeakerVersion reach `transport`, and its writes of the four
+    /// settable ones are taken.
+    bool peerGetsCoreSpeaker(SessionTransport* transport) const;
     /// The phone's direct addresses: devices' coreAddresses reach
     /// `transport` only when it declared coreAddresses 1 (as
     /// peerGetsFeatureProperties) and deviceAuth 1, the Core sends the

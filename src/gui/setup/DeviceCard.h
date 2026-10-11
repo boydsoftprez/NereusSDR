@@ -31,21 +31,58 @@
 //               AI-assisted implementation via Anthropic Claude Code. The
 //               Device, Driver API and Buffer size combos are reachable
 //               for the Microphone page's PC microphone card.
+//   2026-10-09: native audio plan Task 16 (R-AUD-01, R-AUD-03, R-AUD-08 to
+//               R-AUD-11, R-AUD-14 to R-AUD-17, D10) by J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code. One Driver list
+//               replaces the Driver API list and the three WASAPI
+//               checkboxes; devices come from the engine's device catalogue
+//               and follow it live; the role's status notes, the engine
+//               notes and the Delay line.
+//   2026-10-09: Task 16 fix round by J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code. setBuildDefaultEngineForTest(), so
+//               a page a test lays out for another system shows that
+//               system's engine on a card with no device lists.
+//   2026-10-09: native audio plan Task 17 (R-AUD-07, R-AUD-19 to R-AUD-22,
+//               settled call 28) by J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code. An interface's pairs under its name
+//               in the Device list, the same-pair note, the mic's "Mic is
+//               on:" pick, the one-driver prompt, the ASIO buffer size and
+//               rate shared across cards, the restarted note, the ASIO
+//               control panel button and greyed pairs for a driver whose
+//               sample format NereusSDR cannot use.
+//   2026-10-09: Windows test fix (R-AUD-07, R-AUD-19): exported from the
+//               GUI DLL, so a signal of it is found from outside the DLL
+//               on Windows. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
+//   2026-10-10: the Driver row sits in front, above the Device row; the
+//               other rows stay under "Device details". J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/AudioDeviceConfig.h"
+#include "core/audio/IAudioStreamHost.h"
+#include "gui/NereusGuiExport.h"
 
 #include <QCheckBox>
 #include <QComboBox>
 #include <QEvent>
 #include <QGroupBox>
 #include <QLabel>
+#include <QPointer>
 
+#include <optional>
+
+class QFormLayout;
+class QPushButton;
+class QRadioButton;
 class QTimer;
 class QToolButton;
 class QVBoxLayout;
 
 namespace NereusSDR {
+
+class AudioEngine;
+class IAudioDeviceCatalog;
 
 // DeviceCard — one audio-endpoint group box.
 //
@@ -57,7 +94,7 @@ namespace NereusSDR {
 //
 // Role::Output → 7 rows.
 // Role::Input  → 7 rows + monitor-during-TX + tone-check extras (TX card).
-class DeviceCard : public QGroupBox {
+class NEREUS_GUI_EXPORT DeviceCard : public QGroupBox {
     Q_OBJECT
 public:
     enum class Role { Output, Input };
@@ -107,10 +144,11 @@ public:
     }
 
     // ── R-SPK-21 / D14: Device details ──────────────────────────────────
-    // Driver API, Sample rate (with Auto-match), Bit depth, Channels,
-    // Buffer size (with milliseconds), Options and Negotiated sit in a
-    // "Device details" section (objectName "deviceDetails", toggled by the
-    // "deviceDetailsToggle" button), folded by default.
+    // Sample rate (with Auto-match), Bit depth, Channels, Buffer size (with
+    // milliseconds), Delay, Negotiated and the engine note sit in a "Device
+    // details" section (objectName "deviceDetails", toggled by the
+    // "deviceDetailsToggle" button), folded by default. Driver and Device
+    // stay in front of it, Driver first.
     bool detailsExpanded() const;
     void setDetailsExpanded(bool expanded);
 
@@ -124,25 +162,51 @@ public:
     // off (Headphones). Off by default; no-op without an Enabled box.
     void setGreyedUntilEnabled(bool greyed);
 
-    // Re-reads the device list for the card's driver API, keeping the
-    // selected device ("Rescan devices").
+    // Re-reads the device list for the card's driver, keeping the selected
+    // device ("Rescan devices").
     void rescanDevices();
-    // Devices the list offers, without "(platform default)" or a kept
-    // "(not available)" entry.
+    // Devices the list offers, without "(platform default)", "(none)" or a
+    // kept "(not connected)" entry.
     int deviceCount() const;
 
     // R-SPK-21: the Microphone page and its tests reach the card's own
-    // Device, Driver API and Buffer size controls.
+    // Device, Driver and Buffer size controls.  driverApiCombo() holds the
+    // Driver list (R-AUD-01, D10).
     QComboBox* deviceCombo() const { return m_deviceCombo; }
     QComboBox* driverApiCombo() const { return m_driverApiCombo; }
     QComboBox* bufferSizeCombo() const { return m_bufferSizeCombo; }
 
-    // ── R-SPK-24: Exclusive / Event-driven / Bypass mixer ───────────────
-    // Live only when the card's driver API is WASAPI; otherwise disabled
-    // with wasapiOnlyReason() as their tooltip, and a note says so.
-    bool wasapiOptionsAvailable() const;
-    static bool isWasapiDriverName(const QString& driverApi);
-    static QString wasapiOnlyReason();
+    // ── Native audio engines (R-AUD-01, R-AUD-03, R-AUD-08 to R-AUD-17) ──
+    // The card reads the engine's device catalogue and its role's status
+    // and follows their signals: the Driver and Device lists, the state
+    // note ("deviceStateNote"), the Delay line ("deviceDelayCombo",
+    // "deviceDelayNow") and the engine note ("engineNote").  The catalogue
+    // is picked up once the engine has one (it builds it on first use).
+    // Without an engine the card lists "(platform default)" and the saved
+    // device only.
+    void setAudioEngine(AudioEngine* engine);
+    // The role the card's prefix names (audio/Speakers, audio/Headphones,
+    // audio/TxInput, audio/Vax1 to audio/Vax4).
+    static std::optional<AudioRole> roleForPrefix(const QString& prefix);
+#ifdef NEREUS_BUILD_TESTS
+    // The engine a card with no device catalogue shows, for a test that
+    // lays a page out for another system (nullopt: this build's).
+    static void setBuildDefaultEngineForTest(std::optional<AudioEngineKind> engine);
+#endif
+
+    // ── Pairs and ASIO (native audio plan Task 17) ──────────────────────
+    // An interface with more than two channels lists a heading row (its
+    // name, never picked, kGroupHeadingRole true) and its pairs under it;
+    // the popup shows a pair as kPopupTextRole ("Outputs 3-4"), indented,
+    // and the closed field its full label ("<name> · Outputs 3-4").
+    // Notes: "samePairNote" (speakers and headphones), "asioFormatNote"
+    // (settled call 28), and in Device details "asioBufferNote",
+    // "asioSharedNote" and "asioRestartedNote"; the "asioControlPanel"
+    // button; the mic card's "micChannelRow" with "micChannelLeft",
+    // "micChannelRight" and "micChannelBoth".  A pick that would put a
+    // second ASIO driver in use asks first (AsioSwitchAllDialog).
+    static constexpr int kPopupTextRole = Qt::UserRole + 8;
+    static constexpr int kGroupHeadingRole = Qt::UserRole + 9;
 
 signals:
     // Emitted on any control edit (excluding loadFromSettings).
@@ -159,12 +223,38 @@ protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
 
 private:
+    // The device the card has selected: its saved identity and name.
+    struct Selection {
+        QString deviceId;
+        QString deviceName;
+        int firstChannel = 1;
+    };
+
     void buildLayout();
+    void populateDriverCombo();
     void populateDeviceCombo();
-    void selectDeviceName(const QString& name);
+    void selectDevice();
     void updateBufferMsLabel();  // recompute derived ms readout from current combos
-    void updateWasapiOptions();
     void updateBodyEnabled();
+    void onDriverPicked();
+    void onDevicePicked();
+    void attachCatalogue();
+    void takeSavedChoice(const AudioDeviceConfig& saved);
+    void refreshStatus();
+    void markChosenInUse();
+    void refreshDelayNow();
+    void renderPill();
+    void updateEngineNote();
+    QString deviceNameForId(const QString& deviceId) const;
+    AudioEngineKind selectedEngine() const;
+    // Task 17
+    QString selectedAsioDriver() const;   // empty unless the card is on ASIO with a driver
+    bool confirmAsioSwitch(int index);    // false: the pick was cancelled
+    void syncFromSavedChoice();
+    void refreshAsioDetails();
+    void restoreStandardLists();
+    void refreshSamePairNote();
+    void updateMicChannelRow();
 
     QString       m_prefix;
     Role          m_role;
@@ -172,7 +262,7 @@ private:
 
     // Controls
     QCheckBox*  m_enableChk{nullptr};   // title-bar enable (Headphones only)
-    QComboBox*  m_driverApiCombo{nullptr};
+    QComboBox*  m_driverApiCombo{nullptr};   // the Driver list (R-AUD-01)
     QComboBox*  m_deviceCombo{nullptr};
     QComboBox*  m_sampleRateCombo{nullptr};
     QCheckBox*  m_autoMatchSampleRate{nullptr};
@@ -180,24 +270,53 @@ private:
     QComboBox*  m_channelsCombo{nullptr};
     QComboBox*  m_bufferSizeCombo{nullptr};
     QLabel*     m_bufferMsLabel{nullptr};  // derived milliseconds readout
-    QCheckBox*  m_exclusiveChk{nullptr};   // WASAPI exclusive mode
-    QCheckBox*  m_eventDrivenChk{nullptr}; // WASAPI event-driven
-    QCheckBox*  m_bypassMixerChk{nullptr}; // WASAPI bypass mixer
+    QComboBox*  m_delayCombo{nullptr};     // R-AUD-15: DelayMs
+    QLabel*     m_delayNow{nullptr};       // R-AUD-15: "Now X ms ..."
+    QLabel*     m_stateNote{nullptr};      // R-AUD-08 to R-AUD-11, R-AUD-14
+    QLabel*     m_engineNote{nullptr};     // R-AUD-16
     // TX-input extras
     QCheckBox*  m_monitorDuringTxChk{nullptr};
     QCheckBox*  m_toneCheckChk{nullptr};
 
     // Negotiated-format pill
     QLabel*     m_negotiatedPill{nullptr};
+    std::optional<AudioDeviceConfig> m_negotiated;
+    QString     m_negotiatedError;
+    bool        m_applying{false};
 
-    // R-SPK-21 / D14 / R-SPK-24
+    // R-SPK-21 / D14
     QVBoxLayout* m_aboveDeviceLayout{nullptr};
     QVBoxLayout* m_belowDeviceLayout{nullptr};
     QWidget*     m_body{nullptr};          // Device row + details
     QToolButton* m_detailsToggle{nullptr};
     QWidget*     m_details{nullptr};
-    QLabel*      m_wasapiNote{nullptr};
     bool         m_greyedUntilEnabled{false};
+
+    // Native audio engines
+    std::optional<AudioRole>        m_audioRole;
+    QPointer<AudioEngine>           m_engine;
+    QPointer<IAudioDeviceCatalog>   m_catalogue;
+    QTimer*                         m_refreshTimer{nullptr};   // 1 s: delay readout, catalogue pick-up
+    AudioDeviceConfig               m_loaded;                  // the saved config, as last loaded
+    std::optional<AudioEngineKind>  m_driverEngine;            // the Driver list's choice
+    QString                         m_driverHostApi;           // older drivers: the host API
+    Selection                       m_selection;
+    AudioRoleStatus                 m_status;
+
+    // Task 17
+    QFormLayout*  m_detailsForm{nullptr};
+    QLabel*       m_samePairNote{nullptr};
+    QLabel*       m_asioFormatNote{nullptr};
+    QLabel*       m_asioBufferNote{nullptr};
+    QLabel*       m_asioSharedNote{nullptr};
+    QLabel*       m_asioRestartedNote{nullptr};
+    QPushButton*  m_asioControlPanel{nullptr};
+    QWidget*      m_micChannelRow{nullptr};
+    QRadioButton* m_micLeft{nullptr};
+    QRadioButton* m_micRight{nullptr};
+    QRadioButton* m_micBoth{nullptr};
+    bool          m_asioLists{false};      // the rate and buffer lists are the driver's
+    bool          m_switchingAsio{false};  // applying this card's own switch
 
     // 200 ms intra-control debounce for the buffer-size combo only (per
     // addendum §2.1 — debounce is intra-control, not card-wide).  Other

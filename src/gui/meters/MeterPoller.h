@@ -60,6 +60,10 @@
 //                 (setRemoteTxStageReadingsAvailable); a Core below it
 //                 names the reason. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-10 - The six transmit peak meters from a Core at
+//                 txReadingsVersion 4 (setRemoteTxPeakReadingsAvailable); a
+//                 Core below it names the reason. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -284,6 +288,12 @@ public:
     // as a local window's get its own transmit channel's; while false they
     // show remoteTxMeterNotSentText.
     void setRemoteTxStageReadingsAvailable(std::function<bool()> available);
+    // Whether the Core sends the six peak readings (txReadingsVersion 4:
+    // `txState`'s micPeakDb .. cfcPeakDb). While true the
+    // remoteTxPeakBindingsNotSent bindings get them while transmitting, as
+    // a local window's get its own transmit channel's; while false (and
+    // with no hook set) they show remoteTxMeterNotSentText.
+    void setRemoteTxPeakReadingsAvailable(std::function<bool()> available);
     // R-R3-32 (remote-window parity Task 6): the model whose
     // paReadings() feed the HwVolts, HwAmps and HwTemperature bindings on
     // every poll, in a local window (this radio) and a remote one (the
@@ -587,6 +597,10 @@ private:
     std::function<bool()> m_remoteTxStageReadingsAvailable;
     bool m_remoteTxStageReadingsShown{false};
     bool remoteTxStageReadingsAvailable() const;
+    // The Core sends the six peak readings (txReadingsVersion 4).
+    std::function<bool()> m_remoteTxPeakReadingsAvailable;
+    bool m_remoteTxPeakReadingsShown{false};
+    bool remoteTxPeakReadingsAvailable() const;
 };
 
 } // namespace NereusSDR

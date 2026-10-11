@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09 - VAX TX (virtual device) only where a VAX transmit device
+//                exists: greyed on Windows with the PC Mic route, a saved
+//                choice falls back to PC Mic (R-SPK-21, R-AUD-01).
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -1060,6 +1064,9 @@ void PhoneCwApplet::wireControls()
             emit openSetupRequested(QStringLiteral("Audio"),
                                     QStringLiteral("Microphone"));
         });
+        // R-SPK-21, R-AUD-01: greyed from the start where there is no VAX
+        // transmit device.
+        updateTransmitControlAvailability();
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1420,8 +1427,14 @@ void PhoneCwApplet::updateTransmitControlAvailability()
     for (QWidget* control : {static_cast<QWidget*>(m_micSourceCombo),
                              static_cast<QWidget*>(m_vaxBtn)}) {
         const QString sourceReason = m_model ? m_model->micSourceChangeReason(MicSource::Pc) : QString();
-        gate(control, m_transmitPermitted && sourceReason.isEmpty(),
-             !m_transmitPermitted ? m_transmitPermissionReason : sourceReason);
+        // R-SPK-21, R-AUD-01: no VAX transmit device on this system
+        // (Windows): the VAX button is greyed with the PC Mic route.
+        const bool vaxMissing = control == m_vaxBtn && m_model
+            && !m_model->transmitModel().vaxSourceAvailable();
+        gate(control, m_transmitPermitted && sourceReason.isEmpty() && !vaxMissing,
+             !m_transmitPermitted ? m_transmitPermissionReason
+             : !sourceReason.isEmpty() ? sourceReason
+             : TransmitModel::vaxSourceUnavailableReason());
     }
     // R-R3-49 (parity Task 3): the mic profile.
     gate(m_micProfileCombo, m_txProfilePermitted, m_txProfileReason);

@@ -7,19 +7,35 @@
 // AudioEngine::makeBus alone still let a test touch the real audio
 // devices. Constructing an AudioEngine, and a RadioModel (which builds its
 // own AudioEngine), must make no Pa_Initialize or Pa_Terminate call, and
-// the device lists come back empty.
+// the device lists come back empty.  Native audio plan Task 7 (R-AUD-32):
+// the registry's PortAudio backend lists nothing and its Rescan calls
+// nothing either, with the engine running on the system's own backends.
 //
 // Modification history (NereusSDR):
 //   2026-09-24: J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //               Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 7 (R-AUD-32): the system backends
+//               and Rescan make no PortAudio call. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 8 (R-AUD-01, R-AUD-32): on the Mac
+//               the system's engine is Core Audio, which lists nothing in
+//               a test run either. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-09: Windows test fix (R-AUD-02): on Windows the default is
+//               Windows audio, shared. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
+#include <QSignalSpy>
 #include <QStandardPaths>
 
 #include <portaudio.h>
 
 #include "core/AudioEngine.h"
+#include "core/audio/AudioBackendRegistry.h"
+#include "core/audio/IAudioDeviceCatalog.h"
+#include "core/audio/PortAudioBackend.h"
 #include "core/audio/PortAudioBus.h"
 #include "models/RadioModel.h"
 
@@ -52,6 +68,51 @@ private slots:
         // PortAudio's own view, independent of the counter: it answers
         // "not initialised" from its initialisation count alone and touches
         // no device doing so.
+        QCOMPARE(Pa_GetDeviceCount(), PaDeviceIndex(paNotInitialized));
+    }
+
+    // R-AUD-32: the engine on the system's own backends (PortAudio here,
+    // until the native engine tasks) lists and rescans without a
+    // PortAudio call.
+    void systemBackendsAndRescanNeverInitialisePortAudio()
+    {
+        QVERIFY(listPortAudioDevices().isEmpty());
+        {
+            AudioEngine engine;
+            engine.setAudioBackendsForTest(makeSystemAudioBackends(AudioBackendContext{}));
+            engine.start();
+            QVERIFY(engine.catalogue() != nullptr);
+#ifdef Q_OS_MAC
+            // R-AUD-01: Core Audio alone, and in a test run it walks no
+            // device either.
+            QCOMPARE(engine.defaultEngine(), AudioEngineKind::CoreAudio);
+            QVERIFY(engine.catalogue()
+                        ->devices(AudioBackendId::CoreAudio, AudioDeviceDirection::Output)
+                        .isEmpty());
+#elif defined(Q_OS_WIN)
+            // R-AUD-02: Windows audio, shared, is the default, and in a
+            // test run it lists no device either.
+            QCOMPARE(engine.defaultEngine(), AudioEngineKind::WindowsShared);
+            QVERIFY(engine.catalogue()
+                        ->devices(AudioBackendId::Wasapi, AudioDeviceDirection::Output)
+                        .isEmpty());
+#else
+            QCOMPARE(engine.defaultEngine(), AudioEngineKind::PortAudio);
+#endif
+            QVERIFY(engine.catalogue()
+                        ->devices(AudioBackendId::PortAudio, AudioDeviceDirection::Output)
+                        .isEmpty());
+            // Nothing is listed, so the speakers have no system default.
+            QCOMPARE(engine.roleStatus(AudioRole::Speakers).state, AudioRoleState::Silent);
+            QCOMPARE(engine.roleStatus(AudioRole::Speakers).reason, AudioRoleReason::NoDevice);
+
+            QSignalSpy rescanned(engine.catalogue(), &IAudioDeviceCatalog::olderDriversRescanned);
+            engine.rescanOlderDrivers();
+            QVERIFY(rescanned.wait(5000));
+            engine.stop();
+        }
+        QCOMPARE(AudioEngine::paInitializeCallsForTest(), 0);
+        QCOMPARE(AudioEngine::paTerminateCallsForTest(), 0);
         QCOMPARE(Pa_GetDeviceCount(), PaDeviceIndex(paNotInitialized));
     }
 };

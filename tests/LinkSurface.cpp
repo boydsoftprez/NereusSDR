@@ -12,6 +12,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09  J.J. Boyd / KG4VCF  Core speaker: the capture's model is a
+//                                    Core with its own speaker and the
+//                                    capture declares coreSpeaker, so
+//                                    coreSpeakerVersion and radio's six
+//                                    Core speaker properties are captured
+//                                    (native audio plan Task 21).
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-06  J.J. Boyd / KG4VCF  Radio speaker: the capture declares
 //                                    radioSpeaker, so radioSpeakerVersion
 //                                    and radio's five radio speaker
@@ -592,6 +599,9 @@ std::optional<QList<QByteArray>> liveSessionWire(
     model->setLastRadioInfoForTest(info);
     model->setConnectionStateForTest(ConnectionState::Connected);
     model->addSlice(QStringLiteral("pan-0"));
+    // Core speaker (native audio plan Task 21): a Core has its own speaker
+    // (DaemonApp), so its six properties are on the wire.
+    model->setCoreSpeakerHost(true);
     // iPhone app Task 73: a second slice the Core runs for another device
     // that is away, so the session this peer sees holds a `marker:<id>` as
     // well as its own `slice:<id>`.
@@ -729,7 +739,10 @@ std::optional<QList<QByteArray>> liveSessionWire(
                                   {"stationCat", 1},
                                   // Radio speaker: radioSpeakerVersion and
                                   // radio's five radio speaker properties.
-                                  {"radioSpeaker", 1}})));
+                                  {"radioSpeaker", 1},
+                                  // Core speaker: coreSpeakerVersion and
+                                  // radio's six Core speaker properties.
+                                  {"coreSpeaker", 1}})));
     clientEnd->sendText(SessionMessages::encode(SessionMessages::authRequest({}, block)));
 
     // The loopback delivers on later event-loop turns, as a socket would.
@@ -823,6 +836,9 @@ QJsonArray captureCapabilities()
     caps.stationCatVersion = 1;
     // Radio speaker: sent to a peer that declared radioSpeaker.
     caps.radioSpeakerVersion = 1;
+    // Core speaker: sent to a peer that declared coreSpeaker, from a Core
+    // with its own speaker.
+    caps.coreSpeakerVersion = 1;
 
     // The values come from a live station with every feature a Core can
     // switch on: media, telemetry, an enforced display budget with its

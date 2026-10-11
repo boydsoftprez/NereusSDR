@@ -8,8 +8,14 @@
 // Non-strict callers keep the substring fallback.  Pure logic, no
 // PortAudio device is touched.
 //
+// Native audio plan bug 1 (R-AUD-06): only the saved host API is searched,
+// so a name found only under another host API never matches.
+//
 // Modification history (NereusSDR):
 //   2026-09-22: J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//               Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 7 (R-AUD-06): matches stay within
+//               the saved host API. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
 // =================================================================
 
@@ -38,7 +44,7 @@ private slots:
 
         const QVector<Candidate> crossOnly = {{QStringLiteral("Built-in"), 0},
                                               {QStringLiteral("USB Mic 2"), 1}};
-        QTest::newRow("cross-api substring") << crossOnly << "USB Mic" << 0 << -1 << 1;
+        QTest::newRow("cross-api substring") << crossOnly << "USB Mic" << 0 << -1 << -1;
 
         const QVector<Candidate> both = {{QStringLiteral("USB Mic 2"), 0},
                                          {QStringLiteral("usb mic"), 0}};
@@ -46,7 +52,13 @@ private slots:
 
         const QVector<Candidate> crossExact = {{QStringLiteral("USB Mic 2"), 0},
                                                {QStringLiteral("USB Mic"), 1}};
-        QTest::newRow("cross-api exact") << crossExact << "USB Mic" << 0 << 1 << 0;
+        QTest::newRow("cross-api exact") << crossExact << "USB Mic" << 0 << -1 << 0;
+
+        // A "Windows WASAPI" (index 3 here) device name that exists only
+        // under MME (index 2) does not open on MME.
+        const QVector<Candidate> mmeOnly = {{QStringLiteral("Speakers (USB Audio)"), 2}};
+        QTest::newRow("wasapi name only under mme") << mmeOnly << "Speakers (USB Audio)" << 3
+                                                    << -1 << -1;
 
         const QVector<Candidate> anyApi = {{QStringLiteral("USB Mic 2"), 3},
                                            {QStringLiteral("USB Mic"), 4}};

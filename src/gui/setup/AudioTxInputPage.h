@@ -55,6 +55,10 @@
 // §3 Phase I (I.1–I.4) + pre-code review §5.1 + §5.4.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09 - VAX TX (virtual device) only where a VAX transmit device
+//                exists: greyed on Windows with the PC Mic route, a saved
+//                choice falls back to PC Mic (R-SPK-21, R-AUD-01).
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-28 — I.1 written by J.J. Boyd (KG4VCF), with AI-assisted
 //                implementation via Anthropic Claude Code.
 //   2026-04-28 — I.2 PC Mic group box written by J.J. Boyd (KG4VCF),
@@ -211,6 +215,15 @@ public:
     QGroupBox* saturnRadioMicGroup() const { return m_saturnGroup; }
     QGroupBox* micSourceGroup()      const { return m_micSourceGroup; }
     QRadioButton* radioMicButton()   const { return m_radioMicBtn; }
+    QRadioButton* vaxMicButton()     const { return m_vaxMicBtn; }
+
+    // R-SPK-21, R-AUD-01: the VAX TX choice's tooltip names the transmit
+    // device as each system calls it. Windows has none (the choice is
+    // greyed with TransmitModel::vaxSourceUnavailableReason()). Static and
+    // per system so every system's words are tested on any build.
+    enum class HostSystem { Mac, Linux, Windows };
+    static HostSystem thisSystem();
+    static QString vaxSourceToolTip(HostSystem system);
     QLabel*    radioMicNoteLabel()   const { return m_radioMicNoteLabel; }
     QSlider*   hermesLineInGainSlider() const { return m_hermesLineInGainSlider; }
     QLabel*    hermesLineInGainLabel()  const { return m_hermesLineInGainLabel; }

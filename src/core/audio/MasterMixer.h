@@ -80,6 +80,12 @@
 //                 radio's own speaker out, every receiving slice as
 //                 Thetis's mixer 0. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-10 -- Headless Core speaker (JJ's ruling, R-AUD-27):
+//                 tryDrain's everySliceOut, the speakers sum of every
+//                 receiving slice whatever the local mask, beside the
+//                 local sums and never in them. NereusSDR-original.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 // =================================================================
 
 // --- From aamix.c ---
@@ -174,6 +180,13 @@ warren@wpratt.com
 //     64-frame 48 kHz block per period whatever its DDC rate. Cadences
 //     match by construction. Decoded RADE speech returns asynchronously
 //     at the same long-term rate; the rings absorb that scheduling skew.
+//
+//     The transmit monitor is the one input that is born at another rate
+//     (the transmit channel's output rate) and on another thread (the
+//     transmit thread). Both are settled before it reaches this mixer:
+//     AudioEngine::txMonitorBlockReady resamples it to 48 kHz and queues
+//     it, and AudioEngine::pumpTxMonitorHandoff accumulates it here on
+//     the DSP thread. So divergences 1 and 2 hold for it too.
 //
 //  3. Barrier membership is asymmetric: a slice JOINS implicitly on its
 //     first block, but LEAVES only when the slice lifecycle withdraws it
@@ -372,13 +385,25 @@ public:
                  bool localOutOfMask = true, bool onlyWithoutMembers = false,
                  std::uint32_t localListenMask = 0,
                  const float* localListenLevels = nullptr,
-                 float* radioOut = nullptr);
+                 float* radioOut = nullptr,
+                 float* everySliceOut = nullptr);
     // Radio codec (JJ's ruling 2026-09-30): `radioOut`, when not null, is
     // the radio's own speaker out, as Thetis's audio mixer 0: every
     // receiving slice whatever localMask says, each at its own gain, pan
     // and mute, both routes summed, plus the transmit monitor's slot
     // exactly while it is in the local sums (localOutOfMask). maxFrames * 2
     // floats; same ramps and up-slew as the other sums.
+    //
+    // Headless Core speaker (JJ's ruling 2026-10-10): `everySliceOut`, when
+    // not null, is the speakers sum as it would be with every bit of
+    // localMask set: every receiving slice routed to the speakers, whoever
+    // controls it, at its own gain, AF level, pan and mute, plus the
+    // transmit monitor's slot exactly while it is in the local sums
+    // (localOutOfMask). A slice routed to the headphones is not in it, as
+    // it is not in speakersOut, and no listen level is: a slice is summed
+    // here once, at its controller's level. It is a sum of its own:
+    // speakersOut, headphonesOut, every owner's sums and radioOut are what
+    // they are without it. maxFrames * 2 floats.
 
     // Test seam: ramp length in frames (default kDefaultRampFrames).
     void setRampFrames(int frames);

@@ -20,7 +20,7 @@ An older Core may connect while leaving individual Tools entries marked as needi
 
 ## There is no receive audio
 
-On desktop, confirm the selected slice is receiving, unmuted, and has **AF** above zero. Check the computer's output device in **Setup > Audio > Devices** and the operating system's output volume. If the spectrum moves but audio is silent, inspect the selected audio route before changing DSP controls. For digital software, check the VAX channel meter and mute state in the VAX applet; a silent VAX path can coexist with normal speaker audio.
+On desktop, confirm the selected slice is receiving, unmuted, and has **AF** above zero. Check the computer's output device in **Setup > Audio > Outputs** (the card names a device that is **not connected** or **in use by another program**) and the operating system's output volume. If the spectrum moves but audio is silent, inspect the selected audio route before changing DSP controls. For digital software, check the VAX channel meter and mute state in the VAX applet; a silent VAX path can coexist with normal speaker audio.
 
 On iPhone/iPad, check the phone's output route and volume, then open **Tools > Connection and performance**. The audio charts distinguish Core source frames, received packets, phone decoding, and playback underflows. Incoming traffic alone does not prove audio reached the speaker. A rising underflow count points to phone playback or link timing; capture the time and selected route before retrying.
 
@@ -70,6 +70,22 @@ If adding a slice or moving a shared receiver window is refused, read the
 resource/impact notice. Reduce an unnecessary slice or choose an available
 window rather than retrying the same allocation indefinitely. The automatic
 receiver allocation is described in [slices and panadapters](04-slices.md).
+
+## A sound device is not connected or is in use
+
+NereusSDR never moves your microphone or a VAX channel to another device on its own, and never changes your speaker choice. It tells you instead. Read the amber note on the card in **Setup > Audio**.
+
+| What you see | What it means and what to do |
+| --- | --- |
+| **<name> is not connected. Playing on the system default, <default name>, until it comes back.** on Speakers or Headphones | The chosen device is unplugged or switched off. Sound plays on the system default meanwhile and returns to the chosen device by itself when it reappears. Plug it in, or choose another device. |
+| **<name> is in use by another program. Playing on the system default, <default name>, until it comes back.** | Another program holds the device. Close that program, or on Windows consider **Windows audio, shared** rather than exclusive. |
+| **<name> is not connected. The mic stays silent until it comes back; NereusSDR never switches to another mic on its own.** and an amber **PC mic not connected** badge in the TX applet | Reconnect the microphone, or pick a different one under **Audio > Microphone**. Voice transmit stays refused with **Microphone is not ready. Check Audio settings and retry.** until the mic is ready. |
+| **PC mic in use by another program** | Close the other program that has the mic open. Capture resumes by itself. |
+| **<name> is not connected. VAX N stays silent until it comes back; NereusSDR never sends it anywhere else.** | A VAX channel's cable or device is missing. Reconnect or reinstall it, or pick another cable on **Audio > Digital modes**. |
+| **<card> is not connected at the Core.** on the Core speaker card | The Core's sound card is missing. The Core plays on its own default meanwhile. See [Play the Core speaker](08-shared-core.md#play-the-core-speaker). |
+| A Bluetooth headset sounds thin, for listening too, after you pick it as the mic | Bluetooth headsets switch to phone-call quality while they are the mic. Listen on the headset and talk on a wired or built-in mic, or listen on another device for the best sound. |
+| The sound lags the signal | **Audio > Outputs**, **Device details**, **Delay**. Read **Now N ms from the radio to <device>**. **Automatic** lets NereusSDR choose. An older driver adds delay; choose the system's own driver if the device offers one. |
+| A device you plugged in is missing from the list | The system's own drivers update within about a second. For an older driver press **Rescan devices**. |
 
 ## Audio is distorted, noisy or breaks up
 

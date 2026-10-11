@@ -1,0 +1,74 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Phone Core Speaker</title><style>
+:root{--page:#05050c;--panel:#0f0f1a;--border:#304050;--row:#c8d8e8;--head:#708090;--note:#607080;--cur:#1a2a3a;--accent:#00b4d8;--amber:#e0a030;--gone:#e0a030}
+body{background:var(--page);color:var(--row);font:13px -apple-system,system-ui,sans-serif;margin:0;padding:24px 16px}
+h1{font-size:18px;color:var(--accent);margin:0 0 4px}p{color:#9ab;max-width:980px;line-height:1.45;margin:2px 0 14px}
+.wrap{display:flex;gap:28px;flex-wrap:wrap;align-items:flex-start}
+.col{display:flex;flex-direction:column;gap:8px;width:252px}.cap{font-size:12px;color:#8aa8c0;font-weight:600;min-height:32px}
+.panel{width:250px;box-sizing:border-box;background:var(--panel);padding:8px;border-radius:12px;border:1px solid var(--border);box-shadow:0 10px 30px #0008}
+.row{display:flex;align-items:center;justify-content:space-between;min-height:44px;padding:0 12px;font-size:15px;font-weight:600}
+.sw{width:51px;height:31px;border-radius:16px;background:#39393d;position:relative;cursor:pointer;flex:none}.sw::after{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:14px;background:#fff;transition:.15s}
+.sw.on{background:var(--accent)}.sw.on::after{left:22px}.sw.amber.on{background:var(--amber)}
+.div{height:1px;background:var(--border);margin:6px 0}
+.head{font-size:11px;font-weight:700;letter-spacing:.9px;text-transform:uppercase;color:var(--head);padding:0 6px 6px}
+.newtag{font-size:9px;font-weight:700;color:#0f0f1a;background:var(--amber);border-radius:3px;padding:0 4px;margin-left:6px;letter-spacing:0;vertical-align:1px}
+.rt{display:flex;justify-content:space-between;align-items:center;padding:0 12px;height:44px;border-radius:4px;font-size:14px}.rt.cur{background:var(--cur)}.tick{color:var(--row)}
+.sl{display:flex;align-items:center;gap:10px;padding:0 12px;min-height:44px}
+input[type=range]{-webkit-appearance:none;flex:1;height:28px;background:transparent;margin:0}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:linear-gradient(var(--c),var(--c)) 0/var(--p,40%) 100% no-repeat,#1a2a3a}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:26px;height:26px;border-radius:13px;background:#fff;margin-top:-11px;box-shadow:0 1px 4px #0009}
+input.amb{--c:var(--amber)}input.cy{--c:var(--accent)}
+.val{font-size:13px;color:var(--head);width:28px;text-align:right;font-variant-numeric:tabular-nums}
+.note{font-size:12px;color:var(--note);padding:0 12px 4px;line-height:1.35}
+.note.gone{color:var(--gone)}
+.mnote{font-size:11px;color:var(--note);padding:6px 6px 2px}
+.dis{opacity:.4;pointer-events:none}
+.ico{width:20px;height:20px;flex:none;color:var(--row)}
+.opt{font-size:11px;color:#c8a050;font-weight:700;letter-spacing:.04em}
+.legend{max-width:980px;color:#9ab;font-size:12px;line-height:1.5;margin-top:18px}
+.legend b{color:#e0eef8}
+</style></head><body>
+<h1>iPhone: Sound panel with the Core speaker</h1>
+<p>The panel the band's speaker button opens, as built on this branch (Mute this phone, Radio speaker, Play the band through), with a new Core speaker section under Radio speaker: its level and Mute Core speaker, nothing else. Choosing the Core's device stays in the desktop's Setup. Moving the slider here moves it on every desktop window too. Drag the sliders and tap the switches. The two icons are stand-ins for the phone's own SF Symbols ("radio", and "hifispeaker" for the Core speaker); the Core speaker's cyan matches its slider on the desktop card.</p>
+
+<div class="wrap">
+ <div class="col"><span class="cap">Core speaker playing</span><div class="panel" id="pA"></div></div>
+ <div class="col"><span class="cap">Its speaker unplugged at the Core</span><div class="panel" id="pB"></div></div>
+ <div class="col"><span class="cap"><span class="opt">OPTION 1</span><br>Core has no sound card: section left out</span><div class="panel" id="pC1"></div></div>
+ <div class="col"><span class="cap"><span class="opt">OPTION 2</span><br>Core has no sound card: section greyed</span><div class="panel" id="pC2"></div></div>
+</div>
+
+<div class="legend"><b>What each shows.</b> Playing: level and mute work as on the desktop card. Unplugged: the section stays usable and says where it plays meanwhile, as the desktop card does. No sound card: option 1 leaves the section out until a card is plugged into the Core, then it appears by itself; option 2 keeps it greyed with its reason. The desktop Setup card shows either way, since Setup is where you go to set one up.</div>
+
+<script>
+const RADIO = '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2.5" y="7" width="19" height="13" rx="2.5"/><path d="M6 7 17 3"/><circle cx="8.5" cy="13.5" r="3"/><path d="M14 11.5h4.5M14 14.5h4.5"/></svg>';
+const HIFI = '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="5" y="2.5" width="14" height="19" rx="3"/><circle cx="12" cy="7.3" r="1.8"/><circle cx="12" cy="15" r="4"/><circle cx="12" cy="15" r="1" fill="currentColor"/></svg>';
+function slider(icon, cls, v) {
+  return `<div class="sl">${icon}<input type="range" class="${cls}" value="${v}" style="--p:${v}%" oninput="this.style.setProperty('--p',this.value+'%');this.nextElementSibling.textContent=this.value"><span class="val">${v}</span></div>`;
+}
+function radio() {
+  return `<div class="head">Radio speaker</div>${slider(RADIO, "amb", 50)}<div class="row">Mute radio speaker<span class="sw amber" onclick="this.classList.toggle('on')"></span></div>`;
+}
+function core(kind) {
+  if (kind === "none") { return ""; }
+  let body;
+  if (kind === "grey") {
+    body = `<div class="dis">${slider(HIFI, "cy", 40).replace('<span class="val">40</span>', '<span class="val">--</span>')}<div class="row">Mute Core speaker<span class="sw"></span></div></div><div class="note">No sound card is plugged into the Core.</div>`;
+  } else {
+    body = `${slider(HIFI, "cy", 40)}<div class="row">Mute Core speaker<span class="sw on" onclick="this.classList.toggle('on')" style="background:#39393d"></span></div>`;
+    body = body.replace('class="sw on" onclick="this.classList.toggle(\'on\')" style="background:#39393d"', 'class="sw" onclick="this.classList.toggle(\'on\')"');
+    if (kind === "gone") { body += `<div class="note gone">USB Audio Device is not connected at the Core. Playing on bcm2835 Headphones until it comes back.</div>`; }
+  }
+  return `<div class="div"></div><div class="head">Core speaker<span class="newtag">NEW</span></div>${body}`;
+}
+function panel(kind) {
+  return `<div class="row">Mute this phone<span class="sw" onclick="this.classList.toggle('on')"></span></div>
+  <div class="div"></div>${radio()}${core(kind)}
+  <div class="div"></div><div class="head">Play the band through</div>
+  <div class="rt cur">Speaker<span class="tick">&#10003;</span></div><div class="rt">Earpiece</div><div class="rt">AirPods Pro</div>`;
+}
+document.getElementById("pA").innerHTML = panel("live");
+document.getElementById("pB").innerHTML = panel("gone");
+document.getElementById("pC1").innerHTML = panel("none");
+document.getElementById("pC2").innerHTML = panel("grey");
+</script>
+</body></html>

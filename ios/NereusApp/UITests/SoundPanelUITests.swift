@@ -68,7 +68,7 @@ final class SoundPanelUITests: XCTestCase {
         try save("sound-panel")
 
         // Close it with a tap on the band away from it, then look in Setup.
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6)).tap()
+        tapBandBesidePanel(app)
         XCTAssertTrue(mute.waitForNonExistence(timeout: 10))
         app.otherElements["Sections"].buttons["Setup"].tap()
         app.buttons["Audio"].tap()
@@ -85,7 +85,7 @@ final class SoundPanelUITests: XCTestCase {
         XCTAssertTrue(speakerRow.waitForExistence(timeout: 10))
         XCTAssertTrue(speakerRow.isSelected)
         XCTAssertFalse(earpieceRow.isSelected)
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6)).tap()
+        tapBandBesidePanel(app)
         XCTAssertTrue(mute.waitForNonExistence(timeout: 10))
 
         XCUIDevice.shared.orientation = .landscapeLeft
@@ -94,6 +94,23 @@ final class SoundPanelUITests: XCTestCase {
         XCTAssertTrue(mute.waitForExistence(timeout: 10))
         Thread.sleep(forTimeInterval: 0.6)
         try save("sound-panel-sideways")
+    }
+
+    /// A tap on the band beside the open panel, level with its middle, on
+    /// whichever side has more room. The panel's height follows its
+    /// sections (the Core speaker's added one), so a fixed point under the
+    /// toolbar can land inside it.
+    @MainActor
+    private func tapBandBesidePanel(_ app: XCUIApplication) {
+        let panel = app.otherElements["soundPanel"].frame
+        let screen = app.frame
+        let left = panel.minX - screen.minX
+        let right = screen.maxX - panel.maxX
+        XCTAssertGreaterThan(max(left, right), 44)
+        let x = left >= right ? screen.minX + left / 2 : panel.maxX + right / 2
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: x, dy: panel.midY))
+            .tap()
     }
 
     /// D89: the link dot opens the same diagnostics page as Tools.

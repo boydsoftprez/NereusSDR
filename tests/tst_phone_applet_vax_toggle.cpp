@@ -19,6 +19,9 @@
 //   2026-10-06 - R-SPK-21: right-click opens Setup > Audio > Microphone.
 //                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                 Anthropic Claude Code.
+//   2026-10-09 - R-SPK-21, R-AUD-01: greyed where there is no VAX
+//                 transmit device. J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original test file.
@@ -56,6 +59,8 @@ private slots:
     void click_setsVax()
     {
         RadioModel model;
+        // Tests the VAX path itself, which Windows does not offer.
+        model.transmitModel().setVaxSourceAvailable(true);
         PhoneCwApplet applet(&model);
         auto* btn = findVaxButton(&applet);
         QVERIFY(btn != nullptr);
@@ -69,6 +74,8 @@ private slots:
     void secondClick_restoresPrevious()
     {
         RadioModel model;
+        // Tests the VAX path itself, which Windows does not offer.
+        model.transmitModel().setVaxSourceAvailable(true);
         model.transmitModel().setMicSource(MicSource::Radio);
 
         PhoneCwApplet applet(&model);
@@ -86,6 +93,8 @@ private slots:
     void modelChange_syncsButton()
     {
         RadioModel model;
+        // Tests the VAX path itself, which Windows does not offer.
+        model.transmitModel().setVaxSourceAvailable(true);
         PhoneCwApplet applet(&model);
         auto* btn = findVaxButton(&applet);
         QVERIFY(btn != nullptr);
@@ -125,6 +134,34 @@ private slots:
         // the absence of the overlay is sufficient verification.
         QVERIFY(btn->property("nyiOverlay").isNull()
                 || !btn->property("nyiOverlay").toBool());
+    }
+
+    // R-SPK-21, R-AUD-01: where there is no VAX transmit device (Windows)
+    // the button is greyed with the PC Mic route, never hidden, and a
+    // click changes nothing.
+    void noVaxTransmitDevice_greyedWithReason()
+    {
+        RadioModel model;
+        model.transmitModel().setVaxSourceAvailable(false);
+        PhoneCwApplet applet(&model);
+        auto* btn = findVaxButton(&applet);
+        QVERIFY(btn != nullptr);
+        QVERIFY(!btn->isEnabled());
+        QVERIFY(!btn->isHidden());
+        QCOMPARE(btn->toolTip(), TransmitModel::vaxSourceUnavailableReason());
+        btn->click();
+        QCOMPARE(model.transmitModel().micSource(), MicSource::Pc);
+        QVERIFY(!btn->isChecked());
+    }
+
+    // This build's system: enabled on macOS and Linux.
+    void vaxButton_thisSystem()
+    {
+        RadioModel model;
+        PhoneCwApplet applet(&model);
+        auto* btn = findVaxButton(&applet);
+        QVERIFY(btn != nullptr);
+        QCOMPARE(btn->isEnabled(), TransmitModel::kVaxSourceAvailableOnThisSystem);
     }
 };
 

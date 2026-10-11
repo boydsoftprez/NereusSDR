@@ -17,7 +17,7 @@ apt-get install -y --no-install-recommends \
     qt6-base-dev qt6-multimedia-dev qt6-base-private-dev \
     qt6-shadertools-dev qt6-svg-dev qt6-websockets-dev qt6-serialport-dev \
     libfftw3-dev libssl-dev libasound2-dev libjack-jackd2-dev \
-    libpipewire-0.3-dev libgl1-mesa-dev libxkbcommon-dev \
+    libpipewire-0.3-dev libpulse-dev libgl1-mesa-dev libxkbcommon-dev \
     autoconf automake libtool wget git python3
 
 bash packaging/station-image/build-dfnr-source.sh

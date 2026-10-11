@@ -7,6 +7,16 @@
 // Modification history (NereusSDR):
 //   2026-09-22: J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //               Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 13 (R-AUD-11): the device-in-use
+//               reason.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
+//   2026-10-09: native audio plan Task 16 (R-AUD-09, R-AUD-11): a named
+//               mic that is missing "is not connected", and the in-use
+//               text names the mic.  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-09: Task 16 fix round (R-AUD-09, R-AUD-11): micRoleStatusText,
+//               after tx-mic-mockup.html's "PC mic not connected".  J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/setup/CaptureStatusText.h"
@@ -33,10 +43,16 @@ QString failureText(const CaptureSupervisor::Status& status)
         if (status.configuredDevice.isEmpty()) {
             return QStringLiteral("The system default microphone is not available.");
         }
-        return QStringLiteral("The selected microphone \"%1\" is not available.")
+        return QStringLiteral("The selected microphone \"%1\" is not connected.")
             .arg(status.configuredDevice);
     case Reason::InputLost:
         return QStringLiteral("The microphone stopped sending audio.");
+    case Reason::DeviceInUse:
+        if (status.configuredDevice.isEmpty()) {
+            return QStringLiteral("The system default microphone is in use by another program.");
+        }
+        return QStringLiteral("The selected microphone \"%1\" is in use by another program.")
+            .arg(status.configuredDevice);
     case Reason::Timeout:
         return QStringLiteral("The microphone did not respond in time.");
     case Reason::HelperMissing:
@@ -80,6 +96,20 @@ QString captureStatusText(const CaptureSupervisor::Status& status)
         return failureText(status);
     }
     return QStringLiteral("Microphone not in use");
+}
+
+QString micRoleStatusText(const AudioRoleStatus& role)
+{
+    if (role.state != AudioRoleState::Silent) {
+        return {};
+    }
+    if (role.reason == AudioRoleReason::NotConnected) {
+        return QStringLiteral("PC mic not connected");
+    }
+    if (role.reason == AudioRoleReason::InUse) {
+        return QStringLiteral("PC mic in use by another program");
+    }
+    return {};
 }
 
 } // namespace NereusSDR

@@ -50,6 +50,11 @@
 //                 radio's own speaker out, every receiving slice as
 //                 Thetis's mixer 0. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-10 -- Headless Core speaker (JJ's ruling, R-AUD-27):
+//                 tryDrain's everySliceOut, the speakers sum of every
+//                 receiving slice whatever the local mask. NereusSDR-
+//                 original. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 // --- From aamix.c ---
@@ -324,7 +329,7 @@ int MasterMixer::tryDrain(float* out, float* hpOut, int maxFrames,
                           std::uint32_t localMask, OwnerOutput* owners, int ownerCount,
                           bool localOutOfMask, bool onlyWithoutMembers,
                           std::uint32_t localListenMask, const float* localListenLevels,
-                          float* radioOut) {
+                          float* radioOut, float* everySliceOut) {
     // `out` is the speakers sum, `hpOut` the headphones sum (R-R3-45).
     if ((out == nullptr && hpOut == nullptr) || maxFrames <= 0) { return 0; }
     if (owners == nullptr) { ownerCount = 0; }
@@ -407,6 +412,9 @@ int MasterMixer::tryDrain(float* out, float* hpOut, int maxFrames,
     if (radioOut != nullptr) {
         std::fill(radioOut, radioOut + static_cast<size_t>(n) * 2, 0.0f);
     }
+    if (everySliceOut != nullptr) {
+        std::fill(everySliceOut, everySliceOut + static_cast<size_t>(n) * 2, 0.0f);
+    }
     // Task 76: each owner's sums start silent too. Slice control plan
     // Task 6: every owner's, since a listening owner may control nothing
     // (a skipped one handed its tap whatever the buffer last held).
@@ -452,6 +460,11 @@ int MasterMixer::tryDrain(float* out, float* hpOut, int maxFrames,
         // and the monitor slot (MON, the same mixer, audio.cs:417-418) as
         // the local sums take it.
         float* const sliceRadioOut = (inMask || localOutOfMask) ? radioOut : nullptr;
+        // Headless Core speaker (JJ's ruling 2026-10-10): the every-slice
+        // sum takes every receiving slice whatever localMask says, and the
+        // monitor slot as the local sums take it. Only the speakers part
+        // below reaches it, and no listen lane does.
+        float* const sliceEveryOut = (inMask || localOutOfMask) ? everySliceOut : nullptr;
 
         // Target gains. Mute is a ramp target, not a hard gate, so a
         // muted slice fades out over m_rampFrames instead of clicking.
@@ -560,6 +573,10 @@ int MasterMixer::tryDrain(float* out, float* hpOut, int maxFrames,
             if (sliceRadioOut != nullptr) {
                 sliceRadioOut[o + 0] += spkL + hpL;
                 sliceRadioOut[o + 1] += spkR + hpR;
+            }
+            if (sliceEveryOut != nullptr) {
+                sliceEveryOut[o + 0] += spkL;
+                sliceEveryOut[o + 1] += spkR;
             }
             for (int k = 0; k < ownerCount; ++k) {
                 OwnerOutput& owner = owners[k];

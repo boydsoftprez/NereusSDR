@@ -23,8 +23,10 @@
 //      model's reason (HL2, ANAN-100D, ANAN-G2E), and its live status.
 //   7. Remote: the Core's text, an older Core's reason, and the Core's
 //      settings unavailable gating only the radio speaker controls.
-//   8. Sound system texts for Mac, Windows and every Linux backend.
-//   9. One "Rescan devices" that reports what it found.
+//   8. Sound system texts for Mac, Windows and every Linux backend, and the
+//      line from a fake catalogue naming the older drivers in use.
+//   9. One "Rescan devices": it rescans the older drivers and says the
+//      native lists update by themselves; greyed with the reason on the Mac.
 //  10. With NEREUS_AUDIO_SETUP_CAPTURE_DIR set, captures of the page in its
 //      states (run once plain and once with QT_SCALE_FACTOR=2).
 //  11. Microphone follows Outputs, Mixed; Devices and TX Input are gone.
@@ -64,9 +66,40 @@
 //   2026-10-06 - Digital modes and Advanced (Task 11): cases 19 to 27.
 //                J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                Anthropic Claude Code.
+//   2026-10-09 - Native audio plan Task 16 (R-AUD-01, R-AUD-06, V-UI-1):
+//                cases 8 and 9 on fake catalogues; the Outputs and
+//                Microphone captures for the Mac, Windows, Linux PipeWire
+//                and Linux PulseAudio. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-10-09 - Task 16 fix round (R-AUD-01, R-AUD-06, R-AUD-09): Rescan
+//                devices greyed with its Mac note without the lists; every
+//                capture under the app's look; the missing-mic captures
+//                unfolded; each open Driver and Device list, reason
+//                tooltips, the Sound system line and the engine notes.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Case 23: the VAX channel cards show the laid-out
+//                system's engine on any test build (the Linux build showed
+//                PipeWire on a Mac and a Windows layout). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Task 16 fix round 2 (R-AUD-08, R-AUD-11, R-AUD-15): the
+//                Device lists with "(not connected)", "(in use by another
+//                program)" and a saved "(none)"; the open Delay list; Delay
+//                greyed with its reason and live with no radio; the ASIO
+//                and Core cards in full; Linux with neither engine running.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Native audio plan Task 22 (R-AUD-27, D24): cases 2 and 7
+//                place the Core speaker card: absent from a window that runs
+//                the radio itself, between Headphones and Radio speaker in a
+//                remote window. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
+
+#include <array>
+#include <utility>
+#include <memory>
+#include <vector>
 
 #include <QAbstractButton>
 #include <QApplication>
@@ -85,6 +118,7 @@
 #include <QStackedWidget>
 #include <QStyleFactory>
 #include <QToolButton>
+#include <QToolTip>
 #include <QTreeWidget>
 
 #include "OperatorWording.h"
@@ -93,6 +127,10 @@
 #include "core/RadioConnection.h"
 #include "core/RadioDiscovery.h"
 #include "core/session/IStationLink.h"
+#include "core/audio/AudioDeviceTypes.h"
+#include "core/audio/IAudioDeviceCatalog.h"
+#include "core/audio/PortAudioBackend.h"
+#include "fakes/FakeAudioEngineBackend.h"
 #include "gui/HGauge.h"
 #include "gui/SetupDialog.h"
 #include "gui/setup/AudioAdvancedPage.h"
@@ -351,6 +389,108 @@ auto vaxSystem(SoundSystemLine::System system)
     return qScopeGuard([] { AudioVaxPage::setSystemForTest(std::nullopt); });
 }
 
+// Native audio plan Task 16: a fake catalogue for each system, on the
+// model's own engine. The fake's backends decide the system the cards and
+// the Sound system line show; nothing opens a device.
+enum class FakeOs { Mac, Windows, LinuxPipeWire, LinuxPulseAudio };
+
+AudioDeviceInfo fakeDevice(AudioBackendId backend, AudioDeviceDirection direction,
+                           const QString& id, const QString& name, const QString& hostApi = {})
+{
+    AudioDeviceInfo info;
+    info.backend = backend;
+    info.direction = direction;
+    info.id = id;
+    info.name = name;
+    info.hostApi = hostApi;
+    return info;
+}
+
+struct FakeSystem {
+    std::shared_ptr<FakeAudioEngineBackend> native;
+    std::shared_ptr<FakeAudioEngineBackend> older;
+    std::shared_ptr<FakeAudioEngineBackend> stoppedPipeWire;
+};
+
+// Builds the fake system's devices: two outputs (the built-in one the
+// default), one held by another program, a USB mic and a Bluetooth
+// headset's mic; the older drivers list one output on their host API.
+FakeSystem fakeSystem(FakeOs os)
+{
+    AudioBackendId id = AudioBackendId::CoreAudio;
+    QString hostApi;
+    QString headset = QStringLiteral("AirPods");
+    switch (os) {
+    case FakeOs::Mac:
+        break;
+    case FakeOs::Windows:
+        id = AudioBackendId::Wasapi;
+        hostApi = QStringLiteral("MME");
+        headset = QStringLiteral("Headset");
+        break;
+    case FakeOs::LinuxPipeWire:
+        id = AudioBackendId::PipeWire;
+        hostApi = QStringLiteral("ALSA");
+        headset = QStringLiteral("Headset");
+        break;
+    case FakeOs::LinuxPulseAudio:
+        id = AudioBackendId::PulseAudio;
+        hostApi = QStringLiteral("ALSA");
+        headset = QStringLiteral("Headset");
+        break;
+    }
+    FakeSystem fake;
+    fake.native = std::make_shared<FakeAudioEngineBackend>(id);
+    AudioDeviceInfo busy = fakeDevice(id, AudioDeviceDirection::Output, QStringLiteral("studio-uid"),
+                                      QStringLiteral("Studio monitor"));
+    busy.state = AudioDeviceState::InUse;
+    AudioDeviceInfo bluetooth = fakeDevice(id, AudioDeviceDirection::Input,
+                                           QStringLiteral("headset-uid"), headset);
+    bluetooth.transport = AudioTransport::Bluetooth;
+    fake.native->setDevices(
+        {fakeDevice(id, AudioDeviceDirection::Output, QStringLiteral("desk-uid"),
+                    QStringLiteral("Desk speakers")),
+         fakeDevice(id, AudioDeviceDirection::Output, QStringLiteral("built-in-uid"),
+                    QStringLiteral("Built-in speakers")),
+         busy,
+         fakeDevice(id, AudioDeviceDirection::Input, QStringLiteral("usb-mic-uid"),
+                    QStringLiteral("USB Mic")),
+         bluetooth});
+    fake.native->setDefault(AudioDeviceDirection::Output, QStringLiteral("built-in-uid"));
+    fake.native->setDefault(AudioDeviceDirection::Input, QStringLiteral("usb-mic-uid"));
+    if (os == FakeOs::LinuxPulseAudio) {
+        fake.stoppedPipeWire = std::make_shared<FakeAudioEngineBackend>(AudioBackendId::PipeWire);
+        fake.stoppedPipeWire->setRunning(false);
+    }
+    if (!hostApi.isEmpty()) {
+        fake.older = std::make_shared<FakeAudioEngineBackend>(AudioBackendId::PortAudio);
+        fake.older->setTakesStereoMix(false);
+        fake.older->setDevices({fakeDevice(AudioBackendId::PortAudio, AudioDeviceDirection::Output,
+                                           portAudioDeviceId(hostApi, QStringLiteral("Speakers")),
+                                           QStringLiteral("Speakers"), hostApi)});
+    }
+    return fake;
+}
+
+// Puts the fake system on the model's engine and starts it, so the cards
+// find its catalogue as the page is built.
+void startOnFakeSystem(RadioModel& model, const FakeSystem& fake)
+{
+    std::vector<std::shared_ptr<IAudioEngineBackend>> backends;
+    if (fake.stoppedPipeWire) {
+        backends.push_back(fake.stoppedPipeWire);
+    }
+    backends.push_back(fake.native);
+    if (fake.older) {
+        backends.push_back(fake.older);
+    }
+    AudioEngine* engine = model.localAudioDevices();
+    engine->setVaxOutputsAllowed(false);
+    engine->setAudioBackendsForTest(std::move(backends));
+    engine->start();
+    QVERIFY(engine->catalogue() != nullptr);
+}
+
 } // namespace
 
 class TstAudioSetupRegroup : public QObject {
@@ -430,6 +570,8 @@ private slots:
         QCOMPARE(headphones, 1);
         QVERIFY(!dialog.pageLabelsForTest().contains(QStringLiteral("Devices")));
         QCOMPARE(countNamed(&dialog, QStringLiteral("radioSpeakerExplanation")), 0);
+        // R-AUD-27: no Core speaker in a window that runs the radio itself.
+        QCOMPARE(countNamed(&dialog, QStringLiteral("coreSpeakerGroup")), 0);
     }
 
     // 3 and 4. The PC control: header and page are one control, saved keys
@@ -496,11 +638,16 @@ private slots:
         QCOMPARE(headphones->title(), QStringLiteral("Headphones"));
 
         // An edit on each card saves under the old prefixes.
-        speakers->findChildren<QComboBox*>().first()->addItem(QStringLiteral("Other"),
-                                                               QVariant::fromValue(55));
-        speakers->findChildren<QComboBox*>().first()->setCurrentIndex(1);
-        QCOMPARE(AppSettings::instance().value(QStringLiteral("audio/Speakers/DriverApi")).toString(),
-                 QStringLiteral("Other"));
+        QComboBox* channels = nullptr;
+        for (QComboBox* combo : speakers->findChildren<QComboBox*>()) {
+            if (combo->findText(QStringLiteral("1 (Mono)")) >= 0) {
+                channels = combo;
+            }
+        }
+        QVERIFY(channels != nullptr);
+        channels->setCurrentIndex(channels->findData(1));
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("audio/Speakers/Channels")).toString(),
+                 QStringLiteral("1"));
         QCheckBox* enabled = nullptr;
         for (QCheckBox* box : headphones->findChildren<QCheckBox*>()) {
             if (box->text() == QStringLiteral("Enabled")) { enabled = box; }
@@ -675,8 +822,20 @@ private slots:
         AudioOutputsPage page(&remote);
         const Radio r = radioOf(&page);
         QCOMPARE(r.note->text(),
-                 QStringLiteral("This is the speaker at the Core. Changes here reach every window "
-                                "and the phone. Each slice's AF level and mute still apply."));
+                 QStringLiteral("This is the radio's own speaker, at the Core. Changes here reach "
+                                "every window and the phone. Each slice's AF level and mute still "
+                                "apply."));
+        // D24: the Core speaker card sits between Headphones and Radio
+        // speaker, once.
+        QCOMPARE(countNamed(&page, QStringLiteral("coreSpeakerGroup")), 1);
+        {
+            auto* core = child<QWidget>(&page, "coreSpeakerGroup");
+            QLayout* layout = core->parentWidget()->layout();
+            QCOMPARE(layout->indexOf(core),
+                     layout->indexOf(child<QWidget>(&page, "headphonesGroup")) + 1);
+            QCOMPARE(layout->indexOf(child<QWidget>(&page, "radioSpeakerGroup")),
+                     layout->indexOf(core) + 1);
+        }
 
         remote.setStationConnectionState(ConnectionState::Connected);
         QCOMPARE(r.status->text(), kOlderCore);
@@ -711,7 +870,16 @@ private slots:
         // The readout follows the slider.
         QVERIFY(!r.readout->isEnabled());
         QVERIFY(child<QSlider>(&page, "pcVolume")->isEnabled());
-        QVERIFY(child<QPushButton>(&page, "rescanDevices")->isEnabled());
+        // Rescan devices is this computer's: never the station's reason.
+        // R-AUD-06: on the Mac it is greyed, as Core Audio needs no rescan.
+        auto* rescan = child<QPushButton>(&page, "rescanDevices");
+        QVERIFY(rescan->accessibleDescription() != kStationReason);
+        QVERIFY(rescan->toolTip() != kStationReason);
+#if defined(Q_OS_MAC)
+        QVERIFY(!rescan->isEnabled());
+#else
+        QVERIFY(rescan->isEnabled());
+#endif
 
         page.setStationSettingsAvailable(true, QString());
         QVERIFY(r.volume->isEnabled());
@@ -746,15 +914,13 @@ private slots:
         using S = SoundSystemLine::System;
         QCOMPARE(SoundSystemLine::describe(S::Mac, LinuxAudioBackend::None),
                  QStringLiteral("Core Audio"));
-        QVERIFY(SoundSystemLine::describe(S::Windows, LinuxAudioBackend::None)
-                    .startsWith(QStringLiteral("Windows audio.")));
-        QVERIFY(SoundSystemLine::describe(S::Windows, LinuxAudioBackend::None)
-                    .contains(QStringLiteral("WASAPI")));
+        QCOMPARE(SoundSystemLine::describe(S::Windows, LinuxAudioBackend::None),
+                 QStringLiteral("Windows audio (WASAPI)"));
         QCOMPARE(SoundSystemLine::describe(S::Linux, LinuxAudioBackend::PipeWire),
                  QStringLiteral("PipeWire. NereusSDR talks to it directly."));
         QCOMPARE(SoundSystemLine::describe(S::Linux, LinuxAudioBackend::Pactl),
-                 QStringLiteral("PulseAudio. PipeWire was not found, so NereusSDR uses the pactl "
-                                "tool instead."));
+                 QStringLiteral("PulseAudio. PipeWire was not found, so NereusSDR talks to "
+                                "PulseAudio directly."));
         QCOMPARE(SoundSystemLine::describe(S::Linux, LinuxAudioBackend::None),
                  QStringLiteral("None found. Start PipeWire or PulseAudio, then click Rescan "
                                 "devices."));
@@ -771,7 +937,7 @@ private slots:
         QCOMPARE(line->text(), QStringLiteral("Core Audio"));
         QVERIFY(!line->showsProblem());
 #elif defined(Q_OS_WIN)
-        QVERIFY(line->text().startsWith(QStringLiteral("Windows audio.")));
+        QVERIFY(line->text().startsWith(QStringLiteral("Windows audio (WASAPI)")));
 #else
         QCOMPARE(line->text(), SoundSystemLine::describe(
                                    S::Linux, model.localAudioDevices()->linuxBackend()));
@@ -780,17 +946,127 @@ private slots:
         QVERIFY(text != nullptr && text->text().contains(QStringLiteral("Sound system:")));
     }
 
-    // 9. One Rescan devices, reporting what it found.
+    // 9. One Rescan devices (R-AUD-06): it rescans the older drivers and
+    // says the native lists update by themselves; on the Mac it is greyed
+    // with the reason.
+    void rescanDevices_data()
+    {
+        QTest::addColumn<int>("os");
+        QTest::addColumn<QString>("note");
+        QTest::newRow("windows")
+            << int(FakeOs::Windows)
+            << QStringLiteral("Only the older drivers need this. Windows audio and ASIO lists "
+                              "update by themselves.");
+        QTest::newRow("pipewire")
+            << int(FakeOs::LinuxPipeWire)
+            << QStringLiteral("Only the older drivers need this. PipeWire lists update by "
+                              "themselves.");
+        QTest::newRow("pulseaudio")
+            << int(FakeOs::LinuxPulseAudio)
+            << QStringLiteral("Only the older drivers need this. PulseAudio lists update by "
+                              "themselves.");
+    }
     void rescanDevices()
     {
+        QFETCH(int, os);
+        QFETCH(QString, note);
         RadioModel model;
+        const FakeSystem fake = fakeSystem(static_cast<FakeOs>(os));
+        startOnFakeSystem(model, fake);
         AudioOutputsPage page(&model);
         QCOMPARE(page.findChildren<QPushButton*>(QStringLiteral("rescanDevices")).size(), 1);
         auto* button = child<QPushButton>(&page, "rescanDevices");
+        auto* result = child<QLabel>(&page, "rescanDevicesResult");
         QCOMPARE(button->text(), QStringLiteral("Rescan devices"));
+        QVERIFY(button->isEnabled());
+        QCOMPARE(result->text(), note);
+        QSignalSpy rescanned(model.localAudioDevices()->catalogue(),
+                             &IAudioDeviceCatalog::olderDriversRescanned);
         button->click();
-        QVERIFY(child<QLabel>(&page, "rescanDevicesResult")->text().startsWith(
-            QStringLiteral("Found ")));
+        QVERIFY(rescanned.wait(5000));
+        QCOMPARE(fake.older->rescanCount(), 1);
+        QCOMPARE(fake.native->rescanCount(), 0);
+        QCOMPARE(result->text(), note);
+        model.localAudioDevices()->stop();
+    }
+
+    void rescanDevicesGreyedOnTheMac()
+    {
+        RadioModel model;
+        const FakeSystem fake = fakeSystem(FakeOs::Mac);
+        startOnFakeSystem(model, fake);
+        AudioOutputsPage page(&model);
+        auto* button = child<QPushButton>(&page, "rescanDevices");
+        const QString reason =
+            QStringLiteral("Core Audio lists update by themselves, so there is nothing to rescan.");
+        QVERIFY(!button->isEnabled());
+        QVERIFY(!button->isHidden());
+        QCOMPARE(button->toolTip(), reason);
+        QCOMPARE(child<QLabel>(&page, "rescanDevicesResult")->text(), reason);
+        model.localAudioDevices()->stop();
+    }
+
+    // R-AUD-06: the button follows the same rule as its note, with or
+    // without the device lists, and stays so once the page is shown.
+    void rescanDevicesFollowsItsNoteWithoutTheLists()
+    {
+        RadioModel model;
+        AudioOutputsPage page(&model);
+        page.resize(760, 980);
+        page.show();
+        QApplication::processEvents();
+        QApplication::processEvents();
+        auto* button = child<QPushButton>(&page, "rescanDevices");
+        const QString note = child<QLabel>(&page, "rescanDevicesResult")->text();
+#if defined(Q_OS_MAC)
+        QCOMPARE(note,
+                 QStringLiteral("Core Audio lists update by themselves, so there is nothing to rescan."));
+        QVERIFY(!button->isEnabled());
+        QCOMPARE(button->toolTip(), note);
+#else
+        QVERIFY(button->isEnabled());
+#endif
+    }
+
+    // 8. The Sound system line from the catalogue, naming the older
+    // drivers the cards use.
+    void soundSystemLineFollowsTheCatalogue_data()
+    {
+        QTest::addColumn<int>("os");
+        QTest::addColumn<QString>("line");
+        QTest::newRow("mac") << int(FakeOs::Mac) << QStringLiteral("Core Audio");
+        QTest::newRow("windows") << int(FakeOs::Windows)
+                                 << QStringLiteral("Windows audio (WASAPI). Older drivers in "
+                                                   "use: MME.");
+        QTest::newRow("pipewire") << int(FakeOs::LinuxPipeWire)
+                                  << QStringLiteral("PipeWire. NereusSDR talks to it directly. "
+                                                    "Older drivers in use: ALSA.");
+        QTest::newRow("pulseaudio")
+            << int(FakeOs::LinuxPulseAudio)
+            << QStringLiteral("PulseAudio. PipeWire was not found, so NereusSDR talks to "
+                              "PulseAudio directly. Older drivers in use: ALSA.");
+    }
+    void soundSystemLineFollowsTheCatalogue()
+    {
+        QFETCH(int, os);
+        QFETCH(QString, line);
+        const FakeSystem fake = fakeSystem(static_cast<FakeOs>(os));
+        if (fake.older) {
+            AudioDeviceConfig speakers;
+            speakers.engine = AudioEngineKind::PortAudio;
+            speakers.driverApi = fake.older->enumerate().front().hostApi;
+            speakers.deviceId = fake.older->enumerate().front().id;
+            speakers.deviceName = QStringLiteral("Speakers");
+            speakers.saveToSettings(QStringLiteral("audio/Speakers"));
+        }
+        RadioModel model;
+        startOnFakeSystem(model, fake);
+        AudioOutputsPage page(&model);
+        auto* sound = page.findChild<SoundSystemLine*>(QStringLiteral("soundSystemLine"));
+        QVERIFY(sound != nullptr);
+        QCOMPARE(sound->text(), line);
+        QVERIFY(!sound->showsProblem());
+        model.localAudioDevices()->stop();
     }
 
     // 11. Microphone follows Outputs, Mixed; Devices and TX Input are gone.
@@ -948,6 +1224,8 @@ private slots:
     void sourcesNotPickedStayInViewGreyed()
     {
         RadioModel model;
+        // Tests the VAX path itself, which Windows does not offer.
+        model.transmitModel().setVaxSourceAvailable(true);
         model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
         AudioTxInputPage page(&model);
         QWidget* card = page.pcMicGroupBox();
@@ -1294,14 +1572,28 @@ private slots:
         QCOMPARE(page.detectedCablesText(), QStringLiteral("Detected virtual cables: None."));
     }
 
-    // 23. No PipeWire on a Mac or Windows layout.
+    // 23. No PipeWire on a Mac or Windows layout.  The channel cards have
+    // no device lists here, so their Driver list shows the laid-out
+    // system's engine, whichever system the test build runs on.
     void vaxSectionSaysNoPipeWireOffLinux()
     {
-        for (SoundSystemLine::System system :
-             {SoundSystemLine::System::Mac, SoundSystemLine::System::Windows}) {
+        const std::array<std::pair<SoundSystemLine::System, AudioEngineKind>, 3> layouts{{
+            {SoundSystemLine::System::Mac, AudioEngineKind::CoreAudio},
+            {SoundSystemLine::System::Windows, AudioEngineKind::WindowsShared},
+            {SoundSystemLine::System::Linux, AudioEngineKind::PipeWire},
+        }};
+        for (const auto& [system, engine] : layouts) {
             const auto restore = vaxSystem(system);
             AudioVaxPage page(nullptr);
             page.setDetectedCablesForTest({outputCable(QStringLiteral("CABLE Input"))});
+            const QList<DeviceCard*> cards = page.findChildren<DeviceCard*>();
+            QVERIFY(!cards.isEmpty());
+            for (DeviceCard* card : cards) {
+                QCOMPARE(card->driverApiCombo()->currentText(), audioEngineLabel(engine));
+            }
+            if (system == SoundSystemLine::System::Linux) {
+                continue;
+            }
             for (const QString& text : textsUnder(&page)) {
                 QVERIFY2(!text.contains(QLatin1String("PipeWire"), Qt::CaseInsensitive),
                          qPrintable(text));
@@ -1527,6 +1819,11 @@ private slots:
         if (qEnvironmentVariable("NEREUS_AUDIO_SETUP_CAPTURE_DIR").isEmpty()) {
             QSKIP("Set NEREUS_AUDIO_SETUP_CAPTURE_DIR to save the captures.");
         }
+        // Every capture under the app's own style, palette and baseline QSS
+        // (main.cpp), so greyed and live text read as they do in the app.
+        QApplication::setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
+        applyDarkPalette(*qApp);
+        applyAppBaselineQss(*qApp);
         auto shoot = [](RadioModel& model, const QString& stem, bool unfold) {
             AudioOutputsPage page(&model);
             page.resize(760, unfold ? 1500 : 980);
@@ -1537,6 +1834,12 @@ private slots:
             }
             page.show();
             QApplication::processEvents();
+#if defined(Q_OS_MAC)
+            // R-AUD-06: greyed on the Mac in every capture.
+            if (child<QPushButton>(&page, "rescanDevices")->isEnabled()) {
+                QFAIL(qPrintable(stem));
+            }
+#endif
             saveCapture(&page, stem);
         };
 
@@ -1584,12 +1887,7 @@ private slots:
             shoot(remote, QStringLiteral("outputs-remote-unfolded"), true);
         }
 
-        // 18. The Microphone page, under the app's own style, palette and
-        // baseline QSS (main.cpp), so greyed and live text read as they do
-        // in the app.
-        QApplication::setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
-        applyDarkPalette(*qApp);
-        applyAppBaselineQss(*qApp);
+        // 18. The Microphone page (the look is set above).
         auto shootMic = [](RadioModel& model, const QString& stem, bool unfold,
                            const QString& source) {
             AudioTxInputPage page(&model);
@@ -1701,6 +1999,493 @@ private slots:
             QApplication::processEvents();
             saveCapture(&page, QStringLiteral("advanced"));
         }
+
+        // Native audio plan Task 16 (V-UI-1): Outputs and Microphone on a
+        // fake catalogue for each system. Outputs: the speakers' device is
+        // missing (playing on the default), the headphones' device is held
+        // by another program; both cards unfolded with the Delay line.
+        // Microphone: a Bluetooth headset's mic picked, and a missing mic.
+        const std::array<std::pair<FakeOs, QString>, 4> systems{{
+            {FakeOs::Mac, QStringLiteral("mac")},
+            {FakeOs::Windows, QStringLiteral("windows")},
+            {FakeOs::LinuxPipeWire, QStringLiteral("linux-pipewire")},
+            {FakeOs::LinuxPulseAudio, QStringLiteral("linux-pulseaudio")},
+        }};
+        for (const auto& [os, name] : systems) {
+            const AudioEngineKind engine = os == FakeOs::Mac       ? AudioEngineKind::CoreAudio
+                : os == FakeOs::Windows                            ? AudioEngineKind::WindowsShared
+                : os == FakeOs::LinuxPipeWire                      ? AudioEngineKind::PipeWire
+                                                                   : AudioEngineKind::PulseAudio;
+            auto choice = [engine](const QString& id, const QString& device) {
+                AudioDeviceConfig cfg;
+                cfg.engine = engine;
+                cfg.deviceId = id;
+                cfg.deviceName = device;
+                return cfg;
+            };
+            const QString headset = os == FakeOs::Mac ? QStringLiteral("AirPods")
+                                                      : QStringLiteral("Headset");
+            {
+                clearAudioKeys();
+                choice(QStringLiteral("gone-uid"), QStringLiteral("Desk monitor"))
+                    .saveToSettings(QStringLiteral("audio/Speakers"));
+                choice(QStringLiteral("desk-uid"), QStringLiteral("Desk speakers"))
+                    .saveToSettings(QStringLiteral("audio/Headphones"));
+                AppSettings::instance().setValue(QStringLiteral("audio/Headphones/Enabled"),
+                                                 QStringLiteral("True"));
+                RadioModel model;
+                const FakeSystem fake = fakeSystem(os);
+                startOnFakeSystem(model, fake);
+                AudioEngine* audio = model.localAudioDevices();
+                QCOMPARE(fake.native->outputRequests().back().deviceId, QStringLiteral("desk-uid"));
+                FakeMatcherAudioBus* headphonesBus = fake.native->lastOutput();
+                QVERIFY(headphonesBus != nullptr);
+                AudioOutputsPage page(&model);
+                page.resize(760, 960);
+                for (DeviceCard* card : page.findChildren<DeviceCard*>()) {
+                    card->setDetailsExpanded(true);
+                }
+                AudioStreamEvent busy;
+                busy.kind = AudioStreamEvent::Kind::DeviceBusy;
+                headphonesBus->emitEventForTest(busy);
+                auto* speakers = child<DeviceCard>(&page, "thisComputerGroup");
+                auto* headphones = child<DeviceCard>(&page, "headphonesGroup");
+                QTRY_COMPARE_WITH_TIMEOUT(
+                    child<QLabel>(speakers, "deviceStateNote")->text(),
+                    QStringLiteral("Desk monitor is not connected. Playing on the system default, "
+                                   "Built-in speakers, until it comes back."),
+                    5000);
+                QTRY_VERIFY_WITH_TIMEOUT(child<QLabel>(headphones, "deviceStateNote")
+                                             ->text()
+                                             .contains(QStringLiteral("is in use by another program")),
+                                         5000);
+                QTRY_VERIFY_WITH_TIMEOUT(child<QLabel>(speakers, "deviceDelayNow")
+                                             ->text()
+                                             .endsWith(QStringLiteral(" ms from the radio to Built-in speakers")),
+                                         2000);
+                page.show();
+                QApplication::processEvents();
+                saveCapture(&page, QStringLiteral("outputs-%1-missing-in-use-unfolded").arg(name));
+                audio->stop();
+            }
+            {
+                clearAudioKeys();
+                choice(QStringLiteral("headset-uid"), headset)
+                    .saveToSettings(QStringLiteral("audio/TxInput"));
+                RadioModel model;
+                const FakeSystem fake = fakeSystem(os);
+                startOnFakeSystem(model, fake);
+                AudioTxInputPage page(&model);
+                page.resize(760, 720);
+                page.pcMicCard()->setDetailsExpanded(true);
+                QCOMPARE(child<QLabel>(page.pcMicCard(), "deviceStateNote")->text(),
+                         QStringLiteral("Bluetooth headsets switch to phone-call quality, for "
+                                        "listening too, while they are your mic. For the best "
+                                        "sound, listen on %1 and talk on a wired or built-in "
+                                        "mic.")
+                             .arg(headset));
+                page.show();
+                QApplication::processEvents();
+                saveCapture(&page, QStringLiteral("microphone-%1-bluetooth-unfolded").arg(name));
+                model.localAudioDevices()->stop();
+            }
+            {
+                clearAudioKeys();
+                choice(QStringLiteral("gone-mic-uid"), QStringLiteral("Desk mic"))
+                    .saveToSettings(QStringLiteral("audio/TxInput"));
+                RadioModel model;
+                const FakeSystem fake = fakeSystem(os);
+                startOnFakeSystem(model, fake);
+                AudioTxInputPage page(&model);
+                page.resize(760, 720);
+                page.pcMicCard()->setDetailsExpanded(true);
+                QTRY_COMPARE_WITH_TIMEOUT(
+                    child<QLabel>(page.pcMicCard(), "deviceStateNote")->text(),
+                    QStringLiteral("Desk mic is not connected. The mic stays silent until it "
+                                   "comes back; NereusSDR never switches to another mic on its "
+                                   "own."),
+                    5000);
+                QTRY_COMPARE_WITH_TIMEOUT(child<QLabel>(&page, "captureStatus")->text(),
+                                          QStringLiteral("PC mic not connected"), 5000);
+                page.show();
+                QApplication::processEvents();
+                saveCapture(&page, QStringLiteral("microphone-%1-missing-unfolded").arg(name));
+                model.localAudioDevices()->stop();
+            }
+        }
+        captureOpenLists();
+        clearAudioKeys();
+    }
+
+private:
+    // Task 16 fix round: each open list's view rendered on its own (an
+    // offscreen popup is a separate window), a reason tooltip as Qt draws
+    // it, the Sound system line and the engine notes. The engines here are
+    // never started, so the lists come from the catalogue before a radio
+    // connects and no device opens. (The mic's delay readout and in-use
+    // captures need the fake capture helper: tst_audio_tx_input_pc_mic_group.)
+    static void shootList(QComboBox* combo, const QString& stem)
+    {
+        QVERIFY2(combo != nullptr, qPrintable(stem));
+        combo->showPopup();
+        QApplication::processEvents();
+        QVERIFY2(combo->view()->isVisible(), qPrintable(stem));
+        saveCapture(combo->view(), stem);
+        combo->hidePopup();
+        QApplication::processEvents();
+    }
+
+    static void shootTip(QWidget* anchor, const QString& text, const QString& stem)
+    {
+        QVERIFY2(!text.isEmpty(), qPrintable(stem));
+        QToolTip::showText(anchor->mapToGlobal(QPoint(8, 8)), text, anchor);
+        QApplication::processEvents();
+        QWidget* tip = nullptr;
+        for (QWidget* w : QApplication::topLevelWidgets()) {
+            if (w->inherits("QTipLabel") && w->isVisible()) {
+                tip = w;
+            }
+        }
+        QVERIFY2(tip != nullptr, qPrintable(stem));
+        saveCapture(tip, stem);
+        QToolTip::hideText();
+        QApplication::processEvents();
+    }
+
+    static std::unique_ptr<AudioEngine> engineOn(
+        std::vector<std::shared_ptr<IAudioEngineBackend>> backends)
+    {
+        auto engine = std::make_unique<AudioEngine>();
+        engine->setVaxOutputsAllowed(false);
+        engine->setAudioBackendsForTest(std::move(backends));
+        return engine;
+    }
+
+    static std::unique_ptr<DeviceCard> cardOn(AudioEngine* engine, const QString& prefix,
+                                              DeviceCard::Role role, bool unfold)
+    {
+        auto card = std::make_unique<DeviceCard>(prefix, role, false);
+        card->setAudioEngine(engine);
+        card->setDetailsExpanded(unfold);
+        card->resize(700, card->sizeHint().height());
+        card->show();
+        QApplication::processEvents();
+        return card;
+    }
+
+    static QComboBox* deviceCombo(DeviceCard* card)
+    {
+        for (QComboBox* combo : card->findChildren<QComboBox*>()) {
+            if (combo->count() > 0 && combo->itemText(0) == QStringLiteral("(platform default)")) {
+                return combo;
+            }
+        }
+        return nullptr;
+    }
+
+    static void shootLine(AudioEngine* engine, const QString& expected, const QString& stem)
+    {
+        SoundSystemLine line(engine);
+        line.refresh();
+        QCOMPARE(line.text(), expected);
+        line.resize(700, line.sizeHint().height());
+        line.QWidget::show();
+        QApplication::processEvents();
+        saveCapture(&line, stem);
+    }
+
+    static AudioDeviceConfig savedAs(AudioEngineKind engine, const QString& id,
+                                     const QString& name, const QString& driverApi = {})
+    {
+        AudioDeviceConfig cfg;
+        cfg.engine = engine;
+        cfg.deviceId = id;
+        cfg.deviceName = name;
+        cfg.driverApi = driverApi;
+        return cfg;
+    }
+
+    static int opens(const std::shared_ptr<FakeAudioEngineBackend>& backend)
+    {
+        return backend ? int(backend->outputRequests().size()) : 0;
+    }
+
+    void captureOpenLists()
+    {
+        const QString speakers = QStringLiteral("audio/Speakers");
+        // The Mac: Core Audio alone, greyed, with its reason.
+        {
+            clearAudioKeys();
+            const FakeSystem fake = fakeSystem(FakeOs::Mac);
+            auto engine = engineOn({fake.native});
+            auto card = cardOn(engine.get(), speakers, DeviceCard::Role::Output, false);
+            QComboBox* driver = child<QComboBox>(card.get(), "deviceDriverCombo");
+            QCOMPARE(driver->count(), 1);
+            QCOMPARE(driver->itemText(0), QStringLiteral("Core Audio"));
+            shootList(driver, QStringLiteral("list-driver-mac-open"));
+            shootTip(driver, driver->toolTip(), QStringLiteral("list-driver-mac-reason"));
+            QCOMPARE(opens(fake.native), 0);
+        }
+        // Windows: in order, ASIO installed, the "Older drivers" heading;
+        // the Sound system line with ASIO and with an older driver; the
+        // exclusive and older-driver engine notes.
+        {
+            const FakeSystem fake = fakeSystem(FakeOs::Windows);
+            auto asio = std::make_shared<FakeAudioEngineBackend>(AudioBackendId::Asio);
+            asio->setDevices({fakeDevice(AudioBackendId::Asio, AudioDeviceDirection::Output,
+                                         QStringLiteral("focusrite-asio"),
+                                         QStringLiteral("Focusrite USB ASIO"))});
+            const std::vector<std::shared_ptr<IAudioEngineBackend>> backends{fake.native, asio,
+                                                                             fake.older};
+            {
+                clearAudioKeys();
+                auto engine = engineOn(backends);
+                auto card = cardOn(engine.get(), speakers, DeviceCard::Role::Output, false);
+                QComboBox* driver = child<QComboBox>(card.get(), "deviceDriverCombo");
+                const QStringList expected{
+                    QStringLiteral("Windows audio, shared"), QStringLiteral("Windows audio, exclusive"),
+                    QStringLiteral("ASIO"), QStringLiteral("Older drivers")};
+                for (int i = 0; i < expected.size(); ++i) {
+                    QCOMPARE(driver->itemText(i), expected.at(i));
+                }
+                shootList(driver, QStringLiteral("list-driver-windows-open"));
+            }
+            {
+                clearAudioKeys();
+                savedAs(AudioEngineKind::Asio, QStringLiteral("focusrite-asio"),
+                        QStringLiteral("Focusrite USB ASIO"))
+                    .saveToSettings(speakers);
+                auto engine = engineOn(backends);
+                shootLine(engine.get(),
+                          QStringLiteral("Windows audio (WASAPI) and ASIO (Focusrite USB ASIO)"),
+                          QStringLiteral("line-sound-system-windows-asio"));
+            }
+            {
+                clearAudioKeys();
+                savedAs(AudioEngineKind::PortAudio,
+                        portAudioDeviceId(QStringLiteral("MME"), QStringLiteral("Speakers")),
+                        QStringLiteral("Speakers"), QStringLiteral("MME"))
+                    .saveToSettings(speakers);
+                auto engine = engineOn(backends);
+                shootLine(engine.get(),
+                          QStringLiteral("Windows audio (WASAPI). Older drivers in use: MME."),
+                          QStringLiteral("line-sound-system-windows-older"));
+                auto card = cardOn(engine.get(), speakers, DeviceCard::Role::Output, true);
+                QCOMPARE(child<QLabel>(card.get(), "engineNote")->text(),
+                         QStringLiteral("An older driver: more delay, and its list updates only "
+                                        "with Rescan devices."));
+                saveCapture(card.get(), QStringLiteral("card-windows-older-driver-note-unfolded"));
+            }
+            {
+                clearAudioKeys();
+                savedAs(AudioEngineKind::WindowsExclusive, QStringLiteral("desk-uid"),
+                        QStringLiteral("Desk speakers"))
+                    .saveToSettings(speakers);
+                auto engine = engineOn(backends);
+                auto card = cardOn(engine.get(), speakers, DeviceCard::Role::Output, true);
+                QCOMPARE(child<QLabel>(card.get(), "engineNote")->text(),
+                         QStringLiteral("Other apps cannot play through this device while "
+                                        "NereusSDR has it."));
+                saveCapture(card.get(), QStringLiteral("card-windows-exclusive-note-unfolded"));
+            }
+            QCOMPARE(opens(fake.native) + opens(asio) + opens(fake.older), 0);
+        }
+        // Linux: PipeWire; PulseAudio with "PipeWire (not running)"; neither.
+        {
+            clearAudioKeys();
+            const FakeSystem fake = fakeSystem(FakeOs::LinuxPipeWire);
+            auto engine = engineOn({fake.native, fake.older});
+            auto card = cardOn(engine.get(), speakers, DeviceCard::Role::Output, false);
+            QComboBox* driver = child<QComboBox>(card.get(), "deviceDriverCombo");
+            QCOMPARE(driver->itemText(0), QStringLiteral("PipeWire"));
+            shootList(driver, QStringLiteral("list-driver-linux-pipewire-open"));
+            QCOMPARE(opens(fake.native) + opens(fake.older), 0);
+        }
+        {
+            clearAudioKeys();
+            const FakeSystem fake = fakeSystem(FakeOs::LinuxPulseAudio);
+            auto engine = engineOn({fake.stoppedPipeWire, fake.native, fake.older});
+            auto card = cardOn(engine.get(), speakers, DeviceCard::Role::Output, false);
+            QComboBox* driver = child<QComboBox>(card.get(), "deviceDriverCombo");
+            QCOMPARE(driver->itemText(0), QStringLiteral("PipeWire (not running)"));
+            QCOMPARE(driver->itemText(1), QStringLiteral("PulseAudio"));
+            shootList(driver, QStringLiteral("list-driver-linux-pulseaudio-open"));
+            shootTip(driver, driver->itemData(0, Qt::ToolTipRole).toString(),
+                     QStringLiteral("list-driver-linux-pulseaudio-pipewire-reason"));
+            QCOMPARE(opens(fake.native) + opens(fake.older), 0);
+        }
+        {
+            clearAudioKeys();
+            const FakeSystem fake = fakeSystem(FakeOs::LinuxPulseAudio);
+            fake.native->setRunning(false);
+            auto engine = engineOn({fake.stoppedPipeWire, fake.native, fake.older});
+            auto card = cardOn(engine.get(), speakers, DeviceCard::Role::Output, false);
+            QComboBox* driver = child<QComboBox>(card.get(), "deviceDriverCombo");
+            QCOMPARE(driver->itemText(0), QStringLiteral("PipeWire (not running)"));
+            QCOMPARE(driver->itemText(1), QStringLiteral("PulseAudio (not running)"));
+            shootList(driver, QStringLiteral("list-driver-linux-neither-open"));
+            shootLine(engine.get(),
+                      QStringLiteral("None found. Start PipeWire or PulseAudio, then click Rescan "
+                                     "devices."),
+                      QStringLiteral("line-sound-system-linux-neither"));
+            QCOMPARE(opens(fake.native) + opens(fake.older), 0);
+        }
+        // The Core: "ALSA, direct" alone, greyed, with its reason.
+        {
+            clearAudioKeys();
+            auto alsa = std::make_shared<FakeAudioEngineBackend>(AudioBackendId::AlsaDirect);
+            alsa->setDevices({fakeDevice(AudioBackendId::AlsaDirect, AudioDeviceDirection::Output,
+                                         QStringLiteral("hw:1,0"), QStringLiteral("USB Audio")),
+                              fakeDevice(AudioBackendId::AlsaDirect, AudioDeviceDirection::Output,
+                                         QStringLiteral("hw:0,0"), QStringLiteral("Built-in Audio"))});
+            alsa->setDefault(AudioDeviceDirection::Output, QStringLiteral("hw:0,0"));
+            auto engine = engineOn({alsa});
+            auto card = cardOn(engine.get(), speakers, DeviceCard::Role::Output, false);
+            QComboBox* driver = child<QComboBox>(card.get(), "deviceDriverCombo");
+            QCOMPARE(driver->count(), 1);
+            QCOMPARE(driver->itemText(0), QStringLiteral("ALSA, direct"));
+            shootList(driver, QStringLiteral("list-driver-core-open"));
+            shootTip(driver, driver->toolTip(), QStringLiteral("list-driver-core-reason"));
+            QCOMPARE(opens(alsa), 0);
+        }
+        // A Device list: "(platform default)" first, a saved "(none)", and
+        // a Bluetooth headset's mic.
+        {
+            clearAudioKeys();
+            savedAs(AudioEngineKind::CoreAudio, QString::fromLatin1(kAudioDeviceNone),
+                    QString::fromLatin1(kAudioDeviceNone))
+                .saveToSettings(QStringLiteral("audio/TxInput"));
+            const FakeSystem fake = fakeSystem(FakeOs::Mac);
+            auto engine = engineOn({fake.native});
+            auto card = cardOn(engine.get(), QStringLiteral("audio/TxInput"),
+                               DeviceCard::Role::Input, false);
+            QComboBox* device = deviceCombo(card.get());
+            QVERIFY(device != nullptr);
+            QCOMPARE(device->itemText(1), QString::fromLatin1(kAudioDeviceNone));
+            QVERIFY(device->findText(QStringLiteral("AirPods")) > 1);
+            shootList(device, QStringLiteral("list-device-mac-mic-open"));
+            QCOMPARE(opens(fake.native), 0);
+        }
+        captureFixRound2();
+    }
+
+    // Task 16 fix round 2. A card saves one device, so a saved "(none)"
+    // and a saved device that has gone never share a list: one list shows
+    // "(not connected)" beside a device another program holds, the other
+    // "(none)" beside it. Then the open Delay list; Delay greyed with its
+    // reason while the lists are not ready (a page with no device lists)
+    // and live with no radio once they are; the ASIO and Core cards in
+    // full; Linux with neither engine running as a full page.
+    void captureFixRound2()
+    {
+        const QString speakers = QStringLiteral("audio/Speakers");
+        {
+            clearAudioKeys();
+            savedAs(AudioEngineKind::CoreAudio, QStringLiteral("gone-uid"),
+                    QStringLiteral("Desk monitor"))
+                .saveToSettings(speakers);
+            const FakeSystem fake = fakeSystem(FakeOs::Mac);
+            auto engine = engineOn({fake.native});
+            auto card = cardOn(engine.get(), speakers, DeviceCard::Role::Output, true);
+            QComboBox* device = deviceCombo(card.get());
+            QVERIFY(device != nullptr);
+            QVERIFY(device->findText(QStringLiteral("Desk monitor (not connected)")) > 0);
+            QVERIFY(device->findText(QStringLiteral("Studio monitor (in use by another program)")) > 0);
+            shootList(device, QStringLiteral("list-device-mac-speakers-missing-open"));
+            // No radio, the lists ready: Delay is live (R-AUD-15).
+            auto* delay = child<QComboBox>(card.get(), "deviceDelayCombo");
+            QVERIFY(delay->isEnabled());
+            QVERIFY(delay->toolTip().isEmpty());
+            QCOMPARE(delay->itemText(0), QStringLiteral("Automatic"));
+            shootList(delay, QStringLiteral("list-delay-mac-open"));
+            QCOMPARE(opens(fake.native), 0);
+        }
+        {
+            clearAudioKeys();
+            savedAs(AudioEngineKind::CoreAudio, QString::fromLatin1(kAudioDeviceNone),
+                    QString::fromLatin1(kAudioDeviceNone))
+                .saveToSettings(speakers);
+            const FakeSystem fake = fakeSystem(FakeOs::Mac);
+            auto engine = engineOn({fake.native});
+            auto card = cardOn(engine.get(), speakers, DeviceCard::Role::Output, false);
+            QComboBox* device = deviceCombo(card.get());
+            QVERIFY(device != nullptr);
+            QCOMPARE(device->itemText(1), QString::fromLatin1(kAudioDeviceNone));
+            QVERIFY(device->findText(QStringLiteral("Studio monitor (in use by another program)")) > 1);
+            shootList(device, QStringLiteral("list-device-mac-speakers-none-open"));
+            QCOMPARE(opens(fake.native), 0);
+        }
+        // The lists not ready (an engine with no device layer): Delay greyed
+        // with its reason, the card in full and the tooltip as Qt draws it.
+        {
+            clearAudioKeys();
+            auto engine = std::make_unique<AudioEngine>();
+            engine->setVaxOutputsAllowed(false);
+            QVERIFY(engine->catalogue() == nullptr);
+            auto card = cardOn(engine.get(), speakers, DeviceCard::Role::Output, true);
+            auto* delay = child<QComboBox>(card.get(), "deviceDelayCombo");
+            QVERIFY(!delay->isEnabled());
+            QCOMPARE(delay->toolTip(), QStringLiteral("The device lists are not ready."));
+            saveCapture(card.get(), QStringLiteral("card-delay-greyed-not-ready-unfolded"));
+            shootTip(delay, delay->toolTip(), QStringLiteral("card-delay-greyed-not-ready-reason"));
+        }
+        // Windows with ASIO picked, the card in full.
+        {
+            clearAudioKeys();
+            savedAs(AudioEngineKind::Asio, QStringLiteral("focusrite-asio"),
+                    QStringLiteral("Focusrite USB ASIO"))
+                .saveToSettings(speakers);
+            const FakeSystem fake = fakeSystem(FakeOs::Windows);
+            auto asio = std::make_shared<FakeAudioEngineBackend>(AudioBackendId::Asio);
+            asio->setDevices({fakeDevice(AudioBackendId::Asio, AudioDeviceDirection::Output,
+                                         QStringLiteral("focusrite-asio"),
+                                         QStringLiteral("Focusrite USB ASIO"))});
+            auto engine = engineOn({fake.native, asio, fake.older});
+            auto card = cardOn(engine.get(), speakers, DeviceCard::Role::Output, true);
+            QCOMPARE(child<QComboBox>(card.get(), "deviceDriverCombo")->currentText(),
+                     QStringLiteral("ASIO"));
+            QCOMPARE(deviceCombo(card.get())->currentText(), QStringLiteral("Focusrite USB ASIO"));
+            saveCapture(card.get(), QStringLiteral("card-windows-asio-unfolded"));
+            QCOMPARE(opens(fake.native) + opens(asio) + opens(fake.older), 0);
+        }
+        // The Core: "ALSA, direct", the card in full.
+        {
+            clearAudioKeys();
+            auto alsa = std::make_shared<FakeAudioEngineBackend>(AudioBackendId::AlsaDirect);
+            alsa->setDevices({fakeDevice(AudioBackendId::AlsaDirect, AudioDeviceDirection::Output,
+                                         QStringLiteral("hw:1,0"), QStringLiteral("USB Audio")),
+                              fakeDevice(AudioBackendId::AlsaDirect, AudioDeviceDirection::Output,
+                                         QStringLiteral("hw:0,0"), QStringLiteral("Built-in Audio"))});
+            alsa->setDefault(AudioDeviceDirection::Output, QStringLiteral("hw:0,0"));
+            auto engine = engineOn({alsa});
+            auto card = cardOn(engine.get(), speakers, DeviceCard::Role::Output, true);
+            QCOMPARE(child<QComboBox>(card.get(), "deviceDriverCombo")->currentText(),
+                     QStringLiteral("ALSA, direct"));
+            saveCapture(card.get(), QStringLiteral("card-core-alsa-unfolded"));
+            QCOMPARE(opens(alsa), 0);
+        }
+        // Linux with neither PipeWire nor PulseAudio running: the full page.
+        {
+            clearAudioKeys();
+            const FakeSystem fake = fakeSystem(FakeOs::LinuxPulseAudio);
+            fake.native->setRunning(false);
+            RadioModel model;
+            startOnFakeSystem(model, fake);
+            AudioOutputsPage page(&model);
+            page.resize(760, 1500);
+            for (DeviceCard* card : page.findChildren<DeviceCard*>()) {
+                card->setDetailsExpanded(true);
+            }
+            page.show();
+            QApplication::processEvents();
+            QCOMPARE(child<QComboBox>(child<DeviceCard>(&page, "thisComputerGroup"),
+                                      "deviceDriverCombo")
+                         ->itemText(1),
+                     QStringLiteral("PulseAudio (not running)"));
+            saveCapture(&page, QStringLiteral("outputs-linux-neither-unfolded"));
+            model.localAudioDevices()->stop();
+        }
+        clearAudioKeys();
     }
 };
 

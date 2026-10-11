@@ -234,6 +234,7 @@ set(WDSP_EDITED_SOURCES
     src/sbnr.c
     src/snb.c
     src/txgain_stub.c
+    src/varsamp.c
     src/wbfm.c
 )
 set(WDSP_PINNED_SOURCES ${WDSP_SOURCES})

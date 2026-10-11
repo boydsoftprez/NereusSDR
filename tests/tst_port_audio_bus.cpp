@@ -5,6 +5,8 @@
 #include <QStandardPaths>
 
 #include <cmath>
+#include <cstddef>
+#include <vector>
 
 using namespace NereusSDR;
 
@@ -224,101 +226,155 @@ private slots:
         bus.close();
     }
 
-    void outputPacingTracksActualCallbackDrainAndUnderrun() {
+    // R-AUD-15: an output stream queues in its clock matcher.  push()
+    // takes 48 kHz stereo; the callback reads the matcher and writes the
+    // stream's channels; outputPacing reports every frame the device asked
+    // for, the matcher's fill and its automatic size.
+    void outputPacingTracksMatcherReadsAndDryRun() {
         PortAudioBus bus;
         bus.m_cfg.direction = AudioDirection::Output;
-        bus.m_negFormat = AudioFormat{48000, 2, AudioFormat::Sample::Float32};
-        bus.m_ring[0] = 0.1f;
-        bus.m_ring[1] = 0.2f;
-        bus.m_ring[2] = 0.3f;
-        bus.m_ring[3] = 0.4f;
-        bus.m_ring[4] = 0.5f;
-        bus.m_ring[5] = 0.6f;
-        bus.m_ring[6] = 0.7f;
-        bus.m_ring[7] = 0.8f;
-        bus.m_ringRead.store(0, std::memory_order_relaxed);
-        bus.m_ringWrite.store(8, std::memory_order_relaxed);
+        bus.m_cfg.bufferSamples = kCallback;
+        QVERIFY(bus.takesStereoMix());
+        QVERIFY(!bus.outputPacing().has_value());
+        QVERIFY(bus.prepareOutputMatcher(48000, 2));
 
         auto pacing = bus.outputPacing();
         QVERIFY(pacing.has_value());
         QCOMPARE(pacing->consumedFrames, quint64(0));
-        QCOMPARE(pacing->queuedFrames, 4);
-        QCOMPARE(pacing->capacityFrames, static_cast<int>(bus.m_ring.size() / 2));
+        // A fresh matcher starts with its starting fill queued as silence.
+        QVERIFY(pacing->queuedFrames >= 0);
+        QVERIFY(pacing->queuedFrames <= pacing->capacityFrames);
+        QCOMPARE(pacing->callbackFrames, kCallback);
 
-        float first[4] = {};
-        QCOMPARE(PortAudioBus::paCallback(nullptr, first, 2, nullptr, 0, &bus), paContinue);
-        QCOMPARE(first[0], 0.1f);
-        QCOMPARE(first[3], 0.4f);
+        std::vector<float> block(std::size_t(2 * kCallback));
+        for (std::size_t i = 0; i < block.size(); i += 2) {
+            block[i] = 0.5f;
+            block[i + 1] = -0.5f;
+        }
+        std::vector<float> out(std::size_t(2 * kCallback));
+        constexpr int kBlocks = 400;   // a little over a second
+        for (int i = 0; i < kBlocks; ++i) {
+            QCOMPARE(bus.push(reinterpret_cast<const char*>(block.data()),
+                              qint64(block.size() * sizeof(float))),
+                     qint64(block.size() * sizeof(float)));
+            QCOMPARE(PortAudioBus::paCallback(nullptr, out.data(), kCallback, nullptr, 0, &bus),
+                     paContinue);
+        }
+        // Steady state: the device plays the mix as written.
+        for (std::size_t i = 0; i < out.size(); i += 2) {
+            QVERIFY2(std::abs(out[i] - 0.5f) < 1e-3f, qPrintable(QString::number(out[i])));
+            QVERIFY2(std::abs(out[i + 1] + 0.5f) < 1e-3f, qPrintable(QString::number(out[i + 1])));
+        }
         pacing = bus.outputPacing();
-        QCOMPARE(pacing->consumedFrames, quint64(2));
-        QCOMPARE(pacing->queuedFrames, 2);
+        QCOMPARE(pacing->consumedFrames, quint64(kBlocks) * quint64(kCallback));
+        QVERIFY(pacing->capacityFrames > 0);
+        QVERIFY(pacing->queuedFrames >= 0);
+        QVERIFY(pacing->queuedFrames <= pacing->capacityFrames);
 
-        float second[4] = {};
-        QCOMPARE(PortAudioBus::paCallback(nullptr, second, 2, nullptr, 0, &bus), paContinue);
-        QCOMPARE(second[0], 0.5f);
-        QCOMPARE(second[3], 0.8f);
+        const AudioDelayParts parts = bus.delayParts();
+        QVERIFY(parts.matcherFillMs >= 0.0);
+        QCOMPARE(parts.deviceBufferMs, 1000.0 * kCallback / 48000.0);
+        QCOMPARE(parts.deviceLatencyMs, 0.0);
+        QVERIFY(parts.totalMs() >= parts.deviceBufferMs);
 
-        float underrun[4] = {1.0f, 1.0f, 1.0f, 1.0f};
-        QCOMPARE(PortAudioBus::paCallback(nullptr, underrun, 2, nullptr, 0, &bus), paContinue);
-        for (float sample : underrun) {
+        const auto before = bus.matcherStats();
+        QVERIFY(before.has_value());
+
+        // The writer stops: the device keeps asking, the matcher runs dry
+        // and slews to silence, and every asked-for frame still counts.
+        for (int i = 0; i < 20; ++i) {
+            QCOMPARE(PortAudioBus::paCallback(nullptr, out.data(), kCallback, nullptr, 0, &bus),
+                     paContinue);
+        }
+        for (float sample : out) {
             QCOMPARE(sample, 0.0f);
         }
         pacing = bus.outputPacing();
-        QCOMPARE(pacing->consumedFrames, quint64(6));
-        QCOMPARE(pacing->queuedFrames, 0);
-        QCOMPARE(pacing->capacityFrames, static_cast<int>(bus.m_ring.size() / 2));
+        QCOMPARE(pacing->consumedFrames, quint64(kBlocks + 20) * quint64(kCallback));
+        QVERIFY(bus.matcherStats()->dryRuns > before->dryRuns);
     }
 
-    void outputFlushFloorSurvivesStaleCallbackPublication() {
+    // A one-channel device hears left plus right, halved; a stream opened
+    // with more channels than the pair gets silence on the others.
+    void outputWritesTheStreamsOwnChannels() {
+        for (const int channels : {1, 4}) {
+            PortAudioBus bus;
+            bus.m_cfg.direction = AudioDirection::Output;
+            bus.m_cfg.bufferSamples = kCallback;
+            QVERIFY(bus.prepareOutputMatcher(48000, channels));
+            std::vector<float> block(std::size_t(2 * kCallback));
+            for (std::size_t i = 0; i < block.size(); i += 2) {
+                block[i] = 0.2f;
+                block[i + 1] = 0.6f;
+            }
+            std::vector<float> out(std::size_t(channels * kCallback));
+            for (int i = 0; i < 100; ++i) {
+                bus.push(reinterpret_cast<const char*>(block.data()),
+                         qint64(block.size() * sizeof(float)));
+                PortAudioBus::paCallback(nullptr, out.data(), kCallback, nullptr, 0, &bus);
+            }
+            for (int f = 0; f < kCallback; ++f) {
+                const float* frame = out.data() + std::ptrdiff_t(f) * channels;
+                if (channels == 1) {
+                    QVERIFY(std::abs(frame[0] - 0.4f) < 1e-3f);
+                } else {
+                    QVERIFY(std::abs(frame[0] - 0.2f) < 1e-3f);
+                    QVERIFY(std::abs(frame[1] - 0.6f) < 1e-3f);
+                    QCOMPARE(frame[2], 0.0f);
+                    QCOMPARE(frame[3], 0.0f);
+                }
+            }
+        }
+    }
+
+    // flush() asks the matcher to drop what is queued at its next write:
+    // after one more block none of the flushed audio reaches the device.
+    void outputFlushDropsQueuedAudio() {
         PortAudioBus bus;
         bus.m_cfg.direction = AudioDirection::Output;
-        bus.m_negFormat = AudioFormat{48000, 2, AudioFormat::Sample::Float32};
-        bus.m_ring[0] = 0.25f;
-        bus.m_ring[1] = -0.25f;
-        bus.m_ring[2] = 0.25f;
-        bus.m_ring[3] = -0.25f;
-        bus.m_ring[4] = 0.25f;
-        bus.m_ring[5] = -0.25f;
-        bus.m_ring[6] = 0.25f;
-        bus.m_ring[7] = -0.25f;
-        bus.m_ringRead.store(0, std::memory_order_relaxed);
-        bus.m_ringWrite.store(8, std::memory_order_relaxed);
+        bus.m_cfg.bufferSamples = kCallback;
+        QVERIFY(bus.prepareOutputMatcher(48000, 2));
+        std::vector<float> loud(std::size_t(2 * kCallback), 0.25f);
+        std::vector<float> out(std::size_t(2 * kCallback));
+        for (int i = 0; i < 200; ++i) {
+            bus.push(reinterpret_cast<const char*>(loud.data()),
+                     qint64(loud.size() * sizeof(float)));
+            PortAudioBus::paCallback(nullptr, out.data(), kCallback, nullptr, 0, &bus);
+        }
+        QVERIFY(std::abs(out[0] - 0.25f) < 1e-3f);
 
         bus.flush();
-        auto pacing = bus.outputPacing();
-        QVERIFY(pacing.has_value());
-        QCOMPARE(pacing->queuedFrames, 0);
-
-        // Models a callback that loaded read=0 before flush and publishes
-        // that stale position later. The discard floor remains authoritative.
-        bus.m_ringRead.store(0, std::memory_order_release);
-        pacing = bus.outputPacing();
-        QCOMPARE(pacing->queuedFrames, 0);
-
-        float discarded[4] = {1.0f, 1.0f, 1.0f, 1.0f};
-        QCOMPARE(PortAudioBus::paCallback(nullptr, discarded, 2, nullptr, 0, &bus), paContinue);
-        for (float sample : discarded) {
-            QCOMPARE(sample, 0.0f);
+        std::vector<float> quiet(std::size_t(2 * kCallback), 0.0f);
+        for (int i = 0; i < 40; ++i) {
+            bus.push(reinterpret_cast<const char*>(quiet.data()),
+                     qint64(quiet.size() * sizeof(float)));
+            PortAudioBus::paCallback(nullptr, out.data(), kCallback, nullptr, 0, &bus);
         }
-        QCOMPARE(bus.m_ringRead.load(std::memory_order_acquire), qint64(8));
-
-        // New audio after the flush may ramp from silence, but none of the
-        // discarded 0.25/-0.25 samples may reappear.
-        bus.m_ring[8] = 0.75f;
-        bus.m_ring[9] = -0.75f;
-        bus.m_ring[10] = 0.75f;
-        bus.m_ring[11] = -0.75f;
-        bus.m_ringWrite.store(12, std::memory_order_release);
-        float fresh[4] = {};
-        QCOMPARE(PortAudioBus::paCallback(nullptr, fresh, 2, nullptr, 0, &bus), paContinue);
-        for (float sample : fresh) {
-            QVERIFY(std::abs(sample) < 0.02f);
-            QVERIFY(std::abs(std::abs(sample) - 0.25f) > 0.10f);
+        for (float sample : out) {
+            QVERIFY2(std::abs(sample) < 1e-3f, qPrintable(QString::number(sample)));
         }
-        pacing = bus.outputPacing();
-        QCOMPARE(pacing->consumedFrames, quint64(4));
-        QCOMPARE(pacing->queuedFrames, 0);
+        // An input stream holds no matcher and reports none of it.
+        PortAudioBus input;
+        input.m_cfg.direction = AudioDirection::Input;
+        QVERIFY(!input.takesStereoMix());
+        QVERIFY(!input.matcherStats().has_value());
+        QCOMPARE(input.delayParts().matcherFillMs, -1.0);
     }
+
+    // restartClockMatch() reaches the matcher; a closed output takes no mix.
+    void closedOutputTakesNoMix() {
+        PortAudioBus bus;
+        bus.m_cfg.direction = AudioDirection::Output;
+        std::vector<float> block(std::size_t(2 * kCallback), 0.1f);
+        QCOMPARE(bus.push(reinterpret_cast<const char*>(block.data()),
+                          qint64(block.size() * sizeof(float))),
+                 qint64(0));
+        bus.restartClockMatch();   // no matcher: no effect
+        QVERIFY(!bus.matcherStats().has_value());
+    }
+
+private:
+    static constexpr int kCallback = 128;
 };
 
 QTEST_APPLESS_MAIN(TstPortAudioBus)

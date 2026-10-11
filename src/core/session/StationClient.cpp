@@ -9,6 +9,19 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-10  J.J. Boyd / KG4VCF  Core speaker: its properties left out
+//                                    by a host with no speaker of its own
+//                                    are not counted as schema skew.
+//                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-09  J.J. Boyd / KG4VCF  Core speaker: the hello declares
+//                                    coreSpeaker 1; radio's Core speaker
+//                                    level, mute, device and details apply
+//                                    through their setters and go back to
+//                                    the Core, its devices and state apply
+//                                    as the Core sent them;
+//                                    coreSpeakerAvailable (native audio
+//                                    plan Task 21, R-AUD-25). AI-assisted
+//                                    via Anthropic Claude Code.
 //   2026-10-06  J.J. Boyd / KG4VCF  Radio speaker: the hello declares
 //                                    radioSpeaker 1; radio's RADIO level,
 //                                    mute and amplifier choice apply
@@ -509,6 +522,8 @@
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08: Final review I3: requestRefreshRotorPorts. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10: txPeakReadingsAvailable (txReadingsVersion 4). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // 2026-10-01: Authenticated Core address inventory and reconnect learning.
@@ -951,6 +966,12 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // radioSpeakerMuted, speakerAmplifierMode and the two reports;
     // radioSpeakerVersion 1).
     m_declaredFeatures.insert(QByteArrayLiteral("radioSpeaker"), 1);
+    // Core speaker (native audio plan Task 21): Setup's Core speaker card
+    // shows and changes the Core's own sound card output (radio's
+    // coreSpeakerVolume, coreSpeakerMuted, coreSpeakerDevice,
+    // coreSpeakerDevices, coreSpeakerState and coreSpeakerDetails;
+    // coreSpeakerVersion 1).
+    m_declaredFeatures.insert(QByteArrayLiteral("coreSpeaker"), 1);
     // PA on-air gate re-review, Important C: the PA pages open and lock
     // the row the Core holds on the air (paTransmitBandVersion 1).
     m_declaredFeatures.insert(QByteArrayLiteral("paTransmitBand"), 1);
@@ -2113,6 +2134,7 @@ void StationClient::attachTransport(SessionTransport* transport, const QString& 
     m_capabilities.remotePs3DisplaySubscribed = false;
     m_capabilitiesThisSession = false;
     m_capabilities.radioSpeakerVersion = 0;
+    m_capabilities.coreSpeakerVersion = 0;
 
     // These three describe THIS session. Carrying them across a reconnect
     // would let a difference the station has since fixed keep showing up
@@ -2499,6 +2521,7 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
         m_radioModel->clearStationAlexLpf();
         m_radioModel->clearStationLevelCal();
         m_radioModel->clearStationRadioSpeaker();
+        m_radioModel->clearStationCoreSpeaker();
         for (SliceModel* slice : m_radioModel->slices()) {
             slice->setStationAutoAgcNoiseFloor(slice->stationAutoAgcNoiseFloorDbm(), false,
                                               slice->stationAutoAgcNoiseFloorGeneration());
@@ -4143,6 +4166,13 @@ void StationClient::compareSchema(const QByteArray& className,
                 && m_declaredFeatures.value(QByteArray(gate->feature)) < gate->minVersion) {
                 continue;
             }
+            // The Core speaker's properties come only from a Core that has
+            // its own speaker (StationServer::peerGetsCoreSpeaker). A
+            // desktop that hosts a station leaves them out for every
+            // window, so their absence is that host's answer, not skew.
+            if (gate != nullptr && qstrcmp(gate->feature, "coreSpeaker") == 0) {
+                continue;
+            }
             m_schemaOnlyLocal.insert(skewKey(className, name));
             ++onlyLocal;
         }
@@ -4958,6 +4988,11 @@ bool StationClient::applyClientOnlyProperty(QObject* target, const QByteArray& c
         // Radio speaker (radioSpeakerVersion 1): the two reports, read-only
         // on the wire, set as the Core sent them.
         if (m_radioModel->applyStationRadioSpeakerValue(propertyName, native)) {
+            return true;
+        }
+        // Core speaker (coreSpeakerVersion 1): its devices and state,
+        // read-only on the wire, set as the Core sent them.
+        if (m_radioModel->applyStationCoreSpeakerValue(propertyName, native)) {
             return true;
         }
         return m_radioModel->applyStationFilterValue(propertyName, native);
@@ -5913,6 +5948,19 @@ bool StationClient::radioSpeakerNeedsNewerCore() const
            && m_capabilities.radioSpeakerVersion < 1;
 }
 
+bool StationClient::coreSpeakerAvailable() const
+{
+    // As radioSpeakerAvailable: the snapshot's values land through the
+    // setters before the handshake completes.
+    return m_sessionActive && m_authenticated && m_capabilities.coreSpeakerVersion >= 1;
+}
+
+bool StationClient::coreSpeakerNeedsNewerCore() const
+{
+    return m_sessionActive && m_authenticated && m_capabilitiesThisSession
+           && m_capabilities.coreSpeakerVersion < 1;
+}
+
 StationClient::CommandOutcome StationClient::requestStartLevelCalibration(float levelDbm,
                                                                           double frequencyHz,
                                                                           int sliceId)
@@ -6023,6 +6071,11 @@ bool StationClient::txReadingsAvailable() const
 bool StationClient::txStageReadingsAvailable() const
 {
     return txReadingsAvailable() && m_capabilities.txReadingsVersion >= 3;
+}
+
+bool StationClient::txPeakReadingsAvailable() const
+{
+    return txReadingsAvailable() && m_capabilities.txReadingsVersion >= 4;
 }
 
 void StationClient::setCfcCompressionWanted(bool wanted)

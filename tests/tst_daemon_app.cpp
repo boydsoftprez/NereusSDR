@@ -63,6 +63,9 @@
 //               a rate already saved for the radio wins at start (R-R3-49),
 //               by J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //               Anthropic Claude Code.
+//   2026-10-10: nereusd's speaker plays every receiver (JJ's ruling,
+//               R-AUD-27), by J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -303,6 +306,20 @@ private slots:
         DaemonApp app;
         app.applyConfigToSettings(cfg, QString());
         QVERIFY(!settings.contains(key));
+    }
+
+    // JJ's ruling 2026-10-10 (R-AUD-27): nereusd's own speaker plays every
+    // receiver, because nobody sits at a station device there to listen in
+    // (the mix proof is in tst_audio_engine_owner_mix). A RadioModel made
+    // without DaemonApp, as a desktop makes it, keeps the old rule.
+    void theCoreSpeakerPlaysEveryReceiver()
+    {
+        DaemonApp app;
+        app.primeBoardForTest(HPSDRHW::HermesLite);
+        QVERIFY(app.start(testCoreConfig()));
+        QVERIFY(app.m_radioModel->audioEngine()->speakersPlayEverySlice());
+        RadioModel desktop;
+        QVERIFY(!desktop.audioEngine()->speakersPlayEverySlice());
     }
 
     // R-R3-44: nereusd publishes no VAX device on the Core host, receive

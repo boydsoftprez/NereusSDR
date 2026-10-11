@@ -14,6 +14,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09 - PC mic status for the transmit badge (native audio plan
+//                Task 20; R-AUD-24, R-AUD-09, R-AUD-13). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-02  J.J. Boyd / KG4VCF. TX letters share the guarded flag
 //                Take and select action, with current access and target
 //                lifetime checks. AI-assisted via OpenAI Codex.
@@ -551,6 +554,7 @@ private slots:
 private:
     void buildUI();
     void refreshMicSourceBadge();
+    static QString micSourceBadgeStyle(bool amber);
     void wireControls();  // called after buildUI() — attaches signals/slots
     void syncPsaFromFacade();
     // Fix wave GUI-I7: put back PS-A's tooltip under the facade's reason.
@@ -611,6 +615,7 @@ private:
 
     // 0. Mic-source badge (J.3 Phase 3M-1b) — read-only label above the gauges.
     QLabel*  m_micSourceBadge = nullptr;
+    bool     m_micSourceBadgeAmber = false;   // native audio plan Task 20
     QLabel*  m_holderLabel = nullptr;   // fix wave I4
     QPushButton* m_takeTransmitBtn = nullptr;  // Task 78
     // 1. Forward Power gauge

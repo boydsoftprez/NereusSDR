@@ -16,6 +16,8 @@ install -m 0644 "$NEREUS_STATION_SOURCE_DIR/common/nereusd-firstboot.conf" \
     "${ROOTFS_DIR}/tmp/nereus-install/nereusd-firstboot.conf"
 install -m 0644 "$NEREUS_STATION_SOURCE_DIR/common/nereusd-serial.conf" \
     "${ROOTFS_DIR}/tmp/nereus-install/nereusd-serial.conf"
+install -m 0644 "$NEREUS_STATION_SOURCE_DIR/common/nereusd-audio.conf" \
+    "${ROOTFS_DIR}/tmp/nereus-install/nereusd-audio.conf"
 on_chroot <<'EOF'
 /bin/bash /tmp/nereus-install/install-station.sh
 EOF

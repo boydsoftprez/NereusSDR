@@ -15,6 +15,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09 - VAX TX (virtual device) only where a VAX transmit device
+//                exists: greyed on Windows with the PC Mic route, a saved
+//                choice falls back to PC Mic (R-SPK-21, R-AUD-01).
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-26 — tunePowerByBand[14] + per-MAC persistence (G.3, Phase 3M-1a)
 //                 ported by J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.
@@ -3401,6 +3405,10 @@ void TransmitModel::setMicSource(MicSource source)
     if (source == MicSource::Radio && m_micSourceLocked) {
         source = MicSource::Pc;
     }
+    // R-SPK-21, R-AUD-01: no VAX transmit device on this system (Windows).
+    if (source == MicSource::Vax && !m_vaxSourceAvailable) {
+        source = MicSource::Pc;
+    }
 
     if (source == m_micSource) { return; }  // idempotent guard
     m_micSource = source;
@@ -3478,6 +3486,25 @@ void TransmitModel::setMicSourceLocked(bool lock)
     if (lock && m_micSource == MicSource::Radio) {
         setMicSource(MicSource::Pc);  // will clamp through the lock guard above
     }
+}
+
+// ── VAX TX availability (R-SPK-21, R-AUD-01) ────────────────────────
+// NereusSDR-native, as the HL2 lock above: an unavailable VAX TX source
+// falls back to Pc.
+void TransmitModel::setVaxSourceAvailable(bool available)
+{
+    m_vaxSourceAvailable = available;
+    if (!available && m_micSource == MicSource::Vax) {
+        setMicSource(MicSource::Pc);
+    }
+}
+
+QString TransmitModel::vaxSourceUnavailableReason()
+{
+    return QStringLiteral(
+        "Windows has no VAX transmit device. To transmit a program's audio, set "
+        "the program's output to a virtual cable, choose PC Mic and pick the "
+        "cable's recording end as the PC mic device.");
 }
 
 // ── PC Mic session state (3M-1b I.2) ─────────────────────────────────────────

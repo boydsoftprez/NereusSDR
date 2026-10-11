@@ -132,29 +132,43 @@ UMask=0077
 # so buffers past systemd's default RLIMIT_MEMLOCK simply stay unlocked. A
 # grant, if one is ever wanted, should be right-sized, not "infinity".
 #
-# Local audio monitoring on a "shack machine" (design doc section 4.3) is
-# a secondary, explicitly-supported use case, but is NOT the primary
-# target (a headless Pi with no sound card, where nereusd.conf.sample's
-# unset audio_device resolves to the platform default and simply fails to
-# open, which is the paragraph below). A DynamicUser account has no
-# supplementary group memberships by default, so on real ALSA hardware
-# (/dev/snd/* is typically root:audio mode 660) this unit as shipped will
-# NOT be able to open a physical device even when one is present --
-# ensureSpeakersOpen() degrades to its existing "IAudioBus open failed"
-# warning path rather than crashing, so the daemon still starts and
-# still demodulates, just without local monitoring. A shack-machine
-# deployment that wants local audio needs `SupplementaryGroups=audio` (or
-# the equivalent group for the target distro) added via a drop-in; not
-# granting it by default keeps the primary headless target's privilege
-# footprint smaller.
+# Local audio (the Core's own speaker and sound cards, design doc section
+# 4.3). A DynamicUser account has no supplementary group memberships by
+# default, and on real ALSA hardware /dev/snd/* is typically root:audio mode
+# 660, so this unit on its own can NOT open a physical device even when one
+# is present -- ensureSpeakersOpen() degrades to its existing "IAudioBus
+# open failed" warning path rather than crashing, so the daemon still
+# starts and still demodulates, just without local audio.
+#
+# The grant is `SupplementaryGroups=audio`, and it comes from a drop-in
+# beside this unit, never from a line in it, because a group that does not
+# exist stops the unit from starting:
+#   * The nereusd install component ships
+#     packaging/station-image/common/nereusd-audio.conf as the vendor
+#     drop-in nereusd.service.d/audio.conf next to this unit (see the
+#     install() rule in CMakeLists.txt). Both .deb packages are made from
+#     that component, and `audio` always exists on Debian and Ubuntu
+#     (base-passwd), so a plain install of the package can open a sound
+#     card.
+#   * The station images, the Pi 4 installers and the Rock installer write
+#     /etc/systemd/system/nereusd.service.d/audio.conf with the same
+#     content (packaging/station-image/common/install-station.sh,
+#     scripts/pi4/, scripts/radxa/install-core-selector.sh). The Pi 4 and
+#     Rock installers copy named files from a stage, so that file is their
+#     only grant; on an image, a drop-in of the same name under /etc takes
+#     precedence over the vendor one.
+# A source install on a distro whose sound devices belong to another group
+# removes or overrides that one drop-in; this unit itself still sets no
+# group.
 #
 # Serial accessories (the Core's own CAT and keying endpoints on
 # /dev/ttyUSB* or /dev/ttyACM*) need the group that owns those devices,
-# for the same reason. The station images add `SupplementaryGroups=dialout`
-# through a drop-in (packaging/station-image/common/nereusd-serial.conf);
-# it is not set here because the group's name differs between distros
-# (dialout on Debian and Fedora, uucp on Arch), and a group that does not
-# exist stops the unit from starting.
+# for the same reason. The station images and the Pi 4 and Rock installers
+# add `SupplementaryGroups=dialout` through a drop-in under /etc
+# (packaging/station-image/common/nereusd-serial.conf); the install
+# component does not ship it and it is not set here, because the group's
+# name differs between distros (dialout on Debian and Fedora, uucp on
+# Arch), and a group that does not exist stops the unit from starting.
 LimitRTPRIO=99
 
 # --- Signal processing priority (R-R3-41) --------------------------------

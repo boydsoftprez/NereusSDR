@@ -8,6 +8,11 @@
 // Modification history (NereusSDR):
 //   2026-09-22: J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //               Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 13 (R-AUD-11): device in use.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 16 (R-AUD-09, R-AUD-11): not
+//               connected, and the in-use text names the mic.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -56,7 +61,7 @@ private slots:
             << QStringLiteral("Microphone access is turned off for NereusSDR. "
                               "Allow it in System Settings, then retry.");
         QTest::newRow("device-not-found") << State::Failed << Reason::DeviceNotFound << mic << QString()
-            << QStringLiteral("The selected microphone \"USB Mic\" is not available.");
+            << QStringLiteral("The selected microphone \"USB Mic\" is not connected.");
         QTest::newRow("default-not-found") << State::Failed << Reason::DeviceNotFound << QString() << QString()
             << QStringLiteral("The system default microphone is not available.");
         QTest::newRow("open-failed") << State::Failed << Reason::OpenFailed << mic << QString()
@@ -75,6 +80,10 @@ private slots:
             << QStringLiteral("Microphone support stopped unexpectedly.");
         QTest::newRow("protocol-error") << State::Failed << Reason::ProtocolError << mic << QString()
             << QStringLiteral("Microphone support stopped unexpectedly.");
+        QTest::newRow("device-in-use") << State::Failed << Reason::DeviceInUse << mic << QString()
+            << QStringLiteral("The selected microphone \"USB Mic\" is in use by another program.");
+        QTest::newRow("default-in-use") << State::Failed << Reason::DeviceInUse << QString() << QString()
+            << QStringLiteral("The system default microphone is in use by another program.");
     }
 
     void wording()
@@ -100,7 +109,8 @@ private slots:
         const QList<Reason> reasons = {
             Reason::None, Reason::PermissionDenied, Reason::DeviceNotFound, Reason::OpenFailed,
             Reason::StartFailed, Reason::InputLost, Reason::Timeout, Reason::HelperMissing,
-            Reason::HelperDidNotStart, Reason::HelperExited, Reason::ProtocolError};
+            Reason::HelperDidNotStart, Reason::HelperExited, Reason::ProtocolError,
+            Reason::DeviceInUse};
         const QStringList banned = {QStringLiteral("helper"), QStringLiteral("protocol"),
                                     QStringLiteral("generation"), QStringLiteral("pipe"),
                                     QStringLiteral("process")};
@@ -115,6 +125,25 @@ private slots:
                 QVERIFY2(!text.contains(word), qPrintable(text));
             }
         }
+    }
+
+    // Task 16 fix round (R-AUD-09, R-AUD-11): the mic role silent because
+    // its mic is missing or held reads so; anything else leaves the line to
+    // captureStatusText().
+    void micRoleStatusTextNamesMissingAndHeld()
+    {
+        AudioRoleStatus role;
+        role.state = AudioRoleState::Silent;
+        role.reason = AudioRoleReason::NotConnected;
+        QCOMPARE(micRoleStatusText(role), QStringLiteral("PC mic not connected"));
+        role.reason = AudioRoleReason::InUse;
+        QCOMPARE(micRoleStatusText(role), QStringLiteral("PC mic in use by another program"));
+        role.reason = AudioRoleReason::None;
+        QVERIFY(micRoleStatusText(role).isEmpty());
+        role.state = AudioRoleState::Playing;
+        role.reason = AudioRoleReason::InUse;
+        QVERIFY(micRoleStatusText(role).isEmpty());
+        QVERIFY(micRoleStatusText(AudioRoleStatus{}).isEmpty());
     }
 };
 

@@ -1,0 +1,952 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ASIO Audio Setup</title>
+<style>
+:root{--page:#05050c;--dlg:#0f0f1a;--tree:#131326;--border:#203040;--field:#152535;--accent:#00b4d8;--amber:#e0a030;--groove:#1a2a3a;--txt:#c8d8e8;--dim:#8aa8c0;--note:#8aa8c0;--off:#506070;--ok:#3d8;--bad:#e04848}
+*{box-sizing:border-box}
+body{background:var(--page);color:var(--txt);font:12px -apple-system,system-ui,"Segoe UI",sans-serif;margin:0;padding:16px}
+.demo{background:#14141f;border:1px dashed #3a3a55;border-radius:6px;padding:8px 10px;margin-bottom:10px;display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;color:#aab;max-width:1010px}
+.demo b{color:#dde;font-weight:600}
+.demo select{background:#1c1c2c;color:#dde;border:1px solid #3a3a55;border-radius:3px;padding:2px 4px;font-size:12px}
+.demo label{display:inline-flex;gap:5px;align-items:center}
+.demo label.dis{opacity:.4}
+.try{color:#99a;font-size:11px;width:100%;line-height:1.45}
+.win{max-width:1010px;border:1px solid var(--border);border-radius:6px;overflow:hidden;position:relative}
+.wtitle{height:28px;background:#1b1b28;display:flex;align-items:center;justify-content:center;color:#aab;font-size:12px;border-bottom:1px solid #000;position:relative}
+.wtitle i{position:absolute;left:10px;top:9px;width:11px;height:11px;border-radius:6px;background:#ff5f57;box-shadow:17px 0 0 #febc2e,34px 0 0 #28c840}
+.dlg{display:flex;background:var(--dlg);min-height:760px}
+.tree{width:200px;flex:none;background:var(--tree);padding:4px 0;border-right:3px solid #304050}
+.tree div{padding:2px 8px;min-height:19px;line-height:15px;white-space:nowrap;cursor:default}
+.tree .cat::before{content:"\25B8  ";color:var(--dim)}.tree .cat.open::before{content:"\25BE  "}
+.tree .leaf{padding-left:26px;cursor:pointer}.tree .leaf:hover{background:var(--groove)}
+.tree .leaf.sel{background:var(--accent);color:var(--dlg)}
+.pagewrap{flex:1;padding:8px 12px 14px;min-width:0}
+.page{display:none;max-width:750px}.page.on{display:block}
+h2{font-size:15px;margin:2px 0 10px 4px;color:#e0eef8;font-weight:700}
+.sys{display:flex;gap:6px;align-items:center;margin:0 0 4px 2px;color:var(--dim)}
+.sys b{color:var(--txt)}
+.dot{width:8px;height:8px;border-radius:4px;background:var(--ok);flex:none}
+fieldset{border:1px solid var(--border);border-radius:4px;margin:6px 0 10px;padding:6px 8px 8px;min-width:0}
+legend{font-weight:700;color:var(--dim);padding:0 4px;margin-left:6px}
+legend.cy{color:var(--accent)}legend.amb{color:var(--amber)}
+.sect{color:var(--dim);margin:10px 0 3px 2px}
+.bighead{font-weight:700;color:#e0eef8;font-size:13px;margin:10px 0 4px 0}
+.box{border:1px solid var(--border);border-radius:4px;padding:8px 10px;margin-bottom:10px}
+.box.off{color:var(--off)}
+.row{display:flex;align-items:center;gap:8px;margin:7px 0;min-height:22px}
+.row>.k{width:52px;flex:none}
+.drow{display:flex;align-items:center;gap:8px;margin:5px 0 5px 12px;min-height:22px}
+.drow>.k{width:82px;flex:none}
+.vrow{display:flex;align-items:center;gap:6px;margin:4px 0;min-height:18px}
+.vrow>.k{width:48px;flex:none;text-align:right;color:var(--dim);font-size:11px}
+.vrow .v{font-size:11px}.vrow .v.it{font-style:italic;color:var(--dim)}
+.off .k,.k.off{color:var(--off)}
+select{background:var(--field);border:1px solid var(--border);border-radius:3px;color:var(--txt);padding:2px 6px;font-size:12px;height:22px;font-family:inherit}
+select:disabled{color:var(--off)}
+select.dev{width:300px}select.drv{width:230px}select.sm{width:96px}select.md{width:140px}select.full{flex:1}
+.tbox{flex:1;background:var(--field);border:1px solid var(--border);border-radius:3px;padding:3px 6px;height:22px}
+option:disabled{color:#56687a}optgroup{color:var(--dim);font-style:normal;font-weight:600}
+.note{color:var(--note);font-size:11px;line-height:1.4;margin:3px 0}
+.note.amb{color:var(--amber)}.note.off{color:var(--off)}
+.intro{color:#a8b8c8;line-height:1.4;margin:2px 0 4px}
+.ms{color:var(--note);font-size:11px}
+.chk,.rad{display:inline-flex;gap:6px;align-items:center;cursor:pointer}
+.chk input,.rad input{margin:0}
+input[type=checkbox]{-webkit-appearance:none;appearance:none;width:14px;height:14px;border:1px solid #304050;border-radius:3px;background:#1a2a3a;flex:none}
+input[type=checkbox]:checked{background:var(--accent);border-color:var(--accent)}
+input[type=checkbox]:disabled{background:#121a24;border-color:#203040}
+input[type=radio]{-webkit-appearance:none;appearance:none;width:15px;height:15px;border-radius:8px;border:1px solid #304050;background:#1a2a3a;flex:none}
+input[type=radio]:checked{background:var(--accent);border-color:var(--accent);box-shadow:inset 0 0 0 1px #0f0f1a}
+input[type=radio]:disabled{background:#121a24;border-color:#203040}
+input[type=radio]:disabled:checked{background:#405060}
+.dis{color:var(--off)!important;cursor:default}
+input[type=range]{-webkit-appearance:none;appearance:none;height:16px;background:transparent;margin:0;width:160px}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:linear-gradient(var(--c,var(--accent)),var(--c,var(--accent))) 0/var(--p,50%) 100% no-repeat,var(--groove)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:6px;background:var(--c,var(--accent));margin-top:-4px}
+input[type=range].amb{--c:var(--amber)}
+input[type=range].wide{width:580px}
+.val{font-size:11px;background:#0a0a18;border:1px solid #203040;border-radius:3px;padding:2px 3px;color:var(--txt);min-width:26px;text-align:center}
+.ico{width:18px;height:18px}
+.fold{color:var(--dim);font-size:11px;cursor:pointer;margin:8px 0 4px 10px;user-select:none;display:inline-block}
+.fold::before{content:"";display:inline-block;width:0;height:0;border-style:solid;border-width:4px 0 4px 6px;border-color:transparent transparent transparent var(--dim);margin:0 8px 0 2px;vertical-align:0}
+.fold.open::before{border-width:6px 4px 0 4px;border-color:var(--dim) transparent transparent transparent;vertical-align:1px}
+.fold.dis{color:var(--off)}.fold.dis::before{opacity:.5}
+.pill{font-size:10px;border:1px solid #203040;border-radius:9px;padding:2px 8px;color:var(--dim);background:#152530}
+.pill.ok{color:var(--ok);border-color:#2a5a3a}
+button{background:#1a1a26;color:var(--txt);border:1px solid #3a3a48;border-radius:4px;padding:3px 12px;font-size:12px;cursor:pointer;font-family:inherit}
+button:disabled{color:var(--off);border-color:#2a2a36;cursor:default}
+button.pri{background:#00799a;border-color:var(--accent);color:#fff}
+button.small{font-size:11px;padding:2px 9px;background:#152535;border-color:#203040}
+.meter{height:9px;flex:1;background:#0a0a18;border:1px solid #2a3a4a;border-radius:2px;overflow:hidden}
+.meter.thin{height:7px}
+.meter i{display:block;height:100%;width:0;background:linear-gradient(90deg,#2a8,#cc4 75%,#e44);transition:width .08s}
+.sp{flex:1}
+.newtag{font-size:9px;font-weight:700;color:#0f0f1a;background:var(--amber);border-radius:3px;padding:0 4px;margin-left:4px;vertical-align:1px}
+.delay{color:var(--ok);font-weight:600}
+.indent{margin-left:12px}
+.modalbg{position:absolute;inset:28px 0 0 0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center}
+.modalbg.on{display:flex}
+.modal{width:470px;background:#161624;border:1px solid #304050;border-radius:6px;box-shadow:0 12px 40px #000a;padding:16px 18px 14px}
+.modal h3{margin:0 0 8px;font-size:13px;color:#e0eef8}
+.modal p{margin:6px 0;line-height:1.45}
+.modal ul{margin:6px 0 8px;padding-left:18px;line-height:1.6}
+.modal .btns{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+.hide{display:none!important}
+.pop{position:absolute;z-index:50;background:#152535;border:1px solid #203040;border-radius:3px;box-shadow:0 6px 18px #0009;max-height:340px;overflow-y:auto;padding:2px 0;font-size:12px;color:#c8d8e8}
+.pop div{padding:3px 10px 3px 8px;white-space:nowrap;cursor:default}
+.pop .it.ind{padding-left:18px}
+.pop .it.hi{background:#00b4d8;color:#fff}
+.pop .it.dis{color:#506070}
+.pop .grp{color:#8aa8c0;font-weight:700;padding-top:6px}
+select{cursor:default}
+.note.ok{color:var(--ok)}
+.standin{font-size:11px;color:#c8c8d8;font-style:italic;margin:0 0 6px;max-width:340px}
+.drvwin{width:340px;background:#f0f0f0;color:#111;border:1px solid #888;box-shadow:0 12px 40px #000a;font-family:"Segoe UI",system-ui,sans-serif;font-size:12px}
+.drvwin .dwt{background:#fff;border-bottom:1px solid #ccc;padding:6px 10px}
+.drvwin .dwb{padding:10px 14px 12px}
+.drvwin .dwr{display:flex;align-items:center;gap:8px;margin:7px 0}
+.drvwin .dwr span{width:100px}
+.drvwin select{background:#fff;color:#111;border:1px solid #999;border-radius:2px;width:170px}
+.drvwin .dwbtns{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+.drvwin button{background:#e1e1e1;color:#111;border:1px solid #adadad;border-radius:2px;padding:3px 16px}
+.pop.light{background:#fff;color:#111;border-color:#999}
+.pop.light .it.hi{background:#0078d4;color:#fff}
+</style></head><body>
+
+<div class="demo">
+ <b>Mockup controls (not part of the app):</b>
+ <label>Computer <select id="plat">
+  <option value="win">Windows</option>
+  <option value="mac">Mac</option>
+  <option value="lpw">Linux with PipeWire</option>
+  <option value="lpa">Linux with PulseAudio</option>
+ </select></label>
+ <label>ASIO interface <select id="iface">
+  <option value="foc">Focusrite USB ASIO (10 outputs, 8 inputs)</option>
+  <option value="umc">UMC ASIO Driver (4 outputs, 4 inputs)</option>
+ </select></label>
+ <label><input type="checkbox" id="vmOn" checked> Voicemeeter installed</label>
+ <label><input type="checkbox" id="podsOn" checked> AirPods connected</label>
+ <label><input type="checkbox" id="cabA" checked> VB-CABLE A installed</label>
+ <label><input type="checkbox" id="cabB"> VB-CABLE B installed</label>
+ <label><input type="checkbox" id="oneBuf"> ASIO driver allows one buffer size only</label>
+ <label>Device details <select id="layout">
+  <option value="new">Proposed: one Driver list</option>
+  <option value="old">Today: Driver API plus three checkboxes</option>
+ </select></label>
+ <div class="try">Things to try. Computer: switch to Mac or Linux to see their Driver lists and the interface listed by pairs; on Linux with PulseAudio, PipeWire shows greyed out as not running. Outputs: pick a Voicemeeter pair for the speakers while the headphones and mic sit on the Focusrite (one ASIO driver at a time, so it asks first). Microphone: pick AirPods, then disconnect them. Digital modes: give VAX 2 an ASIO pair, install VB-CABLE B and watch it appear, uninstall VB-CABLE A while VAX 3 uses it. ASIO control panel (Outputs, Device details): change the buffer size in the driver's window and press OK; tick "one buffer size only" to see a driver that allows just one. Delay and buffer numbers are examples, not measurements.</div>
+</div>
+
+<div class="win">
+ <div class="wtitle"><i></i>NereusSDR Settings</div>
+ <div class="dlg">
+  <div class="tree">
+   <div class="cat">General</div><div class="cat">Cores</div><div class="cat">Hardware</div><div class="cat">PA</div>
+   <div class="cat open">Audio</div>
+   <div class="leaf sel" data-p="out">Outputs</div>
+   <div class="leaf" data-p="mic">Microphone</div>
+   <div class="leaf" data-p="dig">Digital modes</div>
+   <div class="leaf" data-p="na">TX Profile</div>
+   <div class="leaf" data-p="na">Advanced</div>
+   <div class="cat">DSP</div><div class="cat">Display</div><div class="cat">Transmit</div><div class="cat">Appearance</div><div class="cat">CAT &amp; Network</div><div class="cat">Keyboard</div><div class="cat">Test</div><div class="cat">Diagnostics</div>
+  </div>
+  <div class="pagewrap">
+
+  <!-- ============================ OUTPUTS ============================ -->
+  <div class="page on" id="p-out">
+   <h2>Outputs</h2>
+   <div class="sys"><span class="dot"></span><span><b>Sound system:</b> <span id="sysText"></span></span></div>
+
+   <fieldset id="cardSpk"><legend class="cy">This computer</legend>
+    <div class="row"><span class="k">Volume:</span><img class="ico" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnhsaW5rPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5L3hsaW5rIiB2aWV3Qm94PSIwIDAgNjQgNjQiIHdpZHRoPSI2NCIgaGVpZ2h0PSI2NCI+PGRlZnM+PGxpbmVhckdyYWRpZW50IGlkPSJyaW0iIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNmZmZmZmYiLz48c3RvcCBvZmZzZXQ9IjAuMzUiIHN0b3AtY29sb3I9IiNjOWQyZGMiLz48c3RvcCBvZmZzZXQ9IjAuNiIgc3RvcC1jb2xvcj0iIzdkODk5NiIvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iI2U2ZWNmMiIvPjwvbGluZWFyR3JhZGllbnQ+PGxpbmVhckdyYWRpZW50IGlkPSJyaW1JbiIgeDE9IjEiIHkxPSIxIiB4Mj0iMCIgeTI9IjAiPjxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iI2Y0ZjdmYSIvPjxzdG9wIG9mZnNldD0iMC41IiBzdG9wLWNvbG9yPSIjOGE5NmEzIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjM2E0MzRkIi8+PC9saW5lYXJHcmFkaWVudD48cmFkaWFsR3JhZGllbnQgaWQ9ImNvbmUiIGN4PSIwLjU1IiBjeT0iMC41IiByPSIwLjYiIGZ4PSIwLjYyIiBmeT0iMC40MiI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjOWFhNGFlIi8+PHN0b3Agb2Zmc2V0PSIwLjMiIHN0b3AtY29sb3I9IiM0YTUyNWIiLz48c3RvcCBvZmZzZXQ9IjAuNzUiIHN0b3AtY29sb3I9IiMyMjI3MmQiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMxMjE1MTkiLz48L3JhZGlhbEdyYWRpZW50PjxyYWRpYWxHcmFkaWVudCBpZD0iY2FwIiBjeD0iMC41IiBjeT0iMC41IiByPSIwLjUiIGZ4PSIwLjM4IiBmeT0iMC4zMiI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjZmZmZmZmIi8+PHN0b3Agb2Zmc2V0PSIwLjI1IiBzdG9wLWNvbG9yPSIjYzdjZWQ2Ii8+PHN0b3Agb2Zmc2V0PSIwLjciIHN0b3AtY29sb3I9IiM1ZDY2NzAiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMyYTMwMzYiLz48L3JhZGlhbEdyYWRpZW50PjxsaW5lYXJHcmFkaWVudCBpZD0ibWFnIiB4MT0iMCIgeTE9IjAiIHgyPSIwIiB5Mj0iMSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjNmI3NDgwIi8+PHN0b3Agb2Zmc2V0PSIwLjQ1IiBzdG9wLWNvbG9yPSIjZDRkYmUyIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjM2Q0NDRjIi8+PC9saW5lYXJHcmFkaWVudD48bGluZWFyR3JhZGllbnQgaWQ9IndhdmUiIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNiOGYyZmYiLz48c3RvcCBvZmZzZXQ9IjAuNSIgc3RvcC1jb2xvcj0iIzJmYzZlYSIvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzBhN2ZiMCIvPjwvbGluZWFyR3JhZGllbnQ+PC9kZWZzPjxwYXRoIGQ9Ik01IDI1IFE0IDMyIDUgMzkgTDE2IDQxIEwxNiAyMyBaIiBmaWxsPSJ1cmwoI21hZykiLz48ZWxsaXBzZSBjeD0iMTYiIGN5PSIzMiIgcng9IjMuMiIgcnk9IjkiIGZpbGw9IiMyYTMwMzYiLz48ZWxsaXBzZSBjeD0iMjUiIGN5PSIzMiIgcng9IjEzIiByeT0iMjIiIGZpbGw9InVybCgjcmltKSIgdHJhbnNmb3JtPSJyb3RhdGUoLTggMjUgMzIpIi8+PGVsbGlwc2UgY3g9IjI1LjYiIGN5PSIzMiIgcng9IjEwLjgiIHJ5PSIxOS40IiBmaWxsPSJ1cmwoI3JpbUluKSIgdHJhbnNmb3JtPSJyb3RhdGUoLTggMjUgMzIpIi8+PGVsbGlwc2UgY3g9IjI2IiBjeT0iMzIiIHJ4PSI5LjYiIHJ5PSIxNy44IiBmaWxsPSJ1cmwoI2NvbmUpIiB0cmFuc2Zvcm09InJvdGF0ZSgtOCAyNSAzMikiLz48ZWxsaXBzZSBjeD0iMjcuNiIgY3k9IjMxLjQiIHJ4PSIzLjYiIHJ5PSI2LjQiIGZpbGw9InVybCgjY2FwKSIgdHJhbnNmb3JtPSJyb3RhdGUoLTggMjUgMzIpIi8+PHBhdGggZD0iTTE3IDE1IFEyMCAxMCAyNSAxMCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmZmZmIiBzdHJva2Utb3BhY2l0eT0iLjgiIHN0cm9rZS13aWR0aD0iMS40IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48cGF0aCBkPSJNNDMgMjIgUTQ5IDMyIDQzIDQyIiBmaWxsPSJub25lIiBzdHJva2U9IiMwNjNhNTIiIHN0cm9rZS1vcGFjaXR5PSIuNiIgc3Ryb2tlLXdpZHRoPSI0LjgwMDAwMDAwMDAwMDAwMSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PHBhdGggZD0iTTQzIDIyIFE0OSAzMiA0MyA0MiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ1cmwoI3dhdmUpIiBzdHJva2Utd2lkdGg9IjMuMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PHBhdGggZD0iTTQzIDIyIFE0OSAzMiA0MyA0MiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmZmZmIiBzdHJva2Utb3BhY2l0eT0iLjU1IiBzdHJva2Utd2lkdGg9IjAuOTYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoLS41IC0uNikiLz48cGF0aCBkPSJNNDkgMTUgUTU5IDMyIDQ5IDQ5IiBmaWxsPSJub25lIiBzdHJva2U9IiMwNjNhNTIiIHN0cm9rZS1vcGFjaXR5PSIuNiIgc3Ryb2tlLXdpZHRoPSI0LjgwMDAwMDAwMDAwMDAwMSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PHBhdGggZD0iTTQ5IDE1IFE1OSAzMiA0OSA0OSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ1cmwoI3dhdmUpIiBzdHJva2Utd2lkdGg9IjMuMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PHBhdGggZD0iTTQ5IDE1IFE1OSAzMiA0OSA0OSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmZmZmIiBzdHJva2Utb3BhY2l0eT0iLjU1IiBzdHJva2Utd2lkdGg9IjAuOTYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoLS41IC0uNikiLz48L3N2Zz4=" alt=""><input type="range" value="50" style="--p:50%"><span class="val">50</span><label class="chk"><input type="checkbox"> Mute</label></div>
+    <div class="row"><span class="k">Device:</span><select class="dev" id="spkDev"></select></div>
+    <div class="note amb indent hide" id="spkGone"></div>
+    <div class="note">Same control as PC in the header. Headphones below are not affected by it.</div>
+    <div class="fold open" data-fold="spkDet">Device details</div>
+    <div id="spkDet"></div>
+   </fieldset>
+
+   <fieldset id="cardHp"><legend>Headphones</legend>
+    <div class="row" style="margin-top:4px"><label class="chk"><input type="checkbox" id="hpOn" checked> Enabled</label></div>
+    <div class="note">The PC volume does not change the headphones.</div>
+    <div class="row"><span class="k" id="hpDevK">Device:</span><select class="dev" id="hpDev"></select></div>
+    <div class="note amb indent hide" id="hpGone"></div>
+    <div class="note indent hide" id="hpShare"></div>
+    <div class="fold" data-fold="hpDet" id="hpFold">Device details</div>
+    <div id="hpDet" class="hide"></div>
+   </fieldset>
+
+   <fieldset><legend class="amb">Radio speaker</legend>
+    <div class="row" style="margin-top:4px">Speaker output on the ANAN-G2.</div>
+    <div class="row"><span class="k">Volume:</span><img class="ico" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnhsaW5rPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5L3hsaW5rIiB2aWV3Qm94PSIwIDAgNjQgNjQiIHdpZHRoPSI2NCIgaGVpZ2h0PSI2NCI+PGRlZnM+PGxpbmVhckdyYWRpZW50IGlkPSJjYWIiIHgxPSIwIiB5MT0iMCIgeDI9IjAiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNmNmM0NmEiLz48c3RvcCBvZmZzZXQ9IjAuMTIiIHN0b3AtY29sb3I9IiNlMmE0NDAiLz48c3RvcCBvZmZzZXQ9IjAuNiIgc3RvcC1jb2xvcj0iI2I4NzQyYSIvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzdhNDYxOCIvPjwvbGluZWFyR3JhZGllbnQ+PGxpbmVhckdyYWRpZW50IGlkPSJjYWJFZGdlIiB4MT0iMCIgeTE9IjAiIHgyPSIwIiB5Mj0iMSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjZmZmMGM4Ii8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjNWEzMjEwIi8+PC9saW5lYXJHcmFkaWVudD48bGluZWFyR3JhZGllbnQgaWQ9ImRpYWwiIHgxPSIwIiB5MT0iMCIgeDI9IjAiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNmZmY4ZTQiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiNlOGQ2YTgiLz48L2xpbmVhckdyYWRpZW50PjxyYWRpYWxHcmFkaWVudCBpZD0ia25vYiIgY3g9IjAuNSIgY3k9IjAuNSIgcj0iMC41IiBmeD0iMC4zNiIgZnk9IjAuMyI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjZmZmZmZmIi8+PHN0b3Agb2Zmc2V0PSIwLjMiIHN0b3AtY29sb3I9IiNkOGRlZTQiLz48c3RvcCBvZmZzZXQ9IjAuNzUiIHN0b3AtY29sb3I9IiM2ZTc4ODIiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMyZTM0M2EiLz48L3JhZGlhbEdyYWRpZW50PjxsaW5lYXJHcmFkaWVudCBpZD0iYW50IiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMCI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjOGM5NmEwIi8+PHN0b3Agb2Zmc2V0PSIwLjUiIHN0b3AtY29sb3I9IiNmZmZmZmYiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiM4Yzk2YTAiLz48L2xpbmVhckdyYWRpZW50PjxsaW5lYXJHcmFkaWVudCBpZD0iZ3JpbGxlIiB4MT0iMCIgeTE9IjAiIHgyPSIwIiB5Mj0iMSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjM2EyNDEwIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMWUxMjA4Ii8+PC9saW5lYXJHcmFkaWVudD48bGluZWFyR3JhZGllbnQgaWQ9InBhbmVsIiB4MT0iMCIgeTE9IjAiIHgyPSIwIiB5Mj0iMSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjMmMyZTMyIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMTQxNTE4Ii8+PC9saW5lYXJHcmFkaWVudD48L2RlZnM+PHBhdGggZD0iTTE4IDIxIEw0NiA1IiBzdHJva2U9IiM0YTUwNTgiIHN0cm9rZS13aWR0aD0iMi42IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48cGF0aCBkPSJNMTggMjEgTDQ2IDUiIHN0cm9rZT0idXJsKCNhbnQpIiBzdHJva2Utd2lkdGg9IjEuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PGNpcmNsZSBjeD0iNDYuNCIgY3k9IjQuOCIgcj0iMi4yIiBmaWxsPSJ1cmwoI2tub2IpIi8+PHJlY3QgeD0iOSIgeT0iNTIiIHdpZHRoPSI3IiBoZWlnaHQ9IjQiIHJ4PSIxLjUiIGZpbGw9IiMyYTFhMGMiLz48cmVjdCB4PSI0OCIgeT0iNTIiIHdpZHRoPSI3IiBoZWlnaHQ9IjQiIHJ4PSIxLjUiIGZpbGw9IiMyYTFhMGMiLz48cmVjdCB4PSIzIiB5PSIxOSIgd2lkdGg9IjU4IiBoZWlnaHQ9IjM1IiByeD0iNyIgZmlsbD0iIzNhMjAwOCIvPjxyZWN0IHg9IjMiIHk9IjE4IiB3aWR0aD0iNTgiIGhlaWdodD0iMzUiIHJ4PSI3IiBmaWxsPSJ1cmwoI2NhYikiLz48cmVjdCB4PSI1IiB5PSIxOS4yIiB3aWR0aD0iNTQiIGhlaWdodD0iNSIgcng9IjIuNSIgZmlsbD0iI2ZmZmZmZiIgZmlsbC1vcGFjaXR5PSIuMzUiLz48cmVjdCB4PSI4IiB5PSIyNCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjI1IiByeD0iNCIgZmlsbD0idXJsKCNwYW5lbCkiLz48cmVjdCB4PSIxMSIgeT0iMjciIHdpZHRoPSIyOCIgaGVpZ2h0PSI5IiByeD0iMiIgZmlsbD0idXJsKCNkaWFsKSIvPjxwYXRoIGQ9Ik0xMyAzMC41aDI0TTE0IDMzLjV2LTNNMTggMzMuNXYtMk0yMiAzMy41di0zTTI2IDMzLjV2LTJNMzAgMzMuNXYtM00zNCAzMy41di0yIiBzdHJva2U9IiM4YTZhM2EiIHN0cm9rZS13aWR0aD0iLjgiLz48cGF0aCBkPSJNMjQgMjcuNnY4IiBzdHJva2U9IiNlMDIwMjAiIHN0cm9rZS13aWR0aD0iMS4zIi8+PHJlY3QgeD0iMTEuMiIgeT0iMjcuMiIgd2lkdGg9IjI3LjYiIGhlaWdodD0iMi40IiByeD0iMS4yIiBmaWxsPSIjZmZmZmZmIiBmaWxsLW9wYWNpdHk9Ii41NSIvPjxyZWN0IHg9IjExIiB5PSIzOC41IiB3aWR0aD0iMjgiIGhlaWdodD0iOCIgcng9IjIiIGZpbGw9InVybCgjZ3JpbGxlKSIvPjxwYXRoIGQ9Ik0xMi41IDQwLjVoMjVNMTIuNSA0Mi41aDI1TTEyLjUgNDQuNWgyNSIgc3Ryb2tlPSIjYzg5MDQ4IiBzdHJva2Utb3BhY2l0eT0iLjU1IiBzdHJva2Utd2lkdGg9Ii45Ii8+PGNpcmNsZSBjeD0iNDguNSIgY3k9IjM3IiByPSI3LjYiIGZpbGw9IiMxNDE1MTgiLz48Y2lyY2xlIGN4PSI0OC41IiBjeT0iMzYuNSIgcj0iNi44IiBmaWxsPSJ1cmwoI2tub2IpIi8+PHBhdGggZD0iTTQ4LjUgMzF2My42IiBzdHJva2U9IiMyYTJlMzQiIHN0cm9rZS13aWR0aD0iMS40IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48Y2lyY2xlIGN4PSI0NCIgY3k9IjI5IiByPSIxLjQiIGZpbGw9IiNmZmIwMzAiLz48Y2lyY2xlIGN4PSI0NCIgY3k9IjI5IiByPSIuNiIgZmlsbD0iI2ZmZjRjMCIvPjwvc3ZnPg==" alt=""><input type="range" class="amb" value="60" style="--p:60%"><span class="val">60</span><label class="chk"><input type="checkbox"> Mute radio speaker</label></div>
+    <div class="note">Same control as RADIO in the header. Plays the receiving slices; each slice's AF level and mute still apply.</div>
+    <div class="row"><span>Speaker amplifier:</span>
+     <label class="rad"><input type="radio" name="amp" checked> Normal</label>
+     <label class="rad"><input type="radio" name="amp"> Off while transmitting</label>
+     <label class="rad"><input type="radio" name="amp"> Always off</label></div>
+    <div class="note">The radio's built-in amplifier for its speaker jacks. Muting the radio speaker also switches it off. Off while transmitting keeps it on for CW and Tune, so you still hear the sidetone. Switching it can make a pop.</div>
+   </fieldset>
+
+   <button id="rescanBtn">Rescan devices</button>
+   <div class="note" id="rescanNote"></div>
+  </div>
+
+  <!-- ============================ MICROPHONE ============================ -->
+  <div class="page" id="p-mic">
+   <h2>Microphone</h2>
+   <div class="sect">Source</div>
+   <div class="box">
+    <div style="display:flex;flex-direction:column;gap:6px">
+     <label class="rad"><input type="radio" name="src" checked> PC Mic</label>
+     <label class="rad"><input type="radio" name="src"> Radio Mic</label>
+     <label class="rad"><input type="radio" name="src"> VAX TX (virtual device)</label>
+    </div>
+    <div style="margin-top:6px">Pick where transmit audio comes from. The other sections stay visible but greyed out until you pick them.</div>
+   </div>
+
+   <fieldset id="cardMic"><legend>PC microphone</legend>
+    <div class="row"><span class="k">Device:</span><select class="dev" id="micDev"></select></div>
+    <div class="row" id="sideRow"><span>Mic is on:</span>
+     <label class="rad"><input type="radio" name="side" value="L" checked> <span id="sideL"></span></label>
+     <label class="rad"><input type="radio" name="side" value="R"> <span id="sideR"></span></label>
+     <label class="rad"><input type="radio" name="side" value="B"> Both</label></div>
+    <div class="note indent" id="sideNote">For a mono mic plugged into one input of the pair.</div>
+    <div class="note amb indent hide" id="micBt">AirPods switch to phone-call quality, for listening too, while they are your mic.</div>
+    <div class="note amb indent hide" id="micGone"></div>
+    <div class="row"><button id="testMic">Test Mic</button><span class="meter"><i id="meter"></i></span></div>
+    <div class="row"><span id="micStatus">Microphone not in use</span><span class="sp"></span><button disabled>Retry microphone</button></div>
+    <div class="fold open" data-fold="micDet">Device details</div>
+    <div id="micDet"></div>
+   </fieldset>
+
+   <div class="sect">Radio Mic (Saturn G2)</div>
+   <div class="box off">
+    <div style="display:flex;gap:14px;margin-bottom:6px"><label class="rad dis"><input type="radio" disabled checked> 3.5 mm Jack</label><label class="rad dis"><input type="radio" disabled> XLR</label></div>
+    <div style="display:flex;flex-direction:column;gap:6px">
+     <label class="chk dis"><input type="checkbox" disabled> Mic Tip-Ring (Tip is Mic)</label>
+     <label class="chk dis"><input type="checkbox" disabled> Mic PTT Disabled</label>
+     <label class="chk dis"><input type="checkbox" disabled> Mic Bias</label>
+     <label class="chk dis"><input type="checkbox" disabled> +20 dB Mic Boost</label>
+    </div>
+   </div>
+
+   <div class="sect">Mic gain</div>
+   <div class="box">
+    <div class="row" style="margin:0"><span>Mic Gain:</span><input type="range" class="wide" min="-40" max="10" value="-6" style="--p:68%"><span>-6 dB</span></div>
+    <div style="margin-top:6px">Applies to whichever source is picked above.</div>
+   </div>
+  </div>
+
+  <!-- ============================ DIGITAL MODES ============================ -->
+  <div class="page" id="p-dig">
+   <h2>Digital modes</h2>
+   <div id="digOther" class="hide">
+    <div class="bighead" style="margin-top:0">VAX</div>
+    <div class="intro" id="digIntro"></div>
+    <div class="note">This page does not change on Mac and Linux, where VAX already makes its own devices.</div>
+   </div>
+   <div id="digWin">
+   <div class="bighead" style="margin-top:0">VAX</div>
+   <div class="intro">Windows has no built-in way for one app to hand audio to another, so each VAX channel uses a virtual audio cable you install (VB-CABLE, Voicemeeter or VAC). Pick one cable per channel; WSJT-X and others then use the other end of that cable.</div>
+   <div class="sys" style="margin:2px 0 6px 0"><span class="dot"></span><span id="cabCount"></span></div>
+   <div id="vaxCards"></div>
+   <div class="row"><span class="note" style="margin:0" id="cabLine"></span><span class="sp"></span><button class="small">Rescan</button></div>
+   </div>
+
+   <div class="bighead">TCI</div>
+   <div class="note">TCI audio is separate from the PC and radio speaker volumes; muting either one does not mute TCI.</div>
+   <fieldset><legend>Audio stream</legend>
+    <div class="row"><span style="width:82px;white-space:nowrap">Slice A rate:</span><span class="tbox">48000</span></div>
+    <div class="note">Slices C and D are not available over TCI.</div>
+    <div class="row"><span style="width:82px;white-space:nowrap">Format:</span><span class="tbox">Float32</span></div>
+    <div class="row"><span style="width:82px;white-space:nowrap">Channels:</span><span class="tbox">Stereo</span></div>
+    <div class="row"><span style="width:82px;white-space:nowrap">Block size:</span><span class="tbox">2048 samples</span></div>
+   </fieldset>
+   <fieldset><legend>Transmit</legend>
+    <div class="row"><span style="width:82px;white-space:nowrap">TX channel:</span><span class="tbox">Both</span></div>
+    <div class="row"><span style="width:82px;white-space:nowrap">TX buffering:</span><span class="tbox">50 ms</span></div>
+   </fieldset>
+  </div>
+
+  <div class="page" id="p-na"><h2>Not part of this mockup</h2><p class="note">Only Outputs, Microphone and Digital modes change in this design.</p></div>
+
+  </div>
+ </div>
+
+ <div class="modalbg" id="modal">
+  <div class="modal">
+   <h3 id="mTitle"></h3>
+   <p id="mText"></p>
+   <ul id="mList"></ul>
+   <p class="note" id="mNote"></p>
+   <div class="btns"><button id="mCancel">Cancel</button><button class="pri" id="mOk"></button></div>
+  </div>
+ </div>
+
+ <div class="modalbg" id="drvBg">
+  <div>
+   <div class="standin">Stand-in for the driver's own window. Each maker's looks different, and NereusSDR does not draw it.</div>
+   <div class="drvwin">
+    <div class="dwt" id="dwTitle"></div>
+    <div class="dwb">
+     <div class="dwr"><span>Buffer size</span><select id="dwBuf"></select></div>
+     <div class="dwr"><span>Sample rate</span><select id="dwRate"></select></div>
+     <div class="dwr"><span>Clock source</span><select id="dwClock"></select></div>
+     <div class="dwbtns"><button id="dwOk">OK</button><button id="dwCancel">Cancel</button></div>
+    </div>
+   </div>
+  </div>
+ </div>
+</div>
+
+<script>
+const IF = {
+  foc: {name: "Focusrite USB ASIO", outs: 10, ins: 8, bufs: [32, 64, 128, 256, 512], pref: 64, win: "Focusrite USB Audio"},
+  umc: {name: "UMC ASIO Driver", outs: 4, ins: 4, bufs: [64, 128, 256, 512], pref: 128, win: "UMC404HD 192k"},
+};
+const VM = {name: "Voicemeeter Virtual ASIO", outs: 8, ins: 8, bufs: [128, 256, 512], pref: 256};
+const DRV_NEW = [
+  ["wshared", "Windows audio, shared"],
+  ["wexcl", "Windows audio, exclusive"],
+  ["asio", "ASIO"],
+  ["", "Older drivers", "sep"],
+  ["mme", "MME"],
+  ["ds", "DirectSound"],
+  ["wdmks", "WDM-KS"],
+];
+const DRV_OLD = [
+  ["wshared", "Windows WASAPI"],
+  ["asio", "ASIO"],
+  ["mme", "MME"],
+  ["ds", "Windows DirectSound"],
+  ["wdmks", "Windows WDM-KS"],
+];
+const DRV_PLAT = {
+  win: DRV_NEW,
+  mac: [["ca", "Core Audio"]],
+  lpw: [["pw", "PipeWire"], ["", "Older drivers", "sep"], ["jack", "JACK"], ["alsa", "ALSA"]],
+  lpa: [["pw", "PipeWire (not running)", "dis"], ["pa", "PulseAudio"], ["", "Older drivers", "sep"], ["jack", "JACK"], ["alsa", "ALSA"]],
+};
+const OLDER = ["mme", "ds", "wdmks", "jack", "alsa"];
+const DRV_LABEL = {ca: "Core Audio", pw: "PipeWire", pa: "PulseAudio", jack: "JACK", alsa: "ALSA", wshared: "Windows audio, shared", wexcl: "Windows audio, exclusive", asio: "ASIO", mme: "MME", ds: "DirectSound", wdmks: "WDM-KS"};
+const VAX = ["vax1", "vax2", "vax3", "vax4"];
+const CARDS = ["spk", "hp", "mic", ...VAX];
+const OUTS = ["spk", "hp", ...VAX];
+const NAME = {spk: "Speakers", hp: "Headphones", mic: "PC microphone", vax1: "VAX 1", vax2: "VAX 2", vax3: "VAX 3", vax4: "VAX 4"};
+const WHO = {spk: "the speakers", hp: "the headphones", mic: "the PC microphone", vax1: "VAX 1", vax2: "VAX 2", vax3: "VAX 3", vax4: "VAX 4"};
+const USER = {spk: "speakers", hp: "headphones", vax1: "VAX 1", vax2: "VAX 2", vax3: "VAX 3", vax4: "VAX 4"};
+const CABLES = [
+  {v: "cable:main", t: "CABLE Input (VB-Audio Virtual Cable)", s: "CABLE Input", on: () => true},
+  {v: "cable:a", t: "CABLE-A Input (VB-Audio Cable A)", s: "CABLE-A Input", on: () => $("cabA").checked},
+  {v: "cable:b", t: "CABLE-B Input (VB-Audio Cable B)", s: "CABLE-B Input", on: () => $("cabB").checked},
+  {v: "cable:vm", t: "Voicemeeter Input (VB-Audio Voicemeeter VAIO)", s: "Voicemeeter Input", on: () => $("vmOn").checked},
+];
+const state = {
+  hpOn: true,
+  spkDrv: "asio", hpDrv: "asio", micDrv: "asio",
+  spk: "foc:1", hp: "foc:3", mic: "foc:1",
+  vax1Drv: "cable", vax1: "cable:main", vax1On: true,
+  vax2Drv: "cable", vax2: "", vax2On: false,
+  vax3Drv: "cable", vax3: "cable:a", vax3On: true,
+  vax4Drv: "cable", vax4: "", vax4On: false,
+  excl: {spk: false, hp: false, mic: false},
+  rate: {spk: 48000, hp: 48000, mic: 48000},
+  spkDelay: "auto", hpDelay: "auto", micDelay: "auto",
+  buf: {spk: null, hp: null, mic: null},
+  asio: {},
+};
+const $ = id => document.getElementById(id);
+const plat = () => $("plat").value;
+const isWin = () => plat() === "win";
+const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+
+function iface() { return IF[$("iface").value]; }
+function asioDrivers() {
+  const list = [Object.assign({key: $("iface").value}, iface())];
+  if ($("vmOn").checked) { list.push(Object.assign({key: "vm"}, VM)); }
+  return list;
+}
+function asioByKey(k) { return k === "vm" ? VM : IF[k]; }
+function isOnIn(s, c) { return c === "hp" ? s.hpOn : c.startsWith("vax") ? s[c + "On"] : true; }
+function isOn(c) { return isOnIn(state, c); }
+function activeCards() { return CARDS.filter(isOn); }
+function effDrv(c) { return (state[c + "Drv"] === "wshared" && state.excl[c] && $("layout").value === "old") ? "wexcl" : state[c + "Drv"]; }
+function dirOf(c) { return c === "mic" ? "in" : "out"; }
+function asioKey(v) { return v ? v.split(":")[0] : ""; }
+function asioCh(v) { return Number(v.split(":")[1]); }
+// One ASIO driver runs every channel at one buffer size and one sample rate.
+function asioCur(k) {
+  if (!state.asio[k]) { state.asio[k] = {buf: asioByKey(k).pref, rate: 48000, clock: "int"}; }
+  return state.asio[k];
+}
+function rateOf(c) { return state[c + "Drv"] === "asio" && state[c] ? asioCur(asioKey(state[c])).rate : state.rate[c]; }
+function joinNames(list) { return list.length < 2 ? list.join("") : list.slice(0, -1).join(", ") + " and " + list[list.length - 1]; }
+let restart = null;
+
+function devices(dir) {
+  const ifn = iface().win;
+  if (!isWin()) {
+    const n = dir === "out" ? iface().outs : iface().ins;
+    const pairs = [];
+    for (let ch = 1; ch < n; ch += 2) { pairs.push(["iface:" + ch, ifn + " · " + (dir === "out" ? "Outputs " : "Inputs ") + ch + "-" + (ch + 1)]); }
+    const mac = plat() === "mac";
+    const base = dir === "out"
+      ? [["default", "(platform default)"], ["builtin", mac ? "MacBook Pro Speakers" : "Built-in Audio Analog Stereo"], ["pods", "AirPods Pro"]]
+      : [["default", "(platform default)"], ["builtin", mac ? "MacBook Pro Microphone" : "Built-in Audio Analog Stereo"], ["pods", mac ? "AirPods Pro" : "AirPods Pro (headset)"]];
+    return base.concat(pairs);
+  }
+  return dir === "out"
+    ? [["default", "(platform default)"], ["realtek", "Speakers (Realtek(R) Audio)"], ["iface", "Speakers (" + ifn + ")"], ["pods", "Headphones (AirPods Pro)"]]
+    : [["default", "(platform default)"], ["realtek", "Microphone Array (Realtek(R) Audio)"], ["iface", "Microphone (" + ifn + ")"], ["pods", "Headset (AirPods Pro)"]];
+}
+
+function pairText(key, ch, dir) {
+  return asioByKey(key).name + " · " + (dir === "out" ? "Outputs " : "Inputs ") + ch + "-" + (ch + 1);
+}
+
+// Is this card's chosen device on the computer right now?
+function present(c) {
+  const v = state[c];
+  if (!v) { return true; }
+  if (state[c + "Drv"] === "asio") {
+    const k = asioKey(v);
+    if (k === "vm") { return $("vmOn").checked; }
+    return k === $("iface").value;
+  }
+  if (c.startsWith("vax")) { const cab = CABLES.find(x => x.v === v); return !cab || cab.on(); }
+  if (v === "pods") { return $("podsOn").checked; }
+  return true;
+}
+function devLabel(c) {
+  const v = state[c];
+  if (state[c + "Drv"] === "asio") { return pairText(asioKey(v), asioCh(v), dirOf(c)); }
+  if (c.startsWith("vax")) { const cab = CABLES.find(x => x.v === v); return cab ? cab.t : ""; }
+  const d = devices(dirOf(c)).find(x => x[0] === v);
+  return d ? d[1] : "";
+}
+
+// Other output cards on this exact ASIO pair.
+function pairUsers(c, v) {
+  return OUTS.filter(k => k !== c && isOn(k) && state[k + "Drv"] === "asio" && state[k] === v);
+}
+
+function asioGroups(sel, c, dir) {
+  for (const d of asioDrivers()) {
+    const g = document.createElement("optgroup");
+    g.label = d.name;
+    const n = dir === "out" ? d.outs : d.ins;
+    for (let ch = 1; ch < n; ch += 2) {
+      const v = d.key + ":" + ch;
+      const t = pairText(d.key, ch, dir);
+      const users = dir === "out" ? pairUsers(c, v) : [];
+      const o = new Option(t, v);
+      if (users.length) {
+        o.text = t + "  (used by " + users.map(u => USER[u]).join(", ") + ")";
+        // Radio audio and digital-mode audio never share a pair; speakers and headphones may.
+        const vaxClash = c.startsWith("vax") ? users.some(u => !u.startsWith("vax")) : users.some(u => u.startsWith("vax"));
+        if (vaxClash) { o.disabled = true; }
+      }
+      g.appendChild(o);
+    }
+    sel.appendChild(g);
+  }
+}
+
+function addMissing(sel, c) {
+  if (state[c] && !present(c)) {
+    sel.add(new Option(devLabel(c) + " (not connected)", state[c]));
+  }
+}
+
+function fillDev(c) {
+  const dir = dirOf(c);
+  const sel = $(c + "Dev");
+  sel.innerHTML = "";
+  if (state[c + "Drv"] === "asio") {
+    asioGroups(sel, c, dir);
+    if (!state[c]) {
+      const other = activeCards().find(k => k !== c && state[k + "Drv"] === "asio" && state[k]);
+      const key = other ? asioKey(state[other]) : asioDrivers()[0].key;
+      state[c] = key + ":1";
+    }
+    addMissing(sel, c);
+  } else {
+    let grp = null;
+    for (const [v, t] of devices(dir)) {
+      if (v === "pods" && !$("podsOn").checked) { continue; }
+      if (v.startsWith("iface:")) {
+        if (!grp) { grp = document.createElement("optgroup"); grp.label = iface().win; sel.appendChild(grp); }
+        const users = dir === "out" ? ["spk", "hp"].filter(k => k !== c && isOn(k) && state[k] === v) : [];
+        grp.appendChild(new Option(t + (users.length ? "  (used by " + users.map(u => USER[u]).join(", ") + ")" : ""), v));
+        continue;
+      }
+      sel.add(new Option(t, v));
+    }
+    if (!state[c]) { state[c] = "default"; }
+    addMissing(sel, c);
+  }
+  sel.value = state[c];
+}
+
+function fillVax(c) {
+  const sel = $(c + "Dev");
+  sel.innerHTML = "";
+  sel.add(new Option("(pick a cable)", ""));
+  const g = document.createElement("optgroup");
+  g.label = "Virtual cables";
+  for (const cab of CABLES) {
+    if (!cab.on()) { continue; }
+    const users = VAX.filter(k => k !== c && state[k + "Drv"] === "cable" && state[k] === cab.v);
+    g.appendChild(new Option(cab.t + (users.length ? "  (used by " + users.map(u => NAME[u]).join(", ") + ")" : ""), cab.v));
+  }
+  sel.appendChild(g);
+  asioGroups(sel, c, "out");
+  addMissing(sel, c);
+  sel.value = state[c];
+}
+
+function bufInfo(c) {
+  const drv = effDrv(c);
+  if (drv === "asio") { const k = asioKey(state[c]); const cur = asioCur(k); return {list: $("oneBuf").checked ? [cur.buf] : asioByKey(k).bufs, pref: cur.buf, asio: k}; }
+  if (drv === "wexcl") { return {list: [48, 64, 96, 128, 256], pref: 64}; }
+  if (drv === "wshared") { return {list: [128, 240, 480], pref: 128}; }
+  if (drv === "wdmks") { return {list: [128, 256, 512], pref: 256}; }
+  if (drv === "ca") { return {list: [32, 64, 128, 256, 512], pref: 128}; }
+  if (drv === "pw") { return {list: [64, 128, 256, 512, 1024], pref: 128}; }
+  if (drv === "pa") { return {list: [128, 256, 512, 1024], pref: 256}; }
+  if (drv === "jack") { return {list: [64, 128, 256, 512], pref: 128}; }
+  return {list: [512, 1024, 2048], pref: 1024};
+}
+
+function delayMs(c, buf) {
+  const manual = state[c + "Delay"];
+  const drv = effDrv(c);
+  const extra = {asio: 0.4, wexcl: 0.7, wshared: 1.2, wdmks: 1.0, ds: 30, mme: 40, ca: 0.6, pw: 1.0, pa: 6, jack: 0.8, alsa: 4}[drv];
+  const ring = manual === "auto" ? (["mme", "ds", "alsa"].includes(drv) ? 10 : 1.5) : Number(manual);
+  return (buf / (rateOf(c) / 1000) + ring + extra).toFixed(1);
+}
+
+function details(c) {
+  const dir = dirOf(c);
+  const el = $(c + "Det");
+  const old = $("layout").value === "old";
+  const disabled = !isOn(c);
+  const D = disabled ? " disabled" : "";
+  const kc = disabled ? "k off" : "k";
+  const b = bufInfo(c);
+  if (state.buf[c] === null || !b.list.includes(state.buf[c])) { state.buf[c] = b.pref; }
+  const buf = b.asio ? asioCur(b.asio).buf : state.buf[c];
+  const rate = rateOf(c);
+  const drvList = old ? DRV_OLD : DRV_PLAT[plat()];
+  const drvOpts = drvList.map(([v, t, kind]) => `<option value="${v}"${kind ? " disabled" : ""}${v && !kind && (state[c + "Drv"] === v || (!old && effDrv(c) === v)) ? " selected" : ""}>${kind === "sep" ? "── " + t + " ──" : t}</option>`).join("");
+  const isAsio = state[c + "Drv"] === "asio";
+  const isPair = isAsio || (state[c] || "").startsWith("iface:");
+  const ch = (dir === "in" && isPair) ? "2 (one input pair)" : isPair ? "2 (one output pair)" : "2 (Stereo)";
+  const where = c === "mic" ? "from this mic to the radio" : c === "hp" ? "from the radio to these headphones" : "from the radio to these speakers";
+  const delays = ["auto", "2", "3", "5", "10", "20", "40"].map(v => `<option value="${v}"${state[c + "Delay"] === v ? " selected" : ""}>${v === "auto" ? "Automatic" : v + " ms"}</option>`).join("");
+  const pillName = {asio: "ASIO", wexcl: "Exclusive", wshared: "Shared", mme: "MME", ds: "DirectSound", wdmks: "WDM-KS", ca: "Core Audio", pw: "PipeWire", pa: "PulseAudio", jack: "JACK", alsa: "ALSA"}[effDrv(c)];
+  let h = "";
+  h += `<div class="drow"><span class="${kc}">${old ? "Driver API:" : "Driver:"}</span><select class="drv" data-c="${c}" data-r="drv"${D || plat() === "mac" ? " disabled" : ""}${plat() === "mac" ? ' title="Core Audio is the only sound system on a Mac."' : ""}>${drvOpts}</select>${old ? "" : '<span class="newtag">NEW</span>'}</div>`;
+  h += `<div class="drow"><span class="${kc}">Sample rate:</span><select class="md" data-c="${c}" data-r="rate"${D}>${[48000, 96000, 192000].map(r => `<option value="${r}"${r === rate ? " selected" : ""}>${r} Hz</option>`).join("")}</select></div>`;
+  h += `<div class="drow"><span class="${kc}">Channels:</span><select class="md"${D}><option>${ch}</option></select></div>`;
+  const BD = disabled || (isAsio && $("oneBuf").checked) ? " disabled" : "";
+  h += `<div class="drow"><span class="${kc}">Buffer size:</span><select class="md" data-c="${c}" data-r="buf"${BD}>${b.list.map(n => `<option value="${n}"${n === buf ? " selected" : ""}>${n} samples</option>`).join("")}</select><span class="ms">${(buf / (rate / 1000)).toFixed(1)} ms</span>`
+     + `<button style="margin-left:6px" data-c="${c}" data-r="panel"${isAsio && !disabled ? "" : " disabled"} title="${!isWin() ? "ASIO drivers are Windows only." : isAsio ? "Opens the driver's own settings window" : "For ASIO drivers"}">ASIO control panel</button></div>`;
+  if (isAsio && !disabled) {
+    const k = asioKey(state[c]);
+    if ($("oneBuf").checked) { h += `<div class="drow"><span class="k"></span><span class="note" style="margin:0">This driver allows one buffer size. Change it in the ASIO control panel.</span></div>`; }
+    const others = activeCards().filter(x => x !== c && state[x + "Drv"] === "asio" && state[x] && asioKey(state[x]) === k && present(x)).map(x => WHO[x]);
+    if (others.length) { h += `<div class="drow"><span class="k"></span><span class="note" style="margin:0">Buffer size and sample rate are shared with ${joinNames(others)}, on the same ASIO driver.</span></div>`; }
+  }
+  if (old) {
+    const wasapi = state[c + "Drv"] === "wshared" && !disabled;
+    const W = wasapi ? "" : " disabled";
+    h += `<div class="drow"><span class="${kc}">Options:</span><label class="chk${wasapi ? "" : " dis"}"><input type="checkbox" data-c="${c}" data-r="excl"${state.excl[c] ? " checked" : ""}${W}> Exclusive</label><label class="chk${wasapi ? "" : " dis"}"><input type="checkbox"${W}> Event-driven</label><label class="chk${wasapi ? "" : " dis"}"><input type="checkbox"${W}> Bypass mixer</label></div>`;
+    h += `<div class="drow"><span class="k"></span><span class="note" style="margin:0">These three work only with WASAPI on Windows.</span></div>`;
+  }
+  h += `<div class="drow"><span class="${kc}">Delay:</span><select class="sm" data-c="${c}" data-r="delay"${D}>${delays}</select><span class="newtag">NEW</span><span class="note${disabled ? " off" : ""}" style="margin:0">Now <span class="delay">${disabled ? "--" : delayMs(c, buf) + " ms"}</span> ${where}</span></div>`;
+  h += `<div class="drow"><span class="k off" style="font-size:11px">Negotiated:</span><span class="pill${disabled ? "" : " ok"}">${disabled ? "(not applied)" : pillName + " · " + rate + " Hz · 2 ch · " + buf + " samples"}</span></div>`;
+  if (isAsio && !disabled && restart && restart.key === asioKey(state[c]) && Date.now() < restart.until) { h += `<div class="drow"><span class="k"></span><span class="note ok" style="margin:0">Restarted with the driver's new settings.</span></div>`; }
+  if (!old && effDrv(c) === "wexcl") { h += `<div class="drow"><span class="k"></span><span class="note" style="margin:0">Other apps cannot play through this device while NereusSDR has it.</span></div>`; }
+  if (!old && OLDER.includes(effDrv(c))) { h += `<div class="drow"><span class="k"></span><span class="note" style="margin:0">An older driver: more delay, and its list updates only with Rescan devices.</span></div>`; }
+  el.innerHTML = h;
+}
+
+function goneText(c) {
+  if (!state[c] || present(c)) { return ""; }
+  const name = devLabel(c);
+  if (c === "mic") { return name + " is not connected. The mic stays silent until it comes back; NereusSDR never switches to another mic on its own."; }
+  if (c.startsWith("vax")) { return name + " is not connected. " + NAME[c] + " stays silent until it comes back; NereusSDR never sends it anywhere else."; }
+  const sysDefault = {win: "Speakers (Realtek(R) Audio)", mac: "MacBook Pro Speakers", lpw: "Built-in Audio Analog Stereo", lpa: "Built-in Audio Analog Stereo"}[plat()];
+  return name + " is not connected. Playing on the system default, " + sysDefault + ", until it comes back.";
+}
+
+function buildVaxCards() {
+  $("vaxCards").innerHTML = VAX.map((c, i) => `
+   <fieldset><legend>VAX ${i + 1}</legend>
+    <div class="vrow" style="margin-top:4px"><label class="chk" id="${c}OnL"><input type="checkbox" id="${c}On"> On</label></div>
+    <div class="vrow"><span class="k">Device:</span><select class="full" id="${c}Dev"></select></div>
+    <div class="vrow"><span class="k">Format:</span><span class="v" id="${c}Fmt"></span></div>
+    <div class="vrow"><span class="k">Used by:</span><span class="v it">Not reported on this computer</span></div>
+    <div class="vrow"><span class="k">Activity:</span><span class="meter thin"><i id="${c}Meter"></i></span></div>
+    <div class="note amb hide" id="${c}Msg" style="margin:6px 0 4px"></div>
+    <div class="note hide" id="${c}Asio" style="margin:6px 0 4px">Most digital-mode apps cannot open ASIO, so pass this pair on in the ASIO app's own mixer (a Voicemeeter strip, for example).</div>
+    <div class="vrow" style="margin-top:6px"><button class="small" id="${c}Ren">Rename...</button><button class="small" id="${c}Copy">Copy name</button></div>
+   </fieldset>`).join("");
+  for (const c of VAX) {
+    $(c + "On").addEventListener("change", e => propose(c, {[c + "On"]: e.target.checked}));
+    $(c + "Dev").addEventListener("change", e => {
+      const v = e.target.value;
+      const drv = v === "" || v.startsWith("cable:") ? "cable" : "asio";
+      const prev = VAX.find(k => k !== c && state[k + "Drv"] === drv && state[k] === v && v && (drv === "cable" || state[k + "On"]));
+      if (prev) {
+        const what = drv === "cable" ? CABLES.find(x => x.v === v).s : pairText(asioKey(v), asioCh(v), "out");
+        showModal({
+          title: drv === "cable" ? "Use this cable here?" : "Use this pair here?",
+          text: NAME[prev] + " uses " + what + ". Move it to " + NAME[c] + "? " + NAME[prev] + " will have no " + (drv === "cable" ? "cable." : "device."),
+          list: [], note: "", ok: "OK",
+          apply: () => { state[prev] = ""; state[prev + "On"] = false; state[c] = v; state[c + "Drv"] = drv; },
+        });
+        return;
+      }
+      propose(c, {[c]: v, [c + "Drv"]: drv});
+    });
+  }
+}
+
+function renderVax() {
+  const found = CABLES.filter(x => x.on());
+  $("cabCount").textContent = found.length + " virtual cable" + (found.length === 1 ? "" : "s") + " found.";
+  $("cabLine").textContent = "Detected virtual cables: " + found.length + " cable" + (found.length === 1 ? "" : "s") + ": " + found.map(x => x.s + " (output)").join(", ");
+  for (const c of VAX) {
+    fillVax(c);
+    const has = !!state[c];
+    const asio = state[c + "Drv"] === "asio";
+    $(c + "On").checked = state[c + "On"];
+    $(c + "On").disabled = !has;
+    $(c + "OnL").classList.toggle("dis", !has);
+    $(c + "Fmt").textContent = asio && has ? asioCur(asioKey(state[c])).rate + " Hz · Stereo · Int32 (ASIO)" : "48000 Hz · Stereo · Float32";
+    const msg = !has ? "Pick a cable first." : goneText(c);
+    $(c + "Msg").textContent = msg;
+    $(c + "Msg").classList.toggle("hide", !msg);
+    $(c + "Asio").classList.toggle("hide", !(asio && has && present(c)));
+    $(c + "Ren").disabled = !has;
+    $(c + "Copy").disabled = !has;
+  }
+}
+
+function render() {
+  const old = $("layout").value === "old";
+  for (const c of ["spk", "hp", "mic"]) {
+    if (old && state[c + "Drv"] === "wexcl") { state[c + "Drv"] = "wshared"; state.excl[c] = true; }
+    if (!old && state[c + "Drv"] === "wshared" && state.excl[c]) { state[c + "Drv"] = "wexcl"; state.excl[c] = false; }
+  }
+  $("hpOn").checked = state.hpOn;
+  fillDev("spk"); fillDev("hp"); fillDev("mic");
+  details("spk"); details("hp"); details("mic");
+  renderVax();
+
+  const w = isWin();
+  const cards = w ? activeCards() : ["spk", "hp", "mic"].filter(isOn);
+  const used = [...new Set(cards.filter(c => state[c + "Drv"] === "asio" && present(c)).map(c => asioByKey(asioKey(state[c])).name))];
+  const others = [...new Set(cards.map(c => effDrv(c)).filter(d => OLDER.includes(d)).map(d => DRV_LABEL[d]))];
+  let sys;
+  if (w) {
+    sys = "Windows audio (WASAPI)";
+    if (used.length) { sys += " and ASIO (" + used[0] + ")"; }
+    if (others.length) { sys += ", " + others.join(", "); }
+  } else {
+    sys = {mac: "Core Audio", lpw: "PipeWire. NereusSDR talks to it directly.", lpa: "PulseAudio. PipeWire was not found, so NereusSDR talks to PulseAudio directly."}[plat()];
+    if (others.length) { sys += " Older drivers in use: " + others.join(", ") + "."; }
+  }
+  $("sysText").textContent = sys;
+  $("rescanNote").textContent = {
+    win: "Only the older drivers need this. Windows audio and ASIO lists update by themselves.",
+    mac: "Core Audio lists update by themselves, so there is nothing to rescan.",
+    lpw: "Only the older drivers need this. PipeWire lists update by themselves.",
+    lpa: "Only the older drivers need this. PulseAudio lists update by themselves.",
+  }[plat()];
+  $("rescanBtn").disabled = plat() === "mac";
+  $("digWin").classList.toggle("hide", !w);
+  $("digOther").classList.toggle("hide", w);
+  $("digIntro").textContent = plat() === "mac"
+    ? "Each VAX channel shows up in other apps (WSJT-X, fldigi and so on) as an audio device named NereusSDR VAX 1 to 4. NereusSDR installs this driver itself; no virtual cable is needed."
+    : "Each VAX channel shows up in other apps (WSJT-X, fldigi and so on) as an audio device named NereusSDR VAX 1 to 4. NereusSDR creates them in your sound system; no virtual cable is needed.";
+  for (const id of ["vmOn", "cabA", "cabB", "oneBuf", "layout"]) {
+    $(id).disabled = !w;
+    $(id).closest("label").classList.toggle("dis", !w);
+  }
+
+  for (const c of ["spk", "hp", "mic"]) {
+    const g = goneText(c);
+    $(c + "Gone").textContent = g;
+    $(c + "Gone").classList.toggle("hide", !g || !isOn(c));
+  }
+
+  const hp = state.hpOn;
+  $("hpDev").disabled = !hp;
+  $("hpDevK").className = hp ? "k" : "k off";
+  $("hpFold").classList.toggle("dis", !hp);
+  const pairOf = k => state[k + "Drv"] === "asio" || (state[k] || "").startsWith("iface:");
+  const share = hp && pairOf("spk") && pairOf("hp") && asioKey(state.spk) === asioKey(state.hp) && present("spk") && present("hp");
+  $("hpShare").classList.toggle("hide", !share);
+  if (share) {
+    const sc = asioCh(state.spk), hc = asioCh(state.hp);
+    $("hpShare").textContent = state.spk === state.hp
+      ? "Speakers and headphones are on the same pair, so they play together."
+      : "Speakers use outputs " + sc + "-" + (sc + 1) + " and headphones use outputs " + hc + "-" + (hc + 1) + " of " + (asioKey(state.hp) === "iface" ? iface().win : asioByKey(asioKey(state.hp)).name) + ".";
+  }
+
+  const micAsio = state.micDrv === "asio" || (state.mic || "").startsWith("iface:");
+  const ch = micAsio ? asioCh(state.mic) : 1;
+  $("sideL").textContent = micAsio ? "Input " + ch + " (left)" : "Left";
+  $("sideR").textContent = micAsio ? "Input " + (ch + 1) + " (right)" : "Right";
+  $("sideNote").textContent = micAsio ? "For a mono mic plugged into one input of the pair." : "For a mono mic on one side of a stereo input.";
+  $("micBt").classList.toggle("hide", !(!micAsio && state.mic === "pods" && present("mic")));
+  const micGone = goneText("mic");
+  $("micStatus").textContent = micGone ? "Mic not connected" : "Microphone not in use";
+  $("micStatus").style.color = micGone ? "var(--amber)" : "";
+}
+
+// One ASIO driver at a time: any change that would put two drivers in use asks first.
+let pending = null;
+function showModal(p) {
+  pending = p;
+  $("mTitle").textContent = p.title;
+  $("mText").textContent = p.text;
+  $("mList").innerHTML = p.list.map(t => "<li>" + esc(t) + "</li>").join("");
+  $("mList").classList.toggle("hide", !p.list.length);
+  $("mNote").textContent = p.note;
+  $("mNote").classList.toggle("hide", !p.note);
+  $("mOk").textContent = p.ok;
+  $("modal").classList.add("on");
+}
+function propose(c, patch) {
+  const next = Object.assign({}, state, patch);
+  const apply = () => { Object.assign(state, patch); if (state.buf[c] !== undefined) { state.buf[c] = null; } };
+  if (!(next[c + "Drv"] === "asio" && next[c] && isOnIn(next, c))) { apply(); render(); return; }
+  const key = asioKey(next[c]);
+  const clash = CARDS.filter(k => k !== c && isOnIn(next, k) && next[k + "Drv"] === "asio" && next[k] && asioKey(next[k]) !== key);
+  if (!clash.length) { apply(); render(); return; }
+  const d = asioByKey(key);
+  const moves = clash.map(k => {
+    const kd = dirOf(k);
+    const n = kd === "out" ? d.outs : d.ins;
+    let chn = asioCh(next[k]);
+    if (chn + 1 > n) { chn = 1; }
+    return {k, to: key + ":" + chn, text: NAME[k] + ": " + pairText(asioKey(next[k]), asioCh(next[k]), kd) + "  →  " + pairText(key, chn, kd)};
+  });
+  showModal({
+    title: "One ASIO driver at a time",
+    text: "NereusSDR can use one ASIO driver at a time. Switching " + WHO[c] + " to " + d.name + " also moves:",
+    list: moves.map(m => m.text),
+    note: "Cancel keeps everything as it is. To keep a device where it is, cancel and give it a Windows audio device or cable first.",
+    ok: "Switch all to " + d.name,
+    apply: () => { apply(); for (const m of moves) { state[m.k] = m.to; if (state.buf[m.k] !== undefined) { state.buf[m.k] = null; } } },
+  });
+}
+$("mCancel").onclick = () => { pending = null; $("modal").classList.remove("on"); render(); };
+$("mOk").onclick = () => { pending.apply(); pending = null; $("modal").classList.remove("on"); render(); };
+
+buildVaxCards();
+for (const c of ["spk", "hp", "mic"]) {
+  $(c + "Dev").addEventListener("change", e => propose(c, {[c]: e.target.value}));
+}
+$("hpOn").addEventListener("change", e => propose("hp", {hpOn: e.target.checked}));
+
+document.addEventListener("change", e => {
+  const t = e.target; const c = t.dataset.c; const r = t.dataset.r;
+  if (!c) { return; }
+  if (r === "drv") {
+    const v = t.value;
+    if (v === "asio" && state[c + "Drv"] !== "asio") { state[c] = ""; }
+    if (v !== "asio" && state[c + "Drv"] === "asio") { state[c] = "default"; }
+    state[c + "Drv"] = v; state.excl[c] = false; state.buf[c] = null;
+  } else if (r === "buf") { if (state[c + "Drv"] === "asio") { asioCur(asioKey(state[c])).buf = Number(t.value); } else { state.buf[c] = Number(t.value); } }
+  else if (r === "delay") { state[c + "Delay"] = t.value; }
+  else if (r === "rate") { if (state[c + "Drv"] === "asio") { asioCur(asioKey(state[c])).rate = Number(t.value); } else { state.rate[c] = Number(t.value); } }
+  else if (r === "excl") { state.excl[c] = t.checked; state.buf[c] = null; }
+  render();
+});
+$("iface").addEventListener("change", () => {
+  // A different interface stands for a different computer, so pairs move onto it.
+  const n = iface();
+  for (const c of CARDS) {
+    if (state[c + "Drv"] === "asio" && state[c] && asioKey(state[c]) !== "vm") {
+      let ch = asioCh(state[c]);
+      const max = dirOf(c) === "out" ? n.outs : n.ins;
+      if (ch + 1 > max) { ch = 1; }
+      state[c] = $("iface").value + ":" + ch;
+    }
+    if ((state[c] || "").startsWith("iface:")) {
+      const max = dirOf(c) === "out" ? n.outs : n.ins;
+      if (asioCh(state[c]) + 1 > max) { state[c] = "iface:1"; }
+    }
+  }
+  for (const k of Object.keys(savedPlat)) {
+    for (const c of ["spk", "hp", "mic"]) {
+      const v = savedPlat[k][c] || "";
+      const max = dirOf(c) === "out" ? n.outs : n.ins;
+      if (v.startsWith("iface:") && asioCh(v) + 1 > max) { savedPlat[k][c] = "iface:1"; }
+    }
+  }
+  render();
+});
+const PKEYS = ["spkDrv", "hpDrv", "micDrv", "spk", "hp", "mic", "excl", "rate", "buf", "spkDelay", "hpDelay", "micDelay"];
+const savedPlat = {};
+let curPlat = "win";
+function platDefaults(p) {
+  const d = {mac: "ca", lpw: "pw", lpa: "pa"}[p];
+  return {spkDrv: d, hpDrv: d, micDrv: d, spk: "iface:1", hp: "pods", mic: "builtin",
+    excl: {spk: false, hp: false, mic: false}, rate: {spk: 48000, hp: 48000, mic: 48000}, buf: {spk: null, hp: null, mic: null},
+    spkDelay: "auto", hpDelay: "auto", micDelay: "auto"};
+}
+$("plat").addEventListener("change", () => {
+  savedPlat[curPlat] = JSON.parse(JSON.stringify(Object.fromEntries(PKEYS.map(k => [k, state[k]]))));
+  curPlat = plat();
+  Object.assign(state, savedPlat[curPlat] ? JSON.parse(JSON.stringify(savedPlat[curPlat])) : platDefaults(curPlat));
+  if (curPlat !== "win") { $("layout").value = "new"; }
+  render();
+});
+for (const id of ["vmOn", "podsOn", "cabA", "cabB", "oneBuf", "layout"]) { $(id).addEventListener("change", render); }
+document.querySelectorAll(".fold").forEach(f => f.addEventListener("click", () => {
+  if (f.classList.contains("dis")) { return; }
+  f.classList.toggle("open");
+  $(f.dataset.fold).classList.toggle("hide", !f.classList.contains("open"));
+}));
+document.querySelectorAll(".tree .leaf").forEach(l => l.addEventListener("click", () => {
+  document.querySelectorAll(".tree .leaf").forEach(x => x.classList.remove("sel"));
+  l.classList.add("sel");
+  document.querySelectorAll(".page").forEach(p => p.classList.remove("on"));
+  $("p-" + l.dataset.p).classList.add("on");
+}));
+// The lists open in the page instead of as the browser's own menu, so they behave
+// the same in every browser and look like the app's own pop-up list.
+let pop = null;
+function closePop() { if (pop) { pop.el.remove(); pop = null; } }
+function popHi(i) {
+  if (!pop) { return; }
+  pop.items.forEach((d, k) => d.classList.toggle("hi", k === i));
+  pop.idx = i;
+  if (i >= 0) { pop.items[i].scrollIntoView({block: "nearest"}); }
+}
+function popPick(sel, v) {
+  closePop();
+  sel.focus();
+  if (sel.value === v) { return; }
+  sel.value = v;
+  sel.dispatchEvent(new Event("change", {bubbles: true}));
+}
+function openPop(sel) {
+  closePop();
+  const el = document.createElement("div");
+  el.className = "pop" + (sel.closest(".drvwin") ? " light" : "");
+  const items = [];
+  let cur = -1;
+  const add = (o, ind) => {
+    const d = document.createElement("div");
+    d.className = "it" + (ind ? " ind" : "") + (o.disabled ? " dis" : "");
+    d.textContent = o.text;
+    if (!o.disabled) {
+      const i = items.length;
+      if (o.value === sel.value && cur < 0) { cur = i; }
+      d.addEventListener("mousemove", () => { if (pop && pop.idx !== i) { popHi(i); } });
+      d.addEventListener("click", () => popPick(sel, o.value));
+      items.push(d);
+      d.dataset.v = o.value;
+    }
+    el.appendChild(d);
+  };
+  for (const ch of sel.children) {
+    if (ch.tagName === "OPTGROUP") {
+      const g = document.createElement("div");
+      g.className = "grp";
+      g.textContent = ch.label;
+      el.appendChild(g);
+      for (const o of ch.children) { add(o, true); }
+    } else {
+      add(ch, false);
+    }
+  }
+  el.addEventListener("mousedown", e => e.preventDefault());
+  document.body.appendChild(el);
+  const r = sel.getBoundingClientRect();
+  el.style.minWidth = r.width + "px";
+  el.style.left = Math.max(4, Math.min(r.left, innerWidth - el.offsetWidth - 4)) + scrollX + "px";
+  const h = el.offsetHeight;
+  const below = r.bottom + 2 + h <= innerHeight || r.top - 2 - h < 0;
+  el.style.top = (below ? r.bottom + 2 : r.top - 2 - h) + scrollY + "px";
+  pop = {el, sel, items, idx: -1};
+  popHi(cur);
+}
+document.addEventListener("mousedown", e => {
+  const s = e.target.closest ? e.target.closest("select") : null;
+  if (s) {
+    e.preventDefault();
+    if (s.disabled) { return; }
+    if (pop && pop.sel === s) { closePop(); return; }
+    s.focus();
+    openPop(s);
+    return;
+  }
+  if (pop && !pop.el.contains(e.target)) { closePop(); }
+}, true);
+document.addEventListener("keydown", e => {
+  if (pop) {
+    const n = pop.items.length;
+    if (e.key === "Escape" || e.key === "Tab") { closePop(); if (e.key === "Escape") { e.preventDefault(); } return; }
+    if (e.key === "ArrowDown") { popHi(Math.min(n - 1, pop.idx + 1)); e.preventDefault(); return; }
+    if (e.key === "ArrowUp") { popHi(Math.max(0, pop.idx - 1)); e.preventDefault(); return; }
+    if ((e.key === "Enter" || e.key === " ") && pop.idx >= 0) { popPick(pop.sel, pop.items[pop.idx].dataset.v); e.preventDefault(); return; }
+    e.preventDefault();
+    return;
+  }
+  const s = document.activeElement;
+  if (s && s.tagName === "SELECT" && !s.disabled && [" ", "Enter", "ArrowDown", "ArrowUp"].includes(e.key)) {
+    e.preventDefault();
+    openPop(s);
+  }
+}, true);
+window.addEventListener("scroll", e => { if (pop && e.target !== pop.el) { closePop(); } }, true);
+window.addEventListener("resize", closePop);
+let dwKey = null;
+document.addEventListener("click", e => {
+  const b = e.target.closest ? e.target.closest("button[data-r=panel]") : null;
+  if (!b || b.disabled) { return; }
+  dwKey = asioKey(state[b.dataset.c]);
+  const d = asioByKey(dwKey);
+  const cur = asioCur(dwKey);
+  $("dwTitle").textContent = d.name + " settings";
+  $("dwBuf").innerHTML = d.bufs.map(n => `<option value="${n}"${n === cur.buf ? " selected" : ""}>${n} samples</option>`).join("");
+  $("dwRate").innerHTML = [48000, 96000, 192000].map(r => `<option value="${r}"${r === cur.rate ? " selected" : ""}>${r} Hz</option>`).join("");
+  const clocks = dwKey === "vm" ? [["int", "Internal"]] : [["int", "Internal"], ["spdif", "S/PDIF input"]];
+  $("dwClock").innerHTML = clocks.map(([v, t]) => `<option value="${v}"${v === cur.clock ? " selected" : ""}>${t}</option>`).join("");
+  $("drvBg").classList.add("on");
+});
+$("dwCancel").onclick = () => { $("drvBg").classList.remove("on"); };
+$("dwOk").onclick = () => {
+  $("drvBg").classList.remove("on");
+  const cur = asioCur(dwKey);
+  const nb = Number($("dwBuf").value), nr = Number($("dwRate").value), nc = $("dwClock").value;
+  if (nb === cur.buf && nr === cur.rate && nc === cur.clock) { return; }
+  Object.assign(cur, {buf: nb, rate: nr, clock: nc});
+  // The driver asks for a restart; NereusSDR reopens its ASIO devices right away.
+  restart = {key: dwKey, until: Date.now() + 6000};
+  render();
+  setTimeout(render, 6100);
+};
+let meterTimer = null;
+$("testMic").onclick = () => {
+  if (meterTimer) { clearInterval(meterTimer); meterTimer = null; $("meter").style.width = "0"; $("testMic").textContent = "Test Mic"; return; }
+  $("testMic").textContent = "Stop";
+  meterTimer = setInterval(() => { $("meter").style.width = (goneText("mic") ? 0 : 20 + Math.random() * 45) + "%"; }, 90);
+};
+setInterval(() => {
+  for (const c of VAX) {
+    const live = state[c + "On"] && state[c] && present(c);
+    $(c + "Meter").style.width = live ? (15 + Math.random() * 35) + "%" : "0";
+  }
+}, 120);
+render();
+</script>
+</body></html>

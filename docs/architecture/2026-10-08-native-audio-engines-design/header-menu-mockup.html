@@ -1,0 +1,229 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Header Speaker Menu</title>
+<style>
+:root{--bar:#0a0a14;--border:#203040;--accent:#00b4d8;--groove:#1a2a3a;--inset:#0a0a18;--insetb:#1e2e3e;--txt:#8aa8c0;--page:#05050c;--dim:#4a5a6a;--menu:#1a2a3a;--mtxt:#c8d8e8;--amber:#e0a030}
+body{background:var(--page);color:#c8d8e8;font:13px -apple-system,system-ui,sans-serif;margin:0;padding:20px 16px 60px}
+h1{font-size:18px;color:var(--accent);margin:0 0 4px}
+p{margin:4px 0 10px;color:#9ab;max-width:900px;line-height:1.45}
+.demo{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;background:#0d1622;border:1px solid var(--border);border-radius:6px;padding:8px 12px;margin:10px 0 14px;max-width:980px;font-size:12px}
+.demo b{color:#e0eef8;font-weight:600}
+.demo label{display:flex;align-items:center;gap:5px}
+.demo label.dis{opacity:.4}
+.demo select{background:#12202e;color:#c8d8e8;border:1px solid #2a4054;border-radius:3px;font-size:12px;padding:1px 3px}
+.stage{zoom:2;width:540px;height:300px;position:relative}
+.bar{height:32px;background:linear-gradient(90deg,var(--page),var(--bar) 60px);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 8px;font-size:11px;white-space:nowrap;overflow:hidden;width:520px}
+.sp{flex:1}.utc{color:var(--txt);font-size:11px;margin-right:12px}.app{color:var(--accent);font-weight:bold;font-size:14px}
+.grp{display:flex;align-items:center;gap:4px}
+.ico{width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;user-select:none;border-radius:3px}
+.ico img{width:16px;height:16px;display:block}
+.ico.open{background:#12202e}
+.lbl{font-size:9px;letter-spacing:.06em;color:var(--txt);font-weight:600}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100px;height:16px;background:transparent;margin:0}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:linear-gradient(var(--accent),var(--accent)) 0/var(--p,50%) 100% no-repeat,var(--groove)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:10px;height:10px;border-radius:5px;background:var(--accent);margin-top:-3px}
+input.radio::-webkit-slider-runnable-track{background:linear-gradient(var(--amber),var(--amber)) 0/var(--p,50%) 100% no-repeat,var(--groove)}
+input.radio::-webkit-slider-thumb{background:var(--amber)}
+.val{font-size:10px;background:var(--inset);border:1px solid var(--insetb);border-radius:3px;padding:1px 2px;color:var(--txt);width:18px;text-align:center}
+.gap{width:14px}.feat{background:#3a2a00;border:1px solid #806020;border-radius:3px;padding:2px 4px;font-size:12px;margin-left:10px}
+.menu{position:absolute;background:var(--menu);color:var(--mtxt);border:1px solid var(--border);font-size:11px;padding:3px 0;min-width:190px;box-shadow:0 4px 14px rgba(0,0,0,.55);z-index:5}
+.menu .it{padding:2px 14px 2px 20px;position:relative;cursor:default;white-space:nowrap}
+.menu .it:hover{background:var(--accent);color:#fff}
+.menu .it.chk::before{content:"\2713";position:absolute;left:6px}
+.menu .it.gone{color:#e0a030}
+.menu .it.gone:hover{background:transparent;color:#e0a030}
+.menu .sub{padding:0 14px 3px 20px;color:#8090a0;font-size:10px;white-space:nowrap}
+.menu .sec{padding:4px 10px 1px 8px;color:#6a8098;font-size:9px;letter-spacing:.05em;text-transform:uppercase}
+.menu .grp2{padding:3px 14px 1px 20px;color:#8090a0;font-size:10px}
+.menu .it.ind{padding-left:30px}
+.menu .it.ind.chk::before{left:16px}
+.menu .sep{height:1px;background:var(--border);margin:3px 0}
+.tip{position:absolute;background:#ffffe8;color:#000;border:1px solid #888;font-size:10px;padding:2px 5px;max-width:300px;white-space:normal;z-index:6;display:none}
+.hint{font-size:12px;color:#8a9;margin:6px 0 0}
+.hide{display:none}
+</style></head><body>
+<h1>Header speaker menu with the new sound engines</h1>
+<p>The title bar's right end at 2x zoom, in the app's own colours. <b>Right-click the PC icon</b> (or press the button below) to open its speaker list, then pick a device. A left click still mutes, as today. Hover the PC icon for its tooltip.</p>
+<div class="demo">
+ <b>Mockup controls (not part of the app):</b>
+ <label>Computer <select id="plat"><option value="mac">Mac</option><option value="win">Windows</option><option value="lin">Linux</option></select></label>
+ <label id="drvL">Speakers driver (Setup) <select id="drv"><option value="sh">Windows audio, shared</option><option value="ex">Windows audio, exclusive</option><option value="asio">ASIO</option></select></label>
+ <label><input type="checkbox" id="focOn" checked> Focusrite connected</label>
+ <label><input type="checkbox" id="podsOn" checked> AirPods connected</label>
+ <label>Menu <select id="style"><option value="a">A. This driver only (recommended)</option><option value="b">B. Every driver, as today</option></select></label>
+ <button id="openBtn">Open the menu</button>
+</div>
+<div class="stage" id="stage">
+ <div class="bar">
+  <span class="sp"></span>
+  <span class="utc">14:32:07 UTC</span>
+  <span class="grp"><span class="ico" id="pcIco"><img id="pcImg" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnhsaW5rPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5L3hsaW5rIiB2aWV3Qm94PSIwIDAgNjQgNjQiIHdpZHRoPSI2NCIgaGVpZ2h0PSI2NCI+PGRlZnM+PGxpbmVhckdyYWRpZW50IGlkPSJyaW0iIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNmZmZmZmYiLz48c3RvcCBvZmZzZXQ9IjAuMzUiIHN0b3AtY29sb3I9IiNjOWQyZGMiLz48c3RvcCBvZmZzZXQ9IjAuNiIgc3RvcC1jb2xvcj0iIzdkODk5NiIvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iI2U2ZWNmMiIvPjwvbGluZWFyR3JhZGllbnQ+PGxpbmVhckdyYWRpZW50IGlkPSJyaW1JbiIgeDE9IjEiIHkxPSIxIiB4Mj0iMCIgeTI9IjAiPjxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iI2Y0ZjdmYSIvPjxzdG9wIG9mZnNldD0iMC41IiBzdG9wLWNvbG9yPSIjOGE5NmEzIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjM2E0MzRkIi8+PC9saW5lYXJHcmFkaWVudD48cmFkaWFsR3JhZGllbnQgaWQ9ImNvbmUiIGN4PSIwLjU1IiBjeT0iMC41IiByPSIwLjYiIGZ4PSIwLjYyIiBmeT0iMC40MiI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjOWFhNGFlIi8+PHN0b3Agb2Zmc2V0PSIwLjMiIHN0b3AtY29sb3I9IiM0YTUyNWIiLz48c3RvcCBvZmZzZXQ9IjAuNzUiIHN0b3AtY29sb3I9IiMyMjI3MmQiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMxMjE1MTkiLz48L3JhZGlhbEdyYWRpZW50PjxyYWRpYWxHcmFkaWVudCBpZD0iY2FwIiBjeD0iMC41IiBjeT0iMC41IiByPSIwLjUiIGZ4PSIwLjM4IiBmeT0iMC4zMiI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjZmZmZmZmIi8+PHN0b3Agb2Zmc2V0PSIwLjI1IiBzdG9wLWNvbG9yPSIjYzdjZWQ2Ii8+PHN0b3Agb2Zmc2V0PSIwLjciIHN0b3AtY29sb3I9IiM1ZDY2NzAiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMyYTMwMzYiLz48L3JhZGlhbEdyYWRpZW50PjxsaW5lYXJHcmFkaWVudCBpZD0ibWFnIiB4MT0iMCIgeTE9IjAiIHgyPSIwIiB5Mj0iMSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjNmI3NDgwIi8+PHN0b3Agb2Zmc2V0PSIwLjQ1IiBzdG9wLWNvbG9yPSIjZDRkYmUyIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjM2Q0NDRjIi8+PC9saW5lYXJHcmFkaWVudD48bGluZWFyR3JhZGllbnQgaWQ9IndhdmUiIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNiOGYyZmYiLz48c3RvcCBvZmZzZXQ9IjAuNSIgc3RvcC1jb2xvcj0iIzJmYzZlYSIvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzBhN2ZiMCIvPjwvbGluZWFyR3JhZGllbnQ+PC9kZWZzPjxwYXRoIGQ9Ik01IDI1IFE0IDMyIDUgMzkgTDE2IDQxIEwxNiAyMyBaIiBmaWxsPSJ1cmwoI21hZykiLz48ZWxsaXBzZSBjeD0iMTYiIGN5PSIzMiIgcng9IjMuMiIgcnk9IjkiIGZpbGw9IiMyYTMwMzYiLz48ZWxsaXBzZSBjeD0iMjUiIGN5PSIzMiIgcng9IjEzIiByeT0iMjIiIGZpbGw9InVybCgjcmltKSIgdHJhbnNmb3JtPSJyb3RhdGUoLTggMjUgMzIpIi8+PGVsbGlwc2UgY3g9IjI1LjYiIGN5PSIzMiIgcng9IjEwLjgiIHJ5PSIxOS40IiBmaWxsPSJ1cmwoI3JpbUluKSIgdHJhbnNmb3JtPSJyb3RhdGUoLTggMjUgMzIpIi8+PGVsbGlwc2UgY3g9IjI2IiBjeT0iMzIiIHJ4PSI5LjYiIHJ5PSIxNy44IiBmaWxsPSJ1cmwoI2NvbmUpIiB0cmFuc2Zvcm09InJvdGF0ZSgtOCAyNSAzMikiLz48ZWxsaXBzZSBjeD0iMjcuNiIgY3k9IjMxLjQiIHJ4PSIzLjYiIHJ5PSI2LjQiIGZpbGw9InVybCgjY2FwKSIgdHJhbnNmb3JtPSJyb3RhdGUoLTggMjUgMzIpIi8+PHBhdGggZD0iTTE3IDE1IFEyMCAxMCAyNSAxMCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmZmZmIiBzdHJva2Utb3BhY2l0eT0iLjgiIHN0cm9rZS13aWR0aD0iMS40IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48cGF0aCBkPSJNNDMgMjIgUTQ5IDMyIDQzIDQyIiBmaWxsPSJub25lIiBzdHJva2U9IiMwNjNhNTIiIHN0cm9rZS1vcGFjaXR5PSIuNiIgc3Ryb2tlLXdpZHRoPSI0LjgwMDAwMDAwMDAwMDAwMSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PHBhdGggZD0iTTQzIDIyIFE0OSAzMiA0MyA0MiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ1cmwoI3dhdmUpIiBzdHJva2Utd2lkdGg9IjMuMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PHBhdGggZD0iTTQzIDIyIFE0OSAzMiA0MyA0MiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmZmZmIiBzdHJva2Utb3BhY2l0eT0iLjU1IiBzdHJva2Utd2lkdGg9IjAuOTYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoLS41IC0uNikiLz48cGF0aCBkPSJNNDkgMTUgUTU5IDMyIDQ5IDQ5IiBmaWxsPSJub25lIiBzdHJva2U9IiMwNjNhNTIiIHN0cm9rZS1vcGFjaXR5PSIuNiIgc3Ryb2tlLXdpZHRoPSI0LjgwMDAwMDAwMDAwMDAwMSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PHBhdGggZD0iTTQ5IDE1IFE1OSAzMiA0OSA0OSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ1cmwoI3dhdmUpIiBzdHJva2Utd2lkdGg9IjMuMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PHBhdGggZD0iTTQ5IDE1IFE1OSAzMiA0OSA0OSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmZmZmIiBzdHJva2Utb3BhY2l0eT0iLjU1IiBzdHJva2Utd2lkdGg9IjAuOTYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoLS41IC0uNikiLz48L3N2Zz4=" alt=""></span><span class="lbl">PC</span><input type="range" id="pcVol" value="72"><span class="val" id="pcVal">72</span></span>
+  <span class="gap"></span>
+  <span class="grp"><span class="ico"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnhsaW5rPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5L3hsaW5rIiB2aWV3Qm94PSIwIDAgNjQgNjQiIHdpZHRoPSI2NCIgaGVpZ2h0PSI2NCI+PGRlZnM+PGxpbmVhckdyYWRpZW50IGlkPSJjYWIiIHgxPSIwIiB5MT0iMCIgeDI9IjAiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNmNmM0NmEiLz48c3RvcCBvZmZzZXQ9IjAuMTIiIHN0b3AtY29sb3I9IiNlMmE0NDAiLz48c3RvcCBvZmZzZXQ9IjAuNiIgc3RvcC1jb2xvcj0iI2I4NzQyYSIvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzdhNDYxOCIvPjwvbGluZWFyR3JhZGllbnQ+PGxpbmVhckdyYWRpZW50IGlkPSJjYWJFZGdlIiB4MT0iMCIgeTE9IjAiIHgyPSIwIiB5Mj0iMSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjZmZmMGM4Ii8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjNWEzMjEwIi8+PC9saW5lYXJHcmFkaWVudD48bGluZWFyR3JhZGllbnQgaWQ9ImRpYWwiIHgxPSIwIiB5MT0iMCIgeDI9IjAiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNmZmY4ZTQiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiNlOGQ2YTgiLz48L2xpbmVhckdyYWRpZW50PjxyYWRpYWxHcmFkaWVudCBpZD0ia25vYiIgY3g9IjAuNSIgY3k9IjAuNSIgcj0iMC41IiBmeD0iMC4zNiIgZnk9IjAuMyI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjZmZmZmZmIi8+PHN0b3Agb2Zmc2V0PSIwLjMiIHN0b3AtY29sb3I9IiNkOGRlZTQiLz48c3RvcCBvZmZzZXQ9IjAuNzUiIHN0b3AtY29sb3I9IiM2ZTc4ODIiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMyZTM0M2EiLz48L3JhZGlhbEdyYWRpZW50PjxsaW5lYXJHcmFkaWVudCBpZD0iYW50IiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMCI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjOGM5NmEwIi8+PHN0b3Agb2Zmc2V0PSIwLjUiIHN0b3AtY29sb3I9IiNmZmZmZmYiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiM4Yzk2YTAiLz48L2xpbmVhckdyYWRpZW50PjxsaW5lYXJHcmFkaWVudCBpZD0iZ3JpbGxlIiB4MT0iMCIgeTE9IjAiIHgyPSIwIiB5Mj0iMSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjM2EyNDEwIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMWUxMjA4Ii8+PC9saW5lYXJHcmFkaWVudD48bGluZWFyR3JhZGllbnQgaWQ9InBhbmVsIiB4MT0iMCIgeTE9IjAiIHgyPSIwIiB5Mj0iMSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjMmMyZTMyIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMTQxNTE4Ii8+PC9saW5lYXJHcmFkaWVudD48L2RlZnM+PHBhdGggZD0iTTE4IDIxIEw0NiA1IiBzdHJva2U9IiM0YTUwNTgiIHN0cm9rZS13aWR0aD0iMi42IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48cGF0aCBkPSJNMTggMjEgTDQ2IDUiIHN0cm9rZT0idXJsKCNhbnQpIiBzdHJva2Utd2lkdGg9IjEuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PGNpcmNsZSBjeD0iNDYuNCIgY3k9IjQuOCIgcj0iMi4yIiBmaWxsPSJ1cmwoI2tub2IpIi8+PHJlY3QgeD0iOSIgeT0iNTIiIHdpZHRoPSI3IiBoZWlnaHQ9IjQiIHJ4PSIxLjUiIGZpbGw9IiMyYTFhMGMiLz48cmVjdCB4PSI0OCIgeT0iNTIiIHdpZHRoPSI3IiBoZWlnaHQ9IjQiIHJ4PSIxLjUiIGZpbGw9IiMyYTFhMGMiLz48cmVjdCB4PSIzIiB5PSIxOSIgd2lkdGg9IjU4IiBoZWlnaHQ9IjM1IiByeD0iNyIgZmlsbD0iIzNhMjAwOCIvPjxyZWN0IHg9IjMiIHk9IjE4IiB3aWR0aD0iNTgiIGhlaWdodD0iMzUiIHJ4PSI3IiBmaWxsPSJ1cmwoI2NhYikiLz48cmVjdCB4PSI1IiB5PSIxOS4yIiB3aWR0aD0iNTQiIGhlaWdodD0iNSIgcng9IjIuNSIgZmlsbD0iI2ZmZmZmZiIgZmlsbC1vcGFjaXR5PSIuMzUiLz48cmVjdCB4PSI4IiB5PSIyNCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjI1IiByeD0iNCIgZmlsbD0idXJsKCNwYW5lbCkiLz48cmVjdCB4PSIxMSIgeT0iMjciIHdpZHRoPSIyOCIgaGVpZ2h0PSI5IiByeD0iMiIgZmlsbD0idXJsKCNkaWFsKSIvPjxwYXRoIGQ9Ik0xMyAzMC41aDI0TTE0IDMzLjV2LTNNMTggMzMuNXYtMk0yMiAzMy41di0zTTI2IDMzLjV2LTJNMzAgMzMuNXYtM00zNCAzMy41di0yIiBzdHJva2U9IiM4YTZhM2EiIHN0cm9rZS13aWR0aD0iLjgiLz48cGF0aCBkPSJNMjQgMjcuNnY4IiBzdHJva2U9IiNlMDIwMjAiIHN0cm9rZS13aWR0aD0iMS4zIi8+PHJlY3QgeD0iMTEuMiIgeT0iMjcuMiIgd2lkdGg9IjI3LjYiIGhlaWdodD0iMi40IiByeD0iMS4yIiBmaWxsPSIjZmZmZmZmIiBmaWxsLW9wYWNpdHk9Ii41NSIvPjxyZWN0IHg9IjExIiB5PSIzOC41IiB3aWR0aD0iMjgiIGhlaWdodD0iOCIgcng9IjIiIGZpbGw9InVybCgjZ3JpbGxlKSIvPjxwYXRoIGQ9Ik0xMi41IDQwLjVoMjVNMTIuNSA0Mi41aDI1TTEyLjUgNDQuNWgyNSIgc3Ryb2tlPSIjYzg5MDQ4IiBzdHJva2Utb3BhY2l0eT0iLjU1IiBzdHJva2Utd2lkdGg9Ii45Ii8+PGNpcmNsZSBjeD0iNDguNSIgY3k9IjM3IiByPSI3LjYiIGZpbGw9IiMxNDE1MTgiLz48Y2lyY2xlIGN4PSI0OC41IiBjeT0iMzYuNSIgcj0iNi44IiBmaWxsPSJ1cmwoI2tub2IpIi8+PHBhdGggZD0iTTQ4LjUgMzF2My42IiBzdHJva2U9IiMyYTJlMzQiIHN0cm9rZS13aWR0aD0iMS40IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48Y2lyY2xlIGN4PSI0NCIgY3k9IjI5IiByPSIxLjQiIGZpbGw9IiNmZmIwMzAiLz48Y2lyY2xlIGN4PSI0NCIgY3k9IjI5IiByPSIuNiIgZmlsbD0iI2ZmZjRjMCIvPjwvc3ZnPg==" alt=""></span><span class="lbl">RADIO</span><input type="range" class="radio" value="40"><span class="val">40</span></span>
+  <span class="feat">&#x1F4A1;</span>
+ </div>
+ <div class="menu hide" id="menu"></div>
+ <div class="tip" id="tip"></div>
+</div>
+<p class="hint" id="hint"></p>
+<script>
+const $ = id => document.getElementById(id);
+const FOC = {mac: "Focusrite USB Audio", lin: "Focusrite USB Audio", asio: "Focusrite USB ASIO"};
+const OUTS = 10;
+const state = {mac: "foc:1", win: {sh: "wfoc", ex: "wfoc", asio: "foc:1"}, lin: "foc:1", muted: false};
+const plat = () => $("plat").value;
+const drv = () => plat() === "win" ? $("drv").value : plat() === "mac" ? "ca" : "pw";
+function chosen() { return plat() === "win" ? state.win[$("drv").value] : state[plat()]; }
+function setChosen(v) { if (plat() === "win") { state.win[$("drv").value] = v; } else { state[plat()] = v; } }
+const DRV_NAME = {ca: "Core Audio", pw: "PipeWire", sh: "Windows audio, shared", ex: "Windows audio, exclusive", asio: "ASIO"};
+function sysDefault() { return plat() === "mac" ? "MacBook Pro Speakers" : plat() === "lin" ? "Built-in Audio Analog Stereo" : "Speakers (Realtek(R) Audio)"; }
+
+// Every speaker device the current driver sees, as [value, text, group].
+function devices(d) {
+  const foc = $("focOn").checked, pods = $("podsOn").checked;
+  const list = [];
+  const pairs = name => { for (let ch = 1; ch < OUTS; ch += 2) { list.push(["foc:" + ch, "Outputs " + ch + "-" + (ch + 1), name]); } };
+  if (d === "ca" || d === "pw") {
+    list.push(["default", "(platform default)"]);
+    list.push(["builtin", sysDefault()]);
+    if (pods) { list.push(["pods", "AirPods Pro"]); }
+    if (foc) { pairs(FOC.mac); }
+  } else if (d === "sh" || d === "ex") {
+    list.push(["default", "(platform default)"]);
+    list.push(["realtek", "Speakers (Realtek(R) Audio)"]);
+    if (foc) { list.push(["wfoc", "Speakers (Focusrite USB Audio)"]); }
+    if (pods) { list.push(["pods", "Headphones (AirPods Pro)"]); }
+  } else if (d === "asio") {
+    if (foc) { pairs(FOC.asio); }
+  }
+  return list;
+}
+function label(v, d) {
+  if (v.startsWith("foc:")) { const ch = Number(v.split(":")[1]); return (d === "asio" ? FOC.asio : FOC.mac) + " · Outputs " + ch + "-" + (ch + 1); }
+  const m = {default: "(platform default)", builtin: sysDefault(), pods: plat() === "win" ? "Headphones (AirPods Pro)" : "AirPods Pro", realtek: "Speakers (Realtek(R) Audio)", wfoc: "Speakers (Focusrite USB Audio)"};
+  return m[v] || v;
+}
+function present(v, d) { return devices(d).some(x => x[0] === v); }
+
+// Option B: today's menu, one section per driver, every device in each.
+function everyDriver() {
+  const foc = $("focOn").checked, pods = $("podsOn").checked;
+  if (plat() === "mac") { return [["Core Audio", devices("ca").map(x => [x[0], x[2] ? x[2] + " · " + x[1] : x[1], "ca"])]]; }
+  if (plat() === "lin") {
+    const a = [["hw0", "HDA Intel PCH: ALC892 Analog (hw:0,0)"], ["hw0d", "HDA Intel PCH: HDMI 0 (hw:0,3)"]];
+    if (foc) { a.push(["hw1", "Scarlett 18i20 USB: Audio (hw:1,0)"]); }
+    a.push(["sysdef", "sysdefault"], ["pipewire", "pipewire"], ["pulse", "pulse"], ["adef", "default"]);
+    return [["ALSA", a.map(x => [x[0], x[1], "alsa"])], ["PipeWire", devices("pw").map(x => [x[0], x[2] ? x[2] + " · " + x[1] : x[1], "pw"])], ["JACK", [["jack", "system", "jack"]]]];
+  }
+  const w = [["realtek", "Speakers (Realtek(R) Audio)"]];
+  if (foc) { w.push(["wfoc", "Speakers (Focusrite USB Audio)"]); }
+  if (pods) { w.push(["pods", "Headphones (AirPods Pro)"]); }
+  const mme = [["mapper", "Microsoft Sound Mapper - Output"]].concat(w.map(x => [x[0], x[1].slice(0, 31)]));
+  const ds = [["primary", "Primary Sound Driver"]].concat(w);
+  const ks = [["ks1", "Speakers (Realtek HD Audio output)"]];
+  if (foc) { ks.push(["ks2", "Output (Focusrite USB Audio)"]); }
+  const out = [["MME", mme.map(x => [x[0], x[1], "mme"])], ["Windows DirectSound", ds.map(x => [x[0], x[1], "ds"])],
+    ["Windows audio, shared", devices("sh").map(x => [x[0], x[1], "sh"])], ["Windows audio, exclusive", devices("ex").map(x => [x[0], x[1], "ex"])],
+    ["Windows WDM-KS", ks.map(x => [x[0], x[1], "ks"])]];
+  if (foc) { out.push(["ASIO", devices("asio").map(x => [x[0], FOC.asio + " · " + x[1], "asio"])]); }
+  return out;
+}
+
+function item(menu, text, cls, onPick) {
+  const el = document.createElement("div");
+  el.className = "it" + (cls ? " " + cls : "");
+  el.textContent = text;
+  if (onPick) { el.addEventListener("mouseup", e => { e.stopPropagation(); onPick(); closeMenu(); }); }
+  menu.appendChild(el);
+  return el;
+}
+function div(menu, cls, text) { const el = document.createElement("div"); el.className = cls; if (text) { el.textContent = text; } menu.appendChild(el); return el; }
+
+function buildMenu() {
+  const m = $("menu");
+  m.innerHTML = "";
+  const d = drv();
+  const cur = chosen();
+  const gone = !present(cur, d);
+  if ($("style").value === "a") {
+    div(m, "sec", "Speakers · " + DRV_NAME[d]);
+    if (gone) {
+      item(m, label(cur, d) + " (not connected)", "chk gone");
+      div(m, "sub", "Playing on " + sysDefault() + " until it comes back.");
+      div(m, "sep");
+    }
+    let lastGrp = null;
+    for (const [v, t, g] of devices(d)) {
+      if (g && g !== lastGrp) { div(m, "grp2", g); lastGrp = g; }
+      item(m, t, (g ? "ind" : "") + (v === cur ? " chk" : ""), () => { setChosen(v); render(); });
+    }
+    if (d === "asio" && !devices(d).length && !gone) { item(m, "No ASIO devices present", "gone"); }
+    div(m, "sep");
+    item(m, "Sound setup…", "", () => { $("hint").textContent = "Opens Setup at Audio, Outputs."; });
+  } else {
+    let curShown = false;
+    for (const [sec, list] of everyDriver()) {
+      div(m, "sec", sec);
+      for (const [v, t, dd] of list) {
+        const mine = dd === d && v === cur;
+        if (mine) { curShown = true; }
+        item(m, t, mine ? "chk" : "", () => {
+          if (plat() === "win" && ["sh", "ex", "asio"].includes(dd)) { $("drv").value = dd; }
+          if (["sh", "ex", "asio", "ca", "pw"].includes(dd)) { setChosen(v); }
+          $("hint").textContent = ["sh", "ex", "asio", "ca", "pw"].includes(dd) ? "" : "Picked on the older " + sec + " driver; Setup's Driver changes to it.";
+          render();
+        });
+      }
+    }
+    if (!curShown) { $("hint").textContent = "Option B has nowhere natural to show the missing device; it simply has no tick."; }
+  }
+  return m;
+}
+
+function openMenu() {
+  const m = buildMenu();
+  m.classList.remove("hide");
+  $("pcIco").classList.add("open");
+  $("tip").style.display = "none";
+  const ico = $("pcIco");
+  const left = ico.offsetLeft + ico.offsetWidth / 2;
+  const w = m.offsetWidth;
+  m.style.left = Math.max(4, Math.min(left, 540 - w - 4)) + "px";
+  m.style.top = (ico.offsetTop + ico.offsetHeight + 3) + "px";
+  const stage = $("stage");
+  stage.style.height = Math.max(300, m.offsetTop + m.offsetHeight + 10) + "px";
+}
+function closeMenu() { $("menu").classList.add("hide"); $("pcIco").classList.remove("open"); }
+
+function tipText() {
+  const d = drv(), cur = chosen();
+  const head = "PC volume. Click to mute, right-click for speakers.";
+  if (!present(cur, d)) {
+    return head + " " + label(cur, d) + " is not connected; " + "playing on " + sysDefault() + " meanwhile.";
+  }
+  return head + " Playing on " + (cur === "default" ? sysDefault() : label(cur, d)) + ".";
+}
+
+function render() {
+  const win = plat() === "win";
+  $("drv").disabled = !win;
+  $("drvL").classList.toggle("dis", !win);
+  if (!$("menu").classList.contains("hide")) { openMenu(); }
+}
+
+$("pcIco").addEventListener("contextmenu", e => { e.preventDefault(); openMenu(); });
+$("pcIco").addEventListener("click", () => { state.muted = !state.muted; $("pcImg").src = state.muted ? "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnhsaW5rPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5L3hsaW5rIiB2aWV3Qm94PSIwIDAgNjQgNjQiIHdpZHRoPSI2NCIgaGVpZ2h0PSI2NCI+PGRlZnM+PGxpbmVhckdyYWRpZW50IGlkPSJyaW0iIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNmZmZmZmYiLz48c3RvcCBvZmZzZXQ9IjAuMzUiIHN0b3AtY29sb3I9IiNjOWQyZGMiLz48c3RvcCBvZmZzZXQ9IjAuNiIgc3RvcC1jb2xvcj0iIzdkODk5NiIvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iI2U2ZWNmMiIvPjwvbGluZWFyR3JhZGllbnQ+PGxpbmVhckdyYWRpZW50IGlkPSJyaW1JbiIgeDE9IjEiIHkxPSIxIiB4Mj0iMCIgeTI9IjAiPjxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iI2Y0ZjdmYSIvPjxzdG9wIG9mZnNldD0iMC41IiBzdG9wLWNvbG9yPSIjOGE5NmEzIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjM2E0MzRkIi8+PC9saW5lYXJHcmFkaWVudD48cmFkaWFsR3JhZGllbnQgaWQ9ImNvbmUiIGN4PSIwLjU1IiBjeT0iMC41IiByPSIwLjYiIGZ4PSIwLjYyIiBmeT0iMC40MiI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjOWFhNGFlIi8+PHN0b3Agb2Zmc2V0PSIwLjMiIHN0b3AtY29sb3I9IiM0YTUyNWIiLz48c3RvcCBvZmZzZXQ9IjAuNzUiIHN0b3AtY29sb3I9IiMyMjI3MmQiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMxMjE1MTkiLz48L3JhZGlhbEdyYWRpZW50PjxyYWRpYWxHcmFkaWVudCBpZD0iY2FwIiBjeD0iMC41IiBjeT0iMC41IiByPSIwLjUiIGZ4PSIwLjM4IiBmeT0iMC4zMiI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjZmZmZmZmIi8+PHN0b3Agb2Zmc2V0PSIwLjI1IiBzdG9wLWNvbG9yPSIjYzdjZWQ2Ii8+PHN0b3Agb2Zmc2V0PSIwLjciIHN0b3AtY29sb3I9IiM1ZDY2NzAiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMyYTMwMzYiLz48L3JhZGlhbEdyYWRpZW50PjxsaW5lYXJHcmFkaWVudCBpZD0ibWFnIiB4MT0iMCIgeTE9IjAiIHgyPSIwIiB5Mj0iMSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjNmI3NDgwIi8+PHN0b3Agb2Zmc2V0PSIwLjQ1IiBzdG9wLWNvbG9yPSIjZDRkYmUyIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjM2Q0NDRjIi8+PC9saW5lYXJHcmFkaWVudD48bGluZWFyR3JhZGllbnQgaWQ9IndhdmUiIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNiOGYyZmYiLz48c3RvcCBvZmZzZXQ9IjAuNSIgc3RvcC1jb2xvcj0iIzJmYzZlYSIvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzBhN2ZiMCIvPjwvbGluZWFyR3JhZGllbnQ+PGxpbmVhckdyYWRpZW50IGlkPSJyZWQiIHgxPSIwIiB5MT0iMCIgeDI9IjAiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNmZjhjN2EiLz48c3RvcCBvZmZzZXQ9IjAuNDUiIHN0b3AtY29sb3I9IiNlYzJmMmYiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiM5YTEwMTAiLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48ZyBvcGFjaXR5PSIwLjYiPjxwYXRoIGQ9Ik01IDI1IFE0IDMyIDUgMzkgTDE2IDQxIEwxNiAyMyBaIiBmaWxsPSJ1cmwoI21hZykiLz48ZWxsaXBzZSBjeD0iMTYiIGN5PSIzMiIgcng9IjMuMiIgcnk9IjkiIGZpbGw9IiMyYTMwMzYiLz48ZWxsaXBzZSBjeD0iMjUiIGN5PSIzMiIgcng9IjEzIiByeT0iMjIiIGZpbGw9InVybCgjcmltKSIgdHJhbnNmb3JtPSJyb3RhdGUoLTggMjUgMzIpIi8+PGVsbGlwc2UgY3g9IjI1LjYiIGN5PSIzMiIgcng9IjEwLjgiIHJ5PSIxOS40IiBmaWxsPSJ1cmwoI3JpbUluKSIgdHJhbnNmb3JtPSJyb3RhdGUoLTggMjUgMzIpIi8+PGVsbGlwc2UgY3g9IjI2IiBjeT0iMzIiIHJ4PSI5LjYiIHJ5PSIxNy44IiBmaWxsPSJ1cmwoI2NvbmUpIiB0cmFuc2Zvcm09InJvdGF0ZSgtOCAyNSAzMikiLz48ZWxsaXBzZSBjeD0iMjcuNiIgY3k9IjMxLjQiIHJ4PSIzLjYiIHJ5PSI2LjQiIGZpbGw9InVybCgjY2FwKSIgdHJhbnNmb3JtPSJyb3RhdGUoLTggMjUgMzIpIi8+PHBhdGggZD0iTTE3IDE1IFEyMCAxMCAyNSAxMCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmZmZmIiBzdHJva2Utb3BhY2l0eT0iLjgiIHN0cm9rZS13aWR0aD0iMS40IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48L2c+PHBhdGggZD0iTTYgNTUgTDU2IDciIHN0cm9rZT0iIzNhMDUwNSIgc3Ryb2tlLW9wYWNpdHk9Ii43IiBzdHJva2Utd2lkdGg9IjkiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjxwYXRoIGQ9Ik02IDU1IEw1NiA3IiBzdHJva2U9InVybCgjcmVkKSIgc3Ryb2tlLXdpZHRoPSI2LjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjxwYXRoIGQ9Ik04IDUxLjYgTDUzLjQgOCIgc3Ryb2tlPSIjZmZmZmZmIiBzdHJva2Utb3BhY2l0eT0iLjQ1IiBzdHJva2Utd2lkdGg9IjEuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PC9zdmc+" : "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnhsaW5rPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5L3hsaW5rIiB2aWV3Qm94PSIwIDAgNjQgNjQiIHdpZHRoPSI2NCIgaGVpZ2h0PSI2NCI+PGRlZnM+PGxpbmVhckdyYWRpZW50IGlkPSJyaW0iIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNmZmZmZmYiLz48c3RvcCBvZmZzZXQ9IjAuMzUiIHN0b3AtY29sb3I9IiNjOWQyZGMiLz48c3RvcCBvZmZzZXQ9IjAuNiIgc3RvcC1jb2xvcj0iIzdkODk5NiIvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iI2U2ZWNmMiIvPjwvbGluZWFyR3JhZGllbnQ+PGxpbmVhckdyYWRpZW50IGlkPSJyaW1JbiIgeDE9IjEiIHkxPSIxIiB4Mj0iMCIgeTI9IjAiPjxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iI2Y0ZjdmYSIvPjxzdG9wIG9mZnNldD0iMC41IiBzdG9wLWNvbG9yPSIjOGE5NmEzIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjM2E0MzRkIi8+PC9saW5lYXJHcmFkaWVudD48cmFkaWFsR3JhZGllbnQgaWQ9ImNvbmUiIGN4PSIwLjU1IiBjeT0iMC41IiByPSIwLjYiIGZ4PSIwLjYyIiBmeT0iMC40MiI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjOWFhNGFlIi8+PHN0b3Agb2Zmc2V0PSIwLjMiIHN0b3AtY29sb3I9IiM0YTUyNWIiLz48c3RvcCBvZmZzZXQ9IjAuNzUiIHN0b3AtY29sb3I9IiMyMjI3MmQiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMxMjE1MTkiLz48L3JhZGlhbEdyYWRpZW50PjxyYWRpYWxHcmFkaWVudCBpZD0iY2FwIiBjeD0iMC41IiBjeT0iMC41IiByPSIwLjUiIGZ4PSIwLjM4IiBmeT0iMC4zMiI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjZmZmZmZmIi8+PHN0b3Agb2Zmc2V0PSIwLjI1IiBzdG9wLWNvbG9yPSIjYzdjZWQ2Ii8+PHN0b3Agb2Zmc2V0PSIwLjciIHN0b3AtY29sb3I9IiM1ZDY2NzAiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMyYTMwMzYiLz48L3JhZGlhbEdyYWRpZW50PjxsaW5lYXJHcmFkaWVudCBpZD0ibWFnIiB4MT0iMCIgeTE9IjAiIHgyPSIwIiB5Mj0iMSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjNmI3NDgwIi8+PHN0b3Agb2Zmc2V0PSIwLjQ1IiBzdG9wLWNvbG9yPSIjZDRkYmUyIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjM2Q0NDRjIi8+PC9saW5lYXJHcmFkaWVudD48bGluZWFyR3JhZGllbnQgaWQ9IndhdmUiIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNiOGYyZmYiLz48c3RvcCBvZmZzZXQ9IjAuNSIgc3RvcC1jb2xvcj0iIzJmYzZlYSIvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzBhN2ZiMCIvPjwvbGluZWFyR3JhZGllbnQ+PC9kZWZzPjxwYXRoIGQ9Ik01IDI1IFE0IDMyIDUgMzkgTDE2IDQxIEwxNiAyMyBaIiBmaWxsPSJ1cmwoI21hZykiLz48ZWxsaXBzZSBjeD0iMTYiIGN5PSIzMiIgcng9IjMuMiIgcnk9IjkiIGZpbGw9IiMyYTMwMzYiLz48ZWxsaXBzZSBjeD0iMjUiIGN5PSIzMiIgcng9IjEzIiByeT0iMjIiIGZpbGw9InVybCgjcmltKSIgdHJhbnNmb3JtPSJyb3RhdGUoLTggMjUgMzIpIi8+PGVsbGlwc2UgY3g9IjI1LjYiIGN5PSIzMiIgcng9IjEwLjgiIHJ5PSIxOS40IiBmaWxsPSJ1cmwoI3JpbUluKSIgdHJhbnNmb3JtPSJyb3RhdGUoLTggMjUgMzIpIi8+PGVsbGlwc2UgY3g9IjI2IiBjeT0iMzIiIHJ4PSI5LjYiIHJ5PSIxNy44IiBmaWxsPSJ1cmwoI2NvbmUpIiB0cmFuc2Zvcm09InJvdGF0ZSgtOCAyNSAzMikiLz48ZWxsaXBzZSBjeD0iMjcuNiIgY3k9IjMxLjQiIHJ4PSIzLjYiIHJ5PSI2LjQiIGZpbGw9InVybCgjY2FwKSIgdHJhbnNmb3JtPSJyb3RhdGUoLTggMjUgMzIpIi8+PHBhdGggZD0iTTE3IDE1IFEyMCAxMCAyNSAxMCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmZmZmIiBzdHJva2Utb3BhY2l0eT0iLjgiIHN0cm9rZS13aWR0aD0iMS40IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48cGF0aCBkPSJNNDMgMjIgUTQ5IDMyIDQzIDQyIiBmaWxsPSJub25lIiBzdHJva2U9IiMwNjNhNTIiIHN0cm9rZS1vcGFjaXR5PSIuNiIgc3Ryb2tlLXdpZHRoPSI0LjgwMDAwMDAwMDAwMDAwMSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PHBhdGggZD0iTTQzIDIyIFE0OSAzMiA0MyA0MiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ1cmwoI3dhdmUpIiBzdHJva2Utd2lkdGg9IjMuMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PHBhdGggZD0iTTQzIDIyIFE0OSAzMiA0MyA0MiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmZmZmIiBzdHJva2Utb3BhY2l0eT0iLjU1IiBzdHJva2Utd2lkdGg9IjAuOTYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoLS41IC0uNikiLz48cGF0aCBkPSJNNDkgMTUgUTU5IDMyIDQ5IDQ5IiBmaWxsPSJub25lIiBzdHJva2U9IiMwNjNhNTIiIHN0cm9rZS1vcGFjaXR5PSIuNiIgc3Ryb2tlLXdpZHRoPSI0LjgwMDAwMDAwMDAwMDAwMSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PHBhdGggZD0iTTQ5IDE1IFE1OSAzMiA0OSA0OSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ1cmwoI3dhdmUpIiBzdHJva2Utd2lkdGg9IjMuMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PHBhdGggZD0iTTQ5IDE1IFE1OSAzMiA0OSA0OSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmZmZmIiBzdHJva2Utb3BhY2l0eT0iLjU1IiBzdHJva2Utd2lkdGg9IjAuOTYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoLS41IC0uNikiLz48L3N2Zz4="; });
+$("pcIco").addEventListener("mouseenter", () => {
+  if (!$("menu").classList.contains("hide")) { return; }
+  const t = $("tip"); t.textContent = tipText(); t.style.display = "block";
+  t.style.left = Math.max(4, $("pcIco").offsetLeft - 200) + "px"; t.style.top = "34px";
+});
+$("pcIco").addEventListener("mouseleave", () => { $("tip").style.display = "none"; });
+$("openBtn").addEventListener("click", e => { e.stopPropagation(); openMenu(); });
+document.addEventListener("mousedown", e => { if (!$("menu").contains(e.target) && e.target.closest("#pcIco") === null) { closeMenu(); } });
+document.addEventListener("keydown", e => { if (e.key === "Escape") { closeMenu(); } });
+for (const id of ["plat", "drv", "focOn", "podsOn", "style"]) { $(id).addEventListener("change", () => { $("hint").textContent = ""; render(); }); }
+document.querySelectorAll("input[type=range]").forEach(r => { const v = r.parentElement.querySelector(".val"); const u = () => { r.style.setProperty("--p", r.value + "%"); v.textContent = r.value; }; r.addEventListener("input", u); u(); });
+render();
+</script>
+</body></html>

@@ -55,6 +55,9 @@
 //               compression readings the meter pump already took. Logging
 //               only. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //               Code.
+//   2026-10-10: The six peak readings (txReadingsVersion 4) compared,
+//               applied and cleared with the other meters. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/TransmitStateFacade.h"
@@ -108,7 +111,12 @@ bool sameReadings(const TxMeterReadings& a, const TxMeterReadings& b)
         && sameReading(a.eqDb, b.eqDb) && sameReading(a.levelerDb, b.levelerDb)
         && sameReading(a.levelerGainDb, b.levelerGainDb) && sameReading(a.cfcDb, b.cfcDb)
         && sameReading(a.cfcGainDb, b.cfcGainDb) && sameReading(a.alcGainDb, b.alcGainDb)
-        && sameReading(a.alcGroupDb, b.alcGroupDb);
+        && sameReading(a.alcGroupDb, b.alcGroupDb)
+        && sameReading(a.micPeakDb, b.micPeakDb) && sameReading(a.alcPeakDb, b.alcPeakDb)
+        && sameReading(a.compressionPeakDb, b.compressionPeakDb)
+        && sameReading(a.eqPeakDb, b.eqPeakDb)
+        && sameReading(a.levelerPeakDb, b.levelerPeakDb)
+        && sameReading(a.cfcPeakDb, b.cfcPeakDb);
 }
 
 } // namespace
@@ -672,6 +680,16 @@ bool TransmitState::applyStationValue(const QByteArray& propertyName, const QVar
                                                                : nullptr) {
         // A9 (txReadingsVersion 3): the Core's seven stage readings.
         *stage = value.toDouble();
+        meters = true;
+    } else if (double* peak = propertyName == "micPeakDb"           ? &readings.micPeakDb
+                            : propertyName == "alcPeakDb"         ? &readings.alcPeakDb
+                            : propertyName == "compressionPeakDb" ? &readings.compressionPeakDb
+                            : propertyName == "eqPeakDb"          ? &readings.eqPeakDb
+                            : propertyName == "levelerPeakDb"     ? &readings.levelerPeakDb
+                            : propertyName == "cfcPeakDb"         ? &readings.cfcPeakDb
+                                                                  : nullptr) {
+        // txReadingsVersion 4: the Core's six peak readings.
+        *peak = value.toDouble();
         meters = true;
     } else if (propertyName == "stopReason") {
         stop = value.toString() != m_stopReason;

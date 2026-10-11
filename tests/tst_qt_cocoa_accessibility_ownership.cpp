@@ -1,6 +1,9 @@
 // Regression: a synthetic Qt Cocoa table cell must not delete its borrowed
 // parent ID, and incompatible/intercepted methods must never be overwritten.
 // JJ Boyd (KG4VCF), 2026-10-03, with OpenAI Codex assistance.
+// 2026-10-09: native audio plan Task 16, the audio card case runs on a fake
+// Windows catalogue's Driver list. J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code.
 #include "gui/QtCocoaAccessibilityOwnershipGuard.h"
 #include "gui/ConnectionSelector.h"
 #include "gui/QtCocoaAccessibilityOwnershipGuard_p.h"
@@ -23,7 +26,9 @@
 #include "gui/setup/DeviceCard.h"
 #include "gui/setup/AudioTxInputPage.h"
 #include "core/AudioDeviceConfig.h"
+#include "core/AudioEngine.h"
 #include "core/audio/PortAudioBus.h"
+#include "fakes/FakeAudioEngineBackend.h"
 #include <QAbstractItemView>
 #include <QApplication>
 #include <QAccessible>
@@ -340,30 +345,60 @@ private slots:
         QAccessible::setActive(true);
         const QString prefix = input ? QStringLiteral("audio/TxInput")
                                      : QStringLiteral("audio/Speakers");
+        // Each row starts from no saved audio choice (a Driver row saves
+        // its engine).
+        for (const QString& key : NereusSDR::AppSettings::instance().allKeys()) {
+            if (key.startsWith(QStringLiteral("audio/"))) {
+                NereusSDR::AppSettings::instance().remove(key);
+            }
+        }
         NereusSDR::AudioDeviceConfig config;
         config.deviceName = QStringLiteral("Absent test audio device");
         config.bufferSamples = 3000;
         config.saveToSettings(prefix);
+        // A fake Windows catalogue gives the Driver list two choices
+        // (shared and exclusive) that list the same devices.
+        using NereusSDR::AudioBackendId;
+        using NereusSDR::AudioDeviceDirection;
+        auto native = std::make_shared<NereusSDR::FakeAudioEngineBackend>(AudioBackendId::Wasapi);
+        auto older = std::make_shared<NereusSDR::FakeAudioEngineBackend>(AudioBackendId::PortAudio);
+        auto device = [](AudioDeviceDirection direction, const QString& id, const QString& name) {
+            NereusSDR::AudioDeviceInfo info;
+            info.backend = AudioBackendId::Wasapi;
+            info.direction = direction;
+            info.id = id;
+            info.name = name;
+            return info;
+        };
+        native->setDevices({device(AudioDeviceDirection::Output, QStringLiteral("desk-uid"),
+                                   QStringLiteral("Desk speakers")),
+                            device(AudioDeviceDirection::Input, QStringLiteral("usb-mic-uid"),
+                                   QStringLiteral("USB Mic"))});
+        native->setDefault(AudioDeviceDirection::Output, QStringLiteral("desk-uid"));
+        native->setDefault(AudioDeviceDirection::Input, QStringLiteral("usb-mic-uid"));
+        older->setTakesStereoMix(false);
+        NereusSDR::AudioEngine engine;
+        engine.setVaxOutputsAllowed(false);
+        engine.setAudioBackendsForTest({native, older});
+        engine.start();
+        QVERIFY(engine.catalogue() != nullptr);
         NereusSDR::DeviceCard card(prefix, input ? NereusSDR::DeviceCard::Role::Input
                                                : NereusSDR::DeviceCard::Role::Output, false);
-        const QList<QComboBox*> combos = card.findChildren<QComboBox*>();
-        QComboBox* driver = combos.first();
-        QComboBox* device = nullptr;
+        card.setAudioEngine(&engine);
+        QComboBox* driver = card.driverApiCombo();
+        QComboBox* devices = card.deviceCombo();
         QComboBox* buffer = nullptr;
-        for (QComboBox* combo : combos) {
-            if (combo->findText(QStringLiteral("(platform default)")) >= 0) {
-                device = combo;
-            }
+        for (QComboBox* combo : card.findChildren<QComboBox*>()) {
             if (combo->findText(QStringLiteral("256 samples")) >= 0) {
                 buffer = combo;
             }
         }
-        QVERIFY(device && buffer);
-        {
-            QSignalBlocker blocker(driver);
-            driver->addItem(QStringLiteral("Test audio API"), 0);
-        }
-        QComboBox* refreshed = refresh == QStringLiteral("buffer") ? buffer : device;
+        QVERIFY(driver && devices && buffer);
+        const int shared = driver->findText(QStringLiteral("Windows audio, shared"));
+        const int exclusive = driver->findText(QStringLiteral("Windows audio, exclusive"));
+        QVERIFY(shared >= 0 && exclusive >= 0);
+        const int listed = devices->count();
+        QComboBox* refreshed = refresh == QStringLiteral("buffer") ? buffer : devices;
         QSignalSpy changes(&card, &NereusSDR::DeviceCard::configChanged);
         QSignalSpy modelResets(refreshed->model(), &QAbstractItemModel::modelReset);
         QVERIFY(!card.isVisible());
@@ -373,7 +408,7 @@ private slots:
             QVERIFY2(expired != 0, "Actual Cocoa row rebuild must expire the queried popup cell");
             qInfo() << "Expired audio card popup cell before" << refresh << "refresh:" << expired;
             if (refresh == QStringLiteral("driver")) {
-                driver->setCurrentIndex(driver->currentIndex() == 0 ? 1 : 0);
+                driver->setCurrentIndex(driver->currentIndex() == shared ? exclusive : shared);
                 QCOMPARE(changes.count(), iteration + 1);
                 const auto saved = NereusSDR::AudioDeviceConfig::loadFromSettings(prefix);
                 QCOMPARE(saved.deviceName, config.deviceName);
@@ -390,20 +425,20 @@ private slots:
             }
             QCOMPARE(card.currentConfig().deviceName, config.deviceName);
             QCOMPARE(card.currentConfig().bufferSamples, config.bufferSamples);
-            QCOMPARE(device->currentText(), config.deviceName + QStringLiteral(" (not available)"));
-            QCOMPARE(device->count(), 2);
+            QCOMPARE(devices->currentText(), config.deviceName + QStringLiteral(" (not connected)"));
+            QCOMPARE(devices->count(), listed);
             // Accepted DeviceCard repair 8711bc7b2 resets the real model to
             // invalidate old cell indexes before accessibility cache teardown.
-            // Driver population and retained-entry selection each reset the
-            // device model; a settings reload resets each retained-entry model once.
-            const int resetsPerRefresh = refresh == QStringLiteral("driver") ? 2 : 1;
-            QCOMPARE(modelResets.count(), (iteration + 1) * resetsPerRefresh);
+            // A Driver pick and a settings reload each rebuild the device
+            // list once; a settings reload resets each retained-entry model once.
+            QCOMPARE(modelResets.count(), iteration + 1);
             QAccessibleInterface* table = QAccessible::queryAccessibleInterface(refreshed->view());
             QVERIFY(table && table->tableInterface());
             QAccessibleInterface* selected = table->tableInterface()->cellAt(refreshed->currentIndex(), 0);
             QVERIFY(selected && selected->isValid());
             QCOMPARE(selected->text(QAccessible::Name), refreshed->currentText());
         }
+        engine.stop();
     }
 
     void radeProfileRefreshAfterNativePopupRebuild_data()
@@ -530,22 +565,47 @@ private slots:
         // R-SPK-21: the page's PC microphone is the shared DeviceCard on
         // audio/TxInput now, so an earlier case's saved device would carry
         // over; start from the default configuration.
+        // An engine-picked Driver saved by an earlier case (its Engine
+        // key) goes as well.
+        for (const QString& key : NereusSDR::AppSettings::instance().allKeys()) {
+            if (key.startsWith(QStringLiteral("audio/TxInput/"))) {
+                NereusSDR::AppSettings::instance().remove(key);
+            }
+        }
         NereusSDR::AudioDeviceConfig{}.saveToSettings(QStringLiteral("audio/TxInput"));
-        NereusSDR::AudioTxInputPage page(nullptr);
+        // A fake Windows catalogue on the model's engine: the Driver list
+        // flips shared and exclusive, each rebuilding the Device list.
+        using NereusSDR::AudioBackendId;
+        auto native = std::make_shared<NereusSDR::FakeAudioEngineBackend>(AudioBackendId::Wasapi);
+        auto older = std::make_shared<NereusSDR::FakeAudioEngineBackend>(AudioBackendId::PortAudio);
+        NereusSDR::AudioDeviceInfo mic;
+        mic.backend = AudioBackendId::Wasapi;
+        mic.direction = NereusSDR::AudioDeviceDirection::Input;
+        mic.id = QStringLiteral("usb-mic-uid");
+        mic.name = QStringLiteral("USB Mic");
+        native->setDevices({mic});
+        native->setDefault(NereusSDR::AudioDeviceDirection::Input, mic.id);
+        older->setTakesStereoMix(false);
+        NereusSDR::RadioModel model;
+        NereusSDR::AudioEngine* engine = model.localAudioDevices();
+        engine->setVaxOutputsAllowed(false);
+        engine->setAudioBackendsForTest({native, older});
+        engine->start();
+        QVERIFY(engine->catalogue() != nullptr);
+        NereusSDR::AudioTxInputPage page(&model);
         // Its Device details hold more combos (sample rate among them), so
         // the two are taken by name rather than by child order.
         QComboBox* backend = page.driverApiCombo();
         QComboBox* device = page.deviceCombo();
         QVERIFY(backend && device);
-        QCOMPARE(backend->currentData().toInt(), -1);
+        const int shared = backend->findText(QStringLiteral("Windows audio, shared"));
+        const int exclusive = backend->findText(QStringLiteral("Windows audio, exclusive"));
+        QVERIFY(shared >= 0 && exclusive >= 0);
+        QCOMPARE(backend->currentIndex(), shared);
         // The card's default entry (DeviceCard's "(platform default)").
         const QString defaultText = device->currentText();
         const int defaultCount = device->count();
         QCOMPARE(defaultText, QStringLiteral("(platform default)"));
-        {
-            QSignalBlocker blocker(backend);
-            backend->addItem(QStringLiteral("Test capture API"), 0);
-        }
         QSignalSpy deviceChanges(device, &QComboBox::currentIndexChanged);
         QVERIFY(!page.isVisible());
         QVERIFY(!device->view()->isVisible());
@@ -553,7 +613,7 @@ private slots:
             const QAccessible::Id expired = expireNativePopupCell(device);
             QVERIFY2(expired != 0, "Actual Cocoa row rebuild must expire the queried TX input cell");
             qInfo() << "Expired TX input popup cell before backend refresh:" << expired;
-            backend->setCurrentIndex(backend->currentIndex() == 0 ? 1 : 0);
+            backend->setCurrentIndex(backend->currentIndex() == shared ? exclusive : shared);
             QCOMPARE(deviceChanges.count(), 0);
             QCOMPARE(device->count(), defaultCount);
             QCOMPARE(device->currentText(), defaultText);
@@ -563,6 +623,7 @@ private slots:
             QVERIFY(selected && selected->isValid());
             QCOMPARE(selected->text(QAccessible::Name), device->currentText());
         }
+        engine->stop();
     }
 
     void containerDropdownSelectionAfterNativeTableRebuild()

@@ -12,24 +12,49 @@
 //   5. updateNegotiatedPill() doesn't crash with a valid config.
 //   6. updateNegotiatedPill() with error string doesn't crash.
 //   7. loadFromSettings with no prior keys populates defaults.
-//   8. configChanged signal emits when the driver-API combo is changed
-//      programmatically (via QComboBox::setCurrentIndex).
+//   8. configChanged signal emits when the Driver list's choice changes
+//      (a fake Windows catalogue: shared to exclusive).
 //   9. AppSettings round-trip: DeviceCard saves on control change;
 //      a second loadFromSettings reads the same values back.
 //  10. Headphones card: enabledChanged fires when checkable toggled.
 //  12. R-R3-36: a configured device that is not present and a configured
 //      buffer size the list lacks survive an unrelated edit on the card.
 //  13. R-R3-36: reloading replaces those kept entries instead of adding more.
-//  14. R-SPK-21 / D14: everything but Device folds under "Device details",
-//      folded by default; the toggle unfolds it.
-//  15. R-SPK-24: Exclusive / Event-driven / Bypass mixer are greyed with
-//      "These three work only with WASAPI on Windows." unless the card's
-//      driver API is WASAPI.
+//  14. R-SPK-21 / D14: everything but Driver and Device folds under
+//      "Device details", folded by default; the toggle unfolds it.
+//  15. D10: the WASAPI checkboxes are gone; their saved keys stay as they
+//      were and are never written.
 //  16. R-SPK-21: a card greyed until Enabled greys Device and Device
 //      details while the box is off; a row added above Device stays live.
+//  17. Native audio plan Task 16 (R-AUD-01, R-AUD-03, R-AUD-08, R-AUD-11,
+//      R-AUD-14 to R-AUD-16), over an engine on fake engine backends: the
+//      Driver list, a device added showing within 1 s with the selection
+//      kept, a missing device "(not connected)" and its note, a device in
+//      use, "(none)", a pick saving the identity and reaching the engine,
+//      the Delay line and its readout, the engine notes, the Bluetooth mic
+//      note.
+//  18. Task 16 fix round: the lists and the Delay before a radio connects
+//      (the engine never started), opening nothing; the older drivers'
+//      default on the "Older drivers" heading; an in-use device in the
+//      closed Device field; the Negotiated pill when Setup opens after the
+//      engine started.
+//  19. The Driver row is in front, above the Device row, with the fold
+//      closed (JJ, 2026-10-10: the driver decides which devices are listed).
 //
 // Design spec:
 //   docs/architecture/2026-04-20-phase3o-subphase12-addendum.md §2.1
+//   docs/architecture/2026-10-08-native-audio-engines-design.md
+//
+// Modification history (NereusSDR):
+//   2026-10-09: native audio plan Task 16 (R-AUD-01, R-AUD-03, R-AUD-08 to
+//               R-AUD-16, D10). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-09: Task 16 fix round, case 18 (R-AUD-01, R-AUD-03, R-AUD-11,
+//               R-AUD-15). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
+//   2026-10-10: case 19, and case 14 follows it: the Driver row sits above
+//               the "Device details" fold. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -46,10 +71,100 @@
 
 #include "core/AppSettings.h"
 #include "core/AudioDeviceConfig.h"
+#include "core/AudioEngine.h"
+#include "core/audio/IAudioDeviceCatalog.h"
+#include "core/audio/PortAudioBackend.h"
 #include "core/audio/PortAudioBus.h"
 #include "gui/setup/DeviceCard.h"
 
+#include "fakes/FakeAudioEngineBackend.h"
+
+#include <memory>
+
 using namespace NereusSDR;
+
+namespace {
+
+AudioDeviceInfo deviceInfo(AudioBackendId backend, AudioDeviceDirection direction,
+                           const QString& id, const QString& name, const QString& hostApi = {})
+{
+    AudioDeviceInfo info;
+    info.backend = backend;
+    info.direction = direction;
+    info.id = id;
+    info.name = name;
+    info.hostApi = hostApi;
+    info.channelCount = 2;
+    return info;
+}
+
+AudioDeviceConfig savedChoice(AudioEngineKind engine, const QString& id, const QString& name)
+{
+    AudioDeviceConfig cfg;
+    cfg.engine = engine;
+    cfg.deviceId = id;
+    cfg.deviceName = name;
+    return cfg;
+}
+
+// An engine on fake engine backends: the fake's backends decide the
+// system (Core Audio here, Windows audio with Rig::windows()).  The engine
+// reads the saved choices when it starts, so start() comes after a test
+// saves them.  No device is touched.
+struct Rig {
+    std::shared_ptr<FakeAudioEngineBackend> native;
+    std::shared_ptr<FakeAudioEngineBackend> older =
+        std::make_shared<FakeAudioEngineBackend>(AudioBackendId::PortAudio);
+    std::unique_ptr<AudioEngine> engine;
+
+    explicit Rig(AudioBackendId nativeId = AudioBackendId::CoreAudio)
+        : native(std::make_shared<FakeAudioEngineBackend>(nativeId))
+    {
+        native->setDevices(
+            {deviceInfo(nativeId, AudioDeviceDirection::Output, QStringLiteral("desk-uid"),
+                        QStringLiteral("Desk speakers")),
+             deviceInfo(nativeId, AudioDeviceDirection::Output, QStringLiteral("built-in-uid"),
+                        QStringLiteral("Built-in speakers")),
+             deviceInfo(nativeId, AudioDeviceDirection::Input, QStringLiteral("usb-mic-uid"),
+                        QStringLiteral("USB Mic"))});
+        native->setDefault(AudioDeviceDirection::Output, QStringLiteral("built-in-uid"));
+        native->setDefault(AudioDeviceDirection::Input, QStringLiteral("usb-mic-uid"));
+        older->setTakesStereoMix(false);
+        older->setDevices({deviceInfo(AudioBackendId::PortAudio, AudioDeviceDirection::Output,
+                                      portAudioDeviceId(QStringLiteral("MME"),
+                                                        QStringLiteral("Desk speakers")),
+                                      QStringLiteral("Desk speakers"), QStringLiteral("MME"))});
+    }
+
+    static AudioBackendId windows() { return AudioBackendId::Wasapi; }
+
+    // The engine before a radio connects: made, never started.
+    void prepare()
+    {
+        engine = std::make_unique<AudioEngine>();
+        engine->setVaxOutputsAllowed(false);
+        engine->setAudioBackendsForTest({native, older});
+    }
+
+    void start()
+    {
+        prepare();
+        engine->start();
+        QVERIFY(engine->catalogue() != nullptr);
+    }
+};
+
+QComboBox* comboNamed(const QWidget& card, const char* name)
+{
+    return card.findChild<QComboBox*>(QLatin1String(name));
+}
+
+QLabel* labelNamed(const QWidget& card, const char* name)
+{
+    return card.findChild<QLabel*>(QLatin1String(name));
+}
+
+} // namespace
 
 class TstDeviceCard : public QObject {
     Q_OBJECT
@@ -165,33 +280,38 @@ private slots:
         QVERIFY(cfg.channels >= 1 && cfg.channels <= 2);
     }
 
-    // ── 8. configChanged emits when driver-API combo is changed ──────────
+    // ── 8. configChanged emits when the Driver list's choice changes ─────
     //
-    // DeviceCard uses QComboBox::currentIndexChanged internally.
-    // We locate the first combo (driver-API) and change its index.
+    // A fake Windows catalogue: shared to exclusive saves the new engine,
+    // and a Delay change emits too.
 
-    void configChangedEmitsOnDriverApiChange() {
-        DeviceCard card(QStringLiteral("audio/Speakers"),
-                        DeviceCard::Role::Output,
-                        false);
+    void configChangedEmitsOnDriverChange() {
+        Rig rig(Rig::windows());
+        rig.start();
+        DeviceCard card(QStringLiteral("audio/Speakers"), DeviceCard::Role::Output, false);
+        card.setAudioEngine(rig.engine.get());
+
+        QComboBox* driver = comboNamed(card, "deviceDriverCombo");
+        QVERIFY(driver != nullptr);
+        // The Driver combo stays the card's first combo.
+        QCOMPARE(card.findChildren<QComboBox*>().first(), driver);
+        QVERIFY(driver->isEnabled());
+        QCOMPARE(driver->currentText(), QStringLiteral("Windows audio, shared"));
 
         QSignalSpy spy(&card, &DeviceCard::configChanged);
+        driver->setCurrentIndex(driver->findText(QStringLiteral("Windows audio, exclusive")));
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.last().at(0).value<AudioDeviceConfig>().engine,
+                 std::optional<AudioEngineKind>(AudioEngineKind::WindowsExclusive));
+        QCOMPARE(AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/Speakers")).engine,
+                 std::optional<AudioEngineKind>(AudioEngineKind::WindowsExclusive));
 
-        // Find all QComboBox children — pick the one that changes buffer size.
-        const auto combos = card.findChildren<QComboBox*>();
-        QVERIFY2(!combos.isEmpty(), "No QComboBox children found in DeviceCard");
-
-        // Trigger a change on the first combo (driver API usually).
-        QComboBox* firstCombo = combos.first();
-        const int origIdx = firstCombo->currentIndex();
-        if (firstCombo->count() > 1) {
-            const int newIdx = (origIdx == 0) ? 1 : 0;
-            firstCombo->setCurrentIndex(newIdx);
-            QVERIFY2(spy.count() > 0, "configChanged not emitted after combo change");
-        } else {
-            // Only one item — can't trigger a change. Skip.
-            QSKIP("Only one item in combo; can't trigger change");
-        }
+        QComboBox* delay = comboNamed(card, "deviceDelayCombo");
+        QVERIFY(delay != nullptr);
+        delay->setCurrentIndex(delay->findData(QVariant::fromValue(10)));
+        QCOMPARE(spy.count(), 2);
+        QCOMPARE(spy.last().at(0).value<AudioDeviceConfig>().delayMs, 10);
+        rig.engine->stop();
     }
 
     // ── 9. AppSettings round-trip via DeviceCard ──────────────────────────
@@ -299,10 +419,10 @@ private slots:
 
         DeviceCard card(prefix, static_cast<DeviceCard::Role>(role), false);
 
-        // The card shows the configured device as not available.
+        // The card shows the configured device as not connected.
         bool shown = false;
         for (QComboBox* combo : card.findChildren<QComboBox*>()) {
-            if (combo->currentText() == QStringLiteral("%1 (not available)").arg(missing)) {
+            if (combo->currentText() == QStringLiteral("%1 (not connected)").arg(missing)) {
                 QCOMPARE(combo->currentData().toString(), missing);
                 shown = true;
             }
@@ -311,16 +431,16 @@ private slots:
         QCOMPARE(card.currentConfig().deviceName, missing);
         QCOMPARE(card.currentConfig().bufferSamples, buffer);
 
-        // An unrelated edit (a WASAPI option) saves the same device and buffer.
-        QCheckBox* exclusive = nullptr;
-        for (QCheckBox* c : card.findChildren<QCheckBox*>()) {
-            if (c->text() == QStringLiteral("Exclusive")) {
-                exclusive = c;
+        // An unrelated edit (Channels) saves the same device and buffer.
+        QComboBox* channels = nullptr;
+        for (QComboBox* combo : card.findChildren<QComboBox*>()) {
+            if (combo->findText(QStringLiteral("1 (Mono)")) >= 0) {
+                channels = combo;
             }
         }
-        QVERIFY(exclusive != nullptr);
+        QVERIFY(channels != nullptr);
         QSignalSpy spy(&card, &DeviceCard::configChanged);
-        exclusive->setChecked(!exclusive->isChecked());
+        channels->setCurrentIndex(channels->currentIndex() == 0 ? 1 : 0);
         QTRY_VERIFY(spy.count() >= 1);
         const auto cfg = spy.last().at(0).value<AudioDeviceConfig>();
         QCOMPARE(cfg.deviceName, missing);
@@ -332,7 +452,7 @@ private slots:
 
     // ── 13. Reloading does not pile up kept entries ───────────────────────
     //
-    // R-R3-36: each load removes the "(not available)" device and the
+    // R-R3-36: each load removes the "(not connected)" device and the
     // unlisted buffer size the previous load added before adding its own.
 
     void reloadDropsStaleKeptEntries() {
@@ -357,8 +477,8 @@ private slots:
         }
         QVERIFY(deviceCombo != nullptr);
         QVERIFY(bufferCombo != nullptr);
-        const QString firstText  = QStringLiteral("%1 (not available)").arg(first);
-        const QString secondText = QStringLiteral("%1 (not available)").arg(second);
+        const QString firstText  = QStringLiteral("%1 (not connected)").arg(first);
+        const QString secondText = QStringLiteral("%1 (not connected)").arg(second);
         QVERIFY(deviceCombo->findText(firstText) >= 0);
         QVERIFY(bufferCombo->findData(QVariant::fromValue(3000)) >= 0);
         const int listedBuffers = bufferCombo->count() - 1;
@@ -377,7 +497,7 @@ private slots:
         card.loadFromSettings();
         int unavailable = 0;
         for (int i = 0; i < deviceCombo->count(); ++i) {
-            if (deviceCombo->itemText(i).endsWith(QStringLiteral(" (not available)"))) {
+            if (deviceCombo->itemText(i).endsWith(QStringLiteral(" (not connected)"))) {
                 ++unavailable;
             }
         }
@@ -425,21 +545,26 @@ private slots:
         config.deviceName = QStringLiteral("Absent test audio device");
         config.bufferSamples = 3000;
         config.saveToSettings(prefix);
+        // A fake Windows catalogue: the Driver list flips shared and
+        // exclusive, both listing the same devices.
+        Rig rig(Rig::windows());
+        rig.start();
         DeviceCard card(prefix, input ? DeviceCard::Role::Input : DeviceCard::Role::Output, false);
-        const QList<QComboBox*> combos = card.findChildren<QComboBox*>();
-        QVERIFY(!combos.isEmpty());
-        QComboBox* driver = combos.first();
+        card.setAudioEngine(rig.engine.get());
+        QComboBox* driver = comboNamed(card, "deviceDriverCombo");
+        QVERIFY(driver);
+        const int shared = driver->findText(QStringLiteral("Windows audio, shared"));
+        const int exclusive = driver->findText(QStringLiteral("Windows audio, exclusive"));
+        QVERIFY(shared >= 0 && exclusive >= 0);
+        QCOMPARE(driver->currentIndex(), shared);
         QComboBox* device = nullptr;
-        for (QComboBox* combo : combos) {
+        for (QComboBox* combo : card.findChildren<QComboBox*>()) {
             if (combo->findText(QStringLiteral("(platform default)")) >= 0) {
                 device = combo;
             }
         }
         QVERIFY(device);
-        {
-            QSignalBlocker blocker(driver);
-            driver->addItem(QStringLiteral("Test audio API"), 0);
-        }
+        const int listed = device->count();
         QSignalSpy changes(&card, &DeviceCard::configChanged);
         for (int iteration = 0; iteration < 3; ++iteration) {
             if (inspectNativeCache) {
@@ -447,13 +572,14 @@ private slots:
                 QVERIFY(table && table->tableInterface());
                 QAccessibleInterface* selected = table->tableInterface()->cellAt(device->currentIndex(), 0);
                 QVERIFY(selected && selected->isValid());
-                QCOMPARE(selected->text(QAccessible::Name), QStringLiteral("Absent test audio device (not available)"));
+                QCOMPARE(selected->text(QAccessible::Name), QStringLiteral("Absent test audio device (not connected)"));
             }
 
-            driver->setCurrentIndex(driver->currentIndex() == 0 ? 1 : 0);
+            driver->setCurrentIndex(driver->currentIndex() == shared ? exclusive : shared);
 
             QCOMPARE(changes.count(), iteration + 1);
-            QCOMPARE(device->count(), 2);
+            QCOMPARE(device->count(), listed);
+            QCOMPARE(device->currentText(), QStringLiteral("Absent test audio device (not connected)"));
             QCOMPARE(device->currentData().toString(), config.deviceName);
             QCOMPARE(card.currentConfig().deviceName, config.deviceName);
             QCOMPARE(card.currentConfig().bufferSamples, 3000);
@@ -467,6 +593,7 @@ private slots:
                 QCOMPARE(selected->text(QAccessible::Name), device->currentText());
             }
         }
+        rig.engine->stop();
     }
 
     // The input card offers the TX Input page's larger buffers.
@@ -494,10 +621,11 @@ private slots:
         QVERIFY(!card.detailsExpanded());
         QVERIFY(details->isHidden());
 
-        // Every row but Device is inside the fold; Device is in front.
-        const QStringList folded{QStringLiteral("Driver API:"), QStringLiteral("Sample rate:"),
+        // Every row but Driver and Device is inside the fold; those two are
+        // in front.
+        const QStringList folded{QStringLiteral("Sample rate:"),
                                  QStringLiteral("Channels:"), QStringLiteral("Buffer size:"),
-                                 QStringLiteral("Options:"), QStringLiteral("Negotiated:")};
+                                 QStringLiteral("Delay:"), QStringLiteral("Negotiated:")};
         QStringList foundInDetails;
         for (QLabel* label : details->findChildren<QLabel*>()) {
             foundInDetails << label->text();
@@ -506,9 +634,18 @@ private slots:
             QVERIFY2(foundInDetails.contains(text), qPrintable(text));
         }
         QVERIFY(!foundInDetails.contains(QStringLiteral("Device:")));
-        // The driver API combo stays the card's first combo, inside the fold.
+        QVERIFY(!foundInDetails.contains(QStringLiteral("Driver:")));
+        QVERIFY(!foundInDetails.contains(QStringLiteral("Options:")));
+        QVERIFY(!foundInDetails.contains(QStringLiteral("Driver API:")));
+        QVERIFY(details->isAncestorOf(comboNamed(card, "deviceDelayCombo")));
+        QVERIFY(details->isAncestorOf(labelNamed(card, "deviceDelayNow")));
+        QVERIFY(details->isAncestorOf(labelNamed(card, "engineNote")));
+        // The state note is in front, under the Device row.
+        QVERIFY(!details->isAncestorOf(labelNamed(card, "deviceStateNote")));
+        // The Driver combo stays the card's first combo, in front of the fold.
         QComboBox* first = card.findChildren<QComboBox*>().first();
-        QVERIFY(details->isAncestorOf(first));
+        QCOMPARE(first, comboNamed(card, "deviceDriverCombo"));
+        QVERIFY(!details->isAncestorOf(first));
 
         toggle->click();
         QVERIFY(card.detailsExpanded());
@@ -518,59 +655,486 @@ private slots:
         QVERIFY(!toggle->isChecked());
     }
 
-    // ── 15. WASAPI-only options (R-SPK-24) ────────────────────────────────
+    // ── 19. The Driver row is in front, above Device ──────────────────────
+    // JJ, 2026-10-10: the driver choice decides which devices are listed,
+    // so it is never behind the fold (ASIO on the Windows mic card).
 
-    void wasapiOptionsGreyedUnlessWasapi() {
+    void driverRowIsVisibleAboveDeviceWithTheFoldClosed_data() {
+        QTest::addColumn<QString>("prefix");
+        QTest::addColumn<bool>("input");
+        QTest::newRow("speakers") << QStringLiteral("audio/Speakers") << false;
+        QTest::newRow("mic") << QStringLiteral("audio/TxInput") << true;
+    }
+
+    void driverRowIsVisibleAboveDeviceWithTheFoldClosed() {
+        QFETCH(QString, prefix);
+        QFETCH(bool, input);
+        DeviceCard card(prefix, input ? DeviceCard::Role::Input : DeviceCard::Role::Output, false);
+        // Laid out without a window: grab() sends the pending resizes.
+        card.resize(card.sizeHint());
+        card.grab();
+        QVERIFY(!card.detailsExpanded());
+
+        QComboBox* driver = card.driverApiCombo();
+        QComboBox* device = card.deviceCombo();
+        QVERIFY(driver != nullptr);
+        QVERIFY(device != nullptr);
+        QCOMPARE(driver->objectName(), QStringLiteral("deviceDriverCombo"));
+        QVERIFY(device->isVisibleTo(&card));
+        QVERIFY2(driver->isVisibleTo(&card), "the Driver list is behind the closed fold");
+
+        // Its "Driver:" label is in front with it.
+        bool labelShown = false;
+        for (QLabel* label : card.findChildren<QLabel*>()) {
+            labelShown = labelShown
+                || (label->text() == QStringLiteral("Driver:") && label->isVisibleTo(&card));
+        }
+        QVERIFY(labelShown);
+
+        // Driver first, then Device: on the card and in the tab order.
+        const QRect driverRect(driver->mapTo(&card, QPoint(0, 0)), driver->size());
+        const QRect deviceRect(device->mapTo(&card, QPoint(0, 0)), device->size());
+        QVERIFY2(driverRect.bottom() < deviceRect.top(),
+                 qPrintable(QStringLiteral("driver bottom %1, device top %2")
+                                .arg(driverRect.bottom())
+                                .arg(deviceRect.top())));
+        QWidget* next = driver->nextInFocusChain();
+        while (next != driver && qobject_cast<QComboBox*>(next) == nullptr) {
+            next = next->nextInFocusChain();
+        }
+        QCOMPARE(next, device);
+
+        // The fold still opens and closes under them; Driver stays put.
+        card.setDetailsExpanded(true);
+        QVERIFY(driver->isVisibleTo(&card));
+        card.setDetailsExpanded(false);
+        QVERIFY(driver->isVisibleTo(&card));
+    }
+
+    // ── 15. The WASAPI checkboxes are gone; their keys stay (D10) ─────────
+
+    void retiredWasapiOptionsAreGoneAndTheirKeysStay() {
+        const QString prefix = QStringLiteral("audio/Speakers");
+        auto& s = AppSettings::instance();
+        s.setValue(prefix + QStringLiteral("/ExclusiveMode"), QStringLiteral("True"));
+        s.setValue(prefix + QStringLiteral("/EventDriven"), QStringLiteral("False"));
+        Rig rig;
+        rig.start();
+        DeviceCard card(prefix, DeviceCard::Role::Output, false);
+        card.setAudioEngine(rig.engine.get());
+        for (QCheckBox* box : card.findChildren<QCheckBox*>()) {
+            QVERIFY(box->text() != QStringLiteral("Exclusive"));
+            QVERIFY(box->text() != QStringLiteral("Event-driven"));
+            QVERIFY(box->text() != QStringLiteral("Bypass mixer"));
+        }
+        QVERIFY(labelNamed(card, "wasapiOnlyNote") == nullptr);
+
+        // An edit saves the card, and the retired keys stay as they were:
+        // the seeded ones unchanged, the absent one never written.
+        QComboBox* delay = comboNamed(card, "deviceDelayCombo");
+        QVERIFY(delay != nullptr);
+        delay->setCurrentIndex(delay->findData(QVariant::fromValue(20)));
+        QCOMPARE(s.value(prefix + QStringLiteral("/DelayMs")).toString(), QStringLiteral("20"));
+        QCOMPARE(s.value(prefix + QStringLiteral("/ExclusiveMode")).toString(), QStringLiteral("True"));
+        QCOMPARE(s.value(prefix + QStringLiteral("/EventDriven")).toString(), QStringLiteral("False"));
+        QVERIFY(!s.contains(prefix + QStringLiteral("/BypassMixer")));
+        rig.engine->stop();
+    }
+
+    // ── 17. Native audio plan Task 16: the cards on the engine's lists ────
+
+    // R-AUD-15: the Delay list and what each choice saves. DelayMs is
+    // saved with the engine's keys, so until the lists are ready the Delay
+    // is greyed with its reason.
+    void delayListSavesDelayMs() {
         DeviceCard card(QStringLiteral("audio/Speakers"), DeviceCard::Role::Output, false);
-        const QString reason = QStringLiteral("These three work only with WASAPI on Windows.");
-        QCOMPARE(DeviceCard::wasapiOnlyReason(), reason);
-        QVERIFY(DeviceCard::isWasapiDriverName(QStringLiteral("Windows WASAPI")));
-        QVERIFY(!DeviceCard::isWasapiDriverName(QStringLiteral("MME")));
-        QVERIFY(!DeviceCard::isWasapiDriverName(QStringLiteral("Core Audio")));
+        QComboBox* delay = comboNamed(card, "deviceDelayCombo");
+        QVERIFY(delay != nullptr);
+        QVERIFY(!delay->isEnabled());
+        QVERIFY(!delay->isHidden());
+        QCOMPARE(delay->toolTip(), QStringLiteral("The device lists are not ready."));
+        // Without an engine the readout says nothing is playing.
+        QCOMPARE(labelNamed(card, "deviceDelayNow")->text(), QStringLiteral("Now -- ms"));
 
-        auto optionBoxes = [&card]() {
-            QList<QCheckBox*> boxes;
-            for (QCheckBox* box : card.findChildren<QCheckBox*>()) {
-                if (box->text() == QStringLiteral("Exclusive")
-                    || box->text() == QStringLiteral("Event-driven")
-                    || box->text() == QStringLiteral("Bypass mixer")) {
-                    boxes << box;
-                }
+        Rig rig;
+        rig.start();
+        card.setAudioEngine(rig.engine.get());
+        QVERIFY(delay->isEnabled());
+        QVERIFY(delay->toolTip().isEmpty());
+        const QStringList texts{QStringLiteral("Automatic"), QStringLiteral("2 ms"),
+                                QStringLiteral("3 ms"),      QStringLiteral("5 ms"),
+                                QStringLiteral("10 ms"),     QStringLiteral("20 ms"),
+                                QStringLiteral("40 ms")};
+        const QList<int> saved{0, 2, 3, 5, 10, 20, 40};
+        QCOMPARE(delay->count(), texts.size());
+        QCOMPARE(delay->currentIndex(), 0);
+        for (int i = 0; i < texts.size(); ++i) {
+            QCOMPARE(delay->itemText(i), texts.at(i));
+        }
+        for (int i = texts.size() - 1; i >= 0; --i) {
+            delay->setCurrentIndex(i);
+            QCOMPARE(AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/Speakers")).delayMs,
+                     saved.at(i));
+        }
+        rig.engine->stop();
+    }
+
+    // Fix round, R-AUD-01/R-AUD-03: the lists exist before a radio
+    // connects (the engine never started), the Delay is settable, and
+    // nothing opens a device.
+    void listsAndDelayBeforeStartOpenNothing() {
+        Rig rig;
+        rig.prepare();
+        DeviceCard card(QStringLiteral("audio/Speakers"), DeviceCard::Role::Output, false);
+        card.setAudioEngine(rig.engine.get());
+        QVERIFY(rig.engine->catalogue() != nullptr);
+        bool desk = false;
+        bool builtIn = false;
+        for (QComboBox* combo : card.findChildren<QComboBox*>()) {
+            desk = desk || combo->findText(QStringLiteral("Desk speakers")) >= 0;
+            builtIn = builtIn || combo->findText(QStringLiteral("Built-in speakers")) >= 0;
+        }
+        QVERIFY(desk);
+        QVERIFY(builtIn);
+        QComboBox* delay = comboNamed(card, "deviceDelayCombo");
+        QVERIFY(delay->isEnabled());
+        QVERIFY(delay->toolTip().isEmpty());
+        delay->setCurrentIndex(delay->findText(QStringLiteral("10 ms")));
+        const AudioDeviceConfig saved =
+            AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/Speakers"));
+        QCOMPARE(saved.delayMs, 10);
+        QVERIFY(saved.engine.has_value());
+        QVERIFY(rig.native->outputRequests().empty());
+        QVERIFY(rig.older->outputRequests().empty());
+    }
+
+    // Fix round, R-AUD-01: with no native engine running, the older drivers
+    // with no host API saved show on the "Older drivers" heading, never as a
+    // second, pickable row of that name.
+    void olderDriversDefaultIsTheHeadingRow() {
+        Rig rig(AudioBackendId::PulseAudio);
+        rig.native->setRunning(false);
+        rig.prepare();
+        DeviceCard card(QStringLiteral("audio/Speakers"), DeviceCard::Role::Output, false);
+        card.setAudioEngine(rig.engine.get());
+        QComboBox* driver = comboNamed(card, "deviceDriverCombo");
+        int headings = 0;
+        for (int i = 0; i < driver->count(); ++i) {
+            headings += driver->itemText(i) == QStringLiteral("Older drivers") ? 1 : 0;
+        }
+        QCOMPARE(headings, 1);
+        QCOMPARE(driver->itemText(0), QStringLiteral("PipeWire (not running)"));
+        QCOMPARE(driver->itemText(1), QStringLiteral("PulseAudio (not running)"));
+        QCOMPARE(driver->currentText(), QStringLiteral("Older drivers"));
+        QVERIFY(driver->isEnabled());
+    }
+
+    // Fix round, R-AUD-11: the closed Device field names the chosen device
+    // in use by another program.
+    void inUseChosenDeviceReadsSoInTheClosedField() {
+        savedChoice(AudioEngineKind::CoreAudio, QStringLiteral("desk-uid"),
+                    QStringLiteral("Desk speakers"))
+            .saveToSettings(QStringLiteral("audio/Speakers"));
+        Rig rig;
+        rig.start();
+        DeviceCard card(QStringLiteral("audio/Speakers"), DeviceCard::Role::Output, false);
+        card.setAudioEngine(rig.engine.get());
+        QComboBox* device = nullptr;
+        for (QComboBox* combo : card.findChildren<QComboBox*>()) {
+            if (combo->currentText() == QStringLiteral("Desk speakers")) {
+                device = combo;
             }
-            return boxes;
-        };
-        auto* note = card.findChild<QLabel*>(QStringLiteral("wasapiOnlyNote"));
-        QVERIFY(note != nullptr);
-        QCOMPARE(note->text(), reason);
-
-        // "(PortAudio default)" is not WASAPI: greyed, never hidden.
-        QCOMPARE(optionBoxes().size(), 3);
-        QVERIFY(!card.wasapiOptionsAvailable());
-        for (QCheckBox* box : optionBoxes()) {
-            QVERIFY(!box->isEnabled());
-            QVERIFY(!box->isHidden());
-            QCOMPARE(box->toolTip(), reason);
         }
+        QVERIFY(device != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(rig.native->lastOutput() != nullptr, 5000);
+        AudioStreamEvent event;
+        event.kind = AudioStreamEvent::Kind::DeviceBusy;
+        rig.native->lastOutput()->emitEventForTest(event);
+        QTRY_COMPARE_WITH_TIMEOUT(device->currentText(),
+                                  QStringLiteral("Desk speakers (in use by another program)"),
+                                  5000);
+        QVERIFY(device->findText(QStringLiteral("Built-in speakers")) > 0);
+        rig.engine->stop();
+    }
+
+    // Fix round, R-AUD-15: a card made after the engine started shows the
+    // format the role plays now.
+    void pillShowsThePlayingFormatWhenSetupOpensLater() {
+        Rig rig;
+        rig.start();
+        QTRY_VERIFY_WITH_TIMEOUT(rig.native->lastOutput() != nullptr, 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            rig.engine->roleStatus(AudioRole::Speakers).state == AudioRoleState::Playing
+                || rig.engine->roleStatus(AudioRole::Speakers).state
+                       == AudioRoleState::PlayingOnDefault,
+            5000);
+        DeviceCard card(QStringLiteral("audio/Speakers"), DeviceCard::Role::Output, false);
+        card.setAudioEngine(rig.engine.get());
+        const AudioFormat format = rig.native->lastOutput()->negotiatedFormat();
+        QVERIFY(format.sampleRate > 0);
+        const QString expected = QStringLiteral("%1 Hz \u00b7 %2 ch")
+                                     .arg(format.sampleRate)
+                                     .arg(format.channels);
+        bool shown = false;
+        for (QLabel* label : card.findChildren<QLabel*>()) {
+            shown = shown || label->text().contains(expected);
+        }
+        QVERIFY2(shown, qPrintable(expected));
+        rig.engine->stop();
+    }
+
+    // R-AUD-01: the Mac lists Core Audio alone, greyed with its reason.
+    void macDriverListIsCoreAudioGreyed() {
+        Rig rig;
+        rig.start();
+        DeviceCard card(QStringLiteral("audio/Speakers"), DeviceCard::Role::Output, false);
+        card.setAudioEngine(rig.engine.get());
+        QComboBox* driver = comboNamed(card, "deviceDriverCombo");
+        QCOMPARE(driver->count(), 1);
+        QCOMPARE(driver->currentText(), QStringLiteral("Core Audio"));
+        QVERIFY(!driver->isEnabled());
+        QVERIFY(!driver->isHidden());
+        QCOMPARE(driver->toolTip(), QStringLiteral("The only sound system on the Mac."));
+        QVERIFY(labelNamed(card, "engineNote")->text().isEmpty());
+        rig.engine->stop();
+    }
+
+    // R-AUD-03: "(platform default)" first, then the engine's devices; a
+    // device added shows within 1 s and the selection stays.
+    void deviceAddedShowsAndKeepsTheSelection() {
+        savedChoice(AudioEngineKind::CoreAudio, QStringLiteral("desk-uid"),
+                    QStringLiteral("Desk speakers"))
+            .saveToSettings(QStringLiteral("audio/Speakers"));
+        Rig rig;
+        rig.start();
+        DeviceCard card(QStringLiteral("audio/Speakers"), DeviceCard::Role::Output, false);
+        card.setAudioEngine(rig.engine.get());
+        QComboBox* device = nullptr;
+        for (QComboBox* combo : card.findChildren<QComboBox*>()) {
+            if (combo->findText(QStringLiteral("(platform default)")) >= 0) {
+                device = combo;
+            }
+        }
+        QVERIFY(device != nullptr);
+        QCOMPARE(device->itemText(0), QStringLiteral("(platform default)"));
+        QCOMPARE(device->currentText(), QStringLiteral("Desk speakers"));
+        QCOMPARE(device->findText(QStringLiteral("Built-in speakers")) > 0, true);
+        QCOMPARE(card.deviceCount(), 2);
+
+        QSignalSpy changes(&card, &DeviceCard::configChanged);
+        rig.native->addDevice(deviceInfo(AudioBackendId::CoreAudio, AudioDeviceDirection::Output,
+                                         QStringLiteral("usb-dac-uid"), QStringLiteral("USB DAC")));
+        rig.native->postNotice(AudioNotice::DevicesChanged);
+        QTRY_VERIFY_WITH_TIMEOUT(device->findText(QStringLiteral("USB DAC")) > 0, 1000);
+        QCOMPARE(device->currentText(), QStringLiteral("Desk speakers"));
+        QCOMPARE(card.deviceCount(), 3);
+        QCOMPARE(changes.count(), 0);
+        rig.engine->stop();
+    }
+
+    // R-AUD-08: a saved device that is missing shows "(not connected)",
+    // the note says where the sound plays meanwhile, and both clear when
+    // it comes back.
+    void missingOutputShowsNotConnectedAndItsNote() {
+        savedChoice(AudioEngineKind::CoreAudio, QStringLiteral("gone-uid"),
+                    QStringLiteral("Desk monitor"))
+            .saveToSettings(QStringLiteral("audio/Speakers"));
+        Rig rig;
+        rig.start();
+        DeviceCard card(QStringLiteral("audio/Speakers"), DeviceCard::Role::Output, false);
+        card.setAudioEngine(rig.engine.get());
+        QComboBox* device = nullptr;
+        for (QComboBox* combo : card.findChildren<QComboBox*>()) {
+            if (combo->findText(QStringLiteral("(platform default)")) >= 0) {
+                device = combo;
+            }
+        }
+        QVERIFY(device != nullptr);
+        QCOMPARE(device->currentText(), QStringLiteral("Desk monitor (not connected)"));
+        QLabel* note = labelNamed(card, "deviceStateNote");
+        QTRY_COMPARE_WITH_TIMEOUT(note->text(),
+                                  QStringLiteral("Desk monitor is not connected. Playing on the "
+                                                 "system default, Built-in speakers, until it "
+                                                 "comes back."),
+                                  5000);
         QVERIFY(!note->isHidden());
+        // The readout names the device actually playing.
+        QTRY_VERIFY_WITH_TIMEOUT(labelNamed(card, "deviceDelayNow")
+                                     ->text()
+                                     .endsWith(QStringLiteral(" ms from the radio to Built-in speakers")),
+                                 2000);
 
-        // A WASAPI driver API makes them live and drops the note.
-        QComboBox* driver = card.findChildren<QComboBox*>().first();
-        driver->addItem(QStringLiteral("Windows WASAPI"), QVariant::fromValue(97));
-        driver->addItem(QStringLiteral("MME"), QVariant::fromValue(98));
-        driver->setCurrentIndex(driver->findText(QStringLiteral("Windows WASAPI")));
-        QVERIFY(card.wasapiOptionsAvailable());
-        for (QCheckBox* box : optionBoxes()) {
-            QVERIFY(box->isEnabled());
-            QVERIFY(box->toolTip() != reason);
-        }
+        rig.native->addDevice(deviceInfo(AudioBackendId::CoreAudio, AudioDeviceDirection::Output,
+                                         QStringLiteral("gone-uid"), QStringLiteral("Desk monitor")));
+        rig.native->postNotice(AudioNotice::DevicesChanged);
+        QTRY_COMPARE_WITH_TIMEOUT(device->currentText(), QStringLiteral("Desk monitor"), 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(rig.engine->roleStatus(AudioRole::Speakers).state,
+                                  AudioRoleState::Playing, 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(note->text().isEmpty(), 1000);
         QVERIFY(note->isHidden());
+        QTRY_VERIFY_WITH_TIMEOUT(labelNamed(card, "deviceDelayNow")
+                                     ->text()
+                                     .endsWith(QStringLiteral(" ms from the radio to Desk monitor")),
+                                 2000);
+        rig.engine->stop();
+    }
 
-        driver->setCurrentIndex(driver->findText(QStringLiteral("MME")));
-        QVERIFY(!card.wasapiOptionsAvailable());
-        for (QCheckBox* box : optionBoxes()) {
-            QVERIFY(!box->isEnabled());
-            QCOMPARE(box->toolTip(), reason);
+    // R-AUD-11: a device another program holds says so in the list, and
+    // a busy stream says so in the note.
+    void deviceInUseShowsInTheListAndTheNote() {
+        AudioDeviceInfo busy = deviceInfo(AudioBackendId::CoreAudio, AudioDeviceDirection::Output,
+                                          QStringLiteral("busy-uid"), QStringLiteral("Studio monitor"));
+        busy.state = AudioDeviceState::InUse;
+        Rig rig;
+        rig.native->addDevice(busy);
+        savedChoice(AudioEngineKind::CoreAudio, QStringLiteral("desk-uid"),
+                    QStringLiteral("Desk speakers"))
+            .saveToSettings(QStringLiteral("audio/Speakers"));
+        rig.start();
+        DeviceCard card(QStringLiteral("audio/Speakers"), DeviceCard::Role::Output, false);
+        card.setAudioEngine(rig.engine.get());
+        bool listed = false;
+        for (QComboBox* combo : card.findChildren<QComboBox*>()) {
+            listed = listed
+                || combo->findText(QStringLiteral("Studio monitor (in use by another program)")) > 0;
         }
+        QVERIFY(listed);
+
+        FakeMatcherAudioBus* desk = rig.native->lastOutput();
+        QVERIFY(desk != nullptr);
+        AudioStreamEvent event;
+        event.kind = AudioStreamEvent::Kind::DeviceBusy;
+        desk->emitEventForTest(event);
+        QTRY_VERIFY_WITH_TIMEOUT(labelNamed(card, "deviceStateNote")
+                                     ->text()
+                                     .contains(QStringLiteral("is in use by another program")),
+                                 5000);
+        rig.engine->stop();
+    }
+
+    // A saved "(none)" shows "(none)".
+    void savedNoneShowsNone() {
+        savedChoice(AudioEngineKind::CoreAudio, QString::fromLatin1(kAudioDeviceNone),
+                    QString::fromLatin1(kAudioDeviceNone))
+            .saveToSettings(QStringLiteral("audio/Speakers"));
+        Rig rig;
+        rig.start();
+        DeviceCard card(QStringLiteral("audio/Speakers"), DeviceCard::Role::Output, false);
+        card.setAudioEngine(rig.engine.get());
+        bool shown = false;
+        for (QComboBox* combo : card.findChildren<QComboBox*>()) {
+            shown = shown || combo->currentText() == QStringLiteral("(none)");
+        }
+        QVERIFY(shown);
+        QCOMPARE(card.currentConfig().deviceId, QString::fromLatin1(kAudioDeviceNone));
+        rig.engine->stop();
+    }
+
+    // R-AUD-04: a pick saves Engine, DeviceId, DeviceName and FirstChannel,
+    // and the engine opens that device.
+    void pickSavesTheIdentityAndReachesTheEngine() {
+        Rig rig;
+        rig.start();
+        DeviceCard card(QStringLiteral("audio/Speakers"), DeviceCard::Role::Output, false);
+        card.setAudioEngine(rig.engine.get());
+        connect(&card, &DeviceCard::configChanged, rig.engine.get(),
+                &AudioEngine::setSpeakersConfig);
+        QComboBox* device = nullptr;
+        for (QComboBox* combo : card.findChildren<QComboBox*>()) {
+            if (combo->findText(QStringLiteral("(platform default)")) >= 0) {
+                device = combo;
+            }
+        }
+        QVERIFY(device != nullptr);
+        device->setCurrentIndex(device->findText(QStringLiteral("Desk speakers")));
+
+        auto& s = AppSettings::instance();
+        QCOMPARE(s.value(QStringLiteral("audio/Speakers/Engine")).toString(),
+                 QStringLiteral("CoreAudio"));
+        QCOMPARE(s.value(QStringLiteral("audio/Speakers/DeviceId")).toString(),
+                 QStringLiteral("desk-uid"));
+        QCOMPARE(s.value(QStringLiteral("audio/Speakers/DeviceName")).toString(),
+                 QStringLiteral("Desk speakers"));
+        QCOMPARE(s.value(QStringLiteral("audio/Speakers/FirstChannel")).toString(),
+                 QStringLiteral("1"));
+        QTRY_VERIFY_WITH_TIMEOUT(!rig.native->outputRequests().empty()
+                                     && rig.native->outputRequests().back().deviceId
+                                            == QStringLiteral("desk-uid"),
+                                 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(rig.engine->roleStatus(AudioRole::Speakers).playingName,
+                                  QStringLiteral("Desk speakers"), 5000);
+        rig.engine->stop();
+    }
+
+    // R-AUD-15: "Now -- ms" while the role is not playing, the delay to
+    // the device playing while it is.
+    void delayReadoutFollowsTheRole() {
+        Rig rig;
+        rig.start();
+        DeviceCard card(QStringLiteral("audio/Headphones"), DeviceCard::Role::Output, true);
+        card.setAudioEngine(rig.engine.get());
+        QCOMPARE(rig.engine->roleStatus(AudioRole::Headphones).state, AudioRoleState::Off);
+        QCOMPARE(labelNamed(card, "deviceDelayNow")->text(), QStringLiteral("Now -- ms"));
+
+        DeviceCard speakers(QStringLiteral("audio/Speakers"), DeviceCard::Role::Output, false);
+        speakers.setAudioEngine(rig.engine.get());
+        QCOMPARE(rig.engine->roleStatus(AudioRole::Speakers).state, AudioRoleState::Playing);
+        QTRY_VERIFY_WITH_TIMEOUT(labelNamed(speakers, "deviceDelayNow")
+                                     ->text()
+                                     .startsWith(QStringLiteral("Now ")),
+                                 2000);
+        QVERIFY(labelNamed(speakers, "deviceDelayNow")
+                    ->text()
+                    .endsWith(QStringLiteral(" ms from the radio to Built-in speakers")));
+        rig.engine->stop();
+    }
+
+    // R-AUD-16: what the picked driver means.
+    void engineNotesFollowTheDriver() {
+        Rig rig(Rig::windows());
+        rig.start();
+        DeviceCard card(QStringLiteral("audio/Speakers"), DeviceCard::Role::Output, false);
+        card.setAudioEngine(rig.engine.get());
+        QComboBox* driver = comboNamed(card, "deviceDriverCombo");
+        QLabel* note = labelNamed(card, "engineNote");
+        QVERIFY(note->text().isEmpty());
+        driver->setCurrentIndex(driver->findText(QStringLiteral("Windows audio, exclusive")));
+        QCOMPARE(note->text(),
+                 QStringLiteral("Other apps cannot play through this device while NereusSDR has it."));
+        driver->setCurrentIndex(driver->findText(QStringLiteral("MME")));
+        QCOMPARE(note->text(), QStringLiteral("An older driver: more delay, and its list updates "
+                                              "only with Rescan devices."));
+        driver->setCurrentIndex(driver->findText(QStringLiteral("Windows audio, shared")));
+        QVERIFY(note->text().isEmpty());
+        rig.engine->stop();
+    }
+
+    // R-AUD-14: a Bluetooth mic picked says what it costs.
+    void bluetoothMicNote() {
+        AudioDeviceInfo headset = deviceInfo(AudioBackendId::CoreAudio, AudioDeviceDirection::Input,
+                                             QStringLiteral("airpods-uid"), QStringLiteral("AirPods"));
+        headset.transport = AudioTransport::Bluetooth;
+        Rig rig;
+        rig.native->addDevice(headset);
+        rig.start();
+        DeviceCard card(QStringLiteral("audio/TxInput"), DeviceCard::Role::Input, false);
+        card.setAudioEngine(rig.engine.get());
+        QLabel* note = labelNamed(card, "deviceStateNote");
+        QComboBox* device = nullptr;
+        for (QComboBox* combo : card.findChildren<QComboBox*>()) {
+            if (combo->findText(QStringLiteral("(platform default)")) >= 0) {
+                device = combo;
+            }
+        }
+        QVERIFY(device != nullptr);
+        device->setCurrentIndex(device->findText(QStringLiteral("AirPods")));
+        QCOMPARE(note->text(),
+                 QStringLiteral("Bluetooth headsets switch to phone-call quality, for listening "
+                                "too, while they are your mic. For the best sound, listen on "
+                                "AirPods and talk on a wired or built-in mic."));
+        device->setCurrentIndex(device->findText(QStringLiteral("USB Mic")));
+        QVERIFY(note->text().isEmpty());
+        rig.engine->stop();
     }
 
     // ── 16. Greyed until Enabled (R-SPK-21) ───────────────────────────────

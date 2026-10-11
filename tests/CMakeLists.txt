@@ -610,6 +610,9 @@ if(APPLE)
     set_source_files_properties(tst_qt_cocoa_accessibility_ownership.cpp
         PROPERTIES LANGUAGE OBJCXX SKIP_PRECOMPILE_HEADERS ON)
     nereus_add_test(tst_qt_cocoa_accessibility_ownership NATIVE_WINDOW)
+    # Native audio plan Task 16: the audio card case uses the engine's
+    # test backends.
+    target_compile_definitions(tst_qt_cocoa_accessibility_ownership PRIVATE NEREUS_BUILD_TESTS)
 endif()
 nereus_add_test(tst_meter_composite_dispatch)
 nereus_add_test(tst_meter_responsive_fonts NATIVE_WINDOW)
@@ -1631,6 +1634,13 @@ if(APPLE)
     nereus_add_test(tst_core_audio_hal_bus)
 endif()
 
+# Native audio plan Task 8 (R-AUD-01, R-AUD-02, R-AUD-07, R-AUD-11,
+# R-AUD-14, R-AUD-32): the Core Audio engine against a fake HAL system.
+# The real adapter is made but never opens a device (the test-run barrier).
+if(APPLE)
+    nereus_add_test(tst_core_audio_backend)
+endif()
+
 # Audited 2026-07-25: tst_linux_pipe_bus, tst_linux_backend_detection (below)
 # and tst_pipewire_stream_config, tst_pipewire_stream_integration (further
 # down, Phase 3O Sub-Phase 8 / Task 24) register only inside
@@ -1669,6 +1679,11 @@ endif()
 # 1 M-byte concurrent producer/consumer race for memory ordering.
 nereus_add_test(tst_audio_ring_spsc)
 
+# 2026-10-10: the remote window's microphone collector: a consumer that
+# stalls loses nothing the collector pulled meanwhile, a full queue drops
+# its oldest, and stop joins without waiting out the wake.
+nereus_add_test(tst_mic_uplink_collector EXTRA_LABELS core)
+
 # ── Phase 3O Sub-Phase 8 Task 8: PipeWireStream config-translation ───────────
 # Pure unit test: exercises configToProperties() for Output (virtual source),
 # Input (consumer), and targetNodeName routing. No running daemon required.
@@ -1676,6 +1691,43 @@ nereus_add_test(tst_audio_ring_spsc)
 # main() returns 0 and ctest reports PASS.
 if(UNIX AND NOT APPLE)
     nereus_add_test(tst_pipewire_stream_config)
+endif()
+
+# ── Native audio plan Task 10: the PipeWire engine (R-AUD-01, R-AUD-03, ─────
+# R-AUD-07, R-AUD-14, R-AUD-32). Contract tests with a fake system: nodes to
+# devices, pairs, the stream a pair opens, the registry listener's notices,
+# the matcher output's fill, the not-running engine and the test-run barrier.
+# No daemon is reached (the real adapter never connects in a test run).
+# Compiles to int main(){return 0;} without libpipewire (#else).
+if(UNIX AND NOT APPLE)
+    nereus_add_test(tst_pipewire_device_backend)
+endif()
+
+# ── Native audio plan Task 11: which Linux engine runs (R-AUD-01, R-AUD-02, ─
+# R-AUD-31). Pure: the probe to the choice, forced values included. Runs on
+# every platform (the selection holds no Linux headers).
+nereus_add_test(tst_linux_engine_selection CORE_ONLY)
+
+# ── Native audio plan Task 11: the PulseAudio engine (R-AUD-01, R-AUD-07, ──
+# R-AUD-14, R-AUD-31, R-AUD-32). Contract tests with a fake system: sinks and
+# sources to devices, monitors, pairs, the stream a device opens, the
+# subscribe notices, the matcher output's fill, the registry order and the
+# test-run barrier. No server is reached (the real adapter never connects in
+# a test run). Built only with libpulse, as the engine is.
+if(UNIX AND NOT APPLE AND PULSE_FOUND)
+    nereus_add_test(tst_pulse_audio_backend)
+endif()
+
+# ── Native audio plan Task 12: ALSA direct on the Core (R-AUD-01, R-AUD-11, ─
+# R-AUD-25, R-AUD-30, R-AUD-32). Contract tests with a fake system and a fake
+# PCM: cards to devices, the default card, the inotify node filter and
+# watcher (on a temporary directory), the stream's format, period, writer
+# and error handling, the fall-back and return through the engine and the
+# supervisor, the Core's registry and migration, desktop detection and the
+# test-run barrier. No card is opened. Built only with ALSA, as the engine is.
+if(UNIX AND NOT APPLE AND ALSA_FOUND)
+    nereus_add_test(tst_alsa_direct_backend)
+    target_compile_definitions(tst_alsa_direct_backend PRIVATE NEREUS_BUILD_TESTS)
 endif()
 
 # ── R3 receiver audio fix wave (R-R3-44): PipeWire output frames per cycle ───
@@ -1708,6 +1760,10 @@ nereus_add_test(tst_audio_engine_vax_tee)
 # channel count (44.1 to 192 kHz, stereo and mono). No real device opened.
 nereus_add_test(tst_audio_engine_speaker_format)
 
+# Native audio plan Task 6 (R-AUD-15): a bus that takes the stereo mix gets
+# the 48 kHz block into its clock matcher; no dry run after sizing at 200 ppm.
+nereus_add_test(tst_audio_engine_matcher_push)
+
 # ── R3 receiver audio fix wave (R-R3-42, R-R3-44): one notice per stop ───────
 nereus_add_test(tst_receiver_stop_notices)
 
@@ -1723,7 +1779,16 @@ nereus_add_test(tst_audio_engine_master_mute)
 # widget→AudioEngine user path, the AudioEngine→widget echo path with
 # re-entry prevention, AppSettings round-trip (audio/Master/Volume,
 # audio/Master/Muted), and construction-time restore of saved values.
+# Native audio plan Task 19 (R-AUD-23, D20, V-UI-2): the speakers menu and
+# tooltip over fake engine backends; NEREUS_HEADER_CAPTURE_DIR saves the
+# menu and tooltip captures.
 nereus_add_test(tst_master_output_widget)
+target_compile_definitions(tst_master_output_widget PRIVATE NEREUS_BUILD_TESTS)
+# R-AUD-23 / R-AUD-04 (native audio fix wave): a pick in the header's
+# speakers menu reaches an open Outputs card through MainWindow. Fake engine
+# backends only; no audio device, no radio.
+nereus_add_test(tst_main_window_header_speaker_pick)
+target_compile_definitions(tst_main_window_header_speaker_pick PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3O Sub-Phase 10 Task 10c: TitleBar host strip ─────────────────────
 # 32 px strip that hosts the QMenuBar + MasterOutputWidget. Smoke only:
@@ -1806,9 +1871,51 @@ target_compile_definitions(tst_rxapplet_att_range PRIVATE NEREUS_BUILD_TESTS)
 # combinations, and prefix independence (Speakers vs Headphones).
 nereus_add_test(tst_audio_device_config_roundtrip)
 
+# Native audio Task 4 (R-AUD-04, R-AUD-05, V-SW-2, V-SW-3): matching a saved
+# device against a live list, and the one-time migration to native engines.
+nereus_add_test(tst_audio_device_identity)
+nereus_add_test(tst_audio_device_migration)
+
+# Native audio Task 5 (R-AUD-08 to R-AUD-14, V-SW-4, V-SW-1 retry part): the
+# stream supervisor with a fake catalogue and a fake host: fallback and
+# return, busy, the mic and VAX never moved, default following held while
+# transmitting and never to Bluetooth, the retry schedule, the Bluetooth mic
+# opened first.  Retries run on manual fires or on scaled timers with no
+# timing bound, so the test is not REALTIME.
+nereus_add_test(tst_audio_stream_supervisor)
+
+# Native audio Task 7 (R-AUD-01, R-AUD-06, R-AUD-32): PortAudio as the older
+# drivers engine, with an injected device list: the host APIs offered on
+# each system, the entries and the defaults.  No PortAudio call.
+nereus_add_test(tst_port_audio_backend)
+# Native audio plan Task 7 fix (R-AUD-06): PortAudio's lock under Rescan,
+# on the real library with no stream opened.
+nereus_add_test(tst_port_audio_library_lock)
+# Native audio plan Task 9 (R-AUD-02, R-AUD-03, R-AUD-11, R-AUD-14,
+# R-AUD-16): the Windows audio engine's decisions, portable and tested on
+# every system (format order, periods, notices, transport, results).  The
+# Windows adapter files compile only in Windows CI.
+nereus_add_test(tst_wasapi_policy)
+target_compile_definitions(tst_port_audio_library_lock PRIVATE NEREUS_BUILD_TESTS)
+
+# Native audio Task 7 (R-AUD-02, R-AUD-06, R-AUD-15, R-AUD-34): AudioEngine
+# with fake engines, the catalogue and the stream supervisor: engine choice,
+# the default engine, the role status, the delay readout per role, Rescan of
+# older drivers only, a remote window's speakers and the PC mic role through
+# the scripted fake capture helper.  No timing bound, so not REALTIME.
+nereus_add_test(tst_audio_engine_native_routing fakes/FakeCaptureChild.cpp)
+target_compile_definitions(tst_audio_engine_native_routing PRIVATE NEREUS_BUILD_TESTS)
+
 # R-R3-36 Task 1: capture helper record protocol. Framing, bounded
 # incremental reader, PCM and JSON codecs, malformed-input rejections.
 nereus_add_test(tst_capture_protocol)
+
+# Native audio plan Task 13 (R-AUD-17, V-SW-6): the PC mic hand-off's
+# shared memory and wake.  The test re-executes itself as the writer
+# (--shm-ring-child), which attaches the region by name and passes a
+# numbered ramp of 1,000,000 frames through the clock matcher's ring in
+# lockstep with this side's reader.  No device is opened.
+nereus_add_test(tst_capture_shm_ring)
 
 # R-R3-36 Task 2: the nereus-audio-capture helper as a real process. The
 # test re-executes itself as the helper (--capture-helper, through
@@ -1823,6 +1930,74 @@ nereus_add_test(tst_capture_helper_process fakes/FakeCaptureChild.cpp)
 # hello / stop deadlines, protocol errors, bounded shutdown against a
 # hanging child. No real microphone is opened.
 nereus_add_test(tst_capture_supervisor fakes/FakeCaptureChild.cpp)
+
+# Native audio plan Task 1 (V-HW-8): the audio delay probe. The speakers
+# click, the input detector, the click and hit matcher, the input capture
+# time, and the engine wiring (click on the speakers push only, a Test Mic
+# lease while it runs). Fake speakers and VAX buses; the helper is the
+# scripted fake (--fake-capture-child probe). No real device is opened.
+nereus_add_test(tst_audio_delay_probe fakes/FakeCaptureChild.cpp)
+
+# Native audio plan Task 2 (R-AUD-15, V-SW-5): the lock-free clock matcher
+# (DeviceRateMatcher, ported from WDSP rmatch).  Deterministic: two
+# simulated clocks, no device; the drift checks compare the ratio with
+# WDSP's own rmatchV fed the same clocks (each simulation single-threaded,
+# the four run side by side to keep the wall time down).
+nereus_add_test(tst_device_rate_matcher)
+# TIMEOUT 600: four 10-minute simulations (V-SW-5) through varsamp, about
+# 60 s on the Mac and up to about 360 s in a loaded Linux container.
+# QTEST_FUNCTION_TIMEOUT 540000 for this test only: the drift function runs
+# all four and alone takes about 330 s there, past the 240 s watchdog the
+# Linux CI job sets for the rest, and 540 s stays under the TIMEOUT so the
+# crash handler can still print the stacks.
+if(TEST tst_device_rate_matcher)
+    set_tests_properties(tst_device_rate_matcher PROPERTIES TIMEOUT 600)
+    set_property(TEST tst_device_rate_matcher APPEND PROPERTY ENVIRONMENT
+        "QTEST_FUNCTION_TIMEOUT=540000")
+endif()
+# Native audio plan Task 3 (R-AUD-03, R-AUD-07, R-AUD-32, V-SW-1): engine
+# keys and labels, the pair model, sample format conversion, the no-device
+# rule and the live device catalogue (its debounce, its own thread, the
+# 3 s start and stop waits) with fake engines only. REALTIME: the debounce
+# and default-change cases keep up with the wall clock.
+nereus_add_test(tst_audio_device_catalog REALTIME)
+if(WIN32)
+    # timeBeginPeriod: the 2 ms device thread asks for Windows' 1 ms timer.
+    target_link_libraries(tst_audio_device_catalog PRIVATE winmm)
+endif()
+
+# The same matcher on a real writer thread and reader thread (+-200 ppm):
+# no torn frames, and the reader thread allocates nothing and (on Linux)
+# takes no pthread mutex. REALTIME: both threads are paced by the wall clock.
+nereus_add_test(tst_device_rate_matcher_threads REALTIME)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(tst_device_rate_matcher_threads PRIVATE ${CMAKE_DL_LIBS})
+endif()
+# On Windows each image binds operator new to its own C++ runtime, so the
+# test's replaced operator new never sees an allocation made inside
+# NereusCore.dll.  The matcher is compiled into the test there, so its
+# reader allocates through the test's own operator new, as every image
+# does on the Mac and Linux.
+if(WIN32)
+    target_sources(tst_device_rate_matcher_threads PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/core/audio/DeviceRateMatcher.cpp)
+endif()
+
+# Native audio plan Task 15 (V-SW-7): the ASIO session rules, the buffer
+# switch and the window's AsioBackend with FakeAsioDriver and a fake helper
+# link only; no ASIO driver, sound device or helper is touched.  On Windows
+# the session and what its buffer switch calls are compiled into the test,
+# for the allocation hook (as tst_device_rate_matcher_threads above).
+nereus_add_test(tst_asio_session)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(tst_asio_session PRIVATE ${CMAKE_DL_LIBS})
+endif()
+if(WIN32)
+    target_sources(tst_asio_session PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/core/audio/AsioSession.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/audio/DeviceSampleFormat.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/audio/DeviceRateMatcher.cpp)
+endif()
 
 # R-R3-36 Task 5: AudioEngine and RadioModel PC microphone session demand.
 # start() opens no input; a hanging helper never delays start, connect or
@@ -1868,14 +2043,31 @@ nereus_add_test(tst_audio_engine_no_portaudio)
 # ── Phase 3O Sub-Phase 12 Task 12.2 Step 0: MasterOutputWidget signal refresh ──
 # Verifies that speakersConfigChanged → onSpeakersConfigChanged syncs the widget's
 # device-name anchor without emitting outputDeviceChanged (sync-from-engine path,
-# not a user action). 5 test cases; runs on all platforms.
+# not a user action). 5 test cases; runs on all platforms. Native audio plan
+# Task 19: a fall-back the config names never moves the menu's tick.
 nereus_add_test(tst_master_output_widget_signal_refresh)
+target_compile_definitions(tst_master_output_widget_signal_refresh PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3O Sub-Phase 12 Task 12.2: DeviceCard widget ─────────────────────────
 # Verifies construction (Output, Input, enableCheckbox), currentConfig(),
 # updateNegotiatedPill(), AppSettings round-trip, configChanged emission,
 # and enabledChanged emission. 10 test cases.
 nereus_add_test(tst_device_card)
+target_compile_definitions(tst_device_card PRIVATE NEREUS_BUILD_TESTS)
+
+# Native audio plan Task 17 (R-AUD-07, R-AUD-19 to R-AUD-22): an interface's
+# pairs under its name, the same-pair note, the mic's side, the one-ASIO-
+# driver prompt, the shared ASIO buffer size and rate, the control panel
+# button, the restarted note and greyed pairs for an unusable sample
+# format, over fake engine backends and fake ASIO caps.
+nereus_add_test(tst_device_card_pairs_asio)
+target_compile_definitions(tst_device_card_pairs_asio PRIVATE NEREUS_BUILD_TESTS)
+
+# Native audio plan Task 16 (R-AUD-01, R-AUD-03, R-AUD-06, R-AUD-08 to
+# R-AUD-11, R-AUD-14, R-AUD-15): the Setup cards' Driver and Device lists,
+# state notes, delay readout, Sound system words and Rescan note, over a
+# fake device catalogue.
+nereus_add_test(tst_audio_driver_list)
 
 # ── Phase 3O Sub-Phase 12 Task 12.3: AudioVaxPage + VaxChannelCard ─────────────
 # Verifies VaxChannelCard construction (1–4), loadFromSettings, pill update,
@@ -4576,6 +4768,11 @@ nereus_add_test(tst_audio_engine_tx_monitor_state)
 #   volumeZero_thenNonZero_hasOutput — gain=0 produces silence; gain=1 produces audio
 #   monoExpandedToStereo_LequalsR   — mono sample → L=R in stereo mix
 #   disableAfterEnable_silencesNextBlock — re-disable silences subsequent blocks
+#   reachesMixerOnlyAtDspPump       — the transmit thread never touches the mixer
+#   192kBlocks_playAt48k            — 256 frames at 192 kHz → 64 frames, same tone
+#   rateChange_followsNewRate       — 192 kHz, 96 kHz, then 48 kHz sample for sample
+#   handoffFull_dropsWholeBlock     — a full hand-off drops whole blocks, in order
+#   feedAndDrainOnTwoThreads        — transmit thread feeds while the DSP thread drains
 #
 # Uses masterMixForTest() NEREUS_BUILD_TESTS seam to observe MasterMixer output.
 # Pre-code review §4.3 + §4.4.
@@ -8681,6 +8878,26 @@ nereus_add_test(tst_radio_speaker_link
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
 target_compile_definitions(tst_radio_speaker_link PRIVATE NEREUS_BUILD_TESTS)
+# Native audio plan Task 21 (R-AUD-25, R-AUD-28, R-AUD-30): the Core
+# speaker's JSON forms, its binding on the Core to the master level, mute and
+# speakers role, the taps it leaves alone, and the desktop rule.
+nereus_add_test(tst_core_speaker_model)
+target_compile_definitions(tst_core_speaker_model PRIVATE NEREUS_BUILD_TESTS)
+# Native audio plan Task 21 (R-AUD-25, R-AUD-27, R-AUD-28): the Core
+# speaker's six properties reach only a peer that declared coreSpeaker 1 on
+# a Core with its own speaker, a remote window's change lands on the Core,
+# and a window of an older Core shows it disabled and sends nothing.
+nereus_add_test(tst_core_speaker_link
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_core_speaker_link PRIVATE NEREUS_BUILD_TESTS)
+# Native audio plan Task 22 (R-AUD-27, R-AUD-30, D24, V-UI-4): the Core
+# speaker card on Outputs in a remote window: its texts, its states (greyed
+# while unreachable or with an older Core, no card, the chosen card missing or
+# in use, the desktop box), writes and follows without echo. Captures with
+# NEREUS_AUDIO_SETUP_CAPTURE_DIR.
+nereus_add_test(tst_core_speaker_card EXTRA_LABELS gui)
+target_compile_definitions(tst_core_speaker_card PRIVATE NEREUS_BUILD_TESTS)
 # Level Cal: the window's grid stops following the noise floor while a run
 # goes and is put back after (Thetis CalibrateLevel).
 nereus_add_test(tst_level_cal_grid_follow_guard)

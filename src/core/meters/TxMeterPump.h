@@ -25,6 +25,11 @@
 //                 ALC_GROUP readings, worked the same way: the seven
 //                 container meters a remote window shows (A9,
 //                 txReadingsVersion 3).
+//   micPeakDb, alcPeakDb, compressionPeakDb, eqPeakDb, levelerPeakDb,
+//   cfcPeakDb     Thetis's MIC_PK, ALC_PK, COMP_PK, EQ_PK, LEVELER_PK and
+//                 CFC_PK readings, worked the same way: the peak a
+//                 container meter bar shows as its main value, beside the
+//                 average above (txReadingsVersion 4).
 //
 // R-R3-39 (the plan's Task 32): TxChannel::txMeter returns the transmit
 // lane's last reading and asks the lane for a fresh one, so a poll here
@@ -50,6 +55,10 @@
 //               CFC gain, ALC gain, ALC group); readFrom. J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
+//   2026-10-10: The six peak readings a container meter bar shows as its
+//               main value (MIC, ALC, COMP, EQ, Leveler, CFC peak;
+//               txReadingsVersion 4). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QMetaType>
@@ -93,6 +102,16 @@ struct TxMeterReadings {
     double cfcGainDb{kNoReadingDb};
     double alcGainDb{kNoReadingDb};
     double alcGroupDb{kNoReadingDb};
+    /// txReadingsVersion 4: Thetis's MIC_PK, ALC_PK, COMP_PK, EQ_PK,
+    /// LEVELER_PK and CFC_PK readings (thetisTxReading), what a local
+    /// window's container meters show for TxMicPeak, TxAlcPeak,
+    /// TxCompPeak, TxEqPeak, TxLevelerPeak and TxCfcPeak.
+    double micPeakDb{kNoReadingDb};
+    double alcPeakDb{kNoReadingDb};
+    double compressionPeakDb{kNoReadingDb};
+    double eqPeakDb{kNoReadingDb};
+    double levelerPeakDb{kNoReadingDb};
+    double cfcPeakDb{kNoReadingDb};
 
     bool operator==(const TxMeterReadings& other) const = default;
 };

@@ -99,6 +99,27 @@ else
 fi
 if ldd /usr/local/bin/nereusd | grep -q 'not found'; then echo 'installed nereusd has unresolved libraries'; exit 1; fi
 /usr/local/bin/nereusd --help > "$keep/installed-help.txt"
+# Sound cards and serial accessories: the unit runs as a DynamicUser account
+# with no groups, so drop-ins grant the audio and dialout groups, as the
+# station images do (packaging/station-image/common/nereusd-audio.conf and
+# nereusd-serial.conf).
+audio_dropin=/etc/systemd/system/nereusd.service.d/audio.conf
+serial_dropin=/etc/systemd/system/nereusd.service.d/serial.conf
+install -d -m 755 /etc/systemd/system/nereusd.service.d
+cat > "$audio_dropin" <<'AUDIO'
+# Sound cards on a Core: /dev/snd/* is root:audio on Debian, and a DynamicUser
+# account has no groups of its own.
+[Service]
+SupplementaryGroups=audio
+AUDIO
+chmod 644 "$audio_dropin"
+cat > "$serial_dropin" <<'SERIAL'
+# Serial accessories on a station image: /dev/ttyUSB* and /dev/ttyACM* are
+# root:dialout on Debian, and a DynamicUser account has no groups of its own.
+[Service]
+SupplementaryGroups=dialout
+SERIAL
+chmod 644 "$serial_dropin"
 systemd-analyze verify /usr/lib/systemd/system/nereusd.service
 sha256sum /usr/local/bin/nereusd /usr/local/lib/libNereusCore.so /usr/local/lib/librade.so.0.1 \
     /usr/lib/systemd/system/nereusd.service /etc/nereusd.conf \

@@ -1,4 +1,9 @@
 // no-port-check: NereusSDR-original. Network queue policy; no DSP algorithm.
+//
+// Modification history (NereusSDR):
+//   2026-10-10: hasReady(); takeReady() reads the same due time through
+//               nextDueNs() (R-AUD-15, bench regression). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "core/session/media/AudioJitterBuffer.h"
 #include "core/session/media/OpusAudioCodec.h"
 #include <bit>
@@ -177,24 +182,35 @@ AudioJitterBuffer::Admission AudioJitterBuffer::insert(
     return inserted ? Admission::Accepted : Admission::Duplicate;
 }
 
-std::optional<AudioJitterBuffer::Playout> AudioJitterBuffer::takeReady(qint64 nowNs)
+std::optional<qint64> AudioJitterBuffer::nextDueNs() const
 {
-    tick(nowNs);
-    auto first = m_packets.begin();
-    std::optional<qint64> due;
-    const bool present = first != m_packets.end() && first->first == m_nextIndex;
-    if (present) {
+    const auto first = m_packets.begin();
+    if (first != m_packets.end() && first->first == m_nextIndex) {
         // Preserve the producer's clock: received blocks are released at
         // their own arrival time plus the hold interval. A fixed packet-period
         // software playout clock here would hide clock drift from rmatch
         // and instead let this queue grow until it periodically dropped.
-        due = first->second.dueNs;
-    } else if (first != m_packets.end()) {
-        due = first->second.dueNs
-            - static_cast<qint64>(first->first - m_nextIndex) * m_packetDurationNs;
-    } else {
-        due = m_nextMissingDue;
+        return first->second.dueNs;
     }
+    if (first != m_packets.end()) {
+        return first->second.dueNs
+            - static_cast<qint64>(first->first - m_nextIndex) * m_packetDurationNs;
+    }
+    return m_nextMissingDue;
+}
+
+bool AudioJitterBuffer::hasReady(qint64 nowNs) const
+{
+    const std::optional<qint64> due = nextDueNs();
+    return due && nowNs >= *due;
+}
+
+std::optional<AudioJitterBuffer::Playout> AudioJitterBuffer::takeReady(qint64 nowNs)
+{
+    tick(nowNs);
+    auto first = m_packets.begin();
+    const bool present = first != m_packets.end() && first->first == m_nextIndex;
+    const std::optional<qint64> due = nextDueNs();
     if (!due || nowNs < *due) { return std::nullopt; }
     Playout result;
     result.timestamp = m_nextTimestamp;

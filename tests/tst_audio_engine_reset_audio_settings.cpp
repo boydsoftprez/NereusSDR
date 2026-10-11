@@ -18,6 +18,11 @@
 // fakes and the run is in test mode; before this it opened this
 // computer's real default output and VAX devices.
 //
+// Native audio plan Task 7 fix (2026-10-09, J.J. Boyd KG4VCF, AI-assisted
+// via Anthropic Claude Code): the outputs open through the device layer
+// the app runs (setAudioBackendsForTest with a fake engine of matcher
+// buses); the direct path ships in no build.
+//
 // Cross-platform. No radioModel required (AudioEngine standalone
 // construction with a dedicated AppSettings instance).
 // =================================================================
@@ -32,6 +37,7 @@
 #include "models/RadioModel.h"
 
 #include "fakes/FakeAudioBus.h"
+#include "fakes/FakeDeviceLayer.h"
 
 #include <memory>
 
@@ -43,11 +49,14 @@ namespace {
 // fake, and test mode (initTestCase) stops anything else from reaching this
 // computer's real speakers, microphone or VAX devices. `opened` counts the
 // fake devices made.
+//
+// Native audio plan Task 7 fix: the outputs open through the device layer
+// the app runs (engine backends, catalogue, stream supervisor), on a fake
+// older-drivers engine with matcher buses (FakeDeviceLayer.h).
 void useFakeDevices(AudioEngine* engine, int* opened)
 {
-    engine->setDeviceBusFactoryForTest([opened](const AudioDeviceConfig&, bool) {
+    Test::useFakeDeviceLayer(engine, [opened](const QString&) {
         if (opened) { ++*opened; }
-        return std::make_unique<FakeAudioBus>(QStringLiteral("FakeDevice"));
     });
     engine->setVaxBusFactoryForTest([opened](int channel) -> std::unique_ptr<IAudioBus> {
         if (opened) { ++*opened; }

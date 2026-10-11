@@ -529,16 +529,19 @@ FetchContent_Declare(
     GIT_TAG        v19.7.0  # verified cmake-clean release
 )
 
-# PortAudio build options — turn off ASIO. Direct ASIO support was
-# dropped during the 2026-04-19 GPL compliance review (see plan §"GPL
-# Compliance Review"); PortAudio's built-in ASIO host API is gated off
-# for the same reason (the Steinberg ASIO SDK license is
-# GPL-incompatible). All other PortAudio host APIs remain enabled:
+# PortAudio build options: PortAudio's own ASIO host API stays off,
+# because NereusSDR hosts ASIO itself (its own ASIO engine, built on the
+# vendored SDK below). History: the 2026-04-19 GPL compliance review
+# dropped ASIO because the Steinberg ASIO SDK licence was then
+# GPL-incompatible. Since SDK 2.3.4 (October 2025) the SDK is dual
+# licensed, the Steinberg ASIO License or GPL version 3, and NereusSDR,
+# distributed under GPL-3.0 (LICENSE-NOTICE), takes it under GPL-3.0.
+# All other PortAudio host APIs remain enabled:
 # MME / DS / WDM-KS / WASAPI on Windows, CoreAudio on macOS,
 # ALSA / Pulse / PipeWire / JACK on Linux.
 set(PA_BUILD_SHARED OFF CACHE BOOL "PortAudio static" FORCE)
 set(PA_BUILD_STATIC ON  CACHE BOOL "PortAudio static" FORCE)
-set(PA_USE_ASIO    OFF CACHE BOOL "PortAudio ASIO host API — forced OFF for GPL compliance (Steinberg SDK incompatible)" FORCE)
+set(PA_USE_ASIO    OFF CACHE BOOL "PortAudio ASIO host API, forced OFF: NereusSDR hosts ASIO itself" FORCE)
 
 # Linux audio backends — force ON so the static PortAudio actually contains
 # the host-API modules. PortAudio's CMake nominally auto-detects ALSA/JACK
@@ -558,6 +561,15 @@ endif()
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "Minimum CMake policy version for vendored subprojects" FORCE)
 
 FetchContent_MakeAvailable(portaudio)
+
+# Steinberg ASIO SDK 2.3.4 (third_party/asiosdk, vendored unchanged;
+# GPL-3.0 as NereusSDR takes it, see third_party/asiosdk/VERSION.txt and
+# docs/attribution/ASIO-SDK-PROVENANCE.md). Defines the static library
+# asiosdk_host, which only the mic helper nereus-audio-capture links.
+# ASIO exists only on Windows, so macOS and Linux never see the target.
+if(WIN32)
+    add_subdirectory(third_party/asiosdk)
+endif()
 
 # PortAudio's Windows host APIs (pa_win_ds.c, pa_win_wasapi.c, pa_win_wdmks.c)
 # call windows.h's min / max macros directly. The global NOMINMAX above
@@ -820,6 +832,24 @@ if(UNIX AND NOT APPLE)
         message(STATUS "PipeWire ${PIPEWIRE_VERSION} — native Linux audio bridge enabled")
     else()
         message(STATUS "libpipewire-0.3 >= 0.3.50 not found — Linux audio limited to pactl path")
+    endif()
+    # libpulse: the PulseAudio engine (native audio plan Task 11, R-AUD-31):
+    # one Linux build carries both engines and the sound server that answers
+    # at run time picks which one runs.  Without it the engine is not built.
+    pkg_check_modules(PULSE IMPORTED_TARGET libpulse)
+    if(PULSE_FOUND)
+        message(STATUS "libpulse ${PULSE_VERSION}: PulseAudio engine enabled")
+    else()
+        message(STATUS "libpulse not found: PulseAudio engine not built")
+    endif()
+    # libasound: the ALSA direct engine, the Linux Core's only engine
+    # (native audio plan Task 12, R-AUD-25, D18).  PortAudio's ALSA host API
+    # needs it as well.  Without it the Core keeps the older drivers.
+    find_package(ALSA)
+    if(ALSA_FOUND)
+        message(STATUS "ALSA ${ALSA_VERSION_STRING}: ALSA direct engine enabled")
+    else()
+        message(STATUS "ALSA not found: ALSA direct engine not built")
     endif()
 endif()
 
@@ -1128,10 +1158,40 @@ set(CORE_SOURCES
     src/core/audio/RadeTxFilters.h
     src/core/audio/RadioMicSource.cpp
     src/core/audio/VaxTxMicSource.cpp
+    src/core/audio/AudioDelayProbe.cpp
+    src/core/audio/DeviceRateMatcher.cpp
+    src/core/audio/AudioDeviceTypes.cpp
+    src/core/audio/AudioTestBarrier.cpp
+    src/core/audio/DeviceSampleFormat.cpp
+    src/core/audio/AudioDeviceCatalog.cpp
+    src/core/audio/AudioDeviceMatching.cpp
+    src/core/audio/AudioStreamSupervisor.cpp
+    # Native audio plan Task 21: the Core speaker's link text forms.
+    src/core/audio/CoreSpeakerJson.cpp
+    src/core/audio/AudioBackendRegistry.cpp
+    # Native audio plan Task 11: which Linux engine runs (pure, every platform).
+    src/core/audio/LinuxEngineSelection.cpp
+    src/core/audio/PortAudioBackend.cpp
+    src/core/audio/PortAudioLibrary.cpp
+    src/core/audio/WasapiPolicy.cpp
+    src/core/audio/IAudioStreamHost.h
+    src/core/audio/IAudioDeviceCatalog.h
+    src/core/audio/IAudioEngineBackend.h
     src/core/audio/CaptureProtocol.cpp
+    src/core/audio/CaptureShm.cpp
     src/core/audio/CaptureHelper.cpp
     src/core/audio/CaptureAudioBus.cpp
+    # 2026-10-10: the real-time thread that collects the microphone for a
+    # remote window's uplink.
+    src/core/audio/MicUplinkCollector.cpp
     src/core/audio/CaptureSupervisor.cpp
+    # Native audio plan Task 15: the ASIO session rules (portable; the
+    # driver itself loads only in nereus-audio-capture on Windows) and the
+    # window's ASIO backend over the helper.
+    src/core/audio/IAsioDriver.h
+    src/core/audio/AsioSessionNotifier.h
+    src/core/audio/AsioSession.cpp
+    src/core/audio/AsioBackend.cpp
     src/core/audio/CaptureHelperLocator.cpp
     src/core/StationBinaryLocator.cpp
     src/core/audio/CompositeTxMicRouter.cpp
@@ -1582,6 +1642,13 @@ list(APPEND CORE_SOURCES
 if(APPLE)
     list(APPEND CORE_SOURCES src/core/audio/CoreAudioHalBus.cpp)
     list(APPEND CORE_SOURCES src/core/MacMicPermission.mm)
+    # Native audio plan Task 8 (R-AUD-01): the Core Audio engine, its
+    # system seam, the AUHAL output on the clock matcher and the input.
+    list(APPEND CORE_SOURCES
+        src/core/audio/CoreAudioSystem.cpp
+        src/core/audio/CoreAudioBackend.cpp
+        src/core/audio/CoreAudioOutputBus.cpp
+        src/core/audio/CoreAudioInputStream.cpp)
 endif()
 
 # LinuxPipeBus — Linux-only IAudioBus implementation bridging to PulseAudio /
@@ -1597,6 +1664,22 @@ endif()
 if(UNIX AND NOT APPLE)
     list(APPEND CORE_SOURCES src/core/audio/LinuxPipeBus.cpp)
     list(APPEND CORE_SOURCES src/core/audio/LinuxAudioBackend.cpp)
+endif()
+
+# Windows audio, shared and exclusive (native audio plan Task 9, R-AUD-02,
+# R-AUD-11, R-AUD-16).  Every decision lives in the portable WasapiPolicy
+# (CORE_SOURCES above, tested on every platform by tst_wasapi_policy); these
+# files hold only the COM calls.  They set _WIN32_WINNT before windows.h, so
+# they skip the precompiled header, as DnsSdAdvertiserWindows.cpp does.
+if(WIN32)
+    set(NEREUS_WASAPI_SOURCES
+        src/core/audio/WasapiSystemWin.cpp
+        src/core/audio/WasapiBackendWin.cpp
+        src/core/audio/WasapiOutputBusWin.cpp
+        src/core/audio/WasapiInputStreamWin.cpp
+    )
+    list(APPEND CORE_SOURCES ${NEREUS_WASAPI_SOURCES})
+    set_source_files_properties(${NEREUS_WASAPI_SOURCES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 endif()
 
 set(MODEL_SOURCES
@@ -1950,6 +2033,7 @@ set(GUI_SOURCES
     src/gui/setup/hardware/BandwidthMonitorTab.cpp
     src/gui/setup/AudioAdvancedPage.cpp
     src/gui/setup/AudioOutputsPage.cpp
+    src/gui/setup/CoreSpeakerCard.cpp
     src/gui/setup/AudioTxInputPage.cpp
     src/gui/setup/SoundSystemLine.cpp
     src/gui/setup/CaptureStatusText.cpp
@@ -1958,6 +2042,8 @@ set(GUI_SOURCES
     src/gui/setup/AudioTciPage.cpp
     src/gui/setup/AudioDigitalModesPage.cpp
     src/gui/setup/AudioVaxPage.cpp
+    src/gui/setup/AudioDriverList.cpp
+    src/gui/setup/AsioSwitchAllDialog.cpp
     src/gui/setup/DeviceCard.cpp
     src/gui/setup/DspSetupPages.cpp
     src/gui/setup/DspOptionsPage.cpp
@@ -2125,6 +2211,7 @@ if(NEREUSSDR_LTO_AVAILABLE)
         ${GUI_SOURCES}
         ${RESOURCES}
     )
+    target_compile_definitions(NereusGui_LTO PUBLIC NEREUS_GUI_STATIC)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_sources(NereusGui_LTO PRIVATE src/gui/VaxLinuxFirstRunDialog.cpp)
     endif()
@@ -2284,6 +2371,16 @@ endif()
 # --------------------------------------------------------------------------
 add_executable(nereus-audio-capture src/capture_main.cpp)
 target_link_libraries(nereus-audio-capture PRIVATE NereusCore)
+# Native audio plan Task 15 (R-AUD-01, R-AUD-22): on Windows the helper
+# hosts the ASIO driver: the Steinberg SDK adapter and the cmASIO set-up
+# of the mic live in this target alone, never in NereusCore or a test.
+if(WIN32)
+    target_sources(nereus-audio-capture PRIVATE
+        src/core/audio/AsioDriverWin.cpp
+        src/core/audio/cmasio.cpp)
+    target_link_libraries(nereus-audio-capture PRIVATE asiosdk_host)
+    target_compile_definitions(nereus-audio-capture PRIVATE NEREUS_CAPTURE_HELPER_ASIO)
+endif()
 # The desktop app always carries the helper built from the same revision.
 add_dependencies(NereusSDR nereus-audio-capture)
 if(APPLE)
@@ -2383,13 +2480,22 @@ function(nereus_apply_core_deps target)
         # APIs themselves come from libSystem (already linked) but the
         # property-query helpers and AudioDeviceID type live in CoreAudio.
         target_link_libraries(${target} PUBLIC "-framework CoreAudio")
+
+        # AudioToolbox and AudioUnit for the Core Audio engine's AUHAL
+        # output and input units (src/core/audio/CoreAudioOutputBus.cpp,
+        # CoreAudioInputStream.cpp; native audio plan Task 8).
+        target_link_libraries(${target} PUBLIC "-framework AudioToolbox" "-framework AudioUnit")
     endif()
 
     if(WIN32)
         # avrt provides AvSetMmThreadCharacteristicsW + AvRevertMmThreadCharacteristics
         # used by src/core/audio/RealtimeAudioPriority.cpp to join the
-        # "Pro Audio" MMCSS task class.
-        target_link_libraries(${target} PUBLIC avrt)
+        # "Pro Audio" MMCSS task class.  ole32 (CoInitializeEx,
+        # CoCreateInstance, CoTaskMemFree, PropVariantClear) and uuid
+        # (IID_IUnknown) serve the Windows audio engine in
+        # src/core/audio/Wasapi*Win.cpp; ksuser carries the kernel-streaming
+        # format GUIDs, which that engine also defines itself with cites.
+        target_link_libraries(${target} PUBLIC avrt ole32 uuid ksuser)
     endif()
 
     if(Qt6SerialPort_FOUND)
@@ -2459,13 +2565,41 @@ function(nereus_apply_core_deps target)
     # PipeWire sources compile conditionally.
     if(PIPEWIRE_FOUND)
         target_link_libraries(${target} PUBLIC ${PIPEWIRE_LIBRARIES})
-        target_include_directories(${target} PUBLIC ${PIPEWIRE_INCLUDE_DIRS})
+        # SYSTEM: the spa headers' own warnings stay out of ours.
+        target_include_directories(${target} SYSTEM PUBLIC ${PIPEWIRE_INCLUDE_DIRS})
         target_compile_options(${target} PUBLIC ${PIPEWIRE_CFLAGS_OTHER})
         target_compile_definitions(${target} PUBLIC NEREUS_HAVE_PIPEWIRE)
         target_sources(${target} PRIVATE
             src/core/audio/PipeWireThreadLoop.cpp
             src/core/audio/PipeWireStream.cpp
             src/core/audio/PipeWireBus.cpp
+            # Native audio plan Task 10: the PipeWire engine (R-AUD-01).
+            src/core/audio/PipeWireDeviceSystem.cpp
+            src/core/audio/PipeWireDeviceBackend.cpp
+        )
+    endif()
+
+    # libpulse, gated by the pkg_check_modules block above (native audio
+    # plan Task 11, R-AUD-01, R-AUD-31): the PulseAudio engine.
+    if(PULSE_FOUND)
+        target_link_libraries(${target} PUBLIC PkgConfig::PULSE)
+        target_compile_definitions(${target} PUBLIC NEREUS_HAVE_PULSEAUDIO)
+        target_sources(${target} PRIVATE
+            src/core/audio/PulseAudioSystem.cpp
+            src/core/audio/PulseAudioBus.cpp
+            src/core/audio/PulseAudioBackend.cpp
+        )
+    endif()
+
+    # libasound, found above (native audio plan Task 12, R-AUD-01,
+    # R-AUD-25): the ALSA direct engine the Linux Core plays through.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ALSA_FOUND)
+        target_link_libraries(${target} PUBLIC ALSA::ALSA)
+        target_compile_definitions(${target} PUBLIC NEREUS_HAVE_ALSA_DIRECT)
+        target_sources(${target} PRIVATE
+            src/core/audio/AlsaDirectSystem.cpp
+            src/core/audio/AlsaDirectBus.cpp
+            src/core/audio/AlsaDirectBackend.cpp
         )
     endif()
 
@@ -3293,6 +3427,25 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             EXCLUDE_FROM_ALL)
     install(FILES packaging/nereusd.conf.sample
             DESTINATION "${CMAKE_INSTALL_DATADIR}/nereusd"
+            COMPONENT nereusd
+            EXCLUDE_FROM_ALL)
+    # Sound cards: the unit runs as a DynamicUser account with no groups, and
+    # /dev/snd/* is root:audio 0660, so the Core opens a sound card only with
+    # SupplementaryGroups=audio. Ship that grant as a vendor drop-in beside
+    # the unit, from the one file the station images also install, so no
+    # install of a package can miss it: both .deb packages are made from this
+    # component. (The Pi 4 and Rock stage installers copy named files only
+    # and write the same grant under /etc themselves.) It is a drop-in, not a line in
+    # nereusd.service.in, because a group that does not exist stops the unit
+    # from starting; `audio` always exists on Debian and Ubuntu (base-passwd),
+    # and a source install on a distro without it removes or overrides this
+    # one file. A drop-in of the same name under /etc (the station images and
+    # the Pi 4 and Rock installers write one) takes precedence over it and
+    # has the same content. The serial (dialout) grant is not shipped here:
+    # that group's name does differ between distros (see nereusd.service.in).
+    install(FILES packaging/station-image/common/nereusd-audio.conf
+            DESTINATION "${NEREUSD_SYSTEMD_UNIT_DIR}/nereusd.service.d"
+            RENAME audio.conf
             COMPONENT nereusd
             EXCLUDE_FROM_ALL)
     # Source-stage installers for both ARM stations use the same bounded

@@ -3,6 +3,9 @@
 // =================================================================
 // Author: J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-04-23
+// Modification history (NereusSDR):
+//   2026-10-09: native audio plan Task 11: forced "pulse". J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 #include <QtTest/QtTest>
 #include "core/audio/LinuxAudioBackend.h"
@@ -57,6 +60,13 @@ private slots:
 
     void forcedPactl_honoured() {
         QCOMPARE(asInt(detectLinuxBackend(makeProbes(true, true, "pactl"))),
+                 asInt(LinuxAudioBackend::Pactl));
+    }
+
+    // Native audio plan Task 11: "pulse" names the PulseAudio engine and
+    // forces the pactl path as "pactl" does.
+    void forcedPulse_honoured() {
+        QCOMPARE(asInt(detectLinuxBackend(makeProbes(true, true, "pulse"))),
                  asInt(LinuxAudioBackend::Pactl));
     }
 

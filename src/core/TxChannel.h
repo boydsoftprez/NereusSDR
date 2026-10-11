@@ -2843,11 +2843,13 @@ signals:
     /// can be wired in 3M-3 if a different processing point is needed for
     /// acoustic monitoring; for 3M-1b the m_outI path is sufficient.
     ///
-    /// Sample rate: matches TXA dsp-rate —
-    ///   96 kHz on P2 (Saturn / Orion-II with 192 kHz ADC output rate);
+    /// Sample rate: the channel's OUTPUT rate, the one it was created
+    /// with (m_outputBufferSize frames per block), not the TXA dsp-rate:
+    ///   192 kHz on P2 (256 frames for each 64-frame mic block);
     ///   48 kHz on P1 (Hermes / HL2 / Angelia).
-    /// Subscribers (AudioEngine::txMonitorBlockReady in Phase L) are
-    /// responsible for downmix / resample to speaker output rate.
+    /// Subscribers (AudioEngine::txMonitorBlockReady) are responsible for
+    /// downmix / resample to speaker output rate, and are told the rate
+    /// beside the connect (AudioEngine::setTxMonitorSampleRate).
     ///
     /// Plan: 3M-1b D.5 (this commit). Pre-code review §4.3.
     void sip1OutputReady(const float* samples, int frames);

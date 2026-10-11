@@ -6,6 +6,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09 - Core speaker: RadioModel coreSpeakerVolume,
+//                 coreSpeakerMuted, coreSpeakerDevice and coreSpeakerDetails
+//                 Bidirectional, coreSpeakerDevices and coreSpeakerState
+//                 Outbound, all six gated on coreSpeaker (coreSpeakerVersion
+//                 1) (native audio plan Task 21, R-AUD-25, R-AUD-28). J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-06 - Radio speaker: RadioModel radioSpeakerVolume,
 //                 radioSpeakerMuted and speakerAmplifierMode
 //                 Bidirectional, radioSpeakerAvailability and
@@ -217,6 +223,9 @@
 //                 Code.
 //   2026-10-08 - Rotor control plan Task 4b: RotorModel, all Outbound.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - TransmitState's six peak readings (micPeakDb .. cfcPeakDb)
+//                 Outbound (txReadingsVersion 4). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/MirrorPolicy.h"
@@ -1143,6 +1152,13 @@ const MirrorPolicy::Entry kEntries[] = {
     { "TransmitState", "cfcGainDb", MirrorDirection::Outbound },
     { "TransmitState", "alcGainDb", MirrorDirection::Outbound },
     { "TransmitState", "alcGroupDb", MirrorDirection::Outbound },
+    // txReadingsVersion 4: the container meter bars' peak readings.
+    { "TransmitState", "micPeakDb", MirrorDirection::Outbound },
+    { "TransmitState", "alcPeakDb", MirrorDirection::Outbound },
+    { "TransmitState", "compressionPeakDb", MirrorDirection::Outbound },
+    { "TransmitState", "eqPeakDb", MirrorDirection::Outbound },
+    { "TransmitState", "levelerPeakDb", MirrorDirection::Outbound },
+    { "TransmitState", "cfcPeakDb", MirrorDirection::Outbound },
 
     // Normal PS3 configuration is distinct from operational arming/actions.
     { "PureSignalSettings", "autoCalEnabled", MirrorDirection::Bidirectional },
@@ -1156,7 +1172,7 @@ const MirrorPolicy::Entry kEntries[] = {
     { "PureSignalSettings", "hardwarePeakOverride", MirrorDirection::Bidirectional },
     { "PureSignalSettings", "lastLoadError", MirrorDirection::Outbound },
 
-    // ---- RadioModel (43 entries) ----
+    // ---- RadioModel (49 entries) ----
     { "RadioModel", "settingsSaveError", MirrorDirection::Outbound },
     { "RadioModel", "receiveLayoutRestoreState", MirrorDirection::Outbound },
     { "RadioModel", "receiveLayoutRestoreMessage", MirrorDirection::Outbound },
@@ -1244,6 +1260,17 @@ const MirrorPolicy::Entry kEntries[] = {
     { "RadioModel", "speakerAmplifierMode", MirrorDirection::Bidirectional },
     { "RadioModel", "radioSpeakerAvailability", MirrorDirection::Outbound },
     { "RadioModel", "speakerAmplifierAvailable", MirrorDirection::Outbound },
+    // Core speaker (native audio plan Task 21, coreSpeakerVersion 1): the
+    // Core's own sound card output. A window sets the level, mute, device
+    // and the settable details, which the Core applies and saves; the
+    // card list and the state are Core to window only. All six only to a
+    // peer that declared coreSpeaker (StationServer::fitPeerOnlyProperties).
+    { "RadioModel", "coreSpeakerVolume", MirrorDirection::Bidirectional },
+    { "RadioModel", "coreSpeakerMuted", MirrorDirection::Bidirectional },
+    { "RadioModel", "coreSpeakerDevice", MirrorDirection::Bidirectional },
+    { "RadioModel", "coreSpeakerDevices", MirrorDirection::Outbound },
+    { "RadioModel", "coreSpeakerState", MirrorDirection::Outbound },
+    { "RadioModel", "coreSpeakerDetails", MirrorDirection::Bidirectional },
 
     // ---- PanadapterModel (4 entries) ----
     { "PanadapterModel", "centerFrequency", MirrorDirection::Bidirectional },
@@ -1364,6 +1391,15 @@ const QList<MirrorPolicy::FeatureGate>& MirrorPolicy::featureGates()
         {"RadioModel", "speakerAmplifierMode", "radioSpeaker", 1},
         {"RadioModel", "radioSpeakerAvailability", "radioSpeaker", 1},
         {"RadioModel", "speakerAmplifierAvailable", "radioSpeaker", 1},
+        // Core speaker (native audio plan Task 21, coreSpeakerVersion 1):
+        // the six, to a peer that declared coreSpeaker 1
+        // (StationServer::fitPeerOnlyProperties).
+        {"RadioModel", "coreSpeakerVolume", "coreSpeaker", 1},
+        {"RadioModel", "coreSpeakerMuted", "coreSpeaker", 1},
+        {"RadioModel", "coreSpeakerDevice", "coreSpeaker", 1},
+        {"RadioModel", "coreSpeakerDevices", "coreSpeaker", 1},
+        {"RadioModel", "coreSpeakerState", "coreSpeaker", 1},
+        {"RadioModel", "coreSpeakerDetails", "coreSpeaker", 1},
     };
     return gates;
 }

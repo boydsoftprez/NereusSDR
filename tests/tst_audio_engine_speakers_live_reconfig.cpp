@@ -19,9 +19,22 @@
 //      start() opens it when audio/Headphones/Enabled is set and not
 //      otherwise; the Enabled box opens and closes it; it plays the
 //      headphones mix. Fake devices only.
+//   9. Native audio final review fix (2026-10-09, J.J. Boyd KG4VCF,
+//      AI-assisted via Anthropic Claude Code; R-AUD-15): the Core
+//      speaker's delay readout, polled on the main thread while the DSP
+//      thread plays, costs that thread no block.
+//  10. Native audio final review fix, round 2 (2026-10-09, J.J. Boyd
+//      KG4VCF, AI-assisted via Anthropic Claude Code; R-AUD-15): Setup's
+//      device card for the speakers, the headphones and a VAX output,
+//      refreshing its delay readout and Negotiated line while the DSP
+//      thread plays, reads nothing from the bus on the main thread and
+//      costs that thread no block.
 //
 // Uses the NEREUS_BUILD_TESTS seam (setSpeakersBusForTest,
-// setHeadphonesBusForTest). R3 receiver audio fix wave follow-up
+// setHeadphonesBusForTest). Native audio plan Task 7 fix (2026-10-09,
+// J.J. Boyd KG4VCF, AI-assisted via Anthropic Claude Code): the outputs
+// open through the device layer the app runs (setAudioBackendsForTest with
+// a fake engine of matcher buses); the direct path ships in no build. R3 receiver audio fix wave follow-up
 // (2026-09-23, J.J. Boyd KG4VCF, AI-assisted via Anthropic Claude Code):
 // every device the engine opens is a fake (setDeviceBusFactoryForTest,
 // setVaxBusFactoryForTest) and the run is in test mode, so no case opens
@@ -41,9 +54,17 @@
 #include "core/IAudioBus.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
+#include "gui/setup/DeviceCard.h"
 
 #include "fakes/FakeAudioBus.h"
+#include "fakes/FakeDeviceLayer.h"
 
+#include <QCoreApplication>
+#include <QElapsedTimer>
+#include <QLabel>
+#include <QThread>
+
+#include <atomic>
 #include <memory>
 #include <thread>
 
@@ -58,11 +79,14 @@ const float kSamples[kFrames * 2] = { 0.1f, 0.2f, 0.3f, 0.4f };
 // fake, and test mode (initTestCase) stops anything else from reaching this
 // computer's real speakers, microphone or VAX devices. `opened` counts the
 // fake devices made.
+//
+// Native audio plan Task 7 fix: the outputs open through the device layer
+// the app runs (engine backends, catalogue, stream supervisor), on a fake
+// older-drivers engine with matcher buses (FakeDeviceLayer.h).
 void useFakeDevices(AudioEngine* engine, int* opened)
 {
-    engine->setDeviceBusFactoryForTest([opened](const AudioDeviceConfig&, bool) {
+    Test::useFakeDeviceLayer(engine, [opened](const QString&) {
         if (opened) { ++*opened; }
-        return std::make_unique<FakeAudioBus>(QStringLiteral("FakeDevice"));
     });
     engine->setVaxBusFactoryForTest([opened](int channel) -> std::unique_ptr<IAudioBus> {
         if (opened) { ++*opened; }
@@ -89,6 +113,88 @@ void useFakeVaxOnly(AudioEngine* engine)
         return bus;
     });
 }
+
+// A speakers bus whose delayParts() takes 2 ms on the main thread, as a
+// slow read under the speakers lock would; pushes are counted for the
+// DSP thread that makes them.
+class SlowDelayBus final : public FakeAudioBus {
+public:
+    explicit SlowDelayBus(QThread* mainThread)
+        : FakeAudioBus(QStringLiteral("SlowDelaySpeakers"))
+        , m_mainThread(mainThread)
+    {
+    }
+
+    qint64 push(const char* data, qint64 bytes) override
+    {
+        m_pushes.fetch_add(1);
+        return bytes > 0 && data != nullptr ? bytes : 0;
+    }
+
+    AudioDelayParts delayParts() const override
+    {
+        if (QThread::currentThread() == m_mainThread) {
+            QThread::msleep(2);
+        }
+        AudioDelayParts parts;
+        parts.matcherFillMs = 10.0;
+        return parts;
+    }
+
+    int pushes() const { return m_pushes.load(); }
+
+private:
+    QThread* m_mainThread;
+    std::atomic<int> m_pushes{0};
+};
+
+// R-AUD-15 round 2: a bus that counts the delay and format reads made on
+// the main thread while it is watched; pushes are counted for the DSP
+// thread that makes them.
+class WatchedReadBus final : public FakeAudioBus {
+public:
+    WatchedReadBus(const QString& name, QThread* mainThread)
+        : FakeAudioBus(name)
+        , m_mainThread(mainThread)
+    {
+    }
+
+    qint64 push(const char* data, qint64 bytes) override
+    {
+        m_pushes.fetch_add(1);
+        return bytes > 0 && data != nullptr ? bytes : 0;
+    }
+
+    AudioDelayParts delayParts() const override
+    {
+        countMainThreadRead();
+        AudioDelayParts parts;
+        parts.matcherFillMs = 10.0;
+        return parts;
+    }
+
+    AudioFormat negotiatedFormat() const override
+    {
+        countMainThreadRead();
+        return FakeAudioBus::negotiatedFormat();
+    }
+
+    int pushes() const { return m_pushes.load(); }
+    int mainThreadReads() const { return m_mainThreadReads.load(); }
+    void watch(bool on) { m_watching.store(on); }
+
+private:
+    void countMainThreadRead() const
+    {
+        if (m_watching.load() && QThread::currentThread() == m_mainThread) {
+            m_mainThreadReads.fetch_add(1);        }
+    }
+
+    QThread* m_mainThread;
+    std::atomic<int> m_pushes{0};
+    mutable std::atomic<int> m_mainThreadReads{0};
+    std::atomic<bool> m_watching{false};
+};
 
 } // namespace
 
@@ -285,9 +391,8 @@ private slots:
 
         AudioEngine engine;
         QStringList openedNames;
-        engine.setDeviceBusFactoryForTest([&openedNames](const AudioDeviceConfig& cfg, bool) {
-            openedNames << cfg.deviceName;
-            return std::make_unique<FakeAudioBus>(QStringLiteral("FakeDevice"));
+        Test::useFakeDeviceLayer(&engine, [&openedNames](const QString& name) {
+            openedNames << name;
         });
         useFakeVaxOnly(&engine);
         QSignalSpy spy(&engine, &AudioEngine::headphonesAvailableChanged);
@@ -357,6 +462,186 @@ private slots:
         }
         QCOMPARE(h.speakers->pushCount(), 10);
         QCOMPARE(headphones->pushCount(), 10);
+        AppSettings::instance().clear();
+    }
+
+    // ── 9. R-AUD-15: the Core speaker's delay readout ──────────────────────
+    //
+    // RadioModel's 1 s Core speaker refresh reads speakersDelayNowMs().
+    // Read under the speakers lock it would make the DSP thread's try-lock
+    // fail and drop a block; while that thread plays it is read from what
+    // the thread published.  Every block sent is pushed.
+    void coreSpeakerDelayReadCostsTheDspNoBlock() {
+        AppSettings::instance().clear();
+        auto radio = std::make_unique<RadioModel>();
+        AudioEngine* engine = radio->audioEngine();
+        useFakeDevices(engine, nullptr);
+        radio->configureStreamPool(/*userDdcCount*/ 5, /*maxSlices*/ 5,
+                                   /*defaultRateHz*/ 192000);
+        auto owned = std::make_unique<SlowDelayBus>(QThread::currentThread());
+        AudioFormat fmt;
+        fmt.sampleRate = 48000;
+        fmt.channels = 2;
+        fmt.sample = AudioFormat::Sample::Float32;
+        owned->open(fmt);
+        SlowDelayBus* bus = owned.get();
+        engine->setSpeakersBusForTest(std::move(owned));
+        const int s = radio->addSlice();
+
+        constexpr int kBlocks = 400;
+        std::atomic<bool> done{false};
+        std::thread dsp([&] {
+            for (int i = 0; i < kBlocks; ++i) {
+                engine->rxBlockReady(s, kSamples, kFrames);
+                QThread::usleep(250);
+            }
+            done.store(true);
+        });
+        QElapsedTimer started;
+        started.start();
+        while (bus->pushes() == 0 && started.elapsed() < 5000) {
+            QThread::usleep(100);
+        }
+        int polls = 0;
+        double last = -1.0;
+        while (!done.load()) {
+            last = engine->speakersDelayNowMs();
+            ++polls;
+            QThread::usleep(100);
+        }
+        dsp.join();
+
+        QVERIFY(polls > 10);
+        QCOMPARE(last, 10.0);
+        QCOMPARE(bus->pushes(), kBlocks);
+        AppSettings::instance().clear();
+    }
+
+    // ── 10. R-AUD-15 round 2: Setup's device card while audio plays ───────
+    //
+    // The card's 1 s delay readout and its Negotiated line, read under the
+    // role's bus lock, would make the DSP thread's try-lock fail and drop
+    // a block.  While that thread plays, the card reads what it published:
+    // no read of the bus on the main thread, every block pushed.
+    void deviceCardRefreshCostsTheDspNoBlock_data()
+    {
+        QTest::addColumn<QString>("prefix");
+        QTest::addColumn<int>("vaxChannel");
+        QTest::newRow("speakers") << QStringLiteral("audio/Speakers") << 0;
+        QTest::newRow("headphones") << QStringLiteral("audio/Headphones") << 0;
+        QTest::newRow("vax1") << QStringLiteral("audio/Vax1") << 1;
+    }
+
+    void deviceCardRefreshCostsTheDspNoBlock()
+    {
+        QFETCH(QString, prefix);
+        QFETCH(int, vaxChannel);
+#if !defined(Q_OS_WIN)
+        if (vaxChannel > 0) {
+            // The stream supervisor plays the VAX outputs on Windows only;
+            // elsewhere they are the platform's own devices and their card
+            // reads no delay or format from the engine.
+            QSKIP("VAX outputs play through the stream supervisor on Windows only");
+        }
+#endif
+        AppSettings::instance().clear();
+        if (prefix == QStringLiteral("audio/Headphones")) {
+            AppSettings::instance().setValue(QStringLiteral("audio/Headphones/Enabled"),
+                                             QStringLiteral("True"));
+        }
+        if (prefix == QStringLiteral("audio/Vax1")) {
+            AppSettings::instance().setValue(QStringLiteral("audio/Vax1/DeviceName"),
+                                             QStringLiteral("Phones"));
+        }
+        auto radio = std::make_unique<RadioModel>();
+        AudioEngine* engine = radio->audioEngine();
+        useFakeDevices(engine, nullptr);
+        radio->configureStreamPool(/*userDdcCount*/ 5, /*maxSlices*/ 5,
+                                   /*defaultRateHz*/ 192000);
+        engine->start();
+
+        const std::optional<AudioRole> role = DeviceCard::roleForPrefix(prefix);
+        QVERIFY(role.has_value());
+
+        auto owned = std::make_unique<WatchedReadBus>(QStringLiteral("Watched"),
+                                                      QThread::currentThread());
+        AudioFormat fmt;
+        fmt.sampleRate = 48000;
+        fmt.channels = 2;
+        fmt.sample = AudioFormat::Sample::Float32;
+        owned->open(fmt);
+        WatchedReadBus* bus = owned.get();
+        if (*role == AudioRole::Speakers) {
+            engine->setSpeakersBusForTest(std::move(owned));
+        } else if (*role == AudioRole::Headphones) {
+            engine->setHeadphonesBusForTest(std::move(owned));
+        } else {
+            engine->setVaxBusForTest(vaxChannel, std::move(owned));
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(engine->roleStatus(*role).state == AudioRoleState::Playing
+                                     || engine->roleStatus(*role).state
+                                            == AudioRoleState::PlayingOnDefault,
+                                 5000);
+        const int s = radio->addSlice();
+        radio->sliceById(s)->setVaxChannel(vaxChannel);
+
+        std::atomic<bool> stop{false};
+        std::atomic<int> sent{0};
+        std::thread dsp([&] {
+            while (!stop.load()) {
+                engine->rxBlockReady(s, kSamples, kFrames);
+                sent.fetch_add(1);
+                QThread::usleep(250);
+            }
+        });
+        struct LetGo {
+            std::atomic<bool>& stop;
+            std::thread& dsp;
+            ~LetGo()
+            {
+                stop.store(true);
+                if (dsp.joinable()) {
+                    dsp.join();
+                }
+            }
+        } letGo{stop, dsp};
+
+        QElapsedTimer started;
+        started.start();
+        while (bus->pushes() == 0 && started.elapsed() < 5000) {
+            QThread::usleep(100);
+        }
+        QVERIFY(bus->pushes() > 0);
+
+        bus->watch(true);
+        DeviceCard card(prefix, DeviceCard::Role::Output,
+                        prefix != QStringLiteral("audio/Speakers"));
+        card.setAudioEngine(engine);
+        QLabel* delayNow = card.findChild<QLabel*>(QStringLiteral("deviceDelayNow"));
+        QVERIFY(delayNow != nullptr);
+        // Two ticks of the card's 1 s refresh, the Negotiated line redrawn
+        // between them.
+        QElapsedTimer refreshing;
+        refreshing.start();
+        while (refreshing.elapsed() < 2300) {
+            card.updateNegotiatedPill(card.currentConfig(), QString());
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::usleep(500);
+        }
+        bus->watch(false);
+        stop.store(true);
+        dsp.join();
+
+        QVERIFY2(delayNow->text().startsWith(QStringLiteral("Now 10")),
+                 qPrintable(delayNow->text()));
+        bool formatShown = false;
+        for (QLabel* label : card.findChildren<QLabel*>()) {
+            formatShown = formatShown || label->text().contains(QStringLiteral("48000 Hz"));
+        }
+        QVERIFY(formatShown);
+        QCOMPARE(bus->mainThreadReads(), 0);
+        QCOMPARE(bus->pushes(), sent.load());
+        engine->stop();
         AppSettings::instance().clear();
     }
 };

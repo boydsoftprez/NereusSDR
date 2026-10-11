@@ -46,14 +46,35 @@
 //                HeaderVolumeStyle::applyForm() sizes either group for
 //                either form. J.J. Boyd (KG4VCF), with AI-assisted
 //                implementation via Anthropic Claude Code.
+//   2026-10-09 - Native audio plan Task 19 (R-AUD-23, R-AUD-03, R-AUD-08,
+//                R-AUD-11, R-AUD-12, D20): the right-click menu lists only
+//                the speakers' driver, from the engine's device catalogue
+//                (option A of header-menu-mockup.html): the "Speakers ·
+//                <driver>" heading, "(platform default)", the devices with
+//                pairs under their interface, a missing or busy choice on
+//                top, and "Sound setup…" (soundSetupRequested). The tick and
+//                the tooltip follow the engine's speakers status. A pick
+//                saves the choice as the Outputs card does. setAudioEngine()
+//                and buildSpeakerMenuForTest(). J.J. Boyd (KG4VCF), with
+//                AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-09: Windows test fix (R-AUD-03): exported from the
+//               GUI DLL, so a signal of it is found from outside the DLL
+//               on Windows. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/AudioDeviceConfig.h"
+#include "core/audio/AudioDeviceTypes.h"
+#include "core/audio/IAudioDeviceCatalog.h"
+#include "core/audio/IAudioStreamHost.h"
+#include "gui/NereusGuiExport.h"
 
+#include <QPointer>
 #include <QString>
 #include <QWidget>
 
 class QLabel;
+class QMenu;
 class QPoint;
 class QPushButton;
 class QSlider;
@@ -69,7 +90,8 @@ namespace HeaderVolumeStyle {
 extern const char* const kIconButton;
 // The short word label ("PC", "RADIO"), dimmed while disabled.
 extern const char* const kWordLabel;
-// The PC slider: #1a2a3a groove, #00b4d8 handle and fill.
+// The PC slider: #1a2a3a groove, #00b4d8 handle and fill, and no fill
+// with a dim handle while disabled (as RADIO's).
 extern const char* const kPcSlider;
 // The RADIO slider: the same groove with the amber #e0a030 handle and
 // fill, and no fill with a dim handle while disabled.
@@ -104,12 +126,11 @@ int applyForm(QPushButton* button, QLabel* word, QSlider* slider, QLabel* readou
 //
 // - Speaker button: left-click toggles mute (icons pc-on / pc-muted,
 //   AppIcon; the button's AppIcon::kIconProperty names the icon). Right-click
-//   opens an output-device picker populated from
-//   PortAudioBus::hostApis() + PortAudioBus::outputDevicesFor. The
-//   picker emits outputDeviceChanged(name); the host (Task 10c
-//   TitleBar inside MainWindow) is responsible for calling
-//   AudioEngine::setSpeakersConfig to actually rebuild the speakers
-//   bus. See design spec §6.3.
+//   opens the speakers menu (R-AUD-23, D20): the speakers' own driver and
+//   its devices from the engine's device catalogue. A pick saves the
+//   choice under audio/Speakers and emits outputDeviceChanged(name); the
+//   host (MainWindow) calls AudioEngine::setSpeakersConfig to open it.
+//   "Sound setup…" emits soundSetupRequested.
 // - Slider: 0–100 range mapped linearly to AudioEngine volume [0,1].
 // - Label: inset percent readout (0–100, shown as the raw integer
 //   slider value — Option A per task brief, matches AetherSDR).
@@ -118,14 +139,26 @@ int applyForm(QPushButton* button, QLabel* word, QSlider* slider, QLabel* readou
 // ONLY on user action. The m_updatingFromModel guard plus a
 // QSignalBlocker on the speaker button prevents the engine→widget
 // echo from re-emitting into the engine.
-class MasterOutputWidget : public QWidget {
+class NEREUS_GUI_EXPORT MasterOutputWidget : public QWidget {
     Q_OBJECT
 public:
     explicit MasterOutputWidget(AudioEngine* audio, QWidget* parent = nullptr);
 
+    // R-AUD-23: the engine whose device catalogue fills the speakers menu
+    // and whose speakers status sets the tick and the tooltip. The
+    // constructor's engine is taken the same way; a later call follows
+    // another engine (or none). Does not seed volume, mute or device.
+    void setAudioEngine(AudioEngine* engine);
+
+    // The speakers menu as a right-click opens it, built now from the
+    // catalogue and the speakers status, for a test to read and trigger.
+    // The caller owns it (its parent is this widget).
+    QMenu* buildSpeakerMenuForTest();
+
     // Called by Setup → Audio → Devices when the user picks a
-    // speakers device elsewhere in the app, so the context-menu
-    // check state stays in sync with the engine's current device.
+    // speakers device elsewhere in the app. The menu reads the choice
+    // afresh from the engine and the settings each time it opens, so
+    // this only refreshes the tooltip.
     // Does NOT emit outputDeviceChanged — this is a sync-from-
     // elsewhere path, not a user action.
     void setCurrentOutputDevice(const QString& name);
@@ -142,21 +175,17 @@ signals:
     // User clicked the speaker button.
     void mutedChanged(bool muted);
     // User picked an output device from the right-click context menu.
+    // The name is empty for "(platform default)".
     void outputDeviceChanged(QString deviceName);
+    // R-AUD-23: "Sound setup…" in the speakers menu; the host opens Setup
+    // at Audio, Outputs.
+    void soundSetupRequested();
 
 private slots:
-    // Populate and pop the right-click device picker at `pos`
+    // Build and pop the right-click speakers menu at `pos`
     // (widget-local coordinates, as delivered by
     // QWidget::customContextMenuRequested).
     void onSpeakerContextMenu(const QPoint& pos);
-
-    // R-R3-23: the picker's action for one device. Saves the choice to
-    // audio/Speakers/DeviceName FIRST, then emits outputDeviceChanged. The
-    // order matters in a remote window: remote playback re-reads
-    // audio/Speakers when the engine reports the new speakers, which the
-    // emit leads to synchronously, so announcing before saving made the
-    // remote audio status name the previous device.
-    void selectOutputDevice(const QString& deviceName);
 
     // AudioEngine → widget echo handlers. Both use the
     // m_updatingFromModel / QSignalBlocker guard so a setValue /
@@ -167,12 +196,52 @@ private slots:
 
     // Sub-Phase 12 Task 12.2: live sync with Setup → Audio → Devices edits.
     // Receives the negotiated AudioDeviceConfig from the engine after any
-    // speakers bus reconfig and updates m_currentDeviceName so the right-
-    // click picker's checkmark stays consistent.
+    // speakers bus reconfig. It names the device that opened, a fall-back
+    // to the default included, so it never moves the menu's tick (the
+    // choice comes from the speakers status); it refreshes the tooltip.
     void onSpeakersConfigChanged(const NereusSDR::AudioDeviceConfig& cfg);
 
 private:
+    // One device the speakers menu offers: the identity a pick saves.
+    struct SpeakerPick {
+        AudioEngineKind engine = AudioEngineKind::CoreAudio;
+        QString hostApi;      // older drivers: the PortAudio host API
+        QString deviceId;     // empty: "(platform default)"
+        QString deviceName;
+        int firstChannel = 1;
+        int channelCount = 2;   // the pair's width (ASIO: for the one-driver plan)
+    };
+
+    // R-R3-23: the menu's action for one device. Saves the choice under
+    // audio/Speakers as the Outputs card does (Engine, DeviceId,
+    // DeviceName, FirstChannel) FIRST, then emits outputDeviceChanged.
+    // The order matters in a remote window: remote playback re-reads
+    // audio/Speakers when the engine reports the new speakers, which the
+    // emit leads to synchronously, so announcing before saving made the
+    // remote audio status name the previous device. Picking the current
+    // choice does nothing. A pair on a second ASIO driver asks first, as
+    // the Setup card does (R-AUD-19): "Switch all" moves the other roles
+    // and the pick goes on; Cancel writes and announces nothing.
+    void selectOutputDevice(const SpeakerPick& pick);
+
+    QMenu* buildSpeakerMenu();
+    // Connects the engine's volume, mute, speakers and status signals and
+    // takes up its catalogue.
+    void connectEngine();
+    // The speakers' choice: the engine's status while its device layer
+    // runs (the device chosen, never the fall-back that plays), else the
+    // saved choice.
+    AudioDeviceConfig speakersChoice() const;
+    AudioRoleStatus speakersStatus() const;
+    // The driver the choice is on.
+    AudioEngineKind choiceEngine(const AudioDeviceConfig& choice) const;
+    // Takes up the engine's catalogue once it has one.
+    IAudioDeviceCatalog* attachCatalogue();
+    // R-AUD-23 / R-AUD-12: the tooltip from the speakers status.
+    void refreshSpeakerToolTip();
+
     AudioEngine* m_audio{nullptr};
+    QPointer<IAudioDeviceCatalog> m_catalogue;
     // Shows pc-muted or pc-on on the speaker button (R-SPK-19, D5).
     void applySpeakerIcon(bool muted);
 
@@ -183,7 +252,6 @@ private:
     QSlider*     m_slider{nullptr};
     QLabel*      m_dbLabel{nullptr};
     bool         m_updatingFromModel{false};
-    QString      m_currentDeviceName;
 };
 
 } // namespace NereusSDR

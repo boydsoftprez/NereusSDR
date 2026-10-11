@@ -767,6 +767,8 @@ void TestTxWorkerRemoteRing::retainedRadioTailIsReplacedByTheNextAdmittedSource(
         // local source supersession without a transfer's safety stop ending
         // the deliberately held old drain before this new local press.
         mox->setKeyingGate({});
+        // Tests the VAX path itself, which Windows does not offer.
+        model->transmitModel().setVaxSourceAvailable(true);
         model->transmitModel().setMicSource(nextSource == 1 ? MicSource::Pc : MicSource::Vax);
         rig.pump.engine.onMicSourceChanged(nextSource == 1);
         rig.pump.engine.onMicSourceChangedVax(nextSource == 2);

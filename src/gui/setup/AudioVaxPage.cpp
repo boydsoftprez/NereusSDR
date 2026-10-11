@@ -43,6 +43,25 @@
 // cards' Device row (the name on Mac and Linux, a cable picker on Windows
 // with "On" disabled until a cable is picked), "Used by" and "Activity";
 // "Detected virtual cables" with Rescan moved here from Advanced.
+//
+// 2026-10-09 (R-AUD-04): native audio plan Task 16 fix round. J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code. A cable picked by name
+// drops the previous device's id and channel pair. setSystemForTest() also
+// lays the channel cards out for that system (their engine without lists).
+//
+// 2026-10-09 (R-AUD-03, R-AUD-06, R-AUD-10, R-AUD-11, D12, D13): native
+// audio plan Task 18. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+// Code. With the engine's device catalogue the cables come from it and
+// follow it live; the Windows picker lists the Windows audio cables, then
+// each ASIO driver's pairs (a pair the speakers or headphones use greyed,
+// a second driver asked first), and keeps a missing choice as "<name> (not
+// connected)"; a card's line is its channel's state sentence; Rescan
+// rescans the older drivers and waits for their new list.
+//
+// 2026-10-09 (R-AUD-19, R-AUD-07): native audio fix wave. J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code. The one-driver prompt
+// through askAsioSwitchAll(), shared with the Setup cards and the header;
+// the headphones Enabled box read through AudioEngine.
 // =================================================================
 
 #include "AudioVaxPage.h"
@@ -53,7 +72,10 @@
 #include "core/AppSettings.h"
 #include "core/AudioDeviceConfig.h"
 #include "core/AudioEngine.h"
+#include "core/audio/IAudioDeviceCatalog.h"
 #include "core/audio/VirtualCableDetector.h"
+#include "gui/setup/AsioSwitchAllDialog.h"
+#include "gui/setup/AudioDriverList.h"
 #include "models/RadioModel.h"
 
 #include <QApplication>
@@ -68,6 +90,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QStandardItemModel>
 #include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -218,6 +241,67 @@ static const char* kRowLabelStyle =
     "QLabel { color: #607080; font-size: 11px; }";
 
 constexpr int kStatusDotPx = 8;
+
+// Windows picker item data (R-AUD-03, D12). Qt::UserRole holds the
+// device name, as it always has.
+constexpr int kPickIdRole = Qt::UserRole + 1;
+constexpr int kPickEngineRole = Qt::UserRole + 2;        // int AudioEngineKind; -1: no device
+constexpr int kPickFirstChannelRole = Qt::UserRole + 3;
+constexpr int kPickChannelsRole = Qt::UserRole + 4;
+constexpr int kPickHostApiRole = Qt::UserRole + 5;
+constexpr int kPickHeadingRole = Qt::UserRole + 6;       // "Virtual cables", a driver name
+constexpr int kPickMissingRole = Qt::UserRole + 7;       // the saved choice, not connected
+constexpr int kPickLabelRole = Qt::UserRole + 8;         // the label without "(used by ...)"
+
+void setPickEnabled(QComboBox* combo, int index, bool enabled)
+{
+    auto* model = qobject_cast<QStandardItemModel*>(combo->model());
+    if (model == nullptr) {
+        return;
+    }
+    if (QStandardItem* item = model->item(index)) {
+        item->setEnabled(enabled);
+    }
+}
+
+bool settingIsTrue(const QString& key)
+{
+    return AppSettings::instance().value(key, QStringLiteral("False")).toString()
+        == QStringLiteral("True");
+}
+
+// A saved choice on this ASIO driver (the id is the driver name; older
+// saves may have the name only).
+bool onAsioDriver(const AudioDeviceConfig& cfg, const QString& driver)
+{
+    return cfg.engine == AudioEngineKind::Asio && !driver.isEmpty()
+        && (cfg.deviceId == driver || (cfg.deviceId.isEmpty() && cfg.deviceName == driver));
+}
+
+// A saved choice on this cable: its id, or its name.
+bool onCable(const AudioDeviceConfig& cfg, const QString& id, const QString& name)
+{
+    if (cfg.engine == AudioEngineKind::Asio) {
+        return false;
+    }
+    return (!id.isEmpty() && cfg.deviceId == id)
+        || (!name.isEmpty() && cfg.deviceName == name);
+}
+
+QString usedBySuffix(const QStringList& users)
+{
+    if (users.isEmpty()) {
+        return QString();
+    }
+    return QStringLiteral("  (used by %1)").arg(users.join(QStringLiteral(", ")));
+}
+
+// "<driver> · Outputs 1-2", as the pairs are listed.
+QString asioPairText(const QString& driver, int firstChannel)
+{
+    return driver + QLatin1Char(' ') + QChar(0x00B7) + QLatin1Char(' ')
+        + audioPairLabel(AudioDeviceDirection::Output, AudioChannelPair{firstChannel, 2});
+}
 
 static const char* kStatusDotOk =
     "QLabel { background: #33dd88; border-radius: 4px; }";
@@ -389,6 +473,18 @@ VaxChannelCard::VaxChannelCard(int channel, QWidget* parent)
     m_cardStatus->setVisible(false);
     outerLayout->addWidget(m_cardStatus);
 
+    // D13: an ASIO pair reaches other apps only through the ASIO app's own
+    // mixer. Shown while the channel uses one.
+    m_asioNote = new QLabel(
+        tr("Most digital-mode apps cannot open ASIO, so pass this pair on in the ASIO "
+           "app's own mixer (a Voicemeeter strip, for example)."),
+        this);
+    m_asioNote->setObjectName(QStringLiteral("vaxAsioNote"));
+    m_asioNote->setStyleSheet(QLatin1String(kRowLabelStyle));
+    m_asioNote->setWordWrap(true);
+    m_asioNote->setVisible(false);
+    outerLayout->addWidget(m_asioNote);
+
     // Action buttons row: "Rename…" + "Copy name".
     {
         auto* btnRow = new QHBoxLayout;
@@ -495,6 +591,11 @@ void VaxChannelCard::applyAutoDetectBinding(const QString& deviceName)
     //    other fields, then overwrite the device name with the picked cable.
     AudioDeviceConfig cfg = m_deviceCard->currentConfig();
     cfg.deviceName = deviceName;
+    // The identity is the picked cable's: the previous device's id and
+    // channel pair belonged to it, and a stale id would win over the name
+    // (R-AUD-04).  The engine learns the cable's id by name.
+    cfg.deviceId.clear();
+    cfg.firstChannel = 1;
 
     // 2) Persist all 10 fields to AppSettings under audio/Vax<N>/.
     cfg.saveToSettings(m_prefix);
@@ -513,10 +614,60 @@ void VaxChannelCard::applyAutoDetectBinding(const QString& deviceName)
     updateNodeDescLabel();
 }
 
+void VaxChannelCard::applyBinding(AudioEngineKind engine, const QString& deviceId,
+                                  const QString& deviceName, int firstChannel,
+                                  const QString& hostApi)
+{
+    // As applyAutoDetectBinding(), with the picked device's whole identity
+    // (R-AUD-04): the engine, its id and the pair it starts on.
+    AudioDeviceConfig cfg = m_deviceCard->currentConfig();
+    cfg.engine = engine;
+    cfg.deviceId = deviceId;
+    cfg.deviceName = deviceName;
+    cfg.firstChannel = std::max(1, firstChannel);
+    cfg.driverApi = engine == AudioEngineKind::PortAudio ? hostApi : QString();
+    cfg.saveToSettings(m_prefix);
+    AppSettings::instance().save();
+    m_deviceCard->loadFromSettings();
+    emit configChanged(m_channel, cfg);
+    updateBadge();
+    updateNodeDescLabel();
+}
+
+void VaxChannelCard::setAudioEngine(AudioEngine* engine)
+{
+    m_engine = engine;
+    m_roleStatus.reset();
+    updateBadge();
+}
+
+void VaxChannelCard::setRoleStatus(const AudioRoleStatus& status)
+{
+    m_roleStatus = status;
+    updateBadge();
+}
+
+AudioRole VaxChannelCard::vaxRole() const
+{
+    return static_cast<AudioRole>(static_cast<int>(AudioRole::Vax1) + m_channel - 1);
+}
+
+IAudioDeviceCatalog* VaxChannelCard::pickerCatalogue() const
+{
+    if (!m_engine || !m_devicePicker || currentSystem() != SoundSystemLine::System::Windows) {
+        return nullptr;
+    }
+    return m_engine->catalogue();
+}
+
 void VaxChannelCard::clearBinding()
 {
-    // 1) Build an empty config (all 10 fields reset to defaults).
-    const AudioDeviceConfig empty;
+    // 1) Build an empty config (all 10 fields reset to defaults). It keeps
+    //    the saved engine so the device id and channel pair are written
+    //    empty too: an id left behind would still win over the empty name
+    //    (R-AUD-04).
+    AudioDeviceConfig empty;
+    empty.engine = AudioDeviceConfig::loadFromSettings(m_prefix).engine;
 
     // 2) Persist the empty config, wiping all 10 AppSettings fields.
     empty.saveToSettings(m_prefix);
@@ -799,10 +950,22 @@ void VaxChannelCard::updateBadge()
     // operators: no cable picked on Windows; the picked cable did not
     // open; NereusSDR's own device did not open (the section's status
     // line says why).
+    // The catalogue picker finds whether the saved choice is missing.
+    fillPicker();
     if (m_cardStatus) {
-        QString line;
-        if (system == SoundSystemLine::System::Windows && !hasDevice) {
+        // R-AUD-10 / R-AUD-11: the engine's sentence for the channel comes
+        // first; a choice missing from the list says the same.
+        QString line = m_roleStatus ? audioRoleNote(vaxRole(), *m_roleStatus) : QString();
+        if (!line.isEmpty()) {
+            // the engine's state
+        } else if (system == SoundSystemLine::System::Windows && !hasDevice) {
             line = tr("Pick a cable first.");
+        } else if (!m_missingLabel.isEmpty()) {
+            AudioRoleStatus gone;
+            gone.state = AudioRoleState::Silent;
+            gone.reason = AudioRoleReason::NotConnected;
+            gone.chosenName = m_missingLabel;
+            line = audioRoleNote(vaxRole(), gone);
         } else if (isChannelEnabled() && !m_busOpen) {
             if (hasDevice) {
                 line = tr("Could not open %1. It may be unplugged or in use by "
@@ -816,8 +979,12 @@ void VaxChannelCard::updateBadge()
         m_cardStatus->setText(line);
         m_cardStatus->setVisible(!line.isEmpty());
     }
+    if (m_asioNote) {
+        const bool asio = pickerCatalogue() != nullptr && hasDevice && m_missingLabel.isEmpty()
+            && AudioDeviceConfig::loadFromSettings(m_prefix).engine == AudioEngineKind::Asio;
+        m_asioNote->setVisible(asio);
+    }
     updateNodeDescLabel();
-    fillPicker();
     refreshPlatformTexts();
 
 #if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
@@ -856,12 +1023,18 @@ void VaxChannelCard::setCableChoices(const QVector<DetectedCable>& cables)
             m_cableChoices.append(cable);
         }
     }
-    fillPicker();
+    // The card's line too: a saved cable may have gone or come back.
+    updateBadge();
 }
 
 void VaxChannelCard::fillPicker()
 {
+    m_missingLabel.clear();
     if (!m_devicePicker) {
+        return;
+    }
+    if (IAudioDeviceCatalog* catalogue = pickerCatalogue()) {
+        fillPickerFromCatalogue(*catalogue);
         return;
     }
     QSignalBlocker block(m_devicePicker);
@@ -874,15 +1047,255 @@ void VaxChannelCard::fillPicker()
         boundListed = boundListed || cable.deviceName == bound;
     }
     if (!boundListed) {
-        // A saved cable that this scan did not find stays shown.
-        m_devicePicker->addItem(tr("%1 (not found)").arg(bound), bound);
+        // A saved cable that this scan did not find stays shown
+        // (R-AUD-08's wording).
+        m_devicePicker->addItem(tr("%1 (not connected)").arg(bound), bound);
     }
     m_devicePicker->setCurrentIndex(std::max(0, m_devicePicker->findData(bound)));
+}
+
+void VaxChannelCard::fillPickerFromCatalogue(IAudioDeviceCatalog& catalogue)
+{
+    const AudioDeviceConfig saved = AudioDeviceConfig::loadFromSettings(m_prefix);
+    const bool bound = !saved.deviceId.isEmpty() || !saved.deviceName.isEmpty();
+    const bool savedAsio = saved.engine == AudioEngineKind::Asio;
+    const int savedFirst = std::max(1, saved.firstChannel);
+
+    // The other outputs' choices, for "(used by ...)" and the pairs radio
+    // audio holds.
+    struct Other {
+        QString user;
+        AudioDeviceConfig cfg;
+        bool on;
+        bool vax;
+    };
+    QList<Other> others;
+    for (int ch = 1; ch <= 4; ++ch) {
+        if (ch == m_channel) {
+            continue;
+        }
+        const QString prefix = QStringLiteral("audio/Vax%1").arg(ch);
+        others.append({QStringLiteral("VAX %1").arg(ch), AudioDeviceConfig::loadFromSettings(prefix),
+                       settingIsTrue(prefix + QStringLiteral("/Enabled")), true});
+    }
+    others.append({tr("speakers"),
+                   AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/Speakers")), true,
+                   false});
+    others.append({tr("headphones"),
+                   AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/Headphones")),
+                   AudioEngine::savedHeadphonesEnabled(), false});
+
+    QSignalBlocker block(m_devicePicker);
+    m_devicePicker->clear();
+    auto addItem = [this](const QString& text, const QString& label, const QString& name,
+                          const QString& id, int engine, int firstChannel, int channels,
+                          const QString& hostApi) {
+        const int i = m_devicePicker->count();
+        m_devicePicker->addItem(text, name);
+        m_devicePicker->setItemData(i, id, kPickIdRole);
+        m_devicePicker->setItemData(i, engine, kPickEngineRole);
+        m_devicePicker->setItemData(i, firstChannel, kPickFirstChannelRole);
+        m_devicePicker->setItemData(i, channels, kPickChannelsRole);
+        m_devicePicker->setItemData(i, hostApi, kPickHostApiRole);
+        m_devicePicker->setItemData(i, label, kPickLabelRole);
+        return i;
+    };
+    auto addHeading = [this](const QString& text) {
+        const int i = m_devicePicker->count();
+        m_devicePicker->addItem(text, QString());
+        m_devicePicker->setItemData(i, true, kPickHeadingRole);
+        setPickEnabled(m_devicePicker, i, false);
+    };
+
+    int selected = 0;
+    addItem(tr("(pick a cable)"), QString(), QString(), QString(), -1, 1, 2, QString());
+
+    // D12: the virtual cables, as Windows audio lists them.
+    addHeading(tr("Virtual cables"));
+    for (const DetectedCable& cable : std::as_const(m_cableChoices)) {
+        QStringList users;
+        for (const Other& o : std::as_const(others)) {
+            if (o.vax && onCable(o.cfg, cable.deviceId, cable.deviceName)) {
+                users.append(o.user);
+            }
+        }
+        const int i = addItem(cable.deviceName + usedBySuffix(users), cable.deviceName,
+                              cable.deviceName, cable.deviceId,
+                              static_cast<int>(VirtualCableDetector::engineFor(cable)), 1, 2,
+                              cable.hostApi);
+        if (bound && selected == 0 && !savedAsio
+            && onCable(saved, cable.deviceId, cable.deviceName)) {
+            selected = i;
+        }
+    }
+
+    // D13: each ASIO driver's output pairs under its name, one driver at a
+    // time (onCataloguePick asks before a second).
+    if (catalogue.backendRunning(AudioBackendId::Asio)) {
+        QHash<QString, QString> driverNames;
+        for (const AudioDeviceInfo& info :
+             catalogue.devices(AudioBackendId::Asio, AudioDeviceDirection::Output)) {
+            driverNames.insert(info.id, info.name);
+        }
+        const QList<AudioDeviceEntry> entries =
+            audioDeviceEntries(catalogue, AudioEngineKind::Asio, QString(),
+                               AudioDeviceDirection::Output, AudioDeviceConfig{});
+        QString heading;
+        for (const AudioDeviceEntry& e : entries) {
+            if (e.deviceId.isEmpty() || e.deviceId == QLatin1String(kAudioDeviceNone)
+                || e.state == AudioDeviceState::NotConnected) {
+                continue;
+            }
+            const QString driverName = driverNames.value(e.deviceId, e.deviceId);
+            if (driverName != heading) {
+                addHeading(driverName);
+                heading = driverName;
+            }
+            const int first = std::max(1, e.pair.firstChannel);
+            QStringList users;
+            bool radioUses = false;
+            for (const Other& o : std::as_const(others)) {
+                if (o.on && onAsioDriver(o.cfg, e.deviceId)
+                    && std::max(1, o.cfg.firstChannel) == first) {
+                    users.append(o.user);
+                    radioUses = radioUses || !o.vax;
+                }
+            }
+            const QString label = asioPairText(driverName, first);
+            const int i = addItem(label + usedBySuffix(users), label, driverName, e.deviceId,
+                                  static_cast<int>(AudioEngineKind::Asio), first,
+                                  e.pair.channelCount, QString());
+            QString reason;
+            if (radioUses) {
+                reason = tr("Radio audio and digital-mode audio never share a pair.");
+            } else if (m_engine) {
+                const std::optional<AsioDriverCaps> caps = m_engine->asioDriverCaps(e.deviceId);
+                if (caps && !asioDeviceFormat(caps->sampleType)) {
+                    reason = asioFormatNote(driverName);
+                }
+            }
+            if (!reason.isEmpty()) {
+                setPickEnabled(m_devicePicker, i, false);
+                m_devicePicker->setItemData(i, reason, Qt::ToolTipRole);
+            }
+            if (bound && selected == 0 && savedAsio && onAsioDriver(saved, e.deviceId)
+                && savedFirst == first) {
+                selected = i;
+            }
+        }
+    }
+
+    // R-AUD-10: the saved choice, missing, stays chosen; nothing else opens.
+    if (bound && selected == 0) {
+        const QString name = saved.deviceName.isEmpty() ? saved.deviceId : saved.deviceName;
+        m_missingLabel = savedAsio ? asioPairText(name, savedFirst) : name;
+        selected = addItem(tr("%1 (not connected)").arg(m_missingLabel), m_missingLabel,
+                           saved.deviceName, saved.deviceId,
+                           static_cast<int>(saved.engine.value_or(AudioEngineKind::PortAudio)),
+                           savedFirst, 2, saved.driverApi);
+        m_devicePicker->setItemData(selected, true, kPickMissingRole);
+    }
+    m_devicePicker->setCurrentIndex(selected);
+}
+
+void VaxChannelCard::onCataloguePick(int index)
+{
+    if (m_devicePicker->itemData(index, kPickHeadingRole).toBool()
+        || m_devicePicker->itemData(index, kPickMissingRole).toBool()) {
+        fillPicker();
+        return;
+    }
+    const int engineValue = m_devicePicker->itemData(index, kPickEngineRole).toInt();
+    if (engineValue < 0) {
+        const AudioDeviceConfig saved = AudioDeviceConfig::loadFromSettings(m_prefix);
+        if (!saved.deviceId.isEmpty() || !saved.deviceName.isEmpty()) {
+            clearBinding();
+        }
+        return;
+    }
+    const auto engine = static_cast<AudioEngineKind>(engineValue);
+    const bool asio = engine == AudioEngineKind::Asio;
+    const QString name = m_devicePicker->itemData(index).toString();
+    const QString id = m_devicePicker->itemData(index, kPickIdRole).toString();
+    const QString label = m_devicePicker->itemData(index, kPickLabelRole).toString();
+    const QString hostApi = m_devicePicker->itemData(index, kPickHostApiRole).toString();
+    const int first = std::max(1, m_devicePicker->itemData(index, kPickFirstChannelRole).toInt());
+    const int channels = m_devicePicker->itemData(index, kPickChannelsRole).toInt();
+
+    const AudioDeviceConfig saved = AudioDeviceConfig::loadFromSettings(m_prefix);
+    const bool same = asio ? onAsioDriver(saved, id) && std::max(1, saved.firstChannel) == first
+                           : onCable(saved, id, name);
+    if (same) {
+        return;
+    }
+
+    // Another channel on this cable or pair gives it up, asked first.
+    AudioVaxPage* page = nullptr;
+    for (QObject* p = parent(); p && !page; p = p->parent()) {
+        page = qobject_cast<AudioVaxPage*>(p);
+    }
+    VaxChannelCard* other = nullptr;
+    for (int ch = 1; page && ch <= 4 && !other; ++ch) {
+        VaxChannelCard* card = page->channelCard(ch);
+        if (!card || card == this) {
+            continue;
+        }
+        const AudioDeviceConfig cfg = AudioDeviceConfig::loadFromSettings(card->m_prefix);
+        const bool clash = asio ? card->isChannelEnabled() && onAsioDriver(cfg, id)
+                                      && std::max(1, cfg.firstChannel) == first
+                                : onCable(cfg, id, name);
+        if (clash) {
+            other = card;
+        }
+    }
+    if (other) {
+        QMessageBox confirm(this);
+        if (asio) {
+            confirm.setWindowTitle(tr("Use this pair here?"));
+            confirm.setText(tr("VAX %1 uses %2. Move it to VAX %3? VAX %1 will have no device.")
+                                .arg(other->channelIndex())
+                                .arg(label)
+                                .arg(m_channel));
+        } else {
+            confirm.setWindowTitle(tr("Use this cable here?"));
+            confirm.setText(tr("VAX %1 uses %2. Move it to VAX %3? VAX %1 will have no "
+                               "cable.").arg(other->channelIndex()).arg(name).arg(m_channel));
+        }
+        confirm.setStandardButtons(QMessageBox::Ok | QMessageBox::Cancel);
+        confirm.setDefaultButton(QMessageBox::Cancel);
+        if (confirm.exec() != QMessageBox::Ok) {
+            fillPicker();
+            return;
+        }
+    }
+
+    // R-AUD-19: a second ASIO driver moves every ASIO use with it, asked
+    // first (Task 17's prompt).
+    AsioSwitchPlan plan;
+    if (asio && m_engine) {
+        plan = m_engine->planAsioSwitchFor(vaxRole(), id,
+                                           AudioChannelPair{first, channels > 0 ? channels : 2});
+        if (!askAsioSwitchAll(plan, vaxRole(), name.isEmpty() ? id : name, this)) {
+            fillPicker();
+            return;
+        }
+    }
+    if (other) {
+        other->clearBinding();
+    }
+    if (!plan.moves.isEmpty()) {
+        m_engine->applyAsioSwitch(plan);
+    }
+    applyBinding(engine, id, name, first, hostApi);
 }
 
 void VaxChannelCard::onCablePicked(int index)
 {
     if (!m_devicePicker || index < 0) {
+        return;
+    }
+    if (pickerCatalogue() != nullptr) {
+        onCataloguePick(index);
         return;
     }
     const QString name = m_devicePicker->itemData(index).toString();
@@ -1133,8 +1546,12 @@ AudioVaxPage::AudioVaxPage(RadioModel* model, QWidget* parent)
     setObjectName(QStringLiteral("audioVaxSection"));
     buildPage();
     wirePillFeedback();
-    // The cables found now ("Detected virtual cables", the Windows pickers).
-    applyCables(VirtualCableDetector::scan());
+    // The cables found now ("Detected virtual cables", the Windows pickers):
+    // the catalogue's, live (R-AUD-03), or a scan without one.
+    attachCatalogue();
+    if (!m_catalogue) {
+        applyCables(VirtualCableDetector::scan());
+    }
     m_levelTimer = new QTimer(this);
     m_levelTimer->setInterval(50);  // 20 Hz, as VaxApplet polls
     connect(m_levelTimer, &QTimer::timeout, this, &AudioVaxPage::pollLevels);
@@ -1235,6 +1652,23 @@ SoundSystemLine::System AudioVaxPage::system()
 void AudioVaxPage::setSystemForTest(std::optional<SoundSystemLine::System> system)
 {
     systemOverride() = system;
+    // The channel cards are laid out for that system too: a card with no
+    // device lists shows its engine, not this build's.
+    std::optional<AudioEngineKind> engine;
+    if (system) {
+        switch (*system) {
+        case SoundSystemLine::System::Mac:
+            engine = AudioEngineKind::CoreAudio;
+            break;
+        case SoundSystemLine::System::Windows:
+            engine = AudioEngineKind::WindowsShared;
+            break;
+        case SoundSystemLine::System::Linux:
+            engine = AudioEngineKind::PipeWire;
+            break;
+        }
+    }
+    DeviceCard::setBuildDefaultEngineForTest(engine);
 }
 
 void AudioVaxPage::setDetectedCablesForTest(const QVector<DetectedCable>& cables)
@@ -1403,26 +1837,83 @@ void AudioVaxPage::applyCables(const QVector<DetectedCable>& cables)
     refreshStatus();
 }
 
+void AudioVaxPage::refreshOtherPickers(int channel)
+{
+    // D12 / D13: the other cards' "(used by VAX N)" follow this channel's
+    // choice and its On switch.
+    for (VaxChannelCard* card : std::as_const(m_channelCards)) {
+        if (card->channelIndex() != channel) {
+            card->setCableChoices(m_cables);
+        }
+    }
+}
+
+void AudioVaxPage::attachCatalogue()
+{
+    if (m_catalogue || !m_engine) {
+        return;
+    }
+    m_catalogue = m_engine->catalogue();
+    if (!m_catalogue) {
+        return;
+    }
+    // R-AUD-03: a cable added or removed shows at once, no Rescan needed.
+    connect(m_catalogue, &IAudioDeviceCatalog::devicesChanged, this, [this]() {
+        if (m_catalogue) {
+            applyCables(VirtualCableDetector::detect(*m_catalogue));
+        }
+    });
+    applyCables(VirtualCableDetector::detect(*m_catalogue));
+}
+
 // Moved from Setup > Audio > Advanced (R-SPK-21): rescan, show the cables,
 // and offer any new ones through the first-run dialog.
 void AudioVaxPage::onRescan()
 {
-    const QVector<DetectedCable> current = VirtualCableDetector::scan();
+    attachCatalogue();
+    if (m_catalogue && m_engine) {
+        // R-AUD-06: the older drivers list their devices again; the cables
+        // are read once their new list is in.
+        if (!m_rescanWaiting) {
+            m_rescanWaiting = true;
+            connect(m_catalogue, &IAudioDeviceCatalog::olderDriversRescanned, this,
+                    [this]() {
+                        m_rescanWaiting = false;
+                        if (m_catalogue) {
+                            afterRescan(VirtualCableDetector::detect(*m_catalogue));
+                        }
+                    },
+                    Qt::SingleShotConnection);
+        }
+        m_engine->rescanOlderDrivers();
+        return;
+    }
+    afterRescan(VirtualCableDetector::scan());
+}
+
+void AudioVaxPage::afterRescan(const QVector<DetectedCable>& current)
+{
     applyCables(current);
 
     auto& s = AppSettings::instance();
     const QString lastCsv =
         s.value(QStringLiteral("audio/LastDetectedCables"), QString()).toString();
-    const QVector<DetectedCable> newCables =
-        VirtualCableDetector::diffNewCables(current, lastCsv);
+    // R-AUD-03: compared only with a fingerprint from the same list (the
+    // catalogue, or the older PortAudio scan without one).
+    const QString source = VirtualCableDetector::fingerprintSource(m_catalogue != nullptr);
+    const QVector<DetectedCable> newCables = VirtualCableDetector::newCablesSince(
+        current, lastCsv,
+        s.value(QStringLiteral("audio/LastDetectedCablesSource"), QString()).toString(), source);
 
     // Update the stored fingerprint.
     s.setValue(QStringLiteral("audio/LastDetectedCables"),
                VirtualCableDetector::fingerprintCsv(current));
+    s.setValue(QStringLiteral("audio/LastDetectedCablesSource"), source);
     s.save();
 
     if (!newCables.isEmpty()) {
         VaxFirstRunDialog dlg(FirstRunScenario::RescanNewCables, newCables, this);
+        dlg.setAudioEngine(m_engine);
         dlg.exec();
     }
 }
@@ -1493,6 +1984,11 @@ void AudioVaxPage::buildPage()
         // Wire configChanged to AudioEngine.
         if (m_engine) {
             card->setBusOpen(m_engine->isVaxBusOpen(ch));
+            // R-AUD-03 / D12 / D13: the picker from the catalogue;
+            // R-AUD-10: the channel's state sentence.
+            card->setAudioEngine(m_engine);
+            card->setRoleStatus(m_engine->roleStatus(
+                static_cast<AudioRole>(static_cast<int>(AudioRole::Vax1) + ch - 1)));
 
             connect(card, &VaxChannelCard::configChanged, this,
                     [this](int channel, AudioDeviceConfig cfg) {
@@ -1500,6 +1996,7 @@ void AudioVaxPage::buildPage()
                 if (auto* c = channelCard(channel)) {
                     c->setBusOpen(m_engine->isVaxBusOpen(channel));
                 }
+                refreshOtherPickers(channel);
             });
             connect(card, &VaxChannelCard::enabledChanged, this,
                     [this](int channel, bool on) {
@@ -1507,6 +2004,7 @@ void AudioVaxPage::buildPage()
                 if (auto* c = channelCard(channel)) {
                     c->setBusOpen(m_engine->isVaxBusOpen(channel));
                 }
+                refreshOtherPickers(channel);
             });
         }
     }
@@ -1552,6 +2050,35 @@ void AudioVaxPage::wirePillFeedback()
             card->syncEnabledFromSettings();
         }
     });
+
+    // R-AUD-10 / R-AUD-11: each channel's state, as the engine reports it.
+    connect(m_engine, &AudioEngine::roleStatusChanged, this,
+            [this](AudioRole role, const AudioRoleStatus& status) {
+        attachCatalogue();
+        const int channel = static_cast<int>(role) - static_cast<int>(AudioRole::Vax1) + 1;
+        if (VaxChannelCard* card = channelCard(channel)) {
+            card->setRoleStatus(status);
+        }
+    });
+
+    // R-AUD-19: a switch to another ASIO driver moved these channels' pairs.
+    connect(m_engine, &AudioEngine::asioStatusChanged, this, [this]() {
+        for (VaxChannelCard* card : std::as_const(m_channelCards)) {
+            card->loadFromSettings();
+        }
+    });
+
+    // D13: the pairs radio audio holds, and their "(used by speakers)" and
+    // "(used by headphones)", follow a speakers or headphones change made
+    // anywhere (the Outputs page, the title bar). Every caller saves the
+    // choice before it reaches the engine, so the pickers read it back.
+    // Channel 0 is no card, so every card's picker is filled again.
+    connect(m_engine, &AudioEngine::speakersConfigChanged, this,
+            [this](const AudioDeviceConfig&) { refreshOtherPickers(0); });
+    connect(m_engine, &AudioEngine::headphonesConfigChanged, this,
+            [this](const AudioDeviceConfig&) { refreshOtherPickers(0); });
+    connect(m_engine, &AudioEngine::headphonesEnabledChanged, this,
+            [this](bool) { refreshOtherPickers(0); });
 
     connect(m_engine, &AudioEngine::vaxConfigChanged, this,
             [this](int channel, AudioDeviceConfig cfg) {

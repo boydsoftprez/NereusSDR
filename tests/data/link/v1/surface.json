@@ -372,7 +372,7 @@
         {
             "kind": "i64",
             "name": "txReadingsVersion",
-            "value": 3
+            "value": 4
         },
         {
             "kind": "i64",
@@ -547,6 +547,11 @@
         {
             "kind": "i64",
             "name": "radioSpeakerVersion",
+            "value": 1
+        },
+        {
+            "kind": "i64",
+            "name": "coreSpeakerVersion",
             "value": 1
         },
         {
@@ -5698,6 +5703,42 @@
                     "kind": "bool",
                     "name": "speakerAmplifierAvailable",
                     "ordinal": 42
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "i64",
+                    "name": "coreSpeakerVolume",
+                    "ordinal": 43
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "bool",
+                    "name": "coreSpeakerMuted",
+                    "ordinal": 44
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "utf8",
+                    "name": "coreSpeakerDevice",
+                    "ordinal": 45
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "coreSpeakerDevices",
+                    "ordinal": 46
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "coreSpeakerState",
+                    "ordinal": 47
+                },
+                {
+                    "direction": "bidirectional",
+                    "kind": "utf8",
+                    "name": "coreSpeakerDetails",
+                    "ordinal": 48
                 }
             ]
         },
@@ -8799,6 +8840,42 @@
                     "kind": "f64",
                     "name": "alcGroupDb",
                     "ordinal": 43
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "f64",
+                    "name": "micPeakDb",
+                    "ordinal": 44
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "f64",
+                    "name": "alcPeakDb",
+                    "ordinal": 45
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "f64",
+                    "name": "compressionPeakDb",
+                    "ordinal": 46
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "f64",
+                    "name": "eqPeakDb",
+                    "ordinal": 47
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "f64",
+                    "name": "levelerPeakDb",
+                    "ordinal": 48
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "f64",
+                    "name": "cfcPeakDb",
+                    "ordinal": 49
                 }
             ]
         },

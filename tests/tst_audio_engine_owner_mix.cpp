@@ -15,6 +15,13 @@
 //   2026-09-25 - Original implementation for NereusSDR by J.J. Boyd
 //                (KG4VCF), with AI-assisted implementation via Anthropic
 //                Claude Code (R-IOS-31).
+//   2026-10-10 - Headless Core speaker (JJ's ruling, R-AUD-27): a Core
+//                with no window plays every receiver on its speaker at
+//                the slice's AF level and mute; a desktop host keeps
+//                ruling 9.2; the master tap, the headphones tap, every
+//                owner mix and the VAX mask are the same either way.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -27,6 +34,7 @@
 
 #include "fakes/FakeAudioBus.h"
 
+#include <cstring>
 #include <memory>
 #include <vector>
 
@@ -97,6 +105,13 @@ struct Harness {
         radio->sliceById(sliceA)->setAfGain(100);
         radio->sliceById(sliceB)->setAfGain(100);
         radio->sliceById(sliceC)->setAfGain(100);
+        // A slice's route is saved (Slice<N>/OutputRoute) and the settings
+        // outlive a Harness, so a route an earlier test or run chose would
+        // come back here. Every Harness starts on the speakers, unmuted.
+        for (int slice : {sliceA, sliceB, sliceC}) {
+            radio->sliceById(slice)->setOutputRoute(SliceModel::OutputRoute::Speakers);
+            radio->sliceById(slice)->setMuted(false);
+        }
     }
 
     // Slice A plays 0.5, B 0.25, C 0.125 on both channels.
@@ -113,6 +128,28 @@ struct Harness {
     }
 
     quint32 bit(int slice) const { return 1u << slice; }
+
+    // The left and right of the last frame the speakers bus was handed.
+    float speakersLast(int channel) const
+    {
+        const QByteArray& played = speakers->buffer();
+        if (played.size() < static_cast<qsizetype>(2 * sizeof(float))) {
+            return -1.0f;
+        }
+        float value = 0.0f;
+        std::memcpy(&value,
+                    played.constData() + played.size()
+                        - static_cast<qsizetype>((2 - channel) * sizeof(float)),
+                    sizeof(float));
+        return value;
+    }
+
+    // Two remote windows control A and B; nobody controls C.
+    void remoteWindowsTakeAAndB()
+    {
+        radio->sliceOwnership()->setOwner(sliceA, QByteArrayLiteral("deviceA"));
+        radio->sliceOwnership()->setOwner(sliceB, QByteArrayLiteral("deviceB"));
+    }
 };
 
 } // namespace
@@ -225,6 +262,149 @@ private slots:
         h.feed(3);
         QCOMPARE(master.lastLeft(), 0.125f);
         h.engine->clearMasterMixAudioTap(&master);
+    }
+
+    // JJ's ruling 2026-10-10 (R-AUD-27): a headless Core's speaker plays
+    // every receiver, whichever device controls it, at the slice's own AF
+    // level and mute, then the Core speaker's volume and mute. The masks
+    // are ruling 9.2's still.
+    void aHeadlessCoresSpeakerPlaysEveryReceiver()
+    {
+        Harness h;
+        h.engine->setSpeakersPlayEverySlice(true); // as DaemonApp does
+        h.remoteWindowsTakeAAndB();
+        const quint32 remote = h.bit(h.sliceA) | h.bit(h.sliceB);
+        QCOMPARE(h.engine->localOutputSliceMask() & remote, 0u);
+        QCOMPARE(h.engine->vaxSliceMask() & remote, 0u);
+        QCOMPARE(h.engine->localListenMask(), 0u);
+
+        // A 0.5, B 0.25, C 0.125, all at full AF.
+        h.feed(3);
+        QCOMPARE(h.speakersLast(0), 0.875f);
+        QCOMPARE(h.speakersLast(1), 0.875f);
+
+        // A's controller turns its AF to half: 0.25 + 0.25 + 0.125.
+        h.radio->sliceById(h.sliceA)->setAfGain(50);
+        h.feed(2);
+        QCOMPARE(h.speakersLast(0), 0.625f);
+
+        // B's controller mutes it: 0.25 + 0.125.
+        h.radio->sliceById(h.sliceB)->setMuted(true);
+        h.feed(2);
+        QCOMPARE(h.speakersLast(0), 0.375f);
+        QCOMPARE(h.speakersLast(1), 0.375f);
+
+        // The Core speaker's own volume on top, and its mute.
+        h.engine->setVolume(0.5f);
+        h.feed(2);
+        QCOMPARE(h.speakersLast(0), 0.1875f);
+        h.engine->setMasterMuted(true);
+        const int pushes = h.speakers->pushCount();
+        h.feed(2);
+        QCOMPARE(h.speakers->pushCount(), pushes);
+    }
+
+    // A slice its controller routed to the headphones is not on a headless
+    // Core's speaker, as it is on no speakers.
+    void aHeadlessCoresSpeakerLeavesOutTheHeadphonesRoute()
+    {
+        Harness h;
+        h.engine->setSpeakersPlayEverySlice(true);
+        h.remoteWindowsTakeAAndB();
+        h.radio->sliceById(h.sliceA)->setOutputRoute(SliceModel::OutputRoute::Headphones);
+        h.feed(3);
+        QCOMPARE(h.speakersLast(0), 0.375f);
+    }
+
+    // A desktop that hosts a station (not headless) keeps ruling 9.2: the
+    // same ownership leaves the remote windows' slices off its speakers.
+    void aDesktopHostsSpeakersLeaveOutOtherDevicesSlices()
+    {
+        Harness h;
+        QVERIFY(!h.engine->speakersPlayEverySlice());
+        h.remoteWindowsTakeAAndB();
+        h.feed(3);
+        QCOMPARE(h.speakersLast(0), 0.125f);
+        QCOMPARE(h.speakersLast(1), 0.125f);
+    }
+
+    // The headless rule changes the speakers bus and nothing else: the
+    // station's program (the master tap), the headphones tap, a
+    // controlling device's mix, a listening device's mix and the two
+    // slice masks are identical for the same input.
+    void theHeadlessRuleChangesOnlyTheSpeakersBus()
+    {
+        struct Heard {
+            std::vector<float> master;
+            std::vector<float> headphones;
+            std::vector<float> controller;
+            std::vector<float> controllerHeadphones;
+            std::vector<float> listener;
+            quint32 localMask = 0;
+            quint32 vaxMask = 0;
+            quint32 remoteBits = 0;
+            QByteArray speakers;
+        };
+        const auto run = [](bool headless) {
+            Harness h;
+            h.engine->setSpeakersPlayEverySlice(headless);
+            h.remoteWindowsTakeAAndB();
+            h.radio->sliceById(h.sliceA)->setAfGain(50);
+            h.engine->masterMixForTest().setSliceGain(h.sliceB, 0.5f, 0.25f);
+            RecordingMixTap master;
+            RecordingMixTap headphones;
+            RecordingMixTap controller;
+            RecordingMixTap controllerHeadphones;
+            RecordingMixTap listener;
+            h.engine->setMasterMixAudioTap(&master);
+            h.engine->setHeadphonesMixAudioTap(&headphones);
+            const int x = h.engine->acquireOwnerMix();
+            const int y = h.engine->acquireOwnerMix();
+            h.engine->setOwnerMixSliceMask(x, h.bit(h.sliceA) | h.bit(h.sliceB));
+            h.engine->setOwnerMixAudioTap(x, &controller);
+            h.engine->setOwnerHeadphonesMixAudioTap(x, &controllerHeadphones);
+            h.engine->setOwnerMixListen(y, h.sliceA, 0.25f, /*muted=*/false);
+            h.engine->setOwnerMixAudioTap(y, &listener);
+            h.feed(3);
+            // Mid-run changes: a route to the headphones, a mute.
+            h.radio->sliceById(h.sliceC)->setOutputRoute(SliceModel::OutputRoute::Headphones);
+            h.radio->sliceById(h.sliceB)->setMuted(true);
+            h.feed(3);
+            Heard heard;
+            heard.master = master.received;
+            heard.headphones = headphones.received;
+            heard.controller = controller.received;
+            heard.controllerHeadphones = controllerHeadphones.received;
+            heard.listener = listener.received;
+            heard.localMask = h.engine->localOutputSliceMask();
+            heard.vaxMask = h.engine->vaxSliceMask();
+            heard.remoteBits = h.bit(h.sliceA) | h.bit(h.sliceB);
+            heard.speakers = h.speakers->buffer();
+            h.engine->clearMasterMixAudioTap(&master);
+            h.engine->clearHeadphonesMixAudioTap(&headphones);
+            h.engine->releaseOwnerMix(x);
+            h.engine->releaseOwnerMix(y);
+            return heard;
+        };
+        const Heard desktop = run(false);
+        const Heard core = run(true);
+        // Something was heard on each, so equal is not empty against empty.
+        QCOMPARE(desktop.master.size(), size_t{6 * kFrames * 2});
+        QCOMPARE(desktop.master[static_cast<size_t>(2 * kFrames * 2)], 0.125f);
+        QCOMPARE(desktop.listener[static_cast<size_t>(2 * kFrames * 2)], 0.125f);
+        QVERIFY(desktop.controller.back() != 0.0f);
+        QVERIFY(desktop.headphones.back() != 0.0f);
+
+        QCOMPARE(core.master, desktop.master);
+        QCOMPARE(core.headphones, desktop.headphones);
+        QCOMPARE(core.controller, desktop.controller);
+        QCOMPARE(core.controllerHeadphones, desktop.controllerHeadphones);
+        QCOMPARE(core.listener, desktop.listener);
+        QCOMPARE(core.localMask, desktop.localMask);
+        QCOMPARE(core.vaxMask, desktop.vaxMask);
+        QCOMPARE(core.vaxMask, ~core.remoteBits);
+        // And the speakers bus is what did change.
+        QVERIFY(core.speakers != desktop.speakers);
     }
 
     // At most kMaxOwnerMixes; a released one frees its slot and its taps

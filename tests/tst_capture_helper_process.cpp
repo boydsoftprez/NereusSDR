@@ -14,17 +14,40 @@
 //   2026-09-24: R-R3-21: the helper child answers from a test device list
 //               and never initialises PortAudio. J.J. Boyd (KG4VCF), with
 //               AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-09: early-review fix wave (R-AUD-02, bug 1): the mic's host
+//               API index follows its saved driverApi
+//               (captureHostApiIndex).  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 13 (R-AUD-17): the helper attaches
+//               the window's shared ring and answers RingAttached; a Pcm
+//               record from the parent is a protocol error; the scripted
+//               fake streams its tone through the shared ring.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 15 (R-AUD-19, R-AUD-32): the helper
+//               in a test run hosts no ASIO driver: it lists none, fails
+//               an open and ignores the control panel.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan final fix wave (R-AUD-07): the older
+//               drivers' mic adds the two channels for Both
+//               (pickOlderDriverMic).  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 
 #include <QElapsedTimer>
 #include <QProcess>
+#include <QRandomGenerator>
 
+#include <array>
 #include <cstring>
+#include <memory>
 #include <optional>
 
 #include "core/audio/CaptureProtocol.h"
+#include "core/audio/CaptureShm.h"
+#include "core/audio/DeviceRateMatcher.h"
+#include "core/audio/MatcherRing.h"
 #include "fakes/FakeCaptureChild.h"
 
 // Exercise the real entry point, as tst_daemon_signals does for nereusd.
@@ -130,6 +153,17 @@ bool nextTypeIs(Child& child, P::RecordType type, int timeoutMs)
     return record.has_value() && record->type == type;
 }
 
+QByteArray attachRecord(quint32 generation, const CaptureShmNames& names, std::size_t bytes)
+{
+    P::AttachRing attach;
+    attach.generation = generation;
+    attach.memory = names.memory;
+    attach.wake = names.wake;
+    attach.bytes = static_cast<qint64>(bytes);
+    attach.inRate = 8000;
+    return P::encodeAttachRing(attach);
+}
+
 QByteArray openRecord(quint32 generation) { return P::encodeOpen(P::Command{generation}); }
 QByteArray stopRecord(quint32 generation) { return P::encodeStop(P::Command{generation}); }
 
@@ -138,6 +172,59 @@ QByteArray stopRecord(quint32 generation) { return P::encodeStop(P::Command{gene
 class TstCaptureHelperProcess : public QObject {
     Q_OBJECT
 private slots:
+    // Bug 1 on the PC mic: the saved host API name picks the host API the
+    // helper opens on, never MME's device of the same name listed first.
+    void micHostApiFollowsDriverApi()
+    {
+        const QVector<QPair<int, QString>> windows{
+            {0, QStringLiteral("MME")},
+            {1, QStringLiteral("Windows DirectSound")},
+            {2, QStringLiteral("Windows WASAPI")}};
+        QCOMPARE(captureHostApiIndex(QStringLiteral("Windows DirectSound"), -1, windows), 1);
+        QCOMPARE(captureHostApiIndex(QStringLiteral("Windows WASAPI"), 0, windows), 2);
+        // No host API name: the saved index stands.
+        QCOMPARE(captureHostApiIndex(QString(), -1, windows), -1);
+        QCOMPARE(captureHostApiIndex(QString(), 1, windows), 1);
+        // A host API not listed now: the saved index stands.
+        QCOMPARE(captureHostApiIndex(QStringLiteral("ASIO"), -1, windows), -1);
+        QCOMPARE(captureHostApiIndex(QStringLiteral("Windows DirectSound"), 0, {}), 0);
+    }
+
+    // R-AUD-07: the older drivers' mic picks as every engine does; Both
+    // adds the two channels (Thetis combinebuff), never their average.
+    void olderDriverMicBothAddsTheChannels()
+    {
+        // Two frames of a 3-channel device: (0.5, 0.25, 0.125) each.
+        const std::array<float, 6> block{0.5f, 0.25f, 0.125f, 0.5f, 0.25f, 0.125f};
+        std::array<float, 4> stereo{};
+        const auto heard = [&](int channels, int first, MicChannelPick pick) {
+            stereo.fill(-9.0f);
+            pickOlderDriverMic(block.data(), 2, channels, first, pick, stereo.data());
+            for (float s : stereo) {
+                if (s != stereo[0]) {
+                    return -1.0f;   // the two sides or frames differ
+                }
+            }
+            return stereo[0];
+        };
+        QCOMPARE(heard(3, 1, MicChannelPick::Both), 0.75f);
+        QCOMPARE(heard(3, 1, MicChannelPick::Left), 0.5f);
+        QCOMPARE(heard(3, 1, MicChannelPick::Right), 0.25f);
+        QCOMPARE(heard(3, 2, MicChannelPick::Both), 0.375f);
+        // A pair from the last channel, or past it: that channel, once.
+        QCOMPARE(heard(3, 3, MicChannelPick::Both), 0.125f);
+        QCOMPARE(heard(3, 9, MicChannelPick::Right), 0.125f);
+        // A one-channel device: its channel, once.
+        const std::array<float, 2> mono{0.5f, 0.5f};
+        stereo.fill(-9.0f);
+        pickOlderDriverMic(mono.data(), 2, 1, 1, MicChannelPick::Both, stereo.data());
+        QCOMPARE(stereo, (std::array<float, 4>{0.5f, 0.5f, 0.5f, 0.5f}));
+        // No block: silence.
+        stereo.fill(-9.0f);
+        pickOlderDriverMic(nullptr, 2, 2, 1, MicChannelPick::Both, stereo.data());
+        QCOMPARE(stereo, (std::array<float, 4>{}));
+    }
+
     void helperSendsHelloFirstWithinDeadline()
     {
         Child helper;
@@ -150,7 +237,7 @@ private slots:
         QCOMPARE(record->type, P::RecordType::Hello);
         const auto hello = P::decodeHello(record->payload);
         QVERIFY(hello.has_value());
-        QCOMPARE(hello->protocol, 1);
+        QCOMPARE(hello->protocol, int(P::kVersion));
         QCOMPARE(hello->pid, helper.process().processId());
         QVERIFY(!hello->build.isEmpty());
         QVERIFY2(elapsed < 3000, qPrintable(QStringLiteral("hello after %1 ms").arg(elapsed)));
@@ -276,39 +363,198 @@ private slots:
         QCOMPARE(helper.process().exitCode(), 0);
     }
 
+    // R-AUD-17: the helper attaches the window's region for the configured
+    // generation and answers RingAttached; an AttachRing for another
+    // generation is ignored.
+    void helperAttachesTheWindowsRing()
+    {
+        const CaptureShmNames names = makeCaptureShmNames(
+            QCoreApplication::applicationPid(), QRandomGenerator::global()->generate());
+        constexpr std::size_t kBytes = 64 * 1024;
+        const std::unique_ptr<CaptureShmRegion> region = CaptureShmRegion::create(names, kBytes);
+        QVERIFY(region);
+
+        Child helper;
+        QVERIFY(helper.start({QStringLiteral("--capture-helper")}));
+        QVERIFY(helper.next(3000).has_value());
+        helper.send(configureRecord(8, kListedDevice));
+        helper.send(attachRecord(7, names, kBytes));
+        QVERIFY(!helper.next(300).has_value());
+        QCOMPARE(helper.readerError(), P::RecordReader::Error::None);
+
+        helper.send(attachRecord(8, names, kBytes));
+        const auto record = helper.next(3000);
+        QVERIFY2(record.has_value(), helper.diagnostics().constData());
+        QCOMPARE(record->type, P::RecordType::RingAttached);
+        const auto attached = P::decodeCommand(record->payload);
+        QVERIFY(attached.has_value());
+        QCOMPARE(attached->generation, 8u);
+
+        helper.send(P::encodeShutdown());
+        QVERIFY(helper.finishes(3000));
+        QCOMPARE(helper.process().exitCode(), 0);
+    }
+
+    // A ring the helper cannot attach (no such names) fails the generation
+    // as Internal; the helper keeps running.
+    void helperFailsARingItCannotAttach()
+    {
+        const CaptureShmNames names = makeCaptureShmNames(
+            QCoreApplication::applicationPid(), QRandomGenerator::global()->generate());
+        Child helper;
+        QVERIFY(helper.start({QStringLiteral("--capture-helper")}));
+        QVERIFY(helper.next(3000).has_value());
+        helper.send(configureRecord(9, kListedDevice));
+        helper.send(attachRecord(9, names, 64 * 1024));
+        const auto failed = helper.nextStatus(3000);
+        QVERIFY2(failed.has_value(), helper.diagnostics().constData());
+        QCOMPARE(failed->generation, 9u);
+        QCOMPARE(failed->state, P::HelperState::Failed);
+        QCOMPARE(failed->reason, P::FailReason::Internal);
+
+        helper.send(P::encodeShutdown());
+        QVERIFY(helper.finishes(3000));
+        QCOMPARE(helper.process().exitCode(), 0);
+    }
+
+    // R-AUD-19, R-AUD-32: a test run's helper never makes an ASIO driver.
+    // It lists none, describes a named one without caps, fails an open
+    // with outputs (echoing its serial), closes an empty one, and ignores
+    // the control panel; it keeps running throughout.
+    void helperInATestRunHostsNoAsio()
+    {
+        Child helper;
+        QVERIFY(helper.start({QStringLiteral("--capture-helper")}));
+        QVERIFY(helper.next(3000).has_value());
+
+        helper.send(P::encodeAsioDescribe({QString()}));
+        auto record = helper.next(3000);
+        QVERIFY2(record.has_value(), helper.diagnostics().constData());
+        QCOMPARE(record->type, P::RecordType::AsioCaps);
+        auto caps = P::decodeAsioCaps(record->payload);
+        QVERIFY(caps.has_value());
+        QVERIFY(caps->drivers.isEmpty());
+        QVERIFY(caps->driver.isEmpty());
+        QVERIFY(!caps->caps.has_value());
+
+        helper.send(P::encodeAsioDescribe({QStringLiteral("Focusrite USB ASIO")}));
+        record = helper.next(3000);
+        QVERIFY(record.has_value());
+        QCOMPARE(record->type, P::RecordType::AsioCaps);
+        caps = P::decodeAsioCaps(record->payload);
+        QVERIFY(caps.has_value());
+        QCOMPARE(caps->driver, QStringLiteral("Focusrite USB ASIO"));
+        QVERIFY(!caps->caps.has_value());
+        QVERIFY(!caps->inUse);
+
+        P::AsioOpen open;
+        open.serial = 5;
+        open.driver = QStringLiteral("Focusrite USB ASIO");
+        open.bufferFrames = 256;
+        open.rate = 48000.0;
+        P::AsioOpenUse use;
+        use.role = AudioRole::Speakers;
+        use.pair = AudioChannelPair{3, 2};
+        use.memory = QStringLiteral("nereus-test-asio-memory");
+        use.wake = QStringLiteral("nereus-test-asio-wake");
+        use.bytes = 4096;
+        open.uses.append(use);
+        helper.send(P::encodeAsioOpen(open));
+        record = helper.next(3000);
+        QVERIFY(record.has_value());
+        QCOMPARE(record->type, P::RecordType::AsioState);
+        auto state = P::decodeAsioState(record->payload);
+        QVERIFY(state.has_value());
+        QCOMPARE(state->serial, 5u);
+        QCOMPARE(state->state, P::AsioStateKind::Failed);
+        QCOMPARE(state->detail, QStringLiteral("a test run opens no ASIO driver"));
+
+        helper.send(P::encodeAsioControlPanel());
+        QVERIFY(!helper.next(300).has_value());
+        QCOMPARE(helper.readerError(), P::RecordReader::Error::None);
+
+        open.serial = 6;
+        open.driver.clear();
+        open.uses.clear();
+        helper.send(P::encodeAsioOpen(open));
+        record = helper.next(3000);
+        QVERIFY(record.has_value());
+        QCOMPARE(record->type, P::RecordType::AsioState);
+        state = P::decodeAsioState(record->payload);
+        QVERIFY(state.has_value());
+        QCOMPARE(state->serial, 6u);
+        QCOMPARE(state->state, P::AsioStateKind::Closed);
+
+        helper.send(P::encodeShutdown());
+        QVERIFY(helper.finishes(3000));
+        QCOMPARE(helper.process().exitCode(), 0);
+    }
+
+    // Version 3: a Pcm record from the parent is a protocol error, and the
+    // helper exits as for any malformed parent record.
+    void helperExitsOnAPcmRecordFromTheParent()
+    {
+        Child helper;
+        QVERIFY(helper.start({QStringLiteral("--capture-helper")}));
+        QVERIFY(helper.next(3000).has_value());
+        const std::array<float, 4> samples{};
+        helper.send(P::encodePcm(1, 0, 0, samples.data(), static_cast<int>(samples.size())));
+        QVERIFY(helper.finishes(1000));
+        QCOMPARE(helper.process().exitCode(), 0);
+    }
+
     // ── Scripted fake ──────────────────────────────────────────────────────
 
+    // R-AUD-17: the fake attaches the region, answers RingAttached, then
+    // writes its tone into a clock matcher ring it builds there.
     void fakeReadyStreamsTone()
     {
+        DeviceRateMatcher::Config sizing;
+        sizing.inRate = 8000;
+        sizing.outRate = 48000;
+        sizing.writeBlockFrames = 64;
+        sizing.callbackFrames = P::kMaxBufferFrames;
+        sizing.delayMs = 0;
+        const std::size_t bytes = DeviceRateMatcher::ringBytes(sizing);
+        QVERIFY(bytes > 0);
+        const CaptureShmNames names = makeCaptureShmNames(
+            QCoreApplication::applicationPid(), QRandomGenerator::global()->generate());
+        const std::unique_ptr<CaptureShmRegion> region = CaptureShmRegion::create(names, bytes);
+        QVERIFY(region);
+
         Child fake;
         QVERIFY(fake.start({QStringLiteral("--fake-capture-child"), QStringLiteral("ready")}));
         QVERIFY(nextTypeIs(fake, P::RecordType::Hello, 3000));
         fake.send(configureRecord(3, QString()));
+        fake.send(attachRecord(3, names, bytes));
         fake.send(openRecord(3));
+        const auto attached = fake.next(1000);
+        QVERIFY(attached.has_value());
+        QCOMPARE(attached->type, P::RecordType::RingAttached);
         QVERIFY(nextStateIs(fake, P::HelperState::Opening, 1000));
         const auto ready = fake.nextStatus(1000);
         QVERIFY(ready.has_value());
         QCOMPARE(ready->state, P::HelperState::Ready);
         QCOMPARE(ready->nativeRate, 48000);
-        for (quint64 expected = 0; expected < 3 * 480; expected += 480) {
-            const auto record = fake.next(1000);
-            QVERIFY(record.has_value());
-            QCOMPARE(record->type, P::RecordType::Pcm);
-            const auto pcm = P::decodePcm(record->payload);
-            QVERIFY(pcm.has_value());
-            QCOMPARE(pcm->generation, 3u);
-            QCOMPARE(pcm->framePosition, expected);
-            QCOMPARE(pcm->samples.size(), 480);
+        QCOMPARE(ready->latencyUs, 1500);
+        QCOMPARE(ready->bufferFrames, 480);
+
+        // Three writes of 480 frames reach the ring, each with a wake.
+        for (int i = 0; i < 3; ++i) {
+            QVERIFY(region->waitWake());
         }
+        const auto* header = static_cast<const MatcherRingHeader*>(region->data());
+        QCOMPARE(header->magic, kMatcherRingMagic);
+        MatcherRingHeader* ring =
+            attachMatcherRing(region->data(), matcherRingBytes(header->capacityFrames, 2));
+        QVERIFY(ring != nullptr);
+        QVERIFY(ring->written.load() >= 3 * 480);
+        QVERIFY(ring->lastWriteNs.load() > 0);
+        QVERIFY(!fake.next(50).has_value());                    // no Pcm record
+
         fake.send(stopRecord(3));
-        std::optional<P::Status> stopped;
-        while (!stopped) {
-            const auto record = fake.next(1000);
-            QVERIFY(record.has_value());
-            if (record->type == P::RecordType::Status) {
-                stopped = P::decodeStatus(record->payload);
-            }
-        }
+        const auto stopped = fake.nextStatus(1000);
+        QVERIFY(stopped.has_value());
         QCOMPARE(stopped->state, P::HelperState::Stopped);
         fake.send(P::encodeShutdown());
         QVERIFY(fake.finishes(2000));
@@ -327,6 +573,7 @@ private slots:
         QTest::newRow("input-lost") << QStringLiteral("input-lost");
         QTest::newRow("ignore-stop") << QStringLiteral("ignore-stop");
         QTest::newRow("stale") << QStringLiteral("stale");
+        QTest::newRow("busy") << QStringLiteral("busy");
     }
 
     void fakeScenarioShapes()
@@ -361,7 +608,6 @@ private slots:
             QVERIFY(nextStateIs(fake, P::HelperState::Opening, 1000));
             QVERIFY(timer.elapsed() >= 250);
             QVERIFY(nextStateIs(fake, P::HelperState::Ready, 1000));
-            QVERIFY(nextTypeIs(fake, P::RecordType::Pcm, 1000));
         } else if (scenario == QLatin1String("crash-after-ready")) {
             QVERIFY(nextStateIs(fake, P::HelperState::Opening, 1000));
             QVERIFY(nextStateIs(fake, P::HelperState::Ready, 1000));
@@ -391,13 +637,7 @@ private slots:
             QVERIFY(nextStateIs(fake, P::HelperState::Opening, 1000));
             QVERIFY(nextStateIs(fake, P::HelperState::Ready, 1000));
             fake.send(stopRecord(5));
-            QElapsedTimer timer;
-            timer.start();
-            while (timer.elapsed() < 300) {
-                const auto record = fake.next(100);
-                QVERIFY(record.has_value());
-                QCOMPARE(record->type, P::RecordType::Pcm);
-            }
+            QVERIFY(!fake.next(300).has_value());               // never Stopped
         } else if (scenario == QLatin1String("stale")) {
             const auto opening = fake.nextStatus(1000);
             QVERIFY(opening.has_value());
@@ -406,11 +646,12 @@ private slots:
             QVERIFY(ready.has_value());
             QCOMPARE(ready->state, P::HelperState::Ready);
             QCOMPARE(ready->generation, 4u);
-            const auto record = fake.next(1000);
-            QVERIFY(record.has_value());
-            const auto pcm = P::decodePcm(record->payload);
-            QVERIFY(pcm.has_value());
-            QCOMPARE(pcm->generation, 4u);
+        } else if (scenario == QLatin1String("busy")) {
+            QVERIFY(nextStateIs(fake, P::HelperState::Opening, 1000));
+            const auto failed = fake.nextStatus(1000);
+            QVERIFY(failed.has_value());
+            QCOMPARE(failed->state, P::HelperState::Failed);
+            QCOMPARE(failed->reason, P::FailReason::DeviceInUse);
         }
 
         // Every scenario still exits on stdin EOF.

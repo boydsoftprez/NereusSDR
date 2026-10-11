@@ -21,6 +21,60 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09 : Native audio plan Task 16 fix round (R-AUD-01, R-AUD-03)
+//                 by J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. catalogue() lists the devices before start();
+//                 roleFormat().
+//   2026-10-09 : Native audio plan Task 21 (R-AUD-30, D31) by J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//                 setSpeakersWaitForPick(): a "(none)" speakers choice reads
+//                 waiting for a pick, and before the device layer starts the
+//                 first speakers choice is an unsaved "(none)";
+//                 prepareAudioDevices() starts the device layer without
+//                 opening an output.
+//   2026-10-09 : Native audio plan Task 13 (R-AUD-11, R-AUD-17, R-AUD-18)
+//                 by J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. m_micRequestFloor: a mic open waits for a status of
+//                 its own capture request; the mic's delay parts.
+//   2026-10-09 : Native audio plan Task 12 (R-AUD-11) by J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code. makeBus()
+//                 reports an open another program refused, so the role
+//                 reads in use.
+//   2026-10-09 : Native audio plan early-review fix wave and its follow-up
+//                 (R-AUD-02, R-AUD-06, R-AUD-08, R-AUD-12, R-AUD-14,
+//                 R-AUD-16) by J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code. m_roleOpenDeviceId and
+//                 backendOpensOneStreamAtATime() for the open-first rule;
+//                 kRescanSlewMs; ensureAudioDevices(DeviceStart) starts the
+//                 mic role alone for a capture demand before start().
+//   2026-10-09 : Native audio plan Task 7 fix (R-AUD-06, R-AUD-08) by J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//                 PortAudio starts and stops through PortAudioLibrary; a
+//                 setter's first choice replaces the saved one while the
+//                 device layer is built (one open).
+//   2026-10-09 : Native audio plan Task 7 (R-AUD-02, R-AUD-05, R-AUD-06,
+//                 R-AUD-15, R-AUD-32, R-AUD-34) by J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code. The engine builds
+//                 its engine backends (makeSystemAudioBackends), runs the
+//                 settings migration, starts the device catalogue and the
+//                 stream supervisor, and opens speakers, headphones, the PC
+//                 mic and (Windows) VAX through IAudioStreamHost;
+//                 catalogue(), roleStatus(), roleStatusChanged,
+//                 delayParts(role) (replacing speakersDelayParts()),
+//                 defaultEngine(), rescanOlderDrivers().
+//   2026-10-09 : Native audio plan Task 6 (R-AUD-15) by J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code. A bus that takes
+//                 the stereo mix gets the 48 kHz block without the speaker
+//                 format converter (silence while muted);
+//                 remotePlaybackIntoMatcher(), remotePlaybackMatcherStats(),
+//                 speakersDelayParts() and the probe's readout;
+//                 vaxOutputTakesStereoMix() and restartVaxOutputClockMatch()
+//                 for the remote VAX feeder.
+//   2026-10-08 : Native audio plan Task 1 (V-HW-8) by J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code. The audio delay
+//                 probe: setDelayProbeEnabled() adds a click to the speakers
+//                 block once a second, holds a Test Mic capture lease and
+//                 pairs the helper's hits with the clicks. NereusSDR-original.
 //   2026-10-09 : hasCaptureDemand(), whether anyone holds capture demand, by
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //                 NereusSDR-original.
@@ -195,12 +249,74 @@
 //                 setLocalListen add a slice to a device's own sum at that
 //                 device's level. The VAX tee and the receiver taps no
 //                 longer undo the AF gain. NereusSDR-original.
+//   2026-10-09: native audio plan Task 8 (R-AUD-18) by J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//                 speakersWorkgroupGeneration() and speakersWorkgroupDevice():
+//                 the DSP thread follows the audio workgroup of the device
+//                 the speakers play on. NereusSDR-original.
+//   2026-10-09: native audio plan Task 15 (R-AUD-19, R-AUD-22) by J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code. The
+//                 ASIO backend reaches the mic helper through the capture
+//                 supervisor, and an ASIO output holds Demand::AsioDevice
+//                 so the helper runs with the PC mic off. NereusSDR-original.
+//   2026-10-09: native audio plan Task 17 (R-AUD-07, R-AUD-19 to R-AUD-22)
+//                 by J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. The ASIO session status for the Setup cards
+//                 (asioStatus(), asioStatusChanged), the one-driver switch
+//                 (planAsioSwitchFor(), applyAsioSwitch()), the shared
+//                 buffer and rate, the driver's control panel, and each
+//                 output's role on its stream request. NereusSDR-original.
+//   2026-10-09: settings scope fix (R-AUD-07, R-AUD-20): the saved ASIO
+//               buffer size and rate and the headphones Enabled box are
+//               read through AudioEngine, so a Setup page does not read
+//               a key a core consumer reads. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-09: final review fix (R-AUD-06, R-AUD-15): Rescan's fade wait
+//               runs from a timer, not a busy wait; speakersDelayNowMs()
+//               reads the delay the DSP thread publishes, so the Core's
+//               1 s refresh never takes the speakers lock from it.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: final review fix round 2 (R-AUD-15): the DSP thread
+//               publishes every output role's delay parts and format;
+//               delayPartsNow() and roleFormatNow() read them for Setup's
+//               cards without the role's bus lock. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-10: final review fix round 3 (R-AUD-06): m_rescanRequestTokens,
+//               so each catalogue answer finishes the Rescan that asked
+//               for it. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
+//   2026-10-10: bench regression (R-AUD-15): remote playback into a bus's
+//               clock matcher checks the matcher's room itself; the
+//               comments say so. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
+//   2026-10-10: headless Core speaker (JJ's ruling, R-AUD-27) by J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//               setSpeakersPlayEverySlice(): the speakers bus plays every
+//               receiving slice, whatever the local output mask leaves
+//               out, from a sum of its own (m_everySliceScratch), so the
+//               master tap, the headphones and every owner mix are
+//               unchanged. nereusd sets it. NereusSDR-original.
+//   2026-10-10: transmit monitor at the transmit channel's rate (bench:
+//               MON unreadable on a Protocol 2 radio) by J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//               setTxMonitorSampleRate(): the monitor block is converted
+//               to the mix rate on the transmit thread, as Thetis's mixer
+//               does for the transmitter's stream (cmaster.c:295-296,
+//               aamix.c:185-197 [v2.10.3.15]), and crosses to the DSP
+//               thread through m_txMonitorHandoff, so the mixer is only
+//               ever touched by the DSP thread.
 
 #include "core/NereusCoreExport.h"
 #include "AudioDeviceConfig.h"
 #include "IAudioBus.h"
+#include "audio/AsioSession.h"
+#include "audio/AudioBackendRegistry.h"
+#include "audio/AudioDelayParts.h"
+#include "audio/AudioDelayProbe.h"
+#include "audio/AudioRingSpsc.h"
 #include "audio/CaptureSupervisor.h"
+#include "audio/IAudioStreamHost.h"
 #include "audio/MasterMixer.h"
 #include "audio/VaxChannelMixer.h"
 #include "audio/SpeakerFormatConverter.h"
@@ -216,20 +332,49 @@
 namespace NereusSDR { class PipeWireThreadLoop; }
 #endif
 
+#include <QHash>
+#include <QList>
 #include <QObject>
 #include <QString>
 
 #include <array>
 #include <atomic>
+#include <cstdint>
+#include <deque>
 #include <vector>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <utility>
+
+class QTimer;
+
+namespace NereusSDR::CaptureProtocol { struct AsioState; }
 
 namespace NereusSDR {
 
 class RadioModel;
 class SliceModel;
+class AudioDeviceCatalog;
+class AudioStreamSupervisor;
+class IAudioDeviceCatalog;
+class IAudioEngineBackend;
+class AsioBackend;
+
+// Native audio plan Task 17: the ASIO session as the Setup cards show it
+// (R-AUD-19 to R-AUD-22).  One driver runs at a time; every role saved on
+// it shares its one buffer size and rate.
+struct AsioStatus {
+    QString driver;                    // empty: no ASIO in use
+    std::optional<AsioDriverCaps> caps;
+    int bufferFrames = 0;
+    double sampleRate = 0.0;
+    QList<AudioRole> users;            // every role on this driver
+    bool restartedRecently = false;    // true for 5 s after a restart (R-AUD-21)
+    bool formatUnsupported = false;    // settled call 28
+    friend bool operator==(const AsioStatus&, const AsioStatus&) = default;
+};
 
 // Synchronous observer for the final receiver master mix.  `samples` is
 // borrowed interleaved stereo float32 and is valid only for the duration of
@@ -293,7 +438,7 @@ public:
 // summing point so the cancellation reference matches the audio actually
 // leaving the speakers.  This is a tap-point relocation only; the WDSP
 // DEXP block and TxChannel::sendAntiVoxData wrapper stay unchanged.
-class NEREUS_CORE_EXPORT AudioEngine : public QObject {
+class NEREUS_CORE_EXPORT AudioEngine : public QObject, public IAudioStreamHost {
     Q_OBJECT
 
 public:
@@ -522,8 +667,160 @@ public:
         RemotePlaybackOutput output = RemotePlaybackOutput::Speakers);
     std::optional<IAudioBus::OutputPacing> remotePlaybackPacing(
         RemotePlaybackOutput output = RemotePlaybackOutput::Speakers);
+    // `waitedForRoom`: into a bus's own clock matcher, the caller kept
+    // this packet back until the matcher had room (see below).
     bool writeRemotePlayback(const QVector<float>& pcm,
-                             RemotePlaybackOutput output = RemotePlaybackOutput::Speakers);
+                             RemotePlaybackOutput output = RemotePlaybackOutput::Speakers,
+                             bool waitedForRoom = false);
+
+    // R-AUD-15 (settled call 30): true when the output's bus takes the
+    // 48 kHz stereo mix into its own clock matcher.  Remote playback then
+    // writes 48 kHz stereo through writeRemotePlayback(), one whole packet
+    // a call, as the jitter hold releases it, whatever
+    // remotePlaybackFormat() reports for the device.  Each write tells the
+    // matcher the packet's length, so its size holds one; the caller
+    // checks the room first (remotePlaybackMatcherStats(): queuedFrames +
+    // packetOutFrames at or below packetHighWaterFrames) and keeps a burst
+    // until there is room, because the matcher makes none, and says with
+    // the write whether the packet waited, so the matcher's control steers
+    // by the packets that came in their own time.
+    // remotePlaybackMatcherStats() is that bus's matcher counters and
+    // sizes.  Any thread.
+    bool remotePlaybackIntoMatcher(
+        RemotePlaybackOutput output = RemotePlaybackOutput::Speakers) const;
+    std::optional<DeviceRateMatcherStats> remotePlaybackMatcherStats(
+        RemotePlaybackOutput output = RemotePlaybackOutput::Speakers) const;
+
+    // ── Native audio engines (native audio plan Task 7) ─────────────────
+    // The engine builds its engine backends (makeSystemAudioBackends, or
+    // the test's), migrates the saved device keys (R-AUD-05), starts the
+    // device catalogue and the stream supervisor on first use: start(), a
+    // remote window's speakers, or a Setup change.  The supervisor then
+    // opens each role through openRole() below.  An engine with no
+    // application object, or a test run with no injected backends, keeps
+    // the direct device paths (the DeviceBusFactory seam, or nothing).
+    //
+    // catalogue() builds the catalogue alone on first use, before start()
+    // (Task 16 fix round): it lists the devices, opens none and migrates
+    // no saved key; null where the device layer does not apply, and after
+    // stop() until it is asked again.  roleStatus() is the supervisor's
+    // status (Off before it starts); roleStatusChanged re-emits it.
+    // delayParts(role) is that role's output bus's delay parts
+    // (matcherFillMs -1 without a matcher or a bus; the mic has none here,
+    // R-AUD-15).  defaultEngine() is R-AUD-02's engine for a role on
+    // "(platform default)".  rescanOlderDrivers() (R-AUD-06) closes every
+    // role on PortAudio after a fade of at most the larger of
+    // kRescanFadeMs and the stream's callback period plus kRescanSlewMs
+    // (the matcher's fade is its slew, 3 ms at most), has
+    // PortAudio list its devices again and reopens those roles; a role on
+    // another engine is never closed.  It returns at once: the fade is
+    // waited out from a timer, so the window keeps running meanwhile.
+    // Main thread.
+    static constexpr int kRescanFadeMs = 20;
+    static constexpr double kRescanSlewMs = 3.0;
+    IAudioDeviceCatalog* catalogue();
+    AudioRoleStatus roleStatus(AudioRole role) const;
+    AudioDelayParts delayParts(AudioRole role) const;
+    // The format an output role's bus plays now; nullopt while it is
+    // closed, and for the mic (Task 16 fix round).
+    std::optional<AudioFormat> roleFormat(AudioRole role) const;
+    // For readers on a timer (Setup's cards, the Core's speaker refresh):
+    // delayParts() and roleFormat() without the role's bus lock, which
+    // would cost the DSP thread the block it was pushing.  While the DSP
+    // thread plays the role's bus, the values it published for that bus
+    // with its last block; otherwise (nothing plays it, or a bus opened
+    // since) read under a try-lock, which never waits: when another
+    // thread holds the lock, the last values published for this bus, or
+    // none.  The mic's delay is delayParts(TxInput), which takes no bus
+    // lock.  Owner (main) thread.
+    AudioDelayParts delayPartsNow(AudioRole role) const;
+    std::optional<AudioFormat> roleFormatNow(AudioRole role) const;
+    // delayPartsNow(Speakers).totalMs(): -1 with none.
+    double speakersDelayNowMs() const;
+    // A published value older than this is not used.
+    static constexpr std::int64_t kPublishedDelayFreshNs = 250'000'000;
+    AudioEngineKind defaultEngine() const { return m_defaultEngine; }
+
+    // ── ASIO for the Setup cards (native audio plan Task 17) ────────────
+    // The roles on ASIO are the saved choices whose Engine is "ASIO" (the
+    // headphones and a VAX channel only while their Enabled box is on);
+    // the cards save every pick before the engine hears of it.
+    // asioStatus() is the driver in use (the open session's, else the
+    // first role's), its caps, the buffer and rate it runs at (else the
+    // saved audio/Asio/BufferFrames and audio/Asio/SampleRate, inside its
+    // caps), every role on it, whether it restarted after a reset in the
+    // last kAsioRestartNoteMs (R-AUD-21), and whether its sample format is
+    // one NereusSDR cannot convert (settled call 28).  asioStatusChanged
+    // fires whenever any of that changes.
+    // planAsioSwitchFor() is planAsioSwitch() over the roles on ASIO, for
+    // a role picking a pair on `driver` (R-AUD-19).  applyAsioSwitch()
+    // saves each move (Engine, DeviceId, DeviceName, FirstChannel) and
+    // hands the role its new choice, which reopens it; the role that
+    // asked saves its own pick.  setAsioBufferAndRate() saves the shared
+    // buffer and rate (R-AUD-20) and every role on the driver takes them
+    // (its BufferSamples and SampleRate), reopening on them.
+    // openAsioControlPanel() opens the driver's own settings window in the
+    // helper (R-AUD-22).  Main thread.
+    static constexpr int kAsioRestartNoteMs = 5000;
+    AsioStatus asioStatus() const;
+    QList<AsioUse> asioUses() const;
+    std::optional<AsioDriverCaps> asioDriverCaps(const QString& driver) const;
+    AsioSwitchPlan planAsioSwitchFor(AudioRole role, const QString& driver,
+                                     AudioChannelPair pair) const;
+    void applyAsioSwitch(const AsioSwitchPlan& plan);   // saves and reopens every moved role
+    void setAsioBufferAndRate(int bufferFrames, double sampleRate);   // saves audio/Asio/BufferFrames and audio/Asio/SampleRate
+    // The saved ASIO buffer size and rate (0 and 48000 when none saved)
+    // and the headphones card's saved Enabled box: this computer's
+    // choices.  A Setup page reads them here, never from the settings
+    // store, so the key has one reader in the core (tst_settings_scope).
+    static int savedAsioBufferFrames();
+    static double savedAsioSampleRate();
+    static bool savedHeadphonesEnabled();
+    void openAsioControlPanel();
+#ifdef NEREUS_BUILD_TESTS
+    // A driver's caps as the helper would describe them (nullopt removes).
+    void setAsioDriverCapsForTest(const QString& driver, std::optional<AsioDriverCaps> caps);
+    // An AsioState from the helper, as the capture supervisor delivers it.
+    void deliverAsioStateForTest(const CaptureProtocol::AsioState& state);
+    void setAsioRestartNoteMsForTest(int ms) { m_asioRestartNoteMs = ms; }
+#endif
+    // Native audio plan Task 21 (R-AUD-30, D31): the Core box that starts
+    // into a desktop leaves its cards alone until a Core speaker is picked.
+    // With `waiting`, a "(none)" speakers choice reads WaitingForPick, not
+    // Off (AudioStreamSupervisor::setNoneMeansWaitingForPick), and while the
+    // device layer has not started the speakers' first choice is "(none)",
+    // never saved; a later setSpeakersConfig() replaces it.  Main thread.
+    void setSpeakersWaitForPick(bool waiting);
+    bool speakersWaitForPick() const { return m_speakersWaitForPick; }
+    // Starts the device catalogue and the stream supervisor, as a setter
+    // does, without opening an output (the mic role alone starts, as for
+    // setSpeakersConfig).  False where the device layer does not apply.
+    // defaultEngine() is then the engine a choice is saved with.  Main
+    // thread.
+    bool prepareAudioDevices();
+    // R-AUD-18: the generation is bumped, and the device stored first,
+    // whenever the speakers bus opens on a device (a fall-back to the
+    // default and the return included).  The device is the bus's
+    // audioWorkgroupDevice(): an AudioObjectID on Core Audio, else 0.  The
+    // DSP thread loads the generation once per block and rejoins that
+    // device's workgroup when it changed.  Any thread.
+    std::uint32_t speakersWorkgroupGeneration() const
+    {
+        return m_speakersWorkgroupGeneration.load(std::memory_order_acquire);
+    }
+    std::uint32_t speakersWorkgroupDevice() const
+    {
+        return m_speakersWorkgroupDevice.load(std::memory_order_acquire);
+    }
+    void rescanOlderDrivers();
+    // Before start(); DaemonApp sets daemon = true.
+    void setAudioBackendContext(const AudioBackendContext& context);
+
+    // IAudioStreamHost: the supervisor's opens and closes (main thread).
+    AudioOpenResult openRole(AudioRole role, AudioEngineKind engine,
+                             const std::optional<AudioDeviceInfo>& device,
+                             const AudioDeviceConfig& config) override;
+    void closeRole(AudioRole role) override;
 
     // R-R3-45: stores the headphones device and, when the headphones are
     // enabled, reopens the output on it. Emits headphonesConfigChanged.
@@ -561,6 +858,22 @@ public:
     // retryCapture() starts one.
     bool hasCaptureDemand() const;
     void retryCapture();
+
+    // V-HW-8: the audio delay probe. On, the speakers block carries a
+    // 48-frame click once a second (after every gain and mute, just before
+    // the speakers push; no other output carries it), the engine holds a
+    // Test Mic capture lease, the helper is told to listen once it is
+    // Ready, and every 30 paired clicks one summary line is logged. Off
+    // tells the helper to stop and releases the lease; the speakers block
+    // is then exactly as without the probe. Main thread only.
+    void setDelayProbeEnabled(bool enabled);
+    bool isDelayProbeEnabled() const
+    {
+        return m_delayProbeEnabled.load(std::memory_order_acquire);
+    }
+    // --audio-delay-probe: every later start() turns the probe on after it
+    // has started. Process-wide; set before the engine starts.
+    static void setDelayProbeRequestedAtStart(bool requested);
 
     // Per-VAX device configuration. On Mac/Linux the VAX slots are populated
     // eagerly by start() with the platform-native virtual bus
@@ -609,6 +922,29 @@ public:
     quint32 localOutputSliceMask() const
     {
         return m_localOutputSliceMask.load(std::memory_order_acquire);
+    }
+
+    // Headless Core speaker (JJ's ruling 2026-10-10, R-AUD-27): with
+    // `every`, the speakers bus plays every receiving slice routed to the
+    // speakers, whoever controls it, each at its own AF level, pan and
+    // mute, then the master volume and mute: the local output mask no
+    // longer picks what the speakers bus plays. A Core with no window of
+    // its own (nereusd) sets it, because nobody sits at a station device
+    // there to listen in to another device's slice, so ruling 9.2 left its
+    // speaker silent whenever remote windows had the slices. Only the
+    // speakers bus changes: the master tap, the headphones bus and tap,
+    // every owner mix, the radio's speaker out and the VAX tee are built
+    // as without it, and the transmit monitor plays as it did. False by
+    // default: a desktop that hosts a station keeps ruling 9.2, which
+    // keeps other devices' slices off the host's speakers. Any thread;
+    // the audio thread reads it once per drain.
+    void setSpeakersPlayEverySlice(bool every)
+    {
+        m_speakersPlayEverySlice.store(every, std::memory_order_release);
+    }
+    bool speakersPlayEverySlice() const
+    {
+        return m_speakersPlayEverySlice.load(std::memory_order_acquire);
     }
 
     // iPhone app Task 76 (ruling 9.2): one mix per owner. A device's media
@@ -685,6 +1021,12 @@ public:
     // reports it (IAudioBus::outputHasReader); nullopt otherwise or when
     // the channel has no output. Owner thread.
     std::optional<bool> vaxOutputHasReader(int channel);
+    // R-AUD-15: whether the channel's output takes the 48 kHz stereo mix
+    // into its own clock matcher (the Windows VAX bus), and a restart of
+    // that matcher's control (no-op without one). Feeder worker; both take
+    // the channel's lock.
+    bool vaxOutputTakesStereoMix(int channel);
+    void restartVaxOutputClockMatch(int channel);
 
 #ifdef NEREUS_BUILD_TESTS
     // R-R3-44 test seam: makeVaxBus() (channel 1..4) and makeVaxTxBus()
@@ -714,6 +1056,11 @@ public:
     // (PortAudioBus::portAudioBarredForTestRun).
     static int paInitializeCallsForTest();
     static int paTerminateCallsForTest();
+
+    // Native audio plan Task 7: the engine backends the device layer uses
+    // instead of makeSystemAudioBackends(); in a test run they also turn
+    // the device layer on.  Before start(); an empty list turns it off.
+    void setAudioBackendsForTest(std::vector<std::shared_ptr<IAudioEngineBackend>> backends);
 #endif
 
 #ifdef NEREUS_BUILD_TESTS
@@ -743,6 +1090,8 @@ public:
     void setCaptureSupervisorOptionsForTest(CaptureSupervisor::Options options);
     // The running capture helper's process id, 0 when none.
     qint64 captureHelperProcessIdForTest() const;
+    // V-HW-8: probe hits the engine has taken while the probe was on.
+    quint64 delayProbeHitCountForTest() const { return m_delayProbeHitCount; }
 
     // Persistent test seam — prepare dependencies before every start().
     // stop() intentionally releases all buses, so reconnect fixtures use
@@ -761,6 +1110,15 @@ public:
     // that txMonitorBlockReady accumulated audio into the correct slot.
     // Plan: 3M-1b E.3.
     MasterMixer& masterMixForTest() { return m_masterMix; }
+
+    // Test seams for the transmit monitor's hand-off. The pump is what the
+    // DSP thread runs at the top of every drain; a test that reads the
+    // mixer directly calls it first, on the thread that drains.
+    void pumpTxMonitorForTest() { pumpTxMonitorHandoff(); }
+    quint64 txMonitorDroppedFramesForTest() const
+    {
+        return m_txMonitorDroppedFrames.load(std::memory_order_acquire);
+    }
 
     // Test seam: expose m_antiVoxMix so tests can assert what the anti-VOX
     // reference sums, what it refuses to sum, and how often it releases a
@@ -794,15 +1152,19 @@ public:
     void rxBlockReady(int sliceId, const float* samples, int frames);
 
     /// TX-monitor block consumer. Called via Qt::DirectConnection from
-    /// TxChannel::sip1OutputReady on the audio thread. When monitor is
-    /// enabled, expands the mono TXA samples to interleaved stereo (L=R),
-    /// applies m_txMonitorVolume, and accumulates into MasterMixer at
-    /// kTxMonitorSlotId so the user hears themselves through speakers.
-    /// When disabled, no-op.
+    /// TxChannel::sip1OutputReady on the transmit thread (TxWorkerThread).
+    /// When monitor is enabled, converts the mono block from the transmit
+    /// channel's output rate (setTxMonitorSampleRate) to the mix rate and
+    /// queues it for the DSP thread, which expands it to interleaved
+    /// stereo (L=R) and accumulates it into MasterMixer at
+    /// kTxMonitorSlotId at its next drain (pumpTxMonitorHandoff), so the
+    /// user hears themselves through speakers. The slot's gain is
+    /// m_txMonitorVolume. When disabled, no-op.
     ///
     /// **DirectConnection ONLY.** The samples pointer is valid only for
-    /// the duration of this synchronous call. Does not queue, store, or
-    /// allocate.
+    /// the duration of this synchronous call. One caller thread at a
+    /// time. Never touches the mixer and never blocks; allocates only on
+    /// the first block at a new rate or a larger size.
     ///
     /// Atomic contract: m_txMonitorEnabled and m_txMonitorVolume are both
     /// loaded with std::memory_order_acquire (same acq/rel pairing as
@@ -810,6 +1172,28 @@ public:
     ///
     /// Plan: 3M-1b E.3. Pre-code review §4.3 + §4.4.
     void txMonitorBlockReady(const float* samples, int frames);
+
+    /// The sample rate of the blocks txMonitorBlockReady receives: the
+    /// transmit channel's output rate, 192 kHz on Protocol 2 and 48 kHz
+    /// on Protocol 1. The mix runs at kMasterMixSampleRateHz, so a block
+    /// at any other rate is resampled on its way in. Thetis does the same
+    /// inside its mixer, where the transmitter's input is registered at
+    /// the transmit channel's output rate and every input has a resampler:
+    /// From Thetis cmaster.c:295-296 [v2.10.3.15]
+    ///   pcm->aamix_inrates[pcm->cmRCVR * pcm->cmSubRCVR + i] = pcm->xmtr[i].ch_outrate;
+    /// From Thetis aamix.c:185-197 [v2.10.3.15]
+    ///   a->rsmp[i] = create_resample (run, size, 0, a->resampbuff[i], a->inrate[i], a->outrate, 0.0, 0, 1.0);
+    /// From Thetis cmaster.c:565 [v2.10.3.15]
+    ///   SetAAudioStreamRate (0, 0, mix_in_id, rate);  //	.Set Mixer input rate (sets size too)
+    ///
+    /// Any thread: it stores an atomic. The transmit thread reads it at
+    /// its next block and builds the resampler there, so no WDSP call is
+    /// made here. A rate of zero or less is ignored.
+    void setTxMonitorSampleRate(int hz);
+    int txMonitorSampleRate() const
+    {
+        return m_txMonitorSampleRateHz.load(std::memory_order_acquire);
+    }
 
     // Pull TX-mic audio samples from the bound TX-input bus.
     //
@@ -1177,6 +1561,10 @@ signals:
     // R-R3-36: re-emits CaptureSupervisor::statusChanged on the owner thread.
     void captureStatusChanged(const NereusSDR::CaptureSupervisor::Status& status);
     void vaxConfigChanged(int channel, NereusSDR::AudioDeviceConfig cfg);
+    // Native audio plan Task 7: re-emits AudioStreamSupervisor::statusChanged.
+    void roleStatusChanged(NereusSDR::AudioRole role, const NereusSDR::AudioRoleStatus& status);
+    // Native audio plan Task 17: asioStatus() changed.
+    void asioStatusChanged();
 
 #if defined(Q_OS_LINUX)
     void linuxBackendChanged(LinuxAudioBackend oldBackend,
@@ -1197,8 +1585,14 @@ private:
     // open the given bus slot. Used for the speakers / TX-mic / Windows-BYO
     // VAX paths; the platform-native VAX RX/TX virtual buses are minted via
     // makeVaxBus() / makeVaxTxBus() instead.
+    // `inUse`, when given, is set true when an engine output's open failed
+    // because another program holds the device (R-AUD-11).
+    // `role`, when given, is the role the output plays (an ASIO use names
+    // it to the helper, Task 17).
     std::unique_ptr<IAudioBus> makeBus(const AudioDeviceConfig& cfg,
-                                       bool capture);
+                                       bool capture,
+                                       bool* inUse = nullptr,
+                                       std::optional<AudioRole> role = std::nullopt);
 
     // Sub-Phase 8.5: construct + open the platform-native VAX RX bus for
     // `channel` (1..4). macOS → CoreAudioHalBus(Role::VaxN). Linux →
@@ -1233,6 +1627,53 @@ private:
     // status and applies m_txInputConfig. Never opens capture by itself.
     void installCaptureSupervisor(CaptureSupervisor::Options options);
 
+    // ── Native audio plan Task 7: the device layer ──────────────────────
+    // True once the catalogue and the stream supervisor run; builds them
+    // on the first call where the layer applies (see catalogue()).
+    // MicOnly (a capture demand before start(), or a mic choice) starts
+    // the mic role alone when nothing has started; All also starts the
+    // outputs.  An output setter starts MicOnly, hands its choice over,
+    // then All, so the output opens once, on that choice.
+    enum class DeviceStart { All, MicOnly };
+    bool ensureAudioDevices(DeviceStart start = DeviceStart::All);
+    // The engine backends, the default engine and the catalogue alone
+    // (catalogue()); false where the device layer does not apply.
+    bool ensureCatalogue();
+    // R-AUD-05's migration of the saved keys (idempotent; it writes nothing
+    // for a role with nothing saved), and the in-memory choices it changed.
+    void migrateSavedChoices();
+    bool audioDevicesApply() const;
+    void tearDownAudioDevices();
+    // The config with R-AUD-02's engine on "(platform default)".
+    AudioDeviceConfig withDefaultEngine(const AudioDeviceConfig& cfg) const;
+    // The bus's stream events, posted to this thread; dropped once the
+    // role's bus has been replaced or closed.
+    std::function<void(const AudioStreamEvent&)> makeStreamEventSink(AudioRole role);
+    AudioOpenResult openMicRole(AudioEngineKind engine,
+                                const std::optional<AudioDeviceInfo>& device,
+                                const AudioDeviceConfig& config);
+    void onCaptureStatusForRole(const CaptureSupervisor::Status& status);
+    void onSavedIdentityLearned(AudioRole role, const QString& deviceId);
+    void finishOlderDriversRescan(quint64 token);
+    // Rescan's fade wait, polled from a 1 ms timer; closes the roles and
+    // starts the catalogue's rescan once every fade ends or the wait does.
+    void continueOlderDriversRescan(quint64 token);
+    // DSP thread, under its try-lock of the role's bus: stores the bus's
+    // delay parts and format for delayPartsNow() and roleFormatNow().
+    void publishRoleOutput(AudioRole role, const IAudioBus& bus);
+    // What delayPartsNow() and roleFormatNow() share.
+    struct OutputReading {
+        AudioDelayParts parts;
+        std::optional<AudioFormat> format;
+    };
+    OutputReading readOutputNow(AudioRole role) const;
+    // Speakers, headphones and VAX only; the caller holds roleBusMutex().
+    IAudioBus* roleBusLocked(AudioRole role) const;
+    std::unique_ptr<IAudioBus>& roleBusSlot(AudioRole role);
+    std::mutex& roleBusMutex(AudioRole role) const;
+    // The engine's backend reports opensOneStreamAtATime() (C1).
+    bool backendOpensOneStreamAtATime(AudioEngineKind engine) const;
+
     // The input the TX path reads: an injected test bus when present,
     // otherwise the capture supervisor's stable reader.
     IAudioBus* txInputSource() const noexcept;
@@ -1251,7 +1692,7 @@ private:
     // rxBlockReady() uses try_lock and drops the block if it can't acquire
     // (≤1 ms of silence is inaudible vs. a use-after-free). NOT held in the
     // audio callback path (acquires try_lock only; never blocks).
-    std::mutex m_speakersBusMutex;
+    mutable std::mutex m_speakersBusMutex;
 
     std::unique_ptr<IAudioBus> m_speakersBus;
     bool m_remotePlayback{false}; // protected by m_speakersBusMutex
@@ -1259,7 +1700,7 @@ private:
     // R-R3-45: the headphones output. Replaced only on the owner thread
     // under m_headphonesBusMutex; the DSP thread's push takes it with
     // try_lock and drops the block rather than wait, like the speakers.
-    std::mutex m_headphonesBusMutex;
+    mutable std::mutex m_headphonesBusMutex;
     std::unique_ptr<IAudioBus> m_headphonesBus;
     AudioDeviceConfig m_headphonesConfig;  // owner thread
     bool m_headphonesEnabled{false};       // owner thread
@@ -1280,6 +1721,121 @@ private:
     AudioDeviceConfig m_txInputConfig;
     std::unique_ptr<CaptureSupervisor> m_captureSupervisor;
 
+    // Native audio plan Task 7: the device layer (main thread).  The
+    // supervisor refers to the catalogue and to this engine, so it is
+    // declared after the catalogue and destroyed first.
+    AudioBackendContext m_backendContext;
+    std::vector<std::shared_ptr<IAudioEngineBackend>> m_backends;
+    bool m_backendsInjectedForTest{false};
+    AudioEngineKind m_defaultEngine{AudioEngineKind::PortAudio};
+    std::unique_ptr<AudioDeviceCatalog> m_catalogue;
+    std::unique_ptr<AudioStreamSupervisor> m_streamSupervisor;
+    // Per role: bumped on every open and close, so a late stream event
+    // from a replaced bus is dropped; the engine of the open bus.
+    std::array<quint64, kAudioRoleCount> m_roleBusGeneration{};
+    std::array<std::optional<AudioEngineKind>, kAudioRoleCount> m_roleOpenEngine{};
+    // R-AUD-18: see speakersWorkgroupGeneration().  Main thread writes.
+    void noteSpeakersWorkgroup(const IAudioBus* bus);
+    std::atomic<std::uint32_t> m_speakersWorkgroupGeneration{0};
+    std::atomic<std::uint32_t> m_speakersWorkgroupDevice{0};
+    // The device the open bus plays: its id, or for the system default the
+    // catalogue's default at the open (empty when unknown).  openRole()
+    // closes first only to reopen this same device (C1, R-AUD-08).
+    std::array<QString, kAudioRoleCount> m_roleOpenDeviceId{};
+    // speakersConfigChanged emits made by openRole(), so setSpeakersConfig
+    // announces a config only when no open did.
+    quint64 m_speakersAnnouncements{0};
+    // The PC mic role: the capture supervisor opens it.  Pending until
+    // its status for a generation above m_micGenerationFloor arrives,
+    // answering a request at or above m_micRequestFloor (the supervisor's
+    // requestSerial() when this open was made): an earlier open's status
+    // never completes a later one.
+    bool m_micPending{false};
+    bool m_micOpen{false};
+    bool m_micHandledBySupervisor{false};
+    quint32 m_micGenerationFloor{0};
+    quint64 m_micRequestFloor{0};
+    std::optional<AudioEngineKind> m_micEngine;
+    // rescanOlderDrivers(): the roles it closed, awaiting the new list.
+    quint64 m_rescanToken{0};
+    bool m_rescanPending{false};
+    bool m_rescanMic{false};
+    std::vector<AudioRole> m_rescanRoles;
+    // R-AUD-06 (round 3): the Rescan token of each catalogue rescan asked
+    // for and not yet answered, oldest first.
+    std::deque<quint64> m_rescanRequestTokens;
+    // While the fades run: each fading role with its bus generation then
+    // (a role reopened or closed meanwhile is left alone), the wait, and
+    // since when.
+    std::vector<std::pair<AudioRole, quint64>> m_rescanFading;
+    double m_rescanFadeWaitMs{0.0};
+    std::int64_t m_rescanFadeStartNs{0};
+    // R-AUD-15: each output role's delay parts and format, stored by the
+    // DSP thread under its own try-lock of the role's bus, for the bus
+    // with that instanceId(), with the time they were stored (0 before
+    // the first).  One writer at a time (the try-lock); a sequence count,
+    // odd while a store is under way, lets a reader see one block's
+    // values whole without waiting on the writer.  See delayPartsNow().
+    struct PublishedOutput {
+        std::atomic<std::uint32_t> sequence{0};
+        std::atomic<std::uint64_t> busId{0};
+        std::atomic<double> matcherFillMs{-1.0};
+        std::atomic<double> resamplerMs{0.0};
+        std::atomic<double> deviceBufferMs{0.0};
+        std::atomic<double> deviceLatencyMs{0.0};
+        std::atomic<int> sampleRate{0};
+        std::atomic<int> channels{0};
+        std::atomic<int> sample{0};
+        std::atomic<std::int64_t> atNs{0};
+    };
+    std::array<PublishedOutput, kAudioRoleCount> m_publishedOutput{};
+    // The last whole reading of m_publishedOutput per role, for a read
+    // that lands while a store is under way.  Owner thread only.
+    struct LastPublishedReading {
+        OutputReading reading;
+        std::uint64_t busId{0};
+        std::int64_t atNs{0};
+    };
+    mutable std::array<LastPublishedReading, kAudioRoleCount> m_lastPublishedReading{};
+    // A setter's choice while the device layer is being built, used in
+    // place of the saved one so the role opens once (Speakers, VAX 1-4).
+    std::optional<AudioDeviceConfig> m_speakersChoiceBeforeDevices;
+    // setSpeakersWaitForPick (Task 21, D31).
+    bool m_speakersWaitForPick{false};
+    std::array<std::optional<AudioDeviceConfig>, 4> m_vaxChoiceBeforeDevices;
+    // Windows: the VAX channels' Enabled state for the supervisor's roles.
+    std::array<bool, 4> m_vaxRoleEnabled{{true, true, true, true}};
+
+    // V-HW-8: the audio delay probe (setDelayProbeEnabled).
+    void onDelayProbeHit(qint64 captureNs);    // main thread
+    static std::atomic<bool>& delayProbeRequestedAtStart();
+    std::atomic<bool> m_delayProbeEnabled{false};
+    bool m_delayProbeOnLastBlock{false};               // DSP thread only
+    AudioDelayProbeClicker m_delayProbeClicker;        // DSP thread only
+    // The latest click's push time (audioProbeNowNs), 0 before the first.
+    std::atomic<std::int64_t> m_delayProbeLastClickNs{0};
+    std::int64_t m_delayProbeMatchedClickNs{0};        // main thread
+    AudioDelayProbeMatcher m_delayProbeMatcher;
+    CaptureSupervisor::Lease m_delayProbeLease;        // main thread
+    // Native audio plan Task 15 (R-AUD-19): held while any ASIO output is
+    // open, so the helper that hosts the driver runs with the PC mic off.
+    CaptureSupervisor::Lease m_asioLease;              // main thread
+    bool m_asioDemanded{false};                        // main thread
+    AsioBackend* asioBackend() const;                  // main thread; nullptr off Windows
+    void linkAsioBackend();                            // main thread
+    void setAsioDemanded(bool demanded);               // main thread
+    // Native audio plan Task 17 (R-AUD-19 to R-AUD-22), main thread.
+    void onAsioSessionState(const CaptureProtocol::AsioState& state);
+    void noteAsioStatusMaybeChanged();
+    void applyRoleChoice(AudioRole role, const AudioDeviceConfig& cfg);
+#ifdef NEREUS_BUILD_TESTS
+    QHash<QString, AsioDriverCaps> m_asioCapsForTest;
+#endif
+    QTimer* m_asioRestartNote{nullptr};                // running: restartedRecently
+    int m_asioRestartNoteMs{kAsioRestartNoteMs};
+    std::optional<AsioStatus> m_lastAsioStatus;
+    quint64 m_delayProbeHitCount{0};                   // main thread
+
     // (Phase 3M-1c D.1 added a kMicBlockFrames=720-sample mic-block
     //  accumulator + clearMicBuffer + bench-fix-A pumpMic timer.  The
     //  TX pump architecture redesign (2026-04-29) removed all of them.
@@ -1295,7 +1851,7 @@ private:
     // and by a remote window's VAX feeder around every pacing read and
     // write. The local VAX tee on the DSP thread only try-locks it, and
     // skips the push when it is held (RD-I10).
-    std::array<std::mutex, 4> m_vaxBusMutex;
+    mutable std::array<std::mutex, 4> m_vaxBusMutex;
     // R-R3-44: see setVaxOutputsAllowed().
     // iPhone app Task 73: see setVaxSliceMask().
     std::atomic<quint32> m_vaxSliceMask{0xFFFFFFFFu};
@@ -1361,6 +1917,7 @@ private:
     std::vector<float> m_hpMixScratch;
     std::vector<float> m_programScratch;
     std::vector<float> m_radioOutScratch; // the radio's speaker out (radio codec)
+    std::vector<float> m_everySliceScratch; // a headless Core's speaker (2026-10-10)
     std::vector<float> m_avMixScratch;   // anti-VOX reference
     std::vector<float> m_vaxScratch;     // one VAX channel's mix
     std::atomic<int> m_mixScratchFrames{0};
@@ -1417,6 +1974,8 @@ private:
     std::array<OwnerMixSlot, kMaxOwnerMixes> m_ownerMixes;
     mutable std::mutex m_ownerMixControlMutex;
     std::atomic<quint32> m_localOutputSliceMask{0xFFFFFFFFu};
+    // 2026-10-10: see setSpeakersPlayEverySlice().
+    std::atomic<bool> m_speakersPlayEverySlice{false};
     // Slice control plan Task 6: the local output's listening, as an
     // owner's.
     std::atomic<quint32> m_localListenMask{0};
@@ -1443,6 +2002,10 @@ private:
     // while no slice is a barrier member (MON alone is queued), and never
     // the anti-VOX mixer, which MON is not in.
     void drainMixes(int frames, bool monitorOnly = false);
+    // DSP thread, at the top of drainMixes: moves the transmit monitor's
+    // queued 48 kHz audio from m_txMonitorHandoff into its mixer slot.
+    // Never blocks or allocates.
+    void pumpTxMonitorHandoff();
     // DSP thread. Hands each tap for `sliceId` the block as the slice's
     // receiver produced it: the AF level is applied in the mix, after the
     // taps (slice control plan Task 6).
@@ -1525,6 +2088,35 @@ private:
     std::atomic<bool>  m_txMonitorToHeadphones{false};
     // Task 32: MON on this computer's own outputs (setTxMonitorLocal).
     std::atomic<bool>  m_txMonitorLocal{true};
+
+    // The transmit monitor's way into the mix (setTxMonitorSampleRate).
+    // The monitor block is produced on the transmit thread; the mixer
+    // belongs to the DSP thread alone (MasterMixer.h, divergence 1). So
+    // the transmit thread resamples the block to the mix rate and queues
+    // it here, and the DSP thread moves the queue into the mixer slot at
+    // the top of each drain. Thetis guards each mixer input with a
+    // critical section instead (aamix.c:246 [v2.10.3.15], cs_in[stream]);
+    // a queue between the two threads does the same job with no lock on
+    // either.
+    std::atomic<int> m_txMonitorSampleRateHz{kMasterMixSampleRateHz};
+    // 16384 bytes of mono float: 4095 frames, 85 ms at 48 kHz, the size
+    // of the mixer's own ring (MasterMixer::kMinimumRingFrames). It is a
+    // margin for a late drain and is empty after every drain, so it adds
+    // no delay. A block that finds it full is dropped whole and counted.
+    static constexpr size_t kTxMonitorHandoffBytes = 16384;
+    AudioRingSpsc<kTxMonitorHandoffBytes> m_txMonitorHandoff;
+    std::atomic<quint64> m_txMonitorDroppedFrames{0};
+    // Transmit thread only, below. WDSP's float resampler (resample.c,
+    // create_resampleFV), built at the first block at a rate other than
+    // the mix rate and rebuilt when the rate changes.
+    void* m_txMonitorResampler{nullptr};
+    int   m_txMonitorResamplerRateHz{0};
+    std::vector<float> m_txMonitorResampled;
+    // DSP thread only: the pump's scratch, one chunk of mono and the same
+    // chunk as stereo.
+    static constexpr int kTxMonitorPumpFrames = 256;
+    std::array<float, kTxMonitorPumpFrames> m_txMonitorPumpMono{};
+    std::array<float, kTxMonitorPumpFrames * 2> m_txMonitorPumpStereo{};
 
     // Sub-Phase 9 Task 9.2a — per-channel VAX rx gain / mute and master
     // VAX tx gain. Main-thread writes via set*() setters, DSP-thread

@@ -4,12 +4,22 @@
 // no-port-check: NereusSDR-original.  Unit tests for the capture helper
 // record protocol (R-R3-36): framing, bounded incremental reader, PCM and
 // JSON message codecs, and every malformed-input rejection.
+//
+// Modification history (NereusSDR):
+//   2026-10-09: native audio plan Task 13 (R-AUD-17, R-AUD-18): version 3
+//               cases (AttachRing, RingAttached, the Configure identity
+//               keys, device-in-use, the Status latency and buffer).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 15 (R-AUD-19, R-AUD-20, R-AUD-21):
+//               version 4, the ASIO records and their rejections.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 
 #include "core/audio/CaptureProtocol.h"
 
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QtEndian>
@@ -61,7 +71,51 @@ Status readyStatus()
     s.nativeChannels = 2;
     s.reason = FailReason::None;
     s.detail = QStringLiteral("opened");
+    s.latencyUs = 2'500;
+    s.bufferFrames = 256;
     return s;
+}
+
+AsioDriverCaps motuCaps()
+{
+    AsioDriverCaps caps;
+    caps.name = QStringLiteral("MOTU M Series");
+    caps.inputChannels = 4;
+    caps.outputChannels = 4;
+    caps.sampleType = AsioSampleType::Int24Lsb;
+    caps.minBufferFrames = 32;
+    caps.maxBufferFrames = 2048;
+    caps.preferredBufferFrames = 256;
+    caps.granularity = -1;
+    caps.sampleRates = {44100.0, 48000.0, 96000.0};
+    caps.currentRate = 48000.0;
+    caps.inputLatencyFrames = 300;
+    caps.outputLatencyFrames = 412;
+    return caps;
+}
+
+AsioOpen motuOpen()
+{
+    AsioOpen open;
+    open.serial = 9;
+    open.driver = QStringLiteral("MOTU M Series");
+    open.bufferFrames = 512;
+    open.rate = 96000.0;
+    AsioOpenUse speakers;
+    speakers.role = AudioRole::Speakers;
+    speakers.pair = AudioChannelPair{3, 2};
+    speakers.direction = AudioDeviceDirection::Output;
+    speakers.memory = QStringLiteral("/nrsc-1-0000001am");
+    speakers.wake = QStringLiteral("/nrsc-1-0000001aw");
+    speakers.bytes = 33'024;
+    AsioOpenUse vax;
+    vax.pair = AudioChannelPair{1, 1};
+    vax.direction = AudioDeviceDirection::Input;
+    vax.memory = QStringLiteral("Local\\nrsc-1-0000001bm");
+    vax.wake = QStringLiteral("Local\\nrsc-1-0000001bw");
+    vax.bytes = 4096;
+    open.uses = {speakers, vax};
+    return open;
 }
 
 QByteArray pcmPayload(quint32 generation, quint32 frameCount, int actualFloats, float fill = 0.25f)
@@ -91,7 +145,7 @@ private slots:
 
     void contractConstants()
     {
-        QCOMPARE(int(kVersion), 1);
+        QCOMPARE(int(kVersion), 4);
         QCOMPARE(kHeaderBytes, 12);
         QCOMPARE(kMaxJsonBytes, 4096);
         QCOMPARE(kPcmHeaderBytes, 24);
@@ -105,7 +159,7 @@ private slots:
         const QByteArray rec = encodeRecord(RecordType::Status, QByteArray(300, 'x'));
         QCOMPARE(rec.size(), kHeaderBytes + 300);
         QCOMPARE(rec.left(4), QByteArray("NCAP"));
-        QCOMPARE(quint8(rec[4]), quint8(1));
+        QCOMPARE(quint8(rec[4]), quint8(4));
         QCOMPARE(quint8(rec[5]), quint8(2));
         QCOMPARE(quint8(rec[6]), quint8(0));
         QCOMPARE(quint8(rec[7]), quint8(0));
@@ -123,7 +177,16 @@ private slots:
         const int pcmMax = kPcmHeaderBytes + kMaxPcmFrames * 4;
         QVERIFY(!encodeRecord(RecordType::Pcm, QByteArray(pcmMax, 'a')).isEmpty());
         QVERIFY(encodeRecord(RecordType::Pcm, QByteArray(pcmMax + 1, 'a')).isEmpty());
-        QVERIFY(encodeRecord(static_cast<RecordType>(4), QByteArray("{}")).isEmpty());
+        QVERIFY(encodeRecord(static_cast<RecordType>(8), QByteArray("{}")).isEmpty());
+        QVERIFY(encodeRecord(static_cast<RecordType>(25), QByteArray("{}")).isEmpty());
+        QVERIFY(!encodeRecord(RecordType::AsioOpen, QByteArray(kMaxAsioJsonBytes, 'a')).isEmpty());
+        QVERIFY(encodeRecord(RecordType::AsioOpen, QByteArray(kMaxAsioJsonBytes + 1, 'a')).isEmpty());
+        QVERIFY(!encodeRecord(RecordType::AttachRing, QByteArray(kMaxJsonBytes, 'a')).isEmpty());
+        QVERIFY(encodeRecord(RecordType::AttachRing, QByteArray(kMaxJsonBytes + 1, 'a')).isEmpty());
+        QVERIFY(encodeRecord(RecordType::RingAttached, QByteArray(kMaxJsonBytes + 1, 'a')).isEmpty());
+        QVERIFY(!encodeRecord(RecordType::ProbeHit, QByteArray(kMaxJsonBytes, 'a')).isEmpty());
+        QVERIFY(encodeRecord(RecordType::ProbeHit, QByteArray(kMaxJsonBytes + 1, 'a')).isEmpty());
+        QVERIFY(encodeRecord(RecordType::ProbeEnable, QByteArray(kMaxJsonBytes + 1, 'a')).isEmpty());
     }
 
     // ── RecordReader ──────────────────────────────────────────────────────
@@ -201,24 +264,48 @@ private slots:
     {
         QTest::addColumn<QByteArray>("bytes");
         QTest::addColumn<int>("error");
-        QTest::newRow("bad magic") << rawHeader("NCAQ", 1, 2, 0, 2) + "{}"
+        QTest::newRow("bad magic") << rawHeader("NCAQ", 4, 2, 0, 2) + "{}"
                                    << int(RecordReader::Error::BadMagic);
+        QTest::newRow("version 1") << rawHeader("NCAP", 1, 2, 0, 2) + "{}"
+                                   << int(RecordReader::Error::BadVersion);
         QTest::newRow("version 2") << rawHeader("NCAP", 2, 2, 0, 2) + "{}"
                                    << int(RecordReader::Error::BadVersion);
-        QTest::newRow("reserved nonzero") << rawHeader("NCAP", 1, 2, 1, 2) + "{}"
+        QTest::newRow("version 3") << rawHeader("NCAP", 3, 2, 0, 2) + "{}"
+                                   << int(RecordReader::Error::BadVersion);
+        QTest::newRow("version 5") << rawHeader("NCAP", 5, 2, 0, 2) + "{}"
+                                   << int(RecordReader::Error::BadVersion);
+        QTest::newRow("reserved nonzero") << rawHeader("NCAP", 4, 2, 1, 2) + "{}"
                                           << int(RecordReader::Error::BadReserved);
-        QTest::newRow("reserved high byte") << rawHeader("NCAP", 1, 2, 0x100, 2) + "{}"
+        QTest::newRow("reserved high byte") << rawHeader("NCAP", 4, 2, 0x100, 2) + "{}"
                                             << int(RecordReader::Error::BadReserved);
-        QTest::newRow("unknown type") << rawHeader("NCAP", 1, 4, 0, 2) + "{}"
+        QTest::newRow("unknown type") << rawHeader("NCAP", 4, 8, 0, 2) + "{}"
                                       << int(RecordReader::Error::UnknownType);
-        QTest::newRow("json 4097") << rawHeader("NCAP", 1, 2, 0, 4097)
-                                   << int(RecordReader::Error::Oversize);
-        QTest::newRow("configure 4097") << rawHeader("NCAP", 1, 16, 0, 4097)
+        QTest::newRow("unknown type 25") << rawHeader("NCAP", 4, 25, 0, 2) + "{}"
+                                         << int(RecordReader::Error::UnknownType);
+        QTest::newRow("probe hit 4097") << rawHeader("NCAP", 4, 4, 0, 4097)
                                         << int(RecordReader::Error::Oversize);
+        QTest::newRow("attach ring 4097") << rawHeader("NCAP", 4, 21, 0, 4097)
+                                          << int(RecordReader::Error::Oversize);
+        QTest::newRow("ring attached 4097") << rawHeader("NCAP", 4, 5, 0, 4097)
+                                            << int(RecordReader::Error::Oversize);
+        QTest::newRow("json 4097") << rawHeader("NCAP", 4, 2, 0, 4097)
+                                   << int(RecordReader::Error::Oversize);
+        QTest::newRow("configure 4097") << rawHeader("NCAP", 4, 16, 0, 4097)
+                                        << int(RecordReader::Error::Oversize);
+        QTest::newRow("asio caps 16385") << rawHeader("NCAP", 4, 6, 0, 16385)
+                                         << int(RecordReader::Error::Oversize);
+        QTest::newRow("asio state 16385") << rawHeader("NCAP", 4, 7, 0, 16385)
+                                          << int(RecordReader::Error::Oversize);
+        QTest::newRow("asio describe 16385") << rawHeader("NCAP", 4, 22, 0, 16385)
+                                             << int(RecordReader::Error::Oversize);
+        QTest::newRow("asio open 16385") << rawHeader("NCAP", 4, 23, 0, 16385)
+                                         << int(RecordReader::Error::Oversize);
+        QTest::newRow("asio panel 16385") << rawHeader("NCAP", 4, 24, 0, 16385)
+                                          << int(RecordReader::Error::Oversize);
         QTest::newRow("pcm oversize")
-            << rawHeader("NCAP", 1, 3, 0, kPcmHeaderBytes + kMaxPcmFrames * 4 + 1)
+            << rawHeader("NCAP", 4, 3, 0, kPcmHeaderBytes + kMaxPcmFrames * 4 + 1)
             << int(RecordReader::Error::Oversize);
-        QTest::newRow("payload 0xFFFFFFFF") << rawHeader("NCAP", 1, 3, 0, 0xFFFFFFFFu)
+        QTest::newRow("payload 0xFFFFFFFF") << rawHeader("NCAP", 4, 3, 0, 0xFFFFFFFFu)
                                             << int(RecordReader::Error::Oversize);
     }
 
@@ -256,7 +343,7 @@ private slots:
     void readerBoundedWhileLargestRecordArrives()
     {
         const qsizetype bound = kHeaderBytes + kPcmHeaderBytes + kMaxPcmFrames * 4;
-        const QByteArray header = rawHeader("NCAP", 1, 3, 0,
+        const QByteArray header = rawHeader("NCAP", kVersion, 3, 0,
                                             kPcmHeaderBytes + kMaxPcmFrames * 4);
         RecordReader reader;
         reader.append(header.constData(), header.size());
@@ -417,13 +504,20 @@ private slots:
         c.device.eventDriven = true;
         c.device.bypassMixer = true;
         c.device.manualLatencyMs = 17;
+        c.device.engine = AudioEngineKind::CoreAudio;
+        c.device.deviceId = QStringLiteral("AppleUSBAudioEngine:Generic:USB:1");
+        c.device.firstChannel = 3;
+        c.device.micChannel = MicChannelPick::Right;
+        c.device.delayMs = 5;
         const QByteArray rec = encodeConfigure(c);
         QCOMPARE(quint8(rec[5]), quint8(RecordType::Configure));
         const QJsonObject obj = objectOf(rec);
-        QCOMPARE(obj.size(), 12);
+        QCOMPARE(obj.size(), 17);
         for (const char* key : {"generation", "deviceName", "sampleRate", "channels",
                                 "bufferSamples", "exclusiveMode", "hostApiIndex", "driverApi",
-                                "bitDepth", "eventDriven", "bypassMixer", "manualLatencyMs"}) {
+                                "bitDepth", "eventDriven", "bypassMixer", "manualLatencyMs",
+                                "engine", "deviceId", "firstChannel", "micChannel",
+                                "delayMs"}) {
             QVERIFY2(obj.contains(QLatin1String(key)), key);
         }
         auto d = decodeConfigure(payloadOf(rec));
@@ -440,6 +534,13 @@ private slots:
         QCOMPARE(d->device.eventDriven, c.device.eventDriven);
         QCOMPARE(d->device.bypassMixer, c.device.bypassMixer);
         QCOMPARE(d->device.manualLatencyMs, c.device.manualLatencyMs);
+        QCOMPARE(obj.value("engine").toString(), QStringLiteral("CoreAudio"));
+        QCOMPARE(obj.value("micChannel").toString(), QStringLiteral("Right"));
+        QCOMPARE(d->device.engine, c.device.engine);
+        QCOMPARE(d->device.deviceId, c.device.deviceId);
+        QCOMPARE(d->device.firstChannel, 3);
+        QCOMPARE(d->device.micChannel, MicChannelPick::Right);
+        QCOMPARE(d->device.delayMs, 5);
     }
 
     void configureDefaultDeviceRoundTrip()
@@ -451,6 +552,53 @@ private slots:
         QVERIFY(d->device.deviceName.isEmpty());  // empty = system default
         QCOMPARE(d->device.sampleRate, 48000);
         QCOMPARE(d->device.bufferSamples, 128);
+        // No Engine saved: the engine key is empty and decodes to none.
+        QCOMPARE(objectOf(encodeConfigure(c)).value("engine").toString(), QString());
+        QVERIFY(!d->device.engine.has_value());
+        QVERIFY(d->device.deviceId.isEmpty());
+        QCOMPARE(d->device.firstChannel, 1);
+        QCOMPARE(d->device.micChannel, MicChannelPick::Left);
+        QCOMPARE(d->device.delayMs, 0);
+    }
+
+    void configureIdentityRejections()
+    {
+        Configure c;
+        c.generation = 9;
+        c.device.engine = AudioEngineKind::WindowsShared;
+        const QJsonObject good = objectOf(encodeConfigure(c));
+        QVERIFY(decodeConfigure(json(good)));
+        auto rejects = [&](const char* key, const QJsonValue& value) {
+            QJsonObject o = good;
+            o[QLatin1String(key)] = value;
+            return !decodeConfigure(json(o));
+        };
+        QVERIFY(rejects("engine", "Wasapi"));
+        QVERIFY(rejects("engine", "coreaudio"));
+        QVERIFY(rejects("engine", 1));
+        QVERIFY(!rejects("engine", "AlsaDirect"));
+        QVERIFY(!rejects("engine", "ASIO"));
+        QVERIFY(rejects("micChannel", "left"));
+        QVERIFY(rejects("micChannel", ""));
+        QVERIFY(!rejects("micChannel", "Both"));
+        QVERIFY(rejects("firstChannel", 0));
+        QVERIFY(rejects("firstChannel", 33));
+        QVERIFY(!rejects("firstChannel", 32));
+        QVERIFY(rejects("delayMs", 4));
+        QVERIFY(rejects("delayMs", -1));
+        QVERIFY(rejects("delayMs", 41));
+        for (const int ms : {0, 2, 3, 5, 10, 20, 40}) {
+            QVERIFY(!rejects("delayMs", ms));
+        }
+        QVERIFY(rejects("deviceId", QString(513, 'd')));
+        QVERIFY(rejects("deviceId", 5));
+        for (const char* key : {"engine", "deviceId", "firstChannel", "micChannel", "delayMs"}) {
+            QJsonObject missing = good;
+            missing.remove(QLatin1String(key));
+            QVERIFY2(!decodeConfigure(json(missing)), key);
+        }
+        c.device.delayMs = 7;
+        QVERIFY(encodeConfigure(c).isEmpty());
     }
 
     void configureRejections()
@@ -533,7 +681,8 @@ private slots:
             {FailReason::OpenFailed, "open-failed"},
             {FailReason::StartFailed, "start-failed"},
             {FailReason::InputLost, "input-lost"},
-            {FailReason::Internal, "internal"}};
+            {FailReason::Internal, "internal"},
+            {FailReason::DeviceInUse, "device-in-use"}};
         for (const auto& st : states) {
             for (const auto& rs : reasons) {
                 Status s = readyStatus();
@@ -554,6 +703,8 @@ private slots:
                 QCOMPARE(d->nativeChannels, s.nativeChannels);
                 QCOMPARE(d->reason, s.reason);
                 QCOMPARE(d->detail, s.detail);
+                QCOMPARE(d->latencyUs, s.latencyUs);
+                QCOMPARE(d->bufferFrames, s.bufferFrames);
             }
         }
     }
@@ -597,6 +748,20 @@ private slots:
         QVERIFY(!rejects("nativeChannels", 1));
         QVERIFY(!rejects("nativeChannels", 32));
         QVERIFY(!rejects("detail", QString(512, 'a')));
+        QVERIFY(rejects("latencyUs", -1));
+        QVERIFY(rejects("latencyUs", 10'000'001));
+        QVERIFY(rejects("latencyUs", 1.5));
+        QVERIFY(!rejects("latencyUs", 0));
+        QVERIFY(!rejects("latencyUs", 10'000'000));
+        QVERIFY(rejects("bufferFrames", -1));
+        QVERIFY(rejects("bufferFrames", 65'537));
+        QVERIFY(!rejects("bufferFrames", 0));
+        QVERIFY(!rejects("bufferFrames", 65'536));
+        for (const char* key : {"latencyUs", "bufferFrames"}) {
+            QJsonObject missingKey = good;
+            missingKey.remove(QLatin1String(key));
+            QVERIFY2(!decodeStatus(json(missingKey)), key);
+        }
 
         QJsonObject missing = good;
         missing.remove("detail");
@@ -611,6 +776,508 @@ private slots:
         bad = readyStatus();
         bad.nativeRate = 500000;
         QVERIFY(encodeStatus(bad).isEmpty());
+    }
+
+    // ── Probe records (V-HW-8) ────────────────────────────────────────────
+
+    void probeRecordTypes()
+    {
+        QCOMPARE(int(RecordType::ProbeHit), 4);
+        QCOMPARE(int(RecordType::ProbeEnable), 20);
+    }
+
+    void probeHitRoundTrip_data()
+    {
+        QTest::addColumn<qint64>("captureNs");
+        QTest::newRow("-1") << qint64(-1);
+        QTest::newRow("0") << qint64(0);
+        QTest::newRow("max") << qint64(9223372036854775807LL);
+        QTest::newRow("min") << std::numeric_limits<qint64>::min();
+        QTest::newRow("steady") << qint64(1234567890123456789LL);
+    }
+
+    void probeHitRoundTrip()
+    {
+        QFETCH(qint64, captureNs);
+        const QByteArray rec = encodeProbeHit(captureNs);
+        QVERIFY(!rec.isEmpty());
+        QCOMPARE(quint8(rec[4]), quint8(kVersion));
+        QCOMPARE(quint8(rec[5]), quint8(RecordType::ProbeHit));
+        // The value is a decimal string, so the 64-bit value is exact.
+        const QJsonObject obj = objectOf(rec);
+        QCOMPARE(obj.size(), 1);
+        QVERIFY(obj.value("captureNs").isString());
+        QCOMPARE(obj.value("captureNs").toString(), QString::number(captureNs));
+        const auto decoded = decodeProbeHit(payloadOf(rec));
+        QVERIFY(decoded);
+        QCOMPARE(qint64(*decoded), captureNs);
+    }
+
+    void probeHitExactMaximumText()
+    {
+        const auto decoded = decodeProbeHit(QByteArray(R"({"captureNs":"9223372036854775807"})"));
+        QVERIFY(decoded);
+        QCOMPARE(qint64(*decoded), qint64(9223372036854775807LL));
+        QVERIFY(payloadOf(encodeProbeHit(9223372036854775807LL))
+                == QByteArray(R"({"captureNs":"9223372036854775807"})"));
+    }
+
+    void probeHitRejections()
+    {
+        QVERIFY(decodeProbeHit(QByteArray(R"({"captureNs":"12"})")));
+        QVERIFY(!decodeProbeHit(QByteArray(R"({"captureNs":12})")));
+        QVERIFY(!decodeProbeHit(QByteArray(R"({"captureNs":"1x"})")));
+        QVERIFY(!decodeProbeHit(QByteArray(R"({"captureNs":"12","extra":1})")));
+        QVERIFY(!decodeProbeHit(QByteArray(R"({})")));
+        QVERIFY(!decodeProbeHit(QByteArray(R"({"captureMs":"12"})")));
+        QVERIFY(!decodeProbeHit(QByteArray(R"({"captureNs":""})")));
+        QVERIFY(!decodeProbeHit(QByteArray(R"({"captureNs":"+12"})")));
+        QVERIFY(!decodeProbeHit(QByteArray(R"({"captureNs":"012"})")));
+        QVERIFY(!decodeProbeHit(QByteArray(R"({"captureNs":" 12"})")));
+        QVERIFY(!decodeProbeHit(QByteArray(R"({"captureNs":"9223372036854775808"})")));
+        QVERIFY(!decodeProbeHit(QByteArray(R"({"captureNs":true})")));
+        QVERIFY(!decodeProbeHit(QByteArray("not json")));
+        QVERIFY(!decodeProbeHit(QByteArray(kMaxJsonBytes + 1, ' ')));
+    }
+
+    void probeEnableRoundTrip()
+    {
+        for (const bool enabled : {true, false}) {
+            const QByteArray rec = encodeProbeEnable(enabled);
+            QVERIFY(!rec.isEmpty());
+            QCOMPARE(quint8(rec[5]), quint8(RecordType::ProbeEnable));
+            QCOMPARE(payloadOf(rec), enabled ? QByteArray(R"({"enabled":true})")
+                                             : QByteArray(R"({"enabled":false})"));
+            const auto decoded = decodeProbeEnable(payloadOf(rec));
+            QVERIFY(decoded);
+            QCOMPARE(*decoded, enabled);
+        }
+    }
+
+    void probeEnableRejections()
+    {
+        QVERIFY(!decodeProbeEnable(QByteArray(R"({"enabled":1})")));
+        QVERIFY(!decodeProbeEnable(QByteArray(R"({"enabled":"true"})")));
+        QVERIFY(!decodeProbeEnable(QByteArray(R"({"enabled":true,"extra":1})")));
+        QVERIFY(!decodeProbeEnable(QByteArray(R"({})")));
+        QVERIFY(!decodeProbeEnable(QByteArray("[true]")));
+    }
+
+    void readerAcceptsProbeRecords()
+    {
+        const QByteArray stream = encodeProbeHit(-1) + encodeProbeEnable(true)
+                                  + encodeProbeEnable(false) + encodeProbeHit(42);
+        RecordReader reader;
+        reader.append(stream.constData(), stream.size());
+        QCOMPARE(reader.error(), RecordReader::Error::None);
+        const auto a = reader.next();
+        const auto b = reader.next();
+        const auto c = reader.next();
+        const auto d = reader.next();
+        QVERIFY(a && b && c && d);
+        QCOMPARE(a->type, RecordType::ProbeHit);
+        QCOMPARE(b->type, RecordType::ProbeEnable);
+        QCOMPARE(c->type, RecordType::ProbeEnable);
+        QCOMPARE(d->type, RecordType::ProbeHit);
+        QCOMPARE(qint64(*decodeProbeHit(a->payload)), qint64(-1));
+        QCOMPARE(*decodeProbeEnable(b->payload), true);
+        QCOMPARE(*decodeProbeEnable(c->payload), false);
+        QCOMPARE(qint64(*decodeProbeHit(d->payload)), qint64(42));
+        QVERIFY(!reader.next());
+    }
+
+    // ── Shared-memory hand-off (version 3, R-AUD-17) ──────────────────────
+
+    void ringRecordTypes()
+    {
+        QCOMPARE(int(RecordType::RingAttached), 5);
+        QCOMPARE(int(RecordType::AttachRing), 21);
+    }
+
+    void attachRingRoundTrip()
+    {
+        AttachRing a;
+        a.generation = 4294967295u;
+        a.memory = QStringLiteral("/nrsc-4194303-deadbeefm");
+        a.wake = QStringLiteral("/nrsc-4194303-deadbeefw");
+        a.bytes = 33'024;
+        a.inRate = 44'100;
+        const QByteArray rec = encodeAttachRing(a);
+        QVERIFY(!rec.isEmpty());
+        QCOMPARE(quint8(rec[4]), quint8(kVersion));
+        QCOMPARE(quint8(rec[5]), quint8(RecordType::AttachRing));
+        const QJsonObject obj = objectOf(rec);
+        QCOMPARE(obj.size(), 5);
+        for (const char* key : {"generation", "memory", "wake", "bytes", "inRate"}) {
+            QVERIFY2(obj.contains(QLatin1String(key)), key);
+        }
+        const auto d = decodeAttachRing(payloadOf(rec));
+        QVERIFY(d);
+        QCOMPARE(d->generation, a.generation);
+        QCOMPARE(d->memory, a.memory);
+        QCOMPARE(d->wake, a.wake);
+        QCOMPARE(d->bytes, a.bytes);
+        QCOMPARE(d->inRate, a.inRate);
+        // The Windows names carry a backslash.
+        a.memory = QStringLiteral("Local\\nrsc-1-0000001am");
+        a.wake = QStringLiteral("Local\\nrsc-1-0000001aw");
+        QCOMPARE(decodeAttachRing(payloadOf(encodeAttachRing(a)))->memory, a.memory);
+    }
+
+    void attachRingRejections()
+    {
+        AttachRing a;
+        a.generation = 3;
+        a.memory = QStringLiteral("/m");
+        a.wake = QStringLiteral("/w");
+        a.bytes = 4096;
+        a.inRate = 48000;
+        const QJsonObject good = objectOf(encodeAttachRing(a));
+        QVERIFY(decodeAttachRing(json(good)));
+        auto rejects = [&](const char* key, const QJsonValue& value) {
+            QJsonObject o = good;
+            o[QLatin1String(key)] = value;
+            return !decodeAttachRing(json(o));
+        };
+        QVERIFY(rejects("generation", 0));
+        QVERIFY(rejects("memory", ""));
+        QVERIFY(rejects("wake", ""));
+        QVERIFY(rejects("wake", "/m"));          // the same name twice
+        QVERIFY(rejects("memory", QString(513, 'm')));
+        QVERIFY(rejects("bytes", 0));
+        QVERIFY(rejects("bytes", double(kMaxRingBytes + 1)));
+        QVERIFY(!rejects("bytes", double(kMaxRingBytes)));
+        QVERIFY(rejects("bytes", "4096"));
+        QVERIFY(rejects("inRate", 7999));
+        QVERIFY(rejects("inRate", 384001));
+        QVERIFY(!rejects("inRate", 8000));
+        QVERIFY(!rejects("inRate", 384000));
+        QJsonObject extra = good;
+        extra.insert("pid", 1);
+        QVERIFY(!decodeAttachRing(json(extra)));
+        QJsonObject missing = good;
+        missing.remove("inRate");
+        QVERIFY(!decodeAttachRing(json(missing)));
+        a.generation = 0;
+        QVERIFY(encodeAttachRing(a).isEmpty());
+    }
+
+    void ringAttachedRoundTrip()
+    {
+        const QByteArray rec = encodeRingAttached({77});
+        QCOMPARE(quint8(rec[5]), quint8(RecordType::RingAttached));
+        QCOMPARE(payloadOf(rec), QByteArray(R"({"generation":77})"));
+        QCOMPARE(decodeCommand(payloadOf(rec))->generation, 77u);
+        QVERIFY(encodeRingAttached({0}).isEmpty());
+        RecordReader reader;
+        const QByteArray stream = encodeAttachRing({5, "/a", "/b", 64, 48000})
+                                  + encodeRingAttached({5});
+        reader.append(stream.constData(), stream.size());
+        QCOMPARE(reader.next()->type, RecordType::AttachRing);
+        QCOMPARE(reader.next()->type, RecordType::RingAttached);
+        QCOMPARE(reader.error(), RecordReader::Error::None);
+    }
+
+    // ── ASIO (version 4, R-AUD-19 to R-AUD-21) ────────────────────────────
+
+    void asioRecordTypes()
+    {
+        QCOMPARE(int(RecordType::AsioCaps), 6);
+        QCOMPARE(int(RecordType::AsioState), 7);
+        QCOMPARE(int(RecordType::AsioDescribe), 22);
+        QCOMPARE(int(RecordType::AsioOpen), 23);
+        QCOMPARE(int(RecordType::AsioControlPanel), 24);
+        QCOMPARE(kMaxAsioJsonBytes, 16384);
+    }
+
+    void asioRoleKeys()
+    {
+        const AudioRole roles[] = {AudioRole::Speakers, AudioRole::Headphones, AudioRole::TxInput,
+                                   AudioRole::Vax1, AudioRole::Vax2, AudioRole::Vax3,
+                                   AudioRole::Vax4};
+        for (const AudioRole role : roles) {
+            QCOMPARE(asioRoleFromKey(asioRoleKey(role)), std::optional<AudioRole>(role));
+        }
+        QCOMPARE(asioRoleKey(AudioRole::Vax1), QStringLiteral("Vax1"));
+        QVERIFY(!asioRoleFromKey(QStringLiteral("Vax5")).has_value());
+    }
+
+    void asioDescribeRoundTrip()
+    {
+        const QByteArray rec = encodeAsioDescribe({QStringLiteral("MOTU M Series")});
+        QCOMPARE(quint8(rec[4]), quint8(kVersion));
+        QCOMPARE(quint8(rec[5]), quint8(RecordType::AsioDescribe));
+        QCOMPARE(payloadOf(rec), QByteArray(R"({"driver":"MOTU M Series"})"));
+        QCOMPARE(decodeAsioDescribe(payloadOf(rec))->driver, QStringLiteral("MOTU M Series"));
+        QCOMPARE(decodeAsioDescribe(R"({"driver":""})")->driver, QString());
+        QVERIFY(!decodeAsioDescribe(R"({"driver":1})"));
+        QVERIFY(!decodeAsioDescribe(R"({"driver":"a","pid":1})"));
+        QVERIFY(!decodeAsioDescribe("{}"));
+    }
+
+    void asioCapsRoundTrip()
+    {
+        AsioCapsRecord caps;
+        caps.drivers = {QStringLiteral("Focusrite USB ASIO"), QStringLiteral("MOTU M Series")};
+        caps.driver = QStringLiteral("MOTU M Series");
+        caps.caps = motuCaps();
+        caps.inUse = false;
+        const QByteArray rec = encodeAsioCaps(caps);
+        QVERIFY(!rec.isEmpty());
+        QCOMPARE(quint8(rec[5]), quint8(RecordType::AsioCaps));
+        const auto d = decodeAsioCaps(payloadOf(rec));
+        QVERIFY(d);
+        QCOMPARE(d->drivers, caps.drivers);
+        QCOMPARE(d->driver, caps.driver);
+        QVERIFY(d->caps.has_value());
+        QVERIFY(*d->caps == *caps.caps);
+        QCOMPARE(d->inUse, false);
+
+        // The list only, and a held driver: no caps.
+        AsioCapsRecord list;
+        list.drivers = caps.drivers;
+        QCOMPARE(decodeAsioCaps(payloadOf(encodeAsioCaps(list)))->drivers, caps.drivers);
+        AsioCapsRecord held;
+        held.drivers = caps.drivers;
+        held.driver = QStringLiteral("Focusrite USB ASIO");
+        held.inUse = true;
+        const auto heldBack = decodeAsioCaps(payloadOf(encodeAsioCaps(held)));
+        QVERIFY(heldBack && heldBack->inUse && !heldBack->caps);
+    }
+
+    void asioCapsRejections()
+    {
+        AsioCapsRecord caps;
+        caps.drivers = {QStringLiteral("MOTU M Series")};
+        caps.driver = QStringLiteral("MOTU M Series");
+        caps.caps = motuCaps();
+        const QJsonObject good = objectOf(encodeAsioCaps(caps));
+        QVERIFY(decodeAsioCaps(json(good)));
+        auto rejectsCaps = [&](const char* key, const QJsonValue& value) {
+            QJsonObject o = good;
+            QJsonObject c = o.value(QStringLiteral("caps")).toObject();
+            c[QLatin1String(key)] = value;
+            o[QStringLiteral("caps")] = c;
+            return !decodeAsioCaps(json(o));
+        };
+        QVERIFY(rejectsCaps("name", "Another driver"));        // not the described driver
+        QVERIFY(rejectsCaps("outputs", -1));
+        QVERIFY(rejectsCaps("outputs", kMaxAsioChannels + 1));
+        QVERIFY(rejectsCaps("sampleType", "Int32MSB"));
+        QVERIFY(!rejectsCaps("sampleType", "Unsupported"));
+        QVERIFY(rejectsCaps("granularity", -2));
+        QVERIFY(rejectsCaps("rates", QJsonArray{48000.0, 22050.0}));
+        QVERIFY(rejectsCaps("rates", QJsonArray{44100.0, 48000.0, 88200.0, 96000.0, 176400.0,
+                                                192000.0, 48000.0}));
+        QVERIFY(rejectsCaps("currentRate", -1.0));
+        QVERIFY(rejectsCaps("inputLatency", -1));
+        QJsonObject extra = good;
+        extra.insert("pid", 1);
+        QVERIFY(!decodeAsioCaps(json(extra)));
+        QJsonObject badDrivers = good;
+        badDrivers["drivers"] = QJsonArray{QString()};
+        QVERIFY(!decodeAsioCaps(json(badDrivers)));
+        QJsonArray tooMany;
+        for (int i = 0; i <= kMaxAsioDrivers; ++i) {
+            tooMany.append(QStringLiteral("Driver %1").arg(i));
+        }
+        badDrivers["drivers"] = tooMany;
+        QVERIFY(!decodeAsioCaps(json(badDrivers)));
+    }
+
+    void asioOpenRoundTrip()
+    {
+        const AsioOpen open = motuOpen();
+        const QByteArray rec = encodeAsioOpen(open);
+        QVERIFY(!rec.isEmpty());
+        QCOMPARE(quint8(rec[5]), quint8(RecordType::AsioOpen));
+        const auto d = decodeAsioOpen(payloadOf(rec));
+        QVERIFY(d);
+        QCOMPARE(d->serial, open.serial);
+        QCOMPARE(d->driver, open.driver);
+        QCOMPARE(d->bufferFrames, 512);
+        QCOMPARE(d->rate, 96000.0);
+        QCOMPARE(d->uses.size(), 2);
+        QCOMPARE(d->uses[0].role, std::optional<AudioRole>(AudioRole::Speakers));
+        QCOMPARE(d->uses[0].pair, (AudioChannelPair{3, 2}));
+        QCOMPARE(d->uses[0].direction, AudioDeviceDirection::Output);
+        QCOMPARE(d->uses[0].memory, open.uses[0].memory);
+        QCOMPARE(d->uses[0].wake, open.uses[0].wake);
+        QCOMPARE(d->uses[0].bytes, open.uses[0].bytes);
+        QVERIFY(!d->uses[1].role.has_value());
+        QCOMPARE(d->uses[1].pair, (AudioChannelPair{1, 1}));
+        QCOMPARE(d->uses[1].direction, AudioDeviceDirection::Input);
+
+        // No uses closes the session; no driver is needed then.
+        AsioOpen close;
+        close.serial = 10;
+        const auto closed = decodeAsioOpen(payloadOf(encodeAsioOpen(close)));
+        QVERIFY(closed && closed->uses.isEmpty() && closed->driver.isEmpty());
+    }
+
+    void asioOpenRejections()
+    {
+        const QJsonObject good = objectOf(encodeAsioOpen(motuOpen()));
+        QVERIFY(decodeAsioOpen(json(good)));
+        auto rejects = [&](const char* key, const QJsonValue& value) {
+            QJsonObject o = good;
+            o[QLatin1String(key)] = value;
+            return !decodeAsioOpen(json(o));
+        };
+        QVERIFY(rejects("serial", 0));
+        QVERIFY(rejects("driver", ""));                          // uses need a driver
+        QVERIFY(rejects("rate", 22050.0));
+        QVERIFY(!rejects("rate", 0.0));                          // the driver's own
+        QVERIFY(rejects("bufferFrames", -1));
+        QVERIFY(rejects("bufferFrames", kMaxBufferFrames + 1));
+        auto rejectsUse = [&](const char* key, const QJsonValue& value) {
+            QJsonObject o = good;
+            QJsonArray uses = o.value(QStringLiteral("uses")).toArray();
+            QJsonObject u = uses.at(0).toObject();
+            u[QLatin1String(key)] = value;
+            uses[0] = u;
+            o[QStringLiteral("uses")] = uses;
+            return !decodeAsioOpen(json(o));
+        };
+        QVERIFY(rejectsUse("role", "Vax5"));
+        QVERIFY(!rejectsUse("role", ""));
+        QVERIFY(rejectsUse("first", 0));
+        QVERIFY(rejectsUse("count", 3));
+        QVERIFY(rejectsUse("count", 0));
+        QVERIFY(rejectsUse("direction", "both"));
+        QVERIFY(rejectsUse("memory", ""));
+        QVERIFY(rejectsUse("wake", good.value("uses").toArray().at(0).toObject().value("memory")));
+        QVERIFY(rejectsUse("bytes", 0));
+        QVERIFY(rejectsUse("bytes", double(kMaxRingBytes + 1)));
+        QJsonObject tooMany = good;
+        QJsonArray uses;
+        for (int i = 0; i <= kMaxAsioUses; ++i) {
+            uses.append(good.value("uses").toArray().at(0));
+        }
+        tooMany["uses"] = uses;
+        QVERIFY(!decodeAsioOpen(json(tooMany)));
+    }
+
+    void asioStateRoundTripEveryState()
+    {
+        const AsioStateKind kinds[] = {AsioStateKind::Running, AsioStateKind::Restarted,
+                                       AsioStateKind::InUse, AsioStateKind::Failed,
+                                       AsioStateKind::Closed};
+        for (const AsioStateKind kind : kinds) {
+            AsioState s;
+            s.serial = 9;
+            s.state = kind;
+            s.driver = QStringLiteral("MOTU M Series");
+            s.detail = QStringLiteral("detail");
+            s.bufferFrames = 512;
+            s.rate = 96000.0;
+            s.inputLatencyFrames = 300;
+            s.outputLatencyFrames = 412;
+            const QByteArray rec = encodeAsioState(s);
+            QVERIFY(!rec.isEmpty());
+            QCOMPARE(quint8(rec[5]), quint8(RecordType::AsioState));
+            const auto d = decodeAsioState(payloadOf(rec));
+            QVERIFY(d);
+            QVERIFY(d->state == kind);
+            QCOMPARE(d->serial, s.serial);
+            QCOMPARE(d->driver, s.driver);
+            QCOMPARE(d->detail, s.detail);
+            QCOMPARE(d->bufferFrames, 512);
+            QCOMPARE(d->rate, 96000.0);
+            QCOMPARE(d->inputLatencyFrames, 300);
+            QCOMPARE(d->outputLatencyFrames, 412);
+        }
+        QCOMPARE(objectOf(encodeAsioState(AsioState{})).value("state").toString(),
+                 QStringLiteral("closed"));
+    }
+
+    void asioStateRejections()
+    {
+        AsioState s;
+        s.serial = 9;
+        s.state = AsioStateKind::Running;
+        s.driver = QStringLiteral("MOTU M Series");
+        s.bufferFrames = 256;
+        s.rate = 48000.0;
+        const QJsonObject good = objectOf(encodeAsioState(s));
+        QVERIFY(decodeAsioState(json(good)));
+        auto rejects = [&](const char* key, const QJsonValue& value) {
+            QJsonObject o = good;
+            o[QLatin1String(key)] = value;
+            return !decodeAsioState(json(o));
+        };
+        QVERIFY(rejects("state", "stopped"));
+        QVERIFY(rejects("bufferFrames", 0));                    // running says what it runs at
+        QVERIFY(rejects("rate", 0.0));
+        QVERIFY(rejects("rate", 22050.0));
+        QVERIFY(rejects("serial", -1));
+        QVERIFY(rejects("inputLatency", -1));
+        QJsonObject failed = good;
+        failed["state"] = "failed";
+        failed["bufferFrames"] = 0;
+        failed["rate"] = 0.0;
+        QVERIFY(decodeAsioState(json(failed)));                 // a failure needs neither
+        QJsonObject extra = good;
+        extra.insert("pid", 1);
+        QVERIFY(!decodeAsioState(json(extra)));
+        s.bufferFrames = 0;
+        QVERIFY(encodeAsioState(s).isEmpty());
+    }
+
+    void asioControlPanelAndReader()
+    {
+        const QByteArray panel = encodeAsioControlPanel();
+        QCOMPARE(quint8(panel[5]), quint8(RecordType::AsioControlPanel));
+        QCOMPARE(payloadOf(panel), QByteArray("{}"));
+        // The largest open fits its bound, and the reader takes every
+        // ASIO record.
+        AsioOpen open = motuOpen();
+        open.uses[0].memory = QString(200, QLatin1Char('m'));
+        open.uses[0].wake = QString(200, QLatin1Char('w'));
+        while (open.uses.size() < kMaxAsioUses) {
+            open.uses.append(open.uses.at(0));
+        }
+        const QByteArray big = encodeAsioOpen(open);
+        QVERIFY(!big.isEmpty());
+        QVERIFY(big.size() - kHeaderBytes > kMaxJsonBytes);
+        AsioCapsRecord caps;
+        caps.drivers = {QStringLiteral("MOTU M Series")};
+        const QByteArray stream = encodeAsioDescribe({QString()}) + encodeAsioCaps(caps) + big
+                                  + encodeAsioState(AsioState{}) + panel;
+        RecordReader reader;
+        reader.append(stream.constData(), stream.size());
+        QCOMPARE(reader.next()->type, RecordType::AsioDescribe);
+        QCOMPARE(reader.next()->type, RecordType::AsioCaps);
+        QCOMPARE(reader.next()->type, RecordType::AsioOpen);
+        QCOMPARE(reader.next()->type, RecordType::AsioState);
+        QCOMPARE(reader.next()->type, RecordType::AsioControlPanel);
+        QCOMPARE(reader.error(), RecordReader::Error::None);
+        // Above the ASIO bound, a record is refused.
+        const QByteArray tooBig = rawHeader("NCAP", kVersion, quint8(RecordType::AsioOpen), 0,
+                                            quint32(kMaxAsioJsonBytes + 1));
+        RecordReader refusing;
+        refusing.append(tooBig.constData(), tooBig.size());
+        QVERIFY(refusing.error() != RecordReader::Error::None);
+    }
+
+    void readerRejectsAVersion2Record()
+    {
+        // The window and its helper ship together; a version 2 peer is
+        // refused whatever its type.
+        RecordReader reader;
+        const QByteArray bytes = rawHeader("NCAP", 2, 2, 0, 2) + "{}";
+        reader.append(bytes.constData(), bytes.size());
+        QCOMPARE(reader.error(), RecordReader::Error::BadVersion);
+    }
+
+    void readerRejectsAVersion1ProbeRecord()
+    {
+        // A version 1 peer never sends these; a version 1 header is
+        // rejected whatever its type.
+        RecordReader reader;
+        const QByteArray bytes = rawHeader("NCAP", 1, 4, 0, 2) + "{}";
+        reader.append(bytes.constData(), bytes.size());
+        QCOMPARE(reader.error(), RecordReader::Error::BadVersion);
     }
 };
 

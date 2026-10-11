@@ -46,6 +46,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09  J.J. Boyd / KG4VCF  Core speaker: coreSpeakerAvailable,
+//                                    coreSpeakerNeedsNewerCore and
+//                                    coreSpeakerUnavailableReason
+//                                    (coreSpeakerVersion 1, native audio
+//                                    plan Task 21, R-AUD-25). AI-assisted
+//                                    via Anthropic Claude Code.
 //   2026-10-06  J.J. Boyd / KG4VCF  Radio speaker: radioSpeakerAvailable,
 //                                    radioSpeakerNeedsNewerCore
 //                                    and radioSpeakerUnavailableReason
@@ -789,6 +795,18 @@ public:
     virtual bool radioSpeakerNeedsNewerCore() const { return !radioSpeakerAvailable(); }
     static QString radioSpeakerUnavailableReason()
     { return QStringLiteral("This Core can't set the radio speaker. Update the Core."); }
+
+    // Core speaker (native audio plan Task 21, coreSpeakerVersion 1): the
+    // Core sends radio's six coreSpeaker properties to this link and takes
+    // this window's changes to the level, mute, device and details. The
+    // default says no.
+    virtual bool coreSpeakerAvailable() const { return false; }
+    // True only when the link knows the Core is older, as
+    // radioSpeakerNeedsNewerCore. The default treats a link that offers
+    // nothing as an older Core.
+    virtual bool coreSpeakerNeedsNewerCore() const { return !coreSpeakerAvailable(); }
+    static QString coreSpeakerUnavailableReason()
+    { return QStringLiteral("This Core can't set its speaker from here. Update the Core."); }
 
     // R-R3-49 (parity Task 16): verb "dsp.filterResponse" (dspInfoVersion
     // 1), the filter graph's curve for a slice's receiver on the Core. The

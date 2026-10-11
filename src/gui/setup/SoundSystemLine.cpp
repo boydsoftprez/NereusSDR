@@ -8,11 +8,23 @@
 // 2026-10-06: Written for the radio speaker and Audio Setup plan, Task 9,
 // by J.J. Boyd (KG4VCF), with AI-assisted implementation via Anthropic
 // Claude Code.
+// 2026-10-09: native audio plan Task 16 (R-AUD-01): the engine the device
+// catalogue describes, then the older drivers in use; Windows reads
+// "Windows audio (WASAPI)" and PulseAudio is talked to directly.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: settings scope fix (R-AUD-07, R-AUD-20): the saved ASIO
+//               buffer size and rate and the headphones Enabled box are
+//               read through AudioEngine, so a Setup page does not read
+//               a key a core consumer reads. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "SoundSystemLine.h"
 
+#include "core/AudioDeviceConfig.h"
 #include "core/AudioEngine.h"
+#include "core/audio/IAudioDeviceCatalog.h"
+#include "gui/setup/AudioDriverList.h"
 
 #include <QHBoxLayout>
 #include <QLabel>
@@ -78,12 +90,7 @@ QString SoundSystemLine::describe(System system, LinuxAudioBackend backend)
     case System::Mac:
         return tr("Core Audio");
     case System::Windows:
-        // PortAudio makes its first Windows host API its default, and MME
-        // is first in its list, so a device card left at "(PortAudio
-        // default)" opens through MME.
-        // From PortAudio src/os/win/pa_win_hostapis.c:72-100 [v19.7.0]
-        return tr("Windows audio. Speakers and microphone use MME unless you pick "
-                  "another driver, such as WASAPI, under Device details.");
+        return tr("Windows audio (WASAPI)");
     case System::Linux:
         break;
     }
@@ -91,8 +98,8 @@ QString SoundSystemLine::describe(System system, LinuxAudioBackend backend)
     case LinuxAudioBackend::PipeWire:
         return tr("PipeWire. NereusSDR talks to it directly.");
     case LinuxAudioBackend::Pactl:
-        return tr("PulseAudio. PipeWire was not found, so NereusSDR uses the pactl "
-                  "tool instead.");
+        return tr("PulseAudio. PipeWire was not found, so NereusSDR talks to "
+                  "PulseAudio directly.");
     case LinuxAudioBackend::None:
         break;
     }
@@ -109,21 +116,79 @@ QString SoundSystemLine::text() const
     return m_described;
 }
 
-void SoundSystemLine::refresh()
+namespace {
+
+// The choices the line reads: the Speakers, the Headphones while Enabled,
+// and the Microphone.
+QList<AudioDeviceConfig> choicesInUse()
 {
-    LinuxAudioBackend backend = LinuxAudioBackend::None;
-#if defined(Q_OS_LINUX)
-    if (m_engine != nullptr) {
-        backend = m_engine->linuxBackend();
+    QList<AudioDeviceConfig> choices;
+    choices.append(AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/Speakers")));
+    if (AudioEngine::savedHeadphonesEnabled()) {
+        choices.append(AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/Headphones")));
     }
-#endif
-    show(thisSystem(), backend);
+    choices.append(AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/TxInput")));
+    return choices;
 }
 
-void SoundSystemLine::show(System system, LinuxAudioBackend backend)
+} // namespace
+
+QStringList SoundSystemLine::olderDriversInUse()
 {
-    m_described = describe(system, backend);
-    m_problem = isProblem(system, backend);
+    QStringList names;
+    for (const AudioDeviceConfig& cfg : choicesInUse()) {
+        if (cfg.engine == AudioEngineKind::PortAudio && !cfg.driverApi.isEmpty()) {
+            const QString name = olderDriverDisplayName(cfg.driverApi);
+            if (!names.contains(name)) {
+                names.append(name);
+            }
+        }
+    }
+    return names;
+}
+
+QString SoundSystemLine::asioDriverInUse()
+{
+    for (const AudioDeviceConfig& cfg : choicesInUse()) {
+        if (cfg.engine == AudioEngineKind::Asio && !cfg.deviceName.isEmpty()) {
+            return cfg.deviceName;
+        }
+    }
+    return {};
+}
+
+void SoundSystemLine::refresh()
+{
+    if (m_engine != nullptr && !m_catalogue) {
+        if (IAudioDeviceCatalog* catalogue = m_engine->catalogue()) {
+            m_catalogue = catalogue;
+            connect(catalogue, &IAudioDeviceCatalog::devicesChanged, this,
+                    [this]() { refresh(); });
+        }
+    }
+    QString described;
+    bool problem = false;
+    if (m_catalogue) {
+        described = soundSystemDescription(*m_catalogue, asioDriverInUse());
+        problem = soundSystemMissing(*m_catalogue);
+    }
+    if (described.isEmpty()) {
+        LinuxAudioBackend backend = LinuxAudioBackend::None;
+#if defined(Q_OS_LINUX)
+        if (m_engine != nullptr) {
+            backend = m_engine->linuxBackend();
+        }
+#endif
+        described = describe(thisSystem(), backend);
+        problem = isProblem(thisSystem(), backend);
+    }
+    show(withOlderDriversInUse(described, olderDriversInUse()), problem);
+}
+
+void SoundSystemLine::show(const QString& described, bool problem)
+{
+    m_described = described;
+    m_problem = problem;
     m_dot->setStyleSheet(QLatin1String(m_problem ? kDotProblem : kDotOk));
     m_text->setStyleSheet(QLatin1String(m_problem ? kTextProblem : kTextOk));
     m_text->setText(QStringLiteral("<b style=\"color:#c8d8e8\">%1</b> %2")

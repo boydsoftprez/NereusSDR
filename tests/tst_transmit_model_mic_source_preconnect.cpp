@@ -80,6 +80,8 @@ private slots:
         clearState(mac);
 
         TransmitModel m;
+        // Tests the VAX path itself, which Windows does not offer.
+        m.setVaxSourceAvailable(true);
         // No loadFromSettings call: m_persistMac is empty.
         m.setMicSource(MicSource::Vax);
 
@@ -102,6 +104,8 @@ private slots:
         AppSettings::instance().setValue(preconnectKey(), QStringLiteral("Vax"));
 
         TransmitModel m;
+        // Tests the VAX path itself, which Windows does not offer.
+        m.setVaxSourceAvailable(true);
         m.loadFromSettings(mac);
         QCOMPARE(m.micSource(), MicSource::Vax);
     }
@@ -138,6 +142,8 @@ private slots:
         AppSettings::instance().setValue(preconnectKey(), QStringLiteral("Vax"));
 
         TransmitModel m;
+        // Tests the VAX path itself, which Windows does not offer.
+        m.setVaxSourceAvailable(true);
         m.loadFromSettings(mac);
         // load_emptyPerMac path: m.micSource() is now Vax.
         QCOMPARE(m.micSource(), MicSource::Vax);

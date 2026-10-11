@@ -6,9 +6,11 @@ Use this chapter to locate common commands and distinguish which part of the sta
 
 | Task | Desktop path | iPhone or iPad path | Scope |
 | --- | --- | --- | --- |
-| Select playback and microphone devices | **Setup > Audio > Devices** | **Setup > Audio** device controls | This computer / this phone |
-| Configure VAX audio | **Tools > VAX Audio...** or **Setup > Audio > VAX** | **Tools > VAX Audio** | Desktop: this computer, including remote windows. Phone: Core computer. |
-| Configure TCI audio streams | **Setup > Audio > TCI** | **Tools > TCI Server** for Core server options | Desktop audio setup is this computer; iOS server is Core |
+| Select speakers and headphones | **Setup > Audio > Outputs**; **PC** in the header (right-click for the speakers menu) | **Sound** | This computer / this phone |
+| Radio speaker and Core speaker | **Setup > Audio > Outputs**; **RADIO** in the header | **Sound** | Radio and Core; shared with every window and the phone |
+| Select the microphone | **Setup > Audio > Microphone** | **Setup > Audio > On this phone** | This computer / this phone |
+| Configure VAX audio | **Tools > VAX Audio...** or **Setup > Audio > Digital modes** | **Tools > VAX Audio** | Desktop: this computer, including remote windows. Phone: Core computer. |
+| Configure TCI audio streams | **Setup > Audio > Digital modes** | **Tools > TCI Server** for Core server options | Desktop audio setup is this computer; iOS server is Core |
 | Enable TCI server | **Tools > TCI Server...** or **Setup > CAT & Network > TCI Server** | **Tools > TCI Server** | This computer on desktop; Core on phone |
 | Spot sources and filters | **Tools > Spot Hub...** | **Tools > Spot Hub** | Core station data |
 | FreeDV station list | **Tools > FreeDV Reporter...** | **Tools > FreeDV Reporter** | Core station service |
@@ -21,7 +23,7 @@ Use this chapter to locate common commands and distinguish which part of the sta
 | Canvas, meter sources and individual controls | **Containers > New / Edit Container** | No desktop Canvas editor on phone | Desktop arrangement; live controls retain their ordinary receiver/TX authority. |
 | Core service and pairing | **Setup > CAT & Network > Remote Access** | Welcome/connect flow; **Setup > Devices** for paired-device administration | Service on this computer; device registry on Core |
 | Radio selection and saved targets | **Radio > Connections…** (or **Manage Radios…** in a radio-panel window) | **Radio > More > Manage Radios** for the radio the connected Core runs; **Your Cores** list for saved connection targets | Choosing a different radio changes the Core's shared radio and reconnects devices; this is not the same as choosing a saved Core target. |
-| TX input and microphone route | **Setup > Audio > TX Input** | Main **TX**, **Modes** transmit section; **Setup > Audio > On this phone** for the phone microphone | Mixed input/device and Core transmit settings |
+| Microphone source and route | **Setup > Audio > Microphone** | Main **TX**, **Modes** transmit section; **Setup > Audio > On this phone** for the phone microphone | Mixed input/device and Core transmit settings |
 | TX/mic profiles | **File > Profiles > TX Profiles... / Mic Profiles...**, **Setup > Audio > TX Profile** | Offered Core-described profile settings | Core transmit configuration |
 | Filter bank | **Setup > DSP > Filter Presets** | Offered Core-described Setup page; quick presets in Modes | Shared Core bank; choosing a preset applies to one slice |
 | Advanced receive DSP | **Setup > DSP > AGC/ALC, NR/ANF, NB/SNB, CW, TNF, Options** | **Modes**, then offered Core Setup pages | Core receive processing; some pages include separate TX groups |
@@ -46,7 +48,7 @@ Use **Change model** only to change the model saved for a listed radio. Pick one
 
 ### Adjust the Core's VAX levels from the phone
 
-Open **Tools > VAX Audio**. This page controls VAX channels on the Core's computer, not audio devices on the phone. Each of **VAX 1–4** identifies its virtual device and feeding slice or slices, then provides **Level**, a 0–100% slider, a level meter, and **Mute**. Set a channel level to change what digital-mode apps receive from that VAX channel. **Mute** silences that channel for its applications; it does not mute the speakers. Watch the meter and device/slice labels to make sure the intended receive path is selected. The **VAX microphone** section identifies the transmit slice and has its own **Level** slider and meter. That level changes the Core's VAX microphone input, not this phone's microphone route. Wait for values/meters to refresh; if a request is refused, the page displays the Core's reason. The TX-level slider is disabled unless this phone may transmit. Missing channel or meter data shows an older-Core/unavailable reason rather than a zero value. VAX application routing and platform availability are in [Digital audio and external applications](09-tools.md).
+Open **Tools > VAX Audio**. This page controls VAX channels on the Core's computer, not audio devices on the phone. Each of **VAX 1 to 4** identifies its virtual device and feeding slice or slices, then provides **Level**, a 0 to 100% slider, a level meter, and **Mute**. Set a channel level to change what digital-mode apps receive from that VAX channel. **Mute** silences that channel for its applications; it does not mute the speakers. Watch the meter and device/slice labels to make sure the intended receive path is selected. The **VAX microphone** section identifies the transmit slice and has its own **Level** slider and meter. That level changes the Core's VAX microphone input, not this phone's microphone route. Wait for values/meters to refresh; if a request is refused, the page displays the Core's reason. The TX-level slider is disabled unless this phone may transmit. Missing channel or meter data shows an older-Core/unavailable reason rather than a zero value. VAX application routing and platform availability are in [Digital audio and external applications](09-tools.md).
 
 ### Use iPad screen arrangements and the meter
 
@@ -76,7 +78,7 @@ until that readback is ready.
 | **Cores** | Your Cores (Overview, Addresses, Radio, Devices); Audio with the Core. Inspection and current connection are distinct. | [Core Settings and audio](01-desktop-connect.md), [sharing](08-shared-core.md). |
 | **Hardware** | Hardware Config, whose tabs depend on the radio. | [Hardware and antennas](17-hardware-antennas-calibration.md). |
 | **PA** | PA Gain; Watt Meter; PA Values, with radio capability reasons. | [Calibration](17-hardware-antennas-calibration.md). |
-| **Audio** | Devices; TX Input where available; VAX; TCI; Advanced; TX Profile. | [Transmit](05-transmit.md), [digital routing](09-tools.md), [profiles](14-voice-profiles.md). |
+| **Audio** | Outputs (speakers, headphones, radio speaker, Core speaker); Microphone; Digital modes (VAX and TCI); Advanced; TX Profile. | [Transmit](05-transmit.md), [digital routing](09-tools.md), [profiles](14-voice-profiles.md). |
 | **DSP** | AGC/ALC; NR/ANF; NB/SNB; CW; AM/SAM; FM; CFC; TNF; Filter Presets; Options. | [Receiver DSP](13-receiver-dsp.md), [voice processing](14-voice-profiles.md). A parent page can contain disabled or hidden unbuilt groups. |
 | **Display** | Spectrum Defaults; Spectrum Peaks; Waterfall Defaults; Grid & Scales; Multimeter; TX Display; 3D View. | [Display and layout](10-customize.md). |
 | **Transmit** | Power; Speech Processor; DEXP/VOX. | [Transmit](05-transmit.md), [voice processing](14-voice-profiles.md). TX Profile is under Audio. |

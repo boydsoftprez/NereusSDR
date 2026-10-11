@@ -49,35 +49,64 @@
 //  22.  In a remote window Test Mic opens this computer's microphone and
 //       meters it, without the page reaching the audited local-DSP
 //       accessors.
+//
+// Native audio plan Task 16 fix round (2026-10-09, J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code), on fake engine backends:
+//  23.  While the mic captures, the card's Delay readout reads
+//       "Now N ms from USB Mic to the radio" (R-AUD-15).
+//  24.  A mic another program holds reads so on the status line (amber),
+//       in the card's note and in its closed Device field (R-AUD-11).
+// Fix round 2 (2026-10-09, same authorship): 23 and 24 run on the Mac,
+// Windows, PipeWire and PulseAudio fakes; the status line names the mic
+// the field names; in 24 Test Mic stays on and Retry microphone is greyed
+// with its reason (R-AUD-24), and when the other program lets the mic go
+// the test resumes by itself and the note clears (R-AUD-11).
+//  With NEREUS_AUDIO_SETUP_CAPTURE_DIR set, 23 and 24 save captures.
+// Native audio plan Task 20 round 3 (2026-10-09, same authorship):
+//  25.  While the engine's retry of a held mic is pending (the capture is
+//       Opening, not Failed), Retry microphone keeps its reason, greyed:
+//       it follows the mic's status (R-AUD-24, R-AUD-11).
+//  26.  VAX TX (virtual device) follows this build's own default, unforced:
+//       on Windows greyed with the PC Mic route and a saved VAX choice
+//       loads as PC Mic; elsewhere enabled (R-SPK-21, R-AUD-01).
 // Every capture demand here uses the scripted fake helper (this binary
 // re-executed with --fake-capture-child); no real microphone is opened.
 
 #include <QtTest/QtTest>
 #include <QApplication>
 #include <QComboBox>
+#include <QDir>
 #include <QLabel>
 #include <QGroupBox>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QSlider>
 #include <QSignalSpy>
+#include <QScopeGuard>
+#include <QStyleFactory>
+#include <QTemporaryDir>
 #include <QTimer>
 
 #include "core/AppSettings.h"
 #include "core/AudioDeviceConfig.h"
 #include "core/AudioEngine.h"
+#include "core/audio/AudioDeviceTypes.h"
 #include "core/audio/CaptureSupervisor.h"
+#include "core/audio/IAudioEngineBackend.h"
 #include "gui/HGauge.h"
 #include "gui/setup/AudioTxInputPage.h"
 #include "gui/setup/CaptureStatusText.h"
 #include "gui/setup/DeviceCard.h"
+#include "gui/styles/AppTheme.h"
 #include "models/RadioModel.h"
 #include "models/TransmitModel.h"
 
+#include "fakes/FakeAudioEngineBackend.h"
 #include "fakes/FakeCaptureChild.h"
 
 #include <cstring>
 #include <memory>
+#include <vector>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -127,6 +156,114 @@ QLabel* statusLabelOf(QWidget* page)
 QPushButton* retryButtonOf(QWidget* page)
 {
     return page->findChild<QPushButton*>(QStringLiteral("retryCapture"));
+}
+
+// The system a mic case runs on: the fake backend and the engine saved
+// for the mic (fix round 2: every desktop system).
+struct MicSystem {
+    QString stem;                 // the capture's system part
+    AudioBackendId backend = AudioBackendId::CoreAudio;
+    AudioEngineKind engine = AudioEngineKind::CoreAudio;
+};
+
+void addMicSystemRows()
+{
+    QTest::addColumn<QString>("stem");
+    QTest::addColumn<int>("backend");
+    QTest::addColumn<int>("engine");
+    const auto row = [](const char* name, AudioBackendId backend, AudioEngineKind engine) {
+        QTest::newRow(name) << QString::fromLatin1(name) << static_cast<int>(backend)
+                            << static_cast<int>(engine);
+    };
+    row("mac", AudioBackendId::CoreAudio, AudioEngineKind::CoreAudio);
+    row("windows", AudioBackendId::Wasapi, AudioEngineKind::WindowsShared);
+    row("linux-pipewire", AudioBackendId::PipeWire, AudioEngineKind::PipeWire);
+    row("linux-pulseaudio", AudioBackendId::PulseAudio, AudioEngineKind::PulseAudio);
+}
+
+MicSystem fetchMicSystem()
+{
+    QFETCH(QString, stem);
+    QFETCH(int, backend);
+    QFETCH(int, engine);
+    return {stem, static_cast<AudioBackendId>(backend), static_cast<AudioEngineKind>(engine)};
+}
+
+AudioDeviceInfo fakeDevice(AudioDeviceDirection direction, const QString& id, const QString& name,
+                           AudioBackendId backend = AudioBackendId::CoreAudio)
+{
+    AudioDeviceInfo info;
+    info.backend = backend;
+    info.direction = direction;
+    info.id = id;
+    info.name = name;
+    info.channelCount = 2;
+    return info;
+}
+
+// The saved mic "USB Mic". Saved before the RadioModel is made, as a
+// profile is on disk before the app starts: the engine reads it then.
+void saveUsbMic(AudioEngineKind engine = AudioEngineKind::CoreAudio)
+{
+    AudioDeviceConfig mic;
+    mic.engine = engine;
+    mic.deviceId = QStringLiteral("usb-mic-uid");
+    mic.deviceName = QStringLiteral("USB Mic");
+    mic.saveToSettings(QStringLiteral("audio/TxInput"));
+}
+
+// The engine on a fake Core Audio backend, started, so the mic role runs
+// through the stream supervisor and the (fake) capture helper. No device
+// is touched.
+std::shared_ptr<FakeAudioEngineBackend> startOnFakeMic(
+    RadioModel& model, AudioBackendId backend = AudioBackendId::CoreAudio)
+{
+    auto native = std::make_shared<FakeAudioEngineBackend>(backend);
+    native->setDevices({fakeDevice(AudioDeviceDirection::Output, QStringLiteral("built-in-uid"),
+                                   QStringLiteral("Built-in speakers"), backend),
+                        fakeDevice(AudioDeviceDirection::Input, QStringLiteral("usb-mic-uid"),
+                                   QStringLiteral("USB Mic"), backend)});
+    native->setDefault(AudioDeviceDirection::Output, QStringLiteral("built-in-uid"));
+    native->setDefault(AudioDeviceDirection::Input, QStringLiteral("usb-mic-uid"));
+    std::vector<std::shared_ptr<IAudioEngineBackend>> backends;
+    if (backend == AudioBackendId::PulseAudio) {
+        // PulseAudio runs only where PipeWire does not.
+        auto pipeWire = std::make_shared<FakeAudioEngineBackend>(AudioBackendId::PipeWire);
+        pipeWire->setRunning(false);
+        backends.push_back(pipeWire);
+    }
+    backends.push_back(native);
+    AudioEngine* engine = model.audioEngine();
+    engine->setVaxOutputsAllowed(false);
+    engine->setAudioBackendsForTest(std::move(backends));
+    engine->start();
+    return native;
+}
+
+// With captures on, the app's own style, palette and baseline QSS
+// (main.cpp), as tst_audio_setup_regroup's Microphone captures use.
+void useAppLookForCaptures()
+{
+    if (qEnvironmentVariable("NEREUS_AUDIO_SETUP_CAPTURE_DIR").isEmpty()) {
+        return;
+    }
+    QApplication::setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
+    applyDarkPalette(*qApp);
+    applyAppBaselineQss(*qApp);
+}
+
+void saveCapture(QWidget* w, const QString& stem)
+{
+    const QString dir = qEnvironmentVariable("NEREUS_AUDIO_SETUP_CAPTURE_DIR");
+    if (dir.isEmpty()) {
+        return;
+    }
+    QDir().mkpath(dir);
+    QApplication::processEvents();
+    const QPixmap shot = w->grab();
+    const QString path =
+        QStringLiteral("%1/%2@%3x.png").arg(dir, stem).arg(qRound(shot.devicePixelRatio()));
+    QVERIFY2(shot.save(path), qPrintable(path));
 }
 
 } // namespace
@@ -567,6 +704,218 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, CaptureState::Closed, 5000);
         QTRY_VERIFY_WITH_TIMEOUT(processIsGone(pid), 5000);
         QCOMPARE(remote.localDspHandOutCount(), 0);
+    }
+
+    // ── 23. The mic's Delay readout while it captures ─────────────────────────
+
+    void micDelayReadoutWhileCapturing_data() { addMicSystemRows(); }
+
+    void micDelayReadoutWhileCapturing()
+    {
+        const MicSystem system = fetchMicSystem();
+        useAppLookForCaptures();
+        saveUsbMic(system.engine);
+        RadioModel model;
+        model.setCapsHasMicJackForTest(true);
+        useFakeHelper(model, QStringLiteral("ready"));
+        startOnFakeMic(model, system.backend);
+        AudioEngine* engine = model.audioEngine();
+        AudioTxInputPage page(&model);
+        page.resize(760, 720);
+        page.pcMicCard()->setDetailsExpanded(true);
+        page.show();
+        QLabel* delayNow = page.pcMicCard()->findChild<QLabel*>(QStringLiteral("deviceDelayNow"));
+        QVERIFY(delayNow != nullptr);
+        QCOMPARE(delayNow->text(), QStringLiteral("Now -- ms"));
+
+        page.testMicButton()->setChecked(true);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, CaptureState::Ready, 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(delayNow->text().endsWith(QStringLiteral(" ms from USB Mic to the radio")),
+                                 5000);
+        QVERIFY(delayNow->text().startsWith(QStringLiteral("Now ")));
+        // R-AUD-15: the Negotiated pill reads the capture's rate.
+        const QString rate = QStringLiteral("USB Mic · %1 Hz · ")
+                                 .arg(engine->captureStatus().nativeRate);
+        QVERIFY(engine->captureStatus().nativeRate > 0);
+        bool pill = false;
+        for (QLabel* label : page.pcMicCard()->findChildren<QLabel*>()) {
+            pill = pill || label->text().startsWith(rate);
+        }
+        QVERIFY2(pill, qPrintable(rate));
+        // Fix round 2: the status line names the mic the Device field does
+        // (the helper reports the device it opened).
+        QCOMPARE(statusLabelOf(&page)->text(), QStringLiteral("Microphone ready: USB Mic"));
+        QCOMPARE(page.pcMicCard()->deviceCombo()->currentText(), QStringLiteral("USB Mic"));
+        QCOMPARE(page.pcMicCard()->driverApiCombo()->currentText(),
+                 audioEngineLabel(system.engine));
+        saveCapture(&page, QStringLiteral("microphone-%1-delay-capturing-unfolded").arg(system.stem));
+
+        page.testMicButton()->setChecked(false);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, CaptureState::Closed, 5000);
+        engine->stop();
+    }
+
+    // ── 24. A mic another program holds ───────────────────────────────────────
+
+    void micInUseReadsSo_data() { addMicSystemRows(); }
+
+    void micInUseReadsSo()
+    {
+        const MicSystem system = fetchMicSystem();
+        // The fake helper answers busy while this file exists (another
+        // program holds the mic), and opens once it is gone.
+        QTemporaryDir held;
+        QVERIFY(held.isValid());
+        const QString heldFile = held.filePath(QStringLiteral("held"));
+        {
+            QFile marker(heldFile);
+            QVERIFY(marker.open(QIODevice::WriteOnly));
+        }
+        qputenv("NEREUS_FAKE_CAPTURE_BUSY_FILE", heldFile.toLocal8Bit());
+        const auto unsetHeld = qScopeGuard([] { qunsetenv("NEREUS_FAKE_CAPTURE_BUSY_FILE"); });
+        useAppLookForCaptures();
+        saveUsbMic(system.engine);
+        RadioModel model;
+        model.setCapsHasMicJackForTest(true);
+        useFakeHelper(model, QStringLiteral("busy-while-marked"));
+        startOnFakeMic(model, system.backend);
+        AudioEngine* engine = model.audioEngine();
+        AudioTxInputPage page(&model);
+        page.resize(760, 720);
+        page.pcMicCard()->setDetailsExpanded(true);
+        page.show();
+
+        page.testMicButton()->setChecked(true);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().reason, CaptureReason::DeviceInUse, 5000);
+        QLabel* status = statusLabelOf(&page);
+        QTRY_COMPARE_WITH_TIMEOUT(status->text(), QStringLiteral("PC mic in use by another program"),
+                                  5000);
+        QVERIFY(status->styleSheet().contains(QStringLiteral("#e0a030")));
+        QLabel* note = page.pcMicCard()->findChild<QLabel*>(QStringLiteral("deviceStateNote"));
+        QTRY_VERIFY_WITH_TIMEOUT(note->text().contains(QStringLiteral("in use by another program")),
+                                 5000);
+        QComboBox* device = nullptr;
+        for (QComboBox* combo : page.pcMicCard()->findChildren<QComboBox*>()) {
+            if (combo->currentText() == QStringLiteral("USB Mic (in use by another program)")) {
+                device = combo;
+            }
+        }
+        QVERIFY(device != nullptr);
+        // The field grew to its text, which arrived while the page was shown.
+        QTRY_VERIFY(device->width()
+                    > device->fontMetrics().horizontalAdvance(device->currentText()));
+        // Fix round 2: the test stays on, waiting for the mic (R-AUD-11: it
+        // switches back by itself when it frees), and Retry microphone is
+        // greyed with its reason (R-AUD-24: Retry stays for other failures).
+        QVERIFY(page.testMicButton()->isChecked());
+        QCOMPARE(page.testMicButton()->text(), QStringLiteral("Stop Test"));
+        QVERIFY(page.hasTestMicDemand());
+        QVERIFY(!retryButtonOf(&page)->isEnabled());
+        QCOMPARE(retryButtonOf(&page)->toolTip(),
+                 QStringLiteral("The mic resumes by itself when it comes back."));
+        saveCapture(&page, QStringLiteral("microphone-%1-in-use-unfolded").arg(system.stem));
+
+        // The other program lets the mic go: the test resumes by itself.
+        QVERIFY(QFile::remove(heldFile));
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, CaptureState::Ready, 8000);
+        QTRY_COMPARE_WITH_TIMEOUT(status->text(), QStringLiteral("Microphone ready: USB Mic"), 5000);
+        QVERIFY(status->styleSheet().isEmpty());
+        QTRY_VERIFY_WITH_TIMEOUT(note->text().isEmpty() || note->isHidden(), 5000);
+        QCOMPARE(device->currentText(), QStringLiteral("USB Mic"));
+        QCOMPARE(page.testMicButton()->text(), QStringLiteral("Stop Test"));
+        QVERIFY(!retryButtonOf(&page)->isEnabled());
+        QVERIFY(retryButtonOf(&page)->toolTip().isEmpty());
+
+        page.testMicButton()->setChecked(false);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureHelperProcessIdForTest(), qint64(0), 5000);
+        engine->stop();
+    }
+
+    // ── 25. Retry keeps its reason while the engine's retry is pending ───────
+
+    void retryKeepsReasonWhileRetryPending_data() { addMicSystemRows(); }
+
+    void retryKeepsReasonWhileRetryPending()
+    {
+        const MicSystem system = fetchMicSystem();
+        // Busy while this file exists; once it is gone the engine's next
+        // retry answers Opening and nothing more, so the retry stays pending.
+        QTemporaryDir held;
+        QVERIFY(held.isValid());
+        const QString heldFile = held.filePath(QStringLiteral("held"));
+        {
+            QFile marker(heldFile);
+            QVERIFY(marker.open(QIODevice::WriteOnly));
+        }
+        qputenv("NEREUS_FAKE_CAPTURE_BUSY_FILE", heldFile.toLocal8Bit());
+        const auto unsetHeld = qScopeGuard([] { qunsetenv("NEREUS_FAKE_CAPTURE_BUSY_FILE"); });
+        saveUsbMic(system.engine);
+        RadioModel model;
+        model.setCapsHasMicJackForTest(true);
+        // An open timeout far past the test's length holds the pending retry.
+        useFakeHelper(model, QStringLiteral("busy-while-marked-then-pending"), 600000);
+        startOnFakeMic(model, system.backend);
+        AudioEngine* engine = model.audioEngine();
+        AudioTxInputPage page(&model);
+        page.show();
+
+        page.testMicButton()->setChecked(true);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().reason, CaptureReason::DeviceInUse, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->roleStatus(AudioRole::TxInput).reason,
+                                  AudioRoleReason::InUse, 5000);
+
+        QVERIFY(QFile::remove(heldFile));
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, CaptureState::Opening, 8000);
+        // Held there: the capture is not Failed, and the mic is still in use.
+        QTest::qWait(300);
+        QCOMPARE(engine->captureStatus().state, CaptureState::Opening);
+        const AudioRoleStatus mic = engine->roleStatus(AudioRole::TxInput);
+        QCOMPARE(mic.state, AudioRoleState::Silent);
+        QCOMPARE(mic.reason, AudioRoleReason::InUse);
+        QCOMPARE(statusLabelOf(&page)->text(), QStringLiteral("PC mic in use by another program"));
+        QVERIFY(!retryButtonOf(&page)->isEnabled());
+        QCOMPARE(retryButtonOf(&page)->toolTip(),
+                 QStringLiteral("The mic resumes by itself when it comes back."));
+
+        page.testMicButton()->setChecked(false);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureHelperProcessIdForTest(), qint64(0), 5000);
+        engine->stop();
+    }
+
+    // ── 26. VAX TX follows this build's own default ──────────────────────────
+    // Nothing forces availability here: this is the case the Windows
+    // device-free list runs.
+
+    void vaxTx_followsThisBuildsDefault()
+    {
+        RadioModel model;
+        model.setCapsHasMicJackForTest(true);
+        AudioTxInputPage page(&model);
+        QRadioButton* vax = findRadioButton(&page, QStringLiteral("VAX TX (virtual device)"));
+        QVERIFY(vax != nullptr);
+        QVERIFY(!vax->isHidden());   // greyed, never hidden
+
+        const QString mac = QStringLiteral("tst-pcmic-vax-default-aa-bb-cc");
+        AppSettings::instance().setValue(QStringLiteral("hardware/%1/tx/Mic_Source").arg(mac),
+                                         QStringLiteral("Vax"));
+        TransmitModel saved;
+        saved.loadFromSettings(mac);
+#if defined(Q_OS_WIN)
+        QVERIFY(!vax->isEnabled());
+        QCOMPARE(vax->toolTip(),
+                 QStringLiteral("Windows has no VAX transmit device. To transmit a program's "
+                                "audio, set the program's output to a virtual cable, choose PC "
+                                "Mic and pick the cable's recording end as the PC mic device."));
+        QCOMPARE(saved.micSource(), MicSource::Pc);
+        vax->click();
+        QCOMPARE(model.transmitModel().micSource(), MicSource::Pc);
+#else
+        QVERIFY(vax->isEnabled());
+        QCOMPARE(vax->toolTip(),
+                 AudioTxInputPage::vaxSourceToolTip(AudioTxInputPage::thisSystem()));
+        QVERIFY(!vax->toolTip().contains(QStringLiteral("Windows")));
+        QCOMPARE(saved.micSource(), MicSource::Vax);
+#endif
     }
 
     // ── 18. Hide and destruction release the demand ───────────────────────────

@@ -990,6 +990,19 @@ five, and a change to them alone sends that peer no `radio` delta. A write
 of one from a peer that did not declare it is refused. The station does not
 declare it; the desktop's remote window does.
 
+**`coreSpeaker` 1** (the Core speaker): the client shows and sets the
+Core's own sound card output: its level and mute, the card it plays on and
+that card's buffer, delay setting and sample rate. A peer that declares it,
+on a Core that has its own speaker (a desktop that hosts a station has
+none), is sent `coreSpeakerVersion` (section 6.3) and the `radio` object's
+`coreSpeakerVolume`, `coreSpeakerMuted`, `coreSpeakerDevice`,
+`coreSpeakerDevices`, `coreSpeakerState` and `coreSpeakerDetails` (section
+7); a peer that does not sees exactly the wire it was built for, with none
+of the six, and a change to them alone sends that peer no `radio` delta. A
+write of one from a peer that is not sent them is refused with "Update this
+app to change the Core speaker on this Core." The station does not declare
+it; the desktop's remote window does.
+
 **`sessionHolder` 1** (iPhone app plan Task 71; the several-devices
 design, ruling 10.1): the Core admits up to four devices at once (section
 5.1). A client declares it only together with `deviceAuth` 1 or later, and
@@ -1148,7 +1161,7 @@ table.
 | `remoteTxVersion` | 2 |
 | `txWatchPathVersion` | not advertised by this fixture |
 | `txStateVersion` | 2 |
-| `txReadingsVersion` | 3 |
+| `txReadingsVersion` | 4 |
 | `mediaTunnelVersion` | 1 |
 | `mediaRelayRoutingVersion` | 1 |
 | `settingsHygieneVersion` | 2 |
@@ -1183,6 +1196,7 @@ table.
 | `radeReasonVersion` | 1 |
 | `stationCatVersion` | 1 |
 | `radioSpeakerVersion` | 1 |
+| `coreSpeakerVersion` | 1 |
 
 <!-- /surface -->
 
@@ -2181,7 +2195,7 @@ When a feature is off, its version is 0:
   the read-only `txState` object (section 18.8) to that peer; any other
   peer never sees it or its schema.
 - `txReadingsVersion` (remote-window parity Task 33, R-R3-49, R-R3-32):
-  sent right after `txStateVersion` and only with it. 2 on a Core with its
+  sent right after `txStateVersion` and only with it. 4 on a Core with its
   own radio model and record streams (`recordStreamVersion` at least 1), 0
   otherwise. At 1 `txState` also carries `forwardAdcRaw` and
   `reflectedAdcRaw`, the radio's raw forward and reflected power readings,
@@ -2198,6 +2212,13 @@ When a feature is off, its version is 0:
   (section 18.8). A window below 3 shows each of those meters disabled
   with "This Core does not send this reading. Updating the Core may
   help.", never hidden and never a 0.
+  At 4 `txState` also carries the six peak readings a local window's
+  container meter bars show as their main value, `micPeakDb`, `alcPeakDb`,
+  `compressionPeakDb`, `eqPeakDb`, `levelerPeakDb` and `cfcPeakDb`
+  (section 18.8), so a bar such as MIC shows the same peak in a remote
+  window as in a local one, with the average beside it. A window below 4
+  shows each peak meter disabled with the same sentence, never hidden and
+  never a 0; the averages are unchanged.
 
 `txPermitted` (iPhone app plan Task 34) is true only for a session the
 station transmit gate permits (section 18.1): false until
@@ -2278,6 +2299,18 @@ and none of the five. A client connected to a Core that sends no entry
 shows the radio speaker disabled, with the reason "This Core can't set the
 radio speaker. Update the Core.", and sends no write of the three.
 
+**The Core speaker.** A client that declared `coreSpeaker` 1 is sent
+`coreSpeakerVersion`, an `i64`, 1, by a Core that has its own speaker,
+after `radioSpeakerVersion` (or after the last entry before it when that is
+absent) and before `coreBuildInfo`. At 1 the `radio` object carries
+`coreSpeakerVolume`, `coreSpeakerMuted`, `coreSpeakerDevice` and
+`coreSpeakerDetails`, which the client may write, and `coreSpeakerDevices`
+and `coreSpeakerState`, which it may not (section 7). A peer that did not
+declare the feature, or a Core without its own speaker, is sent no entry
+and none of the six. A client connected to a Core that sends no entry shows
+the Core speaker disabled, with the reason "This Core can't set its speaker
+from here. Update the Core.", and sends no write of the four.
+
 **Core executable identity.** A client at agreed minor 11 may declare
 `coreBuildInfo` 1. After authentication, a Core with a known product version
 appends one optional `coreBuildInfo` utf8 capability after all existing
@@ -2315,7 +2348,8 @@ peer that declared `txInhibitReason` (section 6.1); `paTransmitBandVersion` only
 peer that declared `paTransmitBand`; `radeReasonVersion` only for a peer
 that declared `radeReason`; `stationCatVersion` only for a peer that
 declared `stationCat` on a Core that runs CAT; `radioSpeakerVersion` only for a peer that
-declared `radioSpeaker`. A client ignores a capability it does not know
+declared `radioSpeaker`; `coreSpeakerVersion` only for a peer that declared
+`coreSpeaker` on a Core with its own speaker. A client ignores a capability it does not know
 (`StationCapabilities::fromUpdates`).
 
 **Each device's share of the display budget** (iPhone app plan Task 76; the
@@ -2513,7 +2547,8 @@ older window sees only the values it was built for.
 | 108 | `radeReasonVersion` | `i64` |
 | 109 | `stationCatVersion` | `i64` |
 | 110 | `radioSpeakerVersion` | `i64` |
-| 111 | `coreBuildInfo` | `utf8` |
+| 111 | `coreSpeakerVersion` | `i64` |
+| 112 | `coreBuildInfo` | `utf8` |
 
 <!-- /surface -->
 
@@ -2735,7 +2770,7 @@ An enum property lists the values its domain allows.
 | 8 | `hardwarePeakOverride` | `f64` | bidirectional |  |
 | 9 | `lastLoadError` | `utf8` | outbound |  |
 
-**RadioModel** (43 properties)
+**RadioModel** (49 properties)
 
 | Ordinal | Property | Wire kind | Direction | Enum values |
 | --- | --- | --- | --- | --- |
@@ -2782,6 +2817,12 @@ An enum property lists the values its domain allows.
 | 40 | `speakerAmplifierMode` | `i64` | bidirectional |  |
 | 41 | `radioSpeakerAvailability` | `i64` | outbound |  |
 | 42 | `speakerAmplifierAvailable` | `bool` | outbound |  |
+| 43 | `coreSpeakerVolume` | `i64` | bidirectional |  |
+| 44 | `coreSpeakerMuted` | `bool` | bidirectional |  |
+| 45 | `coreSpeakerDevice` | `utf8` | bidirectional |  |
+| 46 | `coreSpeakerDevices` | `utf8` | outbound |  |
+| 47 | `coreSpeakerState` | `utf8` | outbound |  |
+| 48 | `coreSpeakerDetails` | `utf8` | bidirectional |  |
 
 **RfKitModel** (30 properties)
 
@@ -3279,7 +3320,7 @@ An enum property lists the values its domain allows.
 | 87 | `txEqCurve` | `utf8` | outbound |  |
 | 88 | `cfcProfile` | `utf8` | outbound |  |
 
-**TransmitState** (44 properties)
+**TransmitState** (50 properties)
 
 | Ordinal | Property | Wire kind | Direction | Enum values |
 | --- | --- | --- | --- | --- |
@@ -3327,6 +3368,12 @@ An enum property lists the values its domain allows.
 | 41 | `cfcGainDb` | `f64` | outbound |  |
 | 42 | `alcGainDb` | `f64` | outbound |  |
 | 43 | `alcGroupDb` | `f64` | outbound |  |
+| 44 | `micPeakDb` | `f64` | outbound |  |
+| 45 | `alcPeakDb` | `f64` | outbound |  |
+| 46 | `compressionPeakDb` | `f64` | outbound |  |
+| 47 | `eqPeakDb` | `f64` | outbound |  |
+| 48 | `levelerPeakDb` | `f64` | outbound |  |
+| 49 | `cfcPeakDb` | `f64` | outbound |  |
 
 **TunerModel** (21 properties)
 
@@ -3663,6 +3710,8 @@ Notes on the keys:
   At `txReadingsVersion` 3, `eqDb`, `levelerDb`, `levelerGainDb`, `cfcDb`,
   `cfcGainDb`, `alcGainDb` and `alcGroupDb` (f64) follow
   `reflectedAdcVolts`.
+  At `txReadingsVersion` 4, `micPeakDb`, `alcPeakDb`, `compressionPeakDb`,
+  `eqPeakDb`, `levelerPeakDb` and `cfcPeakDb` (f64) follow `alcGroupDb`.
 - **`vax`** (iPhone app plan Task 25, R-IOS-18; `StationVax`,
   `vaxVersion` 1): the VAX channels of the computer the Core runs on, as its
   VAX applet shows them (`VaxApplet.cpp`). Sent only at agreed minor 11 to a
@@ -4075,6 +4124,34 @@ Notes on the keys:
   write of either is refused. All five are sent only to a peer that
   declared `radioSpeaker` 1 (section 6.2), and declared after every other
   `radio` property so no earlier ordinal moves.
+- **The Core speaker (`radio`).** The Core's own sound card output, which
+  plays the Core's receive audio on the Core box. `coreSpeakerVolume` (int,
+  0 to 100; 50 when none was ever saved) and `coreSpeakerMuted` (bool),
+  bidirectional, are the Core's master level and mute; they act on the
+  Core's sound card alone, never on the audio the Core sends a window, the
+  phone, TCI or the radio. `coreSpeakerDevice` (utf8, bidirectional) is the
+  card chosen, as compact JSON `{"id":"Device,0","name":"USB Audio
+  Device"}`; `{"id":"","name":""}` is the Core's default card and
+  `{"id":"(none)","name":""}` no card. `coreSpeakerDetails` (utf8,
+  bidirectional) is `{"bufferFrames":128,"delayMs":0,"sampleRate":48000,
+  "negotiated":"...","delayNowMs":12.5}`: a write sets the buffer, the
+  delay setting (0 automatic) and the sample rate to a value Setup offers,
+  and a value it does not offer is left as it was; `negotiated` (the format
+  the card opened with) and `delayNowMs` (the delay now, -1 when silent)
+  are the Core's. `coreSpeakerDevices` (utf8, outbound only) lists the
+  Core's cards, `[{"id":"...","name":"...","state":"present"}]`, with
+  `state` one of `present`, `notConnected` (a chosen card that is gone) and
+  `inUse`. `coreSpeakerState` (utf8, outbound only) is
+  `{"state":"playing","playing":"...","chosen":"...","desktop":false}`, with
+  `state` one of `playing`, `notConnected`, `inUse`, `noCard` and
+  `waitingForPick` (a Core box that starts into a desktop and has no card
+  picked opens none until a window picks one; `desktop` says the box does).
+  Keys come in any order, and a value with a key missing or extra is
+  ignored. A write lands through the Core's own setters and is saved on the
+  Core (`audio/Master/` and `audio/Speakers/`); every other window and the
+  phone follow. A raw write of the two reports is refused. All six are sent
+  only to a peer that declared `coreSpeaker` 1 (section 6.2), and declared
+  after every other `radio` property so no earlier ordinal moves.
 
 #### The TX EQ curve (`txEqCurve`)
 
@@ -8498,6 +8575,7 @@ is refused as any outbound property's is.
 | `compressionDb` | The COMP reading (f64, dB; parity Task 33 follow-up, `txReadingsVersion` 1), as the Core's own Compression meters show it: Thetis's reading, the transmit channel's `TXA_COMP_AV` floored at -30 dB (console.cs:46979, dsp.cs:1013-1014 [v2.10.3.15]), so -30 with the speech processor off; -400, no reading, while the Core has no transmit channel. Read with the other meters |
 | `forwardRawPowerWatts`, `forwardAdcVolts`, `reflectedAdcVolts` | Core-scaled raw forward power (W) and forward/reverse ADC voltage (V), f64, `txReadingsVersion` 2. The Core calls the same `PaTelemetryScaling` functions as native PA Values with its current radio model, on the existing PA sample/meter cadence and radio change. All three are outbound only and reset with the session |
 | `eqDb`, `levelerDb`, `levelerGainDb`, `cfcDb`, `cfcGainDb`, `alcGainDb`, `alcGroupDb` | The seven stage readings a local window's container meters show (f64, dB; A9, `txReadingsVersion` 3), each Thetis's reading as its MOX branch works it from the transmit channel (console.cs:46971-46986 [v2.10.3.15]): EQ and Leveler `TXA_EQ_AV` and `TXA_LVLR_AV` floored at -30 dB, Leveler gain `TXA_LVLR_GAIN` negated and floored at 0, CFC `TXA_CFC_AV` floored at -30, CFC gain `TXA_CFC_GAIN` floored at 0, ALC gain `TXA_ALC_GAIN` plus 3 floored at -195, and ALC group `TXA_ALC_PK` floored at -30 plus `TXA_ALC_GAIN` plus 3 floored at 0. -400, no reading, while the Core has no transmit channel. Read and sent with the other meters, and reset with the session |
+| `micPeakDb`, `alcPeakDb`, `compressionPeakDb`, `eqPeakDb`, `levelerPeakDb`, `cfcPeakDb` | The six peak readings a local window's container meter bars show as their main value, beside the average (f64, dB; `txReadingsVersion` 4), each Thetis's reading as its MOX branch works it from the transmit channel (console.cs:46970-46983 [v2.10.3.15]): MIC peak and ALC peak `TXA_MIC_PK` and `TXA_ALC_PK` floored at -195 dB, and COMP, EQ, Leveler and CFC peak `TXA_COMP_PK`, `TXA_EQ_PK`, `TXA_LVLR_PK` and `TXA_CFC_PK` floored at -30. -400, no reading, while the Core has no transmit channel. Read and sent with the other meters, and reset with the session |
 
 The AM Mod Monitor's readings (peaks, holds, carrier, lamps and envelope
 trace) are not `txState` properties: they travel as the `txAmModulation`
@@ -8525,7 +8603,11 @@ meters and the Phone/CW compression gauge read). On a Core below
 `txReadingsVersion` 1 Compression shows no reading with "This Core does not
 send this reading. Updating the Core may help." Each container meter bound
 to a reading `txState` does not carry (EQ, Leveler, Leveler Gain, CFC, CFC
-Gain, ALC Gain, ALC Group) shows no reading with its reason, never 0.
+Gain, ALC Gain, ALC Group below `txReadingsVersion` 3; MIC, ALC, COMP, EQ,
+Leveler and CFC peak below 4) shows no reading with its reason, never 0.
+From 4 a bar's peak reads `micPeakDb`, `alcPeakDb`, `compressionPeakDb`,
+`eqPeakDb`, `levelerPeakDb` or `cfcPeakDb`, as a local window's reads its
+own transmit channel's.
 
 **PA Values in a remote window** reads `forwardPowerWatts`,
 `reflectedPowerWatts` and `swr` for its power rows and `forwardAdcRaw`

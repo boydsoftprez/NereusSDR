@@ -11,11 +11,16 @@
 #include <mutex>
 #include <vector>
 
+// Modification history (NereusSDR):
+//   2026-10-09: R-R3-21: dry events say whether the writer was running
+//               when the device ran out. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
+//
 // R-R3-23: the bus plays in the format it was opened with (48 kHz stereo
 // float when never opened): its queue, clock, capacity and `heard` count
-// frames of that rate and channel count. Its capacity is the ring a
-// PortAudio output stream of that format has (PortAudioBus::
-// outputRingSamples): 4800 frames at 48 kHz stereo.
+// frames of that rate and channel count. Its capacity is 100 ms of that
+// format, never less than 4800 frames of 48 kHz stereo: the ring a
+// PortAudio output stream had before its clock matcher (R-AUD-15).
 class PacedAudioBus final : public NereusSDR::IAudioBus {
 public:
     bool open(const NereusSDR::AudioFormat& f) override { format = f; active = true; return true; }
@@ -34,9 +39,17 @@ public:
             // the past.
             const qint64 dry = takenFramesLocked() - playedFrames - qint64(queue.size()) / channels;
             if (dry > 0) {
+                const qint64 heardAt = playedFrames + qint64(queue.size()) / channels;
                 queue.insert(queue.end(), std::size_t(dry * channels), 0.0f);
                 playedDryFrames += dry;
-                dryEvents.push_back({dueFramesLocked(), dry});
+                // R-R3-21: the writer's look at the queue just before this
+                // push, and the one before that (see DryEvent).
+                DryEvent e{dueFramesLocked(), dry};
+                e.heardFrame = heardAt;
+                e.wokeAfterDry = lastLook.dry && lastLiveLook.ns >= 0;
+                e.queuedBeforeStall = lastLiveLook.ns >= 0 ? lastLiveLook.queued : -1;
+                e.stallNs = e.wokeAfterDry ? firstDryLookNs - lastLiveLook.ns : -1;
+                dryEvents.push_back(e);
             }
         }
         if (playedDryFramesAtFirstPush < 0) {
@@ -45,6 +58,7 @@ public:
         }
         queue.insert(queue.end(), samples, samples + count);
         peakQueued.store(std::max(peakQueued.load(), int(queue.size()) / channels));
+        noteLookLocked();
         return bytes;
     }
     qint64 pull(char*, qint64) override { return 0; }
@@ -59,6 +73,7 @@ public:
             pacingGateChanged.wait(lock, [this] { return releaseOutputPacingGate; });
         }
         if (!outputPacingAvailable) { return std::nullopt; }
+        noteLookLocked();
         const int ahead = playedAheadFramesLocked();
         return OutputPacing{consumed + quint64(ahead),
                             std::max(0, int(queue.size()) / channelsLocked() - ahead),
@@ -96,7 +111,24 @@ public:
     }
     // Each push that found the device had run dry: the play-clock frame of
     // that push and the frames it had played silent. For failure messages.
-    struct DryEvent { qint64 atFrame; qint64 frames; };
+    // R-R3-21: and what the writer did around it, from its looks at the
+    // bus (each outputPacing() read and each push, on the play clock).
+    // queuedBeforeStall: the frames queued (not yet taken) at the writer's
+    // last look while the device still had audio. wokeAfterDry: its next
+    // look (and every one since) found the device already run out, so the
+    // silence started while the writer was not looking at all; stallNs:
+    // the time between those two looks. A writer
+    // that left its full target queued and then woke only after the
+    // device had run dry was not scheduled; one that was awake while the
+    // queue ran down, or left less than its target, ran dry itself.
+    struct DryEvent {
+        qint64 atFrame;
+        qint64 frames;
+        qint64 heardFrame = -1;   // where the silence starts in `heard`
+        bool wokeAfterDry = false;
+        int queuedBeforeStall = -1;
+        qint64 stallNs = -1;
+    };
     std::vector<DryEvent> dryEventsForTesting() const
     {
         std::lock_guard<std::mutex> lock(mutex);
@@ -198,6 +230,23 @@ private:
     qint64 playedDryFramesAtFirstPush = -1;
     qint64 firstPushDueFrame = -1;
     std::vector<DryEvent> dryEvents;
+    // R-R3-21: the writer's looks at the bus (see DryEvent): the last,
+    // the last while the device still had audio, and the first after that.
+    struct Look { qint64 ns = -1; int queued = 0; bool dry = false; };
+    mutable Look lastLook;
+    mutable Look lastLiveLook;
+    mutable qint64 firstDryLookNs = -1;
+    void noteLookLocked() const
+    {
+        if (!playClock) { return; }
+        const int channels = channelsLocked();
+        const qint64 unplayed = playedFrames + qint64(queue.size()) / channels;
+        const qint64 taken = takenFramesLocked();
+        const Look look{playClock(), int(std::max<qint64>(0, unplayed - taken)), taken > unplayed};
+        if (look.dry && !lastLook.dry) { firstDryLookNs = look.ns; }
+        if (!look.dry) { lastLiveLook = look; }
+        lastLook = look;
+    }
     qint64 dueFramesLocked() const
     {
         return playClock ? (playClock() - playOriginNs) * qint64(format.sampleRate)

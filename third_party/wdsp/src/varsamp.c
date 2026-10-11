@@ -24,6 +24,16 @@ warren@wpratt.com
 
 */
 
+// NereusSDR modifications (2026-10-09, J.J. Boyd KG4VCF, with Anthropic Claude
+// Code; against the pinned TAPR WDSP 2.10 tree at b02d5bac, whose varsamp.c and
+// varsamp.h match Thetis v2.10.3.15): varsamp keeps a second, phase-major copy
+// of its coefficients (ht) beside h, and hshift reads its taps from that copy.
+// Upstream reads rsize taps R doubles apart (8 KB at R = 1024) for every output
+// sample; with 4 KB pages that touches a different page for each tap, which made
+// a 48 kHz rmatch stream cost about ten times the processor time on aarch64
+// Linux it costs on macOS. The values read and the arithmetic are unchanged, so
+// the output is bit-identical (R-AUD-15).
+
 #include "comm.h"
 
 void calc_varsamp (VARSAMP a)
@@ -66,11 +76,21 @@ void calc_varsamp (VARSAMP a)
 	a->idx_in = a->rsize - 1;
 	a->h_offset = 0.0;
 	a->hs = (double *)malloc0 (a->rsize * sizeof (double));
+	// NereusSDR: hshift's taps for phase p are h[p], h[p + R], ... h[p + (rsize - 1) * R];
+	// keep them side by side. p runs to R: hshift reads row hidx + 1, and hidx <= R - 1.
+	{
+		int p, m;
+		a->ht = (double *)malloc0 ((size_t)(a->R + 1) * a->rsize * sizeof (double));
+		for (p = 0; p <= a->R; p++)
+			for (m = 0; m < a->rsize; m++)
+				a->ht[p * a->rsize + m] = a->h[p + m * a->R];
+	}
 	a->isamps = 0.0;
 }
 
 void decalc_varsamp (VARSAMP a)
 {
+	_aligned_free (a->ht);
 	_aligned_free (a->hs);
 	_aligned_free (a->ring);
 	_aligned_free (a->h);
@@ -119,8 +139,19 @@ void hshift (VARSAMP a)
 	pos = (double)a->R * a->h_offset;
 	hidx = (int)(pos);
 	frac = pos - (double)hidx;
-	for (i = a->rsize - 1, j = hidx, k = hidx + 1; i >= 0; i--, j += a->R, k += a->R)
-		a->hs[i] = a->h[j] + frac * (a->h[k] - a->h[j]);
+	// NereusSDR: the same taps as upstream's loop below, read from ht's rows hidx and
+	// hidx + 1 (h[j] is ht[hidx * rsize + m], h[k] is ht[(hidx + 1) * rsize + m]).
+	// for (i = a->rsize - 1, j = hidx, k = hidx + 1; i >= 0; i--, j += a->R, k += a->R)
+	// 	a->hs[i] = a->h[j] + frac * (a->h[k] - a->h[j]);
+	const double* hj = a->ht + hidx * a->rsize;
+	const double* hk = hj + a->rsize;
+	(void)j;
+	(void)k;
+	for (i = a->rsize - 1; i >= 0; i--)
+	{
+		const int m = a->rsize - 1 - i;
+		a->hs[i] = hj[m] + frac * (hk[m] - hj[m]);
+	}
 }
 
 int xvarsamp (VARSAMP a, double var)

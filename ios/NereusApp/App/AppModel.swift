@@ -83,6 +83,9 @@ final class AppModel: ObservableObject {
     /// The speaker at the radio, as the Sound panel shows it: one level and
     /// mute the Core keeps for every window and phone (R-SPK-20).
     lazy var radioSpeaker = RadioSpeakerModel(mirror: mirror)
+    /// The speaker at the Core, as the Sound panel shows it: its level and
+    /// mute, kept by the Core for every window and phone (R-AUD-29).
+    lazy var coreSpeaker = CoreSpeakerModel(mirror: mirror)
     /// The Setup pages the Core describes (R-IOS-18), for as long as it
     /// sends them in the current session.
     let setupFeed: SetupDescriptionFeed

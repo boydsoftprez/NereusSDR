@@ -26,9 +26,10 @@ monolithic `wdsp.h` is not used as the application ABI. The obsolete local
 `FDnoiseIQ.c/.h` and `fastmath.h` were removed.
 
 Across the 169 current `.c` and `.h` files, 156 names come from the pinned
-tree and 13 are retained or new Nereus files. Of the pinned names, 121 remain
-byte-identical and 35 contain the reviewed integrations below (counted
-against the pinned tree on 2026-10-01). These counts
+tree and 13 are retained or new Nereus files. Of the pinned names, 119 remain
+byte-identical and 37 contain the reviewed integrations below (counted
+against the pinned tree on 2026-10-01, then `varsamp.c` and
+`varsamp.h` on 2026-10-09). These counts
 describe source identity, not authorship: modified files retain their upstream
 notices and remain derived from WDSP.
 
@@ -68,6 +69,7 @@ upstream attribution.
 | Exchange order | `iobuffs.c` | `dexchange` copies the worker's input chunk out of `r1` before it releases `Sem_OutReady`, not after (2026-10-01). Upstream, and Thetis's `wdsp/iobuffs.c`, release first: a worker preempted between the release and the copy let `fexchange0`'s caller run a chunk ahead, and its next input copy overwrote the head of the chunk the worker had not read (a phase jump and a spike; on TX the Leveler and ALC then duck). `dexchange` serves every channel, RX and TX. Every upstream line is kept verbatim; only their order changed. `fexchange0` and `fexchange2` take `Sem_OutReady` only after writing their own input, and `dexchange` is the only place that releases it, so no other exchange path has the same order. `dexchange` also calls `dsplock.c`'s test-only `WdspTestExchangeHook` after the release (off by default: one pointer test). No DSP algorithm, constant or default changes. |
 | NNR runtime limit | `nnr.c`, `nnr_compat.h` | `RequestRXANNRLimit` stores a limit request (0 none, 1 standard model only, 2 off) with `InterlockedExchange` and never takes `csDSP`. `xnnr` reads it with one atomic load per call and, when it differs from the applied limit, the worker applies it under the `csDSP` it already holds, using the steps the locked setters use (`setModel_nnr`, `flush_nnr`, `RXAbp1Check`/`RXAbp1Set`). `SetRXANNRRun`, `ConfigureRXANNR` and `SetRXANNRModel` apply a pending request first. The request's two stores are separate, so a request the worker sees before its owner channel stays pending until the owner is visible; the bandpass update is never skipped. `SetRXANNRModel` records the caller's model as the requested model and runs the model the limit allows, as `ConfigureRXANNR` does. The caller's accepted model and run request are kept (`requested_model`, `requested_run`) and return when the limit is cleared; `NNRRuntimeStatus` reports the accepted model, the model running (`active_model_slot`), the applied `limit` and `requested_run`. Runtime limit only; no DSP algorithm, constant or default changes (R-R3-40). |
 | TX EQ Q compatibility | `eq.c` | `SetTXAEQProfile(channel, nfreqs, F, G, Q)` takes Q as Thetis's does (`dsp.cs:788`, `wdsp/eq.c:780` at Thetis v2.10.3.15, commit `3759d096`). A non-null Q is kept on the TX EQ's impulse builder, and every rebuild of that EQ (ctfmode, window, size, rate; the ctfmode and window setters rebuild a Q profile of any size, as Thetis's always rebuild) runs Thetis's "parametric eq with Q factor" branch and its ctfmode 0 rolloff, ported verbatim with its defines (`eq_impulse_q`; Richard Samphire MW0LGE, whose notices and dual-licensing statement are retained in the file header). A null Q and the graphic EQ setters (which clear Q, as Thetis's do) keep the WDSP 2.10 path unchanged, pinned by `tst_wdsp_txa_eq_q` against impulses captured before the change. Thetis's impulse cache is not ported. RX profiles are unchanged (R-R3-49). |
+| Resampler coefficient layout | `varsamp.c/.h` | `calc_varsamp` also keeps a phase-major copy of the coefficients (`ht`, (R + 1) rows of `rsize` taps, `ht[p * rsize + m] = h[p + m * R]`), freed in `decalc_varsamp`, and `hshift` reads its two rows instead of striding through `h` R doubles (8 KB at rmatch's R = 1024) per tap. Upstream's loop, identical in Thetis v2.10.3.15, touches a different 4 KB page for each of its 140 taps on every output sample: a 48 kHz `rmatch` stream took about 0.3 s of processor time per second of audio on aarch64 Linux (Docker on Apple silicon) against 0.03 s on macOS. The same values are read and combined in the same order, so the output is bit-identical (an FNV-1a hash of ten minutes of `rmatch` output, both clock directions, was the same before the change on macOS and after it on macOS and on Linux); upstream's loop is kept as a comment. No DSP algorithm, constant or default changes (R-AUD-15). |
 | Filter-resize ownership | `emph.c`, `fmd.c` | Retain the replacement filter-curve object returned after freeing the old one. Pinned `b02d5bac` discarded that return value in both coefficient-count setters, causing a use-after-free on live RX/TX filter resize. |
 
 `linux_port.c/.h` remains the existing Warren Pratt NR0V and John Melton
@@ -352,8 +354,8 @@ source descriptions above retain the detailed lineage and license context.
 | `third_party/wdsp/src/txgain_stub.c` | Nereus-original fixed-I/Q-gain glue; see the glue inventory above. | Retained or new local integration; original notices preserved. |
 | `third_party/wdsp/src/utilities.c` | TAPR WDSP 2.10 @b02d5bac, Source/utilities.c | Pinned file, byte-identical. |
 | `third_party/wdsp/src/utilities.h` | TAPR WDSP 2.10 @b02d5bac, Source/utilities.h | Pinned file, byte-identical. |
-| `third_party/wdsp/src/varsamp.c` | TAPR WDSP 2.10 @b02d5bac, Source/varsamp.c | Pinned file, byte-identical. |
-| `third_party/wdsp/src/varsamp.h` | TAPR WDSP 2.10 @b02d5bac, Source/varsamp.h | Pinned file, byte-identical. |
+| `third_party/wdsp/src/varsamp.c` | TAPR WDSP 2.10 @b02d5bac, Source/varsamp.c | Pinned file with reviewed downstream changes; see the integration inventory above. |
+| `third_party/wdsp/src/varsamp.h` | TAPR WDSP 2.10 @b02d5bac, Source/varsamp.h | Pinned file with reviewed downstream changes; see the integration inventory above. |
 | `third_party/wdsp/src/version.c` | TAPR WDSP 2.10 @b02d5bac, Source/version.c | Pinned file, byte-identical. |
 | `third_party/wdsp/src/version.h` | TAPR WDSP 2.10 @b02d5bac, Source/version.h | Pinned file, byte-identical. |
 | `third_party/wdsp/src/wbfm.c` | TAPR WDSP 2.10 @b02d5bac, Source/wbfm.c | Pinned file with reviewed downstream changes; see the integration inventory above. |

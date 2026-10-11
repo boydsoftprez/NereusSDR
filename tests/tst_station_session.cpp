@@ -1390,7 +1390,9 @@ void TstStationSession::featureGatesNameRealProperties()
 // window declares only radeStatus, txInhibitReason, alexLpf,
 // paTransmitBand and levelCalibration of them, so its schema comparison must not count the other
 // absences as skew: after the whole snapshot it logs no schema skew and both
-// skew sets are empty.
+// skew sets are empty. It also declares coreSpeaker, which only a Core with
+// its own speaker answers; this desktop host leaves those properties out,
+// and that is not skew either.
 void TstStationSession::remoteWindowSeesNoSchemaSkewFromTheCurrentCore()
 {
     QTemporaryDir settingsDir;

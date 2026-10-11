@@ -7,6 +7,7 @@
 #include <QRegularExpression>
 #include <QSet>
 #include <QStringList>
+#include "IAudioDeviceCatalog.h"
 #include "PortAudioBus.h"
 
 using namespace NereusSDR;
@@ -111,6 +112,79 @@ QVector<DetectedCable> VirtualCableDetector::scan() {
     return out;
 }
 
+QList<DetectedCable> VirtualCableDetector::detect(const QList<AudioDeviceInfo>& devices)
+{
+    QList<DetectedCable> out;
+    for (const AudioDeviceInfo& dev : devices) {
+        const VirtualCableProduct p = matchProduct(dev.name);
+        if (p == VirtualCableProduct::None) {
+            continue;
+        }
+        DetectedCable cable{p, dev.name, dev.direction == AudioDeviceDirection::Input, 0};
+        cable.deviceId = dev.id;
+        cable.backend = dev.backend;
+        cable.hostApi = dev.hostApi;
+        out.push_back(cable);
+    }
+    return out;
+}
+
+QList<AudioDeviceInfo> VirtualCableDetector::cableSourceDevices(const IAudioDeviceCatalog& catalogue)
+{
+    // Native backends first, PortAudio last, so a name both list keeps the
+    // native entry (settled call: one row per cable end).
+    QList<AudioBackendId> order;
+    for (AudioBackendId id : catalogue.backends()) {
+        if (id == AudioBackendId::Asio || id == AudioBackendId::PortAudio) {
+            continue;
+        }
+        order.push_back(id);
+    }
+    if (catalogue.backends().contains(AudioBackendId::PortAudio)) {
+        order.push_back(AudioBackendId::PortAudio);
+    }
+    QList<AudioDeviceInfo> out;
+    QSet<QString> seen;
+    for (AudioBackendId id : order) {
+        if (!catalogue.backendRunning(id)) {
+            continue;
+        }
+        for (AudioDeviceDirection dir : {AudioDeviceDirection::Output, AudioDeviceDirection::Input}) {
+            for (const AudioDeviceInfo& dev : catalogue.devices(id, dir)) {
+                if (dev.state == AudioDeviceState::NotConnected) {
+                    continue;   // a gone cable is not offered as found
+                }
+                const QString key = QString::number(static_cast<int>(dir)) + QLatin1Char('|') + dev.name;
+                if (seen.contains(key)) {
+                    continue;
+                }
+                seen.insert(key);
+                out.push_back(dev);
+            }
+        }
+    }
+    return out;
+}
+
+QList<DetectedCable> VirtualCableDetector::detect(const IAudioDeviceCatalog& catalogue)
+{
+    return detect(cableSourceDevices(catalogue));
+}
+
+AudioEngineKind VirtualCableDetector::engineFor(const DetectedCable& cable)
+{
+    switch (cable.backend) {
+    case AudioBackendId::PortAudio: return AudioEngineKind::PortAudio;
+    case AudioBackendId::CoreAudio: return AudioEngineKind::CoreAudio;
+    case AudioBackendId::Wasapi: return AudioEngineKind::WindowsShared;
+    case AudioBackendId::Asio: return AudioEngineKind::Asio;
+    case AudioBackendId::PipeWire: return AudioEngineKind::PipeWire;
+    case AudioBackendId::PulseAudio: return AudioEngineKind::PulseAudio;
+    case AudioBackendId::AlsaDirect: return AudioEngineKind::AlsaDirect;
+    }
+    return AudioEngineKind::PortAudio;
+}
+
 QVector<DetectedCable> VirtualCableDetector::filterThirdParty(
     const QVector<DetectedCable>& all)
 {
@@ -167,4 +241,21 @@ QVector<DetectedCable> VirtualCableDetector::diffNewCables(
         }
     }
     return fresh;
+}
+
+QString VirtualCableDetector::fingerprintSource(bool fromCatalogue)
+{
+    return fromCatalogue ? QStringLiteral("Catalogue") : QStringLiteral("PortAudio");
+}
+
+QVector<DetectedCable> VirtualCableDetector::newCablesSince(const QVector<DetectedCable>& current,
+                                                            const QString& lastCsv,
+                                                            const QString& lastSource,
+                                                            const QString& source)
+{
+    const QString last = lastSource.isEmpty() ? fingerprintSource(false) : lastSource;
+    if (last != source) {
+        return {};
+    }
+    return diffNewCables(current, lastCsv);
 }

@@ -105,6 +105,11 @@
 //                 group meters read the Core's stage readings
 //                 (txReadingsVersion 3); below it they name the reason.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - A remote window's MIC, ALC, COMP, EQ, Leveler and CFC peak
+//                 meters read the Core's peak readings (txReadingsVersion
+//                 4), so a bar shows the same peak a local window's does;
+//                 below it they name the reason. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -371,6 +376,18 @@ bool MeterPoller::remoteTxStageReadingsAvailable() const
     return m_remoteTxStageReadingsAvailable && m_remoteTxStageReadingsAvailable();
 }
 
+void MeterPoller::setRemoteTxPeakReadingsAvailable(std::function<bool()> available)
+{
+    for (int binding : remoteTxPeakBindingsNotSent()) { publishGlobalReading(binding, kNoMeterReadingDbm); }
+    m_remoteTxPeakReadingsAvailable = std::move(available);
+    refreshRemoteTxAvailability(/*force=*/true);
+}
+
+bool MeterPoller::remoteTxPeakReadingsAvailable() const
+{
+    return m_remoteTxPeakReadingsAvailable && m_remoteTxPeakReadingsAvailable();
+}
+
 QString MeterPoller::remoteTransmitUnavailableText() const
 {
     return m_remoteTransmitUnavailable ? m_remoteTransmitUnavailable() : QString();
@@ -384,14 +401,17 @@ void MeterPoller::refreshRemoteTxAvailability(bool force)
     const QString unavailable = remoteTransmitUnavailableText();
     const bool readings = remoteTxReadingsAvailable();
     const bool stages = remoteTxStageReadingsAvailable();
+    const bool peaks = remoteTxPeakReadingsAvailable();
     if (!force && m_remoteTxAvailabilityShown && unavailable == m_remoteTxUnavailableShown
-        && readings == m_remoteTxReadingsShown && stages == m_remoteTxStageReadingsShown) {
+        && readings == m_remoteTxReadingsShown && stages == m_remoteTxStageReadingsShown
+        && peaks == m_remoteTxPeakReadingsShown) {
         return;
     }
     m_remoteTxAvailabilityShown = true;
     m_remoteTxUnavailableShown = unavailable;
     m_remoteTxReadingsShown = readings;
     m_remoteTxStageReadingsShown = stages;
+    m_remoteTxPeakReadingsShown = peaks;
     // Parity Task 33 follow-up: the COMP reading comes with the Core's
     // transmit readings (txReadingsVersion 1).
     const QString compReason = readings ? QString() : TransmitState::txReadingNotSentText();
@@ -399,7 +419,8 @@ void MeterPoller::refreshRemoteTxAvailability(bool force)
     for (int bindingId = MeterBinding::TxPower; bindingId <= MeterBinding::TxCfcPeak; ++bindingId) {
         QString reason = unavailable;
         if (reason.isEmpty() && !stages && notSent.contains(bindingId)) { reason = remoteTxMeterNotSentText(); }
-        if (reason.isEmpty() && remoteTxPeakBindingsNotSent().contains(bindingId)) { reason = remoteTxMeterNotSentText(); }
+        // Only a Core below txReadingsVersion 4 leaves the six peaks out.
+        if (reason.isEmpty() && !peaks && remoteTxPeakBindingsNotSent().contains(bindingId)) { reason = remoteTxMeterNotSentText(); }
         if (reason.isEmpty() && bindingId == MeterBinding::TxComp) { reason = compReason; }
         publishAvailability(bindingId, reason);
         if (!reason.isEmpty()) { publishGlobalReading(bindingId, kNoMeterReadingDbm); }
@@ -452,6 +473,18 @@ void MeterPoller::pollRemoteTxMeters()
         handOutTxReading(MeterBinding::TxCfcGain, state->cfcGainDb());
         handOutTxReading(MeterBinding::TxAlcGain, state->alcGainDb());
         handOutTxReading(MeterBinding::TxAlcGroup, state->alcGroupDb());
+    }
+    // The six peak readings, from a Core that sends them (txReadingsVersion
+    // 4), already worked as the local poll works its own transmit
+    // channel's (thetisTxReading, kTxReadings), so a bar's main value is
+    // the peak here as it is in a local window.
+    if (remoteTxPeakReadingsAvailable()) {
+        handOutTxReading(MeterBinding::TxMicPeak, state->micPeakDb());
+        handOutTxReading(MeterBinding::TxAlcPeak, state->alcPeakDb());
+        handOutTxReading(MeterBinding::TxCompPeak, state->compressionPeakDb());
+        handOutTxReading(MeterBinding::TxEqPeak, state->eqPeakDb());
+        handOutTxReading(MeterBinding::TxLevelerPeak, state->levelerPeakDb());
+        handOutTxReading(MeterBinding::TxCfcPeak, state->cfcPeakDb());
     }
 }
 

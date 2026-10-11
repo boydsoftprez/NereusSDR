@@ -1,6 +1,15 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-09: Core speaker: radio's coreSpeakerVolume, coreSpeakerMuted,
+//               coreSpeakerDevice, coreSpeakerDevices, coreSpeakerState and
+//               coreSpeakerDetails go only to a peer that declared
+//               coreSpeaker 1, on a Core that has its own speaker
+//               (RadioModel::coreSpeakerHost); that peer alone is sent
+//               coreSpeakerVersion 1 (before coreBuildInfo), and a write of
+//               one from any other peer is refused (native audio plan Task
+//               21, R-AUD-25, R-AUD-28). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-06: Setup description version 25 (Audio > Outputs' radio
 //               speaker rows, TX Input titled Microphone) is the cap
 //               (R-SPK-23). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -991,6 +1000,8 @@
 //   2026-10-08: Final review I3: refreshRotorPorts admitted with the other
 //               rotor verbs. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-10: txReadingsVersion 4: the six transmit peak readings. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationServer.h"
@@ -1578,6 +1589,15 @@ constexpr PeerOnlyProperty kPeerOnlyProperties[] = {
     {"RadioModel", "radio", false, "speakerAmplifierMode", "radioSpeaker"},
     {"RadioModel", "radio", false, "radioSpeakerAvailability", "radioSpeaker"},
     {"RadioModel", "radio", false, "speakerAmplifierAvailable", "radioSpeaker"},
+    // The Core's own speaker: level, mute, device, card list, state and
+    // details (coreSpeakerVersion 1, native audio plan Task 21), only from
+    // a Core that has one (StationServer::peerGetsCoreSpeaker).
+    {"RadioModel", "radio", false, "coreSpeakerVolume", "coreSpeaker"},
+    {"RadioModel", "radio", false, "coreSpeakerMuted", "coreSpeaker"},
+    {"RadioModel", "radio", false, "coreSpeakerDevice", "coreSpeaker"},
+    {"RadioModel", "radio", false, "coreSpeakerDevices", "coreSpeaker"},
+    {"RadioModel", "radio", false, "coreSpeakerState", "coreSpeaker"},
+    {"RadioModel", "radio", false, "coreSpeakerDetails", "coreSpeaker"},
     // The CFC dialog's band editor (transmitSettingsVersion 15).
     {"TransmitModel", "transmit", false, "cfcProfile", "cfcProfile"},
 };
@@ -1766,6 +1786,18 @@ constexpr const char* kOutboundWriteReason =
 // is never sent them, so only a misbehaving one gets here.
 constexpr const char* kRadioSpeakerWriteReason =
     "Update this app to change the radio speaker on this Core.";
+
+// Core speaker (native audio plan Task 21): why a write of radio's Core
+// speaker properties is refused from a peer that is not sent them.
+constexpr const char* kCoreSpeakerWriteReason =
+    "Update this app to change the Core speaker on this Core.";
+
+bool isCoreSpeakerProperty(const QByteArray& name)
+{
+    return name == "coreSpeakerVolume" || name == "coreSpeakerMuted"
+        || name == "coreSpeakerDevice" || name == "coreSpeakerDevices"
+        || name == "coreSpeakerState" || name == "coreSpeakerDetails";
+}
 
 bool isRadioSpeakerProperty(const QByteArray& name)
 {
@@ -8062,6 +8094,10 @@ QList<SessionPropertyResult> StationServer::applyPropertyWrite(
             refusals.insert(update.name, QString::fromLatin1(kRadioSpeakerWriteReason));
             continue;
         }
+        if (radioWrite && isCoreSpeakerProperty(update.name) && !peerGetsCoreSpeaker(transport)) {
+            refusals.insert(update.name, QString::fromLatin1(kCoreSpeakerWriteReason));
+            continue;
+        }
         if (!negotiated && (message.objectKey == "pureSignalSettings"
             || update.name.startsWith("nnr")
             || (update.name == "activeNr" && update.value.toInt() == static_cast<int>(NrSlot::NNR)))) {
@@ -9712,6 +9748,14 @@ bool StationServer::peerGetsFeatureProperties(SessionTransport* transport,
         && peerDeclares(transport, feature, 1);
 }
 
+bool StationServer::peerGetsCoreSpeaker(SessionTransport* transport) const
+{
+    // A desktop that hosts a station plays through its own window's
+    // speakers; only a Core has a Core speaker (DaemonApp).
+    return peerGetsFeatureProperties(transport, QByteArrayLiteral("coreSpeaker"))
+        && m_radioModel->coreSpeakerHost();
+}
+
 bool StationServer::peerGetsCoreAddresses(SessionTransport* transport) const
 {
     return peerGetsFeatureProperties(transport, QByteArrayLiteral("coreAddresses"))
@@ -9739,9 +9783,11 @@ bool StationServer::fitPeerOnlyProperties(SessionTransport* transport,
         }
     }
     for (const PeerOnlyProperty& entry : kPeerOnlyProperties) {
+        const QByteArray feature(entry.feature);
         const bool peerGetsIt = entry.deviceKeyOnly
             ? peerGetsCoreAddresses(transport)
-            : peerGetsFeatureProperties(transport, QByteArray(entry.feature));
+            : feature == "coreSpeaker" ? peerGetsCoreSpeaker(transport)
+                                       : peerGetsFeatureProperties(transport, feature);
         if (!peerOnlyPropertyApplies(entry, message) || peerGetsIt) {
             continue;
         }
@@ -13296,6 +13342,12 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
             // properties (fitPeerOnlyProperties).
             caps.radioSpeakerVersion =
                 peerGetsFeatureProperties(transport, QByteArrayLiteral("radioSpeaker")) ? 1 : 0;
+            // Core speaker (native audio plan Task 21): radio's six Core
+            // speaker properties, for a peer that declared coreSpeaker 1 on a
+            // Core with its own speaker (after radioSpeakerVersion and before
+            // coreBuildInfo on the wire), the same test that sends it the
+            // properties (fitPeerOnlyProperties).
+            caps.coreSpeakerVersion = peerGetsCoreSpeaker(transport) ? 1 : 0;
             // R-IOS-13 / R-R3-49: the AM Mod Monitor's readings, appended
             // after remoteIqVersion by StationCapabilities::toUpdates().
             caps.txModMonitorVersion = txModMonitorVersion();
@@ -13844,11 +13896,13 @@ int StationServer::txReadingsVersion() const
     // stream, which a Core without record streams does not keep. Version 2
     // adds the Core-scaled PA values from that local radio's raw samples;
     // version 3 (A9) the seven stage readings the container meters show,
-    // read from that radio's transmit channel with the other meters.
+    // read from that radio's transmit channel with the other meters;
+    // version 4 the six peak readings those meters' bars show as their main
+    // value, read the same way.
     return !m_radioModel.isNull() && m_radioModel->role() != RadioModel::Role::Remote
             && m_recordStreams.find(QString::fromLatin1(TransmitState::kCfcStream))
             != m_recordStreams.end()
-        ? 3
+        ? 4
         : 0;
 }
 

@@ -18,6 +18,21 @@
 //   8. Auto-detect button widget is findable as a QPushButton child.
 //   9. AudioVaxPage constructs (no engine) without crashing.
 //  10. AudioVaxPage has four VaxChannelCard children with indices 1–4.
+//  11b. A cable picked by name drops the previous device's id and channel
+//      pair (R-AUD-04; native audio plan Task 16 fix round, 2026-10-09,
+//      J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code).
+//  14. Native audio plan Task 18 (R-AUD-03, R-AUD-06, R-AUD-10, R-AUD-11,
+//      D12, D13, V-UI-1), the Windows layout over an engine on fake Windows
+//      audio, ASIO and older-driver backends: a cable added or removed
+//      shows within 1 s; a chosen cable that goes stays as "(not
+//      connected)" with the R-AUD-10 sentence; the in-use sentence; the
+//      ASIO pairs under the one-driver rule, radio audio's pair greyed;
+//      the pair clash prompt; Rescan rescans the older drivers and offers
+//      what they found; the capture of Digital modes with a cable missing;
+//      a speakers change through the engine moves "(used by speakers)"
+//      with no list change.
+//      2026-10-09, J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//      Code.
 //
 // Notes:
 //   - Tests use the NEREUS_BUILD_TESTS seam setDetectedCablesForTest()
@@ -29,18 +44,297 @@
 
 #include <QtTest/QtTest>
 #include <QApplication>
+#include <QComboBox>
+#include <QDir>
 #include <QMenu>
+#include <QMessageBox>
+#include <QPushButton>
+#include <QScopeGuard>
 #include <QSignalSpy>
+#include <QStandardItemModel>
+#include <QStyleFactory>
 #include <QTimer>
 
 #include "core/AppSettings.h"
 #include "core/AudioDeviceConfig.h"
+#include "core/AudioEngine.h"
+#include "core/audio/CaptureProtocol.h"
+#include "core/audio/IAudioDeviceCatalog.h"
+#include "core/audio/PortAudioBackend.h"
 #include "core/audio/VirtualCableDetector.h"
+#include "gui/VaxFirstRunDialog.h"
+#include "gui/setup/AsioSwitchAllDialog.h"
+#include "gui/setup/AudioDigitalModesPage.h"
 #include "gui/setup/AudioVaxPage.h"
+#include "gui/styles/AppTheme.h"
+#include "models/RadioModel.h"
 #include "OperatorWording.h"
 #include "gui/RemoteAudioStatus.h"
 
+#include "fakes/FakeAudioEngineBackend.h"
+
+#include <functional>
+#include <memory>
+
 using namespace NereusSDR;
+
+namespace {
+
+const QString kCableA = QStringLiteral("CABLE-A Input (VB-Audio Virtual Cable)");
+const QString kCableB = QStringLiteral("CABLE-B Input (VB-Audio Virtual Cable)");
+const QString kCableC = QStringLiteral("CABLE-C Input (VB-Audio Virtual Cable)");
+const QString kCableD = QStringLiteral("CABLE-D Input (VB-Audio Virtual Cable)");
+const QString kFocusrite = QStringLiteral("Focusrite USB ASIO");
+const QString kMotu = QStringLiteral("MOTU M Series");
+const QString kOldBox = QStringLiteral("Old Box ASIO");
+
+AudioDeviceInfo device(AudioBackendId backend, AudioDeviceDirection direction, const QString& id,
+                       const QString& name, int channels = 2, const QString& hostApi = {})
+{
+    AudioDeviceInfo info;
+    info.backend = backend;
+    info.direction = direction;
+    info.id = id;
+    info.name = name;
+    info.channelCount = channels;
+    info.hostApi = hostApi;
+    return info;
+}
+
+AudioDeviceInfo cable(const QString& id, const QString& name)
+{
+    return device(AudioBackendId::Wasapi, AudioDeviceDirection::Output, id, name);
+}
+
+AsioDriverCaps asioCaps(const QString& name, int inputs, int outputs)
+{
+    AsioDriverCaps c;
+    c.name = name;
+    c.inputChannels = inputs;
+    c.outputChannels = outputs;
+    c.sampleType = AsioSampleType::Int32Lsb;
+    c.minBufferFrames = 64;
+    c.maxBufferFrames = 1024;
+    c.preferredBufferFrames = 256;
+    c.granularity = -1;
+    c.sampleRates = {44100.0, 48000.0, 96000.0};
+    c.currentRate = 48000.0;
+    return c;
+}
+
+void saveBinding(int channel, AudioEngineKind engine, const QString& id, const QString& name,
+                 int firstChannel, bool on)
+{
+    AppSettings& s = AppSettings::instance();
+    const QString prefix = QStringLiteral("audio/Vax%1").arg(channel);
+    s.setValue(prefix + QStringLiteral("/Engine"), audioEngineKey(engine));
+    s.setValue(prefix + QStringLiteral("/DeviceId"), id);
+    s.setValue(prefix + QStringLiteral("/DeviceName"), name);
+    s.setValue(prefix + QStringLiteral("/FirstChannel"), QString::number(firstChannel));
+    s.setValue(prefix + QStringLiteral("/Enabled"), on ? QStringLiteral("True")
+                                                       : QStringLiteral("False"));
+}
+
+void saveSpeakersOnAsio(const QString& driver, int firstChannel)
+{
+    AppSettings& s = AppSettings::instance();
+    s.setValue(QStringLiteral("audio/Speakers/Engine"), audioEngineKey(AudioEngineKind::Asio));
+    s.setValue(QStringLiteral("audio/Speakers/DeviceId"), driver);
+    s.setValue(QStringLiteral("audio/Speakers/DeviceName"), driver);
+    s.setValue(QStringLiteral("audio/Speakers/FirstChannel"), QString::number(firstChannel));
+}
+
+QString value(const QString& key)
+{
+    return AppSettings::instance().value(key).toString();
+}
+
+QStringList audioKeysAndValues()
+{
+    QStringList out;
+    AppSettings& s = AppSettings::instance();
+    for (const QString& k : s.allKeys()) {
+        if (k.startsWith(QStringLiteral("audio/"))) {
+            out << k + QLatin1Char('=') + s.value(k).toString();
+        }
+    }
+    out.sort();
+    return out;
+}
+
+QComboBox* picker(VaxChannelCard* card)
+{
+    return card != nullptr ? card->findChild<QComboBox*>(QStringLiteral("vaxDevicePicker")) : nullptr;
+}
+
+QStringList itemTexts(QComboBox* combo)
+{
+    QStringList out;
+    for (int i = 0; combo != nullptr && i < combo->count(); ++i) {
+        out << combo->itemText(i);
+    }
+    return out;
+}
+
+bool itemEnabled(QComboBox* combo, int index)
+{
+    auto* model = qobject_cast<QStandardItemModel*>(combo->model());
+    return model != nullptr && model->item(index) != nullptr && model->item(index)->isEnabled();
+}
+
+// Picks an item as a click in the list does.
+void pick(QComboBox* combo, const QString& text)
+{
+    const int i = combo->findText(text);
+    QVERIFY2(i >= 0, qPrintable(text));
+    combo->setCurrentIndex(i);
+    emit combo->activated(i);
+}
+
+QString pairText(const QString& driver, const QString& pair)
+{
+    return driver + QStringLiteral(" ") + QChar(0x00B7) + QStringLiteral(" ") + pair;
+}
+
+// The fake computer under the model's engine: Windows audio with desk
+// speakers and the cables given, the older drivers and, when asked, ASIO
+// with two interfaces and a driver of an unusable format.
+struct PageRig {
+    std::shared_ptr<FakeAudioEngineBackend> native =
+        std::make_shared<FakeAudioEngineBackend>(AudioBackendId::Wasapi);
+    std::shared_ptr<FakeAudioEngineBackend> asio;
+    std::shared_ptr<FakeAudioEngineBackend> older =
+        std::make_shared<FakeAudioEngineBackend>(AudioBackendId::PortAudio);
+
+    explicit PageRig(const QList<AudioDeviceInfo>& cables, bool withAsio = false)
+    {
+        QList<AudioDeviceInfo> devices{
+            device(AudioBackendId::Wasapi, AudioDeviceDirection::Output, QStringLiteral("spk-uid"),
+                   QStringLiteral("Desk speakers"))};
+        devices.append(cables);
+        native->setDevices(devices);
+        older->setTakesStereoMix(false);
+        if (withAsio) {
+            asio = std::make_shared<FakeAudioEngineBackend>(AudioBackendId::Asio);
+            asio->setOpensOneStreamAtATime(true);
+            asio->setDevices(
+                {device(AudioBackendId::Asio, AudioDeviceDirection::Output, kFocusrite, kFocusrite, 4),
+                 device(AudioBackendId::Asio, AudioDeviceDirection::Output, kMotu, kMotu, 2),
+                 device(AudioBackendId::Asio, AudioDeviceDirection::Output, kOldBox, kOldBox, 2)});
+        }
+    }
+
+    void start(RadioModel& model)
+    {
+        AudioEngine* engine = model.localAudioDevices();
+        CaptureSupervisor::Options options;
+        options.program = QDir::temp().absoluteFilePath(QStringLiteral("no-such-capture-helper"));
+        engine->setCaptureSupervisorOptionsForTest(options);
+        engine->setVaxOutputsAllowed(false);
+        std::vector<std::shared_ptr<IAudioEngineBackend>> backends{native};
+        if (asio) {
+            backends.push_back(asio);
+        }
+        backends.push_back(older);
+        engine->setAudioBackendsForTest(std::move(backends));
+        if (asio) {
+            engine->setAsioDriverCapsForTest(kFocusrite, asioCaps(kFocusrite, 0, 4));
+            engine->setAsioDriverCapsForTest(kMotu, asioCaps(kMotu, 0, 2));
+            AsioDriverCaps old = asioCaps(kOldBox, 0, 2);
+            old.sampleType = AsioSampleType::Unsupported;
+            engine->setAsioDriverCapsForTest(kOldBox, old);
+        }
+        // Never started: the catalogue lists before start() and nothing
+        // opens, so each channel's state is the test's to set.
+        QVERIFY(engine->catalogue() != nullptr);
+    }
+};
+
+// Answers the next modal dialog of type T: `seen` records it, then `press`
+// closes it.
+template <typename T>
+void answerNext(std::function<void(T*)> seen, std::function<void(T*)> press)
+{
+    auto poll = std::make_shared<std::function<void(int)>>();
+    *poll = [=](int tries) {
+        for (QWidget* top : QApplication::topLevelWidgets()) {
+            auto* dialog = qobject_cast<T*>(top);
+            if (dialog == nullptr || !dialog->isVisible()) {
+                continue;
+            }
+            seen(dialog);
+            press(dialog);
+            return;
+        }
+        if (tries < 300) {
+            QTimer::singleShot(10, qApp, [poll, tries]() { (*poll)(tries + 1); });
+        }
+    };
+    QTimer::singleShot(0, qApp, [poll]() { (*poll)(0); });
+}
+
+void answerMessageBox(QMessageBox::StandardButton button, QString* title, QString* text)
+{
+    answerNext<QMessageBox>(
+        [title, text](QMessageBox* box) {
+            *title = box->windowTitle();
+            *text = box->text();
+        },
+        [button](QMessageBox* box) {
+            if (QAbstractButton* b = box->button(button)) {
+                b->click();
+            } else {
+                box->reject();
+            }
+        });
+}
+
+void answerSwitchDialog(bool ok, QString* text, QStringList* moves)
+{
+    answerNext<AsioSwitchAllDialog>(
+        [text, moves](AsioSwitchAllDialog* dialog) {
+            if (auto* t = dialog->findChild<QLabel*>(QStringLiteral("asioSwitchAllText"))) {
+                *text = t->text();
+            }
+            for (QLabel* line : dialog->findChildren<QLabel*>(QStringLiteral("asioSwitchAllMove"))) {
+                *moves << line->text();
+            }
+        },
+        [ok](AsioSwitchAllDialog* dialog) {
+            auto* button = dialog->findChild<QPushButton*>(
+                ok ? QStringLiteral("asioSwitchAllOk") : QStringLiteral("asioSwitchAllCancel"));
+            if (button != nullptr) {
+                button->click();
+            } else {
+                dialog->reject();
+            }
+        });
+}
+
+void saveCapture(QWidget* w, const QString& stem)
+{
+    const QString dir = qEnvironmentVariable("NEREUS_AUDIO_SETUP_CAPTURE_DIR");
+    if (dir.isEmpty() || w == nullptr) {
+        return;
+    }
+    QDir().mkpath(dir);
+    QApplication::processEvents();
+    QApplication::processEvents();
+    const QPixmap shot = w->grab();
+    const int scale = qRound(shot.devicePixelRatio());
+    const QString path = QStringLiteral("%1/%2@%3x.png").arg(dir, stem).arg(scale);
+    QVERIFY2(shot.save(path), qPrintable(path));
+}
+
+QString vaxSentence(const QString& name, const QString& trouble, int channel)
+{
+    return QStringLiteral("%1 %2. VAX %3 stays silent until it comes back; NereusSDR never "
+                          "sends it anywhere else.")
+        .arg(name, trouble)
+        .arg(channel);
+}
+
+} // namespace
 
 class TstAudioVaxPageAutoDetect : public QObject {
     Q_OBJECT
@@ -109,7 +403,11 @@ private:
 private slots:
 
     void init()    { clearAudioKeys(); }
-    void cleanup() { clearAudioKeys(); }
+    void cleanup()
+    {
+        AudioVaxPage::setSystemForTest(std::nullopt);
+        clearAudioKeys();
+    }
 
     // ── 1. Constructs for channels 1–4 ────────────────────────────────────
     void constructsForAllChannels_data()
@@ -331,6 +629,36 @@ private slots:
         // SampleRate must also be present (default 48000) — proves full config
         // was persisted, not just DeviceName.
         QVERIFY(!s.value(rateKey, QString()).toString().isEmpty());
+    }
+
+    // R-AUD-04: a cable picked by name replaces the whole identity; the
+    // previous device's id (which would win over the name) and its channel
+    // pair are not carried over.
+    void autoDetectBindingDropsTheStaleDeviceId()
+    {
+        clearAudioKeys();
+        AudioDeviceConfig old;
+        old.deviceId = QStringLiteral("old-cable-id");
+        old.deviceName = QStringLiteral("Old cable");
+        old.firstChannel = 3;
+        old.saveToSettings(QStringLiteral("audio/Vax2"));
+
+        VaxChannelCard card(2, nullptr);
+        card.loadFromSettings();
+        QSignalSpy spy(&card, &VaxChannelCard::configChanged);
+        const QString cableName = QStringLiteral("CABLE-A Output (VB-Audio Virtual Cable)");
+        card.bindDeviceNameForTest(cableName);
+
+        const AudioDeviceConfig saved =
+            AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/Vax2"));
+        QCOMPARE(saved.deviceName, cableName);
+        QVERIFY(saved.deviceId.isEmpty());
+        QCOMPARE(saved.firstChannel, 1);
+        QCOMPARE(spy.count(), 1);
+        const auto sent = spy.at(0).at(1).value<AudioDeviceConfig>();
+        QCOMPARE(sent.deviceName, cableName);
+        QVERIFY(sent.deviceId.isEmpty());
+        QCOMPARE(sent.firstChannel, 1);
     }
 
     // ── 12. autoDetectReassign_clearsSourceSlot (C3) ──────────────────────────
@@ -639,6 +967,395 @@ private slots:
             QVERIFY(!text.contains(QLatin1String("docs/")));
             QVERIFY(!text.contains(QLatin1String(".md")));
         }
+    }
+
+    // ── 14. Task 18: the Windows lists from the catalogue ─────────────────
+
+    // R-AUD-03 / D12: the picker lists Windows audio's cables (the render
+    // ends) under a heading; a cable added or removed shows within 1 s
+    // with no Rescan.
+    void catalogueCablesFollowAddAndRemove()
+    {
+        AudioVaxPage::setSystemForTest(SoundSystemLine::System::Windows);
+        RadioModel model;
+        PageRig rig({cable(QStringLiteral("cable-a-uid"), kCableA),
+                     device(AudioBackendId::Wasapi, AudioDeviceDirection::Input,
+                            QStringLiteral("cable-a-rec"),
+                            QStringLiteral("CABLE-A Output (VB-Audio Virtual Cable)"))});
+        rig.start(model);
+        auto stop = qScopeGuard([&model]() { model.localAudioDevices()->stop(); });
+        AudioVaxPage page(&model);
+        QComboBox* combo = picker(page.channelCard(1));
+        QVERIFY(combo != nullptr);
+        QCOMPARE(itemTexts(combo),
+                 (QStringList{QStringLiteral("(pick a cable)"), QStringLiteral("Virtual cables"),
+                              kCableA}));
+        QVERIFY(!itemEnabled(combo, 1));
+        QCOMPARE(page.statusLineText(), QStringLiteral("1 virtual cable found."));
+
+        rig.native->addDevice(cable(QStringLiteral("cable-b-uid"), kCableB));
+        rig.native->postNotice(AudioNotice::DevicesChanged);
+        QTRY_VERIFY_WITH_TIMEOUT(combo->findText(kCableB) > 0, 1000);
+        QCOMPARE(page.statusLineText(), QStringLiteral("2 virtual cables found."));
+        QVERIFY(page.detectedCablesText().contains(kCableB));
+
+        rig.native->removeDevice(QStringLiteral("cable-b-uid"), AudioDeviceDirection::Output);
+        rig.native->postNotice(AudioNotice::DevicesChanged);
+        QTRY_VERIFY_WITH_TIMEOUT(combo->findText(kCableB) < 0, 1000);
+        QCOMPARE(page.statusLineText(), QStringLiteral("1 virtual cable found."));
+
+        // A pick saves the cable as Windows audio lists it.
+        pick(combo, kCableA);
+        QCOMPARE(value(QStringLiteral("audio/Vax1/Engine")),
+                 audioEngineKey(AudioEngineKind::WindowsShared));
+        QCOMPARE(value(QStringLiteral("audio/Vax1/DeviceId")), QStringLiteral("cable-a-uid"));
+        QCOMPARE(value(QStringLiteral("audio/Vax1/DeviceName")), kCableA);
+        // Another channel sees who has it.
+        QVERIFY(itemTexts(picker(page.channelCard(2)))
+                    .contains(kCableA + QStringLiteral("  (used by VAX 1)")));
+    }
+
+    // R-AUD-10: a chosen cable that goes stays chosen as "(not connected)"
+    // with the sentence; nothing is saved over it, and it comes back.
+    void chosenCableGoneStaysChosen()
+    {
+        AudioVaxPage::setSystemForTest(SoundSystemLine::System::Windows);
+        saveBinding(1, AudioEngineKind::WindowsShared, QStringLiteral("cable-b-uid"), kCableB, 1,
+                    true);
+        RadioModel model;
+        PageRig rig({cable(QStringLiteral("cable-a-uid"), kCableA),
+                     cable(QStringLiteral("cable-b-uid"), kCableB)});
+        rig.start(model);
+        auto stop = qScopeGuard([&model]() { model.localAudioDevices()->stop(); });
+        AudioVaxPage page(&model);
+        VaxChannelCard* card = page.channelCard(1);
+        // The engine is never started: the cable plays as far as the card
+        // knows.
+        card->setBusOpen(true);
+        QComboBox* combo = picker(card);
+        QVERIFY(combo != nullptr);
+        QCOMPARE(combo->currentText(), kCableB);
+        QCOMPARE(card->statusLineText(), QString());
+        const QStringList keys = audioKeysAndValues();
+
+        rig.native->removeDevice(QStringLiteral("cable-b-uid"), AudioDeviceDirection::Output);
+        rig.native->postNotice(AudioNotice::DevicesChanged);
+        QTRY_COMPARE_WITH_TIMEOUT(combo->currentText(), kCableB + QStringLiteral(" (not connected)"),
+                                  1000);
+        QCOMPARE(card->statusLineText(),
+                 QStringLiteral("CABLE-B Input (VB-Audio Virtual Cable) is not connected. VAX 1 "
+                                "stays silent until it comes back; NereusSDR never sends it "
+                                "anywhere else."));
+        QVERIFY(OperatorWording::isPlain(card->statusLineText()));
+        QCOMPARE(audioKeysAndValues(), keys);
+        // The other cable is still offered, never put in its place.
+        QVERIFY(combo->findText(kCableA) > 0);
+
+        rig.native->addDevice(cable(QStringLiteral("cable-b-uid"), kCableB));
+        rig.native->postNotice(AudioNotice::DevicesChanged);
+        QTRY_COMPARE_WITH_TIMEOUT(combo->currentText(), kCableB, 1000);
+        QCOMPARE(card->statusLineText(), QString());
+        QCOMPARE(audioKeysAndValues(), keys);
+    }
+
+    // R-AUD-10 / R-AUD-11: the engine's sentence for a channel, not
+    // connected or in use, is the card's line, and goes when it plays.
+    void roleStatusSentences()
+    {
+        AudioVaxPage::setSystemForTest(SoundSystemLine::System::Windows);
+        saveBinding(3, AudioEngineKind::WindowsShared, QStringLiteral("cable-c-uid"), kCableC, 1,
+                    true);
+        RadioModel model;
+        PageRig rig({cable(QStringLiteral("cable-c-uid"), kCableC)});
+        rig.start(model);
+        auto stop = qScopeGuard([&model]() { model.localAudioDevices()->stop(); });
+        AudioEngine* engine = model.localAudioDevices();
+        AudioVaxPage page(&model);
+        VaxChannelCard* card = page.channelCard(3);
+        card->setBusOpen(true);
+        QCOMPARE(card->statusLineText(), QString());
+
+        AudioRoleStatus status;
+        status.state = AudioRoleState::Silent;
+        status.reason = AudioRoleReason::InUse;
+        status.chosenName = kCableC;
+        emit engine->roleStatusChanged(AudioRole::Vax3, status);
+        QCOMPARE(card->statusLineText(),
+                 vaxSentence(kCableC, QStringLiteral("is in use by another program"), 3));
+        // Only VAX 3's card says it.
+        QVERIFY(!page.channelCard(1)->statusLineText().contains(kCableC));
+
+        status.reason = AudioRoleReason::NotConnected;
+        card->setRoleStatus(status);
+        QCOMPARE(card->statusLineText(),
+                 vaxSentence(kCableC, QStringLiteral("is not connected"), 3));
+
+        AudioRoleStatus playing;
+        playing.state = AudioRoleState::Playing;
+        playing.chosenName = kCableC;
+        playing.playingName = kCableC;
+        emit engine->roleStatusChanged(AudioRole::Vax3, playing);
+        QCOMPARE(card->statusLineText(), QString());
+    }
+
+    // D13: each ASIO driver's output pairs under its name; the pair radio
+    // audio plays on is greyed with the reason, as is a driver of a format
+    // NereusSDR cannot play.
+    void asioPairsListedAndGreyed()
+    {
+        AudioVaxPage::setSystemForTest(SoundSystemLine::System::Windows);
+        saveSpeakersOnAsio(kFocusrite, 1);
+        RadioModel model;
+        PageRig rig({cable(QStringLiteral("cable-a-uid"), kCableA)}, /*withAsio=*/true);
+        rig.start(model);
+        auto stop = qScopeGuard([&model]() { model.localAudioDevices()->stop(); });
+        AudioVaxPage page(&model);
+        QComboBox* combo = picker(page.channelCard(1));
+        QVERIFY(combo != nullptr);
+        const QString focus12 = pairText(kFocusrite, QStringLiteral("Outputs 1-2"));
+        const QString focus34 = pairText(kFocusrite, QStringLiteral("Outputs 3-4"));
+        const QString motu12 = pairText(kMotu, QStringLiteral("Outputs 1-2"));
+        const QString old12 = pairText(kOldBox, QStringLiteral("Outputs 1-2"));
+        const QStringList texts = itemTexts(combo);
+        QVERIFY2(texts.contains(kFocusrite) && texts.contains(kMotu) && texts.contains(kOldBox),
+                 qPrintable(texts.join(QLatin1Char('|'))));
+        const int used = combo->findText(focus12 + QStringLiteral("  (used by speakers)"));
+        QVERIFY2(used > 0, qPrintable(texts.join(QLatin1Char('|'))));
+        QVERIFY(!itemEnabled(combo, used));
+        QCOMPARE(combo->itemData(used, Qt::ToolTipRole).toString(),
+                 QStringLiteral("Radio audio and digital-mode audio never share a pair."));
+        QVERIFY(itemEnabled(combo, combo->findText(focus34)));
+        QVERIFY(itemEnabled(combo, combo->findText(motu12)));
+        const int old = combo->findText(old12);
+        QVERIFY(old > 0);
+        QVERIFY(!itemEnabled(combo, old));
+        QCOMPARE(combo->itemData(old, Qt::ToolTipRole).toString(),
+                 QStringLiteral("Old Box ASIO uses a sample format NereusSDR can't play or record."));
+        // The driver headings are not choices; the cables come first.
+        QVERIFY(!itemEnabled(combo, combo->findText(kFocusrite)));
+        QVERIFY(texts.indexOf(kFocusrite) < texts.indexOf(focus34));
+        QVERIFY(texts.indexOf(kCableA) < texts.indexOf(kFocusrite));
+
+        // A pair on the speakers' driver: no switch; the ASIO note shows.
+        auto* note = page.channelCard(1)->findChild<QLabel*>(QStringLiteral("vaxAsioNote"));
+        QVERIFY(note != nullptr);
+        QVERIFY(note->isHidden());
+        pick(combo, focus34);
+        QCOMPARE(value(QStringLiteral("audio/Vax1/Engine")), audioEngineKey(AudioEngineKind::Asio));
+        QCOMPARE(value(QStringLiteral("audio/Vax1/DeviceId")), kFocusrite);
+        QCOMPARE(value(QStringLiteral("audio/Vax1/FirstChannel")), QStringLiteral("3"));
+        QCOMPARE(combo->currentText(), focus34);
+        QVERIFY(!note->isHidden());
+        QCOMPARE(note->text(),
+                 QStringLiteral("Most digital-mode apps cannot open ASIO, so pass this pair on in "
+                                "the ASIO app's own mixer (a Voicemeeter strip, for example)."));
+    }
+
+    // D13: a speakers change made through the engine (the Outputs page saves
+    // the choice, then hands it to the engine) moves "(used by speakers)" and
+    // the greyed pair at once, with no change to the device list.
+    void speakersChangeMovesUsedByWithoutListChange()
+    {
+        AudioVaxPage::setSystemForTest(SoundSystemLine::System::Windows);
+        saveSpeakersOnAsio(kFocusrite, 1);
+        RadioModel model;
+        PageRig rig({cable(QStringLiteral("cable-a-uid"), kCableA)}, /*withAsio=*/true);
+        rig.start(model);
+        AudioEngine* engine = model.localAudioDevices();
+        engine->start();
+        auto stop = qScopeGuard([engine]() { engine->stop(); });
+        AudioVaxPage page(&model);
+        QComboBox* combo = picker(page.channelCard(1));
+        QVERIFY(combo != nullptr);
+        const QString usedBy = QStringLiteral("  (used by speakers)");
+        const QString focus12 = pairText(kFocusrite, QStringLiteral("Outputs 1-2"));
+        const QString focus34 = pairText(kFocusrite, QStringLiteral("Outputs 3-4"));
+        QVERIFY2(combo->findText(focus12 + usedBy) > 0,
+                 qPrintable(itemTexts(combo).join(QLatin1Char('|'))));
+        QVERIFY(itemEnabled(combo, combo->findText(focus34)));
+
+        QSignalSpy listChanged(engine->catalogue(), &IAudioDeviceCatalog::devicesChanged);
+        QSignalSpy speakersChanged(engine, &AudioEngine::speakersConfigChanged);
+        saveSpeakersOnAsio(kFocusrite, 3);
+        engine->setSpeakersConfig(
+            AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/Speakers")));
+        QVERIFY(speakersChanged.count() > 0);
+        QCOMPARE(listChanged.count(), 0);
+
+        const QStringList texts = itemTexts(combo);
+        const int now = combo->findText(focus34 + usedBy);
+        QVERIFY2(now > 0, qPrintable(texts.join(QLatin1Char('|'))));
+        QVERIFY(!itemEnabled(combo, now));
+        QCOMPARE(combo->itemData(now, Qt::ToolTipRole).toString(),
+                 QStringLiteral("Radio audio and digital-mode audio never share a pair."));
+        const int before = combo->findText(focus12);
+        QVERIFY2(before > 0, qPrintable(texts.join(QLatin1Char('|'))));
+        QVERIFY(itemEnabled(combo, before));
+    }
+
+    // R-AUD-19 under D13: a pair on a second ASIO driver asks to move
+    // every ASIO use; Cancel writes nothing, OK moves the speakers too.
+    void asioSecondDriverAsksFirst()
+    {
+        AudioVaxPage::setSystemForTest(SoundSystemLine::System::Windows);
+        saveSpeakersOnAsio(kFocusrite, 1);
+        AppSettings::instance().setValue(QStringLiteral("audio/Vax1/Enabled"),
+                                         QStringLiteral("True"));
+        RadioModel model;
+        PageRig rig({}, /*withAsio=*/true);
+        rig.start(model);
+        auto stop = qScopeGuard([&model]() { model.localAudioDevices()->stop(); });
+        AudioVaxPage page(&model);
+        QComboBox* combo = picker(page.channelCard(1));
+        QVERIFY(combo != nullptr);
+        const QString motu12 = pairText(kMotu, QStringLiteral("Outputs 1-2"));
+        const QStringList keys = audioKeysAndValues();
+
+        QString text;
+        QStringList moves;
+        answerSwitchDialog(false, &text, &moves);
+        pick(combo, motu12);
+        QCOMPARE(text, QStringLiteral("NereusSDR can use one ASIO driver at a time. Switching "
+                                      "VAX 1 to MOTU M Series also moves:"));
+        QCOMPARE(moves, QStringList{QStringLiteral("Speakers: Outputs 1-2")});
+        QCOMPARE(audioKeysAndValues(), keys);
+        QCOMPARE(combo->currentText(), QStringLiteral("(pick a cable)"));
+
+        text.clear();
+        moves.clear();
+        answerSwitchDialog(true, &text, &moves);
+        pick(combo, motu12);
+        QVERIFY(!text.isEmpty());
+        QCOMPARE(value(QStringLiteral("audio/Vax1/Engine")), audioEngineKey(AudioEngineKind::Asio));
+        QCOMPARE(value(QStringLiteral("audio/Vax1/DeviceId")), kMotu);
+        QCOMPARE(value(QStringLiteral("audio/Vax1/FirstChannel")), QStringLiteral("1"));
+        QCOMPARE(value(QStringLiteral("audio/Speakers/DeviceId")), kMotu);
+        QTRY_VERIFY_WITH_TIMEOUT(combo->currentText().startsWith(motu12), 1000);
+    }
+
+    // D13: a pair another VAX channel that is on uses is asked about first;
+    // OK moves it and leaves the other channel with no device.
+    void asioPairClashAsksFirst()
+    {
+        AudioVaxPage::setSystemForTest(SoundSystemLine::System::Windows);
+        saveBinding(2, AudioEngineKind::Asio, kFocusrite, kFocusrite, 3, true);
+        RadioModel model;
+        PageRig rig({}, /*withAsio=*/true);
+        rig.start(model);
+        auto stop = qScopeGuard([&model]() { model.localAudioDevices()->stop(); });
+        AudioVaxPage page(&model);
+        QComboBox* combo = picker(page.channelCard(1));
+        QVERIFY(combo != nullptr);
+        const QString focus34 = pairText(kFocusrite, QStringLiteral("Outputs 3-4"));
+        const QString usedText = focus34 + QStringLiteral("  (used by VAX 2)");
+        QVERIFY2(combo->findText(usedText) > 0, qPrintable(itemTexts(combo).join(QLatin1Char('|'))));
+        const QStringList keys = audioKeysAndValues();
+
+        QString title;
+        QString text;
+        answerMessageBox(QMessageBox::Cancel, &title, &text);
+        pick(combo, usedText);
+#ifndef Q_OS_MAC
+        // macOS shows no title on a message box.
+        QCOMPARE(title, QStringLiteral("Use this pair here?"));
+#endif
+        QCOMPARE(text, QStringLiteral("VAX 2 uses ") + focus34
+                           + QStringLiteral(". Move it to VAX 1? VAX 2 will have no device."));
+        QCOMPARE(audioKeysAndValues(), keys);
+
+        answerMessageBox(QMessageBox::Ok, &title, &text);
+        pick(combo, usedText);
+        QCOMPARE(value(QStringLiteral("audio/Vax1/DeviceId")), kFocusrite);
+        QCOMPARE(value(QStringLiteral("audio/Vax1/FirstChannel")), QStringLiteral("3"));
+        QVERIFY(value(QStringLiteral("audio/Vax2/DeviceId")).isEmpty());
+        QCOMPARE(picker(page.channelCard(2))->currentText(), QStringLiteral("(pick a cable)"));
+    }
+
+    // R-AUD-06: Rescan rescans the older drivers (never Windows audio),
+    // then lists their cables and offers the new ones.
+    void rescanRescansOlderDriversAndOffersNewCables()
+    {
+        AudioVaxPage::setSystemForTest(SoundSystemLine::System::Windows);
+        RadioModel model;
+        PageRig rig({cable(QStringLiteral("cable-a-uid"), kCableA)});
+        rig.start(model);
+        auto stop = qScopeGuard([&model]() { model.localAudioDevices()->stop(); });
+        AudioVaxPage page(&model);
+        // The cables known before.
+        AppSettings::instance().setValue(
+            QStringLiteral("audio/LastDetectedCables"),
+            VirtualCableDetector::fingerprintCsv(
+                VirtualCableDetector::detect(*model.localAudioDevices()->catalogue())));
+        AppSettings::instance().setValue(QStringLiteral("audio/LastDetectedCablesSource"),
+                                         VirtualCableDetector::fingerprintSource(true));
+
+        // An older driver's cable, seen only once they list again.
+        const QString mme = QStringLiteral("MME");
+        rig.older->addDevice(device(AudioBackendId::PortAudio, AudioDeviceDirection::Output,
+                                    portAudioDeviceId(mme, kCableD), kCableD, 2, mme));
+        QComboBox* combo = picker(page.channelCard(1));
+        QVERIFY(combo != nullptr);
+        QVERIFY(combo->findText(kCableD) < 0);
+
+        QStringList offered;
+        bool seen = false;
+        answerNext<VaxFirstRunDialog>(
+            [&offered, &seen](VaxFirstRunDialog* dlg) {
+                seen = true;
+                for (const DetectedCable& c : dlg->detectedForTest()) {
+                    offered << c.deviceName;
+                }
+            },
+            [](VaxFirstRunDialog* dlg) { dlg->reject(); });
+        QSignalSpy rescanned(model.localAudioDevices()->catalogue(),
+                             &IAudioDeviceCatalog::olderDriversRescanned);
+        auto* button = page.findChild<QPushButton*>(QStringLiteral("detectedCablesRescan"));
+        QVERIFY(button != nullptr);
+        button->click();
+        QVERIFY(rescanned.count() == 1 || rescanned.wait(5000));
+        QTRY_VERIFY_WITH_TIMEOUT(seen, 3000);
+        QCOMPARE(rig.older->rescanCount(), 1);
+        QCOMPARE(rig.native->rescanCount(), 0);
+        QCOMPARE(offered, QStringList{kCableD});
+        QVERIFY(combo->findText(kCableD) > 0);
+        QVERIFY(page.detectedCablesText().contains(kCableD));
+
+        // An older driver's cable saves its host API.
+        pick(combo, kCableD);
+        QCOMPARE(value(QStringLiteral("audio/Vax1/Engine")),
+                 audioEngineKey(AudioEngineKind::PortAudio));
+        QCOMPARE(value(QStringLiteral("audio/Vax1/DriverApi")), mme);
+    }
+
+    // V-UI-1: Digital modes on Windows with a chosen cable missing.
+    void captureDigitalModesCableMissing()
+    {
+        if (qEnvironmentVariable("NEREUS_AUDIO_SETUP_CAPTURE_DIR").isEmpty()) {
+            QSKIP("Set NEREUS_AUDIO_SETUP_CAPTURE_DIR to save the captures.");
+        }
+        QApplication::setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
+        applyDarkPalette(*qApp);
+        applyAppBaselineQss(*qApp);
+        AudioVaxPage::setSystemForTest(SoundSystemLine::System::Windows);
+        saveBinding(1, AudioEngineKind::WindowsShared, QStringLiteral("cable-a-uid"), kCableA, 1,
+                    true);
+        saveBinding(2, AudioEngineKind::WindowsShared, QStringLiteral("cable-b-uid"), kCableB, 1,
+                    true);
+        RadioModel model;
+        PageRig rig({cable(QStringLiteral("cable-a-uid"), kCableA)});
+        rig.start(model);
+        auto stop = qScopeGuard([&model]() { model.localAudioDevices()->stop(); });
+        AudioDigitalModesPage page(&model, nullptr);
+        page.resize(760, 1500);
+        page.show();
+        auto* vax = page.findChild<AudioVaxPage*>();
+        QVERIFY(vax != nullptr);
+        // The engine is never started; VAX 1's cable plays as far as the
+        // card knows.
+        vax->channelCard(1)->setBusOpen(true);
+        QTRY_VERIFY_WITH_TIMEOUT(!vax->channelCard(2)->statusLineText().isEmpty(), 1000);
+        saveCapture(&page, QStringLiteral("digital-modes-windows-cable-missing"));
+        page.hide();
     }
 };
 

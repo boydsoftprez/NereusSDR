@@ -3,10 +3,26 @@
 // =================================================================
 // no-port-check: NereusSDR-original.  Record framing and message codecs
 // for the nereus-audio-capture helper pipe; no Thetis logic.
+//
+// Modification history (NereusSDR):
+//   2026-10-08: native audio plan Task 1 (V-HW-8): ProbeHit and
+//               ProbeEnable codecs (protocol version 2). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 13 (R-AUD-17, R-AUD-18): version 3
+//               codecs (AttachRing, RingAttached, the Configure identity
+//               keys, device-in-use, the Status latency and buffer).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: native audio plan Task 15 (R-AUD-19 to R-AUD-22): version 4
+//               ASIO codecs (AsioDescribe, AsioCaps, AsioOpen, AsioState,
+//               AsioControlPanel).  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CaptureProtocol.h"
 
+#include "core/audio/DeviceRateMatcher.h"
+
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
@@ -29,19 +45,38 @@ bool isKnownType(quint8 raw)
     case RecordType::Hello:
     case RecordType::Status:
     case RecordType::Pcm:
+    case RecordType::ProbeHit:
     case RecordType::Configure:
     case RecordType::Open:
     case RecordType::Stop:
     case RecordType::Shutdown:
+    case RecordType::ProbeEnable:
+    case RecordType::RingAttached:
+    case RecordType::AttachRing:
+    case RecordType::AsioCaps:
+    case RecordType::AsioState:
+    case RecordType::AsioDescribe:
+    case RecordType::AsioOpen:
+    case RecordType::AsioControlPanel:
         return true;
     }
     return false;
+}
+
+bool isAsioType(RecordType type)
+{
+    return type == RecordType::AsioCaps || type == RecordType::AsioState
+        || type == RecordType::AsioDescribe || type == RecordType::AsioOpen
+        || type == RecordType::AsioControlPanel;
 }
 
 qsizetype payloadBound(RecordType type)
 {
     if (type == RecordType::Pcm) {
         return kMaxPcmPayloadBytes;
+    }
+    if (isAsioType(type)) {
+        return kMaxAsioJsonBytes;
     }
     return kMaxJsonBytes;
 }
@@ -62,9 +97,10 @@ void appendU64(QByteArray& out, quint64 value)
 
 // ── JSON helpers ───────────────────────────────────────────────────────────
 
-std::optional<QJsonObject> parseExactObject(const QByteArray& json, const QSet<QString>& keys)
+std::optional<QJsonObject> parseExactObject(const QByteArray& json, const QSet<QString>& keys,
+                                            qsizetype maxBytes = kMaxJsonBytes)
 {
-    if (json.size() > kMaxJsonBytes) {
+    if (json.size() > maxBytes) {
         return std::nullopt;
     }
     QJsonParseError error{};
@@ -185,6 +221,7 @@ constexpr ReasonName kReasonNames[] = {
     {FailReason::StartFailed, "start-failed"},
     {FailReason::InputLost, "input-lost"},
     {FailReason::Internal, "internal"},
+    {FailReason::DeviceInUse, "device-in-use"},
 };
 
 QString stateName(HelperState state)
@@ -445,6 +482,11 @@ QByteArray encodeConfigure(const Configure& configure)
     obj.insert(QStringLiteral("eventDriven"), d.eventDriven);
     obj.insert(QStringLiteral("bypassMixer"), d.bypassMixer);
     obj.insert(QStringLiteral("manualLatencyMs"), d.manualLatencyMs);
+    obj.insert(QStringLiteral("engine"), d.engine ? audioEngineKey(*d.engine) : QString());
+    obj.insert(QStringLiteral("deviceId"), d.deviceId);
+    obj.insert(QStringLiteral("firstChannel"), d.firstChannel);
+    obj.insert(QStringLiteral("micChannel"), micChannelKey(d.micChannel));
+    obj.insert(QStringLiteral("delayMs"), d.delayMs);
     return checkedRecord(RecordType::Configure, toJson(obj), decodeConfigure);
 }
 
@@ -456,7 +498,10 @@ std::optional<Configure> decodeConfigure(const QByteArray& json)
         QStringLiteral("bufferSamples"), QStringLiteral("exclusiveMode"),
         QStringLiteral("hostApiIndex"), QStringLiteral("driverApi"),
         QStringLiteral("bitDepth"),     QStringLiteral("eventDriven"),
-        QStringLiteral("bypassMixer"),  QStringLiteral("manualLatencyMs")};
+        QStringLiteral("bypassMixer"),  QStringLiteral("manualLatencyMs"),
+        QStringLiteral("engine"),       QStringLiteral("deviceId"),
+        QStringLiteral("firstChannel"), QStringLiteral("micChannel"),
+        QStringLiteral("delayMs")};
     const auto obj = parseExactObject(json, kKeys);
     if (!obj) {
         return std::nullopt;
@@ -473,9 +518,36 @@ std::optional<Configure> decodeConfigure(const QByteArray& json)
     const auto eventDriven = readBool(*obj, QStringLiteral("eventDriven"));
     const auto bypassMixer = readBool(*obj, QStringLiteral("bypassMixer"));
     const auto manualLatencyMs = readInt(*obj, QStringLiteral("manualLatencyMs"));
+    const auto engineText = readString(*obj, QStringLiteral("engine"));
+    const auto deviceId = readString(*obj, QStringLiteral("deviceId"));
+    const auto firstChannel = readInteger(*obj, QStringLiteral("firstChannel"), 1,
+                                          kMaxNativeChannels);
+    const auto micText = readString(*obj, QStringLiteral("micChannel"));
+    const auto delayMs = readInt(*obj, QStringLiteral("delayMs"));
     if (!generation || !deviceName || !sampleRate || !channels || !bufferSamples
         || !exclusiveMode || !hostApiIndex || !driverApi || !bitDepth || !eventDriven
-        || !bypassMixer || !manualLatencyMs) {
+        || !bypassMixer || !manualLatencyMs || !engineText || !deviceId || !firstChannel
+        || !micText || !delayMs) {
+        return std::nullopt;
+    }
+    // engine: an Engine settings key, or empty when the saved config has none.
+    std::optional<AudioEngineKind> engine;
+    if (!engineText->isEmpty()) {
+        engine = audioEngineFromKey(*engineText);
+        if (!engine) {
+            return std::nullopt;
+        }
+    }
+    const auto micChannel = micChannelFromKey(*micText);
+    if (!micChannel) {
+        return std::nullopt;
+    }
+    // delayMs: 0 (automatic) or one of the matcher's steps.
+    bool delayKnown = (*delayMs == 0);
+    for (const int step : DeviceRateMatcher::kDelayStepsMs) {
+        delayKnown = delayKnown || (*delayMs == step);
+    }
+    if (!delayKnown) {
         return std::nullopt;
     }
     Configure configure;
@@ -491,6 +563,11 @@ std::optional<Configure> decodeConfigure(const QByteArray& json)
     configure.device.eventDriven = *eventDriven;
     configure.device.bypassMixer = *bypassMixer;
     configure.device.manualLatencyMs = *manualLatencyMs;
+    configure.device.engine = engine;
+    configure.device.deviceId = *deviceId;
+    configure.device.firstChannel = static_cast<int>(*firstChannel);
+    configure.device.micChannel = *micChannel;
+    configure.device.delayMs = *delayMs;
     return configure;
 }
 
@@ -533,9 +610,101 @@ std::optional<Command> decodeCommand(const QByteArray& json)
     return command;
 }
 
+QByteArray encodeRingAttached(const Command& command)
+{
+    return checkedRecord(RecordType::RingAttached, commandJson(command), decodeCommand);
+}
+
+// ── AttachRing (version 3) ─────────────────────────────────────────────────
+
+QByteArray encodeAttachRing(const AttachRing& attach)
+{
+    QJsonObject obj;
+    obj.insert(QStringLiteral("generation"), static_cast<double>(attach.generation));
+    obj.insert(QStringLiteral("memory"), attach.memory);
+    obj.insert(QStringLiteral("wake"), attach.wake);
+    obj.insert(QStringLiteral("bytes"), static_cast<double>(attach.bytes));
+    obj.insert(QStringLiteral("inRate"), attach.inRate);
+    return checkedRecord(RecordType::AttachRing, toJson(obj), decodeAttachRing);
+}
+
+std::optional<AttachRing> decodeAttachRing(const QByteArray& json)
+{
+    static const QSet<QString> kKeys = {
+        QStringLiteral("generation"), QStringLiteral("memory"), QStringLiteral("wake"),
+        QStringLiteral("bytes"), QStringLiteral("inRate")};
+    const auto obj = parseExactObject(json, kKeys);
+    if (!obj) {
+        return std::nullopt;
+    }
+    const auto generation = readGeneration(*obj);
+    const auto memory = readString(*obj, QStringLiteral("memory"));
+    const auto wake = readString(*obj, QStringLiteral("wake"));
+    const auto bytes = readInteger(*obj, QStringLiteral("bytes"), 1, kMaxRingBytes);
+    const auto inRate = readInteger(*obj, QStringLiteral("inRate"), kMinNativeRate,
+                                    kMaxNativeRate);
+    if (!generation || !memory || !wake || !bytes || !inRate || memory->isEmpty()
+        || wake->isEmpty() || *memory == *wake) {
+        return std::nullopt;
+    }
+    AttachRing attach;
+    attach.generation = *generation;
+    attach.memory = *memory;
+    attach.wake = *wake;
+    attach.bytes = *bytes;
+    attach.inRate = static_cast<int>(*inRate);
+    return attach;
+}
+
 QByteArray encodeShutdown()
 {
     return encodeRecord(RecordType::Shutdown, QByteArrayLiteral("{}"));
+}
+
+// ── Probe (V-HW-8) ─────────────────────────────────────────────────────────
+
+QByteArray encodeProbeHit(std::int64_t captureNs)
+{
+    QJsonObject obj;
+    obj.insert(QStringLiteral("captureNs"), QString::number(static_cast<qlonglong>(captureNs)));
+    return checkedRecord(RecordType::ProbeHit, toJson(obj), decodeProbeHit);
+}
+
+std::optional<std::int64_t> decodeProbeHit(const QByteArray& json)
+{
+    static const QSet<QString> kKeys = {QStringLiteral("captureNs")};
+    const auto obj = parseExactObject(json, kKeys);
+    if (!obj) {
+        return std::nullopt;
+    }
+    const auto text = readString(*obj, QStringLiteral("captureNs"));
+    if (!text) {
+        return std::nullopt;
+    }
+    bool ok = false;
+    const qlonglong value = text->toLongLong(&ok);
+    // Canonical decimal only: no sign on positives, no padding, no spaces.
+    if (!ok || QString::number(value) != *text) {
+        return std::nullopt;
+    }
+    return static_cast<std::int64_t>(value);
+}
+
+QByteArray encodeProbeEnable(bool enabled)
+{
+    QJsonObject obj;
+    obj.insert(QStringLiteral("enabled"), enabled);
+    return checkedRecord(RecordType::ProbeEnable, toJson(obj), decodeProbeEnable);
+}
+
+std::optional<bool> decodeProbeEnable(const QByteArray& json)
+{
+    static const QSet<QString> kKeys = {QStringLiteral("enabled")};
+    const auto obj = parseExactObject(json, kKeys);
+    if (!obj) {
+        return std::nullopt;
+    }
+    return readBool(*obj, QStringLiteral("enabled"));
 }
 
 // ── Status ─────────────────────────────────────────────────────────────────
@@ -555,6 +724,8 @@ QByteArray encodeStatus(const Status& status)
     obj.insert(QStringLiteral("nativeChannels"), status.nativeChannels);
     obj.insert(QStringLiteral("reason"), reason);
     obj.insert(QStringLiteral("detail"), status.detail);
+    obj.insert(QStringLiteral("latencyUs"), status.latencyUs);
+    obj.insert(QStringLiteral("bufferFrames"), status.bufferFrames);
     return checkedRecord(RecordType::Status, toJson(obj), decodeStatus);
 }
 
@@ -564,9 +735,16 @@ std::optional<Status> decodeStatus(const QByteArray& json)
         QStringLiteral("generation"), QStringLiteral("state"),
         QStringLiteral("actualDevice"), QStringLiteral("nativeRate"),
         QStringLiteral("nativeChannels"), QStringLiteral("reason"),
-        QStringLiteral("detail")};
+        QStringLiteral("detail"), QStringLiteral("latencyUs"),
+        QStringLiteral("bufferFrames")};
     const auto obj = parseExactObject(json, kKeys);
     if (!obj) {
+        return std::nullopt;
+    }
+    const auto latencyUs = readInteger(*obj, QStringLiteral("latencyUs"), 0, kMaxLatencyUs);
+    const auto bufferFrames = readInteger(*obj, QStringLiteral("bufferFrames"), 0,
+                                          kMaxBufferFrames);
+    if (!latencyUs || !bufferFrames) {
         return std::nullopt;
     }
     const auto generation = readGeneration(*obj);
@@ -599,7 +777,456 @@ std::optional<Status> decodeStatus(const QByteArray& json)
     status.nativeChannels = static_cast<int>(*nativeChannels);
     status.reason = *reason;
     status.detail = *detail;
+    status.latencyUs = static_cast<int>(*latencyUs);
+    status.bufferFrames = static_cast<int>(*bufferFrames);
     return status;
+}
+
+// ── ASIO (version 4) ───────────────────────────────────────────────────────
+
+namespace {
+
+constexpr int kMaxAsioLatencyFrames = 10'000'000;
+constexpr double kAsioRates[] = {44100.0, 48000.0, 88200.0, 96000.0, 176400.0, 192000.0};
+
+struct RoleKey {
+    AudioRole role;
+    const char* key;
+};
+
+constexpr RoleKey kRoleKeys[] = {
+    {AudioRole::Speakers, "Speakers"},   {AudioRole::Headphones, "Headphones"},
+    {AudioRole::TxInput, "TxInput"},     {AudioRole::Vax1, "Vax1"},
+    {AudioRole::Vax2, "Vax2"},           {AudioRole::Vax3, "Vax3"},
+    {AudioRole::Vax4, "Vax4"},
+};
+
+struct SampleTypeKey {
+    AsioSampleType type;
+    const char* key;
+};
+
+constexpr SampleTypeKey kSampleTypeKeys[] = {
+    {AsioSampleType::Int16Lsb, "Int16LSB"},     {AsioSampleType::Int24Lsb, "Int24LSB"},
+    {AsioSampleType::Int32Lsb, "Int32LSB"},     {AsioSampleType::Float32Lsb, "Float32LSB"},
+    {AsioSampleType::Float64Lsb, "Float64LSB"}, {AsioSampleType::Unsupported, "Unsupported"},
+};
+
+struct StateKindName {
+    AsioStateKind state;
+    const char* name;
+};
+
+constexpr StateKindName kAsioStateNames[] = {
+    {AsioStateKind::Running, "running"}, {AsioStateKind::Restarted, "restarted"},
+    {AsioStateKind::InUse, "inUse"},     {AsioStateKind::Failed, "failed"},
+    {AsioStateKind::Closed, "closed"},
+};
+
+std::optional<AsioSampleType> sampleTypeFromKey(const QString& key)
+{
+    for (const SampleTypeKey& entry : kSampleTypeKeys) {
+        if (key == QLatin1String(entry.key)) {
+            return entry.type;
+        }
+    }
+    return std::nullopt;
+}
+
+QString sampleTypeKey(AsioSampleType type)
+{
+    for (const SampleTypeKey& entry : kSampleTypeKeys) {
+        if (entry.type == type) {
+            return QString::fromLatin1(entry.key);
+        }
+    }
+    return {};
+}
+
+bool knownAsioRate(double rate)
+{
+    for (double known : kAsioRates) {
+        if (rate == known) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// A rate: 0 (none) or a positive finite number up to kMaxNativeRate.
+std::optional<double> readRate(const QJsonObject& obj, const QString& key)
+{
+    const QJsonValue value = obj.value(key);
+    if (!value.isDouble()) {
+        return std::nullopt;
+    }
+    const double rate = value.toDouble();
+    if (!std::isfinite(rate) || rate < 0.0 || rate > static_cast<double>(kMaxNativeRate)) {
+        return std::nullopt;
+    }
+    return rate;
+}
+
+QString directionKey(AudioDeviceDirection direction)
+{
+    return direction == AudioDeviceDirection::Output ? QStringLiteral("output")
+                                                     : QStringLiteral("input");
+}
+
+std::optional<AudioDeviceDirection> directionFromKey(const QString& key)
+{
+    if (key == QLatin1String("output")) {
+        return AudioDeviceDirection::Output;
+    }
+    if (key == QLatin1String("input")) {
+        return AudioDeviceDirection::Input;
+    }
+    return std::nullopt;
+}
+
+bool exactKeys(const QJsonObject& obj, const QSet<QString>& keys)
+{
+    if (obj.size() != keys.size()) {
+        return false;
+    }
+    for (auto it = obj.begin(); it != obj.end(); ++it) {
+        if (!keys.contains(it.key())) {
+            return false;
+        }
+    }
+    return true;
+}
+
+QJsonObject capsJson(const AsioDriverCaps& caps)
+{
+    QJsonObject obj;
+    obj.insert(QStringLiteral("name"), caps.name);
+    obj.insert(QStringLiteral("inputs"), caps.inputChannels);
+    obj.insert(QStringLiteral("outputs"), caps.outputChannels);
+    obj.insert(QStringLiteral("sampleType"), sampleTypeKey(caps.sampleType));
+    obj.insert(QStringLiteral("minBuffer"), caps.minBufferFrames);
+    obj.insert(QStringLiteral("maxBuffer"), caps.maxBufferFrames);
+    obj.insert(QStringLiteral("preferredBuffer"), caps.preferredBufferFrames);
+    obj.insert(QStringLiteral("granularity"), caps.granularity);
+    QJsonArray rates;
+    for (double rate : caps.sampleRates) {
+        rates.append(rate);
+    }
+    obj.insert(QStringLiteral("rates"), rates);
+    obj.insert(QStringLiteral("currentRate"), caps.currentRate);
+    obj.insert(QStringLiteral("inputLatency"), static_cast<double>(caps.inputLatencyFrames));
+    obj.insert(QStringLiteral("outputLatency"), static_cast<double>(caps.outputLatencyFrames));
+    return obj;
+}
+
+std::optional<AsioDriverCaps> capsFromJson(const QJsonValue& value)
+{
+    if (!value.isObject()) {
+        return std::nullopt;
+    }
+    static const QSet<QString> kKeys = {
+        QStringLiteral("name"), QStringLiteral("inputs"), QStringLiteral("outputs"),
+        QStringLiteral("sampleType"), QStringLiteral("minBuffer"), QStringLiteral("maxBuffer"),
+        QStringLiteral("preferredBuffer"), QStringLiteral("granularity"),
+        QStringLiteral("rates"), QStringLiteral("currentRate"),
+        QStringLiteral("inputLatency"), QStringLiteral("outputLatency")};
+    const QJsonObject obj = value.toObject();
+    if (!exactKeys(obj, kKeys)) {
+        return std::nullopt;
+    }
+    const auto name = readString(obj, QStringLiteral("name"));
+    const auto inputs = readInteger(obj, QStringLiteral("inputs"), 0, kMaxAsioChannels);
+    const auto outputs = readInteger(obj, QStringLiteral("outputs"), 0, kMaxAsioChannels);
+    const auto typeText = readString(obj, QStringLiteral("sampleType"));
+    const auto minBuffer = readInteger(obj, QStringLiteral("minBuffer"), 0, kMaxBufferFrames);
+    const auto maxBuffer = readInteger(obj, QStringLiteral("maxBuffer"), 0, kMaxBufferFrames);
+    const auto preferred = readInteger(obj, QStringLiteral("preferredBuffer"), 0, kMaxBufferFrames);
+    const auto granularity = readInteger(obj, QStringLiteral("granularity"), -1, kMaxBufferFrames);
+    const auto currentRate = readRate(obj, QStringLiteral("currentRate"));
+    const auto inLatency = readInteger(obj, QStringLiteral("inputLatency"), 0, kMaxAsioLatencyFrames);
+    const auto outLatency = readInteger(obj, QStringLiteral("outputLatency"), 0, kMaxAsioLatencyFrames);
+    const QJsonValue ratesValue = obj.value(QStringLiteral("rates"));
+    if (!name || name->isEmpty() || !inputs || !outputs || !typeText || !minBuffer || !maxBuffer
+        || !preferred || !granularity || !currentRate || !inLatency || !outLatency
+        || !ratesValue.isArray()) {
+        return std::nullopt;
+    }
+    const auto type = sampleTypeFromKey(*typeText);
+    const QJsonArray rates = ratesValue.toArray();
+    if (!type || rates.size() > kMaxAsioRates) {
+        return std::nullopt;
+    }
+    AsioDriverCaps caps;
+    for (const QJsonValue& rate : rates) {
+        if (!rate.isDouble() || !knownAsioRate(rate.toDouble())) {
+            return std::nullopt;
+        }
+        caps.sampleRates.append(rate.toDouble());
+    }
+    caps.name = *name;
+    caps.inputChannels = static_cast<int>(*inputs);
+    caps.outputChannels = static_cast<int>(*outputs);
+    caps.sampleType = *type;
+    caps.minBufferFrames = static_cast<int>(*minBuffer);
+    caps.maxBufferFrames = static_cast<int>(*maxBuffer);
+    caps.preferredBufferFrames = static_cast<int>(*preferred);
+    caps.granularity = static_cast<int>(*granularity);
+    caps.currentRate = *currentRate;
+    caps.inputLatencyFrames = *inLatency;
+    caps.outputLatencyFrames = *outLatency;
+    return caps;
+}
+
+} // namespace
+
+QString asioRoleKey(AudioRole role)
+{
+    for (const RoleKey& entry : kRoleKeys) {
+        if (entry.role == role) {
+            return QString::fromLatin1(entry.key);
+        }
+    }
+    return {};
+}
+
+std::optional<AudioRole> asioRoleFromKey(const QString& key)
+{
+    for (const RoleKey& entry : kRoleKeys) {
+        if (key == QLatin1String(entry.key)) {
+            return entry.role;
+        }
+    }
+    return std::nullopt;
+}
+
+QByteArray encodeAsioDescribe(const AsioDescribe& describe)
+{
+    QJsonObject obj;
+    obj.insert(QStringLiteral("driver"), describe.driver);
+    return checkedRecord(RecordType::AsioDescribe, toJson(obj), decodeAsioDescribe);
+}
+
+std::optional<AsioDescribe> decodeAsioDescribe(const QByteArray& json)
+{
+    static const QSet<QString> kKeys = {QStringLiteral("driver")};
+    const auto obj = parseExactObject(json, kKeys, kMaxAsioJsonBytes);
+    if (!obj) {
+        return std::nullopt;
+    }
+    const auto driver = readString(*obj, QStringLiteral("driver"));
+    if (!driver) {
+        return std::nullopt;
+    }
+    return AsioDescribe{*driver};
+}
+
+QByteArray encodeAsioCaps(const AsioCapsRecord& caps)
+{
+    QJsonObject obj;
+    obj.insert(QStringLiteral("drivers"), QJsonArray::fromStringList(caps.drivers));
+    obj.insert(QStringLiteral("driver"), caps.driver);
+    obj.insert(QStringLiteral("caps"), caps.caps ? QJsonValue(capsJson(*caps.caps)) : QJsonValue());
+    obj.insert(QStringLiteral("inUse"), caps.inUse);
+    return checkedRecord(RecordType::AsioCaps, toJson(obj), decodeAsioCaps);
+}
+
+std::optional<AsioCapsRecord> decodeAsioCaps(const QByteArray& json)
+{
+    static const QSet<QString> kKeys = {QStringLiteral("drivers"), QStringLiteral("driver"),
+                                        QStringLiteral("caps"), QStringLiteral("inUse")};
+    const auto obj = parseExactObject(json, kKeys, kMaxAsioJsonBytes);
+    if (!obj) {
+        return std::nullopt;
+    }
+    const QJsonValue drivers = obj->value(QStringLiteral("drivers"));
+    const auto driver = readString(*obj, QStringLiteral("driver"));
+    const auto inUse = readBool(*obj, QStringLiteral("inUse"));
+    const QJsonValue capsValue = obj->value(QStringLiteral("caps"));
+    if (!drivers.isArray() || !driver || !inUse
+        || drivers.toArray().size() > kMaxAsioDrivers) {
+        return std::nullopt;
+    }
+    AsioCapsRecord record;
+    for (const QJsonValue& name : drivers.toArray()) {
+        if (!name.isString() || name.toString().isEmpty()
+            || name.toString().size() > kMaxStringChars) {
+            return std::nullopt;
+        }
+        record.drivers.append(name.toString());
+    }
+    record.driver = *driver;
+    record.inUse = *inUse;
+    if (!capsValue.isNull()) {
+        record.caps = capsFromJson(capsValue);
+        if (!record.caps || record.caps->name != record.driver) {
+            return std::nullopt;
+        }
+    }
+    return record;
+}
+
+QByteArray encodeAsioOpen(const AsioOpen& open)
+{
+    QJsonObject obj;
+    obj.insert(QStringLiteral("serial"), static_cast<double>(open.serial));
+    obj.insert(QStringLiteral("driver"), open.driver);
+    obj.insert(QStringLiteral("bufferFrames"), open.bufferFrames);
+    obj.insert(QStringLiteral("rate"), open.rate);
+    QJsonArray uses;
+    for (const AsioOpenUse& use : open.uses) {
+        QJsonObject u;
+        u.insert(QStringLiteral("role"), use.role ? asioRoleKey(*use.role) : QString());
+        u.insert(QStringLiteral("first"), use.pair.firstChannel);
+        u.insert(QStringLiteral("count"), use.pair.channelCount);
+        u.insert(QStringLiteral("direction"), directionKey(use.direction));
+        u.insert(QStringLiteral("memory"), use.memory);
+        u.insert(QStringLiteral("wake"), use.wake);
+        u.insert(QStringLiteral("bytes"), static_cast<double>(use.bytes));
+        uses.append(u);
+    }
+    obj.insert(QStringLiteral("uses"), uses);
+    return checkedRecord(RecordType::AsioOpen, toJson(obj), decodeAsioOpen);
+}
+
+std::optional<AsioOpen> decodeAsioOpen(const QByteArray& json)
+{
+    static const QSet<QString> kKeys = {QStringLiteral("serial"), QStringLiteral("driver"),
+                                        QStringLiteral("bufferFrames"), QStringLiteral("rate"),
+                                        QStringLiteral("uses")};
+    static const QSet<QString> kUseKeys = {
+        QStringLiteral("role"), QStringLiteral("first"), QStringLiteral("count"),
+        QStringLiteral("direction"), QStringLiteral("memory"), QStringLiteral("wake"),
+        QStringLiteral("bytes")};
+    const auto obj = parseExactObject(json, kKeys, kMaxAsioJsonBytes);
+    if (!obj) {
+        return std::nullopt;
+    }
+    const auto serial = readInteger(*obj, QStringLiteral("serial"), 1,
+                                    std::numeric_limits<quint32>::max());
+    const auto driver = readString(*obj, QStringLiteral("driver"));
+    const auto buffer = readInteger(*obj, QStringLiteral("bufferFrames"), 0, kMaxBufferFrames);
+    const auto rate = readRate(*obj, QStringLiteral("rate"));
+    const QJsonValue usesValue = obj->value(QStringLiteral("uses"));
+    if (!serial || !driver || !buffer || !rate || !usesValue.isArray()
+        || usesValue.toArray().size() > kMaxAsioUses
+        || (driver->isEmpty() && !usesValue.toArray().isEmpty())
+        || (*rate != 0.0 && !knownAsioRate(*rate))) {
+        return std::nullopt;
+    }
+    AsioOpen open;
+    open.serial = static_cast<quint32>(*serial);
+    open.driver = *driver;
+    open.bufferFrames = static_cast<int>(*buffer);
+    open.rate = *rate;
+    for (const QJsonValue& value : usesValue.toArray()) {
+        if (!value.isObject() || !exactKeys(value.toObject(), kUseKeys)) {
+            return std::nullopt;
+        }
+        const QJsonObject u = value.toObject();
+        const auto roleText = readString(u, QStringLiteral("role"));
+        const auto first = readInteger(u, QStringLiteral("first"), 1, kMaxAsioChannels);
+        const auto count = readInteger(u, QStringLiteral("count"), 1, 2);
+        const auto directionText = readString(u, QStringLiteral("direction"));
+        const auto memory = readString(u, QStringLiteral("memory"));
+        const auto wake = readString(u, QStringLiteral("wake"));
+        const auto bytes = readInteger(u, QStringLiteral("bytes"), 1, kMaxRingBytes);
+        if (!roleText || !first || !count || !directionText || !memory || !wake || !bytes
+            || memory->isEmpty() || wake->isEmpty() || *memory == *wake) {
+            return std::nullopt;
+        }
+        const auto direction = directionFromKey(*directionText);
+        if (!direction) {
+            return std::nullopt;
+        }
+        AsioOpenUse use;
+        if (!roleText->isEmpty()) {
+            use.role = asioRoleFromKey(*roleText);
+            if (!use.role) {
+                return std::nullopt;
+            }
+        }
+        use.pair = AudioChannelPair{static_cast<int>(*first), static_cast<int>(*count)};
+        use.direction = *direction;
+        use.memory = *memory;
+        use.wake = *wake;
+        use.bytes = *bytes;
+        open.uses.append(use);
+    }
+    return open;
+}
+
+QByteArray encodeAsioState(const AsioState& state)
+{
+    QString name;
+    for (const StateKindName& entry : kAsioStateNames) {
+        if (entry.state == state.state) {
+            name = QString::fromLatin1(entry.name);
+        }
+    }
+    QJsonObject obj;
+    obj.insert(QStringLiteral("serial"), static_cast<double>(state.serial));
+    obj.insert(QStringLiteral("state"), name);
+    obj.insert(QStringLiteral("driver"), state.driver);
+    obj.insert(QStringLiteral("detail"), state.detail);
+    obj.insert(QStringLiteral("bufferFrames"), state.bufferFrames);
+    obj.insert(QStringLiteral("rate"), state.rate);
+    obj.insert(QStringLiteral("inputLatency"), state.inputLatencyFrames);
+    obj.insert(QStringLiteral("outputLatency"), state.outputLatencyFrames);
+    return checkedRecord(RecordType::AsioState, toJson(obj), decodeAsioState);
+}
+
+std::optional<AsioState> decodeAsioState(const QByteArray& json)
+{
+    static const QSet<QString> kKeys = {
+        QStringLiteral("serial"), QStringLiteral("state"), QStringLiteral("driver"),
+        QStringLiteral("detail"), QStringLiteral("bufferFrames"), QStringLiteral("rate"),
+        QStringLiteral("inputLatency"), QStringLiteral("outputLatency")};
+    const auto obj = parseExactObject(json, kKeys, kMaxAsioJsonBytes);
+    if (!obj) {
+        return std::nullopt;
+    }
+    const auto serial = readInteger(*obj, QStringLiteral("serial"), 0,
+                                    std::numeric_limits<quint32>::max());
+    const auto stateText = readString(*obj, QStringLiteral("state"));
+    const auto driver = readString(*obj, QStringLiteral("driver"));
+    const auto detail = readString(*obj, QStringLiteral("detail"));
+    const auto buffer = readInteger(*obj, QStringLiteral("bufferFrames"), 0, kMaxBufferFrames);
+    const auto rate = readRate(*obj, QStringLiteral("rate"));
+    const auto inLatency = readInteger(*obj, QStringLiteral("inputLatency"), 0, kMaxAsioLatencyFrames);
+    const auto outLatency = readInteger(*obj, QStringLiteral("outputLatency"), 0, kMaxAsioLatencyFrames);
+    if (!serial || !stateText || !driver || !detail || !buffer || !rate || !inLatency
+        || !outLatency) {
+        return std::nullopt;
+    }
+    std::optional<AsioStateKind> kind;
+    for (const StateKindName& entry : kAsioStateNames) {
+        if (*stateText == QLatin1String(entry.name)) {
+            kind = entry.state;
+        }
+    }
+    if (!kind) {
+        return std::nullopt;
+    }
+    // Running and restarted report what the session runs at.
+    if ((*kind == AsioStateKind::Running || *kind == AsioStateKind::Restarted)
+        && (*buffer == 0 || !knownAsioRate(*rate))) {
+        return std::nullopt;
+    }
+    AsioState state;
+    state.serial = static_cast<quint32>(*serial);
+    state.state = *kind;
+    state.driver = *driver;
+    state.detail = *detail;
+    state.bufferFrames = static_cast<int>(*buffer);
+    state.rate = *rate;
+    state.inputLatencyFrames = static_cast<int>(*inLatency);
+    state.outputLatencyFrames = static_cast<int>(*outLatency);
+    return state;
+}
+
+QByteArray encodeAsioControlPanel()
+{
+    return encodeRecord(RecordType::AsioControlPanel, QByteArrayLiteral("{}"));
 }
 
 } // namespace NereusSDR::CaptureProtocol

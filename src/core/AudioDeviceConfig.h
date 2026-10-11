@@ -15,14 +15,29 @@
 // (driverApi, bitDepth, eventDriven, bypassMixer, manualLatencyMs) plus
 // loadFromSettings / saveToSettings helpers for the 10-field AppSettings
 // round-trip required by the live-edit Devices page.
+//
+// Native audio plan Task 4 (2026-10-09, R-AUD-04): saved identity fields
+// Engine, DeviceId, FirstChannel, MicChannel and DelayMs.  J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code.
+//
+// Native audio plan Task 5 (2026-10-09): defaulted operator== for the
+// stream supervisor's AudioRoleStatus.  J.J. Boyd (KG4VCF), AI-assisted
+// via Anthropic Claude Code.
 // =================================================================
+
+#include "core/audio/AudioDeviceTypes.h"
 
 #include <QString>
 #include <QMetaType>
 
+#include <optional>
+
 namespace NereusSDR {
 
 class AppSettings;
+
+// The DeviceId of an explicit "(none)" pick (settled call 12).
+inline constexpr char kAudioDeviceNone[] = "(none)";
 
 struct AudioDeviceConfig {
     // ── Original 6 fields ───────────────────────────────────────────────────
@@ -52,6 +67,20 @@ struct AudioDeviceConfig {
     bool    bypassMixer   = false; // WASAPI stream-flags bypass-mixer
     int     manualLatencyMs = 0;   // 0 = let PortAudio pick; >0 = explicit
 
+    // ── Saved identity (R-AUD-04) ──────────────────────────────────────────
+    // deviceName above keeps its name and meaning (the display name).
+    std::optional<AudioEngineKind> engine;   // key Engine; nullopt when the key is absent
+    QString deviceId;                        // key DeviceId; empty: platform default; "(none)": none
+    int firstChannel = 1;                    // key FirstChannel
+    MicChannelPick micChannel = MicChannelPick::Left;  // key MicChannel: "Left", "Right", "Both"
+    int delayMs = 0;                         // key DelayMs
+
+    bool isPlatformDefault() const;          // deviceId and deviceName both empty, not none
+    bool isNone() const;                     // deviceId == kAudioDeviceNone
+
+    // Every field compared (AudioRoleStatus, native audio plan Task 5).
+    friend bool operator==(const AudioDeviceConfig&, const AudioDeviceConfig&) = default;
+
     // ── Settings round-trip helpers (10 fields) ─────────────────────────────
     // loadFromSettings reads audio/<prefix>/{DriverApi,DeviceName,...} keys.
     // On a fresh install where none of the keys exist, returns a
@@ -59,7 +88,11 @@ struct AudioDeviceConfig {
     // default), which preserves the pre-Sub-Phase-12 behavior exactly.
     static AudioDeviceConfig loadFromSettings(const QString& prefix);
 
-    // saveToSettings writes all 10 fields under audio/<prefix>/<Key>.
+    // The saved identity keys are read when present.
+
+    // saveToSettings writes all 10 fields under audio/<prefix>/<Key>, and
+    // the saved identity keys only when engine is set (so a save never
+    // marks an unmigrated profile as migrated).
     void saveToSettings(const QString& prefix) const;
 };
 

@@ -16,9 +16,17 @@
 //      setCurrentOutputDevice with the same name doesn't emit.
 //   4. Smoke: widget construction connects to speakersConfigChanged
 //      without crashing.
+//   6. Native audio plan Task 19: speakersConfigChanged names the device
+//      that opened, a fall-back to the default included, so it never moves
+//      the speakers menu's tick; the tick follows the speakers status.
 //
 // Design spec:
 //   docs/architecture/2026-04-20-phase3o-subphase12-addendum.md §4
+//   docs/architecture/2026-10-08-native-audio-engines-design.md (R-AUD-23)
+//
+// Modification history (NereusSDR):
+//   2026-10-09: native audio plan Task 19 (R-AUD-23): test 6. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -29,7 +37,41 @@
 #include "core/AudioEngine.h"
 #include "gui/widgets/MasterOutputWidget.h"
 
+#include "fakes/FakeAudioEngineBackend.h"
+
+#include <QAction>
+#include <QMenu>
+
+#include <memory>
+
 using namespace NereusSDR;
+
+namespace {
+
+AudioDeviceInfo output(const QString& id, const QString& name)
+{
+    AudioDeviceInfo info;
+    info.backend = AudioBackendId::CoreAudio;
+    info.direction = AudioDeviceDirection::Output;
+    info.id = id;
+    info.name = name;
+    return info;
+}
+
+// The ticked rows of the speakers menu, by text.
+QStringList tickedRows(MasterOutputWidget& w)
+{
+    std::unique_ptr<QMenu> menu(w.buildSpeakerMenuForTest());
+    QStringList ticked;
+    for (QAction* a : menu->actions()) {
+        if (a->isChecked()) {
+            ticked << a->text();
+        }
+    }
+    return ticked;
+}
+
+} // namespace
 
 class TstMasterOutputWidgetSignalRefresh : public QObject {
     Q_OBJECT
@@ -45,7 +87,7 @@ private:
 private slots:
 
     void init()    { clearKeys(); }
-    void cleanup() { clearKeys(); }
+    void cleanup() { clearKeys(); AppSettings::instance().clear(); }
 
     // ── 1. Smoke: widget construction connects to speakersConfigChanged ─────
 
@@ -179,6 +221,42 @@ private slots:
         }
         QTest::qWait(50);
         QVERIFY(true);
+    }
+
+    // ── 6. A fall-back the config names never moves the tick ───────────────
+
+    void fallbackConfigDoesNotMoveTheTick() {
+        AppSettings::instance().clear();
+        AudioDeviceConfig saved;
+        saved.engine = AudioEngineKind::CoreAudio;
+        saved.deviceId = QStringLiteral("desk-uid");
+        saved.deviceName = QStringLiteral("Desk speakers");
+        saved.saveToSettings(QStringLiteral("audio/Speakers"));
+
+        auto native = std::make_shared<FakeAudioEngineBackend>(AudioBackendId::CoreAudio);
+        native->setDevices({output(QStringLiteral("desk-uid"), QStringLiteral("Desk speakers")),
+                            output(QStringLiteral("built-in-uid"),
+                                   QStringLiteral("Built-in speakers"))});
+        native->setDefault(AudioDeviceDirection::Output, QStringLiteral("built-in-uid"));
+        AudioEngine engine;
+        engine.setVaxOutputsAllowed(false);
+        engine.setAudioBackendsForTest({native});
+        engine.start();
+        QVERIFY(engine.catalogue() != nullptr);
+
+        MasterOutputWidget w(&engine);
+        QCOMPARE(tickedRows(w), QStringList{QStringLiteral("Desk speakers")});
+
+        QSignalSpy spy(&w, &MasterOutputWidget::outputDeviceChanged);
+        AudioDeviceConfig fallback;
+        fallback.engine = AudioEngineKind::CoreAudio;
+        fallback.deviceId = QStringLiteral("built-in-uid");
+        fallback.deviceName = QStringLiteral("Built-in speakers");
+        emit engine.speakersConfigChanged(fallback);
+
+        QCOMPARE(tickedRows(w), QStringList{QStringLiteral("Desk speakers")});
+        QCOMPARE(spy.count(), 0);
+        engine.stop();
     }
 };
 

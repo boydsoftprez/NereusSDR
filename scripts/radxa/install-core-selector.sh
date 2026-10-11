@@ -81,6 +81,65 @@ restore_daemon_state() {
         fi
     fi
 }
+# BEGIN group drop-ins
+# Sound cards and serial accessories: the unit runs as a DynamicUser account
+# with no groups, so drop-ins grant the audio and dialout groups, as the
+# station images and the Pi 4 installers do (same content as
+# packaging/station-image/common/nereusd-audio.conf and nereusd-serial.conf).
+# Without the audio one the Core cannot open a sound card (seen on the Rock
+# 5C bench Core, 2026-10-10). A Core that lacks a grant gets it; an existing
+# one is left as found. Rollback removes only one this install added.
+dropin_dir=/etc/systemd/system/nereusd.service.d
+audio_dropin_added=0
+serial_dropin_added=0
+# One name per grant: <grant>.conf, the name every route writes. The Rock was
+# first set up by hand with nereusd-<grant>.conf; either name counts as
+# present, so a box never ends up with two files for one grant.
+existing_group_dropin() {
+    local f
+    for f in "$dropin_dir/$1.conf" "$dropin_dir/nereusd-$1.conf"; do
+        if [[ -e "$f" || -L "$f" ]]; then printf '%s\n' "$f"; return 0; fi
+    done
+    return 1
+}
+add_group_dropins() {
+    local found
+    if found=$(existing_group_dropin audio); then
+        echo "$found already exists; left unchanged"
+    else
+        audio_dropin_added=1
+        install -d -m 755 "$dropin_dir"
+        cat > "$dropin_dir/audio.conf" <<'AUDIO'
+# Sound cards on a Core: /dev/snd/* is root:audio on Debian, and a DynamicUser
+# account has no groups of its own.
+[Service]
+SupplementaryGroups=audio
+AUDIO
+        chmod 644 "$dropin_dir/audio.conf"
+        echo "added $dropin_dir/audio.conf"
+    fi
+    if found=$(existing_group_dropin serial); then
+        echo "$found already exists; left unchanged"
+    else
+        serial_dropin_added=1
+        install -d -m 755 "$dropin_dir"
+        cat > "$dropin_dir/serial.conf" <<'SERIAL'
+# Serial accessories on a station image: /dev/ttyUSB* and /dev/ttyACM* are
+# root:dialout on Debian, and a DynamicUser account has no groups of its own.
+[Service]
+SupplementaryGroups=dialout
+SERIAL
+        chmod 644 "$dropin_dir/serial.conf"
+        echo "added $dropin_dir/serial.conf"
+    fi
+}
+remove_added_group_dropins() {
+    local removed=0
+    if [[ "$audio_dropin_added" == 1 ]]; then rm -f "$dropin_dir/audio.conf" || removed=1; fi
+    if [[ "$serial_dropin_added" == 1 ]]; then rm -f "$dropin_dir/serial.conf" || removed=1; fi
+    return "$removed"
+}
+# END group drop-ins
 rollback() {
     local result=$?
     if test "$result" -ne 0; then
@@ -100,6 +159,7 @@ rollback() {
         rm -rf /usr/local/share/NereusSDR/models/dfnet3 /usr/local/share/NereusSDR/models/rnnoise /usr/local/share/doc/nereussdr/deepfilter || restored=0
         if test -f "$backup/assets.tar"; then tar -C / -xpf "$backup/assets.tar" || restored=0; fi
         restore_daemon_state || restored=0
+        remove_added_group_dropins || restored=0
         systemctl daemon-reload || restored=0
         if [[ "$restored" == 1 ]]; then
             systemctl start nereusd
@@ -140,6 +200,7 @@ sync -f /usr/local/share/NereusSDR/models/dfnet3/DeepFilterNet3_onnx.tar.gz
 for model in Default_large.bin Default_small.bin; do
     sync -f "/usr/local/share/NereusSDR/models/rnnoise/$model"
 done
+add_group_dropins
 systemctl daemon-reload
 systemctl start nereusd
 sleep 8

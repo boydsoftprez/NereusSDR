@@ -146,7 +146,7 @@ jobs:
             libfuse2 file desktop-file-utils xvfb \
             libfftw3-dev imagemagick \
             libasound2-dev libjack-jackd2-dev \
-            libpipewire-0.3-dev \
+            libpipewire-0.3-dev libpulse-dev \
             libssl-dev
 
       - name: Install system Qt (ARM only)
@@ -404,7 +404,7 @@ jobs:
           sudo apt-get install -y cmake ninja-build pkg-config qt6-base-dev \
             qt6-multimedia-dev qt6-base-private-dev qt6-shadertools-dev \
             qt6-svg-dev qt6-websockets-dev qt6-serialport-dev libfftw3-dev libssl-dev \
-            libasound2-dev libjack-jackd2-dev libpipewire-0.3-dev \
+            libasound2-dev libjack-jackd2-dev libpipewire-0.3-dev libpulse-dev \
             libgl1-mesa-dev libxkbcommon-dev autoconf automake libtool wget
       - name: Configure and build headless station
         run: |
@@ -454,6 +454,7 @@ jobs:
           dpkg-deb --contents "nereusd_${VERSION}_${ARCH}.deb" > package-contents.txt
           grep -q 'usr/bin/nereusd$' package-contents.txt
           grep -q 'systemd/system/nereusd.service$' package-contents.txt
+          grep -q 'systemd/system/nereusd.service.d/audio.conf$' package-contents.txt
           grep -q 'usr/share/nereusd/nereusd.conf.sample$' package-contents.txt
           dpkg-deb --info "nereusd_${VERSION}_${ARCH}.deb"
       - name: Upload Debian package

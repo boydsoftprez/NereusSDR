@@ -50,6 +50,10 @@
 // in use compare as they are ("slice removed", "slice stream binding
 // changed"). The last two are plain as written and are scanned anyway.
 //
+//   2026-10-10  J.J. Boyd / KG4VCF  Native audio plan: the Core speaker's
+//                                    and the Windows VAX source's greyed
+//                                    reasons are the window's own.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-09-28  J.J. Boyd / KG4VCF  Slice control plan Task 2:
 //                                    changeRefusal replaces sliceRefusal;
 //                                    a listener's refusal words scanned.
@@ -1890,6 +1894,15 @@ const QList<AppSideReason>& appSideReasons()
          "a window's own reason RADIO is greyed: no radio, or the link's older-Core reason"},
         {"src/models/RadioModel.cpp", "speakerAmplifierUnavailableReason",
          "a window's own reason the speaker amplifier choice is greyed"},
+        // Native audio plan Task 21: why the Core speaker card is greyed;
+        // the window's own words or IStationLink's (registered there).
+        {"src/models/RadioModel.cpp", "coreSpeakerUnavailableReason",
+         "a window's own reason the Core speaker is greyed: no link to the Core, or the "
+         "link's older-Core reason"},
+        // Native audio plan (R-AUD-19): why "VAX TX (virtual device)" is
+        // greyed on Windows; this window's own tooltip, never sent.
+        {"src/models/TransmitModel.cpp", "vaxSourceUnavailableReason",
+         "a window's own reason the VAX transmit source is greyed on Windows"},
         {"src/models/RadioModel.cpp", "noStationReason",
          "a remote window's own notice when it has no link to the Core"},
         // Fix round 1 (minor 4): the link-down words MOX, TUNE and 2-TONE
@@ -2000,6 +2013,10 @@ const QList<AppSideReason>& appSideReasons()
         // R-SPK-06 / R-SPK-14: the radio speaker (RADIO and the amplifier
         // choice) on a Core without radioSpeakerVersion 1.
         {"src/core/session/IStationLink.h", "radioSpeakerUnavailableReason",
+         "a remote window's own reason when its Core cannot take the request"},
+        // Native audio plan Task 21: the Core speaker on a Core without
+        // coreSpeakerVersion 1.
+        {"src/core/session/IStationLink.h", "coreSpeakerUnavailableReason",
          "a remote window's own reason when its Core cannot take the request"},
         // R-R3-49 (parity Task 16): the filter graph's curve.
         {"src/core/session/IStationLink.h", "filterResponseUnavailableReason",
