@@ -26,7 +26,9 @@ namespace NereusSDR {
 NEREUS_CORE_EXPORT MicModeCalls systemMicModeCalls();
 // The window, before its first audio call: runs the mic helper once to
 // keep this app's stored Mic Mode at Standard, waiting at most
-// kMicModeWaitMs, and logs what it found.
+// kMicModeWaitMs (under a second), and logs one line when it changed the
+// mode (naming the old one), when the system has no Mic Mode call, or when
+// the change or the helper failed.
 NEREUS_CORE_EXPORT void keepWindowMicModeStandard();
 #else
 inline MicModeCalls systemMicModeCalls() { return {}; }

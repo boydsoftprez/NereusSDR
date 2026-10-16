@@ -16,14 +16,10 @@
 #include "core/audio/CaptureHelperLocator.h"
 
 #include <QCoreApplication>
-#include <QElapsedTimer>
-#include <QProcess>
 #include <QString>
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <dlfcn.h>
-
-#include <algorithm>
 
 namespace NereusSDR {
 
@@ -35,15 +31,19 @@ namespace {
 // AVFCapture disassembly on macOS 27.0 shows: the setter takes the mode
 // first and the bundle id second and answers whether it was taken; the
 // reader takes the bundle id and answers the mode.  Modes are numbered as
-// the public AVCaptureMicrophoneMode numbers them.
+// the public AVCaptureMicrophoneMode numbers them.  The setter throws
+// NSInvalidArgumentException for a mode outside the app's supported modes
+// (an app that has never used the mic has none; seen on macOS 27.0), so
+// both calls are guarded: an exception is a refusal, never a crash.
 using ReadMicMode = NSInteger (*)(NSString*);
 using WriteMicMode = BOOL (*)(NSInteger, NSString*);
 constexpr char kAvFoundationPath[] = "/System/Library/Frameworks/AVFoundation.framework/AVFoundation";
 constexpr char kReadSymbol[] = "AVControlCenterMicrophoneModesModuleGetMicrophoneModeForBundleID";
 constexpr char kWriteSymbol[] = "AVControlCenterMicrophoneModesModuleSetMicrophoneModeForBundleID";
 
-// The window waits at most this long for the helper's answer.
-constexpr int kMicModeWaitMs = 1000;
+// The window waits at most this long for the helper's answer, then goes
+// on without it.
+constexpr int kMicModeWaitMs = 800;
 
 QString mainBundleId()
 {
@@ -71,14 +71,26 @@ MicModeCalls systemMicModeCalls()
     }
     MicModeCalls calls;
     calls.read = [read](const QString& bundleId) {
+        long mode = kMicModeNotRead;
         @autoreleasepool {
-            return static_cast<long>(read(bundleId.toNSString()));
+            @try {
+                mode = static_cast<long>(read(bundleId.toNSString()));
+            } @catch (NSException*) {
+                mode = kMicModeNotRead;
+            }
         }
+        return mode;
     };
     calls.write = [write](long mode, const QString& bundleId) {
+        bool taken = false;
         @autoreleasepool {
-            return write(static_cast<NSInteger>(mode), bundleId.toNSString()) == YES;
+            @try {
+                taken = write(static_cast<NSInteger>(mode), bundleId.toNSString()) == YES;
+            } @catch (NSException*) {
+                taken = false;
+            }
         }
+        return taken;
     };
     return calls;
 }
@@ -96,36 +108,15 @@ void keepWindowMicModeStandard()
         return;
     }
 
-    QElapsedTimer clock;
-    clock.start();
-    QProcess process;
-    process.setStandardOutputFile(QProcess::nullDevice());
-    process.setStandardErrorFile(QProcess::nullDevice());
-    process.start(helper, {QString::fromLatin1(kKeepMicModeStandardArg), bundleId});
-    const bool finished = process.waitForStarted(kMicModeWaitMs)
-                          && process.waitForFinished(
-                              std::max(0, kMicModeWaitMs - static_cast<int>(clock.elapsed())));
-    if (!finished) {
-        process.kill();
-        process.waitForFinished(kMicModeWaitMs);
-        qCWarning(lcAudio) << "Mic Mode: no answer from the mic helper within" << kMicModeWaitMs
-                           << "ms; Mic Mode left as it is";
-        return;
+    const MicModeHelperAnswer answer = runMicModeHelper(helper, bundleId, kMicModeWaitMs);
+    const MicModeLogLine line = micModeLogLine(answer, kMicModeWaitMs);
+    if (line.text.isEmpty()) {
+        qCDebug(lcAudio) << "Mic Mode: Standard for this app, in" << answer.elapsedMs << "ms";
+    } else if (line.warning) {
+        qCWarning(lcAudio).noquote() << line.text;
+    } else {
+        qCInfo(lcAudio).noquote() << line.text;
     }
-    MicModeOutcome outcome = MicModeOutcome::Refused;
-    if (process.exitStatus() != QProcess::NormalExit
-        || !micModeOutcomeFromExitCode(process.exitCode(), &outcome)) {
-        qCWarning(lcAudio) << "Mic Mode: the mic helper ended without an answer, exit code"
-                           << process.exitCode();
-        return;
-    }
-    if (outcome == MicModeOutcome::Refused) {
-        qCWarning(lcAudio).noquote() << micModeOutcomeText(outcome) << "for this app, in"
-                                     << clock.elapsed() << "ms";
-        return;
-    }
-    qCInfo(lcAudio).noquote() << micModeOutcomeText(outcome) << "for this app, in"
-                              << clock.elapsed() << "ms";
 }
 
 } // namespace NereusSDR

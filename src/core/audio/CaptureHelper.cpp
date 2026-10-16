@@ -1537,10 +1537,7 @@ int runCaptureHelper(int argc, char** argv)
     // 2026-10-16: the window's one-shot Mic Mode step (MicModeKeeper.h),
     // run here because this process has no bundle id.
     if (argc >= 3 && std::strcmp(argv[1], kKeepMicModeStandardArg) == 0) {
-        const MicModeOutcome outcome =
-            keepMicModeStandard(QString::fromLocal8Bit(argv[2]), systemMicModeCalls());
-        std::fprintf(stderr, "nereus-audio-capture: %s\n", qPrintable(micModeOutcomeText(outcome)));
-        return micModeExitCode(outcome);
+        return answerMicModeRequest(QString::fromLocal8Bit(argv[2]), systemMicModeCalls());
     }
 
     CaptureHelperIo::prepareStdio();
