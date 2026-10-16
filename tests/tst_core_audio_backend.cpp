@@ -23,11 +23,17 @@
 //   2026-10-09: Task 8 merge (R-AUD-32): the real adapter lists nothing
 //               in a test run. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-15: the real adapter's device walk waits for the window's
+//               voice isolation opt-out. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
+#include <QScopeGuard>
+#include <QSemaphore>
 #include <QStandardPaths>
 
+#include "core/MacVoiceIsolation.h"
 #include "core/audio/AudioBackendRegistry.h"
 #include "core/audio/AudioDelayProbe.h"
 #include "core/audio/AudioTestBarrier.h"
@@ -45,11 +51,17 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <thread>
 #include <vector>
 
 using namespace NereusSDR;
 
 namespace {
+
+// How long a held voice isolation opt-out must keep a device walk waiting,
+// and how long a released one may take to let it go.
+constexpr int kOptOutHeldMs = 200;
+constexpr int kOptOutReleasedMs = 5000;
 
 constexpr std::uint32_t fourCc(const char (&code)[5])
 {
@@ -391,6 +403,43 @@ private slots:
         QVERIFY(!input->open());
         QVERIFY(!input->isOpen());
         QCOMPARE(input->errorString(), coreAudioTestRunError());
+#else
+        QSKIP("The Core Audio adapter is the Mac's");
+#endif
+    }
+
+    // The window's first device walk waits for its voice isolation opt-out
+    // (MacVoiceIsolation.h): a walk ahead of it runs into the storm the
+    // opt-out stops.
+    void realAdapterWalkWaitsForTheVoiceIsolationOptOut()
+    {
+#ifdef Q_OS_MAC
+        resetSystemVoiceIsolationOptOutForTest();
+        // Shared with the opt-out's thread, which is detached.
+        const auto release = std::make_shared<QSemaphore>();
+        startSystemVoiceIsolationOptOutWith([release](std::int32_t* status) {
+            release->acquire();
+            *status = 0;
+            return VoiceIsolationOptOut::Applied;
+        });
+        std::unique_ptr<ICoreAudioSystem> system = makeCoreAudioSystem();
+        QVERIFY(system != nullptr);
+
+        QSemaphore listed;
+        std::thread walker([&] {
+            system->devices();
+            listed.release();
+        });
+        // Leave nothing blocked behind a failed check.
+        const auto unblock = qScopeGuard([&] {
+            release->release(1000);
+            walker.join();
+            resetSystemVoiceIsolationOptOutForTest();
+        });
+
+        QVERIFY(!listed.tryAcquire(1, kOptOutHeldMs));
+        release->release();
+        QVERIFY(listed.tryAcquire(1, kOptOutReleasedMs));
 #else
         QSKIP("The Core Audio adapter is the Mac's");
 #endif

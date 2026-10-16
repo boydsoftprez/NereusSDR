@@ -16,11 +16,15 @@
 //               lists no device, reports no default and registers no
 //               listener, as the older drivers' list is empty there. J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: the device walk waits for the window's voice isolation
+//               opt-out. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/audio/CoreAudioSystem.h"
 #include "core/audio/NativeAudioQueryTrace.h"
 
+#include "core/MacVoiceIsolation.h"
 #include "core/audio/AudioTestBarrier.h"
 #include "core/audio/CoreAudioInputStream.h"
 #include "core/audio/CoreAudioOutputBus.h"
@@ -176,6 +180,11 @@ public:
 
     QList<CoreAudioDeviceRecord> devices() override
     {
+        // The window's voice isolation opt-out first (MacVoiceIsolation.h):
+        // a walk that runs ahead of it waits out the storm it stops.
+        // Returns at once where none was started.
+        waitForSystemVoiceIsolationOptOut();
+
         QList<CoreAudioDeviceRecord> records;
         // R-AUD-32: a test run walks no real device.
         if (audioDevicesBarredForTestRun()) {

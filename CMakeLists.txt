@@ -1663,6 +1663,9 @@ if(APPLE)
         src/core/audio/CoreAudioBackend.cpp
         src/core/audio/CoreAudioOutputBus.cpp
         src/core/audio/CoreAudioInputStream.cpp)
+    # MacVoiceIsolation: opts the window out of macOS 27's system voice
+    # isolation, whose per-device loop stalls audio start for over a minute.
+    list(APPEND CORE_SOURCES src/core/MacVoiceIsolation.cpp)
 endif()
 
 # LinuxPipeBus — Linux-only IAudioBus implementation bridging to PulseAudio /

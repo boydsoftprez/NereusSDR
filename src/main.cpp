@@ -8,6 +8,7 @@
 #include "core/BuildIdentity.h"
 #include "core/CoreInit.h"
 #include "core/MacMicPermission.h"
+#include "core/MacVoiceIsolation.h"
 #include "core/audio/RealtimeAudioPriority.h"
 #include "core/RadioConnection.h"
 #include "core/mmio/ExternalVariableEngine.h"
@@ -66,6 +67,11 @@ static QString extractProfileFromArgv(int argc, char* argv[])
 
 int main(int argc, char* argv[])
 {
+    // Before any other audio call, on a thread of its own, since the call
+    // can take seconds; the first device walk waits for it. See
+    // MacVoiceIsolation.h.
+    NereusSDR::startSystemVoiceIsolationOptOut();
+
     // Hand the build stamp to the core accessor before anything can build a
     // window title from it. Empty on release artifacts, in which case the
     // title stays exactly as it was.

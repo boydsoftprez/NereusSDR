@@ -1761,6 +1761,15 @@ endif()
 if(APPLE)
     nereus_add_test(tst_core_audio_backend)
 endif()
+
+# macOS voice isolation opt-out (src/core/MacVoiceIsolation.h). Checks the
+# request through a fake property setter and the window's run of it through
+# a fake opt-out, so it never reaches Core Audio and cannot disturb audio on
+# the machine running it.
+if(APPLE)
+    nereus_add_test(tst_mac_voice_isolation)
+endif()
+
 # 2026-10-12: J.J. Boyd / OpenAI Codex; portable off-device query diagnostics.
 nereus_add_test(tst_native_audio_query_trace)
 
