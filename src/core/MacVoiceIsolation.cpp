@@ -232,6 +232,9 @@ std::optional<VoiceIsolationOptOutReport> waitForSystemVoiceIsolationOptOut(
         const bool first = !answered;
         run->gaveUp = true;
         lock.unlock();
+        // Let go of any waiter already blocked, which would otherwise wait
+        // out its own limit.
+        run->finished.notify_all();
         if (first) {
             qCWarning(lcAudio).nospace()
                 << "The voice isolation opt-out has not returned after " << limit.count()

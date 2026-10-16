@@ -114,8 +114,9 @@ void startSystemVoiceIsolationOptOut();
 
 // Returns once the opt-out started above has returned, with what it did;
 // the first caller to see it done also logs it. Gives up after `limit`,
-// with one warning and nothing; from then on returns at once, with the
-// answer once it has come and nothing before (the opt-out's thread logs a
+// with one warning and nothing; from then on returns at once, a waiter
+// already blocked included, with the answer once it has come and nothing
+// before (the opt-out's thread logs a
 // late answer itself). Returns at once, with nothing, in a process that
 // never started one (nereusd, the mic helper, tests).
 std::optional<VoiceIsolationOptOutReport> waitForSystemVoiceIsolationOptOut(

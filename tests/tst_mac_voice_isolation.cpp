@@ -15,8 +15,9 @@
 //               The property set, and no Core Audio call in a test run.
 //   2026-10-15  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //               The status it answered with; the run on a thread of its own
-//               and the wait for it, which gives up after its limit; no
-//               call unless the Mic Mode is Voice Isolation.
+//               and the wait for it, which gives up after its limit (a
+//               waiter already blocked included); no call unless the Mic
+//               Mode is Voice Isolation.
 // =================================================================
 #include "core/MacMicMode.h"
 #include "core/MacVoiceIsolation.h"
@@ -88,6 +89,23 @@ std::optional<VoiceIsolationOptOutReport> runWithMicMode(std::optional<int> micM
             return VoiceIsolationOptOut::Applied;
         });
     return NereusSDR::waitForSystemVoiceIsolationOptOut();
+}
+
+// After a waiter gave up, the answer once the opt-out returns. Its thread
+// logs a late answer before it is done, so a test that waits for this
+// leaves nothing to log into the next test.
+std::optional<VoiceIsolationOptOutReport> lateAnswer()
+{
+    std::optional<VoiceIsolationOptOutReport> late;
+    QElapsedTimer answered;
+    answered.start();
+    while (!late.has_value() && answered.elapsed() < kReleasedMs) {
+        late = NereusSDR::waitForSystemVoiceIsolationOptOut();
+        if (!late.has_value()) {
+            QThread::msleep(1);
+        }
+    }
+    return late;
 }
 
 } // namespace
@@ -288,17 +306,45 @@ private slots:
         QVERIFY2(again.elapsed() < kReleasedMs, qPrintable(QString::number(again.elapsed())));
 
         release->release();
-        std::optional<VoiceIsolationOptOutReport> late;
-        QElapsedTimer answered;
-        answered.start();
-        while (!late.has_value() && answered.elapsed() < kReleasedMs) {
-            late = NereusSDR::waitForSystemVoiceIsolationOptOut();
-            if (!late.has_value()) {
-                QThread::msleep(1);
-            }
-        }
+        const std::optional<VoiceIsolationOptOutReport> late = lateAnswer();
         QVERIFY(late.has_value());
         QCOMPARE(late->outcome, VoiceIsolationOptOut::Applied);
+    }
+
+    // A waiter already blocked when another gives up lets go at once too,
+    // rather than waiting out its own limit (30 s by default).
+    void aBlockedWaiterLetsGoWhenAnotherGivesUp()
+    {
+        const auto release = std::make_shared<QSemaphore>();
+        NereusSDR::startSystemVoiceIsolationOptOutWith(&voiceIsolationChosen,
+                                                       [release](std::int32_t* status) {
+            release->acquire();
+            *status = 0;
+            return VoiceIsolationOptOut::Applied;
+        });
+
+        QTest::ignoreMessage(QtWarningMsg,
+                             QRegularExpression(QStringLiteral(
+                                 "voice isolation opt-out has not returned after 100 ms")));
+        QSemaphore longGone;
+        std::optional<VoiceIsolationOptOutReport> longReport;
+        std::thread longWaiter([&] {
+            longReport = NereusSDR::waitForSystemVoiceIsolationOptOut();
+            longGone.release();
+        });
+        // Leave nothing blocked behind a failed check.
+        const auto unblock = qScopeGuard([&] {
+            release->release(1000);
+            longWaiter.join();
+            lateAnswer();
+        });
+
+        // Also gives the long waiter time to block before the short one.
+        QVERIFY(!longGone.tryAcquire(1, kHeldMs));
+        QVERIFY(!NereusSDR::waitForSystemVoiceIsolationOptOut(std::chrono::milliseconds(100))
+                     .has_value());
+        QVERIFY(longGone.tryAcquire(1, kReleasedMs));
+        QVERIFY(!longReport.has_value());
     }
 
     // A window in Standard Mic Mode has no loop to stop: no call, and the
