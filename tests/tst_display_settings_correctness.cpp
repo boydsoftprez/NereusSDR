@@ -2,6 +2,9 @@
 // Modification history (NereusSDR):
 //   2026-10-14 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
 //              saved narrow zoom and active toast anchoring regressions.
+//   2026-10-16 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//              the saved span is read from pan 0's own key, where the
+//              per-pan display settings save it.
 
 #include <QtTest/QtTest>
 #include <QFile>
@@ -10,6 +13,7 @@
 #include <memory>
 
 #include "core/AppSettings.h"
+#include "core/settings/PanDisplayKeys.h"
 #include "core/settings/SettingsProxy.h"
 #include "fakes/MainWindowTestSettings.h"
 #include "gui/MainWindow.h"
@@ -133,7 +137,11 @@ private slots:
             QVERIFY(AppSettings::instance().save());
         }
         AppSettings::instance().load();
-        QCOMPARE(AppSettings::instance().value(QStringLiteral("DisplayBandwidth")).toDouble(), savedSpan);
+        // A pan saves its span under its own key (DisplayBandwidth_0); the
+        // bare key is the Setup default, which no pan writes.
+        QVERIFY(PanDisplayKeys::hasOverride(QStringLiteral("DisplayBandwidth"), 0));
+        QCOMPARE(PanDisplayKeys::read(QStringLiteral("DisplayBandwidth"), 0, QVariant()).toDouble(),
+                 savedSpan);
 
         SettingsProxy proxy;
         AppSettings::instance().setRemoteBackend(&proxy);
