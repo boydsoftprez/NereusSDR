@@ -15,9 +15,10 @@
 // catalogue never touches a stream.
 //
 // A backend that hangs never hangs the caller: start() waits at most
-// kStartWaitMs for the first list and stop() at most kStopWaitMs for the
-// thread.  A thread that outlives stop() owns everything it still
-// touches (the shared State, the backends, its worker) and frees it when
+// kStartWaitMs for the first list (not at all with FirstList::InBackground,
+// as the window starts it) and stop() at most kStopWaitMs for the thread.
+// A thread that outlives stop() owns everything it still touches (the
+// shared State, the backends, its worker) and frees it when
 // the backend returns; nothing it does reaches the catalogue again, and it
 // calls no backend after that call.  Until it returns, a later start() or
 // rescan lists that backend as not running and never calls it, so no
@@ -51,6 +52,10 @@
 //   2026-10-12: wantOlderDrivers(): an engine listed on demand is listed
 //               only once something asks for it. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-16: start(FirstList::InBackground) returns at once; the first
+//               list arrives through the main thread's queue.  The window
+//               starts it so; the Core and the tests still wait.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -79,12 +84,17 @@ public:
     static constexpr int kStartWaitMs = 3000;   // start() waits at most this long for the first list
     static constexpr int kStopWaitMs = 3000;    // stop() waits at most this long for the thread
 
+    // Wait: start() holds its caller up to kStartWaitMs for the first list.
+    // InBackground: start() returns at once; the first list arrives through
+    // the main thread's queue (hasListed() and firstListed() say when).
+    enum class FirstList { Wait, InBackground };
+
     // backends in R-AUD-01 order; backends() returns them in this order.
     explicit AudioDeviceCatalog(std::vector<std::shared_ptr<IAudioEngineBackend>> backends,
                                 QObject* parent = nullptr);
     ~AudioDeviceCatalog() override;      // stops its thread
 
-    void start();                        // lists once; waits at most 3 s for the first list
+    void start(FirstList firstList = FirstList::Wait);   // lists once; see FirstList
     void stop();
     void setDebounceIntervalForTest(int ms);
     // The windows this run has started, and the length the last one was

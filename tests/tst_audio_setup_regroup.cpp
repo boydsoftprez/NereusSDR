@@ -92,6 +92,10 @@
 //                the radio itself, between Headphones and Radio speaker in a
 //                remote window. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-16 - Rescan devices takes up a device list that comes after
+//                the page is built, as the window now lists in the
+//                background. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -1027,6 +1031,35 @@ private slots:
 #else
         QVERIFY(button->isEnabled());
 #endif
+    }
+
+    // The window lists its devices in the background: a page built before
+    // the first list takes up the note when it comes.  PipeWire's note
+    // needs the list (whether it is running); the Mac's needs only the
+    // engine's name.
+    void rescanDevicesFollowsALateFirstList()
+    {
+        RadioModel model;
+        const FakeSystem fake = fakeSystem(FakeOs::LinuxPipeWire);
+        fake.native->holdEnumerate();
+        AudioEngine::setDeviceListInBackground(true);
+        const auto restore = qScopeGuard([&fake] {
+            fake.native->releaseEnumerate();
+            AudioEngine::setDeviceListInBackground(false);
+        });
+        startOnFakeSystem(model, fake);
+        IAudioDeviceCatalog* catalogue = model.localAudioDevices()->catalogue();
+        QVERIFY(!catalogue->hasListed());
+        AudioOutputsPage page(&model);
+        auto* button = child<QPushButton>(&page, "rescanDevices");
+        auto* note = child<QLabel>(&page, "rescanDevicesResult");
+        const QString listed = QStringLiteral(
+            "Only the older drivers need this. PipeWire lists update by themselves.");
+        QCOMPARE(note->text(), QStringLiteral("Only the older drivers need this."));
+        fake.native->releaseEnumerate();
+        QTRY_COMPARE_WITH_TIMEOUT(note->text(), listed, 3000);
+        QVERIFY(button->isEnabled());
+        model.localAudioDevices()->stop();
     }
 
     // 8. The Sound system line from the catalogue, naming the older

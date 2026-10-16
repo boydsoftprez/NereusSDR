@@ -23,6 +23,10 @@
 //               cases: true inside a start that got its list, false after
 //               one that gave up until the list is in. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-16: a start that lists in the background returns before its
+//               first list, with no wait and no warning, and the list
+//               arrives later through the main thread's queue. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -631,6 +635,30 @@ private slots:
                           QStringLiteral("spk")));
         QVERIFY(rig.catalog->hasListed());
         QCOMPARE(firstListed.count(), 1);
+    }
+
+    // The window's start: it never waits for the first list.  The backend
+    // is held until start() has returned, so a start that waited would
+    // give up after kStartWaitMs and say so; that warning fails the case.
+    void startInBackgroundReturnsBeforeTheFirstList()
+    {
+        CatalogRig rig;
+        rig.engine->holdEnumerate();
+        QSignalSpy changed(rig.catalog.get(), &IAudioDeviceCatalog::devicesChanged);
+        QSignalSpy firstListed(rig.catalog.get(), &IAudioDeviceCatalog::firstListed);
+        QTest::failOnWarning(QRegularExpression(QStringLiteral("Audio device list took longer")));
+        rig.catalog->start(AudioDeviceCatalog::FirstList::InBackground);
+        QVERIFY(!rig.catalog->hasListed());
+        QVERIFY(rig.catalog->devices(AudioBackendId::CoreAudio, AudioDeviceDirection::Output).isEmpty());
+        QCOMPARE(changed.count(), 0);
+        QCOMPARE(firstListed.count(), 0);
+        rig.engine->releaseEnumerate();
+        QTRY_COMPARE_WITH_TIMEOUT(firstListed.count(), 1, 3000);
+        QCOMPARE(changed.count(), 1);
+        QVERIFY(hasDevice(rig.catalog->devices(AudioBackendId::CoreAudio, AudioDeviceDirection::Output),
+                          QStringLiteral("spk")));
+        QCOMPARE(rig.engine->enumerateCalls(), 1);
+        rig.catalog->stop();
     }
 
     void stopGivesUpOnHungBackend()

@@ -24,6 +24,10 @@
 //               only once something asks for it (wantOlderDrivers, a read
 //               of its devices, Rescan). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-16: start(FirstList::InBackground) returns at once; the first
+//               list arrives through the main thread's queue.  The window
+//               starts it so; the Core and the tests still wait.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AudioDeviceCatalog.h"
@@ -382,7 +386,7 @@ AudioDeviceCatalog::~AudioDeviceCatalog()
     stop();
 }
 
-void AudioDeviceCatalog::start()
+void AudioDeviceCatalog::start(FirstList firstList)
 {
     if (m_thread) {
         return;
@@ -426,11 +430,16 @@ void AudioDeviceCatalog::start()
 
     {
         std::lock_guard<std::mutex> lock(m_state->firstMutex);
-        m_state->waitingForFirst = true;
+        m_state->waitingForFirst = firstList == FirstList::Wait;
     }
     m_thread->start();
     Worker* target = m_worker;
     QMetaObject::invokeMethod(target, [target] { target->relist(); }, Qt::QueuedConnection);
+    if (firstList == FirstList::InBackground) {
+        // 2026-10-16: the window never waits.  The list arrives through the
+        // main thread's queue, as after a start that gave up waiting.
+        return;
+    }
 
     std::optional<Listing> first;
     {

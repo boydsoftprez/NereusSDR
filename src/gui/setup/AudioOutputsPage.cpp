@@ -28,6 +28,10 @@
 // HeaderVolumeStyle::keepFill(), so they keep their filled side in the
 // workspace preview (JJ's D24), by J.J. Boyd (KG4VCF), AI-assisted via
 // Anthropic Claude Code.
+// 2026-10-16: the Rescan devices note follows each device list, so a
+// page built before the window's first list (now always listed in the
+// background) takes it up when it comes. J.J. Boyd (KG4VCF), AI-assisted
+// via Anthropic Claude Code.
 // =================================================================
 
 #include "AudioOutputsPage.h"
@@ -511,16 +515,26 @@ void AudioOutputsPage::wireEngine()
     }
 
     // The engine builds its device catalogue on first use: the note and
-    // the line take it up once it is there.
+    // the line take it up once it is there, and follow its lists from then
+    // on (the window's first list comes in the background).
     m_cataloguePickup = new QTimer(this);
     m_cataloguePickup->setInterval(kCataloguePickupMs);
-    connect(m_cataloguePickup, &QTimer::timeout, this, [this]() {
-        if (m_engine->catalogue() != nullptr) {
+    const auto takeUpCatalogue = [this]() {
+        IAudioDeviceCatalog* catalogue = m_engine->catalogue();
+        if (catalogue == nullptr) {
+            return false;
+        }
+        connect(catalogue, &IAudioDeviceCatalog::devicesChanged, this,
+                [this]() { updateRescanState(); });
+        return true;
+    };
+    connect(m_cataloguePickup, &QTimer::timeout, this, [this, takeUpCatalogue]() {
+        if (takeUpCatalogue()) {
             m_cataloguePickup->stop();
             updateRescanState();
         }
     });
-    if (m_engine->catalogue() == nullptr) {
+    if (!takeUpCatalogue()) {
         m_cataloguePickup->start();
     }
 

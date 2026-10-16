@@ -56,6 +56,9 @@
 //   2026-10-12: regression for a first TX input configuration overwriting
 //               its migrated native engine during catalog setup.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-16: the window's engine builds its device list in the
+//               background: catalogue() returns before the first list.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -198,6 +201,33 @@ private slots:
     void init()
     {
         AppSettings::instance().clear();
+    }
+
+    void cleanup()
+    {
+        AudioEngine::setDeviceListInBackground(false);
+    }
+
+    // The window never waits for this computer's device list: on a system
+    // slow to list (macOS 27 under a Voice Isolation storm took 12 s) the
+    // window would hold its open for the list.  The backend is held until
+    // catalogue() has returned, so a wait would give up and say so.
+    void windowEngineListsDevicesInTheBackground()
+    {
+        Rig rig;
+        rig.build();
+        rig.native->holdEnumerate();
+        rig.older->holdEnumerate();
+        AudioEngine::setDeviceListInBackground(true);
+        QTest::failOnWarning(QRegularExpression(QStringLiteral("Audio device list took longer")));
+        IAudioDeviceCatalog* catalogue = rig.engine->catalogue();
+        QVERIFY(catalogue != nullptr);
+        QVERIFY(!catalogue->hasListed());
+        QSignalSpy firstListed(catalogue, &IAudioDeviceCatalog::firstListed);
+        rig.native->releaseEnumerate();
+        rig.older->releaseEnumerate();
+        QTRY_COMPARE_WITH_TIMEOUT(firstListed.count(), 1, 3000);
+        QVERIFY(!catalogue->devices(AudioBackendId::CoreAudio, AudioDeviceDirection::Output).isEmpty());
     }
 
     // R-AUD-02: the first native engine registered and running, else

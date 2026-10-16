@@ -8,6 +8,7 @@
 #include "core/BuildIdentity.h"
 #include "core/CoreInit.h"
 #include "core/MacMicPermission.h"
+#include "core/audio/MacMicMode.h"
 #include "core/audio/RealtimeAudioPriority.h"
 #include "core/RadioConnection.h"
 #include "core/mmio/ExternalVariableEngine.h"
@@ -170,6 +171,12 @@ int main(int argc, char* argv[])
         }
     });
 
+    // 2026-10-16: before the window's first audio call.  On macOS 27 an app
+    // whose stored Mic Mode is Voice Isolation sets the whole system's
+    // voice processing going round for a minute or two at that first call,
+    // and the mic waits on it.  The helper keeps ours at Standard.
+    NereusSDR::keepWindowMicModeStandard();
+
     // Trigger the macOS microphone permission dialog deterministically
     // (issue #203). The OS only prompts when something actually engages
     // TCC; relying on PortAudio's CoreAudio backend to do so is unreliable
@@ -249,6 +256,8 @@ int main(int argc, char* argv[])
 
         parser.process(app);
         NereusSDR::AudioEngine::setDelayProbeRequestedAtStart(parser.isSet(delayProbeOpt));
+        // The window never waits for this computer's device list to open.
+        NereusSDR::AudioEngine::setDeviceListInBackground(true);
 
         // Command-line values only. The saved-Setup fallback cannot be read
         // yet: AppSettings is not loaded until CoreInit::initialize() below,

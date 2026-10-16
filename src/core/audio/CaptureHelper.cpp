@@ -47,6 +47,9 @@
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12: process/generation tags and debug command timestamps.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-16: --keep-mic-mode-standard <bundle id>: the window's one-shot
+//               Mic Mode step (MicModeKeeper.h), answered by exit code.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CaptureHelper.h"
@@ -68,6 +71,7 @@
 #include "core/audio/DeviceSampleFormat.h"
 #include "core/audio/IAsioDriver.h"
 #include "core/audio/IAudioEngineBackend.h"
+#include "core/audio/MacMicMode.h"
 #include "core/audio/MatcherRing.h"
 #include "core/audio/PortAudioBus.h"
 #include "core/audio/PortAudioLibrary.h"
@@ -92,6 +96,7 @@
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -1529,8 +1534,14 @@ void setCaptureHelperAsio(CaptureHelperAsio asio)
 
 int runCaptureHelper(int argc, char** argv)
 {
-    Q_UNUSED(argc);
-    Q_UNUSED(argv);
+    // 2026-10-16: the window's one-shot Mic Mode step (MicModeKeeper.h),
+    // run here because this process has no bundle id.
+    if (argc >= 3 && std::strcmp(argv[1], kKeepMicModeStandardArg) == 0) {
+        const MicModeOutcome outcome =
+            keepMicModeStandard(QString::fromLocal8Bit(argv[2]), systemMicModeCalls());
+        std::fprintf(stderr, "nereus-audio-capture: %s\n", qPrintable(micModeOutcomeText(outcome)));
+        return micModeExitCode(outcome);
+    }
 
     CaptureHelperIo::prepareStdio();
 

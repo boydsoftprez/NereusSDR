@@ -2212,6 +2212,10 @@ nereus_add_test(tst_capture_status_text)
 # supervisor's default program falling back to HelperMissing.
 nereus_add_test(tst_capture_helper_locator)
 
+# 2026-10-16: the rule that keeps the window's stored macOS Mic Mode at
+# Standard (MicModeKeeper), over stand-in calls; no real setting is read.
+nereus_add_test(tst_mic_mode_keeper)
+
 # ── Phase 3O Sub-Phase 12 Task 12.2 Step 0: AudioEngine speakers live-reconfig ─
 # Verifies speakersConfigChanged / headphonesConfigChanged / txInputConfigChanged
 # / vaxConfigChanged signals, mutex safety in rxBlockReady (try_lock), and
