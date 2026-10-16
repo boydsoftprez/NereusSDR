@@ -33,6 +33,7 @@
 #include <QSemaphore>
 #include <QStandardPaths>
 
+#include "core/MacMicMode.h"
 #include "core/MacVoiceIsolation.h"
 #include "core/audio/AudioBackendRegistry.h"
 #include "core/audio/AudioDelayProbe.h"
@@ -417,7 +418,8 @@ private slots:
         resetSystemVoiceIsolationOptOutForTest();
         // Shared with the opt-out's thread, which is detached.
         const auto release = std::make_shared<QSemaphore>();
-        startSystemVoiceIsolationOptOutWith([release](std::int32_t* status) {
+        startSystemVoiceIsolationOptOutWith([] { return std::optional<int>(kMicModeVoiceIsolation); },
+                                            [release](std::int32_t* status) {
             release->acquire();
             *status = 0;
             return VoiceIsolationOptOut::Applied;

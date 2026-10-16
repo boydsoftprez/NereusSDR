@@ -7,15 +7,18 @@
 // tests pin what it sends and how it reads the answer, through a fake setter:
 // the real call reconfigures every audio device on the machine, so a test
 // must not make it. They also pin the window's run of it on a thread of its
-// own: started once, and a waiter held until it returns.
+// own: started once, made only when the app's Mic Mode is Voice Isolation,
+// and a waiter held until it returns.
 //
 // Modification history (NereusSDR):
 //   2026-10-10  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //               The property set, and no Core Audio call in a test run.
 //   2026-10-15  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //               The status it answered with; the run on a thread of its own
-//               and the wait for it, which gives up after its limit.
+//               and the wait for it, which gives up after its limit; no
+//               call unless the Mic Mode is Voice Isolation.
 // =================================================================
+#include "core/MacMicMode.h"
 #include "core/MacVoiceIsolation.h"
 
 #include <QRegularExpression>
@@ -66,6 +69,26 @@ OSStatus fakeSetProperty(AudioObjectID objectId, const AudioObjectPropertyAddres
 // released one may take to let it go.
 constexpr int kHeldMs = 200;
 constexpr int kReleasedMs = 5000;
+
+std::optional<int> voiceIsolationChosen()
+{
+    return NereusSDR::kMicModeVoiceIsolation;
+}
+
+// Starts a run whose Mic Mode read returns `micMode`, counting the opt-out
+// calls it makes, and waits for its report.
+std::optional<VoiceIsolationOptOutReport> runWithMicMode(std::optional<int> micMode,
+                                                         const std::shared_ptr<std::atomic<int>>& calls)
+{
+    NereusSDR::startSystemVoiceIsolationOptOutWith(
+        [micMode] { return micMode; },
+        [calls](std::int32_t* status) {
+            calls->fetch_add(1);
+            *status = 0;
+            return VoiceIsolationOptOut::Applied;
+        });
+    return NereusSDR::waitForSystemVoiceIsolationOptOut();
+}
 
 } // namespace
 
@@ -165,7 +188,8 @@ private slots:
         // Shared with the opt-out's thread, which is detached.
         const auto release = std::make_shared<QSemaphore>();
         const auto called = std::make_shared<std::atomic<bool>>(false);
-        NereusSDR::startSystemVoiceIsolationOptOutWith([release, called](std::int32_t* status) {
+        NereusSDR::startSystemVoiceIsolationOptOutWith(&voiceIsolationChosen,
+                                                       [release, called](std::int32_t* status) {
             called->store(true);
             release->acquire();
             *status = std::int32_t(kAudioHardwareBadPropertySizeError);
@@ -212,8 +236,8 @@ private slots:
             *status = 0;
             return VoiceIsolationOptOut::Applied;
         };
-        NereusSDR::startSystemVoiceIsolationOptOutWith(optOut);
-        NereusSDR::startSystemVoiceIsolationOptOutWith(optOut);
+        NereusSDR::startSystemVoiceIsolationOptOutWith(&voiceIsolationChosen, optOut);
+        NereusSDR::startSystemVoiceIsolationOptOutWith(&voiceIsolationChosen, optOut);
         const auto unblock = qScopeGuard([&] { release->release(1000); });
 
         QVERIFY(entered->tryAcquire(1, kReleasedMs));
@@ -233,7 +257,8 @@ private slots:
     void theWaitGivesUpAfterItsLimit()
     {
         const auto release = std::make_shared<QSemaphore>();
-        NereusSDR::startSystemVoiceIsolationOptOutWith([release](std::int32_t* status) {
+        NereusSDR::startSystemVoiceIsolationOptOutWith(&voiceIsolationChosen,
+                                                       [release](std::int32_t* status) {
             release->acquire();
             *status = 0;
             return VoiceIsolationOptOut::Applied;
@@ -274,6 +299,63 @@ private slots:
         }
         QVERIFY(late.has_value());
         QCOMPARE(late->outcome, VoiceIsolationOptOut::Applied);
+    }
+
+    // A window in Standard Mic Mode has no loop to stop: no call, and the
+    // device list waits only for the read.
+    void standardMicModeMakesNoCall()
+    {
+        const auto calls = std::make_shared<std::atomic<int>>(0);
+        const std::optional<VoiceIsolationOptOutReport> report =
+            runWithMicMode(NereusSDR::kMicModeStandard, calls);
+        QVERIFY(report.has_value());
+        QCOMPARE(report->outcome, VoiceIsolationOptOut::NotNeeded);
+        QCOMPARE(report->micMode, std::optional<int>(NereusSDR::kMicModeStandard));
+        QCOMPARE(calls->load(), 0);
+    }
+
+    void wideSpectrumMicModeMakesNoCall()
+    {
+        const auto calls = std::make_shared<std::atomic<int>>(0);
+        const std::optional<VoiceIsolationOptOutReport> report =
+            runWithMicMode(NereusSDR::kMicModeWideSpectrum, calls);
+        QVERIFY(report.has_value());
+        QCOMPARE(report->outcome, VoiceIsolationOptOut::NotNeeded);
+        QCOMPARE(calls->load(), 0);
+    }
+
+    void voiceIsolationMicModeMakesTheCall()
+    {
+        const auto calls = std::make_shared<std::atomic<int>>(0);
+        const std::optional<VoiceIsolationOptOutReport> report =
+            runWithMicMode(NereusSDR::kMicModeVoiceIsolation, calls);
+        QVERIFY(report.has_value());
+        QCOMPARE(report->outcome, VoiceIsolationOptOut::Applied);
+        QCOMPARE(report->micMode, std::optional<int>(NereusSDR::kMicModeVoiceIsolation));
+        QCOMPARE(calls->load(), 1);
+    }
+
+    // Before macOS 12 there is no Mic Mode, and nothing to opt out of.
+    void noMicModeMakesNoCall()
+    {
+        const auto calls = std::make_shared<std::atomic<int>>(0);
+        const std::optional<VoiceIsolationOptOutReport> report =
+            runWithMicMode(std::nullopt, calls);
+        QVERIFY(report.has_value());
+        QCOMPARE(report->outcome, VoiceIsolationOptOut::NotApplicable);
+        QCOMPARE(report->micMode, std::optional<int>());
+        QCOMPARE(calls->load(), 0);
+    }
+
+    // The window's own start, in a test run: no Mic Mode read, no call.
+    void aTestRunReadsNoMicMode()
+    {
+        NereusSDR::startSystemVoiceIsolationOptOut();
+        const std::optional<VoiceIsolationOptOutReport> report =
+            NereusSDR::waitForSystemVoiceIsolationOptOut();
+        QVERIFY(report.has_value());
+        QCOMPARE(report->outcome, VoiceIsolationOptOut::NotApplicable);
+        QCOMPARE(report->micMode, std::optional<int>());
     }
 };
 

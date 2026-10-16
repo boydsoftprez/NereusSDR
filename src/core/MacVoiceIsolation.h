@@ -21,6 +21,12 @@
 // the window declines the system processing through Core Audio's own
 // per-client switch.
 //
+// Only when the app's Mic Mode is Voice Isolation (MacMicMode.h). Every
+// loop seen came from a Voice Isolation window, and the call can take
+// seconds, so a window in Standard or Wide Spectrum neither makes it nor
+// waits for it. The mode is read once, at launch; a change made while the
+// window runs is read at the next launch.
+//
 // Only the window does this. The mic helper and nereusd have no bundle
 // identifier, and macOS offers voice isolation only to a process that has
 // one. The call itself can take seconds (it is the process's first Core
@@ -29,7 +35,8 @@
 // the command line is read, and waitForSystemVoiceIsolationOptOut() at the
 // top of every Core Audio device list (MacCoreAudioSystem::devices()).
 //
-// Only that device list waits. These can still reach Core Audio while the
+// Only that device list waits, and only for as long as the Mic Mode read
+// when the mode is not Voice Isolation. These can still reach Core Audio while the
 // call runs, and start the loop ahead of it: the VAX channel's device lookup
 // (CoreAudioHalBus, findDeviceByUid, on the thread opening the channel),
 // the native output and input buses' AudioComponentInstanceNew, and
@@ -45,7 +52,8 @@
 //               The opt-out, made first thing in main() of every program.
 //   2026-10-15  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //               The window only, on a thread of its own, with the device
-//               walk waiting for it up to a limit; nothing in a test run.
+//               walk waiting for it up to a limit; only when the app's Mic
+//               Mode is Voice Isolation; nothing in a test run.
 // =================================================================
 
 #include <QtGlobal>
@@ -64,7 +72,9 @@ namespace NereusSDR {
 
 enum class VoiceIsolationOptOut {
     NotApplicable, // not macOS, a test run, or this macOS has no such switch
-                   // (the property unknown, or the operation unsupported)
+                   // (no Mic Mode, the property unknown, or the operation
+                   // unsupported)
+    NotNeeded,     // the app's Mic Mode is not Voice Isolation; no call made
     Applied,       // Core Audio accepted the opt-out
     Refused        // Core Audio has the switch and returned an error
 };
@@ -78,7 +88,8 @@ constexpr std::chrono::milliseconds kVoiceIsolationOptOutWaitLimit{30000};
 struct VoiceIsolationOptOutReport {
     VoiceIsolationOptOut outcome = VoiceIsolationOptOut::NotApplicable;
     std::int32_t status = 0;  // the OSStatus Core Audio answered with
-    qint64 callMs = 0;        // from the thread's start to the call's return
+    qint64 callMs = 0;        // from the thread's start to its answer
+    std::optional<int> micMode; // what the Mic Mode read returned
 };
 
 #ifdef Q_OS_MAC
@@ -97,7 +108,8 @@ VoiceIsolationOptOut optOutOfSystemVoiceIsolationWith(AudioObjectSetPropertyFn s
                                                       CFStringRef bundleId,
                                                       std::int32_t* status = nullptr);
 
-// The window's opt-out, on a thread of its own. A second call does nothing.
+// The window's opt-out, on a thread of its own: reads the app's Mic Mode,
+// and opts out only when it is Voice Isolation. A second call does nothing.
 void startSystemVoiceIsolationOptOut();
 
 // Returns once the opt-out started above has returned, with what it did;
@@ -109,9 +121,11 @@ void startSystemVoiceIsolationOptOut();
 std::optional<VoiceIsolationOptOutReport> waitForSystemVoiceIsolationOptOut(
     std::chrono::milliseconds limit = kVoiceIsolationOptOutWaitLimit);
 
-// Test seams: start with `optOut` in place of the Core Audio call, and
-// forget a finished run so the next test starts clean.
-void startSystemVoiceIsolationOptOutWith(std::function<VoiceIsolationOptOut(std::int32_t*)> optOut);
+// Test seams: start with `readMicMode` in place of the Mic Mode read and
+// `optOut` in place of the Core Audio call, and forget a finished run so
+// the next test starts clean.
+void startSystemVoiceIsolationOptOutWith(std::function<std::optional<int>()> readMicMode,
+                                         std::function<VoiceIsolationOptOut(std::int32_t*)> optOut);
 void resetSystemVoiceIsolationOptOutForTest();
 #else
 inline void startSystemVoiceIsolationOptOut() {}
