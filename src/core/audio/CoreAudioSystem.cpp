@@ -17,8 +17,8 @@
 //               listener, as the older drivers' list is empty there. J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-15: the device walk waits for the window's voice isolation
-//               opt-out. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
-//               Claude Code.
+//               opt-out, up to a limit. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CoreAudioSystem.h"
@@ -182,7 +182,8 @@ public:
     {
         // The window's voice isolation opt-out first (MacVoiceIsolation.h):
         // a walk that runs ahead of it waits out the storm it stops.
-        // Returns at once where none was started.
+        // Returns at once where none was started, and lists without it
+        // after kVoiceIsolationOptOutWaitLimit.
         waitForSystemVoiceIsolationOptOut();
 
         QList<CoreAudioDeviceRecord> records;

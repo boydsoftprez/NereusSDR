@@ -25,20 +25,32 @@
 // identifier, and macOS offers voice isolation only to a process that has
 // one. The call itself can take seconds (it is the process's first Core
 // Audio call, and pays for Core Audio starting up), so it runs on a thread
-// of its own: startSystemVoiceIsolationOptOut() first thing in the window's
-// main(), and waitForSystemVoiceIsolationOptOut() before the first device
-// walk, so no walk runs ahead of it.
+// of its own: startSystemVoiceIsolationOptOut() in the window's main() once
+// the command line is read, and waitForSystemVoiceIsolationOptOut() at the
+// top of every Core Audio device list (MacCoreAudioSystem::devices()).
+//
+// Only that device list waits. These can still reach Core Audio while the
+// call runs, and start the loop ahead of it: the VAX channel's device lookup
+// (CoreAudioHalBus, findDeviceByUid, on the thread opening the channel),
+// the native output and input buses' AudioComponentInstanceNew, and
+// PortAudio. Gating them would hold the GUI thread for the call. They
+// belong to native audio, which measures the VAX lookup on the launch log
+// and owns the fix if it starts the loop.
+//
+// The wait gives up after kVoiceIsolationOptOutWaitLimit: a call that never
+// returns must not leave the device list empty for the whole session.
 //
 // Modification history (NereusSDR):
 //   2026-10-10  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //               The opt-out, made first thing in main() of every program.
 //   2026-10-15  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //               The window only, on a thread of its own, with the device
-//               walk waiting for it; nothing in a test run.
+//               walk waiting for it up to a limit; nothing in a test run.
 // =================================================================
 
 #include <QtGlobal>
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -52,9 +64,15 @@ namespace NereusSDR {
 
 enum class VoiceIsolationOptOut {
     NotApplicable, // not macOS, a test run, or this macOS has no such switch
+                   // (the property unknown, or the operation unsupported)
     Applied,       // Core Audio accepted the opt-out
     Refused        // Core Audio has the switch and returned an error
 };
+
+// How long the device list waits for the opt-out before it lists without
+// it. Above the slowest call seen at launch (7 to 13 s on test builds with
+// the audio service idle), and well short of the 71 to 92 s loop.
+constexpr std::chrono::milliseconds kVoiceIsolationOptOutWaitLimit{30000};
 
 // What the started opt-out did, for the log.
 struct VoiceIsolationOptOutReport {
@@ -83,10 +101,13 @@ VoiceIsolationOptOut optOutOfSystemVoiceIsolationWith(AudioObjectSetPropertyFn s
 void startSystemVoiceIsolationOptOut();
 
 // Returns once the opt-out started above has returned, with what it did;
-// the first caller to see it done also logs it. Returns at once, with
-// nothing, in a process that never started one (nereusd, the mic helper,
-// tests).
-std::optional<VoiceIsolationOptOutReport> waitForSystemVoiceIsolationOptOut();
+// the first caller to see it done also logs it. Gives up after `limit`,
+// with one warning and nothing; from then on returns at once, with the
+// answer once it has come and nothing before (the opt-out's thread logs a
+// late answer itself). Returns at once, with nothing, in a process that
+// never started one (nereusd, the mic helper, tests).
+std::optional<VoiceIsolationOptOutReport> waitForSystemVoiceIsolationOptOut(
+    std::chrono::milliseconds limit = kVoiceIsolationOptOutWaitLimit);
 
 // Test seams: start with `optOut` in place of the Core Audio call, and
 // forget a finished run so the next test starts clean.
@@ -94,7 +115,8 @@ void startSystemVoiceIsolationOptOutWith(std::function<VoiceIsolationOptOut(std:
 void resetSystemVoiceIsolationOptOutForTest();
 #else
 inline void startSystemVoiceIsolationOptOut() {}
-inline std::optional<VoiceIsolationOptOutReport> waitForSystemVoiceIsolationOptOut()
+inline std::optional<VoiceIsolationOptOutReport> waitForSystemVoiceIsolationOptOut(
+    std::chrono::milliseconds = kVoiceIsolationOptOutWaitLimit)
 {
     return std::nullopt;
 }

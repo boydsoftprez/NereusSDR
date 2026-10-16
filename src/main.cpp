@@ -67,11 +67,6 @@ static QString extractProfileFromArgv(int argc, char* argv[])
 
 int main(int argc, char* argv[])
 {
-    // Before any other audio call, on a thread of its own, since the call
-    // can take seconds; the first device walk waits for it. See
-    // MacVoiceIsolation.h.
-    NereusSDR::startSystemVoiceIsolationOptOut();
-
     // Hand the build stamp to the core accessor before anything can build a
     // window title from it. Empty on release artifacts, in which case the
     // title stays exactly as it was.
@@ -270,6 +265,12 @@ int main(int argc, char* argv[])
         request.allowUnpinnedSpecified = parser.isSet(allowUnpinnedOpt);
         request.local = parser.isSet(localOpt);
     }
+
+    // Once the command line is read, so --help and --version make no audio
+    // call, and before anything below opens audio. On a thread of its own,
+    // since the call can take seconds. Only the Core Audio device list waits
+    // for it; see MacVoiceIsolation.h for what does not.
+    NereusSDR::startSystemVoiceIsolationOptOut();
 
     // Fusion style as a clean cross-platform base, then layer the
     // NereusSDR dark palette + minimal baseline QSS on top so every

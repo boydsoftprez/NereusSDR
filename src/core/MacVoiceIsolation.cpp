@@ -9,7 +9,7 @@
 //               The opt-out; nothing in a test run.
 //   2026-10-15  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //               The window's run of it on a thread of its own, the wait
-//               for it, and its log line.
+//               for it up to a limit, and its log lines.
 // =================================================================
 #include "core/MacVoiceIsolation.h"
 
@@ -22,6 +22,7 @@
 #include <condition_variable>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <utility>
 
@@ -44,6 +45,7 @@ struct OptOutRun {
     std::condition_variable finished;
     bool done = false;
     bool logged = false;
+    bool gaveUp = false;  // a waiter hit its limit; nobody waits any more
     VoiceIsolationOptOutReport report;
 };
 
@@ -57,13 +59,20 @@ std::shared_ptr<OptOutRun> currentRun()
 }
 
 // Logged by the first waiter rather than the opt-out's own thread, which
-// starts before main() has set up logging.
-void logReport(const VoiceIsolationOptOutReport& report, qint64 waitedMs)
+// can start before logging is set up; by the thread only when it answers
+// after a waiter gave up on it (no waited time then).
+void logReport(const VoiceIsolationOptOutReport& report, std::optional<qint64> waitedMs)
 {
     switch (report.outcome) {
     case VoiceIsolationOptOut::Applied:
-        qCInfo(lcAudio).nospace() << "Voice isolation opt-out applied in " << report.callMs
-                                  << " ms; the device list waited " << waitedMs << " ms for it";
+        if (waitedMs) {
+            qCInfo(lcAudio).nospace() << "Voice isolation opt-out applied in " << report.callMs
+                                      << " ms; the device list waited " << *waitedMs
+                                      << " ms for it";
+        } else {
+            qCInfo(lcAudio).nospace() << "Voice isolation opt-out applied in " << report.callMs
+                                      << " ms, after the device list stopped waiting for it";
+        }
         break;
     case VoiceIsolationOptOut::NotApplicable:
         qCInfo(lcAudio).nospace() << "No voice isolation opt-out on this macOS (status "
@@ -101,7 +110,8 @@ VoiceIsolationOptOut optOutOfSystemVoiceIsolationWith(AudioObjectSetPropertyFn s
     if (answer == kAudioHardwareNoError) {
         return VoiceIsolationOptOut::Applied;
     }
-    if (answer == kAudioHardwareUnknownPropertyError) {
+    if (answer == kAudioHardwareUnknownPropertyError
+        || answer == kAudioHardwareUnsupportedOperationError) {
         return VoiceIsolationOptOut::NotApplicable;
     }
     return VoiceIsolationOptOut::Refused;
@@ -144,28 +154,50 @@ void startSystemVoiceIsolationOptOutWith(std::function<VoiceIsolationOptOut(std:
         {
             std::lock_guard<std::mutex> lock(run->mutex);
             run->report = VoiceIsolationOptOutReport{ outcome, status, clock.elapsed() };
+            // Nobody is left waiting to log a late answer, so say it here,
+            // before `done` lets a test reset and finish.
+            if (run->gaveUp && !run->logged) {
+                run->logged = true;
+                logReport(run->report, std::nullopt);
+            }
             run->done = true;
         }
         run->finished.notify_all();
     }).detach();
 }
 
-std::optional<VoiceIsolationOptOutReport> waitForSystemVoiceIsolationOptOut()
+std::optional<VoiceIsolationOptOutReport> waitForSystemVoiceIsolationOptOut(
+    std::chrono::milliseconds limit)
 {
     const std::shared_ptr<OptOutRun> run = currentRun();
     if (!run) {
         return std::nullopt;
     }
-    // No limit: an opt-out that never returns means Core Audio itself is
-    // stuck, and the walk behind it could not finish either.
     QElapsedTimer waited;
     waited.start();
     std::unique_lock<std::mutex> lock(run->mutex);
-    run->finished.wait(lock, [&run] { return run->done; });
+    // Done, or another waiter already gave up on it.
+    const bool answered = run->finished.wait_for(lock, limit, [&run] {
+        return run->done || run->gaveUp;
+    });
+    if (!run->done) {
+        // A call stuck in Core Audio must not leave the device list empty
+        // for the whole session: list without it, and say why only once.
+        const bool first = !answered;
+        run->gaveUp = true;
+        lock.unlock();
+        if (first) {
+            qCWarning(lcAudio).nospace()
+                << "The voice isolation opt-out has not returned after " << limit.count()
+                << " ms; listing audio devices without waiting for it";
+        }
+        return std::nullopt;
+    }
     const VoiceIsolationOptOutReport report = run->report;
     const bool first = !run->logged;
     run->logged = true;
     lock.unlock();
+    // After a give-up the opt-out's thread has logged it already.
     if (first) {
         logReport(report, waited.elapsed());
     }

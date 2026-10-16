@@ -422,19 +422,23 @@ private slots:
             *status = 0;
             return VoiceIsolationOptOut::Applied;
         });
+        // Leave nothing blocked behind a failed check, the opt-out above all:
+        // every later devices() in this binary would wait on it.
+        std::thread walker;
+        const auto unblock = qScopeGuard([&] {
+            release->release(1000);
+            if (walker.joinable()) {
+                walker.join();
+            }
+            resetSystemVoiceIsolationOptOutForTest();
+        });
         std::unique_ptr<ICoreAudioSystem> system = makeCoreAudioSystem();
         QVERIFY(system != nullptr);
 
         QSemaphore listed;
-        std::thread walker([&] {
+        walker = std::thread([&] {
             system->devices();
             listed.release();
-        });
-        // Leave nothing blocked behind a failed check.
-        const auto unblock = qScopeGuard([&] {
-            release->release(1000);
-            walker.join();
-            resetSystemVoiceIsolationOptOutForTest();
         });
 
         QVERIFY(!listed.tryAcquire(1, kOptOutHeldMs));

@@ -14,16 +14,18 @@
 //               The property set, and no Core Audio call in a test run.
 //   2026-10-15  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //               The status it answered with; the run on a thread of its own
-//               and the wait for it.
+//               and the wait for it, which gives up after its limit.
 // =================================================================
 #include "core/MacVoiceIsolation.h"
 
+#include <QRegularExpression>
 #include <QScopeGuard>
 #include <QSemaphore>
 #include <QThread>
 #include <QtTest/QtTest>
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <thread>
 
@@ -111,6 +113,15 @@ private slots:
                  VoiceIsolationOptOut::NotApplicable);
     }
 
+    // An older macOS may say the operation is unsupported rather than the
+    // property unknown; either way there is no switch, and no warning.
+    void anUnsupportedOperationAlsoMeansNoSwitch()
+    {
+        g_captured.answer = kAudioHardwareUnsupportedOperationError;
+        QCOMPARE(NereusSDR::optOutOfSystemVoiceIsolationWith(&fakeSetProperty, nullptr),
+                 VoiceIsolationOptOut::NotApplicable);
+    }
+
     // Every test executable runs in test mode, and several run the real
     // nereusd and helper entry points.
     void aTestRunMakesNoCoreAudioCall()
@@ -192,21 +203,77 @@ private slots:
     // main() starts it once; a second start sends nothing more.
     void startIsIdempotent()
     {
-        const auto calls = std::make_shared<std::atomic<int>>(0);
-        const auto optOut = [calls](std::int32_t* status) {
-            calls->fetch_add(1);
+        // Shared with the opt-out's thread, which is detached.
+        const auto entered = std::make_shared<QSemaphore>();
+        const auto release = std::make_shared<QSemaphore>();
+        const auto optOut = [entered, release](std::int32_t* status) {
+            entered->release();
+            release->acquire();
             *status = 0;
             return VoiceIsolationOptOut::Applied;
         };
         NereusSDR::startSystemVoiceIsolationOptOutWith(optOut);
         NereusSDR::startSystemVoiceIsolationOptOutWith(optOut);
+        const auto unblock = qScopeGuard([&] { release->release(1000); });
+
+        QVERIFY(entered->tryAcquire(1, kReleasedMs));
+        // A second run, had one started, would be in its call by now.
+        QVERIFY(!entered->tryAcquire(1, kHeldMs));
+        release->release();
         const std::optional<VoiceIsolationOptOutReport> report =
             NereusSDR::waitForSystemVoiceIsolationOptOut();
         QVERIFY(report.has_value());
         QCOMPARE(report->outcome, VoiceIsolationOptOut::Applied);
-        // Time for a second run, had one started.
-        QThread::msleep(kHeldMs);
-        QCOMPARE(calls->load(), 1);
+    }
+
+    // An opt-out that never returns must not keep the device list empty for
+    // the whole session: the walk stops waiting after the limit, says so,
+    // and later walks do not wait again. The answer, when it comes, is
+    // still there to read.
+    void theWaitGivesUpAfterItsLimit()
+    {
+        const auto release = std::make_shared<QSemaphore>();
+        NereusSDR::startSystemVoiceIsolationOptOutWith([release](std::int32_t* status) {
+            release->acquire();
+            *status = 0;
+            return VoiceIsolationOptOut::Applied;
+        });
+
+        QTest::ignoreMessage(QtWarningMsg,
+                             QRegularExpression(QStringLiteral(
+                                 "voice isolation opt-out has not returned after 100 ms")));
+        QSemaphore waited;
+        std::optional<VoiceIsolationOptOutReport> first;
+        std::thread waiter([&] {
+            first = NereusSDR::waitForSystemVoiceIsolationOptOut(std::chrono::milliseconds(100));
+            waited.release();
+        });
+        // Leave nothing blocked behind a failed check.
+        const auto unblock = qScopeGuard([&] {
+            release->release(1000);
+            waiter.join();
+        });
+
+        QVERIFY(waited.tryAcquire(1, kReleasedMs));
+        QVERIFY(!first.has_value());
+
+        QElapsedTimer again;
+        again.start();
+        QVERIFY(!NereusSDR::waitForSystemVoiceIsolationOptOut().has_value());
+        QVERIFY2(again.elapsed() < kReleasedMs, qPrintable(QString::number(again.elapsed())));
+
+        release->release();
+        std::optional<VoiceIsolationOptOutReport> late;
+        QElapsedTimer answered;
+        answered.start();
+        while (!late.has_value() && answered.elapsed() < kReleasedMs) {
+            late = NereusSDR::waitForSystemVoiceIsolationOptOut();
+            if (!late.has_value()) {
+                QThread::msleep(1);
+            }
+        }
+        QVERIFY(late.has_value());
+        QCOMPARE(late->outcome, VoiceIsolationOptOut::Applied);
     }
 };
 
