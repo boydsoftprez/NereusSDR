@@ -135,6 +135,24 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.source_ref }}
 
+      # Release title gate. cmake/NereusBuildTag.cmake leaves the build tag
+      # empty only when HEAD sits exactly on a tag. The checkout above is
+      # pinned to the commit prepare resolved and, at depth 1, brings no
+      # tags, so without this every release build fell through to
+      # "detached@<sha>" (2026.10.0 and 2026.10.1 shipped that way). Fetch
+      # the release tag and check it still names the pinned commit.
+      # Verification runs have no tag and keep their smoke-build tag.
+      - name: Fetch the release tag
+        if: needs.prepare.outputs.tag != ''
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "+refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          test "$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")" = "$(git rev-parse HEAD)"
+          git describe --exact-match --tags HEAD
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -436,6 +454,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare.outputs.source_ref }}
+
+      # Release title gate (see "Fetch the release tag" in build-linux).
+      - name: Fetch the release tag
+        if: needs.prepare.outputs.tag != ''
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "+refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          test "$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")" = "$(git rev-parse HEAD)"
+          git describe --exact-match --tags HEAD
+
       - name: Install daemon build dependencies
         run: |
           sudo apt-get update
@@ -532,6 +563,19 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.source_ref }}
           persist-credentials: false
+
+      # Release title gate (see "Fetch the release tag" in build-linux).
+      - name: Fetch the release tag
+        if: needs.prepare.outputs.tag != ''
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "+refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          test "$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")" = "$(git rev-parse HEAD)"
+          git describe --exact-match --tags HEAD
+
       # The pinned dependency downloads (see "Dependency downloads" above
       # build-linux), restored into the checkout here. The fetch and the
       # git redirects run in the build container
@@ -679,6 +723,18 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare.outputs.source_ref }}
+
+      # Release title gate (see "Fetch the release tag" in build-linux).
+      - name: Fetch the release tag
+        if: needs.prepare.outputs.tag != ''
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "+refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          test "$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")" = "$(git rev-parse HEAD)"
+          git describe --exact-match --tags HEAD
 
       - name: Install dependencies (arm64 native)
         if: matrix.arch == 'arm64'
@@ -1280,6 +1336,18 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare.outputs.source_ref }}
+
+      # Release title gate (see "Fetch the release tag" in build-linux).
+      - name: Fetch the release tag
+        if: needs.prepare.outputs.tag != ''
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "+refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          test "$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")" = "$(git rev-parse HEAD)"
+          git describe --exact-match --tags HEAD
 
       # The pinned dependency downloads (see "Dependency downloads" above
       # build-linux).

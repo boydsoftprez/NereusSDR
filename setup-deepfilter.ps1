@@ -151,8 +151,10 @@ try {
         Write-Warning "DeepFilterNet crate notices were not written ($($_.Exception.Message)); $NoticeFile is unchanged. The library build goes on."
     }
 
-    # Commit hash
-    $DfnrCommit | Out-File -Encoding ascii -NoNewline "$OutDir\COMMIT"
+    # Commit hash, with the one trailing LF setup-deepfilter.sh's echo writes
+    # and the tracked file carries. Without it every Windows source build
+    # left COMMIT modified.
+    "$DfnrCommit`n" | Out-File -Encoding ascii -NoNewline "$OutDir\COMMIT"
 
     Write-Host "DeepFilterNet3 ready in $LibDir" -ForegroundColor Green
 }
