@@ -6104,17 +6104,896 @@
     border: 1px solid #3a7cc8;
     border-radius: 6px;
   }
+
+  /* ---------- Display, as on the desktop: the sheet's five tabs ---------- */
+  .dp-sheet {
+    display: flex;
+    flex-direction: column;
+    max-height: 600px;
+    transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .dp-sheet[hidden] {
+    display: none;
+  }
+
+  .dp-tabs {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 2px;
+    padding: 6px 8px 0;
+    background: #0f1a26;
+    border-bottom: 1px solid #203040;
+  }
+
+  .scr .dp-tab {
+    height: 32px;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    font-size: 12px;
+    font-weight: 700;
+    color: #8090a0;
+  }
+
+  .scr .dp-tab.is-on {
+    color: #00e5ff;
+    border-bottom-color: #00b4d8;
+  }
+
+  .dp-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-width: none;
+    gap: 0;
+    padding: 4px 10px 8px;
+  }
+
+  .dp-body::-webkit-scrollbar {
+    display: none;
+  }
+
+  .dp-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .dp-panel[hidden] {
+    display: none;
+  }
+
+  .dp-cap {
+    margin: 8px 0 -2px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+  }
+
+  .dp-corehead {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+    font-size: 11px;
+    color: #8090a0;
+  }
+
+  .dp-row {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .dp-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 30px;
+  }
+
+  .dp-lab {
+    flex: 1;
+    min-width: 0;
+    font-size: 12px;
+    color: #c8d8e8;
+  }
+
+  /* A segmented row heads its group in the sheet, as the pill's captions do. */
+  .dp-panel .dp-row--seg {
+    margin-top: 6px;
+  }
+
+  .dp-panel .dp-row--seg .dp-lab {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: #708090;
+  }
+
+  .dp-sub {
+    font-size: 10px;
+    color: #5fa8ff;
+  }
+
+  .dp-ctl {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* An amber dot: this pan has its own value. A tap goes back to Setup's. */
+  .scr .dp-dot {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    padding: 0;
+    background: radial-gradient(circle, #ffb020 0 4px, transparent 4.5px);
+    border: 0;
+  }
+
+  .dp-dot[hidden] {
+    display: none;
+  }
+
+  .dp-slide {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .dp-range {
+    --p: 50%;
+    flex: 1;
+    min-width: 0;
+    height: 28px;
+    margin: 0;
+    background: transparent;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
+  .dp-range::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 2px;
+    background: linear-gradient(to right, #00b4d8 var(--p), #203040 var(--p));
+  }
+
+  .dp-range::-webkit-slider-thumb {
+    width: 22px;
+    height: 22px;
+    margin-top: -9px;
+    border: 3px solid #0a0a18;
+    border-radius: 50%;
+    background: #00b4d8;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
+  .dp-range::-moz-range-track {
+    height: 4px;
+    border-radius: 2px;
+    background: #203040;
+  }
+
+  .dp-range::-moz-range-progress {
+    height: 4px;
+    border-radius: 2px;
+    background: #00b4d8;
+  }
+
+  .dp-range::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border: 3px solid #0a0a18;
+    border-radius: 50%;
+    background: #00b4d8;
+  }
+
+  .dp-out {
+    min-width: 62px;
+  }
+
+  .scr .dp-sel {
+    max-width: 170px;
+    height: 30px;
+    padding: 0 6px;
+    background: #1a2a3a;
+    border: 1px solid #205070;
+    border-radius: 4px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    color: #c8d8e8;
+  }
+
+  .scr .dp-tog {
+    min-width: 46px;
+  }
+
+  .dp-swatch {
+    flex: none;
+    width: 30px;
+    height: 26px;
+    padding: 0;
+    background: none;
+    border: 1px solid #304050;
+    border-radius: 4px;
+  }
+
+  .dp-swatch::-webkit-color-swatch-wrapper {
+    padding: 2px;
+  }
+
+  .dp-swatch::-webkit-color-swatch {
+    border: 0;
+    border-radius: 2px;
+  }
+
+  .dp-seg {
+    gap: 4px;
+  }
+
+  .dp-seg .nbtn {
+    min-height: 32px;
+    font-size: 11px;
+  }
+
+  .dp-chips {
+    display: grid;
+    gap: 4px;
+  }
+
+  .dp-chips .dp-why {
+    grid-column: 1 / -1;
+  }
+
+  .scr .dp-chip {
+    position: relative;
+    min-height: 32px;
+    font-size: 11px;
+  }
+
+  .dp-cdot {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #ffb020;
+  }
+
+  .dp-cdot[hidden] {
+    display: none;
+  }
+
+  .scr .dp-act {
+    min-width: 0;
+    height: 30px;
+    font-size: 12px;
+  }
+
+  .scr .dp-act:disabled,
+  .scr .dp-reset:disabled {
+    background: #141c26;
+    border-color: #243040;
+    font-size: 12px;
+    color: #506070;
+  }
+
+  .dp-cbadge {
+    display: inline-grid;
+    place-items: center;
+    width: 16px;
+    height: 16px;
+    margin-right: 2px;
+    border-radius: 3px;
+    background: #00b4d8;
+    font-size: 10px;
+    font-weight: 800;
+    color: #0a0a18;
+  }
+
+  .dp-row--action .dp-lab {
+    font-size: 11px;
+    color: #8090a0;
+  }
+
+  .dp-why {
+    margin: 0 0 2px;
+    font-size: 10.5px;
+    line-height: 1.3;
+    color: #8a7a60;
+  }
+
+  .dp-why[hidden] {
+    display: none;
+  }
+
+  .dp-row.is-off .dp-lab,
+  .dp-row.is-off .dp-out {
+    color: #506070;
+  }
+
+  .dp-row.is-off .dp-range::-webkit-slider-thumb {
+    background: #3a4a5a;
+  }
+
+  .dp-row.is-off .dp-range::-webkit-slider-runnable-track {
+    background: #1a2430;
+  }
+
+  .scr .dp-chip:disabled,
+  .scr .stog:disabled,
+  .scr .dp-sel:disabled {
+    opacity: 0.4;
+  }
+
+  .scr .dp-live {
+    min-width: 46px;
+    min-height: 28px;
+    font-size: 11px;
+  }
+
+  .dp-readout {
+    margin: 0;
+    padding: 6px 8px;
+    background: #0a0a18;
+    border: 1px solid #1e2e3e;
+    border-radius: 4px;
+    font-size: 11px;
+    line-height: 1.35;
+    color: #a0b8c8;
+  }
+
+  .dp-link {
+    align-self: flex-start;
+    margin-top: 4px;
+  }
+
+  .dp-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+    border-top: 1px solid #203040;
+    background: #0f1a26;
+  }
+
+  .scr .dp-reset {
+    min-width: 0;
+    height: 32px;
+    font-size: 12px;
+  }
+
+  .dp-tosetup {
+    font-size: 12px;
+  }
+
+  .dp-toast {
+    margin: 0;
+    padding: 6px 10px;
+    background: #1a3040;
+    font-size: 11px;
+    color: #c8d8e8;
+  }
+
+  .dp-toast[hidden] {
+    display: none;
+  }
+
+  /* Peek: while a slider is held the sheet clears away, all but that row. */
+  .dp-sheet.is-peek {
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+  }
+
+  .dp-sheet.is-peek .atitle,
+  .dp-sheet.is-peek .dp-tabs,
+  .dp-sheet.is-peek .dp-foot,
+  .dp-sheet.is-peek .dp-cap,
+  .dp-sheet.is-peek .dp-corehead,
+  .dp-sheet.is-peek .dp-chips,
+  .dp-sheet.is-peek .dp-link,
+  .dp-sheet.is-peek .dp-readout,
+  .dp-sheet.is-peek .dp-row:not(.is-peek) {
+    visibility: hidden;
+  }
+
+  .dp-sheet.is-peek .dp-row.is-peek {
+    padding: 2px 8px;
+    background: rgba(15, 26, 38, 0.92);
+    border: 1px solid #00b4d8;
+    border-radius: 6px;
+  }
+
+  /* On the band */
+  .dp-wfover {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+
+  .dp-ruler-off {
+    visibility: hidden;
+  }
+
+  /* Press and hold the band: the desktop's band menu, at the finger */
+  .dp-hold {
+    position: absolute;
+    z-index: 40;
+    width: 270px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 12px 12px;
+    background: #0f1a26;
+    border: 1px solid #304050;
+    border-radius: 8px;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
+  }
+
+  .dp-hold[hidden] {
+    display: none;
+  }
+
+  .dp-hold__cap {
+    margin-top: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #00b4d8;
+  }
+
+  .dp-hold__freq {
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: #a0b8c8;
+  }
+
+  .scr .dp-hold__more {
+    min-width: 0;
+    height: 34px;
+    margin-top: 6px;
+    font-size: 12px;
+  }
+
+  /* ---------- Setup > Display, the desktop's eight pages ---------- */
+  .dp-spage .dp-sgroup {
+    padding: 4px 12px;
+  }
+
+  .dp-spage .dp-row {
+    padding: 4px 0;
+    border-bottom: 1px solid #1a2a3a;
+  }
+
+  .dp-spage .dp-row:last-child {
+    border-bottom: 0;
+  }
+
+  .dp-spage .dp-lab {
+    font-size: 14px;
+  }
+
+  .dp-spage .srow__text b {
+    font-size: 15px;
+  }
+
+  .dp-hint {
+    margin: 0;
+    font-size: 11px;
+    color: #607080;
+  }
+
+  .dp-hint--pad {
+    padding: 8px 0;
+  }
+
+  .dp-scope {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px;
+    background: #0d1b28;
+    border: 1px solid #203040;
+    border-radius: 4px;
+  }
+
+  .dp-scope__lab {
+    font-size: 11px;
+    font-weight: 700;
+    color: #708090;
+  }
+
+  .dp-scope__chips {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+  }
+
+  .dp-scope__chips .nbtn {
+    min-height: 32px;
+  }
+
+  .dp-scope__acts {
+    display: grid;
+    grid-template-columns: 1fr 1.4fr;
+    gap: 4px;
+  }
+
+  .dp-scope__acts[hidden] {
+    display: none;
+  }
+
+  .scr .dp-scope__acts .rbtn {
+    min-width: 0;
+    height: 32px;
+    font-size: 12px;
+  }
+
+  .dp-scope__note {
+    margin: 0;
+    font-size: 11px;
+    color: #607080;
+  }
+
+  /* ---------- The iPad: the desktop's column and pill on the band ---------- */
+  /* SpectrumOverlayPanel's strip at the pan's top-left (4, 4), its 68 by 22
+     buttons drawn 80 by 30 for a finger, and its menus beside it. */
+  /* Over the band's flags and buttons, under the side panels. */
+  .dp-col {
+    position: absolute;
+    z-index: 12;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 2px;
+  }
+
+  .scr .dp-cbtn {
+    width: 80px;
+    height: 30px;
+    padding: 0;
+    background: rgba(20, 30, 45, 0.94);
+    border: 1px solid rgba(255, 255, 255, 0.157);
+    border-radius: 2px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    color: #c8d8e8;
+  }
+
+  .scr .dp-cbtn[hidden] {
+    display: none;
+  }
+
+  .scr .dp-cbtn.is-open {
+    background: rgba(0, 112, 192, 0.706);
+    border-color: #0090e0;
+    color: #fff;
+  }
+
+  .scr .dp-cbtn:disabled {
+    background: rgba(20, 28, 38, 0.9);
+    border-color: #243040;
+    color: #506070;
+  }
+
+  .dp-fly,
+  .dp-pill {
+    position: absolute;
+    z-index: 12;
+    box-sizing: border-box;
+    background: rgba(15, 15, 26, 0.863);
+    border: 1px solid #304050;
+    border-radius: 3px;
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.5);
+  }
+
+  .dp-fly {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px;
+  }
+
+  .dp-fly[hidden],
+  .dp-pill[hidden] {
+    display: none;
+  }
+
+  .dp-pill {
+    width: 340px;
+    overflow: hidden;
+  }
+
+  .dp-pill .atitle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: transparent;
+  }
+
+  .dp-pill .dp-tabs {
+    gap: 2px;
+    padding: 0 4px 4px;
+    background: transparent;
+    border-bottom: 1px solid #304050;
+  }
+
+  .scr .dp-pill .dp-tab {
+    height: 30px;
+    background: rgba(20, 30, 45, 0.94);
+    border: 1px solid rgba(255, 255, 255, 0.157);
+    border-radius: 2px;
+    font-size: 11px;
+    color: #c8d8e8;
+  }
+
+  .scr .dp-pill .dp-tab.is-on {
+    background: rgba(0, 112, 192, 0.706);
+    border-color: #0090e0;
+    color: #fff;
+  }
+
+  .dp-pill .dp-foot {
+    background: transparent;
+    border-top-color: #304050;
+  }
+
+  .dp-bandgrid {
+    display: grid;
+    grid-template-columns: repeat(4, 52px);
+    gap: 2px;
+  }
+
+  .scr .dp-bbtn {
+    height: 30px;
+    padding: 0;
+    background: rgba(30, 40, 55, 0.863);
+    border: 1px solid #304050;
+    border-radius: 3px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    color: #c8d8e8;
+  }
+
+  .scr .dp-bbtn.is-on {
+    background: rgba(0, 112, 192, 0.706);
+    border-color: #0090e0;
+    color: #fff;
+  }
+
+  .dp-flylab {
+    flex: none;
+    min-width: 52px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #8aa8c0;
+  }
+
+  .dp-fly .dp-sel {
+    flex: 1;
+    max-width: none;
+  }
+
+  .dp-check {
+    cursor: pointer;
+  }
+
+  .dp-check input {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    accent-color: #00b4d8;
+  }
+
+  .dp-fly .dp-line.is-off .dp-flylab,
+  .dp-fly .dp-line.is-off .dp-out {
+    color: #506070;
+  }
+
+  /* What a column button did, at the band's lower right, clear of the pill. */
+  .dp-colnote {
+    position: absolute;
+    right: 336px;
+    bottom: 186px;
+    z-index: 13;
+    max-width: 420px;
+    margin: 0;
+    padding: 6px 10px;
+    background: rgba(15, 15, 26, 0.92);
+    border: 1px solid #304050;
+    border-radius: 3px;
+    font-size: 12px;
+    line-height: 1.35;
+    color: #c8d8e8;
+  }
+
+  .dp-colnote[hidden] {
+    display: none;
+  }
+
+  .dp-hold {
+    overflow-y: auto;
+  }
+
+  .scr--land .dp-colnote {
+    right: 72px;
+    bottom: 120px;
+    max-width: 360px;
+  }
+
+  .opt.dp-flash .slot {
+    animation: dp-flash 1.2s ease;
+  }
+
+  @keyframes dp-flash {
+    0%, 40% { box-shadow: 0 0 0 3px #ffb020; border-radius: 60px; }
+    100% { box-shadow: 0 0 0 3px transparent; border-radius: 60px; }
+  }
 </style>
 
 <header class="head">
   <div>
     <p class="eyebrow">NereusSDR on iPhone and iPad</p>
     <h1>The whole app</h1>
-    <p class="lede">New this round, first below: pairing and connecting, the states in between; under Audio, the sound paused when headphones disconnect (your D68); and every on-screen "station" that means the Core now says "Core" (your rule). Kept: entering a Core's address with the port in a field of its own, under Connecting; the notices and the states in between for several devices, first below. Then several devices on one Core at once, from your calls. Before them, the transmit time-out and your mic level on the band while keyed, then long sessions. Everything after that is agreed with your calls applied: a hardware PTT button that keys a locked phone through Apple's Push to Talk, audio and data use with cellular at Balanced, when things aren't right with the app keeping the older link too, FreeDV Reporter where a tap tunes, Spot Hub as one page, the iPad held upright with the applets below the band, spots on the band that never start behind a flag, the station's side with a switch in the desktop app, first launch with a station required, the tuning dial you pick in Setup, the same layout turned sideways, a lock screen that never transmits from its screen, and before them your layout with NereusSDR's flags and one flag rule for both devices, the tap-to-toggle PTT, the desktop's Setup tree, the front end in the Modes tab, and the amp and tuner in the TX panel.</p>
+    <p class="lede">New this round, first below: the Display sheet and Setup &gt; Display brought in line with the desktop's new Display controls, the sheet with its five tabs and Setup with its eight pages, every row live on the band; press and hold on the band for the desktop's band menu; and the iPad, and the phone held sideways, with the desktop's button column and pill on the band. Before them, from last round: pairing and connecting, the states in between; under Audio, the sound paused when headphones disconnect (your D68); and every on-screen "station" that means the Core now says "Core" (your rule). Kept: entering a Core's address with the port in a field of its own, under Connecting; the notices and the states in between for several devices, first below. Then several devices on one Core at once, from your calls. Before them, the transmit time-out and your mic level on the band while keyed, then long sessions. Everything after that is agreed with your calls applied: a hardware PTT button that keys a locked phone through Apple's Push to Talk, audio and data use with cellular at Balanced, when things aren't right with the app keeping the older link too, FreeDV Reporter where a tap tunes, Spot Hub as one page, the iPad held upright with the applets below the band, spots on the band that never start behind a flag, the station's side with a switch in the desktop app, first launch with a station required, the tuning dial you pick in Setup, the same layout turned sideways, a lock screen that never transmits from its screen, and before them your layout with NereusSDR's flags and one flag rule for both devices, the tap-to-toggle PTT, the desktop's Setup tree, the front end in the Modes tab, and the amp and tuner in the TX panel.</p>
     <p class="note">Signals, station names, addresses and readings are examples. Each screen is its own phone; the tab bars don't switch screens. The iOS parts around NereusSDR's card (clock, status bar, the app behind the island) are drawn generic.</p>
   </div>
 </header>
 
+<section class="sect" aria-label="Display, as on the desktop: the sheet">
+  <h2 class="sect__title">Display, as on the desktop: the sheet</h2>
+  <p class="sect__note">New, for your approval, from your call: the toolbar's Display opens the desktop pill's five tabs, Spectrum, Levels, Waterfall, View and FFT, with its rows in its order and its footer, Reset this pan and Setup defaults. The phone's own rows go in the nearest tab: Spectrum Height under Spectrum, Look back under Waterfall, CTUN and DUP under View. All five frames are one phone's Pan 1, so a change in one shows in all of them, and in the Setup pages below. Every row draws on the band. Tap Display in the toolbar to close the sheet and see the band whole; hold any slider and the sheet clears away but for that row. An amber dot marks a row Pan 1 has its own value for; Fill Alpha starts that way. Tap the dot to follow Setup again.</p>
+  <div class="board board--four">
+    <section class="opt" aria-labelledby="w-dp-spectrum">
+      <div class="opt__head">
+        <h2 id="w-dp-spectrum">Spectrum</h2>
+        <p>The trace, its fill and averaging, peak hold, the grid and scale text, and the markers on the band. Cal Offset is grayed: the Core calibrates for its radio.</p>
+      </div>
+      <div class="slot"><div class="phone" data-placement="fit" data-scene="dpill-spectrum"></div></div>
+    </section>
+    <section class="opt" aria-labelledby="w-dp-levels">
+      <div class="opt__head">
+        <h2 id="w-dp-levels">Levels</h2>
+        <p>The spectrum scale, Manual or tracking the floor. Your call: dB Max and dB Min are kept for each band on the Core, so the phone and the desktop show one scale; Top and Range go. Then the waterfall's five level modes. Rows a mode doesn't use are grayed, with the reason, and every row is grayed while transmitting, as on the desktop (tap PTT to see it).</p>
+      </div>
+      <div class="slot"><div class="phone" data-placement="fit" data-scene="dpill-levels"></div></div>
+    </section>
+    <section class="opt" aria-labelledby="w-dp-waterfall">
+      <div class="opt__head">
+        <h2 id="w-dp-waterfall">Waterfall</h2>
+        <p>The desktop's eight schemes, rate, opacity, NB Blank (a noise burst comes by every few seconds to blank), averaging, the five overlays, timestamps and rewind depth; then Look back.</p>
+      </div>
+      <div class="slot"><div class="phone" data-placement="fit" data-scene="dpill-waterfall"></div></div>
+    </section>
+    <section class="opt" aria-labelledby="w-dp-view">
+      <div class="opt__head">
+        <h2 id="w-dp-view">View</h2>
+        <p>2D or the 3D stacked trace, which replaces only the spectrum, with its five settings; the background color or picture; then CTUN and DUP, this phone's.</p>
+      </div>
+      <div class="slot"><div class="phone" data-placement="fit" data-scene="dpill-view"></div></div>
+    </section>
+    <section class="opt" aria-labelledby="w-dp-fft">
+      <div class="opt__head">
+        <h2 id="w-dp-fft">FFT</h2>
+        <p>The Core's: sizing, size, Hz per bin, frame rate and window, one value for every device. The readout says what the Core is running. Decimation stays this phone's.</p>
+      </div>
+      <div class="slot"><div class="phone" data-placement="fit" data-scene="dpill-fft"></div></div>
+    </section>
+    <section class="opt" aria-labelledby="w-dp-hold">
+      <div class="opt__head">
+        <h2 id="w-dp-hold">Press and hold the band</h2>
+        <p>Your call: holding still on empty band for half a second opens the desktop's band menu at your finger, with a haptic tap. Ref Level and Dyn Range move the band's shared scale, CTUN, a notch at that frequency, and Display settings, which opens the sheet. A drag or a quick tap still moves or tunes. Holding a flag, a spot or a station opens its own card, as now.</p>
+      </div>
+      <div class="slot"><div class="phone" data-placement="fit" data-scene="dpill-hold"></div></div>
+    </section>
+  </div>
+</section>
+<section class="sect" aria-label="Display, as on the desktop: the iPad">
+  <h2 class="sect__title">Display, as on the desktop: the iPad</h2>
+  <p class="sect__note">New, for your approval, from your call: the iPad has the desktop's own button column at the band's top-left, ◀, +RX, +TNF, BAND, ANT, Display, VAX and ATT, and each opens its menu beside the column as on the desktop. Display opens the pill: the same five tabs and rows as the phone's sheet, and the same Pan 1, so a change here shows on the phones above and in Setup below. Every button works: ◀ folds the column away, +RX adds slices C and D, +TNF adds a notch in the middle of the slice's passband, BAND says where it would tune (this board stays on 40 m), ANT changes the flag's antennas, VAX picks the slice's channel, and ATT drops the band by its level. A tap anywhere else closes the open menu, as a click does on the desktop. The toolbar's Display button opens the same pill, and press and hold on the band opens the band menu.</p>
+  <div class="board ">
+    <section class="opt" aria-labelledby="w-dp-ipad">
+      <div class="opt__head">
+        <h2 id="w-dp-ipad">The pill beside the band</h2>
+        <p>The buttons are drawn larger than the desktop's, 30 points tall, for a finger. The pill is as tall as its tab needs and never taller than the band; it scrolls past that.</p>
+      </div>
+      <div class="slot"><div class="tablet" data-placement="fit" data-template="tpl-ipad-col" data-scene="dpill-ipad"></div></div>
+    </section>
+  </div>
+</section>
+<section class="sect" aria-label="Display, as on the desktop: the phone sideways">
+  <h2 class="sect__title">Display, as on the desktop: the phone sideways</h2>
+  <p class="sect__note">New, for your approval, from your call: turned sideways, the phone has the iPad's column and pill on the band, inside the safe area clear of the camera. It is the same Pan 1 as every frame above. The band is short sideways, so the pill is as tall as the band and scrolls, and holding a slider clears it away but for that row. The column and the pill reach down to the PTT, so the PTT moves to just right of whichever is open and is never under a menu, and the keyed meters go beside it, or above it where there is no room. Fold the column with ◀ and the PTT goes back. Press and hold on the band opens the band menu beside your finger, since there is no room under it, on the side that keeps the PTT clear.</p>
+  <div class="board board--land">
+    <section class="opt" aria-labelledby="w-dp-land">
+      <div class="opt__head">
+        <h2 id="w-dp-land">The pill beside the band</h2>
+        <p>Display open on Spectrum, the PTT beside it. Tap PTT to see the keyed meters, then close the pill and watch the PTT follow the column.</p>
+      </div>
+      <div class="slot"><div class="phone phone--land" data-placement="fit" data-template="tpl-land" data-scene="dpill-land"></div></div>
+    </section>
+  </div>
+</section>
+<section class="sect" aria-label="Display, as on the desktop: Setup">
+  <h2 class="sect__title">Display, as on the desktop: Setup</h2>
+  <p class="sect__note">New, for your approval, from "bring the setting forward too": Setup &gt; Display takes the desktop's eight pages, in its order, built from the same rows as the sheet, and the native "On this phone" page goes. Its rows move to the page they belong on: Spectrum Height to Spectrum, CTUN, Extended view and the band plan to View, DUP to Transmit Display, and the color swatches to Appearance, as on the desktop. The first five pages have the desktop's "Settings for" strip: All pans edits what every pan starts with, Pan 1 edits that pan's own values, which then show the amber dot in the sheet above. Setup defaults in the sheet opens the matching page here.</p>
+  <div class="board board--four">
+    <section class="opt" aria-labelledby="w-ds-list">
+      <div class="opt__head">
+        <h2 id="w-ds-list">Setup &gt; Display</h2>
+        <p>The eight pages. A tap goes to that page on this board.</p>
+      </div>
+      <div class="slot"><div class="phone" data-screen="dset-list"></div></div>
+    </section>
+    <section class="opt" aria-labelledby="w-ds-spectrum">
+      <div class="opt__head">
+        <h2 id="w-ds-spectrum">Spectrum</h2>
+        <p>Trace, fill, peak hold, grid, scales and labels, Spectrum Height, calibration and readouts, then links to Peaks &amp; Markers and Multimeter.</p>
+      </div>
+      <div class="slot"><div class="phone" data-screen="dset-spectrum"></div></div>
+    </section>
+    <section class="opt" aria-labelledby="w-ds-levels">
+      <div class="opt__head">
+        <h2 id="w-ds-levels">Levels</h2>
+        <p>The spectrum scale with a band picker that edits a band's values without tuning, and the waterfall levels, each with a copy from the other.</p>
+      </div>
+      <div class="slot"><div class="phone" data-screen="dset-levels"></div></div>
+    </section>
+    <section class="opt" aria-labelledby="w-ds-waterfall">
+      <div class="opt__head">
+        <h2 id="w-ds-waterfall">Waterfall</h2>
+        <p>Drawing, smoothing, overlays and time, with the timestamp's UTC or local time.</p>
+      </div>
+      <div class="slot"><div class="phone" data-screen="dset-waterfall"></div></div>
+    </section>
+    <section class="opt" aria-labelledby="w-ds-view">
+      <div class="opt__head">
+        <h2 id="w-ds-view">View</h2>
+        <p>2D or 3D, the 3D settings and its floor for each band, the background, then this phone's CTUN and extended view, and the band plan.</p>
+      </div>
+      <div class="slot"><div class="phone" data-screen="dset-view"></div></div>
+    </section>
+    <section class="opt" aria-labelledby="w-ds-markers">
+      <div class="opt__head">
+        <h2 id="w-ds-markers">Peaks &amp; Markers</h2>
+        <p>Peak trace, peak markers, peak value, the noise floor line and bin width. Each draws on the sheet's band above.</p>
+      </div>
+      <div class="slot"><div class="phone" data-screen="dset-markers"></div></div>
+    </section>
+    <section class="opt" aria-labelledby="w-ds-fft">
+      <div class="opt__head">
+        <h2 id="w-ds-fft">FFT &amp; Engine</h2>
+        <p>The Core's FFT and frame rate, and this phone's decimation. The desktop's thread priority and monitor rate have nothing to do on a phone, so they aren't here.</p>
+      </div>
+      <div class="slot"><div class="phone" data-screen="dset-fft"></div></div>
+    </section>
+    <section class="opt" aria-labelledby="w-ds-tx">
+      <div class="opt__head">
+        <h2 id="w-ds-tx">Transmit Display</h2>
+        <p>The Core's FFT, panadapter and waterfall while keyed, and this phone's transmit scale (dB Max and dB Min, in place of Top and Range) and waterfall colors. DUP moves here.</p>
+      </div>
+      <div class="slot"><div class="phone" data-screen="dset-tx"></div></div>
+    </section>
+    <section class="opt" aria-labelledby="w-ds-multimeter">
+      <div class="opt__head">
+        <h2 id="w-ds-multimeter">Multimeter</h2>
+        <p>The Core's polling delay, and this phone's decimal point, units and history.</p>
+      </div>
+      <div class="slot"><div class="phone" data-screen="dset-multimeter"></div></div>
+    </section>
+  </div>
+</section>
 <section class="sect" aria-label="Tuning on the band">
   <h2 class="sect__title">Tuning on the band</h2>
   <p class="sect__note">New, for your approval, from your first test on the Pi: a drag on the band moves the band, a drag on a flag or its passband tunes that slice, each slice has a tuning step you can pick, and a tap on the flag's frequency lets you type one. All four use what the Core already sends: the slice's step and the radio's list of steps.</p>
@@ -6151,7 +7030,7 @@
 </section>
 <section class="sect" aria-label="The Pan and Display buttons">
   <h2 class="sect__title">The Pan and Display buttons</h2>
-  <p class="sect__note">New, for your approval: the toolbar's Pan 1 and Display had nothing to open. Pan 1 takes the desktop's pan-level controls (its BAND grid, +RX, +TNF, the extended view); Display takes the pan's display settings, which are this phone's own.</p>
+  <p class="sect__note">New, for your approval: the toolbar's Pan 1 and Display had nothing to open. Pan 1 takes the desktop's pan-level controls (its BAND grid, +RX, +TNF, the extended view); Display takes the pan's display settings, which are this phone's own. Its sheet here is the one the desktop-style sheet at the top would replace.</p>
   <div class="board board--four">
     <section class="opt" aria-labelledby="w-ps-pan">
       <div class="opt__head">
@@ -7641,7 +8520,7 @@
         <button class="srow" type="button"><span class="srow__text"><b>PA</b><span>PA Gain · Watt Meter · PA Values</span></span><span class="tag tag--station">Core</span><i class="chev" aria-hidden="true"></i></button>
         <button class="srow" type="button"><span class="srow__text"><b>Audio</b><span>On this phone · Devices · TX Input · VAX · TCI · Advanced · TX Profile</span></span><span class="tag tag--both">Both</span><i class="chev" aria-hidden="true"></i></button>
         <button class="srow" type="button"><span class="srow__text"><b>DSP</b><span>AGC/ALC · NR/ANF · NB/SNB · CW · AM/SAM · FM · CFC · TNF · Filter Presets · Options</span></span><span class="tag tag--station">Core</span><i class="chev" aria-hidden="true"></i></button>
-        <button class="srow" type="button"><span class="srow__text"><b>Display</b><span>Spectrum Defaults · Spectrum Peaks · Waterfall Defaults · Grid &amp; Scales · Multimeter · TX Display</span></span><span class="tag tag--both">Both</span><i class="chev" aria-hidden="true"></i></button>
+        <button class="srow" type="button"><span class="srow__text"><b>Display</b><span>Spectrum · Levels · Waterfall · View · Peaks &amp; Markers · FFT &amp; Engine · Transmit Display · Multimeter</span></span><span class="tag tag--both">Both</span><i class="chev" aria-hidden="true"></i></button>
         <button class="srow" type="button"><span class="srow__text"><b>Transmit</b><span>Power · TX Profiles · Speech Processor · DEXP/VOX · PTT buttons</span></span><span class="tag tag--both">Both</span><i class="chev" aria-hidden="true"></i></button>
         <button class="srow" type="button"><span class="srow__text"><b>Appearance</b><span>Colors &amp; Theme · Meter Styles · Gradients</span></span><span class="tag tag--phone">This phone</span><i class="chev" aria-hidden="true"></i></button>
         <button class="srow" type="button"><span class="srow__text"><b>CAT &amp; Network</b><span>Serial Ports · TCI Server · Peripherals · 4O3A · RF-Kit · TCP/IP CAT · MIDI Control · Data use</span></span><span class="tag tag--both">Both</span><i class="chev" aria-hidden="true"></i></button>
@@ -14132,6 +15011,2320 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       });
     });
   });
+
+  /* ------------------------------------------------------------------ */
+  /* Display, as on the desktop. The Display sheet takes the desktop     */
+  /* pill's five tabs; Setup > Display takes the desktop's eight pages.  */
+  /* One set of rows feeds both, and every band in the section draws     */
+  /* what they say. Pan rows are Setup's value unless Pan 1 has its own  */
+  /* (the amber dot); Core rows are one value for every device.          */
+  /* ------------------------------------------------------------------ */
+  (function () {
+    var sheetPhones = phones.filter(function (p) {
+      return (p.root.parentElement.getAttribute('data-scene') || '').indexOf('dpill-') === 0;
+    });
+    var setupFrames = all(document, '.phone[data-screen^="dset-"]');
+    if (!sheetPhones.length && !setupFrames.length) {
+      return;
+    }
+
+    function rgb(list) {
+      return list.map(function (s) { return [s[0], (s[1] << 16) | (s[2] << 8) | s[3]]; });
+    }
+    // src/core/spectrum/WaterfallPalettes.cpp, in WfColorScheme order. Custom is
+    // an example of the phone's own gradient.
+    var SCHEMES = {
+      'Default': WF_DEFAULT,
+      'Enhanced': rgb([[0, 0, 0, 0], [0.111, 0, 0, 255], [0.222, 0, 255, 255], [0.333, 0, 255, 0], [0.444, 128, 255, 0], [0.556, 255, 255, 0], [0.667, 255, 128, 0], [0.778, 255, 0, 0], [0.889, 255, 0, 128], [1, 192, 0, 255]]),
+      'Spectran': rgb([[0, 0, 0, 0], [0.1, 32, 0, 64], [0.25, 0, 0, 255], [0.4, 0, 192, 0], [0.55, 255, 255, 0], [0.7, 255, 128, 0], [0.85, 255, 0, 0], [1, 255, 255, 255]]),
+      'BlackWhite': rgb([[0, 0, 0, 0], [1, 255, 255, 255]]),
+      'LinLog': rgb([[0, 0, 0, 0], [0.1, 0, 0, 96], [0.25, 0, 64, 192], [0.5, 0, 192, 192], [0.65, 0, 224, 64], [0.8, 255, 192, 0], [1, 255, 0, 0]]),
+      'LinRad': rgb([[0, 0, 0, 0], [0.15, 16, 16, 120], [0.3, 32, 80, 200], [0.5, 0, 200, 255], [0.7, 200, 255, 120], [0.85, 255, 200, 0], [1, 255, 32, 0]]),
+      'Custom': rgb([[0, 0, 0, 0], [0.3, 40, 0, 90], [0.65, 255, 120, 0], [1, 255, 255, 210]]),
+      'Clarity Blue': rgb([[0, 0, 0, 0], [0.18, 2, 8, 32], [0.32, 8, 32, 88], [0.46, 16, 80, 176], [0.58, 16, 160, 224], [0.7, 16, 208, 96], [0.8, 240, 224, 16], [0.9, 255, 128, 0], [0.96, 255, 32, 32], [1, 255, 64, 192]])
+    };
+    var LUTS = {};
+    Object.keys(SCHEMES).forEach(function (k) { LUTS[k] = buildLut(SCHEMES[k]); });
+
+    var FFT_SIZES = [4096, 8192, 16384, 32768, 65536, 131072, 262144];
+    var RATE_HZ = 192000;   // the example radio's sample rate
+
+    function pct(v) { return v + '%'; }
+    function ms(v) { return v + ' ms'; }
+    function db(v) { return v + ' dB'; }
+    function dbm(v) { return String(v); }
+    function half(v) { return (+v).toFixed(1); }
+
+    // Each row: t (slider, tog, sel, seg, color, action), label (the pill's),
+    // slab (Setup's label where it differs), scope (pan, band, core, phone),
+    // en (when it can change) and why (said under it when it can't).
+    var R = {};
+    function row(k, o) {
+      o.k = k;
+      o.scope = o.scope || 'pan';
+      R[k] = o;
+    }
+    function is3d(v) { return v('view') === '3D Stacked Trace'; }
+    var NOT_3D = 'Not drawn in 3D.';
+
+    // Spectrum
+    row('detector', { t: 'sel', label: 'Detector', slab: 'Spectrum Detector', opts: ['Peak', 'Rosenfell', 'Average', 'Sample', 'RMS'], def: 'Peak' });
+    row('normalize', { t: 'tog', label: 'Normalize to 1 Hz', def: false, en: function (v) { return ['Average', 'Sample', 'RMS'].indexOf(v('detector')) >= 0; }, why: 'Normalize to 1 Hz needs the Average, Sample or RMS detector.' });
+    row('fill', { t: 'tog', label: 'Fill', def: true, en: function (v) { return !is3d(v); }, why: NOT_3D });
+    row('gradient', { t: 'tog', label: 'Gradient', def: false, en: function (v) { return !is3d(v) && v('fill'); }, why: function (v) { return is3d(v) ? NOT_3D : 'Fill is off.'; } });
+    row('fillAlpha', { t: 'slider', label: 'Fill Alpha', min: 0, max: 100, def: 70, fmt: pct, swatch: 'fillColor', en: function (v) { return !is3d(v) && v('fill'); }, why: function (v) { return is3d(v) ? NOT_3D : 'Fill is off.'; } });
+    row('fillColor', { t: 'color', label: 'Fill Color', def: '#00e5ff', en: function (v) { return !is3d(v); }, why: NOT_3D });
+    row('averaging', { t: 'sel', label: 'Averaging', slab: 'Spectrum Averaging', opts: ['None', 'Recursive', 'Time Window', 'Log Recursive'], def: 'Log Recursive' });
+    row('avgTime', { t: 'slider', label: 'Avg Time', slab: 'Spectrum Avg Time', min: 1, max: 500, def: 30, fmt: ms, en: function (v) { return v('averaging') !== 'None'; }, why: 'Averaging is None.' });
+    row('lineWidth', { t: 'slider', label: 'Line Width', min: 0.1, max: 5, step: 0.1, def: 0.5, fmt: function (v) { return half(v) + ' px'; }, swatch: 'traceColor', en: function (v) { return !is3d(v); }, why: NOT_3D });
+    row('traceColor', { t: 'color', label: 'Trace Color', def: '#00e5ff', en: function (v) { return !is3d(v); }, why: NOT_3D });
+    row('peakHoldOn', { t: 'tog', label: 'Peak Hold', def: false, en: function (v) { return !is3d(v); }, why: NOT_3D });
+    row('peakHold', { t: 'slider', label: 'Peak Hold', slab: 'Peak Delay', min: 100, max: 10000, step: 100, def: 2000, fmt: ms, tog: 'peakHoldOn', en: function (v) { return !is3d(v) && v('peakHoldOn'); }, why: function (v) { return is3d(v) ? NOT_3D : 'Peak Hold is off.'; } });
+    row('specHeight', { t: 'slider', label: 'Spectrum Height', min: 20, max: 80, def: 40, fmt: pct, phoneOnly: true });
+    row('calOffset', { t: 'slider', label: 'Cal Offset', min: -30, max: 30, step: 0.5, def: 0, fmt: function (v) { return half(v) + ' dB'; }, en: function () { return false; }, why: 'The Core calibrates the display for its radio.' });
+    row('grid', { t: 'tog', label: 'Grid', def: true });
+    row('gridSpacing', { t: 'sel', label: 'Grid', slab: 'Grid Spacing', opts: ['Auto', '1 kHz', '2 kHz', '5 kHz', '10 kHz', '25 kHz', '50 kHz', '100 kHz'], def: 'Auto', tog: 'grid', en: function (v) { return v('grid'); }, why: 'Grid is off.' });
+    row('dbStep', { t: 'slider', label: 'dB Step', min: 1, max: 40, def: 10, fmt: db, en: function (v) { return v('grid'); }, why: 'Grid is off.' });
+    row('scaleText', { t: 'sel', label: 'Scale Text', opts: ['8 px', '9 px', '10 px', '11 px', '12 px', '13 px', '14 px'], def: '10 px' });
+    row('labelAlign', { t: 'sel', label: 'Freq Label Align', opts: ['Left', 'Center', 'Right', 'Auto', 'Off'], def: 'Center' });
+    row('dbmStrip', { t: 'tog', label: 'dBm scale strip', def: true });
+    row('zeroLine', { t: 'tog', label: 'Show zero line', def: false });
+    row('nfLine', { t: 'tog', label: 'Noise Floor', def: false });
+    row('binWidth', { t: 'tog', label: 'Bin Width', def: false });
+    row('peakValue', { t: 'tog', label: 'Peak Value', def: false });
+    row('cursorFreq', { t: 'tog', label: 'Cursor Freq', def: true });
+    row('fpsOverlay', { t: 'tog', label: 'Show FPS overlay', def: false });
+
+    // Levels
+    function track(v) { return v('scaleMode') === 'Track floor'; }
+    row('scaleMode', { t: 'seg', label: 'Spectrum scale', opts: ['Manual', 'Track floor'], def: 'Manual' });
+    row('dbMax', { t: 'slider', label: 'dB Max', min: -200, max: 0, def: -40, fmt: dbm, scope: 'band', en: function (v) { return !(track(v) && v('keepRange')); }, why: 'Keep range moves the top with the floor.' });
+    row('dbMin', { t: 'slider', label: 'dB Min', min: -200, max: 0, def: -140, fmt: dbm, scope: 'band', en: function (v) { return !track(v); }, why: 'Track floor sets the bottom.' });
+    row('floorOffset', { t: 'slider', label: 'Floor Offset', min: -60, max: 60, def: 0, fmt: db, en: track, why: 'Only with Track floor.' });
+    row('keepRange', { t: 'tog', label: 'Keep range', def: false, en: track, why: 'Only with Track floor.' });
+    row('wfMode', { t: 'seg', label: 'Waterfall levels', opts: ['Clarity', 'Auto', 'Floor', 'Manual', 'Scale'], def: 'Clarity' });
+    row('retune', { t: 'action', label: 'Re-tune', en: function (v) { return v('wfMode') === 'Clarity'; }, why: 'Re-tune works in Clarity.' });
+    row('black', { t: 'slider', label: 'Black Level', min: 0, max: 100, def: 57, fmt: function (v) { var d = (v - 50) * 0.5; return 'N' + (d < 0 ? '−' : '+') + Math.abs(d).toFixed(1) + ' dB'; } });
+    row('gain', { t: 'slider', label: 'Color Gain', min: 0, max: 100, def: 60, fmt: function (v) { return Math.round(80 - 0.7 * v) + ' dB'; } });
+    row('nfOffset', { t: 'slider', label: 'NF Offset', min: -60, max: 60, def: 0, fmt: db, en: function (v) { return v('wfMode') === 'Floor'; }, why: 'Only in Floor.' });
+    row('wfLow', { t: 'slider', label: 'Low', min: -200, max: 0, def: -122, fmt: dbm, en: function (v) { return v('wfMode') === 'Manual'; }, why: 'Only in Manual.' });
+    row('wfHigh', { t: 'slider', label: 'High', min: -200, max: 0, def: -62, fmt: dbm, en: function (v) { return ['Clarity', 'Scale'].indexOf(v('wfMode')) < 0; }, why: function (v) { return v('wfMode') === 'Clarity' ? 'Set by Clarity.' : 'Scale follows the spectrum scale.'; } });
+    row('copyFromWf', { t: 'action', label: 'Copy from waterfall levels' });
+    row('copyFromScale', { t: 'action', label: 'Copy from spectrum scale' });
+
+    // Waterfall
+    row('scheme', { t: 'sel', label: 'Scheme', slab: 'Color Scheme', opts: Object.keys(SCHEMES), def: 'Default' });
+    row('editCustom', { t: 'action', label: 'Edit Custom gradient…', en: function (v) { return v('scheme') === 'Custom'; }, why: 'For the Custom scheme.' });
+    row('rate', { t: 'slider', label: 'Rate', slab: 'Update Period', min: 10, max: 500, def: 30, fmt: ms });
+    row('opacity', { t: 'slider', label: 'Opacity', min: 0, max: 100, def: 100, fmt: pct });
+    row('nbBlank', { t: 'tog', label: 'NB Blank', def: false });
+    row('nbThresh', { t: 'slider', label: 'NB Blank', slab: 'NB threshold', min: 1, max: 20, def: 6, fmt: db, tog: 'nbBlank', en: function (v) { return v('nbBlank'); }, why: 'NB Blank is off.' });
+    row('wfDetector', { t: 'sel', label: 'WF Detector', opts: ['Peak', 'Rosenfell', 'Average', 'Sample'], def: 'Peak' });
+    row('wfAvg', { t: 'sel', label: 'WF Avg', slab: 'WF Averaging', opts: ['None', 'Recursive', 'Time Window', 'Log Recursive'], def: 'None' });
+    row('wfAvgTime', { t: 'slider', label: 'WF Avg Time', min: 1, max: 500, def: 120, fmt: ms, en: function (v) { return v('wfAvg') !== 'None'; }, why: 'WF Avg is None.' });
+    row('stopOnTx', { t: 'tog', label: 'Stop on TX', def: false });
+    row('rxFilter', { t: 'tog', label: 'RX Filter', def: false });
+    row('txFilter', { t: 'tog', label: 'TX Filter', def: true });
+    row('rxZero', { t: 'tog', label: 'RX Zero', def: false });
+    row('txZero', { t: 'tog', label: 'TX Zero', def: false });
+    row('timestamp', { t: 'seg', label: 'Timestamp', slab: 'Timestamp Position', opts: ['None', 'Left', 'Right'], def: 'None' });
+    row('tsMode', { t: 'sel', label: 'Timestamp Mode', opts: ['UTC', 'Local'], def: 'UTC' });
+    row('rewind', { t: 'sel', label: 'Rewind', slab: 'Depth', opts: ['60 s', '5 min', '15 min', '20 min'], def: '20 min' });
+    row('lookBack', { t: 'look', label: 'Look back', def: 0, phoneOnly: true, scope: 'phone' });
+
+    // View
+    function only3d(v) { return is3d(v); }
+    row('view', { t: 'seg', label: 'View', opts: ['2D Waterfall', '3D Stacked Trace'], def: '2D Waterfall' });
+    row('floor3d', { t: 'slider', label: '3D Floor', min: 0, max: 24, def: 6, fmt: db, scope: 'band', en: only3d, why: 'Only in 3D.' });
+    row('gain3d', { t: 'slider', label: '3D Gain', min: 0, max: 100, def: 70, en: only3d, why: 'Only in 3D.' });
+    row('span3d', { t: 'slider', label: '3D Span', min: 0, max: 100, def: 100, en: only3d, why: 'Only in 3D.' });
+    row('angle3d', { t: 'slider', label: '3D Angle', min: 0, max: 100, def: 50, en: only3d, why: 'Only in 3D.' });
+    row('speed3d', { t: 'slider', label: '3D Speed', min: 0, max: 10, def: 0, fmt: function (v) { return +v === 0 ? 'Match' : String(v); }, en: only3d, why: 'Only in 3D.' });
+    row('shadow', { t: 'tog', label: 'Slice Shadow', slab: '3D Slice Shadow', def: true, en: only3d, why: 'Only in 3D.' });
+    row('reset3d', { t: 'action', label: 'Reset 3D to defaults', en: only3d, why: 'Only in 3D.' });
+    function bgOk(v) { return !is3d(v); }
+    row('bgOn', { t: 'tog', label: 'Background', def: false, en: bgOk, why: NOT_3D });
+    row('bgPicture', { t: 'action', label: 'Choose…', also: 'Clear', en: bgOk, why: NOT_3D });
+    row('bgOpacity', { t: 'slider', label: 'BG Opacity', slab: 'Opacity', min: 0, max: 100, def: 80, fmt: pct, swatch: 'bgColor', en: function (v) { return bgOk(v) && v('bgOn'); }, why: function (v) { return is3d(v) ? NOT_3D : 'Background is off.'; } });
+    row('bgColor', { t: 'color', label: 'BG Color', slab: 'Color', def: '#0a0a14', en: function (v) { return bgOk(v) && v('bgOn'); }, why: function (v) { return is3d(v) ? NOT_3D : 'Background is off.'; } });
+    row('ctun', { t: 'tog', label: 'CTUN', def: true, phoneOnly: true });
+    row('extended', { t: 'tog', label: 'Extended view', def: false, phoneOnly: true });
+    row('bandPlan', { t: 'sel', label: 'Band plan', opts: ['ARRL (US)', 'IARU Region 1', 'IARU Region 2', 'IARU Region 3', 'Off'], def: 'ARRL (US)', scope: 'core', phoneOnly: true });
+    row('bandPlanSize', { t: 'sel', label: 'Band plan size', opts: ['Small', 'Medium', 'Large'], def: 'Medium', scope: 'phone', phoneOnly: true });
+
+    // FFT: the Core's, one value for every device.
+    function sizing(v) { return v('sizing'); }
+    row('sizing', { t: 'seg', label: 'Sizing', opts: ['Auto', 'Hz/bin', 'Fixed'], def: 'Auto', scope: 'core' });
+    row('fftSize', { t: 'slider', label: 'FFT Size', min: 0, max: 6, def: 0, fmt: function (i) { return String(FFT_SIZES[i]); }, scope: 'core', en: function (v) { return sizing(v) === 'Fixed'; }, why: function (v) { return sizing(v) === 'Auto' ? 'Auto picks the size.' : 'Hz/bin picks the size.'; } });
+    row('hzbin', { t: 'slider', label: 'Hz/bin', slab: 'Hz/bin Target', min: 0.5, max: 200, step: 0.5, def: 10, fmt: half, scope: 'core', en: function (v) { return sizing(v) === 'Hz/bin'; }, why: 'Only in Hz/bin.' });
+    row('fftInfo', { t: 'readout' });
+    row('fps', { t: 'slider', label: 'FPS', min: 10, max: 60, def: 30, scope: 'core' });
+    row('window', { t: 'sel', label: 'Window', opts: ['Rectangular', 'Blackman-Harris 4T', 'Hann', 'Flat-Top', 'Hamming', 'Kaiser', 'Blackman-Harris 7T'], def: 'Blackman-Harris 4T', scope: 'core' });
+    row('decimation', { t: 'slider', label: 'Decimation', min: 1, max: 16, def: 1, scope: 'phone' });
+
+    // While keyed the pill grays every Levels row: transmit has its own
+    // levels, on Transmit Display.
+    var KEYED = 'While transmitting, levels are on Transmit Display.';
+    function keyed() {
+      return sheetPhones.some(function (p) { return p.tx; });
+    }
+    ['scaleMode', 'dbMax', 'dbMin', 'floorOffset', 'keepRange', 'wfMode', 'retune', 'black', 'gain', 'nfOffset', 'wfLow', 'wfHigh'].forEach(function (k) {
+      var r = R[k];
+      var en = r.en;
+      var why = r.why;
+      r.en = function (v) { return !keyed() && (en ? en(v) : true); };
+      r.why = function (v) { return keyed() ? KEYED : (typeof why === 'function' ? why(v) : why); };
+    });
+
+    // Peaks & Markers (Setup only)
+    row('pkTrace', { t: 'tog', label: 'Peak trace with decay', def: false });
+    row('pkHold', { t: 'slider', label: 'Hold duration', min: 100, max: 60000, step: 100, def: 2000, fmt: ms, en: function (v) { return v('pkTrace'); }, why: 'Peak trace is off.' });
+    row('pkDrop', { t: 'slider', label: 'Drop rate', min: 1, max: 60, def: 6, fmt: function (v) { return v + ' dB/s'; }, en: function (v) { return v('pkTrace'); }, why: 'Peak trace is off.' });
+    row('pkFill', { t: 'tog', label: 'Fill to trace', def: false, en: function (v) { return v('pkTrace'); }, why: 'Peak trace is off.' });
+    row('pkOnTx', { t: 'tog', label: 'Update during TX', def: false, en: function (v) { return v('pkTrace'); }, why: 'Peak trace is off.' });
+    row('pkColor', { t: 'color', label: 'Trace color', def: '#ffd700', en: function (v) { return v('pkTrace'); }, why: 'Peak trace is off.' });
+    row('blobs', { t: 'tog', label: 'Peak markers', def: false });
+    row('blobCount', { t: 'slider', label: 'Number of peaks', min: 1, max: 20, def: 3, en: function (v) { return v('blobs'); }, why: 'Peak markers are off.' });
+    row('blobInside', { t: 'tog', label: 'Inside RX filter only', def: false, en: function (v) { return v('blobs'); }, why: 'Peak markers are off.' });
+    row('blobColor', { t: 'color', label: 'Blob color', def: '#ff4500', en: function (v) { return v('blobs'); }, why: 'Peak markers are off.' });
+    row('blobText', { t: 'color', label: 'Text color', def: '#7fff00', en: function (v) { return v('blobs'); }, why: 'Peak markers are off.' });
+    row('pvRefresh', { t: 'slider', label: 'Refresh', min: 50, max: 10000, step: 50, def: 500, fmt: ms, en: function (v) { return v('peakValue'); }, why: 'Peak Value is off.' });
+    row('nfShift', { t: 'slider', label: 'NF shift', min: -12, max: 12, step: 0.5, def: 0, fmt: function (v) { return half(v) + ' dB'; }, en: function (v) { return v('nfLine'); }, why: 'Noise Floor is off.' });
+    row('nfWidth', { t: 'slider', label: 'Line width', min: 1, max: 5, def: 1, fmt: function (v) { return v + ' px'; }, en: function (v) { return v('nfLine'); }, why: 'Noise Floor is off.' });
+    row('nfColor', { t: 'color', label: 'Line', def: '#ff40ff', en: function (v) { return v('nfLine'); }, why: 'Noise Floor is off.' });
+
+    // Transmit Display (Setup only)
+    row('txFftSize', { t: 'slider', label: 'FFT Size', min: 0, max: 6, def: 0, fmt: function (i) { return String(FFT_SIZES[i]); }, scope: 'core' });
+    row('txWindow', { t: 'sel', label: 'Window', opts: R.window.opts, def: 'Blackman-Harris 4T', scope: 'core' });
+    row('txDetector', { t: 'sel', label: 'Detector', opts: R.detector.opts, def: 'Peak', scope: 'core' });
+    row('txAveraging', { t: 'sel', label: 'Averaging', opts: R.averaging.opts, def: 'Log Recursive', scope: 'core' });
+    row('txTime', { t: 'slider', label: 'Time', min: 1, max: 500, def: 30, fmt: ms, scope: 'core' });
+    row('txNormalize', { t: 'tog', label: 'Normalize to 1 Hz', def: false, scope: 'core' });
+    row('txDbMax', { t: 'slider', label: 'dB Max', min: -200, max: 200, def: 20, fmt: dbm, scope: 'phone' });
+    row('txDbMin', { t: 'slider', label: 'dB Min', min: -200, max: 200, def: -80, fmt: dbm, scope: 'phone' });
+    row('txWfDetector', { t: 'sel', label: 'Detector', opts: R.wfDetector.opts, def: 'Peak', scope: 'core' });
+    row('txWfAveraging', { t: 'sel', label: 'Averaging', opts: R.averaging.opts, def: 'None', scope: 'core' });
+    row('txWfTime', { t: 'slider', label: 'Time', min: 1, max: 500, def: 120, fmt: ms, scope: 'core' });
+    row('txWfLow', { t: 'slider', label: 'Low Level', min: -200, max: 200, def: -70, fmt: dbm, scope: 'phone' });
+    row('txWfHigh', { t: 'slider', label: 'High Level', min: -200, max: 200, def: 30, fmt: dbm, scope: 'phone' });
+    row('txPalette', { t: 'sel', label: 'Palette', opts: ['Enhanced', 'Spectran', 'BlackWhite', 'LinLog', 'LinRad', 'LinAuto', 'Custom'], def: 'Enhanced', scope: 'phone' });
+    row('txLowColor', { t: 'color', label: 'Low Color', def: '#000000', scope: 'phone' });
+    row('dup', { t: 'tog', label: 'DUP', def: false, scope: 'phone', phoneOnly: true });
+
+    // Multimeter (Setup only)
+    row('mmPoll', { t: 'slider', label: 'Polling delay', min: 10, max: 2000, step: 10, def: 100, fmt: ms, scope: 'core' });
+    row('mmDecimal', { t: 'tog', label: 'Show decimal point in readouts', def: true, scope: 'phone' });
+    row('mmUnits', { t: 'seg', label: 'Display units', opts: ['S', 'dBm', 'uV'], def: 'S', scope: 'phone' });
+    row('mmHistory', { t: 'slider', label: 'History duration', min: 1000, max: 600000, step: 1000, def: 60000, fmt: function (v) { return Math.round(v / 1000) + ' s'; }, scope: 'phone' });
+
+    // The sheet's five tabs, in the pill's order. A string starts a caption;
+    // an array is a line of toggles, as the pill puts them.
+    var TABS = [
+      ['spectrum', 'Spectrum', ['Trace', 'detector', ['normalize', 'fill', 'gradient'], 'fillAlpha', 'averaging', 'avgTime', 'lineWidth', 'peakHold', 'specHeight', 'calOffset',
+        'Grid', 'gridSpacing', 'scaleText', 'Markers', ['nfLine', 'binWidth', 'peakValue', 'cursorFreq'], { link: 'markers', label: 'Peaks & Markers in Setup ›' }]],
+      ['levels', 'Levels', ['scaleMode', 'dbMax', 'dbMin', 'floorOffset', 'keepRange',
+        'wfMode', 'retune', 'black', 'gain', 'nfOffset', 'wfLow', 'wfHigh']],
+      ['waterfall', 'Waterfall', ['Drawing', 'scheme', 'rate', 'opacity', 'nbThresh', 'wfAvg', 'wfAvgTime',
+        'Overlays', ['stopOnTx', 'rxFilter', 'txFilter', 'rxZero', 'txZero'], 'Time', 'timestamp', 'rewind', 'lookBack']],
+      ['view', 'View', ['view', '3D', 'floor3d', 'gain3d', 'span3d', 'angle3d', 'speed3d', 'shadow',
+        'Background', ['bgOn'], 'bgPicture', 'bgOpacity', 'On this phone', ['ctun', 'dup']]],
+      ['fft', 'FFT', ['sizing', 'fftSize', 'hzbin', 'fftInfo', 'fps', 'window', 'On this phone', 'decimation']]
+    ];
+
+    // Setup > Display: the desktop's eight pages, in its order. Groups are
+    // [title, tag, rows]; a tag of null takes the page's.
+    var PAGES = [
+      ['spectrum', 'Spectrum', 'pan', 'Trace · Fill · Peak hold · Grid · Scales', [
+        ['Trace', null, ['detector', 'normalize', 'averaging', 'avgTime', 'lineWidth', 'traceColor']],
+        ['Fill', null, ['fill', 'fillAlpha', 'fillColor', 'gradient']],
+        ['Peak hold', null, ['peakHoldOn', 'peakHold']],
+        ['Grid', null, ['grid', 'dbStep', 'gridSpacing']],
+        ['Scales and labels', null, ['labelAlign', 'dbmStrip', 'zeroLine', 'scaleText']],
+        ['Layout', 'phone', ['specHeight']],
+        ['Calibration', 'core', ['calOffset']],
+        ['Readouts', null, ['cursorFreq', 'fpsOverlay']],
+        ['', null, [{ link: 'markers', label: 'Configure peaks →' }, { link: 'multimeter', label: 'Configure multimeter →' }]]
+      ]],
+      ['levels', 'Levels', 'pan', 'Spectrum scale · Waterfall levels', [
+        ['Spectrum scale', null, ['scaleMode', { band: true }, 'dbMax', 'dbMin', 'floorOffset', 'keepRange', 'copyFromWf']],
+        ['Waterfall levels', null, ['wfMode', 'black', 'gain', 'nfOffset', 'wfLow', 'wfHigh', 'retune', 'copyFromScale']],
+        ['While transmitting', null, [{ note: 'Transmit has its own levels, on Transmit Display.' }]]
+      ], 'both'],
+      ['waterfall', 'Waterfall', 'pan', 'Drawing · Smoothing · Overlays · Time', [
+        ['Drawing', null, ['scheme', 'editCustom', 'rate', 'opacity', 'nbBlank', 'nbThresh']],
+        ['Smoothing', null, ['wfDetector', 'wfAvg', 'wfAvgTime']],
+        ['Overlays', null, ['stopOnTx', 'rxFilter', 'txFilter', 'rxZero', 'txZero']],
+        ['Time', null, ['timestamp', 'tsMode', 'rewind']]
+      ]],
+      ['view', 'View', 'pan', '2D or 3D · 3D · Background · Band plan', [
+        ['View', null, ['view']],
+        ['3D', null, ['gain3d', 'span3d', 'angle3d', 'speed3d', 'shadow', 'reset3d']],
+        ['3D floor', 'band', [{ band: true }, 'floor3d']],
+        ['Background', null, ['bgOn', 'bgColor', 'bgPicture', 'bgOpacity']],
+        ['On this phone', 'phone', ['ctun', 'extended']],
+        ['Band plan', 'core', ['bandPlan', 'bandPlanSize']]
+      ], 'both'],
+      ['markers', 'Peaks & Markers', 'pan', 'Peak trace · Peak markers · Peak value · Noise floor', [
+        ['Peak trace', null, ['pkTrace', 'pkHold', 'pkDrop', 'pkFill', 'pkOnTx', 'pkColor']],
+        ['Peak markers', null, ['blobs', 'blobCount', 'blobInside', 'blobColor', 'blobText']],
+        ['Peak value', null, ['peakValue', 'pvRefresh']],
+        ['Noise floor line', null, ['nfLine', 'nfShift', 'nfWidth', 'nfColor']],
+        ['Bin width', null, ['binWidth']]
+      ]],
+      ['fft', 'FFT & Engine', 'core', 'FFT size · Frame rate', [
+        ['FFT size', 'core', ['sizing', 'fftSize', 'hzbin', 'fftInfo', 'window']],
+        ['On this phone', 'phone', ['decimation']],
+        ['Frame rate', 'core', ['fps']]
+      ]],
+      ['tx', 'Transmit Display', 'both', 'FFT · Panadapter · Scale · Waterfall', [
+        ['FFT', 'core', ['txFftSize', 'txWindow']],
+        ['Panadapter', 'core', ['txDetector', 'txAveraging', 'txTime', 'txNormalize']],
+        ['Transmit scale', 'phone', ['txDbMax', 'txDbMin', 'dup']],
+        ['Waterfall', 'core', ['txWfDetector', 'txWfAveraging', 'txWfTime']],
+        ['Waterfall Amplitude Scale', 'phone', ['txWfLow', 'txWfHigh', 'txPalette', 'txLowColor']]
+      ]],
+      ['multimeter', 'Multimeter', 'both', 'Polling · Units · History', [
+        ['Multimeter', 'both', ['mmPoll', 'mmDecimal']],
+        ['Signal Units', 'phone', ['mmUnits']],
+        ['Signal History', 'phone', ['mmHistory']]
+      ]]
+    ];
+
+    /* ---------- State ---------- */
+
+    var S = { def: {}, pan: {}, retuneAt: 0 };
+    Object.keys(R).forEach(function (k) {
+      if ('def' in R[k]) {
+        S.def[k] = R[k].def;
+      }
+    });
+    // Pan 1 starts with its own Fill Alpha, so the amber dot shows.
+    S.pan.fillAlpha = 85;
+    function own(k) { return R[k].scope === 'pan' && Object.prototype.hasOwnProperty.call(S.pan, k); }
+    function val(k) { return own(k) ? S.pan[k] : S.def[k]; }
+    function defVal(k) { return S.def[k]; }
+    function ownCount() { return Object.keys(S.pan).length; }
+    // where: 'pan' writes Pan 1's own value (pan rows); 'all' writes Setup's.
+    function write(k, v, where) {
+      if (R[k].scope === 'pan' && where === 'pan') {
+        if (v === S.def[k]) {
+          delete S.pan[k];
+        } else {
+          S.pan[k] = v;
+        }
+      } else {
+        S.def[k] = v;
+      }
+      changed();
+    }
+
+    var views = [];   // every rendered control: { k, where, el, sync }
+    var listeners = [];
+    var pending = false;
+    function changed() {
+      if (pending) {
+        return;
+      }
+      pending = true;
+      // A timer, not an animation frame: a page in the background still syncs.
+      setTimeout(function () {
+        pending = false;
+        views.forEach(function (w) { w.sync(); });
+        listeners.forEach(function (f) { f(); });
+      }, 16);
+    }
+
+    function el(tag, cls, text) {
+      var e = document.createElement(tag);
+      if (cls) {
+        e.className = cls;
+      }
+      if (text !== undefined) {
+        e.textContent = text;
+      }
+      return e;
+    }
+
+    function enabled(r, getter) {
+      return r.en ? !!r.en(getter) : true;
+    }
+    function reason(r, getter) {
+      return typeof r.why === 'function' ? r.why(getter) : (r.why || '');
+    }
+
+    function fftNow() {
+      var mode = val('sizing');
+      var n;
+      if (mode === 'Fixed') {
+        n = FFT_SIZES[val('fftSize')];
+      } else if (mode === 'Hz/bin') {
+        n = 4096;
+        while (RATE_HZ / n > val('hzbin') && n < 262144) {
+          n *= 2;
+        }
+      } else {
+        n = 4096;
+      }
+      return { n: n, bin: RATE_HZ / n, ms: n / RATE_HZ * 1000 };
+    }
+
+    /* ---------- One row, for the sheet ('pan') or a Setup page ---------- */
+
+    // A row reads and writes through `ctx`: the sheet is Pan 1; a Setup page
+    // is All pans or Pan 1, as its strip says.
+    function renderRow(k, ctx) {
+      var r = R[k];
+      var where = ctx.where;
+      function v(key) { return ctx.get(key); }
+      var wrap = el('div', 'dp-row dp-row--' + r.t);
+      wrap.setAttribute('data-k', k);
+      var line = el('div', 'dp-line');
+      wrap.appendChild(line);
+      var dot = el('button', 'dp-dot');
+      dot.type = 'button';
+      dot.hidden = true;
+      dot.setAttribute('aria-label', 'Pan 1 has its own ' + (ctx.setup ? (r.slab || r.label) : r.label) + '. Tap to follow Setup.');
+      dot.addEventListener('click', function () {
+        delete S.pan[k];
+        if (r.tog) {
+          delete S.pan[r.tog];
+        }
+        if (r.swatch) {
+          delete S.pan[r.swatch];
+        }
+        changed();
+      });
+      var label = el('span', 'dp-lab', ctx.setup ? (r.slab || r.label) : r.label);
+      var ctl = el('span', 'dp-ctl');
+      var why = el('p', 'dp-why');
+      why.hidden = true;
+      var syncers = [];
+
+      if (r.t === 'readout') {
+        var p = el('p', 'dp-readout');
+        wrap.textContent = '';
+        wrap.appendChild(p);
+        syncers.push(function () {
+          var f = fftNow();
+          p.textContent = 'Running ' + f.n + ' points: ' + (f.bin < 10 ? f.bin.toFixed(2) : f.bin.toFixed(1)) + ' Hz a bin, ' + f.ms.toFixed(1) + ' ms a transform, at 192 kHz.';
+        });
+        views.push({ k: k, sync: function () { syncers.forEach(function (s) { s(); }); } });
+        syncers[0]();
+        return wrap;
+      }
+
+      line.appendChild(dot);
+      line.appendChild(label);
+      line.appendChild(ctl);
+
+      function inlineTog(key) {
+        var b = el('button', 'stog dp-tog');
+        b.type = 'button';
+        b.addEventListener('click', function () { ctx.set(key, !v(key)); });
+        syncers.push(function () {
+          var on = !!v(key);
+          b.classList.toggle('is-on', on);
+          b.setAttribute('aria-pressed', String(on));
+          b.textContent = on ? 'On' : 'Off';
+          b.disabled = R[key].en ? !R[key].en(v) : false;
+        });
+        return b;
+      }
+      function swatchFor(key) {
+        var s = el('input', 'dp-swatch');
+        s.type = 'color';
+        s.setAttribute('aria-label', R[key].label);
+        s.addEventListener('input', function () { ctx.set(key, s.value); });
+        syncers.push(function () {
+          s.value = v(key);
+          s.disabled = R[key].en ? !R[key].en(v) : false;
+        });
+        return s;
+      }
+
+      if (r.t === 'slider') {
+        wrap.classList.add('dp-row--slider');
+        var range = el('input', 'dp-range');
+        range.type = 'range';
+        range.min = r.min;
+        range.max = r.max;
+        range.step = r.step || 1;
+        range.setAttribute('aria-label', label.textContent);
+        var out = el('output', 'inset dp-out');
+        var slide = el('div', 'dp-slide');
+        slide.appendChild(range);
+        slide.appendChild(out);
+        if (r.swatch && !ctx.setup) {
+          slide.appendChild(swatchFor(r.swatch));
+        }
+        wrap.appendChild(slide);
+        if (r.tog && !ctx.setup) {
+          ctl.appendChild(inlineTog(r.tog));
+        }
+        range.addEventListener('input', function () {
+          var n = parseFloat(range.value);
+          ctx.set(k, n);
+        });
+        range.addEventListener('pointerdown', function () { ctx.peek(wrap, true); });
+        syncers.push(function () {
+          var n = v(k);
+          if (document.activeElement !== range || parseFloat(range.value) !== n) {
+            range.value = n;
+          }
+          range.style.setProperty('--p', ((n - r.min) / (r.max - r.min) * 100) + '%');
+          out.textContent = r.fmt ? r.fmt(n) : String(n);
+        });
+      } else if (r.t === 'tog') {
+        ctl.appendChild(inlineTog(k));
+      } else if (r.t === 'sel') {
+        var sel = el('select', 'dp-sel');
+        sel.setAttribute('aria-label', label.textContent);
+        r.opts.forEach(function (o) {
+          var op = el('option', '', o);
+          op.value = o;
+          sel.appendChild(op);
+        });
+        sel.addEventListener('change', function () { ctx.set(k, sel.value); });
+        if (r.tog && !ctx.setup) {
+          ctl.appendChild(inlineTog(r.tog));
+        }
+        ctl.appendChild(sel);
+        syncers.push(function () { sel.value = v(k); });
+      } else if (r.t === 'seg') {
+        wrap.classList.add('dp-row--seg');
+        var grid = el('div', 'agrid dp-seg');
+        grid.style.gridTemplateColumns = 'repeat(' + r.opts.length + ', minmax(0, 1fr))';
+        r.opts.forEach(function (o) {
+          var b = el('button', 'nbtn is-blue', o);
+          b.type = 'button';
+          b.addEventListener('click', function () { ctx.set(k, o); });
+          syncers.push(function () {
+            b.setAttribute('aria-pressed', String(v(k) === o));
+            b.disabled = !enabled(r, v);
+          });
+          grid.appendChild(b);
+        });
+        wrap.appendChild(grid);
+      } else if (r.t === 'color') {
+        ctl.appendChild(swatchFor(k));
+      } else if (r.t === 'action') {
+        label.textContent = '';
+        var b1 = el('button', 'rbtn dp-act', r.label);
+        b1.type = 'button';
+        ctl.appendChild(b1);
+        if (k === 'retune' && !ctx.setup) {
+          var c = el('span', 'dp-cbadge', 'C');
+          c.title = 'Clarity';
+          label.appendChild(c);
+          label.appendChild(document.createTextNode(' Clarity sets the levels from the noise floor.'));
+        }
+        if (r.also) {
+          var b2 = el('button', 'rbtn dp-act', r.also);
+          b2.type = 'button';
+          ctl.appendChild(b2);
+          b2.addEventListener('click', function () { ctx.set('bgImage', false, true); });
+          syncers.push(function () { b2.disabled = !enabled(r, v); });
+        }
+        b1.addEventListener('click', function () { act(k, ctx); });
+        syncers.push(function () { b1.disabled = !enabled(r, v); });
+      } else if (r.t === 'look') {
+        wrap.classList.add('dp-row--slider');
+        var lr = el('input', 'dp-range');
+        lr.type = 'range';
+        lr.min = 0;
+        lr.step = 1;
+        lr.setAttribute('aria-label', 'Look back');
+        var lo = el('output', 'inset dp-out');
+        var live = el('button', 'nbtn is-blue dp-live', 'LIVE');
+        live.type = 'button';
+        var ls = el('div', 'dp-slide');
+        ls.appendChild(lr);
+        ls.appendChild(lo);
+        ls.appendChild(live);
+        wrap.appendChild(ls);
+        lr.addEventListener('input', function () { S.def.lookBack = parseFloat(lr.value); changed(); });
+        lr.addEventListener('pointerdown', function () { ctx.peek(wrap, true); });
+        live.addEventListener('click', function () { S.def.lookBack = 0; changed(); });
+        syncers.push(function () {
+          var max = { '60 s': 60, '5 min': 300, '15 min': 900, '20 min': 1200 }[v('rewind')] - 30;
+          lr.max = max;
+          var n = Math.min(S.def.lookBack, max);
+          lr.value = n;
+          lr.style.setProperty('--p', (n / max * 100) + '%');
+          lo.textContent = n === 0 ? 'Live' : '−' + Math.floor(n / 60) + ':' + ('0' + (n % 60)).slice(-2);
+          live.setAttribute('aria-pressed', String(n === 0));
+        });
+      }
+
+      // The amber dot: this pan's own value (the sheet, or Setup on Pan 1).
+      syncers.push(function () {
+        var mine = where() === 'pan' && (own(k) || (r.tog && own(r.tog)) || (r.swatch && own(r.swatch)));
+        dot.hidden = !mine;
+        var ok = enabled(r, v);
+        wrap.classList.toggle('is-off', !ok);
+        all(wrap, 'input, select').forEach(function (i) {
+          if (!i.classList.contains('dp-swatch')) {
+            i.disabled = !ok;
+          }
+        });
+        why.hidden = ok;
+        why.textContent = ok ? '' : reason(r, v);
+      });
+      wrap.appendChild(why);
+      views.push({ k: k, sync: function () { syncers.forEach(function (s) { s(); }); } });
+      syncers.forEach(function (s) { s(); });
+      return wrap;
+    }
+
+    // A line of toggles, as the pill puts Fill, Gradient and the markers.
+    function renderChips(keys, ctx) {
+      var wrap = el('div', 'dp-chips');
+      wrap.style.gridTemplateColumns = 'repeat(' + Math.min(keys.length, keys.length > 4 ? 3 : keys.length) + ', minmax(0, 1fr))';
+      keys.forEach(function (k) {
+        var r = R[k];
+        var b = el('button', 'nbtn is-dsp dp-chip', r.label);
+        b.type = 'button';
+        var d = el('i', 'dp-cdot');
+        b.appendChild(d);
+        b.addEventListener('click', function (e) {
+          if (e.target === d && own(k)) {
+            delete S.pan[k];
+            changed();
+            return;
+          }
+          ctx.set(k, !ctx.get(k));
+        });
+        wrap.appendChild(b);
+        views.push({ k: k, sync: function () {
+          b.setAttribute('aria-pressed', String(!!ctx.get(k)));
+          b.disabled = r.en ? !r.en(ctx.get) : false;
+          d.hidden = !(ctx.where() === 'pan' && own(k));
+        } });
+      });
+      var whys = el('p', 'dp-why');
+      whys.hidden = true;
+      wrap.appendChild(whys);
+      views.push({ k: '', sync: function () {
+        var off = keys.filter(function (k) { return R[k].en && !R[k].en(ctx.get); });
+        whys.hidden = !off.length;
+        whys.textContent = off.length ? reason(R[off[0]], ctx.get) : '';
+      } });
+      return wrap;
+    }
+
+    function act(k, ctx) {
+      if (k === 'retune') {
+        S.retuneAt = performance.now();
+        changed();
+      } else if (k === 'reset3d') {
+        ['floor3d', 'gain3d', 'span3d', 'angle3d', 'speed3d', 'shadow'].forEach(function (key) {
+          ctx.set(key, R[key].def, true);
+        });
+        changed();
+      } else if (k === 'bgPicture') {
+        ctx.set('bgImage', true, true);
+        if (!ctx.get('bgOn')) {
+          ctx.set('bgOn', true);
+        }
+      } else if (k === 'copyFromWf') {
+        ctx.set('dbMin', R.wfLow.def);
+        ctx.set('dbMax', R.wfHigh.def);
+      } else if (k === 'copyFromScale') {
+        ctx.set('wfLow', ctx.get('dbMin'));
+        ctx.set('wfHigh', ctx.get('dbMax'));
+      } else if (k === 'editCustom') {
+        S.toast = 'The Custom gradient editor opens as a sheet.';
+        changed();
+      }
+    }
+    // The background picture isn't a row of its own; it rides with Choose and Clear.
+    R.bgImage = { k: 'bgImage', scope: 'pan', def: false };
+    S.def.bgImage = false;
+
+    /* ---------- The Display sheet ---------- */
+
+    function sheetCtx(root) {
+      return {
+        setup: false,
+        where: function () { return 'pan'; },
+        get: val,
+        set: function (k, v) { write(k, v, 'pan'); },
+        peek: function (rowEl, on) {
+          var sheet = root.querySelector('.dp-sheet');
+          if (!sheet) {
+            return;
+          }
+          all(sheet, '.dp-row.is-peek').forEach(function (r) { r.classList.remove('is-peek'); });
+          sheet.classList.toggle('is-peek', on);
+          if (on) {
+            rowEl.classList.add('is-peek');
+          }
+        }
+      };
+    }
+
+    function buildSheet(p, startTab, opts) {
+      opts = opts || {};
+      var root = p.root;
+      var ctx = sheetCtx(root);
+      var sheet = el('div', (opts.cls || 'dropsheet') + ' dp-sheet');
+      sheet.setAttribute('role', 'dialog');
+      sheet.setAttribute('aria-label', 'Display');
+      var title = el('div', 'atitle');
+      title.appendChild(document.createTextNode('Display '));
+      var forEl = el('span', 'dropsheet__for', opts.forText || 'Pan 1 · this phone');
+      title.appendChild(forEl);
+      sheet.appendChild(title);
+      var tabs = el('div', 'dp-tabs');
+      tabs.setAttribute('role', 'tablist');
+      sheet.appendChild(tabs);
+      var body = el('div', 'abody dp-body');
+      sheet.appendChild(body);
+      var panels = {};
+      TABS.forEach(function (t) {
+        var b = el('button', 'dp-tab', t[1]);
+        b.type = 'button';
+        b.setAttribute('role', 'tab');
+        b.setAttribute('data-tab', t[0]);
+        tabs.appendChild(b);
+        var panel = el('div', 'dp-panel');
+        panel.setAttribute('role', 'tabpanel');
+        if (t[0] === 'fft') {
+          var head = el('div', 'dp-corehead');
+          head.appendChild(el('span', 'tag tag--station', 'Core'));
+          head.appendChild(el('span', '', 'One value for every device on this Core.'));
+          panel.appendChild(head);
+        }
+        t[2].forEach(function (item) {
+          if (typeof item === 'string' && !R[item]) {
+            panel.appendChild(el('div', 'acap dp-cap', item));
+          } else if (Array.isArray(item)) {
+            panel.appendChild(renderChips(item, ctx));
+          } else if (typeof item === 'object' && item.link) {
+            var a = el('button', 'dropsheet__link dp-link', item.label);
+            a.type = 'button';
+            a.addEventListener('click', function () { goSetup(item.link, 'all'); });
+            panel.appendChild(a);
+          } else {
+            var rowEl = renderRow(item, ctx);
+            if (R[item].scope === 'band') {
+              rowEl.querySelector('.dp-lab').appendChild(el('small', 'dp-sub', ' · 40 m, on the Core'));
+            }
+            panel.appendChild(rowEl);
+          }
+        });
+        panels[t[0]] = panel;
+        body.appendChild(panel);
+      });
+      var foot = el('div', 'dp-foot');
+      var reset = el('button', 'rbtn dp-reset');
+      reset.type = 'button';
+      var toSetup = el('button', 'dropsheet__link dp-tosetup', 'Setup defaults ›');
+      toSetup.type = 'button';
+      foot.appendChild(reset);
+      foot.appendChild(toSetup);
+      sheet.appendChild(foot);
+      var toast = el('p', 'dp-toast');
+      toast.hidden = true;
+      sheet.appendChild(toast);
+
+      var current = startTab;
+      function show(tab) {
+        current = tab;
+        all(tabs, '.dp-tab').forEach(function (b) {
+          var on = b.getAttribute('data-tab') === tab;
+          b.setAttribute('aria-selected', String(on));
+          b.classList.toggle('is-on', on);
+        });
+        Object.keys(panels).forEach(function (k) { panels[k].hidden = k !== tab; });
+        body.scrollTop = 0;
+      }
+      all(tabs, '.dp-tab').forEach(function (b) {
+        b.addEventListener('click', function () { show(b.getAttribute('data-tab')); });
+      });
+      reset.addEventListener('click', function () {
+        S.pan = {};
+        changed();
+      });
+      toSetup.addEventListener('click', function () {
+        goSetup({ spectrum: 'spectrum', levels: 'levels', waterfall: 'waterfall', view: 'view', fft: 'fft' }[current], 'all');
+      });
+      views.push({ k: '', sync: function () {
+        var n = ownCount();
+        reset.textContent = 'Reset this pan' + (n ? ' (' + n + ')' : '');
+        reset.disabled = n === 0;
+        toast.hidden = !S.toast;
+        toast.textContent = S.toast || '';
+      } });
+
+      (opts.host || root).appendChild(sheet);
+      show(startTab);
+
+      // The toolbar's Display button opens and closes the sheet, so the band
+      // can be seen whole. On the iPad the band's own Display button does too.
+      var btns = all(root, '.tbtn').filter(function (b) { return b.textContent.trim() === 'Display'; })
+        .concat(opts.btns || []);
+      function setOpen(open) {
+        sheet.hidden = !open;
+        btns.forEach(function (btn) {
+          btn.classList.toggle('is-open', open);
+          btn.setAttribute('aria-expanded', String(open));
+        });
+        if (opts.onOpen) {
+          opts.onOpen(open);
+        }
+      }
+      btns.forEach(function (btn) {
+        btn.addEventListener('click', function () { setOpen(sheet.hidden); });
+      });
+      setOpen(true);
+      return { setOpen: setOpen, show: show, el: sheet };
+    }
+
+    // While a slider is held, the sheet clears away but for that row, so the
+    // band shows what it does.
+    document.addEventListener('pointerup', function () {
+      all(document, '.dp-sheet.is-peek').forEach(function (s) {
+        s.classList.remove('is-peek');
+        all(s, '.dp-row.is-peek').forEach(function (r) { r.classList.remove('is-peek'); });
+      });
+    });
+    document.addEventListener('pointercancel', function () {
+      all(document, '.dp-sheet.is-peek').forEach(function (s) { s.classList.remove('is-peek'); });
+    });
+
+    /* ---------- Setup > Display ---------- */
+
+    var setupPages = {};   // page id -> { frame, setScope }
+    function goSetup(page, scope) {
+      var target = setupPages[page];
+      if (!target) {
+        return;
+      }
+      if (target.setScope) {
+        target.setScope(scope || 'all');
+      }
+      var opt = target.frame.closest('.opt') || target.frame;
+      opt.scrollIntoView({ behavior: REDUCED ? 'auto' : 'smooth', block: 'center' });
+      opt.classList.remove('dp-flash');
+      void opt.offsetWidth;
+      opt.classList.add('dp-flash');
+    }
+
+    var TAG = {
+      core: ['tag--station', 'Core'],
+      band: ['tag--station', 'Core · per band'],
+      phone: ['tag--phone', 'This phone'],
+      pan: ['tag--phone', 'This phone · per pan'],
+      both: ['tag--both', 'Both']
+    };
+    function tagEl(kind) {
+      var t = TAG[kind] || TAG.phone;
+      return el('span', 'tag ' + t[0], t[1]);
+    }
+
+    function setupShell(frame, back, title, endTag) {
+      frame.appendChild(document.getElementById('tpl-navpage').content.cloneNode(true));
+      var scr = frame.querySelector('.scr');
+      scr.removeAttribute('data-navpage');
+      scr.querySelector('.nav__back').textContent = '‹ ' + back;
+      scr.querySelector('.nav__title').textContent = title;
+      var end = scr.querySelector('.nav__end');
+      end.textContent = '';
+      if (endTag) {
+        end.appendChild(tagEl(endTag));
+      }
+      var page = scr.querySelector('.spage');
+      page.textContent = '';
+      page.classList.add('dp-spage');
+      return page;
+    }
+
+    function buildSetupList(frame) {
+      var page = setupShell(frame, 'Setup', 'Display', 'both');
+      var group = el('div', 'sgroup');
+      PAGES.forEach(function (pg) {
+        var b = el('button', 'srow');
+        b.type = 'button';
+        var text = el('span', 'srow__text');
+        text.appendChild(el('b', '', pg[1]));
+        text.appendChild(el('span', '', pg[3]));
+        b.appendChild(text);
+        // A page with Core rows among this phone's says Both.
+        b.appendChild(tagEl(pg[5] || (pg[2] === 'pan' ? 'phone' : pg[2])));
+        b.appendChild(el('i', 'chev'));
+        b.addEventListener('click', function () { goSetup(pg[0], 'all'); });
+        group.appendChild(b);
+      });
+      page.appendChild(group);
+      page.appendChild(el('p', 'snote', 'The desktop\'s eight pages, in its order. Core settings are shared by every device paired with KG4VCF/shack; the rest stay on this phone.'));
+    }
+
+    function buildSetupPage(frame, id) {
+      var pg = PAGES.filter(function (x) { return x[0] === id; })[0];
+      var page = setupShell(frame, 'Display', pg[1], pg[2] === 'pan' ? null : pg[2]);
+      var scope = 'all';
+      var ctx = {
+        setup: true,
+        where: function () { return scope === 'pan' ? 'pan' : 'all'; },
+        get: function (k) { return scope === 'pan' ? val(k) : (R[k].scope === 'pan' ? defVal(k) : val(k)); },
+        set: function (k, v) { write(k, v, scope === 'pan' ? 'pan' : 'all'); },
+        peek: function () {}
+      };
+      if (pg[2] === 'pan') {
+        // The desktop's "Settings for:" strip.
+        var strip = el('div', 'dp-scope');
+        strip.appendChild(el('span', 'dp-scope__lab', 'Settings for:'));
+        var chips = el('div', 'dp-scope__chips');
+        [['all', 'All pans'], ['pan', 'Pan 1']].forEach(function (c) {
+          var b = el('button', 'nbtn is-blue', c[1]);
+          b.type = 'button';
+          b.addEventListener('click', function () { setScope(c[0]); });
+          b.setAttribute('data-scope', c[0]);
+          chips.appendChild(b);
+        });
+        strip.appendChild(chips);
+        var acts = el('div', 'dp-scope__acts');
+        var rs = el('button', 'rbtn', 'Reset this pan');
+        rs.type = 'button';
+        var useAll = el('button', 'rbtn', 'Use Pan 1\'s on all pans');
+        useAll.type = 'button';
+        acts.appendChild(rs);
+        acts.appendChild(useAll);
+        strip.appendChild(acts);
+        var note = el('p', 'dp-scope__note');
+        strip.appendChild(note);
+        page.appendChild(strip);
+        rs.addEventListener('click', function () { S.pan = {}; changed(); });
+        useAll.addEventListener('click', function () {
+          Object.keys(S.pan).forEach(function (k) { S.def[k] = S.pan[k]; });
+          S.pan = {};
+          changed();
+        });
+        views.push({ k: '', sync: function () {
+          all(chips, '.nbtn').forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-scope') === scope)); });
+          acts.hidden = scope !== 'pan';
+          rs.disabled = useAll.disabled = ownCount() === 0;
+          note.textContent = scope === 'pan'
+            ? 'Pan 1\'s own values carry the amber dot. The rest follow All pans.'
+            : 'What every pan starts with. A pan\'s own values stay its own.';
+        } });
+      }
+      function setScope(s) {
+        scope = s;
+        changed();
+      }
+      pg[4].forEach(function (g) {
+        var head = el('p', 'shead');
+        head.appendChild(document.createTextNode(g[0]));
+        if (g[1]) {
+          head.appendChild(document.createTextNode(' '));
+          head.appendChild(tagEl(g[1]));
+        }
+        if (g[0] || g[1]) {
+          page.appendChild(head);
+        }
+        var group = el('div', 'sgroup dp-sgroup');
+        g[2].forEach(function (item) {
+          if (typeof item === 'object' && item.link) {
+            var b = el('button', 'srow');
+            b.type = 'button';
+            var tx = el('span', 'srow__text');
+            tx.appendChild(el('b', '', item.label));
+            b.appendChild(tx);
+            b.appendChild(el('i', 'chev'));
+            b.addEventListener('click', function () { goSetup(item.link, scope); });
+            group.appendChild(b);
+          } else if (typeof item === 'object' && item.band) {
+            var bl = el('div', 'dp-row');
+            var ln = el('div', 'dp-line');
+            ln.appendChild(el('span', 'dp-lab', 'Band'));
+            var bs = el('select', 'dp-sel');
+            ['160 m', '80 m', '60 m', '40 m', '30 m', '20 m', '17 m', '15 m', '12 m', '10 m', '6 m'].forEach(function (b) {
+              var o = el('option', '', b);
+              bs.appendChild(o);
+            });
+            bs.value = '40 m';
+            ln.appendChild(bs);
+            bl.appendChild(ln);
+            bl.appendChild(el('p', 'dp-hint', 'Edits the kept band values without tuning the radio.'));
+            group.appendChild(bl);
+          } else if (typeof item === 'object' && item.note) {
+            group.appendChild(el('p', 'dp-hint dp-hint--pad', item.note));
+          } else {
+            group.appendChild(renderRow(item, ctx));
+          }
+        });
+        page.appendChild(group);
+      });
+      setupPages[id] = { frame: frame, setScope: setScope };
+      return setScope;
+    }
+
+    setupFrames.forEach(function (frame) {
+      var id = frame.getAttribute('data-screen').slice(5);
+      if (id === 'list') {
+        buildSetupList(frame);
+      } else {
+        var setScope = buildSetupPage(frame, id);
+        var start = frame.getAttribute('data-dp-scope');
+        if (start) {
+          setScope(start);
+        }
+      }
+    });
+
+    /* ---------- The band draws what the rows say ---------- */
+
+    var bgPicture = (function () {
+      var c = document.createElement('canvas');
+      c.width = 400;
+      c.height = 240;
+      var g = c.getContext('2d');
+      var sky = g.createLinearGradient(0, 0, 0, 240);
+      sky.addColorStop(0, '#0b1d3a');
+      sky.addColorStop(0.6, '#3a2a55');
+      sky.addColorStop(1, '#c0603a');
+      g.fillStyle = sky;
+      g.fillRect(0, 0, 400, 240);
+      g.fillStyle = '#05070c';
+      g.beginPath();
+      g.moveTo(0, 240);
+      [[0, 190], [60, 150], [110, 175], [170, 120], [230, 168], [290, 140], [350, 176], [400, 160], [400, 240]].forEach(function (pt) { g.lineTo(pt[0], pt[1]); });
+      g.fill();
+      g.strokeStyle = '#05070c';
+      g.lineWidth = 2;
+      g.beginPath();
+      g.moveTo(300, 140);
+      g.lineTo(300, 60);
+      g.moveTo(286, 70);
+      g.lineTo(314, 70);
+      g.moveTo(290, 82);
+      g.lineTo(310, 82);
+      g.stroke();
+      return c;
+    })();
+
+    function lookNow() {
+      var v = val;
+      var three = v('view') === '3D Stacked Trace';
+      var nf = -127;
+      var mode = v('wfMode');
+      var black = v('black');
+      var spanDb = Math.max(4, 80 - 0.7 * v('gain'));
+      var lo;
+      var hi;
+      if (mode === 'Clarity' || mode === 'Auto') {
+        lo = nf + (black - 50) * 0.5;
+        hi = lo + spanDb;
+      } else if (mode === 'Floor') {
+        lo = nf + v('nfOffset') + (black - 57) * 0.5;
+        hi = lo + spanDb;
+      } else {
+        var bLo = mode === 'Manual' ? v('wfLow') : v('dbMin');
+        var bHi = mode === 'Manual' ? v('wfHigh') : v('dbMax');
+        var k = 38 / spanDb;
+        lo = bLo + (black - 57) * 0.5;
+        hi = lo + Math.max(2, (bHi - bLo) * k);
+      }
+      var top = v('dbMax');
+      var bottom = v('dbMin');
+      if (v('scaleMode') === 'Track floor') {
+        var keep = top - bottom;
+        bottom = nf - 6 + v('floorOffset');
+        if (v('keepRange')) {
+          top = bottom + keep;
+        }
+      }
+      var avgA = v('averaging') === 'None' ? 1 : 1 - Math.exp(-v('rate') / Math.max(1, v('avgTime')));
+      var wfA = v('wfAvg') === 'None' ? 1 : 1 - Math.exp(-v('rate') / Math.max(1, v('wfAvgTime')));
+      var gs = v('gridSpacing');
+      return {
+        three: three,
+        ref: top,
+        range: Math.max(10, top - bottom),
+        fill: v('fill') && !three,
+        fillAlpha: v('fillAlpha') / 100,
+        fillColor: v('fillColor'),
+        gradient: v('gradient'),
+        traceColor: v('traceColor'),
+        lineWidth: v('lineWidth') * 2,
+        peakHold: v('peakHoldOn') && !three,
+        peakHoldMs: v('peakHold'),
+        grid: v('grid'),
+        gridHz: gs === 'Auto' ? 0 : parseFloat(gs) * 1000,
+        dbStep: v('dbStep'),
+        scaleText: parseFloat(v('scaleText')),
+        labels: v('labelAlign'),
+        dbmStrip: v('dbmStrip'),
+        zeroLine: v('zeroLine'),
+        nfLine: v('nfLine'),
+        nfShift: v('nfShift'),
+        nfWidth: v('nfWidth'),
+        nfColor: v('nfColor'),
+        binWidth: v('binWidth'),
+        peakValue: v('peakValue'),
+        cursor: v('cursorFreq'),
+        fpsOverlay: v('fpsOverlay'),
+        specA: avgA,
+        specPct: v('specHeight'),
+        wfLo: lo,
+        wfHi: hi,
+        lut: LUTS[v('scheme')] || LUT,
+        wfOpacity: v('opacity') / 100,
+        rowMs: v('rate'),
+        nbBlank: v('nbBlank'),
+        nbThresh: v('nbThresh'),
+        wfA: wfA,
+        stopOnTx: v('stopOnTx'),
+        rxFilter: v('rxFilter'),
+        txFilter: v('txFilter'),
+        rxZero: v('rxZero'),
+        txZero: v('txZero'),
+        timestamp: v('timestamp'),
+        utc: v('tsMode') === 'UTC',
+        lookBack: S.def.lookBack,
+        floor3d: v('floor3d'),
+        gain3d: v('gain3d'),
+        span3d: v('span3d'),
+        angle3d: v('angle3d'),
+        speed3d: v('speed3d'),
+        shadow: v('shadow'),
+        bgOn: v('bgOn') && !three,
+        bgOpacity: v('bgOpacity') / 100,
+        bgColor: v('bgColor'),
+        bgImage: v('bgImage'),
+        fps: v('fps'),
+        bin: fftNow().bin,
+        blobs: v('blobs'),
+        blobCount: v('blobCount'),
+        blobColor: v('blobColor'),
+        blobText: v('blobText'),
+        pkTrace: v('pkTrace'),
+        pkColor: v('pkColor'),
+        pkDrop: v('pkDrop'),
+        pkHold: v('pkHold'),
+        retuning: performance.now() - S.retuneAt < 900
+      };
+    }
+
+    function overlayCanvas(p, wrap, cls) {
+      var c = document.createElement('canvas');
+      c.className = cls;
+      c.setAttribute('aria-hidden', 'true');
+      wrap.appendChild(c);
+      return c;
+    }
+
+    function applyLook(p) {
+      var L = lookNow();
+      var old = p.look;
+      p.look = L;
+      p.wfCanvas.style.opacity = String(L.wfOpacity);
+      p.ruler.style.fontSize = L.scaleText + 'px';
+      p.ruler.classList.toggle('dp-ruler-off', L.labels === 'Off');
+      p.ruler.style.justifyContent = '';
+      p.slices.forEach(function (s) {
+        if (s.passWf) {
+          s.passWf.style.visibility = L.rxFilter ? '' : 'hidden';
+        }
+      });
+      if (!old || old.specPct !== L.specPct) {
+        // Spectrum height splits the band between the spectrum and the waterfall.
+        // The band's height is the device's own: phone, iPad or sideways.
+        if (!p.dpTotal) {
+          var cs = getComputedStyle(p.pan);
+          p.dpTotal = parseFloat(cs.getPropertyValue('--spec-h')) + parseFloat(cs.getPropertyValue('--wf-h'));
+        }
+        var total = p.dpTotal;
+        var spec = Math.round(total * L.specPct / 100);
+        p.pan.style.setProperty('--spec-h', spec + 'px');
+        p.pan.style.setProperty('--wf-h', (total - spec) + 'px');
+        p.hold = null;
+        p.hist3d = [];
+        p.setup();
+      } else if (old.wfLo !== L.wfLo || old.wfHi !== L.wfHi || old.lut !== L.lut) {
+        repaintWf(p);
+      }
+    }
+
+    // Swap the drawing globals for this phone's while it draws.
+    function withLook(p, fn) {
+      var L = p.look;
+      var keep = [REF, RANGE, WF_LO, WF_HI, LUT];
+      REF = L.ref;
+      RANGE = L.range;
+      WF_LO = L.wfLo;
+      WF_HI = L.wfHi;
+      LUT = L.lut;
+      try {
+        fn();
+      } finally {
+        REF = keep[0];
+        RANGE = keep[1];
+        WF_LO = keep[2];
+        WF_HI = keep[3];
+        LUT = keep[4];
+      }
+    }
+
+    var basePush = Phone.prototype.pushRow;
+    Phone.prototype.pushRow = function () {
+      var L = this.look;
+      if (!L) {
+        basePush.call(this);
+        return;
+      }
+      var self = this;
+      var t = Date.now() / 1000;
+      var lin = this.sim.row(t);
+      if (!this.tx) {
+        this.meterAll(lin, false);
+        this.smPeak = Math.max(this.slices[this.active].s, this.smPeak - 1.2);
+      } else {
+        this.txTick(t);
+      }
+      this.toDb(lin);
+      var n = this.bins;
+      var i;
+      // A burst from a nearby noise source every few seconds, for NB Blank to blank.
+      this.dpBurstAt = this.dpBurstAt || t + 2;
+      var burst = t >= this.dpBurstAt;
+      if (burst) {
+        this.dpBurstAt = t + 2.4 + Math.random() * 1.6;
+        for (i = 0; i < n; i++) {
+          this.rowDb[i] = Math.max(this.rowDb[i], -112 + Math.random() * 10);
+        }
+      }
+      this.prev.set(this.cur);
+      for (i = 0; i < n; i++) {
+        this.disp[i] += (this.rowDb[i] - this.disp[i]) * L.specA;
+      }
+      this.cur.set(this.disp);
+      if (!this.wfRow || this.wfRow.length !== n) {
+        this.wfRow = new Float32Array(this.rowDb);
+      }
+      var blank = burst && L.nbBlank && (-112 + 5) - (-127) > L.nbThresh;
+      if (!blank) {
+        for (i = 0; i < n; i++) {
+          this.wfRow[i] += (this.rowDb[i] - this.wfRow[i]) * L.wfA;
+        }
+      }
+      // 3D history: one trace for each row, or fewer when 3D Speed slows it.
+      this.hist3d = this.hist3d || [];
+      this.histTick = (this.histTick || 0) + 1;
+      if (L.speed3d === 0 || this.histTick % (11 - L.speed3d) === 0) {
+        this.hist3d.unshift(new Float32Array(this.cur));
+        if (this.hist3d.length > 48) {
+          this.hist3d.pop();
+        }
+      }
+      // Peak hold and the peak trace.
+      var now = performance.now();
+      if (!this.hold || this.hold.length !== n) {
+        this.hold = new Float32Array(this.cur);
+        this.holdAt = new Float64Array(n);
+        this.pk = new Float32Array(this.cur);
+      }
+      for (i = 0; i < n; i++) {
+        var c = this.cur[i];
+        if (c >= this.hold[i]) {
+          this.hold[i] = c;
+          this.holdAt[i] = now;
+        } else if (now - this.holdAt[i] > L.peakHoldMs) {
+          this.hold[i] = c;
+        }
+        if (c >= this.pk[i]) {
+          this.pk[i] = c;
+        } else {
+          this.pk[i] = Math.max(c, this.pk[i] - L.pkDrop * L.rowMs / 1000);
+        }
+      }
+      var frozen = L.lookBack > 0 || (L.stopOnTx && this.tx);
+      if (!frozen) {
+        withLook(this, function () {
+          self.wfCtx.drawImage(self.wfCanvas, 0, 0, self.bins, self.wfRows - 1, 0, 1, self.bins, self.wfRows - 1);
+          self.paintRow(self.rowImg.data, 0, self.wfRow);
+          self.wfCtx.putImageData(self.rowImg, 0, 0);
+        });
+        this.dpHist = this.dpHist || [];
+        this.dpHist.unshift(new Float32Array(this.wfRow));
+        if (this.dpHist.length > this.wfRows) {
+          this.dpHist.pop();
+        }
+      }
+      this.drawMeters();
+    };
+
+    // A level or scheme change repaints the history held, as the desktop does.
+    function repaintWf(p) {
+      var hist = p.dpHist || [];
+      var img = p.wfCtx.createImageData(p.bins, p.wfRows);
+      withLook(p, function () {
+        for (var y = 0; y < Math.min(hist.length, p.wfRows); y++) {
+          p.paintRow(img.data, y * p.bins * 4, hist[y]);
+        }
+      });
+      p.wfCtx.putImageData(img, 0, 0);
+    }
+
+    // The base prefill, under this phone's look, keeping the rows it paints.
+    Phone.prototype.prefill = (function (base) {
+      return function () {
+        if (!this.look) {
+          base.call(this);
+          return;
+        }
+        var img = this.wfCtx.createImageData(this.bins, this.wfRows);
+        var now = Date.now();
+        var self = this;
+        this.dpHist = [];
+        withLook(this, function () {
+          for (var y = self.wfRows - 1; y >= 0; y--) {
+            var lin = self.sim.row((now - y * self.look.rowMs) / 1000);
+            if (y === 0) {
+              self.meterAll(lin, true);
+            }
+            self.toDb(lin);
+            self.dpHist.unshift(new Float32Array(self.rowDb));
+            self.paintRow(img.data, y * self.bins * 4, self.rowDb);
+            if (y === 8) {
+              self.disp.set(self.rowDb);
+            } else if (y < 8) {
+              for (var i = 0; i < self.bins; i++) {
+                self.disp[i] += (self.rowDb[i] - self.disp[i]) * 0.5;
+              }
+            }
+          }
+        });
+        this.wfCtx.putImageData(img, 0, 0);
+        this.prev.set(this.disp);
+        this.cur.set(this.disp);
+        this.wfRow = new Float32Array(this.disp);
+      };
+    })(Phone.prototype.prefill);
+
+    var baseFrame = Phone.prototype.frame;
+    Phone.prototype.frame = function (now) {
+      var L = this.look;
+      if (!L) {
+        baseFrame.call(this, now);
+        return;
+      }
+      var rowMs = L.rowMs;
+      if (now - this.lastRowAt > 1000) {
+        this.lastRowAt = now - rowMs;
+      }
+      var produced = 0;
+      while (now - this.lastRowAt >= rowMs && produced < 6) {
+        this.lastRowAt += rowMs;
+        this.pushRow();
+        produced++;
+      }
+      if (!this.lastSpecAt || now - this.lastSpecAt >= 1000 / L.fps - 2) {
+        this.fpsSeen = this.lastSpecAt ? 1000 / (now - this.lastSpecAt) : L.fps;
+        this.lastSpecAt = now;
+        this.drawSpectrum(clamp((now - this.lastRowAt) / rowMs, 0, 1));
+        this.drawWfOverlay();
+      }
+      var dt = now - this.lastFrame;
+      this.lastFrame = now;
+      this.drawSMeters(dt);
+      var moving = false;
+      this.slices.forEach(function (s) {
+        if (s.f !== s.target) {
+          var d = s.target - s.f;
+          s.f = Math.abs(d) < 4 ? s.target : s.f + d * Math.min(1, dt / 70);
+          moving = true;
+        }
+      });
+      if (moving) {
+        this.place();
+      }
+    };
+
+    var baseDraw = Phone.prototype.drawSpectrum;
+    Phone.prototype.drawSpectrum = function (frac) {
+      var L = this.look;
+      if (!L) {
+        baseDraw.call(this, frac);
+        return;
+      }
+      var self = this;
+      withLook(this, function () { self.drawLook(frac); });
+    };
+
+    Phone.prototype.drawLook = function (frac) {
+      var L = this.look;
+      var c = this.specCtx;
+      var W = this.W;
+      var H = this.specH;
+      var self = this;
+      var i;
+      c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      c.fillStyle = '#0a0a14';
+      c.fillRect(0, 0, W, H);
+      if (L.bgOn) {
+        c.globalAlpha = L.bgOpacity;
+        c.fillStyle = L.bgColor;
+        c.fillRect(0, 0, W, H);
+        if (L.bgImage) {
+          c.drawImage(bgPicture, 0, 0, W, H);
+        }
+        c.globalAlpha = 1;
+      }
+
+      if (L.three) {
+        this.draw3d(c, W, H);
+        this.drawBandPlan(c);
+        if (L.dbmStrip) {
+          this.drawDbmStrip(c);
+        }
+        return;
+      }
+
+      var step = L.gridHz || this.gridStep;
+      var f;
+      var x;
+      if (L.grid) {
+        c.lineWidth = 1;
+        c.strokeStyle = 'rgba(255, 255, 255, 0.078)';
+        c.setLineDash([1, 2]);
+        c.beginPath();
+        var minor = step / 2;
+        for (f = Math.ceil(this.F0 / minor) * minor; f <= this.F1; f += minor) {
+          if (Math.abs(f % step) < 1) {
+            continue;
+          }
+          x = Math.round(this.fx(f)) + 0.5;
+          c.moveTo(x, 0);
+          c.lineTo(x, H);
+        }
+        c.stroke();
+        c.setLineDash([]);
+        c.strokeStyle = 'rgba(255, 255, 255, 0.157)';
+        c.beginPath();
+        for (var dbv = Math.ceil((REF - RANGE) / L.dbStep) * L.dbStep; dbv <= REF; dbv += L.dbStep) {
+          var gy = Math.round(this.dbToY(dbv)) + 0.5;
+          c.moveTo(0, gy);
+          c.lineTo(W, gy);
+        }
+        for (f = Math.ceil(this.F0 / step) * step; f <= this.F1; f += step) {
+          x = Math.round(this.fx(f)) + 0.5;
+          c.moveTo(x, 0);
+          c.lineTo(x, H);
+        }
+        c.stroke();
+      }
+
+      var trace = new Path2D();
+      var peakI = 0;
+      var peakV = -999;
+      for (i = 0; i < this.bins; i++) {
+        var v = this.prev[i] + (this.cur[i] - this.prev[i]) * frac;
+        if (v > peakV) {
+          peakV = v;
+          peakI = i;
+        }
+        var tx = (i + 0.5) / this.bins * W;
+        var ty = this.dbToY(v);
+        if (i === 0) {
+          trace.moveTo(0, ty);
+        }
+        trace.lineTo(tx, ty);
+      }
+      if (L.fill) {
+        var fill = new Path2D(trace);
+        fill.lineTo(W, H);
+        fill.lineTo(0, H);
+        fill.closePath();
+        if (L.gradient) {
+          var g = c.createLinearGradient(0, this.dbToY(REF), 0, H);
+          g.addColorStop(0, hexAlpha(L.fillColor, L.fillAlpha));
+          g.addColorStop(1, hexAlpha(L.fillColor, 0));
+          c.fillStyle = g;
+        } else {
+          c.fillStyle = hexAlpha(L.fillColor, L.fillAlpha * 0.4);
+        }
+        c.fill(fill);
+      }
+      if (L.pkTrace) {
+        c.setLineDash([]);
+        c.lineWidth = 1;
+        c.strokeStyle = L.pkColor;
+        c.beginPath();
+        for (i = 0; i < this.bins; i += 2) {
+          var py = this.dbToY(this.pk[i]);
+          if (i === 0) {
+            c.moveTo(0, py);
+          } else {
+            c.lineTo((i + 0.5) / this.bins * W, py);
+          }
+        }
+        c.stroke();
+      }
+      if (L.peakHold && this.hold) {
+        c.setLineDash([4, 3]);
+        c.lineWidth = 1;
+        c.strokeStyle = '#ffd700';
+        c.beginPath();
+        for (i = 0; i < this.bins; i += 2) {
+          var hy = this.dbToY(this.hold[i]);
+          if (i === 0) {
+            c.moveTo(0, hy);
+          } else {
+            c.lineTo((i + 0.5) / this.bins * W, hy);
+          }
+        }
+        c.stroke();
+        c.setLineDash([]);
+      }
+      c.lineWidth = L.lineWidth;
+      c.lineJoin = 'round';
+      c.strokeStyle = L.traceColor;
+      c.stroke(trace);
+
+      // The noise floor: the 20th percentile of the frame.
+      var sample = [];
+      for (i = 0; i < this.bins; i += 8) {
+        sample.push(this.cur[i]);
+      }
+      sample.sort(function (a, b) { return a - b; });
+      var nf = sample[Math.floor(sample.length * 0.2)] + L.nfShift;
+      this.nfNow = nf;
+      if (L.zeroLine) {
+        var zx = Math.round(this.fx(this.slices[this.active].f)) + 0.5;
+        c.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+        c.lineWidth = 1;
+        c.beginPath();
+        c.moveTo(zx, 0);
+        c.lineTo(zx, H);
+        c.stroke();
+      }
+      if (L.nfLine) {
+        var ny = Math.round(this.dbToY(nf)) + 0.5;
+        c.strokeStyle = L.nfColor;
+        c.lineWidth = L.nfWidth;
+        c.setLineDash([2, 2]);
+        c.beginPath();
+        c.moveTo(40, ny);
+        c.lineTo(W - 40 - (L.dbmStrip ? 36 * this.dbmK : 0), ny);
+        c.stroke();
+        c.setLineDash([]);
+        c.strokeRect(40 - 4, ny - 4, 8, 8);
+        c.fillStyle = '#ffff00';
+        c.font = '10px ' + UI_FONT;
+        c.textAlign = 'left';
+        c.textBaseline = 'bottom';
+        c.fillText(nf.toFixed(1) + ' dBm', 48, ny - 3);
+      }
+      if (L.blobs) {
+        var found = [];
+        for (i = 4; i < this.bins - 4; i++) {
+          var cv = this.cur[i];
+          if (cv > nf + 12 && cv >= this.cur[i - 3] && cv >= this.cur[i + 3] && cv > this.cur[i - 1] && cv >= this.cur[i + 1]) {
+            found.push([cv, i]);
+          }
+        }
+        found.sort(function (a, b) { return b[0] - a[0]; });
+        found.slice(0, L.blobCount).forEach(function (pk) {
+          var bx = (pk[1] + 0.5) / self.bins * W;
+          var by = self.dbToY(pk[0]);
+          c.strokeStyle = L.blobColor;
+          c.lineWidth = 1.5;
+          c.beginPath();
+          c.arc(bx, by, 3, 0, Math.PI * 2);
+          c.stroke();
+          c.fillStyle = L.blobText;
+          c.font = '9px ' + UI_FONT;
+          c.textAlign = 'left';
+          c.textBaseline = 'bottom';
+          c.fillText(pk[0].toFixed(1), bx + 5, by - 2);
+        });
+      }
+      // The readouts sit top right, clear of slice A's flag.
+      c.font = '10px ' + UI_FONT;
+      c.textBaseline = 'top';
+      c.textAlign = 'right';
+      var line = 0;
+      var topY = this.bandH + 6;
+      var textX = W - (L.dbmStrip ? 36 * this.dbmK : 0) - 6;
+      if (L.peakValue) {
+        var nowMs = performance.now();
+        if (!this.pvAt || nowMs - this.pvAt > 500) {
+          this.pvAt = nowMs;
+          var pf = this.F0 + (peakI + 0.5) / this.bins * this.SPAN;
+          this.pvText = 'Peak: ' + peakV.toFixed(1) + ' dBm @ ' + (pf / 1e6).toFixed(4) + ' MHz';
+        }
+        c.fillStyle = '#c0ff40';
+        c.fillText(this.pvText, textX, topY + 14 * line++);
+      }
+      if (L.binWidth) {
+        c.fillStyle = '#a0b8c8';
+        c.fillText('Bin width: ' + (L.bin < 10 ? L.bin.toFixed(2) : L.bin.toFixed(1)) + ' Hz', textX, topY + 14 * line++);
+      }
+      if (L.fpsOverlay) {
+        c.fillStyle = '#a0b8c8';
+        c.fillText(Math.round(this.fpsSeen || L.fps) + ' fps', textX, topY + 14 * line++);
+      }
+      if (L.cursor && this.dpCursor && performance.now() - this.dpCursor.at < 1600) {
+        var cf = this.F0 + this.dpCursor.x / W * this.SPAN;
+        var label = (cf / 1e6).toFixed(4) + ' MHz';
+        var cx = clamp(this.dpCursor.x, 40, W - 80);
+        c.textAlign = 'left';
+        c.fillStyle = 'rgba(10, 10, 24, 0.85)';
+        c.fillRect(cx - 4, H - 40, c.measureText(label).width + 8, 16);
+        c.fillStyle = '#ffffff';
+        c.fillText(label, cx, H - 37);
+      }
+      this.drawNotches(c, H);
+      this.drawBandPlan(c);
+      if (L.dbmStrip) {
+        this.drawDbmStrip(c);
+      }
+    };
+
+    // A notch: Thetis's yellow at alpha 92, hatched every 8 px, edge lines
+    // and the grab handle at the top (SpectrumWidget's notch overlay). A
+    // 200 Hz notch is under 2 px on this span, so it draws at least 6 px.
+    Phone.prototype.drawNotches = function (c, H) {
+      var self = this;
+      S.notches.forEach(function (n) {
+        var cx = self.fx(n.f);
+        var half = Math.max(3, (self.fx(n.f + n.w / 2) - self.fx(n.f - n.w / 2)) / 2);
+        var left = Math.round(cx - half);
+        var right = Math.round(cx + half);
+        c.fillStyle = 'rgba(255, 255, 0, ' + (92 / 255).toFixed(3) + ')';
+        c.fillRect(left, 0, right - left, H);
+        c.save();
+        c.beginPath();
+        c.rect(left, 0, right - left, H);
+        c.clip();
+        c.strokeStyle = 'rgba(255, 255, 0, 0.5)';
+        c.lineWidth = 1;
+        c.beginPath();
+        for (var y = -(right - left); y < H; y += 8) {
+          c.moveTo(left, y + (right - left));
+          c.lineTo(right, y);
+        }
+        c.stroke();
+        c.restore();
+        c.strokeStyle = '#ffff00';
+        c.beginPath();
+        c.moveTo(left + 0.5, 0);
+        c.lineTo(left + 0.5, H);
+        c.moveTo(right - 0.5, 0);
+        c.lineTo(right - 0.5, H);
+        c.stroke();
+        c.fillStyle = 'rgba(255, 255, 0, 0.8)';
+        c.beginPath();
+        c.moveTo(cx - 5, 0);
+        c.lineTo(cx + 5, 0);
+        c.lineTo(cx, 7);
+        c.closePath();
+        c.fill();
+      });
+    };
+
+    // The 3D stacked trace replaces only the spectrum pane: the newest trace at
+    // the front, older ones further back, up and across by the angle.
+    Phone.prototype.draw3d = function (c, W, H) {
+      var L = this.look;
+      var hist = this.hist3d || [];
+      var rows = Math.max(8, Math.round(hist.length * (0.25 + 0.75 * L.span3d / 100)));
+      var back = clamp(1 - L.angle3d / 100, 0.15, 0.95);
+      var lift = (H - this.bandH) * 0.55 / rows;
+      var amp = (H - this.bandH) * (0.2 + 0.8 * L.gain3d / 100) / 60;
+      var floor = -127 + L.floor3d;
+      var base = H - 6;
+      var slice = this.slices[this.active];
+      var sx0 = this.fx(slice.f + slice.passLo);
+      var sx1 = this.fx(slice.f + slice.passHi);
+      for (var j = Math.min(rows, hist.length) - 1; j >= 0; j--) {
+        var row = hist[j];
+        var depth = j / rows;
+        var scale = 1 - depth * (1 - back);
+        var x0 = W * (1 - scale) / 2 + depth * W * 0.12 * (L.angle3d / 100);
+        var y0 = base - j * lift;
+        var path = new Path2D();
+        path.moveTo(x0, y0);
+        for (var i = 0; i < this.bins; i += 2) {
+          var h = Math.max(0, row[i] - floor) * amp * scale;
+          path.lineTo(x0 + (i + 0.5) / this.bins * W * scale, y0 - h);
+        }
+        path.lineTo(x0 + W * scale, y0);
+        path.closePath();
+        c.fillStyle = '#0a0a14';
+        c.fill(path);
+        var a = 0.25 + 0.75 * (1 - depth);
+        c.strokeStyle = 'rgba(0, 229, 255, ' + a.toFixed(2) + ')';
+        c.lineWidth = j === 0 ? 1.5 : 1;
+        c.stroke(path);
+        if (L.shadow && j % 3 === 0) {
+          c.fillStyle = 'rgba(0, 212, 255, 0.06)';
+          c.fillRect(x0 + sx0 * scale, y0 - 2, (sx1 - sx0) * scale, 2);
+        }
+      }
+    };
+
+    // On the waterfall: timestamps, filter and zero lines, and the look-back chip.
+    Phone.prototype.drawWfOverlay = function () {
+      var L = this.look;
+      if (!this.wfOver) {
+        this.wfOver = overlayCanvas(this, this.wfWrap, 'dp-wfover');
+      }
+      var cv = this.wfOver;
+      var W = this.W;
+      var H = this.wfWrap.clientHeight;
+      if (cv.width !== Math.round(W * this.dpr) || cv.height !== Math.round(H * this.dpr)) {
+        cv.width = Math.round(W * this.dpr);
+        cv.height = Math.round(H * this.dpr);
+      }
+      var c = cv.getContext('2d');
+      c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      c.clearRect(0, 0, W, H);
+      var s = this.slices[this.txSlice];
+      var a = this.slices[this.active];
+      if (L.txFilter) {
+        var t0 = this.fx(s.f + s.passLo);
+        var t1 = this.fx(s.f + s.passHi);
+        c.strokeStyle = 'rgba(255, 64, 64, 0.55)';
+        c.lineWidth = 1;
+        c.strokeRect(Math.round(t0) + 0.5, -1, Math.round(t1 - t0), H + 2);
+      }
+      if (L.rxZero) {
+        var rx = Math.round(this.fx(a.f)) + 0.5;
+        c.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+        c.setLineDash([3, 3]);
+        c.beginPath();
+        c.moveTo(rx, 0);
+        c.lineTo(rx, H);
+        c.stroke();
+        c.setLineDash([]);
+      }
+      if (L.txZero) {
+        var tz = Math.round(this.fx(s.f)) + 1.5;
+        c.strokeStyle = 'rgba(255, 64, 64, 0.85)';
+        c.setLineDash([3, 3]);
+        c.beginPath();
+        c.moveTo(tz, 0);
+        c.lineTo(tz, H);
+        c.stroke();
+        c.setLineDash([]);
+      }
+      if (L.timestamp !== 'None') {
+        var rowH = H / this.wfRows;
+        var every = Math.max(1, Math.round(60 / rowH));
+        var now = Date.now() - L.lookBack * 1000;
+        c.font = '9px ' + UI_FONT;
+        c.textBaseline = 'middle';
+        c.textAlign = L.timestamp === 'Left' ? 'left' : 'right';
+        for (var r = every; r < this.wfRows; r += every) {
+          var d = new Date(now - r * L.rowMs);
+          var hh = L.utc ? d.getUTCHours() : d.getHours();
+          var mm = L.utc ? d.getUTCMinutes() : d.getMinutes();
+          var ss = L.utc ? d.getUTCSeconds() : d.getSeconds();
+          var text = ('0' + hh).slice(-2) + ':' + ('0' + mm).slice(-2) + ':' + ('0' + ss).slice(-2) + (L.utc ? 'z' : '');
+          var y = r * rowH;
+          var x = L.timestamp === 'Left' ? 6 : W - 6;
+          c.fillStyle = 'rgba(10, 10, 24, 0.7)';
+          var tw = c.measureText(text).width;
+          c.fillRect(L.timestamp === 'Left' ? x - 2 : x - tw - 2, y - 6, tw + 4, 12);
+          c.fillStyle = '#c8d8e8';
+          c.fillText(text, x, y);
+        }
+      }
+      if (L.lookBack > 0) {
+        var chip = 'Looking back ' + Math.floor(L.lookBack / 60) + ':' + ('0' + (L.lookBack % 60)).slice(-2);
+        c.font = '600 11px ' + UI_FONT;
+        c.textAlign = 'center';
+        c.textBaseline = 'middle';
+        var cw = c.measureText(chip).width + 16;
+        c.fillStyle = 'rgba(255, 176, 32, 0.9)';
+        c.fillRect(W / 2 - cw / 2, 10, cw, 20);
+        c.fillStyle = '#101010';
+        c.fillText(chip, W / 2, 20);
+      }
+      if (L.retuning) {
+        c.font = '600 11px ' + UI_FONT;
+        c.textAlign = 'center';
+        c.textBaseline = 'middle';
+        c.fillStyle = 'rgba(0, 180, 216, 0.9)';
+        c.fillRect(W / 2 - 50, H - 30, 100, 20);
+        c.fillStyle = '#ffffff';
+        c.fillText('Clarity re-tuning', W / 2, H - 20);
+      }
+    };
+
+    /* ---------- Press and hold the band: the desktop's band menu ---------- */
+    // SpectrumOverlayMenu after the Display pill's trim: Display Range (Ref
+    // Level, Dyn Range), Tuning (CTUN), Notch (Add notch here, at the
+    // frequency under the finger) and Display settings. Ref Level moves the
+    // top and keeps the span; Dyn Range keeps the top and moves the bottom.
+    // Both write the band's dB Max and dB Min, kept on the Core.
+    S.notches = [];
+    var HOLD_MS = 500;
+
+    function sliderRow(label, min, max, fmt, get, set) {
+      var row = el('div', 'dp-row dp-row--slider');
+      var line = el('div', 'dp-line');
+      line.appendChild(el('span', 'dp-lab', label));
+      row.appendChild(line);
+      var slide = el('div', 'dp-slide');
+      var range = el('input', 'dp-range');
+      range.type = 'range';
+      range.min = min;
+      range.max = max;
+      range.setAttribute('aria-label', label);
+      var out = el('output', 'inset dp-out');
+      slide.appendChild(range);
+      slide.appendChild(out);
+      row.appendChild(slide);
+      range.addEventListener('input', function () { set(parseFloat(range.value)); });
+      views.push({ k: '', sync: function () {
+        var v = clamp(get(), min, max);
+        if (document.activeElement !== range) {
+          range.value = v;
+        }
+        range.style.setProperty('--p', ((v - min) / (max - min) * 100) + '%');
+        out.textContent = fmt(Math.round(get()));
+      } });
+      return row;
+    }
+
+    function buildHold(p) {
+      var menu = el('div', 'dp-hold');
+      menu.setAttribute('role', 'dialog');
+      menu.setAttribute('aria-label', 'Band menu');
+      menu.hidden = true;
+      menu.appendChild(el('div', 'dp-hold__cap', 'Display Range'));
+      menu.appendChild(sliderRow('Ref Level', -160, 20, function (v) { return v + ' dBm'; },
+        function () { return val('dbMax'); },
+        function (v) {
+          var span = val('dbMax') - val('dbMin');
+          write('dbMax', v, 'all');
+          write('dbMin', v - span, 'all');
+        }));
+      menu.appendChild(sliderRow('Dyn Range', 20, 160, function (v) { return v + ' dB'; },
+        function () { return val('dbMax') - val('dbMin'); },
+        function (v) { write('dbMin', val('dbMax') - v, 'all'); }));
+      menu.appendChild(el('p', 'dp-hint', 'For 40 m, on the Core: the desktop shows the same scale.'));
+      menu.appendChild(el('div', 'dp-hold__cap', 'Tuning'));
+      var ctun = el('div', 'dp-line');
+      ctun.appendChild(el('span', 'dp-lab', 'CTUN (independent pan)'));
+      var ct = el('button', 'stog dp-tog');
+      ct.type = 'button';
+      ct.addEventListener('click', function () { write('ctun', !val('ctun'), 'pan'); });
+      ctun.appendChild(ct);
+      menu.appendChild(ctun);
+      views.push({ k: '', sync: function () {
+        var on = !!val('ctun');
+        ct.classList.toggle('is-on', on);
+        ct.setAttribute('aria-pressed', String(on));
+        ct.textContent = on ? 'On' : 'Off';
+      } });
+      menu.appendChild(el('div', 'dp-hold__cap', 'Notch'));
+      var nl = el('div', 'dp-line');
+      var add = el('button', 'rbtn dp-act', 'Add notch here');
+      add.type = 'button';
+      var freq = el('span', 'dp-hold__freq');
+      nl.appendChild(add);
+      nl.appendChild(freq);
+      menu.appendChild(nl);
+      var more = el('button', 'rbtn dp-hold__more', 'Display settings…');
+      more.type = 'button';
+      menu.appendChild(more);
+      p.root.appendChild(menu);
+
+      var at = 0;
+      add.addEventListener('click', function () {
+        S.notches.push({ f: at, w: 200 });
+        close();
+        changed();
+      });
+      more.addEventListener('click', function () {
+        close();
+        p.dpSheet.setOpen(true);
+      });
+      function close() {
+        menu.hidden = true;
+      }
+      // Opens at the finger, kept on the screen as the desktop clamps its popup.
+      function open(xPan, yPan) {
+        at = Math.round(p.F0 + clamp(xPan, 0, p.W) / p.W * p.SPAN);
+        freq.textContent = (at / 1e6).toFixed(6) + ' MHz';
+        p.dpSheet.setOpen(false);
+        menu.hidden = false;
+        var ox = 0;
+        var oy = 0;
+        for (var n = p.pan; n && n !== p.root; n = n.offsetParent) {
+          ox += n.offsetLeft;
+          oy += n.offsetTop;
+        }
+        var W = p.root.offsetWidth;
+        var H = p.root.offsetHeight;
+        var land = p.root.classList.contains('scr--land');
+        // Sideways the screen is too short for the menu under the finger, so
+        // it opens beside it, inside the safe area, and scrolls if it must.
+        var bandBottom = oy + p.pan.offsetHeight;
+        menu.style.maxHeight = land ? (bandBottom - 52) + 'px' : '';
+        var w = menu.offsetWidth;
+        var h = menu.offsetHeight;
+        if (land) {
+          // Beside the finger, on the side that keeps the PTT clear; where
+          // neither side does, the menu stops above the PTT and scrolls.
+          var ptt = p.root.querySelector('.ptt');
+          var pl = ptt.offsetLeft;
+          var pr = pl + ptt.offsetWidth;
+          var right = ox + xPan + 24;
+          var left = ox + xPan - 24 - w;
+          var fitsR = right + w <= W - 62;
+          var fitsL = left >= 62;
+          var clearR = right >= pr || right + w <= pl;
+          var clearL = left >= pr || left + w <= pl;
+          var x = fitsR && clearR ? right : fitsL && clearL ? left : fitsR ? right : Math.max(62, left);
+          menu.style.left = x + 'px';
+          if (!(x >= pr || x + w <= pl)) {
+            menu.style.maxHeight = (ptt.offsetTop - 4 - 48) + 'px';
+            h = menu.offsetHeight;
+          }
+          var bottom = x >= pr || x + w <= pl ? bandBottom : ptt.offsetTop;
+          menu.style.top = clamp(oy + yPan - h / 2, 48, bottom - h - 4) + 'px';
+        } else {
+          menu.style.left = clamp(ox + xPan - w / 2, 10, W - w - 10) + 'px';
+          menu.style.top = clamp(oy + yPan + 18, 60, H - h - 40) + 'px';
+        }
+        changed();
+      }
+      p.root.addEventListener('pointerdown', function (e) {
+        if (!menu.hidden && !menu.contains(e.target)) {
+          close();
+        }
+      }, true);
+
+      // Hold still for half a second on empty band. A move or an early lift
+      // is a drag or a tap, as before.
+      var hold = null;
+      p.pan.addEventListener('pointerdown', function (e) {
+        if (e.target.closest('[data-flag], [data-fold]')) {
+          return;
+        }
+        var r = p.pan.getBoundingClientRect();
+        var k = p.pan.offsetWidth / r.width;
+        var x0 = e.clientX;
+        var y0 = e.clientY;
+        hold = {
+          x0: x0,
+          y0: y0,
+          timer: setTimeout(function () {
+            hold = null;
+            p.drag = null;   // no tune on the lift
+            open((x0 - r.left) * k, (y0 - r.top) * k);
+          }, HOLD_MS)
+        };
+      });
+      function cancel(e) {
+        if (hold && (e.type !== 'pointermove' || Math.abs(e.clientX - hold.x0) > 6 || Math.abs(e.clientY - hold.y0) > 6)) {
+          clearTimeout(hold.timer);
+          hold = null;
+        }
+      }
+      p.pan.addEventListener('pointermove', cancel);
+      p.pan.addEventListener('pointerup', cancel);
+      p.pan.addEventListener('pointercancel', cancel);
+      return { open: open, close: close };
+    }
+
+    /* ---------- The iPad: the desktop's column and pill on the band ---------- */
+
+    // SpectrumOverlayPanel: the button column at the pan's top-left, each
+    // menu opening beside it, top-aligned, one at a time. A tap anywhere
+    // else closes the open one, as a click does on the desktop.
+    // src/models/BandGrid.h kBandGrid, in its order.
+    var BAND_GRID = [['160', '160 m', 1.8e6, 'LSB'], ['80', '80 m', 3.5e6, 'LSB'], ['60', '60 m', 5.3e6, 'USB'],
+      ['40', '40 m', 7.0e6, 'LSB'], ['30', '30 m', 10.1e6, 'DIGU'], ['20', '20 m', 14.0e6, 'USB'],
+      ['17', '17 m', 18.068e6, 'USB'], ['15', '15 m', 21.0e6, 'USB'], ['12', '12 m', 24.89e6, 'USB'],
+      ['10', '10 m', 28.0e6, 'USB'], ['6', '6 m', 50.0e6, 'USB'], ['2', '2 m', 144.2e6, 'USB'], ['WWV', 'WWV', 10.0e6, 'AM']];
+
+    function buildColumn(p, forText) {
+      var root = p.root;
+      var col = el('div', 'dp-col');
+      // At the pan's top-left, as the desktop puts it at (4, 4); sideways,
+      // inside the safe area clear of the camera.
+      var inset = root.classList.contains('scr--land') ? 62 : p.pan.offsetLeft;
+      col.style.left = (inset + 4) + 'px';
+      col.style.top = (p.pan.offsetTop + 4) + 'px';
+      root.classList.add('has-dpcol');
+      col.setAttribute('role', 'toolbar');
+      col.setAttribute('aria-label', 'Pan 1');
+      root.appendChild(col);
+      var note = el('p', 'dp-colnote');
+      note.setAttribute('role', 'status');
+      note.hidden = true;
+      root.appendChild(note);
+      var noteTimer = 0;
+      function say(text) {
+        note.textContent = text;
+        note.hidden = false;
+        clearTimeout(noteTimer);
+        noteTimer = setTimeout(function () { note.hidden = true; }, 3200);
+      }
+      function mk(label, aria) {
+        var b = el('button', 'dp-cbtn', label);
+        b.type = 'button';
+        if (aria) {
+          b.setAttribute('aria-label', aria);
+        }
+        col.appendChild(b);
+        return b;
+      }
+      var fold = mk('◀', 'Fold the buttons away');
+      var B = {
+        rx: mk('+RX', 'Add a slice on this pan'),
+        tnf: mk('+TNF', 'Add a notch in the active slice\'s passband'),
+        band: mk('BAND'),
+        ant: mk('ANT'),
+        display: mk('Display'),
+        vax: mk('VAX'),
+        att: mk('ATT')
+      };
+      var menuBtns = Object.keys(B).map(function (k) { return B[k]; });
+
+      // Where a menu goes: beside the column, its top level with the column's,
+      // no taller than the band below it.
+      function place(box) {
+        box.style.left = (col.offsetLeft + col.offsetWidth) + 'px';
+        box.style.top = col.offsetTop + 'px';
+        box.style.maxHeight = (p.pan.offsetTop + p.pan.offsetHeight - col.offsetTop - 4) + 'px';
+      }
+      var flys = {};
+      var open = null;
+      function fly(k, width) {
+        var box = el('div', 'dp-fly');
+        box.setAttribute('role', 'dialog');
+        box.setAttribute('aria-label', B[k].textContent);
+        box.style.width = width + 'px';
+        box.hidden = true;
+        root.appendChild(box);
+        flys[k] = box;
+        B[k].setAttribute('aria-expanded', 'false');
+        B[k].addEventListener('click', function () { toggle(k); });
+        return box;
+      }
+      function closeAll() {
+        Object.keys(flys).forEach(function (k) {
+          flys[k].hidden = true;
+          B[k].classList.remove('is-open');
+          B[k].setAttribute('aria-expanded', 'false');
+        });
+        if (pill && !pill.el.hidden) {
+          pill.setOpen(false);
+        }
+        open = null;
+        shiftSideways();
+      }
+      function toggle(k) {
+        if (open === k) {
+          closeAll();
+          return;
+        }
+        closeAll();
+        open = k;
+        place(flys[k]);
+        flys[k].hidden = false;
+        B[k].classList.add('is-open');
+        B[k].setAttribute('aria-expanded', 'true');
+        shiftSideways();
+      }
+
+      // The Display pill: the sheet's five tabs and rows, in the desktop's frame.
+      var pill = null;
+
+      // Sideways the column and the pill reach down to the PTT. The PTT moves
+      // to just right of whatever reaches its row, as the desktop moves its
+      // zoom row on a short pan, so it is never under a menu. The keyed meters
+      // follow it, beside it or above it where there is no room.
+      var land = root.classList.contains('scr--land');
+      var txp = root.querySelector('.txpanel');
+      var toastEl = root.querySelector('.toast');
+      function shiftSideways() {
+        if (!land || !pill) {
+          return;
+        }
+        var ptt = p.ptt;
+        var edge = 0;
+        var boxes = [col];
+        if (open) {
+          boxes.push(open === 'display' ? pill.el : flys[open]);
+        }
+        boxes.forEach(function (box) {
+          if (!box.hidden && box.offsetTop + box.offsetHeight > ptt.offsetTop) {
+            edge = Math.max(edge, box.offsetLeft + box.offsetWidth);
+          }
+        });
+        if (!edge) {
+          ptt.style.left = '';
+          [txp, toastEl].forEach(function (x) {
+            if (x) {
+              x.style.left = x.style.top = x.style.width = '';
+            }
+          });
+          return;
+        }
+        var left = edge + 8;
+        ptt.style.left = left + 'px';
+        if (toastEl) {
+          toastEl.style.left = left + 'px';
+        }
+        if (txp) {
+          var beside = left + ptt.offsetWidth + 10;
+          txp.style.width = '310px';
+          if (beside + 310 <= root.offsetWidth - 62) {
+            txp.style.left = beside + 'px';
+            txp.style.top = '';
+          } else {
+            txp.style.left = left + 'px';
+            txp.style.top = (ptt.offsetTop - (txp.offsetHeight || 72) - 6) + 'px';
+          }
+        }
+      }
+      listeners.push(shiftSideways);
+
+      pill = buildSheet(p, 'spectrum', {
+        cls: 'dp-pill',
+        forText: forText,
+        btns: [B.display],
+        onOpen: function (on) {
+          if (!pill) {
+            return;
+          }
+          if (on) {
+            Object.keys(flys).forEach(function (k) {
+              flys[k].hidden = true;
+              B[k].classList.remove('is-open');
+            });
+            open = 'display';
+            place(pill.el);
+          } else if (open === 'display') {
+            open = null;
+          }
+          shiftSideways();
+        }
+      });
+      place(pill.el);
+      open = 'display';
+      shiftSideways();
+
+      fold.addEventListener('click', function () {
+        var folded = !col.classList.contains('is-folded');
+        col.classList.toggle('is-folded', folded);
+        fold.textContent = folded ? '▶' : '◀';
+        fold.setAttribute('aria-label', folded ? 'Show the buttons' : 'Fold the buttons away');
+        menuBtns.forEach(function (b) { b.hidden = folded; });
+        closeAll();
+      });
+
+      // +RX: a slice on this pan, in the next free letter, up to four.
+      B.rx.addEventListener('click', function () {
+        var n = p.slices.length;
+        if (n >= SLICE_LETTERS.length) {
+          return;
+        }
+        var f = [7258000, 7226500][n - 2];
+        p.slices.push(p.makeSlice(n, f));
+        p.activate(n);
+        p.place();
+        say('Slice ' + SLICE_LETTERS[n] + ' added on Pan 1 at ' + fmtVfo(f) + '.');
+        if (p.slices.length >= SLICE_LETTERS.length) {
+          B.rx.disabled = true;
+          B.rx.setAttribute('aria-label', 'Pan 1 has four slices, the most a pan holds');
+          say('Slice D added on Pan 1. Four slices is the most a pan holds, so +RX is grayed.');
+        }
+      });
+
+      // +TNF: a notch in the middle of the active slice's passband, 200 Hz
+      // wide (RadioModel::tnfCentreHzFor, NotchModel::notchSidebandShift).
+      B.tnf.addEventListener('click', function () {
+        var s = p.slices[p.active];
+        var f = s.f + Math.round(s.passLo + (s.passHi - s.passLo) / 2);
+        S.notches.push({ f: f, w: 200 });
+        changed();
+        say('Notch added at ' + fmtVfo(f) + ', 200 Hz wide.');
+      });
+
+      // BAND: the desktop's four-across grid. The board's band is 40 m only.
+      var bandBox = fly('band', 4 * 52 + 3 * 2 + 6);
+      var bandGrid = el('div', 'dp-bandgrid');
+      BAND_GRID.forEach(function (b) {
+        var btn = el('button', 'dp-bbtn' + (b[0] === '40' ? ' is-on' : ''), b[0]);
+        btn.type = 'button';
+        btn.setAttribute('aria-label', b[1]);
+        btn.addEventListener('click', function () {
+          closeAll();
+          if (b[0] === '40') {
+            say('Pan 1 is on 40 m.');
+          } else {
+            say(b[1] + ' moves Pan 1 to ' + b[1] + '. This board stays on 40 m.');
+          }
+        });
+        bandGrid.appendChild(btn);
+      });
+      bandBox.appendChild(bandGrid);
+
+      function selRow(box, label, items, get, set) {
+        var line = el('div', 'dp-line');
+        line.appendChild(el('span', 'dp-flylab', label));
+        var sel = el('select', 'dp-sel');
+        sel.setAttribute('aria-label', label.replace(':', ''));
+        items.forEach(function (t) {
+          var o = el('option', '', t);
+          o.value = t;
+          sel.appendChild(o);
+        });
+        sel.value = get();
+        sel.addEventListener('change', function () { set(sel.value); });
+        line.appendChild(sel);
+        box.appendChild(line);
+        return sel;
+      }
+
+      // ANT: the active slice's RX and TX antenna, shown on its flag.
+      var antBox = fly('ant', 200);
+      function flagAnt(kind) {
+        return p.slices[p.active].flag.querySelector('.vfo__ant--' + kind);
+      }
+      var rxSel = selRow(antBox, 'RX Ant:', ['ANT1', 'ANT2', 'ANT3'], function () { return flagAnt('rx').textContent; },
+        function (v) { flagAnt('rx').textContent = v; });
+      var txSel = selRow(antBox, 'TX Ant:', ['ANT1', 'ANT2', 'ANT3'], function () { return flagAnt('tx').textContent; },
+        function (v) { flagAnt('tx').textContent = v; });
+      B.ant.addEventListener('click', function () {
+        rxSel.value = flagAnt('rx').textContent;
+        txSel.value = flagAnt('tx').textContent;
+      });
+
+      // VAX: the channel the active slice sends its audio to.
+      var vaxBox = fly('vax', 160);
+      p.dpVax = p.dpVax || {};
+      var vaxSel = selRow(vaxBox, 'VAX Ch', ['Off', '1', '2', '3', '4'], function () { return 'Off'; }, function (v) {
+        p.dpVax[p.active] = v;
+        say(v === 'Off' ? 'Slice ' + SLICE_LETTERS[p.active] + ' sends no audio to VAX.'
+          : 'Slice ' + SLICE_LETTERS[p.active] + ' sends its audio to VAX ' + v + '.');
+      });
+      B.vax.addEventListener('click', function () { vaxSel.value = p.dpVax[p.active] || 'Off'; });
+
+      // ATT: the radio's step attenuator. The band drops by its level.
+      var attBox = fly('att', 230);
+      p.dpAtt = 0;
+      var attOn = false;
+      var attDb = 10;
+      var chkLine = el('label', 'dp-line dp-check');
+      var chk = el('input');
+      chk.type = 'checkbox';
+      chkLine.appendChild(chk);
+      chkLine.appendChild(el('span', 'dp-flylab', 'Step attenuator'));
+      attBox.appendChild(chkLine);
+      var attLine = el('div', 'dp-line');
+      attLine.appendChild(el('span', 'dp-flylab', 'ATT'));
+      var attRange = el('input', 'dp-range');
+      attRange.type = 'range';
+      attRange.min = '0';
+      attRange.max = '31';
+      attRange.value = String(attDb);
+      attRange.setAttribute('aria-label', 'Step attenuator level');
+      var attOut = el('output', 'inset dp-out');
+      attLine.appendChild(attRange);
+      attLine.appendChild(attOut);
+      attBox.appendChild(attLine);
+      var attWhy = el('p', 'dp-why', 'Turn on the step attenuator to set its level.');
+      attBox.appendChild(attWhy);
+      function syncAtt() {
+        attRange.disabled = !attOn;
+        attRange.style.setProperty('--p', (attDb / 31 * 100) + '%');
+        attOut.textContent = attDb + ' dB';
+        attLine.classList.toggle('is-off', !attOn);
+        attWhy.hidden = attOn;
+        p.dpAtt = attOn ? attDb : 0;
+      }
+      chk.addEventListener('change', function () { attOn = chk.checked; syncAtt(); });
+      attRange.addEventListener('input', function () { attDb = parseInt(attRange.value, 10); syncAtt(); });
+      syncAtt();
+      var baseToDb = p.toDb;
+      p.toDb = function (lin) {
+        baseToDb.call(this, lin);
+        if (this.dpAtt) {
+          for (var i = 0; i < this.bins; i++) {
+            this.rowDb[i] -= this.dpAtt;
+          }
+        }
+      };
+
+      // A tap outside the column and the open menu closes it.
+      root.addEventListener('pointerdown', function (e) {
+        if (!open || col.contains(e.target) || e.target.closest('.tbtn')) {
+          return;
+        }
+        var box = open === 'display' ? pill.el : flys[open];
+        if (!box.contains(e.target)) {
+          closeAll();
+        }
+      }, true);
+      return pill;
+    }
+
+    // A level or scheme change repaints what the waterfall already holds, a
+    // row at a time from the rows kept.
+    sheetPhones.forEach(function (p) {
+      var scene = p.root.parentElement.getAttribute('data-scene');
+      var tab = scene.slice(6);
+      if (tab === 'ipad' || tab === 'land') {
+        p.dpSheet = buildColumn(p, tab === 'ipad' ? 'Pan 1 · this iPad' : 'Pan 1 · this phone');
+      } else {
+        p.dpSheet = buildSheet(p, tab === 'hold' ? 'spectrum' : tab);
+      }
+      p.dpHold = buildHold(p);
+      if (tab === 'hold') {
+        p.dpHold.open(p.W * 0.7, p.specH * 0.42);
+      }
+      p.pan.addEventListener('pointermove', function (e) {
+        var r = p.pan.getBoundingClientRect();
+        p.dpCursor = { x: (e.clientX - r.left) / r.width * p.W, at: performance.now() };
+      });
+      p.pan.addEventListener('pointerdown', function (e) {
+        var r = p.pan.getBoundingClientRect();
+        p.dpCursor = { x: (e.clientX - r.left) / r.width * p.W, at: performance.now() };
+      });
+      applyLook(p);
+    });
+    listeners.push(function () {
+      sheetPhones.forEach(applyLook);
+    });
+    // A toast fades after a moment.
+    listeners.push(function () {
+      if (S.toast) {
+        clearTimeout(S.toastTimer);
+        S.toastTimer = setTimeout(function () { S.toast = ''; changed(); }, 2200);
+      }
+    });
+    // Re-tune's chip clears itself.
+    listeners.push(function () {
+      if (performance.now() - S.retuneAt < 900) {
+        setTimeout(changed, 950);
+      }
+    });
+    // Keying or un-keying (PTT, TUNE, MOX) re-syncs the rows.
+    var baseUpdateTx = Phone.prototype.updateTx;
+    Phone.prototype.updateTx = function () {
+      var was = this.tx;
+      baseUpdateTx.call(this);
+      if (this.look && was !== this.tx) {
+        changed();
+      }
+    };
+    changed();
+    if (REDUCED) {
+      sheetPhones.forEach(function (p) { p.drawSpectrum(1); p.drawWfOverlay(); });
+    }
+  })();
 
   if (!REDUCED) {
     var start = performance.now();
