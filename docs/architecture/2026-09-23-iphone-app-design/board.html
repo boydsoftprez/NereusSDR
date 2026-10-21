@@ -6832,6 +6832,40 @@
     max-width: 360px;
   }
 
+  /* The iPad with two pans: the band splits in two, Pan 1 above Pan 2,
+     each with its own spectrum, ruler and waterfall. */
+  .scr--two .pan {
+    --spec-h: 180px;
+    --wf-h: 131px;
+  }
+
+  .scr--two .zoom {
+    top: 355px;
+  }
+
+  .dp-pan2frame,
+  .dp-pan2 {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  .dp-pan2 > * {
+    pointer-events: auto;
+  }
+
+  .scr--two .dp-pan2 .pan {
+    top: 415px;
+  }
+
+  .scr--two .dp-pan2 .zoom {
+    top: 698px;
+  }
+
+  .dp-pan2 .ptt {
+    display: none;
+  }
+
   .opt.dp-flash .slot {
     animation: dp-flash 1.2s ease;
   }
@@ -6846,7 +6880,7 @@
   <div>
     <p class="eyebrow">NereusSDR on iPhone and iPad</p>
     <h1>The whole app</h1>
-    <p class="lede">New this round, first below: the Display sheet and Setup &gt; Display brought in line with the desktop's new Display controls, the sheet with its five tabs and Setup with its eight pages, every row live on the band; press and hold on the band for the desktop's band menu; and the iPad, and the phone held sideways, with the desktop's button column and pill on the band. Before them, from last round: pairing and connecting, the states in between; under Audio, the sound paused when headphones disconnect (your D68); and every on-screen "station" that means the Core now says "Core" (your rule). Kept: entering a Core's address with the port in a field of its own, under Connecting; the notices and the states in between for several devices, first below. Then several devices on one Core at once, from your calls. Before them, the transmit time-out and your mic level on the band while keyed, then long sessions. Everything after that is agreed with your calls applied: a hardware PTT button that keys a locked phone through Apple's Push to Talk, audio and data use with cellular at Balanced, when things aren't right with the app keeping the older link too, FreeDV Reporter where a tap tunes, Spot Hub as one page, the iPad held upright with the applets below the band, spots on the band that never start behind a flag, the station's side with a switch in the desktop app, first launch with a station required, the tuning dial you pick in Setup, the same layout turned sideways, a lock screen that never transmits from its screen, and before them your layout with NereusSDR's flags and one flag rule for both devices, the tap-to-toggle PTT, the desktop's Setup tree, the front end in the Modes tab, and the amp and tuner in the TX panel.</p>
+    <p class="lede">New this round, first below: the Display sheet and Setup &gt; Display brought in line with the desktop's new Display controls, the sheet with its five tabs and Setup with its eight pages, every row live on the band; press and hold on the band for the desktop's band menu; and the iPad, the iPad with two pans each with its own column and pill, and the phone held sideways, with the desktop's button column and pill on the band. Before them, from last round: pairing and connecting, the states in between; under Audio, the sound paused when headphones disconnect (your D68); and every on-screen "station" that means the Core now says "Core" (your rule). Kept: entering a Core's address with the port in a field of its own, under Connecting; the notices and the states in between for several devices, first below. Then several devices on one Core at once, from your calls. Before them, the transmit time-out and your mic level on the band while keyed, then long sessions. Everything after that is agreed with your calls applied: a hardware PTT button that keys a locked phone through Apple's Push to Talk, audio and data use with cellular at Balanced, when things aren't right with the app keeping the older link too, FreeDV Reporter where a tap tunes, Spot Hub as one page, the iPad held upright with the applets below the band, spots on the band that never start behind a flag, the station's side with a switch in the desktop app, first launch with a station required, the tuning dial you pick in Setup, the same layout turned sideways, a lock screen that never transmits from its screen, and before them your layout with NereusSDR's flags and one flag rule for both devices, the tap-to-toggle PTT, the desktop's Setup tree, the front end in the Modes tab, and the amp and tuner in the TX panel.</p>
     <p class="note">Signals, station names, addresses and readings are examples. Each screen is its own phone; the tab bars don't switch screens. The iOS parts around NereusSDR's card (clock, status bar, the app behind the island) are drawn generic.</p>
   </div>
 </header>
@@ -6909,6 +6943,19 @@
         <p>The buttons are drawn larger than the desktop's, 30 points tall, for a finger. The pill is as tall as its tab needs and never taller than the band; it scrolls past that.</p>
       </div>
       <div class="slot"><div class="tablet" data-placement="fit" data-template="tpl-ipad-col" data-scene="dpill-ipad"></div></div>
+    </section>
+  </div>
+</section>
+<section class="sect" aria-label="Display, as on the desktop: the iPad with two pans">
+  <h2 class="sect__title">Display, as on the desktop: the iPad with two pans</h2>
+  <p class="sect__note">New, for your approval, from your call: with two pans the iPad stacks them as the desktop does, Pan 1 above Pan 2, and each has its own button column at its top-left and its own pill. A pan's pill is that pan's: its amber dots, its Reset this pan count, and every row draw on that pan only, while the Core rows, the band's dB Max and dB Min, and this iPad's own rows are shared by both. Pan 2 starts with two values of its own, the BlackWhite scheme and Fill off, so you can see them differ; Pan 1 keeps its Fill Alpha. Pan 2 is the lower part of 40 m with slice C; slices A and B stay on Pan 1, and +RX on either pan adds the next letter until all four are in use. The toolbar follows the pan you last touched: its Pan button names it, its slice letter is that pan's, and its Display opens that pan's pill. The PTT and the keyed meters are the iPad's; Pan 2's column reaches down to the PTT, so the PTT moves to just right of whatever is open there, as on the phone held sideways.</p>
+  <div class="board ">
+    <section class="opt" aria-labelledby="w-dp-ipad2">
+      <div class="opt__head">
+        <h2 id="w-dp-ipad2">Two pans, two pills</h2>
+        <p>Pan 1's pill open on Spectrum and Pan 2's on Waterfall. Change a row in one and watch only its own pan move; tap Reset this pan on either.</p>
+      </div>
+      <div class="slot"><div class="tablet" data-placement="fit" data-template="tpl-ipad-col" data-scene="dpill-ipad2"></div></div>
     </section>
   </div>
 </section>
@@ -8817,6 +8864,21 @@
   </div>
 </template>
 
+
+<template id="tpl-ipad-pan2">
+  <div class="dp-pan2" data-phone>
+    <div class="pan pan--col" data-pan data-f0="7140000" data-f1="7200000" data-dbm-k="1.35" data-bandplan="9" role="slider" tabindex="0" aria-label="Pan 2, tuning its active slice: tap or drag the band" aria-valuemin="7140000" aria-valuemax="7200000" aria-valuenow="7178500">
+      <div class="pan__spectrum"><canvas data-spectrum aria-hidden="true"></canvas></div>
+      <div class="pan__divider"></div>
+      <div class="pan__freq" data-ruler aria-hidden="true"></div>
+      <div class="pan__waterfall"><canvas data-waterfall aria-hidden="true"></canvas></div>
+      <div class="pan__tx pan__tx--spec" data-tx-spec hidden></div>
+      <div class="pan__tx pan__tx--wf" data-tx-wf hidden></div>
+    </div>
+    <button class="ptt" type="button" aria-hidden="true" tabindex="-1" data-ptt><b data-ptt-label>PTT</b><small data-ptt-sub>Tap</small></button>
+    <div class="zoom zoom--col" role="group" aria-label="Zoom Pan 2"><button type="button" data-zoom="out" aria-label="Zoom out">−</button><button type="button" data-zoom="in" aria-label="Zoom in">+</button></div>
+  </div>
+</template>
 
 <template id="tpl-ipad-col">
   <div class="scr scr--ipad" data-phone>
@@ -12134,11 +12196,14 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       });
     });
 
+    // A second pan may hold no transmit slice.
     var tx = this.slices[this.txSlice];
-    var t1 = this.fx(tx.f - TX_HI);
-    var t2 = this.fx(tx.f - TX_LO);
-    this.txSpec.style.transform = this.txWf.style.transform = 'translateX(' + t1.toFixed(1) + 'px)';
-    this.txSpec.style.width = this.txWf.style.width = Math.max(4, t2 - t1).toFixed(1) + 'px';
+    if (tx) {
+      var t1 = this.fx(tx.f - TX_HI);
+      var t2 = this.fx(tx.f - TX_LO);
+      this.txSpec.style.transform = this.txWf.style.transform = 'translateX(' + t1.toFixed(1) + 'px)';
+      this.txSpec.style.width = this.txWf.style.width = Math.max(4, t2 - t1).toFixed(1) + 'px';
+    }
 
     var order = this.slices.slice();
     if (this.mode !== 'desktop') {
@@ -12158,7 +12223,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       // Marker colours follow the desktop (SpectrumWidget::sliceMarkerGeometry): the selected
       // slice in its own colour; the others with a darker line and triangle and grey edges,
       // and the selected slice's marker on top.
-      var mk = isActive ? s.color : SLICE_DIM[s.idx];
+      var mk = isActive ? s.color : SLICE_DIM[s.letterIdx != null ? s.letterIdx : s.idx];
       s.line.style.setProperty('--mk-line', hexAlpha(mk, 0.863));
       s.tri.style.setProperty('--mk-tri', mk);
       var edge = isActive ? hexAlpha(s.color, 0.51) : 'rgba(128, 144, 160, 0.51)';
@@ -12230,8 +12295,10 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
     }
     this.active = idx;
     var s = this.slices[idx];
+    // A pan's slices may not start at A (a second pan's do not).
+    var li = s.letterIdx != null ? s.letterIdx : idx;
     this.sliceLetters.forEach(function (el) {
-      el.textContent = SLICE_LETTERS[idx];
+      el.textContent = SLICE_LETTERS[li];
       el.style.background = s.color;
     });
     // The RX panel's filter buttons follow the active slice.
@@ -15292,7 +15359,21 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
 
     /* ---------- State ---------- */
 
-    var S = { def: {}, pan: {}, retuneAt: 0 };
+    // Each pan's own values. S.pan is the pan being drawn, synced or touched:
+    // a control in Pan 2's column or pill, or its band, is Pan 2's.
+    var S = { def: {}, pans: { 1: {}, 2: {} }, retuneAt: 0 };
+    var curPan = 1;
+    Object.defineProperty(S, 'pan', {
+      get: function () { return S.pans[curPan]; },
+      set: function (o) { S.pans[curPan] = o; }
+    });
+    function panOf(node) {
+      var host = node && node.closest ? node.closest('[data-dp-pan]') : null;
+      return host ? parseInt(host.getAttribute('data-dp-pan'), 10) : 1;
+    }
+    ['pointerdown', 'click', 'input', 'change', 'keydown'].forEach(function (type) {
+      document.addEventListener(type, function (e) { curPan = panOf(e.target); }, true);
+    });
     Object.keys(R).forEach(function (k) {
       if ('def' in R[k]) {
         S.def[k] = R[k].def;
@@ -15318,7 +15399,12 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       changed();
     }
 
-    var views = [];   // every rendered control: { k, where, el, sync }
+    var views = [];   // every rendered control: { k, where, el, sync, pan }
+    // A control syncs as the pan it was built for.
+    views.push = function (w) {
+      w.pan = w.pan || curPan;
+      return Array.prototype.push.call(this, w);
+    };
     var listeners = [];
     var pending = false;
     function changed() {
@@ -15329,8 +15415,16 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       // A timer, not an animation frame: a page in the background still syncs.
       setTimeout(function () {
         pending = false;
-        views.forEach(function (w) { w.sync(); });
-        listeners.forEach(function (f) { f(); });
+        views.forEach(function (w) {
+          curPan = w.pan;
+          w.sync();
+        });
+        curPan = 1;
+        listeners.forEach(function (f) {
+          curPan = 1;
+          f();
+        });
+        curPan = 1;
       }, 16);
     }
 
@@ -15383,7 +15477,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       var dot = el('button', 'dp-dot');
       dot.type = 'button';
       dot.hidden = true;
-      dot.setAttribute('aria-label', 'Pan 1 has its own ' + (ctx.setup ? (r.slab || r.label) : r.label) + '. Tap to follow Setup.');
+      dot.setAttribute('aria-label', 'Pan ' + curPan + ' has its own ' + (ctx.setup ? (r.slab || r.label) : r.label) + '. Tap to follow Setup.');
       dot.addEventListener('click', function () {
         delete S.pan[k];
         if (r.tog) {
@@ -15762,7 +15856,8 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
 
       // The toolbar's Display button opens and closes the sheet, so the band
       // can be seen whole. On the iPad the band's own Display button does too.
-      var btns = all(root, '.tbtn').filter(function (b) { return b.textContent.trim() === 'Display'; })
+      // With two pans the toolbar's opens the active pan's, wired by the frame.
+      var btns = (opts.noToolbar ? [] : all(root, '.tbtn').filter(function (b) { return b.textContent.trim() === 'Display'; }))
         .concat(opts.btns || []);
       function setOpen(open) {
         sheet.hidden = !open;
@@ -15777,7 +15872,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       btns.forEach(function (btn) {
         btn.addEventListener('click', function () { setOpen(sheet.hidden); });
       });
-      setOpen(true);
+      setOpen(opts.closed ? false : true);
       return { setOpen: setOpen, show: show, el: sheet };
     }
 
@@ -16117,7 +16212,9 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
     }
 
     function applyLook(p) {
+      curPan = p.dpPan || 1;
       var L = lookNow();
+      curPan = 1;
       var old = p.look;
       p.look = L;
       p.wfCanvas.style.opacity = String(L.wfOpacity);
@@ -16685,7 +16782,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       c.clearRect(0, 0, W, H);
       var s = this.slices[this.txSlice];
       var a = this.slices[this.active];
-      if (L.txFilter) {
+      if (L.txFilter && s) {
         var t0 = this.fx(s.f + s.passLo);
         var t1 = this.fx(s.f + s.passHi);
         c.strokeStyle = 'rgba(255, 64, 64, 0.55)';
@@ -16702,7 +16799,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
         c.stroke();
         c.setLineDash([]);
       }
-      if (L.txZero) {
+      if (L.txZero && s) {
         var tz = Math.round(this.fx(s.f)) + 1.5;
         c.strokeStyle = 'rgba(255, 64, 64, 0.85)';
         c.setLineDash([3, 3]);
@@ -16896,7 +16993,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
         }
         changed();
       }
-      p.root.addEventListener('pointerdown', function (e) {
+      (p.dpHost || p).root.addEventListener('pointerdown', function (e) {
         if (!menu.hidden && !menu.contains(e.target)) {
           close();
         }
@@ -16946,8 +17043,13 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       ['17', '17 m', 18.068e6, 'USB'], ['15', '15 m', 21.0e6, 'USB'], ['12', '12 m', 24.89e6, 'USB'],
       ['10', '10 m', 28.0e6, 'USB'], ['6', '6 m', 50.0e6, 'USB'], ['2', '2 m', 144.2e6, 'USB'], ['WWV', 'WWV', 10.0e6, 'AM']];
 
-    function buildColumn(p, forText) {
+    function buildColumn(p, forText, opts) {
+      opts = opts || {};
       var root = p.root;
+      var panName = 'Pan ' + (p.dpPan || 1);
+      // With two pans on the iPad, Pan 2's band shares the frame's PTT,
+      // keyed meters and taps.
+      var host = p.dpHost || p;
       var col = el('div', 'dp-col');
       // At the pan's top-left, as the desktop puts it at (4, 4); sideways,
       // inside the safe area clear of the camera.
@@ -16956,7 +17058,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       col.style.top = (p.pan.offsetTop + 4) + 'px';
       root.classList.add('has-dpcol');
       col.setAttribute('role', 'toolbar');
-      col.setAttribute('aria-label', 'Pan 1');
+      col.setAttribute('aria-label', panName);
       root.appendChild(col);
       var note = el('p', 'dp-colnote');
       note.setAttribute('role', 'status');
@@ -17045,13 +17147,13 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       // zoom row on a short pan, so it is never under a menu. The keyed meters
       // follow it, beside it or above it where there is no room.
       var land = root.classList.contains('scr--land');
-      var txp = root.querySelector('.txpanel');
-      var toastEl = root.querySelector('.toast');
+      var txp = host.root.querySelector('.txpanel');
+      var toastEl = host.root.querySelector('.toast');
       function shiftSideways() {
-        if (!land || !pill) {
+        if (!(land || p.dpHost) || !pill) {
           return;
         }
-        var ptt = p.ptt;
+        var ptt = host.ptt;
         var edge = 0;
         var boxes = [col];
         if (open) {
@@ -17079,7 +17181,8 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
         if (txp) {
           var beside = left + ptt.offsetWidth + 10;
           txp.style.width = '310px';
-          if (beside + 310 <= root.offsetWidth - 62) {
+          var limit = p.dpHost ? p.pan.offsetLeft + p.pan.offsetWidth - 8 : root.offsetWidth - 62;
+          if (beside + 310 <= limit) {
             txp.style.left = beside + 'px';
             txp.style.top = '';
           } else {
@@ -17090,9 +17193,10 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       }
       listeners.push(shiftSideways);
 
-      pill = buildSheet(p, 'spectrum', {
+      pill = buildSheet(p, opts.tab || 'spectrum', {
         cls: 'dp-pill',
         forText: forText,
+        noToolbar: opts.noToolbar,
         btns: [B.display],
         onOpen: function (on) {
           if (!pill) {
@@ -17113,6 +17217,9 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       });
       place(pill.el);
       open = 'display';
+      if (opts.closed) {
+        pill.setOpen(false);
+      }
       shiftSideways();
 
       fold.addEventListener('click', function () {
@@ -17124,8 +17231,32 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
         closeAll();
       });
 
-      // +RX: a slice on this pan, in the next free letter, up to four.
+      // +RX: a slice on this pan, in the next free letter, up to four. With
+      // two pans the letters run across both.
+      p.dpRxBtn = B.rx;
       B.rx.addEventListener('click', function () {
+        if (opts.group) {
+          var used = 0;
+          opts.group.forEach(function (q) { used += q.slices.length; });
+          if (used >= SLICE_LETTERS.length) {
+            return;
+          }
+          var at = p.dpNewF;
+          var ns = p.makeSlice(p.slices.length, at);
+          letterSlice(ns, used);
+          p.slices.push(ns);
+          p.activate(ns.idx);
+          p.place();
+          say('Slice ' + SLICE_LETTERS[used] + ' added on ' + panName + ' at ' + fmtVfo(at) + '.');
+          if (used + 1 >= SLICE_LETTERS.length) {
+            opts.group.forEach(function (q) {
+              q.dpRxBtn.disabled = true;
+              q.dpRxBtn.setAttribute('aria-label', 'Four slices in all, the most the two pans hold');
+            });
+            say('Slice ' + SLICE_LETTERS[used] + ' added on ' + panName + '. Four slices in all is the most, so +RX is grayed on both pans.');
+          }
+          return;
+        }
         var n = p.slices.length;
         if (n >= SLICE_LETTERS.length) {
           return;
@@ -17134,7 +17265,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
         p.slices.push(p.makeSlice(n, f));
         p.activate(n);
         p.place();
-        say('Slice ' + SLICE_LETTERS[n] + ' added on Pan 1 at ' + fmtVfo(f) + '.');
+        say('Slice ' + SLICE_LETTERS[n] + ' added on ' + panName + ' at ' + fmtVfo(f) + '.');
         if (p.slices.length >= SLICE_LETTERS.length) {
           B.rx.disabled = true;
           B.rx.setAttribute('aria-label', 'Pan 1 has four slices, the most a pan holds');
@@ -17162,9 +17293,9 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
         btn.addEventListener('click', function () {
           closeAll();
           if (b[0] === '40') {
-            say('Pan 1 is on 40 m.');
+            say(panName + ' is on 40 m.');
           } else {
-            say(b[1] + ' moves Pan 1 to ' + b[1] + '. This board stays on 40 m.');
+            say(b[1] + ' moves ' + panName + ' to ' + b[1] + '. This board stays on 40 m.');
           }
         });
         bandGrid.appendChild(btn);
@@ -17259,7 +17390,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       };
 
       // A tap outside the column and the open menu closes it.
-      root.addEventListener('pointerdown', function (e) {
+      host.root.addEventListener('pointerdown', function (e) {
         if (!open || col.contains(e.target) || e.target.closest('.tbtn')) {
           return;
         }
@@ -17273,18 +17404,9 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
 
     // A level or scheme change repaints what the waterfall already holds, a
     // row at a time from the rows kept.
-    sheetPhones.forEach(function (p) {
-      var scene = p.root.parentElement.getAttribute('data-scene');
-      var tab = scene.slice(6);
-      if (tab === 'ipad' || tab === 'land') {
-        p.dpSheet = buildColumn(p, tab === 'ipad' ? 'Pan 1 · this iPad' : 'Pan 1 · this phone');
-      } else {
-        p.dpSheet = buildSheet(p, tab === 'hold' ? 'spectrum' : tab);
-      }
+    // The band menu, the cursor readout and the first look, for one pan.
+    function wirePan(p) {
       p.dpHold = buildHold(p);
-      if (tab === 'hold') {
-        p.dpHold.open(p.W * 0.7, p.specH * 0.42);
-      }
       p.pan.addEventListener('pointermove', function (e) {
         var r = p.pan.getBoundingClientRect();
         p.dpCursor = { x: (e.clientX - r.left) / r.width * p.W, at: performance.now() };
@@ -17294,6 +17416,132 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
         p.dpCursor = { x: (e.clientX - r.left) / r.width * p.W, at: performance.now() };
       });
       applyLook(p);
+    }
+
+    // A slice in a letter other than its place on its pan: a second pan's
+    // first slice is C, not A.
+    function letterSlice(s, li) {
+      s.letterIdx = li;
+      s.color = SLICE_COLORS[li];
+      s.flag.style.setProperty('--slice', s.color);
+      s.fold.style.setProperty('--slice', s.color);
+      [s.flag, s.fold, s.fbtns].forEach(function (box) {
+        if (!box) {
+          return;
+        }
+        all(box, '[data-letter]').forEach(function (e) {
+          e.textContent = SLICE_LETTERS[li];
+          e.style.background = s.color;
+        });
+      });
+      s.txBtns.forEach(function (b) {
+        b.setAttribute('aria-label', 'Make slice ' + SLICE_LETTERS[li] + ' the transmit slice');
+      });
+    }
+
+    // The iPad with two pans, as the desktop stacks them: each pan has its
+    // own column, pill, amber dots and Reset this pan. Pan 2 is a band of
+    // its own below Pan 1, on the lower part of 40 m with slice C, and it
+    // shares the iPad's toolbar, PTT and keyed meters.
+    function buildTwoPans(p1) {
+      var root = p1.root;
+      root.classList.add('scr--two');
+      p1.dpPan = 1;
+      p1.dpNewF = 7258000;
+      var sub = el('div', 'dp-pan2frame');
+      sub.setAttribute('data-template', 'tpl-ipad-pan2');
+      sub.setAttribute('data-placement', 'fit');
+      root.appendChild(sub);
+      var p2 = new Phone(sub);
+      p2.root.setAttribute('data-dp-pan', '2');
+      p2.dpPan = 2;
+      p2.dpHost = p1;
+      p2.dpNewF = 7152500;
+      p2.sliceLetters = p1.sliceLetters;
+      p2.slices.splice(1).forEach(function (s) {
+        [s.passSpec, s.passWf, s.line, s.tri, s.flag, s.fbtns, s.fold].forEach(function (e) {
+          if (e) {
+            e.remove();
+          }
+        });
+      });
+      var c = p2.slices[0];
+      letterSlice(c, 2);
+      c.f = c.target = 7178500;
+      // Transmit stays on slice A, on Pan 1.
+      p2.txSlice = -1;
+      p2.updateTx();
+      p2.place();
+      phones.push(p2);
+      sheetPhones.push(p2);
+      // Pan 2 starts with two values of its own, so its dots and its Reset
+      // this pan show.
+      S.pans[2] = { scheme: 'BlackWhite', fill: false };
+
+      var group = [p1, p2];
+      curPan = 1;
+      p1.dpSheet = buildColumn(p1, 'Pan 1 · this iPad', { noToolbar: true, group: group, tab: 'spectrum' });
+      wirePan(p1);
+      curPan = 2;
+      p2.dpSheet = buildColumn(p2, 'Pan 2 · this iPad', { noToolbar: true, group: group, tab: 'waterfall' });
+      wirePan(p2);
+      curPan = 1;
+
+      // The toolbar follows the pan last touched: its Pan button names it,
+      // its slice letter is that pan's active slice, and its Display opens
+      // that pan's pill.
+      var tb = all(root, '.itbar .tbtn');
+      var panBtn = tb.filter(function (b) { return /^Pan \d$/.test(b.textContent.trim()); })[0];
+      var dispBtn = tb.filter(function (b) { return b.textContent.trim() === 'Display'; })[0];
+      var activePan = p1;
+      function syncBar() {
+        panBtn.textContent = 'Pan ' + activePan.dpPan;
+        var on = !activePan.dpSheet.el.hidden;
+        dispBtn.classList.toggle('is-open', on);
+        dispBtn.setAttribute('aria-expanded', String(on));
+      }
+      function setActive(q) {
+        if (activePan !== q) {
+          activePan = q;
+          var s = q.slices[q.active];
+          var li = s.letterIdx != null ? s.letterIdx : q.active;
+          p1.sliceLetters.forEach(function (e) {
+            e.textContent = SLICE_LETTERS[li];
+            e.style.background = s.color;
+          });
+        }
+        syncBar();
+      }
+      group.forEach(function (q) {
+        var scope = q === p1 ? root.querySelector(':scope > .dp-col') : q.root.querySelector('.dp-col');
+        [q.pan, scope, q.dpSheet.el].forEach(function (box) {
+          box.addEventListener('pointerdown', function () { setActive(q); });
+        });
+      });
+      dispBtn.addEventListener('click', function () {
+        activePan.dpSheet.setOpen(activePan.dpSheet.el.hidden);
+        syncBar();
+      });
+      listeners.push(syncBar);
+      syncBar();
+    }
+
+    sheetPhones.slice().forEach(function (p) {
+      var scene = p.root.parentElement.getAttribute('data-scene');
+      var tab = scene.slice(6);
+      if (tab === 'ipad2') {
+        buildTwoPans(p);
+        return;
+      }
+      if (tab === 'ipad' || tab === 'land') {
+        p.dpSheet = buildColumn(p, tab === 'ipad' ? 'Pan 1 · this iPad' : 'Pan 1 · this phone');
+      } else {
+        p.dpSheet = buildSheet(p, tab === 'hold' ? 'spectrum' : tab);
+      }
+      wirePan(p);
+      if (tab === 'hold') {
+        p.dpHold.open(p.W * 0.7, p.specH * 0.42);
+      }
     });
     listeners.push(function () {
       sheetPhones.forEach(applyLook);
