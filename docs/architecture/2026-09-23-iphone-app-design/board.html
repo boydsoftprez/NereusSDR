@@ -6862,6 +6862,8 @@
     top: 698px;
   }
 
+  .dp-radio {margin-top:10px; flex-wrap:wrap}
+  .dp-radio button {min-height:36px; padding:0 12px}
   .dp-pan2 .ptt {
     display: none;
   }
@@ -6948,12 +6950,19 @@
 </section>
 <section class="sect" aria-label="Display, as on the desktop: the iPad with two pans">
   <h2 class="sect__title">Display, as on the desktop: the iPad with two pans</h2>
-  <p class="sect__note">New, for your approval, from your call: with two pans the iPad stacks them as the desktop does, Pan 1 above Pan 2, and each has its own button column at its top-left and its own pill. A pan's pill is that pan's: its amber dots, its Reset this pan count, and every row draw on that pan only, while the Core rows, the band's dB Max and dB Min, and this iPad's own rows are shared by both. Pan 2 starts with two values of its own, the BlackWhite scheme and Fill off, so you can see them differ; Pan 1 keeps its Fill Alpha. Pan 2 is the lower part of 40 m with slice C; slices A and B stay on Pan 1, and +RX on either pan adds the next letter until all four are in use. The toolbar follows the pan you last touched: its Pan button names it, its slice letter is that pan's, and its Display opens that pan's pill. The PTT and the keyed meters are the iPad's; Pan 2's column reaches down to the PTT, so the PTT moves to just right of whatever is open there, as on the phone held sideways.</p>
+  <p class="sect__note">New, for your approval, from your call: with two pans the iPad stacks them as the desktop does, Pan 1 above Pan 2, and each has its own button column at its top-left and its own pill. A pan's pill is that pan's: its amber dots, its Reset this pan count, and every row draw on that pan only, while the Core rows, the band's dB Max and dB Min, and this iPad's own rows are shared by both. Pan 2 starts with two values of its own, the BlackWhite scheme and Fill off, so you can see them differ; Pan 1 keeps its Fill Alpha. Pan 2 is the lower part of 40 m with slice C; slices A and B stay on Pan 1, and +RX on either pan adds the next letter until the radio's slices are all in use. That limit is the radio's, as on the desktop: the ANAN-G2E and ANAN-G2 run five slices, the Hermes Lite 2 five, the Atlas three. How many pans the iPad can open is the radio's too, the smaller of its slices and its free receivers: five on the ANAN-G2, four on the ANAN-G2E, three on the Atlas, two on the Hermes Lite 2. The toolbar follows the pan you last touched: its Pan button names it, its slice letter is that pan's, and its Display opens that pan's pill. The PTT and the keyed meters are the iPad's; Pan 2's column reaches down to the PTT, so the PTT moves to just right of whatever is open there, as on the phone held sideways.</p>
   <div class="board ">
     <section class="opt" aria-labelledby="w-dp-ipad2">
       <div class="opt__head">
         <h2 id="w-dp-ipad2">Two pans, two pills</h2>
-        <p>Pan 1's pill open on Spectrum and Pan 2's on Waterfall. Change a row in one and watch only its own pan move; tap Reset this pan on either.</p>
+        <p>Pan 1's pill open on Spectrum and Pan 2's on Waterfall. Change a row in one and watch only its own pan move; tap Reset this pan on either. Pick the radio to see +RX follow its slices.</p>
+        <div class="seg dp-radio" role="radiogroup" aria-label="The radio behind the Core">
+          <button type="button" role="radio" data-state="rx" data-radio="ANAN-G2E" aria-checked="true">ANAN-G2E</button>
+          <button type="button" role="radio" data-state="rx" data-radio="ANAN-G2" aria-checked="false">ANAN-G2</button>
+          <button type="button" role="radio" data-state="rx" data-radio="Hermes Lite 2" aria-checked="false">Hermes Lite 2</button>
+          <button type="button" role="radio" data-state="rx" data-radio="Atlas" aria-checked="false">Atlas</button>
+        </div>
+        <p class="note dp-radionote" role="status">The ANAN-G2E runs five slices and four pans.</p>
       </div>
       <div class="slot"><div class="tablet" data-placement="fit" data-template="tpl-ipad-col" data-scene="dpill-ipad2"></div></div>
     </section>
@@ -11023,15 +11032,15 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
 
   var UI_FONT = 'system-ui, -apple-system, "SF Pro Text", "Segoe UI", "Helvetica Neue", Arial, sans-serif';
 
-  // VfoWidget::sliceColor (from AetherSDR SliceColors.h): A cyan, B magenta, C green, D yellow.
-  var SLICE_COLORS = ['#00d4ff', '#ff40ff', '#40ff40', '#ffff00'];
+  // VfoWidget::sliceColor (from AetherSDR SliceColors.h): A cyan, B magenta, C green, D yellow, E orange.
+  var SLICE_COLORS = ['#00d4ff', '#ff40ff', '#40ff40', '#ffff00', '#ffa000'];
   // VfoWidget::sliceDimColor (AetherSDR SliceColors.h dim entries): markers of slices not selected.
-  var SLICE_DIM = ['#006080', '#802080', '#208020', '#808000'];
+  var SLICE_DIM = ['#006080', '#802080', '#208020', '#808000', '#805000'];
   function hexAlpha(hex, a) {
     var n = parseInt(hex.slice(1), 16);
     return 'rgba(' + ((n >> 16) & 255) + ', ' + ((n >> 8) & 255) + ', ' + (n & 255) + ', ' + a + ')';
   }
-  var SLICE_LETTERS = ['A', 'B', 'C', 'D'];
+  var SLICE_LETTERS = ['A', 'B', 'C', 'D', 'E'];
   var SLICE_FREQS = [7236400, 7249000];
 
   function clamp(v, lo, hi) {
@@ -17231,47 +17240,32 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
         closeAll();
       });
 
-      // +RX: a slice on this pan, in the next free letter, up to four. With
-      // two pans the letters run across both.
+      // +RX: a slice on this pan, in the next free letter, up to the radio's
+      // slice limit (RadioModel::maxSlices, which the Core advertises: the
+      // board's BoardCapabilities::maxSlices). With two pans the letters
+      // and the limit run across both.
       p.dpRxBtn = B.rx;
+      p.dpSay = say;
+      var group = opts.group || [p];
       B.rx.addEventListener('click', function () {
-        if (opts.group) {
-          var used = 0;
-          opts.group.forEach(function (q) { used += q.slices.length; });
-          if (used >= SLICE_LETTERS.length) {
-            return;
-          }
-          var at = p.dpNewF;
-          var ns = p.makeSlice(p.slices.length, at);
-          letterSlice(ns, used);
-          p.slices.push(ns);
-          p.activate(ns.idx);
-          p.place();
-          say('Slice ' + SLICE_LETTERS[used] + ' added on ' + panName + ' at ' + fmtVfo(at) + '.');
-          if (used + 1 >= SLICE_LETTERS.length) {
-            opts.group.forEach(function (q) {
-              q.dpRxBtn.disabled = true;
-              q.dpRxBtn.setAttribute('aria-label', 'Four slices in all, the most the two pans hold');
-            });
-            say('Slice ' + SLICE_LETTERS[used] + ' added on ' + panName + '. Four slices in all is the most, so +RX is grayed on both pans.');
-          }
+        var used = slicesIn(group);
+        if (used >= dpRadio.slices) {
           return;
         }
-        var n = p.slices.length;
-        if (n >= SLICE_LETTERS.length) {
-          return;
-        }
-        var f = [7258000, 7226500][n - 2];
-        p.slices.push(p.makeSlice(n, f));
-        p.activate(n);
+        var at = opts.group ? p.dpNewF : RX_FREQS[(used - 2) % RX_FREQS.length];
+        var ns = p.makeSlice(p.slices.length, at);
+        letterSlice(ns, used);
+        p.slices.push(ns);
+        p.activate(ns.idx);
         p.place();
-        say('Slice ' + SLICE_LETTERS[n] + ' added on ' + panName + ' at ' + fmtVfo(f) + '.');
-        if (p.slices.length >= SLICE_LETTERS.length) {
-          B.rx.disabled = true;
-          B.rx.setAttribute('aria-label', 'Pan 1 has four slices, the most a pan holds');
-          say('Slice D added on Pan 1. Four slices is the most a pan holds, so +RX is grayed.');
+        say('Slice ' + SLICE_LETTERS[used] + ' added on ' + panName + ' at ' + fmtVfo(at) + '.');
+        if (syncRx(group)) {
+          say('Slice ' + SLICE_LETTERS[used] + ' added on ' + panName + '. The ' + dpRadio.name + ' runs '
+            + NUM[dpRadio.slices] + ' slices, so +RX is grayed' + (opts.group ? ' on both pans.' : '.'));
         }
       });
+      rxGroups.push(group);
+      syncRx(group);
 
       // +TNF: a notch in the middle of the active slice's passband, 200 Hz
       // wide (RadioModel::tnfCentreHzFor, NotchModel::notchSidebandShift).
@@ -17420,6 +17414,78 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
 
     // A slice in a letter other than its place on its pan: a second pan's
     // first slice is C, not A.
+    // The radio behind the Core sets how many slices and pans there are, as
+    // on the desktop: slices are RadioModel::maxSlices (BoardCapabilities
+    // maxSlices), pans are panLayoutLimitFor, the smaller of that and the
+    // radio's user receivers (userDdcCountFor; Protocol 1 at most four).
+    var RADIOS = [
+      { name: 'ANAN-G2E', slices: 5, pans: 4 },
+      { name: 'ANAN-G2', slices: 5, pans: 5 },
+      { name: 'Hermes Lite 2', slices: 5, pans: 2 },
+      { name: 'Atlas', slices: 3, pans: 3 }
+    ];
+    var NUM = ['none', 'one', 'two', 'three', 'four', 'five'];
+    var dpRadio = RADIOS[0];
+    var rxGroups = [];
+    var RX_FREQS = [7258000, 7226500, 7213000];
+    function slicesIn(group) {
+      var n = 0;
+      group.forEach(function (q) { n += q.slices.length; });
+      return n;
+    }
+    // Grays +RX on every pan of the group once the radio's slices are all
+    // in use; true when it is grayed.
+    function syncRx(group) {
+      var full = slicesIn(group) >= dpRadio.slices;
+      group.forEach(function (q) {
+        if (!q.dpRxBtn) {
+          return;
+        }
+        q.dpRxBtn.disabled = full;
+        q.dpRxBtn.setAttribute('aria-label', full
+          ? 'All ' + NUM[dpRadio.slices] + ' of the ' + dpRadio.name + '\'s slices are in use'
+          : 'Add a slice on this pan');
+      });
+      return full;
+    }
+    // A radio with fewer slices than are open: the newest letters go.
+    function dropSlices(group) {
+      var extra = slicesIn(group) - dpRadio.slices;
+      while (extra > 0) {
+        var top = null; var owner = null;
+        group.forEach(function (q) {
+          q.slices.forEach(function (s) {
+            var li = s.letterIdx != null ? s.letterIdx : s.idx;
+            if (!top || li > (top.letterIdx != null ? top.letterIdx : top.idx)) { top = s; owner = q; }
+          });
+        });
+        owner.slices.splice(owner.slices.indexOf(top), 1);
+        [top.passSpec, top.passWf, top.line, top.tri, top.flag, top.fbtns, top.fold].forEach(function (e) {
+          if (e) {
+            e.remove();
+          }
+        });
+        if (owner.active >= owner.slices.length) {
+          owner.activate(owner.slices.length - 1);
+        }
+        owner.place();
+        extra -= 1;
+      }
+    }
+    function pickRadio(r) {
+      dpRadio = r;
+      all(document, '.dp-radio button').forEach(function (b) {
+        b.setAttribute('aria-checked', String(b.dataset.radio === r.name));
+      });
+      all(document, '.dp-radionote').forEach(function (e) {
+        e.textContent = 'The ' + r.name + ' runs ' + NUM[r.slices] + ' slices and ' + NUM[r.pans] + ' pans.';
+      });
+      rxGroups.forEach(function (g) {
+        dropSlices(g);
+        syncRx(g);
+      });
+    }
+
     function letterSlice(s, li) {
       s.letterIdx = li;
       s.color = SLICE_COLORS[li];
@@ -17543,6 +17609,12 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
         p.dpHold.open(p.W * 0.7, p.specH * 0.42);
       }
     });
+    all(document, '.dp-radio button').forEach(function (b) {
+      b.addEventListener('click', function () {
+        pickRadio(RADIOS.filter(function (r) { return r.name === b.dataset.radio; })[0]);
+      });
+    });
+    pickRadio(dpRadio);
     listeners.push(function () {
       sheetPhones.forEach(applyLook);
     });
