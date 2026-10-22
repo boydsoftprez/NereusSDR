@@ -6614,12 +6614,27 @@
 
   .dp-scope__chips {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr 1fr 1fr;
     gap: 4px;
   }
 
   .dp-scope__chips .nbtn {
     min-height: 32px;
+  }
+
+  .dp-chip {
+    padding: 3px 2px;
+    line-height: 1.15;
+  }
+
+  .dp-chip span {
+    font-size: 10px;
+    font-weight: 500;
+    opacity: 0.8;
+  }
+
+  .dp-chip[hidden] {
+    display: none;
   }
 
   .dp-scope__acts {
@@ -6966,6 +6981,20 @@
       </div>
       <div class="slot"><div class="tablet" data-placement="fit" data-template="tpl-ipad-col" data-scene="dpill-ipad2"></div></div>
     </section>
+    <section class="opt" aria-labelledby="w-dp-ipad2-setup">
+      <div class="opt__head">
+        <h2 id="w-dp-ipad2-setup">This iPad's Setup &gt; Display</h2>
+        <p>As the desktop: from the Setup list it opens on All pans; Setup defaults in a pan's pill opens it on that pan, on the page for the open tab. Drawn at phone width.</p>
+      </div>
+      <div class="slot">
+        <div class="phone" data-screen="dset-list" data-dp-device="ipad"></div>
+        <div class="phone" data-screen="dset-spectrum" data-dp-device="ipad"></div>
+        <div class="phone" data-screen="dset-levels" data-dp-device="ipad"></div>
+        <div class="phone" data-screen="dset-waterfall" data-dp-device="ipad"></div>
+        <div class="phone" data-screen="dset-view" data-dp-device="ipad"></div>
+        <div class="phone" data-screen="dset-fft" data-dp-device="ipad"></div>
+      </div>
+    </section>
   </div>
 </section>
 <section class="sect" aria-label="Display, as on the desktop: the phone sideways">
@@ -6983,7 +7012,7 @@
 </section>
 <section class="sect" aria-label="Display, as on the desktop: Setup">
   <h2 class="sect__title">Display, as on the desktop: Setup</h2>
-  <p class="sect__note">New, for your approval, from "bring the setting forward too": Setup &gt; Display takes the desktop's eight pages, in its order, built from the same rows as the sheet, and the native "On this phone" page goes. Its rows move to the page they belong on: Spectrum Height to Spectrum, CTUN, Extended view and the band plan to View, DUP to Transmit Display, and the color swatches to Appearance, as on the desktop. The first five pages have the desktop's "Settings for" strip: All pans edits what every pan starts with, Pan 1 edits that pan's own values, which then show the amber dot in the sheet above. Setup defaults in the sheet opens the matching page here.</p>
+  <p class="sect__note">New, for your approval, from "bring the setting forward too": Setup &gt; Display takes the desktop's eight pages, in its order, built from the same rows as the sheet, and the native "On this phone" page goes. Its rows move to the page they belong on: Spectrum Height to Spectrum, CTUN, Extended view and the band plan to View, DUP to Transmit Display, and the color swatches to Appearance, as on the desktop. The first five pages have the desktop's "Settings for" strip: All pans edits what every pan starts with, and a pan's button edits that pan's own values, which then show the amber dot in its pill. As on the desktop, the strip lists every pan the radio allows, each with its slices, or "not open" for a pan not showing now; a dot on a pan's button means it has its own values on that page, and Reset this pan and Use Pan 1's on all pans act on that page's rows. Setup from the list opens on All pans; Setup defaults in the sheet opens the matching page here on Pan 1.</p>
   <div class="board board--four">
     <section class="opt" aria-labelledby="w-ds-list">
       <div class="opt__head">
@@ -15373,7 +15402,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
     var S = { def: {}, pans: { 1: {}, 2: {} }, retuneAt: 0 };
     var curPan = 1;
     Object.defineProperty(S, 'pan', {
-      get: function () { return S.pans[curPan]; },
+      get: function () { return S.pans[curPan] || (S.pans[curPan] = {}); },
       set: function (o) { S.pans[curPan] = o; }
     });
     function panOf(node) {
@@ -15425,7 +15454,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       setTimeout(function () {
         pending = false;
         views.forEach(function (w) {
-          curPan = w.pan;
+          curPan = typeof w.pan === 'function' ? w.pan() : w.pan;
           w.sync();
         });
         curPan = 1;
@@ -15850,7 +15879,11 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
         changed();
       });
       toSetup.addEventListener('click', function () {
-        goSetup({ spectrum: 'spectrum', levels: 'levels', waterfall: 'waterfall', view: 'view', fft: 'fft' }[current], 'all');
+        // As the desktop's openSetupPage: Setup opens on this pan's chip,
+        // on the page for the open tab.
+        var two = p.dpHost || p.root.classList.contains('scr--two');
+        goSetup({ spectrum: 'spectrum', levels: 'levels', waterfall: 'waterfall', view: 'view', fft: 'fft' }[current],
+          p.dpPan || 1, two ? 'ipad' : 'phone');
       });
       views.push({ k: '', sync: function () {
         var n = ownCount();
@@ -15899,11 +15932,32 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
 
     /* ---------- Setup > Display ---------- */
 
-    var setupPages = {};   // page id -> { frame, setScope }
-    function goSetup(page, scope) {
-      var target = setupPages[page];
+    var setupPages = {};   // 'device:page' -> { frame, setScope, clamp }
+    // Each device's Setup lists the pans it can have, as the desktop's
+    // "Settings for" strip lists pans 1 to panLayoutLimitFor: the open ones
+    // with their slices, the rest "not open". A pan's values live under
+    // S.pans[key]; the phone's and the iPad's Pan 1 is the same band here.
+    var DEVICES = {
+      phone: { open: [1], key: function (n) { return n === 1 ? 1 : 10 + n; } },
+      ipad: { open: [1, 2], key: function (n) { return n <= 2 ? n : 20 + n; } }
+    };
+    var phonePan1 = null;   // the phone's Pan 1, for its slice letters
+    var ipadPans = [];      // the iPad's Pan 1 and Pan 2
+    function panLetters(device, n) {
+      var q = device === 'ipad' ? ipadPans[n - 1] : (n === 1 ? phonePan1 : null);
+      if (!q) {
+        return [];
+      }
+      return q.slices.map(function (sl) { return SLICE_LETTERS[sl.letterIdx != null ? sl.letterIdx : sl.idx]; });
+    }
+    function goSetup(page, scope, device) {
+      device = device || 'phone';
+      var target = setupPages[device + ':' + page] || setupPages['phone:' + page];
       if (!target) {
         return;
+      }
+      if (target.show) {
+        target.show();
       }
       if (target.setScope) {
         target.setScope(scope || 'all');
@@ -15944,7 +15998,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       return page;
     }
 
-    function buildSetupList(frame) {
+    function buildSetupList(frame, device) {
       var page = setupShell(frame, 'Setup', 'Display', 'both');
       var group = el('div', 'sgroup');
       PAGES.forEach(function (pg) {
@@ -15957,65 +16011,125 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
         // A page with Core rows among this phone's says Both.
         b.appendChild(tagEl(pg[5] || (pg[2] === 'pan' ? 'phone' : pg[2])));
         b.appendChild(el('i', 'chev'));
-        b.addEventListener('click', function () { goSetup(pg[0], 'all'); });
+        b.addEventListener('click', function () { goSetup(pg[0], 'all', device); });
         group.appendChild(b);
       });
       page.appendChild(group);
-      page.appendChild(el('p', 'snote', 'The desktop\'s eight pages, in its order. Core settings are shared by every device paired with KG4VCF/shack; the rest stay on this phone.'));
+      page.appendChild(el('p', 'snote', 'The desktop\'s eight pages, in its order. Core settings are shared by every device paired with KG4VCF/shack; the rest stay on this ' + (device === 'ipad' ? 'iPad.' : 'phone.')));
     }
 
-    function buildSetupPage(frame, id) {
+    function buildSetupPage(frame, id, device) {
       var pg = PAGES.filter(function (x) { return x[0] === id; })[0];
       var page = setupShell(frame, 'Display', pg[1], pg[2] === 'pan' ? null : pg[2]);
-      var scope = 'all';
+      var dev = DEVICES[device];
+      var scope = 'all';   // 'all', or a pan number
+      // The values this page shows: All pans reads Pan 1's look for the
+      // rows that are not per pan, and a pan reads its own.
+      function keyNow() { return dev.key(scope === 'all' ? 1 : scope); }
+      var firstView = views.length;
       var ctx = {
         setup: true,
-        where: function () { return scope === 'pan' ? 'pan' : 'all'; },
-        get: function (k) { return scope === 'pan' ? val(k) : (R[k].scope === 'pan' ? defVal(k) : val(k)); },
-        set: function (k, v) { write(k, v, scope === 'pan' ? 'pan' : 'all'); },
+        where: function () { return scope === 'all' ? 'all' : 'pan'; },
+        get: function (k) { return scope !== 'all' ? val(k) : (R[k].scope === 'pan' ? defVal(k) : val(k)); },
+        set: function (k, v) { write(k, v, scope === 'all' ? 'all' : 'pan'); },
         peek: function () {}
       };
+      // This page's rows, for its own-value count (displayPageOwnCount).
+      var pageKeys = [];
+      pg[4].forEach(function (g) {
+        g[2].forEach(function (k) {
+          if (typeof k === 'string' && R[k]) {
+            pageKeys.push(k);
+            if (R[k].tog) { pageKeys.push(R[k].tog); }
+            if (R[k].swatch) { pageKeys.push(R[k].swatch); }
+          }
+        });
+      });
+      function pageOwn() {
+        return pageKeys.filter(function (k) { return R[k] && own(k); });
+      }
       if (pg[2] === 'pan') {
-        // The desktop's "Settings for:" strip.
+        // The desktop's "Settings for:" strip (SetupPage::refreshDisplayPanScope):
+        // All pans, then every pan the radio allows, each with its slices,
+        // "open" or "not open", and a dot when it has its own values here.
         var strip = el('div', 'dp-scope');
         strip.appendChild(el('span', 'dp-scope__lab', 'Settings for:'));
         var chips = el('div', 'dp-scope__chips');
-        [['all', 'All pans'], ['pan', 'Pan 1']].forEach(function (c) {
-          var b = el('button', 'nbtn is-blue', c[1]);
-          b.type = 'button';
-          b.addEventListener('click', function () { setScope(c[0]); });
-          b.setAttribute('data-scope', c[0]);
-          chips.appendChild(b);
-        });
         strip.appendChild(chips);
+        var note = el('p', 'dp-scope__note');
+        strip.appendChild(note);
         var acts = el('div', 'dp-scope__acts');
         var rs = el('button', 'rbtn', 'Reset this pan');
         rs.type = 'button';
-        var useAll = el('button', 'rbtn', 'Use Pan 1\'s on all pans');
+        var useAll = el('button', 'rbtn');
         useAll.type = 'button';
         acts.appendChild(rs);
         acts.appendChild(useAll);
         strip.appendChild(acts);
-        var note = el('p', 'dp-scope__note');
-        strip.appendChild(note);
         page.appendChild(strip);
-        rs.addEventListener('click', function () { S.pan = {}; changed(); });
-        useAll.addEventListener('click', function () {
-          Object.keys(S.pan).forEach(function (k) { S.def[k] = S.pan[k]; });
-          S.pan = {};
+        // Reset this pan and Use Pan n's on all pans act on this page's rows only.
+        rs.addEventListener('click', function () {
+          curPan = keyNow();
+          pageOwn().forEach(function (k) { delete S.pan[k]; });
           changed();
         });
+        useAll.addEventListener('click', function () {
+          curPan = keyNow();
+          pageOwn().forEach(function (k) {
+            S.def[k] = S.pan[k];
+            delete S.pan[k];
+          });
+          changed();
+        });
+        var chipFor = {};
+        function chip(sc) {
+          var b = el('button', 'nbtn is-blue dp-chip');
+          b.type = 'button';
+          b.appendChild(el('b', ''));
+          b.appendChild(el('span', ''));
+          b.addEventListener('click', function () { setScope(sc); });
+          chipFor[sc] = b;
+          return b;
+        }
+        chips.appendChild(chip('all'));
         views.push({ k: '', sync: function () {
-          all(chips, '.nbtn').forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-scope') === scope)); });
-          acts.hidden = scope !== 'pan';
-          rs.disabled = useAll.disabled = ownCount() === 0;
-          note.textContent = scope === 'pan'
-            ? 'Pan 1\'s own values carry the amber dot. The rest follow All pans.'
-            : 'What every pan starts with. A pan\'s own values stay its own.';
+          for (var n = 1; n <= 5; n += 1) {
+            var b = chipFor[n] || chips.appendChild(chip(n));
+            b.hidden = n > dpRadio.pans;
+            var isOpen = dev.open.indexOf(n) >= 0;
+            var letters = isOpen ? panLetters(device, n) : [];
+            curPan = dev.key(n);
+            var mine = pageOwn().length;
+            b.firstChild.textContent = 'Pan ' + n + (mine ? ' •' : '');
+            b.lastChild.textContent = isOpen ? (letters.length ? 'Slice ' + letters.join(', ') : 'open') : 'not open';
+          }
+          chipFor.all.firstChild.textContent = 'All pans';
+          chipFor.all.lastChild.textContent = '';
+          Object.keys(chipFor).forEach(function (sc) {
+            chipFor[sc].setAttribute('aria-pressed', String(String(scope) === sc));
+          });
+          curPan = keyNow();
+          var count = pageOwn().length;
+          var follows = 'Pan ' + scope + ' follows All pans in every row on this page.';
+          var text = '';
+          if (scope === 'all') {
+            text = 'A change here goes to every pan.';
+          } else {
+            if (dev.open.indexOf(scope) < 0) {
+              text = 'Pan ' + scope + ' is not open now. What you set here is kept and used when you open it. ';
+            }
+            text += count ? 'Pan ' + scope + ' has its own value in ' + count + ' row' + (count === 1 ? '' : 's') + ' on this page, marked with a dot.'
+              : follows;
+          }
+          note.textContent = text;
+          acts.hidden = scope === 'all';
+          rs.disabled = useAll.disabled = count === 0;
+          useAll.textContent = 'Use Pan ' + scope + '\'s on all pans';
         } });
       }
-      function setScope(s) {
-        scope = s;
+      function setScope(sc) {
+        scope = sc === 'all' || sc === 'pan' ? (sc === 'pan' ? 1 : 'all') : Math.min(sc, dpRadio.pans);
+        frame.setAttribute('data-dp-pan', String(keyNow()));
         changed();
       }
       pg[4].forEach(function (g) {
@@ -16037,7 +16151,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
             tx.appendChild(el('b', '', item.label));
             b.appendChild(tx);
             b.appendChild(el('i', 'chev'));
-            b.addEventListener('click', function () { goSetup(item.link, scope); });
+            b.addEventListener('click', function () { goSetup(item.link, scope, device); });
             group.appendChild(b);
           } else if (typeof item === 'object' && item.band) {
             var bl = el('div', 'dp-row');
@@ -16061,22 +16175,53 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
         });
         page.appendChild(group);
       });
-      setupPages[id] = { frame: frame, setScope: setScope };
+      // Every control on this page syncs as the pan the strip has picked.
+      for (var i = firstView; i < views.length; i += 1) {
+        views[i].pan = keyNow;
+      }
+      frame.setAttribute('data-dp-pan', String(keyNow()));
+      setupPages[device + ':' + id] = {
+        frame: frame,
+        setScope: setScope,
+        // A radio with fewer pans: a pan past them goes back to All pans.
+        clamp: function () {
+          if (scope !== 'all' && scope > dpRadio.pans) {
+            setScope('all');
+          }
+        }
+      };
       return setScope;
     }
 
+    // The iPad's Setup is one frame showing one page at a time: the list,
+    // or the page a row or a pill's Setup defaults opened. The pages stack
+    // in one slot and stay laid out, so the slot keeps a frame's height.
+    function showIpadSetup(frame) {
+      all(document, '.phone[data-dp-device="ipad"]').forEach(function (f) {
+        f.style.visibility = f === frame ? '' : 'hidden';
+        f.setAttribute('aria-hidden', String(f !== frame));
+      });
+    }
     setupFrames.forEach(function (frame) {
       var id = frame.getAttribute('data-screen').slice(5);
+      var device = frame.getAttribute('data-dp-device') || 'phone';
       if (id === 'list') {
-        buildSetupList(frame);
+        buildSetupList(frame, device);
+        setupPages[device + ':list'] = { frame: frame };
       } else {
-        var setScope = buildSetupPage(frame, id);
-        var start = frame.getAttribute('data-dp-scope');
-        if (start) {
-          setScope(start);
+        buildSetupPage(frame, id, device);
+      }
+      if (device === 'ipad') {
+        setupPages[device + ':' + id].show = function () { showIpadSetup(frame); };
+        var back = frame.querySelector('.nav__back');
+        if (back && id !== 'list') {
+          back.addEventListener('click', function () { showIpadSetup(setupPages['ipad:list'].frame); });
         }
       }
     });
+    if (setupPages['ipad:list']) {
+      showIpadSetup(setupPages['ipad:list'].frame);
+    }
 
     /* ---------- The band draws what the rows say ---------- */
 
@@ -17484,6 +17629,12 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
         dropSlices(g);
         syncRx(g);
       });
+      Object.keys(setupPages).forEach(function (k) {
+        if (setupPages[k].clamp) {
+          setupPages[k].clamp();
+        }
+      });
+      changed();
     }
 
     function letterSlice(s, li) {
@@ -17545,6 +17696,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       S.pans[2] = { scheme: 'BlackWhite', fill: false };
 
       var group = [p1, p2];
+      ipadPans = group;
       curPan = 1;
       p1.dpSheet = buildColumn(p1, 'Pan 1 · this iPad', { noToolbar: true, group: group, tab: 'spectrum' });
       wirePan(p1);
@@ -17598,6 +17750,9 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       if (tab === 'ipad2') {
         buildTwoPans(p);
         return;
+      }
+      if (tab === 'spectrum') {
+        phonePan1 = p;
       }
       if (tab === 'ipad' || tab === 'land') {
         p.dpSheet = buildColumn(p, tab === 'ipad' ? 'Pan 1 · this iPad' : 'Pan 1 · this phone');
