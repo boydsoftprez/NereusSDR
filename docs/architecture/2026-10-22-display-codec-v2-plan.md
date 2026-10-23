@@ -1218,3 +1218,16 @@ main at that point. Not parallel.
 
 - [ ] **Step 1:** Remove the setting, its reads, fields and tests; run the
   verification set; commit.
+
+## Notes from the final review (2026-10-23)
+
+- Malformed counts for the shared rejects: the rejects decided before the version
+  byte chooses a path (oversized, bad magic, an unsupported version, a datagram cut
+  inside the magic or the version) count `malformed` in the decoder's counters for a
+  v1 datagram as well as a v2 one (`DisplayCodecDecoder::decode`). This is what spec
+  section 9.2 says and what the phone's decoder does, so the code stays as it is. The
+  v1 path's own rejects still count nothing.
+- Float context fields: both decoders compare `minDbm` and `maxDbm` by value, so
+  `-0.0` equals `+0.0`, and a NaN interval end is malformed before any comparison.
+  The golden vectors carry `context-floats-compare-by-value`, `malformed-nan-min-dbm`
+  and `malformed-nan-max-dbm`.

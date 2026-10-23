@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22  J.J. Boyd / KG4VCF  NSDC v2 negotiation: declares
+//                                    displayCodec 2. AI-assisted via
+//                                    Anthropic Claude Code.
 //   2026-10-22  J.J. Boyd / KG4VCF  Declares radioAntennaRows 2 (RX-only
 //                                    antennas 0..5) and takes version 1 or
 //                                    2. AI-assisted via Anthropic Claude
@@ -1071,6 +1074,10 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // R-DISP-RETUNE: this client reads the picture a spectrum context
     // continues, when the Core states it.
     m_declaredFeatures.insert(QByteArrayLiteral("spectrumPicture"), 1);
+    // Display codec v2 (NSDC v2): this client reads version 2 display
+    // frames, so the Core may state displayCodecVersion; the connection
+    // uses them only when its media start asks for them.
+    m_declaredFeatures.insert(QByteArrayLiteral("displayCodec"), 2);
     // This client words the firmware release of the Core's radio with its
     // second number, when the Core sends it (the model reads it from the
     // capabilities).

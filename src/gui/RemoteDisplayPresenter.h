@@ -12,6 +12,10 @@
 // session.
 //
 // Modification history (NereusSDR):
+//   2026-10-22: NSDC v2: push() takes whether the frame is a current
+//               receiver measurement (false for a frame whose trace the
+//               decoder carried over a lost part). J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 //   2026-10-21: the rows each push() queues can be taken at once, with the
 //               time each is due, so a widget can slide a row in before its
 //               trace is due. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
@@ -126,7 +130,12 @@ public:
     /// A decoded frame. A waterfall row after a gap first queues the blended
     /// rows for the gap's slots that have not already repeated.
     void push(const DisplayCodecFrame& frame, double centreHz, double spanHz);
-    void push(const DisplayCodecFrame& frame, const RemoteSpectrumCapture& capture);
+    /// measurementCurrent sets the frame's Item::measurementCurrent: false
+    /// for a frame that is not a current receiver measurement (an NSDC v2
+    /// frame whose trace was carried over its lost trace part). It changes
+    /// nothing else; noteLoss() may still clear it while the item waits.
+    void push(const DisplayCodecFrame& frame, const RemoteSpectrumCapture& capture,
+              bool measurementCurrent = true);
     /// A lost message: the decoder waits for a keyframe. While it waits,
     /// each row slot that passes with nothing to show repeats the last row.
     /// A keyframe later than the slots already repeated owes those rows back:
