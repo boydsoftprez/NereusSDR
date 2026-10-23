@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Roundtable Archive</title>
+<style>
+:root{
+  --bg:#08080a; --applet:#0c0c0e; --hdr:#1c1c20; --btn:#1a1a1e; --bd:#2c2c31; --bd2:#1f1f23;
+  --acc:#00b4d8; --grn:#4caf6a; --amb:#d8a55f; --red:#c25a5c;
+  --txt:#dcdce1; --dim:#a6a6ac; --dim2:#7e7e85;
+  --mono:"SF Mono",Menlo,Consolas,monospace; --sans:-apple-system,"Helvetica Neue",Arial,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#060609;color:var(--txt);font:600 12px var(--sans);overflow:hidden}
+button{font:inherit;color:inherit}
+.mono{font-family:var(--mono)}
+#chooser{height:38px;display:flex;align-items:center;gap:8px;padding:0 14px;background:#1d1d20;border-bottom:1px solid #333}
+#chooser .lbl{color:#9c9ca0;font-size:11px;letter-spacing:.12em;margin-right:8px}
+#chooser button{background:#2c2c2f;border:1px solid #444;border-radius:6px;padding:5px 12px;cursor:pointer;color:#ddd}
+#chooser button.on{background:#2f5f92;border-color:var(--acc);color:#fff}
+#stage{position:absolute;top:38px;left:0;right:0;bottom:0;display:flex;gap:16px;padding:16px;
+  background:radial-gradient(circle at 30% 20%,#222225,#08080b)}
+#win{flex:1;min-width:0;background:#0d0d10;border:1px solid #3c3c3f;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,.75);display:flex;flex-direction:column;overflow:hidden}
+.wt{height:28px;flex:none;background:linear-gradient(#363639,#2b2b2e);display:flex;align-items:center;padding:0 10px;gap:8px;color:#ddd;font-weight:600;font-size:13px}
+.wt .lights{display:flex;gap:7px}
+.wt .lights i{width:12px;height:12px;border-radius:50%;display:block}
+.wt .t{flex:1;text-align:center;margin-right:50px}
+#notes{width:300px;flex:none;background:#121215;border:1px solid #2c2c2f;border-radius:8px;padding:12px 14px;overflow:auto;font-weight:500;line-height:1.45;color:#c3c3c7}
+#notes h3{margin:0 0 6px;font-size:12px;color:var(--acc);letter-spacing:.08em}
+#notes p{margin:0 0 9px;font-size:12px}
+#notes b{color:#ededf1}
+
+/* archive body */
+.top{display:flex;align-items:center;gap:12px;padding:8px 12px;border-bottom:1px solid var(--bd2);background:var(--hdr);flex:none}
+.top .me{font-family:var(--mono);font-size:15px;color:var(--acc);font-weight:800}
+.lock{font-size:10px;color:#6fa384;border:1px solid #2c5c44;background:#1c3a2a;border-radius:3px;padding:1px 6px}
+.seg{display:flex;border:1px solid var(--bd);border-radius:4px;overflow:hidden}
+.seg a{padding:2px 9px;font-size:11px;cursor:pointer;color:var(--dim);border-right:1px solid var(--bd)}
+.seg a:last-child{border-right:none}
+.seg a.on{background:#2f5f92;color:#fff}
+.top .sp{flex:1}
+.top .btn{border:1px solid var(--bd);background:var(--btn);border-radius:4px;padding:2px 9px;font-size:11px;cursor:pointer;color:#d7d7db}
+.sum{display:flex;gap:0;border-bottom:1px solid var(--bd2);flex:none}
+.sum div{flex:1;padding:6px 12px;border-right:1px solid var(--bd2)}
+.sum div:last-child{border-right:none}
+.sum b{display:block;font-family:var(--mono);font-size:17px;color:#ededf1}
+.sum span{font-size:10px;color:var(--dim);letter-spacing:.06em}
+.body{flex:1;display:flex;min-height:0}
+.list{width:300px;flex:none;border-right:1px solid var(--bd2);overflow-y:auto}
+.day{font-size:9px;letter-spacing:.14em;color:var(--dim);font-weight:800;padding:8px 10px 3px;position:sticky;top:0;background:#0d0d10;z-index:1}
+.s{display:grid;grid-template-columns:4px 1fr auto;gap:0 8px;padding:5px 10px 6px 0;border-bottom:1px solid #1a1a1d;cursor:pointer}
+.s:hover{background:#161619}
+.s.sel{background:#1e3d5f}
+.s .bar{grid-row:1/3;background:var(--grn2,#3f8f58)}
+.s.empty .bar{background:#444447}
+.s .f{font-family:var(--mono);font-size:12px;color:#e7e7eb}
+.s .f em{font-style:normal;color:var(--acc);margin-right:5px}
+.s .w{font-family:var(--mono);font-size:10px;color:var(--dim);text-align:right}
+.s .n{font-size:11px;color:var(--dim);grid-column:2}
+.s .n b{color:#6fa384}
+.s.empty .n{color:#959599;font-style:italic}
+.s .dur{font-family:var(--mono);font-size:10px;color:var(--dim2);text-align:right}
+.det{flex:1;min-width:0;display:flex;flex-direction:column;overflow-y:auto}
+.sh{display:flex;align-items:baseline;gap:12px;padding:10px 14px 4px}
+.sh .f{font-family:var(--mono);font-size:18px;color:#ededf1}
+.sh .f em{font-style:normal;color:var(--acc);margin-right:8px;font-size:14px}
+.sh .w{color:var(--dim);font-size:11px}
+.sh .sp{flex:1}
+.sh a{color:var(--acc);cursor:pointer;font-size:11px}
+.cap{font-size:9px;letter-spacing:.14em;color:var(--dim);font-weight:800;padding:10px 14px 4px;display:flex;justify-content:space-between}
+.cap span{letter-spacing:0;font-weight:500;color:var(--dim2);font-size:10px}
+/* timeline */
+.tl{padding:0 14px}
+.lane{display:grid;grid-template-columns:120px 1fr 66px 92px;gap:8px;align-items:center;height:20px;font-size:11px}
+.lane .c{font-family:var(--mono);font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lane .c small{font-weight:500;color:var(--dim2);font-size:10px;margin-left:4px}
+.lane .trk{height:10px;position:relative;background:#161619;border:1px solid #29292c}
+.lane .trk i{position:absolute;top:0;bottom:0}
+.lane .trk i.tx{background:#7a2c2e}
+.lane .trk i.gap{background:repeating-linear-gradient(135deg,rgba(255,192,64,.55) 0 3px,transparent 3px 6px)}
+.lane .trk i.aw{background:repeating-linear-gradient(90deg,#67676b 0 2px,transparent 2px 4px)}
+.lane .wd{font-family:var(--mono);font-size:10px;text-align:right;color:#6fa384}
+.lane .rg{font-family:var(--mono);font-size:10px;text-align:right;color:var(--dim)}
+.lane.you .c{color:#e09a9c}
+.lane.hdr{height:16px;color:var(--dim2);font-size:9px;letter-spacing:.1em;font-weight:800}
+.lane.hdr .ticks{position:relative;height:12px}
+.lane.hdr .ticks span{position:absolute;transform:translateX(-50%);font-family:var(--mono);font-weight:500;letter-spacing:0;font-size:9px}
+.lane.sel{background:rgba(0,180,216,.08)}
+.lane{cursor:pointer}
+.legend{display:flex;gap:14px;flex-wrap:wrap;padding:6px 14px 2px;font-size:10px;color:var(--dim)}
+.legend i{display:inline-block;width:18px;height:8px;margin-right:5px;vertical-align:-1px;border:1px solid #29292c}
+.awaytag{font-size:8px;border:1px solid #48484b;color:#a5a5a9;border-radius:2px;padding:0 2px;margin-left:3px;font-family:var(--sans);font-weight:700;letter-spacing:.04em;vertical-align:1px}
+.emptybox{margin:8px 14px;padding:14px;border:1px dashed #444447;border-radius:6px;color:#a5a5a9;font-weight:500;line-height:1.5}
+.emptybox b{color:#e7e7eb}
+/* reading detail for one station */
+.spark{margin:4px 14px 0;padding:6px 8px;background:#151518;border:1px solid #29292c;border-radius:4px}
+.spark .h{display:flex;gap:10px;font-size:11px;margin-bottom:3px}
+.spark .h b{font-family:var(--mono);color:#e7e7eb}
+.spark .h span{color:var(--dim)}
+.spark canvas{display:block;width:100%;height:56px}
+/* histogram */
+.hist{display:flex;align-items:flex-end;gap:2px;height:70px;padding:0 14px}
+.hist div{flex:1;background:#4a7ba8;position:relative;min-height:1px}
+.hist div.z{background:#343437}
+.hist div:hover{background:var(--acc)}
+.hist div span{position:absolute;top:-14px;left:50%;transform:translateX(-50%);font-size:9px;color:#e7e7eb;font-family:var(--mono);display:none}
+.hist div:hover span{display:block}
+.hx{display:flex;justify-content:space-between;padding:2px 14px 0;font-family:var(--mono);font-size:9px;color:var(--dim2)}
+/* messages */
+.msgs{padding:0 14px 12px}
+.msg{padding:4px 0;border-bottom:1px solid #1c1c1f}
+.msg .h{display:flex;gap:6px;align-items:baseline;font-size:11px}
+.msg .h .c{font-family:var(--mono);font-weight:800;color:#e7e7eb}
+.msg .h .t{margin-left:auto;color:var(--dim2);font-family:var(--mono);font-size:10px}
+.msg .x{font-size:12px;font-weight:500;color:#e1e1e5;line-height:1.35}
+.msg.me .h .c{color:var(--acc)}
+.msg .chipr{display:inline-flex;align-items:center;gap:4px;font-size:10px;color:#aeaeb2;background:#18181b;border:1px solid #2b2b2e;border-radius:3px;padding:0 4px;margin-left:4px}
+.gone{padding:8px 10px;margin-top:4px;border:1px solid #343437;border-radius:4px;color:var(--dim);font-weight:500;font-size:11px}
+</style>
+</head>
+<body>
+<div id="chooser">
+  <span class="lbl">ARCHIVE STATE</span>
+  <button data-r="s0">Busy session</button>
+  <button data-r="e">Empty session</button>
+  <button data-r="old">Over a year old</button>
+</div>
+<div id="stage">
+  <div id="win">
+    <div class="wt"><div class="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div><div class="t">Roundtable · Your archive</div></div>
+    <div class="top">
+      <span class="me">KG4VCF</span><span class="lock">Private to your station</span>
+      <div class="seg" id="range"><a data-g="7">7 days</a><a data-g="30">30 days</a><a data-g="365">Year</a><a data-g="all">All</a></div>
+      <div class="seg" id="band"><a data-b="all">All bands</a><a data-b="40M">40M</a><a data-b="20M">20M</a><a data-b="80M">80M</a></div>
+      <span class="sp"></span>
+      <span class="btn">Export CSV</span>
+    </div>
+    <div class="sum" id="sum"></div>
+    <div class="body">
+      <div class="list" id="list"></div>
+      <div class="det" id="det"></div>
+    </div>
+  </div>
+  <div id="notes">
+    <h3>WHAT THIS IS</h3>
+    <p>Your private record of every time you were on the air. Opened from the Roundtable panel header (<b>Archive</b>), the phone's Roundtable page, or the public web page after you prove your station key.</p>
+    <p><b>A session</b> is one stretch on the air on one frequency. Each one lists every station that reported you.</p>
+    <p><b>WATCHED</b> is how long a station kept reporting you, which is not how long you talked. The timeline shows the difference: amber hatching is when you were keyed and that station had lost you (their side, propagation). Plain gaps are when you were not keyed.</p>
+    <p>Each station's own raw readings of you sit on its own row. Nothing is averaged across stations. Click a row to see that station's readings over the session.</p>
+    <p><b>Empty sessions are kept.</b> Nobody heard you, and that is recorded plainly.</p>
+    <p>Signal history is kept for good. <b>Message text is removed after one year</b>; the session and readings stay.</p>
+    <p>AWAY rows are stations whose Core was reporting with nobody at the radio.</p>
+  </div>
+</div>
+<script>
+function rng(s){return function(){s=(s*1103515245+12345)&0x7fffffff;return s/0x7fffffff}}
+const CALLS=[['W4ABC',410],['N3XYZ',620],['K1LOQ',1140],['VE3RTX',1290],['W8DXR',540],['KD9QRT',890],['N4FNB',180],['WA2PLE',950],['K5TUV',1460],['AA4MM',260],['W1GHZ',1210],['KB3IIL',720]];
+const SESS=[
+ {id:'s0',day:'TODAY · OCT 20',band:'40M',f:'7.188.00',start:'19:42',min:74,seed:3,n:9},
+ {id:'s1',day:'TODAY · OCT 20',band:'40M',f:'7.255.50',start:'17:10',min:22,seed:8,n:4},
+ {id:'e',day:'TODAY · OCT 20',band:'20M',f:'14.286.00',start:'15:02',min:11,seed:5,n:0},
+ {id:'s3',day:'SUN · OCT 19',band:'80M',f:'3.873.00',start:'01:15',min:96,seed:11,n:7},
+ {id:'s4',day:'SUN · OCT 19',band:'40M',f:'7.188.00',start:'20:05',min:58,seed:2,n:8},
+ {id:'e2',day:'SAT · OCT 18',band:'20M',f:'14.230.00',start:'14:40',min:6,seed:9,n:0},
+ {id:'s6',day:'SAT · OCT 18',band:'40M',f:'7.200.00',start:'21:30',min:40,seed:6,n:5},
+ {id:'old',day:'OCT 2025',band:'40M',f:'7.188.00',start:'19:55',min:63,seed:4,n:6,old:true},
+];
+const S={sel:'s0',lane:null,range:'30',band:'all'};
+function build(se){
+  const r=rng(se.seed*97+1),M=se.min;
+  // your key-downs: alternating transmissions
+  const tx=[];let t=0;
+  while(t<M){const on=1+r()*4;const off=2+r()*8;tx.push([t,Math.min(M,t+on)]);t+=on+off}
+  const st=[];
+  for(let i=0;i<se.n;i++){
+    const c=CALLS[(se.seed*3+i*5)%CALLS.length];
+    const joinAt=r()<.6?0:r()*M*.4, leaveAt=r()<.6?M:M*(.55+r()*.45);
+    const fades=[];
+    tx.forEach(x=>{if(x[0]<joinAt||x[0]>leaveAt)return; if(r()<.16)fades.push(x)});
+    const away=r()<.18;
+    const base=-73-Math.floor(r()*30), sw=4+Math.floor(r()*10);
+    let w=0;tx.forEach(x=>{if(x[0]>=joinAt&&x[0]<=leaveAt&&fades.indexOf(x)<0)w+=x[1]-x[0]});
+    st.push({call:c[0],km:c[1],joinAt,leaveAt,fades,away,base,sw,watched:Math.max(joinAt?leaveAt-joinAt:leaveAt-joinAt,0)-fades.reduce((a,x)=>a+(x[1]-x[0])*3,0)});
+  }
+  return {tx,st};
+}
+function sUnits(dbm){const s=Math.round((dbm+127)/6);if(s>9){return 'S9+'+Math.round(dbm+73)}return 'S'+Math.max(s,1)}
+function fmtMin(m){m=Math.max(0,Math.round(m));return m>=60?Math.floor(m/60)+'h '+String(m%60).padStart(2,'0')+'m':m+' min'}
+function end(se){const [h,mm]=se.start.split(':').map(Number);const e=h*60+mm+se.min;return String(Math.floor(e/60)%24).padStart(2,'0')+':'+String(e%60).padStart(2,'0')}
+function list(){
+  let h='',last='';
+  SESS.filter(s=>S.band==='all'||s.band===S.band).forEach(s=>{
+    if(s.day!==last){h+=`<div class="day">${s.day}</div>`;last=s.day}
+    h+=`<div class="s ${s.n?'':'empty'} ${S.sel===s.id?'sel':''}" data-s="${s.id}"><i class="bar"></i>
+      <span class="f"><em>${s.band}</em>${s.f}</span><span class="w">${s.start} to ${end(s)}</span>
+      <span class="n">${s.n?`<b>${s.n}</b> stations reported you`:'Nobody reported you'}</span><span class="dur">${fmtMin(s.min)}</span></div>`;
+  });
+  document.getElementById('list').innerHTML=h;
+}
+function summary(){
+  const vis=SESS.filter(s=>S.band==='all'||s.band===S.band);
+  const calls=new Set();vis.forEach(s=>build(s).st.forEach(x=>calls.add(x.call)));
+  const best=Math.max(...vis.flatMap(s=>build(s).st.map(x=>x.km)),0);
+  document.getElementById('sum').innerHTML=
+   `<div><b>${vis.length}</b><span>SESSIONS</span></div><div><b>${fmtMin(vis.reduce((a,s)=>a+s.min,0))}</b><span>ON THE AIR</span></div>
+    <div><b>${calls.size}</b><span>DIFFERENT STATIONS HEARD YOU</span></div><div><b>${vis.filter(s=>!s.n).length}</b><span>SESSIONS NOBODY HEARD</span></div>
+    <div><b>${best} km</b><span>FARTHEST REPORT</span></div>`;
+}
+function det(){
+  const se=SESS.find(s=>s.id===S.sel)||SESS[0], d=build(se), M=se.min;
+  const pct=v=>(v/M*100).toFixed(2)+'%';
+  let h=`<div class="sh"><span class="f"><em>${se.band}</em>${se.f}</span><span class="w">${se.day.split(' · ').pop()} · ${se.start} to ${end(se)} UTC · ${fmtMin(M)}</span><span class="sp"></span><a>Open this frequency's room</a></div>`;
+  if(!se.n){
+    h+=`<div class="emptybox"><b>Nobody reported you in this session.</b><br>You were keyed ${d.tx.length===1?'once':d.tx.length+' times'} over ${fmtMin(M)} on ${se.f}. No station tuned there sent a reading of you. This is kept so your record shows the quiet times as well as the good ones.</div>`;
+  }
+  h+=`<div class="cap">WHO HEARD YOU, AND FOR HOW LONG<span>Each row is that station's own raw readings. Nothing is averaged.</span></div><div class="tl">`;
+  const ticks=[0,.25,.5,.75,1].map(f=>{const [hh,mm]=se.start.split(':').map(Number);const e=hh*60+mm+Math.round(M*f);return `<span style="left:${f*100}%">${String(Math.floor(e/60)%24).padStart(2,'0')}:${String(e%60).padStart(2,'0')}</span>`}).join('');
+  h+=`<div class="lane hdr"><span>STATION</span><div class="ticks">${ticks}</div><span style="text-align:right">WATCHED</span><span style="text-align:right">THEIR READINGS</span></div>`;
+  h+=`<div class="lane you"><span class="c">You keyed</span><div class="trk">${d.tx.map(x=>`<i class="tx" style="left:${pct(x[0])};width:${pct(x[1]-x[0])}"></i>`).join('')}</div><span class="wd" style="color:#e09a9c">${fmtMin(d.tx.reduce((a,x)=>a+x[1]-x[0],0))}</span><span class="rg">${d.tx.length===1?'once':d.tx.length+' times'}</span></div>`;
+  d.st.sort((a,b)=>b.watched-a.watched).forEach(x=>{
+    let segs='';
+    // reporting coverage: shown as green on the tx periods it covered, amber where you were keyed but it had lost you
+    d.tx.forEach(t=>{
+      if(t[0]<x.joinAt||t[0]>x.leaveAt)return;
+      const lost=x.fades.indexOf(t)>=0;
+      segs+=`<i class="${lost?'gap':''}" style="left:${pct(t[0])};width:${pct(t[1]-t[0])};${lost?'':`background:${x.away?'#4a5a52':'#4caf6a'}`}"></i>`;
+    });
+    segs+=`<i style="left:${pct(x.joinAt)};width:${pct(x.leaveAt-x.joinAt)};top:auto;height:1px;background:#2c5c44"></i>`;
+    h+=`<div class="lane ${S.lane===x.call?'sel':''}" data-l="${x.call}"><span class="c">${x.call}${x.away?'<span class="awaytag">AWAY</span>':''}<small>${x.km} km</small></span><div class="trk">${segs}</div>
+      <span class="wd">${fmtMin(Math.max(x.watched,1))}</span><span class="rg">${sUnits(x.base)} to ${sUnits(x.base+x.sw)}</span></div>`;
+  });
+  h+=`</div><div class="legend"><span><i style="background:#7a2c2e"></i>you keyed</span><span><i style="background:#4caf6a"></i>they reported you</span><span><i style="background:repeating-linear-gradient(135deg,rgba(255,192,64,.55) 0 3px,transparent 3px 6px)"></i>you were keyed, they had lost you</span><span><i style="background:#4a5a52"></i>reported while AWAY</span></div>`;
+  if(S.lane){const x=d.st.find(s=>s.call===S.lane);if(x)h+=`<div class="spark"><div class="h"><b>${x.call}</b><span>its raw S-meter readings of you, ${se.start} to ${end(se)}</span><span style="margin-left:auto;cursor:pointer;color:var(--acc)" data-act="closelane">Close</span></div><canvas id="spk" width="900" height="112"></canvas></div>`}
+  // histogram
+  h+=`<div class="cap">STATIONS THAT HEARD YOU, BY HOUR (UTC)<span>${S.range==='all'?'all time':S.range==='365'?'past year':'past '+S.range+' days'}, ${S.band==='all'?'all bands':S.band}</span></div>`;
+  const hr=rng(41+(S.band.length*7)+(S.range.length*3));const hv=[...Array(24)].map((_,i)=>{const night=(i>=0&&i<=4)||i>=19;return Math.round((night?6:i>=13&&i<=17?3:0.6)*hr()*3)});
+  const mx=Math.max(...hv,1);
+  h+=`<div class="hist">${hv.map((v,i)=>`<div class="${v?'':'z'}" style="height:${Math.max(v/mx*100,1.5)}%"><span>${v}</span></div>`).join('')}</div><div class="hx"><span>00</span><span>06</span><span>12</span><span>18</span><span>23</span></div>`;
+  // messages
+  h+=`<div class="cap">MESSAGES IN THIS SESSION<span>${se.old?'text removed after one year':'kept one year from the day sent'}</span></div><div class="msgs">`;
+  if(se.old){h+=`<div class="gone">The text of the 4 messages in this session was removed on Oct 20, 2026, one year after it was sent. Who posted and when is still listed below.</div>`;
+    ['W4ABC 19:58','KG4VCF 20:01','N3XYZ 20:09','KG4VCF 20:15'].forEach(m=>{const [c,t]=m.split(' ');h+=`<div class="msg ${c==='KG4VCF'?'me':''}"><div class="h"><span class="c">${c}</span><span class="t">${t}</span></div><div class="x" style="color:var(--dim2);font-style:italic">Text removed</div></div>`});}
+  else if(!se.n){h+=`<div class="gone">No messages were posted on this frequency while you were on.</div>`}
+  else{[['W4ABC','19:44','Good copy JJ, S9 here in Raleigh','S9'],['KG4VCF','19:46','Thanks all, running the new mic tonight',''],['K1LOQ','19:52','Fading in and out up here, S5 to S7','S6'],['VE3RTX','20:03','Back on, lost you for a minute','S7'],['KG4VCF','20:20','QRT for dinner, 73','']].slice(0,Math.max(2,se.n-3)).forEach(m=>{h+=`<div class="msg ${m[0]==='KG4VCF'?'me':''}"><div class="h"><span class="c">${m[0]}</span>${m[3]?`<span class="chipr">heard you ${m[3]}</span>`:''}<span class="t">${m[1]}</span></div><div class="x">${m[2]}</div></div>`})}
+  h+='</div>';
+  document.getElementById('det').innerHTML=h;
+  if(S.lane)spark(se,d.st.find(s=>s.call===S.lane),d);
+}
+function spark(se,x,d){
+  const c=document.getElementById('spk');if(!c||!x)return;const g=c.getContext('2d'),W=c.width,H=c.height,M=se.min;
+  g.fillStyle='#151518';g.fillRect(0,0,W,H);
+  g.strokeStyle='#29292c';g.lineWidth=1;[.25,.5,.75].forEach(f=>{g.beginPath();g.moveTo(0,H*f);g.lineTo(W,H*f);g.stroke()});
+  const r=rng(x.km);
+  d.tx.forEach(t=>{const x0=t[0]/M*W,x1=t[1]/M*W;g.fillStyle='rgba(122,42,42,.35)';g.fillRect(x0,0,x1-x0,H);
+    if(t[0]<x.joinAt||t[0]>x.leaveAt)return;
+    if(x.fades.indexOf(t)>=0){g.fillStyle='rgba(255,192,64,.12)';g.fillRect(x0,0,x1-x0,H);return}
+    g.strokeStyle='#4caf6a';g.lineWidth=2;g.beginPath();
+    for(let px=x0;px<=x1;px+=3){const v=x.base+x.sw*r();const y=H-((v+110)/50)*H;px===x0?g.moveTo(px,y):g.lineTo(px,y)}g.stroke();});
+  g.fillStyle='#8a8a8e';g.font='18px Menlo';g.fillText('S9',6,H-((-73+110)/50)*H-3);g.fillText('S5',6,H-((-97+110)/50)*H-3);
+}
+function render(){
+  document.querySelectorAll('#range a').forEach(a=>a.classList.toggle('on',a.dataset.g===S.range));
+  document.querySelectorAll('#band a').forEach(a=>a.classList.toggle('on',a.dataset.b===S.band));
+  document.querySelectorAll('#chooser button').forEach(b=>b.classList.toggle('on',b.dataset.r===S.sel));
+  summary();list();det();
+}
+document.addEventListener('click',e=>{
+  const s=e.target.closest('[data-s]');if(s){S.sel=s.dataset.s;S.lane=null;render();return}
+  const l=e.target.closest('[data-l]');if(l){S.lane=S.lane===l.dataset.l?null:l.dataset.l;render();return}
+  if(e.target.closest('[data-act="closelane"]')){S.lane=null;render();return}
+  const g=e.target.closest('[data-g]');if(g){S.range=g.dataset.g;render();return}
+  const b=e.target.closest('[data-b]');if(b){S.band=b.dataset.b;render();return}
+  const r=e.target.closest('#chooser [data-r]');if(r){S.sel=r.dataset.r;S.lane=null;location.hash=r.dataset.r;render()}
+});
+const hs=location.hash.slice(1);
+if(hs){const [a,b]=hs.split('-');if(SESS.find(s=>s.id===a))S.sel=a;if(b){S.lane=build(SESS.find(s=>s.id===S.sel)).st[0].call}}
+render();
+</script>
+</body>
+</html>
