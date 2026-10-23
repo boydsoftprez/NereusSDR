@@ -15,6 +15,9 @@ struct FlagLevelBar: View {
     let dbm: Double?
     let meter: StationCatalog.Meters.SMeter?
     var readout: SMeterReadout = .desktopDefaults
+    /// Which reading the bar shows, off the default (``FlagMeterChoice``):
+    /// its tag is printed above the level, nil prints none.
+    var source: FlagMeterChoice = .peak
 
     /// The level's text width beside the bar.
     static let dbmWidth: CGFloat = 52
@@ -27,7 +30,13 @@ struct FlagLevelBar: View {
         }
         .accessibilityElement()
         .accessibilityLabel("Signal")
-        .accessibilityValue(dbm.flatMap { readout.spoken(dbm: $0, meter: meter) } ?? "No signal reading")
+        .accessibilityValue(Self.spokenValue(dbm.flatMap { readout.spoken(dbm: $0, meter: meter) }, source: source))
+    }
+
+    /// What VoiceOver says: the source when it is not the default, then the level.
+    static func spokenValue(_ level: String?, source: FlagMeterChoice) -> String {
+        let reading = level ?? "No signal reading"
+        return source.tag == nil ? reading : "\(source.label), \(reading)"
     }
 
     /// The marks the flag labels: every other S-unit from S1 (the first
@@ -71,6 +80,11 @@ struct FlagLevelBar: View {
                 context.draw(Text(mark.label).font(.system(size: 8)).foregroundStyle(BandColours.levelTicks),
                              at: CGPoint(x: x, y: Self.top + (Self.tickHeight - 2) / 2), anchor: anchor)
             }
+        }
+        if let tag = source.tag {
+            // Above the level, beside the S-unit marks: which reading this is.
+            context.draw(Text(tag).font(.system(size: 8, weight: .bold)).foregroundStyle(BandColours.levelTicks),
+                         at: CGPoint(x: barWidth + 3, y: Self.top + (Self.tickHeight - 2) / 2), anchor: .leading)
         }
         let bar = CGRect(x: 0, y: barTop, width: barWidth, height: barHeight)
         context.fill(Path(bar), with: .color(BandColours.levelBackground))

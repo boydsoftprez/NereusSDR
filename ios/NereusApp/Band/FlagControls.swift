@@ -3,6 +3,7 @@
 
 import Combine
 import Foundation
+import NereusBand
 import NereusMirror
 
 /// One of the four tabs along a flag's foot, as the redrawn flag has
@@ -76,6 +77,11 @@ final class FlagControls: ObservableObject {
     @Published private(set) var open: FlagPopover?
     /// The more menu's Sample rate list is out.
     @Published var rateListOpen = false
+    /// The more menu's S-meter list (Peak, Average, Max Bin) is out.
+    @Published var meterListOpen = false
+    /// The S-meter, whose RX Mode the flags' levels follow and the more
+    /// menu's S-meter choice sets; nil in the flag pictures.
+    var sMeter: SMeterModel?
     /// Diversity, from the more menu, is up.
     @Published var diversityOpen = false
     @Published var diversity: DiversityModel?
@@ -156,6 +162,8 @@ final class FlagControls: ObservableObject {
         static let makeTransmit = "Make this the TX slice"
         static let antenna = "Antenna >"
         static let sampleRate = "Sample rate >"
+        /// The flags' S-meter source (JJ, 2026-10-23), with the current choice.
+        static func sMeter(_ choice: FlagMeterChoice) -> String { "S-meter: \(choice.label) >" }
         static let diversity = "Diversity..."
         static let filterPolicy = "Filter policy..."
         static let remove = "Remove slice"
@@ -219,6 +227,7 @@ final class FlagControls: ObservableObject {
         tuning?.closePad()
         modes?.closePad()
         rateListOpen = false
+        meterListOpen = false
         moreFromWideChip = false
         slices.activate(popover.sliceId)
         open = popover
@@ -237,6 +246,7 @@ final class FlagControls: ObservableObject {
                 close()
             } else {
                 rateListOpen = false
+                meterListOpen = false
                 moreFromWideChip = true
             }
             return
@@ -247,11 +257,12 @@ final class FlagControls: ObservableObject {
 
     /// Closes the open menu or panel, and any number pad it opened.
     func close() {
-        guard open != nil || rateListOpen else {
+        guard open != nil || rateListOpen || meterListOpen else {
             return
         }
         open = nil
         rateListOpen = false
+        meterListOpen = false
         moreFromWideChip = false
         modes?.closePad()
     }
@@ -344,6 +355,32 @@ final class FlagControls: ObservableObject {
             return
         }
         slices.selectForTransmit(sliceId)
+    }
+
+    /// Opens or closes the more menu's Sample rate list; opening it closes
+    /// the S-meter list, so one list is open at a time.
+    func toggleRateList() {
+        rateListOpen.toggle()
+        if rateListOpen {
+            meterListOpen = false
+        }
+    }
+
+    /// Opens or closes the more menu's S-meter list; opening it closes the
+    /// Sample rate list.
+    func toggleMeterList() {
+        meterListOpen.toggle()
+        if meterListOpen {
+            rateListOpen = false
+        }
+    }
+
+    /// The more menu's S-meter choice: every flag's level follows it, as
+    /// the S-meter's RX Mode, kept on this device.
+    func pickFlagMeter(_ choice: FlagMeterChoice) {
+        meterListOpen = false
+        sMeter?.chooseFlagMeter(choice)
+        close()
     }
 
     /// One of the Sample rate list's rates, for the receiver that hears the slice.
