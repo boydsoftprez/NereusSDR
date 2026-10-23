@@ -50,6 +50,12 @@ struct DisplayCodecFrame {
     /// NSDC v2 only: the trace is the last decoded one, carried into a frame
     /// whose own trace part was lost. Set only by the v2 decoder.
     bool traceCarried {false};
+    /// In process only, never encoded: the row the Core's noise floor
+    /// measures when it is not traceDbm (SpectrumReducer::reduce's
+    /// measurementOut): while the trace's average warms up, the average
+    /// with its starting value taken out, with NaN where a pixel holds no
+    /// data. Empty means traceDbm.
+    QVector<float> measurementDbm;
 };
 
 enum class DisplayCodecDisposition {

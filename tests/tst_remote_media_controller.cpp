@@ -1,5 +1,27 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-23  J.J. Boyd / KG4VCF  waterfallLevelsFromActualRequestMatchLocal:
+//                                    the run level starts at the seed's
+//                                    target, -155.5 and -154.3, and the
+//                                    local pan runs on the rows' clock.
+//                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-23  J.J. Boyd / KG4VCF  waterfallLevelsFromActualRequestMatchLocal:
+//                                    the seed starts the floor's fast
+//                                    attack, so NF-AGC's low is the AGC's
+//                                    run level, -152.2 and -152.32.
+//                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-23  J.J. Boyd / KG4VCF  coreWaterfallAgcWindowContainsAcceptedLevels
+//                                    also widens the window for an NF-AGC
+//                                    low under it. AI-assisted via
+//                                    Anthropic Claude Code.
+//   2026-10-23  J.J. Boyd / KG4VCF  waterfallLevelsFromActualRequestMatchLocal:
+//                                    the noise floor reads the first row, so
+//                                    NF-AGC's low is -155.5 and -155.476 (the
+//                                    seed is where the estimate settles, not
+//                                    the median), the local pan asks for no
+//                                    averaging, and its window needs no
+//                                    second request.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-22  J.J. Boyd / KG4VCF  displayTelemetry().rowsBlanked is the
 //                                    sum of every bound pan's NB Blank
 //                                    count. AI-assisted via Anthropic
@@ -9739,11 +9761,19 @@ private slots:
         // S7: NF-AGC is an option under AGC. Alone it leaves the stored
         // levels and asks the Core for none.
         QTest::newRow("nf-only") << false << true << false << false << false << QString() << -180.0f << 0.0f << -180.0f << 0.0f;
-        // With AGC: the low is the pan's settled noise floor plus the
-        // offset of -5. The floor starts at -200 and its line follows over
-        // 41 frames at 20 a second: -200 + 1/41, then + 1.9756/41 more.
-        QTest::newRow("both-normal-ui") << true << true << true << false << false << QStringLiteral("noiseFloorAgc") << -204.97561f << 0.0f << -204.92742f << 0.0f;
-        QTest::newRow("both-restored") << true << true << false << true << false << QStringLiteral("noiseFloorAgc") << -204.97561f << 0.0f << -204.92742f << 0.0f;
+        // With AGC: the low is the pan's settled noise floor plus the offset
+        // of -5, and the AGC's run level until the floor settles. The first
+        // row seeds the floor where the estimate settles on it, the pixel
+        // with 3 in 20 of the 128 below it: pixel 19 of -160 + 0.5 i,
+        // -150.5, and starts its fast attack (as Thetis starts a display,
+        // display.cs:3698-3700 [v2.10.3.15]). The run level starts at the
+        // seed's target, -155.5, not at Thetis's restart floor of -150
+        // (PR 628). The second row is 20 dB up, with no pixel under -150.5,
+        // so in fast attack the estimate climbs 3 dB and the line follows at
+        // once, and the run level moves 0.4 of the way from -155.5 to
+        // -147.5 - 5: -154.3.
+        QTest::newRow("both-normal-ui") << true << true << true << false << false << QStringLiteral("noiseFloorAgc") << -155.5f << 0.0f << -154.3f << 0.0f;
+        QTest::newRow("both-restored") << true << true << false << true << false << QStringLiteral("noiseFloorAgc") << -155.5f << 0.0f << -154.3f << 0.0f;
         QTest::newRow("manual") << false << false << false << false << false << QString() << -180.0f << 0.0f << -180.0f << 0.0f;
         QTest::newRow("clarity-both-on") << true << true << true << false << true << QString() << -150.0f << -90.0f << -150.0f << -90.0f;
     }
@@ -9899,6 +9929,14 @@ private slots:
         localContext.exactCentreHz = 14225023.4375;
         localContext.exactSpanHz = 24046.875;
         local.setDisplayFps(20);
+        // The local pan's display clock is the Core's: the noise floor's
+        // fast attack, which the first row starts, runs on the same time.
+        qint64 localNowMs = 1000;
+        local.setDisplayClockForTest([&localNowMs] { return localNowMs; });
+        // These rows are the Core's trace as sent, and nothing averages them
+        // here: the pan asks for no averaging, so it takes no starting value
+        // out of them (at Log Recursive it would, as for a new picture).
+        local.setSpectrumAveraging(SpectrumAveraging::None);
         local.setRemoteSpectrumContext(localContext, 14225023.4375, 192000);
         for (int rowIndex = 0; rowIndex < 2; ++rowIndex) {
             QVector<float> row(128);
@@ -9909,10 +9947,11 @@ private slots:
             frame.waterfallAdvance = true;
             frame.traceDbm = row;
             frame.waterfallDbm = row;
+            inputs.nowMs = 1000 + rowIndex * 50;
+            localNowMs = inputs.nowMs;
             QVERIFY(local.updateRemoteSpectrum(frame));
             local.composeWaterfallActiveThresholds(row);
             localLevels.append({local.wfActiveLowThreshold(), local.wfActiveHighThreshold()});
-            inputs.nowMs = 1000 + rowIndex * 50;
             computed.append(processor.process(frame, inputs));
             qInfo() << "mode" << asked.value(QStringLiteral("waterfallLevels")).toObject().value(QStringLiteral("mode"))
                     << "row" << rowIndex << "local" << localLevels.last().first << localLevels.last().second
@@ -9959,21 +9998,20 @@ private slots:
         // (the pan's and the stored levels' -180 to 0 dBm with the headroom).
         QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -190.0);
         QCOMPARE(asked.value(QStringLiteral("maxDbm")).toDouble(), 10.0);
-        // NF-AGC's accepted low (-204.9 dBm) is under the -190 dBm asked
-        // first, so the window is asked again with 10 dB of headroom below
-        // it. AGC's accepted pair (-171 and the stored High, 0) fits the
-        // window asked first now that AGC leaves the high level alone, so it
-        // asks nothing more; the request it used to make followed its high
-        // level (-83.5), not its low. Manual and Clarity fit theirs too.
+        // NF-AGC's accepted low (-155.5 dBm, the floor read from the first
+        // row) fits the -190 dBm window asked first, so it asks nothing more;
+        // it asked again for -215 only while the floor started at -200
+        // (coreWaterfallAgcWindowContainsAcceptedLevels covers a low under
+        // the window). AGC's accepted pair (-171 and the stored High, 0)
+        // fits the window asked first now that AGC leaves the high level
+        // alone, so it asks nothing more; the request it used to make
+        // followed its high level (-83.5), not its low. Manual and Clarity
+        // fit theirs too.
         QTest::qWait(RemoteMediaController::kPlannerIntervalMs + 30);
         now += 60;
         QTest::qWait(RemoteMediaController::kPlannerIntervalMs + 30);
-        const int expectedRequests = mode == QStringLiteral("noiseFloorAgc") ? 2 : 1;
+        const int expectedRequests = 1;
         QCOMPARE(countControl(controls, QStringLiteral("subscribe")), expectedRequests);
-        if (mode == QStringLiteral("noiseFloorAgc")) {
-            QCOMPARE(lastControl(controls, QStringLiteral("subscribe"))
-                         .value(QStringLiteral("minDbm")).toDouble(), -215.0);
-        }
         now += 60;
         QTest::qWait(RemoteMediaController::kPlannerIntervalMs + 30);
         QCOMPARE(countControl(controls, QStringLiteral("subscribe")), expectedRequests);
@@ -10267,6 +10305,40 @@ private slots:
                          .value(QStringLiteral("minDbm")).toDouble(), -120.0);
         widget->composeWaterfallActiveThresholds(line);
         QCOMPARE(widget->wfActiveLowThreshold(), -109.5f);
+
+        // NF-AGC's accepted low under the window (PR 628 re-review: this
+        // test said it covered NF-AGC and turned it off): the Core's pair
+        // for the new context, its low under the -120 dBm window asked,
+        // takes over the waterfall and widens the window to contain it,
+        // once, as the AGC's did.
+        const int beforeNfAgcPair = countControl(controls, QStringLiteral("subscribe"));
+        context.insert(QStringLiteral("revision"),
+                       lastControl(controls, QStringLiteral("subscribe"))
+                           .value(QStringLiteral("revision")));
+        context.insert(QStringLiteral("contextGeneration"), 3);
+        context.insert(QStringLiteral("minDbm"), -120.0);
+        QVERIFY(server.sendMediaControl(context, server.mediaSessionEpoch()));
+        const DisplayCodecContext nfAgcCodec{id, 3, -120.0f, -50.0f, 128, 128, 0};
+        DisplayExtrasFrame nfAgcPair;
+        nfAgcPair.endpointId = id;
+        nfAgcPair.contextGeneration = 3;
+        nfAgcPair.encoderSequence = 6;
+        nfAgcPair.waterfallLevelsDbm = std::make_pair(-131.742f, -70.0f);
+        QTRY_VERIFY_WITH_TIMEOUT([&] {
+            media->deliver(encodeDisplayExtras(nfAgcPair, nfAgcCodec));
+            return widget->wfActiveLowThreshold() == -131.742f;
+        }(), 5000);
+        QCOMPARE(widget->wfActiveHighThreshold(), -70.0f);
+        settle();
+        QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), beforeNfAgcPair + 1);
+        asked = lastControl(controls, QStringLiteral("subscribe"));
+        QCOMPARE(asked.value(QStringLiteral("waterfallLevels")).toObject()
+                     .value(QStringLiteral("mode")).toString(),
+                 QStringLiteral("noiseFloorAgc"));
+        QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -142.0);
+        QCOMPARE(asked.value(QStringLiteral("maxDbm")).toDouble(), -50.0);
+        settle();
+        QCOMPARE(countControl(controls, QStringLiteral("subscribe")), beforeNfAgcPair + 1);
 
         // NF-AGC without AGC is manual levels, and manual levels ask for
         // none.

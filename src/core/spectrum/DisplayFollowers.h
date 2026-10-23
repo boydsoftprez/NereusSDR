@@ -41,6 +41,11 @@
 //                 a minimum length, and the follower says when it is
 //                 settled. J.J. Boyd (KG4VCF), with AI-assisted
 //                 transformation via Anthropic Claude Code.
+//   2026-10-23 - The noise floor skips frames with no data and seeds from
+//                 the first frame that has data, at the level the
+//                 estimate settles at on it. J.J. Boyd
+//                 (KG4VCF), with AI-assisted transformation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 // --- From display.cs ---
@@ -160,6 +165,12 @@ public:
     /// short.
     bool setFastAttack(bool on, qint64 nowMs, qint64 minMs = kFastAttackMinMs);
     bool fastAttack() const { return m_fastAttack; }
+    /// NereusSDR, not in Thetis: a display that held the follower (frames
+    /// with no measured pixel, which change nothing) from holdStartMs until
+    /// nowMs. A fast attack still on runs again from nowMs for what its
+    /// minimum had left at holdStartMs, all of it for one set inside the
+    /// hold. Returns whether one was on.
+    bool resumeFastAttackAfterHold(qint64 holdStartMs, qint64 nowMs);
     /// Whether the smoothed estimate can be used as the noise floor: out of
     /// fast attack, and a frame has been taken since the fast attack was
     /// last set. Thetis's test for NF-AGC,
@@ -169,15 +180,35 @@ public:
 
     /// One frame of display pixels (the measurement row: undented).
     /// Returns true when fast attack cleared itself on this frame
-    /// (display.cs:5904-5908), so a caller that draws the flag repaints.
+    /// (display.cs:5904-5908), or the seed turned it on, so a caller that
+    /// draws the flag repaints.
+    /// Pixels at or below kInitialDbm, or not finite, are no measurement; a
+    /// frame with nothing else changes nothing, and the quiet pixels the
+    /// estimate needs are counted against the measured ones. The first
+    /// frame with data seeds both estimates at the level the estimate
+    /// settles at on it (the pixel with the quiet pixels needed below it)
+    /// and turns fast attack on, as Thetis does when it creates a display.
+    /// A caller whose trace is averaged passes, while its average warms up,
+    /// the average with its starting value taken out
+    /// (SpectrumReducer::reduce's measurementOut).
     bool process(const QVector<float>& pixels, int fps, qint64 nowMs);
+
+    /// Whether a frame with data (or setLerpAverage) has given the
+    /// estimates a value.
+    bool seeded() const { return m_seeded; }
 
     /// Thetis m_fFFTBinAverageRX1: this frame's estimate.
     float fftBinAverage() const { return m_fftBinAverage; }
     /// Thetis m_fLerpAverageRX1: the smoothed estimate the line is drawn at.
     float lerpAverage() const { return m_lerpAverage; }
-    /// Seeds the smoothed estimate (SpectrumWidget's 3D floor test seam).
-    void setLerpAverage(float dbm) { m_lerpAverage = dbm; }
+    /// Seeds both estimates (SpectrumWidget's 3D floor test seam). A
+    /// seeded follower takes no seed from its first frame.
+    void setLerpAverage(float dbm)
+    {
+        m_fftBinAverage = dbm;
+        m_lerpAverage = dbm;
+        m_seeded = true;
+    }
 
 private:
     float m_fftBinAverage {kInitialDbm};
@@ -189,6 +220,8 @@ private:
     qint64 m_fastAttackMinMs {kFastAttackMinMs};
     // Thetis m_bNoiseFloorGoodRX1.
     bool m_good {false};
+    // Whether a frame with data has seeded the estimates.
+    bool m_seeded {false};
 };
 
 /// When a display's noise floor goes to fast attack, as the desktop's
@@ -233,6 +266,10 @@ struct WaterfallLevelSettings {
     /// (NoiseFloorFollower::settled). Read only with noiseFloorAgc.
     float noiseFloorDbm {-200.0f};
     bool noiseFloorSettled {false};
+    /// Whether the follower has an estimate yet (NoiseFloorFollower::seeded).
+    /// NF-AGC's run level takes nothing from a row without one, and starts
+    /// at the floor's target on the first row with one.
+    bool noiseFloorSeeded {false};
     /// Clarity writes the levels itself between rows; nothing here moves
     /// them while it does.
     bool clarityActive {false};
@@ -273,6 +310,8 @@ public:
     {
         m_agcPrimed = false;
         m_hasAgcLow = false;
+        // NF-AGC turned on starts at the floor's target, as at the seed.
+        m_floorSeenSeeded = false;
     }
     bool agcPrimed() const { return m_agcPrimed; }
 
@@ -314,6 +353,8 @@ public:
 private:
     float m_agcRunMin {0.0f};
     bool m_agcPrimed {false};
+    // Whether the last NF-AGC (or AGC) row had a floor with an estimate.
+    bool m_floorSeenSeeded {false};
     // The AGC low level last produced, for the rows of a key.
     float m_agcLow {0.0f};
     bool m_hasAgcLow {false};
