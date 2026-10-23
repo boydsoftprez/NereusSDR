@@ -60,6 +60,7 @@ All ruled by JJ. "Superseded" entries are kept so nobody re-asks them. Claude's 
 | D23 | Other software gets a key from the website with a self-declared callsign, the same trust as a Core. Logins or verification only if abuse forces it | 2026-10-23 | Logbook of the World certificates |
 | D24 | The public API can do everything a Core can: presence, readings, keyed state, messages, naming turns, reports | 2026-10-23 | readings and presence only |
 | D25 | Until someone answers the first-run sheet, the Core connects read-only and sends nothing about the station; reporting starts when someone taps Go live on any device. A Core never answered stays read-only, even unattended. Auto-Start defaults on | 2026-10-23 | report at once with the sheet only informing |
+| D26 | No admin handling of ordinary users: a lost key is a fresh start, and only the old key can move its own history. JJ manages the helper list and nothing else | 2026-10-23 | JJ moves history between station ids after his own check |
 
 UX review fixes, all approved by JJ (full text in [reporter-brainstorm/ux-review.md](reporter-brainstorm/ux-review.md)). The details Claude added to each are calls in section 18.
 
@@ -206,10 +207,7 @@ Growth: at the load the server is tested to (section 14, R-RT-9: 500 stations in
 - The station id for a key is `base32(SHA-256("NereusSDR roundtable key v1\n" || key))[0..26]`.
 - The program answers `hello` with the key in place of the SPKI and signature, over TLS.
 - One key is one station. Its callsign and grid are changed on the key page, signed in with the key; a callsign in `presence` from a key station is ignored.
-- **A lost key:** a new key is a new station. History moves from one station id to another only (C6):
-  - by the old key, while still held: "Move my history to a new key" on the key page revokes the old key and moves everything in one step; or
-  - by JJ as moderator, between two station ids he names, after his own check; the move is logged.
-  - Never by callsign. What moves: sessions, turns, readings, names and messages.
+- **A lost key:** a new key is a new station. History moves to a new key only by the old key, while still held: "Move my history to a new key" on the key page revokes the old key and moves everything in one step (C6, D26). Nobody moves history for someone else, and never by callsign. What moves: sessions, turns, readings, names and messages. A key lost outright means a fresh archive; the old one stays closed.
 - The key page has no email, no password and no captcha. If abuse grows, verification is added then (D23); the stations table has room for a "verified" mark without changing the protocol.
 
 ### 7.4 Signing in on the web
@@ -559,7 +557,7 @@ New requirement family `R-RT`. Evidence: Software (unit, conformance, offscreen 
 | R-RT-19 | Public page with 200 rooms: band list, map, folds, search, sort, room pane, copy link, keyboard, live updates | Integration |
 | R-RT-20 | Web sign-in: one-time links work once within 5 minutes; the token leaves the address bar; CSRF checks refuse a cross-site action; Sign out everywhere ends every session | Integration |
 | R-RT-21 | Review list: report kinds, remove, block, stop counting (live hidden, stored rows kept), leave, helper conflict, 10-minute undo, helper changes by station id only, the log | Integration |
-| R-RT-22 | Keys: issuance limit per address group; callsign change on the key page; history move by the old key or by JJ between named ids, never by callsign | Software |
+| R-RT-22 | Keys: issuance limit per address group; callsign change on the key page; history move by the old key only, never by callsign or by a helper | Software |
 | R-RT-23 | Delete my archive removes what 13 says and keeps the station's readings of others | Software |
 | R-RT-24 | A test client using a website key appears, reports, posts, names and reports exactly as a Core does | Integration |
 | R-RT-25 | The API page on nereussdr.com is generated from the wire spec, and its published fixtures match the repository's | Software |
@@ -622,7 +620,7 @@ Claude's calls. Each can change without touching section 3.
 | C3 | Signal present: at least 10 dB above the station's own floor, the 10th percentile of 60 s of readings taken while not present, held while present; 10 s warm-up after tuning; decided at the station |
 | C4 | A turn ends after 3 s of quiet; same-talker gaps under 3 s join |
 | C5 | Naming an unknown turn needs membership of that room now (D9) and at some time during the turn, for up to 24 h after; names from the last 24 h offered; names never put a turn in an archive |
-| C6 | A lost key is a new station; history moves only by the old key or by JJ between named station ids |
+| C6 | A lost key is a new station; history moves only by the old key (JJ's move between station ids dropped by D26) |
 | C7 | Limits and address groups in 9.5 |
 | C8 | An old protocol version keeps working at least six months after its successor |
 | C9 | Delete my archive: removes your sessions, talking turns and others' readings of them, clears your message text, keeps your readings of others |

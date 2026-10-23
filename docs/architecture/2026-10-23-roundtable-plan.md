@@ -72,7 +72,7 @@ Nobody has an account. There are no passwords, no email, no sign-up and no appro
 - The database rows these leave behind look like accounts but need no care: `stations` (made on a station's first sign-in), `keys` (hashes only), `web_sessions` (cookies that expire by themselves, or end with Sign out everywhere) and `weblinks` (one-time tokens).
 - What helpers act on is a station, not an account: remove its messages, block it from posting, or stop counting its readings. No helper action signs anyone out or deletes anyone.
 - A NereusSDR station keeps its identity as long as its settings folder survives; a reinstall that keeps the folder is the same station.
-- The one place JJ handles an ordinary user's identity is spec C6: moving history from a lost station id to a new one after his own check (Task 6's `store.move_history`, Task 7's `POST /v1/review/move-history`).
+- JJ never handles an ordinary user's identity (spec D26). A lost key is a fresh start; only the old key can move its own history, on the key page.
 
 ## What already exists
 
@@ -391,7 +391,7 @@ Modify:
   - Cookie `rt_session`: `Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000`. Every POST checks `Origin` equals `https://<public_host>` and a per-session CSRF token field.
   - `weblink` on a station socket returns `weblinkOk` with `https://<public_host>/signin/<token>`.
   - Archive JSON for the signed-in station: `GET /v1/me/sessions`, `GET /v1/me/session/<id>` (per reader: callsign at the time, distance, watched seconds from present bits, the tracks, AWAY), `GET /v1/me/histogram`. Sessions are built from the station's talking turns only (C18: gaps under 10 minutes); unknown turns never appear, whatever their names.
-  - `store.move_history(from_id, to_id, by)` (logged in `review_actions`), used by `/key/move` and by Task 7's moderator move.
+  - `store.move_history(from_id, to_id, by)` (logged in `review_actions`), used only by `/key/move`.
   - `store.delete_archive(station_id)` per spec 13 and C9.
 
 **Acceptance:**
@@ -423,7 +423,7 @@ Modify:
 **Interfaces:**
 - Consumes: Tasks 2 to 6.
 - Produces:
-  - Helper-only JSON and actions (cookie of a helper's station): `GET /v1/review/reports`, `POST /v1/review/remove`, `POST /v1/review/block` (until a time or forever), `POST /v1/review/stop-counting` (until a time or forever), `POST /v1/review/leave`, `POST /v1/review/undo` (within 600 000 ms), `POST /v1/review/helpers/add` and `/remove` (by station id), `POST /v1/review/move-history` (two station ids), `GET /v1/review/log`, `GET /v1/review/stations?callsign=` (station ids with callsigns, for picking).
+  - Helper-only JSON and actions (cookie of a helper's station): `GET /v1/review/reports`, `POST /v1/review/remove`, `POST /v1/review/block` (until a time or forever), `POST /v1/review/stop-counting` (until a time or forever), `POST /v1/review/leave`, `POST /v1/review/undo` (within 600 000 ms), `POST /v1/review/helpers/add` and `/remove` (by station id), `GET /v1/review/log`, `GET /v1/review/stations?callsign=` (station ids with callsigns, for picking).
   - Each action carries the report's version; an action on a report another helper changed is refused 409 with what they did.
   - `retention.daily(now)`: clears text older than 365 days (04:00 UTC by the timer), writes the disk line (database size, free disk, warning under 20% free).
   - `retention.snapshot(dir, now)`: SQLite online backup to `roundtable-YYYY-MM-DD.db`, keeps 2, skipped with a warning under 15% free disk.
