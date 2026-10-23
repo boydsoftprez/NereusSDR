@@ -223,6 +223,7 @@ set(WDSP_EDITED_SOURCES
     src/iqc.c
     src/linux_port.c
     src/main.c
+    src/meter.c
     src/netinterface_stub.c
     src/nnet.c
     src/nnio.c
