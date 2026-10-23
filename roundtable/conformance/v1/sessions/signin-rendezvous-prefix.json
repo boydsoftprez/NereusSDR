@@ -28,6 +28,17 @@
       }
     },
     {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "error",
+        "code": "bad-sign-in",
+        "reason": "Roundtable did not accept this station's key or signature.",
+        "about": "hello",
+        "retryAfterMs": 0
+      }
+    },
+    {
       "expectClosed": "station",
       "code": 4001
     }

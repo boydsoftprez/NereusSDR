@@ -14,7 +14,8 @@ Four parties use it:
   key, or any other program, which signs in with a website key (section 4.2).
   Both speak exactly the same protocol (design D22 to D24).
 - **A live reader**: anyone, with no sign-in, reading rooms as they change
-  (section 5.5). The public page and a hidden Core are live readers.
+  (section 5.5). The public page, a hidden Core and a Core whose first-run
+  question is unanswered (design D25) are live readers.
 - **A read API client**: anyone, over plain HTTPS `GET` (section 10).
 
 The conformance suite in `roundtable/conformance/v1/` holds the server, a
@@ -118,15 +119,19 @@ the close frame's reason text is always empty.
 | 1001 | the server is shutting down | no |
 | 1009 | a message over the 16384-byte cap (2.2) | no |
 | 1013 | too many connections from this network, or in all (section 9.1) | yes, `rate` |
-| 4001 | sign-in failed: no `hello` within 10 s, a bad key or signature, an unknown key, or an unsupported version | only for `version` |
+| 4001 | sign-in refused: a key that is not canonical, a signature that does not verify, an unknown website key, or an unsupported version | yes: `bad-sign-in`, or `version` |
 | 4002 | protocol error (section 5.1) | no |
 | 4003 | replaced: the same station signed in on a newer connection | no |
 | 4004 | key revoked: the website key this station signed in with is revoked, at sign-in or while connected | no |
+| 4005 | sign-in timed out: no `hello` within 10 s of the connection opening | no |
 
-A station that gets 4001 for a bad signature, 4003 or 4004 does not
-reconnect in a loop: 4003 means another connection of the same station is
-live; 4001 and 4004 need the operator. A Core shows the reason on its
-connection line and stops retrying until its key or settings change.
+A station that gets 4001, 4003 or 4004 does not reconnect in a loop: 4003
+means another connection of the same station is live; 4001 and 4004 need the
+operator (the `error` before 4001 says whether the key or the version is at
+fault). A Core shows the reason on its connection line and stops retrying
+until its key, its software or its settings change. 4005 is not the
+operator's to fix: a Core reconnects after it with its normal backoff
+(2.3), as after 1000, 1001 and 1013.
 
 ## 3. Roles and the life of a connection
 
@@ -141,15 +146,18 @@ station -> server:   presence, reading, post, ... (section 5.3)
 server  -> station:  roomsDelta, room, delta, posted, ... (section 5.4)
 ```
 
-- The server sends `challenge` at once on every `/v1/station` connection.
+- The server sends `challenge` at once on every `/v1/station` connection it
+  accepts. A connection over a connection cap (9.1) gets `error` `rate` in
+  place of `challenge`, then close 1013.
 - The station's first message must be `hello`. Anything else first is a
   protocol error (4002). No `hello` within 10 s of the connection opening
-  closes it with 4001.
+  closes it with 4005.
 - After `welcome` and `rooms` the station may send any station kind except
   `hello` (a second `hello` is a protocol error).
 - A station that never sends `presence` is never shown anywhere. That is how
-  a hidden Core reaches the archive: it signs in, sends `weblink` or
-  `deleteArchive` only, and closes (design 7.4, 10.2).
+  a hidden Core, or a Core whose first-run question is unanswered, reaches
+  the archive: it signs in, sends `weblink` or `deleteArchive` only, and
+  closes (design 7.4, 10.2, D25).
 - One station id has at most one connection. A newer connection that signs
   in as the same station replaces the older, which is closed with 4003; the
   older connection's rows leave their rooms as when a connection closes
@@ -161,6 +169,10 @@ server  -> station:  roomsDelta, room, delta, posted, ... (section 5.4)
   live reader sends `watchBand` for the band list and `watch` for up to 4
   rooms (section 5.5), and receives the same `rooms`, `roomsDelta`, `room`
   and `delta` kinds as a station, with no row marked as its own.
+- A hidden Core reads Roundtable this way (design 10.2), and so does a Core
+  whose first-run question nobody has answered yet: until someone taps Go
+  live it opens only `/v1/live` and sends nothing about the station, however
+  long it runs unattended (design D25).
 - A live connection never carries a station id, a key or anything a station
   sends; it cannot post, name or report. A station kind on `/v1/live` is a
   protocol error (4002), and so is a live kind on `/v1/station`.
@@ -308,8 +320,17 @@ transcript bytes and valid and invalid signatures.
   the field upper case and the subsquare lower case (`EM73tu`).
 - A Core's callsign comes from `Roundtable/Callsign`, then `User/Callsign`,
   then the Core's `StationCallsign`; its grid from `Roundtable/GridSquare`,
-  then `User/GridSquare` (design 7.1). A Core with no callsign does not
-  connect.
+  then `User/GridSquare` (design 7.1).
+- **What a Core sends.** A malformed callsign or grid in `presence` is a
+  protocol error (5.1), so a Core checks both against these rules before it
+  connects and never sends one the server would refuse:
+  - A Core with no callsign, or with a callsign that is not a callsign by
+    the rule above (a hyphen, a space, too long), does not connect, and its
+    source text on the Spot Hub says why, naming the setting to fix.
+  - A grid of 8 characters (an extended locator such as `EM73tu42`) is cut
+    to its first 6. A grid that is then not a grid by the rule above (2
+    characters, 10, letters out of range, empty) is sent as `null`, and the
+    Core still connects.
 
 ## 5. Messages
 
@@ -449,10 +470,11 @@ After `hidden` (5.3.14) every station kind except `weblink` and
   station's rows while it is present in a room (design 12.1).
 - With `spki` and `sig`: the server checks the key is a canonical P-256 key,
   derives the Roundtable id (4.1), and verifies `sig` over the transcript of
-  4.3. A key that is not canonical, or a signature that does not verify,
-  closes the connection with 4001.
-- With `key`: the server looks up its hash (4.2). An unknown key closes with
-  4001; a revoked key closes with 4004.
+  4.3. A key that is not canonical, or a signature that does not verify, is
+  answered with `error` `bad-sign-in` and the close 4001.
+- With `key`: the server looks up its hash (4.2). An unknown key is answered
+  with `error` `bad-sign-in` and the close 4001; a revoked key closes with
+  4004.
 - `spki` and `key` together, neither, or `spki` without `sig`, is a protocol
   error.
 - On success the server answers `welcome` and then `rooms`. A newer
@@ -474,10 +496,10 @@ After `hidden` (5.3.14) every station kind except `weblink` and
   slice is transmitting.
 - `callsign`: a Core sends its callsign (4.5); `null` from a Core is refused
   with `error` `not-allowed` and the presence is not applied. A key station
-  may send anything or `null`; it is ignored and the key page's callsign is
-  used.
+  may send a callsign or `null`; either is ignored and the key page's
+  callsign is used.
 - `grid`: the station's grid, or `null` for none. For a key station `null`
-  means the key page's grid.
+  means the key page's grid. A Core sends only what 4.5 allows.
 - `atRadio`: whether anyone is at the radio (design D14, 10.1). False marks
   the station AWAY (6.4).
 - Refused: over the presence limit (`error` `rate`, with `retryAfterMs`; a
@@ -675,8 +697,9 @@ Asks for a one-time web sign-in link (design 7.4). Answered with
 {"type":"challenge","nonce":"<nonce>"}
 ```
 
-First on every `/v1/station` connection. The nonce is signed in `hello`
-(4.3); a key station ignores it.
+First on every `/v1/station` connection the server accepts; a connection
+over a cap gets `error` `rate` instead, then close 1013 (3.1, 9.1). The
+nonce is signed in `hello` (4.3); a key station ignores it.
 
 #### 5.4.2 welcome
 
@@ -715,7 +738,12 @@ Changes to the band list since the last `rooms` or `roomsDelta`, with
 `gen` one more than the last: rooms that opened (`add`), rooms whose summary
 changed (`change`, the whole new summary), rooms that closed (`remove`). Sent
 at most every 2 s per connection (6.11). A room appears in at most one of
-the three arrays.
+the three arrays. Changes collected for one `roomsDelta` are merged against
+the band list the connection last received: a room that opened and closed
+since then is in none of the arrays; a room that closed and opened again on
+the same id is in `change` with its new summary; a room that opened and then
+changed is in `add` with its latest summary; a room that changed and then
+closed is in `remove` only.
 
 #### 5.4.5 room
 
@@ -884,9 +912,11 @@ regions' allocations, so a room never depends on where its stations are.
 - **Candidate rooms.** A room is a candidate until one of its slices becomes
   a member (6.4). A candidate is not listed, has no view and no id in use,
   and vanishes when its last slice leaves. So a station tuning across a band
-  makes no rooms. When a slice in a candidate becomes a member the room
-  **opens**: it gets a new opening id and is listed, and the station gets
-  its view.
+  makes no rooms. The server sends nothing about a candidate, so a slice in
+  one has no room id yet: a Core shows it as joining with room id `null`.
+  When a slice in a candidate becomes a member (after 10 s, or at once on
+  keying, 6.4) the room **opens**: it gets a new opening id and is listed,
+  and the station gets its view.
 - The center is fixed while the room lives. It never moves when its first
   station leaves (design 8.1).
 - A room **lives** while it has members, and **closes** 10 minutes after its
@@ -900,7 +930,8 @@ regions' allocations, so a room never depends on where its stations are.
   openings of one id as one room.
 - **Restart.** On a server restart, rooms active in the last 10 minutes are
   reloaded from the database with their ids and centers, as live rooms with
-  no members; stations rejoin them (design 13).
+  no members; stations rejoin them (design 13). A reloaded room's close timer
+  starts at the restart: one no member rejoins closes 10 minutes after it.
 - **Folded.** A room whose members are all AWAY, which has been open at
   least 2 hours and in which no turn started in the last 2 hours, is listed
   folded with the quiet rooms (summary `folded` true, design C18).
@@ -934,7 +965,13 @@ regions' allocations, so a room never depends on where its stations are.
 
 These are normative for a Core and are what other software should do.
 
-- **Presence**: as 5.3.2, on change at most once a second, and every 10 s.
+- **Presence**: as 5.3.2, on change, and every 10 s while nothing changes.
+  The limit's window is half-open (9.1), so a Core spaces its presence
+  messages at least 1100 ms apart, which keeps clock jitter from tripping
+  it.
+- **Callsign and grid**: only values the server accepts, as 4.5 says: no
+  connection without a valid callsign, an 8-character grid cut to 6, any
+  other grid that is not 4 or 6 characters sent as `null`.
 - **Readings**: once a second for each slice that is a member and not keyed.
   A Core sends the slice's `signalStrengthDbm`, only when its
   `meterReadingNs` has advanced since the last one sent, and never while the
@@ -984,6 +1021,16 @@ such reading.
   ending open nothing.
 - **Quiet.** An open unknown turn ends when no member is keyed and no
   present reading has arrived for 3 s (at `L` + 3000 ms); its end is `L`.
+- **A talker leaving.** When a talker's row leaves the room for any reason
+  (its connection closes or is replaced, 30 s with nothing from the station,
+  its slice moves out of the room or is no longer listed, `hidden`), it is
+  no longer keyed there, at that moment, with no 3-second wait: a talking
+  turn of its that is open and not ending ends at that moment; one already
+  ending ends at once with its end at the unkey, as it would have. In a
+  doubled turn the talker's leaving counts as its unkeying, and the doubled
+  rules above apply at that moment. A station that comes back (a reconnect,
+  or its slice tuned back) joins again as a new row, and keying then opens a
+  new turn; it never continues the old one.
 - A room whose last member leaves ends its open turn at that moment, with no
   wait. Open turns end at a server restart.
 
@@ -991,7 +1038,8 @@ such reading.
 C19):
 
 - Each keyed member has its own talking turn, opening when it keys, ending as
-  above (with the same 3-second continuation), whoever else is keyed.
+  above (with the same 3-second continuation, and at once when its talker
+  leaves), whoever else is keyed.
 - An unknown turn opens and ends as above, only while no member is keyed and
   no talking turn is open.
 
@@ -1028,7 +1076,10 @@ member before any message read at that moment is applied.
 
 - `callsign` with `nth`: two stations with one callsign in one room show as
   `W4XYZ` and `W4XYZ (2)` in joining order (design 7.1); `nth` is that
-  number and a screen adds " (2)" when it is over 1.
+  number and a screen adds " (2)" when it is over 1. A row keeps its `nth`
+  for as long as it stays; rows are never renumbered, so when the first
+  `W4XYZ` leaves, `W4XYZ (2)` stays `(2)`, and a row joining later takes the
+  lowest number no present row with that callsign holds.
 - `km`: the great-circle distance from the row's grid to the talker's grid,
   when the room has exactly one talking turn open (ending included), both
   grids are known, and the row is not the talker's; otherwise `null`. Each
@@ -1047,6 +1098,11 @@ member before any message read at that moment is applied.
   joining order; ordering for display is the screen's.
 - `away`, `joining`, `keyed`, `software`, `softwareVersion` as sent.
   `you` is true on the station's own row in views sent to it.
+- A turn's `heard` (it feeds the talker's "9 hear you" line) counts the stations
+  whose latest reading stored with that turn (6.7) has `present` true,
+  whether or not their rows are still in the room. A station counts once
+  whatever its number of readings. A doubled turn's `heard` is always 0,
+  since its readings are never shown as either talker's (6.7).
 
 ### 6.9 Naming turns
 
@@ -1067,13 +1123,19 @@ member before any message read at that moment is applied.
 
 - **Cleaning** (design 12.4), in this order: Unicode NFC; CR LF and lone CR
   become LF; every other control character (Unicode category Cc) is removed;
-  leading and trailing white space is removed. Then the text must be 1 to 500
-  code points and at most 10 lines (9 LFs); more is `too-long`, nothing is
-  `not-allowed`. The server stores the cleaned text and screens clean it again
-  when shown.
+  these invisible and direction-changing format characters are removed:
+  U+200B (zero width space), U+200E and U+200F (direction marks), U+202A to
+  U+202E (direction embeddings and overrides), U+2060 (word joiner), U+2066
+  to U+2069 (direction isolates) and U+FEFF (byte order mark); leading and
+  trailing white space is removed. U+200C and U+200D (zero width non-joiner
+  and joiner) stay, since emoji sequences and some scripts need them. Then
+  the text must be 1 to 500 code points and at most 10 lines (9 LFs); more is
+  `too-long`, nothing is `not-allowed`. The server stores the cleaned text
+  and screens clean it again when shown.
 - **Formatting**, the only markup: `**bold**`, `*italic*`, and links: a run
-  starting `http://` or `https://` up to the next white space is a link,
-  shown with its full address. Everything else is plain text. Screens escape
+  starting `http://` or `https://` up to the next white space or the next
+  format character (Unicode category Cf, such as a U+200D left after
+  cleaning) is a link, shown with its full address. Everything else is plain text. Screens escape
   all text (design C13).
 - A message carries `dbm`: the sender's latest reading in that room, if it is
   stored with a turn open when the message was posted; otherwise `null`
@@ -1135,7 +1197,8 @@ server  -> station:  {"type":"rooms","gen":1,"rooms":[...]}
 ```
 
 A rendezvous-prefixed signature, a signature naming another host, another
-nonce or a flipped bit closes the connection with 4001 (R-RT-2).
+nonce or a flipped bit is answered with `error` `bad-sign-in` and closes the
+connection with 4001 (R-RT-2). No `hello` within 10 s closes it with 4005.
 
 ### 7.2 Sign-in with a website key
 
@@ -1146,7 +1209,8 @@ server  -> station:  {"type":"welcome","station":<key id>,"kind":"key","callsign
 server  -> station:  {"type":"rooms","gen":1,"rooms":[...]}
 ```
 
-An unknown key closes with 4001, a revoked key with 4004.
+An unknown key is answered with `error` `bad-sign-in` and closes with 4001;
+a revoked key closes with 4004.
 
 ### 7.3 Joining a room
 
@@ -1214,9 +1278,10 @@ station:            closes the station connection
 station -> server:  opens /v1/live, watchBand all, watch the rooms it shows
 ```
 
-A Core that starts hidden opens only `/v1/live`. For the archive while
-hidden it opens a brief station connection: `hello`, then `weblink` or
-`deleteArchive`, never `presence`, then closes (design 10.2).
+A Core that starts hidden opens only `/v1/live`, and so does a Core whose
+first-run question is unanswered (design D25). For the archive while hidden
+or unanswered it opens a brief station connection: `hello`, then `weblink`
+or `deleteArchive`, never `presence`, then closes (design 10.2).
 
 ### 7.9 Web sign-in link
 
@@ -1239,10 +1304,12 @@ server  -> station: {"type":"notice","code":"archive-deleted","text":"Your Round
 
 - A refused station or live request gets `error` (5.4.11), or `posted` with
   `ok` false for `post` (5.4.7); the connection stays.
-- A protocol error (5.1) closes with 4002 and no message. A sign-in failure
-  closes with 4001 (after `error` `version` for a version the server does
-  not speak). The connection caps send `error` `rate` with `about` `null`,
-  then close with 1013.
+- A protocol error (5.1) closes with 4002 and no message. A refused sign-in
+  gets `error` `bad-sign-in` (a bad key, signature or website key) or
+  `version` (a version the server does not speak), then closes with 4001.
+  A revoked website key closes with 4004 and no message; no `hello` in time
+  closes with 4005 and no message. A connection over a cap gets `error`
+  `rate` with `about` `null` in place of `challenge`, then close 1013.
 - `reason` is the exact text below, which a screen may show as sent. No
   reason names a source, a file or a code.
 
@@ -1266,10 +1333,11 @@ server  -> station: {"type":"notice","code":"archive-deleted","text":"Your Round
 | `not-allowed` | "You can read up to 4 other frequencies at once." | a fifth `read` |
 | `not-allowed` | "You can watch up to 4 frequencies at once." | a fifth `watch` |
 | `not-allowed` | "To delete your archive, confirm with the exact words asked for." | `deleteArchive` with other words |
-| `not-allowed` | "This station needs a callsign before it can report." | `presence` with `callsign` `null` from a Core |
+| `not-allowed` | "This station needs a callsign before it can send its presence." | `presence` with `callsign` `null` from a Core |
 | `not-allowed` | "There is nothing to send." | `post` with nothing left after cleaning |
 | `not-found` | "That room, turn or message is not here." | `read`, `watch`, `resync`, `delete`, `name`, `report` naming nothing the server holds or the connection views |
 | `version` | "This version of the Roundtable protocol is not supported. Updating the software may help." | `hello` with `v` other than 1; then close 4001 |
+| `bad-sign-in` | "Roundtable did not accept this station's key or signature." | `hello` with a key that is not canonical, a signature that does not verify or an unknown website key; then close 4001 |
 | `server` | "Roundtable can't save messages right now." | `post` while the database cannot save (design 13) |
 
 A receiver treats a code it does not know as a refusal it cannot act on
@@ -1312,12 +1380,16 @@ Per station unless stated; the station's limits are sent in `welcome`
 | Live sockets | 4 per address group; 500 in all | | `error` `rate`, close 1013 |
 | Rooms watched per live socket | 4 | | refused, `error` `not-allowed` |
 | Inbound message | 16384 bytes | | close 1009 |
-| Outbound queue per connection | 1024 messages or 4194304 bytes (4 MiB) | | room `delta`s and `roomsDelta`s are dropped (a gap, 6.11); past twice that the connection is closed with 1000 |
+| Outbound queue per connection | 1024 messages or 4194304 bytes (4 MiB) | | room `delta`s and band-list changes are dropped (a gap, 6.11), except a `delta` with `closed` true and a room's removal from the band list, which are always queued; past twice that the connection is closed with 1000 |
 
 - **Windows.** A limit of N a second, a minute, an hour or a day counts in
   a sliding window of that length on the server's clock: a request is
   refused when N were accepted in the window, with `retryAfterMs` until the
-  oldest leaves it. A refused request is not counted.
+  oldest leaves it. A refused request is not counted. The window is
+  half-open: a request at time T counts those accepted after T less the
+  window's length, so with 1 a second a presence exactly 1000 ms after the
+  last is accepted and one at 999 ms is refused. Senders leave a margin (a
+  Core spaces presence at least 1100 ms apart, 6.5).
 - **Address groups.** One IPv4 address (an IPv4-mapped IPv6 address counts as
   its IPv4 address), or one IPv6 /64 (design 9.5). Connections are counted
   at connect, before sign-in.
@@ -1330,7 +1402,7 @@ Per station unless stated; the station's limits are sent in `welcome`
 
 | Timer | Value | Section |
 | --- | --- | --- |
-| `hello` after connect | 10 s, else close 4001 | 3.1 |
+| `hello` after connect | 10 s, else close 4005 | 3.1 |
 | Ping interval; silence before close | 20 s; 45 s | 2.3 |
 | Presence repeat (station side) | 10 s | 6.5 |
 | A station silent, its rows leave | 30 s | 6.4 |
@@ -1435,16 +1507,21 @@ ascending order of center frequency. An unknown band is `400`.
 `GET /v1/api/callsign/<callsign>`
 
 ```
-{"time":1800000004000,"callsign":"W4XYZ","stations":[{"software":"Example Logger","softwareVersion":"3.1","rooms":[{"room":"usb-14212000","ref":"w2c6tz7e","callsign":"W4XYZ/P","nth":1,"joining":false,"away":false}]}]}
+{"time":1800000004000,"callsign":"W4XYZ","rows":[{"callsign":"W4XYZ/P","room":"usb-14212000","ref":"w2c6tz7e"},{"callsign":"W4XYZ","room":"lsb-7188000","ref":"q7h2m4ka"}]}
 ```
 
-- The live state of every station whose current callsign has the same base
-  callsign as the one asked for (4.5): one entry per station that has a row
-  in a live room, each with its rows. A station with no row is not listed.
-  Entries are ordered by their first row's room id and ref; nothing in an
-  entry lasts beyond the response or links it to another (design 9.4).
+- The live rows whose callsign has the same base callsign as the one asked
+  for (4.5): one flat entry per row in a live room, members and joining,
+  each with the row's `callsign`, its `room` and its `ref`. Rows are ordered
+  by room id, then ref. Nothing says which rows belong to one station, so
+  the answer never links refs across rooms (design 7.1, 9.4).
 - `callsign` is the asked-for callsign as the server normalizes it. A
   string that is not a callsign is `400`.
+- A path segment cannot hold `/`, so a callsign with a prefix or suffix is
+  sent with each `/` written as `%2F` (`/v1/api/callsign/VE3%2FW4XYZ`). Since
+  rows are matched on the base callsign, asking for the base callsign alone
+  (`/v1/api/callsign/W4XYZ`) gives the same answer, and clients may do that
+  instead. An unencoded `/` in the path is `404`.
 
 ### 10.6 Errors
 
@@ -1454,7 +1531,7 @@ ascending order of center frequency. An unknown band is `400`.
 | --- | --- | --- |
 | 400 | `bad-request` | "That request could not be read." |
 | 404 | `not-found` | "That room, turn or message is not here." |
-| 405 | `not-allowed` | "Only GET is supported." |
+| 405 | `not-allowed` | "Only GET and HEAD are supported." |
 | 429 | `rate` | "Too many at once. Try again in a moment." (with `Retry-After` in whole seconds, at least 1) |
 | 503 | `server` | "Roundtable can't answer right now." |
 
@@ -1602,10 +1679,11 @@ A core runner's station key is its Core's: at the behaviour `hello`,
 | `signin-spki` | service, core | challenge, `hello` with a station key, `welcome`, `rooms` |
 | `signin-key` | service | sign-in with a website key: `welcome` `kind` `key` with the key page's callsign and grid |
 | `signin-key-revoked` | service | a revoked key: close 4004 |
-| `signin-key-unknown` | service | a key never issued: close 4001 |
-| `signin-rendezvous-prefix`, `signin-other-host`, `signin-other-nonce`, `signin-flipped-bit` | service | each bad signature: close 4001 |
+| `signin-key-unknown` | service | a key never issued: `error` `bad-sign-in`, close 4001 |
+| `signin-rendezvous-prefix`, `signin-other-host`, `signin-other-nonce`, `signin-flipped-bit` | service | each bad signature: `error` `bad-sign-in`, close 4001 |
 | `signin-version` | service | `v` 2: `error` `version`, close 4001 |
-| `signin-timeout` | service | nothing at 9999 ms; close 4001 at 10000 ms |
+| `signin-timeout` | service | nothing at 9999 ms; close 4005 at 10000 ms |
+| `connection-cap` | service | 8 station connections from one address each get `challenge`; the 9th gets `error` `rate` (`about` `null`, `retryAfterMs` 5000) and close 1013; another address still gets `challenge` |
 | `signin-presence-first` | service | `presence` before `hello`: close 4002 |
 | `signin-replaced` | service | the same key on a second connection: `welcome` there, close 4003 on the first |
 | `unknown-kind-closes` | service | an unknown kind after sign-in: close 4002 |
@@ -1614,6 +1692,7 @@ A core runner's station key is its Core's: at the behaviour `hello`,
 | `reading-keyed-slice` | service | the room opens at 10 s; keying opens a talking turn (a `delta`); a reading from the keyed slice: `error` `slice-keyed` |
 | `post-not-member` | service | a post from a joining station: `posted` `not-member` |
 | `post-away` | service | an AWAY member's post: `posted` `away` |
+| `post-cleaned` | service | a post with a zero width space, a direction override inside a link, CR LF, a control character and a kept zero width joiner: stored and sent cleaned (6.10) |
 | `post-accepted` | service | `posted` ok, the message `delta`, and the band-list change held to 2 s after the last `roomsDelta` |
 | `hidden-ends-presence` | service | `hidden`: the row leaves a live reader's view at once; nothing more to the station; then `presence` gets `error` `hidden` |
 | `resync` | service | `resync` answers a full `rooms` with `gen` 1; a room not in view is `not-found` |
@@ -1666,6 +1745,8 @@ is allowed. They hold the rules of 6.4, 6.6 and 6.7 (R-RT-4, R-RT-5).
 | `digital` | in `digu`, two keyed members each with their own turn, readings while both are keyed in neither, readings with one keyed in its turn, and an unknown turn after |
 | `join-dwell` | joining until 10 s, readings while joining dropped, keying during the dwell making a member at once |
 | `two-slices-one-room` | a station's second slice in one room: its readings dropped |
+| `talker-leaves` | a keyed talker's slice no longer listed ends its turn at that moment; coming back and keying opens a new turn; 30 s of silence from a keyed talker ends its turn when its row leaves |
+| `key-in-candidate` | keying in a candidate room makes the slice a member at once, opening the room and a talking turn; readings while joining dropped |
 
 ### 11.6 Running the server's runner
 

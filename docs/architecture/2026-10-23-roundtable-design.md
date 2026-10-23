@@ -330,7 +330,7 @@ On a gap in generations a client sends `resync` and gets a full `rooms` or `room
 ### 9.4 Live (read-only)
 
 - `/v1/live` takes `watchBand` (a band or all), `watch` / `unwatch` (a room, at most 4 at once) and `resync`, and sends `rooms`, `roomsDelta`, `room` and `delta` as above. No sign-in.
-- `/v1/api/rooms`, `/v1/api/room/<family>/<center Hz>`, `/v1/api/room/<family>/<center Hz>/messages`, `/v1/api/callsign/<callsign>` (live state of every station using that callsign: one entry per station, each with its rooms and row refs, and no marker that lasts beyond the response) answer JSON.
+- `/v1/api/rooms`, `/v1/api/room/<family>/<center Hz>`, `/v1/api/room/<family>/<center Hz>/messages`, `/v1/api/callsign/<callsign>` (live rows using that callsign: one flat entry per room row with its callsign, room and row ref, never grouped by station, so refs are not linked across rooms) answer JSON.
 - Archives are never in the read API (D11).
 
 ### 9.5 Limits (C7)

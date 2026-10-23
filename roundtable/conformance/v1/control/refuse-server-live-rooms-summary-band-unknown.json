@@ -1,0 +1,25 @@
+{
+  "from": "server",
+  "to": "live",
+  "wire": {
+    "type": "rooms",
+    "gen": 1,
+    "rooms": [
+      {
+        "id": "usb-14212000",
+        "band": "21m",
+        "family": "usb",
+        "hz": 14212000,
+        "state": "talking",
+        "talkers": [
+          "K4ABC"
+        ],
+        "members": 2,
+        "messages": 2,
+        "last": 1800000004000,
+        "folded": false
+      }
+    ]
+  },
+  "decodes": false
+}

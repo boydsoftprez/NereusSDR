@@ -834,6 +834,16 @@
       "kind": "control"
     },
     {
+      "id": "refuse-server-live-rooms-summary-band-unknown",
+      "file": "control/refuse-server-live-rooms-summary-band-unknown.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-live-error-about-number",
+      "file": "control/refuse-server-live-error-about-number.json",
+      "kind": "control"
+    },
+    {
       "id": "refuse-server-live-welcome",
       "file": "control/refuse-server-live-welcome.json",
       "kind": "control"
@@ -969,6 +979,16 @@
       "kind": "session"
     },
     {
+      "id": "connection-cap",
+      "file": "sessions/connection-cap.json",
+      "kind": "session"
+    },
+    {
+      "id": "post-cleaned",
+      "file": "sessions/post-cleaned.json",
+      "kind": "session"
+    },
+    {
       "id": "talking",
       "file": "turns/talking.json",
       "kind": "turns"
@@ -1016,6 +1036,16 @@
     {
       "id": "two-slices-one-room",
       "file": "turns/two-slices-one-room.json",
+      "kind": "turns"
+    },
+    {
+      "id": "talker-leaves",
+      "file": "turns/talker-leaves.json",
+      "kind": "turns"
+    },
+    {
+      "id": "key-in-candidate",
+      "file": "turns/key-in-candidate.json",
       "kind": "turns"
     }
   ]
