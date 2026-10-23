@@ -54,6 +54,10 @@
 //               (MicModeKeeper.h), before the helper's first engine call,
 //               and Warmed says what came of it.  J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-23: on Windows the helper's immediate exit is TerminateProcess,
+//               not std::_Exit (ExitProcess), so no DLL static destructor
+//               runs on the reader thread.  J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CaptureHelper.h"
@@ -110,6 +114,10 @@
 #ifdef Q_OS_WIN
 #include <fcntl.h>
 #include <io.h>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #else
 #include <csignal>
 #include <unistd.h>
@@ -198,6 +206,19 @@ qint64 readInput(char* buffer, qint64 size)
         }
         return static_cast<qint64>(got);
     }
+}
+
+void exitProcessNow(int code)
+{
+    std::fflush(stderr);
+#ifdef Q_OS_WIN
+    ::TerminateProcess(::GetCurrentProcess(), static_cast<UINT>(code));
+    // Only reached if the process could not end itself.
+    std::fprintf(stderr, "nereus-audio-capture: TerminateProcess failed, error %lu\n",
+                 static_cast<unsigned long>(::GetLastError()));
+    std::fflush(stderr);
+#endif
+    std::_Exit(code);
 }
 
 } // namespace CaptureHelperIo
@@ -290,11 +311,21 @@ struct CommandQueue {
     std::deque<ParentCommand> commands;
 };
 
+// Ends the helper at once with code 0, from whichever thread sees the
+// reason (usually the stdin reader, while the main thread may be inside a
+// native audio call).  2026-10-23: on Windows std::_Exit is ExitProcess,
+// which kills the main thread mid-call and then runs every DLL's
+// DLL_PROCESS_DETACH, and with it the static destructors of
+// libNereusCore, Qt and the rest, on this thread.  On the STRIX that tore
+// down the helper's statics after a Warm and aborted in libgcc's emutls
+// (0x40000015 in libgcc_s_seh-1.dll), each time the Core closed its first
+// helper at startup.  TerminateProcess runs none of that.  On macOS and
+// Linux std::_Exit is the _exit system call, which runs nothing either
+// (CaptureHelperIo::exitProcessNow).
 [[noreturn]] void exitNow(const char* why)
 {
     std::fprintf(stderr, "nereus-audio-capture: exiting: %s\n", why);
-    std::fflush(stderr);
-    std::_Exit(0);
+    CaptureHelperIo::exitProcessNow(0);
 }
 
 // Parses one parent record.  Anything but a valid Configure / AttachRing /
