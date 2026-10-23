@@ -1,5 +1,9 @@
 // NereusSDR for iOS: media control with the Core: the media connection's start and signalling, display endpoints, keyframes and audio
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-22: NSDC v2: start declares displayCodecVersion 2, a replacement keeps it,
+//   keyframes are asked for on v1 connections only, and every released frame is yielded.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import CryptoKit
 import Foundation
@@ -338,6 +342,10 @@ public actor MediaControlClient {
         /// This connection's `start` declared `spectrumPictureVersion`, so
         /// its spectrum contexts carry `pictureGeneration`.
         var spectrumPictureDeclared = false
+        /// This connection's `start` declared `displayCodecVersion` 2, so
+        /// the Core sends it NSDC v2 rows, which need no keyframe: none is
+        /// asked for when a context is accepted or a replacement takes over.
+        var displayCodecDeclared = false
         /// This connection's `start` declared `txMonitorAudioVersion`, so
         /// it may carry `monitor-audio`.
         var txMonitorDeclared = false
@@ -1013,6 +1021,12 @@ public actor MediaControlClient {
             started.spectrumPictureDeclared = true
             payload["spectrumPictureVersion"] = .number(1)
         }
+        // NSDC v2: a client the Core told displayCodecVersion 2 adds it, and
+        // the Core then sends this connection v2 display rows.
+        if gates.displayCodecV2 {
+            started.displayCodecDeclared = true
+            payload["displayCodecVersion"] = .number(2)
+        }
         // A client the Core told txMonitorAudioVersion adds it, and may
         // then ask where the transmit monitor goes (`monitor-audio`).
         if gates.txMonitorAudio {
@@ -1283,6 +1297,8 @@ public actor MediaControlClient {
         candidate.audioBitrateSent = current.audioBitrateSent
         candidate.txDisplayDeclared = current.txDisplayDeclared
         candidate.spectrumPictureDeclared = current.spectrumPictureDeclared
+        // The Core's replacement inherits the codec the connection agreed.
+        candidate.displayCodecDeclared = current.displayCodecDeclared
         candidate.txMonitorDeclared = current.txMonitorDeclared
         if current.microphoneSsrc != nil {
             candidate.microphoneSsrc = Self.microphoneSsrc(forConnection: id)
@@ -1456,9 +1472,12 @@ public actor MediaControlClient {
             guard routeGeneration == generation, media?.id == candidate.id else { return }
             await display(datagram, connection: candidate.id)
         }
-        for id in endpoints.keys.sorted() {
-            guard routeGeneration == generation, media?.id == candidate.id else { return }
-            await requestKeyframe(endpointId: id)
+        // NSDC v2 rows need no keyframe, so only a v1 connection asks.
+        if !candidate.displayCodecDeclared {
+            for id in endpoints.keys.sorted() {
+                guard routeGeneration == generation, media?.id == candidate.id else { return }
+                await requestKeyframe(endpointId: id)
+            }
         }
         guard routeGeneration == generation, media?.id == candidate.id else { return }
         if pendingMove { await attemptPendingReplacement() }
@@ -2307,7 +2326,10 @@ public actor MediaControlClient {
         }
         endpoints[context.endpointId] = endpoint
         eventSink.yield(.context(context))
-        await requestKeyframe(endpointId: context.endpointId)
+        // NSDC v2 rows need no keyframe, so only a v1 connection asks.
+        if !(media?.displayCodecDeclared ?? false) {
+            await requestKeyframe(endpointId: context.endpointId)
+        }
     }
 
     /// Whether two contexts of an endpoint show the same picture: the same
@@ -2358,12 +2380,16 @@ public actor MediaControlClient {
         let result = decoder.decode(datagram)
         switch result.disposition {
         case .accepted:
-            if let frame = result.frame {
+            // NSDC v2 may release two frames at once (a held part completed
+            // late, then the newer one), oldest first.
+            for frame in result.frames {
                 eventSink.yield(.displayFrame(frame))
             }
         case .needKeyframe:
+            // Only an NSDC v1 frame asks for a keyframe.
             await requestKeyframe(endpointId: endpointId)
-        default:
+        case .held, .rejected:
+            // A held part waits for its partner; a refusal changes nothing.
             break
         }
     }
