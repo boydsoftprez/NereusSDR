@@ -8131,6 +8131,11 @@ nereus_add_test(tst_spectrum_widget_display_signals)
 # spacing and 10 px text draw what they drew before. Test sandbox.
 nereus_add_test(tst_spectrum_widget_additions)
 
+# NB Blank's decision (WaterfallImpulseBlanker, NereusSDR-original, 2026-10-22):
+# a row's median against the median of accepted rows, at most two rows blanked
+# in a row. Fence pulses blanked, loud stations never, a lasting rise followed.
+nereus_add_test(tst_waterfall_impulse_blanker)
+
 # Display pill plan Task 3: the waterfall level model under Clarity (Black
 # Level and Color Gain against the noise floor, up = blacker), what the
 # renderer colours with in each mode, and the one-time conversion of stored

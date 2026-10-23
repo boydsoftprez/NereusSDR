@@ -1873,6 +1873,7 @@ set(GUI_SOURCES
     src/gui/VaxFirstRunDialog.cpp
     src/gui/VaxFirstRunCheck.cpp
     src/gui/SpectrumWidget.cpp
+    src/gui/WaterfallImpulseBlanker.cpp
     src/gui/WheelStepAccumulator.cpp
     src/gui/PanadapterApplet.cpp
     src/gui/PanadapterStack.cpp
