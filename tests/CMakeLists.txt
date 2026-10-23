@@ -11074,6 +11074,10 @@ endif()
 # document, section 12.8): the Core's relay-leg runner over the relay
 # fixtures in rendezvous/conformance/v1/relay/, and the leg's own rules.
 # Loopback only.
+# 2026-10-22: Happy Eyeballs (RFC 8305) for WebSockets to a host name: a
+# silent IPv6 address (a full accept queue on ::1) and an answering IPv4 one,
+# the in-process CONNECT tunnel, and the cases left as before. Loopback only.
+nereus_add_test(tst_happy_eyeballs EXTRA_LABELS session)
 nereus_add_test(tst_relay_leg EXTRA_LABELS session)
 target_compile_definitions(tst_relay_leg PRIVATE
     NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")

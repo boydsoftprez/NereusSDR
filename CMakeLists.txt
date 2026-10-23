@@ -1662,6 +1662,7 @@ list(APPEND CORE_SOURCES
     src/core/session/MediaTunnel.cpp
     src/core/session/NetworkTrouble.cpp
     src/core/session/SystemProxy.cpp
+    src/core/session/HappyEyeballs.cpp
     src/core/session/media/RtpDuplicateFilter.cpp
     src/core/session/media/DualPathAudio.cpp
 )

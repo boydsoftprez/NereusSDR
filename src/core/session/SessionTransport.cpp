@@ -20,9 +20,15 @@
 //                                    (TCP_INFO and unsent bytes on Linux,
 //                                    read only). AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-22  J.J. Boyd / KG4VCF  A socket that runs through a Happy
+//                                    Eyeballs tunnel reports the network
+//                                    connection's addresses, TCP info
+//                                    and TCP_NODELAY. AI-assisted via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/SessionTransport.h"
+#include "core/session/HappyEyeballs.h"
 
 #include <QCryptographicHash>
 #include <QHostAddress>
@@ -63,6 +69,15 @@ std::optional<NetworkPathSnapshot> socketNetworkPathSnapshot(
                     ? NetworkPathSnapshot::Kind::Relayed : NetworkPathSnapshot::Kind::Direct;
     path.carrier = carrier;
     path.endpoints = NetworkPathSnapshot::Endpoints::Socket;
+    // 2026-10-22: through a Happy Eyeballs tunnel, the addresses of the
+    // connection that reaches the far end, not the loopback hop.
+    if (const QAbstractSocket* upstream = HappyEyeballs::upstreamOf(socket)) {
+        path.localAddress = numeric(upstream->localAddress());
+        path.localPort = upstream->localPort();
+        path.remoteAddress = numeric(upstream->peerAddress());
+        path.remotePort = upstream->peerPort();
+        return path;
+    }
     path.localAddress = numeric(socket->localAddress());
     path.localPort = socket->localPort();
     path.remoteAddress = numeric(socket->peerAddress());
@@ -167,13 +182,18 @@ SessionLinkDiagnostics WebSocketTransport::linkDiagnostics() const
     if (inner->state() != QAbstractSocket::ConnectedState) {
         return link;
     }
+    // 2026-10-22: through a Happy Eyeballs tunnel, the TCP connection that
+    // crosses the network, not the loopback hop, for TCP_NODELAY and
+    // TCP_INFO alike.
+    QAbstractSocket* network = HappyEyeballs::upstreamOf(m_socket);
+    QAbstractSocket* carrier = network != nullptr ? network : inner;
     // Read, never set: the socket's options are left as they are.
-    const QVariant noDelay = inner->socketOption(QAbstractSocket::LowDelayOption);
+    const QVariant noDelay = carrier->socketOption(QAbstractSocket::LowDelayOption);
     if (noDelay.isValid()) {
         link.noDelay = noDelay.toInt() != 0;
     }
 #ifdef Q_OS_LINUX
-    const qintptr descriptor = inner->socketDescriptor();
+    const qintptr descriptor = carrier->socketDescriptor();
     if (descriptor >= 0) {
         const int fd = static_cast<int>(descriptor);
         struct tcp_info info {};
@@ -243,6 +263,11 @@ QString WebSocketTransport::peerDescription() const
     if (m_socket == nullptr) {
         return QStringLiteral("<detached>");
     }
+    if (const QAbstractSocket* upstream = HappyEyeballs::upstreamOf(m_socket)) {
+        return QStringLiteral("%1:%2")
+            .arg(upstream->peerAddress().toString())
+            .arg(upstream->peerPort());
+    }
     return QStringLiteral("%1:%2")
         .arg(m_socket->peerAddress().toString())
         .arg(m_socket->peerPort());
@@ -253,7 +278,8 @@ QString WebSocketTransport::peerAddress() const
     if (m_socket == nullptr) {
         return {};
     }
-    QHostAddress address = m_socket->peerAddress();
+    const QAbstractSocket* upstream = HappyEyeballs::upstreamOf(m_socket);
+    QHostAddress address = upstream != nullptr ? upstream->peerAddress() : m_socket->peerAddress();
     // A dual-stack listener sees an IPv4 peer as ::ffff:a.b.c.d; it is one
     // address, recorded one way.
     bool isV4 = false;

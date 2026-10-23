@@ -13,6 +13,9 @@
 // 2026-10-16: The Core's explicit empty address list clears its saved Core
 // addresses, and the reached ones it no longer names, but for the one in
 // use. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-22: A saved paired Core's race (first connect and every retry)
+// also dials the addresses it announces on this network, matched by its
+// identity key. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "gui/GuiConnectionController.h"
 #include "core/security/StationLabel.h"
@@ -331,7 +334,12 @@ void GuiConnectionController::attachWindow(MainWindow* window)
                         : QUrl(target->connection.url) != QUrl(trusted.url))) {
                     return std::nullopt;
                 }
-                RemoteStationOptions current = connectionOptionsForTarget(*target);
+                // 2026-10-22: and where it announces itself on this network,
+                // so a retry also tries the LAN (seen live: every retry raced
+                // the remote access service alone while the Core was listed
+                // under Cores on this network).
+                RemoteStationOptions current =
+                    withAdvertisedAddresses(connectionOptionsForTarget(*target), self->m_lan.endpoints());
                 current.url = trusted.url;
                 return current;
             });
@@ -692,6 +700,27 @@ RemoteStationOptions GuiConnectionController::connectionOptionsForTarget(const S
     return options;
 }
 
+RemoteStationOptions GuiConnectionController::withAdvertisedAddresses(
+    RemoteStationOptions options, const QList<StationLanEndpoint>& endpoints)
+{
+    if (options.identityFingerprint.size() != kStationLanIdentityBytes || options.allowUnpinned) {
+        return options;
+    }
+    for (const StationLanEndpoint& endpoint : endpoints) {
+        // A malformed or schema-1 announcement carries no identity to match.
+        if (endpoint.announcement.identity != options.identityFingerprint
+            || encodeStationLanAnnouncement(endpoint.announcement).isEmpty()) {
+            continue;
+        }
+        const QString address = endpoint.url().toString();
+        if (RemoteStationOptions::isValidStationUrl(address)
+            && !options.directCandidates.contains(address)) {
+            options.directCandidates.append(address);
+        }
+    }
+    return options;
+}
+
 bool GuiConnectionController::isReadyToConnect(const RemoteStationOptions& connection)
 {
     if (!connection.isValidRemoteTarget()) { return false; }
@@ -844,7 +873,8 @@ void GuiConnectionController::connectTarget(const QString& key)
     } else if (key.startsWith(QLatin1String("saved:"))) {
         const auto target = m_store.target(key.mid(6));
         if (!target) { m_selector->setNotice(tr("That saved Core is no longer available.")); return; }
-        const RemoteStationOptions options = connectionOptionsForTarget(*target);
+        const RemoteStationOptions options =
+            withAdvertisedAddresses(connectionOptionsForTarget(*target), m_lan.endpoints());
         if (!isReadyToConnect(options)) {
             if (target->connection.url.isEmpty() && target->connection.isValidRemoteTarget()) {
                 const QString reason = !target->connection.reachFromAnywhere

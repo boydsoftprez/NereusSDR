@@ -14,6 +14,15 @@
 // Cores; plus Add a Core by code (AddCoreByCodeDialog) and Type an
 // address (the Core setup editor, which the Add Core button used to open).
 // =================================================================
+// Modification history (NereusSDR):
+//   2026-10-22: every column can be dragged wider or narrower; the columns
+//               fit their contents until the operator drags one, the list
+//               scrolls sideways when they do not fit, and every cell's
+//               tooltip holds its full text. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
+//   2026-10-22: fitted once, then grown only. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+// =================================================================
 
 #pragma once
 
@@ -68,6 +77,9 @@ public:
     QString selectedKey() const;
     void setSelectedKey(const QString& key);
 
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
 signals:
     void connectRequested(QString key);
     /// iPhone app Task 18: Pair on a Core on this network.
@@ -92,6 +104,9 @@ private:
     const ConnectionTargetRow* selectedTarget() const;
     void updateActions();
     QPushButton* makeButton(const QString& text, const QString& objectName);
+    /// Each column as wide as its widest cell (fitted when the list first
+    /// fills, then grown only), until the operator drags one.
+    void fitColumnsToContents();
 
     QTreeWidget* m_targetTree{nullptr};
     QLabel* m_discoveryStatusLabel{nullptr};
@@ -112,6 +127,12 @@ private:
     QList<ConnectionTargetRow> m_targets;
     bool m_canDisconnect{false};
     bool m_retrying{false};
+    /// A mouse button is down on the column header.
+    bool m_headerPressed{false};
+    /// The operator dragged a column: the widths are theirs from then on.
+    bool m_columnsSizedByUser{false};
+    /// The columns were fitted to a list with targets: grow only from now.
+    bool m_columnsFitted{false};
 };
 
 // iPhone app Task 18 (R-IOS-08): Add a Core by code. The operator types

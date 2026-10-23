@@ -4,6 +4,13 @@
 //
 // no-port-check: NereusSDR-original. R3 Core session presentation and actions.
 // =================================================================
+// Modification history (NereusSDR):
+//   2026-10-22: columnsResizeAndShowTheirWholeText. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-22: the widths grow only, and the sideways scroll is checked
+//               at a width the columns cannot fit. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+// =================================================================
 
 #include "gui/ConnectionSelector.h"
 #include "gui/CoreTargetEditor.h"
@@ -23,6 +30,8 @@
 #include <QSignalSpy>
 #include <QTest>
 #include <QTreeWidget>
+#include <QHeaderView>
+#include <QScrollBar>
 
 #include <algorithm>
 #include <functional>
@@ -66,6 +75,7 @@ private slots:
     void editorForgetsLastAddressesWhenTheCoreChanges();
     void editorOffersReachingTheCoreFromAnywhere();
     void controlsRemainReadableAndReachable();
+    void columnsResizeAndShowTheirWholeText();
     void rowSelectionNeverResizesTheWindow();
     void theCodeDialogNamesPlacesThatShowTheCode();
     void codeAloneIsTheNormalPairingDialogPath();
@@ -413,6 +423,126 @@ void ConnectionSelectorTest::controlsRemainReadableAndReachable()
         QCoreApplication::processEvents();
         QVERIFY(editor.grab().save(captures + QStringLiteral("/core-setup.png")));
     }
+}
+
+// 2026-10-22 (JJ: "unable to see the whole column info and unable to
+// resize"): Name was squeezed by a stretched layout ("KG4VCF/Anvilina_...")
+// and Status cut off ("Retrying Core (attemp..."), and no column could be
+// dragged. Every column is Interactive, fitted to its contents when the
+// list fills, the list scrolls sideways when they do not fit, every cell's
+// tooltip holds its full text, a dragged width survives the next refresh,
+// and the window itself resizes.
+void ConnectionSelectorTest::columnsResizeAndShowTheirWholeText()
+{
+    const QString longName = QStringLiteral("KG4VCF/Anvilina_PROIII_STRIX_bench_Core");
+    const QString longRadio = QStringLiteral("ANAN G2E (Saturn, advertised online)");
+    const QString longAddress = QStringLiteral("[2600:1700:6c40:3a10::19]:47910");
+    const QString longState = QStringLiteral("Retrying Core (attempt 14), remote access service");
+    ConnectionSelector selector;
+    const QList<ConnectionTargetRow> targets{
+        {QStringLiteral("g2e"), ConnectionTargetKind::LocalRadio, QStringLiteral("ANAN G2E"),
+         QStringLiteral("This computer's Core"), QStringLiteral("192.168.109.108"),
+         QStringLiteral("Available"), true, true, true},
+        {QStringLiteral("lan"), ConnectionTargetKind::LanCore, longName, longRadio,
+         QStringLiteral("192.168.109.19:47910"), QStringLiteral("Saved, ready to connect")},
+        {QStringLiteral("saved-core"), ConnectionTargetKind::SavedCore, longName, longRadio,
+         longAddress, longState, true, true, true}};
+    selector.setTargets(targets);
+    selector.show();
+    QCoreApplication::processEvents();
+    auto* tree = selector.findChild<QTreeWidget*>(QStringLiteral("connectionSelectorTargets"));
+    QVERIFY(tree != nullptr);
+    QHeaderView* header = tree->header();
+    for (int column = 0; column < tree->columnCount(); ++column) {
+        QCOMPARE(header->sectionResizeMode(column), QHeaderView::Interactive);
+    }
+    QVERIFY(!header->stretchLastSection());
+
+    QTreeWidgetItem* saved = nullptr;
+    for (QTreeWidgetItem* item : tree->findItems(longName, Qt::MatchExactly | Qt::MatchRecursive)) {
+        if (item->data(0, Qt::UserRole).toString() == QLatin1String("saved-core")) {
+            saved = item;
+        }
+    }
+    QVERIFY(saved != nullptr);
+    const QStringList texts{longName, longRadio, longAddress, longState};
+    const QFontMetrics metrics(tree->font());
+    for (int column = 0; column < texts.size(); ++column) {
+        QCOMPARE(saved->toolTip(column), texts.at(column));
+        // Shown whole after the initial fit: the column is at least as
+        // wide as the text (the first column also carries the row indent).
+        const int needed = metrics.horizontalAdvance(texts.at(column))
+            + (column == 0 ? tree->indentation() : 0);
+        QVERIFY2(tree->columnWidth(column) >= needed,
+                 qPrintable(QStringLiteral("column %1: %2 < %3")
+                                .arg(column).arg(tree->columnWidth(column)).arg(needed)));
+    }
+
+    // A refresh with shorter status text keeps every width: the columns
+    // are fitted once, then only grown, so they do not jump as text changes.
+    QList<int> fitted;
+    for (int column = 0; column < tree->columnCount(); ++column) {
+        fitted.append(tree->columnWidth(column));
+    }
+    QList<ConnectionTargetRow> shorter = targets;
+    shorter[2].state = QStringLiteral("Available");
+    selector.setTargets(shorter);
+    QCoreApplication::processEvents();
+    for (int column = 0; column < tree->columnCount(); ++column) {
+        QCOMPARE(tree->columnWidth(column), fitted.at(column));
+    }
+
+    // Longer status text grows its column to show it whole, here far wider
+    // than any window the selector allows.
+    QStringList parts;
+    for (int i = 0; i < 8; ++i) {
+        parts.append(longState);
+    }
+    const QString hugeState = parts.join(QStringLiteral(", "));
+    QList<ConnectionTargetRow> longer = targets;
+    longer[2].state = hugeState;
+    selector.setTargets(longer);
+    QCoreApplication::processEvents();
+    QVERIFY(tree->columnWidth(3) >= metrics.horizontalAdvance(hugeState));
+    QCOMPARE(tree->columnWidth(0), fitted.at(0));
+
+    // Too wide for the window: the list scrolls sideways.
+    selector.resize(selector.minimumWidth(), selector.height());
+    QCoreApplication::processEvents();
+    int total = 0;
+    for (int column = 0; column < tree->columnCount(); ++column) {
+        total += tree->columnWidth(column);
+    }
+    QVERIFY2(total > tree->viewport()->width(),
+             qPrintable(QStringLiteral("%1 <= %2").arg(total).arg(tree->viewport()->width())));
+    QVERIFY(tree->horizontalScrollBar()->maximum() > 0);
+
+    // The window resizes: no fixed size.
+    QCOMPARE(selector.maximumWidth(), QWIDGETSIZE_MAX);
+    QCOMPARE(selector.maximumHeight(), QWIDGETSIZE_MAX);
+    selector.resize(1400, 760);
+    QCoreApplication::processEvents();
+    QCOMPARE(selector.size(), QSize(1400, 760));
+
+    const QString captures = qEnvironmentVariable("NEREUS_SELECTOR_CAPTURE_DIR");
+    if (!captures.isEmpty()) {
+        QVERIFY(QDir().mkpath(captures));
+        QVERIFY(selector.grab().save(captures + QStringLiteral("/connections-columns.png")));
+    }
+
+    // A width the operator drags is kept through the next refresh, which
+    // would otherwise fit the column to its contents again.
+    QTest::mousePress(header->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      QPoint(header->sectionViewportPosition(1) - 1, header->height() / 2));
+    header->resizeSection(0, 90);
+    QTest::mouseRelease(header->viewport(), Qt::LeftButton, Qt::NoModifier,
+                        QPoint(header->sectionViewportPosition(1) - 1, header->height() / 2));
+    QList<ConnectionTargetRow> refreshed = targets;
+    refreshed[2].state = longState + QStringLiteral(", still trying");
+    selector.setTargets(refreshed);
+    QCoreApplication::processEvents();
+    QCOMPARE(tree->columnWidth(0), 90);
+    QCOMPARE(saved->toolTip(3), refreshed[2].state);
 }
 
 // R-R3-17: seen natively as 820x572 growing to 1156x710 when a row with
