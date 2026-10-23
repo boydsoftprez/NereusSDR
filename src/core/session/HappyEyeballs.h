@@ -47,7 +47,12 @@
 //   2026-10-22: no Nagle on either tunnel socket; failure statuses Qt
 //               reports as the real error; the listener a QObject child.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22: both classes exported from the Core DLL (Windows: their
+//               staticMetaObject, for signals seen from outside it).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
+
+#include "core/NereusCoreExport.h"
 
 #include <QAbstractSocket>
 #include <QByteArray>
@@ -107,7 +112,7 @@ QByteArray failureStatusLine(QAbstractSocket::SocketError error);
 
 /// Connects a TCP socket to a host name the RFC 8305 way. One use: start()
 /// once, then exactly one of connected() or failed().
-class HappyEyeballsConnector final : public QObject {
+class NEREUS_CORE_EXPORT HappyEyeballsConnector final : public QObject {
     Q_OBJECT
 
 public:
@@ -144,7 +149,7 @@ private:
 /// A loopback HTTP CONNECT proxy for one host and port, for one
 /// connection: it accepts the first, answers its CONNECT once
 /// HappyEyeballsConnector has a connection, and copies bytes both ways.
-class HappyEyeballsTunnel final : public QObject {
+class NEREUS_CORE_EXPORT HappyEyeballsTunnel final : public QObject {
     Q_OBJECT
 
 public:

@@ -32,6 +32,9 @@
 //   2026-10-22: tunnelSocketsSendWithoutNagle,
 //               failureStatusesNameTheCause, aFailedRaceReachesTheWebSocket.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22: a failure's wait bound to the hello timer (Windows retries
+//               a refused connect). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -47,6 +50,7 @@
 
 #include "StalledListener.h"
 #include "core/session/HappyEyeballs.h"
+#include "core/session/RendezvousClient.h"
 #include "core/session/SessionTransport.h"
 #include "core/session/SystemProxy.h"
 
@@ -60,6 +64,15 @@ const QHostAddress kV4(QStringLiteral("127.0.0.1"));
 // Well inside RendezvousClient's 10 s hello timer, and far beyond the 250 ms
 // attempt delay plus a loopback connect, even on a loaded machine.
 constexpr int kWellInsideMs = 3000;
+
+// How long a failed race may take to reach its caller: a refused connect
+// is answered at once on macOS and Linux, but Windows retries the SYN after
+// the reset for about 2 s (the STRIX, 2026-10-22: 3350 ms for the whole
+// failure through a WebSocket). What the product needs is the real reason
+// before the caller's own timer replaces it with a plain timeout; the
+// shortest such timer on a name path is RendezvousClient's hello timer, so
+// that is the bound, a margin of several seconds over Windows' retries.
+constexpr int kFailureReachesTheCallerMs = RendezvousClient::kHelloTimeoutMs;
 
 } // namespace
 
@@ -182,7 +195,7 @@ private slots:
         HappyEyeballsConnector refused;
         QSignalSpy refusedFailed(&refused, &HappyEyeballsConnector::failed);
         refused.start(QStringLiteral("closed.example.test"), port);
-        QTRY_COMPARE_WITH_TIMEOUT(refusedFailed.size(), 1, kWellInsideMs);
+        QTRY_COMPARE_WITH_TIMEOUT(refusedFailed.size(), 1, kFailureReachesTheCallerMs);
         QCOMPARE(refusedFailed.at(0).at(0).value<QAbstractSocket::SocketError>(),
                  QAbstractSocket::ConnectionRefusedError);
     }
@@ -366,7 +379,7 @@ private slots:
         QSignalSpy errors(&socket, QOverload<QAbstractSocket::SocketError>::of(&QWebSocket::error));
 #endif
         socket.open(url);
-        QTRY_VERIFY_WITH_TIMEOUT(!errors.isEmpty(), kWellInsideMs);
+        QTRY_VERIFY_WITH_TIMEOUT(!errors.isEmpty(), kFailureReachesTheCallerMs);
         QCOMPARE(errors.first().first().value<QAbstractSocket::SocketError>(), expected);
         QCOMPARE(socket.error(), expected);
         QVERIFY2(!socket.errorString().contains(QLatin1String("proxy"), Qt::CaseInsensitive),
