@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-22 - Nereus band buttons (NEREUSBAND), the applet-styled band grid.
+//                 Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-09 - Workspace preview only: a preview tile has no background of
 //                 its own, so the container's background shows through it as
 //                 it does around the applet in the window. J.J. Boyd
@@ -57,6 +59,7 @@
 #include "gui/meters/FilterDisplayItem.h"
 #include "gui/meters/RotatorItem.h"
 #include "gui/meters/BandButtonItem.h"
+#include "gui/meters/NereusBandButtonItem.h"
 #include "gui/meters/ModeButtonItem.h"
 #include "gui/meters/FilterButtonItem.h"
 #include "gui/meters/AntennaButtonItem.h"
@@ -109,6 +112,7 @@ std::unique_ptr<MeterItem> allocate(const QString& type) {
     if (type == QLatin1String("FILTERDISPLAY")) { return std::make_unique<FilterDisplayItem>(); }
     if (type == QLatin1String("ROTATOR")) { return std::make_unique<RotatorItem>(); }
     if (type == QLatin1String("BANDBTNS")) { return std::make_unique<BandButtonItem>(); }
+    if (type == QLatin1String("NEREUSBAND")) { return std::make_unique<NereusBandButtonItem>(); }
     if (type == QLatin1String("MODEBTNS")) { return std::make_unique<ModeButtonItem>(); }
     if (type == QLatin1String("FILTERBTNS")) { return std::make_unique<FilterButtonItem>(); }
     if (type == QLatin1String("ANTENNABTNS")) { return std::make_unique<AntennaButtonItem>(); }
@@ -274,6 +278,7 @@ QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
     result.append({QStringLiteral("FILTERDISPLAY"), QStringLiteral("FilterDisplay"), false, true, {}});
     result.append({QStringLiteral("ROTATOR"), QStringLiteral("Rotator"), false, true, {}});
     result.append({QStringLiteral("BANDBTNS"), QStringLiteral("BandButton"), false, true, {}});
+    result.append({QStringLiteral("NEREUSBAND"), QStringLiteral("NereusBandButton"), false, true, {}});
     result.append({QStringLiteral("MODEBTNS"), QStringLiteral("ModeButton"), false, true, {}});
     result.append({QStringLiteral("FILTERBTNS"), QStringLiteral("FilterButton"), false, true, {}});
     result.append({QStringLiteral("ANTENNABTNS"), QStringLiteral("AntennaButton"), false, true, {}});
