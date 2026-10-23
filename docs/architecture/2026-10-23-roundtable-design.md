@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-23 (America/New_York)
 **Author:** J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
-**Status:** design approved in conversation, decision by decision, 2026-10-07 to 2026-10-23. JJ called for this spec on 2026-10-23. Reviewed the same day (47 findings), revised, and re-reviewed (9 more, all addressed here). One question is with JJ: C22 (section 18). Nothing is built.
+**Status:** design approved in conversation, decision by decision, 2026-10-07 to 2026-10-23. JJ called for this spec on 2026-10-23. Reviewed the same day (47 findings), revised, and re-reviewed (9 more, all addressed here). JJ answered the last open question (D25) the same day. Nothing is built.
 **Base:** `origin/main` at `83a5a6bcc`. Every file:line below is on that tree.
 **Applies to:** a new server program, the Core, the station link, the desktop window, the iPhone and iPad app, and the website.
 
@@ -59,6 +59,7 @@ All ruled by JJ. "Superseded" entries are kept so nobody re-asks them. Claude's 
 | D22 | Open to other software, with the API published on nereussdr.com | 2026-10-23 | NereusSDR Cores only |
 | D23 | Other software gets a key from the website with a self-declared callsign, the same trust as a Core. Logins or verification only if abuse forces it | 2026-10-23 | Logbook of the World certificates |
 | D24 | The public API can do everything a Core can: presence, readings, keyed state, messages, naming turns, reports | 2026-10-23 | readings and presence only |
+| D25 | Until someone answers the first-run sheet, the Core connects read-only and sends nothing about the station; reporting starts when someone taps Go live on any device. A Core never answered stays read-only, even unattended. Auto-Start defaults on | 2026-10-23 | report at once with the sheet only informing |
 
 UX review fixes, all approved by JJ (full text in [reporter-brainstorm/ux-review.md](reporter-brainstorm/ux-review.md)). The details Claude added to each are calls in section 18.
 
@@ -369,7 +370,7 @@ An address group is one IPv4 address or one IPv6 /64. The server learns the clie
 
 ### 10.1 RoundtableClient
 
-- `src/core/RoundtableClient.{h,cpp}`, a sibling of `FreeDVReporterClient`, using `QWebSocket`, owned by `RadioModel`, and added to `SpotSourceHost::stationSources()` so it appears in the `spotSources` object and starts and stops with the existing `spots.connect` path (Start and Auto-Start, as FreeDV Reporter). Auto-Start defaults on (D2), subject to C22.
+- `src/core/RoundtableClient.{h,cpp}`, a sibling of `FreeDVReporterClient`, using `QWebSocket`, owned by `RadioModel`, and added to `SpotSourceHost::stationSources()` so it appears in the `spotSources` object and starts and stops with the existing `spots.connect` path (Start and Auto-Start, as FreeDV Reporter). Auto-Start defaults on (D2); nothing is sent until the first-run answer (D25).
 - It reads slice frequency, mode, filter and `signalStrengthDbm` with `meterReadingNs` from `SliceModel`, keyed state from `MoxController::moxStateChanged` together with the transmitting slice (`transmittingOn` in `connectedDevices`, or the local TX slice on a desktop running its own radio), and who is at the radio from `StationServer` (section 5).
 - "At the radio" is true when any authenticated device session is `listening` or `transmitting`, or when this is a desktop running its own radio. The away choice (C15) decides whether an unattended Core keeps reporting (default) or stops.
 - **The key:** on a Core it uses the `StationIdentity` that `StationServer` loads. On a desktop running its own radio with Remote Access off, `RoundtableClient` calls `StationIdentity::loadOrCreate` on the directory Remote Access would use, the settings profile directory that `GuiDesktopStationRuntime` passes as `securityDirectory` (`GuiDesktopStationRuntime.cpp:89`), never `defaultDirectory()`, so the station keeps one id when Remote Access is turned on later.
@@ -550,7 +551,7 @@ New requirement family `R-RT`. Evidence: Software (unit, conformance, offscreen 
 | R-RT-11 | Text safety: a corpus of script, HTML and link tricks stores clean and renders inert on every screen and the web page | Software, Integration |
 | R-RT-12 | AWAY: shown when no device is at the radio; an AWAY station can't post or name; the away choice "stop" stops reporting | Software |
 | R-RT-13 | Hidden: going hidden sends `hidden` last and reads anonymously; starting hidden never signs in as a station; own reading NOT SENT; posting off; the archive still reachable | Software |
-| R-RT-14 | First run: asked once per station; the answer kept on the Core; another device shows the one-time note; behavior before the answer per C22 | Software |
+| R-RT-14 | First run: asked once per station; the answer kept on the Core; another device shows the one-time note; nothing sent before the answer (D25) | Software |
 | R-RT-15 | The station link surface (capability, object, streams and record kinds, verbs, settings) matches the link spec and its fixtures | Software |
 | R-RT-16 | Desktop: tags, folds, flag line, panel, pop-out tiers and memory, keyboard in panel and pop-out, Spot Hub tab, first run match section 11.2 and the mockups in offscreen captures at 1x and the Windows pixel density | Software |
 | R-RT-17 | iPhone and iPad: flag line, sheet, PTT hold, keyed layout, dial strip, Tools page, swipes and Setup rows, iPad applet, widen and flag-line scroll match section 11.3, 11.4 and board.html | Software |
@@ -637,7 +638,7 @@ Claude's calls. Each can change without touching section 3.
 | C19 | Digital families have no doubles; each keyed member's transmission is its own turn; readings while two or more members are keyed are kept out; unknown turns stay, so D7 holds there too |
 | C20 | The Roundtable station id is derived from the same station key with Roundtable's own prefix, not the rendezvous id the first sessions assumed, so the two services' records can't be joined |
 | C21 | Server checks against false readings and keyed state (readings only from members and unkeyed slices; 10-minute long key); Report on a station; helpers can Stop counting a station, keeping its stored rows. Stop counting adds a helper power to D16's list (remove, block) |
-| C22 | **Asked of JJ 2026-10-23.** Two choices. (a) Recommended: before the first-run answer, the Core connects read-only and sends nothing about the station; reporting starts when someone answers Go live on any device, and an unattended Core that has never been answered stays read-only. (b) Reporting starts at once (D2's "on by default"), and the first-run sheet only informs, with Stay hidden turning it off. Auto-Start defaults on either way |
+| C22 | Ruled by JJ 2026-10-23: now D25 |
 | C23 | From the UX fixes: while not live, Send is off and drafts stay, nothing queued; the connection line is Roundtable's own, the radio pill unchanged; the first-run answer is per station, kept on the Core, other devices show a note, the switch moves the main button, iPad form sheet; read on one device is read on all, the desktop flag works the same; a fold holds two or more and widens only if needed; stale rows grey at about 5:1 instead of faded; mention badge cyan; iPad message box pinned at the column foot |
 | C24 | The Core sends `signalStrengthDbm`, the meter the operator sees, rather than the average |
 | C25 | The frequency sent is the VFO frequency (the carrier on SSB, AM and FM, the signal on CW), stated per mode on the API page |
