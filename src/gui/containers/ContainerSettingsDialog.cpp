@@ -8,6 +8,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - Nereus Band Buttons in the Controls menu, with text and
+//                 background colours. Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-11 - Workspace preview only: Apply commits through the
 //                 container manager, so a placement chosen here records or
 //                 clears the container's home as Pop Out and Return do.
@@ -186,6 +188,7 @@ mw0lge@grange-lane.co.uk
 #include "meter_property_editors/ClickBoxItemEditor.h"
 #include "meter_property_editors/DataOutItemEditor.h"
 #include "meter_property_editors/BandButtonItemEditor.h"
+#include "meter_property_editors/NereusBandButtonItemEditor.h"
 #include "meter_property_editors/ModeButtonItemEditor.h"
 #include "meter_property_editors/FilterButtonItemEditor.h"
 #include "meter_property_editors/AntennaButtonItemEditor.h"
@@ -1446,6 +1449,7 @@ void ContainerSettingsDialog::onAddItem()
     QMenu* controlsMenu = menu->addMenu(QStringLiteral("Controls"));
     controlsMenu->setStyleSheet(menu->styleSheet());
     controlsMenu->addAction(QStringLiteral("Band Buttons"),      this, [this]{ addNewItem(QStringLiteral("BANDBTNS")); });
+    controlsMenu->addAction(QStringLiteral("Nereus Band Buttons"), this, [this]{ addNewItem(QStringLiteral("NEREUSBAND")); });
     controlsMenu->addAction(QStringLiteral("Mode Buttons"),      this, [this]{ addNewItem(QStringLiteral("MODEBTNS")); });
     controlsMenu->addAction(QStringLiteral("Filter Buttons"),    this, [this]{ addNewItem(QStringLiteral("FILTERBTNS")); });
     controlsMenu->addAction(QStringLiteral("Antenna Buttons"),   this, [this]{ addNewItem(QStringLiteral("ANTENNABTNS")); });
@@ -1738,6 +1742,7 @@ QString ContainerSettingsDialog::typeTagDisplayName(const QString& tag)
         { QStringLiteral("ROTATOR"),       QStringLiteral("Rotator") },
         // Phase 3G-5 interactive types
         { QStringLiteral("BANDBTNS"),      QStringLiteral("Band Buttons") },
+        { QStringLiteral("NEREUSBAND"),    QStringLiteral("Nereus Band Buttons") },
         { QStringLiteral("MODEBTNS"),      QStringLiteral("Mode Buttons") },
         { QStringLiteral("FILTERBTNS"),    QStringLiteral("Filter Buttons") },
         { QStringLiteral("ANTENNABTNS"),   QStringLiteral("Antenna Buttons") },
@@ -2696,6 +2701,7 @@ QWidget* ContainerSettingsDialog::buildTypeSpecificEditor(MeterItem* item, QWidg
     else if (typeTag == QLatin1String("CLICKBOX"))       ed = new ClickBoxItemEditor(parent);
     else if (typeTag == QLatin1String("DATAOUT"))        ed = new DataOutItemEditor(parent);
     else if (typeTag == QLatin1String("BANDBTNS"))       ed = new BandButtonItemEditor(parent);
+    else if (typeTag == QLatin1String("NEREUSBAND"))     ed = new NereusBandButtonItemEditor(parent);
     else if (typeTag == QLatin1String("MODEBTNS"))       ed = new ModeButtonItemEditor(parent);
     else if (typeTag == QLatin1String("FILTERBTNS"))     ed = new FilterButtonItemEditor(parent);
     else if (typeTag == QLatin1String("ANTENNABTNS"))    ed = new AntennaButtonItemEditor(parent);
