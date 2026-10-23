@@ -183,9 +183,9 @@ struct TransmitSection: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 ModesChrome.label("CFC bars")
-                RoundedRectangle(cornerRadius: 3)
+                RoundedRectangle(cornerRadius: 3) // kept-radius: cfc-bars
                     .fill(ChromeColours.buttonOff)
-                    .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(ChromeColours.buttonOffBorder, lineWidth: 1))
+                    .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(ChromeColours.buttonOffBorder, lineWidth: 1)) // kept-radius: cfc-bars
                     .frame(maxWidth: .infinity)
                     .frame(height: 22)
             }

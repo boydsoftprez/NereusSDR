@@ -42,8 +42,8 @@ struct RenameCoreSheet: View {
                 .disabled(flow.renameBusy)
                 .padding(.horizontal, 14)
                 .frame(height: 50)
-                .background(ConnectChrome.fieldFill, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4)
+                .background(ConnectChrome.fieldFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                     .strokeBorder(problem == nil ? ChromeColours.accent : ConnectChrome.badBorder, lineWidth: 1))
                 .padding(.top, 4)
                 .accessibilityLabel("The Core's name")
@@ -75,9 +75,11 @@ struct RenameCoreSheet: View {
         .padding(.top, 8)
         .padding(.bottom, 20)
         .frame(maxWidth: .infinity)
-        .background(ConnectChrome.sheetFill, in: UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14))
+        .background(ConnectChrome.sheetFill, in: UnevenRoundedRectangle(topLeadingRadius: WorkspacePalette.panelRadius,
+                                                                        topTrailingRadius: WorkspacePalette.panelRadius))
         .overlay(alignment: .top) {
-            UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14)
+            UnevenRoundedRectangle(topLeadingRadius: WorkspacePalette.panelRadius,
+                                   topTrailingRadius: WorkspacePalette.panelRadius)
                 .stroke(ConnectChrome.sheetEdge, lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.5), radius: 15, y: -10)

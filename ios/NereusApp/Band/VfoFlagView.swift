@@ -191,12 +191,12 @@ struct VfoFlagView: View {
     /// The owner row's hairlines, the board's.
     static let ownerHairline = Color.white.opacity(0.14)
     /// Take control's outline and words on the owner row, the board's.
-    static let takeEdge = Color(red: 160 / 255, green: 190 / 255, blue: 220 / 255).opacity(0.55)
+    static let takeEdge = WorkspacePalette.titleText.opacity(0.55)
     static let takeText = ChromeColours.textBright
     static let offText = BandColours.txBadgeOffText
     static let transmitOnText = BandColours.txBadgeOnText
     static let transmitOnLine = BandColours.txBadgeOnBorder
-    static let bypassText = Color(red: 0xFF / 255, green: 0xCC / 255, blue: 0x44 / 255)
+    static let bypassText = ChromeColours.buttonOnAmberText // RX bypass on, lit amber (W3)
     /// A listened flag's dashed edge.
     static let listenedDash: [CGFloat] = [4, 3]
 
@@ -262,14 +262,14 @@ struct VfoFlagView: View {
         .padding(.horizontal, FlagMetrics.inset)
         .modifier(FlagFrame(grows: entry.rade?.wraps == true, height: height))
         .onGeometryChange(for: CGFloat.self, of: { $0.size.height }, action: { heightChanged?($0) })
-        .background(BandColours.flagBackground, in: RoundedRectangle(cornerRadius: 4))
+        .background(BandColours.flagBackground, in: RoundedRectangle(cornerRadius: 4)) // kept-radius: flag
         .overlay {
             if entry.listening {
-                RoundedRectangle(cornerRadius: 4)
+                RoundedRectangle(cornerRadius: 4) // kept-radius: flag
                     .strokeBorder(colour, style: StrokeStyle(lineWidth: 1, dash: Self.listenedDash))
                     .accessibilityHidden(true)
             } else {
-                RoundedRectangle(cornerRadius: 4).strokeBorder(BandColours.flagBorder, lineWidth: 1)
+                RoundedRectangle(cornerRadius: 4).strokeBorder(BandColours.flagBorder, lineWidth: 1) // kept-radius: flag
             }
         }
         .overlay(alignment: .top) {
@@ -303,7 +303,7 @@ struct VfoFlagView: View {
                         VStack(spacing: 2) {
                             filterWidth(metrics)
                             Text("DIV").font(.system(size: 9 * metrics.scale, weight: .bold))
-                                .foregroundStyle(ChromeColours.accent)
+                                .foregroundStyle(ChromeColours.accentText)
                         }
                         .frame(width: metrics.diversity.width, height: FlagMetrics.header)
                         .contentShape(Rectangle())
@@ -411,7 +411,7 @@ struct VfoFlagView: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 3)
                         .frame(height: 18)
-                        .background(ChromeColours.txRed, in: RoundedRectangle(cornerRadius: 3))
+                        .background(ChromeColours.txRed, in: RoundedRectangle(cornerRadius: 3)) // kept-radius: flag
                         .accessibilityIdentifier("flagOnAir\(letter)")
                 } else {
                     Text("TX")
@@ -425,7 +425,7 @@ struct VfoFlagView: View {
             .modifier(OpenLine(lit: lit && !onAir, colour: Self.transmitOnLine))
             .overlay {
                 if txHint {
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: 4) // kept-radius: flag
                         .strokeBorder(Self.hintRing, lineWidth: 2)
                         .padding(2)
                         .shadow(color: Self.hintRing.opacity(0.7), radius: 4)
@@ -480,7 +480,7 @@ struct VfoFlagView: View {
     }
 
     /// The ring on the TX button the first-key refusal points at, the board's amber.
-    static let hintRing = Color(red: 0xDD / 255, green: 0xBB / 255, blue: 0)
+    static let hintRing = ChromeColours.noticeWarn
 
     // MARK: The owner row
 
@@ -513,7 +513,7 @@ struct VfoFlagView: View {
                     .minimumScaleFactor(0.7)
                     .padding(.horizontal, metrics.large ? 4 : 7)
                     .frame(width: metrics.takeWidth, height: FlagMetrics.ownerRow)
-                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Self.takeEdge, lineWidth: 1))
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Self.takeEdge, lineWidth: 1)) // kept-radius: flag
                     .contentShape(Rectangle())
                     .opacity(refused || takeControl == nil ? Self.dimmed : 1)
             }
@@ -532,7 +532,7 @@ struct VfoFlagView: View {
     }
 
     /// The owner row's words' colour, the board's.
-    static let ownerText = Color(red: 0xC8 / 255, green: 0xD8 / 255, blue: 0xE8 / 255)
+    static let ownerText = ChromeColours.text
 
     // MARK: The frequency
 
@@ -547,7 +547,7 @@ struct VfoFlagView: View {
                 .minimumScaleFactor(0.6)
                 .padding(.horizontal, 2)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
-                .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(BandColours.frequencyBorder, lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(BandColours.frequencyBorder, lineWidth: 1)) // kept-radius: flag
                 .contentShape(Rectangle())
                 .opacity(entry.listening ? Self.listened : 1)
         }

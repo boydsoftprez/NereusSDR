@@ -235,9 +235,9 @@ struct PaProfilesPanel: View {
                         tablet: tablet, initiallyExpandedBand: initiallyExpandedBand)
         default:
             VStack(alignment: .leading, spacing: 4) {
-                Text(control.label).foregroundStyle(.secondary)
+                Text(control.label).foregroundStyle(WorkspacePalette.textSecondary)
                 Text(dispatcher.state(of: control, in: category).reason ?? SetupControlDispatcher.unreadableReason)
-                    .font(.footnote).foregroundStyle(.secondary)
+                    .font(.footnote).foregroundStyle(WorkspacePalette.textSecondary)
                     .accessibilityIdentifier("\(control.id).reason")
             }.accessibilityIdentifier(control.id)
         }
@@ -273,8 +273,10 @@ private struct PaProfileSelection: View {
                     ForEach(profiles.names, id: \.self) { Text($0).tag($0) }
                 } else { Text("--").tag("") }
             }
-            .pickerStyle(.menu).disabled(reason != nil || profiles == nil)
             .accessibilityIdentifier(control.id)
+            // Outside a list a menu shows no label: the Setup menu row draws it.
+            .setupMenuRow(control.label)
+            .disabled(reason != nil || profiles == nil)
             PaControlNotes(id: control.id, help: control.tooltip, reason: reason, problem: interaction.problem)
         }
         .onDisappear { interaction.retire() }
@@ -304,7 +306,7 @@ private struct PaProfileActionButton: View {
                 if binding.prompt != nil { askingName = interaction.beginPrompt() }
                 else { askingQuestion = interaction.beginQuestion() }
             }
-            .buttonStyle(.bordered).frame(minHeight: 44).fixedSize(horizontal: true, vertical: false)
+            .buttonStyle(SetupButtonStyle()).frame(minHeight: 44).fixedSize(horizontal: true, vertical: false)
             .disabled(reason != nil).accessibilityIdentifier(control.id)
             .help(control.tooltip).accessibilityHint(control.tooltip)
             PaControlNotes(id: control.id, help: "", reason: reason, problem: interaction.problem)
@@ -335,9 +337,9 @@ private struct PaControlNotes: View {
     let reason: String?
     let problem: String?
     var body: some View {
-        if !help.isEmpty { Text(help).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+        if !help.isEmpty { Text(help).font(.footnote).foregroundStyle(WorkspacePalette.textSecondary).fixedSize(horizontal: false, vertical: true) }
         if let reason {
-            Text(reason).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(reason).font(.footnote).foregroundStyle(WorkspacePalette.textSecondary).fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("\(id).reason")
         }
         if let problem {
@@ -419,7 +421,7 @@ private struct PaBandTable: View {
                         }
                     }
                     if let reason = panel.reason(for: row.band) {
-                        Text("\(row.label): \(reason)").font(.footnote).foregroundStyle(.secondary)
+                        Text("\(row.label): \(reason)").font(.footnote).foregroundStyle(WorkspacePalette.textSecondary)
                             .gridCellColumns(grid.columns.count + 1)
                             .accessibilityIdentifier("\(control.id).band\(row.band).reason")
                     }
@@ -470,7 +472,7 @@ private struct PaProfileCell: View {
             } else if let number = value?.number, let range = column.range, let decimals = column.decimals {
                 if compact {
                     numberButton(number, decimals: decimals).frame(maxWidth: .infinity, minHeight: 44)
-                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
                         .accessibilityIdentifier(id)
                 } else {
                     Stepper {
@@ -504,7 +506,7 @@ private struct PaProfileCell: View {
                     .accessibilityIdentifier(id)
                 }
             } else {
-                LabeledContent(compact ? "" : column.label) { Text("--").foregroundStyle(.secondary) }
+                LabeledContent(compact ? "" : column.label) { Text("--").foregroundStyle(WorkspacePalette.textSecondary) }
                     .frame(minHeight: 44).accessibilityLabel("\(row.label) \(column.label)")
                     .accessibilityIdentifier(id)
             }
@@ -529,7 +531,7 @@ private struct PaProfileCell: View {
                 .foregroundStyle(editable ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                 .frame(minHeight: 44)
         }
-        .buttonStyle(.borderless).disabled(!editable || pads == nil)
+        .buttonStyle(.borderless).tint(WorkspacePalette.accentText).disabled(!editable || pads == nil)
         .accessibilityLabel("\(row.label) \(column.label)")
         .accessibilityValue(SetupNumberRow.text(number, decimals: decimals, unit: ""))
         .accessibilityIdentifier("\(id).value")

@@ -46,12 +46,12 @@ struct DataUsePage: View {
     }
 
     var body: some View {
-        List {
-            Section {
+        SetupPageContainer {
+            SetupPanelSection {
                 counter("This session", Self.sessionText(meter), id: "dataThisSession")
                 counter("This month on cellular", DataUseMeter.text(meter.monthCellular.total), id: "dataThisMonth")
             }
-            Section {
+            SetupPanelSection {
                 ForEach(SessionPolicy.Mode.wifiModes, id: \.self) { mode in
                     SetupChoiceRow(title: DataModeText.title(mode), detail: Self.wifiDetail(mode),
                                    chosen: settings.wifiMode == mode, id: "wifi.\(DataModeText.title(mode))") {
@@ -61,7 +61,7 @@ struct DataUsePage: View {
             } header: {
                 Text("On Wi-Fi")
             }
-            Section {
+            SetupPanelSection {
                 ForEach(SessionPolicy.Mode.cellularModes, id: \.self) { mode in
                     SetupChoiceRow(title: DataModeText.title(mode), detail: Self.cellularDetail(mode),
                                    chosen: settings.cellularMode == mode, id: "cellular.\(DataModeText.title(mode))") {
@@ -73,11 +73,11 @@ struct DataUsePage: View {
             } footer: {
                 if let footer = Self.cellularFooter(settings.audioQuality) {
                     Text(footer)
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(WorkspacePalette.textPrimary)
                         .accessibilityIdentifier("cellularLossless")
                 }
             }
-            Section {
+            SetupPanelSection {
                 SetupSwitchRow(title: "Warn me past 5 GB a month on cellular", detail: "A notice on the band",
                                isOn: Binding(get: { settings.cellularWarning }, set: { settings.cellularWarning = $0 }),
                                id: "cellularWarning")
@@ -85,7 +85,7 @@ struct DataUsePage: View {
                 Text(Self.footnote)
             }
         }
-        .navigationTitle("Data use")
+        .setupPageTitle("Data use")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 SetupTagBadge(tag: .thisPhone)
@@ -96,7 +96,7 @@ struct DataUsePage: View {
     private func counter(_ title: String, _ value: String, id: String) -> some View {
         HStack {
             Text(title)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(WorkspacePalette.textSecondary)
             Spacer(minLength: 8)
             Text(value)
                 .font(.body.weight(.semibold).monospacedDigit())

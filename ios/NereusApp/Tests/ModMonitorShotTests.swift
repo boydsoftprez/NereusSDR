@@ -124,7 +124,7 @@ struct ModMonitorShotTests {
     private func render(_ view: some View, name: String, size: CGSize, sideways: Bool = false,
                         scrollToEnd: Bool = false, upBy: CGFloat = 0, ready: () -> Bool = { true }) async throws {
         let window = try ModMonitorTests.window(size: size)
-        let host = UIHostingController(rootView: view)
+        let host = ShotHosting.host(view)
         if sideways {
             host.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: 62, bottom: 21, right: 62)
         }

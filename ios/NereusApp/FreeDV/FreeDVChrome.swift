@@ -22,9 +22,10 @@ enum FreeDVChrome {
                 .padding(.horizontal, 14)
                 .padding(.top, 8)
                 .padding(.bottom, 14)
-                .background(ChromeColours.sheet, in: UnevenRoundedRectangle(topLeadingRadius: 12,
-                                                                            topTrailingRadius: 12))
-                .overlay(UnevenRoundedRectangle(topLeadingRadius: 12, topTrailingRadius: 12)
+                .background(ChromeColours.sheet, in: UnevenRoundedRectangle(topLeadingRadius: WorkspacePalette.panelRadius,
+                                                                            topTrailingRadius: WorkspacePalette.panelRadius))
+                .overlay(UnevenRoundedRectangle(topLeadingRadius: WorkspacePalette.panelRadius,
+                                                topTrailingRadius: WorkspacePalette.panelRadius)
                     .strokeBorder(ChromeColours.sheetBorder, lineWidth: 1))
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier(identifier)
@@ -51,8 +52,8 @@ enum FreeDVChrome {
                     .frame(maxWidth: .infinity, minHeight: 42)
                     .background(!enabled ? ChromeColours.buttonOff
                                 : (primary ? ChromeColours.buttonOnBlue : ChromeColours.button),
-                                in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
+                                in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                         .strokeBorder(!enabled ? ChromeColours.buttonOffBorder
                                       : (primary ? ChromeColours.buttonOnBlueBorder : ChromeColours.buttonBorder),
                                       lineWidth: 1))
@@ -83,8 +84,8 @@ enum FreeDVChrome {
                     .frame(maxWidth: .infinity)
                     .background(!enabled ? ChromeColours.buttonOff
                                 : (chosen ? ChromeColours.buttonOnBlue : ChromeColours.button),
-                                in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
+                                in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                         .strokeBorder(!enabled ? ChromeColours.buttonOffBorder
                                       : (chosen ? ChromeColours.buttonOnBlueBorder : ChromeColours.buttonBorder),
                                       lineWidth: 1))

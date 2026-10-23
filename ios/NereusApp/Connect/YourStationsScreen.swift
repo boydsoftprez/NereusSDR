@@ -35,7 +35,7 @@ struct YourStationsScreen: View {
                         } label: {
                             Text("+")
                                 .font(.system(size: 26))
-                                .foregroundStyle(ChromeColours.accent)
+                                .foregroundStyle(ChromeColours.accentText)
                                 .frame(width: 40, height: 40)
                         }
                         .accessibilityLabel("Add a Core")
@@ -65,8 +65,8 @@ struct YourStationsScreen: View {
                                 .foregroundStyle(ChromeColours.textDim)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(12)
-                                .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: 4))
-                                .overlay(RoundedRectangle(cornerRadius: 4)
+                                .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                                     .strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
                         }
                         ForEach(Array(flow.cores.enumerated()), id: \.element.id) { index, row in
@@ -99,7 +99,7 @@ struct YourStationsScreen: View {
                             .padding(.top, 12)
                         Button("About this app") { showingAbout = true }
                             .font(.footnote)
-                            .foregroundStyle(ChromeColours.accent)
+                            .foregroundStyle(ChromeColours.accentText)
                             .frame(minHeight: 44)
                             .accessibilityIdentifier("coresAbout")
                     }
@@ -139,6 +139,7 @@ struct YourStationsScreen: View {
         }
         .sheet(isPresented: $showingAbout) {
             NavigationStack { AboutAppPage(showsDone: true) }
+                .workspacePresentationRoot()
         }
     }
 
@@ -245,10 +246,10 @@ private struct CoreRowView: View {
         .padding(.leading, 12)
         .padding(.trailing, 4)
         .frame(minHeight: 66)
-        .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
+        .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
         .opacity(flow.keyUnreadable ? 0.75 : 1)
-        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 4))
+        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
         .contextMenu { menu }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("core-\(row.label)")

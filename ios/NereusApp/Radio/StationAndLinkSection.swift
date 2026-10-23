@@ -66,8 +66,8 @@ struct RadioCoreCard: View {
                         .padding(.horizontal, 12)
                         .frame(height: 36)
                         .background(canDisconnect ? ChromeColours.revoke : ChromeColours.buttonOff,
-                                    in: RoundedRectangle(cornerRadius: 4))
-                        .overlay(RoundedRectangle(cornerRadius: 4)
+                                    in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                             .strokeBorder(canDisconnect ? ChromeColours.revokeBorder : ChromeColours.buttonOffBorder,
                                           lineWidth: 1))
                         .contentShape(Rectangle())
@@ -88,7 +88,7 @@ struct RadioCoreCard: View {
             }
         }
         .padding(12)
-        .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.stationBorder, lineWidth: 1))
+        .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ChromeColours.stationBorder, lineWidth: 1))
     }
 }

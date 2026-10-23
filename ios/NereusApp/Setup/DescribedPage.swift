@@ -34,7 +34,7 @@ struct DescribedPage: View {
 
     var body: some View {
         if let page = pages.page(pageId, in: category) {
-            List {
+            SetupPageContainer {
                 if let main, !PhoneSetupKeys.pictureFields(on: page).isEmpty {
                     DisplayV29ScopeHeader(main: main, page: page)
                 }
@@ -44,7 +44,7 @@ struct DescribedPage: View {
                 // A Core below Setup description 23 has no Level Cal
                 // section: the group comes first, as on the desktop.
                 if let levelCal, !page.sections.contains(where: { $0.title == LevelCalSection.title }) {
-                    Section {
+                    SetupPanelSection {
                         LevelCalSection.Top(model: levelCal)
                         LevelCalSection.Run(model: levelCal)
                     } header: {
@@ -53,7 +53,7 @@ struct DescribedPage: View {
                 }
                 ForEach(Array(page.sections.enumerated()), id: \.offset) { _, section in
                     let group = levelCal.flatMap { section.title == LevelCalSection.title ? $0 : nil }
-                    Section {
+                    SetupPanelSection {
                         if let group {
                             LevelCalSection.Top(model: group)
                         }
@@ -69,15 +69,13 @@ struct DescribedPage: View {
                         if let group {
                             LevelCalSection.Run(model: group)
                         }
-                        if let note = section.note { Text(note).font(.footnote).foregroundStyle(.secondary) }
+                        if let note = section.note {
+                            Text(note).font(.footnote).foregroundStyle(WorkspacePalette.textSecondary)
+                        }
                     } header: {
                         if !section.title.isEmpty {
-                            HStack {
-                                Text(section.title)
-                                if let owner = section.owner {
-                                    SetupTagBadge(tag: owner == .station ? .core : .thisPhone)
-                                }
-                            }
+                            SetupPanelTitle(title: section.title,
+                                            tag: section.owner.map { $0 == .station ? .core : .thisPhone })
                         }
                     }
                 }
@@ -91,7 +89,7 @@ struct DescribedPage: View {
             }
             .levelCalAlerts(levelCal)
             .modifier(DisplayV29OptionalPresentation(main: main))
-            .navigationTitle(page.title)
+            .setupPageTitle(page.title)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     SetupTagBadge(tag: SetupTag(page.whereOwned))
@@ -108,9 +106,9 @@ struct DescribedPage: View {
                 paPresentation = nil
             }
         } else {
-            List {
+            SetupPageContainer {
                 Text(Self.goneText)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(WorkspacePalette.textSecondary)
             }
         }
     }
@@ -135,7 +133,7 @@ private struct DisplayV29ScopeHeader: View {
         return count
     }
     var body: some View {
-        Section {
+        SetupPanelSection {
             SheetGrid(columns: 2) {
                 PanelButton(label: "All pans", lit: main.displayEditScope == .all, style: .blue) {
                     main.displayEditScope = .all
@@ -148,15 +146,17 @@ private struct DisplayV29ScopeHeader: View {
             .accessibilityIdentifier("displayScope")
             if main.displayEditScope == .pan {
                 Text("\(ownCount) own value\(ownCount == 1 ? "" : "s") on this page")
-                    .font(.footnote).foregroundStyle(.secondary)
+                    .font(.footnote).foregroundStyle(WorkspacePalette.textSecondary)
                     .accessibilityIdentifier("displayPageOwnCount")
                 Button("Follow All pans on this page") { main.resetDisplayPicture(fields: fields) }
+                    .buttonStyle(SetupButtonStyle())
                     .disabled(own.isEmpty).accessibilityIdentifier("displayPageFollow")
                 Button("Copy own values to All pans") { _ = main.copyOwnDisplayPictureToMaster(fields: fields) }
+                    .buttonStyle(SetupButtonStyle())
                     .disabled(own.isEmpty).accessibilityIdentifier("displayPageCopy")
             } else {
                 Text("Changes here go to every pan. A pan's own value for the changed row is cleared.")
-                    .font(.footnote).foregroundStyle(.secondary)
+                    .font(.footnote).foregroundStyle(WorkspacePalette.textSecondary)
             }
         }
     }
@@ -167,7 +167,7 @@ private struct DisplayV29ScopeHeader: View {
 private struct DisplayV29BandHeader: View {
     @ObservedObject var main: MainScreenModel
     var body: some View {
-        Section {
+        SetupPanelSection {
             if main.displayEditScope == .all {
                 Picker("Band", selection: Binding(
                     get: { main.displayEditingBand ?? "" },
@@ -177,8 +177,9 @@ private struct DisplayV29BandHeader: View {
                     }
                 }
                 .accessibilityIdentifier("displayEditingBand")
+                .setupMenuRow("Band")
                 Text("Edits the kept band values without tuning the radio.")
-                    .font(.footnote).foregroundStyle(.secondary)
+                    .font(.footnote).foregroundStyle(WorkspacePalette.textSecondary)
             } else {
                 LabeledContent("Band", value: main.displayEditingBand.flatMap(Int.init)
                     .flatMap(SetupDescription.bandName) ?? "—")
@@ -218,7 +219,7 @@ private struct DisplayV29Control: View {
     var body: some View {
         HStack(spacing: 8) {
             if own {
-                Circle().fill(Color.accentColor).frame(width: 5, height: 5)
+                Circle().fill(WorkspacePalette.accentFill).frame(width: 5, height: 5)
                     .accessibilityLabel("Pan 1's own value")
                     .accessibilityIdentifier(control.id + ".own")
             }
@@ -261,6 +262,7 @@ struct DisplayV29Presentation: ViewModifier {
         content
             .sheet(item: $model.gradientEditor) { editor in
                 DisplayGradientEditor(main: main, band: main.band, editor: editor)
+                    .workspacePresentationRoot()
             }
             .fileImporter(isPresented: $model.choosingBackgroundPicture,
                           allowedContentTypes: [.png, .jpeg, .bmp]) { result in
@@ -350,7 +352,7 @@ private struct DisplayGradientEditor: View {
                                 stops.remove(at: stops.count - 2)
                             }
                         }.disabled(stops.count <= 2)
-                    }.buttonStyle(.borderless)
+                    }.buttonStyle(.borderless).tint(WorkspacePalette.accentText)
                 } footer: { Text("Custom gradient, kept on this device.") }
             }
             .navigationTitle(editor == .receive ? "Receive gradient" : "Transmit gradient")

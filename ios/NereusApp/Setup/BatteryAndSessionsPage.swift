@@ -16,22 +16,22 @@ struct BatteryAndSessionsPage: View {
     static let soundOnlyDetail = "The Core stops sending the band \u{00B7} about 24 MB an hour"
 
     var body: some View {
-        List {
-            Section {
+        SetupPageContainer {
+            SetupPanelSection {
                 SetupSwitchRow(title: "Sound only", detail: Self.soundOnlyDetail,
                                isOn: Binding(get: { settings.soundOnlyWhenAway },
                                              set: { settings.soundOnlyWhenAway = $0 }), id: "soundOnly")
             } header: {
                 Text("Locked or in another app")
             }
-            Section {
+            SetupPanelSection {
                 screen(.never, "Never", "It still stays on while you're keyed", id: "screen.never")
                 screen(.whileCharging, "While charging", "For a stand or a car mount", id: "screen.whileCharging")
                 screen(.always, "Always", "While the band is showing", id: "screen.always")
             } header: {
                 Text("Keep the screen on")
             }
-            Section {
+            SetupPanelSection {
                 sleep(.off, "Off", "Listen until you stop", id: "sleep.off")
                 sleep(.thirtyMinutes, "30 minutes", "Then disconnect", id: "sleep.30")
                 sleep(.oneHour, "1 hour", "Then disconnect", id: "sleep.60")
@@ -44,7 +44,7 @@ struct BatteryAndSessionsPage: View {
                         .accessibilityIdentifier("sleepEndsAt")
                 }
             }
-            Section {
+            SetupPanelSection {
                 SetupSwitchRow(title: "In Low Power Mode, drop to Saver", detail: "5 frames a second, half the detail",
                                isOn: Binding(get: { settings.lowPowerDropsToSaver },
                                              set: { settings.lowPowerDropsToSaver = $0 }), id: "lowPowerSaver")
@@ -55,7 +55,7 @@ struct BatteryAndSessionsPage: View {
                 Text("Saving power")
             }
         }
-        .navigationTitle("Battery and sessions")
+        .setupPageTitle("Battery and sessions")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 SetupTagBadge(tag: .thisPhone)

@@ -97,7 +97,6 @@ struct SoundPanel: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Self.rowText)
             }
-            .tint(ChromeColours.accent)
             .padding(.horizontal, 12)
             .frame(minHeight: 44)
             .accessibilityIdentifier("soundMute")
@@ -136,14 +135,14 @@ struct SoundPanel: View {
         .accessibilityIdentifier("soundPanel")
     }
 
-    static let background = Color(red: 15 / 255, green: 15 / 255, blue: 26 / 255)
-    static let border = Color(red: 0x30 / 255, green: 0x40 / 255, blue: 0x50 / 255)
-    static let rowText = Color(red: 0xc8 / 255, green: 0xd8 / 255, blue: 0xe8 / 255)
-    static let headText = Color(red: 0x70 / 255, green: 0x80 / 255, blue: 0x90 / 255)
-    static let noteText = Color(red: 0x60 / 255, green: 0x70 / 255, blue: 0x80 / 255)
-    static let currentFill = Color(red: 0x1a / 255, green: 0x2a / 255, blue: 0x3a / 255)
-    /// The desktop's RADIO slider amber (phone-sound-panel.html).
-    static let radioAmber = Color(red: 0xe0 / 255, green: 0xa0 / 255, blue: 0x30 / 255)
+    static let background = ChromeColours.panel
+    static let border = ChromeColours.panelEdge
+    static let rowText = ChromeColours.text
+    static let headText = ChromeColours.caption
+    static let noteText = ChromeColours.textFaint
+    static let currentFill = ChromeColours.buttonOnBlue // glass, the chosen device (W3)
+    /// The RADIO slider's amber (phone-sound-panel.html), the workspace amber.
+    static let radioAmber = WorkspacePalette.amberText
     /// How a greyed control shows (phone-sound-panel.html's disabled rows).
     static let greyed = 0.4
 }
@@ -189,10 +188,8 @@ private struct SoundPanelRadioSpeaker: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(SoundPanel.rowText)
             }
-            .tint(SoundPanel.radioAmber)
             .padding(.horizontal, 12)
             .frame(minHeight: 44)
-            .opacity(speaker.isEnabled ? 1 : SoundPanel.greyed)
             .accessibilityIdentifier("radioSpeakerMute")
             if let words = speaker.reason ?? speaker.note {
                 Text(words)
@@ -257,10 +254,8 @@ private struct SoundPanelCoreSpeaker: View {
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(SoundPanel.rowText)
                     }
-                    .tint(ChromeColours.accent)
                     .padding(.horizontal, 12)
                     .frame(minHeight: 44)
-                    .opacity(speaker.isEnabled ? 1 : SoundPanel.greyed)
                     .accessibilityIdentifier("coreSpeakerMute")
                 }
                 .disabled(!speaker.isEnabled)
@@ -309,7 +304,7 @@ private struct SoundPanelRoutes: View {
                 .foregroundStyle(SoundPanel.rowText)
                 .padding(.horizontal, 12)
                 .frame(height: 44)
-                .background(row.isCurrent ? SoundPanel.currentFill : .clear, in: RoundedRectangle(cornerRadius: 4))
+                .background(row.isCurrent ? SoundPanel.currentFill : .clear, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius, style: .continuous))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)

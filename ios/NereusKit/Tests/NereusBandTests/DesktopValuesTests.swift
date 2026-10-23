@@ -53,11 +53,11 @@ import Testing
         var plain = BandRendererTests.plain()
         plain.traceFill = true
         let image = try Self.render(plain, frame: BandFixtures.frame(trace: BandRendererTests.flat(200, -50)))
-        // Flat at 0.7 x 0.4 = 0.28 of cyan over the band's #0A0A14.
+        // Flat at 0.7 x 0.4 = 0.28 of cyan over the band's #08080A.
         let under = image.pixel(100, Int(BandRendererTests.geometry(plain).y(forDbm: -100)))
-        #expect(under.r.isNear(Int((10 * 0.72).rounded()), tolerance: 3), "\(under)")
-        #expect(under.g.isNear(Int((229 * 0.28 + 10 * 0.72).rounded()), tolerance: 3), "\(under)")
-        #expect(under.b.isNear(Int((255 * 0.28 + 20 * 0.72).rounded()), tolerance: 3), "\(under)")
+        #expect(under.r.isNear(Int((8 * 0.72).rounded()), tolerance: 3), "\(under)")
+        #expect(under.g.isNear(Int((229 * 0.28 + 8 * 0.72).rounded()), tolerance: 3), "\(under)")
+        #expect(under.b.isNear(Int((255 * 0.28 + 10 * 0.72).rounded()), tolerance: 3), "\(under)")
     }
 
     // MARK: The grid and scales

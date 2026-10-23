@@ -78,7 +78,7 @@ struct FreeDVStationRow: View {
                         .foregroundStyle(FreeDVColours.modeText)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 1)
-                        .background(FreeDVColours.modeChip, in: RoundedRectangle(cornerRadius: 3))
+                        .background(FreeDVColours.modeChip, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
                 }
             }
             if !station.userMessage.isEmpty {

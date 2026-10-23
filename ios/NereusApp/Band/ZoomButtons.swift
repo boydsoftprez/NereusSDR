@@ -23,9 +23,9 @@ struct ZoomButtons: View {
             button("+", label: "Zoom in", action: zoomIn)
         }
         .frame(height: Self.buttonSize.height)
-        .background(BandColours.zoomBackground, in: RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(BandColours.zoomBorder, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .background(BandColours.zoomBackground, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(BandColours.zoomBorder, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
     }
 
     private func button(_ glyph: String, label: String, action: @escaping () -> Void) -> some View {

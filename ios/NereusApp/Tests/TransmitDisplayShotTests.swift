@@ -205,7 +205,7 @@ struct TransmitDisplayShotTests {
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(origin: CGPoint(x: 0, y: sideways ? 120 : 0), size: size)
         window.windowLevel = .alert + 1
-        let host = UIHostingController(rootView: view)
+        let host = ShotHosting.host(view)
         if sideways {
             host.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: 62, bottom: 21, right: 62)
         }

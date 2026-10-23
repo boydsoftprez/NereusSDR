@@ -55,13 +55,22 @@ struct LiveActivityShotTests {
         return state
     }
 
-    /// Colours the drawings are checked for, as the board draws them.
+    /// Colors the drawings are checked for, as `lock-board.html` draws them
+    /// in the workspace look (WorkspacePalette).
     static let frequencyCyan = Pixel(0x00, 0xE5, 0xFF)
-    static let unkeyRed = Pixel(0xCC, 0x22, 0x22)
-    static let lostRed = Pixel(0xC1, 0x48, 0x48)
-    static let amber = Pixel(0xFF, 0xD7, 0x00)
-    static let txClockText = Pixel(0xFF, 0xB0, 0xB0)
-    static let linkGreen = Pixel(0x5F, 0xFF, 0x8A)
+    /// UNKEY's keyed face, kTxRed.
+    static let unkeyRed = Pixel(0xC2, 0x5A, 0x5C)
+    /// LINK LOST and the lost dot, kRedBorder: the muted red, never kTxRed.
+    static let lostRed = Pixel(0xA8, 0x6B, 0x6D)
+    /// The time-out and no-news words, kAmberText.
+    static let amber = Pixel(0xD8, 0xA5, 0x5F)
+    /// The TX clock's and badge's words, the keyed rim.
+    static let txClockText = Pixel(0xE0, 0xA3, 0xA4)
+    /// The live dot, kLiveGreen.
+    static let linkGreen = Pixel(0x4C, 0xAF, 0x6A)
+    /// The keyed card's ground, kBadgeTxBg (at 0.93 over the lock screen's dark foot); checked
+    /// within 10, since the panel's kBorder edge is within the default 24 of it.
+    static let keyedCard = Pixel(0x3F, 0x22, 0x24)
 
     @Test("the lock-screen card: listening, locked while keyed, keyed, link lost, back on the air, eight hours, stale")
     func lockScreen() throws {
@@ -74,6 +83,7 @@ struct LiveActivityShotTests {
         #expect(listening.count(Self.frequencyCyan, in: card) > 400, "the frequency is drawn")
         #expect(listening.count(Self.linkGreen, in: card) > 20, "the link dot is drawn")
         #expect(listening.count(Self.unkeyRed, in: card) == 0, "no UNKEY while listening")
+        #expect(listening.count(Self.keyedCard, in: card, tolerance: 10) == 0, "the panel's ground while listening")
 
         let unkeyed = try render("activity-lock-unkeyed",
                                  LockScreen(state: Self.listening(message: "Unkeyed when you locked the phone. TX ran 0:42.")),
@@ -83,6 +93,7 @@ struct LiveActivityShotTests {
 
         let keyed = try render("activity-lock-keyed", LockScreen(state: Self.keyed), size: size)
         #expect(keyed.count(Self.unkeyRed, in: card) > 2_000, "UNKEY is drawn")
+        #expect(keyed.count(Self.keyedCard, in: card, tolerance: 10) > 20_000, "the card is the TX badge's red")
         #expect(keyed.count(Self.amber, in: card) > 30, "the time-out is drawn")
         #expect(keyed.count(Self.txClockText, in: head) > 30, "the TX clock is drawn")
 
@@ -103,6 +114,37 @@ struct LiveActivityShotTests {
         #expect(stale.count(Self.amber, in: card) > 30, "the no-news words are drawn")
         #expect(stale.count(Self.txClockText, in: head) == 0, "no TX clock")
         #expect(stale.count(Self.linkGreen, in: card) == 0, "no link time")
+    }
+
+    /// The speaker's lit amber face (WorkspaceLook.litAmber, kAmberText on it).
+    static let mutedAmberMid = Pixel(0x33, 0x28, 0x0F)
+    /// Reconnect's glass face, between kGlassSelTop and kGlassSelBot.
+    static let glassMid = Pixel(0x27, 0x4E, 0x79)
+    /// The glass face's words, kGlassSelText.
+    static let glassText = Pixel(0xDB, 0xE9, 0xF8)
+
+    @Test("the lock-screen card: the speaker muted (lit amber) and Reconnect after Cancel (glass)")
+    func mutedAndReconnect() throws {
+        let size = CGSize(width: 402, height: 874)
+        let card = CGRect(x: 0, y: 560, width: 402, height: 314)
+        var mutedState = Self.listening()
+        mutedState.muted = true
+        let muted = try render("activity-lock-muted", LockScreen(state: mutedState), size: size)
+        let soundOn = try render("activity-lock-listening", LockScreen(state: Self.listening()), size: size)
+        #expect(muted.count(Self.mutedAmberMid, in: card, tolerance: 8) > 200, "the muted speaker is lit amber")
+        #expect(muted.count(Self.amber, in: card, tolerance: 16) > 20, "the speaker's glyph is kAmberText")
+        #expect(soundOn.count(Self.mutedAmberMid, in: card, tolerance: 8) == 0, "no lit amber with the sound on")
+        #expect(muted.count(Self.frequencyCyan, in: card) > 400)
+
+        var stopped = Self.lost(keyed: false)
+        stopped.retry = StationActivityAttributes.Retry(attempt: 4, at: nil, stopped: true)
+        let reconnect = try render("activity-lock-reconnect", LockScreen(state: stopped), size: size)
+        let cancel = try render("activity-lock-link-lost", LockScreen(state: Self.lost(keyed: false)), size: size)
+        #expect(reconnect.count(Self.glassMid, in: card, tolerance: 12) > 300, "Reconnect is the glass face")
+        #expect(reconnect.count(Self.glassText, in: card, tolerance: 16) > 20, "Reconnect's words are kGlassSelText")
+        #expect(cancel.count(Self.glassMid, in: card, tolerance: 12) == 0, "Cancel is not glass")
+        #expect(reconnect.count(Self.lostRed, in: card) > 300, "LINK LOST is still drawn")
+        #expect(reconnect.count(Self.unkeyRed, in: card) == 0)
     }
 
     @Test("the lock-screen card stays under iOS's 160-point limit in every state")
@@ -126,7 +168,7 @@ struct LiveActivityShotTests {
         #expect(listening.count(Self.frequencyCyan, in: compact) > 40, "the frequency beside the camera")
         let keyed = try render("activity-island-keyed", OtherApp(state: Self.keyed, opened: false), size: size)
         #expect(keyed.count(Self.frequencyCyan, in: compact) == 0)
-        #expect(keyed.count(Pixel(0xFF, 0x80, 0x80), in: compact) > 40, "TX and its clock in red")
+        #expect(keyed.count(Self.txClockText, in: compact) > 40, "TX and its clock in red")
         let openedKeyed = try render("activity-island-opened-keyed", OtherApp(state: Self.keyed, opened: true),
                                      size: size)
         #expect(openedKeyed.count(Self.unkeyRed, in: opened) > 2_000, "UNKEY in the opened island")

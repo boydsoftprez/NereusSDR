@@ -230,7 +230,7 @@ struct ThreeDViewShotTests {
             .environment(\.horizontalSizeClass, iPad ? .regular : .compact)
             .environment(\.dynamicTypeSize, dynamicType)
             .preferredColorScheme(.dark)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         if sideways && !iPad {
             host.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: 62, bottom: 21, right: 62)
         } else if iPad {

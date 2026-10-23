@@ -20,7 +20,7 @@ struct AudioSection: View {
                 model.setPan($0)
             }
             ModesChrome.grid(columns: 3) {
-                PanelButton(label: "MUTE", lit: model.muted == true, style: .red, disabled: model.muted == nil) {
+                PanelButton(label: "MUTE", lit: model.muted == true, style: .dsp, disabled: model.muted == nil) {
                     model.toggleMute()
                 }
                 PanelButton(label: "BIN", lit: model.binaural == true, style: .dsp, disabled: model.binaural == nil) {
@@ -39,13 +39,13 @@ struct AudioSection: View {
             // headphones, the desktop flag's SPEAKERS and PHONES (M5).
             ModesChrome.caption("At the Core:")
             ModesChrome.grid(columns: 2) {
-                PanelButton(label: "SPEAKERS", lit: model.outputRoute == ModesTabModel.speakersRoute, style: .blue,
+                PanelButton(label: "SPEAKERS", lit: model.outputRoute == ModesTabModel.speakersRoute, style: .dsp,
                             disabled: model.outputRoute == nil) {
                     model.selectOutputRoute(ModesTabModel.speakersRoute)
                 }
                 .accessibilityHint("Plays this slice on the Core's speakers")
                 .accessibilityIdentifier("modesSpeakers")
-                PanelButton(label: "PHONES", lit: model.outputRoute == ModesTabModel.phonesRoute, style: .blue,
+                PanelButton(label: "PHONES", lit: model.outputRoute == ModesTabModel.phonesRoute, style: .dsp,
                             disabled: model.outputRoute == nil) {
                     model.selectOutputRoute(ModesTabModel.phonesRoute)
                 }

@@ -30,8 +30,8 @@ struct FindStationScreen: View {
                             Spacer(minLength: 0)
                         }
                         .padding(12)
-                        .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: 4))
-                        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
+                        .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+                        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
                         .accessibilityElement(children: .combine)
                         .accessibilityIdentifier("looking")
                         FindCoreWaysOn(flow: flow)

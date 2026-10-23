@@ -489,7 +489,7 @@ struct MonitorAudioTests {
                     modes: main.modes, meters: nil, scrolls: false)
             TransmitSection(model: main.modes, transmit: main.transmit, micLevel: main.micLevel)
         }
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         host.view.frame = window.bounds
         let wasOn = SetupTypedEntryTests.applicationAccessibility()
         SetupTypedEntryTests.setApplicationAccessibility(true)
@@ -525,7 +525,7 @@ struct MonitorAudioTests {
         let root = MonitorShotRoot(model: model)
             .environment(\.dynamicTypeSize, largeText ? .accessibility1 : .large)
             .preferredColorScheme(scheme)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         host.overrideUserInterfaceStyle = scheme == .dark ? .dark : .light
         host.view.frame = CGRect(origin: .zero, size: size)
         let wasOn = SetupTypedEntryTests.applicationAccessibility()
@@ -555,7 +555,7 @@ struct MonitorAudioTests {
             .background(ChromeColours.page)
             .preferredColorScheme(scheme)
             .environment(\.dynamicTypeSize, largeText ? .accessibility1 : .large)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         host.overrideUserInterfaceStyle = scheme == .dark ? .dark : .light
         host.view.frame = CGRect(origin: .zero, size: size)
         window.rootViewController = host

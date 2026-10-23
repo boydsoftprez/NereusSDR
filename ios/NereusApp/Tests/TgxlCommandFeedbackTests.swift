@@ -266,7 +266,7 @@ struct TgxlCommandFeedbackTests {
         _ = await task.value
         let window = try BandFlagShotTests.window(size: CGSize(width: 402, height: 874))
         window.overrideUserInterfaceStyle = dark ? .dark : .light
-        let host = UIHostingController(rootView: ScrollView {
+        let host = ShotHosting.host(ScrollView {
             TunerGeniusPage(model: rig.accessories, transmit: rig.base.main.transmit, open: { _ in })
         }.preferredColorScheme(dark ? .dark : .light))
         let wasOn = SetupTypedEntryTests.applicationAccessibility()

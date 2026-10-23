@@ -16,7 +16,7 @@ struct DisplaySheetStackRows: View {
 
     /// The board's colours: a greyed row's reason in amber, Reset's words in
     /// the accent blue.
-    static let reasonColour = Color(red: 0xD8 / 255.0, green: 0xA8 / 255.0, blue: 0x60 / 255.0)
+    static let reasonColour = WorkspacePalette.amberText
 
     var body: some View {
         SheetCaption("View:")
@@ -76,7 +76,7 @@ struct DisplaySheetStackRows: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
-            PanelButton(label: model.sliceShadow ? "On" : "Off", lit: model.sliceShadow, style: .blue) {
+            PanelButton(label: model.sliceShadow ? "On" : "Off", lit: model.sliceShadow, style: .dsp) {
                 model.setSliceShadow(!model.sliceShadow)
             }
             .frame(width: 72)
@@ -93,10 +93,9 @@ struct DisplaySheetStackRows: View {
         } label: {
             Text(DisplaySheetModel.resetStackTitle)
                 .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(ChromeColours.accent)
+                .foregroundStyle(ChromeColours.accentText)
                 .frame(maxWidth: .infinity, minHeight: 36)
-                .background(ChromeColours.button, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.buttonBorder, lineWidth: 1))
+                .background { WorkspaceFace(.raised) }
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

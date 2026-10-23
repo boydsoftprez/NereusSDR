@@ -415,7 +415,7 @@ struct AudioQualityTests {
         }
         .preferredColorScheme(scheme)
         .dynamicTypeSize(size)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         host.overrideUserInterfaceStyle = scheme == .dark ? .dark : .light
         host.view.frame = CGRect(origin: .zero, size: frame)
         window.rootViewController = host

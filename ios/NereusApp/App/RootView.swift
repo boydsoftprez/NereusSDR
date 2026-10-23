@@ -59,6 +59,9 @@ struct RootView: View {
                 }
             }
         }
+        // Every switch in the app draws in the desktop's workspace look (W7),
+        // under the workspace accent (W6); each presentation repeats it.
+        .workspacePresentationRoot()
     }
 
     private var tabs: some View {

@@ -84,7 +84,7 @@ struct PowerGeniusPage: View {
             if let records = model.records {
                 Text(AccessoryStatusLine.interlockTitle(records.interlock))
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(ChromeColours.accent)
+                    .foregroundStyle(ChromeColours.accentText)
                     .accessibilityIdentifier("interlockTitle")
                 Text(AccessoryStatusLine.interlockSummary(records.interlock))
                     .font(.system(size: 12))

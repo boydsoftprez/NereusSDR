@@ -16,28 +16,32 @@ struct CfcBandsPanel: View {
         let panel = dispatcher.cfcPanel(control, in: category)
         VStack(alignment: .leading, spacing: 4) {
             NavigationLink(value: SetupTree.Route.cfcBands(category: category, control: control.id)) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(control.label)
-                        .font(.body.weight(.semibold))
-                    if let profile = panel.profile {
-                        Text(CfcBandsEditor.summary(profile))
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
+                SetupLinkLabel {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(control.label)
+                            .font(.body.weight(.semibold))
+                        if let profile = panel.profile {
+                            Text(CfcBandsEditor.summary(profile))
+                                .font(.footnote)
+                                .foregroundStyle(WorkspacePalette.textSecondary)
+                                .monospacedDigit()
+                        }
                     }
                 }
             }
+            .buttonStyle(SetupLinkStyle())
             .disabled(!panel.editable)
+            .setupGreyed(!panel.editable)
             .accessibilityIdentifier(control.id)
             if !control.tooltip.isEmpty {
                 Text(control.tooltip)
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(WorkspacePalette.textSecondary)
             }
             if let reason = panel.reason {
                 Text(reason)
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(WorkspacePalette.textSecondary)
                     .accessibilityIdentifier("\(control.id).reason")
             }
             if let problem = panel.problem {
@@ -95,38 +99,46 @@ struct CfcBandsEditor: View {
     var body: some View {
         if let control, case .cfcProfile(let editor)? = control.binding {
             let panel = dispatcher.cfcPanel(control, in: category)
-            List {
+            SetupPageContainer {
                 if let profile = panel.profile {
                     content(control, editor, profile, editable: panel.editable)
                 }
-                Section {
-                    if let reason = panel.reason {
-                        Text(reason)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .accessibilityIdentifier("\(controlId).reason")
+                if panel.reason != nil || panel.problem != nil || panel.sending {
+                    SetupPanelSection {
+                        if let reason = panel.reason {
+                            Text(reason)
+                                .font(.footnote)
+                                .foregroundStyle(WorkspacePalette.textSecondary)
+                                .accessibilityIdentifier("\(controlId).reason")
+                        }
+                        if let problem = panel.problem {
+                            Text(problem)
+                                .font(.footnote)
+                                .foregroundStyle(ConnectChrome.badText)
+                                .accessibilityIdentifier("\(controlId).problem")
+                        }
+                        if panel.sending {
+                            Text(Self.sendingText)
+                                .font(.footnote)
+                                .foregroundStyle(WorkspacePalette.textSecondary)
+                        }
+                    } footer: {
+                        Text(control.tooltip)
                     }
-                    if let problem = panel.problem {
-                        Text(problem)
-                            .font(.footnote)
-                            .foregroundStyle(ConnectChrome.badText)
-                            .accessibilityIdentifier("\(controlId).problem")
-                    }
-                    if panel.sending {
-                        Text(Self.sendingText)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                } footer: {
+                } else {
+                    // No line to show: the help alone, with no empty panel above it.
                     Text(control.tooltip)
+                        .font(.footnote)
+                        .foregroundStyle(WorkspacePalette.textTertiary)
+                        .padding(.horizontal, 6)
                 }
             }
             .navigationTitle(control.label)
             .accessibilityIdentifier("\(controlId).editor")
         } else {
-            List {
+            SetupPageContainer {
                 Text(Self.goneText)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(WorkspacePalette.textSecondary)
             }
         }
     }
@@ -134,7 +146,7 @@ struct CfcBandsEditor: View {
     @ViewBuilder
     private func content(_ control: SetupDescription.Control, _ editor: SetupDescription.CfcEditor,
                          _ profile: CfcProfile, editable: Bool) -> some View {
-        Section(Self.bandsTitle) {
+        SetupPanelSection(Self.bandsTitle) {
             Picker(Self.bandsTitle, selection: Binding(
                 get: { profile.bands.count },
                 set: { count in edit(control) { $0 = $0.withBandCount(count) } })) {
@@ -146,18 +158,18 @@ struct CfcBandsEditor: View {
             .disabled(!editable)
             .accessibilityIdentifier("\(controlId).bandCount")
         }
-        Section(Self.rangeTitle) {
+        SetupPanelSection(Self.rangeTitle) {
             ForEach(editor.fields.filter { $0.id == "minHz" || $0.id == "maxHz" }, id: \.id) { field in
                 headerRow(control, editor, field, profile, editable: editable)
             }
         }
-        Section(Self.settingsTitle) {
+        SetupPanelSection(Self.settingsTitle) {
             ForEach(editor.fields.filter { $0.id != "minHz" && $0.id != "maxHz" }, id: \.id) { field in
                 headerRow(control, editor, field, profile, editable: editable)
             }
         }
         ForEach(Array(profile.bands.enumerated()), id: \.offset) { index, band in
-            Section {
+            SetupPanelSection {
                 ForEach(editor.columns, id: \.id) { column in
                     bandRow(control, column, index: index, band: band, count: profile.bands.count,
                             parametric: profile.parametric, editable: editable)
@@ -221,7 +233,7 @@ struct CfcBandsEditor: View {
                 LabeledContent(column.label) {
                     Text(SetupNumberRow.text(band.frequencyHz, decimals: column.decimals, unit: column.unit))
                         .monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WorkspacePalette.textSecondary)
                 }
                 .accessibilityIdentifier(id)
             } else {

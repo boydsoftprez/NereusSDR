@@ -110,7 +110,7 @@ struct BandMarksShotTests {
             }
             .background(ChromeColours.bar.ignoresSafeArea())
             .preferredColorScheme(.dark)
-            host = UIHostingController(rootView: AnyView(root))
+            host = UIHostingController(rootView: AnyView(ShotHosting.wrap(root)))
             host.view.frame = CGRect(origin: .zero, size: size)
             window.rootViewController = host
             window.isHidden = false
@@ -121,15 +121,15 @@ struct BandMarksShotTests {
             window.rootViewController = nil
         }
 
-        /// Where the dial's step box is: the box its fill (#0F1420,
-        /// `DialColours.stepBackground`) covers in the window's lower left.
+        /// Where the dial's step box is: the box its fill (#050507,
+        /// `DialColours.stepBackground`, the workspace inset) covers in the window's lower left.
         /// SwiftUI builds no accessibility tree for a window no assistive
         /// tool is reading, so it is found by its pixels.
         func stepFrame() -> CGRect? {
             pixels { cg, pixelScale, colour in
                 var box: (minX: Int, minY: Int, maxX: Int, maxY: Int)?
                 for y in cg.height * 2 / 3..<cg.height {
-                    for x in 0..<cg.width / 2 where colour(x, y) == (0x0F, 0x14, 0x20) {
+                    for x in 0..<cg.width / 2 where colour(x, y) == (0x05, 0x05, 0x07) {
                         box = box.map { (min($0.minX, x), min($0.minY, y), max($0.maxX, x), max($0.maxY, y)) }
                             ?? (x, y, x, y)
                     }
@@ -168,17 +168,17 @@ struct BandMarksShotTests {
             }
         }
 
-        /// Where the mark is, from its two dashed edges (#405060, one point
+        /// Where the mark is, from its two dashed edges (#58585E, one point
         /// thick, `markHeight` apart) across the lower two thirds of
         /// the window, found by its pixels as the step box is.
         func markFrame() -> CGRect? {
             pixels { cg, pixelScale, colour in
-                // Its dashed edges (#405060, `BandColours.awayMarkEdge`) are
+                // Its dashed edges (#58585E, `BandColours.awayMarkEdge`) are
                 // the only rows of that exact colour. Beneath the dial only
                 // the gaps between PTT, the step box and the wheel show them,
                 // so a few dozen pixels in a row are enough.
                 func edge(_ y: Int) -> Bool {
-                    (0..<cg.width).filter { x in colour(x, y) == (0x40, 0x50, 0x60) }.count > 16
+                    (0..<cg.width).filter { x in colour(x, y) == (0x58, 0x58, 0x5E) }.count > 16
                 }
                 let rows = (cg.height / 3..<cg.height).filter(edge)
                 let apart = BandMarksShotTests.markHeight * pixelScale
@@ -193,7 +193,7 @@ struct BandMarksShotTests {
         }
 
         /// Pixels in `rect` (points) as bright as the step box's label
-        /// (#C8D8E8), brighter than anything the mark draws (#8090A0 at most).
+        /// (#DCDCE1), brighter than anything the mark draws (#A6A6AC at most).
         func brightPixels(in rect: CGRect) -> Int {
             pixels { cg, pixelScale, colour in
                 let area = CGRect(x: rect.minX * pixelScale, y: rect.minY * pixelScale,

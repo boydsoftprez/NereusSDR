@@ -408,25 +408,27 @@ extension DiagnosticsRange {
     }
 }
 
-private struct PerformanceButtonStyle: ButtonStyle {
+/// The page's buttons: raised, turned over while pressed
+/// (docs/architecture/2026-10-20-phone-workspace-look-design.md, section 5).
+struct PerformanceButtonStyle: ButtonStyle {
+    static let look: WorkspaceLook = .raised
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.subheadline.weight(.semibold))
-            .foregroundStyle(ChromeColours.textBright)
+            .foregroundStyle(workspaceForeground(Self.look))
             .frame(minHeight: 44)
             .padding(.horizontal, 10)
-            .background(ChromeColours.button.opacity(configuration.isPressed ? 0.7 : 1))
-            .clipShape(RoundedRectangle(cornerRadius: 7))
-            .overlay(RoundedRectangle(cornerRadius: 7).stroke(ChromeColours.buttonBorder))
+            .background { WorkspaceFace(Self.look, pressed: configuration.isPressed) }
+            .contentShape(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius, style: .continuous))
     }
 }
 
+/// The page's cards: the panel treatment, radius 10.
 private struct PerformanceCard: ViewModifier {
     func body(content: Content) -> some View {
         content.padding(12)
-            .background(ChromeColours.panel)
-            .clipShape(RoundedRectangle(cornerRadius: 9))
-            .overlay(RoundedRectangle(cornerRadius: 9).stroke(ChromeColours.panelEdge))
+            .workspacePanel()
     }
 }
 

@@ -489,7 +489,7 @@ struct TxProfilesPanelTests {
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: tablet ? 1024 : 402, height: tablet ? 1366 : 874)
         window.windowLevel = .alert + 1
-        let host = UIHostingController(rootView: NavigationStack {
+        let host = ShotHosting.host(NavigationStack {
             DescribedPage(pages: rig.pages, dispatcher: rig.dispatcher, category: "audio", pageId: "audio.txProfile", profileOwner: rig.flow.setupOwner)
         }.preferredColorScheme(.dark))
         window.rootViewController = host; host.view.frame = window.bounds; window.makeKeyAndVisible()
@@ -563,7 +563,7 @@ struct TxProfilesPanelTests {
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: tablet ? 1024 : 402, height: tablet ? 1366 : 874)
         window.windowLevel = .alert + 1
-        let host = UIHostingController(rootView: surface(rig, equalizer: equalizer, owner: owner))
+        let host = ShotHosting.host(surface(rig, equalizer: equalizer, owner: owner))
         window.rootViewController = host; host.view.frame = window.bounds; window.makeKeyAndVisible()
         defer { rig.flow.retire(owner: owner); window.isHidden = true; window.rootViewController = nil }
         await ShotWait.laidOut(window)
@@ -625,7 +625,7 @@ struct TxProfilesPanelTests {
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene); window.frame = CGRect(x: 0, y: 0, width: 402, height: 874)
         window.windowLevel = .alert + 1
-        let oldHost = UIHostingController(rootView: surface(rig, equalizer: equalizer, owner: oldOwner))
+        let oldHost = ShotHosting.host(surface(rig, equalizer: equalizer, owner: oldOwner))
         window.rootViewController = oldHost; window.makeKeyAndVisible(); await ShotWait.laidOut(window)
         defer { rig.flow.retire(owner: replacementOwner); window.isHidden = true; window.rootViewController = nil }
         rig.choose("Beta", equalizer: equalizer, owner: oldOwner); _ = try await nativeAlert(oldHost)
@@ -633,7 +633,7 @@ struct TxProfilesPanelTests {
         rig.flow.retire(owner: oldOwner)
         rig.choose("Beta", equalizer: !equalizer, owner: replacementOwner)
         let identity = try #require(rig.flow.questionIdentity)
-        let newHost = UIHostingController(rootView: surface(rig, equalizer: !equalizer, owner: replacementOwner))
+        let newHost = ShotHosting.host(surface(rig, equalizer: !equalizer, owner: replacementOwner))
         window.rootViewController = newHost; newHost.view.frame = window.bounds
         await ShotWait.laidOut(window)
         let question = try await nativeAlert(newHost)

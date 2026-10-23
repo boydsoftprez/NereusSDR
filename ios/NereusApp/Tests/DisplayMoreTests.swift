@@ -109,6 +109,8 @@ struct DisplayMoreTests {
         display.goLive()
         #expect(band.lookBackLines == 0)
         #expect(BandReadouts.liveText == "LIVE")
+        // W5: the LIVE button is not transmit, so it is the muted danger set, never kTxRed.
+        #expect(BandReadouts.liveLook == .danger)
     }
 
     @Test("dragging the split keeps the waterfall's lines and its storage: only the lines on screen follow the split")

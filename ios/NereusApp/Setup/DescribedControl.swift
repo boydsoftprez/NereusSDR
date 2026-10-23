@@ -107,14 +107,14 @@ struct DescribedControl: View {
                 if !control.tooltip.isEmpty, control.kind != .toggle {
                     Text(control.tooltip)
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WorkspacePalette.textSecondary)
                         .lineLimit(3)
                 }
                 // A table says its own reason in its row, once.
                 if let reason = state.reason, control.kind != .table {
                     Text(reason)
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WorkspacePalette.textSecondary)
                         .accessibilityIdentifier("\(control.id).reason")
                 }
                 if let problem {
@@ -211,8 +211,13 @@ struct DescribedControl: View {
                 var edited = textEntry
                 if edited.type(value, identity: entryIdentity) { textEntry = edited }
             }))
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .workspaceInset()
                 .onSubmit { submitText(identity: entryIdentity) }
                 .disabled(!state.editable)
+                .setupGreyed(!state.editable)
                 .accessibilityIdentifier(control.id)
         case .colour?:
             colour(state)
@@ -220,7 +225,7 @@ struct DescribedControl: View {
             Button(control.label) {
                 request(nil)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(SetupButtonStyle())
             .disabled(!state.editable)
             .accessibilityIdentifier(control.id)
         case .readout?:
@@ -250,7 +255,7 @@ struct DescribedControl: View {
         LabeledContent(title) {
             Text(value)
                 .monospacedDigit()
-                .foregroundStyle(.secondary)
+                .foregroundStyle(WorkspacePalette.textSecondary)
         }
         .accessibilityIdentifier(control.id)
     }
@@ -285,10 +290,10 @@ struct DescribedControl: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(control.label)
                 .font(.body.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(WorkspacePalette.textInactive)
             Text(reason)
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(WorkspacePalette.textSecondary)
                 .accessibilityIdentifier("\(control.id).reason")
         }
         .accessibilityElement(children: .combine)
@@ -305,10 +310,11 @@ struct DescribedControl: View {
                 LabeledContent(title) {
                     Text(state.value == nil ? Self.unavailableText : options[min(max(shown, 0), options.count - 1)].label)
                         .monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WorkspacePalette.textSecondary)
                 }
-                Slider(value: Binding(get: { draft ?? Double(index) }, set: { draft = $0 }),
-                       in: 0...Double(max(options.count - 1, 1)), step: 1) { editing in
+                SetupSlider(value: Binding(get: { draft ?? Double(index) }, set: { draft = $0 }),
+                            range: 0...Double(max(options.count - 1, 1)), step: 1,
+                            identifier: control.id) { editing in
                     if !editing, let draft {
                         let chosen = options[min(max(Int(draft.rounded()), 0), options.count - 1)]
                         self.draft = nil
@@ -317,16 +323,18 @@ struct DescribedControl: View {
                 }
                 .disabled(!state.editable || state.value == nil || options.count < 2)
             }
+            .setupGreyed(!state.editable || state.value == nil || options.count < 2)
             .accessibilityIdentifier(control.id)
         } else if let range = drawn.range, let number = state.value?.number {
             VStack(alignment: .leading) {
                 LabeledContent(title) {
                     Text(SetupNumberRow.text(draft ?? number, decimals: decimals, unit: control.unit ?? ""))
                         .monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WorkspacePalette.textSecondary)
                 }
-                Slider(value: Binding(get: { draft ?? number }, set: { draft = $0 }),
-                       in: range.minimum...range.maximum, step: range.step) { editing in
+                SetupSlider(value: Binding(get: { draft ?? number }, set: { draft = $0 }),
+                            range: range.minimum...range.maximum, step: range.step,
+                            identifier: control.id) { editing in
                     if !editing, let draft {
                         self.draft = nil
                         request(wholeRange ? .integer(Int64(draft.rounded())) : .decimal(draft))
@@ -334,6 +342,7 @@ struct DescribedControl: View {
                 }
                 .disabled(!state.editable)
             }
+            .setupGreyed(!state.editable)
             .accessibilityIdentifier(control.id)
         } else {
             valueRow(Self.unavailableText)
@@ -369,13 +378,13 @@ struct DescribedControl: View {
                             .selectionDisabled(unavailable[item.value] != nil)
                     }
                 }
-                .pickerStyle(.menu)
-                .disabled(!state.editable)
                 .accessibilityIdentifier(control.id)
+                .setupMenuRow(title)
+                .disabled(!state.editable)
                 ForEach(items.filter { unavailable[$0.value] != nil }, id: \.value) { item in
                     Text("\(item.label): \(unavailable[item.value] ?? "")")
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WorkspacePalette.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("\(control.id).option.\(item.value)")
                 }
@@ -396,9 +405,10 @@ struct DescribedControl: View {
                             supportsOpacity: !opaque)
                 Text(hex)
                     .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(WorkspacePalette.textSecondary)
             }
             .disabled(!state.editable)
+            .setupGreyed(!state.editable)
             .accessibilityIdentifier(control.id)
         } else {
             valueRow(Self.unavailableText)
@@ -415,7 +425,7 @@ struct DescribedControl: View {
                 .font(.body.weight(.semibold))
             Text(Self.tableReason(reason))
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(WorkspacePalette.textSecondary)
                 .accessibilityIdentifier("\(control.id).reason")
         }
         .accessibilityIdentifier(control.id)
@@ -454,7 +464,7 @@ struct DescribedControl: View {
         switch lamp {
         case .inUse:
             Circle()
-                .fill(Color.accentColor)
+                .fill(WorkspacePalette.accentFill)
                 .frame(width: lowPassMarkSize, height: lowPassMarkSize)
                 .accessibilityElement()
                 .accessibilityLabel(SetupControlDispatcher.lowPassInUseText)

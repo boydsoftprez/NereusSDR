@@ -2,26 +2,36 @@
 
 Unmodified native simulator/test-render captures with simulated station data. No mockup-board images.
 
+Recaptured on 21 October 2026 in the workspace look, at the original sizes, from branch `claude/ios-workspace-look` at `4ff934ec0`. Panadapter, receive and landscape were recaptured again on 22 October 2026 at `45c52b2dd`, after the final review's fixes. All four were recaptured once more on 22 October 2026 after the 7 and 10 radii (W11): landscape, receive and transmit at `e20d70b38` on an iPhone 17 simulator, panadapter at `d3207d2bb` on an iPhone 18 Pro Max simulator.
+
 ## iphone-panadapter.png
 
-/Users/j.j.boyd/NereusSDR-crew/2026-09-23-iphone-app-plan/pages-resume-focused-v3/pages-prep-current-20261002-v3-green-focused/shots/fix-band-markers-dark.png
+/Users/j.j.boyd/NereusSDR-crew/2026-10-21-phone-workspace-look-plan/followup-c-shots/fc-shots-iphone18pm/fix-band-markers-dark.png
 
-SHA-256: `2af46765df20c484fa833b0ae075291abbb404da3f9de7997542050170d91577`
+SeveralDevicesScreenTests, iPhone 18 Pro Max simulator
+
+SHA-256: `c28f97882b448d87fa99c1cda52727047c54b32fa9b776a0b2c55467bfa6d595`
 
 ## iphone-receive.png
 
-/Users/j.j.boyd/NereusSDR-crew/2026-09-23-iphone-app-plan/audioquality-acceptance-v1-20261001-210754-8850/shots/upright-rx-panel.png
+/Users/j.j.boyd/NereusSDR-crew/2026-10-21-phone-workspace-look-plan/followup-c-shots/fc-shots-iphone17/upright-rx-panel.png
 
-SHA-256: `9363cb1899b9945ce8af93a8bc2d8f7e3cf9e412558a7478f4a98becbfd6c3bf`
+MainScreenShotTests, iPhone 17 simulator
+
+SHA-256: `9fbc83502c20fe54c8bc1c06e6f83f79c9d7f0289b0e22ba605de4e1b1906bcd`
 
 ## iphone-transmit.png
 
-/Users/j.j.boyd/NereusSDR-crew/2026-09-23-iphone-app-plan/native-txpanel-resume-focused-20261002-v1/unit-fixtures/shots/native-txpanel-portrait-dark.png
+/Users/j.j.boyd/NereusSDR-crew/2026-10-21-phone-workspace-look-plan/followup-c-shots/fc-shots-iphone17/native-txpanel-portrait-dark.png
 
-SHA-256: `fad68e894113a119dd17458bad4151bfafbeb6e36d202444db6a3cf2a1d3b28c`
+TxPanelApprovedShotTests, iPhone 17 simulator
+
+SHA-256: `ff67289412306367355236ed30ca5ce5dd80399ed8a0334be1e16dd82c6d7cc6`
 
 ## iphone-landscape.png
 
-/Users/j.j.boyd/NereusSDR-crew/2026-09-23-iphone-app-plan/audioquality-acceptance-v1-20261001-210754-8850/shots/sideways.png
+/Users/j.j.boyd/NereusSDR-crew/2026-10-21-phone-workspace-look-plan/followup-c-shots/fc-shots-iphone17/sideways.png
 
-SHA-256: `5ff4a5cad4e4e46aacf43d0a1061e7459918c3b097ee3447f1b4d6e58fc131e3`
+MainScreenShotTests, iPhone 17 simulator
+
+SHA-256: `eb47f9538d9f5ae183442861ef1b1b391710146deeca11f355d20bef52bf07ca`

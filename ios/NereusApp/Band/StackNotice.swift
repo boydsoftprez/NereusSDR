@@ -19,10 +19,10 @@ struct StackNotice: View {
     static let pausedText = "Paused while transmitting"
 
     /// The board's colours: the notice's card and edge, the chip's.
-    static let card = Color(red: 0x16 / 255.0, green: 0x22 / 255.0, blue: 0x2F / 255.0)
-    static let cardEdge = Color(red: 0x2C / 255.0, green: 0x4A / 255.0, blue: 0x66 / 255.0)
-    static let chip = Color(red: 20 / 255.0, green: 30 / 255.0, blue: 44 / 255.0).opacity(0.92)
-    static let chipEdge = Color(red: 0x40 / 255.0, green: 0x58 / 255.0, blue: 0x70 / 255.0)
+    static let card = ChromeColours.sheet
+    static let cardEdge = ChromeColours.panelEdge
+    static let chip = ChromeColours.bar.opacity(0.92)
+    static let chipEdge = WorkspacePalette.borderMuted
 
     var body: some View {
         GeometryReader { proxy in
@@ -34,8 +34,8 @@ struct StackNotice: View {
                             .foregroundStyle(ChromeColours.text)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            .background(Self.chip, in: RoundedRectangle(cornerRadius: 4))
-                            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Self.chipEdge, lineWidth: 1))
+                            .background(Self.chip, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(Self.chipEdge, lineWidth: 1))
                             .offset(x: 12, y: max(axes.layout.strip.minY - 34, 4))
                             .allowsHitTesting(false)
                             .accessibilityIdentifier("stackPaused")
@@ -70,8 +70,8 @@ struct StackNotice: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Self.card, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Self.cardEdge, lineWidth: 1))
+        .background(Self.card, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(Self.cardEdge, lineWidth: 1))
         .shadow(color: .black.opacity(0.55), radius: 11, y: 8)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("stackNotice")

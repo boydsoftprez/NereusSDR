@@ -10,7 +10,7 @@ struct ActivityAppIcon: View {
             .resizable()
             .interpolation(.high)
             .frame(width: 22, height: 22)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .clipShape(RoundedRectangle(cornerRadius: 6)) // kept-radius: icon
             .accessibilityHidden(true)
     }
 }

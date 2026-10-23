@@ -94,7 +94,7 @@ struct ListenerAudioSection: View {
                            accessibility: "Pan, left to right", format: AudioSection.panText, notConfirmed: model.isUnconfirmed("audioPan")) { _ in }
                 .listenerDim(dim, showReason: listener.showReason)
             ModesChrome.grid(columns: 3) {
-                PanelButton(label: "MUTE", lit: level.muted, style: .red) {
+                PanelButton(label: "MUTE", lit: level.muted, style: .dsp) {
                     listener.toggleMute()
                 }
                 .accessibilityLabel("Mute slice \(letter) on this phone only")
@@ -118,9 +118,9 @@ struct ListenerAudioSection: View {
                 ModesChrome.caption("At the Core:")
                 ModesChrome.grid(columns: 2) {
                     PanelButton(label: "SPEAKERS", lit: model.outputRoute == ModesTabModel.speakersRoute,
-                                style: .blue) {}
+                                style: .dsp) {}
                     PanelButton(label: "PHONES", lit: model.outputRoute == ModesTabModel.phonesRoute,
-                                style: .blue) {}
+                                style: .dsp) {}
                 }
             }
             .listenerDim(dim, showReason: listener.showReason)

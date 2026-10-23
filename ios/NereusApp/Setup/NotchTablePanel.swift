@@ -40,12 +40,12 @@ struct NotchTablePanel: View {
             if !control.tooltip.isEmpty {
                 Text(control.tooltip)
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(WorkspacePalette.textSecondary)
             }
             if let list = state.list {
                 if list.rows.isEmpty {
                     Text(Self.emptyText)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WorkspacePalette.textSecondary)
                         .accessibilityIdentifier("\(control.id).empty")
                 }
                 ForEach(list.rows) { notch in
@@ -61,7 +61,7 @@ struct NotchTablePanel: View {
             if let reason = state.reason, reason != state.listReason {
                 Text(reason)
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(WorkspacePalette.textSecondary)
                     .accessibilityIdentifier("\(control.id).reason")
             }
             if let problem {
@@ -113,23 +113,23 @@ struct NotchTablePanel: View {
                         draft.admission.revoke()
                         editing = nil
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(SetupButtonStyle())
                     .accessibilityIdentifier("notch.\(notch.id).cancel")
                     Spacer()
                     Button(Self.saveText) { if let editing { save(editing) } }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(SetupButtonStyle(.glass))
                         .accessibilityIdentifier("notch.\(notch.id).save")
                 }
             } else {
                 LabeledContent(centreLabel) {
                     Text(Self.hertz(notch.centreHz))
                         .monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WorkspacePalette.textSecondary)
                 }
                 LabeledContent(widthLabel) {
                     Text(Self.hertz(notch.widthHz))
                         .monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WorkspacePalette.textSecondary)
                 }
                 Toggle(column("active")?.label ?? "",
                        isOn: Binding(get: { notch.active }, set: { change(notch.id, .setActive($0)) }))
@@ -137,12 +137,12 @@ struct NotchTablePanel: View {
                     .accessibilityIdentifier("notch.\(notch.id).active")
                 HStack {
                     Button(Self.editText) { beginEdit(notch) }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(SetupButtonStyle())
                         .disabled(!editable || editing != nil)
                         .accessibilityIdentifier("notch.\(notch.id).edit")
                     Spacer()
                     Button(column("delete")?.label ?? "", role: .destructive) { change(notch.id, .delete) }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(SetupButtonStyle(.danger))
                         .disabled(!editable)
                         .accessibilityIdentifier("notch.\(notch.id).delete")
                 }

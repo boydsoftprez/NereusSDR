@@ -422,7 +422,7 @@ struct PaProfilesPanelTests {
         specialized.makePa = { control, category in
             AnyView(PaProfilesPanel(control: control, category: category, pages: rig.pages, dispatcher: rig.dispatcher))
         }
-        let host = UIHostingController(rootView: NavigationStack {
+        let host = ShotHosting.host(NavigationStack {
             DescribedPage(pages: rig.pages, dispatcher: rig.dispatcher, category: "pa", pageId: "pa.gain", specialized: specialized)
         })
         window.rootViewController = host
@@ -762,7 +762,7 @@ struct PaProfilesPanelTests {
             let root = NavigationStack {
                 DescribedPage(pages: rig.pages, dispatcher: rig.dispatcher, category: "pa", pageId: "pa.gain", specialized: specialized)
             }.valuePads(hostPads).environment(\.dynamicTypeSize, type).preferredColorScheme(scheme)
-            let host = UIHostingController(rootView: root)
+            let host = ShotHosting.host(root)
             host.view.frame = window.bounds
             window.rootViewController = host
             window.makeKeyAndVisible()

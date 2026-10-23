@@ -39,8 +39,8 @@ struct TuneStepMenu: View {
         .padding(6)
         .frame(minWidth: Self.width, alignment: .leading)
         .fixedSize()
-        .background(ChromeColours.sheet, in: RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(ChromeColours.sheetBorder, lineWidth: 1))
+        .background(ChromeColours.sheet, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ChromeColours.sheetBorder, lineWidth: 1))
         .shadow(color: .black.opacity(0.55), radius: 14, y: 10)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(tuning.stepMenuTitle(sliceId: sliceId))
@@ -58,7 +58,7 @@ struct TuneStepMenu: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 7)
-                .background(lit ? Self.lit : Color.clear, in: RoundedRectangle(cornerRadius: 4))
+                .background(lit ? Self.lit : Color.clear, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -66,5 +66,5 @@ struct TuneStepMenu: View {
     }
 
     /// The lit step, the board's `.tustep__item.is-on`.
-    private static let lit = Color(red: 0x1A / 255.0, green: 0x5C / 255.0, blue: 0xA8 / 255.0)
+    private static let lit = ChromeColours.buttonOnBlue // glass, a picked choice (W3)
 }

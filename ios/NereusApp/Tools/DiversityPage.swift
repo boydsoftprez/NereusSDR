@@ -24,7 +24,7 @@ struct DiversityPage: View {
                             Button("Use" + (model.activeTargetLetter.map { " " + $0 } ?? "")) { model.useActiveSlice() }
                                 .font(.system(size: 14, weight: .bold))
                                 .frame(minWidth: 60, minHeight: 44)
-                                .buttonStyle(.bordered)
+                                .buttonStyle(SetupButtonStyle())
                                 .disabled(!model.canUse)
                                 .accessibilityIdentifier("diversity.use")
                         }
@@ -139,13 +139,13 @@ struct DiversityPage: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             }
-            .foregroundStyle(usable ? (memory != nil ? ChromeColours.accent : ChromeColours.text)
+            .foregroundStyle(usable ? (memory != nil ? ChromeColours.accentText : ChromeColours.text)
                                     : ChromeColours.buttonOffText)
             .frame(maxWidth: .infinity, minHeight: 44)
             .background(model.storing && enabled ? ChromeColours.buttonOnAmber
                                                  : (usable ? ChromeColours.button : ChromeColours.buttonOff),
-                        in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4)
+                        in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                 .strokeBorder(model.storing && enabled ? ChromeColours.buttonOnAmberBorder
                                                        : (usable ? ChromeColours.buttonBorder
                                                                  : ChromeColours.buttonOffBorder), lineWidth: 1))
@@ -180,8 +180,8 @@ struct DiversityOnOff: View {
                 .foregroundStyle(isOn ? ChromeColours.buttonOnGreenText : ChromeColours.text)
                 .frame(width: 44, height: 30)
                 .background(isOn ? ChromeColours.buttonOnGreen : ChromeColours.button,
-                            in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(isOn ? ChromeColours.buttonOnGreenBorder : ChromeColours.buttonBorder, lineWidth: 1))
+                            in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(isOn ? ChromeColours.buttonOnGreenBorder : ChromeColours.buttonBorder, lineWidth: 1))
                 .frame(width: 44, height: 44).contentShape(Rectangle())
         }
         .buttonStyle(.plain).disabled(!enabled).opacity(enabled ? 1 : 0.5)

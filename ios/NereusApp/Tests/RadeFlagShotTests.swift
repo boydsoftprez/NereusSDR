@@ -75,7 +75,7 @@ struct RadeFlagShotTests {
             .padding(20)
             .frame(width: size.width, height: size.height, alignment: .topLeading)
             .background(Color.black)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         host.safeAreaRegions = []
         host.view.frame = CGRect(origin: .zero, size: size)
         window.rootViewController = host
@@ -129,7 +129,7 @@ struct RadeFlagShotTests {
         .environment(\.dynamicTypeSize, large ? Self.largeType : .large)
         .frame(width: size.width, height: size.height)
         .background(Color.black)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         host.safeAreaRegions = []
         host.view.frame = CGRect(origin: .zero, size: size)
         window.rootViewController = host
@@ -190,7 +190,7 @@ struct RadeFlagShotTests {
         .preferredColorScheme(scheme)
         .frame(width: size.width, height: size.height)
         .background(Color.black)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         host.overrideUserInterfaceStyle = scheme == .dark ? .dark : .light
         host.safeAreaRegions = []
         host.view.frame = CGRect(origin: .zero, size: size)

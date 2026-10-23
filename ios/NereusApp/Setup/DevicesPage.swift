@@ -27,6 +27,8 @@ struct DevicesPage: View {
         ZStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
+                    // In the iPad's split, the page's title heads its own column.
+                    SetupInlineTitle()
                     coreCard
                     if model.keyBackupNeeded {
                         backupCard
@@ -37,7 +39,7 @@ struct DevicesPage: View {
                             ForEach(model.connected) { row in
                                 connectedRow(row)
                                 if row.id != model.connected.last?.id {
-                                    Divider().overlay(ConnectChrome.rowBorder)
+                                    Divider().overlay(WorkspacePalette.borderSubtle)
                                 }
                             }
                         }
@@ -49,7 +51,7 @@ struct DevicesPage: View {
                             ForEach(model.paired) { row in
                                 pairedRow(row)
                                 if row.id != model.paired.last?.id {
-                                    Divider().overlay(ConnectChrome.rowBorder)
+                                    Divider().overlay(WorkspacePalette.borderSubtle)
                                 }
                             }
                         }
@@ -63,6 +65,7 @@ struct DevicesPage: View {
                         .accessibilityIdentifier("devicesNote")
                 }
                 .padding(12)
+                .modifier(SetupReadableWidth())
             }
             if let id = flow.renaming, let row = flow.cores.first(where: { $0.id == id }) {
                 Color.black.opacity(0.45)
@@ -77,9 +80,9 @@ struct DevicesPage: View {
                 .transition(.move(edge: .bottom))
             }
         }
-        .background(ChromeColours.page.ignoresSafeArea())
+        .background(WorkspacePalette.appBg.ignoresSafeArea())
         .animation(.easeOut(duration: 0.2), value: flow.renaming)
-        .navigationTitle("Devices")
+        .setupPageTitle("Devices")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 SetupTagBadge(tag: .core)
@@ -87,6 +90,7 @@ struct DevicesPage: View {
         }
         .sheet(isPresented: $showingBackup) {
             KeyBackupSheet(model: model) { showingBackup = false }
+                .workspacePresentationRoot()
                 .presentationDetents([.medium, .large])
                 .preferredColorScheme(.dark)
         }
@@ -140,7 +144,7 @@ struct DevicesPage: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(Self.backupTitle)
                 .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(ConnectChrome.warn)
+                .foregroundStyle(WorkspacePalette.amberText)
             Text(Self.backupText)
                 .font(.system(size: 12))
                 .foregroundStyle(ChromeColours.text)
@@ -152,8 +156,11 @@ struct DevicesPage: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(ConnectChrome.warn.opacity(0.08), in: RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ConnectChrome.warn.opacity(0.5), lineWidth: 1))
+        // The workspace's amber warning set (spec section 7.4).
+        .background(WorkspacePalette.amberBg,
+                    in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius, style: .continuous)
+            .strokeBorder(WorkspacePalette.amberBorder, lineWidth: 1))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("keyBackupReminder")
     }
@@ -164,7 +171,7 @@ struct DevicesPage: View {
         Text(text.uppercased())
             .font(.system(size: 11, weight: .bold))
             .tracking(0.8)
-            .foregroundStyle(ConnectChrome.heading)
+            .foregroundStyle(WorkspacePalette.textScale)
             .padding(.top, 6)
             .accessibilityAddTraits(.isHeader)
     }
@@ -178,7 +185,7 @@ struct DevicesPage: View {
                         .font(.system(size: 10, weight: .heavy))
                         .foregroundStyle(Color.black)
                         .frame(width: 14, height: 14)
-                        .background(BandColours.slice(slice.colour), in: RoundedRectangle(cornerRadius: 2))
+                        .background(BandColours.slice(slice.colour), in: RoundedRectangle(cornerRadius: 2)) // kept-radius: swatch
                         .accessibilityLabel("Slice \(slice.letter)")
                     if !slice.band.isEmpty {
                         Text(slice.band)
@@ -217,8 +224,8 @@ struct DevicesPage: View {
                                 .foregroundStyle(BandColours.txBadgeOnText)
                                 .padding(.horizontal, 4)
                                 .padding(.vertical, 1)
-                                .background(BandColours.txBadgeOn, in: RoundedRectangle(cornerRadius: 2))
-                                .overlay(RoundedRectangle(cornerRadius: 2)
+                                .background(BandColours.txBadgeOn, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                                     .strokeBorder(BandColours.txBadgeOnBorder, lineWidth: 1))
                                 .accessibilityLabel("has transmit")
                         }
@@ -320,32 +327,23 @@ struct DevicesPage: View {
 
     private func smallButton(_ title: String, enabled: Bool, style: ButtonStyleKind, id: String,
                              action: @escaping () -> Void) -> some View {
-        let revoke = style == .revoke
-        return Button(action: action) {
+        // Raised at rest, Revoke in the muted danger set; 0.4 when it cannot act.
+        Button(action: action) {
             Text(title)
                 .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(enabled ? (revoke ? ChromeColours.revokeText : ChromeColours.text)
-                    : ChromeColours.buttonOffText)
-                .padding(.horizontal, 12)
                 .frame(minHeight: 36)
-                .background(enabled ? (revoke ? ChromeColours.revoke : ChromeColours.button) : ChromeColours.buttonOff,
-                            in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(enabled ? (revoke ? ChromeColours.revokeBorder : ChromeColours.buttonBorder)
-                        : ChromeColours.buttonOffBorder, lineWidth: 1))
-                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(SetupButtonStyle(style == .revoke ? .danger : .raised))
         .disabled(!enabled)
         .accessibilityIdentifier(id)
     }
 
-    /// The board's card: a dark row fill with a thin border.
+    /// The board's card: a workspace panel, its 10 point corner and `kBorder` edge.
     private struct Card: ViewModifier {
         func body(content: Content) -> some View {
             content
-                .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.stationBorder, lineWidth: 1))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .workspacePanel()
         }
     }
 }

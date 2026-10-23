@@ -99,8 +99,8 @@ struct SpotDetailsSheet: View {
                         .foregroundStyle(reason == nil ? Color.white : ChromeColours.buttonOffText)
                         .frame(maxWidth: .infinity, minHeight: 40)
                         .background(reason == nil ? ChromeColours.buttonOnBlue : ChromeColours.buttonOff,
-                                    in: RoundedRectangle(cornerRadius: 4))
-                        .overlay(RoundedRectangle(cornerRadius: 4)
+                                    in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                             .strokeBorder(reason == nil ? ChromeColours.buttonOnBlueBorder : ChromeColours.buttonOffBorder,
                                           lineWidth: 1))
                         .contentShape(Rectangle())
@@ -117,8 +117,7 @@ struct SpotDetailsSheet: View {
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(ChromeColours.text)
                         .frame(maxWidth: .infinity, minHeight: 40)
-                        .background(ChromeColours.button, in: RoundedRectangle(cornerRadius: 4))
-                        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.buttonBorder, lineWidth: 1))
+                        .background { WorkspaceFace(.raised) }
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -132,8 +131,8 @@ struct SpotDetailsSheet: View {
         .onChange(of: spot.id) { _, _ in beamSent = false }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
-        .background(SpotColours.sheet.opacity(0.97), in: RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(SpotColours.sheetBorder, lineWidth: 1))
+        .background(SpotColours.sheet.opacity(0.97), in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(SpotColours.sheetBorder, lineWidth: 1))
         .shadow(color: .black.opacity(0.6), radius: 15, y: 12)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("spotDetails")
@@ -156,17 +155,12 @@ private struct TurnBeamButton: View {
         } label: {
             Text(SpotDetailsSheet.turnBeamTitle(spot))
                 .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(reason == nil ? RotorColours.amber : ChromeColours.buttonOffText)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
                 .frame(maxWidth: .infinity, minHeight: 40)
-                .background(reason == nil ? RotorColours.beam : ChromeColours.buttonOff,
-                            in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(reason == nil ? RotorColours.beamBorder : ChromeColours.buttonOffBorder, lineWidth: 1))
-                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        // Lit amber, as the mockup's amber Turn beam; greyed, raised at 40 percent.
+        .buttonStyle(WorkspaceButtonStyle(reason == nil ? .litAmber : .raised))
         .disabled(reason != nil)
         .accessibilityHint(reason ?? "")
         .accessibilityIdentifier("spotDetailsTurnBeam")

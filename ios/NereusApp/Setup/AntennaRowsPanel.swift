@@ -52,7 +52,7 @@ struct AntennaRowsPanel: View {
             if let reason = table.reason, reason != table.gridReason {
                 Text(reason)
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(WorkspacePalette.textSecondary)
                     .accessibilityIdentifier("\(control.id).reason")
             }
             if let problem {
@@ -73,7 +73,7 @@ struct AntennaRowsPanel: View {
                 ForEach(Array(rows.columnGroups.enumerated()), id: \.offset) { _, group in
                     Text(group.label)
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WorkspacePalette.textSecondary)
                         .frame(width: Self.cellWidth * CGFloat(group.columns.count))
                 }
             }
@@ -83,7 +83,7 @@ struct AntennaRowsPanel: View {
             ForEach(Array(rows.columns.enumerated()), id: \.offset) { _, column in
                 Text(column.label)
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(WorkspacePalette.textSecondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                     .frame(width: Self.cellWidth)
@@ -100,7 +100,7 @@ struct AntennaRowsPanel: View {
         } label: {
             Image(systemName: Self.symbol(checkbox: column.field == "rxOnly", selected: selected))
                 .font(.title3)
-                .foregroundStyle(blocked ? Color.secondary.opacity(0.4) : selected ? Color.accentColor : Color.secondary)
+                .foregroundStyle(blocked ? Color.secondary.opacity(0.4) : selected ? WorkspacePalette.accentFill : Color.secondary)
                 .frame(width: Self.cellWidth, height: 36)
         }
         .buttonStyle(.plain)

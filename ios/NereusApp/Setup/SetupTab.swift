@@ -26,6 +26,8 @@ struct SetupTab: View {
     @StateObject private var timeOut: TransmitTimeOutModel
     /// A test build's name, shown small at the foot of the list.
     var buildTag: String?
+    /// A regular-width iPad window takes the split (``SetupSplitView``).
+    @Environment(\.horizontalSizeClass) private var widthClass
 
     /// `devices` stands in for the Devices page's own model (the tests'
     /// pictures); `specialized` for the app's closed-control panels.
@@ -54,14 +56,43 @@ struct SetupTab: View {
     }
 
     var body: some View {
+        GeometryReader { proxy in
+            if SetupSplit.applies(horizontal: widthClass, size: proxy.size) {
+                // A full-width iPad: the list on the left, the open page beside it.
+                SetupSplitView(router: router, tree: tree) { route in
+                    destination(route)
+                } footer: {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(Self.note(coreName: main.coreName))
+                            .accessibilityIdentifier("setupNote")
+                        if let buildTag {
+                            Text(BuildTag.label(for: buildTag))
+                                .accessibilityIdentifier("SetupBuildTag")
+                        }
+                    }
+                }
+            } else {
+                oneList
+            }
+        }
+        // Another page opening closes an open pad, sending nothing.
+        .onChange(of: router.path) { _, _ in router.pads.close() }
+        // A number row's typed value: its pad at the foot of the tab.
+        .valuePads(router.pads)
+    }
+
+    /// An iPhone, or an iPad window shared narrowly: one list, and each page
+    /// slides in over it.
+    private var oneList: some View {
         NavigationStack(path: $router.path) {
-            List {
-                Section {
+            SetupPageContainer {
+                SetupPanelSection {
                     ForEach(tree) { category in
                         NavigationLink(value: category.opensPage.map(SetupTree.Route.page)
                                        ?? SetupTree.Route.category(category.id)) {
                             SetupRow(title: category.title, detail: category.summary, tag: category.tag)
                         }
+                        .buttonStyle(SetupLinkStyle())
                         .accessibilityIdentifier(category.title)
                     }
                 } footer: {
@@ -69,12 +100,12 @@ struct SetupTab: View {
                         .accessibilityIdentifier("setupNote")
                 }
                 if let buildTag {
-                    Section {
-                        Text(BuildTag.label(for: buildTag))
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .accessibilityIdentifier("SetupBuildTag")
-                    }
+                    // A test build's name, small at the foot, outside the panels.
+                    Text(BuildTag.label(for: buildTag))
+                        .font(.footnote)
+                        .foregroundStyle(WorkspacePalette.textTertiary)
+                        .padding(.horizontal, 6)
+                        .accessibilityIdentifier("SetupBuildTag")
                 }
             }
             .navigationTitle("Setup")
@@ -82,10 +113,6 @@ struct SetupTab: View {
                 destination(route)
             }
         }
-        // Another page opening closes an open pad, sending nothing.
-        .onChange(of: router.path) { _, _ in router.pads.close() }
-        // A number row's typed value: its pad at the foot of the tab.
-        .valuePads(router.pads)
     }
 
     /// The tree now: the app's own pages and the ones the Core describes.
@@ -99,8 +126,8 @@ struct SetupTab: View {
         switch route {
         case .category(let id):
             if let category = tree.first(where: { $0.id == id }) {
-                List {
-                    Section {
+                SetupPageContainer {
+                    SetupPanelSection {
                         ForEach(category.pages, id: \.destination) { entry in
                             if let reason = entry.unavailableReason {
                                 // Listed greyed with its reason, never left out.
@@ -110,6 +137,7 @@ struct SetupTab: View {
                                 NavigationLink(value: Self.route(entry.destination)) {
                                     SetupRow(title: entry.title, detail: nil, tag: entry.tag)
                                 }
+                                .buttonStyle(SetupLinkStyle())
                                 .accessibilityIdentifier(entry.title)
                             }
                         }
@@ -120,7 +148,7 @@ struct SetupTab: View {
                         }
                     }
                 }
-                .navigationTitle(category.title)
+                .setupPageTitle(category.title)
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
                         SetupTagBadge(tag: category.tag)

@@ -84,7 +84,7 @@ struct CatalogueRangesShotTests {
         }
         .frame(width: size.width, height: size.height)
         .background(Color.black)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         host.safeAreaRegions = []
         host.view.frame = CGRect(origin: .zero, size: size)
         window.rootViewController = host
@@ -122,7 +122,7 @@ struct CatalogueRangesShotTests {
 
     private func shoot(_ name: String, size: CGSize, @ViewBuilder content: () -> some View) async throws {
         let window = try BandFlagShotTests.window(size: size)
-        let host = UIHostingController(rootView: content()
+        let host = ShotHosting.host(content()
             .frame(width: size.width, height: size.height, alignment: .top)
             .preferredColorScheme(.dark))
         host.safeAreaRegions = []

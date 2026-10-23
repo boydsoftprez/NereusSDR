@@ -72,27 +72,46 @@ struct SetupNumberRow: View {
     /// The row opens a pad: it can change and the screen draws one.
     private var typable: Bool { enabled && pads != nil }
 
+    /// The value field's narrowest width beside the label, as the board draws it.
+    static let fieldMinWidth: CGFloat = 86
+
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     var body: some View {
         let shown = Self.text(value, decimals: decimals, unit: unit)
-        Stepper {
-            HStack {
-                Text(title)
-                Spacer(minLength: 8)
+        let stacked = SetupValueRowLayout<EmptyView, EmptyView>.stacks(dynamicTypeSize)
+        // The value in the inset field, raised minus and plus beside it
+        // (spec section 7.1); under the title at the accessibility sizes (W9).
+        SetupValueRowLayout(probe: id) {
+            Text(title)
+        } value: {
+            HStack(spacing: 6) {
                 Button {
                     openPad()
                 } label: {
                     Text(shown)
                         .monospacedDigit()
-                        .foregroundStyle(typable ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                        // One line beside the title; the title wraps instead.
+                        .lineLimit(stacked ? nil : 1)
+                        .fixedSize(horizontal: !stacked, vertical: false)
+                        .foregroundStyle(typable ? WorkspacePalette.textPrimary : WorkspacePalette.textSecondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .frame(minWidth: Self.fieldMinWidth, maxWidth: stacked ? .infinity : nil,
+                               alignment: stacked ? .leading : .trailing)
+                        .workspaceInset()
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
                 .disabled(!typable)
                 .accessibilityIdentifier("\(id).value")
+                SetupStepButton(systemImage: "minus") {
+                    decrement()
+                }
+                SetupStepButton(systemImage: "plus") {
+                    increment()
+                }
             }
-        } onIncrement: {
-            increment()
-        } onDecrement: {
-            decrement()
         }
         .disabled(!enabled)
         .opacity(enabled ? 1 : Self.greyedOpacity)

@@ -353,7 +353,7 @@ struct LiveMicLevelTests {
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(origin: .zero, size: size)
         window.windowLevel = .alert + 1
-        let host = UIHostingController(rootView: LiveMicShotRoot(model: model).preferredColorScheme(.dark))
+        let host = ShotHosting.host(LiveMicShotRoot(model: model).preferredColorScheme(.dark))
         host.view.frame = CGRect(origin: .zero, size: size)
         window.rootViewController = host
         window.isHidden = false

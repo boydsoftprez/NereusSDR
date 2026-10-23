@@ -136,7 +136,7 @@ struct TxPanelApprovedShotTests {
         }
         .preferredColorScheme(dark ? .dark : .light)
         .dynamicTypeSize(large ? .accessibility3 : .large)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         host.view.frame = window.bounds
         let wasAccessible = SetupTypedEntryTests.applicationAccessibility()
         SetupTypedEntryTests.setApplicationAccessibility(true)
@@ -306,6 +306,95 @@ extension TxPanelApprovedShotTests {
                 #expect(AccessoryPagesTests.elements(labelled: "RF Pwr", in: window).first?.accessibilityValue == expected)
                 #expect((!AccessoryPagesTests.elements(labelled: "DRIVE 42 W", in: window).isEmpty) == (state.operate && state.keyed))
             })
+        }
+    }
+}
+
+@MainActor
+extension TxPanelApprovedShotTests {
+    /// The lit TUNE and the lit MOX, each in the danger set (PanelButton
+    /// `.red`: kRedBg, kRedText, kRedBorder), as the desktop's
+    /// redCheckedStyle draws them; never kTxRed, which is the keyed PTT's.
+    @Test("lit TUNE and lit MOX draw in the danger set")
+    func litTuneAndMox() async throws {
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        let defaults = try #require(UserDefaults(suiteName: "TxPanelLitShots-\(UUID().uuidString)"))
+        let platform = TestPlatform()
+        let model = AppModel(displaySettings: BandDisplaySettingsStore(defaults: defaults), platform: platform.platform)
+        model.main.transmit.thisDeviceId = TransmitScreenTests.thisDeviceId
+        let station = try FakeStation(additions: [.remoteTx, .txStageReadings])
+        await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
+                            transportFactory: station.transportFactory)
+        try #require(await station.waitUntilLive())
+        try await MainScreenShotTests.fill(station)
+        await TransmitScreenTests.fillTransmit(station)
+        await station.deliver(.objectCreate(LinkMessage.ObjectCreate(
+            key: "txState", className: "TransmitState",
+            properties: TransmitScreenTests.holder("", short: "", keyed: false)
+                + [.init(ordinal: 3, name: "txSliceId", value: .i64(0)),
+                   .init(ordinal: 17, name: "stopSerial", value: .i64(0))])))
+        try #require(await ShotWait.until { model.main.transmit.permitted && model.main.transmit.rfPower == 100 })
+        let transmit = model.main.transmit
+
+        transmit.toggleTune()
+        try #require(await ShotWait.until { transmit.ptt.tuning && transmit.ptt.state.isKeyed })
+        try await shootLit("native-txpanel-tune-lit", key: "txTune", model: model)
+        transmit.toggleTune()
+        try #require(await ShotWait.until { transmit.ptt.state == .idle })
+
+        transmit.tapPtt()
+        try #require(await ShotWait.until { transmit.ptt.pttKeyed })
+        try await shootLit("native-txpanel-mox-lit", key: "txMox", model: model)
+        transmit.tapPtt()
+        try #require(await ShotWait.until { transmit.ptt.state == .idle })
+        await model.disconnect()
+    }
+
+    /// Draws the TX panel scrolled to its keys, writes it as `name`, and
+    /// checks the lit key's face: kRedBg fills it, no kTxRed in it.
+    private func shootLit(_ name: String, key: String, model: AppModel) async throws {
+        let size = CGSize(width: 402, height: 874)
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(origin: .zero, size: size)
+        window.windowLevel = .alert + 1
+        let main = model.main
+        let panel = TxPanel(transmit: main.transmit, accessories: main.accessories, micLevel: main.micLevel,
+                            modes: main.modes, meters: main.band.catalog?.meters, width: nil,
+                            modMonitor: main.modMonitor, take: main.take)
+            .preferredColorScheme(.dark)
+        let host = ShotHosting.host(panel)
+        host.view.frame = window.bounds
+        window.rootViewController = host
+        window.isHidden = false
+        defer { window.isHidden = true; window.rootViewController = nil }
+        await ShotWait.laidOut(window)
+        if let scroll = descendants(window).compactMap({ $0 as? UIScrollView })
+            .first(where: { $0.contentSize.height > $0.bounds.height }) {
+            scroll.setContentOffset(CGPoint(x: 0, y: scroll.contentSize.height - scroll.bounds.height), animated: false)
+            await ShotWait.laidOut(window)
+        }
+        let element = try #require(SetupTypedEntryTests.element(key, in: window), "\(key)")
+        let frame = element.accessibilityFrame
+        #expect(window.bounds.contains(frame), "\(key) is on screen")
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 2
+        let image = UIGraphicsImageRenderer(bounds: window.bounds, format: format).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        let picture = try #require(LiveActivityShotTests.Picture(image))
+        let face = frame.insetBy(dx: 3, dy: 3)
+        let area = Int(face.width * face.height) * 4
+        let dangerBg = LiveActivityShotTests.Pixel(0x7A, 0x2C, 0x2E)
+        let txRed = LiveActivityShotTests.Pixel(0xC2, 0x5A, 0x5C)
+        #expect(picture.count(dangerBg, in: face, tolerance: 6) > area / 2, "\(key) is filled with kRedBg")
+        #expect(picture.count(txRed, in: face, tolerance: 6) == 0, "\(key) has no kTxRed")
+        if let directory = ProcessInfo.processInfo.environment["NEREUS_MAIN_SHOTS"], !directory.isEmpty {
+            let url = URL(fileURLWithPath: directory).appendingPathComponent("\(name).png")
+            try #require(image.pngData()).write(to: url)
+            print("Wrote \(url.path)")
         }
     }
 }

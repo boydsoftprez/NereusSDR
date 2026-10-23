@@ -10,7 +10,11 @@ rule) when:
   header    a source file (.swift .c .h .m .metal .cpp) outside a vendored
             directory does not start with the two app header lines;
   upstream  such a file names Thetis, WDSP, wdsp, AetherSDR, FlexRadio, NR0V,
-            MW0LGE or Warren Pratt, or carries a "Copyright (C)" line;
+            MW0LGE, Warren Pratt, Longpath or OE5SOS, or carries a
+            "Copyright (C)" line; Longpath and OE5SOS may appear only in
+            the two workspace files (WORKSPACE_FILES below); a file in
+            KNOWN_OPEN_LICENCE_ITEMS passes for the names listed against it
+            and is printed as a NOTE, so the open item stays visible;
   licence   a vendored directory's ios/THIRD-PARTY.md row names a licence
             outside BSD-2-Clause, BSD-3-Clause, MIT, ISC, Apache-2.0 and
             MPL-2.0;
@@ -63,8 +67,40 @@ SOURCE_SUFFIXES = {".swift", ".c", ".h", ".m", ".metal", ".cpp"}
 
 UPSTREAM_NAMES = (
     "Thetis", "WDSP", "wdsp", "AetherSDR", "FlexRadio", "NR0V", "MW0LGE",
-    "Warren Pratt",
+    "Warren Pratt", "Longpath", "OE5SOS",
 )
+
+# The desktop's workspace tokens and treatments are cited to Longpath
+# (OE5SOS, GPL-3). JJ ruled on 2026-10-21, "use them and carry on": the phone
+# carries them, with each value's Longpath cite kept exactly as the desktop
+# writes it, in these two files only
+# (docs/architecture/2026-10-20-phone-workspace-look-design.md, section 11).
+# A Longpath or OE5SOS name anywhere else in ios/ still fails.
+WORKSPACE_FILES = {
+    "Shared/WorkspacePalette.swift",
+    "Shared/WorkspaceStyles.swift",
+}
+WORKSPACE_NAMES = {"Longpath", "OE5SOS"}
+
+# Known open licence items: NOT approved, kept apart from WORKSPACE_FILES on
+# purpose. A file listed here passes for the names listed against it only,
+# and every run prints a NOTE naming it, so the item stays visible in CI
+# output until it is resolved. Each entry must be resolved before App Store
+# submission.
+KNOWN_OPEN_LICENCE_ITEMS: Dict[str, Tuple[Tuple[str, ...], str]] = {
+    # An open licence item from the 2026-10-09 iOS licence audit: the dial's
+    # geometry is copied from Longpath's RotorDialWidget (Martin Fischer /
+    # OE5SOS). Not settled by JJ's 2026-10-21 palette ruling (which covers
+    # WORKSPACE_FILES only); must be resolved before App Store submission.
+    # The file names Longpath, not OE5SOS, so only Longpath is listed.
+    "NereusApp/Accessories/RotorDial.swift": (
+        ("Longpath",),
+        "open licence item from the 2026-10-09 iOS licence audit (copied "
+        "Longpath RotorDialWidget geometry, Martin Fischer / OE5SOS); not "
+        "settled by JJ's 2026-10-21 palette ruling; resolve before App Store "
+        "submission",
+    ),
+}
 COPYRIGHT_RE = re.compile(r"Copyright \([Cc]\)")
 
 ALLOWED_LICENCES = {
@@ -284,7 +320,9 @@ def check_word_list(root: Path, ios: Path) -> List[str]:
     return []
 
 
-def check(root: Path) -> List[str]:
+def check(root: Path, notes: Optional[List[str]] = None) -> List[str]:
+    """Findings for the tree at `root`; known open licence items found in
+    the tree are appended to `notes` when it is given."""
     ios = root / "ios"
     if not ios.is_dir():
         return []
@@ -332,7 +370,14 @@ def check(root: Path) -> List[str]:
         problem = _header_problem(relative, text)
         if problem:
             findings.append(shown + ": header: " + problem)
+        known_open = KNOWN_OPEN_LICENCE_ITEMS.get(relative)
         for name in UPSTREAM_NAMES:
+            if name in WORKSPACE_NAMES and relative in WORKSPACE_FILES:
+                continue
+            if known_open is not None and name in known_open[0]:
+                if name in text and notes is not None:
+                    notes.append(shown + ": names " + name + "; " + known_open[1])
+                continue
             if name in text:
                 findings.append(
                     shown + ": upstream: names " + name
@@ -352,7 +397,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="repository root (default: this checkout)")
     args = parser.parse_args(argv)
 
-    findings = check(args.root.resolve())
+    notes: List[str] = []
+    findings = check(args.root.resolve(), notes)
+    for note in notes:
+        print("NOTE " + note)
     if findings:
         for finding in findings:
             print("FAIL " + finding, file=sys.stderr)

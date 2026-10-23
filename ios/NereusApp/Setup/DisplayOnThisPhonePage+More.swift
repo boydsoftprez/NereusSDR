@@ -22,7 +22,7 @@ extension DisplayOnThisPhonePage {
     // MARK: Waterfall
 
     var waterfallMore: some View {
-        Section {
+        SetupPanelSection {
             if !core.available {
                 // With the Core's description these are its WF Detector and
                 // WF Averaging, in the Core's own groups above.
@@ -30,11 +30,13 @@ extension DisplayOnThisPhonePage {
                     ForEach(SpectrumDetector.waterfallCases, id: \.self) { Text($0.title).tag($0) }
                 }
                 .accessibilityIdentifier("waterfallDetector")
+                .setupMenuRow("Detector")
                 Picker("Averaging", selection: binding(\.waterfallAveraging)) {
                     ForEach(SpectrumAveraging.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
-                .disabled(!extras)
                 .accessibilityIdentifier("waterfallAveraging")
+                .setupMenuRow("Averaging")
+                .disabled(!extras)
             }
             SetupNumberRow(title: "Update period", value: Double(settings.waterfallPeriodMs),
                            range: Self.range(BandDisplaySettings.waterfallPeriodRange), step: 10, unit: "ms",
@@ -47,23 +49,28 @@ extension DisplayOnThisPhonePage {
             // Scale is now the fifth coherent level choice above; its
             // inactive bit is not a second independently visible switch.
             Button("Copy the scale to High and Low") { copyScaleToLevels() }
+                .buttonStyle(SetupButtonStyle())
                 .accessibilityIdentifier("copyScaleToLevels")
             Button("Copy High and Low to the scale") { copyLevelsToScale() }
+                .buttonStyle(SetupButtonStyle())
                 .accessibilityIdentifier("copyLevelsToScale")
             Picker("Look back up to", selection: binding(\.rewindSeconds)) {
                 ForEach(BandDisplaySettings.rewindChoices, id: \.self) { Text(Self.minutesText($0)).tag($0) }
             }
             .accessibilityIdentifier("rewindDepth")
+            .setupMenuRow("Look back up to")
             Picker("Time", selection: binding(\.timestampPosition)) {
                 ForEach(TimestampPosition.allCases, id: \.self) { Text($0.title).tag($0) }
             }
             .accessibilityIdentifier("timestampPosition")
+            .setupMenuRow("Time")
             Picker("Time zone", selection: binding(\.timestampUtc)) {
                 Text("UTC").tag(true)
                 Text("This phone's").tag(false)
             }
-            .disabled(settings.timestampPosition == .none)
             .accessibilityIdentifier("timestampZone")
+            .setupMenuRow("Time zone")
+            .disabled(settings.timestampPosition == .none)
             Toggle("Receive filter", isOn: binding(\.showRxFilterOnWaterfall))
                 .accessibilityIdentifier("showRxFilterOnWaterfall")
             Toggle("Transmit filter while transmitting", isOn: binding(\.showTxFilterOnWaterfall))
@@ -107,7 +114,7 @@ extension DisplayOnThisPhonePage {
             Button("Remove a stop") { change { $0.customPalette.remove(at: $0.customPalette.count - 2) } }
                 .disabled(settings.customPalette.count <= 2)
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(SetupButtonStyle())
         .accessibilityIdentifier("customStops")
     }
 
@@ -146,7 +153,7 @@ extension DisplayOnThisPhonePage {
     // MARK: Spectrum
 
     var spectrumMore: some View {
-        Section {
+        SetupPanelSection {
             if !core.available {
                 // With the Core's description these are its Spectrum
                 // Detector, Spectrum Averaging and Decimation, above.
@@ -154,11 +161,13 @@ extension DisplayOnThisPhonePage {
                     ForEach(SpectrumDetector.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
                 .accessibilityIdentifier("spectrumDetector")
+                .setupMenuRow("Detector")
                 Picker("Averaging", selection: binding(\.spectrumAveraging)) {
                     ForEach(SpectrumAveraging.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
-                .disabled(!extras)
                 .accessibilityIdentifier("spectrumAveraging")
+                .setupMenuRow("Averaging")
+                .disabled(!extras)
                 SetupNumberRow(title: "Decimation", value: Double(settings.decimation),
                                range: Self.range(BandDisplaySettings.decimationRange), step: 1, unit: "",
                                enabled: display.gates.decimation,
@@ -184,13 +193,14 @@ extension DisplayOnThisPhonePage {
     // MARK: Grid
 
     var gridMore: some View {
-        Section {
+        SetupPanelSection {
             Toggle("dBm scale", isOn: binding(\.showDbmScale))
                 .accessibilityIdentifier("showDbmScale")
             Picker("Frequency labels", selection: binding(\.frequencyLabelAlignment)) {
                 ForEach(FrequencyLabelAlignment.allCases, id: \.self) { Text($0.title).tag($0) }
             }
             .accessibilityIdentifier("frequencyLabelAlignment")
+            .setupMenuRow("Frequency labels")
             Toggle("Bottom follows the noise floor", isOn: binding(\.gridFollowsNoiseFloor))
                 .disabled(!extras)
                 .accessibilityIdentifier("gridFollowsNoiseFloor")
@@ -213,7 +223,7 @@ extension DisplayOnThisPhonePage {
     // MARK: Readouts
 
     var readouts: some View {
-        Section {
+        SetupPanelSection {
             Toggle("Frequency under the finger", isOn: binding(\.showCursorFrequency))
                 .accessibilityIdentifier("showCursorFrequency")
             Toggle("Bin width", isOn: binding(\.showBinWidth))
@@ -225,8 +235,9 @@ extension DisplayOnThisPhonePage {
             Picker("Corner", selection: binding(\.peakValueCorner)) {
                 ForEach(OverlayCorner.allCases, id: \.self) { Text($0.title).tag($0) }
             }
-            .disabled(!settings.showPeakValue)
             .accessibilityIdentifier("peakValueCorner")
+            .setupMenuRow("Corner")
+            .disabled(!settings.showPeakValue)
             SetupNumberRow(title: "Every", value: Double(settings.peakValueDelayMs),
                            range: Self.range(BandDisplaySettings.peakValueDelayRange), step: 100, unit: "ms",
                            enabled: settings.showPeakValue,
@@ -241,7 +252,7 @@ extension DisplayOnThisPhonePage {
     // MARK: Colours
 
     var colours: some View {
-        Section {
+        SetupPanelSection {
             colourRow("Grid", \.gridColour, id: "gridColour")
             colourRow("Fine grid", \.gridFineColour, id: "gridFineColour")
             colourRow("Level grid", \.hGridColour, id: "hGridColour")
@@ -256,6 +267,7 @@ extension DisplayOnThisPhonePage {
             colourRow("Noise floor's level", \.noiseFloorTextColour, id: "noiseFloorTextColour")
             ColorPicker("Noise floor catching up", selection: .constant(Self.fastAttackColour), supportsOpacity: false)
                 .disabled(true)
+                .setupGreyed(true)
                 .accessibilityHint(Self.fastAttackReason)
                 .accessibilityIdentifier("noiseFloorFastColour")
             colourRow("Strongest signal", \.peakValueColour, id: "peakValueColour")
@@ -281,8 +293,9 @@ extension DisplayOnThisPhonePage {
     // MARK: Reset
 
     var reset: some View {
-        Section {
+        SetupPanelSection {
             Button(Self.resetTitle, role: .destructive) { confirmingReset = true }
+                .buttonStyle(SetupButtonStyle(.danger))
                 .accessibilityIdentifier("resetDisplay")
         } footer: {
             Text(Self.resetMessage)

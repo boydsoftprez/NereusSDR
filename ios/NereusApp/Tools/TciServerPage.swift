@@ -122,7 +122,7 @@ struct TciServerPage: View {
                             .foregroundStyle(ChromeColours.revokeText)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
-                            .background(ChromeColours.revoke, in: RoundedRectangle(cornerRadius: 3))
+                            .background(ChromeColours.revoke, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
                     }
                 }
                 Text(client.address)
@@ -149,8 +149,8 @@ struct TciServerPage: View {
             .foregroundStyle(ChromeColours.revokeText)
             .padding(.horizontal, 10)
             .frame(minHeight: 30)
-            .background(ChromeColours.revoke, in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.revokeBorder, lineWidth: 1))
+            .background(ChromeColours.revoke, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.revokeBorder, lineWidth: 1))
             .buttonStyle(.plain)
             .disabled(model.disconnectReason != nil)
             .opacity(model.disconnectReason == nil ? 1 : 0.5)

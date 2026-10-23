@@ -4,8 +4,8 @@
 import AppIntents
 import SwiftUI
 
-/// The card's speaker (the board's `.la__btn`): lit amber while this phone
-/// is muted; a tap asks for the other state.
+/// The card's speaker (the board's `.la__btn`): the raised face, lit amber
+/// while this phone is muted; a tap asks for the other state.
 struct ActivityMuteButton: View {
     let muted: Bool
 
@@ -13,15 +13,16 @@ struct ActivityMuteButton: View {
         Button(intent: MuteIntent(muted: !muted)) {
             Image(systemName: muted ? "speaker.slash" : "speaker.wave.1")
                 .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(muted ? ActivityColours.mutedEdge : ActivityColours.text)
+                .foregroundStyle(workspaceForeground(look))
                 .frame(width: 46, height: 36)
-                .background(muted ? ActivityColours.mutedFill : ActivityColours.button,
-                            in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(muted ? ActivityColours.mutedEdge : ActivityColours.buttonEdge, lineWidth: 1))
+                .background { WorkspaceFace(look) }
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Mute this phone")
         .accessibilityValue(muted ? "Muted" : "Sound on")
+    }
+
+    private var look: WorkspaceLook {
+        muted ? ActivityColours.muted : ActivityColours.button
     }
 }

@@ -40,7 +40,7 @@ struct TabGlyph: View {
         var path = Path()
         switch tab {
         case .panadapter:
-            path.addRoundedRect(in: CGRect(x: 1.5, y: 1.5, width: 33, height: 25), cornerSize: CGSize(width: 3, height: 3))
+            path.addRoundedRect(in: CGRect(x: 1.5, y: 1.5, width: 33, height: 25), cornerSize: CGSize(width: 3, height: 3)) // kept-radius: glyph
             let trace: [(CGFloat, CGFloat)] = [
                 (4, 21), (5, 20), (6, 21), (7, 18), (8, 21), (9, 20), (10, 17), (11, 11), (12, 16), (13, 21),
                 (14, 20), (15, 21), (16, 15), (17, 21), (18, 20), (19, 18), (20, 21), (21, 19), (22, 11), (23, 5),
@@ -48,13 +48,13 @@ struct TabGlyph: View {
             ]
             path.addLines(trace.map { CGPoint(x: $0.0, y: $0.1) })
         case .modes:
-            path.addRoundedRect(in: CGRect(x: 7, y: 1.5, width: 22, height: 25), cornerSize: CGSize(width: 3, height: 3))
+            path.addRoundedRect(in: CGRect(x: 7, y: 1.5, width: 22, height: 25), cornerSize: CGSize(width: 3, height: 3)) // kept-radius: glyph
             path.move(to: CGPoint(x: 7, y: 14))
             path.addLine(to: CGPoint(x: 29, y: 14))
         case .tools:
             wrench(&path)
         case .radio:
-            path.addRoundedRect(in: CGRect(x: 3, y: 8, width: 30, height: 16), cornerSize: CGSize(width: 2.5, height: 2.5))
+            path.addRoundedRect(in: CGRect(x: 3, y: 8, width: 30, height: 16), cornerSize: CGSize(width: 2.5, height: 2.5)) // kept-radius: glyph
             path.addEllipse(in: CGRect(x: 21, y: 12, width: 8, height: 8))
             for (y, length) in [(13.0, 9.0), (16.5, 9.0), (20.0, 6.0)] {
                 path.move(to: CGPoint(x: 8, y: y))

@@ -122,8 +122,11 @@ final class ConfirmationPresenter: ObservableObject {
         window.host = host
         window.overrideUserInterfaceStyle = .dark
         window.backgroundColor = .clear
+        // Its own window, so its own presentation root: the window does not
+        // inherit the app root's switch style or tint.
         let root = UIHostingController(rootView: ConfirmationWindowContent(presenter: self, devices: devices,
-                                                                             main: main))
+                                                                             main: main)
+            .workspacePresentationRoot())
         root.view.backgroundColor = .clear
         window.rootViewController = root
         window.isHidden = true

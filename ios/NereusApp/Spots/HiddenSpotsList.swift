@@ -80,7 +80,8 @@ struct HiddenSpotsList: View {
         .padding(.top, 8)
         .padding(.bottom, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(SpotColours.sheet, in: UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14))
+        .background(SpotColours.sheet, in: UnevenRoundedRectangle(topLeadingRadius: WorkspacePalette.panelRadius,
+                                                                  topTrailingRadius: WorkspacePalette.panelRadius))
         .overlay(alignment: .top) {
             Rectangle().fill(SpotColours.sheetBorder).frame(height: 1).padding(.horizontal, 10)
         }

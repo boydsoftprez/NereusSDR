@@ -37,8 +37,8 @@ struct FrequencyPad: View {
                     .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(model.canEnter ? Color.white : ChromeColours.buttonOffText)
                     .frame(maxWidth: .infinity, minHeight: 40)
-                    .background(model.canEnter ? Self.go : ChromeColours.buttonOff, in: RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6)
+                    .background(model.canEnter ? Self.go : ChromeColours.buttonOff, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                         .strokeBorder(model.canEnter ? Self.goBorder : ChromeColours.buttonOffBorder, lineWidth: 1))
                     .contentShape(Rectangle())
             }
@@ -47,8 +47,8 @@ struct FrequencyPad: View {
             .accessibilityIdentifier("frequencyPadEnter")
         }
         .padding(10)
-        .background(ChromeColours.sheet, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(ChromeColours.sheetBorder, lineWidth: 1))
+        .background(ChromeColours.sheet, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ChromeColours.sheetBorder, lineWidth: 1))
         .shadow(color: .black.opacity(0.55), radius: 14, y: -8)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("frequencyPad")
@@ -65,7 +65,7 @@ struct FrequencyPad: View {
                 model.cancel()
             }
             .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(ChromeColours.accent)
+            .foregroundStyle(ChromeColours.accentText)
             .buttonStyle(.plain)
         }
     }
@@ -83,8 +83,8 @@ struct FrequencyPad: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity)
-        .background(Self.entryBackground, in: RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Self.entryBorder, lineWidth: 1))
+        .background(Self.entryBackground, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(Self.entryBorder, lineWidth: 1))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Frequency")
         .accessibilityValue("\(model.entry) \(model.unit.label)")
@@ -125,8 +125,8 @@ struct FrequencyPad: View {
             .font(.system(size: 18, weight: .semibold))
             .foregroundStyle(ChromeColours.textBright)
             .frame(maxWidth: .infinity, minHeight: 40)
-            .background(Self.key, in: RoundedRectangle(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Self.keyBorder, lineWidth: 1))
+            .background(Self.key, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(Self.keyBorder, lineWidth: 1))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -145,14 +145,11 @@ struct FrequencyPad: View {
     }
 
     // The board's `.tupad` colours.
-    private static let entryBackground = rgb(0x07, 0x0C, 0x14)
-    private static let entryBorder = rgb(0x2A, 0x4A, 0x60)
-    private static let key = rgb(0x1A, 0x26, 0x36)
-    private static let keyBorder = rgb(0x2A, 0x3A, 0x4C)
-    private static let go = rgb(0x1A, 0x5C, 0xA8)
-    private static let goBorder = rgb(0x3A, 0x7C, 0xC8)
-
-    private static func rgb(_ red: Int, _ green: Int, _ blue: Int) -> Color {
-        Color(red: Double(red) / 255, green: Double(green) / 255, blue: Double(blue) / 255)
-    }
+    // The entry is an inset, a key is raised, Enter is glass (W3).
+    private static let entryBackground = ChromeColours.inset
+    private static let entryBorder = ChromeColours.insetBorder
+    private static let key = ChromeColours.button
+    private static let keyBorder = ChromeColours.buttonBorder
+    private static let go = ChromeColours.buttonOnBlue
+    private static let goBorder = ChromeColours.buttonOnBlueBorder
 }

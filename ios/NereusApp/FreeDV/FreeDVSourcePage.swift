@@ -113,8 +113,8 @@ struct FreeDVSourcePage: View {
                     .frame(minWidth: 88, minHeight: 40)
                     .background(reason != nil ? ChromeColours.buttonOff
                                 : (running ? ChromeColours.button : ChromeColours.buttonOnBlue),
-                                in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
+                                in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                         .strokeBorder(reason != nil ? ChromeColours.buttonOffBorder
                                       : (running ? ChromeColours.buttonBorder : ChromeColours.buttonOnBlueBorder),
                                       lineWidth: 1))
@@ -125,8 +125,8 @@ struct FreeDVSourcePage: View {
             .accessibilityIdentifier("freedv.connect")
         }
         .padding(12)
-        .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.stationBorder, lineWidth: 1))
+        .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ChromeColours.stationBorder, lineWidth: 1))
     }
 
     private var console: some View {
@@ -150,8 +150,8 @@ struct FreeDVSourcePage: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(height: 150)
-            .background(SpotColours.console, in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(SpotColours.consoleBorder, lineWidth: 1))
+            .background(SpotColours.console, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(SpotColours.consoleBorder, lineWidth: 1))
             .onAppear { reader.scrollTo(lines.count - 1, anchor: .bottomLeading) }
             .onChange(of: lines.count) { _, count in
                 reader.scrollTo(count - 1, anchor: .bottomLeading)

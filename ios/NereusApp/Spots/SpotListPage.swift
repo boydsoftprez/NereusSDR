@@ -108,7 +108,7 @@ struct SpotListPage: View {
                         .foregroundStyle(SpotColours.sourceTag)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(SpotColours.sourceTag.opacity(0.1), in: RoundedRectangle(cornerRadius: 3))
+                        .background(SpotColours.sourceTag.opacity(0.1), in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
                         .frame(width: 44, alignment: .trailing)
                 }
                 Text(Self.detailLine(spot))
@@ -136,8 +136,8 @@ struct SpotListPage: View {
                 .foregroundStyle(lit ? Color.white : (enabled ? ChromeColours.text : ChromeColours.buttonOffText))
                 .frame(maxWidth: .infinity, minHeight: 32)
                 .background(lit ? ChromeColours.buttonOnBlue : (enabled ? ChromeColours.button : ChromeColours.buttonOff),
-                            in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4)
+                            in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                     .strokeBorder(lit ? ChromeColours.buttonOnBlueBorder
                                       : (enabled ? ChromeColours.buttonBorder : ChromeColours.buttonOffBorder),
                                   lineWidth: 1))

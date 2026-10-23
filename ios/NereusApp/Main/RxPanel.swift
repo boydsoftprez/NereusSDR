@@ -147,8 +147,8 @@ struct RxPanel: View {
                     .foregroundStyle(model.squelchOn ? ChromeColours.buttonOnGreenText : ChromeColours.textDim)
                     .frame(width: 62, height: 28)
                     .background(model.squelchOn ? ChromeColours.buttonOnGreen : ChromeColours.button,
-                                in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
+                                in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                         .strokeBorder(model.squelchOn ? ChromeColours.buttonOnGreenBorder : ChromeColours.buttonBorder,
                                       lineWidth: 1))
             }
@@ -245,15 +245,25 @@ extension EnvironmentValues {
     }
 }
 
-/// One of the panel's square buttons, in the desktop's colours: blue for a
-/// choice, green for a DSP switch, greyed when the Core cannot run it.
+/// One of the panel's square buttons, in the desktop's workspace look
+/// (docs/architecture/2026-10-20-phone-workspace-look-design.md, sections 3
+/// and 5): raised at rest; lit, the treatment of the desktop's own control
+/// (W3): glass for a choice, lit green for a running function, lit amber
+/// for a measured or caution state, keyed for transmit. Greyed when the
+/// Core cannot run it: the raised face at 40 percent, in place.
 struct PanelButton: View {
     enum Style {
+        /// A pick-one choice (mode, filter, band, AGC, antenna): the glass.
         case blue
+        /// A running function (a DSP button, SPEAKERS and PHONES): lit green.
         case dsp
-        /// TUNE and MOX, lit red while on the air; the TX antenna, lit red.
+        /// TUNE, MOX, 2-Tone and the tuner's TUNE: the danger set when lit,
+        /// as the desktop's redCheckedStyle lights them.
         case red
-        /// RIT and XIT, lit amber (the Modes tab).
+        /// The chosen TX antenna marks transmit (W5): the keyed look.
+        case txAntenna
+        /// RIT and XIT, lit amber (the Modes tab); RX bypass on transmit, as
+        /// the desktop flag lights BYPS in yellow.
         case amber
     }
 
@@ -275,76 +285,49 @@ struct PanelButton: View {
                 .font(.system(size: 12 * textScale, weight: .bold))
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
-                .foregroundStyle(foreground)
                 .frame(maxWidth: .infinity, minHeight: height)
-                .background(background, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(warning ? ChromeColours.buttonOnAmberBorder : border, lineWidth: 1))
-                .overlay(alignment: .topTrailing) {
+                .overlay {
                     if warning {
-                        Circle().fill(ChromeColours.buttonOnAmber).frame(width: 7, height: 7).padding(4)
+                        RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius, style: .continuous)
+                            .strokeBorder(ChromeColours.buttonOnAmberBorder, lineWidth: 1)
                     }
                 }
-                .contentShape(Rectangle())
+                .overlay(alignment: .topTrailing) {
+                    if warning {
+                        Circle().fill(ChromeColours.buttonOnAmberText).frame(width: 7, height: 7).padding(4)
+                    }
+                }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(WorkspaceButtonStyle(look))
         .disabled(disabled)
         .accessibilityLabel(label)
         .accessibilityAddTraits(lit ? .isSelected : [])
     }
 
-    private var foreground: Color {
-        if disabled {
-            return ChromeColours.buttonOffText
-        }
-        guard lit else {
-            return ChromeColours.text
-        }
-        switch style {
-        case .dsp:
-            return ChromeColours.buttonOnGreenText
-        case .amber:
-            return ChromeColours.buttonOnAmberText
-        case .blue, .red:
-            return .white
-        }
+    /// The face it draws: raised at rest and while greyed (plan call 2),
+    /// lit in its style's treatment.
+    var look: WorkspaceLook {
+        Self.look(style: style, lit: lit, disabled: disabled)
     }
 
-    private var background: Color {
-        if disabled {
-            return ChromeColours.buttonOff
-        }
-        guard lit else {
-            return ChromeColours.button
+    static func look(style: Style, lit: Bool, disabled: Bool) -> WorkspaceLook {
+        guard lit, !disabled else {
+            return .raised
         }
         switch style {
         case .blue:
-            return ChromeColours.buttonOnBlue
+            return .glass
         case .dsp:
-            return ChromeColours.buttonOnGreen
-        case .red:
-            return ChromeColours.txRed
+            return .litGreen
         case .amber:
-            return ChromeColours.buttonOnAmber
-        }
-    }
-
-    private var border: Color {
-        if disabled {
-            return ChromeColours.buttonOffBorder
-        }
-        guard lit else {
-            return ChromeColours.buttonBorder
-        }
-        switch style {
-        case .blue:
-            return ChromeColours.buttonOnBlueBorder
-        case .dsp:
-            return ChromeColours.buttonOnGreenBorder
+            return .litAmber
         case .red:
-            return ChromeColours.pttEdge
-        case .amber:
-            return ChromeColours.buttonOnAmberBorder
+            // From NereusSDR src/gui/applets/TxApplet.cpp:613-627 (TUNE, MOX) and
+            // src/gui/StyleConstants.h:156-161 redCheckedStyle: kRedBg, kRedText,
+            // kRedBorder, the danger set.
+            return .danger
+        case .txAntenna:
+            return .keyed
         }
     }
 }
@@ -395,8 +378,8 @@ struct PanelSliderRow: View {
                 .padding(.horizontal, 4)
                 .padding(.vertical, 2)
                 .frame(minWidth: 34)
-                .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 3))
-                .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
+                .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
         }
         .opacity(range == nil || value == nil || greyed ? 0.45 : 1)
         .onChange(of: value) {

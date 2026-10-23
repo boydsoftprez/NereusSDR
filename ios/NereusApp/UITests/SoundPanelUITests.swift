@@ -44,10 +44,13 @@ final class SoundPanelUITests: XCTestCase {
         // The band stays in sight beside the panel.
         XCTAssertTrue(app.otherElements["Sections"].exists)
 
-        mute.switches.firstMatch.tap()
+        // The workspace switch (W7) draws its track at the row's trailing
+        // edge, and only the track takes a tap, so the tap lands there.
+        let track = mute.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5)).withOffset(CGVector(dx: -30, dy: 0))
+        track.tap()
         XCTAssertEqual(mute.value as? String, "1")
         XCTAssertEqual(speaker.value as? String, "Muted")
-        mute.switches.firstMatch.tap()
+        track.tap()
         XCTAssertEqual(mute.value as? String, "0")
 
         if iPad {

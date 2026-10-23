@@ -556,7 +556,7 @@ struct SetupRenderingTests {
         }
         .background(ChromeColours.bar.ignoresSafeArea())
         .preferredColorScheme(.dark)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         host.view.frame = CGRect(origin: .zero, size: size)
         window.rootViewController = host
         window.isHidden = false

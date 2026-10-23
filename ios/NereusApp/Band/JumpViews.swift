@@ -23,8 +23,8 @@ struct JumpBar: View {
     static let inset: CGFloat = 4
     static let sidewaysInset: CGFloat = 66
     static let height: CGFloat = 44
-    static let ground = Color(red: 10 / 255, green: 10 / 255, blue: 20 / 255).opacity(0.92)
-    static let edge = Color(red: 0x30 / 255, green: 0x40 / 255, blue: 0x50 / 255)
+    static let ground = ChromeColours.bar.opacity(0.92)
+    static let edge = ChromeColours.panelEdge
 
     /// The bar's width before it is drawn, for keeping the flags clear:
     /// "Back to your band" and the slice's words at their size.
@@ -71,7 +71,7 @@ struct JumpBar: View {
                 HStack(spacing: 6) {
                     Text("\u{25C0}")
                         .font(.system(size: large ? 15 : 11))
-                        .foregroundStyle(ChromeColours.accent)
+                        .foregroundStyle(ChromeColours.accentText)
                     Text(Self.backTitle)
                         .font(.system(size: large ? 19 : 13, weight: .bold))
                         .foregroundStyle(ChromeColours.textBright)
@@ -106,8 +106,8 @@ struct JumpBar: View {
         .overlay(alignment: .leading) {
             Rectangle().fill(colour).frame(width: 3)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Self.edge, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(Self.edge, lineWidth: 1))
         .fixedSize(horizontal: true, vertical: false)
         .offset(x: sideways ? Self.sidewaysInset : Self.inset, y: Self.inset)
         .accessibilityElement(children: .contain)
@@ -325,9 +325,9 @@ struct EdgeMarker: View {
         }
         .padding(.horizontal, 8)
         .frame(height: FlagLayout.foldedHeight)
-        .background(JumpBar.ground, in: RoundedRectangle(cornerRadius: 4))
+        .background(JumpBar.ground, in: RoundedRectangle(cornerRadius: 4)) // kept-radius: edge-marker
         .overlay {
-            RoundedRectangle(cornerRadius: 4)
+            RoundedRectangle(cornerRadius: 4) // kept-radius: edge-marker
                 .strokeBorder(colour, style: StrokeStyle(lineWidth: 1, dash: entry.listening ? [4, 3] : []))
         }
         .contentShape(Rectangle())
@@ -355,9 +355,9 @@ struct EdgeMarker: View {
         }
         .padding(.horizontal, 8)
         .frame(minHeight: large ? EdgeMarkers.largeHeight : EdgeMarkers.height)
-        .background(JumpBar.ground, in: RoundedRectangle(cornerRadius: 4))
+        .background(JumpBar.ground, in: RoundedRectangle(cornerRadius: 4)) // kept-radius: edge-marker
         .overlay {
-            RoundedRectangle(cornerRadius: 4)
+            RoundedRectangle(cornerRadius: 4) // kept-radius: edge-marker
                 .strokeBorder(colour, style: StrokeStyle(lineWidth: 1, dash: entry.listening ? [4, 3] : []))
         }
         .contentShape(Rectangle())

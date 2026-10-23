@@ -167,8 +167,8 @@ struct TxStageMeters: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 7)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Self.reasonFill, in: RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Self.reasonBorder, lineWidth: 1))
+                    .background(Self.reasonFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(Self.reasonBorder, lineWidth: 1))
                     .accessibilityIdentifier("txStagesReason")
             } else if let line = Self.line(look) {
                 Text(line)
@@ -191,14 +191,10 @@ struct TxStageMeters: View {
         .accessibilityIdentifier("txStageMeters")
     }
 
-    static let reasonFill = rgb(0x14, 0x1C, 0x28)
-    static let reasonBorder = rgb(0x30, 0x40, 0x50)
-    static let reasonText = rgb(0xD4, 0xE2, 0xEE)
-    static let noteText = rgb(0x90, 0xA4, 0xB6)
-
-    private static func rgb(_ red: Int, _ green: Int, _ blue: Int) -> Color {
-        Color(red: Double(red) / 255, green: Double(green) / 255, blue: Double(blue) / 255)
-    }
+    static let reasonFill = ChromeColours.reason
+    static let reasonBorder = ChromeColours.reasonEdge
+    static let reasonText = ChromeColours.text
+    static let noteText = ChromeColours.caption
 }
 
 /// One stage: its name, its bar with the scale's marks under it, and its reading.
@@ -270,13 +266,13 @@ private struct TxStageRow: View {
     private func drawTrack(in context: inout GraphicsContext, size: CGSize) {
         let track = CGRect(origin: .zero, size: size)
         let midX = track.width * stage.midAt
-        let shape = Path(roundedRect: track, cornerRadius: 2)
+        let shape = Path(roundedRect: track, cornerRadius: 2) // kept-radius: meter
         context.fill(shape, with: .color(ChromeColours.gaugeGround))
         var red = context
         red.clip(to: shape)
         red.fill(Path(CGRect(x: midX, y: 0, width: track.width - midX, height: track.height)),
                  with: .color(TxStageRow.redGround))
-        context.stroke(Path(roundedRect: track.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 2),
+        context.stroke(Path(roundedRect: track.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 2), // kept-radius: meter
                        with: .color(ChromeColours.gaugeBorder), lineWidth: 1)
         let inner = track.insetBy(dx: 1, dy: 1)
         if let reading {
@@ -312,7 +308,7 @@ private struct TxStageRow: View {
         }
     }
 
-    static let nameColour = Color(red: 0xB0 / 255.0, green: 0xC0 / 255.0, blue: 0xD0 / 255.0)
-    static let dimmedValue = Color(red: 0xA8 / 255.0, green: 0xB8 / 255.0, blue: 0xC8 / 255.0)
-    static let redGround = Color(red: 0x1E / 255.0, green: 0x0E / 255.0, blue: 0x12 / 255.0)
+    static let nameColour = WorkspacePalette.titleText
+    static let dimmedValue = WorkspacePalette.titleText
+    static let redGround = ChromeColours.gaugeRedZone
 }

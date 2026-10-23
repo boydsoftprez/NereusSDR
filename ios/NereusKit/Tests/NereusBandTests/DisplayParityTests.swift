@@ -83,7 +83,7 @@ import Testing
         let geometry = Self.geometry(settings)
         let image = try Self.render(settings, frame: BandFixtures.frame(trace: BandRendererTests.flat(200, -50)))
         // Red at 0.2 over the background, the same just under the trace and at the foot.
-        let expected = Int((255 * 0.2 + 10 * 0.8).rounded())
+        let expected = Int((255 * 0.2 + 8 * 0.8).rounded())
         let high = image.pixel(100, Int(geometry.y(forDbm: -60)))
         let low = image.pixel(100, Int(geometry.y(forDbm: -135)))
         #expect(high.r.isNear(expected, tolerance: 3), "under the trace \(high)")
@@ -99,10 +99,10 @@ import Testing
         let image = try Self.render(settings, frame: BandFixtures.frame(trace: BandRendererTests.flat(200, -40)))
         let height = Double(geometry.size.height)
         let quarter = image.pixel(100, Int(height * 0.25))
-        let expected = Int((255 * 0.75 + 10 * 0.25).rounded())
+        let expected = Int((255 * 0.75 + 8 * 0.25).rounded())
         #expect(quarter.r.isNear(expected, tolerance: 4), "a quarter down \(quarter)")
         let foot = image.pixel(100, Int(height) - 1)
-        #expect(foot.r.isNear(10, tolerance: 4), "at the foot \(foot)")
+        #expect(foot.r.isNear(8, tolerance: 4), "at the foot \(foot)")
         #expect(!BandDisplaySettings.desktopDefaults.traceGradient)
     }
 
@@ -111,7 +111,8 @@ import Testing
     @Test func theBackgroundIsTheDesktops() throws {
         let image = try Self.render(BandRendererTests.plain(), frame: nil)
         let pixel = image.pixel(100, 40)
-        #expect(pixel.r.isNear(10, tolerance: 1) && pixel.g.isNear(10, tolerance: 1) && pixel.b.isNear(20, tolerance: 1),
+        // The desktop's workspace data ground, kAppBg #08080A.
+        #expect(pixel.r.isNear(8, tolerance: 1) && pixel.g.isNear(8, tolerance: 1) && pixel.b.isNear(10, tolerance: 1),
                 "\(pixel)")
     }
 

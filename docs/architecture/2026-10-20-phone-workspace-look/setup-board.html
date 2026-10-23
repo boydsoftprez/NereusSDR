@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Setup in the workspace look</title>
+<style>
+:root{
+  --page:#08080a; --ink:#dcdce1; --ink2:#a6a6ac; --ink3:#909096; --rule:#1f1f23;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--page);color:var(--ink);font:15px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif}
+header{max-width:1100px;margin:0 auto;padding:28px 20px 8px}
+header .kicker{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3)}
+header h1{margin:6px 0 8px;font-size:28px}
+header p{margin:0 0 6px;color:var(--ink2);max-width:780px}
+.screen{max-width:1100px;margin:0 auto;padding:26px 20px 30px;border-top:1px solid var(--rule)}
+.screen h2{margin:0 0 4px;font-size:20px}
+.screen>p{margin:0 0 16px;color:var(--ink2);max-width:860px}
+.pair{display:flex;gap:40px;flex-wrap:wrap}
+.col h3{margin:0 0 8px;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);font-weight:600}
+.phone{width:350px;height:740px;border-radius:52px;padding:12px;background:#1b1b1f;box-shadow:0 0 0 1px #2c2c31,0 20px 50px rgba(0,0,0,.6)}
+.scr{position:relative;width:100%;height:100%;border-radius:42px;overflow:hidden;display:flex;flex-direction:column}
+.island{position:absolute;top:10px;left:50%;transform:translateX(-50%);width:104px;height:30px;border-radius:16px;background:#000;z-index:5}
+.status{height:46px;flex:none;display:flex;align-items:flex-end;justify-content:space-between;padding:0 28px 4px;font-size:14px;font-weight:600}
+.body{flex:1;overflow-y:auto;overflow-x:hidden;scrollbar-width:none}
+.body::-webkit-scrollbar{display:none}
+.navbar{display:flex;align-items:center;justify-content:space-between;padding:6px 14px 0;height:46px}
+.back{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:22px;cursor:pointer}
+.big{font-size:30px;font-weight:700;padding:6px 18px 8px;letter-spacing:-.01em}
+.tag{font:600 11px/1 ui-monospace,"SF Mono",Menlo,monospace;padding:4px 7px;white-space:nowrap}
+.sec{margin:0 14px 20px}
+.sec-h{padding:0 6px 6px}
+.sec-f{padding:6px 6px 0;font-size:12.5px}
+.group{overflow:hidden}
+.row{display:flex;align-items:center;gap:10px;padding:11px 14px;min-height:46px;position:relative;cursor:pointer;user-select:none}
+.row .txt{flex:1;min-width:0}
+.row .t{font-size:15.5px}
+.row .d{font-size:12.5px;margin-top:1px}
+.row .one{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .v{font-size:15px;white-space:nowrap}
+.row .chev{font-size:15px;opacity:.6}
+.row.dim{cursor:default}
+.check{width:18px;text-align:center;font-size:17px}
+.sw{width:50px;height:30px;border-radius:15px;position:relative;flex:none;transition:background .15s}
+.sw i{position:absolute;top:2px;left:2px;width:26px;height:26px;border-radius:50%;transition:left .15s}
+.sw.on i{left:22px}
+.slider{flex:1;height:4px;border-radius:2px;position:relative;margin:0 6px}
+.slider b{position:absolute;left:0;top:0;bottom:0;border-radius:2px}
+.slider i{position:absolute;top:50%;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%}
+.helpline{font-size:12px;padding:0 14px 10px;margin-top:-5px}
+.field{padding:6px 10px;font-size:14.5px;min-width:86px;text-align:right}
+.menu{padding:6px 10px;font-size:14.5px;display:flex;gap:6px;align-items:center}
+.tabbar{flex:none;height:70px;display:flex;justify-content:space-around;align-items:flex-start;padding-top:8px}
+.tab{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10.5px;width:62px}
+.tab svg{width:26px;height:22px}
+.homebar{position:absolute;bottom:7px;left:50%;transform:translateX(-50%);width:124px;height:5px;border-radius:3px}
+.dot{width:10px;height:10px;border-radius:50%;flex:none}
+.slicechip{display:inline-block;font:700 11px/16px -apple-system,sans-serif;width:16px;text-align:center;border-radius:3px;color:#000;margin-right:4px}
+.btn{padding:7px 14px;font-weight:600;font-size:14px;white-space:nowrap}
+.card{margin:0 14px 14px;padding:12px 14px}
+.notes{max-width:1100px;margin:0 auto;padding:20px 20px 60px;border-top:1px solid var(--rule);color:var(--ink2)}
+.notes h2{color:var(--ink);font-size:18px;margin:0 0 8px}
+.notes li{margin:4px 0}
+
+/* number stepper, large type, iPad */
+.stepper{display:flex;flex:none}
+.stepper b{width:40px;height:30px;display:flex;align-items:center;justify-content:center;font-weight:500;font-size:18px;cursor:pointer}
+.col .xl .big{font-size:36px}
+.col .xl .sec-h{font-size:19px}
+.col .xl .row .t{font-size:23px}
+.col .xl .row .d{font-size:18.5px}
+.col .xl .sec-f,.xl .helpline{font-size:17px}
+.col .xl .tag{font-size:13px}
+.col .xl .row.num,.xl .row.mrow{flex-wrap:wrap}
+.col .xl .row.num .txt,.xl .row.mrow .txt{flex:1 1 100%}
+.col .xl .row.num .field{flex:1;text-align:left;font-size:21px}
+.col .xl .row.mrow .menu{font-size:20px}
+.col .xl .stepper b{width:52px;height:40px;font-size:22px}
+.col .xl .row .v{font-size:21px}
+.col.ws .xl .row.num .field{padding:9px 12px}
+.ipads{display:flex;flex-direction:column;gap:30px}
+.ipad{width:1000px;max-width:100%;aspect-ratio:1180/820;border-radius:34px;padding:14px;background:#1b1b1f;box-shadow:0 0 0 1px #2c2c31,0 20px 50px rgba(0,0,0,.6)}
+.ipad .scr{border-radius:22px}
+.ipad .status{height:30px;align-items:center;font-size:13px;padding:0 22px}
+.ipad .tabbar{height:62px;justify-content:center;gap:56px}
+.ipad .homebar{width:180px}
+.split{flex:1;display:flex;min-height:0}
+.tree{width:300px;flex:none;overflow-y:auto;scrollbar-width:none}
+.tree .big{font-size:26px;padding:8px 16px 10px}
+.tree .row{padding:9px 12px;min-height:40px}
+.tree .row .t{font-size:15px}
+.tree .sub .row{padding-left:30px;min-height:36px}
+.tree .sub .row .t{font-size:14px;font-weight:400}
+.ws .tree{background:#0c0c0e;border-right:1px solid #1f1f23}
+.ws .tree .row.here{background:linear-gradient(#2f5f92,#1e3d5f);box-shadow:inset 0 0 0 1px #3d78b0;border-radius:7px;margin:0 6px}
+.ws .tree .row.here .t{color:#dbe9f8}
+.ws .tree .row.open .t{color:#dcdce1}
+.split .body{flex:1}
+.wide .sec,.wide .big,.wide .navbar{max-width:720px;margin-left:auto;margin-right:auto}
+.wide .sec{margin-bottom:20px}
+
+/* ---------- Today: stock iPhone grouped lists (as the captures show) ---------- */
+.today .scr{background:#000;color:#fff}
+.today .back{background:#1c1c1e;color:#fff;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}
+.today .navtag{background:#1c1c1e;border-radius:20px;padding:6px 8px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}
+.today .tag{background:rgba(255,255,255,.08);border-radius:3px;color:#98989f}
+.today .tag.core{color:#00b4d8}
+.today .sec-h{color:#98989f;font-size:15px;font-weight:600}
+.today .sec-f{color:#98989f}
+.today .group{background:#1c1c1e;border-radius:22px}
+.today .row+.row::before{content:"";position:absolute;top:0;left:14px;right:14px;height:1px;background:#38383a}
+.today .row .d{color:#98989f}
+.today .row.dim .t{color:#98989f}
+.today .check{color:#4aa8d8}
+.today .sw{background:#39393d}
+.today .sw i{background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.3)}
+.today .sw.on{background:#34c759}
+.today .sw.off-dis{opacity:.45}
+.today .sw.dis{opacity:.45}
+.today .slider{background:#39393d}
+.today .slider b{background:#0a84ff}
+.today .slider i{background:#fff}
+.today .helpline{color:#98989f}
+.today .field{color:#4aa8d8;padding:6px 4px;min-width:0}
+.today .stepper{background:#2c2c2e;border-radius:9px;margin-left:6px}
+.today .stepper b{color:#fff}
+.today .stepper b+b{border-left:1px solid #48484a}
+.today .menu{color:#98989f}
+.today .chev{color:#5a5a5e}
+.today .v{color:#fff}
+.today .tabbar{background:#0f0f1a;border-top:1px solid #1a2a3a}
+.today .tab{color:#8090a0}
+.today .tab.sel{color:#00b4d8}
+.today .homebar{background:#fff}
+/* Devices was already drawn in the navy chrome */
+.today .navy .group{background:#0d1b28;border:1px solid #203040;border-radius:4px}
+.today .navy .row+.row::before{left:0;right:0;background:#203040}
+.today .navy .sec-h{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#8090a0}
+.today .navy .card{background:#0d1b28;border:1px solid #203040;border-radius:4px}
+.today .navy .card.warn{background:#2a2410;border-color:#8a7020}
+.today .navy .btn{background:#1a2a3a;border:1px solid #205070;border-radius:4px;color:#c8d8e8}
+.today .navy .btn.danger{background:#4a2020;border-color:#6a3030;color:#c8a8a8}
+.today .navy .btn.primary{background:#2a6cc0;border-color:#3a80d8;color:#fff;border-radius:4px}
+.today .navyscr{background:#0f0f1a}
+.today .badge-tx{color:#ff4444;border:1px solid #ff4444;border-radius:2px;font:600 11px/1 ui-monospace,monospace;padding:2px 4px;margin-left:6px}
+
+/* ---------- Workspace: the desktop 2026.10.1 tokens ---------- */
+.ws .scr{background:#08080a;color:#dcdce1}
+.ws .back{background:linear-gradient(#222227,#141417);color:#dcdce1;border:1px solid #2c2c31}
+.ws .navtag{background:transparent}
+.ws .tag{background:#16161c;border:1px solid #2c2c31;border-radius:7px;color:#a6a6ac}
+.ws .tag.core{color:#8fb4d9;border-color:#3d78b0}
+.ws .big{color:#dcdce1}
+.ws .sec-h{color:#c4c4ca;font-size:13px;font-weight:600;padding-left:4px}
+.ws .sec-f{color:#909096}
+.ws .group{background:linear-gradient(#17171b,#0e0e10);border:1px solid #2c2c31;border-radius:10px}
+.ws .row+.row::before{content:"";position:absolute;top:0;left:12px;right:12px;height:1px;background:#1f1f23}
+.ws .row .t{color:#dcdce1}
+.ws .row .d{color:#a6a6ac}
+.ws .row.dim .t{color:#58585e}
+.ws .row.dim .d{color:#7e7e85}
+.ws .row.picked{background:linear-gradient(#2f5f92,#1e3d5f);box-shadow:inset 0 0 0 1px #3d78b0;border-radius:9px}
+.ws .row.picked .t{color:#dbe9f8}
+.ws .row.picked .d{color:#b7cde3}
+.ws .row.picked::before,.ws .row.picked+.row::before{display:none}
+.ws .check{color:#dbe9f8}
+.ws .sw{background:#141417;border:1px solid #2c2c31}
+.ws .sw i{background:linear-gradient(#5a5a60,#3d3d41);top:1px;left:1px}
+.ws .sw.on{background:#1b3527;border-color:#33684c}
+.ws .sw.on i{background:linear-gradient(#8fc3a3,#6fa384);left:21px}
+.ws .sw.dis{opacity:.4}
+.ws .slider{background:#1f1f23}
+.ws .slider b{background:#3d78b0}
+.ws .slider i{background:linear-gradient(#c4c4ca,#909096);border:1px solid #58585e}
+.ws .helpline{color:#909096}
+.ws .field{color:#dcdce1;background:#050507;border:1px solid #232329;border-radius:7px}
+.ws .menu{color:#dcdce1;background:linear-gradient(#222227,#141417);border:1px solid #2c2c31;border-radius:7px}
+.ws .chev{color:#7e7e85}
+.ws .stepper{gap:6px;margin-left:6px}
+.ws .stepper b{background:linear-gradient(#222227,#141417);border:1px solid #2c2c31;border-radius:7px;color:#dcdce1}
+.ws .v{color:#dcdce1}
+.ws .tabbar{background:#0a0a0c;border-top:1px solid #1f1f23}
+.ws .tab{color:#7e7e85}
+.ws .tab.sel{color:#8fb4d9}
+.ws .homebar{background:#dcdce1}
+.ws .navy .sec-h{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#828288}
+.ws .navy .row+.row::before{left:0;right:0}
+.ws .navy .card{background:linear-gradient(#17171b,#0e0e10);border:1px solid #2c2c31;border-radius:10px}
+.ws .navy .card.warn{background:#33280f;border-color:#6b5426}
+.ws .navy .card.warn .wt{color:#d8a55f}
+.ws .navy .btn{background:linear-gradient(#222227,#141417);border:1px solid #2c2c31;border-radius:7px;color:#dcdce1}
+.ws .navy .btn.danger{background:#3f2224;border-color:#7a2c2e;color:#f0dcdc}
+.ws .navy .btn.primary{background:linear-gradient(#2f5f92,#1e3d5f);border-color:#3d78b0;color:#dbe9f8;border-radius:7px}
+.ws .badge-tx{color:#f0dcdc;background:#3f2224;border:1px solid #7a2c2e;border-radius:5px;font:600 11px/1 ui-monospace,monospace;padding:2px 4px;margin-left:6px}
+.today .navy .card.warn .wt{color:#ffd700}
+body.blue .ws .sw.on{background:linear-gradient(#2f5f92,#1e3d5f);border-color:#3d78b0}
+body.blue .ws .sw.on i{background:linear-gradient(#dbe9f8,#a9c4df)}
+.pick{position:sticky;top:0;z-index:20;background:rgba(8,8,10,.94);border-bottom:1px solid #1f1f23}
+.pick div{max-width:1100px;margin:0 auto;padding:10px 20px;display:flex;gap:8px;align-items:center;font-size:13px;color:#a6a6ac}
+.pick button{font:600 13px -apple-system,sans-serif;padding:6px 12px;border-radius:7px;border:1px solid #2c2c31;background:linear-gradient(#222227,#141417);color:#dcdce1;cursor:pointer}
+.pick button.on{background:linear-gradient(#2f5f92,#1e3d5f);border-color:#3d78b0;color:#dbe9f8}
+</style>
+</head>
+<body class="blue">
+<header>
+  <div class="kicker">NereusSDR on iPhone · Setup</div>
+  <h1>Setup in the workspace look</h1>
+  <p>Each Setup screen as the app draws it today (left) and moved into the desktop's workspace panels (right). Today most Setup pages are standard iPhone lists, Devices is in the navy chrome, and the rest of the app is navy. On the right they all share the desktop's panels.</p>
+  <p>Everything on the right works: tap a choice, flip a switch, drag a slider. Each phone scrolls on its own.</p>
+</header>
+
+<div class="pick"><div><b style="color:#dcdce1">Switches when on</b>
+<button id="g">Soft green, as the desktop's DSP buttons</button>
+<button id="b" class="on">Blue, as the desktop's Setup checkboxes</button></div></div>
+<div id="screens"></div>
+
+<section class="notes">
+  <h2>What moves, and what stays</h2>
+  <ul>
+    <li>Panels: the desktop's panel gradient and border, rounded 10, in place of the iPhone's grey cards.</li>
+    <li>Section names in the desktop's group-title grey, like the titles on the desktop's Setup group boxes.</li>
+    <li>A picked choice gets the desktop's blue glass selection, the same as a picked mode on the flag. The check mark stays, so the choice still reads without color.</li>
+    <li>Switches when on: blue, the same as a ticked box in the desktop's Setup (JJ, 2026-10-20). Green stays for a DSP function that is running. A switch that can't be used right now stays in place, greyed, with the reason under it.</li>
+    <li>iPad: the Setup list sits on the left and the open page beside it, as in the desktop's Setup window (JJ, 2026-10-20). An iPhone, or an iPad sharing its screen narrowly, keeps the single list with pages that slide in.</li>
+    <li>Numbers sit in the desktop's dark inset field. Tapping one still opens the number pad at the foot of the tab, as today.</li>
+    <li>Kept as they are: the iPhone's back button and big page title, swipe back from the left edge, the Core / This phone / Both marks (restyled as chips), and every word on every page.</li>
+  </ul>
+</section>
+
+<script>
+const TABS=[["Panadapter",'<path d="M2 18h22M4 16l3-9 2 6 2-11 2 13 2-5 2 4 2-7 3 9" fill="none" stroke="currentColor" stroke-width="1.6"/>'],
+ ["Modes",'<rect x="6" y="1" width="14" height="20" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><text x="13" y="9.5" font-size="6" text-anchor="middle" fill="currentColor" font-family="sans-serif" font-weight="700">RX</text><text x="13" y="17" font-size="6" text-anchor="middle" fill="currentColor" font-family="sans-serif" font-weight="700">TX</text>'],
+ ["Tools",'<path d="M5 20l9-9M15 3a5 5 0 0 0 5 7l-3-3 1-3z" fill="none" stroke="currentColor" stroke-width="1.6"/>'],
+ ["Radio",'<rect x="2" y="7" width="22" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6 6l12-4M5 12h7M5 15h7" stroke="currentColor" stroke-width="1.4"/><circle cx="18" cy="13.5" r="3" fill="none" stroke="currentColor" stroke-width="1.4"/>'],
+ ["Setup",'<circle cx="13" cy="11" r="3.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M13 2v3M13 17v3M4 11h3M19 11h3M6.6 4.6l2.1 2.1M17.3 15.3l2.1 2.1M6.6 17.4l2.1-2.1M17.3 6.7l2.1-2.1" stroke="currentColor" stroke-width="1.8"/>']];
+
+const tag=(t)=>`<span class="tag ${t==='Core'?'core':''}">${t}</span>`;
+
+function rowHTML(r,look){
+  switch(r.t){
+  case 'nav': return `<div class="row ${r.dim?'dim':''}"><div class="txt"><div class="t" style="font-weight:600">${r.title}</div>${r.detail?`<div class="d ${r.dim?'':'one'}">${r.detail}</div>`:''}</div>${tag(r.tag)}${r.dim?'':'<span class="chev">›</span>'}</div>`;
+  case 'choice': return `<div class="row choice ${r.on?'picked':''}" data-group="${r.group}"><div class="txt"><div class="t" style="font-weight:600">${r.title}</div>${r.detail?`<div class="d">${r.detail}</div>`:''}</div><span class="check">${r.on?'✓':''}</span></div>`;
+  case 'sw': return `<div class="row ${r.dis?'dim':''}"><div class="txt"><div class="t">${r.title}</div>${r.detail?`<div class="d">${r.detail}</div>`:''}</div><span class="sw ${r.on?'on':''} ${r.dis?'dis':''}"><i></i></span></div>`;
+  case 'read': return `<div class="row"><div class="txt"><div class="t" style="opacity:.8">${r.title}</div></div><span class="v" style="font-weight:600">${r.value}</span></div>`;
+  case 'num': return `<div class="row num"><div class="txt"><div class="t">${r.title}</div></div><span class="field">${r.value}</span><span class="stepper"><b>−</b><b>+</b></span></div>${r.help?`<div class="helpline">${r.help}</div>`:''}`;
+  case 'menu': return `<div class="row mrow"><div class="txt"><div class="t">${r.title}</div></div><span class="menu">${r.value} <span class="chev">⌃⌄</span></span></div>${r.help?`<div class="helpline">${r.help}</div>`:''}`;
+  case 'slider': return `<div class="row" style="flex-wrap:wrap"><div class="txt" style="flex:1 1 100%;display:flex;justify-content:space-between"><span class="t">${r.title}</span><span class="v">${r.value}</span></div><div class="slider" data-min="${r.min}" data-max="${r.max}" data-unit="${r.unit||''}" style="margin:12px 6px 6px"><b style="width:${r.pct}%"></b><i style="left:${r.pct}%"></i></div></div>${r.help?`<div class="helpline">${r.help}</div>`:''}`;
+  }
+}
+
+function pageHTML(s,look){
+  let h=`<div class="navbar">${s.back?'<span class="back">‹</span>':'<span></span>'}${s.tag?`<span class="navtag">${tag(s.tag)}</span>`:'<span></span>'}</div><div class="big">${s.title}</div>`;
+  if(s.custom){ h+=s.custom(look); return h; }
+  for(const sec of s.sections){
+    h+=`<div class="sec">${sec.h?`<div class="sec-h">${sec.h}</div>`:''}<div class="group">${sec.rows.map(r=>rowHTML(r,look)).join('')}</div>${sec.f?`<div class="sec-f">${sec.f}</div>`:''}</div>`;
+  }
+  return h;
+}
+
+function phone(s,look,xl){
+  return `<div class="col ${look}"><h3>${look==='today'?(xl?'Today (approximate)':'Today'):'Workspace'}</h3><div class="phone"><div class="scr ${xl?'xl':''} ${s.navy&&look==='today'?'navyscr':''}"><div class="island"></div><div class="status"><span>9:41</span><span>●●● ▮</span></div><div class="body ${s.navy?'navy':''}">${pageHTML(s,look)}<div style="height:24px"></div></div><div class="tabbar">${TABS.map(([n,svg])=>`<div class="tab ${n==='Setup'?'sel':''}"><svg viewBox="0 0 26 22">${svg}</svg>${n}</div>`).join('')}</div><div class="homebar"></div></div></div></div>`;
+}
+
+const CORE_NOTE="Core settings are shared by every device paired with the Core, KG4VCF/shack. Settings marked This phone stay on this phone.";
+
+const devices=(look)=>`
+ <div class="card" style="display:flex;align-items:center;gap:10px"><div style="flex:1"><div style="font:600 18px ui-monospace,Menlo,monospace">KG4VCF/shack</div><div style="font-size:13px;opacity:.7">ANAN-G2</div></div><span class="btn">Rename</span></div>
+ <div class="card warn"><div class="wt" style="font-weight:700">Back up the Core's key.</div><div style="font-size:13.5px;margin:4px 0 10px">The key is the Core's identity. If its card fails without a backup, every device has to pair again.</div><span class="btn">Show me how</span></div>
+ <div class="sec"><div class="sec-h">Connected now</div><div class="group">
+  <div class="row"><span class="dot" style="background:${look==='ws'?'#4caf6a':'#39c167'}"></span><div class="txt"><div class="t" style="font-weight:600">JJ's iPhone</div><div class="d"><span class="slicechip" style="background:#00d4ff">A</span>40 m · this phone</div></div></div>
+  <div class="row"><span class="dot" style="background:${look==='ws'?'#4caf6a':'#39c167'}"></span><div class="txt"><div class="t" style="font-weight:600">MacBook Pro<span class="badge-tx">TX</span></div><div class="d"><span class="slicechip" style="background:#ff40ff">B</span>40 m <span class="slicechip" style="background:#ffff00">D</span>17 m · 2 hours</div></div><span class="btn danger">Revoke</span></div>
+  <div class="row"><span class="dot" style="background:${look==='ws'?'#4caf6a':'#39c167'}"></span><div class="txt"><div class="t" style="font-weight:600">iPad Pro</div><div class="d"><span class="slicechip" style="background:#40ff40">C</span>20 m · 40 minutes</div></div><span class="btn danger">Revoke</span></div>
+ </div></div>
+ <div class="sec"><div class="sec-h">Paired</div><div class="group">
+  <div class="row"><span class="dot" style="background:${look==='ws'?'#c25a5c':'#c14848'}"></span><div class="txt"><div class="t" style="font-weight:600">Old ThinkPad</div><div class="d">Paired Jul 5 · last seen 41 days ago</div></div><span class="btn danger">Revoke</span></div>
+ </div></div>
+ <div style="margin:0 14px"><div class="btn primary" style="text-align:center;padding:12px">Add a device</div></div>
+ <div class="sec-f" style="margin:8px 14px">Up to four devices can be connected at once. TX marks the one with transmit. Revoking drops that device at once, even mid-session.</div>`;
+
+const SCREENS=[
+ {h:"Setup",p:"The tab's first list: Devices first, then the desktop's categories with their pages and their mark, then where settings live.",
+  s:{title:"Setup",sections:[{rows:[
+   {t:'nav',title:'Devices',detail:'Paired phones and computers · Add a device',tag:'Core'},
+   {t:'nav',title:'General',detail:'Startup & Preferences · UI Scale & Theme · Navigation · Battery and sessions · Options',tag:'Both'},
+   {t:'nav',title:'Hardware',detail:'Hardware Config · DDC Routing',tag:'Core'},
+   {t:'nav',title:'PA',detail:'PA Gain · Watt Meter',tag:'Core'},
+   {t:'nav',title:'Audio',detail:'On this phone · Outputs · Microphone · Devices · TX Input · VAX · TCI',tag:'Both'},
+   {t:'nav',title:'DSP',detail:'AGC/ALC · NR/ANF · NB/SNB · CW · AM/SAM · FM · CFC · TNF',tag:'Core'},
+   {t:'nav',title:'Display',detail:'On this phone · Spectrum · Levels · Waterfall · View · Peaks & Markers',tag:'Both'},
+   {t:'nav',title:'Transmit',detail:'Power · TX Profiles · Speech Processor · DEXP/VOX · PTT buttons',tag:'Both'},
+   {t:'nav',title:'Appearance',detail:'Colors & Theme · Meter Styles · Gradients',tag:'This phone'},
+   {t:'nav',title:'CAT & Network',detail:'Serial Ports · TCI Server · Peripherals · Rotor · Data use',tag:'Both'},
+   {t:'nav',title:'Test',detail:'Two-Tone IMD',tag:'Core'},
+   {t:'nav',title:'Diagnostics',detail:'Radio Status · Connection Quality · Settings Validation · Logs · Export / Import',tag:'Both'},
+   {t:'nav',title:'About this app',detail:'Build · Credits · Licenses',tag:'This phone'}],f:CORE_NOTE},
+   ],}},
+ {h:"A category: Display",p:"A category's pages, each with its mark. A page this Core can't open stays in the list, greyed, with the reason in full (here 3D View on an older Core).",
+  s:{title:"Display",back:1,tag:'Both',sections:[{rows:[
+   {t:'nav',title:'On this phone',tag:'Both'},{t:'nav',title:'Spectrum',tag:'Core'},{t:'nav',title:'Levels',tag:'Core'},
+   {t:'nav',title:'Waterfall',tag:'Core'},{t:'nav',title:'View',tag:'Core'},{t:'nav',title:'Peaks & Markers',tag:'Core'},
+   {t:'nav',title:'FFT & Engine',tag:'Core'},{t:'nav',title:'Transmit Display',tag:'Core'},{t:'nav',title:'Multimeter',tag:'Both'},
+   {t:'nav',title:'3D View',tag:'This phone',dim:1,detail:'This Core does not offer the 3D view. Updating the Core may help.'}]}]}},
+ {h:"Navigation",p:"One of this phone's own pages: a pick-one list, switches that wait on it (greyed with the reason under them while the dial is Off), a menu.",
+  s:{title:"Navigation",back:1,tag:'This phone',sections:[
+   {h:'Tuning dial',rows:[
+    {t:'choice',group:'dial',title:'Off',detail:'Tune by dragging or tapping the band',on:1},
+    {t:'choice',group:'dial',title:'Knob on the waterfall',detail:'Opposite PTT, always on screen'},
+    {t:'choice',group:'dial',title:'Pop-up knob',detail:'A big knob when you tap the frequency'},
+    {t:'choice',group:'dial',title:'Thumbwheel',detail:'A flat wheel along the bottom of the waterfall'}]},
+   {rows:[{t:'sw',title:'Haptic tick on each detent',on:1,dis:1},{t:'sw',title:'Firmer bump on each whole kHz',on:1,dis:1},{t:'sw',title:'Reverse dial direction',dis:1}],
+    f:'Pick a dial above to use its haptics and direction.'},
+   {h:'Touch',rows:[
+    {t:'sw',title:'Drag a flag to tune',detail:"A drag on a slice's flag or passband tunes it in its step. A drag on the band moves the band.",on:1},
+    {t:'sw',title:'Tap to tune on the band',detail:'A tap on the band tunes the active slice there',on:1},
+    {t:'sw',title:'Pinch to zoom the band',detail:'Zoom minus and plus stay on the waterfall',on:1},
+    {t:'menu',title:'Double-tap action',value:'Center'}]},
+   {h:'Tuning',rows:[{t:'sw',title:'Snap tap-to-tune to step',detail:"A tap lands on the slice's nearest step",on:1}]}]}},
+ {h:"A Core page: DSP, AGC/ALC",p:"A page the Core describes, drawn the way Setup draws every described row: a menu, numbers, sliders and a switch, with the desktop's labels and help. The values here are for the picture only.",
+  s:{title:"AGC/ALC",back:1,tag:'Core',sections:[
+   {h:'RX1 AGC',rows:[
+    {t:'menu',title:'Mode',value:'Med',help:'Automatic Gain Control Mode Setting'},
+    {t:'num',title:'Attack',value:'2 ms'},
+    {t:'num',title:'Decay',value:'250 ms',help:'Time-constant to increase signal amplitude after strong signal'},
+    {t:'num',title:'Hang',value:'250 ms',help:'Time to hold constant gain after strong signal'},
+    {t:'slider',title:'Slope',value:'0',pct:0,min:0,max:20,help:'Gain difference for weak and strong signals'},
+    {t:'num',title:'Max Gain',value:'90 dB'},
+    {t:'num',title:'Fixed Gain',value:'20 dB',help:'Gain when AGC is disabled'},
+    {t:'slider',title:'Hang Threshold',value:'0',pct:0,min:0,max:100,help:"Level at which the 'hang' function is engaged"}]},
+   {h:'Auto AGC',rows:[
+    {t:'sw',title:'Auto AGC RX1',detail:'Automatically adjust AGC based on Noise Floor'},
+    {t:'num',title:'± Offset',value:'20 dB',help:'dB shift from noise floor'}]}]}},
+ {h:"Data use",p:"Readings at the top, then two pick-one lists.",
+  s:{title:"Data use",back:1,tag:'This phone',sections:[
+   {rows:[{t:'read',title:'This session',value:'0.0 MB total'},{t:'read',title:'This month on cellular',value:'0.0 MB'}]},
+   {h:'On Wi-Fi',rows:[{t:'choice',group:'wifi',title:'Full',detail:'30 frames a second, full detail · about 70 MB an hour',on:1},{t:'choice',group:'wifi',title:'Balanced',detail:'15 frames a second · about 45 MB an hour'}]},
+   {h:'On cellular',rows:[{t:'choice',group:'cell',title:'Full',detail:'The same as Wi-Fi · about 70 MB an hour'},{t:'choice',group:'cell',title:'Balanced',detail:'15 frames a second · about 45 MB an hour',on:1},{t:'choice',group:'cell',title:'Saver',detail:'5 frames a second, half the detail · about 30 MB an hour'},{t:'choice',group:'cell',title:'Audio only',detail:'No band, just the sound · about 24 MB an hour'}]}]}},
+ {h:"Devices",p:"Devices is already in the navy chrome today, so it is a recolor like the rest of the app rather than a move.",
+  s:{title:"Devices",back:1,tag:'Core',navy:1,custom:devices}},
+];
+SCREENS.splice(5,0,
+ {h:"Navigation, large type",xl:1,p:"The largest accessibility text size. Titles and their lines wrap; a switch keeps its place on the right; the page scrolls. The left phone is drawn from how standard iPhone lists grow, not captured.",s:null},
+ {h:"AGC/ALC, large type",xl:1,p:"At this size a number's value and its minus and plus move under its label, and a menu's value under its name, so nothing is squeezed or cut off. Tapping the value still opens the number pad.",s:null});
+SCREENS[5].s=SCREENS.find(x=>x.h==='Navigation').s; SCREENS[6].s=SCREENS.find(x=>x.h==='A Core page: DSP, AGC/ALC').s;
+
+const root=document.getElementById('screens');
+for(const sc of SCREENS){
+  const d=document.createElement('section');d.className='screen';
+  d.innerHTML=`<h2>${sc.h}</h2><p>${sc.p}</p><div class="pair">${phone(sc.s,'today',sc.xl)}${phone(sc.s,'ws',sc.xl)}</div>`;
+  root.appendChild(d);
+}
+
+// The iPad: today Setup is the same single list as the phone, stretched to the
+// window. The third frame is the chosen layout: the list beside the page, as the
+// desktop's Setup window has its tree beside the page.
+const CATS=['Devices','General','Hardware','PA','Audio','DSP','Display','Transmit','Appearance','CAT & Network','Test','Diagnostics','About this app'];
+const CATTAG={'Devices':'Core','General':'Both','Hardware':'Core','PA':'Core','Audio':'Both','DSP':'Core','Display':'Both','Transmit':'Both','Appearance':'This phone','CAT & Network':'Both','Test':'Core','Diagnostics':'Both','About this app':'This phone'};
+const DSPPAGES=['AGC/ALC','NR/ANF','NB/SNB','CW','AM/SAM','FM','CFC','TNF','Filter Presets','Options'];
+function ipad(look,split){
+  const agc=SCREENS.find(x=>x.h==='A Core page: DSP, AGC/ALC').s;
+  const tabbar=`<div class="tabbar">${TABS.map(([n,svg])=>`<div class="tab ${n==='Setup'?'sel':''}"><svg viewBox="0 0 26 22">${svg}</svg>${n}</div>`).join('')}</div>`;
+  let inner;
+  if(split){
+    const tree=`<div class="tree"><div class="big">Setup</div><div class="sec" style="margin:0 8px 14px"><div class="group" style="background:none;border:0">${CATS.map(c=>
+      c==='DSP'?`<div class="row open"><div class="txt"><div class="t" style="font-weight:600">DSP</div></div>${tag('Core')}<span class="chev">⌄</span></div><div class="sub">${DSPPAGES.map(pg=>`<div class="row ${pg==='AGC/ALC'?'here':''}"><div class="txt"><div class="t">${pg}</div></div></div>`).join('')}</div>`
+      :`<div class="row"><div class="txt"><div class="t" style="font-weight:600">${c}</div></div>${tag(CATTAG[c])}<span class="chev">›</span></div>`).join('')}</div></div></div>`;
+    inner=`<div class="split">${tree}<div class="body wide">${pageHTML({...agc,back:0},look)}<div style="height:24px"></div></div></div>`;
+  }else{
+    inner=`<div class="body wide">${pageHTML(agc,look)}<div style="height:24px"></div></div>`;
+  }
+  return `<div class="col ${look}"><h3>${look==='today'?'Today':split?'Workspace, chosen: the list beside the page':'Workspace, as today: one list, pushed pages'}</h3><div class="ipad"><div class="scr"><div class="status"><span>9:41 Tue Oct 20</span><span>●●● ▮</span></div>${inner}${tabbar}<div class="homebar"></div></div></div></div>`;
+}
+{
+  const d=document.createElement('section');d.className='screen';
+  d.innerHTML=`<h2>iPad, on its side</h2><p>Today the iPad shows Setup exactly as the phone does: one list, and a page slides in over it, stretched to the full width. The first two frames are that, today and in the workspace panels, with the page held to a readable width. The third is the chosen layout (JJ, 2026-10-20): the categories stay on the left with the open category's pages under it, and the page sits beside them, as the desktop's Setup window has its tree beside the page. On a phone, and on an iPad sharing its screen narrowly, Setup stays one list either way.</p><div class="ipads">${ipad('today',0)}${ipad('ws',0)}${ipad('ws',1)}</div>`;
+  root.appendChild(d);
+}
+document.addEventListener('click',e=>{
+  const c=e.target.closest('.row.choice');
+  if(c){const grp=c.dataset.group;const g=c.parentElement;
+    g.querySelectorAll(`.row.choice[data-group="${grp}"]`).forEach(r=>{r.classList.toggle('picked',r===c);r.querySelector('.check').textContent=r===c?'✓':''});
+    if(grp==='dial'){const off=c.querySelector('.t').textContent==='Off';
+      const sec=g.closest('.sec').nextElementSibling;
+      sec.querySelectorAll('.row').forEach(r=>{r.classList.toggle('dim',off);r.querySelector('.sw').classList.toggle('dis',off)});
+      sec.querySelector('.sec-f').textContent=off?'Pick a dial above to use its haptics and direction.':'The step is set on the dial itself. Each slice keeps its own step on each band.';}
+    return;}
+  const r=e.target.closest('.row');
+  if(r){const sw=r.querySelector('.sw');if(sw&&!sw.classList.contains('dis'))sw.classList.toggle('on');}
+});
+for(const [id,blue] of [['g',false],['b',true]])document.getElementById(id).onclick=()=>{document.body.classList.toggle('blue',blue);document.getElementById('g').classList.toggle('on',!blue);document.getElementById('b').classList.toggle('on',blue)};
+if(location.search.includes('green'))document.getElementById('g').click();
+let drag=null;
+document.addEventListener('pointerdown',e=>{const s=e.target.closest('.slider');if(s){drag=s;move(e);}});
+document.addEventListener('pointermove',e=>{if(drag)move(e)});
+document.addEventListener('pointerup',()=>drag=null);
+function move(e){const r=drag.getBoundingClientRect();let p=Math.min(1,Math.max(0,(e.clientX-r.left)/r.width));
+  drag.querySelector('b').style.width=p*100+'%';drag.querySelector('i').style.left=p*100+'%';
+  const min=+drag.dataset.min,max=+drag.dataset.max;drag.closest('.row').querySelector('.v').textContent=Math.round(min+p*(max-min));}
+</script>
+</body>
+</html>

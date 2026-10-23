@@ -483,8 +483,8 @@ private struct SoundNotice: View {
         }
         .padding(.vertical, 10)
         .padding(.horizontal, 12)
-        .background(ChromeColours.notice, in: RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
+        .background(ChromeColours.notice, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
         .contentShape(Rectangle())
     }
 

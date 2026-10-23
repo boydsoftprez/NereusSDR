@@ -131,7 +131,7 @@ struct ModMonitorSettingsSheet: View {
             HStack(spacing: 8) {
                 Text(title)
                     .font(.system(size: text * 0.92, weight: .bold))
-                    .foregroundStyle(Color(red: 0xB5 / 255, green: 0xC9 / 255, blue: 0xDA / 255))
+                    .foregroundStyle(WorkspacePalette.titleText)
                     .accessibilityAddTraits(.isHeader)
                 Spacer(minLength: 4)
                 SetupTagBadge(tag: tag)
@@ -139,8 +139,8 @@ struct ModMonitorSettingsSheet: View {
             content()
         }
         .padding(10)
-        .background(Color(red: 0x0D / 255, green: 0x13 / 255, blue: 0x20 / 255), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(ChromeColours.sheetBorder, lineWidth: 1))
+        .background(ChromeColours.panel, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ChromeColours.sheetBorder, lineWidth: 1))
     }
 
     private func label(_ words: String) -> some View {
@@ -152,7 +152,7 @@ struct ModMonitorSettingsSheet: View {
     private func note(_ words: String) -> some View {
         Text(words)
             .font(.system(size: small))
-            .foregroundStyle(Color(red: 0x8F / 255, green: 0xA2 / 255, blue: 0xB4 / 255))
+            .foregroundStyle(ChromeColours.caption)
             .fixedSize(horizontal: false, vertical: true)
     }
 }
@@ -196,8 +196,8 @@ struct ModMonitorThresholdRow: View {
                     .focused($typing)
                     .padding(.horizontal, 4)
                     .frame(width: control * 1.05, height: control * 0.9)
-                    .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
+                    .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
                     .accessibilityLabel(title + ", percent")
                     .accessibilityIdentifier(identifier)
                     .onChange(of: typing) { _, now in
@@ -240,10 +240,10 @@ struct ModMonitorThresholdRow: View {
         } label: {
             Text(glyph)
                 .font(.system(size: font + 7, weight: .bold))
-                .foregroundStyle(disabled ? Color(red: 0x40 / 255, green: 0x50 / 255, blue: 0x60 / 255) : ChromeColours.text)
+                .foregroundStyle(disabled ? ChromeColours.iconMuted : ChromeColours.text)
                 .frame(width: control, height: control)
-                .background(ChromeColours.button, in: RoundedRectangle(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6)
+                .background(ChromeColours.button, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                     .strokeBorder(disabled ? ChromeColours.insetBorder : ChromeColours.buttonBorder, lineWidth: 1))
                 .contentShape(Rectangle())
         }

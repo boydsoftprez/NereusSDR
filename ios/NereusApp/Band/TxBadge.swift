@@ -14,8 +14,8 @@ struct TxBadge: View {
             .font(.system(size: 10, weight: .bold))
             .foregroundStyle(lit ? BandColours.txBadgeOnText : BandColours.txBadgeOffText)
             .frame(width: 28, height: 18)
-            .background(lit ? BandColours.txBadgeOn : BandColours.txBadgeOff, in: RoundedRectangle(cornerRadius: 3))
-            .overlay(RoundedRectangle(cornerRadius: 3)
+            .background(lit ? BandColours.txBadgeOn : BandColours.txBadgeOff, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                 .strokeBorder(lit ? BandColours.txBadgeOnBorder : BandColours.txBadgeOffBorder, lineWidth: 1))
             .accessibilityLabel(lit ? "Transmit slice" : "Not the transmit slice")
     }

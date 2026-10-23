@@ -9,43 +9,53 @@ import SwiftUI
 /// the `.vfo`, `.vfo-fold` and `.zoom` styles). A slice's own colour is the
 /// Core's, read from the catalogue; these are the parts around it.
 enum BandColours {
-    static let flagBackground = rgb(0x0A, 0x0A, 0x14).opacity(0.902)
+    // The desktop's workspace look (docs/architecture/2026-10-20-phone-workspace-look-design.md,
+    // appendix A): chrome roles point at WorkspacePalette tokens, a raised role
+    // holds the raised treatment's flat bottom, a value the palette does not
+    // hold is the board's mapping (make_board.py), and the kept data colors
+    // (W2) stay as they were.
+    private typealias P = WorkspacePalette
+
+    static let flagBackground = P.statusBarBg.opacity(0.902)
     static let flagBorder = Color.white.opacity(0.118)
-    static let text = rgb(0xC8, 0xD8, 0xE8)
-    static let rxAntenna = rgb(0x44, 0x88, 0xFF)
-    static let txAntenna = rgb(0xFF, 0x44, 0x44)
-    static let bandwidth = rgb(0x00, 0xC8, 0xFF)
-    static let frequency = rgb(0x00, 0xE5, 0xFF)
+    static let text = P.textPrimary
+    static let rxAntenna = P.rgb(0x4488FF) // kept (W2)
+    static let txAntenna = P.txRed
+    static let bandwidth = P.rgb(0x00C8FF) // kept (W2)
+    static let frequency = P.rgb(0x00E5FF) // kept (W2)
     static let frequencyBorder = Color.white.opacity(0.196)
     /// The flag's step button (the board's `.vfo__step`).
-    static let stepBackground = rgb(0x0D, 0x1B, 0x28)
-    static let stepBorder = rgb(0x2A, 0x4A, 0x60)
-    static let tab = rgb(0x68, 0x88, 0xA0)
+    static let stepBackground = P.glassBtnBot // raised
+    static let stepBorder = P.border // raised
+    static let tab = P.rgb(0x828288)
     static let tabDivider = Color.white.opacity(0.314)
-    static let txBadgeOff = rgb(0x1A, 0x2A, 0x3A)
-    static let txBadgeOffBorder = rgb(0x30, 0x40, 0x50)
-    static let txBadgeOffText = rgb(0x68, 0x88, 0xA0)
-    static let txBadgeOn = rgb(0x6A, 0x30, 0x30)
-    static let txBadgeOnBorder = rgb(0xFF, 0x44, 0x44)
-    static let txBadgeOnText = rgb(0xFF, 0x80, 0x80)
-    static let buttonBackground = rgb(0x14, 0x1E, 0x32).opacity(0.902)
-    static let buttonBorder = rgb(0x50, 0x64, 0x82).opacity(0.706)
-    static let levelTicks = rgb(0x68, 0x88, 0xA0)
-    static let levelBackground = rgb(0x10, 0x10, 0x1C)
-    static let levelBorder = rgb(0x30, 0x40, 0x50)
-    static let levelLow = rgb(0x00, 0xB4, 0xD8)
-    static let levelHigh = rgb(0x00, 0xD8, 0x60)
-    static let zoomBackground = rgb(0x14, 0x1E, 0x2D).opacity(0.941)
+    static let txBadgeOff = P.rgb(0x1A1A1E)
+    static let txBadgeOffBorder = P.border
+    static let txBadgeOffText = tab
+    static let txBadgeOn = P.badgeTxBg
+    static let txBadgeOnBorder = P.txRed
+    static let txBadgeOnText = P.keyedRim
+    static let buttonBackground = P.glassBtnBot.opacity(0.902) // raised
+    static let buttonBorder = P.rgb(0x69696D).opacity(0.706)
+    static let levelTicks = tab
+    static let levelBackground = P.insetBg
+    static let levelBorder = P.border
+    static let levelLow = P.accentFill
+    static let levelHigh = P.liveGreen
+    static let zoomBackground = P.rgb(0x202024).opacity(0.941)
     static let zoomBorder = Color.white.opacity(0.157)
-    /// The flag's RADE row (the board's `.rf-row`, the desktop's SNR row):
-    /// the words, the locked-on dot at 5 dB or more, the dot below 5 dB,
-    /// the not-locked dot, the greyed older-Core row, and the mode tab in RADE.
-    static let radeRow = rgb(0x00, 0xB4, 0xD8)
-    static let radeGood = rgb(0x00, 0xFF, 0x88)
-    static let radeMarginal = rgb(0xE0, 0xE0, 0x40)
-    static let radeHollow = rgb(0x50, 0x50, 0x50)
-    static let radeOff = rgb(0x68, 0x88, 0xA0)
-    static let radeMode = rgb(0xA7, 0x8B, 0xFA)
+    /// The RADE row's accent for fills and marks (the board's `.rf-row`, the
+    /// desktop's SNR row). Nothing draws in it today: the row's words take
+    /// radeRowText, and its dots and mode tab have their own roles. Kept, and
+    /// pinned, as the row's fill accent.
+    static let radeRow = P.accentFill
+    /// The RADE row's words, in the accent for text (spec section 10).
+    static let radeRowText = P.accentText
+    static let radeGood = P.rgb(0x6FA384)
+    static let radeMarginal = P.rgb(0xE0E040) // kept (W2)
+    static let radeHollow = P.rgb(0x505054)
+    static let radeOff = tab
+    static let radeMode = P.rgb(0xA78BFA) // kept (W2)
 
     /// A slice's colour from the Core's `#RRGGBB`.
     static func slice(_ hex: String) -> Color {
@@ -60,23 +70,19 @@ enum BandColours {
     }
 
     /// The readouts' inset box on the band (the desktop's text overlays).
-    static let readoutBackground = rgb(0x10, 0x15, 0x20).opacity(0.706)
+    static let readoutBackground = P.rgb(0x18181C).opacity(0.706)
     /// The finger's frequency box, the desktop's cursor readout at 200 of
     /// 255 (value from src/gui/SpectrumWidget.cpp:6609).
-    static let cursorBackground = rgb(0x10, 0x15, 0x20).opacity(200.0 / 255)
+    static let cursorBackground = P.rgb(0x18181C).opacity(200.0 / 255)
     /// The waterfall's time, the desktop's `#C8DCFF` at 10 points (values
     /// from src/gui/SpectrumWidget.cpp:4642-4644).
-    static let timestamp = rgb(0xC8, 0xDC, 0xFF)
+    static let timestamp = P.rgb(0xC8DCFF) // kept (W2)
     /// The mark of a stretch the band was not sent (the board's `.wfgap`).
-    static let awayMarkBackground = rgb(0x0A, 0x0A, 0x14).opacity(0.88)
-    static let awayMarkEdge = rgb(0x40, 0x50, 0x60)
-    static let awayMarkText = rgb(0x80, 0x90, 0xA0)
+    static let awayMarkBackground = P.statusBarBg.opacity(0.88)
+    static let awayMarkEdge = P.textInactive
+    static let awayMarkText = P.textSecondary
     static let timestampPoints: CGFloat = 10
     /// The transmit zero line down the spectrum: dashes 4 and gaps 2, a
     /// point wide (values from src/gui/SpectrumWidget.cpp:4286).
     static let txZeroLineDash: [CGFloat] = [4, 2]
-
-    private static func rgb(_ red: Int, _ green: Int, _ blue: Int) -> Color {
-        Color(red: Double(red) / 255, green: Double(green) / 255, blue: Double(blue) / 255)
-    }
 }

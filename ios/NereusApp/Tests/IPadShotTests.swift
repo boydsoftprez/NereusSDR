@@ -1,4 +1,4 @@
-// NereusSDR for iOS: the iPad on its side and upright, for comparing with the board's pictures 18 and 19
+// NereusSDR for iOS: the iPad on its side and upright, and Setup beside its page, for comparing with the boards
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
 import Foundation
@@ -75,6 +75,96 @@ struct IPadShotTests {
         await model.disconnect()
     }
 
+    /// R-IOS-52, W8: Setup on the iPad on its side, the list beside DSP's
+    /// AGC/ALC page with the page held to a readable width, compared with
+    /// setup-board.html's chosen iPad frame; then the same router in a
+    /// narrow, compact-width window: one list with the page slid in, still
+    /// AGC/ALC.
+    @Test("Setup on the iPad on its side beside its page, and the same page in a compact window",
+          .enabled("The iPad's screens are drawn on an iPad simulator") {
+              await MainActor.run { UIDevice.current.userInterfaceIdiom == .pad }
+          })
+    func setupShots() async throws {
+        typealias Described = SetupDescribedPagesTests
+        let rig = try await Described.connected()
+        defer { UserDefaults.standard.removePersistentDomain(forName: rig.suite) }
+        await rig.station.deliverSetup(try Described.coreCategories())
+        let app = rig.app
+        #expect(await Described.settle { app.setupPages.isCurrent && app.setupFeed.description(for: "dsp") != nil })
+        let numbers = try SetupWorkspaceShotTests.numberRowIds(app, category: "dsp", page: "dsp.agcAlc")
+        let agcAlc = SetupWorkspaceShotTests.agcAlc
+        rig.router.path = agcAlc
+
+        let wide = CGSize(width: 1210, height: 834)
+        let split = try await shootSetup("ipad-setup-split", rig: rig, size: wide, widthClass: .regular)
+        // Each number row is on the right of the list, inside the readable width.
+        let left = SetupSplit.listWidth + (wide.width - SetupSplit.listWidth - SetupSplit.readableWidth) / 2
+        var measured = 0
+        for id in numbers {
+            guard let label = split.frame(id, .label), let value = split.frame(id, .value) else {
+                continue
+            }
+            measured += 1
+            #expect(label.minX >= left - 1, "\(id): the row is not held to the readable width")
+            #expect(value.maxX <= left + SetupSplit.readableWidth + 1, "\(id): the row runs past the readable width")
+        }
+        #expect(measured > 0, "No number row was laid out beside the list")
+        #expect(rig.router.path == agcAlc)
+
+        // The window narrowed to compact: one list, the same page still open.
+        let narrow = CGSize(width: 375, height: 834)
+        let compact = try await shootSetup("ipad-setup-compact", rig: rig, size: narrow, widthClass: .compact)
+        #expect(rig.router.path == agcAlc, "The open page closed when the window narrowed")
+        let row = try #require(numbers.lazy.compactMap { compact.frame($0, .label) }.first,
+                               "AGC/ALC is not open in the compact window")
+        #expect(row.minX < SetupSplit.listWidth, "The compact window still has the list beside the page")
+        await app.disconnect()
+    }
+
+    /// Draws the Setup tab and the tab bar in a window `size` wide with the
+    /// width class `widthClass`, as the app's root lays them out, and returns
+    /// where the page's value rows were laid out.
+    private func shootSetup(_ name: String, rig: SetupDescribedPagesTests.Rig, size: CGSize,
+                            widthClass: UserInterfaceSizeClass) async throws -> SetupLayoutProbe {
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        let onItsSide = size.width > size.height
+        window.frame = CGRect(origin: CGPoint(x: 0, y: onItsSide ? 120 : 0), size: size)
+        window.windowLevel = .alert + 1
+        let probe = SetupLayoutProbe()
+        let iPad = IPadLayout.arrangement(horizontal: widthClass, size: size).isIPad
+        let root = VStack(spacing: 0) {
+            SetupTab(app: rig.app, flow: rig.flow, router: rig.router, buildTag: nil)
+            TabBar(selection: .constant(.setup), sideways: onItsSide, iPad: iPad)
+        }
+        .background(ChromeColours.bar.ignoresSafeArea())
+        .environment(\.horizontalSizeClass, widthClass)
+        .environment(\.setupLayoutProbe, probe)
+        .preferredColorScheme(.dark)
+        let host = ShotHosting.host(root)
+        if onItsSide {
+            host.additionalSafeAreaInsets = UIEdgeInsets(top: 24, left: 0, bottom: 20, right: 0)
+        }
+        host.view.frame = CGRect(origin: .zero, size: size)
+        window.rootViewController = host
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        await ShotWait.laidOut(window)
+        let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        if let directory = ProcessInfo.processInfo.environment["NEREUS_IPAD_SHOTS"], !directory.isEmpty,
+           let data = image.pngData() {
+            let url = URL(fileURLWithPath: directory).appendingPathComponent("\(name).png")
+            try data.write(to: url)
+            print("Wrote \(url.path)")
+        }
+        return probe
+    }
+
     // MARK: Inside
 
     private func settle(seconds: Double, _ condition: () -> Bool) async -> Bool {
@@ -99,7 +189,7 @@ struct IPadShotTests {
         let root = IPadShotRoot(model: model, columnShown: screen.columnShown)
             .environment(\.horizontalSizeClass, .regular)
             .preferredColorScheme(.dark)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         if screen.onItsSide {
             host.additionalSafeAreaInsets = UIEdgeInsets(top: 24, left: 0, bottom: 20, right: 0)
         }

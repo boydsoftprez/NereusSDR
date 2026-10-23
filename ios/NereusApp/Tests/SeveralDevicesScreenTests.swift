@@ -1129,7 +1129,7 @@ struct SeveralDevicesScreenTests {
         window.frame = CGRect(origin: CGPoint(x: 0, y: sideways ? 120 : 0), size: size)
         window.windowLevel = .alert + 1
         let root = ScreenRoot(model: model, sideways: sideways).preferredColorScheme(scheme).dynamicTypeSize(typeSize)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         if sideways {
             host.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: 62, bottom: 21, right: 62)
         }
@@ -1362,7 +1362,7 @@ extension SeveralDevicesScreenTests {
             .preferredColorScheme(scheme)
             .frame(width: size.width, height: size.height, alignment: .top)
             .background(ChromeColours.bar)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         host.overrideUserInterfaceStyle = scheme == .light ? .light : .dark
         host.view.frame = CGRect(origin: .zero, size: size)
         window.rootViewController = host

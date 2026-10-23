@@ -163,7 +163,7 @@ import Testing
         #expect(peakColumns.allSatisfy { abs(Double($0) + 0.5 - (peakX - shift)) <= 2 }, "\(peakColumns)")
         // The new right quarter is empty in the spectrum and the waterfall.
         #expect(columnsWithTrace(moved, in: (Self.width * 3 / 4 + 2)..<Self.width).isEmpty)
-        #expect(moved.grey(Self.width - 10, top).isNear(Self.backgroundGrey, tolerance: 12))
+        #expect(moved.grey(Self.width - 10, top).isNear(Self.backgroundGrey, tolerance: 2))
         #expect(moved.grey(20, top).isNear(255))
         // The old view's left edge is off the band; the band still shows data up to the frame's right edge.
         #expect(!columnsWithTrace(moved, in: 10..<(Self.width * 3 / 4 - 2)).isEmpty)
@@ -188,7 +188,7 @@ import Testing
                                       extras: state.frameExtras, overlays: overlays)
         let top = Int(layout.waterfall.minY)
         #expect(image.grey(200, top).isNear(128))
-        #expect(image.grey(200, top + 1).isNear(Self.backgroundGrey, tolerance: 12))
+        #expect(image.grey(200, top + 1).isNear(Self.backgroundGrey, tolerance: 2))
 
         let second = BandFixtures.frame(trace: Self.flat(100, -50), sequence: 2)
         state.receive(frame: second, manualLevels: manual)
@@ -197,10 +197,14 @@ import Testing
                                   overlays: overlays)
         #expect(image.grey(200, top).isNear(0))
         #expect(image.grey(200, top + 1).isNear(128))
-        #expect(image.grey(200, top + 2).isNear(Self.backgroundGrey, tolerance: 12))
+        #expect(image.grey(200, top + 2).isNear(Self.backgroundGrey, tolerance: 2))
     }
 
-    static let backgroundGrey = 14
+    /// The band's ground, `#08080A` (`BandRenderer.background`), as
+    /// ``Image/grey(_:_:)`` reads it: (8 + 8 + 10) / 3 rounded down. Red
+    /// alone is 8. The old ground `#0A0A14` read 13 (red 10), outside every
+    /// tolerance used against this.
+    static let backgroundGrey = 8
 
     /// A frame still on the graphics processor draws the waterfall as it
     /// was when the frame was made: the next frame's new line, landing in
@@ -388,7 +392,7 @@ import Testing
                 let y = Int(layout.strip.midY)
                 // Filled up to the dBm scale's left edge, and not under it.
                 #expect(image.pixel(Int(layout.strip.maxX) - 1, y).r.isNear(fill.red, tolerance: 1))
-                #expect(image.pixel(Int(layout.strip.maxX) + 1, y).r.isNear(Self.backgroundGrey, tolerance: 12))
+                #expect(image.pixel(Int(layout.strip.maxX) + 1, y).r.isNear(Self.backgroundGrey, tolerance: 1))
                 // Filled from its top row to its foot, and not above it.
                 #expect(image.pixel(20, Int(layout.strip.minY)).r.isNear(fill.red, tolerance: 1))
                 #expect(image.pixel(20, Int(layout.strip.maxY) - 1).r.isNear(fill.red, tolerance: 1))
@@ -405,7 +409,7 @@ import Testing
         #expect(geometry.size.height == layout.spectrum.height)
         // The spectrum's foot, where a strip would be, is the background.
         for y in Int(layout.spectrum.maxY) - 20..<Int(layout.spectrum.maxY) {
-            #expect(image.pixel(100, y).r.isNear(Self.backgroundGrey, tolerance: 12))
+            #expect(image.pixel(100, y).r.isNear(Self.backgroundGrey, tolerance: 1))
             #expect(!image.pixel(Int(geometry.x(forHz: 7_200_000)), y).isWhitish)
         }
     }
@@ -571,10 +575,11 @@ import Testing
         let bare = try target.render(renderer, frame: frame, history: WaterfallHistory(capacity: 1), extras: nil,
                                      overlays: Self.overlays(settings)).pixel(100, below)
         #expect(filled.g > bare.g + 40)
-        #expect(bare.g.isNear(Self.backgroundGreen, tolerance: 6))
+        #expect(bare.g.isNear(Self.backgroundGreen, tolerance: 1))
     }
 
-    static let backgroundGreen = 14
+    /// The ground's green, 8 (`#08080A`); the old ground's was 10.
+    static let backgroundGreen = 8
 
     @Test func theCoresPlanChoiceChangesTheStrip() throws {
         let target = try Offscreen(width: Self.width, height: Self.height)

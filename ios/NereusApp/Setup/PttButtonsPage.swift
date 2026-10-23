@@ -26,8 +26,8 @@ struct PttButtonsPage: View {
     static let footnote = "The time-out and the Core's watchdog apply to every transmission, however it was keyed. The desktop at the station keeps its own time-out, off by default."
 
     var body: some View {
-        List {
-            Section {
+        SetupPageContainer {
+            SetupPanelSection {
                 SetupSwitchRow(title: "Headset button", detail: "AirPods or wired: press once to key, again to unkey",
                                isOn: .constant(false), enabled: false, id: "headsetButton")
                 HStack(spacing: 12) {
@@ -36,11 +36,11 @@ struct PttButtonsPage: View {
                             .font(.body.weight(.semibold))
                         Text("None paired")
                             .font(.footnote)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(WorkspacePalette.textSecondary)
                     }
                     Spacer(minLength: 0)
                     Button("Pair") {}
-                        .buttonStyle(.bordered)
+                        .buttonStyle(SetupButtonStyle())
                         .disabled(true)
                         .accessibilityIdentifier("bluetoothPttPair")
                 }
@@ -49,9 +49,9 @@ struct PttButtonsPage: View {
                         .font(.body.weight(.semibold))
                     Text("Choose NereusSDR PTT in the iPhone's Settings, Action Button")
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WorkspacePalette.textSecondary)
                 }
-                .foregroundStyle(.secondary)
+                .foregroundStyle(WorkspacePalette.textSecondary)
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("actionButton")
             } header: {
@@ -60,7 +60,7 @@ struct PttButtonsPage: View {
                 Text(Self.buttonsReason)
                     .accessibilityIdentifier("pttButtonsReason")
             }
-            Section {
+            SetupPanelSection {
                 SetupSwitchRow(title: "Buttons key a locked phone",
                                detail: "Through Apple's Push to Talk; locking still ends an on-screen transmission",
                                isOn: .constant(false), enabled: false, id: "keyLockedPhone")
@@ -69,16 +69,18 @@ struct PttButtonsPage: View {
             } footer: {
                 Text(Self.lockedReason)
             }
-            Section {
-                HStack(spacing: 12) {
+            SetupPanelSection {
+                // A menu row (spec section 7.1): a raised button with the value
+                // and the up-down chevrons, under the title at large type (W9).
+                SetupValueRowLayout(probe: "transmitTimeOut") {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Stop transmitting after")
                             .font(.body.weight(.semibold))
                         Text(Self.timeOutDetail)
                             .font(.footnote)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(WorkspacePalette.textSecondary)
                     }
-                    Spacer(minLength: 0)
+                } value: {
                     Menu {
                         Button(TransmitTimeOutModel.text(nil)) {
                             Task { await timeOut.choose(nil) }
@@ -89,14 +91,17 @@ struct PttButtonsPage: View {
                             }
                         }
                     } label: {
-                        Text("\(TransmitTimeOutModel.text(timeOut.choice)) \u{25BE}")
-                            .font(.footnote.weight(.bold))
-                            .foregroundStyle(ChromeColours.text)
-                            .padding(.horizontal, 10)
-                            .frame(minHeight: 32)
-                            .background(ChromeColours.button, in: RoundedRectangle(cornerRadius: 4))
-                            .overlay(RoundedRectangle(cornerRadius: 4)
-                                .strokeBorder(ChromeColours.buttonBorder, lineWidth: 1))
+                        HStack(spacing: 6) {
+                            Text(TransmitTimeOutModel.text(timeOut.choice))
+                                .font(.footnote.weight(.bold))
+                                .foregroundStyle(WorkspacePalette.textPrimary)
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(WorkspacePalette.textScale)
+                        }
+                        .padding(.horizontal, 10)
+                        .frame(minHeight: 32)
+                        .background { WorkspaceFace(.raised) }
                     }
                     .accessibilityLabel("Stop transmitting after")
                     .accessibilityValue(TransmitTimeOutModel.text(timeOut.choice))
@@ -118,7 +123,7 @@ struct PttButtonsPage: View {
             }
             #if PTT_PROBE
             // The button test (plan Task 65 step 1): debug copies only.
-            Section {
+            SetupPanelSection {
                 NavigationLink {
                     PttProbePage(probe: .shared)
                 } label: {
@@ -133,7 +138,7 @@ struct PttButtonsPage: View {
             }
             #endif
         }
-        .navigationTitle("PTT buttons")
+        .setupPageTitle("PTT buttons")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 SetupTagBadge(tag: .thisPhone)

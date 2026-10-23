@@ -18,8 +18,7 @@ enum AccessoryChrome {
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
+            .workspacePanel()
         }
     }
 
@@ -32,8 +31,7 @@ enum AccessoryChrome {
                 content()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
+            .workspacePanel()
         }
     }
 
@@ -84,7 +82,8 @@ enum AccessoryChrome {
         }
     }
 
-    /// OPERATE (green) or STANDBY (blue), as the device reports it.
+    /// OPERATE (lit green, a running function, W4) or STANDBY (raised), as
+    /// the device reports it; greyed at 40 percent.
     struct OperateButton: View {
         let label: String
         let lit: Bool
@@ -96,17 +95,10 @@ enum AccessoryChrome {
             Button(action: action) {
                 Text(label)
                     .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(lit ? .white : ChromeColours.text)
                     .frame(minWidth: 96, minHeight: 40)
-                    .background(lit ? ChromeColours.operateOn : ChromeColours.operateOff,
-                                in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
-                        .strokeBorder(lit ? ChromeColours.operateOnBorder : ChromeColours.operateOffBorder,
-                                      lineWidth: 1))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(WorkspaceButtonStyle(lit ? .litGreen : .raised))
             .disabled(!enabled)
-            .opacity(enabled ? 1 : 0.5)
             .accessibilityValue(lit ? "On" : "Off")
             .accessibilityHint(reason ?? "")
         }
@@ -141,8 +133,8 @@ enum AccessoryChrome {
                 }
                 .foregroundStyle(look.text)
                 .frame(maxWidth: .infinity, minHeight: 40)
-                .background(look.fill, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(look.border, lineWidth: 1))
+                .background { look.background }
+                .opacity(look.opacity)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -151,17 +143,18 @@ enum AccessoryChrome {
         }
     }
 
-    /// A button that is greyed while it cannot run, with its reason under it.
+    /// A button that is greyed while it cannot run, with its reason under
+    /// it: the raised face at 40 percent.
     struct GreyedButton: View {
         let label: String
 
         var body: some View {
             Text(label)
                 .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(ChromeColours.buttonOffText)
+                .foregroundStyle(workspaceForeground(.raised))
                 .frame(maxWidth: .infinity, minHeight: 40)
-                .background(ChromeColours.buttonOff, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.buttonOffBorder, lineWidth: 1))
+                .background { WorkspaceFace(.raised) }
+                .opacity(WorkspacePalette.disabledOpacity)
                 .accessibilityElement()
                 .accessibilityLabel(label)
                 .accessibilityValue("Not available")
@@ -252,9 +245,10 @@ enum AccessoryChrome {
                         .foregroundStyle(ChromeColours.textFaint)
                 }
                 .padding(10)
-                .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.gaugeRed.opacity(0.5),
-                                                                        lineWidth: 1))
+                .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius,
+                                                                      style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius, style: .continuous)
+                    .strokeBorder(ChromeColours.gaugeRed.opacity(0.5), lineWidth: 1))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -279,8 +273,10 @@ enum AccessoryChrome {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(10)
-            .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.gaugeRed.opacity(0.5), lineWidth: 1))
+            .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius,
+                                                                  style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius, style: .continuous)
+                .strokeBorder(ChromeColours.gaugeRed.opacity(0.5), lineWidth: 1))
             .accessibilityElement(children: .combine)
         }
     }
@@ -309,13 +305,13 @@ enum AccessoryChrome {
                     .frame(width: 22, alignment: .leading)
                 GeometryReader { proxy in
                     ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 2).fill(ChromeColours.gaugeGround)
+                        RoundedRectangle(cornerRadius: 2).fill(ChromeColours.gaugeGround) // kept-radius: meter
                         if let value {
-                            RoundedRectangle(cornerRadius: 2)
+                            RoundedRectangle(cornerRadius: 2) // kept-radius: meter
                                 .fill(ChromeColours.gaugeNormal)
                                 .frame(width: proxy.size.width * CGFloat(min(max(value, 0), 255)) / 255)
                         }
-                        RoundedRectangle(cornerRadius: 2).strokeBorder(ChromeColours.gaugeBorder, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 2).strokeBorder(ChromeColours.gaugeBorder, lineWidth: 1) // kept-radius: meter
                     }
                 }
                 .frame(height: 13)

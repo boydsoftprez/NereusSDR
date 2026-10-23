@@ -31,20 +31,21 @@ struct TxProfileControl: View {
                         Text(option.label).tag(option.label)
                     }
                 }
-                .pickerStyle(.menu)
-                .disabled(!state.editable || flow.busy)
                 .accessibilityIdentifier(control.id)
+                // Outside a list a menu shows no label: the Setup menu row draws it.
+                .setupMenuRow(control.label)
+                .disabled(!state.editable || flow.busy)
             } else {
                 Button(control.label) { flow.beginSave(control, in: category, owner: owner) }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(SetupButtonStyle())
                     .disabled(!state.editable || flow.busy)
                     .accessibilityIdentifier(control.id)
             }
             if !control.tooltip.isEmpty {
-                Text(control.tooltip).font(.footnote).foregroundStyle(.secondary).lineLimit(3)
+                Text(control.tooltip).font(.footnote).foregroundStyle(WorkspacePalette.textSecondary).lineLimit(3)
             }
             if let reason = state.reason {
-                Text(reason).font(.footnote).foregroundStyle(.secondary)
+                Text(reason).font(.footnote).foregroundStyle(WorkspacePalette.textSecondary)
                     .accessibilityIdentifier(control.id + ".reason")
             }
             if let problem = flow.problem(for: owner), flow.problemControlId == control.id {

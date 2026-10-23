@@ -89,7 +89,7 @@ struct LinkChip: View {
         .padding(.leading, 7)
         .padding(.trailing, 8)
         .frame(height: Self.height)
-        .background(ChromeColours.chip, in: RoundedRectangle(cornerRadius: 3))
+        .workspaceInset()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(link.spoken(core: core))
     }

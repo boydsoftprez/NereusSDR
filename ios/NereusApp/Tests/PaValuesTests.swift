@@ -547,7 +547,7 @@ struct PaValuesTests {
                     DescribedPage(pages: pages, dispatcher: rig.dispatcher, category: "pa",
                                   pageId: "pa.values", specialized: panels)
                 }.environment(\.dynamicTypeSize, type).preferredColorScheme(scheme)
-                let host = UIHostingController(rootView: root)
+                let host = ShotHosting.host(root)
                 window.rootViewController = host
                 host.view.frame = window.bounds
                 window.makeKeyAndVisible()
@@ -629,7 +629,7 @@ struct PaValuesTests {
         window.frame = CGRect(x: 0, y: 0, width: 402, height: 1300)
         window.windowLevel = .alert + 1
         rig.router.path = [.category("PA")]
-        let host = UIHostingController(rootView: SetupTab(app: rig.app, flow: rig.flow, router: rig.router, buildTag: nil))
+        let host = ShotHosting.host(SetupTab(app: rig.app, flow: rig.flow, router: rig.router, buildTag: nil))
         window.rootViewController = host
         host.view.frame = window.bounds
         window.makeKeyAndVisible()

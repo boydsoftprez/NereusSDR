@@ -644,7 +644,7 @@ struct AccessoryPagesTests {
         for (device, identifier, verb) in [(AccessoriesModel.Device.powerGenius, "pgxlName", "setPgxlName"),
                                            (.tunerGenius, "tgxlName", "setTgxlName")] {
             let window = try BandFlagShotTests.window(size: CGSize(width: 402, height: 1_600))
-            let host = UIHostingController(rootView: ScrollView {
+            let host = ShotHosting.host(ScrollView {
                 AccessoryAdvancedPage(model: accessories, device: device, coreName: "Shack")
             }.preferredColorScheme(.dark))
             host.view.frame = window.bounds
@@ -1134,7 +1134,7 @@ struct AccessoryPagesTests {
         }
         .background(ChromeColours.page)
         .preferredColorScheme(.dark)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         host.view.frame = CGRect(origin: .zero, size: size)
         window.rootViewController = host
         window.isHidden = false

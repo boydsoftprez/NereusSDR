@@ -107,14 +107,23 @@ Rendered on 9 October 2026 by the native audio engines plan's widget and phone-p
 | --- | --- |
 | [desktop-audio-outputs.png](desktop-audio-outputs.png) | Audio > Outputs on a Mac, no radio: This computer, Headphones off, Radio speaker grayed, Rescan devices grayed. |
 | [desktop-modes-audio.png](desktop-modes-audio.png) | Audio > Digital modes on a Mac: four VAX cards off, TCI settings. |
-| [iphone-sound-core-speaker.png](iphone-sound-core-speaker.png) | Sound panel with Radio speaker 40, Core speaker 60, AirPods route. |
+| [iphone-sound-core-speaker.png](iphone-sound-core-speaker.png) | Sound panel with Radio speaker 40, Core speaker 60, AirPods route. Recaptured on 22 October 2026 in the workspace look, with the workspace switch, by `SoundPanelTests` (see Phone and iPad captures). |
 
 ## Phone and iPad captures
 
-The audio-quality acceptance run on 1 October 2026 built source
-`46591d6cd62a916a6eef83e65d12fc655259b44d`. Its frozen-source record was unchanged
-after the run. The phone images below come from that run’s native simulator
-tests. **Sound** is a screenshot of the full running app driven by
+These images were recaptured on 21 October 2026, when the phone took the
+desktop's workspace look, from the native simulator tests each row names, at
+the sizes of the 1 October originals: an iPhone 17 simulator for most, an
+iPhone 18 Pro Max simulator for **Sound**. On 22 October, after the final
+review's fixes (the workspace switch in every presentation, accent text and
+the 7 and 10 radii), all of them except Devices were recaptured again from
+branch `claude/ios-workspace-look` at `45c52b2dd`; Devices did not change. The two
+Sound images were recaptured once more at `fb8cebe45`, after the re-review
+(the Sound switch rows greyed once, the output row's corner at 7). After the
+7 and 10 radii (W11), Shared slices, Sound, Spot Hub, Devices, Radio, Mic muted
+and the iPad column were recaptured again on 22 October: the iPhone 17 images
+at `e20d70b38`, Sound and the iPad column at `d3207d2bb`. [Capture provenance](capture-provenance.json)
+records each image's test, hash and build. **Sound** is a screenshot of the full running app driven by
 `XCUIApplication`. The other phone images render the application’s actual
 SwiftUI screens in a simulator window with test services or simulated Core
 data. They are not HTML design boards. They do not prove received audio,
@@ -134,10 +143,9 @@ radio telemetry, pairing or RF transmission.
 | [iphone-mic-muted-original.png](iphone-mic-muted-original.png) | `TxStageMetersTests`: scripted mic mute and missing TX readings. |
 
 [ipad-applet-column-original.png](ipad-applet-column-original.png) is a full-app
-`XCUIApplication` screenshot from the 2 October focused TX-panel run. Its source
-manifest records accepted revision `0da733c21bc64bdeef40717eaa48cfe259862b97`;
-the kit product ledger records `4be63a9d6fd6d168fe6be2e176d419e113834096`.
-Both identities are retained rather than reconciled by assumption. It shows
+`XCUIApplication` screenshot by `TxPanelUITests` on an iPad Pro 13-inch (M5)
+simulator, recaptured on 21 October 2026 at `4ff934ec0` in the workspace look and
+again on 22 October at `d3207d2bb` after the 7 and 10 radii. It shows
 the applet-column arrangement in a test scenario with unavailable Core
 readings, so it illustrates layout only. Redundant dim TX-panel captures are
 not used as distinct operating states.

@@ -196,6 +196,10 @@ final class TxPanelUITests: XCTestCase {
         XCTAssertFalse(visible.isEmpty, file: file, line: line)
         for id in ["txTune", "txMox", "txTwoTone", "txPsa", "txSettings"] {
             let key = app.buttons[id]
+            // A tap just before this check can leave the key briefly unhittable
+            // while the layout settles, so wait for it as the file's other checks do.
+            let hittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isHittable == true"), object: key)
+            _ = XCTWaiter.wait(for: [hittable], timeout: 10)
             XCTAssertTrue(key.exists && key.isHittable, id, file: file, line: line)
             XCTAssertGreaterThanOrEqual(key.frame.height, 44, id, file: file, line: line)
             XCTAssertGreaterThanOrEqual(key.frame.width, 44, id, file: file, line: line)

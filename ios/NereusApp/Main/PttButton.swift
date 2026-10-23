@@ -110,8 +110,12 @@ struct PttButton: View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
             let words = Self.words(transmit.ptt, clock: Self.clock(seconds: elapsedSeconds))
             ZStack {
-                Circle().fill(ground)
-                Circle().strokeBorder(edge, lineWidth: 1)
+                if look == .keyed {
+                    KeyedFace()
+                } else {
+                    Circle().fill(ground)
+                    Circle().strokeBorder(edge, lineWidth: 1)
+                }
                 VStack(spacing: 2) {
                     Text(words.label)
                         .font(.system(size: look == .ready || look == .keyed ? 18 : 16, weight: .heavy))
@@ -148,6 +152,9 @@ struct PttButton: View {
         return Int(transmit.keyedForSeconds)
     }
 
+    /// At rest, the danger set's ground with the transmit red edge; keyed,
+    /// the keyed treatment (``KeyedFace``); elsewhere, the muted red-grey
+    /// (docs/architecture/2026-10-20-phone-workspace-look-design.md, section 9).
     private var ground: Color {
         switch look {
         case .ready:
@@ -173,7 +180,7 @@ struct PttButton: View {
         case .ready, .elsewhere(onAir: true):
             return ChromeColours.pttText
         case .keyed:
-            return .white
+            return workspaceForeground(.keyed)
         case .elsewhere, .waiting:
             return ChromeColours.pttElsewhereText
         }
@@ -184,7 +191,7 @@ struct PttButton: View {
         case .ready:
             return ChromeColours.pttSub
         case .keyed:
-            return .white
+            return workspaceForeground(.keyed)
         case .elsewhere(onAir: true):
             return ChromeColours.pttElsewhereAirSub
         case .elsewhere:
@@ -193,6 +200,21 @@ struct PttButton: View {
         case .waiting:
             return ChromeColours.text
         }
+    }
+}
+
+/// The keyed PTT's face: the keyed treatment drawn on the round button,
+/// kTxRed with the lighter top and its rim
+/// (docs/architecture/2026-10-20-phone-workspace-look-design.md, section 5).
+/// ``WorkspaceFace`` is a rounded rectangle; this is the same fill on a circle.
+private struct KeyedFace: View {
+    var body: some View {
+        Circle().fill(WorkspacePalette.txRed)
+            .overlay {
+                Circle().fill(LinearGradient(colors: [WorkspacePalette.glassLight, .clear],
+                                             startPoint: .top, endPoint: .bottom))
+            }
+            .overlay { Circle().strokeBorder(WorkspacePalette.keyedRim, lineWidth: 1) }
     }
 }
 

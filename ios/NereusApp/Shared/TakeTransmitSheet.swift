@@ -209,6 +209,10 @@ struct TakeTransmitButton: View {
         // Greyed while a question about the take is up: it is answered there.
         let offered = take.available && !take.questionUp
         let red = offered && take.holderOnAir
+        // The glass, a primary action; the danger set while the holder is on
+        // the air (it takes them off; it is not itself transmit, W5); greyed,
+        // the raised face at 40 percent.
+        let look: WorkspaceLook = red ? .danger : offered ? .glass : .raised
         VStack(alignment: .leading, spacing: 4) {
             Button {
                 if take.begin(sliceId: sliceId, offered: true) {
@@ -217,21 +221,16 @@ struct TakeTransmitButton: View {
             } label: {
                 HStack(spacing: 6) {
                     if take.inFlight {
-                        ProgressView().tint(.white).controlSize(.small)
+                        ProgressView().tint(workspaceForeground(look)).controlSize(.small)
                     }
                     Text(Self.title)
                 }
                 .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(offered ? .white : ChromeColours.textDim)
+                .foregroundStyle(workspaceForeground(look))
                 .padding(.horizontal, 12)
                 .frame(minHeight: 32)
-                .background(red ? ConnectChrome.WideButton.stopFill
-                                : offered ? ChromeColours.buttonOnBlue : NoticeBanner.greyedFill,
-                            in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(red ? ConnectChrome.WideButton.stopBorder
-                                      : offered ? ChromeColours.buttonOnBlueBorder : NoticeBanner.greyedEdge,
-                                  lineWidth: 1))
+                .background { WorkspaceFace(look) }
+                .opacity(offered ? 1 : WorkspacePalette.disabledOpacity)
             }
             .buttonStyle(.plain)
             .disabled(!Self.enabled(take))

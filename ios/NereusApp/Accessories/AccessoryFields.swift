@@ -76,8 +76,7 @@ enum AccessoryFields {
                     .submitLabel(.done)
                     .padding(.horizontal, 8)
                     .frame(minHeight: 34)
-                    .background(ChromeColours.button, in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.buttonBorder, lineWidth: 1))
+                    .workspaceInset()
                     .disabled(!enabled)
                     .accessibilityLabel(label)
                     .accessibilityHint(hint)
@@ -131,13 +130,11 @@ enum AccessoryFields {
                         Image(systemName: "chevron.up.chevron.down")
                             .font(.system(size: 10, weight: .semibold))
                     }
-                    .foregroundStyle(enabled ? ChromeColours.text : ChromeColours.buttonOffText)
+                    .foregroundStyle(workspaceForeground(.raised))
                     .padding(.horizontal, 10)
                     .frame(minHeight: 34)
-                    .background(enabled ? ChromeColours.button : ChromeColours.buttonOff,
-                                in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
-                        .strokeBorder(enabled ? ChromeColours.buttonBorder : ChromeColours.buttonOffBorder, lineWidth: 1))
+                    .background { WorkspaceFace(.raised) }
+                    .opacity(enabled ? 1 : WorkspacePalette.disabledOpacity)
                 }
                 .disabled(!enabled)
                 .accessibilityLabel(label)
@@ -161,7 +158,6 @@ enum AccessoryFields {
                     .font(.system(size: 12))
                     .foregroundStyle(ChromeColours.textDim)
             }
-            .tint(ChromeColours.buttonOnGreen)
             .disabled(!enabled)
             .accessibilityIdentifier(identifier)
         }
@@ -215,16 +211,10 @@ enum AccessoryFields {
             Button(action: action) {
                 Text(title)
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(enabled ? ChromeColours.text : ChromeColours.buttonOffText)
                     .padding(.horizontal, 8)
                     .frame(minWidth: 44, maxWidth: wide ? .infinity : nil, minHeight: 34)
-                    .background(enabled ? ChromeColours.button : ChromeColours.buttonOff,
-                                in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
-                        .strokeBorder(enabled ? ChromeColours.buttonBorder : ChromeColours.buttonOffBorder, lineWidth: 1))
-                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(WorkspaceButtonStyle(.raised))
             .disabled(!enabled)
         }
     }
@@ -248,15 +238,9 @@ enum AccessoryFields {
             } label: {
                 Text(title)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(enabled ? ChromeColours.text : ChromeColours.buttonOffText)
                     .frame(maxWidth: .infinity, minHeight: 38)
-                    .background(enabled ? ChromeColours.button : ChromeColours.buttonOff,
-                                in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
-                        .strokeBorder(enabled ? ChromeColours.buttonBorder : ChromeColours.buttonOffBorder, lineWidth: 1))
-                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(WorkspaceButtonStyle(.raised))
             .disabled(!enabled)
             .accessibilityIdentifier(identifier)
             .confirmationDialog(confirm?.title ?? "", isPresented: $asking, titleVisibility: .visible) {
@@ -347,8 +331,7 @@ enum AccessoryFields {
                     .autocorrectionDisabled()
                     .padding(.horizontal, 8)
                     .frame(minHeight: 34)
-                    .background(ChromeColours.button, in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.buttonBorder, lineWidth: 1))
+                    .workspaceInset()
                     .disabled(!saveEnabled && !connectEnabled)
                     .accessibilityLabel(label)
                     .accessibilityIdentifier(identifier)
@@ -395,7 +378,6 @@ enum AccessoryFields {
                         .font(.system(size: 12))
                         .foregroundStyle(ChromeColours.textDim)
                 }
-                .tint(ChromeColours.buttonOnGreen)
                 .disabled(!enabled)
                 .accessibilityIdentifier("\(prefix).dhcp")
                 field("Address", $draftAddress, "\(prefix).address")
@@ -433,8 +415,7 @@ enum AccessoryFields {
                     .autocorrectionDisabled()
                     .padding(.horizontal, 8)
                     .frame(minHeight: 34)
-                    .background(ChromeColours.button, in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.buttonBorder, lineWidth: 1))
+                    .workspaceInset()
                     .disabled(!enabled || draftDhcp)
                     .accessibilityLabel(label)
                     .accessibilityIdentifier(identifier)

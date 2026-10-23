@@ -16,7 +16,7 @@ struct RotorSetupPage: View {
 
     var body: some View {
         RotorSetupCard(model: model)
-            .navigationTitle("Rotor")
+            .setupPageTitle("Rotor")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     SetupTagBadge(tag: .core)
@@ -47,15 +47,15 @@ struct RotorSetupCard: View {
     var body: some View {
         let reason = model.setupReason
         let enabled = reason == nil
-        List {
+        SetupPageContainer {
             if let reason {
-                Section {
+                SetupPanelSection {
                     Text(reason)
                         .accessibilityIdentifier("rotor.setup.reason")
                 }
             }
             if let note = model.note {
-                Section {
+                SetupPanelSection {
                     Button {
                         model.dismissNote()
                     } label: {
@@ -64,7 +64,7 @@ struct RotorSetupCard: View {
                                 .foregroundStyle(ChromeColours.gaugeRed)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             Image(systemName: "xmark")
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(WorkspacePalette.textSecondary)
                         }
                     }
                     .buttonStyle(.plain)
@@ -97,15 +97,16 @@ struct RotorSetupCard: View {
     @ViewBuilder
     private func connection(enabled: Bool) -> some View {
         let ports = model.state?.serialPorts ?? []
-        Section {
+        SetupPanelSection {
             Picker("Controller", selection: Binding(get: { draft.driver }, set: { draft.driver = $0 })) {
                 ForEach(RotorModel.Driver.allCases.filter { $0 != RotorModel.Driver.none }, id: \.self) { driver in
                     Text(driver.title).tag(driver)
                 }
             }
             .pickerStyle(.menu)
-            .disabled(!enabled)
             .accessibilityIdentifier("rotor.setup.driver")
+            .setupMenuRow("Controller")
+            .disabled(!enabled)
             if draft.driver.usesSerialPort {
                 Picker("Serial port", selection: Binding(get: { draft.serialPort }, set: { draft.serialPort = $0 })) {
                     ForEach(Self.portChoices(ports, current: draft.serialPort), id: \.self) { port in
@@ -113,16 +114,18 @@ struct RotorSetupCard: View {
                     }
                 }
                 .pickerStyle(.menu)
-                .disabled(!enabled || ports.isEmpty)
                 .accessibilityIdentifier("rotor.setup.serialPort")
+                .setupMenuRow("Serial port")
+                .disabled(!enabled || ports.isEmpty)
                 Picker("Baud", selection: Binding(get: { draft.baud }, set: { draft.baud = $0 })) {
                     ForEach(Self.baudChoices(current: draft.baud), id: \.self) { baud in
                         Text(String(baud)).tag(baud)
                     }
                 }
                 .pickerStyle(.menu)
-                .disabled(!enabled)
                 .accessibilityIdentifier("rotor.setup.baud")
+                .setupMenuRow("Baud")
+                .disabled(!enabled)
             }
             if draft.driver == .rotctldRunning {
                 field("Host", text: $draft.host, keyboard: .URL, enabled: enabled, identifier: "rotor.setup.host")
@@ -159,30 +162,33 @@ struct RotorSetupCard: View {
     // MARK: Rotor
 
     private func rotor(enabled: Bool) -> some View {
-        Section {
+        SetupPanelSection {
             Picker("Turns in", selection: Binding(get: { draft.axes }, set: { draft.axes = $0 })) {
                 ForEach(RotorModel.Axes.allCases, id: \.self) { axes in
                     Text(axes.title).tag(axes)
                 }
             }
             .pickerStyle(.menu)
-            .disabled(!enabled)
             .accessibilityIdentifier("rotor.setup.axes")
+            .setupMenuRow("Turns in")
+            .disabled(!enabled)
             Picker("End stop", selection: Binding(get: { draft.endStop }, set: { draft.endStop = $0 })) {
                 ForEach(RotorModel.EndStop.allCases, id: \.self) { stop in
                     Text(stop.title).tag(stop)
                 }
             }
             .pickerStyle(.menu)
-            .disabled(!enabled)
             .accessibilityIdentifier("rotor.setup.endStop")
+            .setupMenuRow("End stop")
+            .disabled(!enabled)
             Picker("Travel", selection: Binding(get: { draft.rangeDeg }, set: { draft.rangeDeg = $0 })) {
                 Text("360\u{00B0}").tag(Int64(360))
                 Text("450\u{00B0}").tag(Int64(450))
             }
             .pickerStyle(.menu)
-            .disabled(!enabled)
             .accessibilityIdentifier("rotor.setup.range")
+            .setupMenuRow("Travel")
+            .disabled(!enabled)
             SetupNumberRow(title: "Heading offset", value: draft.offsetDeg.rounded(), range: -180...180, step: 1,
                            unit: "\u{00B0}", enabled: enabled, id: "rotor.setup.offset") { draft.offsetDeg = $0 }
         } header: {
@@ -193,18 +199,20 @@ struct RotorSetupCard: View {
     // MARK: Save and connect
 
     private func save(enabled: Bool, reason: String?) -> some View {
-        Section {
+        SetupPanelSection {
             Button("Save and connect") {
                 var setup = draft
                 setup.port = Int64(portText) ?? setup.port
                 setup.hamlibModel = Int64(modelText) ?? setup.hamlibModel
                 model.configure(setup)
             }
+            .buttonStyle(SetupButtonStyle(.glass, fill: true))
             .disabled(!enabled || !changedOrIdle)
             .accessibilityIdentifier("rotor.setup.save")
             Button("Disconnect") {
                 model.disconnect()
             }
+            .buttonStyle(SetupButtonStyle(fill: true))
             .disabled(!enabled || model.state?.driver == RotorModel.Driver.none)
             .accessibilityIdentifier("rotor.setup.disconnect")
         } footer: {
@@ -247,6 +255,11 @@ struct RotorSetupCard: View {
                 .autocorrectionDisabled()
                 .multilineTextAlignment(.trailing)
                 .monospacedDigit()
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .frame(minWidth: SetupNumberRow.fieldMinWidth)
+                .workspaceInset()
                 .disabled(!enabled)
                 .accessibilityLabel(label)
                 .accessibilityIdentifier(identifier)
@@ -258,35 +271,33 @@ struct RotorSetupCard: View {
 
     @ViewBuilder
     private func presetsSection(enabled: Bool) -> some View {
-        Section {
+        SetupPanelSection {
             ForEach(Array(presets.rows.enumerated()), id: \.element.id) { index, row in
                 presetRow(row, index: index, enabled: enabled)
+                    // The list's swipe to delete, kept beside the visible
+                    // Edit and Remove (D114).
+                    .modifier(SetupSwipeToDelete(enabled: enabled, id: "rotor.setup.preset.\(index)") {
+                        presets.remove(row.id)
+                    })
             }
-            .onDelete { offsets in
-                guard enabled else {
-                    return
-                }
-                presets.remove(atOffsets: offsets)
-            }
-            .deleteDisabled(!enabled)
             HStack(spacing: 12) {
                 Button("Add") {
                     presets.add()
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(SetupButtonStyle())
                 .disabled(!enabled)
                 .accessibilityIdentifier("rotor.setup.presets.add")
                 Button(editingPresets ? "Done" : "Edit") {
                     editingPresets.toggle()
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(SetupButtonStyle())
                 .disabled(!enabled || (presets.rows.isEmpty && !editingPresets))
                 .accessibilityIdentifier("rotor.setup.presets.edit")
                 Spacer(minLength: 8)
                 Button("Save presets") {
                     savePresets()
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(SetupButtonStyle(.glass))
                 .disabled(!enabled)
                 .accessibilityIdentifier("rotor.setup.presets.save")
             }
@@ -316,7 +327,7 @@ struct RotorSetupCard: View {
                     presets.remove(row.id)
                 } label: {
                     Image(systemName: "minus.circle.fill")
-                        .foregroundStyle(enabled ? ChromeColours.gaugeRed : Color.secondary)
+                        .foregroundStyle(enabled ? ChromeColours.gaugeRed : WorkspacePalette.textSecondary)
                 }
                 .buttonStyle(.borderless)
                 .disabled(!enabled)
@@ -326,6 +337,11 @@ struct RotorSetupCard: View {
             TextField("Name", text: Binding(get: { row.name }, set: { presets.setName($0, of: row.id) }))
                 .textInputAutocapitalization(.characters)
                 .autocorrectionDisabled()
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .workspaceInset()
+                .setupSwipeExcluded()
                 .disabled(!enabled)
                 .accessibilityLabel("Preset name")
                 .accessibilityIdentifier("rotor.setup.preset.\(index).name")
@@ -333,13 +349,18 @@ struct RotorSetupCard: View {
                 .keyboardType(.decimalPad)
                 .multilineTextAlignment(.trailing)
                 .monospacedDigit()
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
                 .frame(maxWidth: 90)
-                .foregroundStyle(presets.refusedRow == row.id ? ChromeColours.gaugeRed : Color.primary)
+                .workspaceInset()
+                .setupSwipeExcluded()
+                .foregroundStyle(presets.refusedRow == row.id ? ChromeColours.gaugeRed : WorkspacePalette.textPrimary)
                 .disabled(!enabled)
                 .accessibilityLabel("Preset heading in degrees")
                 .accessibilityIdentifier("rotor.setup.preset.\(index).heading")
             Text("\u{00B0}")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(WorkspacePalette.textSecondary)
         }
         .opacity(enabled ? 1 : SetupNumberRow.greyedOpacity)
     }

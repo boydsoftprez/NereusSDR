@@ -27,8 +27,8 @@ struct MicrophoneQuestionScreen: View {
                     Spacer(minLength: 0)
                 }
                 .padding(12)
-                .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.stationBorder, lineWidth: 1))
+                .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.stationBorder, lineWidth: 1))
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("pairedWith")
             }
@@ -56,12 +56,12 @@ struct MicrophoneQuestionScreen: View {
                 .accessibilityIdentifier("notNow")
             }
             .padding(16)
-            .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
+            .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
             Spacer()
             Button("Go to the band") { flow.goToBand() }
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(ChromeColours.accent)
+                .foregroundStyle(ChromeColours.accentText)
                 .padding(.bottom, 16)
                 .accessibilityIdentifier("goToBand")
         }

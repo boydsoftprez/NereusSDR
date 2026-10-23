@@ -81,8 +81,8 @@ enum ModesChrome {
             .padding(.horizontal, 4)
             .padding(.vertical, 2)
             .frame(minWidth: minWidth, maxWidth: grow ? .infinity : nil)
-            .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 3))
-            .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
+            .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
     }
 
     /// One of a stepper's arrows, the board's `.nbtn.tri`.

@@ -104,7 +104,7 @@ struct Knob: View {
     // MARK: Drawing
 
     private var index: some View {
-        RoundedRectangle(cornerRadius: 2)
+        RoundedRectangle(cornerRadius: 2) // kept-radius: knob
             .fill(spinner.flash ? DialColours.indexTick : DialColours.index)
             .shadow(color: spinner.flash ? DialColours.indexGlow : .clear, radius: 4.5)
             .frame(width: 3, height: 9)

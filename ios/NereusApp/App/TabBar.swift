@@ -83,7 +83,10 @@ struct TabBar: View {
                     }
                 }
             }
-            .foregroundStyle(chosen ? ChromeColours.accent : ChromeColours.textFaint)
+            // The chosen tab in the glass border's lighter step, so it reads on
+            // the bar (docs/architecture/2026-10-20-phone-workspace-look-design.md,
+            // section 9 and section 13 item 5).
+            .foregroundStyle(chosen ? WorkspacePalette.tabChosen : ChromeColours.textFaint)
             .lineLimit(1)
             .contentShape(Rectangle())
         }

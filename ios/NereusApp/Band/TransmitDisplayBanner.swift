@@ -56,7 +56,7 @@ struct TransmitDisplayBanner: View {
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 4)
-                        .background(Color.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 4))
+                        .background(Color.black.opacity(0.7), in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
                         .position(x: proxy.size.width / 2, y: spectrum.midY)
                         .accessibilityIdentifier("highSwr")
                 }
@@ -69,7 +69,7 @@ struct TransmitDisplayBanner: View {
                         .multilineTextAlignment(.leading)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
-                        .background(BandColours.readoutBackground, in: RoundedRectangle(cornerRadius: 3))
+                        .background(BandColours.readoutBackground, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
                         .frame(width: axes.layout.dbmScale.minX - 12, alignment: .leading)
                         .offset(x: 6, y: max(axes.layout.strip.minY - 40, 4))
                         .accessibilityIdentifier("transmitDisplayNote")

@@ -88,7 +88,7 @@ struct ModesShotTests {
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(origin: .zero, size: size)
         window.windowLevel = .alert + 1
-        let host = UIHostingController(rootView: ModesShotRoot(model: model, whole: whole).preferredColorScheme(.dark))
+        let host = ShotHosting.host(ModesShotRoot(model: model, whole: whole).preferredColorScheme(.dark))
         host.view.frame = CGRect(origin: .zero, size: size)
         window.rootViewController = host
         window.isHidden = false

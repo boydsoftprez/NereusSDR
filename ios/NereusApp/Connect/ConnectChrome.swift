@@ -7,28 +7,32 @@ import SwiftUI
 /// `.nav`, `.list`, `.row`, `.rbtn`, `.wide`, `.code`, `.warnbox` and
 /// `.tsheet` styles (docs/architecture/2026-09-23-iphone-app-design/board.html).
 enum ConnectChrome {
-    // The board's colours for these screens, beyond the toolbar's.
-    static let rowFill = rgb(0x0D, 0x1B, 0x28)
-    static let rowBorder = rgb(0x20, 0x30, 0x40)
-    static let heading = rgb(0x70, 0x80, 0x90)
-    static let codeText = rgb(0x00, 0xE5, 0xFF)
-    static let fieldFill = rgb(0x0A, 0x0A, 0x18)
-    static let nameBorder = rgb(0x2A, 0x3A, 0x4A)
-    static let warn = rgb(0xFF, 0xD7, 0x00)
-    static let bad = rgb(0xFF, 0x6B, 0x6B)
-    static let badBorder = rgb(0xFF, 0x50, 0x50)
-    static let badText = rgb(0xFF, 0x8A, 0x8A)
-    static let pillOn = rgb(0x39, 0xC1, 0x67)
-    static let pillStale = rgb(0xD3, 0x9C, 0x2A)
-    static let pillOff = rgb(0xC1, 0x48, 0x48)
-    static let pillUnknown = rgb(0x40, 0x48, 0x58)
-    static let sheetFill = rgb(0x0A, 0x0A, 0x18)
-    static let sheetEdge = rgb(0x30, 0x40, 0x50)
-    static let grab = rgb(0x40, 0x50, 0x60)
+    // The board's colours for these screens, beyond the toolbar's, in the
+    // desktop's workspace look (docs/architecture/2026-10-20-phone-workspace-look-design.md,
+    // appendix A and the board's mapping, make_board.py). A red that is not
+    // transmit takes the muted danger set (W5).
+    private typealias P = WorkspacePalette
 
-    static func rgb(_ red: Int, _ green: Int, _ blue: Int) -> Color {
-        Color(red: Double(red) / 255, green: Double(green) / 255, blue: Double(blue) / 255)
-    }
+    static let rowFill = P.rgb(0x141418)
+    static let rowBorder = P.borderSubtle
+    static let heading = P.textTertiary
+    static let codeText = P.rgb(0x00E5FF) // kept (W2), the frequency cyan
+    static let fieldFill = P.panelBg
+    static let nameBorder = P.rgb(0x26262B)
+    static let warn = P.amberText
+    static let bad = P.redBorder
+    static let badBorder = P.redBorder
+    // Standalone red text on a plain panel takes kRedBorder, as the desktop
+    // colors it (src/gui/SliceChooser.cpp:417); kRedText is only for text on a
+    // kRedBg fill (src/gui/applets/ModMonitorApplet.cpp:630-640).
+    static let badText = P.redBorder
+    static let pillOn = P.liveGreen
+    static let pillStale = P.noticeWarn
+    static let pillOff = P.redBorder
+    static let pillUnknown = P.borderMuted
+    static let sheetFill = P.panelBg
+    static let sheetEdge = P.border
+    static let grab = P.textInactive
 
     /// The bar over a connecting screen: Back on the left, the title in
     /// the middle, and an optional control on the right.
@@ -52,7 +56,7 @@ enum ConnectChrome {
                         Button(action: onBack) {
                             Text("\u{2039} \(back)")
                                 .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(ChromeColours.accent)
+                                .foregroundStyle(ChromeColours.accentText)
                                 .frame(height: backHeight)
                                 .padding(.horizontal, 4)
                         }
@@ -72,7 +76,9 @@ enum ConnectChrome {
         }
     }
 
-    /// A full-width button: `.go` is the board's blue one.
+    /// A full-width button: `.go` is the glass, `.plain` raised and `.stop`
+    /// the danger set (docs/architecture/2026-10-20-phone-workspace-look-design.md,
+    /// section 5); greyed, the raised face at 40 percent.
     struct WideButton: View {
         enum Look {
             case go
@@ -89,59 +95,49 @@ enum ConnectChrome {
         let action: () -> Void
 
         var body: some View {
+            let face = Self.face(look, enabled: enabled)
             Button(action: action) {
                 HStack(spacing: 8) {
                     if busy {
-                        ProgressView().tint(.white)
+                        ProgressView().tint(workspaceForeground(face))
                     }
                     Text(title)
                 }
                 .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(enabled ? (look == .plain ? ChromeColours.text : Color.white) : ChromeColours.textDim)
+                .foregroundStyle(workspaceForeground(face))
                 .frame(maxWidth: .infinity)
                 .frame(height: 48)
-                .background(fill, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(border, lineWidth: 1))
+                .background { WorkspaceFace(face) }
+                .opacity(enabled ? 1 : WorkspacePalette.disabledOpacity)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(!enabled || busy)
         }
 
-        private var fill: Color {
+        /// The treatment a look draws in, raised while greyed.
+        static func face(_ look: Look, enabled: Bool) -> WorkspaceLook {
             guard enabled else {
-                return ChromeColours.buttonOff
+                return .raised
             }
             switch look {
             case .go:
-                return ChromeColours.buttonOnBlue
+                return .glass
             case .plain:
-                return ChromeColours.button
+                return .raised
             case .stop:
-                return Self.stopFill
+                return .danger
             }
         }
 
-        private var border: Color {
-            guard enabled else {
-                return ChromeColours.buttonOffBorder
-            }
-            switch look {
-            case .go:
-                return ChromeColours.buttonOnBlueBorder
-            case .plain:
-                return ChromeColours.buttonBorder
-            case .stop:
-                return Self.stopBorder
-            }
-        }
-
-        /// The desktop's red take-over button (TakeTransmitDialog: #b02020, edge #ff4444).
-        static let stopFill = Color(red: 0xB0 / 255, green: 0x20 / 255, blue: 0x20 / 255)
-        static let stopBorder = Color(red: 0xFF / 255, green: 0x44 / 255, blue: 0x44 / 255)
+        /// The red take-over button (the desktop's TakeTransmitDialog), in
+        /// the muted danger set (W5): it takes someone off the air, it is not
+        /// itself transmit.
+        static let stopFill = WorkspacePalette.redBg
+        static let stopBorder = WorkspacePalette.redBorder
     }
 
-    /// A row's button, the board's `.rbtn`.
+    /// A row's button, the board's `.rbtn`: the glass for `go`, else raised.
     struct RowButton: View {
         let title: String
         var go = false
@@ -151,16 +147,11 @@ enum ConnectChrome {
             Button(action: action) {
                 Text(title)
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(go ? Color.white : ChromeColours.text)
                     .padding(.horizontal, 12)
                     .frame(minWidth: 88)
                     .frame(height: 40)
-                    .background(go ? ChromeColours.buttonOnBlue : ChromeColours.button,
-                                in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
-                        .strokeBorder(go ? ChromeColours.buttonOnBlueBorder : ChromeColours.buttonBorder, lineWidth: 1))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(WorkspaceButtonStyle(go ? .glass : .raised))
         }
     }
 
@@ -228,12 +219,10 @@ enum ConnectChrome {
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
-            .background(tone == .warn ? Color(red: 1, green: 215.0 / 255, blue: 0).opacity(0.08)
-                            : Color(red: 1, green: 80.0 / 255, blue: 80.0 / 255).opacity(0.08),
-                        in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4)
-                .strokeBorder(tone == .warn ? Color(red: 1, green: 215.0 / 255, blue: 0).opacity(0.35)
-                                  : Color(red: 1, green: 80.0 / 255, blue: 80.0 / 255).opacity(0.45),
+            .background(tone == .warn ? ConnectChrome.warn.opacity(0.08) : ConnectChrome.badBorder.opacity(0.08),
+                        in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius, style: .continuous)
+                .strokeBorder(tone == .warn ? ConnectChrome.warn.opacity(0.35) : ConnectChrome.badBorder.opacity(0.45),
                               lineWidth: 1))
             .accessibilityElement(children: .combine)
         }

@@ -98,7 +98,7 @@ struct ManageRadiosPage: View {
                         .foregroundStyle(ChromeColours.buttonOnGreenText)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
-                        .background(ChromeColours.buttonOnGreen, in: RoundedRectangle(cornerRadius: 3))
+                        .background(ChromeColours.buttonOnGreen, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
                         .accessibilityIdentifier("manageRadios.\(radio.mac).inUse")
                 }
             }
@@ -148,8 +148,8 @@ struct ManageRadiosPage: View {
                 .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(look.text)
                 .frame(maxWidth: .infinity, minHeight: 40)
-                .background(look.fill, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(look.border, lineWidth: 1))
+                .background { look.background }
+                .opacity(look.opacity)
                 .contentShape(Rectangle())
         }
         .disabled(!enabled)

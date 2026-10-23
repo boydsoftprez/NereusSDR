@@ -237,7 +237,7 @@ struct FilterPresetsPanelTests {
         let root = NavigationStack {
             DescribedPage(pages: rig.pages, dispatcher: rig.dispatcher, category: "dsp", pageId: "dsp.filterPresets")
         }.valuePads(pads).environment(\.filterPresetsTablet, false).preferredColorScheme(.dark)
-        let host = UIHostingController(rootView: root); host.view.frame = window.bounds
+        let host = ShotHosting.host(root); host.view.frame = window.bounds
         window.rootViewController = host; window.makeKeyAndVisible()
         await ShotWait.laidOut(window)
         #expect(rig.editor.selectedSlot == rig.editor.rows.first?.slot,
@@ -289,7 +289,7 @@ struct FilterPresetsPanelTests {
             let root = NavigationStack {
                 DescribedPage(pages: rig.pages, dispatcher: rig.dispatcher, category: "dsp", pageId: "dsp.filterPresets")
             }.valuePads(pads).environment(\.filterPresetsTablet, tablet).environment(\.dynamicTypeSize, type).preferredColorScheme(scheme)
-            let host = UIHostingController(rootView: root); host.view.frame = window.bounds
+            let host = ShotHosting.host(root); host.view.frame = window.bounds
             window.rootViewController = host; window.makeKeyAndVisible()
             defer { pads.close(); window.isHidden = true; window.rootViewController = nil }
             await ShotWait.laidOut(window)

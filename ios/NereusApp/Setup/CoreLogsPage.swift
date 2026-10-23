@@ -31,8 +31,8 @@ struct CoreLogsPage: View {
     var body: some View {
         let log = model.log
         let enabled = log.reason == nil
-        List {
-            Section {
+        SetupPageContainer {
+            SetupPanelSection {
                 logView(enabled: enabled)
                 HStack(spacing: 12) {
                     button(Self.reloadText, enabled: model.canReload, id: "coreLogs.reload") { model.reload() }
@@ -43,7 +43,7 @@ struct CoreLogsPage: View {
             } footer: {
                 Text(Self.clearNote)
             }
-            Section {
+            SetupPanelSection {
                 ForEach(log.categories) { category in
                     Toggle(category.title, isOn: Binding(get: { log.on.contains(category.id) },
                                                          set: { log.setCategory(category.id, $0) }))
@@ -71,7 +71,7 @@ struct CoreLogsPage: View {
                 }
             }
         }
-        .navigationTitle(Self.title)
+        .setupPageTitle(Self.title)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 SetupTagBadge(tag: .core)
@@ -97,19 +97,17 @@ struct CoreLogsPage: View {
                 }
             }
             .frame(height: 320)
-            .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
+            .workspaceInset()
             .accessibilityIdentifier("coreLogs.log")
             .onChange(of: model.lines.last?.id, initial: true) { _, _ in
                 reader.scrollTo(Self.logEnd, anchor: .bottomLeading)
             }
         }
-        .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
     }
 
     private static let logEnd = "coreLogs.log.end"
 
-    /// A button in a list row; each button in the row is pressed on its own.
+    /// A raised button in a panel row; each button in the row is pressed on its own.
     private func button(_ title: String, enabled: Bool, id: String,
                         action: @escaping () -> Void) -> some View {
         Button(action: action) {
@@ -117,7 +115,7 @@ struct CoreLogsPage: View {
                 .font(.body.weight(.semibold))
                 .frame(maxWidth: .infinity, minHeight: 34)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(SetupButtonStyle(fill: true))
         .disabled(!enabled)
         .accessibilityIdentifier(id)
     }
