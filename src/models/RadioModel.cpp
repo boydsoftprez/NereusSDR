@@ -17,6 +17,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - Connect hold: discovery sends nothing from the moment a
+//                local connection is created until it reports Connected or
+//                ends, then waits the post-disconnect quiet period
+//                (RadioDiscovery::beginConnectHold). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-22 - A lone slice that tunes well inside another receiver of its
 //                pan goes back onto that receiver instead of moving its own
 //                (bindSliceToStream, rejoinCandidateStreams; JJ's ruling
@@ -19685,6 +19690,17 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
         qCWarning(lcConnection) << "Failed to create connection for" << info.displayName();
         return;
     }
+    // Connect hold (2026-10-22): from here until this connection reports
+    // Connected (its first I/Q frame) or ends, discovery sends nothing:
+    // a running walk's next attempt, a new scan and a unicast probe all
+    // wait, in this process and on every NIC. The walk no longer blocks
+    // the thread, so the startup auto-connect (MainWindow::tryAutoReconnect,
+    // the turn after the walk starts) and a Connect pressed during a scan
+    // would otherwise broadcast at a radio that is starting, the same
+    // window as the 2026-07-27 ANAN-G2E lockups after a stop. The
+    // post-disconnect quiet period follows the hold
+    // (onConnectionStateChanged, teardownConnection).
+    RadioDiscovery::beginConnectHold(this);
     m_connection = conn.release();
     syncTransmitCutTargets();
 #ifdef NEREUS_BUILD_TESTS
@@ -28362,6 +28378,10 @@ void RadioModel::teardownConnection()
     if (m_discovery) {
         m_discovery->holdOffScans(kPostDisconnectScanQuietMs);
     }
+    // A connection torn down before it reported Connected (a failed
+    // connect, a cancel, quit) ends its connect hold here; the quiet period
+    // above then runs from the end of the teardown.
+    RadioDiscovery::endConnectHold(this, kPostDisconnectScanQuietMs);
 }
 
 // Phase 3G-9b — 7 smooth-default recipe values. See docs/architecture/waterfall-tuning.md.
@@ -28569,6 +28589,14 @@ void RadioModel::onConnectionStateChanged(ConnectionState state)
     // Phase 3Q-1: route through setConnectionState() so m_connectionState
     // stays in sync and the signal carries the new state value.
     setConnectionState(state);
+
+    // Connect hold (see connectToRadioImpl): the connection is up, or it
+    // ended without coming up. Discovery waits the post-disconnect quiet
+    // period from now, then resumes. Probing and Connecting keep the hold.
+    if (state == ConnectionState::Connected || state == ConnectionState::Disconnected
+        || state == ConnectionState::LinkLost) {
+        RadioDiscovery::endConnectHold(this, kPostDisconnectScanQuietMs);
+    }
 
     switch (state) {
     case ConnectionState::Connected:

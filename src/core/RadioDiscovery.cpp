@@ -56,6 +56,10 @@
 //   2026-10-22 - walkBoundMs(), the longest a running walk can still take,
 //                 for the startup auto-connect wait. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - Connect hold: while a local connection starts, every
+//                 scan, probe and running walk's next attempt waits, then
+//                 the quiet period follows. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  clsRadioDiscovery.cs
@@ -233,6 +237,7 @@ RadioDiscovery::~RadioDiscovery()
 // per-instance, and why it is monotonic rather than wall-clock.
 QDeadlineTimer RadioDiscovery::s_scanHoldOff;
 QMutex RadioDiscovery::s_scanHoldOffMutex;
+QSet<quintptr> RadioDiscovery::s_connectHolds;
 
 bool RadioDiscovery::scanCancelled() const
 {
@@ -245,8 +250,35 @@ void RadioDiscovery::clearHoldOffForTest()
 {
     const QMutexLocker lock(&s_scanHoldOffMutex);
     s_scanHoldOff = QDeadlineTimer();
+    s_connectHolds.clear();
 }
 #endif
+
+void RadioDiscovery::beginConnectHold(const void* owner)
+{
+    const QMutexLocker lock(&s_scanHoldOffMutex);
+    s_connectHolds.insert(reinterpret_cast<quintptr>(owner));
+}
+
+void RadioDiscovery::endConnectHold(const void* owner, std::chrono::milliseconds quiet)
+{
+    const QMutexLocker lock(&s_scanHoldOffMutex);
+    if (!s_connectHolds.remove(reinterpret_cast<quintptr>(owner))) {
+        return;
+    }
+    // The quiet period starts when the hold ends, as holdOffScans() keeps
+    // the later deadline.
+    const QDeadlineTimer candidate(quiet, Qt::PreciseTimer);
+    if (candidate > s_scanHoldOff) {
+        s_scanHoldOff = candidate;
+    }
+}
+
+bool RadioDiscovery::connectHoldActive()
+{
+    const QMutexLocker lock(&s_scanHoldOffMutex);
+    return !s_connectHolds.isEmpty();
+}
 
 void RadioDiscovery::holdOffScans(std::chrono::milliseconds quiet)
 {
@@ -268,7 +300,13 @@ qint64 RadioDiscovery::holdOffRemainingMs() const
     // guard covers the -1 "forever" encoding, which we never construct.
     const QMutexLocker lock(&s_scanHoldOffMutex);
     const qint64 remaining = s_scanHoldOff.remainingTime();
-    return remaining > 0 ? remaining : 0;
+    const qint64 quiet = remaining > 0 ? remaining : 0;
+    // A connect hold has no deadline of its own: report a short wait, so
+    // the caller waits and checks again (see beginConnectHold()).
+    if (!s_connectHolds.isEmpty()) {
+        return qMax(quiet, kConnectHoldRecheckMs);
+    }
+    return quiet;
 }
 
 void RadioDiscovery::startDiscovery()
@@ -804,7 +842,7 @@ void RadioDiscovery::beginAttempt()
         m_scanPollTimer.stop();
         m_scanDeadlineTimer.stop();
         qCDebug(lcDiscovery) << "Discovery attempt" << m_scanAttempt + 1
-                             << "waits" << waitMs << "ms for the post-disconnect quiet period";
+                             << "waits" << waitMs << "ms for the post-disconnect quiet period or a connect hold";
         m_scanHoldOffTimer.start(int(waitMs));
         return;
     }

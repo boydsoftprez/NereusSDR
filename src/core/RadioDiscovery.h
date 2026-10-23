@@ -31,6 +31,9 @@
 //   2026-10-22 - isScanRunning() and walkBoundMs() for the startup
 //                 auto-connect wait (PinnedRadioWait). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - Connect hold: beginConnectHold() / endConnectHold()
+//                 pause discovery while a local connection starts. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  clsRadioDiscovery.cs
@@ -277,6 +280,24 @@ public:
     void holdOffScans(std::chrono::milliseconds quiet);
     qint64 holdOffRemainingMs() const;
 
+    // Connect hold (2026-10-22). The walk runs from the event loop, so a
+    // local connection can start while it is still broadcasting on later
+    // NICs: the startup auto-connect does so every time. A radio that is
+    // starting up is in the same window as one that is stopping (the
+    // 2026-07-27 ANAN-G2E lockups), so RadioModel holds discovery from the
+    // moment it creates a connection until that connection reports
+    // Connected (its first I/Q frame) or ends, and then arms the quiet
+    // period above. While any hold is up, holdOffRemainingMs() reports at
+    // least kConnectHoldRecheckMs, so every path that already waits out the
+    // quiet period (startDiscovery(), probeAddress(), a running walk's next
+    // attempt, the Core's scans) waits for the hold too, and re-checks.
+    // Process-wide, like the quiet period; keyed by owner so a second
+    // begin is a no-op and an end with no begin arms nothing.
+    static void beginConnectHold(const void* owner);
+    static void endConnectHold(const void* owner, std::chrono::milliseconds quiet);
+    static bool connectHoldActive();
+    static constexpr qint64 kConnectHoldRecheckMs = 100;
+
     DiscoveryProfile profile() const { return m_profile; }
     void setProfile(DiscoveryProfile profile) { m_profile = profile; }
 
@@ -310,7 +331,7 @@ public:
     // The holdOffScans deadline is process-wide (see s_scanHoldOff), so it
     // survives across test functions and would defer probes in unrelated
     // cases. Call from a QTest init() for a clean slate.
-    static void clearHoldOffForTest();
+    static void clearHoldOffForTest();   // also drops every connect hold
 
     // Walk these NICs instead of the machine's interfaces (an empty list
     // restores the real ones), with this timing instead of the profile's.
@@ -432,6 +453,8 @@ private:
     // or wedge discovery.
     static QDeadlineTimer s_scanHoldOff;
     static QMutex s_scanHoldOffMutex;
+    // Owners of a connect hold (beginConnectHold), under the same mutex.
+    static QSet<quintptr> s_connectHolds;
     bool scanCancelled() const;
 
     // Per-instance: stops a burst of startDiscovery() calls on THIS object

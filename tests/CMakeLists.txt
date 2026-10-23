@@ -4136,6 +4136,13 @@ target_link_libraries(tst_radio_discovery_probe PRIVATE Qt6::Network)
 nereus_add_test(tst_pinned_radio_wait)
 target_link_libraries(tst_pinned_radio_wait PRIVATE Qt6::Network)
 
+# Review of PR 600, Important 2: a walk running when a local connection
+# starts sends nothing until it is Connected (or failed) plus the quiet
+# period, then finishes (RadioDiscovery connect hold, RadioModel).
+nereus_add_test(tst_discovery_connect_hold fakes/P1FakeRadio.cpp)
+target_link_libraries(tst_discovery_connect_hold PRIVATE Qt6::Network)
+target_compile_definitions(tst_discovery_connect_hold PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3Q Task 4: AddCustomRadioDialog — SKU model picker + action buttons ──
 # 4 tests: Auto-detect at index 0, all 16 SKUs present in modelCombo,
 # saveOfflineButton + probeButton objectNames accessible via findChild.
