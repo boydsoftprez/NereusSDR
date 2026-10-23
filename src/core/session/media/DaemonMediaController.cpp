@@ -4,6 +4,22 @@
 // no-port-check: NereusSDR-original. See DaemonMediaController.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-22: NSDC v2 test seams (setEndpointMaximumFrameBytesForTest,
+//               setEncodedFrameObserverForTest and the observer) build only
+//               with NEREUS_BUILD_TESTS. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
+//   2026-10-22: NSDC v2 sender: on a connection whose start agreed
+//               version 2, every receive and transmit display frame is
+//               encoded with encodeDisplayCodecV2 at the endpoint's admitted
+//               frame bytes; pacing and the cost are checked once against
+//               the frame's total; a split frame's row part then trace part
+//               go in one turn; a v2 frame forces no keyframe. The
+//               diagnostics line adds splitFrames and secondPartRefusals.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22: NSDC v2 negotiation: handleStart takes displayCodecVersion
+//               2 from a peer the Core told displayCodecVersion 2, and
+//               stores the agreed version beside m_startMicLine.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22: Bench setting DisplayKeyframeEveryFrame (JJ approved
 //               2026-10-22): with it on, every receive and transmit display
 //               frame is encoded as a keyframe. The display diagnostics line
@@ -1339,9 +1355,10 @@ QString daemonDisplayDiagnosticsLine(const DaemonDisplayDiagnostics& diagnostics
                           " sourceFramesReplaced=%11 panFramesReplaced=%12"
                           " framesSent=%13 keyframesSent=%14 meanFrameBytes=%15"
                           " keyframeEveryFrame=%16"
+                          " splitFrames=%17 secondPartRefusals=%18"
                           // senderGapMaxMs stays last: the logged line follows it
                           // with senderGapMaxSinceLastMs, and readers pair the two.
-                          " senderGapMaxMs=%17")
+                          " senderGapMaxMs=%19")
         .arg(diagnostics.displayMaxKeyframeBytes)
         .arg(IMediaTransport::sctpFragmentCount(diagnostics.displayMaxKeyframeBytes))
         .arg(diagnostics.displayMaxDeltaBytes)
@@ -1364,7 +1381,14 @@ QString daemonDisplayDiagnosticsLine(const DaemonDisplayDiagnostics& diagnostics
                                    'f', 1))
         .arg(diagnostics.displayKeyframeEveryFrame ? QStringLiteral("on")
                                                    : QStringLiteral("off"))
+        .arg(diagnostics.displaySplitFrames)
+        .arg(diagnostics.displaySecondPartRefusals)
         .arg(senderGapMs(diagnostics.displaySenderGapMaxUs));
+}
+
+quint32 DaemonMediaController::displayCodecVersion() const noexcept
+{
+    return m_displayCodecVersion.load();
 }
 
 void DaemonMediaController::setDisplayKeyframeEveryFrame(bool on)
@@ -1551,6 +1575,27 @@ bool DaemonMediaController::readDisplayExtrasForTest(
     read(*it->second.extras);
     return true;
 }
+
+#ifdef NEREUS_BUILD_TESTS
+bool DaemonMediaController::setEndpointMaximumFrameBytesForTest(quint32 endpointId,
+                                                                quint32 bytes)
+{
+    const auto displayHold = displayGuard();
+    const auto it = m_endpoints.find(endpointId);
+    if (it == m_endpoints.end()) {
+        return false;
+    }
+    it->second.displayCost.maximumFrameBytes = bytes;
+    return true;
+}
+
+void DaemonMediaController::setEncodedFrameObserverForTest(
+    std::function<void(const DisplayCodecFrame&)> observer)
+{
+    const auto displayHold = displayGuard();
+    m_encodedFrameObserver = std::move(observer);
+}
+#endif
 
 std::optional<int> DaemonMediaController::spectrumSourceFps(quint32 endpointId) const
 {
@@ -2411,6 +2456,22 @@ bool DaemonMediaController::handleStart(const QJsonObject& control)
             return false;
         }
     }
+    // NSDC v2: displayCodecVersion, from a peer the Core told
+    // displayCodecVersion 2 (its hello declared displayCodec 2 at minor 11,
+    // media on, the Core's RemoteDisplayCodecV2 setting on); only then are
+    // this connection's display frames version 2.
+    const bool declaresDisplayCodec =
+        control.contains(QStringLiteral("displayCodecVersion"));
+    if (declaresDisplayCodec) {
+        legacyShape.remove(QStringLiteral("displayCodecVersion"));
+        quint32 version = 0;
+        if (!m_server || !m_server->displayCodecV2Available(m_epoch)
+            || !exactUnsigned(control.value(QStringLiteral("displayCodecVersion")),
+                              version, /*nonzero=*/true)
+            || version != 2) {
+            return false;
+        }
+    }
     if (!exactKeys(legacyShape, {"op", "connectionId"})
         || !canonicalConnectionId(control.value(QStringLiteral("connectionId")))) {
         return false;
@@ -2499,6 +2560,7 @@ bool DaemonMediaController::handleStart(const QJsonObject& control)
     // Task 29: what a replacement of this peer keeps.
     m_startOfferedLossless = offerLossless;
     m_startMicLine = declaresRemoteTx;
+    m_displayCodecVersion.store(declaresDisplayCodec ? 2U : 1U);
     // Parity Task 31: 3 and above may add `duplex` to a subscribe.
     m_txDisplayDeclared = declaredTxDisplay;
     if (declaresTxDisplay) {
@@ -6124,6 +6186,57 @@ IMediaTransport::DisplaySendResult DaemonMediaController::peerSubmitDisplay(
     return peer->submitDisplay(message);
 }
 
+DaemonMediaController::DisplayV2Send DaemonMediaController::submitDisplayCodecV2(
+    MediaPeer* peer, quint64 epoch, const DisplayCodecV2Encoding& encoding)
+{
+    // NSDC v2 (display codec v2 document, section 5): the row part first,
+    // then the trace part, in this one turn. The channel holds at most one
+    // message SCTP cannot take at once and refuses the next, so if either
+    // part waits it is the trace part that is refused. A message not taken
+    // ends the frame: nothing after it is offered, and nothing is resent.
+    m_lastDisplayAttemptWasPs3 = false;
+    const QPointer<DaemonMediaController> self(this);
+    bool frameTaken = false;
+    for (std::size_t part = 0; part < encoding.messages.size(); ++part) {
+        const QByteArray& message = encoding.messages[part];
+        const IMediaTransport::DisplaySendResult result = peerSubmitDisplay(peer, message);
+        if (!self || m_peer.get() != peer || m_epoch != epoch) {
+            return DisplayV2Send::PeerGone;
+        }
+        const bool taken = result == IMediaTransport::DisplaySendResult::Sent
+            || result == IMediaTransport::DisplaySendResult::Queued;
+        if (!taken) {
+            ++m_displayDiagnostics.displaySendRefusals;
+            if (part > 0) {
+                ++m_displayDiagnostics.displaySecondPartRefusals;
+            }
+            break;
+        }
+        if (result == IMediaTransport::DisplaySendResult::Queued) {
+            ++m_displayDiagnostics.displayQueuedLate;
+        }
+        // Every message taken is measured on its own: v2 has no keyframes,
+        // so the largest message is the largest "delta".
+        const auto bytes = static_cast<quint32>(message.size());
+        m_displayDiagnostics.displayMaxDeltaBytes =
+            std::max(m_displayDiagnostics.displayMaxDeltaBytes, bytes);
+        m_displayDiagnostics.displayBytesSent += bytes;
+        m_displayDiagnostics.displayMaxFragments = std::max(
+            m_displayDiagnostics.displayMaxFragments,
+            static_cast<quint32>(IMediaTransport::sctpFragmentCount(bytes)));
+        if (part == 0) {
+            // The frame counts as sent once its first message (its row, or
+            // the whole frame) is taken.
+            frameTaken = true;
+            ++m_displayDiagnostics.displayFramesSent;
+            if (encoding.split()) {
+                ++m_displayDiagnostics.displaySplitFrames;
+            }
+        }
+    }
+    return frameTaken ? DisplayV2Send::Taken : DisplayV2Send::NotTaken;
+}
+
 bool DaemonMediaController::peerIqBusy(MediaPeer* peer) const
 {
     if (onDisplayThread()) {
@@ -6580,14 +6693,59 @@ bool DaemonMediaController::trySendSpectrum(MediaPeer* peer, quint64 epoch, qint
                 }
             }
         }
-        // Bench setting DisplayKeyframeEveryFrame: every frame a keyframe.
-        const QByteArray bytes = current.encoder.encode(
-            *reduced, current.forceKeyframe || m_displayKeyframeEveryFrame.load());
-        const bool keyframe = current.encoder.lastEncodedKeyframe();
         const quint32 generation = current.endpoint.context().codec.contextGeneration;
         const quint64 samples = static_cast<quint64>(reduced->traceDbm.size())
             + static_cast<quint64>(reduced->waterfallDbm.size())
             + static_cast<quint64>(reduced->wideDbm.size());
+#ifdef NEREUS_BUILD_TESTS
+        if (m_encodedFrameObserver) {
+            m_encodedFrameObserver(*reduced);
+        }
+#endif
+        // The newest frame's extras replace any not yet sent; they go on a
+        // later turn, after every message of this frame.
+        const auto keepExtras = [&] {
+            it = m_endpoints.find(endpointId);
+            if (extrasFrame && it != m_endpoints.end() && it->second.revision == revision
+                && it->second.endpoint.configured()
+                && it->second.endpoint.context().codec.contextGeneration == generation) {
+                it->second.pendingExtras =
+                    encodeDisplayExtras(*extrasFrame, it->second.endpoint.context().codec);
+                it->second.pendingExtrasSamples = extrasFrame->peakHoldDbm
+                    ? static_cast<quint64>(extrasFrame->peakHoldDbm->size()) : 0;
+            }
+        };
+        if (m_displayCodecVersion.load() == 2U) {
+            // NSDC v2 (display codec v2 document, sections 5 and 9.3): no
+            // history, so neither the v1 encoder, its keyframe flag nor the
+            // bench setting DisplayKeyframeEveryFrame is consulted. Pacing and
+            // the admitted cost are checked once, against the frame's total.
+            const DisplayCodecV2Encoding encoding =
+                encodeDisplayCodecV2(*reduced, current.displayCost.maximumFrameBytes);
+            if (encoding.messages.empty()) {
+                continue;
+            }
+            const qsizetype totalBytes = encoding.totalBytes();
+            if (totalBytes > static_cast<qsizetype>(current.displayCost.maximumFrameBytes)
+                || samples > current.displayCost.maximumFrameSampleUnits
+                || (displayPacingRequired()
+                    && !m_displayPacer.spendSpectrum(static_cast<quint64>(totalBytes),
+                                                     samples, nowNs))) {
+                // Cannot happen by the codec's bound; dropped, with no
+                // keyframe to force.
+                qCWarning(lcDaemonMedia) << "spectrum codec v2 frame exceeded admitted display cost";
+                continue;
+            }
+            const DisplayV2Send outcome = submitDisplayCodecV2(peer, epoch, encoding);
+            if (outcome == DisplayV2Send::Taken) {
+                keepExtras();
+            }
+            return true;
+        }
+        // Bench setting DisplayKeyframeEveryFrame: every frame a keyframe.
+        const QByteArray bytes = current.encoder.encode(
+            *reduced, current.forceKeyframe || m_displayKeyframeEveryFrame.load());
+        const bool keyframe = current.encoder.lastEncodedKeyframe();
         if (bytes.isEmpty()) {
             continue;
         }
@@ -6614,16 +6772,7 @@ bool DaemonMediaController::trySendSpectrum(MediaPeer* peer, quint64 epoch, qint
             if (result == IMediaTransport::DisplaySendResult::Queued) {
                 ++m_displayDiagnostics.displayQueuedLate;
             }
-            it = m_endpoints.find(endpointId);
-            if (extrasFrame && it != m_endpoints.end() && it->second.revision == revision
-                && it->second.endpoint.configured()
-                && it->second.endpoint.context().codec.contextGeneration == generation) {
-                // The newest frame's extras replace any not yet sent.
-                it->second.pendingExtras =
-                    encodeDisplayExtras(*extrasFrame, it->second.endpoint.context().codec);
-                it->second.pendingExtrasSamples = extrasFrame->peakHoldDbm
-                    ? static_cast<quint64>(extrasFrame->peakHoldDbm->size()) : 0;
-            }
+            keepExtras();
         } else {
             // Not taken (busy or failed): this frame is gone, never queued
             // behind the link.
@@ -7333,12 +7482,41 @@ bool DaemonMediaController::trySendTransmitFrame(quint32 endpointId, MediaPeer* 
     frame.waterfallDbm = entry.txWaterfall.isEmpty() ? entry.txTrace : entry.txWaterfall;
     entry.txPending = false;
     entry.txNewWaterfall = false;
+    const quint64 samples = static_cast<quint64>(frame.traceDbm.size())
+        + static_cast<quint64>(frame.waterfallDbm.size());
+#ifdef NEREUS_BUILD_TESTS
+    if (m_encodedFrameObserver) {
+        m_encodedFrameObserver(frame);
+    }
+#endif
+    if (m_displayCodecVersion.load() == 2U) {
+        // NSDC v2: as a receive frame (trySendSpectrum), at this endpoint's
+        // own admitted frame bytes; no keyframe state.
+        const DisplayCodecV2Encoding encoding =
+            encodeDisplayCodecV2(frame, entry.displayCost.maximumFrameBytes);
+        if (encoding.messages.empty()) {
+            return false;
+        }
+        const qsizetype totalBytes = encoding.totalBytes();
+        if (totalBytes > static_cast<qsizetype>(entry.displayCost.maximumFrameBytes)
+            || samples > entry.displayCost.maximumFrameSampleUnits
+            || (displayPacingRequired()
+                && !m_displayPacer.spendSpectrum(static_cast<quint64>(totalBytes), samples,
+                                                 nowNs))) {
+            qCWarning(lcDaemonMedia)
+                << "transmit display codec v2 frame exceeded admitted display cost";
+            return false;
+        }
+        const qint64 followingDueNs = entry.txNextDueNs + periodNs;
+        entry.txNextDueNs = entry.txNextDueNs == 0 || nowNs >= followingDueNs
+            ? nowNs + periodNs : followingDueNs;
+        submitDisplayCodecV2(peer, epoch, encoding);
+        return true;
+    }
     // Bench setting DisplayKeyframeEveryFrame: every frame a keyframe.
     const QByteArray bytes = entry.encoder.encode(
         frame, entry.forceKeyframe || m_displayKeyframeEveryFrame.load());
     const bool keyframe = entry.encoder.lastEncodedKeyframe();
-    const quint64 samples = static_cast<quint64>(frame.traceDbm.size())
-        + static_cast<quint64>(frame.waterfallDbm.size());
     if (bytes.isEmpty()) {
         return false;
     }

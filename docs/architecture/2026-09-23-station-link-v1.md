@@ -1014,6 +1014,18 @@ it sees exactly the wire it was built for: no capability entry, and every
 `context` byte for byte as before. The station does not declare it; the
 desktop's remote window and the phone app do.
 
+**`displayCodec` 2** (display codec v2): the client's display decoder reads
+version 2 display frames (NSDC v2) as well as version 1. A peer that
+declares it at agreed minor 11, while media is available and the Core's
+`RemoteDisplayCodecV2` setting is on, is sent `displayCodecVersion` 2
+(section 6.3) and may declare `displayCodecVersion` 2 in its media `start`;
+that media connection's display frames are then version 2, and a `replace`
+of it keeps them (the media control document's "The display codec a
+connection agrees"). A peer that does not declare it sees exactly the wire
+it was built for: no capability entry, today's `start` and version 1 frames
+byte for byte. The station does not declare it; the desktop's remote window
+and the phone app do.
+
 **`firmwareBeta` 1** (the radio's second firmware number): the client words
 the firmware release of the Core's radio in full, as a window running that
 radio does. A release is two numbers (22 and 14 read "22.14"), and
@@ -1258,6 +1270,7 @@ table.
 | `spectrumPictureVersion` | 1 |
 | `waveformVersion` | 1 |
 | `rxMeterStampsVersion` | 1 |
+| `displayCodecVersion` | 2 |
 
 <!-- /surface -->
 
@@ -2421,6 +2434,17 @@ last entry before it when that is absent) and before `coreBuildInfo`. At 1
 each `slice:<id>` object carries `meterReadingNs` (section 7). A peer that
 did not declare the feature is sent no entry and no `meterReadingNs`.
 
+**The display codec.** A client at agreed minor 11 that declared
+`displayCodec` 2 is sent `displayCodecVersion`, an `i64`, 2, while media is
+available and the Core's `RemoteDisplayCodecV2` setting is on, after
+`rxMeterStampsVersion` (or after the last entry before it when that is
+absent) and before `coreBuildInfo`. At 2 the client's media `start` may
+declare `displayCodecVersion` 2, and that connection's display frames are
+then version 2 (the
+[display codec v2 design](2026-10-22-display-codec-v2-intra-rows.md)). A
+peer that did not declare the feature, or any peer of a Core whose setting
+is off, is sent no entry, and a `start` carrying the field is refused.
+
 **Core executable identity.** A client at agreed minor 11 may declare
 `coreBuildInfo` 1. After authentication, a Core with a known product version
 appends one optional `coreBuildInfo` utf8 capability after all existing
@@ -2464,7 +2488,9 @@ for a peer that declared `spectrumPicture` while media is available;
 `firmwareBeta` only for a peer that declared `firmwareBeta`;
 `waveformVersion` only for a peer that declared `waveform` while media is
 available on a Core that is not itself a remote client;
-`rxMeterStampsVersion` only for a peer that declared `rxMeterStamps`. A
+`rxMeterStampsVersion` only for a peer that declared `rxMeterStamps`;
+`displayCodecVersion` only for a peer that declared `displayCodec` 2 while
+media is available and the Core's `RemoteDisplayCodecV2` setting is on. A
 client ignores a capability it does not know
 (`StationCapabilities::fromUpdates`).
 
@@ -2668,7 +2694,8 @@ older window sees only the values it was built for.
 | 113 | `firmwareBeta` | `i64` |
 | 114 | `waveformVersion` | `i64` |
 | 115 | `rxMeterStampsVersion` | `i64` |
-| 116 | `coreBuildInfo` | `utf8` |
+| 116 | `displayCodecVersion` | `i64` |
+| 117 | `coreBuildInfo` | `utf8` |
 
 <!-- /surface -->
 
@@ -7107,7 +7134,7 @@ Client to station:
 | `monitor-audio` | `txMonitorAudioVersion` | `connectionId`, `op`, `revision`, `route` | none | none |
 | `receiver-audio` | `receiverAudioVersion` | `connectionId`, `enabled`, `op`, `profile`, `revision`, `sliceId` | none | none |
 | `replace` | `mediaReplaceVersion` | `connectionId`, `op`, `replaces` | `mediaDirectVersion` with mediaDirectVersion | none |
-| `start` | `remoteMediaVersion` | `connectionId`, `op` | `audioProfileVersion` with audioProfileVersion; `headphonesMixVersion` with headphonesMixVersion; `mediaRelayRoutingVersion` with mediaRelayRoutingVersion; `mediaTunnelVersion` with mediaTunnelVersion; `miniDisplayVersion` with miniDisplayVersion; `receiverAudioVersion` with receiverAudioVersion; `remoteIqVersion` with remoteIqVersion; `remoteTxVersion` with remoteTxVersion; `spectrumPictureVersion` with spectrumPictureVersion; `txDisplayVersion` with txDisplayVersion; `txMonitorAudioVersion` with txMonitorAudioVersion; `waveformVersion` with waveformVersion | none |
+| `start` | `remoteMediaVersion` | `connectionId`, `op` | `audioProfileVersion` with audioProfileVersion; `displayCodecVersion` with displayCodecVersion; `headphonesMixVersion` with headphonesMixVersion; `mediaRelayRoutingVersion` with mediaRelayRoutingVersion; `mediaTunnelVersion` with mediaTunnelVersion; `miniDisplayVersion` with miniDisplayVersion; `receiverAudioVersion` with receiverAudioVersion; `remoteIqVersion` with remoteIqVersion; `remoteTxVersion` with remoteTxVersion; `spectrumPictureVersion` with spectrumPictureVersion; `txDisplayVersion` with txDisplayVersion; `txMonitorAudioVersion` with txMonitorAudioVersion; `waveformVersion` with waveformVersion | none |
 | `subscribe` | `remoteMediaVersion` | `centreHz`, `connectionId`, `endpointId`, `fftSize`, `fps`, `framesPerLine`, `maxDbm`, `minDbm`, `op`, `pixels`, `revision`, `sliceId`, `spanHz`, `tier`, `trace`, `waterfall`, `wideSpanFactor`, `windowType` | `activePeakHold` with displayExtrasVersion; `averageTimeMs` with displayExtrasVersion; `calibrationOffsetDb` with displayExtrasVersion; `decimation` with spectrumGrantVersion; `displayRole` with miniDisplayVersion; `duplex` with txDisplayVersion; `extendedView` with remoteWidebandDisplayVersion; `noiseFloor` with displayExtrasVersion; `normalize` with displayExtrasVersion; `peakBlobs` with displayExtrasVersion; `txMaxDbm` with txDisplayVersion; `txMinDbm` with txDisplayVersion; `waterfallAverageTimeMs` with displayExtrasVersion; `waterfallLevels` with displayExtrasVersion | `activePeakHold`: {enabled, fallDbPerSec, holdMs, onTx} or {enabled, fallDbPerSec, holdMs}; `noiseFloor`: {enabled, fastAttack, shiftDb} or {enabled, shiftDb}; `peakBlobs`: {count, fallDbPerSec, holdMs, insideOnly}; `trace`: {averageAlpha, averageMode, detector}; `waterfall`: {averageAlpha, averageMode, detector}; `waterfallLevels`: {highDbm, lowDbm, mode, offsetDb} |
 | `unsubscribe` | `remoteMediaVersion` | `connectionId`, `endpointId`, `op` | `revision` with remoteDisplayBudgetVersion | none |
 | `waveform-stream` | `waveformVersion` | `connectionId`, `enabled`, `kind`, `op`, `revision`, `sliceId` | none | none |

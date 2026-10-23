@@ -1,4 +1,10 @@
 // no-port-check: NereusSDR-original. Observational Core/GUI telemetry adapter.
+//
+// Modification history (NereusSDR):
+//   2026-10-22: NSDC v2: the diagnostics line names the display messages
+//               and parts the window's decoders found lost
+//               (displayMessagesLost, displayPartsLost). J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 #include "RemoteTelemetryController.h"
 #include "gui/RemoteAudioStatus.h"
 #include "gui/RemoteMediaController.h"
@@ -462,6 +468,8 @@ void RemoteTelemetryController::logDiagnostics(qint64 now) const
            // rode through the link.
            << QStringLiteral("displayKeyframeWaits=%1").arg(display.keyframeWaits)
            << QStringLiteral("displayKeyframeRequests=%1").arg(display.keyframeRequests)
+           << QStringLiteral("displayMessagesLost=%1").arg(display.messagesLost)
+           << QStringLiteral("displayPartsLost=%1").arg(display.partsLost)
            << QStringLiteral("displayRowsBlended=%1").arg(display.rowsBlended)
            << QStringLiteral("displayRowsRepeated=%1").arg(display.rowsRepeated)
            << QStringLiteral("displayLargestArrivalGapMs=%1").arg(logged(display.largestArrivalGapMs))

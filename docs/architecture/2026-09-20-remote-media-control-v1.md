@@ -53,7 +53,7 @@ starts its media over through its usual recovery on the two drop reasons.
 
 | Operation | Exact payload fields beyond `op` and `connectionId` |
 | --- | --- |
-| `start` | None; a GUI whose Core advertised `audioProfileVersion` adds `audioProfileVersion`, a whole number of at least 1 (anything else is refused and no peer starts); a GUI whose Core advertised `receiverAudioVersion` may add `receiverAudioVersion` the same way (see Receiver audio), one whose Core advertised `headphonesMixVersion` may add `headphonesMixVersion` the same way (see Headphones mix), one whose Core advertised `remoteTxVersion` may add `remoteTxVersion` the same way (see Microphone line), and one whose Core advertised `txDisplayVersion` may add `txDisplayVersion` the same way (see Transmit display) |
+| `start` | None; a GUI whose Core advertised `audioProfileVersion` adds `audioProfileVersion`, a whole number of at least 1 (anything else is refused and no peer starts); a GUI whose Core advertised `receiverAudioVersion` may add `receiverAudioVersion` the same way (see Receiver audio), one whose Core advertised `headphonesMixVersion` may add `headphonesMixVersion` the same way (see Headphones mix), one whose Core advertised `remoteTxVersion` may add `remoteTxVersion` the same way (see Microphone line), one whose Core advertised `txDisplayVersion` may add `txDisplayVersion` the same way (see Transmit display), and one whose Core advertised `displayCodecVersion` may add `displayCodecVersion` 2, exactly 2 (see The display codec a connection agrees) |
 | `description` | `sdp`, `type` (`offer` or `answer`, appropriate to peer role) |
 | `candidate` | `candidate`, `mid` |
 
@@ -528,6 +528,26 @@ match its current context. A whole-peer rejection uses endpoint/revision
 zero. Unsubscribe releases an unused source. Rebinding, slice removal and
 disconnect invalidate the corresponding endpoint. Hidden GUI panes
 unsubscribe, and a newly shown pane receives a new endpoint ID.
+
+#### The display codec a connection agrees
+
+(Display codec v2.) At agreed session minor 11, a GUI hello that declares
+`displayCodec: 2` receives capability `displayCodecVersion: 2` when media
+is available and the Core's `RemoteDisplayCodecV2` setting is on. The
+setting is read once, when the Core starts; absent or `"True"` it is on,
+and any other value advertises the capability to no peer. The capability
+is omitted for a peer that did not declare the feature. A media `start` may
+then declare `displayCodecVersion: 2`; another value (1, 3, 0, a boolean, a
+string, a fraction), or a declaration without that capability, is refused
+and no peer starts. A `start` without the field agrees version 1.
+
+The agreed version holds for the media connection: every display endpoint
+on it, the transmit display included, is sent version 2 frames when the
+`start` declared it, and exactly today's version 1 bytes otherwise. A
+`replace` carries none of `start`'s version keys, so the replacement keeps
+the version its `start` agreed; only the next `start` sets it again. The
+frame format, the decoder and the window's keyframe rules are in the
+[display codec v2 design](2026-10-22-display-codec-v2-intra-rows.md).
 
 ### Display budget (unsubscribe revision and allocation-result)
 
