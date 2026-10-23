@@ -58,6 +58,22 @@
 - No public posts. Pushes go only to the branch below, one batched push per round, never to stay current with main.
 - **Branch:** `claude/roundtable`, cut from `origin/main` by the controller, which first cherry-picks the spec and mockup commits (`2ef5e1739`, `25769a202`) and this plan's commit from `claude/nereus-freedv-reporter-chat-e7a0b9`. Lanes S (Tasks 1 to 9), C (Tasks 10 to 15) and I (Tasks 16 to 19) touch different files; the controller may run S beside C or I in separate worktrees (`claude/roundtable-server`, `claude/roundtable-apps`) merged back into `claude/roundtable` at lane ends.
 
+## Who signs in, and what JJ manages
+
+Nobody has an account. There are no passwords, no email, no sign-up and no approval step, and nothing for JJ to look after for ordinary users. There are four kinds of sign-in; only the last is an admin list.
+
+| Who | How they prove who they are | What they do | What JJ does |
+| --- | --- | --- | --- |
+| A NereusSDR station (a Core, or a desktop running everything) | Its existing station key, the one Remote Access already uses. The Core signs the server's challenge on every connect (Tasks 2 and 10). | Nothing. It happens when Roundtable starts. | Nothing. |
+| Other software (a logger, a script) | A key from `roundtable.nereussdr.com/key`, pasted into that program. The server keeps only a hash of it (Tasks 2 and 6). | Types a callsign and grid once and copies the key, which is shown once. Changes callsign or grid, or moves to a new key, on the same page using the key. | Nothing. The limit of 3 new keys a day per address is automatic. |
+| An operator opening their archive in a browser | A one-time link the app asks its Core for (works once, within 5 minutes), swapped for a 30-day browser cookie. Other-software stations sign in on the key page with their key instead (Task 6). | Clicks Archive in the app. | Nothing. |
+| Helpers: JJ and anyone he names | The same browser sign-in as the archive; the server then checks the station id against its helper list (Task 7). | Nothing more. | Keeps the helper list: his own station id goes in the server config at deploy (Task 21); others are added and removed on the review page by station id, and every change is logged. |
+
+- The database rows these leave behind look like accounts but need no care: `stations` (made on a station's first sign-in), `keys` (hashes only), `web_sessions` (cookies that expire by themselves, or end with Sign out everywhere) and `weblinks` (one-time tokens).
+- What helpers act on is a station, not an account: remove its messages, block it from posting, or stop counting its readings. No helper action signs anyone out or deletes anyone.
+- A NereusSDR station keeps its identity as long as its settings folder survives; a reinstall that keeps the folder is the same station.
+- The one place JJ handles an ordinary user's identity is spec C6: moving history from a lost station id to a new one after his own check (Task 6's `store.move_history`, Task 7's `POST /v1/review/move-history`).
+
 ## What already exists
 
 Facts from origin/main `83a5a6bcc`; spec section 5 has the rest.
