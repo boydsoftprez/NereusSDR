@@ -9,6 +9,11 @@
 // printed or accepted as command-line values.
 //
 // =================================================================
+// Modification history (NereusSDR):
+//   2026-10-22: A Held case for the NSDC v2 disposition; the probe stays on
+//               v1 and never sees one. J.J. Boyd (KG4VCF), AI-assisted via
+//               Claude Code.
+// =================================================================
 
 #include "core/AppSettings.h"
 #include "core/AudioDeviceConfig.h"
@@ -622,6 +627,10 @@ private:
             break;
         case DisplayCodecDisposition::Rejected:
             ++m_rejected;
+            break;
+        case DisplayCodecDisposition::Held:
+            // NSDC v2 only. The probe never asks for v2, so it never sees
+            // one; a held part counts nothing and requests nothing.
             break;
         }
     }

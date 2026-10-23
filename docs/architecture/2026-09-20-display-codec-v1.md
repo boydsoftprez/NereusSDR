@@ -5,6 +5,12 @@ channel. It has no socket, GUI, radio, or Qt Multimedia dependency. The codec
 is NereusSDR-original; its input is the output of the independent trace and
 waterfall reducers.
 
+Version 2, in which every waterfall row and every trace is coded on its own,
+is specified in
+[display codec v2: every row stands alone](2026-10-22-display-codec-v2-intra-rows.md).
+Version 1, as this document describes it, stays for every media connection
+that did not agree version 2, byte for byte.
+
 R-R3-11: production rows are antenna-referenced dBm. Core applies the
 station calibration before reduction/quantization, including the optional
 wide row. A remote renderer must not add its own local radio calibration.
@@ -162,7 +168,10 @@ was lost inside Core before it was sent: `sourceFramesReplaced` (a newer frame
 replaced it before Core's main thread took it from the FFT engine),
 `panFramesReplaced` (a newer frame replaced it before a sender turn took it
 for that pan), and `senderGapMaxMs` with `senderGapMaxSinceLastMs`, the
-longest time between two turns of the 5 ms display sender. The Rock check at
+longest time between two turns of the 5 ms display sender. On a connection
+that agreed display codec v2, `splitFrames` counts the frames sent as two
+messages (the row part, then the trace part) and `secondPartRefusals` counts
+the trace parts the transport did not take. The Rock check at
 4096 points, 60 fps with 3D, is that this line never exceeds 9,361 bytes / 11
 fragments and that a capture shows no media datagram above 1000 bytes (969 on
 IPv4).

@@ -12,6 +12,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22  J.J. Boyd / KG4VCF  NSDC v2 negotiation: the capture
+//                                    declares displayCodec 2, so
+//                                    displayCodecVersion and the start's
+//                                    declaration are captured. AI-assisted
+//                                    via Anthropic Claude Code.
 //   2026-10-22  J.J. Boyd / KG4VCF  RX meter stamps: the capture declares
 //                                    rxMeterStamps, so rxMeterStampsVersion
 //                                    and the slice's meterReadingNs are
@@ -774,7 +779,10 @@ std::optional<QList<QByteArray>> liveSessionWire(
                                   {"firmwareBeta", 1},
                                   // RX meter stamps: rxMeterStampsVersion
                                   // and each slice's meterReadingNs.
-                                  {"rxMeterStamps", 1}})));
+                                  {"rxMeterStamps", 1},
+                                  // NSDC v2: displayCodecVersion and the
+                                  // start's declaration.
+                                  {"displayCodec", 2}})));
     clientEnd->sendText(SessionMessages::encode(SessionMessages::authRequest({}, block)));
 
     // The loopback delivers on later event-loop turns, as a socket would.
@@ -879,6 +887,8 @@ QJsonArray captureCapabilities()
     caps.firmwareBetaEntry = true;
     // RX meter stamps: sent to a peer that declared rxMeterStamps.
     caps.rxMeterStampsVersion = 1;
+    // NSDC v2: sent to a peer that declared displayCodec 2.
+    caps.displayCodecVersion = 2;
 
     // The values come from a live station with every feature a Core can
     // switch on: media, telemetry, an enforced display budget with its
@@ -1370,6 +1380,8 @@ QJsonObject guiToCoreOps()
         {QStringLiteral("miniDisplayVersion"), {QStringLiteral("miniDisplayVersion")}},
         // R-DISP-RETUNE: DaemonMediaController.cpp handleStart.
         {QStringLiteral("spectrumPictureVersion"), {QStringLiteral("spectrumPictureVersion")}},
+        // NSDC v2: DaemonMediaController.cpp handleStart.
+        {QStringLiteral("displayCodecVersion"), {QStringLiteral("displayCodecVersion")}},
         {QStringLiteral("audioProfileVersion"), {QStringLiteral("audioProfileVersion")}},
         {QStringLiteral("receiverAudioVersion"), {QStringLiteral("receiverAudioVersion")}},
         {QStringLiteral("remoteIqVersion"), {QStringLiteral("remoteIqVersion")}},

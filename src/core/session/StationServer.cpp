@@ -1,6 +1,11 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-22: NSDC v2 negotiation: displayCodecVersion 2 for a minor-11
+//               peer that declared displayCodec 2, media on, while the
+//               Core's RemoteDisplayCodecV2 setting is on
+//               (displayCodecV2Available). J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-22: RX-only antennas as Thetis's checkbox sum (0..5):
 //               radioAntennaRowsVersion 2 for a peer that declared
 //               radioAntennaRows 2; any other peer reads and writes a 0..3
@@ -13189,6 +13194,28 @@ bool StationServer::spectrumPictureAvailable(quint64 epoch) const
         && peerDeclares(session, QByteArrayLiteral("spectrumPicture"), 1);
 }
 
+void StationServer::setDisplayCodecV2Enabled(bool enabled)
+{
+    m_displayCodecV2Enabled = enabled;
+}
+
+bool StationServer::displayCodecV2Enabled() const
+{
+    return m_displayCodecV2Enabled;
+}
+
+bool StationServer::displayCodecV2Available(quint64 epoch) const
+{
+    // The value rides on the media start, which every peer at minor 11 has;
+    // the Core's fallback switch withdraws it from every peer.
+    SessionTransport* session = mediaSessionFor(epoch);
+    const auto it = m_peers.constFind(session);
+    return mediaAvailable(epoch) && it != m_peers.cend()
+        && it->agreedMinor >= kRadioIdentitySessionProtocolMinor
+        && peerDeclares(session, QByteArrayLiteral("displayCodec"), 2)
+        && displayCodecV2Enabled();
+}
+
 bool StationServer::miniDisplayAvailable(quint64 epoch) const
 {
     SessionTransport* session = mediaSessionFor(epoch);
@@ -13845,6 +13872,14 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
             // property (fitPeerOnlyProperties).
             caps.rxMeterStampsVersion =
                 peerGetsFeatureProperties(transport, QByteArrayLiteral("rxMeterStamps")) ? 1 : 0;
+            // Display codec v2 (NSDC v2): for a minor-11 peer that declared
+            // displayCodec 2, media on, while the Core's RemoteDisplayCodecV2
+            // setting is on (after rxMeterStampsVersion and before
+            // coreBuildInfo on the wire); old peers retain their exact
+            // descriptor.
+            caps.displayCodecVersion = caps.radioIdentityEntries && media
+                && peerDeclares(transport, QByteArrayLiteral("displayCodec"), 2)
+                && displayCodecV2Enabled() ? 2 : 0;
             // iPhone app Task 71 (ruling 10.1): several devices at once, for
             // a peer that declared sessionHolder with deviceAuth; any other
             // peer is sent no entry, so its capabilities are today's.

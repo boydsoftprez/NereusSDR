@@ -59,6 +59,11 @@
 //               step of the better-path search). ICE nominating the web
 //               relay first on a loaded runner failed the old check.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22: NSDC v2 interop (display codec v2, Task 6): the media
+//               controllers' own connection over the web relay agrees
+//               display codec v2 at its start, and the display frames it
+//               delivers are version 2 (DisplayVersionTap). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -73,24 +78,34 @@
 #include <QWebSocketServer>
 
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <memory>
 #include <utility>
 
 #include "RendezvousTestHarness.h"
+#include "core/AudioEngine.h"
+#include "core/HpsdrModel.h"
 #include "core/security/ClientDeviceIdentity.h"
 #include "core/security/StationIdentity.h"
 #include "core/session/DataChannelTransport.h"
 #include "core/session/IceConfiguration.h"
 #include "core/session/PathRacer.h"
 #include "core/session/RelayLeg.h"
+#include "core/session/media/DaemonMediaController.h"
 #include "core/session/media/LibDataChannelMediaTransport.h"
 #include "core/session/StationClient.h"
 #include "core/session/StationRendezvous.h"
 #include "core/session/StationServer.h"
 #include "core/session/SwitchableTransport.h"
 #include "core/settings/SettingsProxy.h"
+#include "fakes/DisplayVersionTap.h"
+#include "gui/PanadapterApplet.h"
+#include "gui/PanadapterStack.h"
+#include "gui/RemoteMediaController.h"
+#include "gui/SpectrumWidget.h"
 #include "models/RadioModel.h"
+#include "models/SliceModel.h"
 
 using namespace NereusSDR;
 using namespace NereusSDR::Test::Rendezvous;
@@ -393,6 +408,100 @@ private slots:
         QCOMPARE(relay.joins, 2); // one leg per end carried both
         offerer.stop();
         answerer.stop();
+        window.disconnectFromStation(QStringLiteral("test done"));
+    }
+
+    // NSDC v2 interop (display codec v2, Task 6): with only the web relay
+    // working, the media controllers' own connection runs on the relay's
+    // media lane; its start agrees display codec v2, and every display
+    // frame it delivers to the window is version 2.
+    void relayedMediaAgreesDisplayCodecV2()
+    {
+        StandInRelay relay;
+        QVERIFY(relay.server->isListening());
+        LocalService service(/*stun=*/false, /*relay=*/false);
+        service.setRelayGrants(true);
+        RelayLeg::setRelayUrlForTest(QUrl(relay.url()));
+        QVERIFY2(service.start(), qPrintable(service.startFailure()));
+        CoreThroughService station;
+        // A radio with one slice whose stream the test feeds, and media on.
+        RadioModel& radio = *station.core.model;
+        radio.setBoardForTest(HPSDRHW::Saturn);
+        radio.configureStreamPool(/*userDdcCount=*/5, /*maxSlices=*/5,
+                                  /*defaultRateHz=*/192000);
+        radio.setConnectionStateForTest(ConnectionState::Connected);
+        const int sliceId = radio.addSlice();
+        QVERIFY(sliceId >= 0);
+        const int stream = radio.sliceById(sliceId)->streamIndex();
+        QVERIFY(stream >= 0);
+        station.core.server->setMediaEnabled(true);
+        DaemonMediaController daemonMedia(station.core.server.get(), &radio);
+        QVERIFY2(station.start(service), qPrintable(station.failure));
+        IceConfiguration::setOnlyLoopbackShimCandidatesForTest(true);
+
+        QTemporaryDir keyDir;
+        auto key = std::make_shared<const ClientDeviceIdentity>(
+            ClientDeviceIdentity::loadOrCreate(keyDir.path()));
+        QVERIFY(station.core.pairComputer(*key));
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.setConnectionStateForTest(ConnectionState::Connected);
+        remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
+        SettingsProxy proxy;
+        StationClient window(&remote, &proxy);
+        window.setDeviceIdentity(key, QStringLiteral("Shack MacBook"));
+        window.withholdFeatureForTest(QByteArrayLiteral("remoteTx")); // Display-only fixture.
+        PanadapterStack stack;
+        auto* pan = stack.addPanadapter(QStringLiteral("relay"));
+        pan->setActiveSliceIndex(sliceId);
+        pan->spectrumWidget()->setDisplayWindowPreservingHistory(
+            radio.streamCentreHz(stream), 48000);
+        stack.resize(600, 400);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        RemoteMediaController remoteMedia(&window, &remote, &stack);
+        Test::DisplayVersionTap tap(&remoteMedia);
+        QSignalSpy controls(station.core.server.get(), &StationServer::mediaControlReceived);
+        QSignalSpy frames(&remoteMedia, &RemoteMediaController::displayFrameReceived);
+        QVector<float> iq(2048);
+        for (int i = 0; i < iq.size(); i += 2) {
+            iq[i] = 0.01f * static_cast<float>(std::cos(double(i) * 0.17));
+            iq[i + 1] = 0.01f * static_cast<float>(std::sin(double(i) * 0.17));
+        }
+        QTimer display;
+        display.setInterval(20);
+        QObject::connect(&display, &QTimer::timeout, &display, [&radio, stream, &iq] {
+            QMetaObject::invokeMethod(&radio, "rawIqDataForStream", Qt::DirectConnection,
+                                      Q_ARG(int, stream), Q_ARG(QVector<float>, iq));
+        });
+        display.start();
+
+        QString why;
+        QVERIFY2(connectWindow(window, service, station, &why), qPrintable(why));
+        QCOMPARE(window.pathRank(), int(PathRacer::Floor));
+        QCOMPARE(window.capabilities().displayCodecVersion, 2);
+        EndWatch ends;
+        ends.watch(&window);
+        QVERIFY2(waitUntil([&] {
+                     tap.follow();
+                     return !frames.isEmpty() && tap.allVersions().size() >= 4;
+                 }, 60000, ends, QStringLiteral("display frames over the web relay"), &why),
+                 qPrintable(why));
+        display.stop();
+        // The media connection ran on the relay's media lane.
+        QVERIFY(!relay.forwarded[RelayLeg::kTagMedia].isEmpty());
+        int starts = 0;
+        for (const QList<QVariant>& call : controls) {
+            const QJsonObject control = call.at(0).toJsonObject();
+            if (control.value(QStringLiteral("op")).toString() == QLatin1String("start")) {
+                ++starts;
+                QCOMPARE(control.value(QStringLiteral("displayCodecVersion")).toInt(), 2);
+            }
+        }
+        QCOMPARE(starts, 1);
+        QCOMPARE(daemonMedia.displayCodecVersion(), quint32{2});
+        for (int version : tap.allVersions()) {
+            QCOMPARE(version, 2);
+        }
         window.disconnectFromStation(QStringLiteral("test done"));
     }
 

@@ -575,6 +575,11 @@
             "value": 1
         },
         {
+            "kind": "i64",
+            "name": "displayCodecVersion",
+            "value": 2
+        },
+        {
             "kind": "utf8",
             "name": "coreBuildInfo",
             "value": "{\"productVersion\":\"0.5.2\",\"sourceTag\":\"link-surface@fixture\"}"
@@ -3829,6 +3834,9 @@
                 "conditional": {
                     "audioProfileVersion": [
                         "audioProfileVersion"
+                    ],
+                    "displayCodecVersion": [
+                        "displayCodecVersion"
                     ],
                     "headphonesMixVersion": [
                         "headphonesMixVersion"

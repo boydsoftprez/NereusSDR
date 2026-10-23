@@ -4,6 +4,8 @@
 // no-port-check: NereusSDR-original. See RemoteDisplayPresenter.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-22: push() sets the frame item's measurementCurrent (NSDC v2).
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-21: push() records the rows it queues (takeQueuedRows).
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-02: Capture identity separates incompatible presentation chains.
@@ -146,13 +148,15 @@ void RemoteDisplayPresenter::push(const DisplayCodecFrame& frame, double centreH
 }
 
 void RemoteDisplayPresenter::push(const DisplayCodecFrame& frame,
-                                  const RemoteSpectrumCapture& capture)
+                                  const RemoteSpectrumCapture& capture,
+                                  bool measurementCurrent)
 {
     const double centreHz = capture.context().exactCentreHz;
     const double spanHz = capture.context().exactSpanHz;
     m_queuedRows.clear();
     Item item;
     item.kind = Kind::Frame;
+    item.measurementCurrent = measurementCurrent;
     item.frame = frame;
     item.capture = capture;
     item.centreHz = centreHz;
