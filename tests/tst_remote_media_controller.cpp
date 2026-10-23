@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-22  J.J. Boyd / KG4VCF  displayTelemetry().rowsBlanked is the
+//                                    sum of every bound pan's NB Blank
+//                                    count. AI-assisted via Anthropic
+//                                    Claude Code.
 //   2026-10-22  J.J. Boyd / KG4VCF  The stall test also checks the pan's
 //                                    own keyframe waits and blended and
 //                                    repeated rows. AI-assisted via
@@ -4541,6 +4545,79 @@ private slots:
         QCOMPARE(controller.activeEndpointCount(), 0);
         QTRY_COMPARE(daemon.activeEndpointCount(), 0);
         QTRY_COMPARE(daemon.activeSourceCount(), 0);
+    }
+
+    // NB Blank's replaced rows reach the diagnostics line as the sum over
+    // every bound pan (displayRowsBlanked): one pan blanks one row, the
+    // other two, and the window reports three.
+    void displayTelemetrySumsEveryPansBlankedRows()
+    {
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5, 5, 192000);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        const int sliceId = station.addSlice();
+        QVERIFY(station.sliceById(sliceId));
+        StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        QPointer<DisplayTransport> sourceMedia;
+        DaemonMediaController daemon(&server, &station, nullptr,
+            [&sourceMedia](QObject* owner) -> IMediaTransport* {
+                sourceMedia = new DisplayTransport(owner);
+                return sourceMedia;
+            });
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true);
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        PanadapterStack stack;
+        stack.resize(800, 800);
+        stack.applyLayout(QStringLiteral("2v"), {QStringLiteral("pan-0"), QStringLiteral("pan-1")});
+        for (PanadapterApplet* applet : stack.allApplets()) {
+            applet->setActiveSliceIndex(sliceId);
+            applet->spectrumWidget()->setDisplayWindowPreservingHistory(
+                station.streamCentreHz(station.sliceById(sliceId)->streamIndex()), 48000);
+        }
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        QPointer<DisplayTransport> sinkMedia;
+        RemoteMediaController controller(&client, &remote, &stack, nullptr,
+            [&sinkMedia](QObject* owner) -> IMediaTransport* {
+                sinkMedia = new DisplayTransport(owner);
+                return sinkMedia;
+            });
+        auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
+        auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        stationLink->linkTo(clientLink);
+        client.startSession(clientLink, server.token());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(client.isHandshakeComplete());
+        QTRY_VERIFY(sourceMedia && sinkMedia);
+        sourceMedia->activate();
+        sinkMedia->activate();
+        QTRY_COMPARE(controller.activeEndpointCount(), 2);
+        QCOMPARE(controller.displayTelemetry().rowsBlanked, quint64(0));
+
+        // Each pan: 10 quiet rows of history, then `pulses` rows 10 dB up
+        // across the whole row, each followed by a quiet row.
+        const auto blankRows = [](SpectrumWidget* widget, int pulses) {
+            const int n = widget->liveWaterfallForTest().width();
+            QVERIFY(n > 0);
+            widget->setWaterfallBlankingEnabled(true);
+            for (int i = 0; i < 10; ++i) {
+                widget->pushWaterfallRowForTest(QVector<float>(n, -110.0f));
+            }
+            for (int i = 0; i < pulses; ++i) {
+                widget->pushWaterfallRowForTest(QVector<float>(n, -100.0f));
+                widget->pushWaterfallRowForTest(QVector<float>(n, -110.0f));
+            }
+            QCOMPARE(widget->waterfallRowsBlanked(), quint64(pulses));
+        };
+        blankRows(stack.spectrum(QStringLiteral("pan-0")), 1);
+        blankRows(stack.spectrum(QStringLiteral("pan-1")), 2);
+        QCOMPARE(controller.displayTelemetry().rowsBlanked, quint64(3));
     }
 
     void logicalPanLifecycleKeepsMediaAcrossReparentAndRetiresItOnRemoval()

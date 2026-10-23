@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-22: displayTelemetry() adds up the rows the pans' NB Blank
+//               replaced (rowsBlanked). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-22: the display counters are also kept per pan
 //               (RemoteDisplayTelemetry::pans) for the diagnostics line.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -8603,6 +8606,7 @@ RemoteDisplayTelemetry RemoteMediaController::displayTelemetry() const
         }
         if (binding.widget) {
             telemetry.rowsDropped += binding.widget->remoteRowsDropped();
+            telemetry.rowsBlanked += binding.widget->waterfallRowsBlanked();
         }
     }
     if (const std::optional<qint64> map = d->displayDelay.mapNs()) {

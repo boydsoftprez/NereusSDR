@@ -1,4 +1,8 @@
 // no-port-check: NereusSDR-original. Observational Core/GUI telemetry adapter.
+// Modification history (NereusSDR):
+//   2026-10-22: the diagnostics line carries displayRowsBlanked, the
+//               waterfall rows NB Blank replaced. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 #include "RemoteTelemetryController.h"
 #include "gui/RemoteAudioStatus.h"
 #include "gui/RemoteMediaController.h"
@@ -464,6 +468,7 @@ void RemoteTelemetryController::logDiagnostics(qint64 now) const
            << QStringLiteral("displayKeyframeRequests=%1").arg(display.keyframeRequests)
            << QStringLiteral("displayRowsBlended=%1").arg(display.rowsBlended)
            << QStringLiteral("displayRowsRepeated=%1").arg(display.rowsRepeated)
+           << QStringLiteral("displayRowsBlanked=%1").arg(display.rowsBlanked)
            << QStringLiteral("displayLargestArrivalGapMs=%1").arg(logged(display.largestArrivalGapMs))
            << QStringLiteral("displayDelayMs=%1").arg(logged(display.displayDelayMs))
            << QStringLiteral("displayItemsDropped=%1").arg(display.itemsDropped)
