@@ -364,6 +364,32 @@ jobs:
         run: /usr/bin/python3 -m pytest rendezvous/tests -q -p no:cacheprovider
 
   # --------------------------------------------------------------------
+  # The Roundtable server (roundtable/), the rendezvous job's shape.
+  #
+  # Runs the server's pytest suite, conformance fixtures included, on the
+  # same packages the server runs: Ubuntu 24.04's python3-websockets,
+  # python3-cryptography and python3-pytest from apt, never pip, under the
+  # system interpreter (no setup-python, whose interpreter would not see
+  # the apt packages).
+  # --------------------------------------------------------------------
+  roundtable:
+    runs-on: ubuntu-24.04
+    name: Roundtable server
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the server's packages from apt
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-websockets python3-cryptography python3-pytest
+
+      - name: Show the versions under test
+        run: /usr/bin/python3 -c "import sys, websockets, cryptography, pytest; print(sys.version.split()[0], websockets.__version__, cryptography.__version__, pytest.__version__)"
+
+      - name: pytest (Roundtable server and conformance fixtures)
+        run: /usr/bin/python3 -m pytest roundtable/tests -q -p no:cacheprovider
+
+  # --------------------------------------------------------------------
   # The traversal harness (iPhone app plan Task 27, R-IOS-16).
   #
   # Reaching a Core through the rendezvous across real NATs, on this runner
