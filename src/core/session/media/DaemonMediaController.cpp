@@ -4,6 +4,10 @@
 // no-port-check: NereusSDR-original. See DaemonMediaController.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-22: NSDC v2 negotiation: handleStart takes displayCodecVersion
+//               2 from a peer the Core told displayCodecVersion 2, and
+//               stores the agreed version beside m_startMicLine.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22: Bench setting DisplayKeyframeEveryFrame (JJ approved
 //               2026-10-22): with it on, every receive and transmit display
 //               frame is encoded as a keyframe. The display diagnostics line
@@ -1367,6 +1371,11 @@ QString daemonDisplayDiagnosticsLine(const DaemonDisplayDiagnostics& diagnostics
         .arg(senderGapMs(diagnostics.displaySenderGapMaxUs));
 }
 
+quint32 DaemonMediaController::displayCodecVersion() const noexcept
+{
+    return m_displayCodecVersion.load();
+}
+
 void DaemonMediaController::setDisplayKeyframeEveryFrame(bool on)
 {
     m_displayKeyframeEveryFrame.store(on);
@@ -2411,6 +2420,22 @@ bool DaemonMediaController::handleStart(const QJsonObject& control)
             return false;
         }
     }
+    // NSDC v2: displayCodecVersion, from a peer the Core told
+    // displayCodecVersion 2 (its hello declared displayCodec 2 at minor 11,
+    // media on, the Core's RemoteDisplayCodecV2 setting on); only then are
+    // this connection's display frames version 2.
+    const bool declaresDisplayCodec =
+        control.contains(QStringLiteral("displayCodecVersion"));
+    if (declaresDisplayCodec) {
+        legacyShape.remove(QStringLiteral("displayCodecVersion"));
+        quint32 version = 0;
+        if (!m_server || !m_server->displayCodecV2Available(m_epoch)
+            || !exactUnsigned(control.value(QStringLiteral("displayCodecVersion")),
+                              version, /*nonzero=*/true)
+            || version != 2) {
+            return false;
+        }
+    }
     if (!exactKeys(legacyShape, {"op", "connectionId"})
         || !canonicalConnectionId(control.value(QStringLiteral("connectionId")))) {
         return false;
@@ -2499,6 +2524,7 @@ bool DaemonMediaController::handleStart(const QJsonObject& control)
     // Task 29: what a replacement of this peer keeps.
     m_startOfferedLossless = offerLossless;
     m_startMicLine = declaresRemoteTx;
+    m_displayCodecVersion.store(declaresDisplayCodec ? 2U : 1U);
     // Parity Task 31: 3 and above may add `duplex` to a subscribe.
     m_txDisplayDeclared = declaredTxDisplay;
     if (declaresTxDisplay) {

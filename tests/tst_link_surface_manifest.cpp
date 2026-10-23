@@ -27,6 +27,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22  J.J. Boyd / KG4VCF  NSDC v2 negotiation: the Core takes
+//                                    displayCodecVersion in a start before
+//                                    the window sends it; the start
+//                                    producer check names that one field.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-11  J.J. Boyd / KG4VCF  Guard native waveform context reply
 //                                    fields with planted drift controls.
 //                                    AI-assisted via OpenAI Codex.
@@ -1334,7 +1339,14 @@ void TstLinkSurfaceManifest::mediaRequestFieldsAreOperationScoped()
     QVERIFY2(error.isEmpty(), qPrintable(error));
     const QSet<QString> inserted = mediaMemberKeys(producer, QStringLiteral("startControl"), QStringLiteral("insert"), &error);
     QVERIFY2(error.isEmpty(), qPrintable(error));
-    QCOMPARE(inserted, start.conditional);
+    // Display codec v2: the Core accepts displayCodecVersion (Task 3) before
+    // the window's start sends it, which comes with the window's v2
+    // decoder; until then it is the one Core field the producer omits.
+    QSet<QString> coreAhead{QStringLiteral("displayCodecVersion")};
+    if (inserted.contains(QStringLiteral("displayCodecVersion"))) {
+        coreAhead.clear();
+    }
+    QCOMPARE(inserted, start.conditional - coreAhead);
     const qsizetype object = mediaAnchor(producer, mediaTokens(QStringLiteral("QJsonObject startControl {")), &error);
     QVERIFY2(error.isEmpty(), qPrintable(error));
     const QSet<QString> producerBase = mediaPayloadKeys(mediaBraces(producer, object + 2, &error), &error);

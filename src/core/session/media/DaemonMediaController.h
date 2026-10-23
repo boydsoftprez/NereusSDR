@@ -8,6 +8,10 @@
 // coordination; it contains neither GUI nor radio control policy.
 //
 // Modification history (NereusSDR):
+//   2026-10-22: NSDC v2 negotiation: a start may declare
+//               displayCodecVersion 2; displayCodecVersion() is the
+//               version the connection agreed. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-22: Bench setting DisplayKeyframeEveryFrame (JJ approved
 //               2026-10-22, option C of the waterfall loss study): every
 //               display frame goes as a keyframe; the display diagnostics
@@ -502,6 +506,11 @@ public:
     /// still counted and honoured; it never sends a second frame.
     void setDisplayKeyframeEveryFrame(bool on);
     bool displayKeyframeEveryFrame() const noexcept { return m_displayKeyframeEveryFrame.load(); }
+    /// Display codec v2 (NSDC v2): the display codec version this
+    /// connection agreed in its media start: 2 when the start carried
+    /// displayCodecVersion 2, else 1. A replace keeps it; only the next
+    /// start sets it again.
+    quint32 displayCodecVersion() const noexcept;
     /// The profile the Core's audio runs for the current peer (R-R3-23).
     RemoteAudioProfile audioProfile() const noexcept { return m_audioActiveProfile; }
     /// R-R3-43: receiver streams sending now (enabled receiver contexts).
@@ -1176,6 +1185,10 @@ private:
     bool m_currentRouted = false;
     bool m_replacementRouted = false;
     bool m_startMicLine{false};
+    // NSDC v2: the display codec version the last start agreed (2 or 1);
+    // written on the main thread, read by whichever thread sends the
+    // displays. A replace carries no start, so it keeps this.
+    std::atomic<quint32> m_displayCodecVersion{1};
     std::unique_ptr<DaemonAudioSender> m_audioSender;
     int m_audioTargetBitrate{OpusAudioCodecConfig{}.bitrate};
     // R-R3-23 lossless audio, per media peer. The GUI declares it understands
