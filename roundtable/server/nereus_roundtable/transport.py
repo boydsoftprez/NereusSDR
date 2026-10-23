@@ -23,7 +23,7 @@ import http
 import ipaddress
 import logging
 import socket
-from typing import Any, Iterable, List, Optional, Sequence
+from typing import Any, Iterable, List, Optional, Sequence, Set
 
 from websockets.exceptions import ConnectionClosed
 
@@ -190,15 +190,16 @@ def serve_kwargs(config: Any) -> dict:
 
 class WsTransport:
     """What the service needs from a connection: send, close and the
-    incoming frames. It notes when the last frame arrived, for the
-    heartbeat."""
+    incoming frames. It notes when the last frame arrived, on the service's
+    clock, for the heartbeat."""
 
-    def __init__(self, ws: Any) -> None:
+    def __init__(self, ws: Any, clock: Any) -> None:
         self.ws = ws
-        self.last_frame = asyncio.get_running_loop().time()
+        self.clock = clock
+        self.last_frame = clock.now_ms()
 
     def touch(self) -> None:
-        self.last_frame = asyncio.get_running_loop().time()
+        self.last_frame = self.clock.now_ms()
 
     async def send(self, text: str) -> None:
         await self.ws.send(text)
@@ -216,33 +217,70 @@ class WsTransport:
         return frame
 
 
-async def heartbeat(transport: WsTransport, interval_ms: int, silence_ms: int) -> None:
+class Heartbeat:
     """Wire spec 2.3: a ping every interval; close with 1000 and no message
-    when no message or pong has arrived for silence_ms."""
-    loop = asyncio.get_running_loop()
-    interval_s = interval_ms / 1000.0
-    silence_s = silence_ms / 1000.0
-    next_ping = loop.time() + interval_s
+    when no message or pong has arrived for silence_ms. It runs on the
+    service's clock, so the tests move it with a ManualClock."""
 
-    def ponged(future: "asyncio.Future[Any]") -> None:
-        if not future.cancelled() and future.exception() is None:
-            transport.touch()
+    def __init__(self, transport: WsTransport, clock: Any, interval_ms: int, silence_ms: int) -> None:
+        self.transport = transport
+        self.clock = clock
+        self.interval_ms = interval_ms
+        self.silence_ms = silence_ms
+        self.next_ping = clock.now_ms() + interval_ms
+        self.timer: Any = None
+        self.tasks: Set["asyncio.Future[Any]"] = set()
+        self.stopped = False
 
-    while True:
-        wake = min(next_ping, transport.last_frame + silence_s)
-        await asyncio.sleep(max(0.0, wake - loop.time()))
-        now = loop.time()
-        if now >= transport.last_frame + silence_s:
-            log.info("closed a connection that went silent")
-            await transport.close(1000)
+    def start(self) -> None:
+        self._schedule()
+
+    def stop(self) -> None:
+        self.stopped = True
+        if self.timer is not None:
+            self.timer.cancel()
+            self.timer = None
+        for task in list(self.tasks):
+            task.cancel()
+
+    def _schedule(self) -> None:
+        wake = min(self.next_ping, self.transport.last_frame + self.silence_ms)
+        self.timer = self.clock.call_later(max(0, wake - self.clock.now_ms()), self._tick)
+
+    def _spawn(self, coro: Any) -> None:
+        task = asyncio.ensure_future(coro)
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
+
+    def _tick(self) -> None:
+        self.timer = None
+        if self.stopped:
             return
-        if now >= next_ping:
-            next_ping = now + interval_s
-            try:
-                waiter = await transport.ws.ping()
-            except ConnectionClosed:
-                return
-            asyncio.ensure_future(waiter).add_done_callback(ponged)
+        now = self.clock.now_ms()
+        if now >= self.transport.last_frame + self.silence_ms:
+            log.info("closed a connection that went silent")
+            self.stopped = True
+            self._spawn(self._close())
+            return
+        if now >= self.next_ping:
+            self.next_ping = now + self.interval_ms
+            self._spawn(self._ping())
+        self._schedule()
+
+    async def _close(self) -> None:
+        try:
+            await self.transport.close(1000)
+        except ConnectionClosed:
+            return
+
+    async def _ping(self) -> None:
+        try:
+            waiter = await self.transport.ws.ping()
+            await waiter
+        except ConnectionClosed:
+            return
+        if not self.stopped:
+            self.transport.touch()
 
 
 # ----------------------------------------------------------------- listeners
@@ -305,10 +343,11 @@ async def start(service: Any, http_app: Any, config: Any) -> Listeners:
     async def handler(ws: Any) -> None:
         path = _request_path(ws)
         address = client_address(ws, config.trusted_proxies)
-        transport = WsTransport(ws)
+        transport = WsTransport(ws, service.clock)
         beat = None
         if config.ping_interval_ms:
-            beat = asyncio.ensure_future(heartbeat(transport, config.ping_interval_ms, config.silence_close_ms))
+            beat = Heartbeat(transport, service.clock, config.ping_interval_ms, config.silence_close_ms)
+            beat.start()
         try:
             if path == STATION_PATH:
                 await service.handle_station(transport, address)
@@ -316,7 +355,7 @@ async def start(service: Any, http_app: Any, config: Any) -> Listeners:
                 await service.handle_live(transport, address)
         finally:
             if beat is not None:
-                beat.cancel()
+                beat.stop()
 
     http_handler = http_app.handle if http_app is not None else _not_found
     try:

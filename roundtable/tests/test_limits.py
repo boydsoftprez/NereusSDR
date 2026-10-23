@@ -208,43 +208,105 @@ def test_outbound_queue_bytes_cap():
     asyncio.run(go())
 
 
-class _SilentWs:
-    """A peer that never answers a ping."""
+class _PingWs:
+    """A peer whose pongs the test answers, or does not."""
 
     def __init__(self):
-        self.pings = 0
+        self.pings = []
         self.closed = None
 
     async def ping(self):
-        self.pings += 1
-        return asyncio.get_running_loop().create_future()
+        waiter = asyncio.get_running_loop().create_future()
+        self.pings.append(waiter)
+        return waiter
 
     async def close(self, code, reason):
         self.closed = code
 
 
+async def _settle():
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+
 def test_heartbeat_pings_and_closes_a_silent_connection_with_1000():
     async def go():
-        ws = _SilentWs()
-        conn = transport.WsTransport(ws)
-        await asyncio.wait_for(transport.heartbeat(conn, 20, 70), 2)
+        clock = ManualClock()
+        ws = _PingWs()
+        conn = transport.WsTransport(ws, clock)
+        beat = transport.Heartbeat(conn, clock, 20000, 45000)
+        beat.start()
+        clock.advance(19999)
+        await _settle()
+        assert len(ws.pings) == 0
+        clock.advance(1)
+        await _settle()
+        assert len(ws.pings) == 1
+        clock.advance(20000)
+        await _settle()
+        assert len(ws.pings) == 2
+        clock.advance(4999)
+        await _settle()
+        assert ws.closed is None
+        clock.advance(1)
+        await _settle()
         assert ws.closed == 1000
-        assert ws.pings >= 3
+        clock.advance(60000)
+        await _settle()
+        assert len(ws.pings) == 2
+        beat.stop()
+
+    asyncio.run(go())
+
+
+def test_heartbeat_a_pong_or_a_message_resets_the_silence():
+    async def go():
+        clock = ManualClock()
+        ws = _PingWs()
+        conn = transport.WsTransport(ws, clock)
+        beat = transport.Heartbeat(conn, clock, 20000, 45000)
+        beat.start()
+        clock.advance(20000)
+        await _settle()
+        ws.pings[0].set_result(0.0)
+        await _settle()
+        assert conn.last_frame == 20000
+        clock.advance(25000)
+        await _settle()
+        assert ws.closed is None
+        clock.advance(10000)
+        conn.touch()
+        clock.advance(44999)
+        await _settle()
+        assert ws.closed is None
+        clock.advance(1)
+        await _settle()
+        assert ws.closed == 1000
+        beat.stop()
 
     asyncio.run(go())
 
 
 def test_heartbeat_keeps_a_connection_that_answers():
     async def go():
-        config_setup = {}
-        async with live_service(config_setup) as live:
-            live.service.config.ping_interval_ms = 20
-            live.service.config.silence_close_ms = 70
-            ws = await ws_connect(live.station_uri, "192.0.2.1")
-            await recv_json(ws)
-            # The client library answers pings; nothing closes it for
-            # silence (the hello timeout runs on the ManualClock).
+        async with live_service() as live:
+            live.service.config.ping_interval_ms = 20000
+            live.service.config.silence_close_ms = 45000
+            # Signed in, so the hello timeout does not end it first.
+            ws, _, _ = await sign_in(live)
+            conn = next(iter(live.service.connections))
+            live.clock.advance(20000)
+            # The client library answers the ping; its pong resets the silence.
+            for _ in range(500):
+                if conn.transport.last_frame == 20000:
+                    break
+                await asyncio.sleep(0.01)
+            assert conn.transport.last_frame == 20000
+            # Short of the next ping and of the silence close: still open.
+            live.clock.advance(19999)
+            await _settle()
             with pytest.raises(asyncio.TimeoutError):
-                await asyncio.wait_for(ws.recv(), 0.3)
+                await asyncio.wait_for(ws.recv(), 0.1)
+            assert not conn.closing
 
     asyncio.run(go())
