@@ -56,6 +56,10 @@
 //                 when it changed, rejoins the workgroup of the device the
 //                 speakers play on. NereusSDR-original. J.J. Boyd (KG4VCF),
 //                 with AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-23 - Note at the drain threshold: on the receive lane the
+//                 ordering alone does not keep it equal to the channel's
+//                 input block; RxChannel::processIq's guard does. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1001,6 +1005,10 @@ void RxDspWorker::processIqBatch(int receiverIndex,
     // so a threshold BELOW the channel's configured in_size reads past the
     // end of the accumulator. RadioModel keeps the two in step; see
     // RadioModel::applyStreamDspGeometry for the ordering that guarantees it.
+    // 2026-10-23: not on the receive lane, where a slice's new binding
+    // reaches this worker before its channel's re-rate. RxChannel::processIq
+    // silences a chunk that is not the channel's WDSP input block, which is
+    // what keeps it out of fexchange2.
     //
     // Upstream keys the size per input stream for the same reason:
     //   From Thetis cmaster.c:461 [v2.10.3.15]
