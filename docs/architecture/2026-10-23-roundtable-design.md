@@ -392,7 +392,7 @@ An address group is one IPv4 address or one IPv6 /64. The server learns the clie
 - Mirrored object `roundtable`: link state (connecting, live, reconnecting since, offline since, hidden), first-run answered, mention counts per room id, each slice's room id.
 - Record streams: `roundtableRooms` (the band list; capacity 500; record kind `room`) and `roundtableRoom:<room id>` (one room; capacity 400; record kinds `member`, `reading`, `turn`, `name`, `message`), subscribed with the existing `records.subscribe` verb. Subscribing to a room's stream only delivers what the Core already receives; `roundtable.read` is what makes the Core ask the server for another room.
 - Verbs: `roundtable.post`, `roundtable.delete`, `roundtable.name`, `roundtable.report`, `roundtable.read`, `roundtable.unread`, `roundtable.setHidden`, `roundtable.answerFirstRun`, `roundtable.mute`, `roundtable.unmute`, `roundtable.markMentionRead`, `roundtable.webSignIn` (returns the one-time link), `roundtable.deleteArchive`.
-- Settings through the existing `settings.*` path: `Roundtable/AutoStart`, `Roundtable/AwayChoice`, `Roundtable/HighlightMentions`, `Roundtable/Callsign`, `Roundtable/GridSquare`.
+- Settings through the station link's settings write path (`StationServer::applySettingsWrite`, then `SettingsProxyServer::applyInboundWrite`), with a `Roundtable` Station prefix added to `SettingsScope.cpp` (the per-computer preferences stay OperatorLocal exceptions there). The Core keys: `Roundtable/AutoStart`, `Roundtable/AwayChoice`, `Roundtable/HighlightMentions`, `Roundtable/Callsign`, `Roundtable/GridSquare`.
 - The link spec, `tests/data/link/v1/` and `surface.json` change together, per link spec section 17. Operator wording passes `OperatorWording::isPlain`.
 
 ---
