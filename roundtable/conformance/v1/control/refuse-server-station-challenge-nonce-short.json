@@ -1,0 +1,9 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "challenge",
+    "nonce": "g38k--9t8PAtfvp6OQKA9hqPPOeH842uKL82ez2Wqz"
+  },
+  "decodes": false
+}

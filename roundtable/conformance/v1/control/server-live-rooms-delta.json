@@ -1,0 +1,27 @@
+{
+  "from": "server",
+  "to": "live",
+  "wire": {
+    "type": "roomsDelta",
+    "gen": 5,
+    "add": [],
+    "change": [
+      {
+        "id": "usb-14212000",
+        "band": "20m",
+        "family": "usb",
+        "hz": 14212000,
+        "state": "talking",
+        "talkers": [
+          "K4ABC"
+        ],
+        "members": 2,
+        "messages": 2,
+        "last": 1800000004000,
+        "folded": false
+      }
+    ],
+    "remove": []
+  },
+  "decodes": true
+}

@@ -1,0 +1,8 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "read",
+    "room": null
+  },
+  "decodes": false
+}

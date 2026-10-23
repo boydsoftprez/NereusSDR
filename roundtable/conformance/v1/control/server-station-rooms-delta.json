@@ -1,0 +1,43 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "roomsDelta",
+    "gen": 2,
+    "add": [
+      {
+        "id": "digu-14074000",
+        "band": "20m",
+        "family": "digu",
+        "hz": 14074000,
+        "state": "talking",
+        "talkers": [
+          "K4ABC",
+          "W4XYZ"
+        ],
+        "members": 6,
+        "messages": 0,
+        "last": 1800000000000,
+        "folded": false
+      }
+    ],
+    "change": [
+      {
+        "id": "usb-14212000",
+        "band": "20m",
+        "family": "usb",
+        "hz": 14212000,
+        "state": "quiet",
+        "talkers": [],
+        "members": 2,
+        "messages": 2,
+        "last": 1800000004000,
+        "folded": false
+      }
+    ],
+    "remove": [
+      "lsb-7188000"
+    ]
+  },
+  "decodes": true
+}

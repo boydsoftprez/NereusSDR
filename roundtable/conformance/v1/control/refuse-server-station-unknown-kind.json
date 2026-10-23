@@ -1,0 +1,9 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "weather",
+    "text": "sunny"
+  },
+  "decodes": false
+}

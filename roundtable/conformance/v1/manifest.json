@@ -1,0 +1,1022 @@
+{
+  "roundtableVersions": [
+    1
+  ],
+  "fixtures": [
+    {
+      "id": "base64url",
+      "file": "crypto/base64url.json",
+      "kind": "crypto"
+    },
+    {
+      "id": "hello-signature",
+      "file": "crypto/hello-signature.json",
+      "kind": "crypto"
+    },
+    {
+      "id": "key-id",
+      "file": "crypto/key-id.json",
+      "kind": "crypto"
+    },
+    {
+      "id": "p256-spki",
+      "file": "crypto/p256-spki.json",
+      "kind": "crypto"
+    },
+    {
+      "id": "roundtable-id",
+      "file": "crypto/roundtable-id.json",
+      "kind": "crypto"
+    },
+    {
+      "id": "station-hello-spki",
+      "file": "control/station-hello-spki.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-hello-key",
+      "file": "control/station-hello-key.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-hello-extra-keys",
+      "file": "control/station-hello-extra-keys.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-presence",
+      "file": "control/station-presence.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-presence-every-mode",
+      "file": "control/station-presence-every-mode.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-presence-no-slices",
+      "file": "control/station-presence-no-slices.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-presence-key-station",
+      "file": "control/station-presence-key-station.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-presence-lower-case",
+      "file": "control/station-presence-lower-case.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-reading",
+      "file": "control/station-reading.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-reading-whole-dbm",
+      "file": "control/station-reading-whole-dbm.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-reading-range-ends",
+      "file": "control/station-reading-range-ends.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-post",
+      "file": "control/station-post.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-post-unicode",
+      "file": "control/station-post-unicode.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-delete",
+      "file": "control/station-delete.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-name",
+      "file": "control/station-name.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-name-suffix",
+      "file": "control/station-name-suffix.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-report-message",
+      "file": "control/station-report-message.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-report-message-no-reason",
+      "file": "control/station-report-message-no-reason.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-report-turn",
+      "file": "control/station-report-turn.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-report-station",
+      "file": "control/station-report-station.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-read",
+      "file": "control/station-read.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-unread",
+      "file": "control/station-unread.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-resync-rooms",
+      "file": "control/station-resync-rooms.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-resync-room",
+      "file": "control/station-resync-room.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-mentions-seen",
+      "file": "control/station-mentions-seen.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-weblink",
+      "file": "control/station-weblink.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-delete-archive",
+      "file": "control/station-delete-archive.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-delete-archive-other-words",
+      "file": "control/station-delete-archive-other-words.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-hidden",
+      "file": "control/station-hidden.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-hello-spki-and-key",
+      "file": "control/refuse-station-hello-spki-and-key.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-hello-neither",
+      "file": "control/refuse-station-hello-neither.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-hello-spki-without-sig",
+      "file": "control/refuse-station-hello-spki-without-sig.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-hello-version-string",
+      "file": "control/refuse-station-hello-version-string.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-hello-version-zero",
+      "file": "control/refuse-station-hello-version-zero.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-hello-spki-padded",
+      "file": "control/refuse-station-hello-spki-padded.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-hello-sig-short",
+      "file": "control/refuse-station-hello-sig-short.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-hello-key-short",
+      "file": "control/refuse-station-hello-key-short.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-hello-software-empty",
+      "file": "control/refuse-station-hello-software-empty.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-presence-five-slices",
+      "file": "control/refuse-station-presence-five-slices.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-presence-mode-unknown",
+      "file": "control/refuse-station-presence-mode-unknown.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-presence-mode-lower-case",
+      "file": "control/refuse-station-presence-mode-lower-case.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-presence-hz-fraction",
+      "file": "control/refuse-station-presence-hz-fraction.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-presence-hz-zero",
+      "file": "control/refuse-station-presence-hz-zero.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-presence-slice-id-repeated",
+      "file": "control/refuse-station-presence-slice-id-repeated.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-presence-keyed-missing",
+      "file": "control/refuse-station-presence-keyed-missing.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-presence-grid-short",
+      "file": "control/refuse-station-presence-grid-short.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-presence-grid-field-out-of-range",
+      "file": "control/refuse-station-presence-grid-field-out-of-range.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-presence-callsign-space",
+      "file": "control/refuse-station-presence-callsign-space.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-presence-callsign-no-digit",
+      "file": "control/refuse-station-presence-callsign-no-digit.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-presence-at-radio-missing",
+      "file": "control/refuse-station-presence-at-radio-missing.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-presence-at-radio-string",
+      "file": "control/refuse-station-presence-at-radio-string.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-reading-dbm-string",
+      "file": "control/refuse-station-reading-dbm-string.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-reading-dbm-below-range",
+      "file": "control/refuse-station-reading-dbm-below-range.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-reading-dbm-above-range",
+      "file": "control/refuse-station-reading-dbm-above-range.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-reading-t-negative",
+      "file": "control/refuse-station-reading-t-negative.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-reading-t-fraction",
+      "file": "control/refuse-station-reading-t-fraction.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-reading-present-missing",
+      "file": "control/refuse-station-reading-present-missing.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-reading-slice-256",
+      "file": "control/refuse-station-reading-slice-256.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-post-text-empty",
+      "file": "control/refuse-station-post-text-empty.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-post-text-oversize",
+      "file": "control/refuse-station-post-text-oversize.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-post-room-upper-case",
+      "file": "control/refuse-station-post-room-upper-case.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-post-room-leading-zero",
+      "file": "control/refuse-station-post-room-leading-zero.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-post-room-family-unknown",
+      "file": "control/refuse-station-post-room-family-unknown.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-post-client-id-missing",
+      "file": "control/refuse-station-post-client-id-missing.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-post-client-id-oversize",
+      "file": "control/refuse-station-post-client-id-oversize.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-delete-msg-zero",
+      "file": "control/refuse-station-delete-msg-zero.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-delete-msg-string",
+      "file": "control/refuse-station-delete-msg-string.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-name-turn-string",
+      "file": "control/refuse-station-name-turn-string.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-name-callsign-bad",
+      "file": "control/refuse-station-name-callsign-bad.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-name-missing",
+      "file": "control/refuse-station-name-missing.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-report-target-unknown",
+      "file": "control/refuse-station-report-target-unknown.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-report-message-without-msg",
+      "file": "control/refuse-station-report-message-without-msg.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-report-turn-reason-spam",
+      "file": "control/refuse-station-report-turn-reason-spam.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-report-station-without-ref",
+      "file": "control/refuse-station-report-station-without-ref.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-report-reason-free-text",
+      "file": "control/refuse-station-report-reason-free-text.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-report-reason-missing",
+      "file": "control/refuse-station-report-reason-missing.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-read-room-number",
+      "file": "control/refuse-station-read-room-number.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-read-room-null",
+      "file": "control/refuse-station-read-room-null.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-unread-missing-room",
+      "file": "control/refuse-station-unread-missing-room.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-resync-missing-room",
+      "file": "control/refuse-station-resync-missing-room.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-mentions-seen-t-string",
+      "file": "control/refuse-station-mentions-seen-t-string.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-weblink-duplicate-type",
+      "file": "control/refuse-station-weblink-duplicate-type.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-delete-archive-confirm-missing",
+      "file": "control/refuse-station-delete-archive-confirm-missing.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-delete-archive-confirm-number",
+      "file": "control/refuse-station-delete-archive-confirm-number.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-hidden-duplicate-key",
+      "file": "control/refuse-station-hidden-duplicate-key.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-presence-duplicate-key",
+      "file": "control/refuse-station-presence-duplicate-key.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-reading-nan",
+      "file": "control/refuse-station-reading-nan.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-not-object",
+      "file": "control/refuse-station-not-object.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-type-not-string",
+      "file": "control/refuse-station-type-not-string.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-type-missing",
+      "file": "control/refuse-station-type-missing.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-unknown-kind",
+      "file": "control/refuse-station-unknown-kind.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-live-kind",
+      "file": "control/refuse-station-live-kind.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-server-kind",
+      "file": "control/refuse-station-server-kind.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-challenge",
+      "file": "control/server-station-challenge.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-welcome-core",
+      "file": "control/server-station-welcome-core.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-welcome-key",
+      "file": "control/server-station-welcome-key.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-welcome-extra-limits",
+      "file": "control/server-station-welcome-extra-limits.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-rooms",
+      "file": "control/server-station-rooms.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-rooms-empty",
+      "file": "control/server-station-rooms-empty.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-rooms-other-band",
+      "file": "control/server-station-rooms-other-band.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-rooms-delta",
+      "file": "control/server-station-rooms-delta.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-room",
+      "file": "control/server-station-room.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-room-extra-keys",
+      "file": "control/server-station-room-extra-keys.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-delta",
+      "file": "control/server-station-delta.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-delta-closed",
+      "file": "control/server-station-delta-closed.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-posted-ok",
+      "file": "control/server-station-posted-ok.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-posted-refused",
+      "file": "control/server-station-posted-refused.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-posted-unknown-code",
+      "file": "control/server-station-posted-unknown-code.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-mention",
+      "file": "control/server-station-mention.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-notice",
+      "file": "control/server-station-notice.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-notice-archive-deleted",
+      "file": "control/server-station-notice-archive-deleted.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-notice-unknown-code",
+      "file": "control/server-station-notice-unknown-code.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-weblink-ok",
+      "file": "control/server-station-weblink-ok.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-error",
+      "file": "control/server-station-error.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-error-rate",
+      "file": "control/server-station-error-rate.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-error-unknown-code",
+      "file": "control/server-station-error-unknown-code.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-challenge-nonce-short",
+      "file": "control/refuse-server-station-challenge-nonce-short.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-welcome-station-upper-case",
+      "file": "control/refuse-server-station-welcome-station-upper-case.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-welcome-kind-unknown",
+      "file": "control/refuse-server-station-welcome-kind-unknown.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-welcome-limits-missing",
+      "file": "control/refuse-server-station-welcome-limits-missing.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-rooms-gen-zero",
+      "file": "control/refuse-server-station-rooms-gen-zero.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-rooms-state-unknown",
+      "file": "control/refuse-server-station-rooms-state-unknown.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-rooms-delta-remove-missing",
+      "file": "control/refuse-server-station-rooms-delta-remove-missing.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-room-family-unknown",
+      "file": "control/refuse-server-station-room-family-unknown.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-room-member-ref-short",
+      "file": "control/refuse-server-station-room-member-ref-short.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-room-turn-kind-unknown",
+      "file": "control/refuse-server-station-room-turn-kind-unknown.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-room-message-state-unknown",
+      "file": "control/refuse-server-station-room-message-state-unknown.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-delta-gen-string",
+      "file": "control/refuse-server-station-delta-gen-string.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-delta-closed-missing",
+      "file": "control/refuse-server-station-delta-closed-missing.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-posted-client-id-missing",
+      "file": "control/refuse-server-station-posted-client-id-missing.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-posted-ok-string",
+      "file": "control/refuse-server-station-posted-ok-string.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-mention-message-missing",
+      "file": "control/refuse-server-station-mention-message-missing.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-notice-text-number",
+      "file": "control/refuse-server-station-notice-text-number.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-weblink-ok-http-url",
+      "file": "control/refuse-server-station-weblink-ok-http-url.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-weblink-ok-expires-missing",
+      "file": "control/refuse-server-station-weblink-ok-expires-missing.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-error-retry-negative",
+      "file": "control/refuse-server-station-error-retry-negative.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-error-code-upper-case",
+      "file": "control/refuse-server-station-error-code-upper-case.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-unknown-kind",
+      "file": "control/refuse-server-station-unknown-kind.json",
+      "kind": "control"
+    },
+    {
+      "id": "live-watch-band",
+      "file": "control/live-watch-band.json",
+      "kind": "control"
+    },
+    {
+      "id": "live-watch-band-all",
+      "file": "control/live-watch-band-all.json",
+      "kind": "control"
+    },
+    {
+      "id": "live-watch-band-other",
+      "file": "control/live-watch-band-other.json",
+      "kind": "control"
+    },
+    {
+      "id": "live-watch",
+      "file": "control/live-watch.json",
+      "kind": "control"
+    },
+    {
+      "id": "live-unwatch",
+      "file": "control/live-unwatch.json",
+      "kind": "control"
+    },
+    {
+      "id": "live-resync-rooms",
+      "file": "control/live-resync-rooms.json",
+      "kind": "control"
+    },
+    {
+      "id": "live-resync-room",
+      "file": "control/live-resync-room.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-live-watch-band-unknown",
+      "file": "control/refuse-live-watch-band-unknown.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-live-watch-band-missing",
+      "file": "control/refuse-live-watch-band-missing.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-live-watch-room-missing",
+      "file": "control/refuse-live-watch-room-missing.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-live-unwatch-room-bad",
+      "file": "control/refuse-live-unwatch-room-bad.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-live-resync-room-missing",
+      "file": "control/refuse-live-resync-room-missing.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-live-station-kind",
+      "file": "control/refuse-live-station-kind.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-live-hello",
+      "file": "control/refuse-live-hello.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-live-unknown-kind",
+      "file": "control/refuse-live-unknown-kind.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-live-rooms",
+      "file": "control/server-live-rooms.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-live-rooms-delta",
+      "file": "control/server-live-rooms-delta.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-live-room",
+      "file": "control/server-live-room.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-live-delta",
+      "file": "control/server-live-delta.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-live-error",
+      "file": "control/server-live-error.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-live-room-members-missing",
+      "file": "control/refuse-server-live-room-members-missing.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-live-delta-left-not-array",
+      "file": "control/refuse-server-live-delta-left-not-array.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-live-rooms-delta-gen-fraction",
+      "file": "control/refuse-server-live-rooms-delta-gen-fraction.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-live-welcome",
+      "file": "control/refuse-server-live-welcome.json",
+      "kind": "control"
+    },
+    {
+      "id": "signin-spki",
+      "file": "sessions/signin-spki.json",
+      "kind": "session"
+    },
+    {
+      "id": "signin-key",
+      "file": "sessions/signin-key.json",
+      "kind": "session"
+    },
+    {
+      "id": "signin-key-revoked",
+      "file": "sessions/signin-key-revoked.json",
+      "kind": "session"
+    },
+    {
+      "id": "signin-key-unknown",
+      "file": "sessions/signin-key-unknown.json",
+      "kind": "session"
+    },
+    {
+      "id": "signin-rendezvous-prefix",
+      "file": "sessions/signin-rendezvous-prefix.json",
+      "kind": "session"
+    },
+    {
+      "id": "signin-other-host",
+      "file": "sessions/signin-other-host.json",
+      "kind": "session"
+    },
+    {
+      "id": "signin-other-nonce",
+      "file": "sessions/signin-other-nonce.json",
+      "kind": "session"
+    },
+    {
+      "id": "signin-flipped-bit",
+      "file": "sessions/signin-flipped-bit.json",
+      "kind": "session"
+    },
+    {
+      "id": "signin-version",
+      "file": "sessions/signin-version.json",
+      "kind": "session"
+    },
+    {
+      "id": "signin-timeout",
+      "file": "sessions/signin-timeout.json",
+      "kind": "session"
+    },
+    {
+      "id": "signin-presence-first",
+      "file": "sessions/signin-presence-first.json",
+      "kind": "session"
+    },
+    {
+      "id": "signin-replaced",
+      "file": "sessions/signin-replaced.json",
+      "kind": "session"
+    },
+    {
+      "id": "unknown-kind-closes",
+      "file": "sessions/unknown-kind-closes.json",
+      "kind": "session"
+    },
+    {
+      "id": "reading-while-joining-dropped",
+      "file": "sessions/reading-while-joining-dropped.json",
+      "kind": "session"
+    },
+    {
+      "id": "reading-unknown-slice",
+      "file": "sessions/reading-unknown-slice.json",
+      "kind": "session"
+    },
+    {
+      "id": "reading-keyed-slice",
+      "file": "sessions/reading-keyed-slice.json",
+      "kind": "session"
+    },
+    {
+      "id": "post-not-member",
+      "file": "sessions/post-not-member.json",
+      "kind": "session"
+    },
+    {
+      "id": "post-away",
+      "file": "sessions/post-away.json",
+      "kind": "session"
+    },
+    {
+      "id": "post-accepted",
+      "file": "sessions/post-accepted.json",
+      "kind": "session"
+    },
+    {
+      "id": "hidden-ends-presence",
+      "file": "sessions/hidden-ends-presence.json",
+      "kind": "session"
+    },
+    {
+      "id": "resync",
+      "file": "sessions/resync.json",
+      "kind": "session"
+    },
+    {
+      "id": "resync-after-gap",
+      "file": "sessions/resync-after-gap.json",
+      "kind": "session"
+    },
+    {
+      "id": "read-room",
+      "file": "sessions/read-room.json",
+      "kind": "session"
+    },
+    {
+      "id": "weblink",
+      "file": "sessions/weblink.json",
+      "kind": "session"
+    },
+    {
+      "id": "delete-archive",
+      "file": "sessions/delete-archive.json",
+      "kind": "session"
+    },
+    {
+      "id": "live-watch-not-found",
+      "file": "sessions/live-watch-not-found.json",
+      "kind": "session"
+    },
+    {
+      "id": "talking",
+      "file": "turns/talking.json",
+      "kind": "turns"
+    },
+    {
+      "id": "unknown-then-talking",
+      "file": "turns/unknown-then-talking.json",
+      "kind": "turns"
+    },
+    {
+      "id": "quiet-after-3s",
+      "file": "turns/quiet-after-3s.json",
+      "kind": "turns"
+    },
+    {
+      "id": "same-talker-continues",
+      "file": "turns/same-talker-continues.json",
+      "kind": "turns"
+    },
+    {
+      "id": "waiting-reading-dropped",
+      "file": "turns/waiting-reading-dropped.json",
+      "kind": "turns"
+    },
+    {
+      "id": "doubled",
+      "file": "turns/doubled.json",
+      "kind": "turns"
+    },
+    {
+      "id": "long-key",
+      "file": "turns/long-key.json",
+      "kind": "turns"
+    },
+    {
+      "id": "digital",
+      "file": "turns/digital.json",
+      "kind": "turns"
+    },
+    {
+      "id": "join-dwell",
+      "file": "turns/join-dwell.json",
+      "kind": "turns"
+    },
+    {
+      "id": "two-slices-one-room",
+      "file": "turns/two-slices-one-room.json",
+      "kind": "turns"
+    }
+  ]
+}

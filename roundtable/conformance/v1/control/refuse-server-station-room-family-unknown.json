@@ -1,0 +1,151 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "room",
+    "gen": 1,
+    "id": "usb-14212000",
+    "opening": 17,
+    "band": "20m",
+    "family": "dsb",
+    "hz": 14212000,
+    "members": [
+      {
+        "ref": "k3m7q2xa",
+        "callsign": "K4ABC",
+        "nth": 1,
+        "grid": "EM73",
+        "km": null,
+        "offsetHz": 0,
+        "joining": false,
+        "away": false,
+        "keyed": true,
+        "software": "NereusSDR",
+        "softwareVersion": "26.10.3",
+        "reading": null,
+        "you": false
+      },
+      {
+        "ref": "p5vd4n2b",
+        "callsign": "KG4VCF",
+        "nth": 1,
+        "grid": "FM18lw",
+        "km": 935,
+        "offsetHz": 40,
+        "joining": false,
+        "away": false,
+        "keyed": false,
+        "software": "NereusSDR",
+        "softwareVersion": "26.10.3",
+        "reading": {
+          "dbm": -91.5,
+          "t": 1800000004000,
+          "present": true,
+          "turn": 4410
+        },
+        "you": true
+      },
+      {
+        "ref": "w2c6tz7e",
+        "callsign": "W4XYZ/P",
+        "nth": 1,
+        "grid": null,
+        "km": null,
+        "offsetHz": -120,
+        "joining": true,
+        "away": false,
+        "keyed": false,
+        "software": "Example Logger",
+        "softwareVersion": "3.1",
+        "reading": null,
+        "you": false
+      }
+    ],
+    "now": [
+      {
+        "id": 4410,
+        "kind": "talking",
+        "talkers": [
+          {
+            "ref": "k3m7q2xa",
+            "callsign": "K4ABC",
+            "nth": 1
+          }
+        ],
+        "start": 1800000001000,
+        "end": null,
+        "ending": false,
+        "names": [],
+        "heard": 1,
+        "mine": null
+      }
+    ],
+    "earlier": [
+      {
+        "id": 4408,
+        "kind": "doubled",
+        "talkers": [
+          {
+            "ref": "k3m7q2xa",
+            "callsign": "K4ABC",
+            "nth": 1
+          },
+          {
+            "ref": null,
+            "callsign": "N4QQQ",
+            "nth": 1
+          }
+        ],
+        "start": 1799999800000,
+        "end": 1799999802000,
+        "ending": false,
+        "names": [],
+        "heard": 1,
+        "mine": null
+      },
+      {
+        "id": 4407,
+        "kind": "unknown",
+        "talkers": [],
+        "start": 1799999700000,
+        "end": 1799999760000,
+        "ending": false,
+        "names": [
+          {
+            "name": "W4XYZ",
+            "count": 3
+          },
+          {
+            "name": "W4XYC",
+            "count": 1
+          }
+        ],
+        "heard": 2,
+        "mine": "W4XYZ"
+      }
+    ],
+    "messages": [
+      {
+        "id": 975,
+        "ref": null,
+        "callsign": "N4QQQ",
+        "nth": 1,
+        "t": 1799999750000,
+        "state": "removed",
+        "text": null,
+        "dbm": null
+      },
+      {
+        "id": 981,
+        "ref": "p5vd4n2b",
+        "callsign": "KG4VCF",
+        "nth": 1,
+        "t": 1800000003000,
+        "state": "shown",
+        "text": "Good copy here, **S7** in Boston. See https://example.org/qsl",
+        "dbm": -91.5
+      }
+    ]
+  },
+  "decodes": false
+}

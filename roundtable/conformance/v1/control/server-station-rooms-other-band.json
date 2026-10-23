@@ -1,0 +1,23 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "rooms",
+    "gen": 1,
+    "rooms": [
+      {
+        "id": "am-1250000",
+        "band": "other",
+        "family": "am",
+        "hz": 1250000,
+        "state": "unknown",
+        "talkers": [],
+        "members": 1,
+        "messages": 0,
+        "last": 1800000000000,
+        "folded": false
+      }
+    ]
+  },
+  "decodes": true
+}

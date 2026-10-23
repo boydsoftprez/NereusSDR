@@ -1,0 +1,52 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "rooms",
+    "gen": 1,
+    "rooms": [
+      {
+        "id": "lsb-7188000",
+        "band": "40m",
+        "family": "lsb",
+        "hz": 7188000,
+        "state": "quiet",
+        "talkers": [],
+        "members": 3,
+        "messages": 0,
+        "last": 1799992800000,
+        "folded": true
+      },
+      {
+        "id": "digu-14074000",
+        "band": "20m",
+        "family": "digu",
+        "hz": 14074000,
+        "state": "talking",
+        "talkers": [
+          "K4ABC",
+          "W4XYZ"
+        ],
+        "members": 6,
+        "messages": 0,
+        "last": 1800000000000,
+        "folded": false
+      },
+      {
+        "id": "usb-14212000",
+        "band": "20m",
+        "family": "usb",
+        "hz": 14212000,
+        "state": "talking",
+        "talkers": [
+          "K4ABC"
+        ],
+        "members": 2,
+        "messages": 2,
+        "last": 1800000004000,
+        "folded": false
+      }
+    ]
+  },
+  "decodes": true
+}

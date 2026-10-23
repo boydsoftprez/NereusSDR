@@ -1,0 +1,2183 @@
+{
+  "runs": [
+    "service"
+  ],
+  "setup": {
+    "stations": [
+      {
+        "name": "A",
+        "callsign": "K4ABC",
+        "grid": "EM73"
+      },
+      {
+        "name": "B",
+        "callsign": "KG4VCF",
+        "grid": "EM73tu"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 9999
+    },
+    {
+      "expectTurns": [
+        {
+          "kind": "talking",
+          "talker": "A",
+          "startMs": 10000,
+          "endMs": null,
+          "ending": false
+        }
+      ]
+    },
+    {
+      "advanceMs": 1
+    },
+    {
+      "expectTurns": [
+        {
+          "kind": "talking",
+          "talker": "A",
+          "startMs": 10000,
+          "endMs": null,
+          "ending": true
+        }
+      ]
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 3000
+    },
+    {
+      "expectTurns": [
+        {
+          "kind": "talking",
+          "talker": "A",
+          "startMs": 10000,
+          "endMs": 610000,
+          "ending": false
+        }
+      ]
+    },
+    {
+      "advanceMs": 5000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "expectTurns": [
+        {
+          "kind": "talking",
+          "talker": "A",
+          "startMs": 10000,
+          "endMs": 610000
+        }
+      ]
+    },
+    {
+      "advanceMs": 5000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 1000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "expectTurns": [
+        {
+          "kind": "talking",
+          "talker": "A",
+          "startMs": 10000,
+          "endMs": 610000
+        },
+        {
+          "kind": "talking",
+          "talker": "A",
+          "startMs": 624000,
+          "endMs": null
+        }
+      ]
+    }
+  ]
+}
