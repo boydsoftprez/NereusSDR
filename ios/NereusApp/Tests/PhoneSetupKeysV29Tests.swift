@@ -312,13 +312,15 @@ extension PhoneSetupKeysV29Tests {
         #expect(rig.recorded.settingsSent.isEmpty)
     }
 
-    @Test func version29TreeKeepsNativeEntryThenAllEightCanonicalPagesAndLegacyTreeKeepsItsNames() throws {
+    // Rewritten for spec section 7.1: version 29 lists the eight pages without "On this phone".
+    @Test func version29TreeListsTheEightCanonicalPagesAndLegacyTreeKeepsItsNames() throws {
         let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("resources/setup")
         let live = try SetupDescription.parse(json: String(contentsOf: folder.appendingPathComponent("display.json"), encoding: .utf8))
         let tree = SetupTree.categories(described: ["display": live], order: ["display"], unreadable: [:], stackOffered: true)
         let display = try #require(tree.first { $0.title == "Display" })
-        #expect(display.pages.map(\.title) == ["On this phone", "Spectrum", "Levels", "Waterfall", "View", "Peaks & Markers", "FFT & Engine", "Transmit Display", "Multimeter"])
+        #expect(display.pages.map(\.title) == ["Spectrum", "Levels", "Waterfall", "View", "Peaks & Markers", "FFT & Engine", "Transmit Display", "Multimeter"])
+        #expect(!display.pages.contains { $0.page == .displayOnThisPhone })
         let frozen = try SetupDescription.parse(json: String(contentsOf: folder.appendingPathComponent("legacy/display-v28.json"), encoding: .utf8))
         let legacy = SetupTree.categories(described: ["display": frozen], order: ["display"], unreadable: [:], stackOffered: true)
         #expect(legacy.first { $0.title == "Display" }?.pages.map(\.title) == ["On this phone", "Spectrum Defaults", "Spectrum Peaks", "Waterfall Defaults", "Grid & Scales", "Multimeter", "TX Display", "3D View"])

@@ -15,13 +15,51 @@ struct RootView: View {
     @State private var selection: AppTab
     @Environment(\.horizontalSizeClass) private var widthClass
     /// The Setup tab's stack, so the Display sheet can open Display's page.
-    @StateObject private var setupRouter = SetupRouter()
+    @StateObject private var setupRouter: SetupRouter
     @StateObject private var toolsRouter = ToolsRouter()
     @StateObject private var txSettingsRouter = TxSettingsRouter()
 
-    /// `selection` is the tab shown first, Panadapter unless a test asks otherwise.
-    init(selection: AppTab = .panadapter) {
+    /// `selection` is the tab shown first, Panadapter unless a test asks
+    /// otherwise; `setupRouter` stands in for the Setup tab's stack (the tests').
+    init(selection: AppTab = .panadapter, setupRouter: SetupRouter? = nil) {
         _selection = State(initialValue: selection)
+        _setupRouter = StateObject(wrappedValue: setupRouter ?? SetupRouter())
+    }
+
+    /// The page "More display options in Setup" opens: on a Core whose
+    /// Display description reaches version 29, its first page, Spectrum
+    /// (spec section 7.1); on an older Core, "On this phone".
+    static func openDisplaySetup(_ router: SetupRouter, app: AppModel) {
+        if (app.setupPages.categories["display"]?.version ?? 0) >= SetupTree.displayPagesVersion {
+            router.open(describedPage: DisplayPillTab.spectrum.setupPageId)
+        } else {
+            router.open(.displayOnThisPhone)
+        }
+    }
+
+    /// The Setup and Tools pages other screens open, installed as the root
+    /// appears so a link works before the Setup tab has ever been shown.
+    /// The routers hold nothing of the model's, so no cycle.
+    static func navigation(setupRouter: SetupRouter, toolsRouter: ToolsRouter,
+                           selectSetup: @escaping () -> Void, selectTools: @escaping () -> Void) -> PhoneNavigation {
+        var navigation = PhoneNavigation(
+            openSetupPage: { pageId in setupRouter.open(describedPage: pageId) },
+            openTxEqualizer: {
+                toolsRouter.openTxEqualizer()
+                selectTools()
+            })
+        navigation.openDisplayPage = { pageId, scope in
+            guard setupRouter.open(describedPage: pageId, scope: scope) else { return false }
+            selectSetup()
+            return true
+        }
+        return navigation
+    }
+
+    private func installNavigation() {
+        model.phoneNavigation = Self.navigation(setupRouter: setupRouter, toolsRouter: toolsRouter,
+                                                selectSetup: { selection = .setup },
+                                                selectTools: { selection = .tools })
     }
 
     var body: some View {
@@ -59,6 +97,8 @@ struct RootView: View {
                 }
             }
         }
+        // Setup's links from other screens work from the start (V15).
+        .onAppear { installNavigation() }
         // Every switch in the app draws in the desktop's workspace look (W7),
         // under the workspace accent (W6); each presentation repeats it.
         .workspacePresentationRoot()
@@ -102,6 +142,13 @@ struct RootView: View {
         // Keep the screen on counts only while the band itself is showing.
         .onChange(of: selection, initial: true) { _, tab in
             model.longSession.bandShown(tab == .panadapter)
+            // Back on Setup's Display pages, their rows edit the pans the
+            // strip shows again, whatever a pill chose meanwhile.
+            if tab == .setup, SetupRouter.inDisplay(setupRouter.path),
+               (model.setupPages.categories["display"]?.version ?? 0) >= SetupTree.displayPagesVersion,
+               model.main.displayEditScope != setupRouter.displayScope {
+                model.main.displayEditScope = setupRouter.displayScope
+            }
         }
         .onDisappear {
             model.longSession.bandShown(false)
@@ -114,7 +161,7 @@ struct RootView: View {
         case .panadapter:
             // More display options in Setup opens Setup's Display page (D79).
             MainScreen(app: model, main: model.main, flow: flow, openSetup: {
-                setupRouter.open(.displayOnThisPhone)
+                Self.openDisplaySetup(setupRouter, app: model)
                 selection = .setup
             },
                        openRadio: { selection = .radio },
@@ -124,18 +171,8 @@ struct RootView: View {
                        }, openTransmitSettings: { txSettingsRouter.openTransmit() })
         case .setup:
             SetupTab(app: model, flow: flow, router: setupRouter)
-                .onAppear {
-                    // Setup's buttons that open another page (V15).
-                    // The routers hold nothing of the model's, so no cycle.
-                    let setupRouter = setupRouter
-                    let toolsRouter = toolsRouter
-                    model.phoneNavigation = PhoneNavigation(
-                        openSetupPage: { pageId in setupRouter.open(describedPage: pageId) },
-                        openTxEqualizer: {
-                            toolsRouter.openTxEqualizer()
-                            selection = .tools
-                        })
-                }
+                // Setup's buttons that open another page (V15), as the root installs them.
+                .onAppear { installNavigation() }
         case .tools:
             ToolsTab(app: model, flow: flow, spots: model.spots,
                      router: toolsRouter, isActive: selection == .tools)

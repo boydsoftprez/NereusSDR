@@ -293,10 +293,14 @@ struct MainScreen: View {
         }
     }
 
-    /// Closes the sheet and opens a described Setup page.
-    private func openDescribedPage(_ pageId: String) {
+    /// Closes the sheet and opens a described Setup page; a Display page
+    /// with `scope` chosen on its strip when one is given.
+    private func openDescribedPage(_ pageId: String, scope: MainScreenModel.DisplayEditScope? = nil) {
         sheet = nil
         openSetup()
+        if let scope, app.phoneNavigation?.openDisplayPage(pageId, scope) == true {
+            return
+        }
         _ = app.phoneNavigation?.openSetupPage(pageId)
     }
 
@@ -311,8 +315,8 @@ struct MainScreen: View {
                                  device: DisplayDropSheet.deviceWord, openSetup: {
                     sheet = nil
                     openSetup()
-                }, onSetupDefaults: { tab, _ in
-                    openDescribedPage(tab.setupPageId)
+                }, onSetupDefaults: { tab, pan in
+                    openDescribedPage(tab.setupPageId, scope: .pan(pan))
                 }, onOpenPage: { pageId in
                     openDescribedPage(pageId)
                 })

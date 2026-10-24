@@ -163,6 +163,13 @@ enum SetupTree {
         categories(described: [:], order: [], unreadable: [:])
     }
 
+    /// The Display description version whose pages are the desktop's eight,
+    /// each holding this phone's rows too (spec section 7.1).
+    static let displayPagesVersion = 29
+    /// Display's pages at that version, in the desktop's order.
+    static let displayV29PageOrder = ["Spectrum", "Levels", "Waterfall", "View", "Peaks & Markers", "FFT & Engine",
+                                      "Transmit Display", "Multimeter"]
+
     /// The Display category's 3D View page (Display V12) and its title.
     static let stackPageId = "display.threeD"
     static let stackPageTitle = "3D View"
@@ -235,21 +242,24 @@ enum SetupTree {
     /// The app's own pages and the described ones in the desktop's order.
     /// A described page the desktop's list lacks follows the page before it.
     private static func merged(_ skeleton: Skeleton, description: SetupDescription?) -> [PageEntry] {
-        let pageOrder = skeleton.coreId == "display" && (description?.version ?? 0) >= 29
-            ? ["On this phone", "Spectrum", "Levels", "Waterfall", "View", "Peaks & Markers", "FFT & Engine", "Transmit Display", "Multimeter"]
-            : skeleton.pageOrder
+        // A Core at Display description 29 describes the desktop's eight
+        // pages, and the phone's own rows sit on them (spec section 7.1):
+        // "On this phone" is listed only for an older Core.
+        let displayV29 = skeleton.coreId == "display" && (description?.version ?? 0) >= displayPagesVersion
+        let pageOrder = displayV29 ? displayV29PageOrder : skeleton.pageOrder
         func rank(_ title: String) -> Double? {
             pageOrder.firstIndex { $0.caseInsensitiveCompare(title) == .orderedSame }.map(Double.init)
         }
         var ranked: [(rank: Double, sequence: Int, entry: PageEntry)] = []
-        for (index, entry) in skeleton.native.enumerated() {
+        let native = displayV29 ? skeleton.native.filter { $0.page != .displayOnThisPhone } : skeleton.native
+        for (index, entry) in native.enumerated() {
             ranked.append((rank(entry.title) ?? Double(skeleton.pageOrder.count), index, entry))
         }
         var previous = -1.0
         var step = 0
         let described = (description?.pages ?? []).filter { page in
             !leftOff.contains(page.title.lowercased())
-                && !skeleton.native.contains { $0.title.caseInsensitiveCompare(page.title) == .orderedSame }
+                && !native.contains { $0.title.caseInsensitiveCompare(page.title) == .orderedSame }
         }
         for page in described {
             let entry = PageEntry(category: skeleton.coreId ?? "", page: page)

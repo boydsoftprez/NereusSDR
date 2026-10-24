@@ -35,22 +35,51 @@ final class MainScreenModel: ObservableObject {
         displayEditScope == .all ? displayBandChoice ?? band.settings.scaleBand : band.settings.scaleBand
     }
     var displayEditingSettings: BandDisplaySettings {
-        guard displayEditScope == .all else { return band.settings }
-        var settings = displaySettings.masterSettings(forPan: BandSubscriber.panId)
-        settings.enterBand(displayEditingBand)
-        return settings
+        switch displayEditScope {
+        case .pan(let pan) where pan == .first:
+            return band.settings
+        case .pan(let pan):
+            // A pan not open now: its kept values, on Pan 1's band, as
+            // the desktop's strip edits a closed pan (spec section 7.3).
+            var settings = displaySettings.settings(forPan: pan.storeKey)
+            settings.enterBand(band.settings.scaleBand)
+            return settings
+        case .all:
+            var settings = displaySettings.masterSettings(forPan: BandSubscriber.panId)
+            settings.enterBand(displayEditingBand)
+            return settings
+        }
+    }
+    /// The display store's key for a pan: Pan 1's is the band's own.
+    private static func displayStoreKey(_ pan: PanIdentity) -> String {
+        pan == .first ? BandSubscriber.panId : pan.storeKey
     }
     func ownDisplayFields(among fields: Set<String>) -> Set<String> {
-        displaySettings.ownFields(forPan: BandSubscriber.panId, among: fields)
+        ownDisplayFields(among: fields, pan: .first)
+    }
+    /// The fields among `fields` that `pan` keeps its own value for.
+    func ownDisplayFields(among fields: Set<String>, pan: PanIdentity) -> Set<String> {
+        displaySettings.ownFields(forPan: Self.displayStoreKey(pan), among: fields)
     }
     func resetDisplayPicture(fields: Set<String>) {
         guard displayEditScope == .pan(.first) else { return }
-        displaySettings.resetPicture(forPan: BandSubscriber.panId, fields: fields)
+        resetDisplayPicture(fields: fields, pan: .first)
+    }
+    /// `pan` follows All pans again in `fields` (the strip's Reset this pan).
+    func resetDisplayPicture(fields: Set<String>, pan: PanIdentity) {
+        displaySettings.resetPicture(forPan: Self.displayStoreKey(pan), fields: fields)
         reloadDisplaySettings()
     }
     func copyOwnDisplayPictureToMaster(fields: Set<String>) -> Bool {
-        guard displayEditScope == .pan(.first), !ownDisplayFields(among: fields).isEmpty else { return false }
-        displaySettings.copyOwnPictureToMaster(forPan: BandSubscriber.panId, fields: fields)
+        guard displayEditScope == .pan(.first) else { return false }
+        return copyOwnDisplayPictureToMaster(fields: fields, pan: .first)
+    }
+    /// `pan`'s own values in `fields` become All pans' (the strip's Use
+    /// Pan N's on all pans); false when it has none there.
+    @discardableResult
+    func copyOwnDisplayPictureToMaster(fields: Set<String>, pan: PanIdentity) -> Bool {
+        guard !ownDisplayFields(among: fields, pan: pan).isEmpty else { return false }
+        displaySettings.copyOwnPictureToMaster(forPan: Self.displayStoreKey(pan), fields: fields)
         reloadDisplaySettings()
         return true
     }
@@ -364,8 +393,8 @@ final class MainScreenModel: ObservableObject {
             // even when a selected value already equals the master.
             displaySettings.setSettings(edited, forPan: BandSubscriber.panId, includingPicture: false)
             displaySettings.setMasterSettings(edited, fields: selected)
-        } else if edited != before {
-            displaySettings.setSettings(edited, forPan: BandSubscriber.panId)
+        } else if edited != before, case .pan(let pan) = displayEditScope {
+            displaySettings.setSettings(edited, forPan: Self.displayStoreKey(pan))
         }
         // Refresh the accepted snapshot, including a newer master/shared field
         // a stale local save was correctly forbidden from overwriting.

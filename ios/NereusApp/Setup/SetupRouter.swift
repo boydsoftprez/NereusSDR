@@ -12,9 +12,33 @@ import Combine
 /// when the window changes width.
 @MainActor
 final class SetupRouter: ObservableObject {
-    @Published var path: [SetupTree.Route] = []
+    @Published var path: [SetupTree.Route] = [] {
+        // Leaving Display for the list or another category: the next
+        // Display page opened from the list edits All pans.
+        didSet {
+            if !Self.inDisplay(path), displayScope != .all {
+                displayScope = .all
+            }
+        }
+    }
     /// The number pad a Setup number row has open, at the foot of the tab.
     let pads = ValuePadHost()
+    /// The pans Display's pages edit: All pans from the Setup list, or the
+    /// pan a page was opened on. It stays while moving between Display's
+    /// pages, as the desktop's strip keeps its pan (spec section 7.3).
+    @Published var displayScope: MainScreenModel.DisplayEditScope = .all
+
+    /// Whether `path` is in Setup > Display.
+    static func inDisplay(_ path: [SetupTree.Route]) -> Bool {
+        path.contains { route in
+            switch route {
+            case .category(let id): return id == "Display"
+            case .described(let category, _): return category == "display"
+            case .page(let page): return page == .displayOnThisPhone
+            case .cfcBands: return false
+            }
+        }
+    }
 
     /// Shows `page` through its category, from the top of the tree.
     func open(_ page: SetupTree.Page) {
@@ -27,6 +51,16 @@ final class SetupRouter: ObservableObject {
     func open(describedPage pageId: String) -> Bool {
         guard let route = SetupTree.route(toDescribed: pageId) else { return false }
         path = route
+        return true
+    }
+
+    /// Shows the Core-described page `pageId` with `scope` chosen on its
+    /// strip, as the Display sheet's Setup link opens its pan's page; false,
+    /// leaving the scope as it was, when no category holds that id.
+    @discardableResult
+    func open(describedPage pageId: String, scope: MainScreenModel.DisplayEditScope) -> Bool {
+        guard open(describedPage: pageId) else { return false }
+        displayScope = scope
         return true
     }
 }

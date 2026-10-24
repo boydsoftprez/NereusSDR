@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
 import CoreGraphics
+import Foundation
+import NereusMirror
 @testable import NereusSDR
 import SwiftUI
 import Testing
@@ -72,6 +74,28 @@ struct SetupSplitTests {
         let agc = SetupSplitSelection(path: router.path, tree: tree)
         #expect(agc.openCategory == "DSP")
         #expect(agc.shown == .described(category: "dsp", page: "dsp.agcAlc"))
+    }
+
+    @Test("On a version 29 Core a pan's Setup link opens its Display page on the right, the pan chosen")
+    func displayPageWithItsPanOpensInTheSplit() throws {
+        let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("resources/setup")
+        let live = try SetupDescription.parse(json: String(contentsOf: folder.appendingPathComponent("display.json"),
+                                                           encoding: .utf8))
+        let described = SetupTree.categories(described: ["display": live], order: ["display"], unreadable: [:],
+                                             stackOffered: true)
+        let router = SetupRouter()
+        let pan = PanIdentity(number: 2)
+        #expect(router.open(describedPage: "display.levels", scope: .pan(pan)))
+        let levels = SetupSplitSelection(path: router.path, tree: described)
+        #expect(levels.openCategory == "Display")
+        #expect(levels.shown == .described(category: "display", page: "display.levels"))
+        #expect(levels.pushed.isEmpty)
+        #expect(router.displayScope == .pan(pan))
+        // Another Display page from the list keeps the pan.
+        let display = try #require(described.first { $0.id == "Display" })
+        router.path = SetupSplitSelection.path(choosing: display, openCategory: "Display", current: router.path)
+        #expect(router.displayScope == .pan(pan))
     }
 
     @Test("Choosing a category opens its first page that can open; the open one stays as it is")

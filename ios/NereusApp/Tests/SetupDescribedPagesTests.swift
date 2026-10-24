@@ -123,7 +123,10 @@ struct SetupDescribedPagesTests {
                         }
                         controls.append(control)
                     }
-                    if !controls.isEmpty {
+                    // A group the Core describes with no rows, only its note
+                    // (Levels' While transmitting at 29), goes as it is.
+                    let noteOnly = (section["controls"] as? [[String: Any]] ?? []).isEmpty
+                    if !controls.isEmpty || noteOnly {
                         section["controls"] = controls
                         sections.append(section)
                     }

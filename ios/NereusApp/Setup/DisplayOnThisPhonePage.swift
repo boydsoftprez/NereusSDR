@@ -23,6 +23,10 @@ import UIKit
 /// does not compute display extras (D23). Calibration offset is greyed on
 /// every Core, with the desktop remote window's reason: the Core already
 /// calibrates the display for its radio, so it is never applied twice.
+///
+/// Listed only for a Core whose Display description is below version 29:
+/// from 29 each of these rows sits on the desktop's eight pages instead
+/// (spec section 7.2; ``DisplayPhoneGroups/onThisPhonePlaces``).
 struct DisplayOnThisPhonePage: View {
     @ObservedObject var main: MainScreenModel
     @ObservedObject var band: BandModel

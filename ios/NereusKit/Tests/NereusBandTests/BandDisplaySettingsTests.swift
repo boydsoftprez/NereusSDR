@@ -430,4 +430,17 @@ import Testing
             #expect(kept["bandPlanId"] == nil)
         }
     }
+
+    /// The page reset on All pans keeps the zoom the operator left (spec 7.4).
+    @Test func aResetKeepsTheZoom() {
+        var zoomed = BandDisplaySettings.desktopDefaults
+        zoomed.rxViewSpanHz = 24_000
+        zoomed.traceColour = "#00FF00"
+        let reset = zoomed.resetKeepingPlace()
+        #expect(reset.rxViewSpanHz == 24_000)
+        #expect(reset.traceColour == BandDisplaySettings.desktopDefaults.traceColour)
+        var never = BandDisplaySettings.desktopDefaults
+        never.rxViewSpanHz = nil
+        #expect(never.resetKeepingPlace().rxViewSpanHz == nil)
+    }
 }

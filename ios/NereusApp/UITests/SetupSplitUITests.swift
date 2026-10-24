@@ -83,7 +83,11 @@ final class SetupSplitUITests: XCTestCase {
 
     /// R-IOS-52: a Setup link from elsewhere, the Display sheet's More display
     /// options in Setup, opens Display's page on the right, with Display open
-    /// in the list and its page marked.
+    /// in the list and its page marked. This launch has no Core, so no
+    /// Display description: the page is the older "On this phone". On a Core
+    /// at description 29 the link opens Spectrum instead (spec section 7.1),
+    /// which `DisplayStripTests` and `SetupWorkspaceShotTests` drive against
+    /// the fake Core.
     @MainActor
     func testSetupLinkFromElsewhereOpensItsPageOnTheRight() throws {
         try XCTSkipIf(UIDevice.current.userInterfaceIdiom != .pad, "The split is the iPad's")

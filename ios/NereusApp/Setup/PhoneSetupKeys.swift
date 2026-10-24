@@ -135,10 +135,10 @@ final class PhoneSetupKeys: SetupPhoneKeys {
             return FrequencyLabelAlignment.allCases.firstIndex(of: settings.frequencyLabelAlignment)
                 .map { .integer(Int64($0)) }
         case "DisplayGridMax":
-            // The Core's dB Max for the band on the pan, when it keeps it.
-            return .integer(Int64((main.bandScale.shownRange?.maxDbm ?? settings.scaleTopDbm).rounded()))
+            // The Core's dB Max for the band being edited, when it keeps it.
+            return .integer(Int64((editingScaleRange?.maxDbm ?? settings.scaleTopDbm).rounded()))
         case "DisplayGridMin":
-            return .integer(Int64((main.bandScale.shownRange?.minDbm ?? settings.scaleBottomDbm).rounded()))
+            return .integer(Int64((editingScaleRange?.minDbm ?? settings.scaleBottomDbm).rounded()))
         case "DisplaySpectrumDetector":
             return .integer(Int64(settings.spectrumDetector.rawValue))
         case "DisplaySpectrumAveraging":
@@ -286,7 +286,7 @@ final class PhoneSetupKeys: SetupPhoneKeys {
             // The Core keeps it for the band the pan is on, as the desktop's
             // per-band dB Max; an older Core leaves it on this phone.
             guard let top = whole else { return false }
-            if let shared = main.bandScale.shownRange, let band = main.bandScale.shownBand {
+            if let shared = editingScaleRange, let band = editingScaleBand {
                 // From src/models/PanadapterModel.cpp:248-251 (setPerBandDbMax)
                 main.bandScale.set(maxDbm: Double(top), minDbm: shared.minDbm, band: band)
             } else {
@@ -294,7 +294,7 @@ final class PhoneSetupKeys: SetupPhoneKeys {
             }
         case "DisplayGridMin":
             guard let bottom = whole else { return false }
-            if let shared = main.bandScale.shownRange, let band = main.bandScale.shownBand {
+            if let shared = editingScaleRange, let band = editingScaleBand {
                 // From src/models/PanadapterModel.cpp:253-256 (setPerBandDbMin)
                 main.bandScale.set(maxDbm: shared.maxDbm, minDbm: Double(bottom), band: band)
             } else {
@@ -459,7 +459,7 @@ final class PhoneSetupKeys: SetupPhoneKeys {
         case "copySpectrumMinMax":
             // The pan's scale as it is drawn now becomes the thresholds: the
             // Core's for the band when it keeps it.
-            let shared = main.bandScale.shownRange
+            let shared = editingScaleRange
             main.changeDisplay { settings in
                 var scaled = settings
                 if let shared {
@@ -473,7 +473,7 @@ final class PhoneSetupKeys: SetupPhoneKeys {
         case "copyWaterfallThresholds":
             // The band's dB Max and dB Min become the thresholds, rounded:
             // written to the Core when it keeps them.
-            if main.bandScale.shownRange != nil, let band = main.bandScale.shownBand {
+            if editingScaleRange != nil, let band = editingScaleBand {
                 let levels = main.displayEditingSettings
                 main.bandScale.set(maxDbm: levels.waterfallHighDbm.rounded(), minDbm: levels.waterfallLowDbm.rounded(),
                                    band: band)
@@ -553,6 +553,21 @@ final class PhoneSetupKeys: SetupPhoneKeys {
 
     private func changeDisplay(forPhoneKey key: String, _ change: (inout BandDisplaySettings) -> Void) {
         main.changeDisplay(fields: Self.displayFields(forPhoneKey: key), change)
+    }
+
+    /// The Core's band number whose dB Max and dB Min the Levels page edits
+    /// on a Core that keeps each band's scale (description 29): All pans'
+    /// chosen band, else the band on the pan, so the band picker edits a
+    /// band without tuning. Nil on an older Core, where the phone keeps one
+    /// scale for every band and the picker's band edits that one scale.
+    private var editingScaleBand: Int? {
+        guard main.bandScale.isShared else { return nil }
+        return main.displayEditingBand.flatMap { Int($0) }
+    }
+
+    /// The editing band's scale as the Core keeps it; nil on an older Core.
+    private var editingScaleRange: (maxDbm: Double, minDbm: Double)? {
+        editingScaleBand.flatMap { main.bandScale.range(band: $0) }
     }
 
     /// Exact established typed carriers; virtual mode is one coherent stored
@@ -905,4 +920,191 @@ struct PhoneNavigation {
     /// Opens the Core-described page with this id; false when there is none.
     let openSetupPage: (String) -> Bool
     let openTxEqualizer: () -> Void
+    /// Opens a Display page with a pan or All pans chosen on its strip, as
+    /// a pan's "Setup defaults" does (spec section 7.3); false when there is none.
+    var openDisplayPage: (String, MainScreenModel.DisplayEditScope) -> Bool = { _, _ in false }
+}
+
+/// This phone's own Display rows on the Core's version 29 pages (spec
+/// section 7.2), where the older Core's "On this phone" page held them:
+/// each group on its page beside the Core's groups, and where each row of
+/// that older page is now.
+enum DisplayPhoneGroups {
+    /// Where a group goes among the page's described groups.
+    enum Placement: Equatable, Sendable {
+        /// Before the described group with this title.
+        case before(String)
+        /// After the described group with this title.
+        case after(String)
+        /// Its rows at the foot of the described group with this title.
+        case into(String)
+        /// After every described group.
+        case end
+    }
+
+    /// One group of this phone's rows on a page.
+    struct Group: Equatable, Sendable {
+        let pageId: String
+        let title: String
+        let tag: SetupTag
+        let placement: Placement
+        /// The rows' ids, in order.
+        let rows: [String]
+    }
+
+    static let groups: [Group] = [
+        // Spectrum Height, the band's share of the screen, is this phone's layout.
+        Group(pageId: "display.spectrumDefaults", title: "Layout", tag: .thisPhone, placement: .before("Reset"),
+              rows: ["setupSpectrumHeight"]),
+        Group(pageId: "display.threeD", title: "On this phone", tag: .thisPhone, placement: .after("View"),
+              rows: ["extendedView", "setupCtun"]),
+        // The plan is the Core's; its size is kept on this phone.
+        Group(pageId: "display.threeD", title: "Band plan", tag: .both, placement: .end,
+              rows: ["bandPlanPicker", "bandPlanSize"]),
+        // DUP joins the transmit scale (spec section 7.2).
+        Group(pageId: "display.txDisplay", title: "Transmit scale", tag: .thisPhone, placement: .into("Transmit scale"),
+              rows: ["setupDuplex"]),
+    ]
+
+    /// The desktop's rows a phone has nothing to do with, left off FFT &
+    /// Engine by their keys: the FFT thread's priority and the monitor's
+    /// refresh rate (spec section 7.2).
+    static let leftOff: Set<String> = ["DisplayThreadPriority", "getMonitorHz"]
+
+    /// The groups on the page `pageId`.
+    static func groups(on pageId: String) -> [Group] {
+        groups.filter { $0.pageId == pageId }
+    }
+
+    /// Where a row of the older Core's "On this phone" page is on version 29.
+    enum Place: Equatable, Sendable {
+        /// A row the Core describes, by its binding's key, in the page's group.
+        case described(page: String, group: String, key: String)
+        /// One of this phone's rows in ``groups``.
+        case phone(page: String, group: String, row: String)
+        /// A color on Setup > Appearance's Colors & Theme, as on the desktop.
+        case appearance(group: String, key: String)
+        /// A note or a group's frame, not a row.
+        case notARow
+        /// A row the desktop has no Setup row for.
+        case noDesktopRow
+    }
+
+    /// Every id the older page draws, and where its row is now.
+    static let onThisPhonePlaces: [String: Place] = [
+        "activePeakHold": .described(page: "display.spectrumPeaks", group: "Peak trace", key: "DisplayActivePeakHoldEnabled"),
+        "activePeakHoldFall": .described(page: "display.spectrumPeaks", group: "Peak trace", key: "DisplayActivePeakHoldDropDbPerSec"),
+        "activePeakHoldFill": .described(page: "display.spectrumPeaks", group: "Peak trace", key: "DisplayActivePeakHoldFill"),
+        "activePeakHoldMs": .described(page: "display.spectrumPeaks", group: "Peak trace", key: "DisplayActivePeakHoldDurationMs"),
+        "bandPlanGroup": .phone(page: "display.threeD", group: "Band plan", row: "bandPlanPicker"),
+        "bandPlanSize": .phone(page: "display.threeD", group: "Band plan", row: "bandPlanSize"),
+        "calibrationNote": .notARow,
+        "calibrationOffset": .described(page: "display.spectrumDefaults", group: "Calibration", key: "DisplayCalOffset"),
+        "classicPeakHoldSetup": .described(page: "display.spectrumDefaults", group: "Peak hold", key: "DisplayPeakHoldEnabled"),
+        "copyLevelsToScale": .described(page: "display.levels", group: "Spectrum scale", key: "copyWaterfallThresholds"),
+        "copyScaleToLevels": .described(page: "display.levels", group: "Waterfall levels", key: "copySpectrumMinMax"),
+        "coreBinWidth": .described(page: "display.fftEngine", group: "FFT size", key: "DisplayHzPerBinTarget"),
+        "coreDisplayNote": .notARow,
+        "coreDisplayOlder": .notARow,
+        "coreTransmitDisplayGroup": .notARow,
+        "coreTxBinWidth": .described(page: "display.txDisplay", group: "FFT", key: "DisplayTxFftSize"),
+        "coreTxFftSize": .described(page: "display.txDisplay", group: "FFT", key: "DisplayTxFftSize"),
+        "coreTxNormalize": .described(page: "display.txDisplay", group: "Panadapter", key: "DisplayTxPanNormalize"),
+        "coreTxNotApplied": .notARow,
+        "coreTxNote": .notARow,
+        "coreTxTraceAveraging": .described(page: "display.txDisplay", group: "Panadapter", key: "DisplayTxPanAveraging"),
+        "coreTxTraceDetector": .described(page: "display.txDisplay", group: "Panadapter", key: "DisplayTxPanDetector"),
+        "coreTxTraceTime": .described(page: "display.txDisplay", group: "Panadapter", key: "DisplayTxPanAvTimeMs"),
+        "coreTxWaterfallAveraging": .described(page: "display.txDisplay", group: "Waterfall", key: "DisplayTxWfAveraging"),
+        "coreTxWaterfallDetector": .described(page: "display.txDisplay", group: "Waterfall", key: "DisplayTxWfDetector"),
+        "coreTxWaterfallTime": .described(page: "display.txDisplay", group: "Waterfall", key: "DisplayTxWfAvTimeMs"),
+        "coreTxWindow": .described(page: "display.txDisplay", group: "FFT", key: "DisplayTxWindowType"),
+        "customStops": .described(page: "display.waterfallDefaults", group: "Drawing", key: "editReceiveGradient"),
+        "decimation": .described(page: "display.fftEngine", group: "FFT size", key: "decimation"),
+        "displayExtrasNote": .notARow,
+        "displayPalette": .described(page: "display.waterfallDefaults", group: "Drawing", key: "DisplayWfColorScheme"),
+        "extendedView": .phone(page: "display.threeD", group: "On this phone", row: "extendedView"),
+        "fillColour": .described(page: "display.spectrumDefaults", group: "Fill", key: "DisplayFillColor"),
+        "fillStrength": .described(page: "display.spectrumDefaults", group: "Fill", key: "DisplayFftFillAlpha"),
+        "frequencyLabelAlignment": .described(page: "display.spectrumDefaults", group: "Scales and labels", key: "DisplayFreqLabelAlign"),
+        "grid": .described(page: "display.spectrumDefaults", group: "Grid", key: "DisplayGridEnabled"),
+        "gridColour": .appearance(group: "Spectrum", key: "DisplayGridColor"),
+        "gridFineColour": .appearance(group: "Spectrum", key: "DisplayGridFineColor"),
+        "gridFollowsNoiseFloor": .described(page: "display.levels", group: "Spectrum scale", key: "DisplaySpectrumScaleMode"),
+        "gridKeepsRange": .described(page: "display.levels", group: "Spectrum scale", key: "DisplayMaintainNFAdjustDelta"),
+        "gridNoiseFloorOffset": .described(page: "display.levels", group: "Spectrum scale", key: "DisplayNFOffsetGridFollow"),
+        "gridStep": .described(page: "display.spectrumDefaults", group: "Grid", key: "DisplayGridStep"),
+        "gridTextColour": .appearance(group: "Spectrum", key: "DisplayGridTextColor"),
+        "hGridColour": .appearance(group: "Spectrum", key: "DisplayHGridColor"),
+        "noiseFloorColour": .described(page: "display.spectrumPeaks", group: "Noise floor line", key: "DisplayNoiseFloorColor"),
+        "noiseFloorFastColour": .described(page: "display.spectrumPeaks", group: "Noise floor line", key: "DisplayNoiseFloorFastColor"),
+        "noiseFloorLine": .described(page: "display.spectrumPeaks", group: "Noise floor line", key: "DisplayShowNoiseFloor"),
+        "noiseFloorShift": .described(page: "display.spectrumPeaks", group: "Noise floor line", key: "DisplayNoiseFloorShiftDb"),
+        "noiseFloorTextColour": .described(page: "display.spectrumPeaks", group: "Noise floor line", key: "DisplayNoiseFloorTextColor"),
+        "normalize": .described(page: "display.spectrumDefaults", group: "Trace", key: "DisplayDispNormalize"),
+        "passbandColour": .appearance(group: "Spectrum", key: "DisplayRxFilterColor"),
+        "passbandStrength": .appearance(group: "Spectrum", key: "DisplayRxFilterColor"),
+        "peakBlobColour": .described(page: "display.spectrumPeaks", group: "Peak markers", key: "DisplayPeakBlobColor"),
+        "peakBlobCount": .described(page: "display.spectrumPeaks", group: "Peak markers", key: "DisplayPeakBlobsCount"),
+        "peakBlobFall": .described(page: "display.spectrumPeaks", group: "Peak markers", key: "DisplayPeakBlobsHoldDrop"),
+        "peakBlobFallRate": .described(page: "display.spectrumPeaks", group: "Peak markers", key: "DisplayPeakBlobsFallDbPerSec"),
+        "peakBlobHold": .described(page: "display.spectrumPeaks", group: "Peak markers", key: "DisplayPeakBlobsHoldEnabled"),
+        "peakBlobHoldMs": .described(page: "display.spectrumPeaks", group: "Peak markers", key: "DisplayPeakBlobsHoldMs"),
+        "peakBlobTextColour": .described(page: "display.spectrumPeaks", group: "Peak markers", key: "DisplayPeakBlobTextColor"),
+        "peakBlobs": .described(page: "display.spectrumPeaks", group: "Peak markers", key: "DisplayPeakBlobsEnabled"),
+        "peakBlobsInsideOnly": .described(page: "display.spectrumPeaks", group: "Peak markers", key: "DisplayPeakBlobsInsideFilterOnly"),
+        "peakHoldColour": .described(page: "display.spectrumPeaks", group: "Peak trace", key: "DisplayActivePeakHoldColor"),
+        "peakHoldDelay": .described(page: "display.spectrumDefaults", group: "Peak hold", key: "DisplayPeakHoldResetMs"),
+        "peakValueColour": .noDesktopRow,
+        "peakValueCorner": .described(page: "display.spectrumPeaks", group: "Peak value", key: "DisplayPeakValuePosition"),
+        "peakValueDelay": .described(page: "display.spectrumPeaks", group: "Peak value", key: "DisplayPeakTextDelayMs"),
+        "resetDisplay": .described(page: "display.spectrumDefaults", group: "Reset", key: "smoothDefaults"),
+        "rewindDepth": .described(page: "display.waterfallDefaults", group: "Time", key: "DisplayWaterfallHistoryMs"),
+        "rxZeroLineColour": .appearance(group: "Spectrum", key: "DisplayRxZeroLineColor"),
+        "scaleBottom": .described(page: "display.levels", group: "Spectrum scale", key: "DisplayGridMin"),
+        "scaleNote": .notARow,
+        "scaleTop": .described(page: "display.levels", group: "Spectrum scale", key: "DisplayGridMax"),
+        "setupBlackLevel": .described(page: "display.levels", group: "Waterfall levels", key: "DisplayWfBlackLevel"),
+        "setupColorGain": .described(page: "display.levels", group: "Waterfall levels", key: "DisplayWfColorGain"),
+        "setupCtun": .phone(page: "display.threeD", group: "On this phone", row: "setupCtun"),
+        "setupDuplex": .phone(page: "display.txDisplay", group: "Transmit scale", row: "setupDuplex"),
+        "setupSpectrumHeight": .phone(page: "display.spectrumDefaults", group: "Layout", row: "setupSpectrumHeight"),
+        "showBinWidth": .described(page: "display.spectrumPeaks", group: "Bin width", key: "DisplayShowBinWidth"),
+        "showCursorFrequency": .described(page: "display.spectrumDefaults", group: "Readouts", key: "DisplayShowCursorFreq"),
+        "showDbmScale": .described(page: "display.spectrumDefaults", group: "Scales and labels", key: "DisplayDbmScaleVisible"),
+        "showFps": .described(page: "display.spectrumDefaults", group: "Readouts", key: "DisplayShowFps"),
+        "showPeakValue": .described(page: "display.spectrumPeaks", group: "Peak value", key: "DisplayShowPeakValueOverlay"),
+        "showRxFilterOnWaterfall": .described(page: "display.waterfallDefaults", group: "Overlays", key: "DisplayShowRxFilterOnWaterfall"),
+        "showRxZeroLineOnWaterfall": .described(page: "display.waterfallDefaults", group: "Overlays", key: "DisplayShowRxZeroLine"),
+        "showTxFilterOnWaterfall": .described(page: "display.waterfallDefaults", group: "Overlays", key: "DisplayShowTxFilterOnRxWaterfall"),
+        "showTxZeroLineOnWaterfall": .described(page: "display.waterfallDefaults", group: "Overlays", key: "DisplayShowTxZeroLine"),
+        "showZeroLine": .described(page: "display.spectrumDefaults", group: "Scales and labels", key: "DisplayShowZeroLine"),
+        "spectrumAverage": .described(page: "display.spectrumDefaults", group: "Trace", key: "DisplaySpectrumAverageTimeMs"),
+        "spectrumAveraging": .described(page: "display.spectrumDefaults", group: "Trace", key: "DisplaySpectrumAveraging"),
+        "spectrumDetector": .described(page: "display.spectrumDefaults", group: "Trace", key: "DisplaySpectrumDetector"),
+        "timestampPosition": .described(page: "display.waterfallDefaults", group: "Time", key: "DisplayWfTimestampPos"),
+        "timestampZone": .described(page: "display.waterfallDefaults", group: "Time", key: "DisplayWfTimestampMode"),
+        "traceColour": .described(page: "display.spectrumDefaults", group: "Trace", key: "DisplayTraceColor"),
+        "traceFill": .described(page: "display.spectrumDefaults", group: "Fill", key: "DisplayPanFill"),
+        "traceGradient": .described(page: "display.spectrumDefaults", group: "Fill", key: "DisplayGradientEnabled"),
+        "traceLine": .described(page: "display.spectrumDefaults", group: "Trace", key: "DisplayLineWidth"),
+        "transmitDisplayGroup": .notARow,
+        "txGridRange": .described(page: "display.txDisplay", group: "Transmit scale", key: "DisplayTxGridMin"),
+        "txGridTop": .described(page: "display.txDisplay", group: "Transmit scale", key: "DisplayTxGridRefLevel"),
+        "txPassbandColour": .appearance(group: "Spectrum", key: "DisplayTxFilterColor"),
+        "txWaterfallHigh": .described(page: "display.txDisplay", group: "Waterfall Amplitude Scale", key: "DisplayTxWfHighLevel"),
+        "txWaterfallLow": .described(page: "display.txDisplay", group: "Waterfall Amplitude Scale", key: "DisplayTxWfLowLevel"),
+        "txWaterfallPalette": .described(page: "display.txDisplay", group: "Waterfall Amplitude Scale", key: "DisplayTxWfPalette"),
+        "txZeroLineColour": .appearance(group: "Spectrum", key: "DisplayTxZeroLineColor"),
+        "waterfallAverage": .described(page: "display.waterfallDefaults", group: "Smoothing", key: "DisplayWaterfallAverageTimeMs"),
+        "waterfallAveraging": .described(page: "display.waterfallDefaults", group: "Smoothing", key: "DisplayWaterfallAveraging"),
+        "waterfallDetector": .described(page: "display.waterfallDefaults", group: "Smoothing", key: "DisplayWaterfallDetector"),
+        "waterfallHigh": .described(page: "display.levels", group: "Waterfall levels", key: "DisplayWfHighLevel"),
+        "waterfallLevels": .described(page: "display.levels", group: "Waterfall levels", key: "DisplayWaterfallLevelsMode"),
+        "waterfallLow": .described(page: "display.levels", group: "Waterfall levels", key: "DisplayWfLowLevel"),
+        "waterfallOffset": .described(page: "display.levels", group: "Waterfall levels", key: "WaterfallAGCOffsetDb"),
+        "waterfallOpacity": .described(page: "display.waterfallDefaults", group: "Drawing", key: "DisplayWfOpacity"),
+        "waterfallPeriod": .described(page: "display.waterfallDefaults", group: "Drawing", key: "DisplayWfUpdatePeriodMs"),
+        "waterfallStopOnTx": .described(page: "display.waterfallDefaults", group: "Overlays", key: "WaterfallStopOnTx"),
+    ]
 }
