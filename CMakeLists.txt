@@ -1989,6 +1989,8 @@ set(GUI_SOURCES
     src/gui/roundtable/RoundtableFirstRunDialog.h
     src/gui/roundtable/RoundtablePanel.cpp
     src/gui/roundtable/RoundtablePanel.h
+    src/gui/roundtable/RoundtableTagLayout.cpp
+    src/gui/roundtable/RoundtableTagLayout.h
     src/gui/roundtable/RoundtableWindow.cpp
     src/gui/roundtable/RoundtableWindow.h
     src/gui/QtCocoaAccessibleTableCache.cpp

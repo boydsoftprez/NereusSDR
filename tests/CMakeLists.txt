@@ -9767,6 +9767,11 @@ target_compile_definitions(tst_roundtable_spothub PRIVATE
 # the read bar, keyed, the connection line, drafts, the counter, Not sent,
 # the message menus, the mute fold, the pills and the keyboard.
 nereus_add_test(tst_roundtable_panel)
+# Roundtable plan Task 14: the Roundtable tags on a panadapter: where they
+# go, which fold into +N (your room and rooms that name you never do, a
+# lone neighbor moves aside, folds widen only when the tags don't fit),
+# the tags a model gives, and how each link state shows them.
+nereus_add_test(tst_roundtable_tag_layout)
 # Roundtable plan Task 11: Roundtable on the station link: the
 # stationRoundtableVersion capability and `roundtable` object only for a
 # peer that declared roundtable, the thirteen verbs, the room streams and
