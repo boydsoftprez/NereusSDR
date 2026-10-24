@@ -17,6 +17,17 @@
 //               queue overflows, the engine's 5 ms skips and the clock's
 //               re-anchors are counted, and the first two logged. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22: an I/Q sequence gap from the radio is an input
+//               discontinuity, counted in inputHistoryResets (after
+//               Longpath PR 62). J.J. Boyd (KG4VCF), with AI-assisted
+//               transformation via Claude Code.
+//   2026-10-23: the gap takes the engine's bounded window reset, as the
+//               desktop app's engines do; engineWindowResets and
+//               engineWindowResetsSkipped. J.J. Boyd (KG4VCF), with
+//               AI-assisted implementation via Claude Code.
+//   2026-10-24: engineWindowResetsSkipped's doc names the engine's rule as
+//               it now stands (JJ's ruling, option i). J.J. Boyd (KG4VCF),
+//               with AI-assisted implementation via Claude Code.
 // =================================================================
 
 #include "core/spectrum/FftEnginePool.h"
@@ -174,9 +185,18 @@ public:
     /// Owner thread only.
     void resetInputHistoryAll();
     /// Input resets the source's engine has made on its worker thread for a
-    /// discontinuity (a dropped packet or resetInputHistoryAll). 0 for an
-    /// unknown source.
+    /// discontinuity (a dropped packet, an I/Q sequence gap from the radio
+    /// that dropped the window, or resetInputHistoryAll). 0 for an unknown
+    /// source.
     quint64 inputHistoryResets(const MediaSourceKey& key) const;
+    /// The engine's windows dropped for an I/Q sequence gap
+    /// (FFTEngine::windowResets), and the gaps it let through
+    /// (FFTEngine::windowResetsSkipped): with no frame for
+    /// FFTEngine::kGapResetStallFrameIntervals frame intervals, and then
+    /// every gap until a whole window passes with none
+    /// (FFTEngine::requestWindowReset). 0 for an unknown source.
+    quint64 engineWindowResets(const MediaSourceKey& key) const;
+    quint64 engineWindowResetsSkipped(const MediaSourceKey& key) const;
 
     /// Stops a single source tier and releases its engine. Safe for an
     /// unknown key.  The other tier for the same stream remains active.

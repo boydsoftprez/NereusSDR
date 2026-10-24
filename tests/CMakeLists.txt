@@ -11036,6 +11036,13 @@ nereus_add_test(tst_display_settings_model)
 nereus_add_test(tst_radio_link_stats fakes/P1FakeRadio.cpp fakes/P2FakeRadio.cpp)
 target_compile_definitions(tst_radio_link_stats PRIVATE NEREUS_BUILD_TESTS)
 
+# A lost I/Q packet does not paint a line across the spectrum: the display
+# FFT drops its window in progress on a sequence gap, which both protocols
+# send before the samples after it. Ported from Longpath PR 62
+# (tests/tst_fft_window_after_gap.cpp [@383f058]) and extended, 2026-10-22.
+nereus_add_test(tst_fft_window_after_gap fakes/P1FakeRadio.cpp fakes/P2FakeRadio.cpp)
+target_compile_definitions(tst_fft_window_after_gap PRIVATE NEREUS_BUILD_TESTS)
+
 # RADE threads lane (2026-09-30): one Protocol 2 socket drain's I/Q reaches
 # the DSP worker as one post per stream, with the same samples in order.
 nereus_add_test(tst_p2_iq_drain_batching fakes/P2FakeRadio.cpp)

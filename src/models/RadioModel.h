@@ -694,6 +694,9 @@
 //   2026-10-10 - rebuildDspOptionsForMode judges each slice by its own
 //                mode. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                Code.
+//   2026-10-22 - iqSequenceGapForStream: a lost I/Q packet on a stream, for
+//                the display FFTs (after Longpath PR 62). J.J. Boyd
+//                (KG4VCF), with AI-assisted transformation via Claude Code.
 //   2026-10-22 - reportDspDiagnostics, slowNrCallLogLine, nrStagesLogName
 //                and outputNonFiniteLogLine: the Core log names a slice's
 //                noise-reduction calls over 50 ms with the stages that ran,
@@ -721,6 +724,11 @@
 //                (m_deviceReservationsMac), and a letter's snapshot is
 //                dropped once a device is placed on it.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24 - iqSequenceGapForStream's comment names the engine's bound
+//                on the window reset (JJ's ruling, option i), and then
+//                option c, a gap within four windows of the last one let
+//                through. J.J. Boyd (KG4VCF), with AI-assisted
+//                implementation via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -6550,6 +6558,20 @@ signals:
     // reach its own engine (and from there its own panadapter).
     // Emitted from the same Connection-thread fork as rawIqData.
     void rawIqDataForStream(int streamIndex, const QVector<float>& samples);
+
+    // An I/Q sequence gap on this stream (-1: every stream), emitted from
+    // the same Connection-thread path as rawIqDataForStream and before the
+    // samples after the gap. A display FFT fed by rawIqDataForStream takes
+    // it on the engine's thread in order with the samples
+    // (FFTEngine::requestWindowReset): on a healthy link it discards its
+    // window in progress; on a lossy link (a gap within
+    // FFTEngine::kGapLossyLinkWindows windows of the last one, once a frame
+    // has come since the last reset, or no frame for
+    // FFTEngine::kGapResetStallFrameIntervals frame intervals) it keeps
+    // the window, so frames keep their normal rate with a slight smear.
+    // NereusSDR, 2026-10-22, after Longpath PR 62; bound 2026-10-23,
+    // option c 2026-10-24.
+    void iqSequenceGapForStream(int streamIndex);
 
     // Phase 3Q-6: forwarded from the active RadioConnection::frameReceived()
     // so TitleBar::ConnectionSegment can pulse its activity LED without

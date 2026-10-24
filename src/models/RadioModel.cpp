@@ -1287,6 +1287,11 @@
 //                local page's edit to every slice in the mode group, not
 //                the first receiver alone. J.J. Boyd (KG4VCF), AI-assisted
 //                via Anthropic Claude Code.
+//   2026-10-22 - RadioConnection::iqSequenceGap reaches iqSequenceGapForStream
+//                through ReceiverManager on the Connection thread, beside
+//                the samples (after Longpath PR 62). The audio path does not
+//                listen. J.J. Boyd (KG4VCF), with AI-assisted transformation
+//                via Claude Code.
 //   2026-10-22 - SWR protection reaches the drive, as Thetis applies
 //                NetworkIO.SWRProtect: the controller's factor is the
 //                TransmitModel factor the wire pump reads, a wind-back
@@ -21868,6 +21873,19 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
             this, [this](int receiverIndex, const QVector<float>& samples) {
         forkIqToTaps(receiverIndex, samples);
     }, Qt::DirectConnection);
+
+    // A lost I/Q packet: the display FFTs drop their window in progress
+    // (NereusSDR, 2026-10-22, after Longpath PR 62). The same path as the
+    // samples, all on the Connection thread, so rawIqDataForStream's
+    // consumers see the gap between the samples before it and after it.
+    // The audio path (iqDataForReceiverStamped, the DSP worker) does not
+    // listen: a gap reaches WDSP as it always has.
+    connect(m_connection, &RadioConnection::iqSequenceGap,
+            m_receiverManager, &ReceiverManager::noteIqSequenceGap,
+            Qt::DirectConnection);
+    connect(m_receiverManager, &ReceiverManager::iqSequenceGapForReceiver,
+            this, &RadioModel::iqSequenceGapForStream,
+            Qt::DirectConnection);
 
     // Step 2b: ReceiverManager → DSP worker (queued, off the main thread).
     // RxDspWorker accumulates samples into in_size chunks, runs each
