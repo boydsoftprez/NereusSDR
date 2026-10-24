@@ -59,6 +59,7 @@
 #include "core/settings/SettingsScope.h"
 #include "fakes/LoopbackTransport.h"
 #include "fakes/UpgradedCoreToken.h"
+#include "fakes/NoCaptureHelper.h"
 #include "gui/MoxDisplayController.h"
 #include "gui/PanadapterApplet.h"
 #include "gui/PanadapterStack.h"
@@ -196,6 +197,9 @@ struct RemoteWindow {
 
     explicit RemoteWindow(bool withAnalyzer)
     {
+        // No real helper beside the test binary may start (NoCaptureHelper.h).
+        Test::useNoCaptureHelper(station);
+        Test::useNoCaptureHelper(remote);
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);

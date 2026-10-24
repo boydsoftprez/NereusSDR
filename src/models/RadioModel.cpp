@@ -1320,6 +1320,23 @@
 //                sampler's tick). Diagnostics only; NR and DSP
 //                parameters unchanged. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-23 - Slice letters across Core restarts (JJ: "the core
+//                headless and core inside window should be the same
+//                experience"): a Core inside a desktop window keeps its
+//                paired devices' letters and saved settings from the
+//                receive layout without making their slices, takes the
+//                lowest letter nobody keeps for the window, and gives a
+//                device its letter when it signs in; the window's layout
+//                save keeps every entry that is not a device's
+//                (setHostsStationDevice, addStartingSlices,
+//                placeReservedSlicesFor, captureHostedReceiveLayout). Each
+//                local connect snapshots the device letters' settings so a
+//                device never gets the window's; windowSliceId names the
+//                window's own starting slice for its one-time wiring.
+//                Kept letters belong to the radio they were kept for
+//                (m_deviceReservationsMac), and a letter's snapshot is
+//                dropped once a device is placed on it.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1763,6 +1780,7 @@ mw0lge@grange-lane.co.uk
 #include "core/cat/StationCatController.h"
 #include "core/cat/CatControl.h"
 #include "core/SliceOwnership.h"
+#include "core/DeviceLayoutStore.h"
 #include "core/session/SliceAccessPolicy.h"
 #include "core/session/StationServer.h"
 #include "core/session/SessionTransport.h"
@@ -15953,10 +15971,19 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     // list, where minting locally would drift the two apart after any
     // mid-list removal. addSliceWithStationId() has already refused a
     // colliding id before reaching here.
+    //
+    // A letter kept for a paired device that has not signed in yet
+    // (addStartingSlices, JJ 2026-10-23) is minted only when no other free
+    // letter is left.
     int index = requestedId >= 0 ? requestedId : 0;
     if (requestedId < 0) {
-        while (sliceById(index) != nullptr) {
-            ++index;
+        index = m_deviceSliceReservations.isEmpty()
+            ? -1 : lowestUnreservedFreeSliceId(sliceChannelLimit());
+        if (index < 0) {
+            index = 0;
+            while (sliceById(index) != nullptr) {
+                ++index;
+            }
         }
     }
     SlicePublication constructing{added, index};
@@ -18491,12 +18518,411 @@ quint32 RadioModel::advanceKeyingEpoch()
 
 int RadioModel::lowestFreeSliceId() const
 {
+    // A letter kept for a paired device that has not signed in yet
+    // (addStartingSlices) is taken only when no other is free.
+    const int unreserved = lowestUnreservedFreeSliceId(sliceChannelLimit());
+    if (unreserved >= 0) {
+        return unreserved;
+    }
     for (int id = 0; id < sliceChannelLimit(); ++id) {
         if (sliceById(id) == nullptr) {
             return id;
         }
     }
     return -1;
+}
+
+namespace {
+
+// The device a layout entry or a live slice is kept for: the device the
+// station device holds it for, else its owner.
+QByteArray layoutSubject(const QByteArray& owner, const QByteArray& heldFor)
+{
+    return heldFor.isEmpty() ? owner : heldFor;
+}
+
+// A paired device's id: not empty, not the station device, not a token
+// window (which has no saved slices of its own, StationServer step 2).
+bool isPairedDeviceSubject(const QByteArray& subject)
+{
+    return !subject.isEmpty() && subject != SliceOwnership::stationDevice()
+        && !subject.startsWith("token:");
+}
+
+} // namespace
+
+void RadioModel::setHostsStationDevice(bool hosts)
+{
+    if (role() != Role::Local || hosts == m_hostsStationDevice) {
+        return;
+    }
+    if (!hosts) {
+        // The last word before the window stops hosting: the layout as its
+        // paired devices left it, reservations included. The caller's save
+        // (saveForStationHandover, the quit) writes it to the file.
+        if (!m_receiveLayoutManaged) {
+            captureHostedReceiveLayout();
+        }
+        m_deviceSliceReservations.clear();
+        m_deviceReservationsMac.clear();
+        m_hostsStationDevice = false;
+        return;
+    }
+    m_hostsStationDevice = true;
+    // Run Core turned on after the window has its slices, connected or not
+    // (slices outlive a disconnect): the layout's device letters are kept
+    // now, for the radio the window last had. A letter the window already
+    // uses is not kept; its device gets the lowest free letter, with the
+    // settings its letter had at connect (the snapshot). With no radio
+    // address yet, or when the next connect is to another radio, that
+    // connect keeps them for its radio (addStartingSlices). Before
+    // the window has slices, addStartingSlices does this.
+    if (!m_receiveLayoutManaged && !m_slices.isEmpty()) {
+        reserveDeviceSlices(m_lastRadioInfo.macAddress);
+    }
+}
+
+QList<int> RadioModel::reservedSliceLetters() const
+{
+    QList<int> letters;
+    for (const DeviceSliceReservation& reservation : m_deviceSliceReservations) {
+        if (reservation.letterKept) {
+            letters.append(reservation.state.id);
+        }
+    }
+    std::sort(letters.begin(), letters.end());
+    return letters;
+}
+
+bool RadioModel::sliceLetterReserved(int id) const
+{
+    return std::any_of(m_deviceSliceReservations.cbegin(), m_deviceSliceReservations.cend(),
+                       [id](const DeviceSliceReservation& reservation) {
+                           return reservation.letterKept && reservation.state.id == id;
+                       });
+}
+
+int RadioModel::lowestUnreservedFreeSliceId(int cap) const
+{
+    for (int id = 0; id < cap; ++id) {
+        if (sliceById(id) == nullptr && !sliceLetterReserved(id)) {
+            return id;
+        }
+    }
+    return -1;
+}
+
+int RadioModel::startingSliceCap() const
+{
+    // The connect makes its starting slices before it sizes the stream
+    // pool, so the board's own limit stands in for the pool's then.
+    if (m_streamAllocator.streamCount() > 0) {
+        return sliceChannelLimit();
+    }
+    return deviceLayoutLimit();
+}
+
+void RadioModel::reserveDeviceSlices(const QString& radioMac)
+{
+    m_deviceSliceReservations.clear();
+    m_deviceReservationsMac.clear();
+    if (role() != Role::Local || m_receiveLayoutManaged || !m_hostsStationDevice
+        || AppSettings::normalizedRadioMac(radioMac).isEmpty()) {
+        return;
+    }
+    m_deviceReservationsMac = AppSettings::normalizedRadioMac(radioMac);
+    AppSettings& store = AppSettings::instance();
+    const ReceiveLayoutStore::LoadResult layout = ReceiveLayoutStore::load(store, radioMac);
+    if (layout.state != ReceiveLayoutStore::LoadState::Loaded) {
+        if (layout.state != ReceiveLayoutStore::LoadState::Missing) {
+            qCWarning(lcConnection) << "Receive layout: paired devices' letters not reserved:"
+                                    << layout.error;
+        }
+        return;
+    }
+    // The connect's snapshot when it is this radio's: what the device left
+    // on its letter, even when the window has since written that letter.
+    const bool snapshotHere = !m_deviceLetterSnapshotMac.isEmpty()
+        && AppSettings::normalizedRadioMac(m_deviceLetterSnapshotMac)
+            == AppSettings::normalizedRadioMac(radioMac);
+    const int cap = startingSliceCap();
+    for (const ReceiveSliceState& state : layout.slices) {
+        const QByteArray device = layoutSubject(state.owner, state.heldFor);
+        if (!isPairedDeviceSubject(device)) {
+            continue;
+        }
+        // A device already on this Core keeps the slice it has.
+        const SliceOwnership::Mark live = m_sliceOwnership->mark(state.id);
+        if (sliceById(state.id) != nullptr && layoutSubject(live.owner, live.heldFor) == device) {
+            continue;
+        }
+        // The letter's settings as the device left them, before anything
+        // else can write them.
+        QMap<QString, QString> settings = snapshotHere && m_deviceLetterSnapshot.contains(state.id)
+            ? m_deviceLetterSnapshot.value(state.id)
+            : DeviceLayoutStore::captureSliceSettings(store, radioMac, state.id);
+        m_deviceSliceReservations.append(
+            {device, state, std::move(settings),
+             state.id >= 0 && state.id < cap && sliceById(state.id) == nullptr});
+    }
+}
+
+int RadioModel::deviceLayoutLimit() const
+{
+    const int board = boardCapabilities().maxSlices;
+    return board > 0 ? std::min(board, WdspEngine::kMaxSliceChannels)
+                     : WdspEngine::kMaxSliceChannels;
+}
+
+void RadioModel::snapshotDeviceLetterSettings(const QString& radioMac)
+{
+    m_deviceLetterSnapshot.clear();
+    m_deviceLetterSnapshotMac.clear();
+    if (role() != Role::Local || m_receiveLayoutManaged
+        || AppSettings::normalizedRadioMac(radioMac).isEmpty()) {
+        return;
+    }
+    AppSettings& store = AppSettings::instance();
+    const ReceiveLayoutStore::LoadResult layout = ReceiveLayoutStore::load(store, radioMac);
+    if (layout.state != ReceiveLayoutStore::LoadState::Loaded) {
+        return;
+    }
+    m_deviceLetterSnapshotMac = radioMac;
+    for (const ReceiveSliceState& state : layout.slices) {
+        if (isPairedDeviceSubject(layoutSubject(state.owner, state.heldFor))) {
+            m_deviceLetterSnapshot.insert(
+                state.id, DeviceLayoutStore::captureSliceSettings(store, radioMac, state.id));
+        }
+    }
+}
+
+int RadioModel::addStartingSlices(const QString& radioMac)
+{
+    if (role() != Role::Local) {
+        return -1;
+    }
+    if (!m_slices.isEmpty()) {
+        // A reconnect keeps its slices. Connecting to another radio than
+        // the one the snapshot and the kept letters were made for (or Run
+        // Core turned on before any radio address was known): that
+        // radio's letters and settings, never the last radio's.
+        const QString mac = AppSettings::normalizedRadioMac(radioMac);
+        if (AppSettings::normalizedRadioMac(m_deviceLetterSnapshotMac) != mac) {
+            snapshotDeviceLetterSettings(radioMac);
+        }
+        if (m_hostsStationDevice && !m_receiveLayoutManaged && m_deviceReservationsMac != mac) {
+            reserveDeviceSlices(radioMac);
+        }
+        return -1;
+    }
+    // JJ 2026-10-23, the open behavior ruling: at every local connect, the
+    // paired devices' letters' settings as they are now, so a device that
+    // comes back later gets its own settings even when the window (Run Core
+    // off at connect) takes its letter and writes it.
+    snapshotDeviceLetterSettings(radioMac);
+    // JJ 2026-10-23: a Core inside a desktop window keeps a returning paired
+    // device's letter and settings for it, as the headless Core does, and
+    // the window takes the lowest letter nobody's device has. The device's
+    // slice is made only when it signs in (placeReservedSlicesFor), so
+    // nothing of it runs in the window. Without this the window took A at
+    // every start and a device that had A was given a new slice.
+    if (m_hostsStationDevice && !m_receiveLayoutManaged) {
+        reserveDeviceSlices(radioMac);
+        const int cap = startingSliceCap();
+        if (lowestUnreservedFreeSliceId(cap) < 0) {
+            // Every letter is a device's: the window takes the last, and
+            // that device gets the lowest free letter when it signs in,
+            // with its letter's settings as they were kept above.
+            for (DeviceSliceReservation& reservation : m_deviceSliceReservations) {
+                if (reservation.letterKept && reservation.state.id == cap - 1) {
+                    reservation.letterKept = false;
+                }
+            }
+        }
+    }
+    // The window's one-time wiring follows this slice (windowSliceId), and
+    // runs on its sliceAdded, so the id is known before the slice is made:
+    // addSliceImpl mints the lowest letter not kept, else the lowest free.
+    const int unkept = m_deviceSliceReservations.isEmpty()
+        ? -1 : lowestUnreservedFreeSliceId(sliceChannelLimit());
+    m_windowSliceId = unkept >= 0 ? unkept : 0;
+    const int id = addSlice();
+    SliceModel* slice = sliceById(id);
+    if (!slice) {
+        return -1;
+    }
+    if (id != m_windowSliceId) {
+        qCWarning(lcConnection) << "Starting slice" << receiverLetter(id)
+                                << "is not the letter the window expected"
+                                << receiverLetter(m_windowSliceId);
+        m_windowSliceId = id;
+    }
+    slice->setPanKey(QStringLiteral("pan-0"));
+    return id;
+}
+
+int RadioModel::placeReservedSlicesFor(const QByteArray& device)
+{
+    if (role() != Role::Local || device.isEmpty()) {
+        return 0;
+    }
+    const QString mac = currentRadioMac();
+    if (mac.isEmpty()) {
+        return 0;
+    }
+    // Letters kept for another radio are never placed on this one.
+    if (m_deviceReservationsMac != AppSettings::normalizedRadioMac(mac)) {
+        return 0;
+    }
+    QList<DeviceSliceReservation> mine;
+    QList<DeviceSliceReservation> others;
+    for (const DeviceSliceReservation& reservation : std::as_const(m_deviceSliceReservations)) {
+        (reservation.device == device ? mine : others).append(reservation);
+    }
+    if (mine.isEmpty()) {
+        return 0;
+    }
+    m_deviceSliceReservations = others;
+    AppSettings& store = AppSettings::instance();
+    int placed = 0;
+    for (const DeviceSliceReservation& reservation : std::as_const(mine)) {
+        const ReceiveSliceState& kept = reservation.state;
+        // Its letter when free, else the lowest letter free and not kept
+        // for another device (as StationServer step 2 places a saved slice).
+        const int cap = sliceChannelLimit();
+        const int sliceId = kept.id >= 0 && kept.id < cap && sliceById(kept.id) == nullptr
+            ? kept.id : lowestFreeSliceId();
+        const SavedSlice saved{kept.id, kept.panKey, kept.frequencyHz, kept.dspMode,
+                               reservation.settings};
+        if (sliceId < 0) {
+            DeviceLayoutStore::append(store, mac, device, saved, deviceLayoutLimit());
+            qCInfo(lcConnection) << "Receive layout: no free letter for a paired device's slice;"
+                                    " kept in its saved slices";
+            continue;
+        }
+        DeviceLayoutStore::writeSliceSettings(store, mac, sliceId, reservation.settings);
+        const ReceiveSliceState state{sliceId, kept.panKey, kept.frequencyHz, kept.dspMode,
+                                      {}, {}};
+        QString reason;
+        if (restoreSliceFor(device, sliceId, state, &reason) < 0) {
+            qCInfo(lcConnection) << "Receive layout: a paired device's slice did not fit:"
+                                 << reason;
+            if (sliceId != kept.id) {
+                DeviceLayoutStore::clearSliceSettings(store, mac, sliceId);
+            }
+            DeviceLayoutStore::append(store, mac, device, saved, deviceLayoutLimit());
+            continue;
+        }
+        // The device's settings for its kept letter now live on its slice
+        // (restoreSliceFor dropped that letter's snapshot).
+        m_deviceLetterSnapshot.remove(kept.id);
+        ++placed;
+    }
+    requestSettingsSave();
+    return placed;
+}
+
+bool RadioModel::captureHostedReceiveLayout()
+{
+    // Never blocks the window's own saves: a layout that cannot be staged
+    // is logged and the settings are saved as before.
+    if (role() != Role::Local || m_connectionState != ConnectionState::Connected) {
+        return true;
+    }
+    const QString mac = m_lastRadioInfo.macAddress;
+    if (AppSettings::normalizedRadioMac(mac).isEmpty()) {
+        return true;
+    }
+    AppSettings& store = AppSettings::instance();
+    const ReceiveLayoutStore::LoadResult existing = ReceiveLayoutStore::load(store, mac);
+    if (existing.state != ReceiveLayoutStore::LoadState::Loaded
+        && existing.state != ReceiveLayoutStore::LoadState::Missing) {
+        // A layout this Core cannot read is left as it is, never replaced.
+        qCWarning(lcConnection) << "Receive layout: kept unread, paired devices' slices not saved:"
+                                << existing.error;
+        return true;
+    }
+    QList<ReceiveSliceState> slices;
+    QSet<int> ids;
+    // The paired devices' live slices, owned or held for them.
+    for (const SliceModel* slice : std::as_const(m_slices)) {
+        const SliceOwnership::Mark mark = m_sliceOwnership->mark(slice->sliceIndex());
+        if (!isPairedDeviceSubject(layoutSubject(mark.owner, mark.heldFor))) {
+            continue;
+        }
+        slices.append({slice->sliceIndex(), slice->panKey(), slice->frequency(), slice->dspMode(),
+                       mark.owner, mark.heldFor});
+        ids.insert(slice->sliceIndex());
+    }
+    // Letters still kept for devices that have not signed in. Letters kept
+    // for another radio are not this radio's and are left as they are.
+    const bool reservationsHere =
+        m_deviceReservationsMac == AppSettings::normalizedRadioMac(mac);
+    QList<DeviceSliceReservation> reservations;
+    for (const DeviceSliceReservation& reservation : std::as_const(m_deviceSliceReservations)) {
+        if (!reservationsHere) {
+            reservations.append(reservation);
+            continue;
+        }
+        if (ids.contains(reservation.state.id) || sliceById(reservation.state.id) != nullptr) {
+            // Another slice has that letter now (a device's or the window's
+            // own): the device's saved slices keep this one, with its own
+            // settings, never the letter's current ones.
+            const ReceiveSliceState& kept = reservation.state;
+            DeviceLayoutStore::append(store, mac, reservation.device,
+                                      {kept.id, kept.panKey, kept.frequencyHz, kept.dspMode,
+                                       reservation.settings},
+                                      deviceLayoutLimit());
+            continue;
+        }
+        reservations.append(reservation);
+        slices.append(reservation.state);
+        ids.insert(reservation.state.id);
+    }
+    m_deviceSliceReservations = reservations;
+    // Never lose what this Core does not manage: entries with no paired
+    // device (a headless Core's unowned slices, a token window's) come
+    // through unchanged.
+    if (existing.state == ReceiveLayoutStore::LoadState::Loaded) {
+        for (const ReceiveSliceState& entry : existing.slices) {
+            if (isPairedDeviceSubject(layoutSubject(entry.owner, entry.heldFor))) {
+                continue;
+            }
+            if (ids.contains(entry.id)) {
+                qCInfo(lcConnection) << "Receive layout: a paired device now has letter"
+                                     << receiverLetter(entry.id) << "; its unowned entry is replaced";
+                continue;
+            }
+            slices.append(entry);
+            ids.insert(entry.id);
+        }
+    }
+    if (slices.isEmpty()) {
+        ReceiveLayoutStore::forget(store, mac);
+        return true;
+    }
+    // Two RADE slices need a named audio owner (ReceiveLayoutStore::validate):
+    // the one the layout named, else the lowest letter.
+    QList<int> radeIds;
+    for (const ReceiveSliceState& entry : std::as_const(slices)) {
+        if (isRadeDspMode(entry.dspMode)) {
+            radeIds.append(entry.id);
+        }
+    }
+    std::optional<int> radeOwner;
+    if (existing.radeRxOwnerId && radeIds.contains(*existing.radeRxOwnerId)) {
+        radeOwner = existing.radeRxOwnerId;
+    } else if (radeIds.size() > 1) {
+        radeOwner = *std::min_element(radeIds.cbegin(), radeIds.cend());
+    }
+    const std::optional<int> diversityOwner =
+        existing.diversityOwnerId && ids.contains(*existing.diversityOwnerId)
+            ? existing.diversityOwnerId : std::nullopt;
+    QString reason;
+    if (!ReceiveLayoutStore::stage(store, mac, slices, &reason, radeOwner, diversityOwner)) {
+        qCWarning(lcConnection) << "Receive layout: paired devices' slices not saved:" << reason;
+    }
+    return true;
 }
 
 int RadioModel::restoreSliceFor(const QByteArray& owner, int sliceId,
@@ -18532,6 +18958,10 @@ int RadioModel::restoreSliceFor(const QByteArray& owner, int sliceId,
         return refuse(rejection.isEmpty() ? tr("All the radio's receivers are in use.")
                                           : rejection);
     }
+    // A device is on this letter now (a kept letter, or a saved slice at
+    // admission): its connect-time snapshot is stale from here on, and a
+    // later Run Core off/on cycle reads the letter's current settings.
+    m_deviceLetterSnapshot.remove(id);
     if (reason) {
         reason->clear();
     }
@@ -19561,18 +19991,18 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
     // Create slice 0 and load persisted VFO state from AppSettings.
     // Slice A always lives on the default pan "pan-0"; seed its panKey so
     // flag migration (panKeyChanged) routes symmetrically with Slice B+.
-    if (m_slices.isEmpty()) {
-        addSlice();
-        if (!m_slices.isEmpty()) {
-            m_slices.first()->setPanKey(QStringLiteral("pan-0"));
-        }
-    }
+    // A Core inside a desktop window first gives paired devices their
+    // letters back, and its window takes the lowest free one
+    // (addStartingSlices).
+    const int startingSliceId = addStartingSlices(info.macAddress);
     for (SliceModel* slice : std::as_const(m_slices)) {
         slice->setSettingsRadioIdentity(info.macAddress);
         slice->restoreNnrSettings();
     }
     if (!preserveSlices && !m_receiveLayoutOverridesCount) {
-        setActiveSlice(0);
+        const qsizetype startingIndex =
+            startingSliceId >= 0 ? m_slices.indexOf(sliceById(startingSliceId)) : 0;
+        setActiveSlice(static_cast<int>(std::max<qsizetype>(0, startingIndex)));
         loadSliceState(m_activeSlice);
     }
 
@@ -27259,7 +27689,9 @@ void RadioModel::completeReceiveLayoutStartup()
 bool RadioModel::captureReceiveLayout(QString* error)
 {
     if (!m_receiveLayoutManaged) {
-        return true;
+        // A Core inside a desktop window keeps its paired devices' slices
+        // in the layout too, so a restart either way gives them back.
+        return m_hostsStationDevice ? captureHostedReceiveLayout() : true;
     }
     // Slice control plan Task 7 (ruling Q10): a Core left with no slice
     // saves no layout, so a restart starts as a first start does, with one

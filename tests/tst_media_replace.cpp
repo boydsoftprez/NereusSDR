@@ -147,6 +147,7 @@
 #include "fakes/DisplayVersionTap.h"
 #include "fakes/RemoteAudioSessionHarness.h"
 #include "fakes/UpgradedCoreToken.h"
+#include "fakes/NoCaptureHelper.h"
 #include "gui/PanadapterApplet.h"
 #include "gui/PanadapterStack.h"
 #include "gui/RemoteMediaController.h"
@@ -429,6 +430,9 @@ struct CoreHarness {
                          return transport;
                      })
     {
+        // No real helper beside the test binary may start (NoCaptureHelper.h).
+        Test::useNoCaptureHelper(radio);
+        Test::useNoCaptureHelper(remote);
         radio.setBoardForTest(HPSDRHW::Saturn);
         radio.configureStreamPool(/*userDdcCount=*/5, /*maxSlices=*/5,
                                   /*defaultRateHz=*/192000);

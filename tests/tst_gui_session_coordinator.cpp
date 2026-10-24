@@ -65,6 +65,7 @@
 #include "fakes/MainWindowTestSettings.h"
 #include "fakes/P1FakeRadio.h"
 #include "fakes/UpgradedCoreToken.h"
+#include "fakes/NoCaptureHelper.h"
 
 using namespace NereusSDR;
 
@@ -345,6 +346,7 @@ private slots:
         QVERIFY(sessions.configureDesktopStation(AppSettings::profileOverride(), true));
         QVERIFY2(sessions.replace({}, false, &error), qPrintable(error));
         RadioModel* model = sessions.window()->radioModel();
+        Test::useNoCaptureHelper(*model);   // the connect demands the PC mic
         RadioDiscovery* discovery = model->discovery();
         discovery->injectLastSeenForTest(radio.macAddress, radio, 0);
         sessions.window()->startInitialConnection();

@@ -42,6 +42,7 @@
 #include "fakes/RemoteAudioSessionHarness.h"
 #include "fakes/MainWindowTestSettings.h"
 #include "fakes/UpgradedCoreToken.h"
+#include "fakes/NoCaptureHelper.h"
 
 using namespace NereusSDR;
 
@@ -636,6 +637,7 @@ private slots:
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
         RadioModel station;
+        Test::useNoCaptureHelper(station);
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -646,6 +648,7 @@ private slots:
         QVERIFY2(server.listen(QHostAddress::LocalHost, 0), qPrintable(server.lastError()));
 
         RadioModel remote(RadioModel::Role::Remote);
+        Test::useNoCaptureHelper(remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);

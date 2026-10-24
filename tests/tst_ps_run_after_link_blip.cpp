@@ -51,6 +51,7 @@
 #include "models/RadioModel.h"
 #include "fakes/ConnectableRadioModel.h"
 #include "fakes/FakeAudioBus.h"
+#include "fakes/NoCaptureHelper.h"
 #include "fakes/P1FakeRadio.h"
 #include "fakes/P2FakeRadio.h"
 
@@ -269,6 +270,7 @@ private slots:
 
         RadioModel model;
         model.audioEngine()->setStartInitializerForTest(installOpenAudioBuses);
+        Test::useNoCaptureHelper(model);    // the connect demands the PC mic
         model.wdspEngine()->setSynchronousInitForTest(true);
         model.configureP2TransportForTest(outboundPortBase, inputRolePortBase, 1000, 200);
 

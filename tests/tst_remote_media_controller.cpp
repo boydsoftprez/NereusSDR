@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-24  J.J. Boyd / KG4VCF  Every model the cases build is an
+//                                    IsolatedRadioModel, so none starts a
+//                                    capture helper found beside the test
+//                                    binary. AI-assisted via Anthropic
+//                                    Claude Code.
 //   2026-10-23  J.J. Boyd / KG4VCF  waterfallLevelsFromActualRequestMatchLocal:
 //                                    the run level starts at the seed's
 //                                    target, -155.5 and -154.3, and the
@@ -403,6 +408,7 @@
 #include "fakes/FakeCaptureChild.h"
 #include <atomic>
 #include "fakes/UpgradedCoreToken.h"
+#include "fakes/NoCaptureHelper.h"
 
 using namespace NereusSDR;
 
@@ -521,6 +527,21 @@ void captureRemoteMediaMessages(QtMsgType, const QMessageLogContext& context,
         g_remoteMediaMessages.append(message);
     }
 }
+
+namespace {
+// Every model this file builds is one of these: its capture supervisor
+// points at a program that cannot exist (NoCaptureHelper.h), so no case
+// starts a real nereus-audio-capture found beside this test binary.  A
+// case that wants a helper still installs the scripted fake afterwards.
+class IsolatedRadioModel final : public RadioModel {
+public:
+    explicit IsolatedRadioModel(RadioModel::Role role = RadioModel::Role::Local)
+        : RadioModel(role)
+    {
+        Test::useNoCaptureHelper(*this);
+    }
+};
+} // namespace
 
 namespace {
 // I/Q blocks a display test hands the Core per poll of a QTRY wait. One
@@ -1260,7 +1281,7 @@ private slots:
     void waveformRemoteDemandClockAndIdentity()
     {
         QTemporaryDir dir; AppSettings settings(dir.filePath("station.settings"));
-        RadioModel station; station.setBoardForTest(HPSDRHW::Saturn);
+        IsolatedRadioModel station; station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5,5,192000); station.setConnectionStateForTest(ConnectionState::Connected);
         const int slice=station.addSlice(); QVERIFY(slice>=0);
         StationServer server(&station,settings,NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
@@ -1270,7 +1291,7 @@ private slots:
         DaemonMediaController core(&server,&station,nullptr,[&](QObject* parent)->IMediaTransport* {
             coreMedia=new DisplayTransport(parent); return coreMedia;
         },[] { return waveformNowNs()+offset; });
-        RadioModel remote(RadioModel::Role::Remote); remote.audioEngine()->setMasterMuted(true);
+        IsolatedRadioModel remote(RadioModel::Role::Remote); remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy; StationClient client(&remote,&proxy);
         client.withholdFeatureForTest("remoteTx"); // This observer fixture opens no microphone line/capture.
         RemoteMediaController gui(&client,&remote,nullptr,nullptr,[&](QObject* parent)->IMediaTransport* {
@@ -1316,10 +1337,10 @@ private slots:
 
     void waveformOlderCoreIsUnsupported()
     {
-        QTemporaryDir dir; AppSettings settings(dir.filePath("station.settings")); RadioModel station;
+        QTemporaryDir dir; AppSettings settings(dir.filePath("station.settings")); IsolatedRadioModel station;
         StationServer server(&station,settings,NereusSDR::Test::seedUpgradedCoreToken(dir.path())); server.setMediaEnabled(true);
         DaemonMediaController core(&server,&station,nullptr,[](QObject* parent)->IMediaTransport* { return new DisplayTransport(parent); });
-        RadioModel remote(RadioModel::Role::Remote); remote.audioEngine()->setMasterMuted(true);
+        IsolatedRadioModel remote(RadioModel::Role::Remote); remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy; StationClient client(&remote,&proxy); client.withholdFeatureForTest("waveform");
         RemoteMediaController gui(&client,&remote,nullptr,nullptr,[](QObject* parent)->IMediaTransport* { return new DisplayTransport(parent); });
         auto* stationLink=new Test::LoopbackTransport("station", &server);
@@ -1335,7 +1356,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath("station.settings"));
-        RadioModel station;
+        IsolatedRadioModel station;
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
         QPointer<DisplayTransport> coreMedia;
@@ -1344,7 +1365,7 @@ private slots:
                 coreMedia = new DisplayTransport(owner);
                 return coreMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -1431,10 +1452,10 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -1480,10 +1501,10 @@ private slots:
         QFETCH(bool, recovers);
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -1533,10 +1554,10 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -1570,11 +1591,11 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
 
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -1616,10 +1637,10 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -1689,10 +1710,10 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -1749,13 +1770,13 @@ private slots:
         constexpr int kConnectMs = 1500;
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
         // Core answers media only when a test case wants its description.
         bool coreOffers = false;
         std::unique_ptr<DaemonMediaController> core;
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -1838,10 +1859,10 @@ private slots:
         constexpr int kDeadlineMs = 150;
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -1917,10 +1938,10 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -2178,7 +2199,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -2197,7 +2218,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -2306,7 +2327,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -2324,7 +2345,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -2487,7 +2508,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -2505,7 +2526,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -2610,7 +2631,7 @@ private slots:
         QFETCH(bool, olderCore);
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -2635,7 +2656,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -2855,7 +2876,7 @@ private slots:
         QFETCH(bool, scale);
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -2879,7 +2900,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -2975,7 +2996,7 @@ private slots:
         QCOMPARE(station.sliceOwnership()->anchorOf(stream), identity->fingerprint());
         QTRY_VERIFY(remote.sliceById(hiddenId));
         QCOMPARE(remote.slicesOnStream(stream).size(), 2);
-        RadioModel remoteB(RadioModel::Role::Remote);
+        IsolatedRadioModel remoteB(RadioModel::Role::Remote);
         remoteB.audioEngine()->setMasterMuted(true);
         SettingsProxy proxyB;
         StationClient clientB(&remoteB, &proxyB);
@@ -3205,7 +3226,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -3223,7 +3244,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -3421,7 +3442,7 @@ private slots:
         // The rejoin rows need a codec: a rejoin compares the ADC each
         // receiver's DDC reads, which only the codec's assignment says.
         P2CodecSaturn codec;
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         if (rejoined) {
@@ -3466,7 +3487,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -3623,7 +3644,7 @@ private slots:
         // A Protocol 2 Core with a wideband ADC path: a view outside the
         // receiver is one this Core accepts and switches the filters for.
         P2RadioConnection p2;
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -3665,7 +3686,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -3855,7 +3876,7 @@ private slots:
         QFETCH(bool, budget);
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -3886,7 +3907,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -4005,7 +4026,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -4022,7 +4043,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -4091,7 +4112,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -4114,7 +4135,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -4200,7 +4221,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -4218,7 +4239,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -4313,7 +4334,7 @@ private slots:
             if (hadFft) { appSettings.setValue(QStringLiteral("DisplayFftSize"), savedFft); }
             else { appSettings.remove(QStringLiteral("DisplayFftSize")); }
         });
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         StepAttenuatorController stationAttenuator(&station);
         stationAttenuator.setStepAttEnabled(true);
@@ -4338,7 +4359,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         PanClarityRegistry registry(&remote);
         SettingsProxy proxy;
@@ -4512,7 +4533,7 @@ private slots:
         QFETCH(QString, trigger);
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -4526,7 +4547,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -4654,7 +4675,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -4672,7 +4693,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -4908,7 +4929,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -4939,7 +4960,7 @@ private slots:
                 return sourceMedia;
             });
 
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -5012,7 +5033,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -5043,7 +5064,7 @@ private slots:
                 return sourceMedia;
             });
 
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -5113,7 +5134,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -5129,7 +5150,7 @@ private slots:
                 return sourceMedia;
             });
 
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -5205,13 +5226,13 @@ private slots:
             if (hadFps) { appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), savedFps); }
             else { appSettings.remove(QStringLiteral("DisplaySpectrumFps")); }
         });
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
         const int sliceId = station.addSlice();
         QVERIFY(station.sliceById(sliceId));
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -5349,13 +5370,13 @@ private slots:
             if (hadFps) { appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), savedFps); }
             else { appSettings.remove(QStringLiteral("DisplaySpectrumFps")); }
         });
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
         const int sliceId = station.addSlice();
         QVERIFY(station.sliceById(sliceId));
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -5491,13 +5512,13 @@ private slots:
             if (hadFps) { appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), savedFps); }
             else { appSettings.remove(QStringLiteral("DisplaySpectrumFps")); }
         });
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
         const int sliceId = station.addSlice();
         QVERIFY(station.sliceById(sliceId));
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -5660,13 +5681,13 @@ private slots:
             if (hadFps) { appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), savedFps); }
             else { appSettings.remove(QStringLiteral("DisplaySpectrumFps")); }
         });
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
         const int sliceId = station.addSlice();
         QVERIFY(station.sliceById(sliceId));
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -5753,13 +5774,13 @@ private slots:
             if (hadFps) { appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), savedFps); }
             else { appSettings.remove(QStringLiteral("DisplaySpectrumFps")); }
         });
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
         const int sliceId = station.addSlice();
         QVERIFY(station.sliceById(sliceId));
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -5927,13 +5948,13 @@ private slots:
             if (hadFps) { appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), savedFps); }
             else { appSettings.remove(QStringLiteral("DisplaySpectrumFps")); }
         });
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
         const int sliceId = station.addSlice();
         QVERIFY(station.sliceById(sliceId));
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -6174,7 +6195,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -6205,7 +6226,7 @@ private slots:
                 return sourceMedia;
             });
 
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -6281,7 +6302,7 @@ private slots:
         });
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -6301,7 +6322,7 @@ private slots:
                 sourcePeers.append(transport);
                 return transport;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -6459,7 +6480,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -6474,7 +6495,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -6542,7 +6563,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -6573,7 +6594,7 @@ private slots:
                 return sourceMedia;
             });
 
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -6653,7 +6674,7 @@ private slots:
             if (hadFps) { appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), savedFps); }
             else { appSettings.remove(QStringLiteral("DisplaySpectrumFps")); }
         });
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -6679,7 +6700,7 @@ private slots:
             return false;
         });
 
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -6782,7 +6803,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5,5,192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -6795,7 +6816,7 @@ private slots:
         }
         StationServer server(&station, settings, Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         remote.setClarityEnabled(true);
         PanClarityRegistry registry(&remote);
@@ -6923,7 +6944,7 @@ private slots:
         QFETCH(qint64, holdMs);
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -6934,7 +6955,7 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         NereusSDR::FFTEngine windowEngine(-1); // Rendering > Decimation keeps its value here.
         windowEngine.setDecimation(decimation);
@@ -7128,7 +7149,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -7138,7 +7159,7 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         PanClarityRegistry registry(&remote);
         SettingsProxy proxy;
@@ -7478,7 +7499,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -7487,7 +7508,7 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -7715,7 +7736,7 @@ private slots:
         QFETCH(QString, rule);
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -7729,7 +7750,7 @@ private slots:
         const auto clearAnalyzer = qScopeGuard([&station] { station.setTxAnalyzer(nullptr); });
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -7916,7 +7937,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -7925,7 +7946,7 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -8204,7 +8225,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -8213,7 +8234,7 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -8452,7 +8473,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -8465,7 +8486,7 @@ private slots:
         const auto clearAnalyzer = qScopeGuard([&station] { station.setTxAnalyzer(nullptr); });
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -8713,7 +8734,7 @@ private slots:
         QFETCH(bool, agreed);
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -8726,7 +8747,7 @@ private slots:
         const auto clearAnalyzer = qScopeGuard([&station] { station.setTxAnalyzer(nullptr); });
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -8941,7 +8962,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -8950,7 +8971,7 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -9056,7 +9077,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -9066,7 +9087,7 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -9210,7 +9231,7 @@ private slots:
             if (hadSizingMode) { appSettings.setValue(sizingModeKey, savedSizingMode); }
             else { appSettings.remove(sizingModeKey); }
         });
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -9220,7 +9241,7 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         NereusSDR::FFTEngine windowEngine(-1); // Rendering > Decimation keeps its value here.
         windowEngine.setDecimation(4);
@@ -9440,7 +9461,7 @@ private slots:
             appSettings.remove(hzPerBinKey);
             appSettings.remove(modeKey);
         });
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -9450,7 +9471,7 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -9536,7 +9557,7 @@ private slots:
             appSettings.remove(sizeKey);
             appSettings.remove(modeKey);
         });
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -9546,7 +9567,7 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -9623,7 +9644,7 @@ private slots:
             if (hadFps) { appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), savedFps); }
             else { appSettings.remove(QStringLiteral("DisplaySpectrumFps")); }
         });
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -9633,7 +9654,7 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -9802,7 +9823,7 @@ private slots:
         });
         appSettings.clear();
         appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), QStringLiteral("20"));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -9812,7 +9833,7 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -10034,7 +10055,7 @@ private slots:
             }
         });
         appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), QStringLiteral("20"));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -10044,7 +10065,7 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -10364,7 +10385,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
         station.addSlice(QStringLiteral("pan-0"));
@@ -10374,7 +10395,7 @@ private slots:
         stationSlice->setFrequency(14225000);
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -10476,7 +10497,7 @@ private slots:
         const bool grantAgreed = minor >= kRemoteSpectrumGrantSessionProtocolMinor;
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -10494,7 +10515,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -10594,7 +10615,7 @@ private slots:
         QFETCH(bool, txState);
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -10628,7 +10649,7 @@ private slots:
                 coreMedia = new DisplayTransport(owner);
                 return coreMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         auto microphone = std::make_unique<FakeAudioBus>();
         QVERIFY(microphone->open(AudioFormat{48000, 1, AudioFormat::Sample::Float32}));
@@ -10908,7 +10929,7 @@ private slots:
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -10932,7 +10953,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -11127,7 +11148,7 @@ private slots:
         QFETCH(bool, agreed);
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -11147,7 +11168,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -11311,7 +11332,7 @@ private slots:
         QFETCH(bool, analyzer);
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -11334,7 +11355,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -11476,7 +11497,7 @@ private slots:
         const bool budgetMode = minor >= kDisplayBudgetReasonSessionProtocolMinor;
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -11497,7 +11518,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
@@ -11619,7 +11640,7 @@ private slots:
             if (hadTarget) { appSettings.setValue(targetKey, savedTarget); }
             else { appSettings.remove(targetKey); }
         });
-        RadioModel station;
+        IsolatedRadioModel station;
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -11653,7 +11674,7 @@ private slots:
                 sourceMedia = new DisplayTransport(owner);
                 return sourceMedia;
             });
-        RadioModel remote(RadioModel::Role::Remote);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
