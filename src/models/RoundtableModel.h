@@ -37,6 +37,10 @@
 //               Core's Roundtable settings (stationSetting,
 //               setStationSetting) and settingChanged for the Spot Hub
 //               tab. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-24: Roundtable plan Task 13: earlier turns of the last 30
+//               minutes only (wire spec 5.4.6: receivers drop the rest
+//               themselves), with a clock tests can set. J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -49,7 +53,10 @@
 #include <QObject>
 #include <QPointer>
 #include <QString>
+#include <QTimer>
 #include <QUrl>
+
+#include <functional>
 
 namespace NereusSDR {
 
@@ -70,6 +77,16 @@ public:
     static constexpr int kRoomCapacity = 400;
     /// Wire spec 5.4.5: a room view holds the last 50 messages.
     static constexpr int kRoomMessages = 50;
+    /// Wire spec 5.4.6: a room view's earlier turns are those that ended in
+    /// the last 30 minutes; a turn that leaves the window is not announced,
+    /// receivers drop it themselves.
+    static constexpr qint64 kEarlierWindowMs = 30LL * 60LL * 1000LL;
+
+    /// The Unix time in ms the model reads (the wall clock unless a test
+    /// set its own).
+    static qint64 nowMs();
+    /// A test's clock; an empty function restores the wall clock.
+    static void setClockForTest(std::function<qint64()> clock);
 
     static QString roomStreamName(const QString& roomId);
     /// The room id of a `roundtableRoom:<id>` stream, else empty.
@@ -172,6 +189,11 @@ public:
     void requestWebLink();
     void deleteArchive(const QString& confirm);
 
+    /// Drops every ended turn older than kEarlierWindowMs from the rooms in
+    /// view and emits roomChanged for each room that lost one. Runs on its
+    /// own when the oldest earlier turn ages out.
+    void pruneEarlierTurns();
+
 signals:
     void roomsChanged();
     void roomChanged(const QString& roomId);
@@ -204,6 +226,8 @@ private:
     void pushRoomsToState();
     void refuse(const QString& verb, const QString& reason);
     bool stationOutcome(const QString& verb, bool sent, const QString& reason);
+    static bool pruneView(RoomView& view, qint64 cutoffMs);
+    void schedulePrune();
 
     QPointer<RoundtableClient> m_client;
     QPointer<RoundtableState> m_state;
@@ -228,6 +252,9 @@ private:
 
     // The AppSettings write observer feeding settingChanged.
     int m_settingsObserver = -1;
+
+    // Fires when the oldest earlier turn leaves the 30-minute window.
+    QTimer m_pruneTimer;
 };
 
 } // namespace NereusSDR

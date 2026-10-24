@@ -9762,6 +9762,11 @@ nereus_add_test(tst_roundtable_model)
 nereus_add_test(tst_roundtable_spothub)
 target_compile_definitions(tst_roundtable_spothub PRIVATE
     NEREUS_ROUNDTABLE_CONFORMANCE_DIR="${CMAKE_SOURCE_DIR}/roundtable/conformance/v1")
+# Roundtable plan Task 13 (design 11.1, 11.2 Panel): the room panel the
+# applet and the pop-out show: its order, readings, earlier turns and Name,
+# the read bar, keyed, the connection line, drafts, the counter, Not sent,
+# the message menus, the mute fold, the pills and the keyboard.
+nereus_add_test(tst_roundtable_panel)
 # Roundtable plan Task 11: Roundtable on the station link: the
 # stationRoundtableVersion capability and `roundtable` object only for a
 # peer that declared roundtable, the thirteen verbs, the room streams and

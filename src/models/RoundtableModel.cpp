@@ -13,6 +13,9 @@
 //   2026-10-24: Roundtable plan Task 12: available(), muteList(), the
 //               Core's Roundtable settings and settingChanged. J.J. Boyd
 //               (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-24: Roundtable plan Task 13: earlier turns of the last 30
+//               minutes only, pruned on a timer, and the test clock.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include "models/RoundtableModel.h"
@@ -24,6 +27,7 @@
 #include "core/session/IStationLink.h"
 #include "core/session/RecordStream.h"
 
+#include <QDateTime>
 #include <QJsonValue>
 
 #include <algorithm>
@@ -69,7 +73,36 @@ QJsonObject withSortedNames(QJsonObject turn)
     return turn;
 }
 
+std::function<qint64()>& testClock()
+{
+    static std::function<qint64()> clock;
+    return clock;
+}
+
+bool isOpen(const QJsonObject& turn)
+{
+    // An open turn's end is null (or left out on the way).
+    const QJsonValue end = turn.value(QStringLiteral("end"));
+    return end.isNull() || end.isUndefined();
+}
+
+bool endedBefore(const QJsonObject& turn, qint64 cutoffMs)
+{
+    return !isOpen(turn) && turn.value(QStringLiteral("end")).toInteger() < cutoffMs;
+}
+
 } // namespace
+
+qint64 RoundtableModel::nowMs()
+{
+    const std::function<qint64()>& clock = testClock();
+    return clock ? clock() : QDateTime::currentMSecsSinceEpoch();
+}
+
+void RoundtableModel::setClockForTest(std::function<qint64()> clock)
+{
+    testClock() = std::move(clock);
+}
 
 QString RoundtableModel::roomStreamName(const QString& roomId)
 {
@@ -187,6 +220,8 @@ RoundtableModel::RoundtableModel(QObject* parent)
     m_settingsObserver = AppSettings::instance().addWriteObserver([this](const QString& key) {
         noteSettingChanged(key);
     });
+    m_pruneTimer.setSingleShot(true);
+    connect(&m_pruneTimer, &QTimer::timeout, this, &RoundtableModel::pruneEarlierTurns);
 }
 
 RoundtableModel::~RoundtableModel()
@@ -379,7 +414,9 @@ void RoundtableModel::applyRoom(const QJsonObject& full)
         }
     }
     trimMessages(view);
+    pruneView(view, nowMs() - kEarlierWindowMs);
     m_views.insert(id, view);
+    schedulePrune();
     emit roomChanged(id);
 }
 
@@ -419,6 +456,8 @@ void RoundtableModel::applyRoomDelta(const QJsonObject& delta)
         }
     }
     trimMessages(view);
+    pruneView(view, nowMs() - kEarlierWindowMs);
+    schedulePrune();
     emit roomChanged(id);
 }
 
@@ -509,7 +548,9 @@ void RoundtableModel::rebuildRoomFromRecords(const QString& roomId)
     for (auto it = view.turns.begin(); it != view.turns.end(); ++it) {
         it->insert(QStringLiteral("names"), names.value(it.key()));
     }
+    pruneView(view, nowMs() - kEarlierWindowMs);
     m_views.insert(roomId, view);
+    schedulePrune();
     emit roomChanged(roomId);
 }
 
@@ -591,12 +632,13 @@ QJsonObject RoundtableModel::room(const QString& roomId) const
 
     QList<QJsonObject> open;
     QList<QJsonObject> ended;
+    // Wire spec 5.4.6: only the turns that ended in the last 30 minutes,
+    // even between the prune timer's runs.
+    const qint64 cutoff = nowMs() - kEarlierWindowMs;
     for (const QJsonObject& turn : view.turns) {
-        // An open turn's end is null (or left out on the way).
-        const QJsonValue end = turn.value(QStringLiteral("end"));
-        if (end.isNull() || end.isUndefined()) {
+        if (isOpen(turn)) {
             open.append(turn);
-        } else {
+        } else if (!endedBefore(turn, cutoff)) {
             ended.append(turn);
         }
     }
@@ -921,6 +963,63 @@ void RoundtableModel::deleteArchive(const QString& confirm)
     } else if (!m_state || !m_state->deleteArchive(confirm, &reason)) {
         refuse(QStringLiteral("deleteArchive"), m_state ? reason : notRunningReason());
     }
+}
+
+// ---------------------------------------------------------------- earlier
+
+bool RoundtableModel::pruneView(RoomView& view, qint64 cutoffMs)
+{
+    bool pruned = false;
+    for (auto it = view.turns.begin(); it != view.turns.end();) {
+        if (endedBefore(it.value(), cutoffMs)) {
+            it = view.turns.erase(it);
+            pruned = true;
+        } else {
+            ++it;
+        }
+    }
+    return pruned;
+}
+
+void RoundtableModel::pruneEarlierTurns()
+{
+    const qint64 cutoff = nowMs() - kEarlierWindowMs;
+    QStringList changed;
+    for (auto it = m_views.begin(); it != m_views.end(); ++it) {
+        if (pruneView(it.value(), cutoff)) {
+            changed.append(it.key());
+        }
+    }
+    schedulePrune();
+    std::sort(changed.begin(), changed.end());
+    for (const QString& id : std::as_const(changed)) {
+        emit roomChanged(id);
+    }
+}
+
+void RoundtableModel::schedulePrune()
+{
+    qint64 oldestEnd = -1;
+    for (const RoomView& view : std::as_const(m_views)) {
+        for (const QJsonObject& turn : view.turns) {
+            if (isOpen(turn)) {
+                continue;
+            }
+            const qint64 end = turn.value(QStringLiteral("end")).toInteger();
+            if (oldestEnd < 0 || end < oldestEnd) {
+                oldestEnd = end;
+            }
+        }
+    }
+    if (oldestEnd < 0) {
+        m_pruneTimer.stop();
+        return;
+    }
+    // A second past the moment the oldest leaves the window, at least a
+    // second from now.
+    const qint64 wait = std::clamp<qint64>(oldestEnd + kEarlierWindowMs - nowMs() + 1000, 1000,
+                                           kEarlierWindowMs);
+    m_pruneTimer.start(static_cast<int>(wait));
 }
 
 } // namespace NereusSDR

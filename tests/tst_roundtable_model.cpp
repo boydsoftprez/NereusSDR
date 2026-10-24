@@ -18,10 +18,14 @@
 // Modification history (NereusSDR):
 //   2026-10-24: Created (Roundtable plan Task 11). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-24: Roundtable plan Task 13: earlier turns of the last 30
+//               minutes in both placements, on a test clock. J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 
+#include <QElapsedTimer>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -317,6 +321,14 @@ class TstRoundtableModel : public QObject {
     Q_OBJECT
 
 private slots:
+    void initTestCase()
+    {
+        // The scripted rooms' times are a few seconds after the epoch.
+        RoundtableModel::setClockForTest([] { return qint64(2000); });
+    }
+
+    void cleanupTestCase() { RoundtableModel::setClockForTest({}); }
+
     void bothPlacementsHoldEqualRooms()
     {
         Placements p;
@@ -526,6 +538,61 @@ private slots:
         p.windowState.clearStationValues();
         QVERIFY(!p.remote.firstRunAnswered());
         QCOMPARE(p.remote.mentionCount(kRoom), 0);
+    }
+
+    // Wire spec 5.4.6: a turn that leaves the 30-minute earlier window is
+    // not announced; each placement drops it itself, on its own timer.
+    void earlierTurnsAreTheLastThirtyMinutes()
+    {
+        constexpr qint64 kMinute = 60LL * 1000LL;
+        qint64 now = 100LL * kMinute;
+        RoundtableModel::setClockForTest([&now] { return now; });
+
+        QJsonObject full = roomFull();
+        full.insert(QStringLiteral("now"), QJsonArray{});
+        full.insert(QStringLiteral("earlier"),
+                    QJsonArray{turn(1, 60LL * kMinute, 65LL * kMinute, QJsonArray{}),
+                               turn(2, 70LL * kMinute, 75LL * kMinute, QJsonArray{}),
+                               turn(3, 90LL * kMinute, 95LL * kMinute, QJsonArray{})});
+        Placements p;
+        emit p.client.roomReceived(full);
+        p.carry();
+        const auto earlierIds = [](const QJsonObject& room) {
+            QList<qint64> ids;
+            for (const QJsonValue& t : room.value(QStringLiteral("earlier")).toArray()) {
+                ids.append(t.toObject().value(QStringLiteral("id")).toInteger());
+            }
+            return ids;
+        };
+        // Turn 1 ended 35 minutes ago: dropped on arrival.
+        QCOMPARE(earlierIds(p.local.room(kRoom)), (QList<qint64>{3, 2}));
+        QCOMPARE(earlierIds(p.remote.room(kRoom)), (QList<qint64>{3, 2}));
+
+        // Turn 2 leaves the window: room() stops showing it at once, and
+        // the prune drops it and tells the screens.
+        now = 105LL * kMinute + 1;
+        QCOMPARE(earlierIds(p.local.room(kRoom)), (QList<qint64>{3}));
+        QSignalSpy changed(&p.local, &RoundtableModel::roomChanged);
+        p.local.pruneEarlierTurns();
+        QCOMPARE(changed.size(), 1);
+        QCOMPARE(changed.at(0).at(0).toString(), kRoom);
+        p.local.pruneEarlierTurns();
+        QCOMPARE(changed.size(), 1); // nothing more to drop
+        QCOMPARE(earlierIds(p.remote.room(kRoom)), (QList<qint64>{3}));
+
+        // The timer does it unasked once the last one ages out: half a
+        // second before turn 3 leaves, on a clock that runs.
+        QElapsedTimer running;
+        running.start();
+        const qint64 base = 125LL * kMinute - 500;
+        RoundtableModel::setClockForTest([&running, base] { return base + running.elapsed(); });
+        p.local.pruneEarlierTurns(); // reschedules from the running clock
+        changed.clear();
+        QVERIFY(!earlierIds(p.local.room(kRoom)).isEmpty());
+        QTRY_VERIFY_WITH_TIMEOUT(changed.size() >= 1, 4000);
+        QVERIFY(earlierIds(p.local.room(kRoom)).isEmpty());
+        QVERIFY(earlierIds(p.remote.room(kRoom)).isEmpty());
+        RoundtableModel::setClockForTest([] { return qint64(2000); });
     }
 };
 
