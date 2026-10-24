@@ -9526,6 +9526,10 @@
             {
                 "key": "Roundtable/FirstRunSeen",
                 "scope": "operatorLocal"
+            },
+            {
+                "key": "Roundtable/WindowGeometry",
+                "scope": "operatorLocal"
             }
         ],
         "operatorLocalKeys": [

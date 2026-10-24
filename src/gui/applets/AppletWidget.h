@@ -14,6 +14,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24 - createFloatingWindow / dockFloatingWindow and
+//                floatingWindowDocked: an applet may pop out into a window of
+//                its own (Roundtable plan Task 13). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-04-18 — Implemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -60,6 +64,21 @@ public:
     /// True if the panel should offer a pop-out button so the applet can
     /// float in its own window (AppletPanelWidget::floatApplet).
     virtual bool canFloat() const { return false; }
+    /// An applet with a window of its own to pop out into returns it here
+    /// (shown by AppletPanelWidget::floatApplet, in place of an
+    /// AppletFloatingWindow); nullptr, the default, floats the applet
+    /// itself. The window stays the applet's: it docks itself
+    /// (dockFloatingWindow) and says so with floatingWindowDocked.
+    virtual QWidget* createFloatingWindow() { return nullptr; }
+    /// Puts back what createFloatingWindow() popped out; emits
+    /// floatingWindowDocked when it did.
+    virtual void dockFloatingWindow() {}
+
+signals:
+    /// The window createFloatingWindow() returned has docked.
+    void floatingWindowDocked();
+
+public:
 
     // Disabled, never hidden: while `reason` is not empty the applet is
     // grayed and shows the reason at its top (as the Rotor applet does);

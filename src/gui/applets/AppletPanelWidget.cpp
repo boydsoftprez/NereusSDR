@@ -16,6 +16,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24 - floatApplet shows an applet's own pop-out window
+//                (AppletWidget::createFloatingWindow) before any
+//                AppletFloatingWindow, in both modes; dockApplet,
+//                isAppletFloating, removeApplet and setAppletVisible know it
+//                (Roundtable plan Task 13). J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
 //   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
@@ -291,6 +297,9 @@ void AppletPanelWidget::setArrangeController(ContainerArrangeController *control
 }
 bool AppletPanelWidget::isAppletFloating(AppletWidget* applet) const
 {
+    if (applet && m_ownWindows.contains(applet)) {
+        return true;
+    }
     if (m_arrange && applet) {
         for (const auto &c : m_arrange->workspaceSnapshot().containers) {
             for (const auto &e : c.contents) {
@@ -306,6 +315,24 @@ bool AppletPanelWidget::isAppletFloating(AppletWidget* applet) const
 
 void AppletPanelWidget::floatApplet(AppletWidget* applet)
 {
+    // An applet with a window of its own pops out into it, in either mode;
+    // it stays where it is in the panel or its container.
+    if (applet && (m_managedWorkspace || m_applets.contains(applet))) {
+        if (QWidget* own = applet->createFloatingWindow()) {
+            if (!m_ownWindows.contains(applet)) {
+                m_ownWindows.insert(applet, own);
+                m_ownDocked.insert(applet, connect(applet, &AppletWidget::floatingWindowDocked, this,
+                                                   [this, applet]() { forgetOwnWindow(applet); }));
+            }
+            if (!m_managedWorkspace) {
+                AppSettings::instance().setValue(floatKey(applet), QStringLiteral("True"));
+            }
+            own->show();
+            own->raise();
+            own->activateWindow();
+            return;
+        }
+    }
     if (m_managedWorkspace) {
         if (m_arrange && applet) {
             for (const auto &c : m_arrange->workspaceSnapshot().containers) {
@@ -348,8 +375,22 @@ void AppletPanelWidget::floatApplet(AppletWidget* applet)
     win->raise();
 }
 
+void AppletPanelWidget::forgetOwnWindow(AppletWidget* applet)
+{
+    disconnect(m_ownDocked.take(applet));
+    if (m_ownWindows.remove(applet) > 0 && !m_managedWorkspace) {
+        AppSettings::instance().setValue(floatKey(applet), QStringLiteral("False"));
+    }
+}
+
 void AppletPanelWidget::dockApplet(AppletWidget* applet)
 {
+    if (applet && m_ownWindows.contains(applet)) {
+        // The applet docks its own window and says so (forgetOwnWindow).
+        applet->dockFloatingWindow();
+        forgetOwnWindow(applet);
+        return;
+    }
     if (m_managedWorkspace) {
         if (m_arrange && applet) {
             for (const auto &c : m_arrange->workspaceSnapshot().containers) {
@@ -385,7 +426,7 @@ void AppletPanelWidget::removeApplet(AppletWidget* applet)
 {
     if (!applet) { return; }
     if (!m_applets.contains(applet)) { return; }
-    if (m_floating.contains(applet)) {
+    if (m_floating.contains(applet) || m_ownWindows.contains(applet)) {
         dockApplet(applet);
     }
     m_wantVisible.remove(applet);
@@ -408,6 +449,12 @@ void AppletPanelWidget::setAppletVisible(AppletWidget* applet, bool visible)
     QWidget* wrapper = m_wrappers.value(applet, nullptr);
     if (!wrapper) { return; }  // applet not in this panel
     m_wantVisible[applet] = visible;
+    if (QWidget* own = m_ownWindows.value(applet)) {
+        // Hiding an applet popped out into its own window hides the window.
+        own->setVisible(visible);
+        wrapper->setVisible(visible);
+        return;
+    }
     if (AppletFloatingWindow* win = m_floating.value(applet, nullptr)) {
         // Hiding a floating applet hides its window; showing brings it back.
         win->setVisible(visible);

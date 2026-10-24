@@ -10,6 +10,11 @@
 // following it. Archive opens the web sign-in link; Settings asks its
 // owner (MainWindow opens the Spot Hub on its Roundtable tab).
 //
+// Pop out moves the panel into a RoundtableWindow of the applet's own
+// (createFloatingWindow, through AppletPanelWidget::floatApplet); the
+// applet then says so with "Put it back here". Closing the window docks
+// the panel back.
+//
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
@@ -20,6 +25,7 @@
 #pragma once
 
 #include "AppletWidget.h"
+#include "gui/roundtable/RoundtableWindow.h"
 #include "models/RoundtableModel.h"
 
 #include <QPointer>
@@ -27,9 +33,11 @@
 
 #include <functional>
 
+class QVBoxLayout;
 
 namespace NereusSDR {
 
+class AppletPanelWidget;
 class RoundtablePanel;
 class SliceModel;
 
@@ -47,8 +55,13 @@ public:
     QString appletTitle() const override { return QStringLiteral("Roundtable"); }
     bool canFloat() const override { return true; }
     void syncFromModel() override;
+    QWidget* createFloatingWindow() override;
+    void dockFloatingWindow() override;
 
     RoundtablePanel* panel() const { return m_panel; }
+    /// The pop-out window once made (it lives as long as the applet).
+    RoundtableWindow* floatingWindow() const { return m_window; }
+    bool isPoppedOut() const;
     RoundtableModel* roundtable() const { return m_roundtable; }
 
     /// What opens the Archive's sign-in link (a seam for tests).
@@ -63,9 +76,15 @@ private:
     void bindActiveSlice();
     void tuneHere(qint64 hz, const QString& family);
     void openArchive();
+    void popOut();
+    void putBack();
+    AppletPanelWidget* host() const;
 
     QPointer<RoundtableModel> m_roundtable;
     RoundtablePanel* m_panel = nullptr;
+    QVBoxLayout* m_layout = nullptr;
+    QWidget* m_poppedNote = nullptr;
+    QPointer<RoundtableWindow> m_window;
     QPointer<SliceModel> m_slice;
     QMetaObject::Connection m_sliceFrequency;
     std::function<void(const QUrl&)> m_urlOpener;

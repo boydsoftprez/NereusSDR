@@ -121,6 +121,8 @@ signals:
     void settingsRequested();
     /// Escape while popped out.
     void stepBackRequested();
+    /// The menu's Wide window while popped out (the window's Wide preset).
+    void widePresetRequested();
     /// The room shown changed (a room read, or back to the slice).
     void shownRoomChanged(const QString& roomId);
 

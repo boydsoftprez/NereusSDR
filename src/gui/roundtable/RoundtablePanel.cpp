@@ -1041,7 +1041,8 @@ void RoundtablePanel::rebuildHead(const QJsonObject& room)
     auto* menu = new QToolButton(body);
     menu->setObjectName(QStringLiteral("roundtableMenuBtn"));
     menu->setText(QStringLiteral("\u22ef"));
-    menu->setToolTip(QStringLiteral("Archive, settings and pop out"));
+    menu->setToolTip(m_popped ? QStringLiteral("Archive, settings and the wide window")
+                              : QStringLiteral("Archive, settings and pop out"));
     menu->setStyleSheet(QLatin1String(kIconStyle));
     menu->setFocusPolicy(Qt::ClickFocus);
     connect(menu, &QToolButton::clicked, this, &RoundtablePanel::showPanelMenu);
@@ -1950,7 +1951,8 @@ void RoundtablePanel::rebuildEmpty()
     auto* menu = new QToolButton(body);
     menu->setObjectName(QStringLiteral("roundtableMenuBtn"));
     menu->setText(QStringLiteral("\u22ef"));
-    menu->setToolTip(QStringLiteral("Archive, settings and pop out"));
+    menu->setToolTip(m_popped ? QStringLiteral("Archive, settings and the wide window")
+                              : QStringLiteral("Archive, settings and pop out"));
     menu->setStyleSheet(QLatin1String(kIconStyle));
     menu->setFocusPolicy(Qt::ClickFocus);
     connect(menu, &QToolButton::clicked, this, &RoundtablePanel::showPanelMenu);
@@ -2349,8 +2351,11 @@ void RoundtablePanel::showPanelMenu()
     menu->setAttribute(Qt::WA_DeleteOnClose);
     menu->addAction(QStringLiteral("Archive"), this, &RoundtablePanel::archiveRequested);
     menu->addAction(QStringLiteral("Settings"), this, &RoundtablePanel::settingsRequested);
-    QAction* pop = menu->addAction(QStringLiteral("Pop out"), this, &RoundtablePanel::popOutRequested);
-    pop->setEnabled(!m_popped);
+    if (m_popped) {
+        menu->addAction(QStringLiteral("Wide window"), this, &RoundtablePanel::widePresetRequested);
+    } else {
+        menu->addAction(QStringLiteral("Pop out"), this, &RoundtablePanel::popOutRequested);
+    }
     auto* button = findChild<QToolButton*>(QStringLiteral("roundtableMenuBtn"));
     QWidget* anchor = button != nullptr && button->isVisible() ? static_cast<QWidget*>(button) : this;
     menu->popup(anchor->mapToGlobal(QPoint(0, anchor->height())));

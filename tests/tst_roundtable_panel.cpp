@@ -15,7 +15,10 @@
 // menus, the mute fold, the new and mention pills, following at the end,
 // and the keyboard. The applet: it follows the active slice, Tune A here
 // tunes that slice, tuning it anywhere goes back to following it, and
-// Archive opens the web sign-in link.
+// Archive opens the web sign-in link. The pop-out window: its three shapes
+// by width, the Wide preset and the saved geometry, the close box docking
+// the panel back (a close from code does not), Put it back here through
+// the applet panel, and the room list's keyboard.
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -42,14 +45,18 @@
 #include <QSignalSpy>
 #include <QToolButton>
 #include <QUrl>
+#include <QListWidget>
 #include <QVBoxLayout>
+#include <qpa/qwindowsysteminterface.h>
 
 #include "core/AppSettings.h"
 #include "core/roundtable/RoundtableState.h"
 #include "core/session/IStationLink.h"
 #include "core/WdspTypes.h"
+#include "gui/applets/AppletPanelWidget.h"
 #include "gui/applets/RoundtableApplet.h"
 #include "gui/roundtable/RoundtablePanel.h"
+#include "gui/roundtable/RoundtableWindow.h"
 #include "models/RadioModel.h"
 #include "models/RoundtableModel.h"
 #include "models/SliceModel.h"
@@ -325,6 +332,8 @@ private slots:
         AppSettings::instance().remove(QStringLiteral("Roundtable/MuteList"));
         AppSettings::instance().remove(QStringLiteral("Roundtable/PanelOpensOn"));
         AppSettings::instance().remove(QStringLiteral("Roundtable/EarlierTurnsShown"));
+        AppSettings::instance().remove(QLatin1String(RoundtableWindow::kGeometryKey));
+        AppSettings::instance().remove(QStringLiteral("AppletroundtableFloating"));
     }
 
     void sectionsInOrder()
@@ -1005,6 +1014,237 @@ private slots:
         p.model.applyWebLink(link);
         QCOMPARE(opened.size(), 1);
         settle();
+    }
+
+    void windowShapesByWidth()
+    {
+        QCOMPARE(RoundtableWindow::shapeFor(599), RoundtableWindow::Shape::OneColumn);
+        QCOMPARE(RoundtableWindow::shapeFor(600), RoundtableWindow::Shape::TwoColumns);
+        QCOMPARE(RoundtableWindow::shapeFor(980), RoundtableWindow::Shape::TwoColumns);
+        QCOMPARE(RoundtableWindow::shapeFor(981), RoundtableWindow::Shape::ThreeColumns);
+
+        Posed p;
+        p.model.applyRoom(talkingRoom());
+        RoundtableWindow window(&p.model);
+        auto* panel = new RoundtablePanel(&p.model);
+        panel->followSlice(0);
+        window.takePanel(panel);
+        QVERIFY(panel->isPopped());
+        window.show();
+        auto* list = child<QWidget>(&window, QStringLiteral("roundtableRoomListColumn"));
+        auto* rooms = child<QListWidget>(&window, QStringLiteral("roundtableRoomList"));
+
+        window.resize(560, 600);
+        settle();
+        QCOMPARE(window.shape(), RoundtableWindow::Shape::OneColumn);
+        QVERIFY(!window.isListShown());
+        QVERIFY(panel->isVisible());
+        QVERIFY(!panel->isSplit());
+
+        window.resize(800, 600);
+        settle();
+        QCOMPARE(window.shape(), RoundtableWindow::Shape::TwoColumns);
+        QVERIFY(window.isListShown());
+        QCOMPARE(list->width(), RoundtableWindow::kRoomListWidth);
+        QVERIFY(panel->isVisible());
+        QVERIFY(!panel->isSplit());
+
+        window.resize(1200, 600);
+        settle();
+        QCOMPARE(window.shape(), RoundtableWindow::Shape::ThreeColumns);
+        QVERIFY(window.isListShown());
+        QCOMPARE(list->width(), RoundtableWindow::kRoomListWidth);
+        QVERIFY(panel->isSplit());
+
+        // The list: the "N on air" count, a band heading that is not a
+        // room, and the room the slice is in marked.
+        QCOMPARE(child<QLabel>(&window, QStringLiteral("roundtableOnAir"))->text(),
+                 QStringLiteral("8 on air"));
+        QCOMPARE(rooms->count(), 3);
+        QVERIFY(!(rooms->item(0)->flags() & Qt::ItemIsSelectable));
+        QVERIFY(rooms->item(1)->text().startsWith(QStringLiteral("7.185.000  LSB  ·  YOU · A")));
+        QVERIFY(rooms->item(2)->text().startsWith(QStringLiteral("7.249.000  LSB")));
+    }
+
+    void windowWidePresetAndSavedGeometry()
+    {
+        Posed p;
+        QWidget owner;
+        owner.resize(400, 300);
+        {
+            RoundtableWindow window(&p.model, &owner);
+            QVERIFY(window.isWindow());
+            // The first time: the Wide preset.
+            window.showAtSavedGeometry();
+            settle();
+            QCOMPARE(window.size(), QSize(RoundtableWindow::kWideWidth, RoundtableWindow::kWideHeight));
+            window.resize(700, 480);
+            window.move(40, 60);
+            settle();
+            QVERIFY(!AppSettings::instance().value(QLatin1String(RoundtableWindow::kGeometryKey)).toString().isEmpty());
+            window.close();
+        }
+        RoundtableWindow again(&p.model, &owner);
+        again.showAtSavedGeometry();
+        settle();
+        QCOMPARE(again.size(), QSize(700, 480));
+        QCOMPARE(again.pos(), QPoint(40, 60));
+        again.applyWidePreset();
+        settle();
+        QCOMPARE(again.size(), QSize(RoundtableWindow::kWideWidth, RoundtableWindow::kWideHeight));
+    }
+
+    void windowCloseBoxDocksAndCloseFromCodeDoesNot()
+    {
+        Posed p;
+        p.model.applyRoom(talkingRoom());
+        QWidget top;
+        auto* layout = new QVBoxLayout(&top);
+        auto* applet = new RoundtableApplet(nullptr, &p.model, &top);
+        layout->addWidget(applet);
+        top.resize(340, 900);
+        top.show();
+        settle();
+        RoundtablePanel* panel = applet->panel();
+        QSignalSpy docked(applet, &AppletWidget::floatingWindowDocked);
+
+        // No applet panel above it: Pop out opens the window directly.
+        emit panel->popOutRequested();
+        settle();
+        RoundtableWindow* window = applet->floatingWindow();
+        QVERIFY(window != nullptr);
+        QVERIFY(window->isVisible());
+        QVERIFY(applet->isPoppedOut());
+        QVERIFY(window->isAncestorOf(panel));
+        QVERIFY(panel->isPopped());
+        QVERIFY(child<QWidget>(applet, QStringLiteral("roundtablePoppedNote"))->isVisible());
+
+        // A close from code (the quit sweep) only hides it.
+        window->close();
+        settle();
+        QVERIFY(!window->isVisible());
+        QVERIFY(applet->isPoppedOut());
+        QCOMPARE(docked.size(), 0);
+
+        // The close box docks it back.
+        emit panel->popOutRequested();
+        settle();
+        QVERIFY(window->isVisible());
+        QVERIFY(window->windowHandle() != nullptr);
+        QWindowSystemInterface::handleCloseEvent<QWindowSystemInterface::SynchronousDelivery>(
+            window->windowHandle());
+        settle();
+        QVERIFY(!window->isVisible());
+        QVERIFY(!applet->isPoppedOut());
+        QCOMPARE(docked.size(), 1);
+        QCOMPARE(panel->parentWidget(), applet);
+        QVERIFY(panel->isVisible());
+        QVERIFY(!panel->isPopped());
+        QVERIFY(!panel->isSplit());
+        QVERIFY(!child<QWidget>(applet, QStringLiteral("roundtablePoppedNote"))->isVisible());
+    }
+
+    void putItBackThroughTheAppletPanel()
+    {
+        Posed p;
+        p.model.applyRoom(talkingRoom());
+        AppletPanelWidget host;
+        auto* applet = new RoundtableApplet(nullptr, &p.model, nullptr);
+        host.addApplet(applet);
+        host.resize(340, 900);
+        host.show();
+        settle();
+        RoundtablePanel* panel = applet->panel();
+
+        child<QToolButton>(panel, QStringLiteral("roundtablePopBtn"))->click();
+        settle();
+        QVERIFY(host.isAppletFloating(applet));
+        QVERIFY(applet->isPoppedOut());
+        QVERIFY(applet->floatingWindow()->isVisible());
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("AppletroundtableFloating")).toString(),
+                 QStringLiteral("True"));
+
+        child<QPushButton>(applet, QStringLiteral("roundtablePutBackBtn"))->click();
+        settle();
+        QVERIFY(!host.isAppletFloating(applet));
+        QVERIFY(!applet->isPoppedOut());
+        QVERIFY(!applet->floatingWindow()->isVisible());
+        QCOMPARE(panel->parentWidget(), applet);
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("AppletroundtableFloating")).toString(),
+                 QStringLiteral("False"));
+
+        // Again, and the close box: the panel knows it is docked.
+        host.floatApplet(applet);
+        settle();
+        QVERIFY(host.isAppletFloating(applet));
+        QWindowSystemInterface::handleCloseEvent<QWindowSystemInterface::SynchronousDelivery>(
+            applet->floatingWindow()->windowHandle());
+        settle();
+        QVERIFY(!host.isAppletFloating(applet));
+        QVERIFY(!applet->isPoppedOut());
+    }
+
+    void windowKeyboard()
+    {
+        Posed p;
+        p.model.applyRoom(talkingRoom());
+        p.model.applyRoom(roomOf(kOther, {}, {},
+                                 QJsonArray{message(5, QStringLiteral("x"), QStringLiteral("AB1CD"),
+                                                    QStringLiteral("elsewhere"))}));
+        RoundtableWindow window(&p.model);
+        auto* panel = new RoundtablePanel(&p.model);
+        panel->followSlice(0);
+        window.takePanel(panel);
+        window.resize(1200, 600);
+        window.show();
+        window.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&window));
+        settle();
+        auto* search = child<QLineEdit>(&window, QStringLiteral("roundtableRoomSearch"));
+        auto* rooms = child<QListWidget>(&window, QStringLiteral("roundtableRoomList"));
+
+        // / searches.
+        QTest::keyClick(&window, Qt::Key_Slash);
+        QVERIFY(search->hasFocus());
+        QTest::keyClicks(search, QStringLiteral("7.249"));
+        settle();
+        QCOMPARE(rooms->count(), 2);
+        // Down moves into the list, Enter goes into the room.
+        QTest::keyClick(search, Qt::Key_Down);
+        QVERIFY(rooms->hasFocus());
+        QCOMPARE(rooms->currentItem()->text().left(9), QStringLiteral("7.249.000"));
+        QTest::keyClick(rooms, Qt::Key_Return);
+        settle();
+        QCOMPARE(panel->roomId(), kOther);
+        QVERIFY(panel->isReading());
+        // Escape in the list clears the search.
+        rooms->setFocus(Qt::OtherFocusReason);
+        QTest::keyClick(rooms, Qt::Key_Escape);
+        settle();
+        QVERIFY(search->text().isEmpty());
+        QCOMPARE(rooms->count(), 3);
+
+        // One column: Enter shows the room in place of the list, Escape in
+        // the room goes back to the list.
+        panel->backToSlice();
+        window.resize(560, 600);
+        settle();
+        QVERIFY(!window.isListShown());
+        QTest::keyClick(&window, Qt::Key_Slash);
+        settle();
+        QVERIFY(window.isListShown());
+        QVERIFY(search->hasFocus());
+        QTest::keyClick(search, Qt::Key_Return);
+        settle();
+        // The list kept its place: Enter opens the room picked before.
+        QVERIFY(!window.isListShown());
+        QCOMPARE(panel->roomId(), kOther);
+        auto* box = child<QPlainTextEdit>(panel, QStringLiteral("roundtableBox"));
+        box->setFocus(Qt::OtherFocusReason);
+        QTest::keyClick(box, Qt::Key_Escape);
+        settle();
+        QVERIFY(window.isListShown());
+        QVERIFY(rooms->hasFocus());
     }
 };
 

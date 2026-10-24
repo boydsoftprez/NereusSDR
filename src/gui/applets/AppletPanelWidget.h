@@ -16,6 +16,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24 - An applet's own pop-out window (AppletWidget::
+//                createFloatingWindow) floats and docks through the panel
+//                (Roundtable plan Task 13). J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
 //   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
@@ -140,6 +144,11 @@ private:
     QList<AppletWidget*> m_applets;
     QMap<AppletWidget*, QWidget*> m_wrappers;  // applet → wrapper widget
     QMap<AppletWidget*, AppletFloatingWindow*> m_floating;  // applet → window
+    // Applets popped out into a window of their own (createFloatingWindow),
+    // and the connection that hears each one dock.
+    QMap<AppletWidget*, QPointer<QWidget>> m_ownWindows;
+    QMap<AppletWidget*, QMetaObject::Connection> m_ownDocked;
+    void forgetOwnWindow(AppletWidget* applet);
     QMap<AppletWidget*, bool> m_wantVisible;   // last setAppletVisible() request
     QWidget* makeFloatButton(AppletWidget* applet);
     void restoreFloatState(AppletWidget* applet);

@@ -203,6 +203,9 @@
 //                computer has asked the first-run question or shown its
 //                one-time note) stays each window's. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-24 - Roundtable plan Task 13: Roundtable/WindowGeometry (the
+//                pop-out window's size and screen) stays each computer's.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/settings/SettingsScope.h"
@@ -323,6 +326,9 @@ const Rule kExceptions[] = {
     // asked the first-run question or shown the one-time note that another
     // device answered it. The answer itself is the Core's.
     { "Roundtable/FirstRunSeen", SettingsScope::OperatorLocal },
+    // Roundtable plan Task 13 (design 11.2): where this computer's
+    // Roundtable window sits and how big it is.
+    { "Roundtable/WindowGeometry", SettingsScope::OperatorLocal },
 };
 
 // ---- 2. Prefixes ---------------------------------------------------------
