@@ -23521,7 +23521,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
           var follows = 'Pan ' + scope + ' follows All pans in every row on this page.';
           var text = '';
           if (scope === 'all') {
-            text = 'A change here goes to every pan.';
+            text = 'A change here goes to every pan. Pick a pan to reset it.';
           } else {
             if (dev.open.indexOf(scope) < 0) {
               text = 'Pan ' + scope + ' is not open now. What you set here is kept and used when you open it. ';
@@ -23531,9 +23531,10 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
           }
           note.textContent = text;
           oneOnly.hidden = dpRadio.pans < 2;
-          acts.hidden = scope === 'all';
-          rs.disabled = useAll.disabled = count === 0;
-          useAll.textContent = 'Use Pan ' + scope + '\'s on all pans';
+          // Grayed on All pans rather than hidden (JJ, 2026-10-24): a phone
+          // control is grayed with its reason, never hidden.
+          rs.disabled = useAll.disabled = scope === 'all' || count === 0;
+          useAll.textContent = scope === 'all' ? 'Use this pan\'s on all pans' : 'Use Pan ' + scope + '\'s on all pans';
         } });
       }
       function setScope(sc) {

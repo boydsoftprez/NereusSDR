@@ -176,7 +176,7 @@ Transmit Display's phone rows use dB Max and dB Min in place of Top and Range, m
 - On Spectrum, Levels, Waterfall, View and Peaks & Markers, above the first group, replacing `DisplayV29ScopeHeader`.
 - **Buttons:** "All pans", then "Pan 1" to "Pan <limit>", each with a second line naming its slices ("Slice A, B") or "not open", and " •" after the name when that pan has its own values on this page, as the desktop's chips do (`SetupPage.cpp:398-440`). On an iPhone, the pans after Pan 1 are grayed with "An iPhone shows one pan."
 - **Notes**, the desktop's words: on All pans, that these are what every pan starts with; on a pan with no own values, "Pan N follows All pans in every row on this page."; on a pan that is not open, "Pan N is not open now. What you set here is kept and used when you open it." (`:447-460`).
-- **Actions** on a pan, acting on this page's rows only: "Reset this pan" and "Use Pan N's on all pans" (`:466`), both grayed when the pan has no own values on the page. On All pans the two are not shown, as on the desktop.
+- **Actions** on a pan, acting on this page's rows only: "Reset this pan" and "Use Pan N's on all pans" (`:466`), both grayed when the pan has no own values on the page. On All pans the two stay in place, grayed with "Pick a pan to reset it." (the desktop hides them; see section 12, item 4).
 - **Levels** keeps its band picker, which edits a band's dB Max and dB Min without tuning.
 - **Opening:** from the Setup list, All pans. From a pan's "Setup defaults", that pan, on the page for the open tab. The choice stays while moving between Display pages, as the desktop's `SetupDialog::setDisplayPanIndex` does (`src/gui/SetupDialog.cpp:997`).
 - **Live:** a change to All pans reaches every pan that follows it at once, and a change in a pill shows in Setup while it is open (the pill design's D26 and D27).
@@ -236,10 +236,10 @@ These were drawn on the board or follow from it and were not asked one at a time
 1. On the board, Pan 2 is on the lower part of 40 m with slice C, and starts with two values of its own (the BlackWhite scheme, Fill off). That is the board's example only; a new pan in the app starts by following All pans.
 2. The toolbar follows the pan last touched (DC9), and a new slice from a pan's +RX starts on that pan.
 3. The PTT moves to just right of whatever is open, on the iPad and sideways.
-4. "Reset this pan" and "Use Pan N's on all pans" are not shown on All pans, as on the desktop, even though the phone's rule is grayed rather than hidden. On a pan they are grayed when there is nothing to reset.
-5. The iPad's Setup is PR 603's split view (W8), not the phone-width page the board drew.
-6. A second pan is opened from the iPad's Pan sheet ("Add a pan", "Close this pan"). The board drew two pans open and no control for opening one; the desktop's is "+PAN" on its status bar.
-7. On an iPhone, the strip's pans after Pan 1 are grayed with "An iPhone shows one pan", because a phone's display values are its own and an iPhone never opens them. The board drew them as live buttons.
+4. "Reset this pan" and "Use Pan N's on all pans" stay in place on All pans, grayed with "Pick a pan to reset it.", where the desktop hides them (JJ, 2026-10-24: gray them; a phone control is grayed with its reason, never hidden). On a pan they are grayed when there is nothing to reset.
+5. The iPad's Setup is PR 603's split view (W8): the Setup list on the left with Display open under it, the page on the right. The board draws it so.
+6. A second pan is opened and closed from the iPad's Pan sheet ("Add a pan", "Close this pan"), as section 6.3 and the board draw it; the desktop's is "+PAN" on its status bar. JJ, 2026-10-24: "yes on the ipad we want to move that work forward".
+7. On an iPhone, the strip's pans after Pan 1 are grayed with "An iPhone shows one pan", because a phone's display values are its own and an iPhone never opens them. The board draws them so.
 8. The sheet's rows are drawn from the Core's description, so an older Core keeps today's sheet (section 9) rather than a half-filled pill.
 9. The phone's saved per-band Top and Range are dropped on upgrade, not sent to the Core (5.4).
 10. The iPad's column buttons are 30 points tall; the desktop's are smaller.
