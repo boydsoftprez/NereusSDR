@@ -92,10 +92,13 @@ choose the **Drive Source** intentionally:
 | Use Tune Slider | The saved Tune Pwr for the transmit band. |
 | Use Fixed Drive | Fixed Tune Power on this page, using the radio's displayed scale. |
 
-Moving the TX applet's **RF Power** slider selects Use Drive Slider; moving
-**Tune Pwr** selects Use Tune Slider. The last change can therefore replace a
-previous source selection. Recheck the Tune group's radio button and value
-before a test, especially after changing ordinary transmit drive. A remote
+Only this page chooses the source. Moving the TX applet's **RF Power** or
+**Tune Pwr** slider changes that slider's value, never the source, in a local
+window, a remote window or the phone. During TUNE the slider the source does
+not use is grayed, with a tooltip saying where the source is chosen; during the
+two-tone test the same applies to the two-tone source. Both sliders keep a
+value per band, so recheck the Tune group's radio button and value before a
+test, especially after a band change. A remote
 window uses the Core's permitted tune settings and readbacks; a refused edit
 must be resolved before assuming the new drive is in effect. The separate
 **TX TUN Meter** selector is not a working meter-routing control in this build.
@@ -184,7 +187,7 @@ For a single-tone check, press **TUNE** instead of MOX. The button changes to **
 
 ## Configure the transmit protection readback
 
-Open **File > Settings... > Transmit > Power**. **Enable Protection SWR >** turns on the visual SWR warning threshold; **SWR Limit** sets that threshold. **Ignore when Tune Pwr <** and **Tune Pwr (W)** specify whether SWR protection is ignored below the selected Tune power. That option disables SWR protection during low-power Tune; use it only when that is the intended station policy. **Reduce Pwr if protected** asks the radio to wind back drive when high-SWR protection engages. These controls apply immediately and affect the Core's protection behavior, including from a remote desktop when the Core offers the setting.
+Open **File > Settings... > Transmit > Power**. **Enable Protection SWR >** turns on the visual SWR warning threshold; **SWR Limit** sets that threshold. **Ignore when Tune Pwr <** and **Tune Pwr (W)** specify whether SWR protection is ignored below the selected Tune power. That option disables SWR protection during low-power Tune; use it only when that is the intended station policy. When protection trips while you transmit, it lowers the drive. **Reduce Pwr if protected** sends the lower drive at once; with it off, the lower drive takes effect at the next power change. Protection releases when you unkey, so the next key starts at full drive. An open antenna drops the key and shows **High SWR condition detected. Please check your antenna connection.** A microphone PTT or VOX key still held at that moment stays off until you release it; a CAT or TCI program, or a fresh key from another source, keys normally. Find and fix the antenna fault before keying again. These controls apply immediately and affect the Core's protection behavior, including from a remote desktop when the Core offers the setting.
 
 In the same **Power** page, **External TX Inhibit** contains **Update with TX Inhibit state** and **Reversed logic**. Enable monitoring when the connected radio's external inhibit input is wired and intended to control the TX gate. Reverse logic only when the hardware's asserted/deasserted levels require it. Confirm the resulting inhibit state in the TX readiness indication before keying. Do not mask an inhibit by changing logic as a troubleshooting guess.
 

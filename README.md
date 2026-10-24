@@ -222,9 +222,10 @@ It takes effect at the next system start, or at once with
 
 ### Take the console with you
 
-The native **iPhone and iPad app** provides live spectrum and waterfall,
-touch tuning, receiver controls, receive audio, microphone uplink and PTT,
-transmit readings, station Setup, spots and accessory pages. Native EQ/CFC
+The native **iPhone and iPad app**, in the desktop's workspace look,
+provides live spectrum and waterfall, touch tuning, receiver controls,
+receive audio, microphone uplink and PTT, transmit readings, station Setup,
+spots and accessory pages. Native EQ/CFC
 controls, Filter Presets and named TX profiles bring voice shaping and everyday
 receiver setup to the phone. It follows the same pairing, receiver ownership
 and transmit-holder rules as the desktop.
@@ -299,6 +300,10 @@ if you want to host the remote-access service yourself.
   windows have a pin, and workspace profiles save whole layouts.
 - **Applets, Canvas and meters.** Stack or float containers, or arrange
   applets, meters and fifteen individual controls on an editable Canvas.
+  The TX applet's rows (monitor, power, filter, chain, VOX, processing and
+  keying) and the RX applet's rows (antennas, mode, step, filter, pan,
+  squelch, attenuator, AGC, RIT and XIT) can each go in a container on their
+  own.
   Move, resize, layer and lock objects, preview changes, and Apply or Cancel.
   Responsive meter text, complete meter faces and the Nereus ANAN artwork
   bring readings together. Supported objects can follow the selected receiver
