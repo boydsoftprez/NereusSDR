@@ -13,14 +13,15 @@ still connect to each other as before.
 
 ### Remote display: waterfall rows that stand alone
 
-- A remote window and a 2026.10.2 Core now send the display in a new format in
+- A remote window, the iPhone and iPad app, and a 2026.10.2 Core now send the
+  display in a new format in
   which every waterfall row and trace stands on its own. A lost network message
   costs one row, which is filled in by blending its neighbors, and the window
   never waits for a fresh full frame. Frames are usually smaller than before,
-  and about a third the size of a full frame. An older Core or
-  window keeps the earlier format. The iPhone and iPad app stays on the earlier
-  format for now.
+  and about a third the size of a full frame. An older Core, window or phone
+  app keeps the earlier format.
   ([#631](https://github.com/boydsoftprez/NereusSDR/pull/631),
+  [#632](https://github.com/boydsoftprez/NereusSDR/pull/632),
   [#618](https://github.com/boydsoftprez/NereusSDR/pull/618))
 - A Core setting, `RemoteDisplayCodecV2`, turns the new format off for new
   connections if it ever needs to be. It is on by default, has no Setup page,
@@ -47,6 +48,10 @@ still connect to each other as before.
   much as 150 ms ahead of it. This needs a 2026.10.2 Core; with an older Core the
   meters show readings as they arrive.
   ([#601](https://github.com/boydsoftprez/NereusSDR/pull/601))
+- The pan does less work on every frame: its grid, scales, band plan and
+  frequency labels are redrawn only when one of them changes, not on every
+  frame. Nothing on screen looks different.
+  ([#619](https://github.com/boydsoftprez/NereusSDR/pull/619))
 - The Max Bin peak hold falls again after a signal above 0 dBm. It used to
   creep toward 0 dBm and stay there.
   ([#608](https://github.com/boydsoftprez/NereusSDR/pull/608))
@@ -190,6 +195,11 @@ still connect to each other as before.
 - Quit (Cmd-Q, the menu or closing the main window) works while a pan or applet
   floats in its own window. A floating window's close box still docks it.
   ([#609](https://github.com/boydsoftprez/NereusSDR/pull/609))
+- Closing a pan, disconnecting the radio or closing a floating window while
+  one of its right-click menus or dialogs is open no longer crashes NereusSDR.
+  Every menu and dialog keeps the same items and buttons. Thanks to Martin
+  Fischer (OE5SOS), whose Longpath fix this follows.
+  ([#607](https://github.com/boydsoftprez/NereusSDR/pull/607))
 - DXCC worked status reads ADIF logs whose fields name their
   type (for example `<CALL:6:S>`). Such logs used to read as empty.
   ([#612](https://github.com/boydsoftprez/NereusSDR/pull/612))

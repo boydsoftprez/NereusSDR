@@ -10,18 +10,17 @@ whether you use a local or remote Core.
 ## Update the Core and the desktop together
 
 The Core owns the radio, the station DSP and the accessories. The console runs
-where you operate. Update both. Two improvements need a 2026.10.2 Core and a
-2026.10.2 window:
+where you operate. Update both, and the iPhone and iPad app if you use it. Two improvements
+need a 2026.10.2 Core and a 2026.10.2 window or phone app:
 
 - **The new remote display format.** Every waterfall row and trace stands on
   its own, so a lost network message costs one row instead of smearing the
-  rows after it. An older Core or window keeps the earlier format.
+  rows after it. An older Core, window or phone app keeps the earlier format.
 - **RX meters held to their audio.** A remote window's S-meter and receive
   meters move with what you hear. With an older Core they show readings as
   they arrive, as before.
 
-Older Cores, windows and phone apps still connect to each other. The iPhone
-and iPad app stays on the earlier display format for now.
+Older Cores, windows and phone apps still connect to each other.
 
 ## Check before you transmit
 
