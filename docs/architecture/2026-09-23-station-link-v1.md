@@ -5935,6 +5935,7 @@ computer, never sent). `classifySettingsKey` (`SettingsScope.cpp`) decides:
 | 3. whole key | `DisableHfPa` | station |
 | 3. whole key | `MultimeterDelayMs` | station |
 | 3. whole key | `NetworkWatchdogEnabled` | station |
+| 3. whole key | `LimitFiltersToSidebands` | station |
 | 3. whole key | `MoxTimeOutEnabled` | station |
 | 3. whole key | `MoxTimeOutSeconds` | station |
 | 3. whole key | `PingTimeOutEnabled` | station |

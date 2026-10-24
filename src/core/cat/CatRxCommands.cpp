@@ -87,6 +87,11 @@ Added extended CAT commands for APF funtions - May 2017.
 
 // Ported from Thetis CAT/CATCommands.cs and console.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+// 2026-10-22 - Filter writes answer against the pair the slice keeps after
+//              its minimum width and constraint (SliceModel::filterForRequest),
+//              so a clamped ZZSF/ZZFL/ZZFH/SH/SL write answers "" as Thetis's
+//              does. J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//              Claude Code.
 // 2026-10-04 - Read the service desired global tuple during reconfiguration.
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-04 - Stable slice CAT RX commands adapted by J.J. Boyd (KG4VCF),
@@ -1458,8 +1463,13 @@ CatCommandResult CatRxCommands::execute(const CatRequest& request, CatSessionCon
         } else { const int hz=int(std::clamp(input,qint64(-kEdgeLimit),qint64(kEdgeLimit))); if (lowEdge) { low=hz; } else { high=hz; } }
         const CatWriteToken write=token("filterLow"); const CatWriteToken highWrite=token("filterHigh");
         if (!stillValid(write) || !stillValid(highWrite)) { return error(); }
+        // The slice widens, constrains or refuses the pair as Thetis's
+        // UpdateRX1Filters does (console.cs:7544-7582 [v2.10.3.15]), and
+        // Thetis's filter commands still answer "" (CAT/CATCommands.cs:6247-6253
+        // [v2.10.3.15]), so the reply checks the pair the slice should hold.
+        const std::pair<int,int> expected=slice->filterForRequest(low,high);
         slice->setFilter(low,high);
-        return stillValid(write) && stillValid(highWrite) && slice->filterLow() == low && slice->filterHigh() == high ? silence() : error();
+        return stillValid(write) && stillValid(highWrite) && slice->filterLow() == expected.first && slice->filterHigh() == expected.second ? silence() : error();
     }
     // From Thetis CAT/CATCommands.cs:1801-1859 [v2.10.3.15]. Real station stream pin, shared cohosts.
     if (code == "ZZCN" || code == "ZZCO") {

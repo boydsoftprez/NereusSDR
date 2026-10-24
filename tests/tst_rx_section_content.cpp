@@ -13,6 +13,11 @@
 //                 Shift-click on a copy, inert previews, the shared face
 //                 defaults. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-24 - aCopiedPassbandCentreDragKeepsTheWidth. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24 - Its drag goes on past the cap with the slice already
+//                 there, and the copy shows the stored filter. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -21,6 +26,7 @@
 #include <QComboBox>
 #include <QLabel>
 #include <QLayout>
+#include <QMouseEvent>
 #include <QPointer>
 #include <QPushButton>
 #include <QScopeGuard>
@@ -516,6 +522,54 @@ private slots:
         QCOMPARE(properties.at(5).defaultValue.toString(), QString::fromLatin1(NereusButtonFace::kRestingBottom));
         QCOMPARE(properties.at(6).defaultValue.toString(), QString::fromLatin1(NereusButtonFace::kSelectedTop));
         QCOMPARE(properties.at(7).defaultValue.toString(), QString::fromLatin1(NereusButtonFace::kSelectedBottom));
+    }
+
+    // A copy's passband centre drag moves the filter with shiftFilter, as
+    // the applet's own passband does: past the cap the width is kept
+    // (8100..10000).
+    void aCopiedPassbandCentreDragKeepsTheWidth()
+    {
+        RadioModel radio;
+        SliceModel slice(0);
+        slice.setDspMode(DSPMode::USB);
+        slice.setFilter(8000, 9900);
+        RxApplet applet(nullptr, &radio);
+        applet.setSlice(&slice);
+        ContainerContentRegistry registry;
+        registerRxSectionContent(registry, &applet);
+        QWidget host;
+        auto* copy = qobject_cast<RxFilterSection*>(
+            registry.createWidget(registry.makeEntry(QStringLiteral("rx.filter")), &host));
+        QVERIFY(copy);
+        FilterPassbandWidget* passband = copy->passband();
+        QVERIFY(passband);
+        // 632 px: 600 usable, 10 Hz per pixel; the centre zone runs from
+        // x 105 to 527.
+        passband->resize(632, 48);
+        QCOMPARE(passband->filterLo(), 8000);
+        QCOMPARE(passband->filterHi(), 9900);
+        QSignalSpy shifted(passband, &FilterPassbandWidget::passbandShifted);
+
+        const auto mouse = [passband](QEvent::Type type, int x, Qt::MouseButton button,
+                                      Qt::MouseButtons buttons) {
+            QMouseEvent me(type, QPointF(x, 20), passband->mapToGlobal(QPointF(x, 20)),
+                           button, buttons, Qt::NoModifier);
+            QApplication::sendEvent(passband, &me);
+        };
+        // 300 px right in the centre zone: +3000 Hz, 11000..12900 asked.
+        // Then 310 px (11100..13000) with the slice already at the cap.
+        mouse(QEvent::MouseButtonPress, 150, Qt::LeftButton, Qt::LeftButton);
+        mouse(QEvent::MouseMove, 450, Qt::NoButton, Qt::LeftButton);
+        QCOMPARE(slice.filterLow(), 8100);
+        QCOMPARE(slice.filterHigh(), 10000);
+        mouse(QEvent::MouseMove, 460, Qt::NoButton, Qt::LeftButton);
+        mouse(QEvent::MouseButtonRelease, 460, Qt::LeftButton, Qt::NoButton);
+
+        QCOMPARE(shifted.count(), 2);
+        QCOMPARE(slice.filterLow(), 8100);
+        QCOMPARE(slice.filterHigh(), 10000);
+        QCOMPARE(passband->filterLo(), 8100);
+        QCOMPARE(passband->filterHi(), 10000);
     }
 };
 
