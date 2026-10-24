@@ -242,7 +242,7 @@ These were drawn on the board or follow from it and were not asked one at a time
 6. A second pan is opened and closed from the iPad's Pan sheet ("Add a pan", "Close this pan"), as section 6.3 and the board draw it; the desktop's is "+PAN" on its status bar. JJ, 2026-10-24: "yes on the ipad we want to move that work forward".
 7. On an iPhone, the strip's pans after Pan 1 are grayed with "An iPhone shows one pan", because a phone's display values are its own and an iPhone never opens them. The board draws them so.
 8. The sheet's rows are drawn from the Core's description, so an older Core keeps today's sheet (section 9) rather than a half-filled pill.
-9. The phone's saved per-band Top and Range are dropped on upgrade, not sent to the Core (5.4).
+9. The phone's saved per-band Top and Range are dropped on upgrade, not sent to the Core (5.4): each band then shows the Core's scale, and a phone's update never changes the desktop's. JJ, 2026-10-24: drop them.
 10. The iPad's column buttons are 30 points tall; the desktop's are smaller.
 
 ## 13. Out of scope
