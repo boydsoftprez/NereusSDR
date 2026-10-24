@@ -31,6 +31,8 @@
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 11: the `roundtable`
 //               object and the Core's Roundtable answers).
+//   2026-10-24: Task 11 fix round: isClientId() public. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -82,6 +84,8 @@ public:
     static QString notConnectedReason();
     /// The answer to a request the Core could not read.
     static QString unreadableReason();
+    /// Wire spec 5.2: a post's clientId, 1 to 64 bytes of printable ASCII.
+    static bool isClientId(const QString& id);
 
     LinkState linkState() const { return m_linkState; }
     qint64 linkSince() const { return m_linkSince; }
@@ -175,11 +179,7 @@ private:
 
     // The Core's own inputs.
     QList<RoundtableSliceState> m_slices;
-    struct Listed {
-        QString family;
-        qint64 hz = 0;
-    };
-    QHash<QString, Listed> m_rooms;
+    QHash<QString, RoundtableWire::ListedRoom> m_rooms;
     QHash<qint64, Mention> m_mentions;
     qint64 m_mentionsSeenMs = 0;
     QStringList m_muteList;

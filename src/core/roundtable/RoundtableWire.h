@@ -29,11 +29,16 @@
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 10, R-RT-1 Core runner).
+//   2026-10-24: placeSlice() and familyWidthHz(), shared by the Core's
+//               state and its live reader (Roundtable plan Task 11 fix
+//               round). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
 
 #include <QByteArray>
+#include <QHash>
 #include <QJsonObject>
 #include <QList>
 #include <QString>
@@ -160,6 +165,20 @@ NEREUS_CORE_EXPORT QString gridToSend(const QString& text);
 NEREUS_CORE_EXPORT QString familyOfMode(const QString& mode);
 /// The band holding `hz` (6.2), or `other`.
 NEREUS_CORE_EXPORT QString bandOf(qint64 hz);
+/// A room in the band list, as far as placing a slice needs.
+struct ListedRoom {
+    QString family;
+    qint64 hz = 0;
+};
+/// How far either side of a room's center a slice of `family` may be and
+/// still be in that room (6.1).
+NEREUS_CORE_EXPORT qint64 familyWidthHz(const QString& family);
+/// The listed room `slice` is in (6.3), or empty for none: the room of its
+/// family whose center is nearest, within the family's width, the lower
+/// center on a tie; it stays in `previous` while its family is unchanged
+/// and it is still within the width.
+NEREUS_CORE_EXPORT QString placeSlice(const RoundtableSliceState& slice, const QString& previous,
+                                      const QHash<QString, ListedRoom>& rooms);
 /// The base callsign (4.5) of every word in a message's text (6.10): the
 /// runs of A-Z a-z 0-9 / with an optional leading @, upper case, each once.
 /// A station is mentioned when its own base callsign is among them.

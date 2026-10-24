@@ -1068,8 +1068,10 @@ Roundtable, is sent `stationRoundtableVersion` (section 6.3), the
 `roundtable` object (section 7.1), may subscribe to the `roundtableRooms`
 and `roundtableRoom:<id>` streams (section 7.7) and may send the
 `roundtable.*` verbs (section 9.1). A peer that does not declare it sees
-exactly the wire it was built for: no entry, no object, no stream and no
-verb. The station does not declare it; the desktop's remote window does.
+exactly the wire it was built for: no entry, no object, no stream, no
+verb, no `Roundtable/` setting (section 8) and no `roundtableState` or
+`roundtableText` on `spotSources`. The station does not declare it; the
+desktop's remote window does.
 
 **`sessionHolder` 1** (iPhone app plan Task 71; the several-devices
 design, ruling 10.1): the Core admits up to four devices at once (section
@@ -3258,7 +3260,7 @@ An enum property lists the values its domain allows.
 | 153 | `radeReason` | `utf8` | outbound |  |
 | 154 | `meterReadingNs` | `i64` | outbound |  |
 
-**SpotSourceHost** (11 properties)
+**SpotSourceHost** (13 properties)
 
 | Ordinal | Property | Wire kind | Direction | Enum values |
 | --- | --- | --- | --- | --- |
@@ -3273,6 +3275,8 @@ An enum property lists the values its domain allows.
 | 8 | `freedvReporterState` | `utf8` | outbound |  |
 | 9 | `freedvReporterText` | `utf8` | outbound |  |
 | 10 | `freedvReporterHidden` | `bool` | outbound |  |
+| 11 | `roundtableState` | `utf8` | outbound |  |
+| 12 | `roundtableText` | `utf8` | outbound |  |
 
 **StationCatModel** (7 properties)
 
@@ -3617,7 +3621,10 @@ Notes on the keys:
   on, `mentionCounts` a JSON object of room id to the mentions not yet read
   there, and `sliceRooms` a JSON object of slice id to the room the slice
   is in. A window shows these as they come and keeps no copy when the
-  session ends.
+  session ends. The `spotSources` object's `roundtableState` and
+  `roundtableText` (`SpotSourceHost`, the Spot Hub's Roundtable row) are
+  likewise sent only to such a peer: another peer's schema, snapshot and
+  deltas leave them out, and a delta that changed only them is not sent.
 - **`pan:<i>`.** The station watches every panadapter its model holds, but
   no code path in `nereusd` adds one: panadapters live in the window, and
   the Core's spectrum travels on display endpoints (media control). A real
@@ -5997,7 +6004,15 @@ station-scoped: the Core keeps `Roundtable/AutoStart`, `AwayChoice`,
 (comma-separated base callsigns) and `MentionsSeenMs`, so a first-run
 answer, Hide my station, a mute or a mention read on one device holds on
 every device. Two are each device's own: `Roundtable/EarlierTurnsShown`
-and `Roundtable/PanelOpensOn` (operatorLocal).
+and `Roundtable/PanelOpensOn` (operatorLocal). `FirstRunAnswer`, `Hidden`,
+`MuteList` and `MentionsSeenMs` are the Core's own answers: a
+`settings.write` or `settings.remove` of any of them (in any letter case)
+is refused with "This Core changes its Roundtable choices only through
+Roundtable.", and they change only through the `roundtable.*` verbs
+(section 9.1). A Core whose `FirstRunAnswer` is `"Hidden"` and whose
+`Hidden` key is missing stays hidden; only `Hidden` `"False"` takes it
+live. A peer that did not declare `roundtable` 1 is sent no `Roundtable/`
+key, in its settings snapshot or as a change.
 
 ### 8.1 Snapshot and write-through
 
@@ -6880,7 +6895,10 @@ These command groups need a sentence beyond the table:
   share Roundtable with this app."). `roundtable.post` answers when
   Roundtable does, with `messageId` (utf8) on success, or after 30 s with
   "Roundtable did not answer. Try again shortly."; a second post with the
-  same `clientId` while the first waits is refused. `roundtable.webSignIn`
+  same `clientId` on the same connection while the first waits is refused.
+  The Core sends Roundtable a `clientId` of its own for each post, so two
+  connections that happen to use the same `clientId` each get their own
+  answer. `roundtable.webSignIn`
   answers the same way, with `link` (utf8). `roundtable.read` answers with
   `stream` (utf8), the room's stream name, which exists before the answer
   (section 7.7); a room Roundtable has not got is refused ("Roundtable has

@@ -196,6 +196,9 @@
 //                (Station); Roundtable/EarlierTurnsShown and
 //                Roundtable/PanelOpensOn stay each window's. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24 - Roundtable plan Task 11 fix round: the four Roundtable
+//                keys the verbs change are model-owned. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/settings/SettingsScope.h"
@@ -757,6 +760,22 @@ bool isCoreOwnedIdentitySettingsKey(QStringView rawKey)
                == 0;
 }
 
+bool isCoreOwnedRoundtableSettingsKey(QStringView rawKey)
+{
+    static constexpr const char* kKeys[] = {
+        "Roundtable/FirstRunAnswer",
+        "Roundtable/Hidden",
+        "Roundtable/MuteList",
+        "Roundtable/MentionsSeenMs",
+    };
+    for (const char* key : kKeys) {
+        if (rawKey.compare(QLatin1String(key), Qt::CaseInsensitive) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool isModelOwnedDspSettingsKey(QStringView rawKey)
 {
     const QString key = rawKey.toString().toLower();
@@ -766,6 +785,12 @@ bool isModelOwnedDspSettingsKey(QStringView rawKey)
     // iPhone app Task 13 (R-IOS-08): the Core's name and its key backup
     // acknowledgement change only through their commands.
     if (isCoreOwnedIdentitySettingsKey(rawKey)) {
+        return true;
+    }
+    // Roundtable plan Task 11: what the roundtable.* verbs change, so the
+    // first-run answer stays once-only and Hide my station is the
+    // operator's.
+    if (isCoreOwnedRoundtableSettingsKey(rawKey)) {
         return true;
     }
     // R-R3-21 / R-R3-09: the Core owns the notch list. An older app's
@@ -828,6 +853,9 @@ QString modelOwnedSettingsRefusal(QStringView rawKey)
     }
     if (rawKey.compare(QLatin1String("StationLabel"), Qt::CaseInsensitive) == 0) {
         return QStringLiteral("This Core keeps its own name. Update this app to rename it.");
+    }
+    if (isCoreOwnedRoundtableSettingsKey(rawKey)) {
+        return QStringLiteral("This Core changes its Roundtable choices only through Roundtable.");
     }
     return QStringLiteral("The Core changes these settings only through their own controls.");
 }

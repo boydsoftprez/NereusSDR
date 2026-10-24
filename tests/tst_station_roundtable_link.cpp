@@ -15,23 +15,34 @@
 // mark; the Core's Roundtable settings written from a window, and the two
 // panel preferences kept by the window.
 //
-// The Core's RoundtableClient never connects: each test feeds it the views
-// a Roundtable server would send (its own signals), so nothing leaves
-// 127.0.0.1 and nothing waits on a network.
+// The Core's RoundtableClient mostly never connects: each test feeds it
+// the views a Roundtable server would send (its own signals). The one test
+// that needs posts to wait for their answers signs it in to a fake
+// Roundtable server on 127.0.0.1, so nothing leaves this computer.
 //
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-24: Created (Roundtable plan Task 11). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-24: Task 11 fix round: the Core's own Roundtable answers
+//               refused from a peer, no Roundtable setting to an older
+//               peer, the spotSources Roundtable properties per peer, and
+//               two connections' posts with one clientId. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 
+#include <QFile>
+#include <QHostAddress>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRandomGenerator>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QWebSocket>
+#include <QWebSocketServer>
 
 #include <memory>
 #include <optional>
@@ -43,6 +54,8 @@
 #include "core/RadioConnection.h"
 #include "core/roundtable/RoundtableClient.h"
 #include "core/roundtable/RoundtableState.h"
+#include "core/roundtable/RoundtableWire.h"
+#include "core/security/StationIdentity.h"
 #include "core/session/SessionMessages.h"
 #include "core/session/StationCapabilities.h"
 #include "core/session/StationClient.h"
@@ -159,12 +172,59 @@ QString valueOf(const SessionMessage& m, const QByteArray& name)
     return {};
 }
 
-SessionMessage invoke(LoopbackTransport* peer, const QByteArray& verb,
-                      const QList<MirrorUpdate>& arguments)
+// Sends a command and returns its id without waiting for the answer.
+quint32 sendCommand(LoopbackTransport* peer, const QByteArray& verb,
+                    const QList<MirrorUpdate>& arguments)
 {
     static quint32 nextId = 7000;
     const quint32 id = ++nextId;
     peer->sendText(SessionMessages::encode(SessionMessages::commandInvoke(verb, id, arguments)));
+    return id;
+}
+
+// The SettingsReject `peer` was sent for `key`, if any.
+std::optional<SessionMessage> rejectFor(const LoopbackTransport* peer, const QString& key)
+{
+    for (const SessionMessage& m : receivedMessages(peer)) {
+        if (m.kind == SessionMessageKind::SettingsReject
+            && QString::fromUtf8(m.objectKey) == key) {
+            return m;
+        }
+    }
+    return std::nullopt;
+}
+
+// Whether `peer` was sent a schema for `className` with field `field`.
+bool schemaHasField(const LoopbackTransport* peer, const QByteArray& className,
+                    const QByteArray& field)
+{
+    for (const SessionMessage& m : receivedMessages(peer)) {
+        if (m.kind != SessionMessageKind::Schema || m.className != className) {
+            continue;
+        }
+        for (const SessionSchemaField& f : m.fields) {
+            if (f.name == field) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool sawSchema(const LoopbackTransport* peer, const QByteArray& className)
+{
+    for (const SessionMessage& m : receivedMessages(peer)) {
+        if (m.kind == SessionMessageKind::Schema && m.className == className) {
+            return true;
+        }
+    }
+    return false;
+}
+
+SessionMessage invoke(LoopbackTransport* peer, const QByteArray& verb,
+                      const QList<MirrorUpdate>& arguments)
+{
+    const quint32 id = sendCommand(peer, verb, arguments);
     std::optional<SessionMessage> answer;
     QDeadlineTimer deadline(5000);
     while (!(answer = resultFor(peer, id)) && !deadline.hasExpired()) {
@@ -210,6 +270,98 @@ QJsonObject roomFull(const QString& id)
                                 {QStringLiteral("callsign"), QStringLiteral("W1AW")},
                                 {QStringLiteral("text"), QStringLiteral("hello")}}}}};
 }
+
+// A Roundtable server as far as a station connection sees it: a
+// challenge, a welcome for any hello, and a `posted` answer only when the
+// test asks for one. Every post frame it hears is kept.
+class FakeRoundtable {
+public:
+    FakeRoundtable()
+        : m_server(QStringLiteral("fake-roundtable"), QWebSocketServer::NonSecureMode)
+    {
+        QObject::connect(&m_server, &QWebSocketServer::newConnection, &m_context,
+                         [this] { accept(); });
+    }
+
+    bool listen() { return m_server.listen(QHostAddress::LocalHost, 0); }
+    QUrl stationUrl() const
+    {
+        return QUrl(QStringLiteral("ws://127.0.0.1:%1/v1/station").arg(m_server.serverPort()));
+    }
+
+    QList<QJsonObject> posts;
+
+    void answerPost(const QString& clientId, qint64 messageId)
+    {
+        if (m_socket == nullptr) {
+            return;
+        }
+        QJsonObject posted = fixtureWire(QStringLiteral("server-station-posted-ok"));
+        posted.insert(QStringLiteral("clientId"), clientId);
+        posted.insert(QStringLiteral("msg"), messageId);
+        sendJson(posted);
+    }
+
+private:
+    static QJsonObject fixtureWire(const QString& name)
+    {
+        QFile file(QStringLiteral(NEREUS_ROUNDTABLE_CONFORMANCE_DIR "/control/") + name
+                   + QStringLiteral(".json"));
+        if (!file.open(QIODevice::ReadOnly)) {
+            return {};
+        }
+        return QJsonDocument::fromJson(file.readAll()).object().value(QStringLiteral("wire"))
+            .toObject();
+    }
+
+    void sendJson(const QJsonObject& message)
+    {
+        m_socket->sendTextMessage(
+            QString::fromUtf8(QJsonDocument(message).toJson(QJsonDocument::Compact)));
+    }
+
+    void accept()
+    {
+        while (m_server.hasPendingConnections()) {
+            QWebSocket* socket = m_server.nextPendingConnection();
+            socket->setParent(&m_context);
+            if (socket->requestUrl().path() != QLatin1String("/v1/station")) {
+                continue;
+            }
+            m_socket = socket;
+            QObject::connect(socket, &QWebSocket::textMessageReceived, &m_context,
+                             [this](const QString& text) { received(text); });
+            QByteArray nonce(32, '\0');
+            QRandomGenerator::global()->fillRange(reinterpret_cast<quint32*>(nonce.data()), 8);
+            sendJson(QJsonObject{{QStringLiteral("type"), QStringLiteral("challenge")},
+                                 {QStringLiteral("nonce"), RoundtableWire::toBase64Url(nonce)}});
+        }
+    }
+
+    void received(const QString& text)
+    {
+        const RoundtableWire::Decoded decoded =
+            RoundtableWire::decode(text, RoundtableWire::Direction::StationToServer);
+        if (!decoded.ok) {
+            return;
+        }
+        if (decoded.type == QLatin1String("hello")) {
+            bool ok = false;
+            const QByteArray spki = RoundtableWire::fromBase64Url(
+                decoded.message.value(QStringLiteral("spki")).toString(), &ok);
+            QJsonObject welcome = fixtureWire(QStringLiteral("server-station-welcome-core"));
+            welcome.insert(QStringLiteral("station"), RoundtableWire::roundtableId(spki));
+            sendJson(welcome);
+        } else if (decoded.type == QLatin1String("post")) {
+            posts.append(decoded.message);
+        }
+    }
+
+    QWebSocketServer m_server;
+    QWebSocket* m_socket = nullptr;
+    // Declared last, destroyed first.
+    QObject m_context;
+};
 
 // A Core: its radio model (whose Roundtable client never connects), its
 // settings, and its station server.
@@ -317,15 +469,73 @@ private slots:
         QVERIFY(!subscribed.accepted);
         QVERIFY(OperatorWording::isPlain(subscribed.reason));
 
-        // Nothing about Roundtable reaches the older peer as it changes.
-        const qsizetype mark = older->received().size();
+        // Nothing about Roundtable reaches the older peer, from the hello on
+        // and as it changes, but the answers to its own two requests.
         core.listRooms();
         QVERIFY(invoke(newer, "roundtable.answerFirstRun", {boolean("live", true)}).accepted);
         QTest::qWait(150);
-        for (qsizetype i = mark; i < older->received().size(); ++i) {
-            QVERIFY2(!older->received().at(i).contains("roundtable"),
+        for (qsizetype i = 0; i < older->received().size(); ++i) {
+            const QByteArray& wire = older->received().at(i);
+            SessionMessage decoded;
+            if (SessionMessages::decode(wire, &decoded)
+                && decoded.kind == SessionMessageKind::CommandResult
+                && (decoded.commandId == refused.commandId
+                    || decoded.commandId == subscribed.commandId)) {
+                continue;
+            }
+            QVERIFY2(!wire.toLower().contains("roundtable"), wire.constData());
+        }
+    }
+
+    void noRoundtableSettingReachesAnOlderPeer()
+    {
+        // Roundtable/ keys in the Core's settings, before and after the
+        // peers connect: in the snapshot and the relay for a peer that
+        // declared roundtable, in neither for one that did not.
+        Core core;
+        core.settings->setValue(QStringLiteral("Roundtable/Callsign"), QStringLiteral("KG4VCF"));
+        core.settings->setValue(QStringLiteral("Roundtable/MuteList"), QStringLiteral("W1AW"));
+        LoopbackTransport* older = core.connect(this, {});
+        LoopbackTransport* newer = core.connect(this, {{"roundtable", 1}});
+        NEREUS_TRY_VERIFY(snapshotDone(older));
+        NEREUS_TRY_VERIFY(snapshotDone(newer));
+        core.settings->setValue(QStringLiteral("Roundtable/Grid"), QStringLiteral("EM73"));
+        core.settings->setValue(QStringLiteral("Roundtable/Callsign"), QStringLiteral("KG4VCG"));
+        core.settings->remove(QStringLiteral("Roundtable/MuteList"));
+
+        const auto sawText = [](const LoopbackTransport* peer, const QByteArray& text) {
+            for (const QByteArray& wire : peer->received()) {
+                if (wire.contains(text)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        NEREUS_TRY_VERIFY(sawText(newer, "KG4VCG"));
+        QVERIFY(sawText(newer, "KG4VCF"));
+        QVERIFY(sawText(newer, "EM73"));
+        QTest::qWait(150);
+        for (qsizetype i = 0; i < older->received().size(); ++i) {
+            QVERIFY2(!older->received().at(i).toLower().contains("roundtable"),
                      older->received().at(i).constData());
         }
+    }
+
+    void theSpotSourcesRoundtablePropertiesArePerPeer()
+    {
+        Core core;
+        LoopbackTransport* older = core.connect(this, {});
+        LoopbackTransport* newer = core.connect(this, {{"roundtable", 1}});
+        NEREUS_TRY_VERIFY(snapshotDone(older));
+        NEREUS_TRY_VERIFY(snapshotDone(newer));
+        QVERIFY(sawSchema(older, "SpotSourceHost"));
+        QVERIFY(sawSchema(newer, "SpotSourceHost"));
+        QVERIFY(schemaHasField(newer, "SpotSourceHost", "roundtableState"));
+        QVERIFY(schemaHasField(newer, "SpotSourceHost", "roundtableText"));
+        QVERIFY(!schemaHasField(older, "SpotSourceHost", "roundtableState"));
+        QVERIFY(!schemaHasField(older, "SpotSourceHost", "roundtableText"));
+        // The rest of the host reaches both.
+        QVERIFY(schemaHasField(older, "SpotSourceHost", "pskReporterText"));
     }
 
     void theObjectIsReadOnly()
@@ -339,7 +549,151 @@ private slots:
         QVERIFY(!core.state()->hidden());
     }
 
+    void aPeerCannotWriteTheCoresOwnAnswers()
+    {
+        // The Core changes its first-run answer, hidden choice, mute list
+        // and mention mark only through Roundtable's own verbs; a peer's
+        // settings write or remove of them is refused, and the Core stays
+        // hidden.
+        Core core;
+        core.settings->setValue(QStringLiteral("Roundtable/FirstRunAnswer"),
+                                QStringLiteral("Hidden"));
+        core.settings->setValue(QStringLiteral("Roundtable/Hidden"), QStringLiteral("True"));
+        core.settings->setValue(QStringLiteral("Roundtable/MuteList"), QStringLiteral("W1AW"));
+        core.settings->setValue(QStringLiteral("Roundtable/MentionsSeenMs"),
+                                QStringLiteral("1000"));
+        NEREUS_TRY_VERIFY(core.state()->hidden());
+        LoopbackTransport* peer = core.connect(this, {{"roundtable", 1}});
+        NEREUS_TRY_VERIFY(snapshotDone(peer));
+
+        const QList<std::pair<QString, QString>> writes{
+            {QStringLiteral("Roundtable/FirstRunAnswer"), QStringLiteral("Live")},
+            {QStringLiteral("Roundtable/Hidden"), QStringLiteral("False")},
+            {QStringLiteral("roundtable/mutelist"), QString()},
+            {QStringLiteral("Roundtable/MentionsSeenMs"), QStringLiteral("9000")}};
+        for (const auto& [key, value] : writes) {
+            peer->sendText(SessionMessages::encode(
+                SessionMessages::settingsWrite(key, value, QStringLiteral("peer"))));
+            NEREUS_TRY_VERIFY(rejectFor(peer, key).has_value());
+            QVERIFY2(OperatorWording::isPlain(rejectFor(peer, key)->reason),
+                     qPrintable(rejectFor(peer, key)->reason));
+        }
+        // Over an earlier write's reject for the same key.
+        const qsizetype before = receivedMessages(peer).size();
+        peer->sendText(SessionMessages::encode(
+            SessionMessages::settingsRemove(QStringLiteral("Roundtable/Hidden"))));
+        NEREUS_TRY_VERIFY(receivedMessages(peer).size() > before);
+        bool removeRefused = false;
+        const QList<SessionMessage> after = receivedMessages(peer).mid(before);
+        for (const SessionMessage& m : after) {
+            if (m.kind == SessionMessageKind::SettingsReject
+                && m.objectKey == QByteArrayLiteral("Roundtable/Hidden")) {
+                removeRefused = true;
+            }
+        }
+        QVERIFY(removeRefused);
+
+        QTest::qWait(150);
+        QVERIFY(core.state()->hidden());
+        QCOMPARE(core.settings->value(QStringLiteral("Roundtable/FirstRunAnswer")).toString(),
+                 QStringLiteral("Hidden"));
+        QCOMPARE(core.settings->value(QStringLiteral("Roundtable/Hidden")).toString(),
+                 QStringLiteral("True"));
+        QCOMPARE(core.settings->value(QStringLiteral("Roundtable/MuteList")).toString(),
+                 QStringLiteral("W1AW"));
+        QCOMPARE(core.settings->value(QStringLiteral("Roundtable/MentionsSeenMs")).toString(),
+                 QStringLiteral("1000"));
+    }
+
+    void aHiddenAnswerStaysHiddenWithoutItsHiddenKey()
+    {
+        Core core;
+        core.settings->setValue(QStringLiteral("Roundtable/FirstRunAnswer"),
+                                QStringLiteral("Hidden"));
+        core.settings->setValue(QStringLiteral("Roundtable/Hidden"), QStringLiteral("True"));
+        NEREUS_TRY_VERIFY(core.state()->hidden());
+        core.settings->remove(QStringLiteral("Roundtable/Hidden"));
+        QTest::qWait(50);
+        QVERIFY(core.state()->hidden());
+        // Only an explicit False takes it live.
+        core.settings->setValue(QStringLiteral("Roundtable/Hidden"), QStringLiteral("False"));
+        NEREUS_TRY_VERIFY(!core.state()->hidden());
+    }
+
     // ── The verbs ──────────────────────────────────────────────────
+
+    void twoConnectionsPostingOneClientIdEachGetTheirOwnAnswer()
+    {
+        // The key outlives the Core that signs with it.
+        QTemporaryDir keyDir;
+        QVERIFY(keyDir.isValid());
+        const StationIdentity identity = StationIdentity::loadOrCreate(keyDir.path());
+        Core core;
+        FakeRoundtable roundtable;
+        QVERIFY(roundtable.listen());
+        QVERIFY(identity.isValid());
+        core.client()->setServerUrl(roundtable.stationUrl());
+        core.client()->setIdentity(&identity);
+        core.client()->setStationInfo(QStringLiteral("KG4VCF"), QStringLiteral("EM73"));
+        core.settings->setValue(QStringLiteral("Roundtable/FirstRunAnswer"),
+                                QStringLiteral("Live"));
+        core.settings->setValue(QStringLiteral("Roundtable/Hidden"), QStringLiteral("False"));
+        core.client()->start();
+        NEREUS_TRY_VERIFY(core.client()->linkState() == RoundtableClient::LinkState::Live);
+        core.listRooms();
+
+        LoopbackTransport* first = core.connect(this, {{"roundtable", 1}});
+        LoopbackTransport* second = core.connect(this, {{"roundtable", 1}});
+        NEREUS_TRY_VERIFY(snapshotDone(first));
+        NEREUS_TRY_VERIFY(snapshotDone(second));
+        const QString clientId = QStringLiteral("m-1-1");
+        const quint32 firstId = sendCommand(
+            first, "roundtable.post",
+            {utf8("roomId", kRoom), utf8("text", QStringLiteral("from one")),
+             utf8("clientId", clientId)});
+        const quint32 secondId = sendCommand(
+            second, "roundtable.post",
+            {utf8("roomId", kRoom), utf8("text", QStringLiteral("from two")),
+             utf8("clientId", clientId)});
+        NEREUS_TRY_COMPARE(roundtable.posts.size(), 2);
+        QVERIFY(!resultFor(first, firstId).has_value());
+        QVERIFY(!resultFor(second, secondId).has_value());
+        const QString firstWire =
+            roundtable.posts.at(0).value(QStringLiteral("clientId")).toString();
+        const QString secondWire =
+            roundtable.posts.at(1).value(QStringLiteral("clientId")).toString();
+        QVERIFY(firstWire != secondWire);
+        QCOMPARE(roundtable.posts.at(0).value(QStringLiteral("text")).toString(),
+                 QStringLiteral("from one"));
+
+        // The second answer first: only the second connection hears it.
+        roundtable.answerPost(secondWire, 52);
+        NEREUS_TRY_VERIFY(resultFor(second, secondId).has_value());
+        QVERIFY(resultFor(second, secondId)->accepted);
+        QCOMPARE(valueOf(*resultFor(second, secondId), "messageId"), QStringLiteral("52"));
+        QVERIFY(!resultFor(first, firstId).has_value());
+        roundtable.answerPost(firstWire, 51);
+        NEREUS_TRY_VERIFY(resultFor(first, firstId).has_value());
+        QVERIFY(resultFor(first, firstId)->accepted);
+        QCOMPARE(valueOf(*resultFor(first, firstId), "messageId"), QStringLiteral("51"));
+
+        // A second post of one clientId on one connection still waits its
+        // turn.
+        const quint32 again = sendCommand(
+            first, "roundtable.post",
+            {utf8("roomId", kRoom), utf8("text", QStringLiteral("again")),
+             utf8("clientId", QStringLiteral("m-1-2"))});
+        const SessionMessage twice = invoke(
+            first, "roundtable.post",
+            {utf8("roomId", kRoom), utf8("text", QStringLiteral("twice")),
+             utf8("clientId", QStringLiteral("m-1-2"))});
+        QVERIFY(!twice.accepted);
+        NEREUS_TRY_COMPARE(roundtable.posts.size(), 3);
+        QVERIFY(!resultFor(first, again).has_value());
+        core.client()->stop();
+    }
+
+    // ── The verbs (no Roundtable connection) ───────────────────────
 
     void theVerbsAnswerPlainly()
     {

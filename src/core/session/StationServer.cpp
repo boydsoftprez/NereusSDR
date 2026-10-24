@@ -7,6 +7,13 @@
 //               verbs, only for a peer that declared roundtable 1; Roundtable
 //               kept out of the spotConsole streams. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-24: Roundtable plan Task 11 fix round: the Core's own
+//               Roundtable answers refused from a peer's settings remove;
+//               no Roundtable/ setting to a peer without Roundtable;
+//               SpotSourceHost's roundtableState and roundtableText fitted
+//               per peer; a post keyed by its connection and a Core
+//               clientId. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-22: RX-only antennas as Thetis's checkbox sum (0..5):
 //               radioAntennaRowsVersion 2 for a peer that declared
 //               radioAntennaRows 2; any other peer reads and writes a 0..3
@@ -1441,6 +1448,13 @@ bool isRoundtableMessage(const SessionMessage& message)
             && message.className == "RoundtableState");
 }
 
+// The Core's Roundtable/ settings, sent only to a peer that gets Roundtable,
+// so an older peer's snapshot and settings relay stay as they were.
+bool isRoundtableSettingsKey(const QString& key)
+{
+    return key.startsWith(QLatin1String("Roundtable/"), Qt::CaseInsensitive);
+}
+
 bool isRoundtableStream(const QString& stream)
 {
     return stream == QLatin1String(RoundtableModel::kRoomsStream)
@@ -1708,6 +1722,10 @@ constexpr PeerOnlyProperty kPeerOnlyProperties[] = {
     {"RadioModel", "radio", false, "coreSpeakerDetails", "coreSpeaker"},
     // The CFC dialog's band editor (transmitSettingsVersion 15).
     {"TransmitModel", "transmit", false, "cfcProfile", "cfcProfile"},
+    // The Spot Hub's Roundtable row (stationRoundtableVersion 1), only to a
+    // peer that gets Roundtable (StationServer::peerGetsRoundtable).
+    {"SpotSourceHost", "spotSources", false, "roundtableState", "roundtable"},
+    {"SpotSourceHost", "spotSources", false, "roundtableText", "roundtable"},
 };
 
 // Phone wire batch: record fields that go only to a peer at
@@ -7975,7 +7993,13 @@ bool StationServer::sendCapabilitiesAndSettingsSnapshot(SessionTransport* transp
         m_radioModel.isNull() ? QString() : m_radioModel->currentRadioMac());
     QList<MirrorUpdate> entries;
     entries.reserve(snapshot.size());
+    const bool roundtableSettings = peerGetsRoundtable(transport);
     for (auto it = snapshot.cbegin(); it != snapshot.cend(); ++it) {
+        // Roundtable plan Task 11: the Roundtable/ keys only to a peer
+        // that gets Roundtable.
+        if (!roundtableSettings && isRoundtableSettingsKey(it.key())) {
+            continue;
+        }
         entries.append(
             MirrorUpdate{0, it.key().toUtf8(), MirrorWireKind::Utf8, QVariant(it.value())});
     }
@@ -8927,7 +8951,7 @@ void StationServer::handleSettingsRemove(SessionTransport* transport, const Sess
         const bool plainReason = nr3Path || isModelOwnedNotchSettingsKey(key)
             || isModelOwnedStepAttenuatorSettingsKey(key)
             || isModelOwnedAlexAntennaSettingsKey(key)
-            || isCoreOwnedIdentitySettingsKey(key);
+            || isCoreOwnedIdentitySettingsKey(key) || isCoreOwnedRoundtableSettingsKey(key);
         // iPhone app Task 71: to the session that asked (the only one
         // before).
         send(transport, SessionMessages::settingsReject(key, value.isValid(), value.toString(),
@@ -9611,6 +9635,12 @@ void StationServer::sendToPeer(SessionTransport* transport, const SessionMessage
         return;
     }
     logControlResult(transport, message);
+    // Roundtable plan Task 11: nor its Roundtable/ settings.
+    if (message.kind == SessionMessageKind::SettingsValue
+        && isRoundtableSettingsKey(QString::fromUtf8(message.objectKey))
+        && !peerGetsRoundtable(transport)) {
+        return;
+    }
     switch (message.kind) {
     case SessionMessageKind::Schema:
     case SessionMessageKind::ObjectCreate:
@@ -10114,10 +10144,10 @@ bool StationServer::fitPeerOnlyProperties(SessionTransport* transport,
     }
     for (const PeerOnlyProperty& entry : kPeerOnlyProperties) {
         const QByteArray feature(entry.feature);
-        const bool peerGetsIt = entry.deviceKeyOnly
-            ? peerGetsCoreAddresses(transport)
-            : feature == "coreSpeaker" ? peerGetsCoreSpeaker(transport)
-                                       : peerGetsFeatureProperties(transport, feature);
+        const bool peerGetsIt = entry.deviceKeyOnly ? peerGetsCoreAddresses(transport)
+            : feature == "coreSpeaker"                  ? peerGetsCoreSpeaker(transport)
+            : feature == "roundtable"                   ? peerGetsRoundtable(transport)
+                                                        : peerGetsFeatureProperties(transport, feature);
         if (!peerOnlyPropertyApplies(entry, message) || peerGetsIt) {
             continue;
         }
@@ -14642,7 +14672,7 @@ void StationServer::handleRoundtableCommand(SessionTransport* transport,
     // A later answer: kept by `key` until Roundtable answers, or for 30 s.
     const auto awaitAnswer = [this, transport, &message](const QString& key) {
         m_roundtablePending.insert(key, RoundtablePending{transport, message.commandVerb,
-                                                          message.commandId});
+                                                          message.commandId, QString()});
         const quint32 commandId = message.commandId;
         QTimer::singleShot(kRoundtableAnswerMs, this, [this, key, transport, commandId]() {
             const auto it = m_roundtablePending.constFind(key);
@@ -14656,14 +14686,28 @@ void StationServer::handleRoundtableCommand(SessionTransport* transport,
     };
     QString reason;
     if (verb == "roundtable.post") {
-        const QString key = QStringLiteral("post:") + text("clientId");
-        if (m_roundtablePending.contains(key)) {
+        const QString clientId = text("clientId");
+        if (!RoundtableState::isClientId(clientId)) {
             answer(false, RoundtableState::unreadableReason(), {});
             return;
         }
+        // One post of a clientId waits at a time on each connection.
+        for (auto it = m_roundtablePending.cbegin(); it != m_roundtablePending.cend(); ++it) {
+            if (it.key().startsWith(QLatin1String("post:")) && it->transport == transport
+                && it->clientId == clientId) {
+                answer(false, RoundtableState::unreadableReason(), {});
+                return;
+            }
+        }
+        // Roundtable hears a clientId of the Core's own for each post, so
+        // two connections that use the same clientId never answer each
+        // other's post.
+        const QString wireId = QStringLiteral("link-%1").arg(++m_roundtablePostSerial);
+        const QString key = QStringLiteral("post:") + wireId;
         awaitAnswer(key);
+        m_roundtablePending[key].clientId = clientId;
         // Refused here, or by the client at once, the answer goes now.
-        if (!state->post(text("roomId"), text("text"), text("clientId"), &reason)) {
+        if (!state->post(text("roomId"), text("text"), wireId, &reason)) {
             answerRoundtablePending(key, false, reason, {});
         }
         return;

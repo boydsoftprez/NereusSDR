@@ -54,6 +54,9 @@
 //   2026-09-24  J.J. Boyd / KG4VCF  iPhone app Task 13 (R-IOS-08):
 //                                    isCoreOwnedIdentitySettingsKey().
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-24  J.J. Boyd / KG4VCF  Roundtable plan Task 11 fix round:
+//                                    isCoreOwnedRoundtableSettingsKey().
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QList>
@@ -116,6 +119,11 @@ bool isModelOwnedAlexAntennaSettingsKey(QStringView key);
 // identity key backup acknowledgement (StationKeyBackupAcknowledged), which
 // change only through station.rename and station.acknowledgeKeyBackup.
 bool isCoreOwnedIdentitySettingsKey(QStringView key);
+// Roundtable plan Task 11 (design 10.3): the Core's first-run answer, Hide
+// my station, mute list and mention mark (Roundtable/FirstRunAnswer,
+// Hidden, MuteList, MentionsSeenMs), which change only through the
+// roundtable.* verbs.
+bool isCoreOwnedRoundtableSettingsKey(QStringView key);
 // The reason a raw write or remove of a model-owned key is refused, in the
 // operator's words.
 QString modelOwnedSettingsRefusal(QStringView key);

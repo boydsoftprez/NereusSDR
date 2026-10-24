@@ -12,6 +12,10 @@
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 10, R-RT-1 Core runner).
+//   2026-10-24: placeSlice() and familyWidthHz(), moved here from
+//               RoundtableState so the live reader places slices too
+//               (Roundtable plan Task 11 fix round). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/roundtable/RoundtableWire.h"
@@ -26,7 +30,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <functional>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -1573,6 +1579,63 @@ QString familyOfMode(const QString& mode)
         {QStringLiteral("FDVU"), QStringLiteral("fdvu")},
     };
     return families.value(mode);
+}
+
+namespace {
+
+// Wire spec 6.1 (design C1, C25): how far either side of a room's center a
+// slice of each family may be and still be in that room.
+constexpr qint64 kSidebandWidthHz = 1500;
+constexpr qint64 kAmWidthHz = 3000;
+constexpr qint64 kFmWidthHz = 6000;
+constexpr qint64 kCwWidthHz = 300;
+
+} // namespace
+
+qint64 familyWidthHz(const QString& family)
+{
+    if (family == QLatin1String("am")) {
+        return kAmWidthHz;
+    }
+    if (family == QLatin1String("fm")) {
+        return kFmWidthHz;
+    }
+    if (family == QLatin1String("cw")) {
+        return kCwWidthHz;
+    }
+    return kSidebandWidthHz;  // lsb, usb, digl, digu, fdvl, fdvu
+}
+
+QString placeSlice(const RoundtableSliceState& slice, const QString& previous,
+                   const QHash<QString, ListedRoom>& rooms)
+{
+    const QString family = familyOfMode(slice.mode);
+    if (family.isEmpty()) {
+        return {};
+    }
+    const qint64 width = familyWidthHz(family);
+    const auto held = rooms.constFind(previous);
+    if (held != rooms.cend() && held->family == family && std::llabs(slice.hz - held->hz) <= width) {
+        return previous;
+    }
+    QString best;
+    qint64 bestDistance = std::numeric_limits<qint64>::max();
+    qint64 bestCenter = 0;
+    for (auto it = rooms.cbegin(); it != rooms.cend(); ++it) {
+        if (it->family != family) {
+            continue;
+        }
+        const qint64 distance = std::llabs(slice.hz - it->hz);
+        if (distance > width) {
+            continue;
+        }
+        if (distance < bestDistance || (distance == bestDistance && it->hz < bestCenter)) {
+            best = it.key();
+            bestDistance = distance;
+            bestCenter = it->hz;
+        }
+    }
+    return best;
 }
 
 QString bandOf(qint64 hz)

@@ -11,6 +11,12 @@
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 10: R-RT-6, R-RT-12,
 //               R-RT-13, R-RT-14 Core side).
+//   2026-10-24: Roundtable plan Task 11 fix round: syncWatches() keeps
+//               the live reader watching its slices' rooms; an archive
+//               action waits for the station connection when that is
+//               wanted, and the station connection waits for the archive
+//               connection to finish (3.1: never two at once). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/roundtable/RoundtableClient.h"
@@ -235,6 +241,7 @@ void RoundtableClient::setSlices(const QList<RoundtableSliceState>& slices)
     if (!sameSlices(before, presenceSlices())) {
         m_presenceDirty = true;
     }
+    syncWatches();
 }
 
 void RoundtableClient::pushMeter(int sliceId, double dbm, qint64 meterReadingNs)
@@ -386,10 +393,23 @@ void RoundtableClient::reconcile()
         return;
     }
     const Leg leg = want == Want::Station ? Leg::Station : Leg::Live;
-    if (m_main.socket) {
-        if (m_main.leg == leg) {
+    if (m_main.socket && m_main.leg == leg) {
+        return;
+    }
+    if (leg == Leg::Station && m_archive.socket) {
+        // 3.1: a second connection of this station closes the older one
+        // with 4003. The archive's unsent actions go on the station
+        // connection instead, and the station connection opens once the
+        // archive has its answers (finishArchiveIfAnswered,
+        // onArchiveClosed); the live reader carries on until then.
+        m_mainQueue.append(m_archiveQueue);
+        m_archiveQueue.clear();
+        if (m_archiveUnanswered > 0) {
             return;
         }
+        closeLink(m_archive, true);
+    }
+    if (m_main.socket) {
         // Going hidden (or away with Stop) from live: `hidden` is the last
         // thing the station sends (5.3.14), then the live reader opens.
         if (m_main.leg == Leg::Station && m_main.signedIn) {
@@ -436,6 +456,8 @@ void RoundtableClient::openLink(Link& link, Leg leg)
         m_awaitingRooms = false;
         m_roomGens.clear();
         m_awaitingRoom.clear();
+        m_listedRooms.clear();
+        m_watched.clear();
         if (leg == Leg::Station) {
             m_presenceSent = false;
             m_sentSlices.clear();
@@ -528,9 +550,8 @@ void RoundtableClient::onConnected(Leg leg, quint64 generation)
     if (leg == Leg::Live) {
         // 7.8: the band list, all bands, and the rooms being read.
         send(link, RoundtableWire::watchBand(QStringLiteral("all")));
-        for (const QString& room : std::as_const(m_reads)) {
-            send(link, RoundtableWire::watch(room));
-        }
+        m_watched.clear();
+        syncWatches();
         setState(LinkState::Hidden);
         emit statusTextChanged();
     }
@@ -832,7 +853,16 @@ void RoundtableClient::handleViews(const QString& type, const QJsonObject& messa
     if (type == QLatin1String("rooms")) {
         m_roomsGen = gen;
         m_awaitingRooms = false;
+        m_listedRooms.clear();
+        for (const QJsonValue& value : message.value(QStringLiteral("rooms")).toArray()) {
+            const QJsonObject summary = value.toObject();
+            m_listedRooms.insert(summary.value(QStringLiteral("id")).toString(),
+                                 RoundtableWire::ListedRoom{
+                                     summary.value(QStringLiteral("family")).toString(),
+                                     summary.value(QStringLiteral("hz")).toInteger()});
+        }
         emit roomsReceived(message);
+        syncWatches();
     } else if (type == QLatin1String("roomsDelta")) {
         if (m_awaitingRooms) {
             return;
@@ -844,7 +874,20 @@ void RoundtableClient::handleViews(const QString& type, const QJsonObject& messa
             return;
         }
         m_roomsGen = gen;
+        for (const QString& key : {QStringLiteral("add"), QStringLiteral("change")}) {
+            for (const QJsonValue& value : message.value(key).toArray()) {
+                const QJsonObject summary = value.toObject();
+                m_listedRooms.insert(summary.value(QStringLiteral("id")).toString(),
+                                     RoundtableWire::ListedRoom{
+                                         summary.value(QStringLiteral("family")).toString(),
+                                         summary.value(QStringLiteral("hz")).toInteger()});
+            }
+        }
+        for (const QJsonValue& value : message.value(QStringLiteral("remove")).toArray()) {
+            m_listedRooms.remove(value.toString());
+        }
         emit roomsDeltaReceived(message);
+        syncWatches();
     } else if (type == QLatin1String("room")) {
         const QString id = message.value(QStringLiteral("id")).toString();
         m_roomGens.insert(id, gen);
@@ -1108,8 +1151,8 @@ void RoundtableClient::readRoom(const QString& roomId)
     }
     if (stationLive()) {
         send(m_main, RoundtableWire::read(roomId));
-    } else if (m_main.socket && m_main.leg == Leg::Live && m_main.open) {
-        send(m_main, RoundtableWire::watch(roomId));
+    } else {
+        syncWatches();
     }
 }
 
@@ -1118,8 +1161,8 @@ void RoundtableClient::unreadRoom(const QString& roomId)
     m_reads.removeAll(roomId);
     if (stationLive()) {
         send(m_main, RoundtableWire::unread(roomId));
-    } else if (m_main.socket && m_main.leg == Leg::Live && m_main.open) {
-        send(m_main, RoundtableWire::unwatch(roomId));
+    } else {
+        syncWatches();
     }
 }
 
@@ -1155,6 +1198,17 @@ void RoundtableClient::runArchive(ArchiveAction action)
 {
     if (stationLive()) {
         sendArchiveAction(m_main, action);
+        return;
+    }
+    if (wanted() == Want::Station) {
+        // The station connection is wanted (signing in, waiting out a
+        // retry, or waiting for an archive connection to finish): the
+        // action goes on it once welcomed, never on a second connection of
+        // this station (3.1 closes the older with 4003).
+        m_mainQueue.append(action);
+        if (!m_main.socket && m_reconnectDueMs < 0) {
+            reconcile();
+        }
         return;
     }
     if (m_main.socket && m_main.leg == Leg::Station) {
@@ -1227,6 +1281,10 @@ void RoundtableClient::finishArchiveIfAnswered()
     if (m_archiveUnanswered <= 0 && m_archiveQueue.isEmpty()) {
         m_archiveUnanswered = 0;
         closeLink(m_archive, true);
+        // A station connection that waited for it opens now.
+        if (m_started) {
+            reconcile();
+        }
     }
 }
 
@@ -1239,6 +1297,61 @@ void RoundtableClient::onArchiveClosed()
         emit errorReceived(QStringLiteral("unreachable"),
                            tr("Roundtable could not be reached. Try again shortly."));
     }
+    if (m_started) {
+        reconcile();
+    }
+}
+
+void RoundtableClient::placeSlices()
+{
+    // 6.3, as the Core's state places them (RoundtableState::replace).
+    QHash<int, QString> next;
+    for (const RoundtableSliceState& slice : std::as_const(m_slices)) {
+        const QString room =
+            RoundtableWire::placeSlice(slice, m_sliceRoomIds.value(slice.id), m_listedRooms);
+        if (!room.isEmpty()) {
+            next.insert(slice.id, room);
+        }
+    }
+    m_sliceRoomIds = next;
+}
+
+void RoundtableClient::syncWatches()
+{
+    placeSlices();
+    if (!m_main.socket || m_main.leg != Leg::Live || !m_main.open) {
+        return;
+    }
+    // 7.8: the live reader watches the rooms it shows: the rooms read,
+    // newest first, then each slice's room, at most four.
+    QStringList wanted;
+    for (auto it = m_reads.crbegin(); it != m_reads.crend(); ++it) {
+        if (!wanted.contains(*it)) {
+            wanted.append(*it);
+        }
+    }
+    QList<int> ids = m_sliceRoomIds.keys();
+    std::sort(ids.begin(), ids.end());
+    for (const int id : std::as_const(ids)) {
+        const QString room = m_sliceRoomIds.value(id);
+        if (!wanted.contains(room)) {
+            wanted.append(room);
+        }
+    }
+    if (wanted.size() > kMaxWatched) {
+        wanted = wanted.mid(0, kMaxWatched);
+    }
+    for (const QString& room : std::as_const(m_watched)) {
+        if (!wanted.contains(room)) {
+            send(m_main, RoundtableWire::unwatch(room));
+        }
+    }
+    for (const QString& room : std::as_const(wanted)) {
+        if (!m_watched.contains(room)) {
+            send(m_main, RoundtableWire::watch(room));
+        }
+    }
+    m_watched = wanted;
 }
 
 } // namespace NereusSDR

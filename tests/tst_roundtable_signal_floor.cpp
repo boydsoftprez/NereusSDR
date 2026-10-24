@@ -14,6 +14,9 @@
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 10).
+//   2026-10-24: Task 11 fix round: a spread window's nearest-rank 10th
+//               percentile. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/roundtable/RoundtableSignalFloor.h"
@@ -50,6 +53,7 @@ private slots:
     void carrierHeldFiveMinutesStaysPresent();
     void retuneClearsAndRestartsWarmup();
     void tenDecibelsIsTheEdge();
+    void spreadWindowFloorIsTheNearestRankTenthPercentile();
 };
 
 void TstRoundtableSignalFloor::steadyFloorThenSignalIsPresentOnlyAfterWarmup()
@@ -110,6 +114,28 @@ void TstRoundtableSignalFloor::tenDecibelsIsTheEdge()
     QVERIFY(feed(floor, -120.0, kStartMs, warm, false));
     QVERIFY(!floor.update(-110.5, warm));
     QVERIFY(floor.update(-110.0, warm + kStepMs));
+}
+
+void TstRoundtableSignalFloor::spreadWindowFloorIsTheNearestRankTenthPercentile()
+{
+    RoundtableSignalFloor floor;
+    floor.retune(kStartMs);
+    // 100 distinct readings, -130 to -31 dBm, fed out of order inside the
+    // warm-up. The nearest-rank 10th percentile is the ceil(0.1 * 100) =
+    // 10th smallest, -121 dBm. A min (-130), median (-81) or last-value
+    // floor gives something else.
+    for (int i = 0; i < 100; ++i) {
+        const int step = (i * 37) % 100;
+        QVERIFY(!floor.update(-130.0 + step, kStartMs + i * kStepMs));
+    }
+    double dbm = 0.0;
+    QVERIFY(floor.floor(&dbm));
+    QCOMPARE(dbm, -121.0);
+    // 101 readings: ceil(10.1) = 11th smallest. Add one more at -31 dBm
+    // (still in the warm-up), so the 11th smallest is -120 dBm.
+    QVERIFY(!floor.update(-31.0, kStartMs + 100 * kStepMs - 1));
+    QVERIFY(floor.floor(&dbm));
+    QCOMPARE(dbm, -120.0);
 }
 
 QTEST_GUILESS_MAIN(TstRoundtableSignalFloor)

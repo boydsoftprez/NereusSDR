@@ -10,6 +10,9 @@
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 11).
+//   2026-10-24: Task 11 fix round: a "Hidden" answer stays hidden without
+//               its Hidden key; slices placed by RoundtableWire::placeSlice.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/roundtable/RoundtableState.h"
@@ -28,27 +31,6 @@ namespace NereusSDR {
 
 namespace {
 
-// Wire spec 6.1 (design C1, C25): how far either side of a room's center a
-// slice of each family may be and still be in that room.
-constexpr qint64 kSidebandWidthHz = 1500;
-constexpr qint64 kAmWidthHz = 3000;
-constexpr qint64 kFmWidthHz = 6000;
-constexpr qint64 kCwWidthHz = 300;
-
-qint64 familyWidthHz(const QString& family)
-{
-    if (family == QLatin1String("am")) {
-        return kAmWidthHz;
-    }
-    if (family == QLatin1String("fm")) {
-        return kFmWidthHz;
-    }
-    if (family == QLatin1String("cw")) {
-        return kCwWidthHz;
-    }
-    return kSidebandWidthHz;  // lsb, usb, digl, digu, fdvl, fdvu
-}
-
 QString compact(const QJsonObject& object)
 {
     return QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact));
@@ -57,17 +39,6 @@ QString compact(const QJsonObject& object)
 QJsonObject parseObject(const QVariant& value)
 {
     return QJsonDocument::fromJson(value.toString().toUtf8()).object();
-}
-
-// Wire spec 5.2: clientId, 1 to 64 bytes of printable ASCII.
-bool isClientId(const QString& id)
-{
-    if (id.isEmpty() || id.size() > 64) {
-        return false;
-    }
-    return std::all_of(id.cbegin(), id.cend(), [](QChar c) {
-        return c.unicode() >= 0x21 && c.unicode() <= 0x7E;
-    });
 }
 
 // Wire spec 5.2: an id is a whole number from 1 to 9007199254740991.
@@ -81,6 +52,17 @@ bool isWireId(const QString& text)
 constexpr qint64 kMaxUnixMs = 9007199254740991LL;
 
 } // namespace
+
+// Wire spec 5.2: clientId, 1 to 64 bytes of printable ASCII.
+bool RoundtableState::isClientId(const QString& id)
+{
+    if (id.isEmpty() || id.size() > 64) {
+        return false;
+    }
+    return std::all_of(id.cbegin(), id.cend(), [](QChar c) {
+        return c.unicode() >= 0x21 && c.unicode() <= 0x7E;
+    });
+}
 
 RoundtableState::RoundtableState(QObject* parent)
     : QObject(parent)
@@ -201,8 +183,12 @@ void RoundtableState::reloadSettings()
     AppSettings* s = settings();
     const QString answer = s->value(QLatin1String(kFirstRunAnswerKey)).toString();
     const bool answered = answer == QLatin1String("Live") || answer == QLatin1String("Hidden");
-    const bool hidden = s->value(QLatin1String(kHiddenKey), QStringLiteral("False")).toString()
-        == QLatin1String("True");
+    // A Core answered "Stay hidden" stays hidden when its Hidden key is
+    // missing (an older or imported settings file): only an explicit
+    // "False" takes it live.
+    const bool hidden = s->contains(QLatin1String(kHiddenKey))
+        ? s->value(QLatin1String(kHiddenKey)).toString() == QLatin1String("True")
+        : answer == QLatin1String("Hidden");
     bool okSeen = false;
     const qint64 seen = s->value(QLatin1String(kMentionsSeenKey)).toString().toLongLong(&okSeen);
     QStringList mutes;
@@ -288,14 +274,14 @@ void RoundtableState::setSlices(const QList<RoundtableSliceState>& slices)
 
 void RoundtableState::setRooms(const QJsonArray& summaries)
 {
-    QHash<QString, Listed> rooms;
+    QHash<QString, RoundtableWire::ListedRoom> rooms;
     for (const QJsonValue& value : summaries) {
         const QJsonObject summary = value.toObject();
         const QString id = summary.value(QStringLiteral("id")).toString();
         if (id.isEmpty()) {
             continue;
         }
-        rooms.insert(id, Listed{summary.value(QStringLiteral("family")).toString(),
+        rooms.insert(id, RoundtableWire::ListedRoom{summary.value(QStringLiteral("family")).toString(),
                                 summary.value(QStringLiteral("hz")).toInteger()});
     }
     m_rooms = rooms;
@@ -316,37 +302,13 @@ void RoundtableState::replace()
     // none) has no room id yet.
     QJsonObject next;
     for (const RoundtableSliceState& slice : std::as_const(m_slices)) {
-        const QString family = RoundtableWire::familyOfMode(slice.mode);
-        if (family.isEmpty()) {
+        if (RoundtableWire::familyOfMode(slice.mode).isEmpty()) {
             continue;
         }
-        const qint64 width = familyWidthHz(family);
         const QString key = QString::number(slice.id);
-        const QString previous = m_sliceRooms.value(key).toString();
-        const auto held = m_rooms.constFind(previous);
-        if (held != m_rooms.cend() && held->family == family
-            && std::llabs(slice.hz - held->hz) <= width) {
-            next.insert(key, previous);
-            continue;
-        }
-        QString best;
-        qint64 bestDistance = std::numeric_limits<qint64>::max();
-        qint64 bestCenter = 0;
-        for (auto it = m_rooms.cbegin(); it != m_rooms.cend(); ++it) {
-            if (it->family != family) {
-                continue;
-            }
-            const qint64 distance = std::llabs(slice.hz - it->hz);
-            if (distance > width) {
-                continue;
-            }
-            if (distance < bestDistance || (distance == bestDistance && it->hz < bestCenter)) {
-                best = it.key();
-                bestDistance = distance;
-                bestCenter = it->hz;
-            }
-        }
-        next.insert(key, best.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(best));
+        const QString room =
+            RoundtableWire::placeSlice(slice, m_sliceRooms.value(key).toString(), m_rooms);
+        next.insert(key, room.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(room));
     }
     if (next != m_sliceRooms) {
         m_sliceRooms = next;

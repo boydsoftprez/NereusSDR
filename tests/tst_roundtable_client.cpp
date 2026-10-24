@@ -20,7 +20,12 @@
 //   - at radio false with AwayChoice "Stop" sends nothing about the
 //     station;
 //   - the resync-after-gap session fixture's exchange;
-//   - the desktop's key and Remote Access's key are one key.
+//   - the desktop's key and Remote Access's key are one key;
+//   - an archive request just before going live never makes two signed-in
+//     station connections at once (3.1, the fake server closes the older
+//     with 4003);
+//   - a hidden client's live reader watches its slice's room once the
+//     band list names it (7.8), and unwatches it when the slice leaves.
 //
 // Keys and nonces are made at run time; nothing leaves this computer.
 //
@@ -29,6 +34,9 @@
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 10).
+//   2026-10-24: Task 11 fix round: the fake server's 3.1 rule and the
+//               archive-then-live and slice-watch cases. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/roundtable/RoundtableClient.h"
@@ -50,6 +58,7 @@
 #include <QWebSocketServer>
 #include <QtTest/QtTest>
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 
@@ -88,6 +97,7 @@ struct FakeConnection {
     bool signatureVerified = false;
     bool signatureVerifiesWithPort = false;
     bool closed = false;
+    bool welcomed = false;
     bool allFramesValid = true;
 
     QStringList types() const
@@ -125,6 +135,8 @@ public:
     bool autoSignIn = true;
     bool autoWebLink = true;
     std::vector<std::unique_ptr<FakeConnection>> connections;
+    // The most station connections signed in at once, this one included.
+    int maxSignedInStations = 0;
 
     int count(const QString& path) const
     {
@@ -191,6 +203,17 @@ private:
             c->signatureVerifiesWithPort = StationIdentity::verify(
                 c->spki, Wire::helloTranscript(QStringLiteral("127.0.0.1:%1").arg(port()), c->nonce), sig);
             if (c->signatureVerified) {
+                // 3.1: a second connection of one station closes the older
+                // one with 4003.
+                int signedIn = 1;
+                for (const auto& other : connections) {
+                    if (other.get() != c && other->path == c->path && other->welcomed && !other->closed) {
+                        ++signedIn;
+                        other->socket->close(static_cast<QWebSocketProtocol::CloseCode>(4003));
+                    }
+                }
+                maxSignedInStations = std::max(maxSignedInStations, signedIn);
+                c->welcomed = true;
                 QJsonObject welcome = fixtureWire(QStringLiteral("server-station-welcome-core"));
                 welcome.insert(QStringLiteral("station"), Wire::roundtableId(c->spki));
                 c->send(welcome);
@@ -257,6 +280,8 @@ private slots:
     void gapInTheBandListAsksForItAgain();
     void desktopKeyIsRemoteAccessKey();
     void refusedCallsignMeansNoStart();
+    void archiveThenLiveMakesOneStationConnection();
+    void hiddenReaderWatchesItsSlicesRoom();
 
 private:
     // The client set up against the fake server with the fake clocks.
@@ -723,6 +748,68 @@ void TstRoundtableClient::refusedCallsignMeansNoStart()
     m_client->setStationInfo(QStringLiteral("KG4VCF"), QString());
     QVERIFY(waitConnection(QStringLiteral("/v1/station"), 1) != nullptr);
     QTRY_COMPARE_WITH_TIMEOUT(m_client->linkState(), RoundtableClient::LinkState::Live, kWaitMs);
+}
+
+void TstRoundtableClient::archiveThenLiveMakesOneStationConnection()
+{
+    // Hidden with the live reader up, the operator asks for the web
+    // link and at once goes live, before the archive connection has its
+    // answer. One station connection signs in at a time, so the server
+    // never closes one with 4003 and the link still comes.
+    makeClient(true);
+    m_client->setHidden(true);
+    QSignalSpy errors(m_client.get(), &RoundtableClient::errorReceived);
+    QSignalSpy links(m_client.get(), &RoundtableClient::webLinkReady);
+    m_client->start();
+    FakeConnection* live = waitConnection(QStringLiteral("/v1/live"), 1);
+    QVERIFY(live != nullptr);
+    QVERIFY(waitFrames(live, 1));
+    QTRY_COMPARE_WITH_TIMEOUT(m_client->linkState(), RoundtableClient::LinkState::Hidden, kWaitMs);
+
+    m_client->requestWebLink();
+    m_client->setHidden(false);
+    QTRY_COMPARE_WITH_TIMEOUT(m_client->linkState(), RoundtableClient::LinkState::Live, kWaitMs);
+    QTRY_COMPARE_WITH_TIMEOUT(links.size(), 1, kWaitMs);
+    // Settle: nothing else opens or closes.
+    QTest::qWait(200);
+    QCOMPARE(m_server->maxSignedInStations, 1);
+    QCOMPARE(m_client->linkState(), RoundtableClient::LinkState::Live);
+    for (const QList<QVariant>& error : std::as_const(errors)) {
+        QVERIFY2(error.first().toString() != QLatin1String("unreachable"),
+                 qPrintable(error.value(1).toString()));
+    }
+    FakeConnection* station = m_server->last(QStringLiteral("/v1/station"));
+    QVERIFY(station != nullptr);
+    QVERIFY(!station->closed);
+    QVERIFY(station->types().contains(QStringLiteral("presence")));
+    QTRY_VERIFY_WITH_TIMEOUT(live->closed, kWaitMs);
+}
+
+void TstRoundtableClient::hiddenReaderWatchesItsSlicesRoom()
+{
+    // Hidden, the live reader shows the rooms the slices are in (7.8):
+    // once the band list names the slice's room it watches it, and when
+    // the slice moves out of every listed room it stops.
+    makeClient(true);
+    m_client->setHidden(true);
+    m_client->start();
+    FakeConnection* live = waitConnection(QStringLiteral("/v1/live"), 1);
+    QVERIFY(live != nullptr);
+    QVERIFY(waitFrames(live, 1));
+    QCOMPARE(live->types(), QStringList{QStringLiteral("watchBand")});
+
+    live->send(fixtureWire(QStringLiteral("server-live-rooms")));
+    QVERIFY(waitFrames(live, 2));
+    QCOMPARE(live->frames.at(1), Wire::watch(kRoom));
+
+    RoundtableSliceState moved = usbSlice();
+    moved.hz = 7200000;
+    moved.mode = QStringLiteral("LSB");
+    m_client->setSlices({moved});
+    QVERIFY(waitFrames(live, 3));
+    QCOMPARE(live->frames.at(2), Wire::unwatch(kRoom));
+    QVERIFY(live->allFramesValid);
+    QCOMPARE(m_server->count(QStringLiteral("/v1/station")), 0);
 }
 
 QTEST_GUILESS_MAIN(TstRoundtableClient)

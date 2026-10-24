@@ -7823,6 +7823,18 @@
                     "kind": "bool",
                     "name": "freedvReporterHidden",
                     "ordinal": 10
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "roundtableState",
+                    "ordinal": 11
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "roundtableText",
+                    "ordinal": 12
                 }
             ]
         },

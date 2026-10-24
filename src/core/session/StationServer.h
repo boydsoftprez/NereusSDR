@@ -186,6 +186,9 @@
 //               roundtableRooms and roundtableRoom:<id> streams and the
 //               roundtable.* verbs. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-24: Roundtable plan Task 11 fix round: a pending post keeps
+//               its connection's clientId. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-22: peerReadsRxOnlyPairs: RX-only antennas 0..5 for a peer
 //               that declared radioAntennaRows 2. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
@@ -2819,12 +2822,14 @@ private:
     // stream's records as last sent (to send only what changed); the
     // connections reading each room; when each room stream was last
     // needed (a slice in the room, or a reader), on m_roundtableClock; the
-    // sweep; and the answers that come later (a post, by its clientId; a
-    // web sign-in, by "weblink:<n>").
+    // sweep; and the answers that come later (a post, by "post:link-<n>",
+    // the clientId Roundtable hears, keeping the connection's own; a web
+    // sign-in, by "weblink:<n>").
     struct RoundtablePending {
         SessionTransport* transport = nullptr;
         QByteArray verb;
         quint32 commandId = 0;
+        QString clientId;
     };
     bool m_roundtableOn = false;
     QHash<QString, QHash<QString, QJsonObject>> m_roundtableRecords;
@@ -2834,6 +2839,7 @@ private:
     QTimer* m_roundtableSweepTimer = nullptr;
     QHash<QString, RoundtablePending> m_roundtablePending;
     quint64 m_roundtableWebLinkSerial = 0;
+    quint64 m_roundtablePostSerial = 0;
     QTimer* m_recordFlushTimer = nullptr;
     // Parity Task 22: the log sink's last line put in `coreLog`, the pull
     // that runs while it has a subscriber, the newest telemetry this Core

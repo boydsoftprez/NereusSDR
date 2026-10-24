@@ -47,6 +47,10 @@
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 10: R-RT-6, R-RT-12,
 //               R-RT-13, R-RT-14 Core side).
+//   2026-10-24: Roundtable plan Task 11 fix round: the live reader
+//               watches its slices' rooms, and an archive action never
+//               opens a second station connection beside the main one.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -95,6 +99,8 @@ public:
     /// How long a brief archive connection may take to be answered.
     static constexpr int kArchiveTimeoutMs = 30000;
     static constexpr int kTickMs = 100;
+    /// Wire spec 7.8 and 9.1: the rooms one live socket watches at once.
+    static constexpr int kMaxWatched = 4;
     /// The retry ladder (2.3, design 10.1); the last step repeats.
     static const QList<int>& reconnectDelaysMs();
     static QUrl defaultServerUrl();
@@ -239,6 +245,10 @@ private:
     void flushQueuedArchive(Link& link, QList<ArchiveAction>& queue);
     void sendArchiveAction(Link& link, ArchiveAction action);
     void finishArchiveIfAnswered();
+    // 7.8: the rooms the live reader watches, the rooms read (newest
+    // first) and then the slices' rooms, at most kMaxWatched.
+    void placeSlices();
+    void syncWatches();
     void scheduleReconnect(qint64 atLeastMs);
     void goOffline(const QString& reason);
     void clearOffline();
@@ -285,6 +295,11 @@ private:
     QHash<QString, qint64> m_roomGens;
     QSet<QString> m_awaitingRoom;
     QStringList m_reads;
+    // The band list as last heard (6.3), each slice's room in it, and the
+    // rooms the live reader watches now.
+    QHash<QString, RoundtableWire::ListedRoom> m_listedRooms;
+    QHash<int, QString> m_sliceRoomIds;
+    QStringList m_watched;
 
     // Mentions.
     QSet<qint64> m_mentionIds;
