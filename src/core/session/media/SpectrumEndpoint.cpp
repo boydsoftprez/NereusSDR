@@ -5,6 +5,10 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 Task 2.
 //
 // Modification history (NereusSDR):
+//   2026-10-23: A frame carries the row its noise floor measures
+//               (measurementDbm) while the trace's average warms up or a
+//               wing holds no data. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-21: Even row gaps: a frame fills its slot when it is nearer the
 //               slot than the source's next frame (earlyToleranceNs), not
 //               only within a twentieth of a period. J.J. Boyd (KG4VCF),
@@ -507,6 +511,7 @@ std::optional<DisplayCodecFrame> SpectrumEndpoint::consume(
 
     QVector<float> trace;
     QVector<float> waterfall;
+    QVector<float> measurement;
     if (m_extendedView) {
         const QVector<float> emptyAdcRawDb;
         const QVector<float>& adcRawDb =
@@ -515,7 +520,8 @@ std::optional<DisplayCodecFrame> SpectrumEndpoint::consume(
             : emptyAdcRawDb;
         if (!m_extendedTraceReducer->reduce(frame.binsLinear, frame.windowEnb, frame.dbmOffset,
                                             adcRawDb, m_context.wideband.adcRateHz,
-                                            stationOffsetDb, m_request.minDbm, trace)
+                                            stationOffsetDb, m_request.minDbm, trace,
+                                            &measurement)
             || !m_extendedWaterfallReducer->reduce(frame.binsLinear, frame.windowEnb,
                                                     frame.dbmOffset, adcRawDb,
                                                     m_context.wideband.adcRateHz,
@@ -525,7 +531,7 @@ std::optional<DisplayCodecFrame> SpectrumEndpoint::consume(
         }
     } else {
         m_traceReducer->reduce(frame.binsLinear, frame.windowEnb,
-                               frame.dbmOffset + stationOffsetDb, trace);
+                               frame.dbmOffset + stationOffsetDb, trace, &measurement);
         m_waterfallReducer->reduce(frame.binsLinear, frame.windowEnb,
                                    frame.dbmOffset + stationOffsetDb, waterfall);
     }
@@ -542,6 +548,9 @@ std::optional<DisplayCodecFrame> SpectrumEndpoint::consume(
     output.waterfallAdvance = (m_emittedFrames % static_cast<quint64>(m_context.framesPerLine)) == 0;
     output.traceDbm = std::move(trace);
     output.waterfallDbm = std::move(waterfall);
+    if (measurement.size() == output.traceDbm.size()) {
+        output.measurementDbm = std::move(measurement);
+    }
     if (m_context.codec.wideSamples != 0) {
         output.wideDbm = wideRowDbm(frame, frame.dbmOffset + stationOffsetDb, {
             m_request.centreHz, m_request.spanHz, m_sourceContext.centreHz,

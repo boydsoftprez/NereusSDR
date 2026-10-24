@@ -32,6 +32,12 @@
 //                                    window depth, idempotent configuration
 //                                    and changed-depth accumulator reset.
 //                                    AI-assisted via OpenAI Codex.
+//   2026-10-23  J.J. Boyd / KG4VCF  Track the share of the recursive
+//                                    average its starting value still
+//                                    holds (warmingUp), the average with
+//                                    it taken out (unseededDb), and
+//                                    warmAfterFrames().
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -102,6 +108,7 @@ void SpectrumAvenger::resize(int numPixels)
         m_availFrames = 0;
         m_avInIdx = 0;
         m_avOutIdx = 0;
+        m_seedShare = 1.0;
         return;
     }
     // resize() + fill() instead of assign() — QVector::assign was added in
@@ -117,6 +124,7 @@ void SpectrumAvenger::resize(int numPixels)
     m_availFrames = 0;
     m_avInIdx = 0;
     m_avOutIdx = 0;
+    m_seedShare = 1.0;
 }
 
 void SpectrumAvenger::setNumAverage(int numFrames)
@@ -159,6 +167,44 @@ void SpectrumAvenger::clear()
     m_availFrames = 0;
     m_avInIdx = 0;
     m_avOutIdx = 0;
+    m_seedShare = 1.0;
+}
+
+void SpectrumAvenger::unseededDb(double scale, QVector<float>& pixelsOut) const
+{
+    pixelsOut.clear();
+    if (!warmingUp() || m_seedShare >= 1.0 || m_needsInitialization
+        || (m_lastMode != 1 && m_lastMode != 3)) {
+        return;
+    }
+    const double share = m_seedShare;
+    const double weight = 1.0 - share;
+    pixelsOut.resize(m_avSum.size());
+    for (int i = 0; i < m_avSum.size(); ++i) {
+        if (m_lastMode == 3) {
+            pixelsOut[i] = static_cast<float>((m_avSum[i] - share * kLogRecursiveStartDb) / weight);
+        } else {
+            // Each term of the linear average is a power, so what is left
+            // is never below zero but for round-off.
+            const double power = std::max(
+                (m_avSum[i] - share * kLinearRecursiveStart) / weight, 0.0);
+            pixelsOut[i] = static_cast<float>(tenLog10(scale * power));
+        }
+    }
+}
+
+bool SpectrumAvenger::warmAfterFrames(int frames, int avMode, double avBackmult, int numAverage)
+{
+    if (frames <= 0) {
+        return false;
+    }
+    if (avMode == 1 || avMode == 3) {
+        return std::pow(std::clamp(avBackmult, 0.0, 1.0), frames) <= kWarmSeedShare;
+    }
+    if (avMode == kTimeWindowMode) {
+        return frames >= std::max(1, std::min(numAverage, kMaxAverage));
+    }
+    return true;
 }
 
 // From Thetis WDSP analyzer.c:464-554 [v2.10.3.13] — avenger() verbatim port.
@@ -201,6 +247,7 @@ void SpectrumAvenger::apply(const QVector<float>& tPixels,
         m_needsInitialization = false;
     }
 
+    m_lastMode = avMode;
     int i;
     double factor;
     switch (avMode)
@@ -275,6 +322,13 @@ void SpectrumAvenger::apply(const QVector<float>& tPixels,
     if (normalize) {
         for (i = 0; i < num_pixels; i++)
             pixelsOut[i] += static_cast<float>(normOneHzDb);
+    }
+    // NereusSDR, not in WDSP: the recursive modes keep avBackmult of the
+    // starting value each frame; the others hold none of it after a frame.
+    if (avMode == 1 || avMode == 3) {
+        m_seedShare *= std::clamp(avBackmult, 0.0, 1.0);
+    } else {
+        m_seedShare = 0.0;
     }
 }
 

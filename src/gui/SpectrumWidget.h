@@ -1,4 +1,11 @@
 // Modification history (NereusSDR):
+//   2026-10-23  J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
+//                 remoteTraceStartShareForTest().
+//   2026-10-23  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: the
+//                 noise floor's measurement row (m_noiseFloorMeasurement),
+//                 the wing placeholders fillWidebandWings marks and the
+//                 frames with data since, and a remote pan's view of the
+//                 Core's trace average warming up (noteRemoteTraceWarmUp).
 //   2026-10-23  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
 //                 imdOverlayShown() and syncWfTimestampTicker() replace
 //                 imdMarkersDrawn() and sameImdMarkers(); test seams
@@ -1543,6 +1550,9 @@ public:
     // dssFloorDbm() directly so the floor-anchoring math is testable
     // without standing up the noise-floor pipeline.
     void setMeasuredNoiseFloorForTest(float dbm) { m_noiseFloor.setLerpAverage(dbm); }
+    // Test only: the share of the Core's trace average its starting value
+    // held at the last frame (0 once warm; noteRemoteTraceWarmUp).
+    double remoteTraceStartShareForTest() const { return m_remoteTraceStartShare; }
     // Test only (R-DISP-HOLD): the codec context of the remote display this
     // pan accepts frames for (all zero while it accepts none).
     const DisplayCodecContext& remoteCodecForTest() const { return m_remoteCodec; }
@@ -3235,10 +3245,13 @@ private:
     /// picks the DDC noise reference the wings are calibrated against. Passed
     /// per call rather than read off a member because the trace and the
     /// waterfall choose their detectors independently.
+    /// `placeholder`, when given, is set true for each wing pixel filled
+    /// with the window's bottom because there was no wideband data for it.
     void fillWidebandWings(QVector<float>& linearPixels,
                            int islandFirstPx, int islandLastPx,
                            double dbmOffset,
-                           SpectrumDetector detector) const;
+                           SpectrumDetector detector,
+                           QVector<bool>* placeholder = nullptr) const;
 
 
 
@@ -3328,6 +3341,15 @@ private:
     // Also runs the fast-attack convergence-gated auto-clear from
     // display.cs:5904-5908.
     void processNoiseFloor();
+    // A remote pan's noise floor while the Core's trace average warms up
+    // (PR 628 re-review): the Core sends the averaged trace only, so for a
+    // new picture the pan works out the share of that average the Core's
+    // starting value still holds from the frame's encoder sequence. At Log
+    // Recursive, for a follower that has no estimate yet, it takes the
+    // start out of the trace; otherwise it holds the estimate it has (or
+    // none) until the average is warm. Leaves the row to measure in
+    // m_noiseFloorMeasurement for this frame.
+    void noteRemoteTraceWarmUp(const DisplayCodecFrame& frame);
     void updateReducedSpectrumOverlays();
     void drawWaterfall(QPainter& p, const QRect& wfRect);
     // HIGH SWR / PA safety overlay — ported from display.cs:4183-4201 [v2.10.3.13]
@@ -3631,6 +3653,31 @@ private:
     QVector<float> m_extendedWaterfallLinearPixels;
     NereusSDR::SpectrumAvenger m_extendedSpectrumAvenger;
     NereusSDR::SpectrumAvenger m_extendedWaterfallAvenger;
+    // The extended trace's wing pixels that held no data this frame, and
+    // per pixel the frames with data since it last held none.
+    QVector<bool> m_extendedSpectrumPlaceholder;
+    QVector<int> m_extendedSpectrumFramesWithData;
+    // The row the noise floor measures when it is not the trace: the
+    // average with its starting value taken out while it warms up, with NaN
+    // for wing pixels that hold no data (or, on a remote pan, the Core's
+    // trace so treated: noteRemoteTraceWarmUp). Fresh only for the frame it
+    // was written for.
+    QVector<float> m_noiseFloorMeasurement;
+    bool m_noiseFloorMeasurementFresh {false};
+    // Whether the last row the noise floor took had no measured pixel (a
+    // hold), so the fast attack runs its time again when data comes back.
+    bool m_noiseFloorHeldLastFrame {false};
+    // When that hold began, on the display clock.
+    qint64 m_noiseFloorHoldStartMs {0};
+    // A remote pan's view of the Core's trace average: the share of it the
+    // Core's starting value held when the current context started (1 for a
+    // new picture, 0 once warm or when the mode has no starting value), the
+    // share at the last frame, and whether the pan takes the start out of
+    // the trace (a follower with no estimate yet at Log Recursive) rather
+    // than hold its estimate (noteRemoteTraceWarmUp).
+    double m_remoteTraceStartShareAtContext {0.0};
+    double m_remoteTraceStartShare {0.0};
+    bool m_remoteTraceTakeStartOut {false};
 
     // ---- Frequency range ----
     double m_centerHz{14225000.0};    // 14.225 MHz default

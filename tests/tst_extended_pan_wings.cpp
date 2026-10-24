@@ -20,8 +20,15 @@
 //      agreeing with the frequency scale drawn under it.
 //   2. Nothing ever read m_widebandBinsAdc0/1 back out, so the wings were
 //      empty no matter how much wideband data arrived.
+//
+// Modification history (NereusSDR):
+//   2026-10-23  J.J. Boyd / KG4VCF  Late wings are no data to the noise
+//                                    floor while their average warms (PR
+//                                    628 re-review). AI-assisted via
+//                                    Anthropic Claude Code.
 // =================================================================
 #include <QtTest/QtTest>
+#include <algorithm>
 #include <cmath>
 
 #include "gui/SpectrumWidget.h"
@@ -102,6 +109,48 @@ private slots:
                      qPrintable(QStringLiteral("pixel %1: Core %2, local %3")
                                     .arg(i).arg(remote[i]).arg(local[i])));
         }
+    }
+
+    // PR 628 re-review: wideband data that first arrives after the trace's
+    // Log Recursive average has warmed up. Each wing pixel's average still
+    // holds its placeholder for as long as the average takes, so it is no
+    // data to the noise floor until then: the floor never falls below the
+    // island's, and once the wings are warm it reads them.
+    void late_wings_are_not_the_floor_while_their_average_warms()
+    {
+        SpectrumWidget sw;
+        configureExtendedPan(sw);
+        sw.resize(1024, 400);
+        QVERIFY(sw.extendedMode());
+        sw.setSpectrumDetector(SpectrumDetector::Peak);
+        sw.setSpectrumAveraging(SpectrumAveraging::LogRecursive);
+        sw.setSpectrumAverageTimeMs(650);
+        // A wing with no data holds the bottom of the pan's range.
+        sw.setDbmRange(-180.0f, -40.0f);
+        const QVector<float> ddc(4096, 1.0e-12f);
+        for (int frame = 0; frame < 120; ++frame) {
+            sw.updateSpectrumLinear(0, ddc, 2.0, -10.0);
+        }
+        const float islandFloor = sw.nfLerpAverageForTest();
+        QVERIFY2(islandFloor > -190.0f, qPrintable(QString::number(islandFloor)));
+        sw.setWidebandBins(0, QVector<float>(WidebandFftEngine::kOutputBins, 0.0f));
+        float lowest = islandFloor;
+        for (int frame = 0; frame < 240; ++frame) {
+            sw.updateSpectrumLinear(0, ddc, 2.0, -10.0);
+            lowest = std::min(lowest, sw.nfLerpAverageForTest());
+            QVERIFY2(sw.nfLerpAverageForTest() > islandFloor - 3.0f,
+                     qPrintable(QStringLiteral("frame %1: %2, island %3")
+                                    .arg(frame).arg(sw.nfLerpAverageForTest())
+                                    .arg(islandFloor)));
+        }
+        // The wings are above the island, and the floor ends up on them.
+        const QVector<float> pixels = sw.undentedPixelsForTest();
+        QVERIFY(!pixels.isEmpty());
+        qInfo("island floor %.2f dBm, wing %.2f dBm, lowest %.2f dBm, last %.2f dBm",
+              double(islandFloor), double(pixels.first()), double(lowest),
+              double(sw.nfLerpAverageForTest()));
+        QVERIFY2(pixels.first() > islandFloor + 10.0f, qPrintable(QString::number(pixels.first())));
+        QVERIFY(sw.nfLerpAverageForTest() > islandFloor + 5.0f);
     }
 
     // Extended mode is permission plus need: the toggle alone must not put a
