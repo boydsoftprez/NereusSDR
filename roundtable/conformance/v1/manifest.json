@@ -639,6 +639,16 @@
       "kind": "control"
     },
     {
+      "id": "refuse-server-station-rooms-readings-too-many",
+      "file": "control/refuse-server-station-rooms-readings-too-many.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-rooms-last-message-long",
+      "file": "control/refuse-server-station-rooms-last-message-long.json",
+      "kind": "control"
+    },
+    {
       "id": "refuse-server-station-rooms-delta-remove-missing",
       "file": "control/refuse-server-station-rooms-delta-remove-missing.json",
       "kind": "control"

@@ -209,8 +209,9 @@ def probe_band_map(c: Chrome, server: Server) -> None:
 
 
 def probe_row(c: Chrome, server: Server) -> None:
-    """A row shows frequency, mode, state, talker, time, members, the
-    reading strip nearest first, the last message and its age."""
+    """A row shows frequency, mode, state, talker, time, heard count, the
+    reading strip nearest first, the last message and its age, all from
+    the band list on the stream: no read API call fills a row."""
     open_public(c, server.base)
     c.eval("document.querySelector('.band[data-band=\"20m\"]').click()")
     sel = '#rows .row[data-id="usb-14212000"]'
@@ -222,18 +223,23 @@ def probe_row(c: Chrome, server: Server) -> None:
         return {{fq:t('.fq'), md:t('.md'), who:t('.who'), gl:r.querySelector('.who .gl').className, tm:t('.tm'), hb:t('.hb'),
         bars:r.querySelectorAll('.strip i').length, strip:r.querySelector('.strip').getAttribute('aria-label'),
         heights:[...r.querySelectorAll('.strip i')].map(function(i){{return parseFloat(i.style.height)}}),
-        lm:t('.lm'), ago:t('.ago')}};}})()"""
+        lm:t('.lm'), ago:t('.ago'), summary:RT.summaries().find(function(s){{return s.id==='usb-14212000'}}),
+        fetched:performance.getEntriesByType('resource').filter(function(e){{return e.name.indexOf('/v1/api/room/')>=0}}).length}};}})()"""
     )
-    summary = next(r for r in rooms_api(server) if r["id"] == "usb-14212000")
+    summary = row["summary"]
     detail = server.get("/v1/api/room/usb/14212000")["room"]
     assert row["fq"].replace(" ", "").startswith("14.212"), row
     assert row["md"] == "USB", row
     assert "K4ABC" in row["who"] and "talking" in row["gl"], row
     assert re.match(r"^\d+:\d\d$", row["tm"] or ""), row
-    assert row["hb"] == str(summary["members"]) and summary["members"] == 10, (row, summary)
+    assert row["fetched"] == 0, row
+    assert summary["members"] == 10 and summary["start"] is not None, summary
+    assert row["hb"] == str(summary["heard"]) and summary["heard"] >= 1, (row, summary)
     readers = [m for m in detail["members"] if m["reading"] is not None and m["reading"]["turn"] is not None and not m["joining"]]
     assert row["bars"] >= 5 and row["strip"] == f"{row['bars']} readings, nearest first", row
+    assert row["bars"] == len(summary["readings"]) and len(summary["readings"]) <= 12, (row, summary)
     assert "VE3XYZ" in row["lm"] and "Thanks for the QSO" in row["lm"], row
+    assert summary["lastMessage"]["callsign"] == "VE3XYZ", summary
     assert re.match(r"^\d+ ?[smh]", row["ago"] or ""), row
     assert len(readers) >= row["bars"] - 1, (readers, row)
     no_errors(c, "public row")

@@ -18,7 +18,12 @@
         "members": 6,
         "messages": 0,
         "last": 1800000000000,
-        "folded": false
+        "folded": false,
+        "start": null,
+        "heard": 0,
+        "readings": [],
+        "lastMessage": null,
+        "ended": null
       }
     ],
     "change": [
@@ -32,7 +37,12 @@
         "members": 2,
         "messages": 2,
         "last": 1800000004000,
-        "folded": false
+        "folded": false,
+        "start": null,
+        "heard": 0,
+        "readings": [],
+        "lastMessage": null,
+        "ended": null
       }
     ],
     "remove": [

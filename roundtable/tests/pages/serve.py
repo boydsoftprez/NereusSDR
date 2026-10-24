@@ -266,10 +266,6 @@ class World:
         drain(st, got)
         assert got and got[0]["type"] == "welcome", got[:1]
         st.station_id = got[0]["station"]
-        # A simulated station drops what it is sent, so it takes no band
-        # list: pacing one for each of hundreds of stations would cost the
-        # one process more than the pages need.
-        st.conn.band = None
         return st
 
     def callsign(self) -> str:

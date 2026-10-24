@@ -449,3 +449,105 @@ def test_summary_folds_an_all_away_room_after_two_hours():
         assert room.summary()["folded"] is False
     finally:
         h.close()
+
+
+def _summary(station_msgs, room_id="usb-14212000"):
+    for m in station_msgs:
+        if m["type"] == "roomsDelta":
+            for s in m["add"] + m["change"]:
+                if s["id"] == room_id:
+                    return s
+    raise AssertionError(f"no summary of {room_id} in {station_msgs}")
+
+
+def test_a_summary_carries_the_turn_the_strip_and_the_last_message(harness):
+    grids = {"K4ABC": "EM73", "KG4VCF": "FN31", "W4XYZ": None, "N4NEAR": "EM74"}
+    stations = {
+        c: _join(harness, c, hz=14212000 + 10 * i, grid=g, address=f"192.0.2.{i + 1}")
+        for i, (c, g) in enumerate(grids.items())
+    }
+    watcher = harness.sign_in(address="192.0.2.9")
+    harness.advance(10000)
+    for s in list(stations.values()) + [watcher]:
+        s.take()
+    quiet = harness.service.book.live("usb-14212000").summary()
+    assert (quiet["start"], quiet["heard"], quiet["readings"], quiet["lastMessage"], quiet["ended"]) == (None, 0, [], None, None)
+    a = stations["K4ABC"]
+    a.send(presence("K4ABC", "EM73", [slice_(0, 14212000, keyed=True)]))
+    start = harness.clock.wall_ms()
+    harness.advance(2000)
+    got = _summary(watcher.take())
+    assert got["state"] == "talking" and got["talkers"] == ["K4ABC"]
+    assert (got["start"], got["heard"], got["readings"]) == (start, 0, [])
+    now = harness.clock.wall_ms()
+    stations["KG4VCF"].send(reading(0, -91.5, now, True))
+    stations["W4XYZ"].send(reading(0, -110.0, now, False))
+    stations["N4NEAR"].send(reading(0, -80.0, now, True))
+    harness.advance(2000)
+    got = _summary(watcher.take())
+    # Nearest first, no grid last; the talker has no reading of its own turn.
+    assert (got["start"], got["heard"], got["readings"]) == (start, 2, [-80.0, -91.5, -110.0])
+    text = "x" * 79 + "é\U0001f600" + "y" * 10
+    stations["KG4VCF"].send({"type": "post", "room": "usb-14212000", "text": text, "clientId": "c1"})
+    msg_id = [m for m in stations["KG4VCF"].take() if m["type"] == "posted"][0]["msg"]
+    harness.advance(2000)
+    line = _summary(watcher.take())["lastMessage"]
+    assert line == {"callsign": "KG4VCF", "nth": 1, "t": line["t"], "state": "shown", "text": "x" * 79 + "é"}
+    stations["KG4VCF"].send({"type": "delete", "msg": msg_id})
+    harness.advance(2000)
+    line = _summary(watcher.take())["lastMessage"]
+    assert (line["callsign"], line["state"], line["text"]) == ("KG4VCF", "deleted", None)
+    # The turn ends 3 s after the talker unkeys and the last signal: `ended`.
+    a.send(presence("K4ABC", "EM73", [slice_(0, 14212000)]))
+    harness.advance(10000)
+    got = harness.service.book.live("usb-14212000").summary()
+    assert got["state"] == "quiet" and got["start"] is None and got["readings"] == [] and got["heard"] == 0
+    assert got["ended"] is not None and start < got["ended"] <= harness.clock.wall_ms()
+
+
+def test_the_strip_holds_at_most_twelve_readings(harness):
+    talker = _join(harness, "K4ABC", grid="EM73")
+    others = [
+        _join(harness, f"K{i}XYZ", hz=14212000 + 10 * (i + 1), grid="EM73", address=f"192.0.2.{i + 2}")
+        for i in range(14)
+    ]
+    harness.advance(10000)
+    talker.send(presence("K4ABC", "EM73", [slice_(0, 14212000, keyed=True)]))
+    now = harness.clock.wall_ms()
+    for i, s in enumerate(others):
+        s.send(reading(0, -100.0 + i, now, True))
+    summary = harness.service.book.live("usb-14212000").summary()
+    assert summary["heard"] == 14
+    # Same distance: callsign order, K0XYZ to K11XYZ (string order).
+    order = sorted(range(14), key=lambda i: f"K{i}XYZ")[:12]
+    assert summary["readings"] == [-100.0 + i for i in order]
+
+
+def test_one_band_list_build_a_tick_for_six_hundred_stations(harness):
+    """Wire spec 6.11 "Pacing": 600 stations in 150 rooms, every one
+    sending a reading in each 2 s window: the band list is built once a
+    tick and each station gets one roomsDelta a tick."""
+    stations = []
+    for i in range(600):
+        s = harness.sign_in(address=f"192.0.{2 + i // 250}.{1 + i % 250}")
+        hz = 14000000 + 5000 * (i // 4)
+        keyed = i % 4 == 0
+        s.send(presence(f"K{i}A", "EM73", [slice_(0, hz, keyed=keyed)]))
+        stations.append((s, keyed))
+    harness.advance(10000)
+    assert len(harness.service.book.live_rooms()) == 150
+    for s, _ in stations:
+        s.take()
+    service = harness.service
+    for tick in range(3):
+        builds = service.band_builds
+        harness.advance(500)
+        now = harness.clock.wall_ms()
+        for s, keyed in stations:
+            if not keyed:
+                s.send(reading(0, -90.0 - tick, now, True))
+        harness.advance(1500)
+        assert service.band_builds == builds + 1
+        for s, _ in stations:
+            kinds = [m["type"] for m in s.take()]
+            assert kinds.count("roomsDelta") == 1, kinds

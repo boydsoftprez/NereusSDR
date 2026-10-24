@@ -432,7 +432,6 @@
   const ROOM_STALE_MS = 60000;
   const BACKOFF_S = [1, 2, 5, 10, 30];
   const EARLIER_MS = 30 * 60000;
-  const DETAIL_FRESH_MS = 30000;
   // The read API takes 60 a minute per address group; the page keeps under 40.
   const BUCKET_SIZE = 20;
   const BUCKET_PER_MS = 40 / 60000;
@@ -532,13 +531,6 @@
     return out;
   }
 
-  function lastMessage(room) {
-    if (!room || !room.messages || !room.messages.length) {
-      return null;
-    }
-    return room.messages[room.messages.length - 1];
-  }
-
   function newestReading(room) {
     let t = 0;
     if (room) {
@@ -551,11 +543,13 @@
     return t;
   }
 
+  /* Quiet since the newest ended turn: the room view's when it is at hand,
+     otherwise the summary's `ended`, otherwise `last` (wire spec 6.11). */
   function quietSince(summary, room) {
     if (room && room.earlier && room.earlier.length && room.earlier[0].end) {
       return room.earlier[0].end;
     }
-    return summary.last;
+    return summary.ended !== null && summary.ended !== undefined ? summary.ended : summary.last;
   }
 
   function isQuiet(summary) {
@@ -638,6 +632,12 @@
       if (post) {
         return { kind: "poster", message: post };
       }
+    }
+    const lastLine = summary.lastMessage;
+    if (lastLine && lastLine.callsign.toUpperCase().includes(upper)) {
+      return { kind: "poster", message: lastLine };
+    }
+    if (room) {
       const member = room.members.find(function (m) {
         return m.callsign.toUpperCase().includes(upper);
       });
@@ -744,40 +744,6 @@
       scheduleRender();
     } else if (!summary) {
       details.delete(id);
-    }
-  }
-
-  /* The rows on screen whose details are missing or older than 30 s, the
-     oldest first, one at a time within the budget. */
-  function fillDetails() {
-    if (document.hidden) {
-      return;
-    }
-    const box = rowsBox.getBoundingClientRect();
-    const due = [];
-    for (const row of rowsBox.querySelectorAll(".row")) {
-      const r = row.getBoundingClientRect();
-      if (r.bottom < box.top - 60 || r.top > box.bottom + 60) {
-        continue;
-      }
-      const id = row.dataset.id;
-      if (view && view.id === id) {
-        continue;
-      }
-      const d = details.get(id);
-      const at = d ? d.at : 0;
-      if (Date.now() - at > DETAIL_FRESH_MS) {
-        due.push([at, id]);
-      }
-    }
-    due.sort(function (a, b) {
-      return a[0] - b[0];
-    });
-    for (const item of due.slice(0, 4)) {
-      if (inflight >= 4) {
-        break;
-      }
-      fetchDetail(item[1], false);
     }
   }
 
@@ -1127,23 +1093,24 @@
 
   RT.highlight = highlight;
 
-  function stripNode(room) {
-    const reads = room ? readingsOf(room) : [];
+  /* The row's strip: the open turn's readings from the band list, nearest
+     first, at most 12 (wire spec 6.11). */
+  function stripNode(summary) {
+    const reads = summary.readings || [];
     if (!reads.length) {
       return el("span", { class: "strip none", attrs: { "aria-label": "no readings" } });
     }
     const strip = el("span", { class: "strip", attrs: { "aria-label": reads.length + " readings, nearest first" } });
-    for (const m of reads.slice(0, 18)) {
-      const bar = el("i", { class: m.away ? "a" : "" });
-      bar.style.height = Math.round(3 + sBar(m.reading.dbm) * 13) + "px";
+    for (const dbm of reads) {
+      const bar = el("i");
+      bar.style.height = Math.round(3 + sBar(dbm) * 13) + "px";
       strip.appendChild(bar);
     }
     return strip;
   }
 
+  /* A row is drawn from its band-list summary alone (wire spec 6.11). */
   function rowNode(summary) {
-    const detail = roomDetail(summary.id);
-    const room = detail ? detail.room : null;
     const t = now();
     const quiet = isQuiet(summary);
     // `last` is the room's latest reading, row change, turn or message (wire spec 6.11).
@@ -1161,15 +1128,17 @@
     const state = quiet ? "quiet" : summary.state;
     let who;
     if (quiet) {
-      const mins = Math.max(1, Math.floor((t - quietSince(summary, room)) / 60000));
+      const mins = Math.max(1, Math.floor((t - quietSince(summary, null)) / 60000));
       who = el("span", { class: "who" }, [glyph("quiet"), el("span", { class: "c quiet", text: (summary.folded ? "away " : "quiet ") + mins + " min" })]);
     } else {
       who = el("span", { class: "who" }, [glyph(state), el("span", { class: "c " + (state === "talking" ? "" : state) }, highlight(talkerLabel(summary)))]);
     }
-    const turn = openTurn(room);
-    const tm = el("span", { class: "tm r", text: turn ? mmss((t - turn.start) / 1000) : "" });
-    const hb = el("span", { class: "hb r", text: summary.members ? String(summary.members) : "" });
-    const last = lastMessage(room);
+    const open = summary.start !== null && summary.start !== undefined;
+    const tm = el("span", { class: "tm r", text: open ? mmss((t - summary.start) / 1000) : "" });
+    // An open turn's heard count; a quiet room's members.
+    const heard = open ? summary.heard : summary.members;
+    const hb = el("span", { class: "hb r", text: heard ? String(heard) : "" });
+    const last = summary.lastMessage;
     const lm = el("span", { class: "lm" });
     const match = S.q && !freqQuery(S.q) ? callMatch(summary, S.q.toUpperCase()) : null;
     if (match && match.kind === "reader") {
@@ -1178,7 +1147,7 @@
       add(lm, [el("b", {}, highlight(callText(match.message.callsign, match.message.nth))), messageLine(match.message)]);
     } else if (last) {
       add(lm, [el("b", {}, highlight(callText(last.callsign, last.nth))), messageLine(last)]);
-    } else if (room) {
+    } else {
       add(lm, el("span", { class: "gone", text: "No messages yet" }));
     }
     const shownMsg = match && match.kind === "poster" ? match.message : last;
@@ -1199,7 +1168,7 @@
       [
         freqNode("fq", summary.hz),
         el("span", { class: "md" + (summary.family.indexOf("fdv") === 0 ? " fdv" : ""), text: FAMILY_LABEL[summary.family] || summary.family.toUpperCase() }),
-        who, tm, hb, stripNode(room), lm, ageNode,
+        who, tm, hb, stripNode(summary), lm, ageNode,
       ]
     );
     return row;
@@ -1834,7 +1803,6 @@
     // Ages and freshness move with the clock.
     renderList();
     renderRoom();
-    fillDetails();
   }, 1000);
 
   RT.state = S;

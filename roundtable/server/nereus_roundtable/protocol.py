@@ -367,6 +367,26 @@ def _unique_slice_ids(raw: Dict[str, Any], out: Dict[str, Any], path: str) -> No
 
 SLICE = _object([("id", SLICE_ID), ("hz", HZ), ("mode", MODE), ("filterHz", FILTER_HZ), ("keyed", BOOL)])
 
+def _line_text(raw: Dict[str, Any], out: Dict[str, Any], path: str) -> None:
+    # As a message's: `text` is a text exactly when `state` is shown, and a
+    # summary's holds at most 80 code points (6.11).
+    if "text" not in raw:
+        raise _bad(f"{path}text", "missing")
+    if out["state"] == "shown":
+        out["text"] = TEXT(raw["text"], f"{path}text")
+        if len(out["text"]) > 80:
+            raise _bad(f"{path}text", "longer than 80 code points")
+    elif raw["text"] is not None:
+        raise _bad(f"{path}text", "not null for a message that is not shown")
+    else:
+        out["text"] = None
+
+
+LAST_MESSAGE = _object(
+    [("callsign", CALLSIGN), ("nth", NTH), ("t", UNIX_MS), ("state", MESSAGE_STATE)],
+    _line_text,
+)
+
 SUMMARY = _object(
     [
         ("id", ROOM_ID),
@@ -379,6 +399,11 @@ SUMMARY = _object(
         ("messages", COUNT),
         ("last", UNIX_MS),
         ("folded", BOOL),
+        ("start", _or_null(UNIX_MS)),
+        ("heard", COUNT),
+        ("readings", _array(DBM, 0, 12)),
+        ("lastMessage", _or_null(LAST_MESSAGE)),
+        ("ended", _or_null(UNIX_MS)),
     ]
 )
 

@@ -1,0 +1,38 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "rooms",
+    "gen": 1,
+    "rooms": [
+      {
+        "id": "usb-14212000",
+        "band": "20m",
+        "family": "usb",
+        "hz": 14212000,
+        "state": "talking",
+        "talkers": [
+          "K4ABC"
+        ],
+        "members": 2,
+        "messages": 2,
+        "last": 1800000004000,
+        "folded": false,
+        "start": 1800000001000,
+        "heard": 1,
+        "readings": [
+          -81.5
+        ],
+        "lastMessage": {
+          "callsign": "W4XYZ",
+          "nth": 1,
+          "t": 1800000004000,
+          "state": "shown",
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        "ended": null
+      }
+    ]
+  },
+  "decodes": false
+}

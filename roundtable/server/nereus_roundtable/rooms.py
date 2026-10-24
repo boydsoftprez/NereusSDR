@@ -79,6 +79,10 @@ FOLD_AFTER_MS = 7200000
 EARLIER_MS = 1800000
 FLUSH_MS = 30000
 VIEW_MESSAGES = 50
+# Wire spec 6.11 "Summary keys": a summary's readings strip and its last
+# message's text are cut to these.
+SUMMARY_READINGS = 12
+SUMMARY_TEXT_CODE_POINTS = 80
 
 REF_BYTES = 5  # 40 bits: 8 base32 characters (4.4)
 
@@ -242,11 +246,16 @@ class Room:
         self.close_timer: Any = None
         self.engine = TurnEngine(self, book.clock)
         self.last_turn_start: Optional[int] = None
+        # The end of the newest ended turn in this opening (summary `ended`).
+        self.last_turn_end: Optional[int] = None
         # Messages posted in the current opening (6.11), the rows that
         # posted them in this process (for each message's `ref`, 6.10), and
         # the message objects changed since the last delta.
         self.message_count = 0
         self.message_rows: Dict[int, Row] = {}
+        # The newest stored message of the room id, any opening, for the
+        # summary's `lastMessage` (6.11); loaded when the room opens.
+        self.last_message: Optional[Dict[str, Any]] = None
         self.pending_messages: "OrderedDict[int, Dict[str, Any]]" = OrderedDict()
         # What the room's viewers last received (6.11).
         self.version = 0
@@ -280,6 +289,7 @@ class Room:
         self.book.store.turn_end(turn.id, turn.end)
         self.turn_flush(turn)
         self.book.earlier.setdefault(self.id, []).append(turn)
+        self.last_turn_end = turn.end
         gone = {id(reading) for _, reading in dropped}
         for row in self.rows.values():
             if row.reading_turn is turn and id(row.reading) in gone:
@@ -393,9 +403,15 @@ class Room:
 
     def message_changed(self, row: Dict[str, Any]) -> None:
         """A message was posted, or its state changed: its object goes in
-        the room's next delta."""
+        the room's next delta, and in the summary when it is the newest."""
         self.pending_messages[int(row["id"])] = self.message_object(row)
+        if self.last_message is None or int(row["id"]) >= int(self.last_message["id"]):
+            self.last_message = row
         self.book.touch(self)
+
+    def load_last_message(self) -> None:
+        newest = self.book.store.messages_of_room(self.id, 1)
+        self.last_message = newest[-1] if newest else None
 
     def now_turns(self) -> List[Turn]:
         return sorted(self.engine.open, key=lambda t: (t.start, t.id))
@@ -426,18 +442,54 @@ class Room:
             return False
         return self.last_turn_start is None or now - self.last_turn_start >= FOLD_AFTER_MS
 
+    def strip(self, turn: Turn) -> List[float]:
+        """Wire spec 6.11: the dBm of each member's latest reading stored
+        with the open turn, the turn's talkers left out, nearest first and
+        rows with no distance after in callsign order (6.8), at most 12."""
+        talkers = {id(row) for row in turn.talkers}
+        rows = [
+            row
+            for row in self.members()
+            if row.counted and row.reading is not None and row.reading_turn is turn and id(row) not in talkers
+        ]
+        keyed = [(self.km_of(row), row) for row in rows]
+        keyed.sort(key=lambda kr: (kr[0] is None, kr[0] if kr[0] is not None else 0, kr[1].callsign, kr[1].nth))
+        return [row.reading.dbm for _, row in keyed[:SUMMARY_READINGS]]  # type: ignore[union-attr]
+
+    def last_message_line(self) -> Optional[Dict[str, Any]]:
+        """Wire spec 6.11: the newest message of the room id, its text cut
+        to its first 80 code points."""
+        m = self.last_message
+        if m is None:
+            return None
+        shown = m["state"] == "shown"
+        return {
+            "callsign": m["callsign"],
+            "nth": int(m["nth"]),
+            "t": int(m["t"]),
+            "state": m["state"],
+            "text": m["text"][:SUMMARY_TEXT_CODE_POINTS] if shown else None,
+        }
+
     def summary(self) -> Dict[str, Any]:
+        now = self.now_turns()
+        turn = now[0] if now else None
         return {
             "id": self.id,
             "band": self.band,
             "family": self.family,
             "hz": self.center,
             "state": self.state(),
-            "talkers": [row.callsign for t in self.now_turns() for row in t.talkers],
+            "talkers": [row.callsign for t in now for row in t.talkers],
             "members": len([row for row in self.members() if row.counted]),
             "messages": self.message_count,
             "last": self.last,
             "folded": self.folded(),
+            "start": turn.start if turn is not None else None,
+            "heard": turn.heard() if turn is not None else 0,
+            "readings": self.strip(turn) if turn is not None else [],
+            "lastMessage": self.last_message_line(),
+            "ended": self.last_turn_end,
         }
 
     def diff(self) -> Optional[RoomDiff]:
@@ -873,8 +925,10 @@ class RoomBook:
         room.opened = now
         room.last = now
         room.last_turn_start = None
+        room.last_turn_end = None
         room.message_count = 0
         room.message_rows = {}
+        room.load_last_message()
         room.opening_id = self.store.opening_open(room.id, room.band, room.family, room.center, now)
         # Refs are new for every opening (4.4).
         room.refs = set()
@@ -947,6 +1001,7 @@ class RoomBook:
             room.opened = int(row["opened"])
             room.last = int(row["last_active"])
             room.message_count = self.store.message_count(room.opening_id)
+            room.load_last_message()
             room.close_timer = self.clock.call_later(CLOSE_AFTER_MS, lambda r=room: self._close(r))
             self.rooms[room.id] = room
             loaded.append(room)

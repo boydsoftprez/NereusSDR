@@ -135,9 +135,13 @@ class Connection:
         self.views: Dict[str, _View] = {}
         self.want_full: List[str] = []
         self.band: Optional[_View] = None
-        self.band_sent: Dict[str, Tuple[Optional[int], Dict[str, Any]]] = {}
+        # What the band list last sent it holds: the shared band list of
+        # tick `band_seq` (cut to its band) while `band_sent` is None,
+        # otherwise `band_sent` itself (after `rooms`, or a dropped
+        # `roomsDelta`).
+        self.band_sent: Optional[Dict[str, Tuple[Optional[int], Dict[str, Any]]]] = {}
+        self.band_seq = -1
         self.band_last_ms: Optional[int] = None
-        self.band_timer: Optional[TimerHandle] = None
         # Live path (5.5): the watched band ("all" or a band name, None
         # before any `watchBand`) and the watched rooms.
         self.watch_band: Optional[str] = None
@@ -150,7 +154,12 @@ class Connection:
         spec 9.1). True when queued."""
         if self.closing:
             return False
-        text = protocol.encode(message)
+        return self.send_text(protocol.encode(message), droppable)
+
+    def send_text(self, text: str, droppable: bool = False) -> bool:
+        """As `send`, for a message already encoded."""
+        if self.closing:
+            return False
         size = len(text.encode("utf-8"))
         config = self.service.config
         count = self.queue.qsize()
@@ -186,7 +195,7 @@ class Connection:
         if self.timer is not None:
             self.timer.cancel()
             self.timer = None
-        for name in ("silence_timer", "band_timer"):
+        for name in ("silence_timer",):
             handle = getattr(self, name)
             if handle is not None:
                 handle.cancel()
@@ -246,6 +255,14 @@ class Service:
         self._dirty: Set[Connection] = set()
         # When a helper's "stop counting" for a time ends, by station id.
         self._counting_timers: Dict[str, TimerHandle] = {}
+        # The band list (6.11 "Pacing"): built once a tick, at most every
+        # 2000 ms, and every connection's `roomsDelta` is cut from it.
+        self._band_list: Dict[str, Tuple[Optional[int], Dict[str, Any]]] = {}
+        self._band_seq = 0
+        self._band_tick_ms: Optional[int] = None
+        self._band_timer: Optional[TimerHandle] = None
+        # How many times the band list was built for a tick; tests read it.
+        self.band_builds = 0
         self.book = RoomBook(_EventClock(self), self.store, random)
         self.book.reload()
         self.on(STATION, "presence", self._presence)
@@ -395,6 +412,9 @@ class Service:
 
     def shutdown(self) -> None:
         self.stopping = True
+        if self._band_timer is not None:
+            self._band_timer.cancel()
+            self._band_timer = None
         for conn in list(self.connections):
             conn.close(protocol.CLOSE_GOING_AWAY)
         # The open turns' tracks, so a restart loses as little as it can.
@@ -820,9 +840,6 @@ class Service:
         conn.reads.clear()
         conn.want_full = []
         conn.band = None
-        if conn.band_timer is not None:
-            conn.band_timer.cancel()
-            conn.band_timer = None
         # Its rows leave every room (a delta to every other viewer); its
         # open talking turn ends now with no 3-second wait (6.6), and its
         # joining slices are dropped.
@@ -1026,57 +1043,119 @@ class Service:
         return {room.id: (room.opening_id, room.summary()) for room in self.book.live_rooms()}
 
     @staticmethod
-    def _band_for(
-        conn: Connection, band: Dict[str, Tuple[Optional[int], Dict[str, Any]]]
-    ) -> Dict[str, Tuple[Optional[int], Dict[str, Any]]]:
-        """The band list as one connection views it: every live room for a
+    def _band_key(conn: Connection) -> str:
+        """Which band list a connection views: every live room for a
         station, the watched band's for a live reader (5.4.3)."""
-        if conn.path != LIVE or conn.watch_band == "all":
+        if conn.path != LIVE or conn.watch_band is None:
+            return "all"
+        return conn.watch_band
+
+    @staticmethod
+    def _cut(
+        band: Dict[str, Tuple[Optional[int], Dict[str, Any]]], key: str
+    ) -> Dict[str, Tuple[Optional[int], Dict[str, Any]]]:
+        if key == "all":
             return band
-        return {room_id: entry for room_id, entry in band.items() if entry[1]["band"] == conn.watch_band}
+        return {room_id: entry for room_id, entry in band.items() if entry[1]["band"] == key}
 
     def _send_rooms(self, conn: Connection) -> None:
         """A full band list, generation 1 (5.4.3)."""
-        band = self._band_for(conn, self._band_now())
+        band = self._cut(self._band_now(), self._band_key(conn))
         conn.send(protocol.message("rooms", conn.path, gen=1, rooms=[summary for _, summary in band.values()]))
         conn.band = _View()
         conn.band_sent = band
+        conn.band_seq = -1
         conn.band_last_ms = self.clock.now_ms()
-        if conn.band_timer is not None:
-            conn.band_timer.cancel()
-            conn.band_timer = None
 
-    def _band_check(self, conn: Connection, band: Dict[str, Tuple[Optional[int], Dict[str, Any]]]) -> None:
-        """Send a `roomsDelta` now, or 2000 ms after the last band-list
-        message, when the band list differs from what the connection last
-        received (6.11 "Pacing")."""
-        view = conn.band
-        if view is None or view.stale or conn.band_timer is not None:
-            return
-        band = self._band_for(conn, band)
-        if band == conn.band_sent:
+    def _band_changed(self) -> None:
+        """A summary changed, a room opened or one closed (6.11 "Pacing"):
+        the band list goes out at once when no tick ran in the last
+        2000 ms, otherwise at the tick 2000 ms after the last one."""
+        if self._band_timer is not None or self.stopping:
             return
         now = self.clock.now_ms()
-        last = conn.band_last_ms
-        if last is not None and now - last < BAND_PACING_MS:
-            conn.band_timer = self.call_later(last + BAND_PACING_MS - now, lambda: self._band_due(conn))
+        last = self._band_tick_ms
+        if last is None or now - last >= BAND_PACING_MS:
+            self._band_tick()
             return
-        self._send_rooms_delta(conn, band)
+        self._band_timer = self.call_later(last + BAND_PACING_MS - now, self._band_tick)
 
-    def _band_due(self, conn: Connection) -> None:
-        conn.band_timer = None
-        if conn.closing or conn.band is None or conn.band.stale:
+    def _band_tick(self) -> None:
+        """Build the band list once and send each connection viewing one
+        the `roomsDelta` cut from it. A connection whose last band-list
+        message is under 2000 ms old (a `rooms` since the last tick) waits
+        for the next tick, which is then due 2000 ms later even with
+        nothing new."""
+        self._band_timer = None
+        if self.stopping:
             return
-        band = self._band_for(conn, self._band_now())
-        if band != conn.band_sent:
-            self._send_rooms_delta(conn, band)
+        now = self.clock.now_ms()
+        prev_tick = self._band_tick_ms
+        self._band_tick_ms = now
+        old, old_seq = self._band_list, self._band_seq
+        new = self._band_now()
+        self.band_builds += 1
+        self._band_list = new
+        self._band_seq = seq = old_seq + 1
+        cuts: Dict[str, Optional[Tuple[str, str, str, bool]]] = {}
 
-    def _send_rooms_delta(self, conn: Connection, band: Dict[str, Tuple[Optional[int], Dict[str, Any]]]) -> None:
-        """Wire spec 5.4.4, merged against what the connection last
-        received."""
-        view = conn.band
-        assert view is not None
-        sent = conn.band_sent
+        def changes(key: str) -> Optional[Tuple[str, str, str, bool]]:
+            # The changes since the last tick in one band list, encoded once.
+            if key not in cuts:
+                add, change, remove = self._merge(self._cut(old, key), self._cut(new, key))
+                if add or change or remove:
+                    cuts[key] = (protocol.encode(add), protocol.encode(change), protocol.encode(remove), bool(remove))
+                else:
+                    cuts[key] = None
+            return cuts[key]
+
+        waiting = False
+        for conn in list(self.connections):
+            view = conn.band
+            if conn.closing or conn.hidden or view is None or view.stale:
+                continue
+            key = self._band_key(conn)
+            if conn.band_sent is None and conn.band_seq == old_seq:
+                # It holds the last tick's list: this tick's changes are its.
+                cut = changes(key)
+                if cut is None:
+                    conn.band_seq = seq
+                    continue
+                view.gen += 1
+                text = f'{{"type":"roomsDelta","gen":{view.gen},"add":{cut[0]},"change":{cut[1]},"remove":{cut[2]}}}'
+                # A removal is always queued (9.1).
+                if self._send_view_text(conn, view, text, droppable=not cut[3]):
+                    conn.band_seq = seq
+                    conn.band_last_ms = now
+                else:
+                    conn.band_sent = self._cut(old, key)
+                continue
+            sent = conn.band_sent if conn.band_sent is not None else {}
+            last = conn.band_last_ms
+            if last is not None and now - last < BAND_PACING_MS and (prev_tick is None or last > prev_tick):
+                waiting = True
+                continue
+            band = self._cut(new, key)
+            add, change, remove = self._merge(sent, band)
+            if not (add or change or remove):
+                conn.band_sent = None
+                conn.band_seq = seq
+                continue
+            view.gen += 1
+            msg = protocol.message("roomsDelta", conn.path, gen=view.gen, add=add, change=change, remove=remove)
+            if self._send_view(conn, view, msg, droppable=not remove):
+                conn.band_sent = None
+                conn.band_seq = seq
+                conn.band_last_ms = now
+        if waiting:
+            self._band_timer = self.call_later(BAND_PACING_MS, self._band_tick)
+
+    @staticmethod
+    def _merge(
+        sent: Dict[str, Tuple[Optional[int], Dict[str, Any]]], band: Dict[str, Tuple[Optional[int], Dict[str, Any]]]
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[str]]:
+        """Wire spec 5.4.4: the band list merged against what the
+        connection last received."""
         add = [summary for room_id, (_, summary) in band.items() if room_id not in sent]
         change = [
             summary
@@ -1084,13 +1163,15 @@ class Service:
             if room_id in sent and sent[room_id] != (opening, summary)
         ]
         remove = [room_id for room_id in sent if room_id not in band]
-        view.gen += 1
-        msg = protocol.message("roomsDelta", conn.path, gen=view.gen, add=add, change=change, remove=remove)
-        # A removal is always queued (9.1).
-        if not self._send_view(conn, view, msg, droppable=not remove):
-            return
-        conn.band_sent = band
-        conn.band_last_ms = self.clock.now_ms()
+        return add, change, remove
+
+    def _send_view_text(self, conn: Connection, view: _View, text: str, droppable: bool) -> bool:
+        ok = conn.send_text(text, droppable)
+        if not ok:
+            view.lost = True
+        elif view.lost:
+            view.stale = True
+        return ok
 
     def _send_view(self, conn: Connection, view: _View, msg: Dict[str, Any], droppable: bool) -> bool:
         ok = conn.send(msg, droppable)
@@ -1196,11 +1277,8 @@ class Service:
                 targets.append(conn)
 
         if band_changed:
-            for conn in self.stations.values():
-                want(conn)
-            for conn in list(self.connections):
-                if conn.path == LIVE and conn.band is not None:
-                    want(conn)
+            # The band list's `roomsDelta`s come first (6.11 "Order").
+            self._band_changed()
         for conn in dirty:
             want(conn)
         for room, diff in diffs:
@@ -1208,10 +1286,7 @@ class Service:
                 want(conn)
             for row, _ in diff.members:
                 want(self.stations.get(row.station_id))
-        band = self._band_now() if band_changed else None
         for conn in targets:
-            if band is not None:
-                self._band_check(conn, band)
             fresh: Set[str] = set()
             owed = list(conn.want_full)
             conn.want_full = []

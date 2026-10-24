@@ -418,7 +418,8 @@ an object missing one is a message a receiver cannot decode.
 | Object | Keys |
 | --- | --- |
 | slice (from a station) | `id` (`sliceId`), `hz` (`hz`), `mode` (`mode`), `filterHz` (`filterHz`), `keyed` (`bool`) |
-| summary | `id` (`roomId`), `band` (`band`), `family` (`family`), `hz` (`hz`, the center), `state` (`state`), `talkers` (array of `callsign`), `members` (`count`), `messages` (`count`), `last` (`unixMs`), `folded` (`bool`) |
+| summary | `id` (`roomId`), `band` (`band`), `family` (`family`), `hz` (`hz`, the center), `state` (`state`), `talkers` (array of `callsign`), `members` (`count`), `messages` (`count`), `last` (`unixMs`), `folded` (`bool`), `start` (`unixMs` or `null`), `heard` (`count`), `readings` (array of `dbm`, at most 12), `lastMessage` (last message or `null`), `ended` (`unixMs` or `null`) |
+| last message | `callsign` (`callsign`), `nth` (`nth`), `t` (`unixMs`), `state` (`messageState`), `text` (the first 80 code points of the message's `text` when `state` is `shown`, otherwise `null`) |
 | member | `ref` (`rowRef`), `callsign` (`callsign`), `nth` (`nth`), `grid` (`grid` or `null`), `km` (`km`), `offsetHz` (`offsetHz`), `joining` (`bool`), `away` (`bool`), `keyed` (`bool`), `software` (`software`), `softwareVersion` (`softwareVersion`), `reading` (reading or `null`), `you` (`bool`) |
 | reading | `dbm` (`dbm`), `t` (`unixMs`), `present` (`bool`), `turn` (`id` or `null`) |
 | turn | `id` (`id`), `kind` (`turnKind`), `talkers` (array of talker), `start` (`unixMs`), `end` (`unixMs` or `null`), `ending` (`bool`), `names` (array of name count), `heard` (`count`), `mine` (`callsign` or `null`) |
@@ -720,7 +721,7 @@ nonce is signed in `hello` (4.3); a key station ignores it.
 #### 5.4.3 rooms
 
 ```
-{"type":"rooms","gen":1,"rooms":[{"id":"usb-14212000","band":"20m","family":"usb","hz":14212000,"state":"talking","talkers":["K4ABC"],"members":2,"messages":2,"last":1800000004000,"folded":false}]}
+{"type":"rooms","gen":1,"rooms":[{"id":"usb-14212000","band":"20m","family":"usb","hz":14212000,"state":"talking","talkers":["K4ABC"],"members":2,"messages":2,"last":1800000004000,"folded":false,"start":1800000001000,"heard":1,"readings":[-81.5],"lastMessage":{"callsign":"W4XYZ","nth":1,"t":1800000003000,"state":"shown","text":"Good copy, 57 here"},"ended":null}]}
 ```
 
 The band list, full: every live room (to a live reader, every live room of
@@ -737,7 +738,8 @@ Sent after `welcome`, after `watchBand`, and in answer to `resync` with
 Changes to the band list since the last `rooms` or `roomsDelta`, with
 `gen` one more than the last: rooms that opened (`add`), rooms whose summary
 changed (`change`, the whole new summary), rooms that closed (`remove`). Sent
-at most every 2 s per connection (6.11). A room appears in at most one of
+at most every 2 s, cut from one band list the server builds each 2 s for
+every connection (6.11). A room appears in at most one of
 the three arrays. Changes collected for one `roomsDelta` are merged against
 the band list the connection last received: a room that opened and closed
 since then is in none of the arrays; a room that closed and opened again on
@@ -841,8 +843,9 @@ is set for `rate` (at least 1) and is otherwise 0. Section 8.
 ```
 
 A live reader's views are a station's with every `you` false and every
-`mine` `null`. Unknown kinds and station kinds close the connection with
-4002.
+`mine` `null`. The band list's summaries carry what a room's row shows
+(6.11), so a page fills its rows from `rooms` and `roomsDelta` alone.
+Unknown kinds and station kinds close the connection with 4002.
 
 ## 6. Rooms, turns and readings
 
@@ -1167,7 +1170,19 @@ member before any message read at that moment is applied.
   talkers' callsigns (none for unknown). `members`: members, not joining.
   `messages`: messages posted in the current opening. `last`: the latest of
   the room's opening, a row entering or leaving, a reading, a turn opening or
-  ending, a message. `folded`: 6.3.
+  ending, a message. `folded`: 6.3. `start`: the start of the first open
+  turn (the order of the room view's `now`), `null` when none is open.
+  `heard`: that turn's `heard`, 0 when none is open. `readings`: for that
+  turn, the `dbm` of each member's latest reading stored with it (6.7), the
+  turn's talkers left out, nearest first and rows with no `km` after them in
+  callsign order (6.8), at most 12; empty when no turn is open.
+  `lastMessage`: the room id's newest message in any opening (the room
+  view's newest), `null` when it has none; its `text` is the first 80 code
+  points of the message's `text`. `ended`: the end of the newest turn that
+  ended in the current opening since the server started, `null` when none
+  has (a quiet row's "quiet N min" counts from it, otherwise from `last`).
+  A change to any of these is a summary change and goes in the room's
+  `change` entry.
 - **Generations.** Each connection has one generation for its band list and
   one for each room in its view. A full `rooms` or `room` starts its
   generation at 1; each `roomsDelta` or `delta` carries the next. The server
@@ -1176,10 +1191,16 @@ member before any message read at that moment is applied.
   one it sends then shows a gap. A receiver that sees a gap sends `resync`
   (design 9.3).
 - **Pacing.** A room's `delta` is sent at once, one for each message or timer
-  that changes the room. Band-list changes are collected per connection: when
-  no `rooms` or `roomsDelta` has gone to the connection in the last 2000 ms,
-  they are sent at once; otherwise in one `roomsDelta` 2000 ms after the
-  previous one (design C27).
+  that changes the room. Band-list changes are collected for the server, not
+  per connection: when no band-list tick has run in the last 2000 ms, a tick
+  runs at once; otherwise one runs 2000 ms after the previous tick (design
+  C27). A tick builds the band list once and sends every connection that
+  views a band list one `roomsDelta` cut from it (its watched band, or all)
+  with the changes since what the connection last received; a connection
+  with no change gets none. A connection that received `rooms` after the
+  previous tick and less than 2000 ms ago gets its changes at the next
+  tick, which then runs 2000 ms later even with nothing new; so its first
+  `roomsDelta` comes at most 4000 ms after its `rooms`.
 - **Order.** For one message or timer, a connection receives, in this order:
   the answer to its own request (`posted`, `error`, `weblinkOk`, `notice`),
   then a `roomsDelta` if one is due, then any `room` views, then `delta`s,
@@ -1693,7 +1714,7 @@ A core runner's station key is its Core's: at the behaviour `hello`,
 | `post-not-member` | service | a post from a joining station: `posted` `not-member` |
 | `post-away` | service | an AWAY member's post: `posted` `away` |
 | `post-cleaned` | service | a post with a zero width space, a direction override inside a link, CR LF, a control character and a kept zero width joiner: stored and sent cleaned (6.10) |
-| `post-accepted` | service | `posted` ok, the message `delta`, and the band-list change held to 2 s after the last `roomsDelta` |
+| `post-accepted` | service | `posted` ok, the message `delta`, and the band-list change, with the room's new `lastMessage`, held to the next 2 s tick |
 | `hidden-ends-presence` | service | `hidden`: the row leaves a live reader's view at once; nothing more to the station; then `presence` gets `error` `hidden` |
 | `resync` | service | `resync` answers a full `rooms` with `gen` 1; a room not in view is `not-found` |
 | `resync-after-gap` | core | a skipped generation: the Core sends `resync` and takes the full list |
