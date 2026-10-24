@@ -670,6 +670,13 @@ if(TARGET wdsp_static)
     nereus_add_test(tst_tx_analyzer_skirt EXTRA_LABELS core REALTIME)
     target_include_directories(tst_tx_analyzer_skirt PRIVATE ${FFTW3_INCLUDE_DIRS})
     target_compile_definitions(tst_tx_analyzer_skirt PRIVATE WDSP_STATIC_BUILD)
+    # 2026-10-23 (the iPhone S-meter at 3086.5 dBm): a WDSP meter leaves a
+    # non-finite sample out of its average and peak, so a short NaN burst in
+    # a receiver's output never pegs its S-meter readings (meter.c xmeter).
+    nereus_add_test(tst_wdsp_meter_non_finite WdspMeterProbe.c CORE_ONLY EXTRA_LABELS core)
+    set_source_files_properties(WdspMeterProbe.c PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    target_include_directories(tst_wdsp_meter_non_finite PRIVATE ${FFTW3_INCLUDE_DIRS})
+    target_compile_definitions(tst_wdsp_meter_non_finite PRIVATE WDSP_STATIC_BUILD)
 endif()
 
 # ── Issue #75: receiver leak across disconnect/reconnect ──────────────────
