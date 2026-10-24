@@ -46,7 +46,8 @@ constexpr const char* kListStyle =
     "QListWidget::item:disabled { color: #a6a6ac; background: #111114; }";
 constexpr const char* kSearchStyle =
     "QLineEdit { background: #0f0f12; border: 1px solid #3f3f42; border-radius: 3px;"
-    "  color: #dcdce1; font-size: 12px; padding: 2px 5px; margin: 6px 8px; }"
+    "  color: #dcdce1; font-size: 12px; padding: 2px 5px; margin: 6px 8px;"
+    "  placeholder-text-color: #8e8e93; }"
     "QLineEdit:focus { border-color: #00b4d8; }";
 
 QString frequencyText(qint64 hz)

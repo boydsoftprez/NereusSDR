@@ -367,6 +367,11 @@ private slots:
         QCOMPARE(texts(&panel, QStringLiteral("roundtableTalkerName")), QStringList{QStringLiteral("W1TLK")});
         QCOMPARE(texts(&panel, QStringLiteral("roundtableReadingsTitle")),
                  QStringList{QStringLiteral("READINGS OF W1TLK")});
+        // 340 px wide the count takes two lines; wider, one.
+        QCOMPARE(texts(&panel, QStringLiteral("roundtableCount")),
+                 QStringList{QStringLiteral("5 in the room\n1 away")});
+        panel.resize(600, 1400);
+        settle();
         QCOMPARE(texts(&panel, QStringLiteral("roundtableCount")),
                  QStringList{QStringLiteral("5 in the room · 1 away")});
     }
@@ -726,6 +731,46 @@ private slots:
         settle();
     }
 
+    void fitsTheRightColumnAndTheMessagesColumn()
+    {
+        // A muted fold, an AWAY tag and long text never widen the panel
+        // past the 340 px right column or the 320 px messages column.
+        AppSettings::instance().setValue(QStringLiteral("Roundtable/MuteList"), QStringLiteral("N3XYZ"));
+        Posed p;
+        p.model.applyRoom(talkingRoom(QJsonArray{
+            message(1, QStringLiteral("b"), QStringLiteral("N3XYZ"), QStringLiteral("muted")),
+            message(2, QStringLiteral("a"), QStringLiteral("W4ABC"),
+                    QStringLiteral("Who was that on at the top of the hour? Strong but no ID."))}));
+        RoundtablePanel panel(&p.model);
+        panel.resize(340, 1400);
+        panel.followSlice(0);
+        panel.show();
+        settle();
+        auto* content = child<QWidget>(&panel, QStringLiteral("roundtableContent"));
+        QVERIFY(content->width() <= 340);
+        // Room for a vertical scroll bar too: a content minimum between the
+        // two widths makes the scroll area flip between them.
+        const int withBar = 340 - panel.style()->pixelMetric(QStyle::PM_ScrollBarExtent);
+        QVERIFY2(content->minimumSizeHint().width() <= withBar,
+                 qPrintable(QString::number(content->minimumSizeHint().width())));
+
+        panel.resize(900, 700);
+        panel.setSplit(true);
+        settle();
+        auto* scroll = child<QScrollArea>(&panel, QStringLiteral("roundtableMessagesScroll"));
+        auto* messages = child<QWidget>(&panel, QStringLiteral("roundtableMessages"));
+        QVERIFY(messages->width() <= scroll->viewport()->width());
+        // The rows sit at the top of the column.
+        QWidget* last = nullptr;
+        for (QWidget* w : messages->findChildren<QWidget*>()) {
+            if (w->property("navKey").toString() == QLatin1String("m:2")) {
+                last = w;
+            }
+        }
+        QVERIFY(last != nullptr);
+        QVERIFY(last->mapTo(messages, QPoint(0, last->height())).y() < 300);
+    }
+
     void mutedMessagesFold()
     {
         AppSettings::instance().setValue(QStringLiteral("Roundtable/MuteList"), QStringLiteral("W4ABC"));
@@ -1055,6 +1100,9 @@ private slots:
         QVERIFY(window.isListShown());
         QCOMPARE(list->width(), RoundtableWindow::kRoomListWidth);
         QVERIFY(panel->isSplit());
+        // The room column has the width for the count on one line.
+        QCOMPARE(texts(panel, QStringLiteral("roundtableCount")),
+                 QStringList{QStringLiteral("5 in the room · 1 away")});
 
         // The list: the "N on air" count, a band heading that is not a
         // room, and the room the slice is in marked.

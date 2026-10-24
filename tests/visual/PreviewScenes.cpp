@@ -11,6 +11,10 @@
 // transmit scene refuses to run if one exists).
 //
 // Modification history (NereusSDR):
+//   2026-10-24 - Roundtable plan Task 13: the roundtable-panel-*,
+//                 roundtable-window-{narrow,medium,wide} and roundtable-keyed
+//                 scenes. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-24 - Roundtable plan Task 12: the roundtable-spothub,
 //                 roundtable-firstrun and roundtable-firstrun-hidden scenes;
 //                 dialog-spot-hub closes the first-run sheet its Roundtable
@@ -301,6 +305,7 @@
 #include <cmath>
 #include <memory>
 #include <optional>
+#include <tuple>
 
 #include "ControlsSheet.h"
 #include "PreviewData.h"
@@ -415,6 +420,8 @@
 #include "fakes/FakeStationLink.h"
 #include "core/roundtable/RoundtableState.h"
 #include "gui/roundtable/RoundtableFirstRunDialog.h"
+#include "gui/roundtable/RoundtablePanel.h"
+#include "gui/roundtable/RoundtableWindow.h"
 #include "models/RoundtableModel.h"
 #include "gui/applets/RxApplet.h"
 #include "gui/widgets/AntennaSwitchToast.h"
@@ -6580,8 +6587,270 @@ struct PosedRoundtable {
     }
 };
 
+// Roundtable plan Task 13 (design 11.1, 11.2; mockup placement.html): one
+// room on 40 m posed on a fixed clock, as the panel and the window show it.
+constexpr qint64 kRoundtableNow = 1'800'000'000'000LL;
+const QString kRoundtableRoom = QStringLiteral("lsb-7185000");
+
+QJsonObject roundtableReading(double dbm, qint64 ageMs)
+{
+    return QJsonObject{{QStringLiteral("dbm"), dbm}, {QStringLiteral("t"), kRoundtableNow - ageMs},
+                       {QStringLiteral("present"), true}};
+}
+
+QJsonObject roundtableMember(const QString& ref, const QString& callsign, const QString& grid,
+                             double km, const QJsonValue& reading, bool you = false,
+                             bool away = false)
+{
+    QJsonObject m{{QStringLiteral("ref"), ref},      {QStringLiteral("callsign"), callsign},
+                  {QStringLiteral("nth"), 1},        {QStringLiteral("grid"), grid},
+                  {QStringLiteral("offsetHz"), 0},   {QStringLiteral("away"), away},
+                  {QStringLiteral("keyed"), false},  {QStringLiteral("you"), you},
+                  {QStringLiteral("reading"), reading}};
+    if (km >= 0) {
+        m.insert(QStringLiteral("km"), km);
+    }
+    return m;
+}
+
+QJsonObject roundtableTalker(const QString& ref, const QString& callsign)
+{
+    return QJsonObject{{QStringLiteral("ref"), ref}, {QStringLiteral("callsign"), callsign},
+                       {QStringLiteral("nth"), 1}};
+}
+
+QJsonObject roundtableTurn(qint64 id, const QString& kind, const QJsonArray& talkers, qint64 agoStart,
+                           const QJsonValue& agoEnd, bool mine = false)
+{
+    const QJsonValue end = agoEnd.isDouble() ? QJsonValue(kRoundtableNow - agoEnd.toInteger())
+                                             : QJsonValue(QJsonValue::Null);
+    return QJsonObject{{QStringLiteral("id"), id},
+                       {QStringLiteral("kind"), kind},
+                       {QStringLiteral("talkers"), talkers},
+                       {QStringLiteral("start"), kRoundtableNow - agoStart},
+                       {QStringLiteral("end"), end},
+                       {QStringLiteral("names"), QJsonArray{}},
+                       {QStringLiteral("mine"), mine}};
+}
+
+QJsonObject roundtableMessage(qint64 id, const QString& ref, const QString& callsign, qint64 agoMs,
+                              const QString& text)
+{
+    return QJsonObject{{QStringLiteral("id"), id},       {QStringLiteral("ref"), ref},
+                       {QStringLiteral("callsign"), callsign}, {QStringLiteral("nth"), 1},
+                       {QStringLiteral("t"), kRoundtableNow - agoMs},
+                       {QStringLiteral("state"), QStringLiteral("shown")},
+                       {QStringLiteral("text"), text}};
+}
+
+// The room list with what is on each frequency, for the window's list.
+void poseRoundtableRooms(RoundtableModel& model)
+{
+    const auto room = [](const QString& id, const QString& band, qint64 hz, int members,
+                         const QString& state, const QStringList& talkers, qint64 agoLast) {
+        return QJsonObject{{QStringLiteral("id"), id},
+                           {QStringLiteral("band"), band},
+                           {QStringLiteral("hz"), hz},
+                           {QStringLiteral("members"), members},
+                           {QStringLiteral("state"), state},
+                           {QStringLiteral("talkers"), QJsonArray::fromStringList(talkers)},
+                           {QStringLiteral("last"), kRoundtableNow - agoLast}};
+    };
+    QJsonArray rooms{
+        room(QStringLiteral("lsb-3873000"), QStringLiteral("80m"), 3873000, 6, QStringLiteral("quiet"), {}, 540000),
+        room(kRoundtableRoom, QStringLiteral("40m"), 7185000, 6, QStringLiteral("talking"),
+             {QStringLiteral("W1TLK")}, 0),
+        room(QStringLiteral("lsb-7200000"), QStringLiteral("40m"), 7200000, 4, QStringLiteral("unknown"), {}, 0),
+        room(QStringLiteral("lsb-7249000"), QStringLiteral("40m"), 7249000, 3, QStringLiteral("doubled"),
+             {QStringLiteral("K4QQ"), QStringLiteral("N4RRR")}, 0),
+        room(QStringLiteral("usb-14212000"), QStringLiteral("20m"), 14212000, 12, QStringLiteral("talking"),
+             {QStringLiteral("VE3XYZ")}, 0),
+        room(QStringLiteral("usb-14313000"), QStringLiteral("20m"), 14313000, 5, QStringLiteral("quiet"), {}, 180000),
+        room(QStringLiteral("cw-14040000"), QStringLiteral("20m"), 14040000, 2, QStringLiteral("talking"),
+             {QStringLiteral("DL1ABC")}, 0)};
+    model.applyRooms(QJsonObject{{QStringLiteral("rooms"), rooms}});
+}
+
+QJsonArray roundtableMembers()
+{
+    return QJsonArray{
+        roundtableMember(QStringLiteral("me"), QStringLiteral("KG4VCF"), QStringLiteral("EM73"), -1,
+                         QJsonValue::Null, true),
+        roundtableMember(QStringLiteral("t"), QStringLiteral("W1TLK"), QStringLiteral("FN42"), 1290,
+                         roundtableReading(-71, 800)),
+        roundtableMember(QStringLiteral("a"), QStringLiteral("W4ABC"), QStringLiteral("EM85"), 210,
+                         roundtableReading(-64, 1500)),
+        roundtableMember(QStringLiteral("b"), QStringLiteral("N3XYZ"), QStringLiteral("FM19"), 880,
+                         roundtableReading(-88, 2500)),
+        roundtableMember(QStringLiteral("c"), QStringLiteral("K9AWY"), QStringLiteral("EN52"), 940,
+                         roundtableReading(-93, 1200), false, true),
+        roundtableMember(QStringLiteral("d"), QStringLiteral("VE3OLD"), QStringLiteral("FN03"), 1210,
+                         roundtableReading(-97, 46000))};
+}
+
+// `keyed`: you are talking (the TX line and the readings of you).
+void poseRoundtableRoom(PosedRoundtable& rt, bool keyed)
+{
+    rt.live(false);
+    poseRoundtableRooms(rt.model);
+    const QJsonArray now = keyed
+        ? QJsonArray{roundtableTurn(40, QStringLiteral("talking"),
+                                    QJsonArray{roundtableTalker(QStringLiteral("me"), QStringLiteral("KG4VCF"))},
+                                    65000, QJsonValue::Null, true)}
+        : QJsonArray{roundtableTurn(30, QStringLiteral("talking"),
+                                    QJsonArray{roundtableTalker(QStringLiteral("t"), QStringLiteral("W1TLK"))},
+                                    42000, QJsonValue::Null)};
+    const QJsonArray earlier{
+        roundtableTurn(22, QStringLiteral("unknown"), QJsonArray{}, 300000, 240000),
+        roundtableTurn(21, QStringLiteral("talking"),
+                       QJsonArray{roundtableTalker(QStringLiteral("a"), QStringLiteral("W4ABC"))}, 520000, 330000),
+        roundtableTurn(20, QStringLiteral("talking"),
+                       QJsonArray{roundtableTalker(QStringLiteral("me"), QStringLiteral("KG4VCF"))}, 760000, 540000,
+                       true)};
+    const QJsonArray messages{
+        roundtableMessage(1, QStringLiteral("a"), QStringLiteral("W4ABC"), 600000,
+                          QStringLiteral("Good evening all, 40 is in fine shape tonight.")),
+        roundtableMessage(2, QStringLiteral("j"), QStringLiteral("N9JNK"), 420000, QStringLiteral("ignore me")),
+        roundtableMessage(3, QStringLiteral("b"), QStringLiteral("N3XYZ"), 300000,
+                          QStringLiteral("Who was that on at the top of the hour? Strong but no ID.")),
+        roundtableMessage(4, QStringLiteral("t"), QStringLiteral("W1TLK"), 120000,
+                          QStringLiteral("KG4VCF you are S9 here in Boston, nice audio.")),
+        roundtableMessage(5, QStringLiteral("a"), QStringLiteral("W4ABC"), 30000,
+                          QStringLiteral("Net check-ins at 0100Z, same frequency."))};
+    rt.model.applyRoom(QJsonObject{{QStringLiteral("type"), QStringLiteral("room")},
+                                   {QStringLiteral("id"), kRoundtableRoom},
+                                   {QStringLiteral("members"), roundtableMembers()},
+                                   {QStringLiteral("now"), now},
+                                   {QStringLiteral("earlier"), earlier},
+                                   {QStringLiteral("messages"), messages}});
+}
+
+// Runs `scene` on the fixed clock, then puts the clock and the window's
+// saved geometry back.
+void onRoundtableClock(const std::function<void()>& scene)
+{
+    auto& settings = AppSettings::instance();
+    const QString key = QString::fromLatin1(RoundtableWindow::kGeometryKey);
+    const QVariant geometry = settings.value(key);
+    RoundtableModel::setClockForTest([] { return kRoundtableNow; });
+    scene();
+    RoundtableModel::setClockForTest({});
+    if (geometry.isValid()) {
+        settings.setValue(key, geometry);
+    } else {
+        settings.remove(key);
+    }
+}
+
 void appendRoundtableScenes(QVector<Scene>& scenes)
 {
+    // The panel in the right column, 340 px wide: in a room, reading
+    // another, on a frequency with nobody, and reconnecting.
+    const auto panelScene = [&scenes](const QString& name, const std::function<void(PosedRoundtable&, RoundtablePanel&)>& pose,
+                                      const QString& note) {
+        scenes.append({name, QStringLiteral("2v"), true, [name, pose, note](SceneContext& ctx) {
+            prepareForDialog(ctx);
+            onRoundtableClock([&] {
+                PosedRoundtable rt;
+                poseRoundtableRoom(rt, false);
+                RoundtablePanel panel(&rt.model);
+                panel.setWindowTitle(QStringLiteral("Roundtable"));
+                panel.resize(340, 900);
+                panel.followSlice(0);
+                panel.setSliceFrequency(7185000);
+                pose(rt, panel);
+                panel.show();
+                pump(kTabSettleMs);
+                captureDialog(ctx, &panel, name);
+                panel.close();
+            });
+            ctx.notes.append(note);
+        }});
+    };
+    panelScene(QStringLiteral("roundtable-panel-room"), [](PosedRoundtable&, RoundtablePanel&) {},
+               QStringLiteral("slice A in 7.185 LSB with W1TLK talking, five readings (one away, one "
+                              "stale), three earlier turns and a muted message"));
+    panelScene(QStringLiteral("roundtable-panel-reading"),
+               [](PosedRoundtable& rt, RoundtablePanel& panel) {
+                   rt.model.applyRoom(QJsonObject{
+                       {QStringLiteral("type"), QStringLiteral("room")},
+                       {QStringLiteral("id"), QStringLiteral("usb-14212000")},
+                       {QStringLiteral("members"), roundtableMembers()},
+                       {QStringLiteral("now"), QJsonArray{roundtableTurn(
+                            50, QStringLiteral("talking"),
+                            QJsonArray{roundtableTalker(QStringLiteral("b"), QStringLiteral("N3XYZ"))}, 15000,
+                            QJsonValue::Null)}},
+                       {QStringLiteral("earlier"), QJsonArray{}},
+                       {QStringLiteral("messages"),
+                        QJsonArray{roundtableMessage(9, QStringLiteral("b"), QStringLiteral("N3XYZ"), 90000,
+                                                     QStringLiteral("Anyone up for a contact on 20?"))}}});
+                   panel.readRoom(QStringLiteral("usb-14212000"));
+               },
+               QStringLiteral("slice A in 7.185 LSB, reading 14.212 USB with the read bar"));
+    panelScene(QStringLiteral("roundtable-panel-empty"),
+               [](PosedRoundtable& rt, RoundtablePanel& panel) {
+                   rt.state.applyStationValue("sliceRooms", QStringLiteral("{}"));
+                   panel.setSliceFrequency(7200500);
+               },
+               QStringLiteral("slice A on a frequency with nobody on Roundtable"));
+    panelScene(QStringLiteral("roundtable-panel-reconnecting"),
+               [](PosedRoundtable& rt, RoundtablePanel&) {
+                   rt.state.applyStationValue("linkSince", kRoundtableNow - 8000);
+                   rt.state.applyStationValue(
+                       "linkState", static_cast<int>(RoundtableModel::LinkState::Reconnecting));
+               },
+               QStringLiteral("the room while Roundtable reconnects"));
+
+    // You are transmitting: the TX line and the readings of you.
+    scenes.append({QStringLiteral("roundtable-keyed"), QStringLiteral("2v"), true, [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        onRoundtableClock([&] {
+            PosedRoundtable rt;
+            poseRoundtableRoom(rt, true);
+            RoundtablePanel panel(&rt.model);
+            panel.setWindowTitle(QStringLiteral("Roundtable"));
+            panel.resize(340, 900);
+            panel.followSlice(0);
+            panel.setSliceFrequency(7185000);
+            panel.show();
+            pump(kTabSettleMs);
+            captureDialog(ctx, &panel, QStringLiteral("roundtable-keyed"));
+            panel.close();
+        });
+        ctx.notes.append(QStringLiteral("KG4VCF transmitting for 1:05 in 7.185 LSB"));
+    }});
+
+    // The pop-out window at the mockup's three sizes: one column, two, and
+    // three.
+    const QList<std::tuple<QString, QSize, QString>> windows{
+        {QStringLiteral("roundtable-window-narrow"), QSize(420, 620), QStringLiteral("one column")},
+        {QStringLiteral("roundtable-window-medium"), QSize(820, 600), QStringLiteral("two columns")},
+        {QStringLiteral("roundtable-window-wide"), QSize(RoundtableWindow::kWideWidth, RoundtableWindow::kWideHeight),
+         QStringLiteral("three columns, the Wide preset")}};
+    for (const auto& [name, size, shape] : windows) {
+        scenes.append({name, QStringLiteral("2v"), true, [name, size, shape](SceneContext& ctx) {
+            prepareForDialog(ctx);
+            onRoundtableClock([&] {
+                PosedRoundtable rt;
+                poseRoundtableRoom(rt, false);
+                RoundtableWindow window(&rt.model, ctx.window);
+                auto* panel = new RoundtablePanel(&rt.model);
+                panel->followSlice(0);
+                panel->setSliceFrequency(7185000);
+                window.takePanel(panel);
+                window.resize(size);
+                window.show();
+                pump(kTabSettleMs);
+                captureDialog(ctx, &window, name);
+                window.hide();
+            });
+            ctx.notes.append(QStringLiteral("the Roundtable window at %1 x %2, %3")
+                                 .arg(size.width())
+                                 .arg(size.height())
+                                 .arg(shape));
+        }});
+    }
+
     // The Spot Hub's Roundtable tab: live, then hidden, then the delete
     // confirm; each the dialog as it opens and the whole tab.
     scenes.append({QStringLiteral("roundtable-spothub"), QStringLiteral("2v"), true,

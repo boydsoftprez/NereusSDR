@@ -42,6 +42,7 @@
 #include <QTimeZone>
 #include <QToolButton>
 #include <QUuid>
+#include <QFontMetrics>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -73,8 +74,8 @@ constexpr int kSmallPx = 11;
 constexpr int kBodyPx = 12;
 // The readings columns (mockup .rd, with the Age column the design adds).
 constexpr int kCallWidth = 84;
-constexpr int kKmWidth = 50;
-constexpr int kOffsetWidth = 50;
+constexpr int kKmWidth = 40;
+constexpr int kOffsetWidth = 40;
 constexpr int kValueWidth = 46;
 constexpr int kAgeWidth = 40;
 // The rooms the empty state offers to read.
@@ -113,7 +114,8 @@ constexpr const char* kIconStyle =
     "QToolButton::menu-indicator { image: none; width: 0; }";
 constexpr const char* kInputStyle =
     "QLineEdit, QPlainTextEdit { background: #0f0f12; border: 1px solid #3f3f42;"
-    "  border-radius: 3px; color: #dcdce1; font-size: 12px; padding: 2px 5px; }"
+    "  border-radius: 3px; color: #dcdce1; font-size: 12px; padding: 2px 5px;"
+    "  placeholder-text-color: #8e8e93; }"
     "QLineEdit:focus, QPlainTextEdit:focus { border-color: #00b4d8; }"
     "QLineEdit:disabled, QPlainTextEdit:disabled { color: #6a6a70; border-color: #2a2a2e; }";
 
@@ -395,6 +397,7 @@ RoundtablePanel::RoundtablePanel(RoundtableModel* model, QWidget* parent)
     m_scroll->setFrameShape(QFrame::NoFrame);
     m_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_scroll->setFocusPolicy(Qt::NoFocus);
+    m_scroll->viewport()->installEventFilter(this);
     m_scroll->setStyleSheet(QStringLiteral("QScrollArea { background: %1; border: none; }")
                                 .arg(QLatin1String(kGround)));
     mainLayout->addWidget(m_scroll, 1);
@@ -1019,13 +1022,17 @@ void RoundtablePanel::rebuildHead(const QJsonObject& room)
     if (room.isEmpty()) {
         count = summaryOf(id).value(QStringLiteral("members")).toInt();
     }
-    QString countText = QStringLiteral("%1 in the room").arg(count);
+    m_countOneLine = QStringLiteral("%1 in the room").arg(count);
+    m_countTwoLines.clear();
     if (away > 0) {
-        countText += QStringLiteral(" \u00b7 %1 away").arg(away);
+        m_countTwoLines = m_countOneLine + QStringLiteral("\n%1 away").arg(away);
+        m_countOneLine += QStringLiteral(" \u00b7 %1 away").arg(away);
     }
-    QLabel* countLabel = makeLabel(body, countText, kDim, kSmallPx);
+    QLabel* countLabel = makeLabel(body, m_countOneLine, kDim, kSmallPx);
     countLabel->setObjectName(QStringLiteral("roundtableCount"));
+    countLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     row->addWidget(countLabel);
+    m_countLabel = countLabel;
 
     auto* pop = new QToolButton(body);
     pop->setObjectName(QStringLiteral("roundtablePopBtn"));
@@ -1047,6 +1054,44 @@ void RoundtablePanel::rebuildHead(const QJsonObject& room)
     menu->setFocusPolicy(Qt::ClickFocus);
     connect(menu, &QToolButton::clicked, this, &RoundtablePanel::showPanelMenu);
     row->addWidget(menu);
+    fitCount();
+}
+
+void RoundtablePanel::fitCount()
+{
+    // "N in the room · N away" goes onto two lines before it widens the
+    // 340 px panel (not a word-wrapping label: one with a height for its
+    // width makes the scroll area lay out mid-rebuild).
+    if (m_countLabel == nullptr || m_countTwoLines.isEmpty()) {
+        return;
+    }
+    // Measured, not laid out: nothing here may relayout the content.
+    auto* row = static_cast<QHBoxLayout*>(m_countLabel->parentWidget()->layout());
+    const QMargins margins = row->contentsMargins();
+    int need = margins.left() + margins.right();
+    int widgets = 0;
+    for (int i = 0; i < row->count(); ++i) {
+        QWidget* w = row->itemAt(i)->widget();
+        if (w == nullptr || w->isHidden()) {
+            continue;
+        }
+        w->ensurePolished();
+        need += w == m_countLabel ? QFontMetrics(w->font()).horizontalAdvance(m_countOneLine)
+                                  : w->sizeHint().width();
+        ++widgets;
+    }
+    need += std::max(0, widgets - 1) * row->spacing();
+    const int room = m_scroll->viewport()->width() > 0 ? m_scroll->viewport()->width() : width();
+    const QString& text = need > room ? m_countTwoLines : m_countOneLine;
+    if (m_countLabel->text() != text) {
+        m_countLabel->setText(text);
+    }
+}
+
+void RoundtablePanel::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    fitCount();
 }
 
 void RoundtablePanel::updateConnectionLine(const QJsonObject& room)
@@ -1828,10 +1873,13 @@ void RoundtablePanel::rebuildMessages(const QJsonObject& room)
                                               .arg(withNth(message)),
                                      kDim2, kSmallPx);
             text->setObjectName(QStringLiteral("roundtableMutedFold"));
+            // Wraps, so the fold never widens the 340 px panel.
+            text->setWordWrap(true);
+            text->setMinimumWidth(0);
             QFont italic = text->font();
             italic.setItalic(true);
             text->setFont(italic);
-            fold->addWidget(text);
+            fold->addWidget(text, 1);
             QPushButton* show = makeButton(row, QStringLiteral("Show"), kLinkStyle);
             show->setObjectName(QStringLiteral("roundtableShowMutedBtn"));
             connect(show, &QPushButton::clicked, this, [this, id]() {
@@ -1846,7 +1894,6 @@ void RoundtablePanel::rebuildMessages(const QJsonObject& room)
                 }
             });
             fold->addWidget(unmute);
-            fold->addStretch(1);
             rowCol->addLayout(fold);
             col->addWidget(row);
             continue;
@@ -1911,6 +1958,8 @@ void RoundtablePanel::rebuildMessages(const QJsonObject& room)
         rowCol->addWidget(text);
         col->addWidget(row);
     }
+    // In the messages column the rows sit at the top, not spread out.
+    col->addStretch(1);
 
     if (focusTarget != nullptr) {
         focusTarget->setFocus(Qt::OtherFocusReason);
@@ -2466,6 +2515,12 @@ void RoundtablePanel::leavePanel()
 
 bool RoundtablePanel::eventFilter(QObject* watched, QEvent* event)
 {
+    // The room's width is the scroll's viewport, which settles after the
+    // panel's own resize.
+    if (event->type() == QEvent::Resize && watched == m_scroll->viewport()) {
+        fitCount();
+        return false;
+    }
     if (event->type() != QEvent::KeyPress) {
         return QWidget::eventFilter(watched, event);
     }

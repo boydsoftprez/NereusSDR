@@ -129,6 +129,7 @@ signals:
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
     void focusInEvent(QFocusEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     struct Pending {
@@ -139,6 +140,7 @@ private:
     void onRoomChanged(const QString& roomId);
     void rebuild();
     void rebuildHead(const QJsonObject& room);
+    void fitCount();
     void rebuildTalker(const QJsonObject& room);
     void rebuildReadings(const QJsonObject& room);
     void rebuildEarlier(const QJsonObject& room);
@@ -209,6 +211,9 @@ private:
     QVBoxLayout* m_contentLayout = nullptr;
     QWidget* m_readBar = nullptr;
     QLabel* m_readLabel = nullptr;
+    QPointer<QLabel> m_countLabel;
+    QString m_countOneLine;
+    QString m_countTwoLines;
     QWidget* m_head = nullptr;
     QLabel* m_connection = nullptr;
     QWidget* m_txLine = nullptr;
