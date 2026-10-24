@@ -138,13 +138,13 @@ private struct DisplayV29ScopeHeader: View {
                 PanelButton(label: "All pans", lit: main.displayEditScope == .all, style: .blue) {
                     main.displayEditScope = .all
                 }
-                PanelButton(label: "Pan 1", lit: main.displayEditScope == .pan, style: .blue) {
-                    main.displayEditScope = .pan
+                PanelButton(label: "Pan 1", lit: main.displayEditScope == .pan(.first), style: .blue) {
+                    main.displayEditScope = .pan(.first)
                 }
             }
             .accessibilityLabel("Display settings for")
             .accessibilityIdentifier("displayScope")
-            if main.displayEditScope == .pan {
+            if main.displayEditScope == .pan(.first) {
                 Text("\(ownCount) own value\(ownCount == 1 ? "" : "s") on this page")
                     .font(.footnote).foregroundStyle(WorkspacePalette.textSecondary)
                     .accessibilityIdentifier("displayPageOwnCount")
@@ -212,7 +212,7 @@ private struct DisplayV29Control: View {
         readouts = band.effectiveReadouts
     }
     private var own: Bool {
-        guard main.displayEditScope == .pan, control.owner == .pan, control.perBand == nil,
+        guard main.displayEditScope == .pan(.first), control.owner == .pan, control.perBand == nil,
               control.kind != .button, case .phone(let key)? = control.binding else { return false }
         return !main.ownDisplayFields(among: PhoneSetupKeys.displayFields(forPhoneKey: key)).isEmpty
     }

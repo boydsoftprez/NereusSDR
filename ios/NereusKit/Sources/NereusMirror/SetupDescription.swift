@@ -277,13 +277,28 @@ public struct SetupDescription: Equatable, Sendable {
     public static let twoMetreBand = 27
     public static let twoMetreName = "2m"
 
+    /// The desktop's names for the shortwave broadcast bands, the Core's
+    /// band numbers 14 to 26 in order. Kept apart from ``bandNames``,
+    /// whose count is the closed per-band list's.
+    // From src/models/Band.h:130-142 (enum order) and src/models/Band.cpp:195-207 (labels)
+    static let swlBandNames = ["120m", "90m", "61m", "49m", "41m", "31m", "25m",
+                               "22m", "19m", "16m", "14m", "13m", "11m"]
+    /// The Core's number for the first shortwave broadcast band, 120m.
+    // From src/models/Band.h:130 (Band120m follows XVTR, 13)
+    static let firstSwlBand = 14
+
     /// The desktop's name for the Core's band `number`: 160m to XVTR by
-    /// their numbers 0 to 13, and 2m for 27; nil for any other.
+    /// their numbers 0 to 13, 120m to 11m by 14 to 26, and 2m for 27;
+    /// nil for any other.
     public static func bandName(_ number: Int) -> String? {
         if number == twoMetreBand {
             return twoMetreName
         }
-        return bandNames.indices.contains(number) ? bandNames[number] : nil
+        if bandNames.indices.contains(number) {
+            return bandNames[number]
+        }
+        let swl = number - firstSwlBand
+        return swlBandNames.indices.contains(swl) ? swlBandNames[swl] : nil
     }
 
     /// 2 m, the band the Core numbers 27 (link document section 6.1,

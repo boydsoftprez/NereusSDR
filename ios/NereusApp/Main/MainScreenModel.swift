@@ -26,8 +26,8 @@ final class MainScreenModel: ObservableObject {
     let rx: RxPanelModel
     /// Setup edits either the focused supportedPan1 or the device master.
     /// Rendering/subscription always uses the same effective liveBandModel.
-    enum DisplayEditScope: Hashable { case pan, all }
-    @Published var displayEditScope: DisplayEditScope = .pan
+    enum DisplayEditScope: Hashable { case all; case pan(PanIdentity) }
+    @Published var displayEditScope: DisplayEditScope = .pan(.first)
     /// Accepted HTML445/1108: All edits an independently chosen kept band;
     /// Pan1 always edits its actual band. Choosing here never retunes a slice.
     @Published var displayBandChoice: String? = nil
@@ -44,12 +44,12 @@ final class MainScreenModel: ObservableObject {
         displaySettings.ownFields(forPan: BandSubscriber.panId, among: fields)
     }
     func resetDisplayPicture(fields: Set<String>) {
-        guard displayEditScope == .pan else { return }
+        guard displayEditScope == .pan(.first) else { return }
         displaySettings.resetPicture(forPan: BandSubscriber.panId, fields: fields)
         reloadDisplaySettings()
     }
     func copyOwnDisplayPictureToMaster(fields: Set<String>) -> Bool {
-        guard displayEditScope == .pan, !ownDisplayFields(among: fields).isEmpty else { return false }
+        guard displayEditScope == .pan(.first), !ownDisplayFields(among: fields).isEmpty else { return false }
         displaySettings.copyOwnPictureToMaster(forPan: BandSubscriber.panId, fields: fields)
         reloadDisplaySettings()
         return true
@@ -58,7 +58,7 @@ final class MainScreenModel: ObservableObject {
         changeDisplay(selectedFields: fields, change)
     }
     func displayEffectiveValue(_ readout: SetupDescription.EffectiveReadout) -> Double? {
-        guard displayEditScope == .pan else { return nil }
+        guard displayEditScope == .pan(.first) else { return nil }
         switch readout {
         case .waterfallLow: return band.effectiveWaterfallLevels.map { Double($0.lowDbm) }
         case .waterfallHigh: return band.effectiveWaterfallLevels.map { Double($0.highDbm) }
@@ -297,7 +297,7 @@ final class MainScreenModel: ObservableObject {
             return take.inFlight || take.questionUp
         }
         displayOwner = self
-        display.focusPan = { [weak self] in self?.displayEditScope = .pan }
+        display.focusPan = { [weak self] in self?.displayEditScope = .pan(.first) }
     }
 
     /// The notice kind for a tuner tune that ended without keying.

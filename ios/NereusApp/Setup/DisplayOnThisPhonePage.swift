@@ -191,7 +191,7 @@ struct DisplayOnThisPhonePage: View {
             Text(Self.resetMessage)
         }
         .modifier(DisplayV29Presentation(main: main, model: display))
-        .onAppear { main.displayEditScope = .pan }
+        .onAppear { main.displayEditScope = .pan(.first) }
         .setupPageTitle("Display")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {

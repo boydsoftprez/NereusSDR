@@ -693,7 +693,7 @@ final class PhoneSetupKeys: SetupPhoneKeys {
         "ClarityRetune", "copySpectrumMinMax",
     ]
     private func displayUnavailableReason(forPhoneKey key: String) -> String? {
-        if main.displayEditScope == .pan, main.band.transmitOverlay, Self.receiveLevelsKeys.contains(key) {
+        if main.displayEditScope == .pan(.first), main.band.transmitOverlay, Self.receiveLevelsKeys.contains(key) {
             return "Pan 1 is transmitting. Receive scale and level settings are kept until it stops. Change transmit settings on Transmit Display."
         }
         let display = main.displayEditingSettings

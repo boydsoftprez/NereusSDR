@@ -244,7 +244,7 @@ extension PhoneSetupKeysV29Tests {
         rig.main.displayEditScope = .all
         #expect(rig.main.displayEditingSettings.traceFill)
         #expect(!rig.main.band.settings.traceFill) // Drawing remains the effective focusedPan.
-        rig.main.displayEditScope = .pan
+        rig.main.displayEditScope = .pan(.first)
         #expect(!rig.main.displayEditingSettings.traceFill)
         rig.main.changeDisplay(fields: ["traceFill"]) { $0.traceFill = true }
         #expect(rig.main.ownDisplayFields(among: ["traceFill"]).isEmpty)
@@ -297,7 +297,7 @@ extension PhoneSetupKeysV29Tests {
         for readout in [SetupDescription.EffectiveReadout.waterfallLow, .waterfallHigh, .spectrumMax, .spectrumMin] {
             #expect(rig.main.displayEffectiveValue(readout) == nil)
         }
-        rig.main.displayEditScope = .pan
+        rig.main.displayEditScope = .pan(.first)
         rig.main.changeDisplay { $0.gridFollowsNoiseFloor = true; $0.gridKeepsRange = false }
         #expect(keys.unavailableReason(forPhoneKey: "DisplayGridMin")?.isEmpty == false)
         let minAccepted = keys.set(.integer(-90), forPhoneKey: "DisplayGridMin")
@@ -381,7 +381,7 @@ extension PhoneSetupKeysV29Tests {
         restarted.main.displayEditScope = .all
         restarted.main.displayBandChoice = "5"
         #expect(restoredKeys.value(forPhoneKey: "DisplayGridMax") == .integer(-55))
-        restarted.main.displayEditScope = .pan
+        restarted.main.displayEditScope = .pan(.first)
         #expect(restarted.main.displayEditingBand == "7")
         #expect(restoredKeys.value(forPhoneKey: "DisplayGridMax") == .integer(-30))
         #expect(restarted.recorded.settingsSent.isEmpty && restarted.retunes.isEmpty)
@@ -644,7 +644,7 @@ extension PhoneSetupKeysV29Tests {
         #expect(allMode && allScale && allBlack)
         #expect(rig.store.masterSettings(forPan: "1").waterfallBlackLevel == 65)
         #expect(rig.main.band.transmitOverlay)
-        rig.main.displayEditScope = .pan
+        rig.main.displayEditScope = .pan(.first)
         rig.mirror.apply(.delta(.init(key: "txState", properties: [.init(ordinal: 0, name: "keyed", value: .bool(false))])))
         for _ in 0..<100 {
             if !rig.main.band.transmitOverlay { break }
