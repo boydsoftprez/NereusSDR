@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-23 - The RX applet's jobs as container copies. The applet's
+//                 own panel is unchanged; the applet wires each copy.
+//                 Brian Sutton, AI-assisted via xAI Grok.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -150,8 +153,12 @@
 #include "models/Band.h"
 #include "gui/NereusGuiExport.h"
 
+#include "gui/applets/RxControlSections.h"
+
 #include <QHash>
+#include <QJsonObject>
 #include <QList>
+#include <QPointer>
 #include <QPushButton>
 #include <QStringList>
 #include <QVector>
@@ -209,6 +216,19 @@ public:
     QString appletId()    const override { return QStringLiteral("rx"); }
     QString appletTitle() const override { return QStringLiteral("RX"); }
     void    syncFromModel() override;
+
+    // Container copies of this applet's jobs. The applet makes and wires
+    // each one. The panel above is not rebuilt from these objects.
+    QWidget* createAntennasSection(QWidget* parent);
+    QWidget* createModeSection(QWidget* parent);
+    QWidget* createStepSection(QWidget* parent);
+    QWidget* createFilterSection(QWidget* parent, const QJsonObject& config = {});
+    QWidget* createPanSection(QWidget* parent);
+    QWidget* createSquelchSection(QWidget* parent);
+    QWidget* createAttenuatorSection(QWidget* parent);
+    QWidget* createAgcSection(QWidget* parent);
+    QWidget* createRitSection(QWidget* parent);
+    QWidget* createXitSection(QWidget* parent);
 
     // Attach to a different slice (or nullptr to detach).
     void setSlice(SliceModel* slice);
@@ -333,6 +353,7 @@ private:
     void disconnectSlice(SliceModel* s);
     void updateFilterLabel();
     void rebuildFilterButtons(DSPMode mode);
+    void fillWorkspaceFilterButtons(RxFilterSection* section, DSPMode mode);
     void updateFilterButtons();
     void applyFilterPreset(int low, int high);
 
@@ -367,6 +388,33 @@ private:
     // later calls return the existing one. R-R3-46: a remote window learns
     // its board only when the Core's radio arrives, so it builds it then.
     void ensureRx1PreampToggle();
+
+    // Container copies. The panel widgets stay where buildUi put them.
+    void pushStateToCopies();
+    void showRxAntennaMenu(QPushButton* anchor);
+    void showTxAntennaMenu(QPushButton* anchor);
+    void wireAntennasSection(RxAntennasSection* section);
+    void wireModeSection(RxModeSection* section);
+    void wireStepSection(RxStepSection* section);
+    void wireFilterSection(RxFilterSection* section);
+    void wirePanSection(RxPanSection* section);
+    void wireSquelchSection(RxSquelchSection* section);
+    void wireAttenuatorSection(RxAttenuatorSection* section);
+    void wireAgcSection(RxAgcSection* section);
+    void wireRitSection(RxRitSection* section);
+    void wireXitSection(RxXitSection* section);
+    void onRx1PreampToggled(bool on);
+    bool m_pushingCopies = false;
+    QList<QPointer<RxAntennasSection>> m_antennaCopies;
+    QList<QPointer<RxModeSection>> m_modeCopies;
+    QList<QPointer<RxStepSection>> m_stepCopies;
+    QList<QPointer<RxFilterSection>> m_filterCopies;
+    QList<QPointer<RxPanSection>> m_panCopies;
+    QList<QPointer<RxSquelchSection>> m_squelchCopies;
+    QList<QPointer<RxAttenuatorSection>> m_attCopies;
+    QList<QPointer<RxAgcSection>> m_agcCopies;
+    QList<QPointer<RxRitSection>> m_ritCopies;
+    QList<QPointer<RxXitSection>> m_xitCopies;
 
     static QString formatFilterWidth(int low, int high);
 

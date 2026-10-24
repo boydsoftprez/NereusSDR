@@ -30,6 +30,8 @@
 //                 AI-assisted via Anthropic Claude Code.
 //   2026-10-20 - Frequency (Custom) font, colour, centering and slice lines.
 //                 Brian Sutton, AI-assisted via xAI Grok.
+//   2026-10-23 - frequencyShowsAfterTheStationAdoptsTheSlice. Brian Sutton,
+//                 AI-assisted via xAI Grok.
 #include <QtTest>
 #include <cstring>
 #include <QApplication>
@@ -54,7 +56,9 @@
 #include <QSplitter>
 #include <QTemporaryDir>
 #include "core/AppSettings.h"
+#include "core/SliceOwnership.h"
 #include "core/antenna/AmateurBands.h"
+#include "core/session/SliceAccessPolicy.h"
 #include "gui/containers/ContainerContentHost.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContainerManager.h"
@@ -566,6 +570,63 @@ private slots:
         // The own slice's binding survives the refreshes.
         sliceA->setFrequency(7190000.0);
         QCOMPARE(freq->frequency(), 7190000.0);
+    }
+
+    void frequencyShowsAfterTheStationAdoptsTheSlice()
+    {
+        // Direct connect, desktop hosting. The instrument is built before
+        // the radio connects, so its sliceAdded slot is connected first.
+        // The slice is published while nobody owns it. The station adopts
+        // it from a later sliceAdded slot (StationSliceOwnershipPolicy).
+        // That adoption does not emit activeSliceChanged: the slice is
+        // already the active one. windowRxSlice only returns a slice the
+        // station may change, so the first look finds nothing and the
+        // digits stay on the empty reading unless ownership is followed.
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        const QByteArray station = SliceOwnership::stationDevice();
+        auto stationSlice = [&model, station](const QJsonObject&) -> SliceModel* {
+            SliceOwnership* ownership = model.sliceOwnership();
+            if (!ownership) { return nullptr; }
+            const auto controlled = [&](int id) {
+                return id >= 0
+                    && SliceAccessPolicy::mayChange(*ownership, station, id)
+                    && !ownership->mark(id).isHeld();
+            };
+            const int rx = ownership->activeRxFor(station);
+            if (controlled(rx)) { return model.sliceById(rx); }
+            const int chosen = ownership->activeFor(station);
+            if (controlled(chosen)) { return model.sliceById(chosen); }
+            for (SliceModel* slice : model.slices()) {
+                if (slice && controlled(slice->sliceIndex())) { return slice; }
+            }
+            return nullptr;
+        };
+        LongpathContent::Sources sources;
+        sources.radio = &model;
+        sources.sliceForContext = stationSlice;
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, sources);
+        const ContentEntry entry = registry.makeEntry(QString::fromLatin1(LongpathContent::kFrequencyCustomType));
+        QWidget parent;
+        std::unique_ptr<QWidget> widget(registry.createWidget(entry, &parent));
+        auto* freq = qobject_cast<FrequencyInstrument*>(widget.get());
+        QVERIFY(freq);
+        QCOMPARE(freq->frequency(), 0.0);
+
+        // Connected after the instrument, as the station policy is.
+        connect(&model, &RadioModel::sliceAdded, &model, [&model, station](int) {
+            model.sliceOwnership()->adoptUnowned(station);
+        });
+        model.addSlice();
+        QCOMPARE(model.slices().size(), 1);
+        SliceModel* slice = model.slices().at(0);
+        QCOMPARE(model.sliceOwnership()->mark(slice->sliceIndex()).owner, station);
+        QCOMPARE(freq->frequency(), 14225000.0);
+
+        slice->setFrequency(7240000.0);
+        QCOMPARE(freq->frequency(), 7240000.0);
     }
 
     void barDefaultsAndReadings()

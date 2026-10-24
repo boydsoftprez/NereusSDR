@@ -18,8 +18,10 @@
 #include "gui/containers/ContainerManager.h"
 #include "gui/containers/ContainerSettingsDialog.h"
 #include "gui/containers/ContainerWidget.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "gui/meters/AntennaButtonItem.h"
 #include "gui/meters/BandButtonItem.h"
+#include "gui/meters/NereusBandButtonItem.h"
 #include "gui/meters/FilterButtonItem.h"
 #include "gui/meters/MeterItem.h"
 #include "gui/meters/MeterWidget.h"
@@ -28,12 +30,18 @@
 #include "gui/meters/TuneStepButtonItem.h"
 #include "gui/meters/VfoDisplayItem.h"
 
+#include <QColor>
 #include <QComboBox>
+#include <QImage>
 #include <QLabel>
 #include <QListWidget>
+#include <QMouseEvent>
+#include <QPainter>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSet>
+#include <QSignalSpy>
+#include <QSpinBox>
 #include <QStackedWidget>
 
 using namespace NereusSDR;
@@ -516,6 +524,174 @@ private slots:
             QStringLiteral("NereusSDR::VfoDisplayItemEditor"),
         };
         QCOMPARE(opened, expected);
+    }
+
+    // The Nereus band grid keeps every band and both clicks, paints the
+    // applet face, and remembers the two chosen colours.
+    void nereusBandButtonsKeepBandsClicksAndColours()
+    {
+        BandButtonItem classic;
+        NereusBandButtonItem bands;
+        QCOMPARE(bands.buttonCount(), classic.buttonCount());
+        for (int i = 0; i < classic.buttonCount(); ++i) {
+            QCOMPARE(bands.button(i).text, classic.button(i).text);
+            QCOMPARE(bands.isButtonShown(i), classic.isButtonShown(i));
+        }
+        QCOMPARE(bands.columns(), classic.columns());
+        QVERIFY(qobject_cast<BandButtonItem*>(&bands));
+
+        bands.setRect(0.1f, 0.2f, 0.8f, 0.4f);
+        bands.setColumns(5);
+        bands.setActiveBand(3);
+        bands.setButtonTextColor(QColor(10, 20, 30, 200));
+        bands.setBackgroundTopColor(QColor(40, 50, 60, 180));
+        bands.setBackgroundBottomColor(QColor(70, 80, 90));
+        bands.setSelectedTopColor(QColor(12, 80, 40));
+        bands.setSelectedBottomColor(QColor(6, 40, 20));
+        QCOMPARE(bands.button(0).textColour, QColor(10, 20, 30, 200));
+        QCOMPARE(bands.button(0).fillColour, QColor(40, 50, 60, 180));
+        QCOMPARE(bands.backgroundBottomColor(), QColor(70, 80, 90));
+        QCOMPARE(bands.selectedTopColor(), QColor(12, 80, 40));
+        QCOMPARE(bands.selectedBottomColor(), QColor(6, 40, 20));
+
+        const QString saved = bands.serialize();
+        QVERIFY(saved.startsWith(QStringLiteral("NEREUSBAND|")));
+        NereusBandButtonItem restored;
+        QVERIFY(restored.deserialize(saved + QStringLiteral("|future-tail")));
+        QCOMPARE(restored.x(), bands.x());
+        QCOMPARE(restored.y(), bands.y());
+        QCOMPARE(restored.itemWidth(), bands.itemWidth());
+        QCOMPARE(restored.itemHeight(), bands.itemHeight());
+        QCOMPARE(restored.columns(), 5);
+        QCOMPARE(restored.activeBand(), 3);
+        QCOMPARE(restored.buttonTextColor(), QColor(10, 20, 30, 200));
+        QCOMPARE(restored.backgroundTopColor(), QColor(40, 50, 60, 180));
+        QCOMPARE(restored.backgroundBottomColor(), QColor(70, 80, 90));
+        QCOMPARE(restored.selectedTopColor(), QColor(12, 80, 40));
+        QCOMPARE(restored.selectedBottomColor(), QColor(6, 40, 20));
+        QVERIFY(!restored.deserialize(QStringLiteral("BANDBTNS|0|0|1|1|-1|0")));
+
+        struct PreviewRestore {
+            bool on;
+            ~PreviewRestore() { WorkspacePreview::setEnabledForTest(on); }
+        } restorePreview{WorkspacePreview::enabled()};
+
+        auto countPixels = [](const QImage& image, const auto& match) {
+            int count = 0;
+            for (int y = 0; y < image.height(); ++y) {
+                for (int x = 0; x < image.width(); ++x) {
+                    if (match(image.pixelColor(x, y))) { ++count; }
+                }
+            }
+            return count;
+        };
+        const auto near = [](const QColor& pixel, const QColor& ink, int slack) {
+            return qAbs(pixel.red() - ink.red()) <= slack
+                && qAbs(pixel.green() - ink.green()) <= slack
+                && qAbs(pixel.blue() - ink.blue()) <= slack;
+        };
+
+        NereusBandButtonItem painted;
+        painted.setActiveBand(0);
+        QImage image(420, 220, QImage::Format_ARGB32_Premultiplied);
+        const auto paint = [&] {
+            image.fill(Qt::black);
+            QPainter painter(&image);
+            painted.paint(painter, image.width(), image.height());
+        };
+
+        paint();
+        const int idleTop = countPixels(image, [&](const QColor& pixel) {
+            return near(pixel, painted.backgroundTopColor(), 8);
+        });
+        const int idleBottom = countPixels(image, [&](const QColor& pixel) {
+            return near(pixel, painted.backgroundBottomColor(), 8);
+        });
+        const int selectedTop = countPixels(image, [&](const QColor& pixel) {
+            return near(pixel, painted.selectedTopColor(), 8);
+        });
+        const int selectedBottom = countPixels(image, [&](const QColor& pixel) {
+            return near(pixel, painted.selectedBottomColor(), 8);
+        });
+        QVERIFY2(idleTop > 40, qPrintable(QStringLiteral("resting top %1").arg(idleTop)));
+        QVERIFY2(idleBottom > 40, qPrintable(QStringLiteral("resting bottom %1").arg(idleBottom)));
+        QVERIFY2(selectedTop > 20, qPrintable(QStringLiteral("selected top %1").arg(selectedTop)));
+        QVERIFY2(selectedBottom > 20, qPrintable(QStringLiteral("selected bottom %1").arg(selectedBottom)));
+
+        painted.setBackgroundTopColor(Qt::red);
+        painted.setBackgroundBottomColor(Qt::red);
+        painted.setSelectedTopColor(Qt::blue);
+        painted.setSelectedBottomColor(Qt::blue);
+        painted.setButtonTextColor(QColor(0, 255, 0));
+        paint();
+        const int red = countPixels(image, [](const QColor& pixel) {
+            return pixel.red() > 220 && pixel.green() < 40 && pixel.blue() < 40;
+        });
+        const int green = countPixels(image, [](const QColor& pixel) {
+            return pixel.green() > 220 && pixel.red() < 40 && pixel.blue() < 40;
+        });
+        const int blue = countPixels(image, [](const QColor& pixel) {
+            return pixel.blue() > 220 && pixel.red() < 40 && pixel.green() < 40;
+        });
+        QVERIFY2(red > 400, qPrintable(QStringLiteral("background pixels %1").arg(red)));
+        QVERIFY2(green > 20, qPrintable(QStringLiteral("text pixels %1").arg(green)));
+        QVERIFY2(blue > 80, qPrintable(QStringLiteral("selected pixels %1").arg(blue)));
+
+        NereusBandButtonItem clicks;
+        // bandClicked lives on BandButtonItem, which is not exported from the
+        // GUI DLL, so a spy on it is a null signal on Windows. The button
+        // box signal is exported and is what the band handler listens to.
+        QSignalSpy buttonClick(&clicks, &ButtonBoxItem::buttonClicked);
+        const QPointF hit(40, 40);
+        QMouseEvent press(QEvent::MouseButtonPress, hit, hit, Qt::LeftButton,
+                          Qt::LeftButton, Qt::NoModifier);
+        QMouseEvent release(QEvent::MouseButtonRelease, hit, hit, Qt::LeftButton,
+                            Qt::NoButton, Qt::NoModifier);
+        QVERIFY(clicks.handleMousePress(&press, 400, 160));
+        QVERIFY(clicks.handleMouseRelease(&release, 400, 160));
+        QCOMPARE(buttonClick.count(), 1);
+        QVERIFY(buttonClick.at(0).at(0).toInt() >= 0);
+        QCOMPARE(buttonClick.at(0).at(1).value<Qt::MouseButton>(), Qt::LeftButton);
+
+        QMouseEvent rightPress(QEvent::MouseButtonPress, hit, hit, Qt::RightButton,
+                               Qt::RightButton, Qt::NoModifier);
+        QMouseEvent rightRelease(QEvent::MouseButtonRelease, hit, hit, Qt::RightButton,
+                                 Qt::NoButton, Qt::NoModifier);
+        QVERIFY(clicks.handleMousePress(&rightPress, 400, 160));
+        QVERIFY(clicks.handleMouseRelease(&rightRelease, 400, 160));
+        QCOMPARE(buttonClick.count(), 2);
+        QCOMPARE(buttonClick.at(1).at(0).toInt(), buttonClick.at(0).at(0).toInt());
+        QCOMPARE(buttonClick.at(1).at(1).value<Qt::MouseButton>(), Qt::RightButton);
+
+        ContainerWidget container;
+        auto* meter = new MeterWidget();
+        container.setContent(meter);
+        meter->addItem(new NereusBandButtonItem());
+        ContainerSettingsDialog dialog(&container);
+        QListWidget* list = nullptr;
+        for (QListWidget* candidate : dialog.findChildren<QListWidget*>()) {
+            if (candidate->count() == 1) { list = candidate; }
+        }
+        QVERIFY(list != nullptr);
+        QCOMPARE(list->item(0)->text(), QStringLiteral("Nereus Band Buttons"));
+        list->setCurrentRow(0);
+        QStackedWidget* stack = dialog.findChild<QStackedWidget*>();
+        QVERIFY(stack != nullptr);
+        auto* scroll = qobject_cast<QScrollArea*>(stack->currentWidget());
+        QVERIFY(scroll != nullptr && scroll->widget() != nullptr);
+        QCOMPARE(QString::fromLatin1(scroll->widget()->metaObject()->className()),
+                 QStringLiteral("NereusSDR::NereusBandButtonItemEditor"));
+        QVERIFY(scroll->widget()->findChild<QPushButton*>(
+            QStringLiteral("nereusBandButtonTextColor")) != nullptr);
+        QVERIFY(scroll->widget()->findChild<QPushButton*>(
+            QStringLiteral("nereusBandBackgroundTop")) != nullptr);
+        QVERIFY(scroll->widget()->findChild<QPushButton*>(
+            QStringLiteral("nereusBandBackgroundBottom")) != nullptr);
+        QVERIFY(scroll->widget()->findChild<QPushButton*>(
+            QStringLiteral("nereusBandSelectedTop")) != nullptr);
+        QVERIFY(scroll->widget()->findChild<QPushButton*>(
+            QStringLiteral("nereusBandSelectedBottom")) != nullptr);
+        QVERIFY(scroll->widget()->findChild<QSpinBox*>() != nullptr);
     }
 };
 

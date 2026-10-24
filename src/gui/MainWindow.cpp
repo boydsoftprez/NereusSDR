@@ -21,6 +21,9 @@
 //               (RadioModel::windowSliceId), not Slice A, which a Core
 //               inside the window may keep for a paired device. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-23: The RX applet's jobs are registered as container content
+//               (registerRxSectionContent). Brian Sutton, AI-assisted via
+//               xAI Grok.
 //   2026-10-20: The TX applet's rows are registered as container content
 //               (registerTxSectionContent). Brian Sutton, AI-assisted via
 //               OpenCode.
@@ -1242,6 +1245,7 @@ warren@wpratt.com
 #include "core/SmartSdrApiListener.h"
 #include "applets/TxApplet.h"
 #include "applets/TxSectionContent.h"
+#include "applets/RxSectionContent.h"
 #include "applets/TxEqDialog.h"
 // Phase 3J-2 H1: Tools menu modeless singletons (Spot Hub + FreeDV Reporter).
 #include "SpotHubDialog.h"
@@ -11710,6 +11714,9 @@ void MainWindow::populateDefaultMeter()
         // container can hold the monitor controls (or any other row) on
         // their own.  The applet's own panel is unchanged.
         registerTxSectionContent(*registry, m_txApplet);
+        // The RX applet's jobs as independent container content. The
+        // applet's own panel is unchanged.
+        registerRxSectionContent(*registry, m_rxApplet);
     }
     if (auto* host = m_containerManager->contentHost(c0->id())) { host->setBannerMenu(m_bannerAppletsMenu); }
     if (!m_containerManager->storageError().isEmpty()) {
