@@ -11,6 +11,9 @@
 #   2026-10-16: includes libjuice-0004 (src/udp.c, the macOS dual-stack
 #               port hold). J.J. Boyd (KG4VCF), with AI-assisted
 #               implementation via Anthropic Claude Code.
+#   2026-10-24: includes libjuice-0005 (src/udp.c, each IPv6 /64 offers
+#               the address macOS sends from). J.J. Boyd (KG4VCF), with
+#               AI-assisted implementation via Anthropic Claude Code.
 foreach(_required IN ITEMS REPO BUILD ORIGINAL_JUICE ORIGINAL_DC PATCHED_JUICE DATACHANNEL WORK)
     if(NOT DEFINED ${_required})
         message(FATAL_ERROR "check-relay-cleanup-patches: -D${_required}= is required")
@@ -43,7 +46,7 @@ foreach(_entry IN ITEMS
         "src/agent.h|fc1d88cf387189b645e31228b6e9f68a8bf1a4efad8f483a710fc81125ea9656"
         "src/juice.c|408a423f1c3f4a7c4a17ce7b4612ad1e5295b3c3c4b8fb7024a610afdd36b7b8"
         "src/conn_poll.c|5ccfb2f2622c43b5bb5b3ce727c9ce638b5bc4519b8b3c2ee0f927e1efbd3afb"
-        "src/udp.c|99da53bee97b509dd2adf5fc579ced7007c65904a0d6ab66247219911ba91b55")
+        "src/udp.c|989b89d1a7e110371d28c19ee883dd5873695bec181204e84851fbaf75713c40")
     string(REPLACE "|" ";" _entry "${_entry}")
     list(GET _entry 0 _relative)
     list(GET _entry 1 _expected)
@@ -66,6 +69,7 @@ foreach(_entry IN ITEMS
 endforeach()
 
 foreach(_patch IN ITEMS
+        libjuice-0005-offer-kernel-source-per-ipv6-prefix.patch
         libjuice-0004-dual-stack-owns-ipv4-port-on-macos.patch
         libjuice-0003-keep-poll-worker-with-retained-agents.patch
         libjuice-0002-bounded-turn-release-lifecycle.patch

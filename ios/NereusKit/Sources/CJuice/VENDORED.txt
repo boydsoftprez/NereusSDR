@@ -8,6 +8,7 @@ Files:    46, copied from the archive, then patched by
           ios/patches/libjuice/0001-give-turn-allocations-back.patch
           ios/patches/libjuice/0002-bounded-turn-release-lifecycle.patch
           ios/patches/libjuice/0003-keep-poll-worker-with-retained-agents.patch
+          ios/patches/libjuice/0004-offer-kernel-source-per-ipv6-prefix.patch
 
 Written by ios/scripts/vendor-sources.sh libjuice. Do not edit
 these files; change the pin or the patches and run it again.

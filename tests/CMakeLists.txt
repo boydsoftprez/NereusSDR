@@ -9130,6 +9130,14 @@ target_link_libraries(tst_juice_dual_stack_port PRIVATE datachannel-static)
 target_include_directories(tst_juice_dual_stack_port PRIVATE
     "${libdatachannel_SOURCE_DIR}/include"
     "${libjuice_SOURCE_DIR}/src")
+# libjuice offers each IPv6 /64 once, and on macOS with the address the
+# system sends from rather than the first one listed
+# (cmake/patches/libjuice-0005).
+nereus_add_test(tst_juice_ipv6_source_address CORE_ONLY EXTRA_LABELS session)
+target_link_libraries(tst_juice_ipv6_source_address PRIVATE datachannel-static)
+target_include_directories(tst_juice_ipv6_source_address PRIVATE
+    "${libdatachannel_SOURCE_DIR}/include"
+    "${libjuice_SOURCE_DIR}/src")
 # iPhone app plan Task 27 (R-IOS-08, R-IOS-16): the rendezvous wire and its
 # crypto and control vectors, the Core's and the desktop's conformance
 # runners (rendezvous/conformance/v1/), and the Core against the Python
