@@ -51,6 +51,10 @@ Older Cores, windows and phone apps still connect to each other.
   passband, or near its center line, and drag it. Dragging a VFO flag sideways
   tunes its slice. Two-finger trackpad tuning no longer coasts after your
   fingers lift.
+- **Slice letters after a restart.** A paired window or phone gets its own
+  slice letter back, with its step and AGC, when a Core inside a desktop window
+  restarts, as a headless Core already did. That desktop window's own slice
+  may now start on B or later instead of A.
 - **Radio search.** The window stays usable while it searches for radios. The
   search pauses while a connection starts, so the Connection panel fills in
   about 3 seconds after you connect.

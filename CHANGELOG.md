@@ -209,6 +209,14 @@ still connect to each other as before.
 
 ### Remote connections
 
+- A paired window or phone gets its own slice letter back, with that slice's
+  step, AGC and other saved settings, after a Core that runs inside a desktop
+  window restarts. A headless Core already did this. The desktop window's own
+  slice now takes the lowest letter no paired device has kept, so it may start
+  on B or later instead of A. A kept letter shows nothing in the window until
+  its device signs in.
+  ([#627](https://github.com/boydsoftprez/NereusSDR/pull/627))
+
 - A window or Core on a computer whose IPv6 path is silently broken now falls
   back to IPv4 within a quarter second, instead of waiting until the attempt
   timed out. This covers remote access, pairing, the relay and a Core typed by
