@@ -1,9 +1,9 @@
 # The phone's display controls, as on the desktop: design
 
-**Date:** 2026-10-18 to 2026-10-22
+**Date:** 2026-10-18 to 2026-10-24
 **Author:** J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
-**Status:** Written for JJ's review. Every ruling in section 3 was made by JJ between 2026-10-18 and 2026-10-22 against the board listed below. The smaller calls in section 12 are listed for veto.
-**Base:** `origin/main` at `f7442e6f7`. Every `file:line` below is on that tree unless it says PR 603, which means `origin/claude/ios-workspace-look` at `6a8d8f309` (the workspace look, open and in draft).
+**Status:** Approved by JJ, 2026-10-24 ("all sugestions look good onward"). Every ruling in section 3 was made by JJ between 2026-10-18 and 2026-10-24 against the board listed below; the calls in section 12 were each put to him and accepted.
+**Base:** `origin/main` at `f7442e6f7`. Every `file:line` below is on that tree unless it says PR 603, which means `origin/claude/ios-workspace-look` at `6a8d8f309` (the workspace look; merged to main on 2026-10-23, so the plan reads it from main).
 **Applies to:** the iPhone and iPad app under `ios/`. The desktop and the Core do not change (section 6.6 lists the two facts the plan confirms on a real Core).
 **Mockup (approved):** [board.html](2026-09-23-iphone-app-design/board.html), the sections headed "Display, as on the desktop":
 - the sheet: one frame per tab (Spectrum, Levels, Waterfall, View, FFT) and "Press and hold the band";
@@ -12,7 +12,7 @@
 - the phone sideways;
 - Setup: "Setup > Display", the eight pages, and "Transmit Display".
 
-The board is drawn in the navy look and draws the iPad's Setup at phone width. Both are superseded by the workspace look (section 8): the controls, rows and behavior are as drawn; the colors, corners and the iPad's Setup layout are PR 603's.
+The board is drawn in the workspace look (section 8), with a switch back to the navy look it was first drawn in, and draws the iPad's Setup as the split view of section 7.4.
 
 ---
 
@@ -232,7 +232,7 @@ Numbered after PR 603's R-IOS-49 to R-IOS-54, in the R-IOS table of [2026-09-23-
 
 ## 12. Settled calls, listed for veto
 
-These were drawn on the board or follow from it and were not asked one at a time.
+These were drawn on the board or follow from it. JJ settled items 4 and 9 one at a time on 2026-10-24 and accepted the rest as recommended the same day.
 
 1. On the board, Pan 2 is on the lower part of 40 m with slice C, and starts with two values of its own (the BlackWhite scheme, Fill off). That is the board's example only; a new pan in the app starts by following All pans.
 2. The toolbar follows the pan last touched (DC9), and a new slice from a pan's +RX starts on that pan.

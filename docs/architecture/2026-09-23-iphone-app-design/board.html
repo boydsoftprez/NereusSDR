@@ -24741,7 +24741,8 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       var txp = host.root.querySelector('.txpanel');
       var toastEl = host.root.querySelector('.toast');
       function shiftSideways() {
-        if (!(land || p.dpHost) || !pill) {
+        // On the iPad too: Pan 1 reaches the PTT once Pan 2 is closed.
+        if (!pill) {
           return;
         }
         var ptt = host.ptt;
