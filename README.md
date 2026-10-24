@@ -301,7 +301,9 @@ if you want to host the remote-access service yourself.
 - **Applets, Canvas and meters.** Stack or float containers, or arrange
   applets, meters and fifteen individual controls on an editable Canvas.
   The TX applet's rows (monitor, power, filter, chain, VOX, processing and
-  keying) can each go in a container on their own.
+  keying) and the RX applet's rows (antennas, mode, step, filter, pan,
+  squelch, attenuator, AGC, RIT and XIT) can each go in a container on their
+  own.
   Move, resize, layer and lock objects, preview changes, and Apply or Cancel.
   Responsive meter text, complete meter faces and the Nereus ANAN artwork
   bring readings together. Supported objects can follow the selected receiver

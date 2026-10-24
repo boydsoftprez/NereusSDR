@@ -153,7 +153,24 @@ filter cutoffs), **TX Chain** (LEV, EQ, CFC and the TX profile), **TX VOX**,
 Keying** (TUNE, MOX and the transmit slice row). Add one to keep that row where
 you want it. Each copy shows and sets the same state as the TX applet's own
 row and follows the same transmit rules, so a grayed row in the applet is
-grayed in the container too. The TX applet itself keeps every row.
+grayed in the container too. The TX applet itself keeps every row. A
+container's **TX Keying** has **Hide slice indicators**, which leaves only TUNE
+and MOX.
+
+The RX applet's rows are listed the same way: **RX Antennas**, **RX Mode**,
+**RX Step**, **RX Filter**, **RX Pan**, **RX Squelch**, **RX Attenuator**,
+**RX AGC**, **RX RIT** and **RX XIT**. Each acts on the same slice as the RX
+applet. A container's **RX Filter** has **Hide width label** and **Hide
+passband**, so it can show just the filter buttons, plus **Columns** (1 to 32)
+and the **Button text**, **Background top**, **Background bottom**, **Selected
+top** and **Selected bottom** colors for those buttons. The RX applet itself
+keeps every row.
+
+**Nereus Band Buttons**, under **Controls** in the add-item menu beside **Band
+Buttons**, draws the band buttons with the raised look of the PureSignal
+button. It has the same settings as **Band Buttons**, plus a **Nereus colours**
+group: **Button text**, **Background top**, **Background bottom**, **Selected
+top** and **Selected bottom**.
 
 **Frequency (Custom)** is a frequency readout you can size and style, beside
 the fixed **Frequency (Longpath)** item. Its properties are **Font size** (12

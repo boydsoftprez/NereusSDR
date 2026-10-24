@@ -63,6 +63,12 @@ still connect to each other as before.
   trace read about 10 pixels low, and with normalization about 17 dB off.
   Thanks to Martin Fischer (OE5SOS), whose Longpath fix this follows.
   ([#614](https://github.com/boydsoftprez/NereusSDR/pull/614))
+- NB Blank on the waterfall hides electric-fence lines without freezing the
+  waterfall when a loud SSB station keys up. It now judges each row by its
+  middle level, so a strong station on part of the band no longer counts as a
+  burst, and it hides at most two rows in a row, so a real rise in the noise
+  floor shows after two rows. The threshold setting is unchanged.
+  ([#625](https://github.com/boydsoftprez/NereusSDR/pull/625))
 - The Max Bin peak hold falls again after a signal above 0 dBm. It used to
   creep toward 0 dBm and stay there.
   ([#608](https://github.com/boydsoftprez/NereusSDR/pull/608))
@@ -133,6 +139,25 @@ still connect to each other as before.
   center it in the box, and show or hide either A/B slice line. Contributed by
   Brian Sutton.
   ([#597](https://github.com/boydsoftprez/NereusSDR/pull/597))
+- The RX applet's rows can go in a container on their own too: **RX
+  Antennas**, **RX Mode**, **RX Step**, **RX Filter**, **RX Pan**, **RX
+  Squelch**, **RX Attenuator**, **RX AGC**, **RX RIT** and **RX XIT**. A
+  container's **RX Filter** can hide its width label or its passband, and you
+  set its number of button columns and its button colors. The RX applet itself
+  is unchanged. Contributed by Brian Sutton.
+  ([#635](https://github.com/boydsoftprez/NereusSDR/pull/635))
+- New **Nereus Band Buttons** item under **Controls**, beside **Band
+  Buttons**: band buttons with the raised look of the PureSignal button, and
+  your own colors for the text and for selected and unselected bands. Contributed by Brian Sutton.
+  ([#635](https://github.com/boydsoftprez/NereusSDR/pull/635))
+- A container's **TX Keying** can hide its slice indicators (the slice letters,
+  the holder line and Take transmit), leaving TUNE and MOX. The TX applet's own
+  keying row is unchanged. Contributed by Brian Sutton.
+  ([#635](https://github.com/boydsoftprez/NereusSDR/pull/635))
+- **Frequency (Custom)** and **Frequency (Longpath)** show the frequency after
+  a direct connection to a radio. They used to stay empty until you changed
+  slices. Contributed by Brian Sutton.
+  ([#635](https://github.com/boydsoftprez/NereusSDR/pull/635))
 
 ### Receivers and radios
 
@@ -145,6 +170,12 @@ still connect to each other as before.
   +3086 dBm. A short burst of bad samples after a sample-rate change used to
   poison the meter until it was next reset; the meter now skips such samples.
   ([#629](https://github.com/boydsoftprez/NereusSDR/pull/629))
+- A sample-rate change that moves a slice onto a new receiver stream no longer
+  plays about 300 ms of noise, which was where the bad S-meter readings came
+  from. The slice is silent for a few tens of milliseconds instead, and with
+  NB or NB2 on the change can no longer corrupt memory. This touches the
+  receive path and has not yet been checked on a radio.
+  ([#630](https://github.com/boydsoftprez/NereusSDR/pull/630))
 - Changing the sample rate live right after connecting no longer fails. A late
   connection update could wipe the rate and receiver count chosen at connect.
   Thanks to Martin Fischer (OE5SOS), whose Longpath fix this follows.
