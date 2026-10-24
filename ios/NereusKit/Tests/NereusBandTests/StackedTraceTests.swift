@@ -325,6 +325,61 @@ import Testing
         #expect(pacer.leastInterval(askedFps: 30) == 2.0 / 30)
     }
 
+    /// Runs `frames` (arrival seconds) through a throttle as the band view
+    /// does: a wait's timer fires `timerLate` after it was due, and the view
+    /// draws on the 60 Hz refresh after it is asked. Returns the draw times.
+    private func stackDraws(frames: [Double], interval: Double, timerLate: Double = 0.002) -> [Double] {
+        func refresh(after time: Double) -> Double {
+            ((time * 60).rounded(.down) + 1) / 60
+        }
+        var throttle = StackedDrawThrottle()
+        var draws: [Double] = []
+        var timer: Double?
+        for frame in frames {
+            if let fires = timer, fires <= frame {
+                throttle.waited()
+                draws.append(refresh(after: fires))
+                timer = nil
+            }
+            switch throttle.request(at: frame, interval: interval) {
+            case .now:
+                draws.append(refresh(after: frame))
+            case .after(let wait):
+                timer = frame + wait + timerLate
+            case .waiting:
+                break
+            }
+        }
+        return draws
+    }
+
+    @Test func threeDDrawsEveryFrameTheCoreSends() {
+        // 30 frames a second, each a few ms early or late, as JJ's phone got
+        // them: timing from the draw drew 16.6 a second of these.
+        let jitter = [0.004, -0.003, 0.002, -0.004, 0.001]
+        let frames = (0..<300).map { Double($0) / 30 + jitter[$0 % jitter.count] }
+        let draws = stackDraws(frames: frames, interval: 1.0 / 30)
+        #expect(draws.count >= 297, "one draw a frame, not one every 50 ms")
+        let gaps = zip(draws, draws.dropFirst()).map { (($1 - $0) * 60).rounded() }
+        #expect(gaps.filter { $0 >= 3 }.count <= 3, "no refresh lost at each wait")
+    }
+
+    @Test func threeDNeverDrawsFasterThanAsked() {
+        let frames = (0..<600).map { Double($0) / 60 }
+        #expect(stackDraws(frames: frames, interval: 1.0 / 30).count <= 301)
+        #expect(stackDraws(frames: frames, interval: 2.0 / 30).count <= 151, "half rate")
+        var throttle = StackedDrawThrottle()
+        #expect(throttle.request(at: 10, interval: 0.1) == .now)
+        guard case .after(let wait) = throttle.request(at: 10.04, interval: 0.1) else {
+            Issue.record("a change sooner than the interval waits")
+            return
+        }
+        #expect(abs(wait - 0.06) < 1e-9, "until the interval from when the last draw was due")
+        #expect(throttle.request(at: 10.05, interval: 0.1) == .waiting, "the waiting draw takes this change too")
+        throttle.waited()
+        #expect(throttle.request(at: 10.3, interval: 0.1) == .now)
+    }
+
     @Test func whyAPanShowsTwoD() {
         typealias Hold = StackedTraceHold
         #expect(Hold.reason(chosen: false, offered: false, lowPower: true, hot: true, stage: .fellBack) == nil)
