@@ -69,6 +69,8 @@ class Track:
         self.offset_hz: Optional[int] = None
         self.km: Optional[int] = None
         self.not_counted = False
+        # The reader was AWAY at its latest reading (design 11.6).
+        self.away = False
 
     def add(self, reading: Reading) -> None:
         self.readings.append(reading)
@@ -154,6 +156,7 @@ class Turn:
             track = Track(row.station_id, row.callsign)
             self.tracks[row.station_id] = track
         track.callsign = row.callsign
+        track.away = bool(getattr(row, "away", False))
         track.add(reading)
         return track
 

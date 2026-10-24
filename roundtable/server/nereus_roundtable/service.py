@@ -5,7 +5,8 @@ a station's presence, readings and views: `rooms`, `roomsDelta`,
 `room` and `delta`, with their generations, pacing and resync (5.3.2,
 5.3.3, 5.3.8 to 5.3.10, 5.4.3 to 5.4.6, 6.11), and its messages, names,
 reports, mentions and going hidden (5.3.4 to 5.3.7, 5.3.11, 5.3.14, 5.4.7,
-5.4.8, 6.9, 6.10), and a live reader's watched band list and rooms
+5.4.8, 6.9, 6.10), its web sign-in links and Delete my archive (5.3.12,
+5.3.13, 5.4.10), and a live reader's watched band list and rooms
 (3.2, 5.5): the same `rooms`, `roomsDelta`, `room` and `delta` a station
 gets, with every `you` false and every `mine` null.
 
@@ -64,6 +65,12 @@ READING_RATE_ERROR_MS = 60000
 NAME_AFTER_MS = 86400000
 # Wire spec 5.3: after `hidden`, these are the only station kinds taken.
 AFTER_HIDDEN = frozenset({"weblink", "deleteArchive"})
+# Wire spec 5.4.10 and 9.2 (design C27): a sign-in link lasts 5 minutes and
+# works once; its token is 32 random bytes.
+WEBLINK_MS = 300000
+WEBLINK_TOKEN_BYTES = 32
+# Wire spec 5.3.13: the exact words that confirm Delete my archive.
+DELETE_CONFIRM = "delete my archive"
 
 
 def short(station_id: str) -> str:
@@ -249,6 +256,8 @@ class Service:
         self.on(STATION, "report", self._report)
         self.on(STATION, "mentionsSeen", self._mentions_seen)
         self.on(STATION, "hidden", self._hidden)
+        self.on(STATION, "weblink", self._weblink)
+        self.on(STATION, "deleteArchive", self._delete_archive)
         self.on(LIVE, "watchBand", self._watch_band)
         self.on(LIVE, "watch", self._watch)
         self.on(LIVE, "unwatch", self._unwatch)
@@ -805,6 +814,61 @@ class Service:
         # open talking turn ends now with no 3-second wait (6.6), and its
         # joining slices are dropped.
         self.book.remove_station(sid)
+
+    # ----------------------------------------------------------- archive
+
+    def _weblink(self, conn: Connection, msg: Dict[str, Any]) -> None:
+        """Wire spec 5.3.12: a one-time web sign-in link."""
+        assert conn.station_id is not None
+        url, expires = self.make_weblink(conn.station_id)
+        conn.send(protocol.message("weblinkOk", STATION, url=url, expires=expires))
+
+    def make_weblink(self, station_id: str) -> Tuple[str, int]:
+        """A sign-in link for the station and when it expires (5.4.10).
+        Only the token's SHA-256 is stored; the token is never logged."""
+        token = self.random(WEBLINK_TOKEN_BYTES)
+        now = self.clock.wall_ms()
+        expires = now + WEBLINK_MS
+        self.store.weblink_add(identity.key_hash(token), station_id, now, expires)
+        log.info("station %s asked for a sign-in link", short(station_id))
+        return f"https://{self.config.public_host}/signin?t={identity.to_b64url(token)}", expires
+
+    def _delete_archive(self, conn: Connection, msg: Dict[str, Any]) -> None:
+        """Wire spec 5.3.13."""
+        assert conn.station_id is not None
+        if msg["confirm"] != DELETE_CONFIRM:
+            conn.send(protocol.error_message("not-allowed-archive", "deleteArchive"))
+            return
+        self.delete_archive(conn.station_id)
+        conn.send(protocol.message("notice", STATION, code="archive-deleted", text=protocol.NOTICES["archive-deleted"], until=None))
+
+    def delete_archive(self, station_id: str) -> None:
+        """Delete my archive (design 13, C9). The cleared messages change
+        in the views of the live rooms that hold them."""
+        with self.event():
+            cleared = self.store.delete_archive(station_id)
+            for message_id, room_id in cleared:
+                room = self.book.live(room_id)
+                if room is None:
+                    continue
+                row = self.store.message_get(message_id)
+                if row is not None:
+                    room.message_changed(row)
+        log.info("station %s deleted its archive", short(station_id))
+
+    def revoke_station(self, station_id: str) -> None:
+        """The station's website key was revoked: its connection closes
+        with 4004 and no message (wire spec 2.4, 4.2), and its rows leave."""
+        conn = self.stations.get(station_id)
+        if conn is not None:
+            log.info("station %s: its key was revoked; closing", short(station_id))
+            conn.close(protocol.CLOSE_REVOKED)
+
+    def station_moved(self, old: str, new: str) -> None:
+        """After a history move: what the rooms hold under the old id
+        takes the new one."""
+        self.book.rename_station(old, new)
+        log.info("station %s moved its history to %s", short(old), short(new))
 
     # ----------------------------------------------------------- live
 

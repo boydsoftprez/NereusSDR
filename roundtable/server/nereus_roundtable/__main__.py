@@ -16,6 +16,7 @@ from .clock import RealClock
 from .config import ConfigError, load
 from .service import Service
 from .store import Store, StoreError
+from .web import Web
 
 
 def configure_logging(level: str) -> None:
@@ -42,7 +43,9 @@ async def run(config_path: str) -> int:
         print(f"nereus_roundtable: database: {exc}", file=sys.stderr)
         return 1
     service = Service(config, RealClock(), store)
-    listeners = await transport.start(service, App(service, store, config), config)
+    app = App(service, store, config)
+    Web(service, store, config, app)
+    listeners = await transport.start(service, app, config)
     log.info(
         "listening on %d WebSocket and %d HTTP addresses",
         len(listeners.ws_servers),

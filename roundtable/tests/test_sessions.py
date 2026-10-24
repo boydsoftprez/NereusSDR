@@ -14,10 +14,7 @@ SESSIONS = [f for f in load_manifest()["fixtures"] if f["kind"] == "session"]
 
 # Fixtures whose server behavior a later task of the Roundtable plan builds.
 # Each later task removes its own entries; nothing else is skipped.
-LATER = {
-    "weblink": "Task 6 (website sign-in links)",
-    "delete-archive": "Task 6 (archive deletion)",
-}
+LATER: dict = {}
 
 
 @pytest.mark.parametrize("entry", SESSIONS, ids=[f["id"] for f in SESSIONS])

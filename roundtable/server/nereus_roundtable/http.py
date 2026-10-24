@@ -227,6 +227,7 @@ class App:
         self.api_window = Window(config.api_requests_per_minute, API_WINDOW_MS)
         self._swept_ms: Optional[int] = None
         self._routes: Dict[Tuple[str, str], Handler] = {}
+        self._prefixes: List[Tuple[str, str, Handler]] = []
 
     # ----------------------------------------------------------- routes
 
@@ -236,6 +237,12 @@ class App:
         one. A route for GET also answers HEAD, without the body. A route
         comes before the read API and the static files."""
         self._routes[(method.upper(), path)] = handler
+
+    def route_prefix(self, method: str, prefix: str, handler: Handler) -> None:
+        """Answer `method` on every path that starts with `prefix` (as
+        sent, before `?`) and has more after it, after the exact routes. A
+        GET route also answers HEAD."""
+        self._prefixes.append((method.upper(), prefix, handler))
 
     # ----------------------------------------------------------- the wire
 
@@ -308,6 +315,11 @@ class App:
         handler = self._routes.get((method, request.path))
         if handler is None and request.method == "HEAD":
             handler = self._routes.get(("HEAD", request.path))
+        if handler is None:
+            for m, prefix, candidate in self._prefixes:
+                if m == method and request.path.startswith(prefix) and len(request.path) > len(prefix):
+                    handler = candidate
+                    break
         if handler is not None:
             result = handler(request)
             if inspect.isawaitable(result):

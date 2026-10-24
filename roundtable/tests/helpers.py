@@ -17,6 +17,7 @@ from nereus_roundtable.http import App
 from nereus_roundtable.clock import ManualClock
 from nereus_roundtable.service import Service
 from nereus_roundtable.store import Store
+from nereus_roundtable.web import Web
 from runner import DEFAULT_ADDRESS, make_config, ws_connect
 
 
@@ -44,6 +45,8 @@ async def live_service(
     store = Store(":memory:")
     service = Service(config, ManualClock(), store)
     app = App(service, store, config) if http_app else None
+    if app is not None:
+        Web(service, store, config, app)
     listeners = await transport.start(service, app, config)
     try:
         yield Live(service, listeners, app)

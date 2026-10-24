@@ -291,7 +291,9 @@ class Room:
             if packed is None:
                 continue
             first, last, dbm, bits = packed
-            rows.append((track.station_id, track.callsign, track.offset_hz, track.km, first, last, dbm, bits, track.not_counted))
+            rows.append(
+                (track.station_id, track.callsign, track.offset_hz, track.km, first, last, dbm, bits, track.not_counted, track.away)
+            )
         self.book.store.tracks_write(turn.id, rows)
 
     @staticmethod
@@ -647,6 +649,34 @@ class RoomBook:
         for slice_id in list(entry.placements):
             self.leave(station_id, slice_id)
         self.stations.pop(station_id, None)
+
+    def rename_station(self, old: str, new: str) -> None:
+        """The station's history moved to a new station id (design 7.3,
+        C6): what the rooms hold in memory under the old id, in open and
+        earlier turns and the rows that posted messages, takes the new one,
+        so a later write stores nothing under the old id. The station's
+        own rows have already left with its connection."""
+        turns: List[Turn] = []
+        for room in self.rooms.values():
+            turns.extend(room.engine.open)
+            for row in room.message_rows.values():
+                if row.station_id == old:
+                    row.station_id = new
+        for earlier in self.earlier.values():
+            turns.extend(earlier)
+        for turn in turns:
+            if old in turn.tracks:
+                track = turn.tracks.pop(old)
+                track.station_id = new
+                turn.tracks[new] = track
+            for row in turn.talkers:
+                if row.station_id == old:
+                    row.station_id = new
+            if old in turn.given:
+                turn.given[new] = turn.given.pop(old)
+            if old in turn.members_during:
+                turn.members_during.discard(old)
+                turn.members_during.add(new)
 
     def reading(self, row: Row, dbm: float, t: int, present: bool) -> Optional[Turn]:
         """An accepted reading from a member's counted slice (6.7)."""
