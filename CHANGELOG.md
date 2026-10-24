@@ -52,6 +52,17 @@ still connect to each other as before.
   frequency labels are redrawn only when one of them changes, not on every
   frame. Nothing on screen looks different.
   ([#619](https://github.com/boydsoftprez/NereusSDR/pull/619))
+- The waterfall no longer turns bright green and cyan across its width for
+  several seconds after a Core restart, or when the phone comes back from
+  another app. The noise floor now starts from the first real data instead of
+  climbing up from far below the band. A remote window or the phone needs a
+  2026.10.2 Core for this.
+  ([#628](https://github.com/boydsoftprez/NereusSDR/pull/628))
+- On the GPU spectrum, the trace and peak hold sit on their grid lines when the
+  band plan is shown and when 1 Hz normalization is on. With the band plan the
+  trace read about 10 pixels low, and with normalization about 17 dB off.
+  Thanks to Martin Fischer (OE5SOS), whose Longpath fix this follows.
+  ([#614](https://github.com/boydsoftprez/NereusSDR/pull/614))
 - The Max Bin peak hold falls again after a signal above 0 dBm. It used to
   creep toward 0 dBm and stay there.
   ([#608](https://github.com/boydsoftprez/NereusSDR/pull/608))
@@ -130,6 +141,14 @@ still connect to each other as before.
   history when you switch between them. The slice that moves has one short
   audio gap.
   ([#610](https://github.com/boydsoftprez/NereusSDR/pull/610))
+- A slice's S-meter can no longer stick at an impossible reading such as
+  +3086 dBm. A short burst of bad samples after a sample-rate change used to
+  poison the meter until it was next reset; the meter now skips such samples.
+  ([#629](https://github.com/boydsoftprez/NereusSDR/pull/629))
+- Changing the sample rate live right after connecting no longer fails. A late
+  connection update could wipe the rate and receiver count chosen at connect.
+  Thanks to Martin Fischer (OE5SOS), whose Longpath fix this follows.
+  ([#611](https://github.com/boydsoftprez/NereusSDR/pull/611))
 - The three receive-only columns in **Hardware Config > Antenna / ALEX** (RX1,
   RX2 and XVTR, or the labels your radio uses) are checkboxes again. Unticking returns
   a band to none, which was impossible before. The first two exclude each
@@ -189,6 +208,13 @@ still connect to each other as before.
 - The band keeps your zoom across launches instead of opening fully zoomed
   out.
   ([#586](https://github.com/boydsoftprez/NereusSDR/pull/586))
+- The flag's **...** menu gains **S-meter: Peak / Average / Max Bin**, so you
+  choose what the flag's level shows. The flag now shows the peak by default,
+  as on the desktop, and an **AV** or **MAX** tag appears beside the level when
+  you pick another. The choice belongs to this phone or iPad and also sets the
+  iPad S-meter's RX Mode; it never changes what a desktop window shows. Max
+  Bin is grayed, with the reason, while the slice's pan is not drawn here.
+  ([#629](https://github.com/boydsoftprez/NereusSDR/pull/629))
 
 ### Fixes
 

@@ -39,6 +39,8 @@ Start on **Panadapter** with the desired band visible. Each owned slice has a co
 4. Tap the step readout on the flag to open the tune-step menu and choose a step. Each slice keeps its own step on each band. A tuning dial's own step button opens the same kind of step choice.
 5. For a coarse view change, pinch if **Pinch to zoom the band** is enabled or use the **−** and **+** controls at the lower right of the waterfall. Minus widens the view; plus closes in. The controls are deliberately placed away from the lower-left PTT area. The band keeps the zoom you set by hand across launches. A zoom made while transmitting sets only the transmit view.
 
+To choose what a flag's level shows, open the flag's **...** menu, tap **S-meter**, and pick **Peak**, **Average** or **Max Bin**. Peak is the default, as on the desktop; any other choice puts an **AV** or **MAX** tag beside the level. The choice is this device's S-meter **RX Mode**, so every flag follows it, and on an iPad the S-meter applet changes with it. It never changes a desktop window. **Max Bin** is disabled, with its reason, while this device is not drawing the slice's pan or the passband is outside the shown span.
+
 Tap/drag behavior is configurable under **Setup > General > Navigation > Touch**. **Drag a flag to tune** changes the flag/passband drag behavior; a drag on empty band pans the view. **Tap to tune on the band** tunes the active slice at a tapped frequency. **Double-tap action** selects **Tune**, **Center**, or **None**. **Snap tap-to-tune to step** rounds a tap to the nearest slice step when tap-to-tune or double-tap Tune is enabled. These settings apply to this phone.
 
 ## Use the dial or thumbwheel

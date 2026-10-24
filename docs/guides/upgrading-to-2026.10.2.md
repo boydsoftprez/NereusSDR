@@ -59,6 +59,9 @@ Older Cores, windows and phone apps still connect to each other.
   returns a band to none.
 - **The phone and iPad** take the desktop's workspace look, and the band keeps
   your zoom across launches.
+- **The phone's flag level shows the peak** by default, as on the desktop. To
+  go back to the average, open the flag's **...** menu and choose **S-meter:
+  Average**.
 
 ## What to try
 
