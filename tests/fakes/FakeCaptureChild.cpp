@@ -43,6 +43,9 @@
 //   2026-10-16: a Warm that names a bundle is answered as a stored Voice
 //               Isolation made Standard.  J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-23: every exit goes through CaptureHelperIo::exitProcessNow,
+//               which on Windows runs no DLL static destructor.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "FakeCaptureChild.h"
@@ -163,7 +166,7 @@ void readParent(std::shared_ptr<Queue> queue)
         const qint64 got = CaptureHelperIo::readInput(buffer.data(),
                                                       static_cast<qint64>(buffer.size()));
         if (got <= 0) {
-            std::_Exit(0);
+            CaptureHelperIo::exitProcessNow(0);
         }
         reader.append(buffer.data(), got);
         while (auto record = reader.next()) {
@@ -172,20 +175,20 @@ void readParent(std::shared_ptr<Queue> queue)
             if (record->type == P::RecordType::Configure) {
                 const auto configure = P::decodeConfigure(record->payload);
                 if (!configure) {
-                    std::_Exit(0);
+                    CaptureHelperIo::exitProcessNow(0);
                 }
                 command.generation = configure->generation;
                 command.deviceName = configure->device.deviceName;
             } else if (record->type == P::RecordType::Open || record->type == P::RecordType::Stop) {
                 const auto decoded = P::decodeCommand(record->payload);
                 if (!decoded) {
-                    std::_Exit(0);
+                    CaptureHelperIo::exitProcessNow(0);
                 }
                 command.generation = decoded->generation;
             } else if (record->type == P::RecordType::AttachRing) {
                 const auto attach = P::decodeAttachRing(record->payload);
                 if (!attach) {
-                    std::_Exit(0);
+                    CaptureHelperIo::exitProcessNow(0);
                 }
                 command.generation = attach->generation;
                 command.ring = {attach->memory, attach->wake};
@@ -193,37 +196,37 @@ void readParent(std::shared_ptr<Queue> queue)
             } else if (record->type == P::RecordType::ProbeEnable) {
                 const auto enabled = P::decodeProbeEnable(record->payload);
                 if (!enabled) {
-                    std::_Exit(0);
+                    CaptureHelperIo::exitProcessNow(0);
                 }
                 command.probeEnabled = *enabled;
             } else if (record->type == P::RecordType::AsioDescribe) {
                 const auto describe = P::decodeAsioDescribe(record->payload);
                 if (!describe) {
-                    std::_Exit(0);
+                    CaptureHelperIo::exitProcessNow(0);
                 }
                 command.asioDriver = describe->driver;
             } else if (record->type == P::RecordType::AsioOpen) {
                 const auto open = P::decodeAsioOpen(record->payload);
                 if (!open) {
-                    std::_Exit(0);
+                    CaptureHelperIo::exitProcessNow(0);
                 }
                 command.asioOpen = *open;
             } else if (record->type == P::RecordType::Warm) {
                 const auto warm = P::decodeWarm(record->payload);
                 if (!warm) {
-                    std::_Exit(0);
+                    CaptureHelperIo::exitProcessNow(0);
                 }
                 command.micModeBundle = warm->micModeBundle;
             } else if (record->type != P::RecordType::Shutdown
                        && record->type != P::RecordType::AsioControlPanel) {
-                std::_Exit(0);
+                CaptureHelperIo::exitProcessNow(0);
             }
             std::lock_guard<std::mutex> lock(queue->mutex);
             queue->commands.push_back(command);
             queue->wake.notify_one();
         }
         if (reader.error() != P::RecordReader::Error::None) {
-            std::_Exit(0);
+            CaptureHelperIo::exitProcessNow(0);
         }
     }
 }
@@ -231,7 +234,7 @@ void readParent(std::shared_ptr<Queue> queue)
 void send(const QByteArray& record)
 {
     if (!CaptureHelperIo::writeRecord(record)) {
-        std::_Exit(0);
+        CaptureHelperIo::exitProcessNow(0);
     }
 }
 
@@ -404,7 +407,7 @@ private:
                 break;
             }
             if (command.probeEnabled && !m_readySent) {
-                std::_Exit(kProbeEnabledBeforeReadyExit);
+                CaptureHelperIo::exitProcessNow(kProbeEnabledBeforeReadyExit);
             }
             m_probeOn = command.probeEnabled;
             if (m_probeOn) {
@@ -445,7 +448,7 @@ private:
             }
             sendWarmed(command.micModeBundle);
             if (m_scenario == Scenario::ExitAfterWarm) {
-                std::_Exit(3);
+                CaptureHelperIo::exitProcessNow(3);
             }
             break;
         case P::RecordType::Stop:
@@ -661,7 +664,7 @@ private:
         if (m_scenario == Scenario::PcmRecordOnProbeEnable) {
             send(P::encodePcm(m_generation, 0, 0, m_tone.data(), P::kHelperPcmFrames));
         } else if (m_scenario == Scenario::CrashOnProbeEnable) {
-            std::_Exit(3);
+            CaptureHelperIo::exitProcessNow(3);
         } else if (m_scenario == Scenario::InputLostOnProbeEnable) {
             m_streaming = false;
             sendStatus(m_generation, P::HelperState::Failed, P::FailReason::InputLost,
@@ -731,7 +734,7 @@ private:
         }
         if (now - m_streamStart >= kPcmBeforeEvent) {
             if (m_scenario == Scenario::CrashAfterReady) {
-                std::_Exit(3);
+                CaptureHelperIo::exitProcessNow(3);
             }
             if (m_scenario == Scenario::InputLost) {
                 m_streaming = false;
