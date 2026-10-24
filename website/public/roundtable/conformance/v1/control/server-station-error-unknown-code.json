@@ -1,0 +1,12 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "error",
+    "code": "solar-flare",
+    "reason": "Something new went wrong.",
+    "about": null,
+    "retryAfterMs": 0
+  },
+  "decodes": true
+}

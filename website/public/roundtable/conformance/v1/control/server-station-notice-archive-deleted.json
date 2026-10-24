@@ -1,0 +1,11 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "notice",
+    "code": "archive-deleted",
+    "text": "Your Roundtable archive has been deleted. Backups age out within 7 days.",
+    "until": null
+  },
+  "decodes": true
+}

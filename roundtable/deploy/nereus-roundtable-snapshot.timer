@@ -1,0 +1,15 @@
+# Every night at 03:30 UTC, for nereus-roundtable-snapshot.service (design
+# 6.2, C12), before the daily job at 04:00. Installed as
+# /etc/systemd/system/nereus-roundtable-snapshot.timer by
+# roundtable/deploy/setup-server.sh. Persistent: a run missed while the
+# server was off happens at the next boot.
+
+[Unit]
+Description=NereusSDR Roundtable nightly snapshot, 03:30 UTC
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

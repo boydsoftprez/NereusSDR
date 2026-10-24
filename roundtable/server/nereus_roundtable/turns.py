@@ -66,6 +66,8 @@ class Track:
         self.station_id = station_id
         self.callsign = callsign
         self.readings: List[Reading] = []
+        # Readings let go once the turn ended and was stored (release()).
+        self.released = 0
         self.offset_hz: Optional[int] = None
         self.km: Optional[int] = None
         self.not_counted = False
@@ -82,9 +84,16 @@ class Track:
         self.readings = kept
         return dropped
 
+    def release(self) -> None:
+        """The turn has ended and its track is stored: keep only the latest
+        reading, which is all an ended turn still reads (heard()), and the
+        count of the others."""
+        self.released += max(0, len(self.readings) - 1)
+        del self.readings[:-1]
+
     @property
     def count(self) -> int:
-        return len(self.readings)
+        return self.released + len(self.readings)
 
     @property
     def latest(self) -> Optional[Reading]:

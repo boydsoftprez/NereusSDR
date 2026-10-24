@@ -1,0 +1,57 @@
+# The nightly snapshot (design 6.2, C12): a consistent copy of the database
+# through SQLite's online backup, written to
+# /var/lib/nereus-roundtable/backup/roundtable-YYYY-MM-DD.db, keeping the
+# newest 2; skipped with a journal warning while the disk is under 15% free.
+# JJ's machine pulls the newest with roundtable/deploy/pull-backup.sh.
+# Started at 03:30 UTC by nereus-roundtable-snapshot.timer.
+#
+# Installed as /etc/systemd/system/nereus-roundtable-snapshot.service by
+# roundtable/deploy/setup-server.sh. It runs as the same transient account
+# name as nereus-roundtable.service, with the same state directory, so it
+# opens the server's own database (SQLite's locking keeps the two apart).
+# Read it with:
+#   journalctl -u nereus-roundtable-snapshot
+
+[Unit]
+Description=NereusSDR Roundtable nightly snapshot
+After=nereus-roundtable.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -m nereus_roundtable --config /etc/nereus-roundtable/roundtable.conf --snapshot
+Environment=PYTHONPATH=/opt/nereus-roundtable
+Environment=PYTHONDONTWRITEBYTECODE=1
+WorkingDirectory=/
+DynamicUser=yes
+User=nereus-roundtable
+Group=nereus-roundtable
+StateDirectory=nereus-roundtable
+StateDirectoryMode=0700
+MemoryMax=256M
+MemorySwapMax=0
+OOMScoreAdjust=500
+# It sends and receives nothing.
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX
+NoNewPrivileges=yes
+UMask=0077
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=

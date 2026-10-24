@@ -1,0 +1,9 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "post",
+    "room": "usb-14212000",
+    "text": "hi"
+  },
+  "decodes": false
+}

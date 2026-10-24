@@ -38,6 +38,20 @@ if args.website:
         routes[guide.resolve()] = f'guides/{name}.html'
     files.append(root/'rendezvous/README.md')
     routes[files[-1].resolve()] = 'guides/remote-access.html'
+    # The Roundtable API page is its wire spec; the fixtures it names are
+    # published beside it, a copy of the repository's (design C10, R-RT-25).
+    references = [root/'docs/architecture/2026-10-23-roundtable-v1.md']
+    files.extend(references)
+    routes[references[0].resolve()] = 'roundtable/api.html'
+    fixtures = root/'roundtable/conformance/v1'
+    published_fixtures = site_out/'roundtable/conformance/v1'
+    if not fixtures.is_dir():
+        raise ValueError(f'Missing Roundtable fixtures: {fixtures.relative_to(root)}')
+    if published_fixtures.exists():
+        shutil.rmtree(published_fixtures)
+    shutil.copytree(fixtures, published_fixtures)
+else:
+    references = []
 # Retain contributor records as source downloads, not extra reader chapters.
 for document in source.glob('*.md'):
     shutil.copyfile(document, out/document.name)
@@ -66,6 +80,8 @@ def website_target(page, target, image=False):
         path = '/'+routes[destination]
     elif destination in downloads:
         path = '/'+downloads[destination]
+    elif args.website and destination.is_file() and destination.is_relative_to(fixtures):
+        path = '/roundtable/conformance/v1/'+destination.relative_to(fixtures).as_posix()
     elif destination.is_relative_to(source/'images'):
         path = '/manual/images/'+destination.relative_to(source/'images').as_posix()
     elif image:
@@ -133,8 +149,10 @@ for index,p in enumerate(files):
     nav=''.join(f'<a href="{page_link(q)}"{ " aria-current=page" if q==p else ""}>{html.escape(titles[q.resolve()])}</a>' for q in manual_files)
     navigation=f'<details open><summary>Browse all chapters</summary>{nav}</details>'
     if args.website:
-        howtos=''.join(f'<a href="{page_link(q)}"{ " aria-current=page" if q==p else ""}>{html.escape(titles[q.resolve()])}</a>' for q in files[len(manual_files):])
+        howtos=''.join(f'<a href="{page_link(q)}"{ " aria-current=page" if q==p else ""}>{html.escape(titles[q.resolve()])}</a>' for q in files[len(manual_files):] if q not in references)
         navigation += f'<details open><summary>How-to guides</summary>{howtos}</details>'
+        refs=''.join(f'<a href="{page_link(q)}"{ " aria-current=page" if q==p else ""}>{html.escape(titles[q.resolve()])}</a>' for q in references)
+        navigation += f'<details open><summary>Reference</summary>{refs}</details>'
     prev='' if index==0 or p not in manual_files else f'<a href="{page_link(files[index-1])}">Previous chapter</a>'
     nxt='' if index>=len(manual_files)-1 else f'<a href="{page_link(files[index+1])}">Next chapter</a>'
     styles = '<link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css">' if args.website else '<link rel="stylesheet" href="site.css"><link rel="stylesheet" href="manual.css">'

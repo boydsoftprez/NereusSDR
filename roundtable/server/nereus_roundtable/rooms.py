@@ -288,6 +288,10 @@ class Room:
         assert turn.end is not None
         self.book.store.turn_end(turn.id, turn.end)
         self.turn_flush(turn)
+        # Stored now, and an ended turn is written no more: 30 minutes of
+        # readings held per earlier turn was most of the server's memory.
+        for track in turn.tracks.values():
+            track.release()
         self.book.earlier.setdefault(self.id, []).append(turn)
         self.last_turn_end = turn.end
         gone = {id(reading) for _, reading in dropped}
@@ -970,12 +974,25 @@ class RoomBook:
     def _on_tick(self) -> None:
         self._tick = None
         self.flush()
+        self.prune_earlier()
         for room in self.rooms.values():
             if room.live:
                 # Folding depends on time alone; the diff sends only change.
                 self.touch(room)
         if self.rooms:
             self.ensure_tick()
+
+    def prune_earlier(self) -> None:
+        """Drop the earlier turns past 30 minutes (5.4.5) of every room id,
+        closed ones too: only a viewed room prunes its own list, so a room
+        that closed or moved would otherwise keep its turns for good."""
+        cutoff = self.clock.wall_ms() - EARLIER_MS
+        for room_id in list(self.earlier):
+            kept = [t for t in self.earlier[room_id] if t.end is not None and t.end >= cutoff]
+            if kept:
+                self.earlier[room_id] = kept
+            else:
+                del self.earlier[room_id]
 
     def flush(self) -> None:
         """Write the open turns' tracks and the live rooms' last activity

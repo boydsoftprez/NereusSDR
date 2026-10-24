@@ -551,3 +551,29 @@ def test_one_band_list_build_a_tick_for_six_hundred_stations(harness):
         for s, _ in stations:
             kinds = [m["type"] for m in s.take()]
             assert kinds.count("roomsDelta") == 1, kinds
+
+
+def test_an_ended_track_keeps_its_latest_reading_and_its_count():
+    from nereus_roundtable.turns import Reading, Track
+
+    track = Track("a", "K4ABC")
+    for i in range(5):
+        track.add(Reading(1000 * i, -80.0, i, i == 4))
+    track.release()
+    assert track.count == 5
+    assert len(track.readings) == 1
+    assert track.latest is not None and track.latest.present
+    track.release()
+    assert track.count == 5
+
+
+def test_earlier_turns_past_thirty_minutes_go_from_every_room_id(book):
+    from nereus_roundtable.turns import Turn
+
+    now = book.clock.wall_ms()
+    old, recent = Turn("talking", [], now - rooms.EARLIER_MS - 5000), Turn("talking", [], now - 60000)
+    old.end = now - rooms.EARLIER_MS - 1
+    recent.end = now - 1000
+    book.earlier = {"usb-14200000": [old, recent], "usb-7200000": [old]}
+    book.prune_earlier()
+    assert book.earlier == {"usb-14200000": [recent]}

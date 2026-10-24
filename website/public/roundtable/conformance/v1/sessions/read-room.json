@@ -1,0 +1,298 @@
+{
+  "runs": [
+    "service"
+  ],
+  "setup": {},
+  "steps": [
+    {
+      "connect": "station"
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "challenge",
+        "nonce": "$b64:32:challenge"
+      }
+    },
+    {
+      "from": "station",
+      "role": "behaviour",
+      "message": {
+        "type": "hello",
+        "v": 1,
+        "software": "$string:software",
+        "softwareVersion": "$string:softwareVersion",
+        "spki": "$key:a:spki",
+        "sig": "$hello:a:challenge:signed"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "welcome",
+        "station": "$key:a:id",
+        "kind": "core",
+        "callsign": null,
+        "grid": null,
+        "time": 1800000000000,
+        "limits": {
+          "readingsPerSecond": 2,
+          "presencePerSecond": 1,
+          "messagesPerMinute": 6,
+          "messagesPerHour": 60,
+          "messageCodePoints": 500,
+          "messageLines": 10,
+          "namesPerMinute": 10,
+          "reportsPerHour": 10,
+          "slices": 4,
+          "reads": 4
+        },
+        "mentions": []
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "rooms",
+        "gen": 1,
+        "rooms": []
+      }
+    },
+    {
+      "from": "station",
+      "role": "behaviour",
+      "message": {
+        "type": "presence",
+        "callsign": "K4ABC",
+        "grid": "EM73",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "roomsDelta",
+        "gen": 2,
+        "add": [
+          {
+            "id": "usb-14212000",
+            "band": "20m",
+            "family": "usb",
+            "hz": 14212000,
+            "state": "quiet",
+            "talkers": [],
+            "members": 1,
+            "messages": 0,
+            "last": 1800000010000,
+            "folded": false,
+            "start": null,
+            "heard": 0,
+            "readings": [],
+            "lastMessage": null,
+            "ended": null
+          }
+        ],
+        "change": [],
+        "remove": []
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "room",
+        "gen": 1,
+        "id": "usb-14212000",
+        "opening": "$int:opening",
+        "band": "20m",
+        "family": "usb",
+        "hz": 14212000,
+        "members": [
+          {
+            "ref": "$rowRef:a",
+            "callsign": "K4ABC",
+            "nth": 1,
+            "grid": "EM73",
+            "km": null,
+            "offsetHz": 0,
+            "joining": false,
+            "away": false,
+            "keyed": false,
+            "software": "$ref:software",
+            "softwareVersion": "$ref:softwareVersion",
+            "reading": null,
+            "you": true
+          }
+        ],
+        "now": [],
+        "earlier": [],
+        "messages": []
+      }
+    },
+    {
+      "advanceMs": 1000
+    },
+    {
+      "connect": "station2"
+    },
+    {
+      "from": "server",
+      "to": "station2",
+      "message": {
+        "type": "challenge",
+        "nonce": "$b64:32:challenge2"
+      }
+    },
+    {
+      "from": "station2",
+      "role": "behaviour",
+      "message": {
+        "type": "hello",
+        "v": 1,
+        "software": "$string:software",
+        "softwareVersion": "$string:softwareVersion",
+        "spki": "$key:b:spki",
+        "sig": "$hello:b:challenge2:signed"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station2",
+      "message": {
+        "type": "welcome",
+        "station": "$key:b:id",
+        "kind": "core",
+        "callsign": null,
+        "grid": null,
+        "time": 1800000011000,
+        "limits": {
+          "readingsPerSecond": 2,
+          "presencePerSecond": 1,
+          "messagesPerMinute": 6,
+          "messagesPerHour": 60,
+          "messageCodePoints": 500,
+          "messageLines": 10,
+          "namesPerMinute": 10,
+          "reportsPerHour": 10,
+          "slices": 4,
+          "reads": 4
+        },
+        "mentions": []
+      }
+    },
+    {
+      "from": "server",
+      "to": "station2",
+      "message": {
+        "type": "rooms",
+        "gen": 1,
+        "rooms": [
+          {
+            "id": "usb-14212000",
+            "band": "20m",
+            "family": "usb",
+            "hz": 14212000,
+            "state": "quiet",
+            "talkers": [],
+            "members": 1,
+            "messages": 0,
+            "last": 1800000010000,
+            "folded": false,
+            "start": null,
+            "heard": 0,
+            "readings": [],
+            "lastMessage": null,
+            "ended": null
+          }
+        ]
+      }
+    },
+    {
+      "from": "station2",
+      "role": "behaviour",
+      "message": {
+        "type": "read",
+        "room": "usb-14212000"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station2",
+      "message": {
+        "type": "room",
+        "gen": 1,
+        "id": "usb-14212000",
+        "opening": "$ref:opening",
+        "band": "20m",
+        "family": "usb",
+        "hz": 14212000,
+        "members": [
+          {
+            "ref": "$ref:a",
+            "callsign": "K4ABC",
+            "nth": 1,
+            "grid": "EM73",
+            "km": null,
+            "offsetHz": 0,
+            "joining": false,
+            "away": false,
+            "keyed": false,
+            "software": "$ref:software",
+            "softwareVersion": "$ref:softwareVersion",
+            "reading": null,
+            "you": false
+          }
+        ],
+        "now": [],
+        "earlier": [],
+        "messages": []
+      }
+    },
+    {
+      "from": "station2",
+      "role": "behaviour",
+      "message": {
+        "type": "unread",
+        "room": "usb-14212000"
+      }
+    },
+    {
+      "expectSilent": "station2"
+    },
+    {
+      "from": "station2",
+      "role": "scripted",
+      "message": {
+        "type": "read",
+        "room": "lsb-7188000"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station2",
+      "message": {
+        "type": "error",
+        "code": "not-found",
+        "reason": "That room, turn or message is not here.",
+        "about": "read",
+        "retryAfterMs": 0
+      }
+    }
+  ]
+}
