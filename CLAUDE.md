@@ -120,8 +120,9 @@ strings `"True"` / `"False"`.
   4903-4910, 17528-17542). Connecting never keys.
 * Per-MAC under `hardware/<mac>/...`: sample rate, active RX count.
 * Client-authoritative, persisted: VFO, mode, filter, DSP settings, RX and TX
-  antenna per receiver (`Slice<N>/RxAntenna`, `Slice<N>/TxAntenna`), layout, UI
-  and display preferences.
+  antenna per band in Setup's antenna table (`hardware/<mac>/alex/antenna/...`,
+  the only antenna store; slices take their labels from it), layout, UI and
+  display preferences.
 
 GUI↔model sync: model setters emit, the connection sends; guard echo loops with
 `m_updatingFromModel` or `QSignalBlocker` (AetherSDR pattern).

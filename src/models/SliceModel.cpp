@@ -8,6 +8,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-23 - saveToSettings and restoreFromSettings no longer carry the
+//                slice's antenna labels: restoring them overwrote Setup's
+//                per-band antenna table. NereusSDR-original. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22 - rxAntennaLabelFor: refreshAntennasFromAlex's receive-label
 //                rule on its own, so the Core can compare the label a slice
 //                will have on a new band before it gets there. J.J. Boyd
@@ -3064,8 +3068,9 @@ void SliceModel::saveToSettings(Band band)
     s.setValue(sp + QStringLiteral("XitHz"),      m_xitHz);
     s.setValue(sp + QStringLiteral("AfGain"),     m_afGain);
     s.setValue(sp + QStringLiteral("RfGain"),     m_rfGain);
-    s.setValue(sp + QStringLiteral("RxAntenna"),  m_rxAntenna);
-    s.setValue(sp + QStringLiteral("TxAntenna"),  m_txAntenna);
+    // The antennas are not saved here. Setup's per-band antenna table
+    // (AlexController) is their only store, as Thetis keeps them in Alex
+    // alone; a slice takes its labels from that table for the band it is on.
 
     // Audio panel, squelch, APF and the mode-specific offsets. Per slice
     // (no band suffix), like Muted and AfGain beside them: each is a
@@ -3513,12 +3518,11 @@ void SliceModel::restoreFromSettings(Band band)
     if (s.contains(sp + QStringLiteral("RfGain"))) {
         setRfGain(s.value(sp + QStringLiteral("RfGain")).toInt());
     }
-    if (s.contains(sp + QStringLiteral("RxAntenna"))) {
-        setRxAntenna(s.value(sp + QStringLiteral("RxAntenna")).toString());
-    }
-    if (s.contains(sp + QStringLiteral("TxAntenna"))) {
-        setTxAntenna(s.value(sp + QStringLiteral("TxAntenna")).toString());
-    }
+    // The antennas are not restored here. The old Slice<N>/RxAntenna and
+    // TxAntenna keys held one label for the whole slice, so restoring a band
+    // wrote the last band's antenna into the new band's row of Setup's
+    // antenna table. RadioModel names the slice's antennas from that table
+    // instead (refreshSliceAntennasFromAlex).
 
     // Audio panel, squelch, APF and the mode-specific offsets (per slice).
     // An absent key leaves the SliceModel default as it is.
