@@ -69,6 +69,12 @@ still connect to each other as before.
   burst, and it hides at most two rows in a row, so a real rise in the noise
   floor shows after two rows. The threshold setting is unchanged.
   ([#625](https://github.com/boydsoftprez/NereusSDR/pull/625))
+- A lost I/Q packet no longer draws a false bright line across the spectrum
+  and waterfall. On a link that keeps losing packets, such as Wi-Fi or a
+  Hermes Lite 2, the waterfall keeps moving, with a slight smear at a gap
+  instead of a pause. Thanks to Martin Fischer (OE5SOS), whose Longpath fix
+  this follows.
+  ([#641](https://github.com/boydsoftprez/NereusSDR/pull/641))
 - The Max Bin peak hold falls again after a signal above 0 dBm. It used to
   creep toward 0 dBm and stay there.
   ([#608](https://github.com/boydsoftprez/NereusSDR/pull/608))
@@ -176,6 +182,19 @@ still connect to each other as before.
   NB or NB2 on the change can no longer corrupt memory. This touches the
   receive path and has not yet been checked on a radio.
   ([#630](https://github.com/boydsoftprez/NereusSDR/pull/630))
+- The filter presets F1 to F10 for LSB, USB, DIGL, DIGU, CWL, CWU, AM, SAM
+  and DSB now have the standard Thetis values. For example, CW F1 is 1.0 kHz
+  wide instead of 1.5 kHz. A preset you edited and saved keeps what you saved,
+  and **Reset** gives the new value. If you ever reordered a mode's presets,
+  that mode keeps its old values until you reset it in **Setup > DSP > Filter
+  Presets**. Where no filter is saved yet, DIGU and DIGL start on a 3.0 kHz
+  filter. Below a CW pitch of 500 Hz, a CW preset slides so it no longer
+  crosses the carrier. FM is unchanged.
+  ([#640](https://github.com/boydsoftprez/NereusSDR/pull/640))
+- The band's AGC and the RF gain slider come back as you left them after a
+  restart. Moving the AGC-T or RF gain slider just before quitting could save
+  one of the pair out of step with the other.
+  ([#645](https://github.com/boydsoftprez/NereusSDR/pull/645))
 - Changing the sample rate live right after connecting no longer fails. A late
   connection update could wipe the rate and receiver count chosen at connect.
   Thanks to Martin Fischer (OE5SOS), whose Longpath fix this follows.
@@ -206,8 +225,26 @@ still connect to each other as before.
   "Invalid binding" and serial-port PTT did nothing until the slice was picked
   again. Thanks to Ben (OZ1CT) for the report.
   ([#595](https://github.com/boydsoftprez/NereusSDR/pull/595))
+- A TCI program's AGC gain now sets the AGC-T, the same control as the AGC-T
+  slider, with its full -20 to 120 range. It used to move a different AGC
+  control and read back the wrong number. A TCI AGC change now survives a band
+  change or restart.
+  ([#613](https://github.com/boydsoftprez/NereusSDR/pull/613))
+- A TCI program that stops reading can no longer make NereusSDR's memory grow
+  without limit. Audio and I/Q it cannot take are dropped instead. Thanks to
+  Martin Fischer (OE5SOS), whose Longpath fix this follows.
+  ([#613](https://github.com/boydsoftprez/NereusSDR/pull/613))
+- Over Hamlib rigctld, PKTUSB and PKTLSB use a 3000 Hz default filter instead
+  of 1200 Hz, matching the new DIGU and DIGL starting filter.
+  ([#640](https://github.com/boydsoftprez/NereusSDR/pull/640))
 
 ### Remote connections
+
+- On a Mac, iPhone or iPad, a remote session uses IPv6 for audio and display
+  too when both ends have it. Before, they could fall back to IPv4 while the
+  controls used IPv6, because the device offered an IPv6 address it does not
+  send from.
+  ([#642](https://github.com/boydsoftprez/NereusSDR/pull/642))
 
 - A paired window or phone gets its own slice letter back, with that slice's
   step, AGC and other saved settings, after a Core that runs inside a desktop
