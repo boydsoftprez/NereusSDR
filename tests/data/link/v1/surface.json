@@ -9320,6 +9320,7 @@
             "DisableHfPa",
             "MultimeterDelayMs",
             "NetworkWatchdogEnabled",
+            "LimitFiltersToSidebands",
             "MoxTimeOutEnabled",
             "MoxTimeOutSeconds",
             "PingTimeOutEnabled",

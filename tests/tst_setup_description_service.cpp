@@ -11,6 +11,9 @@
 // via Anthropic Claude Code.
 // 2026-10-12: Frozen pre-V29 Display/Appearance payload byte regressions.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-24: General version 30, the Filters page's Limit filter edges to
+// sidebands row; the cap is 30. J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code.
 #include <QtTest>
 #include <QRegularExpression>
 
@@ -1995,6 +1998,65 @@ private slots:
         }
     }
 
+    // Version 30: General gains a Filters page with the desktop General >
+    // Filters checkbox, bound to the station setting the Core applies to
+    // every slice. A peer below 30 reads version 3 without the page; a
+    // later declaration is capped at 30.
+    void generalV30AddsLimitFilterEdgesRow()
+    {
+        SetupDescriptionService service;
+        const QJsonObject current = projectedCategory(service.general(), 30);
+        QCOMPARE(current.value("version"), QJsonValue(30));
+        const QJsonArray pages = current.value("pages").toArray();
+        QCOMPARE(pages.last().toObject().value("id"), QJsonValue("general.filters"));
+        const QJsonObject page = pageById(current, "general.filters");
+        QCOMPARE(page.value("title"), QJsonValue("Filters"));
+        QCOMPARE(page.value("where"), QJsonValue("station"));
+        const QJsonArray sections = page.value("sections").toArray();
+        QCOMPARE(sections.size(), 1);
+        QCOMPARE(sections.first().toObject().value("title"), QJsonValue("Filters"));
+        const QJsonArray rows = rowsOf(page);
+        QCOMPARE(rows.size(), 1);
+        const QJsonObject row = rows.first().toObject();
+        QCOMPARE(row, (QJsonObject{
+            {"id", "general.filters.limitFilterEdgesToSidebands"},
+            {"label", "Limit filter edges to sidebands"},
+            {"tooltip", "Prevents crossing the 0 point with certain filters"},
+            {"kind", "toggle"},
+            {"binding", QJsonObject{{"setting", "LimitFiltersToSidebands"}}},
+            {"applies", "live"},
+            {"valueEncoding", QJsonObject{{"true", "True"}, {"false", "False"}}},
+            {"requiresDescriptionVersion", 30}}));
+        QCOMPARE(QString::fromLatin1(RadioModel::kLimitFiltersToSidebandsKey),
+                 QStringLiteral("LimitFiltersToSidebands"));
+        QCOMPARE(classifySettingsKey(QStringLiteral("LimitFiltersToSidebands")),
+                 SettingsScope::Station);
+        QVERIFY(SetupDescriptionService::validateGeneralV30Control(row));
+        QVERIFY(SetupDescriptionService::validateSettingToggleEncoding(row));
+
+        // Below 30: version 3 exactly, without the page.
+        for (const int version : {3, 29}) {
+            const QJsonObject older = projectedCategory(service.general(), version);
+            QCOMPARE(older.value("version"), QJsonValue(3));
+            QVERIFY(pageById(older, "general.filters").isEmpty());
+            QJsonObject expected = withoutRowsOf(current, 30);
+            expected.insert("version", 3);
+            QCOMPARE(older, expected);
+        }
+        QCOMPARE(projectedCategory(service.general(), 99), current);
+
+        // The resource's row is closed.
+        const QList<QJsonObject> resource = resourceRows(QStringLiteral("general"), 30);
+        QCOMPARE(resource.size(), 1);
+        for (const QJsonObject& resourceRow : resource) {
+            QVERIFY(SetupDescriptionService::validateGeneralV30Control(resourceRow));
+            for (const QJsonObject& changed : mutationsOf(resourceRow)) {
+                QVERIFY2(!SetupDescriptionService::validateGeneralV30Control(changed),
+                         qPrintable(QJsonDocument(changed).toJson(QJsonDocument::Compact)));
+            }
+        }
+    }
+
     // Version 24 (radio codec lane): TX Input's Line In Gain moves in the
     // 1.5 dB steps of Thetis's udLineInBoost with one decimal
     // (setup.designer.cs:47006-47034 [v2.10.3.15]), and the Saturn G2 group
@@ -3051,10 +3113,12 @@ private slots:
                                   QStringLiteral("catNetwork"), QStringLiteral("dsp")}) {
             const QJsonObject category = service.category(id);
             // Version 15 carries DSP and CAT & Network rows; 19, CFC's band
-            // editor; 21, TCI Forget's dependency on Duplicate.
+            // editor; 21, TCI Forget's dependency on Duplicate; 30, General's
+            // Filters page.
             QCOMPARE(category.value(QStringLiteral("version")).toInt(),
                      id == QLatin1String("dsp") ? 19
-                         : id == QLatin1String("catNetwork") ? 21 : 1);
+                         : id == QLatin1String("catNetwork") ? 21
+                         : id == QLatin1String("general") ? 30 : 1);
             QCOMPARE(category.value(QStringLiteral("category")).toObject()
                          .value(QStringLiteral("id")).toString(), id);
             QVERIFY(!category.value(QStringLiteral("pages")).toArray().isEmpty());
@@ -3205,7 +3269,8 @@ private slots:
             QStringLiteral("RxOnly"), QStringLiteral("NetworkWatchdogEnabled"),
             QStringLiteral("MoxTimeOutEnabled"), QStringLiteral("PingTimeOutEnabled"),
             QStringLiteral("RemoteMoxTimeOutEnabled"), QStringLiteral("ExtendedTransmit"),
-            QStringLiteral("PreventTxOnDifferentBandToRx")};
+            QStringLiteral("PreventTxOnDifferentBandToRx"),
+            QStringLiteral("LimitFiltersToSidebands")};
         int generalCount = 0;
         for (const QJsonValue& page : service.category(QStringLiteral("general"))
                  .value(QStringLiteral("pages")).toArray()) {
@@ -3226,7 +3291,7 @@ private slots:
                 }
             }
         }
-        QCOMPARE(generalCount, 7);
+        QCOMPARE(generalCount, 8);
 
         const QJsonObject watchdog = findControl(QStringLiteral("general"),
             QStringLiteral("general.options.networkWatchdog"));
@@ -3260,6 +3325,7 @@ private slots:
             QStringLiteral("MoxTimeOutEnabled"), QStringLiteral("PingTimeOutEnabled"),
             QStringLiteral("RemoteMoxTimeOutEnabled"), QStringLiteral("NetworkWatchdogEnabled"),
             QStringLiteral("ExtendedTransmit"), QStringLiteral("PreventTxOnDifferentBandToRx"),
+            QStringLiteral("LimitFiltersToSidebands"),
             QStringLiteral("DspOptionsCacheImpulse"),
             QStringLiteral("DspOptionsCacheImpulseSaveRestore")};
         QHash<QString, QVariant> oldValues;
@@ -3286,6 +3352,7 @@ private slots:
             QStringLiteral("general.options.networkWatchdog"),
             QStringLiteral("general.options.extended"),
             QStringLiteral("general.options.preventDifferentBand"),
+            QStringLiteral("general.filters.limitFilterEdgesToSidebands"),
             QStringLiteral("dsp.options.DspOptionsCacheImpulse"),
             QStringLiteral("dsp.options.DspOptionsCacheImpulseSaveRestore")};
         for (const QString& id : ids) {
@@ -3315,6 +3382,8 @@ private slots:
                     QCOMPARE(RadioModel::extendedTransmitSetting(), on);
                 } else if (key == QLatin1String("PreventTxOnDifferentBandToRx")) {
                     QCOMPARE(RadioModel::preventTxOnDifferentBandSetting(), on);
+                } else if (key == QLatin1String("LimitFiltersToSidebands")) {
+                    QCOMPARE(RadioModel::limitFiltersToSidebandsSetting(), on);
                 } else if (key == QLatin1String("MoxTimeOutEnabled")) {
                     QCOMPARE(RadioModel::txTimeOutSettingsFor(QStringLiteral("station")).moxEnabled, on);
                 } else if (key == QLatin1String("PingTimeOutEnabled")) {
@@ -3994,7 +4063,7 @@ private slots:
             QTRY_VERIFY(!(general = setupCategoryOnWire(
                 *core.app, "general", SessionMessageKind::Delta)).isEmpty());
             QCOMPARE(QJsonDocument::fromJson(general.toUtf8()).object()
-                         .value("version").toInt(), qMin(expected, 3));
+                         .value("version").toInt(), expected >= 30 ? 30 : qMin(expected, 3));
         };
         check(0, kSessionProtocolMinor, 0);
         check(1, kSessionProtocolMinor, 1);
@@ -4022,7 +4091,9 @@ private slots:
         // row; 24 is TX Input's Line In Gain steps and Saturn Mic
         // Tip-Ring; 25 is Audio's Outputs page and Microphone title; 26 is
         // Display's Waterfall Defaults level gates; 27 is Appearance's
-        // Trace Color row; 28 is Display's FFT sizing rows, and the cap.
+        // Trace Color row; 28 is Display's FFT sizing rows; 29 is the
+        // accepted eight Display pages; 30 is General's Filters page, and
+        // the cap.
         check(21, kSessionProtocolMinor, 21);
         check(22, kSessionProtocolMinor, 22);
         check(23, kSessionProtocolMinor, 23);
@@ -4032,7 +4103,8 @@ private slots:
         check(27, kSessionProtocolMinor, 27);
         check(28, kSessionProtocolMinor, 28);
         check(29, kSessionProtocolMinor, 29);
-        check(30, kSessionProtocolMinor, 29);
+        check(30, kSessionProtocolMinor, 30);
+        check(31, kSessionProtocolMinor, 30);
         check(2, quint16(kRadioIdentitySessionProtocolMinor - 1), 0);
         check(3, quint16(kRadioIdentitySessionProtocolMinor - 1), 0);
     }
