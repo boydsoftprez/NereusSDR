@@ -7904,8 +7904,10 @@ private:
     void wireRxChannelLaneSignals(int channelId);
     // Reads the AGC top back (on the lane) after an AGC-T set and puts it in
     // the slice's RF gain. m_agcReadbackSerial keeps only the newest
-    // readback per slice.
-    void syncRfGainFromAgcTop(SliceModel* slice, RxChannel* channel);
+    // readback per slice. `scheduleSave` saves the slice when the readback
+    // changes its RF gain: true for the AGC-T slider, false for the AUTO
+    // tick, whose writes are not the operator's and schedule no save.
+    void syncRfGainFromAgcTop(SliceModel* slice, RxChannel* channel, bool scheduleSave);
     QHash<const SliceModel*, quint64> m_agcReadbackSerial;
     // The live rate change (setSampleRateLiveAsync).
     struct SampleRateRequest {
