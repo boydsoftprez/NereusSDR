@@ -27,6 +27,13 @@
 //                 row period, the pointer leaving, the front slice, a
 //                 removed flag, the dBm strip arrows, a replaced history)
 //                 and the FPS readout counts frames outside the rebuild.
+//   2026-10-22  The GPU trace and its peak hold sit on their grid: the dBm
+//                 floor is the top of the band plan strip and the 1 Hz
+//                 normalization is added, as dbmToYf() does for the grid.
+//                 Ported from Longpath (Martin Fischer,
+//                 OE5SOS; PR 100, c3ce95bf, src/gui/SpectrumWidget.cpp
+//                 [@383f058]) by J.J. Boyd (KG4VCF), with AI-assisted
+//                 transformation via Claude Code.
 //   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a live
 //                 trace of a remote pan's row clock (starves, re-anchors,
 //                 two-row puts, paint gaps and a 10 s summary), gated on
@@ -15493,9 +15500,43 @@ void SpectrumWidget::initialize(QRhiCommandBuffer* cb)
     m_rhiInitialized = true;
 }
 
+// The GPU trace's dBm floor in the spectrum viewport's normalized device
+// coordinates (-1 bottom, +1 top), and the dB it adds to every value: the
+// same floor and shift dbmToYf() gives the grid, the dBm scale and every
+// overlay, so the trace sits on its grid with the band plan shown and with
+// the 1 Hz normalization on.
+// From Longpath src/gui/SpectrumWidget.cpp:11648-11665 [@383f058]
+float SpectrumWidget::fftTraceFloorNdc(const QRect& specRect) const
+{
+    const float yBot = -1.0f;
+    // Boden der dBm-Achse: wie dbmToYf die OBERKANTE des Bandplan-
+    // Streifens, nicht der Rand des Bereichs. Bis 2026-09-25 rechnete
+    // die GPU-Kurve ueber die volle Hoehe, Gitter und Ueberlagerungen
+    // ohne den Streifen -- mit Bandplan lag die Kurve am Rauschboden
+    // um fast die Streifenhoehe zu tief (tst_spectrum_trace_on_grid).
+    // Die Fuellung reicht weiter bis yBot, wie im CPU-Pfad bis
+    // specRect.bottom().
+    const float stripFrac = (specRect.height() > 0)
+        ? static_cast<float>(bandPlanStripHeight()) / static_cast<float>(specRect.height())
+        : 0.0f;
+    return yBot + 2.0f * qBound(0.0f, stripFrac, 1.0f);
+}
+
+float SpectrumWidget::fftTraceShiftDb() const
+{
+    // Kalibrierung UND 1-Hz-Normierung, wie dbmToYf -- die Normierung
+    // fehlte hier, Gitter und Ueberlagerungen hatten sie schon.
+    // [original inline comment from Longpath src/gui/SpectrumWidget.cpp:11663-11664]
+    // NereusSDR: the calibration is displayCalOffsetDb(), as dbmToYf takes it.
+    return displayCalOffsetDb() + normalizeShiftDb();
+}
+
 // The trace and fill vertices renderGpuFrame() uploads, moved out of it
-// unchanged (Display pill plan Task 5) apart from the two colours below.
-void SpectrumWidget::buildFftTraceVertices(int n, bool buildFill,
+// (Display pill plan Task 5). Since then the two colors below follow the
+// trace and fill colours, and the dBm floor and shift are the grid's
+// (Longpath PR 100): yFloor is fftTraceFloorNdc() of the spectrum area,
+// computed once per frame by the caller and shared with the peak hold.
+void SpectrumWidget::buildFftTraceVertices(int n, float yFloor, bool buildFill,
                                            QVector<float>& lineVerts,
                                            QVector<float>& fillVerts) const
 {
@@ -15505,7 +15546,8 @@ void SpectrumWidget::buildFftTraceVertices(int n, bool buildFill,
     const float yTop = 1.0f;
 
     const float fa = m_fillAlpha;
-    const float cal = displayCalOffsetDb();
+    // From Longpath src/gui/SpectrumWidget.cpp:11665 [@383f058]
+    const float cal = fftTraceShiftDb();
 
     // Flat-mode colour picked from m_fillColor.
     const float flatR = m_fillColor.redF();
@@ -15536,7 +15578,8 @@ void SpectrumWidget::buildFftTraceVertices(int n, bool buildFill,
     for (int j = 0; j < n; ++j) {
         float x = (n > 1) ? 2.0f * j / (n - 1) - 1.0f : 0.0f;
         float t = qBound(0.0f, ((m_renderedPixels[j] + cal) - minDbm) / range, 1.0f);
-        float y = yBot + t * (yTop - yBot);
+        // From Longpath src/gui/SpectrumWidget.cpp:11753 [@383f058]
+        float y = yFloor + t * (yTop - yFloor);
 
         float cr, cg, cb2;
         if (m_gradientEnabled) {
@@ -15588,6 +15631,39 @@ void SpectrumWidget::buildFftTraceVertices(int n, bool buildFill,
     }
 }
 
+// The peak hold line's vertices renderGpuFrame() uploads, moved out of it
+// so a test can read them; on the same floor (yFloor, fftTraceFloorNdc())
+// and shift as the trace.
+void SpectrumWidget::buildFftPeakVertices(int n, float yFloor,
+                                          QVector<float>& peakVerts) const
+{
+    const float minDbm = m_refLevel - m_dynamicRange;
+    const float range  = m_dynamicRange;
+    const float yTop = 1.0f;
+    // From Longpath src/gui/SpectrumWidget.cpp:11660-11665 [@383f058]
+    const float cal = fftTraceShiftDb();
+
+    // Flat-mode colour picked from m_fillColor.
+    const float flatR = m_fillColor.redF();
+    const float flatG = m_fillColor.greenF();
+    const float flatB = m_fillColor.blueF();
+
+    peakVerts.resize(n * kFftVertStride);
+    for (int j = 0; j < n; ++j) {
+        float x = (n > 1) ? 2.0f * j / (n - 1) - 1.0f : 0.0f;
+        float t = qBound(0.0f, ((m_pxPeakHold[j] + cal) - minDbm) / range, 1.0f);
+        // From Longpath src/gui/SpectrumWidget.cpp:11894 [@383f058]
+        float y = yFloor + t * (yTop - yFloor);
+        int li = j * kFftVertStride;
+        peakVerts[li]     = x;
+        peakVerts[li + 1] = y;
+        peakVerts[li + 2] = flatR;
+        peakVerts[li + 3] = flatG;
+        peakVerts[li + 4] = flatB;
+        peakVerts[li + 5] = 0.55f;
+    }
+}
+
 QVector<float> SpectrumWidget::fftTraceRibbonForTest(float viewportWidthPx,
                                                      float viewportHeightPx,
                                                      float devicePixelRatio) const
@@ -15595,7 +15671,8 @@ QVector<float> SpectrumWidget::fftTraceRibbonForTest(float viewportWidthPx,
     const int n = static_cast<int>(qMin<qsizetype>(m_renderedPixels.size(), kMaxFftBins));
     QVector<float> lineVerts;
     QVector<float> fillVerts;
-    buildFftTraceVertices(n, false, lineVerts, fillVerts);
+    buildFftTraceVertices(n, fftTraceFloorNdc(spectrumLayout().spectrum), false,
+                          lineVerts, fillVerts);
     QVector<float> ribbon;
     buildSpectrumTraceRibbon(lineVerts, n, kFftVertStride, viewportWidthPx, viewportHeightPx,
                              m_lineWidth * devicePixelRatio, ribbon);
@@ -16346,24 +16423,18 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
     if (trace.writeLine) {
         const int n = qMin(m_renderedPixels.size(), kMaxFftBins);
         m_visibleBinCount = n;
-        const float minDbm = m_refLevel - m_dynamicRange;
-        const float range  = m_dynamicRange;
-        const float yBot = -1.0f;
-        const float yTop = 1.0f;
-
-        const float cal = displayCalOffsetDb();
-
-        // Flat-mode colour picked from m_fillColor.
-        const float flatR = m_fillColor.redF();
-        const float flatG = m_fillColor.greenF();
-        const float flatB = m_fillColor.blueF();
 
         // Display pill plan Task 5: the loop that was here is
         // buildFftTraceVertices(), so a test can read what is uploaded.
         QVector<float> lineVerts;
         const bool buildFill = trace.writeFill;
         QVector<float> fillVerts;
-        buildFftTraceVertices(n, buildFill, lineVerts, fillVerts);
+        // The trace's dBm floor, once per frame for the trace and the peak
+        // hold (it measures the band plan strip's font).
+        // From Longpath src/gui/SpectrumWidget.cpp:11660 [@383f058]: the floor
+        // (yFloor) is the top of the band plan strip; the fill still reaches yBot.
+        const float traceFloorNdc = fftTraceFloorNdc(specRect);
+        buildFftTraceVertices(n, traceFloorNdc, buildFill, lineVerts, fillVerts);
 
         // The live trace goes up as geometry of its line width, in device
         // pixels of the spectrum viewport the line pass below draws in.
@@ -16392,19 +16463,8 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
         // m_peakHoldHasData.  Per-display-pixel array (m_pxPeakHold) is
         // sized to m_renderedPixels in updateSpectrumLinear.
         if (trace.writePeak) {
-            QVector<float> peakVerts(n * kFftVertStride);
-            for (int j = 0; j < n; ++j) {
-                float x = (n > 1) ? 2.0f * j / (n - 1) - 1.0f : 0.0f;
-                float t = qBound(0.0f, ((m_pxPeakHold[j] + cal) - minDbm) / range, 1.0f);
-                float y = yBot + t * (yTop - yBot);
-                int li = j * kFftVertStride;
-                peakVerts[li]     = x;
-                peakVerts[li + 1] = y;
-                peakVerts[li + 2] = flatR;
-                peakVerts[li + 3] = flatG;
-                peakVerts[li + 4] = flatB;
-                peakVerts[li + 5] = 0.55f;
-            }
+            QVector<float> peakVerts;
+            buildFftPeakVertices(n, traceFloorNdc, peakVerts);
             batch->updateDynamicBuffer(m_fftPeakVbo, 0,
                 n * kFftVertStride * sizeof(float), peakVerts.constData());
         }

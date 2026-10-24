@@ -8152,6 +8152,12 @@ nereus_add_test(tst_spectrum_widget_display_signals)
 # spacing and 10 px text draw what they drew before. Test sandbox.
 nereus_add_test(tst_spectrum_widget_additions)
 
+# -- The GPU spectrum trace and its peak hold sit on their grid line with
+#    the band plan shown and with the 1 Hz normalization on, and a new bin
+#    count redraws the normalized grid. Ported from Longpath PR 100
+#    (tests/tst_spectrum_trace_on_grid.cpp [@383f058]), 2026-10-22 --
+nereus_add_test(tst_spectrum_trace_on_grid)
+
 # Display pill plan Task 3: the waterfall level model under Clarity (Black
 # Level and Color Gain against the noise floor, up = blacker), what the
 # renderer colours with in each mode, and the one-time conversion of stored
