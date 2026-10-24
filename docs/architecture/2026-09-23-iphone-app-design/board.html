@@ -6883,6 +6883,18 @@
     top: 698px;
   }
 
+  /* The iPad's Pan sheet drops from its Pan button, as wide as the phone's. */
+  .dropsheet.dp-pansheet {
+    right: auto;
+    width: 380px;
+    z-index: 45;
+  }
+
+  .dp-pansheet .agrid + .acap,
+  .dp-pansheet .dropsheet__row + .acap {
+    margin-top: 10px;
+  }
+
   .dp-radio {margin-top:10px; flex-wrap:wrap}
   .dp-radio button {min-height:36px; padding:0 12px}
   .dp-pan2 .ptt {
@@ -14016,6 +14028,18 @@
     top: 698px;
   }
 
+  /* The iPad's Pan sheet drops from its Pan button, as wide as the phone's. */
+  .dropsheet.dp-pansheet {
+    right: auto;
+    width: 380px;
+    z-index: 45;
+  }
+
+  .dp-pansheet .agrid + .acap,
+  .dp-pansheet .dropsheet__row + .acap {
+    margin-top: 10px;
+  }
+
   .dp-radio {margin-top:10px; flex-wrap:wrap}
   .dp-radio button {min-height:36px; padding:0 12px}
   .dp-pan2 .ptt {
@@ -14308,7 +14332,7 @@
     <section class="opt" aria-labelledby="w-dp-ipad2">
       <div class="opt__head">
         <h2 id="w-dp-ipad2">Two pans, two pills</h2>
-        <p>Pan 1's pill open on Spectrum and Pan 2's on Waterfall. Change a row in one and watch only its own pan move; tap Reset this pan on either. Pick the radio to see +RX follow its slices.</p>
+        <p>Pan 1's pill open on Spectrum and Pan 2's on Waterfall. Change a row in one and watch only its own pan move; tap Reset this pan on either. Tap Pan 1 or Pan 2 in the toolbar for that pan's sheet: Close this pan on Pan 2 closes it and moves its slice to Pan 1, and Add a pan opens it again. Pick the radio to see +RX follow its slices and Add a pan follow its pans.</p>
         <div class="seg dp-radio" role="radiogroup" aria-label="The radio behind the Core">
           <button type="button" role="radio" data-state="rx" data-radio="ANAN-G2E" aria-checked="true">ANAN-G2E</button>
           <button type="button" role="radio" data-state="rx" data-radio="ANAN-G2" aria-checked="false">ANAN-G2</button>
@@ -23316,12 +23340,17 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
     };
     var phonePan1 = null;   // the phone's Pan 1, for its slice letters
     var ipadPans = [];      // the iPad's Pan 1 and Pan 2
+    var ipadParked = null;  // a closed Pan 2, whose slices moved to Pan 1
     function panLetters(device, n) {
       var q = device === 'ipad' ? ipadPans[n - 1] : (n === 1 ? phonePan1 : null);
       if (!q) {
         return [];
       }
-      return q.slices.map(function (sl) { return SLICE_LETTERS[sl.letterIdx != null ? sl.letterIdx : sl.idx]; });
+      var held = q.slices.slice();
+      if (device === 'ipad' && n === 1 && ipadParked) {
+        held = held.concat(ipadParked.slices);
+      }
+      return held.map(function (sl) { return SLICE_LETTERS[sl.letterIdx != null ? sl.letterIdx : sl.idx]; });
     }
     function goSetup(page, scope, device) {
       device = device || 'phone';
@@ -24797,6 +24826,7 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       // board's BoardCapabilities::maxSlices). With two pans the letters
       // and the limit run across both.
       p.dpRxBtn = B.rx;
+      p.dpTnfBtn = B.tnf;
       p.dpSay = say;
       var group = opts.group || [p];
       B.rx.addEventListener('click', function () {
@@ -25149,6 +25179,182 @@ DX de N1ABC:     7246.5  F5ABC                             1939Z</pre>
       });
       listeners.push(syncBar);
       syncBar();
+
+      // The Pan sheet: the toolbar's Pan button opens it for the pan last
+      // touched. The phone's Pan sheet, plus Add a pan and Close this pan
+      // (design section 6.3). A new pan takes a spare slice from a pan with
+      // two, as the desktop's layout spreads them (spreadSlicesOntoEmptyPans),
+      // or a new slice where none is spare; a closed pan's slices move to
+      // Pan 1 (rehomeSlicesToPans), and its own values are kept.
+      var pan2Open = true;
+      var ps = el('div', 'dropsheet dp-pansheet');
+      ps.setAttribute('role', 'dialog');
+      ps.hidden = true;
+      var psTitle = el('div', 'atitle');
+      var psName = el('span', '', 'Pan 1');
+      var psFor = el('span', 'dropsheet__for');
+      psTitle.appendChild(psName);
+      psTitle.appendChild(psFor);
+      ps.appendChild(psTitle);
+      var psBody = el('div', 'abody');
+      ps.appendChild(psBody);
+      psBody.appendChild(el('div', 'acap', 'Band:'));
+      var bandGrid = el('div', 'agrid agrid--4');
+      ['160', '80', '60', '40', '30', '20', '17', '15', '12', '10', '6', 'WWV'].forEach(function (b) {
+        var x = el('button', 'nbtn is-blue', b);
+        x.type = 'button';
+        x.setAttribute('aria-pressed', String(b === '40'));
+        x.addEventListener('click', function () {
+          all(bandGrid, 'button').forEach(function (y) { y.setAttribute('aria-pressed', String(y === x)); });
+        });
+        bandGrid.appendChild(x);
+      });
+      psBody.appendChild(bandGrid);
+      psBody.appendChild(el('p', 'dropsheet__note', 'A band opens where this pan\'s active slice last was on it: its frequency, mode and filter.'));
+      var sliceActs = el('div', 'agrid agrid--2');
+      var addSl = el('button', 'nbtn', 'Add a slice here');
+      var addNotch = el('button', 'nbtn', 'Add a notch at A');
+      [addSl, addNotch].forEach(function (b) { b.type = 'button'; sliceActs.appendChild(b); });
+      psBody.appendChild(sliceActs);
+      var ext = el('label', 'dropsheet__row');
+      var extText = el('span');
+      extText.appendChild(el('b', '', 'Extended view'));
+      extText.appendChild(el('small', '', 'Show the radio\'s full width either side of the band.'));
+      var extBtn = el('button', 'nbtn is-blue', 'On');
+      extBtn.type = 'button';
+      extBtn.setAttribute('aria-pressed', 'true');
+      extBtn.addEventListener('click', function () {
+        var on = extBtn.getAttribute('aria-pressed') !== 'true';
+        extBtn.setAttribute('aria-pressed', String(on));
+        extBtn.textContent = on ? 'On' : 'Off';
+      });
+      ext.appendChild(extText);
+      ext.appendChild(extBtn);
+      psBody.appendChild(ext);
+      psBody.appendChild(el('div', 'acap', 'Pans:'));
+      var panActs = el('div', 'agrid agrid--2');
+      var addPan = el('button', 'nbtn', 'Add a pan');
+      var closePan = el('button', 'nbtn', 'Close this pan');
+      [addPan, closePan].forEach(function (b) { b.type = 'button'; panActs.appendChild(b); });
+      psBody.appendChild(panActs);
+      var psNote = el('p', 'dropsheet__note');
+      psNote.setAttribute('role', 'status');
+      psBody.appendChild(psNote);
+      root.appendChild(ps);
+
+      function lettersOf(q) {
+        return q.slices.map(function (sl) { return SLICE_LETTERS[sl.letterIdx != null ? sl.letterIdx : sl.idx]; });
+      }
+      function andList(xs) {
+        return xs.length < 2 ? xs.join('') : xs.slice(0, -1).join(', ') + ' and ' + xs[xs.length - 1];
+      }
+      function syncPs() {
+        var q = activePan;
+        var s = q.slices[q.active];
+        var letter = SLICE_LETTERS[s.letterIdx != null ? s.letterIdx : q.active];
+        psName.textContent = 'Pan ' + q.dpPan;
+        ps.setAttribute('aria-label', 'Pan ' + q.dpPan);
+        psFor.textContent = 'Slice ' + letter;
+        addNotch.textContent = 'Add a notch at ' + letter;
+        addSl.disabled = q.dpRxBtn.disabled;
+        var openN = pan2Open ? 2 : 1;
+        var atLimit = openN >= dpRadio.pans;
+        addPan.disabled = atLimit;
+        closePan.disabled = q.dpPan === 1;
+        var why = [];
+        if (atLimit) {
+          why.push('The ' + dpRadio.name + ' can show ' + NUM[dpRadio.pans] + ' pans.');
+        } else if (pan2Open) {
+          why.push('Add a pan opens Pan ' + (openN + 1) + ' below Pan ' + openN + ', with a spare slice moved onto it.');
+        } else {
+          why.push('Add a pan opens Pan 2 below this one, with a spare slice moved onto it.');
+        }
+        why.push(q.dpPan === 1 ? 'Pan 1 stays open.'
+          : 'Close this pan moves ' + (q.slices.length > 1 ? 'its slices' : 'slice ' + lettersOf(q)[0]) + ' to Pan 1 and keeps this pan\'s own values for next time.');
+        psNote.textContent = why.join(' ');
+      }
+      function placePs() {
+        var R = root.getBoundingClientRect();
+        var k = R.width / root.offsetWidth || 1;
+        var r = panBtn.getBoundingClientRect();
+        ps.style.left = Math.round((r.left - R.left) / k) + 'px';
+        ps.style.top = Math.round((r.bottom - R.top) / k + 6) + 'px';
+      }
+      function setPs(open) {
+        ps.hidden = !open;
+        panBtn.classList.toggle('is-open', open);
+        panBtn.setAttribute('aria-expanded', String(open));
+        if (open) {
+          placePs();
+          syncPs();
+        }
+      }
+      panBtn.setAttribute('aria-expanded', 'false');
+      panBtn.addEventListener('click', function () { setPs(ps.hidden); });
+      document.addEventListener('pointerdown', function (e) {
+        if (!ps.hidden && !ps.contains(e.target) && e.target !== panBtn) {
+          setPs(false);
+        }
+      }, true);
+      addSl.addEventListener('click', function () {
+        activePan.dpRxBtn.click();
+        syncPs();
+      });
+      addNotch.addEventListener('click', function () { activePan.dpTnfBtn.click(); });
+
+      function setPan2(on) {
+        pan2Open = on;
+        sub.hidden = !on;
+        root.classList.toggle('scr--two', on);
+        p2.frozen = !on;
+        DEVICES.ipad.open = on ? [1, 2] : [1];
+        ipadPans = on ? [p1, p2] : [p1];
+        ipadParked = on ? null : p2;
+        // Pan 1 takes the whole band, or half of it again, split by its
+        // Spectrum Height as before.
+        p1.pan.style.removeProperty('--spec-h');
+        p1.pan.style.removeProperty('--wf-h');
+        var cs = getComputedStyle(p1.pan);
+        p1.dpTotal = parseFloat(cs.getPropertyValue('--spec-h')) + parseFloat(cs.getPropertyValue('--wf-h'));
+        var spec = Math.round(p1.dpTotal * ((p1.look && p1.look.specPct) || 40) / 100);
+        p1.pan.style.setProperty('--spec-h', spec + 'px');
+        p1.pan.style.setProperty('--wf-h', (p1.dpTotal - spec) + 'px');
+        p1.hold = null;
+        p1.hist3d = [];
+        p1.setup();
+        if (on) {
+          p2.setup();
+        }
+        changed();
+      }
+      addPan.addEventListener('click', function () {
+        if (pan2Open) {
+          activePan.dpSay('Pan ' + 3 + ' would open below Pan 2 here. The board draws two pans.');
+          return;
+        }
+        setPan2(true);
+        setPs(false);
+        setActive(p2);
+        var ls = lettersOf(p2);
+        p2.dpSay('Pan 2 opened below Pan 1. Slice ' + andList(ls) + ' moved to it from Pan 1, which had ' + (ls.length > 1 ? 'spares' : 'a spare') + '.');
+      });
+      closePan.addEventListener('click', function () {
+        if (activePan !== p2) {
+          return;
+        }
+        var ls = lettersOf(p2);
+        var f = p2.slices[0].f;
+        setPan2(false);
+        setPs(false);
+        setActive(p1);
+        p1.dpSay('Pan 2 closed. ' + (ls.length > 1 ? 'Slices ' : 'Slice ') + andList(ls) + ' moved to Pan 1, at ' + fmtVfo(f)
+          + ', below the band in view. Pan 2\'s own values are kept for next time.');
+      });
+      listeners.push(function () {
+        if (!ps.hidden) {
+          syncPs();
+        }
+      });
     }
 
     sheetPhones.slice().forEach(function (p) {
