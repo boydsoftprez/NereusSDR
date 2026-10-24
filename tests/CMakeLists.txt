@@ -6531,6 +6531,13 @@ nereus_add_test(tst_spectrum_tx_overlay)
 # setPresetsForMode reorder persists, presetsChanged fires on every mutator.
 nereus_add_test(tst_filter_preset_store)
 
+# ── Longpath bug-fix port, bug 3: filter presets match Thetis ───────────────
+# Table-driven: every F1..F10 slot of LSB, USB, DIGL, DIGU, CWL, CWU, AM, SAM
+# and DSB against Thetis InitFilterPresets (console.cs:5188-5582
+# [v2.10.3.15]), F5 as the default filter, and the CW slots following the CW
+# pitch with the CWPitch setter's image-limit slide.
+nereus_add_test(tst_filter_presets_thetis)
+
 # ── Issue #175 Task 1: per-SKU PA UI constants for HL2 mi0bot parity ─────────
 # 5 tests asserting the 9 constexpr helpers + 2 attenuator constants added
 # in HpsdrModel.h for HL2 (HERMESLITE) mi0bot-Thetis slider/spinbox parity:
