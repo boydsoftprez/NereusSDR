@@ -55,6 +55,8 @@ struct MainScreen: View {
     @State private var displayTab: DisplayPillTab = .spectrum
     /// The Display pill's row a finger holds: only it draws while held (spec DC4).
     @State private var displayPeek: String?
+    /// The band menu a hold on empty band opened, where it opened (DC6).
+    @State private var bandMenu: BandMenuAnchor?
     /// On an iPad on its side, the applet column shows (its corner button).
     @State private var columnShown: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -188,6 +190,16 @@ struct MainScreen: View {
             // A spot's details or a badge's list, over PTT and under the covers.
             SpotLayer.Popups(spots: app.spots, sideways: sideways)
                 .padding(.trailing, sideways ? trailingInset : 0)
+            if let anchor = bandMenu {
+                // Over PTT, as a spot's details are; a tap off it closes it.
+                BandMenuLayer(anchor: anchor, display: main.display, scale: main.bandScale, pan: main.pan,
+                              sideways: sideways, leadingInset: sideways ? leadingInset : 0,
+                              trailingInset: sideways ? trailingInset : 0, close: { bandMenu = nil },
+                              openDisplay: {
+                                  bandMenu = nil
+                                  sheet = .display
+                              })
+            }
             if let flow {
                 LinkLostBanner(flow: flow, mirror: app.mirror, devices: main.devices)
             }
@@ -252,6 +264,12 @@ struct MainScreen: View {
         }
         .clipped()
         .ignoresSafeArea(edges: sideways ? .horizontal : [])
+        // A sheet or a panel opening closes the band menu.
+        .onChange(of: sheet != nil || rxPanelOpen || txPanelOpen) { _, covered in
+            if covered {
+                bandMenu = nil
+            }
+        }
     }
 
     /// The band itself: the trace, waterfall, scales, band-plan strip,
@@ -275,7 +293,7 @@ struct MainScreen: View {
                              firstKeyRefused: BandSlicesModel.refusedForTransmitChoice(transmit.ptt),
                              flagControls: main.flagControls,
                              transmitReason: BandGestureLayer.transmitReason(transmit, take: main.take),
-                             take: main.take)
+                             take: main.take, bandMenu: $bandMenu)
             DbmScaleArrows(display: main.display, band: main.band, trailingInset: trailingInset)
             BandReadouts(band: main.band, trailingInset: trailingInset)
             TransmitDisplayBanner(band: main.band)
@@ -290,7 +308,10 @@ struct MainScreen: View {
             }
         }
         if let flow {
-            faded.modifier(BandUnderCover(flow: flow) { sheet = nil })
+            faded.modifier(BandUnderCover(flow: flow) {
+                sheet = nil
+                bandMenu = nil
+            })
         } else {
             faded
         }

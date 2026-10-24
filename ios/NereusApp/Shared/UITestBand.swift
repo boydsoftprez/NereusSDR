@@ -24,6 +24,12 @@ enum UITestBand {
     static let noRotorArgument = "-NereusNoRotorFixture"
     /// Beside ``argument``: two spots on the band, one the Core can place (330 degrees) and one it cannot.
     static let spotsArgument = "-NereusSpotFixture"
+    /// Beside ``argument`` and ``displayEnvironment``: the band menu's
+    /// Core. Slice A is on 40 m, the Core takes notch requests (version 1)
+    /// and the link is up for settings and commands: each settings write
+    /// comes back as the Core's value, and each `notch.add` is refused with
+    /// its own arguments in the reason, so the UI test reads what was sent.
+    static let bandMenuArgument = "-NereusBandMenuFixture"
     static let catalogueEnvironment = "NEREUS_UITEST_CATALOGUE"
     /// Beside ``argument``: the Core describes Setup > Display at version
     /// 29, read from the file this names (the repository's
@@ -44,6 +50,7 @@ enum UITestBand {
         let mirror = app.mirror
         let rotor = arguments.contains(rotorArgument)
         let noRotor = arguments.contains(noRotorArgument)
+        let bandMenu = arguments.contains(bandMenuArgument)
         let display = environment[displayEnvironment].flatMap { path in
             FileManager.default.contents(atPath: path).flatMap { String(data: $0, encoding: .utf8) }
         }
@@ -70,7 +77,8 @@ enum UITestBand {
             .init(ordinal: 1, name: "propertyResultVersion", value: .i64(1)),
             .init(ordinal: 2, name: "stationCatalogVersion", value: .i64(1)),
         ] + (rotor || noRotor ? [.init(ordinal: 3, name: RotorModel.capability, value: .i64(1))] : [])
-          + (display == nil ? [] : displayCapabilities))))
+          + (display == nil ? [] : displayCapabilities)
+          + (bandMenu ? [.init(ordinal: 8, name: PanSheetModel.notchControlCapability, value: .i64(1))] : []))))
         if let display {
             mirror.apply(.schema(.init(className: "SetupDescription", fields: [
                 .init(ordinal: 0, name: "revision", kind: .i64), .init(ordinal: 1, name: "display", kind: .utf8),
@@ -106,7 +114,7 @@ enum UITestBand {
             .init(ordinal: 15, name: "signalStrengthDbm", value: .f64(-72)),
             .init(ordinal: 28, name: "sampleRateHz", value: .i64(192_000)),
             .init(ordinal: 35, name: "locked", value: .bool(false)),
-        ])))
+        ] + (bandMenu ? [.init(ordinal: 30, name: "band", value: .i64(3))] : []))))
         if rotor {
             mirror.apply(.objectCreate(LinkMessage.ObjectCreate(key: RotorModel.objectKey, className: "RotorModel",
                                                                properties: rotorProperties)))
@@ -119,6 +127,9 @@ enum UITestBand {
         }
         mirror.apply(.snapshotComplete)
         mirror.handle(.stateChanged(.ready))
+        if bandMenu {
+            linkForBandMenu(app)
+        }
         if arguments.contains(spotsArgument) {
             app.records.apply(LinkMessage.RecordBatch(stream: RecordStreamClient.spotsStream, generation: 1, reset: true,
                                                       upserts: spotRecords, removes: []))
@@ -136,6 +147,53 @@ enum UITestBand {
         if let context = MediaControlDecoder.context(payload, wideband: false, grant: false) {
             band.receive(.context(context))
         }
+    }
+
+    /// The settings proxy and the command client up as on a live link, and
+    /// the Core's answers to what they send (``bandMenuArgument``).
+    @MainActor
+    private static func linkForBandMenu(_ app: AppModel) {
+        let settings = app.settings
+        let commands = app.commands
+        let notchVerb = PanSheetModel.addNotchAtVerb
+        app.useBandFixtureCommandSender { [weak settings] message in
+            switch message {
+            case .settingsWrite(let write):
+                // The Core keeps it and says so, after the write is sent.
+                Task { @MainActor in
+                    settings?.handle(.message(.settingsValue(.init(key: write.key, origin: write.origin,
+                                                                   properties: write.properties))))
+                }
+            case .commandInvoke(let invoke) where invoke.verb == notchVerb:
+                let reason = "UI fixture: " + notchText(invoke.args)
+                Task {
+                    await commands.handle(.message(.commandResult(.init(verb: invoke.verb, id: invoke.id,
+                                                                        accepted: false, reason: reason,
+                                                                        affected: []))))
+                }
+            default:
+                throw LinkSendError.notConnected
+            }
+        }
+        settings.handle(.stateChanged(.ready))
+        settings.handle(.message(.authResult(.init(accepted: true, reason: "", retryable: false))))
+        settings.handle(.message(.settingsSnapshot(.init(properties: []))))
+        Task { await commands.handle(.stateChanged(.ready)) }
+    }
+
+    /// A `notch.add`'s arguments in words, for its refusal.
+    private static func notchText(_ args: [LinkMessage.PropertyEntry]) -> String {
+        func number(_ name: String) -> Double? {
+            switch args.first(where: { $0.name == name })?.value {
+            case .f64(let value)?: return value
+            case .i64(let value)?: return Double(value)
+            default: return nil
+            }
+        }
+        let centre = number("centreHz").map { String(format: "%.6f MHz", $0 / 1.0e6) } ?? "no centre"
+        let width = number("widthHz").map { "\(Int($0)) Hz wide" } ?? "no width"
+        let slice = number("sliceId").map { "slice \(Int($0))" } ?? "no slice"
+        return "notch.add at \(centre), \(width), \(slice)"
     }
 
     /// What a Core that describes Display at version 29 offers, as the

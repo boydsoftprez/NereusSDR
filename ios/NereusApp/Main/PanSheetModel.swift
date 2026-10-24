@@ -19,6 +19,8 @@ import os
 /// filter there). Add a slice here asks for a slice on this pan
 /// (`addSliceOnPan`); Add a notch asks the Core to place one at the active
 /// slice (`notch.addAtSlice`), so the phone computes no notch itself (D4).
+/// The band menu's "Add notch here" asks for one at the frequency under the
+/// finger, at the desktop's width (`notch.add`, ``addNotch(atHz:)``).
 /// The extended view is this phone's own setting for the pan, sent in the
 /// pan's display subscription.
 ///
@@ -51,6 +53,13 @@ final class PanSheetModel: ObservableObject {
     static let notchControlCapability = "notchControlVersion"
     /// `notch.addAtSlice` came with `notchControlVersion` 2.
     static let notchAtSliceVersion: Int64 = 2
+    /// The band menu's notch at a frequency, which the Core takes from `notchControlVersion` 1.
+    // From src/core/session/SessionCommandDispatcher.cpp:1094-1095 (notch.add {sliceId, centreHz, widthHz}, notchControlVersion 1)
+    static let addNotchAtVerb = "notch.add"
+    static let notchAtFrequencyVersion: Int64 = 1
+    /// The width the desktop's "Add notch here" places.
+    // From src/models/NotchModel.h:213 (kDefaultNotchWidthHz 200.0)
+    static let notchAtFrequencyWidthHz = 200.0
     static let commandTimeout: Duration = .seconds(5)
     static let noSliceReason = "Add a slice to use this control."
 
@@ -60,6 +69,8 @@ final class PanSheetModel: ObservableObject {
     /// Core's first-pan key when no owned slice has supplied one.
     @Published private(set) var panKey = "pan-0"
     @Published private(set) var canAddNotch = false
+    /// The band menu's "Add notch here" can ask the Core (``addNotch(atHz:)``).
+    @Published private(set) var canAddNotchAtFrequency = false
     @Published private(set) var canAddSlice = false
     @Published private(set) var extendedViewOn = false
     @Published private(set) var extendedViewAvailable = false
@@ -156,6 +167,18 @@ final class PanSheetModel: ObservableObject {
         invoke(Self.addNotchVerb, [CommandArgument(name: "sliceId", value: .int(Int64(sliceId)))])
     }
 
+    /// Add notch here: a notch on the active slice at `hz`, the absolute
+    /// frequency under the finger, the desktop's width wide, as the desktop's
+    /// band menu adds one (SpectrumWidget's notchAddRequested).
+    func addNotch(atHz hz: Double) {
+        guard canAddNotchAtFrequency, hz.isFinite, hz > 0, let sliceId = slices.activeSliceId else {
+            return
+        }
+        invoke(Self.addNotchAtVerb, [CommandArgument(name: "sliceId", value: .int(Int64(sliceId))),
+                                     CommandArgument(name: "centreHz", value: .double(hz)),
+                                     CommandArgument(name: "widthHz", value: .double(Self.notchAtFrequencyWidthHz))])
+    }
+
     /// The extended view's On and Off, kept for this pan on this phone.
     func toggleExtendedView() {
         guard extendedViewAvailable else {
@@ -241,6 +264,8 @@ final class PanSheetModel: ObservableObject {
         }
         set(\.canAddNotch, store.isSnapshotComplete && slices.activeSliceId != nil &&
             store.capabilityVersion(Self.notchControlCapability) >= Self.notchAtSliceVersion)
+        set(\.canAddNotchAtFrequency, store.isSnapshotComplete && slices.activeSliceId != nil &&
+            store.capabilityVersion(Self.notchControlCapability) >= Self.notchAtFrequencyVersion)
         set(\.canAddSlice, commands != nil && store.isSnapshotComplete)
         let wideband = gates.wideband
         set(\.extendedViewAvailable, wideband)

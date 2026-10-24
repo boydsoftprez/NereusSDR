@@ -5,6 +5,7 @@ import Combine
 import NereusBand
 import NereusLink
 import SwiftUI
+import UIKit
 
 /// Everything over one band's Metal view (R-IOS-11, R-IOS-12, D9, D10,
 /// D74, spec section 5.1 items 3, 4, 9 and 17), sized to the band:
@@ -21,7 +22,9 @@ import SwiftUI
 ///   the Core to move the window, as the desktop's remote window does; a
 ///   drag that starts on a flag or its passband tunes that slice in its
 ///   step (with drag to tune on); a tap tunes the active slice, pinch
-///   zooms, and the double tap does Tune, Center or None;
+///   zooms, and the double tap does Tune, Center or None; a half-second
+///   hold on empty band, still within the drag threshold, opens the band
+///   menu at the finger after a light tap (``BandMenuHit``, DC6);
 /// - zoom minus and plus at the bottom right of the waterfall. The bottom
 ///   left stays clear for PTT;
 /// - the tuning dial Setup picked for this phone, if any (``DialLayer``):
@@ -82,6 +85,10 @@ struct BandGestureLayer: View {
     /// The TX badges' take (JJ's ruling of 2026-09-30); nil draws each TX
     /// button as the transmit choice alone (the flag pictures).
     var take: TransmitTakeModel?
+    /// The open band menu's anchor, which a hold on empty band sets; nil
+    /// leaves the band without the hold (the flag pictures). While the menu
+    /// is open the band's taps and drags do nothing.
+    var bandMenu: Binding<BandMenuAnchor?>?
     @Environment(\.uprightBandWidth) private var uprightWidth
     @Environment(\.dynamicTypeSize) private var typeSize
 
@@ -94,6 +101,9 @@ struct BandGestureLayer: View {
     @State private var flagHeights: [Int: CGFloat] = [:]
     /// Moves on whenever the take changes, so each badge redraws.
     @State private var badgeTick = 0
+    /// The press that may become a hold, until the finger lifts.
+    @State private var press: BandMenuHit.Press?
+    @State private var pressGeneration = 0
 
     var body: some View {
         GeometryReader { proxy in
@@ -233,8 +243,22 @@ struct BandGestureLayer: View {
                                      trailingInset: trailingInset, large: large)
         // The active slice's flag on top of the others.
         let ordered = flags.sorted { ($0.0.id == slices.activeSliceId ? 1 : 0) < ($1.0.id == slices.activeSliceId ? 1 : 0) }
+        // Where a hold opens the band menu: clear of every flag and folded
+        // tag, the spots, other devices' labels and the dBm scale, as they
+        // stand when the hold fires.
+        let flagAndTagRects = rects + placements.filter(\.isFolded).map(\.rect)
+        let spotsModel = spots
+        let emptyBand: (CGPoint) -> Bool = { point in
+            let spotRects = spotsModel.map { model in
+                BandMenuHit.spotRects(SpotLayout.layout(spots: model.bandSpots, flags: placements, geometry: geometry,
+                                                        settings: model.display))
+            } ?? []
+            let stations = others.compactMap { BandMenuHit.stationRect($0.slice, geometry: geometry, layout: layout) }
+            return BandMenuHit.isEmptyBand(at: point, flags: flagAndTagRects, spots: spotRects, stations: stations,
+                                           layout: layout)
+        }
         return ZStack(alignment: .topLeading) {
-            touchSurface(geometry: geometry)
+            touchSurface(geometry: geometry, emptyBand: emptyBand)
             if let txFilterHz {
                 txFilter(txFilterHz, layout: layout, geometry: geometry)
             }
@@ -484,12 +508,14 @@ struct BandGestureLayer: View {
 
     // MARK: Touches
 
-    private func touchSurface(geometry: BandGeometry) -> some View {
+    private func touchSurface(geometry: BandGeometry, emptyBand: @escaping (CGPoint) -> Bool) -> some View {
         Color.clear
             .contentShape(Rectangle())
             .gesture(taps(geometry: geometry))
             .simultaneousGesture(pinch(geometry: geometry), including: settings.pinchToZoom ? .all : .none)
+            .simultaneousGesture(hold(geometry: geometry, emptyBand: emptyBand), including: bandMenu == nil ? .none : .all)
             .accessibilityElement()
+            .accessibilityIdentifier("bandSurface")
             .accessibilityLabel("Band")
             .accessibilityHint(settings.tapToTune ? "Tap to tune the active slice, drag to move the band"
                                                   : "Drag to move the band")
@@ -515,7 +541,8 @@ struct BandGestureLayer: View {
                       placements: [FlagPlacement]) -> some Gesture {
         DragGesture(minimumDistance: TuneGestures.dragThresholdPoints)
             .onChanged { value in
-                guard !pinching else {
+                // While the band menu is open the finger that opened it moves nothing.
+                guard !pinching, !menuOpen || dragger.target != nil else {
                     return
                 }
                 dragger.changed(from: value.startLocation, translation: value.translation.width,
@@ -528,6 +555,52 @@ struct BandGestureLayer: View {
             .onEnded { _ in
                 dragger.ended(slices: slices)
                 band.cursorHz = nil
+            }
+    }
+
+    /// The band menu is open.
+    private var menuOpen: Bool { bandMenu?.wrappedValue != nil }
+
+    /// The hold: a finger down on empty band that stays within the drag
+    /// threshold for ``BandMenuHit/holdSeconds`` opens the band menu where
+    /// it came down, after a light tap. Moving past the threshold, lifting,
+    /// or a pinch beginning first leaves the touch to the drag, the tap or
+    /// the pinch, as before.
+    private func hold(geometry: BandGeometry, emptyBand: @escaping (CGPoint) -> Bool) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                // A press whose end was never seen (a cancelled touch) is
+                // over once a finger comes down somewhere else.
+                if let current = press, current.start == value.startLocation {
+                    if current.live, !BandMenuHit.isHold(from: current.start, to: value.location) {
+                        press?.live = false
+                    }
+                    return
+                }
+                guard !pinching, !menuOpen else {
+                    press = BandMenuHit.Press(start: value.startLocation, generation: pressGeneration, live: false)
+                    return
+                }
+                pressGeneration &+= 1
+                let generation = pressGeneration
+                press = BandMenuHit.Press(start: value.startLocation, generation: generation)
+                // As DialHaptics' detent: a light impact, woken at once so it is not late.
+                let haptic = UIImpactFeedbackGenerator(style: .light)
+                haptic.prepare()
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(BandMenuHit.holdSeconds))
+                    guard let held = press, held.generation == generation, held.live, !pinching, !menuOpen,
+                          dragger.target == nil, emptyBand(held.start) else {
+                        return
+                    }
+                    press?.live = false
+                    haptic.impactOccurred()
+                    bandMenu?.wrappedValue = BandMenuAnchor(point: held.start,
+                                                            frequencyHz: geometry.hz(forX: Double(held.start.x)))
+                }
+            }
+            .onEnded { _ in
+                press = nil
             }
     }
 
@@ -556,6 +629,8 @@ struct BandGestureLayer: View {
     private func pinch(geometry: BandGeometry) -> some Gesture {
         MagnifyGesture()
             .onChanged { value in
+                // Two fingers are a pinch, never a hold.
+                press?.live = false
                 let start = pinchStart ?? geometry
                 pinchStart = start
                 pinching = true
@@ -581,6 +656,10 @@ struct BandGestureLayer: View {
     }
 
     private func tap(atX x: CGFloat, geometry: BandGeometry) {
+        // The lift that ends the hold opening the band menu tunes nothing.
+        guard !menuOpen else {
+            return
+        }
         if foreign.openNote != nil {
             // A touch on the band closes an open note, and tunes nothing.
             foreign.openNote = nil
@@ -596,6 +675,9 @@ struct BandGestureLayer: View {
     /// Tune writes to the active slice, even with tap-to-tune off; Center
     /// asks for a new view, as zoom does, and retunes nothing.
     private func doubleTap(_ action: TuneGestures.DoubleTapAction, atX x: CGFloat, geometry: BandGeometry) {
+        guard !menuOpen else {
+            return
+        }
         let step = slices.active.flatMap { snapStep($0) }
         switch TuneGestures.doubleTapped(action, atX: x, geometry: geometry, snap: settings.snapTapToStep,
                                          stepHz: step) {

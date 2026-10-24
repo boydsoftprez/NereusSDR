@@ -1,4 +1,4 @@
-// NereusSDR for iOS: the Display pill's Setup defaults link opens each tab's Setup page on its pan, and NB Blank agrees between the two
+// NereusSDR for iOS: the Display pill's Setup defaults link opens each tab's Setup page on its pan, NB Blank agrees between the two, and the band menu a hold opens
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
 import XCTest
@@ -8,6 +8,12 @@ import XCTest
 final class DisplayPillUITests: XCTestCase {
     override func setUp() {
         continueAfterFailure = false
+    }
+
+    override func tearDown() {
+        MainActor.assumeIsolated {
+            XCUIDevice.shared.orientation = .portrait
+        }
     }
 
     /// Each tab's first control on the Setup page its Setup defaults link
@@ -93,6 +99,148 @@ final class DisplayPillUITests: XCTestCase {
                       "The threshold is not greyed with its reason")
     }
 
+    /// R-IOS-57, DC6: a tap on the band tunes and opens nothing; a hold on a
+    /// spot opens its details, never the band menu; a half-second hold on
+    /// empty band opens the band menu with the desktop's four groups, and
+    /// each item acts: Ref Level and Dyn Range move the band's scale on the
+    /// Core, CTUN turns on and off, Add notch here sends `notch.add` at the
+    /// finger (the fixture's Core refuses it with what it was sent), and
+    /// Display settings... opens the Display sheet.
+    @MainActor
+    func testHoldOnEmptyBandOpensTheBandMenu() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch(bandMenu: true)
+        let surface = app.descendants(matching: .any)["bandSurface"]
+        XCTAssertTrue(surface.waitForExistence(timeout: 30), "The band has no touch surface")
+        let menu = app.descendants(matching: .any)["bandMenu"]
+
+        surface.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.65)).tap()
+        XCTAssertFalse(menu.waitForExistence(timeout: 1.5), "A tap opened the band menu")
+
+        let spot = app.buttons["JA1ABC"]
+        XCTAssertTrue(spot.waitForExistence(timeout: 10), "JA1ABC is not on the band")
+        spot.press(forDuration: 0.8)
+        XCTAssertTrue(app.descendants(matching: .any)["spotDetails"].waitForExistence(timeout: 10),
+                      "A hold on a spot did not open its details")
+        XCTAssertFalse(menu.exists, "A hold on a spot opened the band menu")
+        app.buttons["spotDetailsClose"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["spotDetails"].waitForNonExistence(timeout: 10))
+
+        holdOnBand(app, at: CGVector(dx: 0.6, dy: 0.65))
+        XCTAssertTrue(menu.waitForExistence(timeout: 5), "A hold on empty band did not open the band menu")
+        for (id, words) in [("bandMenuDisplayRange", "Display Range"), ("bandMenuTuning", "Tuning"),
+                            ("bandMenuNotch", "Notch")] {
+            XCTAssertEqual(app.staticTexts[id].label, words)
+        }
+        let settings = app.buttons["bandMenuDisplaySettings"]
+        XCTAssertEqual(settings.label, "Display settings...")
+        // The groups run down the menu in the desktop's order.
+        XCTAssertLessThan(app.staticTexts["bandMenuDisplayRange"].frame.minY, app.staticTexts["bandMenuTuning"].frame.minY)
+        XCTAssertLessThan(app.staticTexts["bandMenuTuning"].frame.minY, app.staticTexts["bandMenuNotch"].frame.minY)
+        XCTAssertLessThan(app.staticTexts["bandMenuNotch"].frame.minY, settings.frame.minY)
+
+        // Display Range: the fixture's Core keeps nothing for 40 m, so the desktop's defaults.
+        let ref = app.descendants(matching: .any)["bandMenuRefLevel"]
+        let dyn = app.descendants(matching: .any)["bandMenuDynRange"]
+        XCTAssertEqual(ref.value as? String, "-40 dBm")
+        XCTAssertEqual(dyn.value as? String, "100 dB")
+        XCTAssertFalse(app.staticTexts["bandMenuRangeReason"].exists, "The range is greyed on a Core that shares it")
+        // A drag across each slider's right half raises Ref Level, which keeps the span.
+        drag(ref, from: 0.6, to: 0.9)
+        XCTAssertTrue(waitUntil { (Self.number(ref) ?? -40) > -40 }, "Ref Level did not move up")
+        let top = Self.number(ref)
+        XCTAssertEqual(dyn.value as? String, "100 dB", "Ref Level did not keep the span")
+        // Dyn Range down, which keeps the top.
+        drag(dyn, from: 0.7, to: 0.4)
+        XCTAssertTrue(waitUntil { (Self.number(dyn) ?? 100) < 100 }, "Dyn Range did not move down")
+        XCTAssertEqual(Self.number(ref), top, "Dyn Range did not keep the top")
+
+        // Tuning: the simulator keeps this app's settings between runs, so start from off.
+        let ctun = app.buttons["bandMenuCtun"]
+        XCTAssertEqual(ctun.label, "CTUN (independent pan)")
+        if ctun.value as? String == "On" {
+            ctun.tap()
+        }
+        XCTAssertTrue(waitForValue(ctun, "Off"))
+        ctun.tap()
+        XCTAssertTrue(waitForValue(ctun, "On"), "CTUN did not turn on")
+        ctun.tap()
+        XCTAssertTrue(waitForValue(ctun, "Off"), "CTUN did not turn off")
+
+        // Notch: at the frequency under the finger, 200 Hz wide, for slice A.
+        let add = app.buttons["bandMenuAddNotch"]
+        XCTAssertEqual(add.label, "Add notch here")
+        XCTAssertTrue(add.isEnabled)
+        let hz = app.staticTexts["bandMenuNotchHz"].label
+        XCTAssertTrue(hz.hasSuffix(" MHz") && hz.hasPrefix("7.2"), "The notch row shows \(hz)")
+        add.tap()
+        let sent = app.staticTexts["bandMenuNotchReason"]
+        XCTAssertTrue(sent.waitForExistence(timeout: 10), "Add notch here sent nothing")
+        XCTAssertEqual(sent.label, "UI fixture: notch.add at \(hz), 200 Hz wide, slice 0")
+        XCTAssertTrue(menu.exists, "The band menu closed after Add notch here, which the desktop's keeps open")
+
+        settings.tap()
+        XCTAssertTrue(menu.waitForNonExistence(timeout: 5), "Display settings... left the band menu open")
+        XCTAssertTrue(app.descendants(matching: .any)["displayPillTab.spectrum"].waitForExistence(timeout: 10),
+                      "Display settings... did not open the Display sheet")
+    }
+
+    /// R-IOS-57, DC6: sideways, the band menu opens beside the finger, on
+    /// its right, clear of PTT.
+    @MainActor
+    func testBandMenuOpensBesideTheFingerSideways() throws {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = launch(bandMenu: true)
+        let surface = app.descendants(matching: .any)["bandSurface"]
+        XCTAssertTrue(surface.waitForExistence(timeout: 30), "The band has no touch surface")
+        let at = CGVector(dx: 0.45, dy: 0.6)
+        holdOnBand(app, at: at)
+        let menu = app.descendants(matching: .any)["bandMenu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 5), "A hold on empty band did not open the band menu sideways")
+        let fingerX = surface.frame.minX + surface.frame.width * at.dx
+        XCTAssertGreaterThan(menu.frame.minX, fingerX, "The band menu does not open beside the finger")
+        let ptt = app.buttons["ptt"]
+        XCTAssertTrue(ptt.exists)
+        XCTAssertFalse(menu.frame.intersects(ptt.frame), "The band menu covers PTT")
+        app.descendants(matching: .any)["bandMenuClose"].coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.1)).tap()
+        XCTAssertTrue(menu.waitForNonExistence(timeout: 5), "A tap off the band menu did not close it")
+    }
+
+    /// Holds a finger still on the band at `offset` for longer than the band menu's half second.
+    @MainActor
+    private func holdOnBand(_ app: XCUIApplication, at offset: CGVector) {
+        app.descendants(matching: .any)["bandSurface"].coordinate(withNormalizedOffset: offset).press(forDuration: 0.8)
+    }
+
+    @MainActor
+    private func drag(_ element: XCUIElement, from: CGFloat, to: CGFloat) {
+        element.coordinate(withNormalizedOffset: CGVector(dx: from, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: element.coordinate(withNormalizedOffset: CGVector(dx: to, dy: 0.5)))
+    }
+
+    /// The number a value such as "-40 dBm" starts with.
+    @MainActor
+    private static func number(_ element: XCUIElement) -> Double? {
+        (element.value as? String)?.split(separator: " ").first.flatMap { Double($0) }
+    }
+
+    @MainActor
+    private func waitUntil(_ condition: () -> Bool) -> Bool {
+        for _ in 0..<50 {
+            if condition() {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        return condition()
+    }
+
+    @MainActor
+    private func waitForValue(_ element: XCUIElement, _ value: String) -> Bool {
+        let shown = expectation(for: NSPredicate(format: "value == %@", value), evaluatedWith: element)
+        return XCTWaiter.wait(for: [shown], timeout: 5) == .completed
+    }
+
     /// Opens the Display sheet from the toolbar on `tab`.
     @MainActor
     private func openPill(_ app: XCUIApplication, tab: String) {
@@ -113,11 +261,13 @@ final class DisplayPillUITests: XCTestCase {
     }
 
     @MainActor
-    private func launch() -> XCUIApplication {
+    private func launch(bandMenu: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         // The band with the Core's catalogue and its version 29 Display
-        // description, with no Core (a debug build's launch arguments).
+        // description, with no Core (a debug build's launch arguments); for
+        // the band menu, with the spots and the menu's Core as well.
         app.launchArguments = ["-NereusShowBand", "-NereusFlagsOnBand"]
+            + (bandMenu ? ["-NereusSpotFixture", "-NereusBandMenuFixture"] : [])
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()

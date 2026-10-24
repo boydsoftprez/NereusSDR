@@ -225,6 +225,13 @@ final class AppModel: ObservableObject {
     func useBandFixturePropertySender(_ sender: @escaping @Sendable (LinkMessage.PropertyWrite) async throws -> Void) {
         route.useBandFixturePropertySender(sender)
     }
+
+    /// Only the command-line band fixture supplies this stand-in for the
+    /// Core's answers to commands and settings writes, while there is no
+    /// session; a real session keeps its own route.
+    func useBandFixtureCommandSender(_ sender: @escaping @Sendable (LinkMessage) async throws -> Void) {
+        route.useBandFixtureCommandSender(sender)
+    }
     #endif
 
     init(phoneSettings: PhoneSettings = PhoneSettings(),
