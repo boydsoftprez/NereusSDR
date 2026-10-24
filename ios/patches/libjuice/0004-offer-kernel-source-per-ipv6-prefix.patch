@@ -1,0 +1,129 @@
+libjuice 3c40a354: on macOS and iOS each IPv6 /64 offers the address the system sends from
+
+MPL-2.0, like src/udp.c; original file notice preserved unchanged.
+2026-10-24: J.J. Boyd (KG4VCF), with AI-assisted implementation via Anthropic Claude Code.
+
+udp_get_addrs offers one host candidate per IPv6 /64: has_duplicate_addr
+compares the first 64 bits, and the comment above the gathering loop hopes
+getifaddrs lists the preferred address first. On macOS and iOS it often
+lists the secured (stable) address first, while the system sends from the
+temporary one (net.inet6.ip6.prefer_tempaddr is 1), because the agent's
+socket is bound to the wildcard address. Seen 2026-10-24 on a Mac with
+2605:...:9ffc (secured) and 2605:...:61f2 (temporary): the Mac offered 9ffc
+and sent every check from 61f2. Behind stateful IPv6 firewalls at both ends
+neither side's checks matched a pinhole the other had opened, the IPv6 pair
+never succeeded, and ICE settled on IPv4. A UDP probe between the same two
+hosts passed in both directions whenever the offered and sending addresses
+were the same.
+
+On __APPLE__ only, for each IPv6 address getifaddrs lists, a UDP socket is
+connected to another host in the same /64 (the address with its interface
+identifier inverted, port 9; nothing is sent) and getsockname gives the
+source the system picks. When that is another listed, usable address of the
+same /64, this address is skipped and the /64 is offered with the address
+the system sends from. In every other case the address is kept, so behavior
+is unchanged: no socket, no route (connect fails), a source outside the /64,
+the source is this address, or the source is not listed. IPv4 and Windows
+are unchanged; Linux (which sends from the temporary address only with
+use_tempaddr=2) is unchanged. libjuice upstream master (cb523763, checked
+2026-10-24) has the same has_duplicate_addr and gathering loop.
+
+diff --git a/src/udp.c b/src/udp.c
+--- a/src/udp.c
++++ b/src/udp.c
+@@ -6,6 +6,10 @@
+  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+  */
+ 
++// Modification history (NereusSDR):
++// 2026-10-24: on macOS and iOS each IPv6 /64 offers the address the system sends from.
++// J.J. Boyd (KG4VCF), with AI-assisted implementation via Anthropic Claude Code.
++
+ #include "udp.h"
+ #include "addr.h"
+ #include "log.h"
+@@ -396,6 +400,72 @@ static int has_duplicate_addr(struct sockaddr *addr, const addr_record_t *record
+ 	return false;
+ }
+ 
++#if defined(__APPLE__) && !defined(NO_IFADDRS)
++// NereusSDR: only one address of each IPv6 /64 is offered (has_duplicate_addr above), and
++// macOS and iOS send from the temporary address (net.inet6.ip6.prefer_tempaddr), which
++// getifaddrs may list after the secured one. Checks from a peer to the offered address and
++// checks this agent sends from the other one then match no stateful firewall pinhole, so the
++// IPv6 pair never succeeds. Ask the kernel which address a wildcard-bound socket sends from to
++// a host in this /64, the way get_local_default_inet6 does for the default route.
++static int get_kernel_source_inet6(const struct sockaddr_in6 *sin6, struct sockaddr_in6 *result) {
++	struct sockaddr_in6 dest;
++	memset(&dest, 0, sizeof(dest));
++	dest.sin6_family = AF_INET6;
++	dest.sin6_len = sizeof(dest);
++	dest.sin6_port = htons(9); // discard port, nothing is sent
++	// Another host in the same /64: this address with its interface identifier inverted
++	memcpy(&dest.sin6_addr, &sin6->sin6_addr, 8);
++	for (int i = 8; i < 16; ++i)
++		dest.sin6_addr.s6_addr[i] = (uint8_t)~sin6->sin6_addr.s6_addr[i];
++
++	socket_t sock = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
++	if (sock == INVALID_SOCKET)
++		return -1;
++
++	int ret = -1;
++	socklen_t result_len = sizeof(*result);
++	if (connect(sock, (const struct sockaddr *)&dest, sizeof(dest)) == 0 &&
++	    getsockname(sock, (struct sockaddr *)result, &result_len) == 0 &&
++	    result_len == sizeof(*result) && result->sin6_family == AF_INET6 &&
++	    memcmp(&result->sin6_addr, &dest.sin6_addr, 16) != 0)
++		ret = 0;
++
++	closesocket(sock);
++	return ret;
++}
++
++// True when the kernel sends from another listed address of addr's /64, so addr must not take
++// the prefix's one host candidate. When the kernel can't say (no route, no socket) or picks an
++// address that isn't listed, addr is kept as before.
++static bool is_other_kernel_source_inet6(const struct sockaddr *addr, const struct ifaddrs *ifas) {
++	const struct sockaddr_in6 *sin6 = (const struct sockaddr_in6 *)addr;
++	struct sockaddr_in6 source;
++	if (get_kernel_source_inet6(sin6, &source))
++		return false;
++	if (memcmp(&source.sin6_addr, &sin6->sin6_addr, 8) != 0) // another prefix
++		return false;
++	if (memcmp(&source.sin6_addr, &sin6->sin6_addr, 16) == 0) // this address
++		return false;
++
++	for (const struct ifaddrs *ifa = ifas; ifa; ifa = ifa->ifa_next) {
++		const struct sockaddr *sa = ifa->ifa_addr;
++		if (sa && sa->sa_family == AF_INET6 && (ifa->ifa_flags & IFF_UP) &&
++		    !(ifa->ifa_flags & IFF_LOOPBACK) && strcmp(ifa->ifa_name, "docker0") != 0 &&
++		    !addr_is_local(sa) &&
++		    memcmp(&((const struct sockaddr_in6 *)sa)->sin6_addr, &source.sin6_addr, 16) == 0) {
++			if (JLOG_DEBUG_ENABLED) {
++				char skipped[ADDR_MAX_STRING_LEN], offered[ADDR_MAX_STRING_LEN];
++				addr_to_string(addr, skipped, sizeof(skipped));
++				addr_to_string(sa, offered, sizeof(offered));
++				JLOG_DEBUG("Skipping %s, the system sends from %s", skipped, offered);
++			}
++			return true;
++		}
++	}
++	return false;
++}
++#endif
++
+ #if !defined(_WIN32) && defined(NO_IFADDRS)
+ // Helper function to get the IPv6 address of the default interface
+ static int get_local_default_inet6(uint16_t port, struct sockaddr_in6 *result) {
+@@ -538,6 +608,11 @@ int udp_get_addrs(socket_t sock, addr_record_t *records, size_t count) {
+ 		    (sa->sa_family == AF_INET ||
+ 		     (sa->sa_family == AF_INET6 && bound.addr.ss_family == AF_INET6)) &&
+ 		    !addr_is_local(sa) && (len = addr_get_len(sa)) > 0) {
++#if defined(__APPLE__)
++			// NereusSDR: offer the address the system sends from for this /64
++			if (sa->sa_family == AF_INET6 && is_other_kernel_source_inet6(sa, ifas))
++				continue;
++#endif
+ 			if (!has_duplicate_addr(sa, records, current - records)) {
+ 				++ret;
+ 				if (current != end) {
