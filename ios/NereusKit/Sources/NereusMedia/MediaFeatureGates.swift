@@ -1,5 +1,8 @@
 // NereusSDR for iOS: which parts of media control the Core and the agreed link minor allow
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-22: the displayCodecV2 gate (NSDC v2, displayCodecVersion 2 at minor 11).
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 /// The two-key gates of media control (link document section 6.2): each
 /// part is on only when the agreed minor has reached the minor it arrived
@@ -45,6 +48,10 @@ public struct MediaFeatureGates: Sendable, Equatable {
     /// minor-11 block (the media control document, "The picture a context
     /// continues").
     public static let spectrumPictureMinor: UInt16 = 11
+    /// The display codec a connection agrees (`displayCodecVersion`) rides
+    /// the minor-11 block (the media control document, "The display codec a
+    /// connection agrees").
+    public static let displayCodecMinor: UInt16 = 11
 
     /// Media control at all: `remoteMediaVersion`.
     public var media: Bool
@@ -110,6 +117,11 @@ public struct MediaFeatureGates: Sendable, Equatable {
     /// tells only a device whose hello declared `spectrumPicture` 1. It
     /// rides on the context's grant shape.
     public var spectrumPicture: Bool
+    /// `displayCodecVersion` 2 in `start`, and with it NSDC v2 display rows
+    /// on the connection: `displayCodecVersion` 2, which the Core tells only
+    /// a device whose hello declared `displayCodec` 2. It rides on the
+    /// context's grant shape.
+    public var displayCodecV2: Bool
 
     public init(agreedMinor: UInt16, capabilityVersion: (String) -> Int64) {
         media = agreedMinor >= Self.mediaMinor && capabilityVersion("remoteMediaVersion") >= 1
@@ -148,6 +160,8 @@ public struct MediaFeatureGates: Sendable, Equatable {
             && capabilityVersion("audioQualityVersion") >= 1
         spectrumPicture = spectrumGrant && agreedMinor >= Self.spectrumPictureMinor
             && capabilityVersion("spectrumPictureVersion") >= 1
+        displayCodecV2 = spectrumGrant && agreedMinor >= Self.displayCodecMinor
+            && capabilityVersion("displayCodecVersion") >= 2
     }
 
     /// The `txDisplayVersion` a `start` declares to this Core: 3 where it

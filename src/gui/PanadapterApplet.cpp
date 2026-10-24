@@ -31,6 +31,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMenu>
+#include <QPointer>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QVBoxLayout>
@@ -547,8 +548,13 @@ void PanadapterApplet::setExtendedViewEnabled(bool on)
 void PanadapterApplet::contextMenuEvent(QContextMenuEvent* event)
 {
     QMenu* menu = buildContextMenu(this);
+    // The menu's parent can die in exec() and take the menu with it; free it
+    // only if it is still there (see ScopedChildWidget.h).
+    const QPointer<QMenu> guard(menu);
     menu->exec(event->globalPos());
-    menu->deleteLater();
+    if (guard) {
+        guard->deleteLater();
+    }
 }
 
 // Task B5 (bottom-banner + pan-menu epic, design doc s8.5): "Add slice on

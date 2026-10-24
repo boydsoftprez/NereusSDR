@@ -56,6 +56,10 @@ private slots:
 
 void TestModeMenuRade::initTestCase()
 {
+    // The experimental modes are offered only with the V2 opt-in, read once
+    // per process by RadeV2Feature; set it before any case asks, so a direct
+    // run of the binary matches ctest (tests/CMakeLists.txt sets it too).
+    qputenv("NEREUS_ENABLE_RADE_V2", "1");
     if (!qApp) {
         static int   argc = 0;
         static char* argv = nullptr;

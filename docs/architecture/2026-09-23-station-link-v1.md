@@ -1024,7 +1024,7 @@ of it keeps them (the media control document's "The display codec a
 connection agrees"). A peer that does not declare it sees exactly the wire
 it was built for: no capability entry, today's `start` and version 1 frames
 byte for byte. The station does not declare it; the desktop's remote window
-does.
+and the phone app do.
 
 **`firmwareBeta` 1** (the radio's second firmware number): the client words
 the firmware release of the Core's radio in full, as a window running that

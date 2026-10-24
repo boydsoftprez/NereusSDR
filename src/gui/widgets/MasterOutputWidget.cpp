@@ -10,6 +10,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22  J.J. Boyd (KG4VCF): the right-click menu is freed only if
+//               it is still there after exec(), since a parent that dies
+//               while it is open takes it along. With AI-assisted
+//               transformation via Claude Code.
 //   2026-10-12 - JJ's option B: fit small workspace text to the approved
 //                 11 logical-pixel floor. J.J. Boyd (KG4VCF), AI-assisted
 //                 via OpenAI Codex. Classic geometry and colors retained.
@@ -71,6 +75,7 @@
 #include <QLabel>
 #include <QLayout>
 #include <QMenu>
+#include <QPointer>
 #include <QPoint>
 #include <QPushButton>
 #include <QSignalBlocker>
@@ -803,8 +808,14 @@ QMenu* MasterOutputWidget::buildSpeakerMenu()
 
 void MasterOutputWidget::onSpeakerContextMenu(const QPoint& pos)
 {
-    std::unique_ptr<QMenu> menu(buildSpeakerMenu());
+    QMenu* menu = buildSpeakerMenu();
+    // The menu's parent can die in exec() and take the menu with it; free it
+    // only if it is still there (see ScopedChildWidget.h).
+    const QPointer<QMenu> guard(menu);
     menu->exec(m_speakerBtn->mapToGlobal(pos));
+    if (guard) {
+        delete guard.data();
+    }
 }
 
 void MasterOutputWidget::selectOutputDevice(const SpeakerPick& pick)

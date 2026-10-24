@@ -83,9 +83,9 @@
 //     German comments are kept verbatim.
 //   - The context menu gains "Manage profiles..." (manageRequested), and
 //     the "move the rail" item can be left out (setPlacementToggleOffered).
-//   - Longpath's ScopedChildWidget is not in NereusSDR: the menu is a
-//     child of the main window held by QPointer and deleted later, which
-//     keeps the same guarantee (see showMenuFor).
+//   - The menu does not use ScopedChildWidget (src/gui/ScopedChildWidget.h,
+//     ported later): it is a child of the main window held by QPointer
+//     and deleted later, which keeps the same guarantee (see showMenuFor).
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -104,6 +104,9 @@
 //                 (shared Longpath defect, fixed in our copy; see
 //                 kCloserSidePx). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-22 - Comments no longer say ScopedChildWidget is absent.
+//                 J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//                 Claude Code.
 // =================================================================
 
 #include "gui/widgets/ProfileRail.h"
@@ -504,8 +507,8 @@ void ProfileRail::showMenuFor(const QString& id, const QPoint& globalPos)
     // Fensterbezug ("QWidgetWindow(... ProfileRailClassWindow) must be a
     // top level window." bei jedem Rechtsklick in Martins Protokoll) --
     // auf macOS kann es dann hinter schwebenden Werkzeugfenstern landen.
-    // NereusSDR: no ScopedChildWidget; a QPointer to a menu parented to
-    // the window, deleted later.  [original inline comment from
+    // NereusSDR: a QPointer to a menu parented to the window, deleted
+    // later, in place of ScopedChildWidget (same guarantee).  [original inline comment from
     // ProfileRail.cpp:350: "stirbt nicht mit dem Rahmen, siehe
     // ScopedChildWidget.h"]
     QPointer<QMenu> menuOwner = new QMenu(window());

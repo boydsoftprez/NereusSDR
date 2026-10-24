@@ -62,6 +62,10 @@
 //   2026-10-13 - Reset the visible receive filter bank and LPF frequency edges.
 //                 J.J. Boyd (KG4VCF), with AI-assisted implementation
 //                 via OpenAI Codex.
+//   2026-10-22  J.J. Boyd (KG4VCF): dialogs exec()ed with a parent are
+//               built through ScopedChildWidget instead of on the stack, so
+//               a parent that dies while one is open no longer frees it
+//               twice. With AI-assisted transformation via Claude Code.
 // =================================================================
 //
 //=================================================================
@@ -114,6 +118,7 @@
 // =================================================================
 
 #include "AntennaAlexAlex1Tab.h"
+#include "gui/ScopedChildWidget.h"
 #include "HardwareTransmitGate.h"
 
 #include "core/AlexSettingsKeys.h"
@@ -430,13 +435,17 @@ AntennaAlexAlex1Tab::AntennaAlexAlex1Tab(RadioModel* model, QWidget* parent)
             // as the default focus and Common.MB_TOPMOST flag.
             QMessageBox::StandardButton choice = QMessageBox::Cancel;
             if (m_imdAutoResult == ImdAutoResult::None) {
-                QMessageBox box(QMessageBox::Warning,
+                // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+                ScopedChildWidget<QMessageBox> boxOwner(QMessageBox::Warning,
                     tr("PureSignal Issue"),
                     imdWarningText(),
                     QMessageBox::Ok | QMessageBox::Cancel, this);
+                QMessageBox& box = *boxOwner.get();
                 box.setDefaultButton(QMessageBox::Cancel);          // Button2 per Thetis
                 box.setWindowFlag(Qt::WindowStaysOnTopHint);        // MB_TOPMOST per Thetis
                 choice = static_cast<QMessageBox::StandardButton>(box.exec());
+                // The parent may have died in exec() and taken the dialog with it.
+                if (!boxOwner) { return; }
             } else {
                 choice = (m_imdAutoResult == ImdAutoResult::Ok)
                              ? QMessageBox::Ok

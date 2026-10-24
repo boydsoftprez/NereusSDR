@@ -13,10 +13,16 @@
 // heap under its owner, so the owner's destruction deletes it cleanly;
 // otherwise it is deleted when the holder goes out of scope.
 //
+// See also src/gui/ScopedChildWidget.h, the general owner (ported from
+// Longpath and AetherSDR) for menus, dialogs and drags elsewhere; it
+// deletes at scope exit at once where this uses deleteLater().
+//
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-09 - New. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-22 - Points to ScopedChildWidget.h. J.J. Boyd (KG4VCF), with
+//                 AI-assisted transformation via Claude Code.
 // =================================================================
 
 #pragma once

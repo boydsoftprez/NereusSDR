@@ -64,6 +64,10 @@
 //                 the yellow band is gone. Forward, reflected and SWR show
 //                 dashes while the amplifier is not transmitting.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF): the right-click menu is freed only if
+//               it is still there after exec(), since a parent that dies
+//               while it is open takes it along. With AI-assisted
+//               transformation via Claude Code.
 // =================================================================
 
 #include "AmpApplet.h"
@@ -81,6 +85,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMenu>
+#include <QPointer>
 #include <QVBoxLayout>
 
 namespace NereusSDR {
@@ -737,8 +742,13 @@ void AmpApplet::setPgxlConnected(bool connected)
 void AmpApplet::contextMenuEvent(QContextMenuEvent* ev)
 {
     QMenu* menu = buildContextMenu(this);
+    // The menu's parent can die in exec() and take the menu with it; free it
+    // only if it is still there (see ScopedChildWidget.h).
+    const QPointer<QMenu> guard(menu);
     menu->exec(ev->globalPos());
-    menu->deleteLater();
+    if (guard) {
+        guard->deleteLater();
+    }
 }
 
 QMenu* AmpApplet::buildContextMenu(QObject* menuParent)

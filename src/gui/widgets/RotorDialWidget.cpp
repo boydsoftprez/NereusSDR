@@ -28,6 +28,11 @@
 //               controller's span to the target with the offset removed,
 //               and the end stop is drawn the offset round. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22: The right-click menu is owned by ScopedChildWidget
+//               (Longpath [@383f058]) instead of living on the stack,
+//               so closing the window while it is open no longer
+//               frees it twice. J.J. Boyd (KG4VCF), with AI-assisted
+//               transformation via Claude Code.
 // =================================================================
 //
 // --- From RotorDialWidget.cpp ---
@@ -50,6 +55,7 @@
 
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/widgets/RotorDialWidget.h"
+#include "gui/ScopedChildWidget.h"
 
 #include "core/AppSettings.h"
 #include "core/RotorRoute.h"
@@ -250,10 +256,12 @@ void RotorDialWidget::refreshFromModel()
 }
 
 // From Longpath src/gui/widgets/RotorDialWidget.cpp:133-165 [@551576e]
+// From Longpath src/gui/widgets/RotorDialWidget.cpp:133-164 [@383f058] (the menu owner)
 void RotorDialWidget::contextMenuEvent(QContextMenuEvent* ev)
 {
-    QMenu menu(this);
+    ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
     const QPointer<RotorDialWidget> self(this);
+    QMenu& menu = *menuOwner.get();
     auto* group = new QActionGroup(&menu);
     group->setExclusive(true);
 
@@ -279,7 +287,7 @@ void RotorDialWidget::contextMenuEvent(QContextMenuEvent* ev)
     menu.exec(ev->globalPos());
     // Das Elternteil kann waehrend exec() gestorben sein — dann ist
     // auch das Menue weg und `this` eine Leiche. Siehe ScopedChildWidget.h.
-    if (!self) { return; }
+    if (!menuOwner || !self) { return; }
     ev->accept();
 }
 
