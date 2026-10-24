@@ -78,6 +78,7 @@ CLOSE_AFTER_MS = 600000
 FOLD_AFTER_MS = 7200000
 EARLIER_MS = 1800000
 FLUSH_MS = 30000
+VIEW_MESSAGES = 50
 
 REF_BYTES = 5  # 40 bits: 8 base32 characters (4.4)
 
@@ -95,6 +96,21 @@ def offset_hz(hz: int, center: int) -> int:
     d = hz - center
     q = (abs(d) + 5) // 10 * 10
     return q if d >= 0 else -q
+
+
+def message_object(row: Dict[str, Any], ref: Optional[str] = None) -> Dict[str, Any]:
+    """A stored message row as the wire's message object (5.2): `text` only
+    while `state` is `shown`."""
+    return {
+        "id": int(row["id"]),
+        "ref": ref,
+        "callsign": row["callsign"],
+        "nth": int(row["nth"]),
+        "t": int(row["t"]),
+        "state": row["state"],
+        "text": row["text"] if row["state"] == "shown" else None,
+        "dbm": row["dbm"],
+    }
 
 
 class Profile:
@@ -163,7 +179,8 @@ class Row:
 class RoomDiff:
     """What changed in one room since its last delta (6.11): the changed
     rows with their member objects (`you` false), the rows that left, the
-    changed turn objects, whether the room closed, and whether its summary
+    changed turn objects (`mine` null) with their turns, the new or changed
+    message objects, whether the room closed, and whether its summary
     changed."""
 
     def __init__(
@@ -173,15 +190,26 @@ class RoomDiff:
         turns: List[Dict[str, Any]],
         closed: bool,
         band: bool,
+        turn_of: Optional[List[Turn]] = None,
+        messages: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         self.members = members
         self.left = left
         self.turns = turns
         self.closed = closed
         self.band = band
+        self.turn_of = turn_of or []
+        self.messages = messages or []
+
+    def turns_for(self, station_id: Optional[str]) -> List[Dict[str, Any]]:
+        """The changed turn objects as one station receives them: `mine` is
+        its own name for the turn (6.9)."""
+        if station_id is None or not self.turn_of:
+            return self.turns
+        return [dict(obj, mine=turn.given.get(station_id)) for obj, turn in zip(self.turns, self.turn_of)]
 
     def __bool__(self) -> bool:
-        return bool(self.members or self.left or self.turns or self.closed)
+        return bool(self.members or self.left or self.turns or self.messages or self.closed)
 
 
 class _StationEntry:
@@ -210,9 +238,12 @@ class Room:
         self.close_timer: Any = None
         self.engine = TurnEngine(self, book.clock)
         self.last_turn_start: Optional[int] = None
-        # Messages posted in the current opening (6.11); messages are a
-        # later part of the server.
+        # Messages posted in the current opening (6.11), the rows that
+        # posted them in this process (for each message's `ref`, 6.10), and
+        # the message objects changed since the last delta.
         self.message_count = 0
+        self.message_rows: Dict[int, Row] = {}
+        self.pending_messages: "OrderedDict[int, Dict[str, Any]]" = OrderedDict()
         # What the room's viewers last received (6.11).
         self.version = 0
         self.sent_members: Dict[str, Tuple[Row, Dict[str, Any]]] = {}
@@ -224,6 +255,10 @@ class Room:
 
     def turn_opened(self, turn: Turn) -> None:
         turn.id = self.book.store.turn_open(self.opening_id or 0, turn.kind, self._talker_pairs(turn), turn.start)
+        # Who may name it later (6.9): every member now, and each row that
+        # becomes a member while it is open (_became_member).
+        turn.members_during = {row.station_id for row in self.members()}
+        self.book.store.turn_members(turn.id, turn.members_during)
         turn.stored_talkers = len(turn.talkers)  # type: ignore[attr-defined]
         self.last = max(self.last, turn.start)
         self.last_turn_start = turn.start
@@ -306,6 +341,8 @@ class Room:
         }
 
     def turn_object(self, turn: Turn, mine: Optional[str] = None) -> Dict[str, Any]:
+        """The turn as a viewer receives it; `mine` is that viewer's own
+        name for it, or None."""
         return {
             "id": turn.id,
             "kind": turn.kind,
@@ -320,6 +357,33 @@ class Room:
             "heard": turn.heard(),
             "mine": mine,
         }
+
+    def message_object(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        """A stored message as a viewer receives it (5.2, 6.10). `ref` is the
+        sender's row ref while the message belongs to the current opening
+        and that row is still in the room."""
+        sender = self.message_rows.get(int(row["id"]))
+        ref = None
+        if (
+            sender is not None
+            and self.live
+            and row["opening_id"] == self.opening_id
+            and sender.present
+            and self.rows.get(sender.station_id) is sender
+        ):
+            ref = sender.ref
+        return message_object(row, ref)
+
+    def recent_messages(self) -> List[Dict[str, Any]]:
+        """The last 50 messages of the room id, any opening, oldest first
+        (5.4.5)."""
+        return [self.message_object(r) for r in self.book.store.messages_of_room(self.id, VIEW_MESSAGES)]
+
+    def message_changed(self, row: Dict[str, Any]) -> None:
+        """A message was posted, or its state changed: its object goes in
+        the room's next delta."""
+        self.pending_messages[int(row["id"])] = self.message_object(row)
+        self.book.touch(self)
 
     def now_turns(self) -> List[Turn]:
         return sorted(self.engine.open, key=lambda t: (t.start, t.id))
@@ -373,12 +437,14 @@ class Room:
             self.sent_turns = {}
             self.sent_summary = None
             self.version += 1
+            self.pending_messages.clear()
             if self.live:
                 # Closed and opened again in one event: the opening is
                 # announced next.
                 self.book.touch(self)
             return RoomDiff([], [], [], True, True)
         if not self.live:
+            self.pending_messages.clear()
             return None
         current: Dict[str, Tuple[Row, Dict[str, Any]]] = {}
         members: List[Tuple[Row, Dict[str, Any]]] = []
@@ -391,17 +457,21 @@ class Room:
         left = [row for ref, (row, _) in self.sent_members.items() if ref not in current]
         turns_now: Dict[int, Dict[str, Any]] = {}
         turns: List[Dict[str, Any]] = []
+        turn_of: List[Turn] = []
         for turn in self.now_turns() + list(reversed(self.earlier_turns())):
             obj = self.turn_object(turn)
             turns_now[turn.id] = obj
             if self.sent_turns.get(turn.id) != obj:
                 turns.append(obj)
+                turn_of.append(turn)
         self.sent_members = current
         self.sent_turns = turns_now
         summary = self.summary()
         band = summary != self.sent_summary
         self.sent_summary = summary
-        diff = RoomDiff(members, left, turns, False, band)
+        messages = list(self.pending_messages.values())
+        self.pending_messages.clear()
+        diff = RoomDiff(members, left, turns, False, band, turn_of, messages)
         if diff:
             self.version += 1
         return diff
@@ -694,6 +764,11 @@ class RoomBook:
             room.close_timer = None
         room.last = max(room.last, self.clock.wall_ms())
         self.touch(room)
+        for turn in room.engine.open:
+            # A member at some time during the turn (6.9).
+            if row.station_id not in turn.members_during:
+                turn.members_during.add(row.station_id)
+                self.store.turn_members(turn.id, turn.members_during)
         if row.keyed:
             room.engine.on_presence(row, True)
 
@@ -711,6 +786,7 @@ class RoomBook:
         room.last = now
         room.last_turn_start = None
         room.message_count = 0
+        room.message_rows = {}
         room.opening_id = self.store.opening_open(room.id, room.band, room.family, room.center, now)
         # Refs are new for every opening (4.4).
         room.refs = set()
@@ -782,6 +858,7 @@ class RoomBook:
             room.opening_id = int(row["opening_id"])
             room.opened = int(row["opened"])
             room.last = int(row["last_active"])
+            room.message_count = self.store.message_count(room.opening_id)
             room.close_timer = self.clock.call_later(CLOSE_AFTER_MS, lambda r=room: self._close(r))
             self.rooms[room.id] = room
             loaded.append(room)

@@ -15,11 +15,9 @@ SESSIONS = [f for f in load_manifest()["fixtures"] if f["kind"] == "session"]
 # Fixtures whose server behavior a later task of the Roundtable plan builds.
 # Each later task removes its own entries; nothing else is skipped.
 LATER = {
-    "post-not-member": "Task 4 (messages)",
-    "post-away": "Task 4 (messages)",
-    "post-cleaned": "Task 4 (messages)",
-    "post-accepted": "Task 4 (messages)",
-    "hidden-ends-presence": "Tasks 4 and 5 (hidden, and the live reader's view)",
+    # `hidden` itself is Task 4's (test_messages.py); the fixture watches
+    # the room from a live reader, which Task 5 builds.
+    "hidden-ends-presence": "Task 5 (the live reader's view)",
     "live-watch-not-found": "Task 5 (live readers)",
     "weblink": "Task 6 (website sign-in links)",
     "delete-archive": "Task 6 (archive deletion)",

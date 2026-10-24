@@ -1,9 +1,11 @@
 # no-port-check: NereusSDR-original.
 """The Roundtable server's connections: the envelope, the connection caps,
 sign-in and replacement (wire spec sections 2.4, 3, 4, 5.1, 5.3.1, 9.1),
-and a station's presence, readings and views: `rooms`, `roomsDelta`,
+a station's presence, readings and views: `rooms`, `roomsDelta`,
 `room` and `delta`, with their generations, pacing and resync (5.3.2,
-5.3.3, 5.3.8 to 5.3.10, 5.4.3 to 5.4.6, 6.11).
+5.3.3, 5.3.8 to 5.3.10, 5.4.3 to 5.4.6, 6.11), and its messages, names,
+reports, mentions and going hidden (5.3.4 to 5.3.7, 5.3.11, 5.3.14, 5.4.7,
+5.4.8, 6.9, 6.10).
 
 The service is transport-agnostic: a connection is anything with async
 send(text), close(code) and async iteration over incoming frames
@@ -16,11 +18,14 @@ another.
 Every message read and every timer is one event. The rooms and turns it
 changes are collected while it runs; when it ends, each connection gets, in
 order, a `roomsDelta` if one is due, the full `room` views that entered its
-view, and one `delta` for each room it views that changed (6.11 "Order").
+view, one `delta` for each room it views that changed, then any `mention`
+(6.11 "Order"). An answer (`posted`, `error`) is queued by the handler
+itself, so it comes first.
 
 The client address is used only to find its address group, which is held
 in memory while the connection is open and never logged (wire spec 9.1,
-9.4). Logs name at most the first 6 characters of a station id.
+9.4). Logs name at most the first 6 characters of a station id, and never
+message text or a callsign.
 """
 
 from __future__ import annotations
@@ -28,14 +33,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sqlite3
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Tuple
 
-from . import identity, protocol
+from . import identity, messages, protocol
 from .clock import RealClock, TimerHandle
 from .config import Config, check as check_config, wire_limits
 from .limits import AddressGroups, Window
-from .rooms import SILENT_LEAVE_MS, Profile, Room, RoomBook, RoomDiff
+from .rooms import SILENT_LEAVE_MS, Profile, Room, RoomBook, RoomDiff, Row, message_object
 from .store import Store
 
 log = logging.getLogger("nereus_roundtable")
@@ -51,6 +57,11 @@ READING_SKEW_MS = 5000
 # Wire spec 5.3.3: at most one `rate` error a minute per station for
 # readings over the limit.
 READING_RATE_ERROR_MS = 60000
+# Wire spec 6.9 and 9.2: an unknown turn may be named up to 24 hours after
+# it ends.
+NAME_AFTER_MS = 86400000
+# Wire spec 5.3: after `hidden`, these are the only station kinds taken.
+AFTER_HIDDEN = frozenset({"weblink", "deleteArchive"})
 
 
 def short(station_id: str) -> str:
@@ -101,6 +112,11 @@ class Connection:
         self.software_version = ""
         # The latest presence's slices by id; None before any presence.
         self.presence: Optional[Dict[int, Dict[str, Any]]] = None
+        # The station's current callsign, for mentions (6.10): the stored
+        # one at sign-in, then its presence's.
+        self.callsign: Optional[str] = None
+        # Set by `hidden` (5.3.14): nothing but answers from then on.
+        self.hidden = False
         self.silence_timer: Optional[TimerHandle] = None
         self.reading_rate_error_ms: Optional[int] = None
         # Views (6.11): the rooms it reads, each room view's generation,
@@ -203,6 +219,12 @@ class Service:
         self._handlers: Dict[str, Dict[str, Callable[[Connection, Dict[str, Any]], None]]] = {STATION: {}, LIVE: {}}
         self.presence_window = Window(config.presence_per_second, 1000)
         self.reading_window = Window(config.readings_per_second, 1000)
+        self.post_minute_window = Window(config.messages_per_minute, 60000)
+        self.post_hour_window = Window(config.messages_per_hour, 3600000)
+        self.name_window = Window(config.names_per_minute, 60000)
+        self.report_window = Window(config.reports_per_hour, 3600000)
+        # `mention`s owed at the end of the event, after every delta.
+        self._mentions: List[Tuple[Connection, Dict[str, Any]]] = []
         self.stopping = False
         self._depth = 0
         self._viewers: Dict[str, Set[Connection]] = {}
@@ -215,6 +237,12 @@ class Service:
         self.on(STATION, "read", self._read)
         self.on(STATION, "unread", self._unread)
         self.on(STATION, "resync", self._resync)
+        self.on(STATION, "post", self._post)
+        self.on(STATION, "delete", self._delete)
+        self.on(STATION, "name", self._name)
+        self.on(STATION, "report", self._report)
+        self.on(STATION, "mentionsSeen", self._mentions_seen)
+        self.on(STATION, "hidden", self._hidden)
 
     # ----------------------------------------------------------- lifecycle
 
@@ -378,6 +406,14 @@ class Service:
                 # A second hello is a protocol error.
                 conn.close(protocol.CLOSE_PROTOCOL)
                 return
+            if conn.hidden and kind not in AFTER_HIDDEN:
+                # Wire spec 5.3 and 5.3.14; a post is always answered with
+                # `posted` (5.3.4).
+                if kind == "post":
+                    self._posted(conn, msg["clientId"], "hidden")
+                else:
+                    conn.send(protocol.error_message("hidden", kind))
+                return
         handler = self._handlers[conn.path].get(kind)
         if handler is not None:
             handler(conn, msg)
@@ -434,6 +470,7 @@ class Service:
             previous.close(protocol.CLOSE_REPLACED)
         conn.station_id = station_id
         conn.station_kind = kind
+        conn.callsign = (self.store.station_get(station_id) or {}).get("callsign")
         self.stations[station_id] = conn
         log.info("station %s signed in (%s)", short(station_id), kind)
         conn.send(
@@ -452,10 +489,15 @@ class Service:
         self._send_rooms(conn)
         self._heard_from(conn)
 
-    def mentions_for(self, station_id: str) -> list:
-        """Messages naming the station since its last `mentionsSeen` (wire
-        spec 5.4.2). The server keeps no messages yet, so there are none."""
-        return []
+    def mentions_for(self, station_id: str) -> List[Dict[str, Any]]:
+        """Messages naming the station posted after its last `mentionsSeen`,
+        oldest first, at most the newest 50 (wire spec 5.4.2)."""
+        out: List[Dict[str, Any]] = []
+        for row in self.store.unread_mentions(station_id):
+            room = self.book.rooms.get(row["room_id"])
+            obj = room.message_object(row) if room is not None else message_object(row)
+            out.append({"room": row["room_id"], "message": obj})
+        return out
 
     def rooms_message(self) -> Dict[str, Any]:
         """The full band list, generation 1 (wire spec 5.4.3): every live
@@ -503,6 +545,7 @@ class Service:
             return
         self.presence_window.allow(sid, now)
         callsign = protocol.normalize_callsign(callsign)
+        conn.callsign = callsign
         grid = protocol.normalize_grid(grid) if grid is not None and protocol.is_grid(grid) else None
         if conn.station_kind == "core":
             self.store.station_upsert(sid, "core", callsign, grid, self.clock.wall_ms())
@@ -542,6 +585,215 @@ class Service:
         if abs(t - wall) > READING_SKEW_MS:
             t = wall
         self.book.reading(row, msg["dbm"], t, msg["present"])
+
+    # ----------------------------------------------------------- messages
+
+    def _posted(self, conn: Connection, client_id: str, cause: Optional[str] = None, msg_id: Optional[int] = None) -> None:
+        """The answer to every `post` (5.4.7)."""
+        if cause is None:
+            conn.send(protocol.message("posted", STATION, clientId=client_id, ok=True, msg=msg_id, code=None, reason=None))
+            return
+        code, reason, _ = protocol.REASONS[cause]
+        conn.send(protocol.message("posted", STATION, clientId=client_id, ok=False, msg=None, code=code, reason=reason))
+
+    def _member_row(self, conn: Connection, room_id: str) -> Tuple[Optional[Room], Optional[Row]]:
+        """The live room with this id and the station's row there, when that
+        row is a member (not joining)."""
+        room = self.book.live(room_id)
+        row = room.rows.get(conn.station_id or "") if room is not None else None
+        if row is None or not row.member:
+            return room, None
+        return room, row
+
+    def _post(self, conn: Connection, msg: Dict[str, Any]) -> None:
+        """Wire spec 5.3.4, its refusals in its order (`hidden` is checked
+        before any handler)."""
+        sid = conn.station_id
+        assert sid is not None
+        client_id = msg["clientId"]
+        room, row = self._member_row(conn, msg["room"])
+        if room is None or row is None:
+            self._posted(conn, client_id, "not-member")
+            return
+        if row.away:
+            self._posted(conn, client_id, "away")
+            return
+        wall = self.clock.wall_ms()
+        if self.store.station_blocked(sid, wall):
+            self._posted(conn, client_id, "blocked")
+            return
+        now = self.clock.now_ms()
+        if self.post_minute_window.retry_after(sid, now) or self.post_hour_window.retry_after(sid, now):
+            self._posted(conn, client_id, "rate")
+            return
+        cleaned = messages.clean_text(msg["text"])
+        refusal = messages.check(cleaned, self.config.message_code_points, self.config.message_lines)
+        if refusal == "too-long":
+            self._posted(conn, client_id, "too-long")
+            return
+        if refusal is not None:
+            self._posted(conn, client_id, "not-allowed-empty")
+            return
+        # The sender's latest reading here, when it is stored with a turn
+        # still open (6.10, design D4).
+        dbm = None
+        if row.reading is not None and row.reading_turn is not None and row.reading_turn in room.engine.open:
+            dbm = row.reading.dbm
+        words = messages.words(cleaned)
+        assert room.opening_id is not None
+        try:
+            msg_id = self.store.message_add(room.opening_id, room.id, sid, row.callsign, row.nth, wall, cleaned, dbm, words)
+            stored = self.store.message_get(msg_id)
+        except sqlite3.Error as exc:
+            log.error("a database error saving a message (%s)", type(exc).__name__)
+            self._posted(conn, client_id, "server")
+            return
+        assert stored is not None
+        self.post_minute_window.allow(sid, now)
+        self.post_hour_window.allow(sid, now)
+        room.message_count += 1
+        room.last = max(room.last, wall)
+        room.message_rows[msg_id] = row
+        room.message_changed(stored)
+        self._posted(conn, client_id, None, msg_id)
+        # Every other connected station whose base callsign it names gets
+        # `mention` after the deltas (6.10, 6.11 "Order").
+        bases = set(words)
+        mention = protocol.message("mention", STATION, room=room.id, message=room.message_object(stored))
+        for other in self.stations.values():
+            if other is conn or other.hidden or other.closing or not other.callsign:
+                continue
+            if messages.base_callsign(other.callsign) in bases:
+                self._mentions.append((other, mention))
+
+    def _delete(self, conn: Connection, msg: Dict[str, Any]) -> None:
+        """Wire spec 5.3.5."""
+        sid = conn.station_id
+        assert sid is not None
+        result = self.store.message_delete(msg["msg"], sid)
+        if result == "not-found":
+            conn.send(protocol.error_message("not-found", "delete"))
+            return
+        if result == "not-allowed":
+            conn.send(protocol.error_message("not-allowed-delete", "delete"))
+            return
+        if result != "deleted":
+            return
+        row = self.store.message_get(msg["msg"])
+        assert row is not None
+        room = self.book.live(row["room_id"])
+        if room is not None:
+            # Views hold the last 50 of the room id, any opening.
+            room.message_changed(row)
+
+    def _find_turn(self, room_id: str, turn_id: int) -> Tuple[Optional[Room], Optional[Any]]:
+        """A turn the rooms still hold in memory (open, or ended in this
+        process), with its room."""
+        room = self.book.rooms.get(room_id)
+        if room is not None:
+            for turn in room.engine.open:
+                if turn.id == turn_id:
+                    return room, turn
+        for turn in self.book.earlier.get(room_id, []):
+            if turn.id == turn_id:
+                return room, turn
+        return room, None
+
+    def _name(self, conn: Connection, msg: Dict[str, Any]) -> None:
+        """Wire spec 5.3.6 and 6.9, its refusals in its order."""
+        sid = conn.station_id
+        assert sid is not None
+        turn_id = msg["turn"]
+        stored = self.store.turn_get(turn_id)
+        if stored is None:
+            conn.send(protocol.error_message("not-found", "name"))
+            return
+        wall = self.clock.wall_ms()
+        end = stored["end_ms"]
+        if stored["kind"] != "unknown" or (end is not None and wall - end > NAME_AFTER_MS):
+            conn.send(protocol.error_message("bad-turn", "name"))
+            return
+        _, row = self._member_row(conn, stored["room_id"])
+        if row is None:
+            conn.send(protocol.error_message("not-member", "name"))
+            return
+        if row.away:
+            conn.send(protocol.error_message("away", "name"))
+            return
+        if self.store.station_blocked(sid, wall):
+            conn.send(protocol.error_message("blocked", "name"))
+            return
+        room, turn = self._find_turn(stored["room_id"], turn_id)
+        during = turn.members_during if turn is not None else self.store.member_ids(stored)
+        if sid not in during:
+            conn.send(protocol.error_message("not-allowed-name", "name"))
+            return
+        now = self.clock.now_ms()
+        retry = self.name_window.retry_after(sid, now)
+        if retry:
+            conn.send(protocol.error_message("rate", "name", retry))
+            return
+        self.name_window.allow(sid, now)
+        name = protocol.normalize_callsign(msg["name"])
+        self.store.turn_name(turn_id, sid, name, row.callsign, wall)
+        if turn is not None and turn.set_name(sid, name) and room is not None and room.live:
+            # The turn's names change in the room's views.
+            self.book.touch(room)
+
+    def _report(self, conn: Connection, msg: Dict[str, Any]) -> None:
+        """Wire spec 5.3.7: onto the review list; answered by nothing."""
+        sid = conn.station_id
+        assert sid is not None
+        target = msg["target"]
+        reported: Optional[str] = None
+        if target == "message":
+            key: Any = msg["msg"]
+            found = self.store.message_get(key) is not None
+        elif target == "turn":
+            key = msg["turn"]
+            found = self.store.turn_get(key) is not None
+        else:
+            key = (msg["room"], msg["ref"])
+            room = self.book.live(msg["room"])
+            row = next((r for r in room.rows.values() if r.ref == msg["ref"]), None) if room is not None else None
+            found = row is not None
+            reported = row.station_id if row is not None else None
+        if not found:
+            conn.send(protocol.error_message("not-found", "report"))
+            return
+        now = self.clock.now_ms()
+        retry = self.report_window.retry_after(sid, now)
+        if retry:
+            conn.send(protocol.error_message("rate", "report", retry))
+            return
+        self.report_window.allow(sid, now)
+        self.store.report_add(target, key, msg["reason"], sid, self.clock.wall_ms(), reported)
+
+    def _mentions_seen(self, conn: Connection, msg: Dict[str, Any]) -> None:
+        """Wire spec 5.3.11: answered by nothing."""
+        assert conn.station_id is not None
+        self.store.mention_seen(conn.station_id, msg["t"])
+
+    def _hidden(self, conn: Connection, msg: Dict[str, Any]) -> None:
+        """Wire spec 5.3.14: the station's presence ends at once, and the
+        connection gets nothing more but answers."""
+        sid = conn.station_id
+        assert sid is not None
+        log.info("station %s went hidden", short(sid))
+        conn.hidden = True
+        conn.presence = None
+        for room_id in list(conn.views):
+            self._drop_view(conn, room_id)
+        conn.reads.clear()
+        conn.want_full = []
+        conn.band = None
+        if conn.band_timer is not None:
+            conn.band_timer.cancel()
+            conn.band_timer = None
+        # Its rows leave every room (a delta to every other viewer); its
+        # open talking turn ends now with no 3-second wait (6.6), and its
+        # joining slices are dropped.
+        self.book.remove_station(sid)
 
     # ----------------------------------------------------------- views
 
@@ -675,9 +927,9 @@ class Service:
             family=room.family,
             hz=room.center,
             members=[room.member_object(row, row.station_id == sid) for row in room.rows.values()],
-            now=[room.turn_object(t) for t in room.now_turns()],
-            earlier=[room.turn_object(t) for t in room.earlier_turns()],
-            messages=[],
+            now=[room.turn_object(t, t.given.get(sid or "")) for t in room.now_turns()],
+            earlier=[room.turn_object(t, t.given.get(sid or "")) for t in room.earlier_turns()],
+            messages=room.recent_messages(),
         )
         conn.send(msg)
         conn.views[room.id] = _View(room.opening_id)
@@ -699,8 +951,8 @@ class Service:
                 gen=view.gen,
                 members=members,
                 left=[row.ref for row in diff.left],
-                turns=diff.turns,
-                messages=[],
+                turns=diff.turns_for(sid),
+                messages=diff.messages,
                 closed=diff.closed,
             )
             # A closing delta is always queued (9.1).
@@ -724,6 +976,10 @@ class Service:
                 if not rooms and not self._dirty:
                     break
                 self._flush_once(rooms)
+            mentions, self._mentions = self._mentions, []
+            for conn, mention in mentions:
+                if not self.stopping and not conn.hidden:
+                    conn.send(mention)
         finally:
             self._depth -= 1
 
@@ -745,7 +1001,7 @@ class Service:
         seen: Set[Connection] = set()
 
         def want(conn: Optional[Connection]) -> None:
-            if conn is not None and conn not in seen and conn.station_id is not None and not conn.closing:
+            if conn is not None and conn not in seen and conn.station_id is not None and not conn.closing and not conn.hidden:
                 seen.add(conn)
                 targets.append(conn)
 

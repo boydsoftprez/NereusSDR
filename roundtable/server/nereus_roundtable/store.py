@@ -10,6 +10,11 @@ ever stores one (wire spec 9.3, 12): the key-issuance count per address
 group lives in memory only. A website key is stored only as SHA-256 of its
 32 raw bytes.
 
+Every id is the table's largest plus one. Message and report rows are never
+deleted (a deleted, removed or expired message keeps its row), so their ids
+are never given twice; a later deletion of the newest rows of any table
+would let its ids come back.
+
 The schema is created whole on first open; schema_version names it so a
 later version can move an older file forward.
 """
@@ -17,7 +22,9 @@ later version can move an older file forward.
 from __future__ import annotations
 
 import sqlite3
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+
+from . import messages
 
 SCHEMA_VERSION = 1
 
@@ -37,7 +44,8 @@ CREATE TABLE IF NOT EXISTS stations (
     posting_block_until INTEGER,
     posting_block_forever INTEGER NOT NULL DEFAULT 0,
     not_counted_until INTEGER,
-    not_counted_forever INTEGER NOT NULL DEFAULT 0
+    not_counted_forever INTEGER NOT NULL DEFAULT 0,
+    mentions_seen INTEGER
 );
 CREATE TABLE IF NOT EXISTS keys (
     key_hash BLOB PRIMARY KEY,
@@ -66,7 +74,8 @@ CREATE TABLE IF NOT EXISTS turns (
     second_talker_id TEXT,
     second_talker_callsign TEXT,
     start_ms INTEGER NOT NULL,
-    end_ms INTEGER
+    end_ms INTEGER,
+    member_ids TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS turns_by_opening ON turns (opening_id, start_ms);
 CREATE INDEX IF NOT EXISTS turns_by_talker ON turns (talker_id, start_ms);
@@ -92,6 +101,7 @@ CREATE TABLE IF NOT EXISTS turn_names (
     t INTEGER NOT NULL,
     PRIMARY KEY (turn_id, station_id)
 );
+CREATE INDEX IF NOT EXISTS turn_names_by_time ON turn_names (t);
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY,
     opening_id INTEGER NOT NULL,
@@ -103,7 +113,8 @@ CREATE TABLE IF NOT EXISTS messages (
     text TEXT,
     state TEXT NOT NULL CHECK (state IN ('shown', 'removed', 'deleted', 'expired')),
     dbm REAL,
-    removed_by TEXT
+    removed_by TEXT,
+    mentions TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS messages_by_room ON messages (room_id, id);
 CREATE INDEX IF NOT EXISTS messages_by_station ON messages (station_id);
@@ -121,6 +132,7 @@ CREATE TABLE IF NOT EXISTS reports (
     closed INTEGER,
     closed_by TEXT
 );
+CREATE INDEX IF NOT EXISTS reports_by_reporter ON reports (reporter_id, target);
 CREATE TABLE IF NOT EXISTS review_actions (
     id INTEGER PRIMARY KEY,
     helper_id TEXT NOT NULL,
@@ -359,6 +371,222 @@ class Store:
             "SELECT * FROM turn_readings WHERE turn_id = ? ORDER BY station_id", (turn_id,)
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def turn_get(self, turn_id: int) -> Optional[Dict[str, Any]]:
+        """One turn with its opening's room id, or None."""
+        row = self.db.execute(
+            "SELECT turns.*, rooms.room_id AS room_id FROM turns"
+            " JOIN rooms ON rooms.opening_id = turns.opening_id WHERE turns.id = ?",
+            (turn_id,),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def turn_members(self, turn_id: int, station_ids: Iterable[str]) -> None:
+        """The stations that were members of the turn's room at some time
+        during it (wire spec 6.9), kept for naming."""
+        self.db.execute(
+            "UPDATE turns SET member_ids = ? WHERE id = ?", (" ".join(sorted(station_ids)), turn_id)
+        )
+
+    @staticmethod
+    def member_ids(turn: Dict[str, Any]) -> Set[str]:
+        return set((turn.get("member_ids") or "").split())
+
+    # ------------------------------------------------------------- names
+
+    def turn_name(self, turn_id: int, station_id: str, name: str, callsign: Optional[str], t: int) -> None:
+        """A station names a turn: one name per station, a later one
+        replacing the earlier (wire spec 5.3.6). Nothing here touches
+        sessions: a name never puts a turn in an archive (6.9)."""
+        self.db.execute(
+            "INSERT OR REPLACE INTO turn_names (turn_id, station_id, callsign, name, t) VALUES (?, ?, ?, ?, ?)",
+            (turn_id, station_id, callsign, name, t),
+        )
+
+    def turn_names_of(self, turn_id: int) -> Dict[str, str]:
+        """Each naming station's name for the turn."""
+        rows = self.db.execute("SELECT station_id, name FROM turn_names WHERE turn_id = ?", (turn_id,)).fetchall()
+        return {r["station_id"]: r["name"] for r in rows}
+
+    def name_counts(self, turn_id: int) -> Dict[str, int]:
+        """Each distinct name with how many stations gave it, most first,
+        then by name (6.9)."""
+        rows = self.db.execute(
+            "SELECT name, COUNT(*) AS n FROM turn_names WHERE turn_id = ? GROUP BY name ORDER BY n DESC, name",
+            (turn_id,),
+        ).fetchall()
+        return {r["name"]: int(r["n"]) for r in rows}
+
+    def names_recent(self, room_id: str, since: int) -> List[str]:
+        """The base callsigns of the names given at or after `since` to
+        turns of any opening of the room id, newest first, each once (6.9:
+        what a screen offers)."""
+        rows = self.db.execute(
+            "SELECT turn_names.name AS name, MAX(turn_names.t) AS last FROM turn_names"
+            " JOIN turns ON turns.id = turn_names.turn_id"
+            " JOIN rooms ON rooms.opening_id = turns.opening_id"
+            " WHERE rooms.room_id = ? AND turn_names.t >= ? GROUP BY turn_names.name ORDER BY last DESC, name",
+            (room_id, since),
+        ).fetchall()
+        out: List[str] = []
+        for r in rows:
+            base = messages.base_callsign(r["name"])
+            if base not in out:
+                out.append(base)
+        return out
+
+    # ------------------------------------------------------------- messages
+
+    def message_add(
+        self,
+        opening_id: int,
+        room_id: str,
+        station_id: str,
+        callsign: str,
+        nth: int,
+        t: int,
+        text: str,
+        dbm: Optional[float],
+        mentions: Iterable[str] = (),
+    ) -> int:
+        """Store a posted message with the sender's callsign and row number
+        at the time and its reading of the talker (or None); returns its
+        id. `mentions` are the base callsigns of its words, kept so a
+        station's next `welcome` can list the messages naming it."""
+        message_id = self._next_id("messages", "id")
+        words = list(mentions)
+        self.db.execute(
+            "INSERT INTO messages (id, opening_id, room_id, station_id, callsign, nth, t, text, state, dbm,"
+            " removed_by, mentions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'shown', ?, NULL, ?)",
+            (
+                message_id,
+                opening_id,
+                room_id,
+                station_id,
+                callsign,
+                nth,
+                t,
+                text,
+                dbm,
+                (" " + " ".join(words) + " ") if words else "",
+            ),
+        )
+        return message_id
+
+    def message_get(self, message_id: int) -> Optional[Dict[str, Any]]:
+        row = self.db.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
+        return dict(row) if row is not None else None
+
+    def message_delete(self, message_id: int, by_station: str) -> str:
+        """The sender deletes its own message (wire spec 5.3.5): the text
+        goes, `state` becomes `deleted`, the row stays. Returns `deleted`,
+        `unchanged` (already without its text), `not-found` or
+        `not-allowed` (another station's message)."""
+        row = self.message_get(message_id)
+        if row is None:
+            return "not-found"
+        if row["station_id"] != by_station:
+            return "not-allowed"
+        if row["state"] != "shown":
+            return "unchanged"
+        self.db.execute("UPDATE messages SET text = NULL, state = 'deleted' WHERE id = ?", (message_id,))
+        return "deleted"
+
+    def messages_of_room(self, room_id: str, limit: int = 50, before: Optional[int] = None) -> List[Dict[str, Any]]:
+        """The newest `limit` messages of every opening of the room id, with
+        ids under `before` when given, oldest first."""
+        if before is None:
+            rows = self.db.execute(
+                "SELECT * FROM messages WHERE room_id = ? ORDER BY id DESC LIMIT ?", (room_id, limit)
+            ).fetchall()
+        else:
+            rows = self.db.execute(
+                "SELECT * FROM messages WHERE room_id = ? AND id < ? ORDER BY id DESC LIMIT ?",
+                (room_id, before, limit),
+            ).fetchall()
+        return [dict(r) for r in reversed(rows)]
+
+    def message_count(self, opening_id: int) -> int:
+        row = self.db.execute("SELECT COUNT(*) FROM messages WHERE opening_id = ?", (opening_id,)).fetchone()
+        return int(row[0])
+
+    # ------------------------------------------------------------- mentions
+
+    def mention_seen(self, station_id: str, up_to_ms: int) -> None:
+        """Every mention of the station in a message posted at or before
+        `up_to_ms` is seen (wire spec 5.3.11). The mark never moves back."""
+        self.db.execute(
+            "UPDATE stations SET mentions_seen = MAX(COALESCE(mentions_seen, -1), ?) WHERE id = ?",
+            (up_to_ms, station_id),
+        )
+
+    def unread_mentions(self, station_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """The shown messages of other stations naming the station's current
+        base callsign, posted after its last `mentionsSeen`: at most the
+        newest `limit`, oldest first (wire spec 5.4.2)."""
+        station = self.station_get(station_id)
+        if station is None or not station["callsign"]:
+            return []
+        base = messages.base_callsign(station["callsign"])
+        seen = station["mentions_seen"]
+        rows = self.db.execute(
+            "SELECT * FROM messages WHERE state = 'shown' AND station_id != ? AND t > ?"
+            " AND instr(mentions, ?) > 0 ORDER BY id DESC LIMIT ?",
+            (station_id, -1 if seen is None else seen, f" {base} ", limit),
+        ).fetchall()
+        return [dict(r) for r in reversed(rows)]
+
+    # ------------------------------------------------------------- reports
+
+    def report_add(
+        self,
+        kind: str,
+        target: Any,
+        reason: Optional[str],
+        by: str,
+        now: int,
+        station: Optional[str] = None,
+    ) -> bool:
+        """Put an item on the review list (wire spec 5.3.7). `target` is a
+        message id, a turn id, or (room id, row ref) for a station, whose
+        station id is `station`. A second open report of one item by one
+        station counts once: False, and nothing is added."""
+        message_id = target if kind == "message" else None
+        turn_id = target if kind == "turn" else None
+        room_id, ref = target if kind == "station" else (None, None)
+        if kind == "station":
+            match = "room_id = ? AND row_ref = ?"
+            args: Tuple[Any, ...] = (room_id, ref)
+        elif kind == "message":
+            match = "message_id = ?"
+            args = (message_id,)
+        else:
+            match = "turn_id = ?"
+            args = (turn_id,)
+        found = self.db.execute(
+            f"SELECT 1 FROM reports WHERE reporter_id = ? AND target = ? AND closed IS NULL AND {match}",
+            (by, kind) + args,
+        ).fetchone()
+        if found is not None:
+            return False
+        report_id = self._next_id("reports", "id")
+        self.db.execute(
+            "INSERT INTO reports (id, target, message_id, turn_id, room_id, row_ref, reported_station_id, reason,"
+            " reporter_id, t, closed, closed_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)",
+            (report_id, kind, message_id, turn_id, room_id, ref, station, reason, by, now),
+        )
+        return True
+
+    # ------------------------------------------------------------- blocks
+
+    def station_blocked(self, station_id: str, now: int) -> bool:
+        """Whether a helper has blocked the station from posting and naming
+        turns (design 11.7) at `now`."""
+        row = self.station_get(station_id)
+        if row is None:
+            return False
+        until = row["posting_block_until"]
+        return bool(row["posting_block_forever"]) or (until is not None and until > now)
 
     # ------------------------------------------------------------- schema
 

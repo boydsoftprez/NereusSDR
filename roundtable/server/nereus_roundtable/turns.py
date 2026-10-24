@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import math
 from collections import OrderedDict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 log = logging.getLogger("nereus_roundtable")
 
@@ -124,8 +124,25 @@ class Turn:
         self.unkey: Optional[int] = None
         self.timer: Any = None
         self.tracks: "OrderedDict[str, Track]" = OrderedDict()
-        # Filled by naming (wire spec 6.9), a later part of the server.
+        # Naming (wire spec 6.9): each naming station's name, the counts
+        # the views show, and the stations that were members of the room
+        # at some time during the turn (who may name it).
+        self.given: Dict[str, str] = {}
         self.names: List[Dict[str, Any]] = []
+        self.members_during: Set[str] = set()
+
+    def set_name(self, station_id: str, name: str) -> bool:
+        """A station's name for the turn, replacing its earlier one. True
+        when the counts changed."""
+        if self.given.get(station_id) == name:
+            return False
+        self.given[station_id] = name
+        counts: Dict[str, int] = {}
+        for given in self.given.values():
+            counts[given] = counts.get(given, 0) + 1
+        # Most first, then by name (6.9).
+        self.names = [{"name": n, "count": c} for n, c in sorted(counts.items(), key=lambda nc: (-nc[1], nc[0]))]
+        return True
 
     @property
     def talker(self) -> Any:
