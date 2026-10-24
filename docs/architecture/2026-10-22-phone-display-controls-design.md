@@ -55,6 +55,7 @@ After this work the phone and the iPad have the desktop's Display controls: the 
 - **Per-pan storage already exists:** a master set `phone.display.master.v29`, each pan's own values in `phone.band.display.<panId>`, `ownFields`, `reset(pan:)` and `copyOwnPictureToMaster` (`ios/NereusKit/Sources/NereusBand/BandDisplaySettingsStore.swift:15-60`, `:188`, `:364-405`), wrapped by `DisplayEditScope { pan, all }` (`MainScreenModel.swift:29-56`).
 - **Setup > Display** already renders version 29's eight pages from the Core's description, after an "On this phone" page (`ios/NereusApp/Setup/SetupTree.swift:238-239`), with a two-chip "All pans" / "Pan 1" header, own-value dots and a band picker in All mode (`DescribedPage.swift:38-42`, `:122-224`).
 - **dB Max and dB Min** are the phone's own, per band in `bandScales` (`NereusBand/BandDisplaySettings.swift:173-187`, `:463-519`), written by the sheet's Top and Range and the dBm arrows (`DisplaySheetModel.swift:411-424`, `:528-578`). The Core's `DisplayGridMax_<band>` is known only as a station-scoped key (`NereusMirror/SettingsScope.swift:84-87`) and is never read into the band.
+- **NB Blank has no way in.** The phone stores it per pan, `waterfallBlanking` (off) and `waterfallBlankingThresholdDb` (6) (`NereusBand/BandDisplaySettings.swift:164-165`), under the keys `WaterfallBlankingEnabled` and `WaterfallBlankingThresholdDb` (`Setup/PhoneSetupKeys.swift:102-103`, `:220-226`), and version 29's Waterfall page lists both rows (`NereusMirror/SetupDescription+V29.swift`, `display.waterfall.blanking` and `display.waterfall.blankingThreshold`). The sheet has no NB row, and on JJ's phone Setup shows neither (his report, 2026-10-24).
 - **No band menu.** The band has drag, single and double tap, and pinch (`Band/BandGestureLayer.swift:275-557`); the only long presses are on a spot label and a FreeDV row.
 - **The iPad** has three layouts, phone, column and front panel (`iPad/IPadLayout.swift:14-36`), and the same drop sheet; it has no button column.
 - **The zoom kept across launches** (PR 586) is `BandDisplaySettings.rxViewSpanHz` (`BandDisplaySettings.swift:372`), saved in the pan's own `phone.band.display.1`.
@@ -81,7 +82,7 @@ Each tab is a table in the app of setting keys in the pill's order, each cited t
 | --- | --- |
 | Spectrum | Trace: detector, normalize, fill, gradient, fill alpha, averaging, average time, line width, peak hold, Spectrum Height (this phone), Cal Offset (grayed, DC5). Grid: spacing, scale text. Markers: noise floor line, bin width, peak value, cursor frequency. A link "Peaks & Markers in Setup ›". |
 | Levels | Spectrum scale mode (Manual or tracking the floor), dB Max, dB Min, floor offset, keep range; waterfall level mode (five modes), Re-tune, black level, gain, noise floor offset, low, high. |
-| Waterfall | Drawing: scheme, rate, opacity, NB threshold, averaging, average time. Overlays: the five. Time: timestamp, rewind depth, then Look back (this phone). |
+| Waterfall | Drawing: scheme, rate, opacity, NB Blank on or off, NB threshold (grayed while NB Blank is off), averaging, average time. Overlays: the five. Time: timestamp, rewind depth, then Look back (this phone). |
 | View | 2D or 3D; with 3D, floor (per band), gain, span, angle, speed, slice shadow; background: on, picture, opacity. On this phone: CTUN, DUP. |
 | FFT | The Core's: sizing, size, Hz per bin, the readout, frame rate, window. On this phone: decimation. |
 
@@ -143,6 +144,8 @@ The design needs no Core change. Two facts are confirmed against a real Core in 
 2. A second display subscription from one device, with its own pan key, is granted and framed as the desktop remote window's second pan is.
 
 If either is not so, the plan stops and the gap goes to the Core's owner.
+
+The same task finds why JJ's phone shows no NB Blank row in Setup > Display > Waterfall although the description lists it: an installed build older than the page, the Core's description version, or the row read as unavailable. The fix ships with the Waterfall rows.
 
 ## 7. Setup > Display
 
@@ -210,7 +213,7 @@ Numbered after PR 603's R-IOS-49 to R-IOS-54, in the R-IOS table of [2026-09-23-
 
 | ID | Requirement | Evidence |
 | --- | --- | --- |
-| R-IOS-55 | The Display sheet and pill (DC1, DC2, DC4, DC5): the five tabs, each tab's rows in the desktop pill's order with the phone's rows where DC2 puts them, live on the band, the peek, the amber dot and its tap, Reset this pan and Setup defaults, Cal Offset grayed. | Software: each tab's key table against the desktop functions cited in DC1; own-value set, clear and reset against `BandDisplaySettingsStore`. Integration: shot tests of each tab on the iPhone, sideways and on the iPad, compared with the redrawn board; a UI test that Setup defaults opens the matching page on that pan. |
+| R-IOS-55 | The Display sheet and pill (DC1, DC2, DC4, DC5): the five tabs, each tab's rows in the desktop pill's order with the phone's rows where DC2 puts them, live on the band, the peek, the amber dot and its tap, Reset this pan and Setup defaults, Cal Offset grayed, NB Blank and its threshold on the Waterfall tab and page. | Software: each tab's key table against the desktop functions cited in DC1; own-value set, clear and reset against `BandDisplaySettingsStore`. Integration: shot tests of each tab on the iPhone, sideways and on the iPad, compared with the redrawn board; a UI test that Setup defaults opens the matching page on that pan; a UI test that NB Blank and its threshold on the sheet and in Setup both change the pan's blanking. Device: NB Blank on JJ's phone. |
 | R-IOS-56 | dB Max and dB Min per band through the Core (DC3, 5.4): read, write, unconfirmed and refused states; Top and Range gone; the older-Core fallback. | Software: against `FakeStation` with and without version 29, including a refusal. Integration: a change on the phone moves the desktop's scale on that band on a real Core, and the reverse. |
 | R-IOS-57 | The band menu (DC6): the half-second hold on empty band, the haptic, the items in the desktop's order, a notch at the finger's frequency, drags and taps unchanged, holds on flags, spots and stations unchanged. | Software: the gesture's hit rules on a band fixture. Integration: a UI test of the hold, the menu and each item. Device: JJ's phone, upright and sideways. |
 | R-IOS-58 | The column and the pill on the iPad and the sideways iPhone (DC7, DC8): every button and its menu, one menu at a time, fold, the pill's height and scroll, the PTT's move. | Integration: `IPadShotTests` and a sideways iPhone shot test with each menu open; a UI test that the PTT is never under an open menu. Device: JJ's iPad and phone. |
