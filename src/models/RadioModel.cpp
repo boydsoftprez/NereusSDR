@@ -1337,6 +1337,11 @@
 //                (m_deviceReservationsMac), and a letter's snapshot is
 //                dropped once a device is placed on it.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24 - The AGC-T and RF gain sliders each save the value their
+//                lane readback gives (the RF gain, the band's threshold),
+//                so both come back as they were left on a restart. The AUTO
+//                tick still schedules no save. J.J. Boyd (KG4VCF), with
+//                AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -17452,10 +17457,10 @@ void RadioModel::runOnDspWorkerFromLane(RxDspWorker* worker, const std::function
 // (console.cs:45978 [v2.10.3.13], GetRXAAGCTop after SetRXAAGCThresh), as a
 // lane readback. The RF gain is written with m_syncingAgc set, so its own
 // handler neither turns auto AGC off nor calls WDSP again, as before.
-void RadioModel::syncRfGainFromAgcTop(SliceModel* slice, RxChannel* channel)
+void RadioModel::syncRfGainFromAgcTop(SliceModel* slice, RxChannel* channel, bool scheduleSave)
 {
     const quint64 serial = ++m_agcReadbackSerial[slice];
-    channel->requestAgcReadBack(slice, [this, slice, serial](double top, double) {
+    channel->requestAgcReadBack(slice, [this, slice, serial, scheduleSave](double top, double) {
         // A newer AGC set on this slice has its own readback.
         if (m_agcReadbackSerial.value(slice) != serial) {
             return;
@@ -17466,6 +17471,13 @@ void RadioModel::syncRfGainFromAgcTop(SliceModel* slice, RxChannel* channel)
             m_syncingAgc = true;
             slice->setRfGain(rfGain);
             m_syncingAgc = wasSyncing;
+            // The slice keeps the RF gain the new threshold gives, so it comes
+            // back as the user left it. The save the caller scheduled captured
+            // the slice's values before this lane readback landed. The AUTO
+            // tick passes false: its writes schedule no save.
+            if (scheduleSave) {
+                scheduleSettingsSave(slice);
+            }
         }
     });
 }
@@ -24758,7 +24770,7 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
             // From Thetis console.cs:45978 — GetRXAAGCTop after SetRXAAGCThresh
             // R-R3-39: read on the receive lane after the set; at once
             // without a lane.
-            syncRfGainFromAgcTop(slice, rxCh);
+            syncRfGainFromAgcTop(slice, rxCh, true);
         }
         scheduleSettingsSave(slice);
     });
@@ -25415,6 +25427,11 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
                     m_syncingAgc = true;
                     slice->setAgcThreshold(threshInt);
                     m_syncingAgc = wasSyncing;
+                    // The band keeps the threshold the new top gives, so the
+                    // band's AGC comes back as the user left it. The save
+                    // scheduled below captured the band's values before this
+                    // lane readback landed.
+                    scheduleSettingsSave(slice);
                 }
             });
         }
@@ -27451,7 +27468,7 @@ void RadioModel::updateAutoAgc()
                 rxCh->setAgcThreshold(threshInt);
                 // From Thetis v2.10.3.13 console.cs:45978 — readback AGC top
                 // R-R3-39: read on the receive lane after the set.
-                syncRfGainFromAgcTop(slice, rxCh);
+                syncRfGainFromAgcTop(slice, rxCh, false);
             }
 
             // Update model (UI sync) — handler won't re-enter WDSP

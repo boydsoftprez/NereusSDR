@@ -40,6 +40,12 @@
 //   2026-10-17 -- Teardown stops the TX worker before the audio engine
 //                 drops the input it reads (main CI crash at 4066a86b6).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24 -- The AGC-T and RF gain sliders save the value their lane
+//                 readback gives. Before, an AGC-T move's RF gain came back
+//                 stale on restart (the AGC did not move), and an RF gain
+//                 move's band threshold came back stale. The AUTO tick
+//                 still schedules no save.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -53,7 +59,9 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <memory>
+#include <optional>
 #include <thread>
 
 #include "core/AppSettings.h"
@@ -63,6 +71,7 @@
 #include "core/RxChannel.h"
 #include "core/dsp/DspAssetService.h"
 #include "core/WdspEngine.h"
+#include "core/daemon/DaemonAgcSource.h"
 #include "core/audio/TxMicSource.h"
 #include "core/session/PureSignalSessionFacade.h"
 #include "models/SliceModel.h"
@@ -156,6 +165,41 @@ std::unique_ptr<IAudioBus> openedBus(std::unique_ptr<FakeAudioBus> bus)
     return bus;
 }
 
+// The band's AGC as WDSP holds it: the threshold read back from the channel
+// (what the AGC runs on, not the slice's or the channel's cached copy).
+// The reading lives in shared state, so a readback that lands after the
+// deadline writes there and not into a returned stack frame.
+std::optional<int> wdspAgcThreshold(RadioModel& radio, SliceModel* slice)
+{
+    RxChannel* channel = radio.rxChannelForSlice(slice->sliceIndex());
+    if (channel == nullptr) {
+        return std::nullopt;
+    }
+    auto reading = std::make_shared<std::optional<int>>();
+    channel->requestAgcReadBack(slice, [reading](double, double thresh) {
+        *reading = static_cast<int>(std::round(thresh));
+    });
+    QDeadlineTimer deadline(5000);
+    while (!reading->has_value() && !deadline.hasExpired()) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    }
+    return *reading;
+}
+
+// Fixed broad-band pseudo-noise for a stream's noise floor, as
+// tst_radio_slice_settings_restore feeds it.
+QVector<float> pseudoNoise()
+{
+    QVector<float> noise;
+    noise.reserve(4096 * 2);
+    quint32 state = 0x4d595df4U;
+    for (int i = 0; i < 4096 * 2; ++i) {
+        state = state * 1664525U + 1013904223U;
+        noise.append((static_cast<float>((state >> 8) & 0xffffU) / 32767.5f - 1.0f) * 0.20f);
+    }
+    return noise;
+}
+
 } // namespace
 
 class TestConnectableRadioModel : public QObject {
@@ -206,6 +250,183 @@ private slots:
         QCOMPARE(channel->filterLow(), 350.0);
         QCOMPARE(channel->filterHigh(), 2450.0);
         QCOMPARE(channel->agcThreshold(), -37);
+    }
+
+    // The desktop AGC-T slider sets the threshold; the receive lane reads
+    // back the AGC top it gives and sets the slice's RF gain. A save that
+    // ran before that readback kept the old RF gain, and on restart the RF
+    // gain came back stale. The AGC itself came back as the slider left it
+    // (the restored threshold reaches WDSP after the RF gain).
+    void agcThresholdMoveSavesTheRfGainFromTheReadback()
+    {
+        AppSettings::instance().clear();
+        int movedThreshold = 0;
+        int movedRfGain = 0;
+        std::optional<int> movedWdspThreshold;
+        {
+            auto harness = ConnectableRadioModel::create(
+                10000, RadioModel::Role::Local, {}, HPSDRHW::HermesLite, false);
+            QVERIFY(harness);
+            RadioModel& radio = harness->model();
+            SliceModel* slice = radio.slices().first();
+            QVERIFY(slice);
+            slice->setFrequency(14225000.0);
+            radio.requestSettingsSave();
+            radio.flushPendingSettingsSave();
+            QVERIFY(radio.waitForReceiveLaneForTest());
+            const int rfGainBefore = slice->rfGain();
+
+            // The slider: outside the AGC sync guard.
+            movedThreshold = slice->agcThreshold() - 25;
+            slice->setAgcThreshold(movedThreshold);
+            // The coalesced save can run before the lane's readback lands: flush
+            // here, before the readback reaches this thread, as that timer would.
+            radio.flushPendingSettingsSave();
+            QVERIFY(radio.waitForReceiveLaneForTest());
+            QTRY_VERIFY_WITH_TIMEOUT(slice->rfGain() != rfGainBefore, 5000);
+            radio.flushPendingSettingsSave();
+            movedRfGain = slice->rfGain();
+            QCOMPARE(slice->agcThreshold(), movedThreshold);
+            movedWdspThreshold = wdspAgcThreshold(radio, slice);
+            QVERIFY(movedWdspThreshold.has_value());
+        }
+
+        // Restart: the settings as the file holds them, then a fresh model.
+        AppSettings::instance().load();
+        auto harness = ConnectableRadioModel::create(
+            10000, RadioModel::Role::Local, {}, HPSDRHW::HermesLite, false);
+        QVERIFY(harness);
+        RadioModel& radio = harness->model();
+        SliceModel* slice = radio.slices().first();
+        QVERIFY(slice);
+        QVERIFY(radio.waitForReceiveLaneForTest());
+        QCoreApplication::processEvents();
+        QVERIFY(radio.waitForReceiveLaneForTest());
+        QCoreApplication::processEvents();
+        QCOMPARE(wdspAgcThreshold(radio, slice), movedWdspThreshold);
+        QCOMPARE(slice->agcThreshold(), movedThreshold);
+        QCOMPARE(slice->rfGain(), movedRfGain);
+    }
+
+    // The desktop RF gain slider sets the AGC top; the receive lane reads
+    // back the threshold it gives and sets the band's AGC-T. A save that
+    // ran before that readback kept the band's old threshold, and on
+    // restart that threshold reached WDSP after the RF gain and moved the
+    // band's AGC away from where the slider left it.
+    void rfGainMoveSavesTheBandsThresholdFromTheReadback()
+    {
+        AppSettings::instance().clear();
+        int movedThreshold = 0;
+        int movedRfGain = 0;
+        std::optional<int> movedWdspThreshold;
+        {
+            auto harness = ConnectableRadioModel::create(
+                10000, RadioModel::Role::Local, {}, HPSDRHW::HermesLite, false);
+            QVERIFY(harness);
+            RadioModel& radio = harness->model();
+            SliceModel* slice = radio.slices().first();
+            QVERIFY(slice);
+            slice->setFrequency(14225000.0);
+            // A threshold of the operator's own first, saved with the RF gain
+            // it gives. A fresh channel skips a threshold equal to its -20
+            // default, so the band starts away from it.
+            const int rfGainAtStart = slice->rfGain();
+            slice->setAgcThreshold(-35);
+            QVERIFY(radio.waitForReceiveLaneForTest());
+            QTRY_VERIFY_WITH_TIMEOUT(slice->rfGain() != rfGainAtStart, 5000);
+            radio.requestSettingsSave();
+            radio.flushPendingSettingsSave();
+            QVERIFY(radio.waitForReceiveLaneForTest());
+            const int thresholdBefore = slice->agcThreshold();
+
+            // The slider: outside the AGC sync guard.
+            movedRfGain = slice->rfGain() + 30;
+            slice->setRfGain(movedRfGain);
+            // The coalesced save can run before the lane's readback lands: flush
+            // here, before the readback reaches this thread, as that timer would.
+            radio.flushPendingSettingsSave();
+            QVERIFY(radio.waitForReceiveLaneForTest());
+            QTRY_VERIFY_WITH_TIMEOUT(slice->agcThreshold() != thresholdBefore, 5000);
+            radio.flushPendingSettingsSave();
+            movedThreshold = slice->agcThreshold();
+            QCOMPARE(slice->rfGain(), movedRfGain);
+            movedWdspThreshold = wdspAgcThreshold(radio, slice);
+            QVERIFY(movedWdspThreshold.has_value());
+        }
+
+        // Restart: the settings as the file holds them, then a fresh model.
+        AppSettings::instance().load();
+        auto harness = ConnectableRadioModel::create(
+            10000, RadioModel::Role::Local, {}, HPSDRHW::HermesLite, false);
+        QVERIFY(harness);
+        RadioModel& radio = harness->model();
+        SliceModel* slice = radio.slices().first();
+        QVERIFY(slice);
+        QVERIFY(radio.waitForReceiveLaneForTest());
+        QCoreApplication::processEvents();
+        QVERIFY(radio.waitForReceiveLaneForTest());
+        QCoreApplication::processEvents();
+        QCOMPARE(wdspAgcThreshold(radio, slice), movedWdspThreshold);
+        QCOMPARE(slice->agcThreshold(), movedThreshold);
+        QCOMPARE(slice->rfGain(), movedRfGain);
+    }
+
+    // The AUTO tick writes the threshold from the noise floor, and the lane
+    // readback then changes the slice's RF gain. Neither is the operator's
+    // change, so neither schedules a save (and so neither can mark receiver
+    // edits a station handover would refuse to drop).
+    void theAutoTicksRfGainReadbackSchedulesNoSave()
+    {
+#ifndef HAVE_FFTW3
+        QSKIP("FFTEngine has no FFTW3 backend in this build");
+#endif
+        qRegisterMetaType<QVector<float>>();
+        AppSettings::instance().clear();
+        auto harness = ConnectableRadioModel::create(
+            10000, RadioModel::Role::Local, {}, HPSDRHW::HermesLite, false);
+        QVERIFY(harness);
+        RadioModel& radio = harness->model();
+        SliceModel* slice = radio.slices().first();
+        QVERIFY(slice);
+        QVERIFY(slice->streamIndex() >= 0);
+        // Only the explicit tick below may run: a timed tick while the lane
+        // is awaited would land the tick's RF gain before the flush.
+        QVERIFY(radio.autoAgcTimer());
+        radio.autoAgcTimer()->stop();
+        // The station's AGC source measures the slice's stream noise floor.
+        DaemonAgcSource source(&radio);
+        QTRY_VERIFY(source.activeStreamCount() >= 1);
+        const QVector<float> noise = pseudoNoise();
+        for (int frame = 0; frame < 90 && !slice->stationAutoAgcNoiseFloorValid(); ++frame) {
+            QVERIFY(QMetaObject::invokeMethod(&radio, "rawIqDataForStream", Qt::DirectConnection,
+                                              Q_ARG(int, slice->streamIndex()),
+                                              Q_ARG(QVector<float>, noise)));
+            QTest::qWait(35);
+        }
+        QVERIFY(slice->stationAutoAgcNoiseFloorValid());
+
+        // A threshold the tick will certainly move, then AUTO on, and all
+        // of that written once the readback has landed.
+        const int rfGainAtStart = slice->rfGain();
+        slice->setAgcThreshold(-42);
+        slice->setAutoAgcEnabled(true);
+        QVERIFY(radio.waitForReceiveLaneForTest());
+        QTRY_VERIFY_WITH_TIMEOUT(slice->rfGain() != rfGainAtStart, 5000);
+        radio.flushPendingSettingsSave();
+        const QString rfGainKey = QStringLiteral("Slice%1/RfGain").arg(slice->sliceIndex());
+        const int savedRfGain = AppSettings::instance().value(rfGainKey).toInt();
+        QCOMPARE(savedRfGain, slice->rfGain());
+
+        radio.runAutoAgcTickForTest();
+        QVERIFY(slice->agcThreshold() != -42);   // the tick did write
+        QVERIFY(slice->autoAgcEnabled());        // and it is not a manual change
+        QVERIFY(radio.waitForReceiveLaneForTest());
+        QTRY_VERIFY_WITH_TIMEOUT(slice->rfGain() != savedRfGain, 5000);
+
+        // Nothing was scheduled, so a flush writes nothing: what is saved is
+        // still the RF gain the operator's own change gave.
+        radio.flushPendingSettingsSave();
+        QCOMPARE(AppSettings::instance().value(rfGainKey).toInt(), savedRfGain);
     }
 
     void reconnectPreservesLiveReceivers()
