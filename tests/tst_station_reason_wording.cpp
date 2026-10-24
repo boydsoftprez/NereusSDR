@@ -309,6 +309,14 @@
 //                                    where they are assigned
 //                                    (deviceWordsNotFromSliceHolderWords).
 //                                    AI tooling: Claude Code.
+//   2026-10-24  J.J. Boyd / KG4VCF  Roundtable plan Task 12: Roundtable's
+//                                    reason sites placed (RoundtableState's
+//                                    refusals, IStationLink's and
+//                                    RoundtableModel's own words,
+//                                    SpotSourceHost::startRoundtableWith),
+//                                    and StationServer's forward of
+//                                    RoundtableState::readOnlyReason named.
+//                                    AI tooling: Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -1008,6 +1016,9 @@ const QList<ReasonSource>& reasonSources()
           QStringLiteral("RotorLink::RotorModel::readOnlyReason()"),
           // Parity Task 19: the `spotSources` object's, scanned below.
           QStringLiteral("SpotSourceHost::readOnlyReason()"),
+          // Roundtable plan Task 11: the `roundtable` object's, scanned in
+          // RoundtableState.cpp below.
+          QStringLiteral("RoundtableState::readOnlyReason()"),
           // Fix wave after parity Tasks 19 and 21 (I5): the radio verbs'
           // refusal to a token sign-in, scanned in StationRadios.cpp.
           QStringLiteral("StationRadios::pairedDeviceReason()"),
@@ -1628,6 +1639,29 @@ const QList<ReasonSource>& reasonSources()
         // StationServer and the dispatcher; a remote window shows the same
         // words when its Core is older than the rotor.
         {"src/core/session/IStationLink.h", {QStringLiteral("rotorUnavailableReason")}, {}, 1},
+        // Roundtable plan Tasks 10 and 11: the roundtable.* refusals the
+        // Core answers with, and the `roundtable` object's read-only reason
+        // (StationServer forwards it).
+        {"src/core/roundtable/RoundtableState.cpp",
+         {QStringLiteral("readOnlyReason"), QStringLiteral("notConnectedReason"),
+          QStringLiteral("unreadableReason"), QStringLiteral("requireClient"),
+          QStringLiteral("requireLive"), QStringLiteral("post"),
+          QStringLiteral("deleteMessage"), QStringLiteral("nameTurn"),
+          QStringLiteral("report"), QStringLiteral("readRoom"),
+          QStringLiteral("setOperatorHidden"), QStringLiteral("answerFirstRun"),
+          QStringLiteral("mute"), QStringLiteral("unmute"),
+          QStringLiteral("markMentionRead"), QStringLiteral("requestWebLink"),
+          QStringLiteral("deleteArchive")},
+         {}, 10, {},
+         {// The two helpers above, their literals scanned in this entry.
+          QStringLiteral("notConnectedReason()"), QStringLiteral("unreadableReason()")}},
+        // Roundtable plan Task 11: a window whose Core cannot share
+        // Roundtable (the roundtable request defaults, and StationClient).
+        {"src/core/session/IStationLink.h", {QStringLiteral("roundtableUnavailableReason")}, {},
+         1},
+        // Roundtable plan Task 11: Roundtable not running on this computer
+        // (no Core link and no local Roundtable), the model's own words.
+        {"src/models/RoundtableModel.cpp", {QStringLiteral("notRunningReason")}, {}, 1},
         // Remote rotor control: a window's rotor commands. They pass on the
         // controller's refusal (scanned above) or the Core's command.result
         // through the link, or IStationLink's words; the setup check is
@@ -1660,8 +1694,14 @@ const QList<ReasonSource>& reasonSources()
          {QStringLiteral("readOnlyReason"), QStringLiteral("connectSource"),
           QStringLiteral("disconnectSource"), QStringLiteral("sendCommand"),
           QStringLiteral("setFreedvMessage"), QStringLiteral("sendFreedvQsy"),
-          QStringLiteral("startFreedvWith"), QStringLiteral("setFreedvHidden")},
-         {}, 16, {QStringLiteral("wanted")},
+          QStringLiteral("startFreedvWith"), QStringLiteral("setFreedvHidden"),
+          // Roundtable plan Task 12: Roundtable's start (the reason it did
+          // not start: no Roundtable, or a callsign it can't use).
+          QStringLiteral("startRoundtableWith")},
+         {}, 16,
+         {QStringLiteral("wanted"),
+          // The operator's own callsign, as entered.
+          QStringLiteral("call")},
          {// The refuse helper's parameter: this entry's own literals.
           QStringLiteral("why")}},
         {"src/models/SliceModel.cpp",
@@ -2156,6 +2196,11 @@ const QList<AppSideReason>& appSideReasons()
          "a remote window's own reason when its Core cannot manage its TCI apps"},
         {"src/core/SpotSourceHost.cpp", "reportStationRefusal",
          "a remote window shows the Core's refusal it was given"},
+        // Roundtable plan Task 11: the window's Roundtable model passes on
+        // the Core's roundtable.* refusal (scanned in RoundtableState.cpp)
+        // or its own notRunningReason (scanned).
+        {"src/models/RoundtableModel.cpp", "applyRefusal",
+         "a window shows the Core's Roundtable refusal it was given"},
         // R-R3-49 (parity Task 22): the Core's log, logging and bundle. The
         // Core also answers a coreLog subscribe with it when it keeps no
         // log stream; tst_remote_core_log checks it is plain.
