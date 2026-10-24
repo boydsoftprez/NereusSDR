@@ -15,7 +15,10 @@ a live reader's: `you` false, `mine` null, no station id, no address. The
 client address is used only to find its address group, in memory; nothing
 here logs a request, an address, a path or a callsign (wire spec 9.4).
 
-Static files come from `static_dir` only. A path segment that starts with
+Static files come from `static_dir` only. The pages also answer at their
+own paths: `/archive`, `/review` and `/key` serve `archive.html`,
+`review.html` and `key.html`, and a room link `/r/<family>/<center Hz>`
+(wire spec 6.3) serves `index.html`, which opens that room. A path segment that starts with
 `.` (so `.` and `..` too) or decodes to hold `/`, `\\` or NUL is 404, as is
 a directory: no route ever lists one. Every answer carries the
 Content-Security-Policy header.
@@ -64,6 +67,11 @@ API_ERRORS: Dict[int, Tuple[str, str]] = {
     429: ("rate", "Too many at once. Try again in a moment."),
     503: ("server", "Roundtable can't answer right now."),
 }
+# The web pages at their own paths (design 7.3, 11.5 to 11.7).
+PAGES: Dict[str, str] = {"archive": "archive.html", "review": "review.html", "key": "key.html"}
+# A room link: /r/<family>/<center Hz> (wire spec 6.3).
+ROOM_LINK = "r"
+
 # The plain answers outside the read API.
 TEXT_ERRORS: Dict[int, str] = {
     400: "That request could not be read.\n",
@@ -514,6 +522,12 @@ class App:
         segments = split_path(request.path)
         if segments is None or any("/" in seg for seg in segments):
             return text_error(404)
+        if len(segments) == 1 and segments[0] in PAGES:
+            segments = [PAGES[segments[0]]]
+        elif len(segments) == 3 and segments[0] == ROOM_LINK:
+            if protocol.room_id_center(f"{segments[1]}-{segments[2]}") is None:
+                return text_error(404)
+            segments = ["index.html"]
         if not segments or segments[-1] == "":
             segments = segments[:-1] + ["index.html"] if segments else ["index.html"]
         if any(seg == "" for seg in segments):
