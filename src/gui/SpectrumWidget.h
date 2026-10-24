@@ -1,4 +1,8 @@
 // Modification history (NereusSDR):
+//   2026-10-24  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//                 the Roundtable room tags along the foot of the spectrum
+//                 (setRoundtableTags, roundtableRoomClicked, the fold list)
+//                 and their test seams (Roundtable plan Task 14).
 //   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a live
 //                 trace of a remote pan's row clock, gated on
 //                 NEREUS_TRACE_REMOTE_ROWS=1 (diagnostics only).
@@ -445,6 +449,7 @@ mw0lge@grange-lane.co.uk
 #include "gui/spectrum/RemoteWaterfallRowClock.h"
 #include "gui/NereusGuiExport.h"
 #include "gui/WheelStepAccumulator.h"
+#include "gui/roundtable/RoundtableTagLayout.h"
 
 #include <QElapsedTimer>
 #include <QPointer>
@@ -2721,6 +2726,35 @@ public:
         drawSpotMarkers(p, specRect);
     }
 
+    // ---- Roundtable room tags (Roundtable plan Task 14, design 11.2) ----
+    // One tag per room along the foot of the spectrum, above the band
+    // plan: the state glyph, the talker (or Unknown, Doubled, Quiet) and
+    // the member count. Crowded tags fold into +N (layoutRoundtableTags).
+    // `display` Hidden draws none, Stale greys them as last known. Display
+    // only: a click asks for a tune through roundtableRoomClicked.
+    void setRoundtableTags(const QList<RoundtableTag>& tags, RoundtableTagDisplay display);
+    const QList<RoundtableTag>& roundtableTags() const { return m_roundtableTags; }
+    RoundtableTagDisplay roundtableTagDisplay() const { return m_roundtableTagDisplay; }
+    /// A drawn tag or fold, in this widget's coordinates.
+    struct RoundtableTagHit {
+        QRect rect;
+        QStringList roomIds;
+        bool folded = false;
+    };
+    /// What the last tag pass drew (it is redrawn with the overlay).
+    const QList<RoundtableTagHit>& roundtableTagHitsForTest() const { return m_roundtableTagHits; }
+    void drawRoundtableTagsForTest(QPainter& p, const QRect& specRect) { drawRoundtableTags(p, specRect); }
+    /// The rows a fold's list holds: a heading, then one row per room in
+    /// `roomIds` (by frequency), each emitting roundtableRoomClicked.
+    void buildRoundtableFoldMenu(const QStringList& roomIds, QMenu& menu);
+    /// The spectrum rectangle the tags are drawn against, and the band
+    /// plan strip's height at its foot.
+    QRect roundtableTagSpectrumRectForTest() const;
+    int bandPlanStripHeightForTest(const QPaintDevice* device = nullptr) const
+    {
+        return bandPlanStripHeight(device);
+    }
+
     // Phase 3J-2 + 3R M2 test seams. Read-only views into the Spot
     // Display knob state so the M2 round-trip test can pin the
     // loadSpotDisplaySettings push-path without driving a paint cycle.
@@ -2986,6 +3020,10 @@ signals:
     // sources (Memory, DX cluster, RBN, etc.) can react.
     // From AetherSDR src/gui/SpectrumWidget.h:327 [@0cd4559]
     void spotTriggered(int spotIndex);
+    // Roundtable plan Task 14: the operator clicked a Roundtable tag, or a
+    // row of a fold's list: tune the active slice to that room. Never
+    // emitted while the transmit view shows (as requestTune).
+    void roundtableRoomClicked(const QString& roomId);
     // Rotor control plan Task 8: the operator tuned to a spot (a label
     // click, a cluster popup entry or the menu's Tune), with its call and
     // its Core-served bearing (-1 when none). MainWindow hands it to
@@ -3366,6 +3404,10 @@ private:
     //  - Cluster badge popup menu with formatted spot lines.
     void drawSpotMarkers(QPainter& p, const QRect& specRect);
     void showSpotClusterPopup(const SpotCluster& cluster, const QPoint& globalPos);
+    // Roundtable plan Task 14: the room tags, after the spots in both
+    // paint paths, and a click on one (true when it took the click).
+    void drawRoundtableTags(QPainter& p, const QRect& specRect);
+    bool roundtableTagClick(const QPoint& pos, const QPoint& globalPos);
 
     // ---- TNF / notch overlay (design section 8.2) ----
     // Geometry ported unchanged from AetherSDR drawTnfMarkers
@@ -4342,6 +4384,10 @@ private:
     QPointer<SpotBeamTurner> m_spotBeamTurner;  // rotor control plan Task 8
     QVector<SpotHitRect> m_spotClickRects;
     QVector<SpotCluster> m_spotClusters;
+    // Roundtable plan Task 14: the room tags and what the last pass drew.
+    QList<RoundtableTag> m_roundtableTags;
+    RoundtableTagDisplay m_roundtableTagDisplay{RoundtableTagDisplay::Hidden};
+    QList<RoundtableTagHit> m_roundtableTagHits;
     bool   m_showSpots{true};
     int    m_spotFontSize{16};
     int    m_spotMaxLevels{3};

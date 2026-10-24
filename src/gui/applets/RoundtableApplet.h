@@ -20,6 +20,8 @@
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 13).
+//   2026-10-24: tuneToRoom, for a panadapter tag (Roundtable plan Task 14).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -63,6 +65,10 @@ public:
     RoundtableWindow* floatingWindow() const { return m_window; }
     bool isPoppedOut() const;
     RoundtableModel* roundtable() const { return m_roundtable; }
+
+    /// Tunes the active slice to room `roomId` from the band list, as Tune
+    /// A here does: a panadapter tag or a fold's row (design 11.2).
+    void tuneToRoom(const QString& roomId);
 
     /// What opens the Archive's sign-in link (a seam for tests).
     void setUrlOpener(std::function<void(const QUrl&)> opener) { m_urlOpener = std::move(opener); }

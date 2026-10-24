@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24: Roundtable plan Task 14: every pan shows the Roundtable
+//               tags (refreshRoundtableTags, coalesced), and a tag click
+//               tunes the active slice through the Roundtable applet.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-24: Roundtable plan Task 13: the Roundtable applet in the right
 //               column, following the active slice; its Settings open the
 //               Spot Hub on the Roundtable tab. J.J. Boyd (KG4VCF),
@@ -6420,6 +6424,50 @@ void MainWindow::refreshPanNotchMinWidth()
     }
 }
 
+void MainWindow::wirePanRoundtableTags()
+{
+    if (!m_panStack) { return; }
+    for (auto* applet : m_panStack->allApplets()) {
+        if (!applet) { continue; }
+        SpectrumWidget* sw = applet->spectrumWidget();
+        if (!sw) { continue; }
+        connect(sw, &SpectrumWidget::roundtableRoomClicked,
+                this, &MainWindow::onRoundtableRoomClicked,
+                Qt::UniqueConnection);
+    }
+}
+
+void MainWindow::scheduleRoundtableRefresh()
+{
+    if (m_roundtableRefreshPending) { return; }
+    m_roundtableRefreshPending = true;
+    QTimer::singleShot(0, this, [this]() {
+        m_roundtableRefreshPending = false;
+        refreshRoundtableTags();
+    });
+}
+
+void MainWindow::refreshRoundtableTags()
+{
+    if (!m_panStack || !m_radioModel) { return; }
+    const RoundtableModel* roundtable = m_radioModel->roundtableModel();
+    QList<int> sliceIds;
+    for (SliceModel* slice : m_radioModel->slices()) {
+        if (slice) { sliceIds.append(slice->sliceIndex()); }
+    }
+    const QList<RoundtableTag> tags = roundtableTagsFor(roundtable, sliceIds);
+    const RoundtableTagDisplay display = roundtableTagDisplayFor(roundtable);
+    for (PanadapterApplet* applet : m_panStack->allApplets()) {
+        SpectrumWidget* sw = applet ? applet->spectrumWidget() : nullptr;
+        if (sw) { sw->setRoundtableTags(tags, display); }
+    }
+}
+
+void MainWindow::onRoundtableRoomClicked(const QString& roomId)
+{
+    if (m_roundtableApplet) { m_roundtableApplet->tuneToRoom(roomId); }
+}
+
 void MainWindow::wirePanNotchHandlers()
 {
     if (!m_panStack) { return; }
@@ -8530,6 +8578,8 @@ void MainWindow::buildUI()
         wirePanStatusOverlayTriggers();
         wirePanBadgeHandlers();
         wirePanNotchHandlers();
+        wirePanRoundtableTags();
+        scheduleRoundtableRefresh();
         ensureOverlayPanels();
         refreshPanStatusOverlays();
         refreshPanNotchMarkers();
@@ -8607,6 +8657,7 @@ void MainWindow::buildUI()
     wirePanStatusOverlayTriggers();
     wirePanBadgeHandlers();
     wirePanNotchHandlers();
+    wirePanRoundtableTags();
     // Seed pan-0 with whatever NotchModel::restoreFromSettings() already
     // loaded in the RadioModel constructor. The layout restore below fires
     // countChanged and re-runs both of these for the pans it creates.
@@ -11253,6 +11304,18 @@ void MainWindow::populateDefaultMeter()
     // Roundtable tab.
     m_roundtableApplet = new RoundtableApplet(m_radioModel);
     panel->addApplet(m_roundtableApplet);
+    // Roundtable plan Task 14 (design 11.2): the tags on every pan follow
+    // the band list, the link, the slices' rooms and mentions of you.
+    if (RoundtableModel* roundtable = m_radioModel->roundtableModel()) {
+        connect(roundtable, &RoundtableModel::roomsChanged, this, &MainWindow::scheduleRoundtableRefresh);
+        connect(roundtable, &RoundtableModel::roomChanged, this, &MainWindow::scheduleRoundtableRefresh);
+        connect(roundtable, &RoundtableModel::linkChanged, this, &MainWindow::scheduleRoundtableRefresh);
+        connect(roundtable, &RoundtableModel::mentionsChanged, this, &MainWindow::scheduleRoundtableRefresh);
+        connect(roundtable, &RoundtableModel::sliceRoomsChanged, this, &MainWindow::scheduleRoundtableRefresh);
+    }
+    connect(m_radioModel, &RadioModel::sliceAdded, this, &MainWindow::scheduleRoundtableRefresh);
+    connect(m_radioModel, &RadioModel::sliceRemoved, this, &MainWindow::scheduleRoundtableRefresh);
+    scheduleRoundtableRefresh();
     connect(m_roundtableApplet, &RoundtableApplet::settingsRequested, this, [this]() {
         openSpotHub();
         if (!m_spotHubDialog) {

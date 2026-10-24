@@ -93,6 +93,22 @@ NEREUS_GUI_EXPORT QList<RoundtableTagPlacement> layoutRoundtableTags(const QList
                                                                      double width, double tagWidth,
                                                                      double gap);
 
+/// A stretch of the pan, in pixels from its left edge, that no tag may
+/// cover (a VFO flag hanging over the tag row).
+struct RoundtableKeepOut {
+    double left = 0.0;
+    double right = 0.0;
+};
+
+/// As above, with the tags kept off `keepOut`: they sit side by side in the
+/// stretches between, each in the one nearest its frequency that has room,
+/// in order of frequency; whether they fit counts only those stretches.
+NEREUS_GUI_EXPORT QList<RoundtableTagPlacement> layoutRoundtableTags(const QList<RoundtableTag>& tags,
+                                                                     double hzPerPixel, qint64 leftHz,
+                                                                     double width, double tagWidth,
+                                                                     double gap,
+                                                                     const QList<RoundtableKeepOut>& keepOut);
+
 /// How a pan shows its tags (design 11.1, U4): offline greys them as last
 /// known, connecting hides them.
 enum class RoundtableTagDisplay { Hidden, Live, Stale };
@@ -105,6 +121,17 @@ NEREUS_GUI_EXPORT QList<RoundtableTag> roundtableTagsFor(const RoundtableModel* 
 /// offline; Live otherwise (live, reconnecting, or hidden, when you still
 /// see everything).
 NEREUS_GUI_EXPORT RoundtableTagDisplay roundtableTagDisplayFor(const RoundtableModel* model);
+
+/// The state colors (design 11): talking green, unknown amber, doubled
+/// red, you cyan, quiet grey; waiting amber, offline red.
+NEREUS_GUI_EXPORT QColor roundtableGlyphColor(int glyph);
+/// Grey for a tag shown as last known.
+NEREUS_GUI_EXPORT QColor roundtableStaleColor();
+
+/// Draws glyph `glyph` centered on `center`, `size` pixels across; `grey`
+/// draws it in the last-known grey.
+NEREUS_GUI_EXPORT void paintRoundtableGlyph(QPainter& p, const QPointF& center, qreal size, int glyph,
+                                            bool grey = false);
 
 /// A room's frequency as the fold list shows it: MHz with three decimals,
 /// more when the room is between kHz ("7.185", "7.0305").

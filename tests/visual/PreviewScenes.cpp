@@ -11,6 +11,12 @@
 // transmit scene refuses to run if one exists).
 //
 // Modification history (NereusSDR):
+//   2026-10-24 - Roundtable plan Task 14: the roundtable-tags,
+//                 roundtable-tags-crowded, roundtable-tags-offline and
+//                 roundtable-tags-connecting scenes, with the CPU painter's
+//                 tags against the GPU frame's; poseRoundtableRoomOn poses
+//                 room 7.185 on any model. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-24 - Roundtable plan Task 13: the roundtable-panel-*,
 //                 roundtable-window-{narrow,medium,wide} and roundtable-keyed
 //                 scenes. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -6689,11 +6695,20 @@ QJsonArray roundtableMembers()
                          roundtableReading(-97, 46000))};
 }
 
-// `keyed`: you are talking (the TX line and the readings of you).
+// `keyed`: you are talking (the TX line and the readings of you). The band
+// list and room 7.185 go to `model`, which may be another model on rt's
+// state (the window's own, for the panadapter scenes).
+void poseRoundtableRoomOn(RoundtableModel& model, bool keyed);
+
 void poseRoundtableRoom(PosedRoundtable& rt, bool keyed)
 {
     rt.live(false);
-    poseRoundtableRooms(rt.model);
+    poseRoundtableRoomOn(rt.model, keyed);
+}
+
+void poseRoundtableRoomOn(RoundtableModel& model, bool keyed)
+{
+    poseRoundtableRooms(model);
     const QJsonArray now = keyed
         ? QJsonArray{roundtableTurn(40, QStringLiteral("talking"),
                                     QJsonArray{roundtableTalker(QStringLiteral("me"), QStringLiteral("KG4VCF"))},
@@ -6718,7 +6733,7 @@ void poseRoundtableRoom(PosedRoundtable& rt, bool keyed)
                           QStringLiteral("KG4VCF you are S9 here in Boston, nice audio.")),
         roundtableMessage(5, QStringLiteral("a"), QStringLiteral("W4ABC"), 30000,
                           QStringLiteral("Net check-ins at 0100Z, same frequency."))};
-    rt.model.applyRoom(QJsonObject{{QStringLiteral("type"), QStringLiteral("room")},
+    model.applyRoom(QJsonObject{{QStringLiteral("type"), QStringLiteral("room")},
                                    {QStringLiteral("id"), kRoundtableRoom},
                                    {QStringLiteral("members"), roundtableMembers()},
                                    {QStringLiteral("now"), now},
@@ -6740,6 +6755,169 @@ void onRoundtableClock(const std::function<void()>& scene)
         settings.setValue(key, geometry);
     } else {
         settings.remove(key);
+    }
+}
+
+// Roundtable plan Task 14 (design 11.2 Panadapter tags and VFO flag line;
+// mockups placement.html and board.html). The window's own Roundtable
+// model, moved onto a posed state over a link that offers Roundtable, so
+// MainWindow's wiring draws the tags on every pan and the flag lines; put
+// back on the window's own client and state afterwards.
+class RoundtableSceneLink final : public IStationLink {
+public:
+    CommandOutcome requestAddSlice(const QString&) override { return {}; }
+    CommandOutcome requestAddSliceOnPan(const QString&) override { return {}; }
+    CommandOutcome requestRemoveSlice(int) override { return {}; }
+    CommandOutcome requestActiveSlice(int) override { return {}; }
+    CommandOutcome requestSliceSampleRate(int, int) override { return {}; }
+    bool roundtableAvailable() const override { return true; }
+};
+
+struct WindowRoundtable {
+    PosedRoundtable rt;
+    RoundtableSceneLink link;
+    RadioModel* radio = nullptr;
+    RoundtableModel* model = nullptr;
+
+    explicit WindowRoundtable(RadioModel* r) : radio(r), model(r != nullptr ? r->roundtableModel() : nullptr)
+    {
+        if (model != nullptr) {
+            model->detach();
+            model->attachStation(&link, &rt.state);
+        }
+    }
+
+    ~WindowRoundtable()
+    {
+        if (model != nullptr) {
+            model->detach();
+            model->attachLocal(radio->roundtableClient(), radio->roundtableState());
+        }
+    }
+
+    // Live, in room 7.185 (`keyed`: you are talking there).
+    void live(bool keyed)
+    {
+        rt.live(false);
+        if (model != nullptr) {
+            poseRoundtableRoomOn(*model, keyed);
+        }
+    }
+
+    // Rooms crowded below 7.185: five 50 Hz apart (one of them names you,
+    // so it stays out of the fold) and a pair that fold together.
+    void crowd()
+    {
+        if (model == nullptr) {
+            return;
+        }
+        QJsonArray rooms = model->rooms();
+        const auto room = [](qint64 hz, const QString& state, const QStringList& talkers, int members) {
+            return QJsonObject{{QStringLiteral("id"), QStringLiteral("lsb-%1").arg(hz)},
+                               {QStringLiteral("band"), QStringLiteral("40m")},
+                               {QStringLiteral("hz"), hz},
+                               {QStringLiteral("members"), members},
+                               {QStringLiteral("state"), state},
+                               {QStringLiteral("talkers"), QJsonArray::fromStringList(talkers)},
+                               {QStringLiteral("last"), kRoundtableNow}};
+        };
+        rooms.append(room(7170000, QStringLiteral("talking"), {QStringLiteral("K4ABC")}, 9));
+        rooms.append(room(7170050, QStringLiteral("unknown"), {}, 4));
+        rooms.append(room(7170100, QStringLiteral("talking"), {QStringLiteral("N3XYZ")}, 5));
+        rooms.append(room(7170150, QStringLiteral("doubled"), {QStringLiteral("W2AB"), QStringLiteral("K2CD")}, 3));
+        rooms.append(room(7170200, QStringLiteral("quiet"), {}, 2));
+        rooms.append(room(7176000, QStringLiteral("talking"), {QStringLiteral("VE3QRP")}, 7));
+        rooms.append(room(7176050, QStringLiteral("quiet"), {}, 2));
+        model->applyRooms(QJsonObject{{QStringLiteral("rooms"), rooms}});
+        rt.state.applyStationValue("mentionCounts", QStringLiteral("{\"lsb-7170100\":2}"));
+    }
+
+    void setLink(RoundtableModel::LinkState state, qint64 since)
+    {
+        rt.state.applyStationValue("linkSince", since);
+        rt.state.applyStationValue("linkState", static_cast<int>(state));
+    }
+};
+
+// Pan 1's tags: whether each sits clear of the flags and the band plan,
+// and the CPU painter's tags against the GPU frame's, border by border.
+void checkRoundtableTags(SceneContext& ctx, const QString& name)
+{
+    SpectrumWidget* s = panOne(ctx);
+    if (s == nullptr) {
+        ctx.failure = QStringLiteral("%1: no pan 1").arg(name);
+        return;
+    }
+    const QImage gpu = grabWidget(s);
+    const qreal dpr = gpu.devicePixelRatio();
+    const QList<SpectrumWidget::RoundtableTagHit> drawn = s->roundtableTagHitsForTest();
+    QImage cpu(gpu.size(), QImage::Format_ARGB32_Premultiplied);
+    cpu.setDevicePixelRatio(dpr);
+    cpu.fill(Qt::black);
+    {
+        QPainter painter(&cpu);
+        s->drawRoundtableTagsForTest(painter, s->roundtableTagSpectrumRectForTest());
+    }
+    const QList<SpectrumWidget::RoundtableTagHit> painted = s->roundtableTagHitsForTest();
+
+    const QRect spec = s->roundtableTagSpectrumRectForTest();
+    const int bandTop = spec.bottom() + 1 - s->bandPlanStripHeightForTest();
+    QRegion flags = s->receiverFlagRegion();
+    // The pan's toolbar down its left side counts as a flag here.
+    if (auto* toolbar = s->findChild<SpectrumOverlayPanel*>(QString(), Qt::FindDirectChildrenOnly);
+        toolbar != nullptr && toolbar->isVisible()) {
+        flags += toolbar->geometry();
+    }
+    QJsonArray tags;
+    bool clear = true;
+    bool same = drawn.size() == painted.size();
+    for (qsizetype i = 0; i < painted.size(); ++i) {
+        const auto& hit = painted.at(i);
+        const QPoint edge(static_cast<int>(std::lround(hit.rect.center().x() * dpr)),
+                          static_cast<int>(std::floor(hit.rect.top() * dpr)));
+        const QString cpuColor = QColor(cpu.pixel(edge)).name();
+        const QString gpuColor = QColor(gpu.pixel(edge)).name();
+        const bool underFlag = flags.intersects(hit.rect);
+        const bool onBandPlan = hit.rect.bottom() >= bandTop;
+        clear = clear && !underFlag && !onBandPlan;
+        same = same && i < drawn.size() && drawn.at(i).rect == hit.rect && cpuColor == gpuColor;
+        tags.append(QJsonObject{{QStringLiteral("rooms"), QJsonArray::fromStringList(hit.roomIds)},
+                                {QStringLiteral("folded"), hit.folded},
+                                {QStringLiteral("x"), hit.rect.x()},
+                                {QStringLiteral("y"), hit.rect.y()},
+                                {QStringLiteral("w"), hit.rect.width()},
+                                {QStringLiteral("h"), hit.rect.height()},
+                                {QStringLiteral("under_flag"), underFlag},
+                                {QStringLiteral("on_band_plan"), onBandPlan},
+                                {QStringLiteral("cpu_border"), cpuColor},
+                                {QStringLiteral("gpu_border"), gpuColor}});
+    }
+    ctx.checks.append(QJsonObject{{QStringLiteral("check"), QStringLiteral("roundtable-tags")},
+                                  {QStringLiteral("scene"), name},
+                                  {QStringLiteral("tags"), tags},
+                                  {QStringLiteral("clear_of_flags_and_band_plan"), clear},
+                                  {QStringLiteral("cpu_matches_gpu"), same}});
+    ctx.notes.append(QStringLiteral("%1: pan 1 drew %2 Roundtable tag(s); clear of the flags and band plan: %3; "
+                                    "CPU tags match the GPU frame's: %4")
+                         .arg(name).arg(painted.size())
+                         .arg(clear ? QStringLiteral("yes") : QStringLiteral("no"))
+                         .arg(same ? QStringLiteral("yes") : QStringLiteral("no")));
+    if (!same || !clear) {
+        ctx.failure = QStringLiteral("%1: the tags are under a flag or the band plan, or the CPU tags "
+                                     "differ from the GPU frame's: %2")
+                          .arg(name, QString::fromUtf8(QJsonDocument(tags).toJson(QJsonDocument::Compact)));
+    }
+
+    // The pan as the GPU path drew it, and the CPU painter's tags alone.
+    for (const auto& [suffix, image] : {std::pair<QString, QImage>{QStringLiteral("--gpu-pan"), gpu},
+                                        std::pair<QString, QImage>{QStringLiteral("--cpu-tags"), cpu}}) {
+        CapturedImage img;
+        img.name = name + suffix;
+        img.kind = QStringLiteral("detail");
+        img.image = image;
+        img.logicalSize = s->size();
+        img.dpr = dpr;
+        ctx.images.append(img);
     }
 }
 
@@ -6934,6 +7112,66 @@ void appendRoundtableScenes(QVector<Scene>& scenes)
         sheet.close();
         AppSettings::instance().remove(QString::fromLatin1(RoundtableFirstRunDialog::kSeenKey));
     }});
+    // Roundtable plan Task 14: the tags along pan 1's foot and slice A's
+    // flag line, live; crowded (folds, one +N list open); offline (the
+    // tags greyed as last known); connecting (no tags).
+    const auto tagScene = [&scenes](const QString& name,
+                                    const std::function<void(WindowRoundtable&)>& pose,
+                                    const std::function<void(SceneContext&, WindowRoundtable&)>& after = {}) {
+        scenes.append({name, QStringLiteral("2v"), false, [name, pose, after](SceneContext& ctx) {
+            onRoundtableClock([&] {
+                WindowRoundtable rt(ctx.model);
+                if (rt.model == nullptr) {
+                    ctx.failure = QStringLiteral("the window has no Roundtable model");
+                    return;
+                }
+                runWindowScene(ctx, twoBandPoses(), 0, [&rt, &pose](SceneContext&) {
+                    pose(rt);
+                });
+                if (!ctx.failure.isEmpty()) {
+                    return;
+                }
+                pump(kFinalSettleMs);
+                captureWindow(ctx, name);
+                checkRoundtableTags(ctx, name);
+                if (after) {
+                    after(ctx, rt);
+                }
+            });
+        }});
+    };
+    tagScene(QStringLiteral("roundtable-tags"), [](WindowRoundtable& rt) { rt.live(false); });
+    tagScene(QStringLiteral("roundtable-tags-crowded"),
+             [](WindowRoundtable& rt) {
+                 rt.live(false);
+                 rt.crowd();
+             },
+             [](SceneContext& ctx, WindowRoundtable&) {
+                 SpectrumWidget* s = panOne(ctx);
+                 const SpectrumWidget::RoundtableTagHit* fold = nullptr;
+                 for (const auto& hit : s->roundtableTagHitsForTest()) {
+                     if (fold == nullptr && hit.folded && hit.roomIds.size() > 2) {
+                         fold = &hit;
+                     }
+                 }
+                 if (fold == nullptr) {
+                     ctx.failure = QStringLiteral("no +N fold on pan 1");
+                     return;
+                 }
+                 QMenu menu(s);
+                 s->buildRoundtableFoldMenu(fold->roomIds, menu);
+                 menu.popup(globalAt(s, QPoint(fold->rect.left(), fold->rect.bottom() + 2)));
+                 captureDialog(ctx, &menu, QStringLiteral("roundtable-tags-crowded--fold-list"));
+                 menu.close();
+             });
+    tagScene(QStringLiteral("roundtable-tags-offline"), [](WindowRoundtable& rt) {
+        rt.live(false);
+        rt.setLink(RoundtableModel::LinkState::Offline, kRoundtableNow - 25 * 60 * 1000);
+    });
+    tagScene(QStringLiteral("roundtable-tags-connecting"), [](WindowRoundtable& rt) {
+        rt.live(false);
+        rt.setLink(RoundtableModel::LinkState::Connecting, kRoundtableNow - 4000);
+    });
 }
 
 void appendMenuScenes(QVector<Scene>& scenes)

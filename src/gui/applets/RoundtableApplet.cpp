@@ -13,6 +13,8 @@
 //   2026-10-24: host() falls back to the panel named on the applet, for a
 //               managed workspace. J.J. Boyd (KG4VCF), AI-assisted via
 //               Claude Code.
+//   2026-10-24: tuneToRoom, for a panadapter tag (Roundtable plan Task 14).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "RoundtableApplet.h"
@@ -27,6 +29,8 @@
 
 #include <QDesktopServices>
 #include <QHBoxLayout>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QLabel>
 #include <QPushButton>
 #include <QVBoxLayout>
@@ -193,6 +197,26 @@ void RoundtableApplet::tuneHere(qint64 hz, const QString& family)
     }
     slice->setFrequency(static_cast<double>(hz));
     m_panel->backToSlice();
+}
+
+void RoundtableApplet::tuneToRoom(const QString& roomId)
+{
+    if (m_roundtable == nullptr || roomId.isEmpty()) {
+        return;
+    }
+    for (const QJsonValue& value : m_roundtable->rooms()) {
+        const QJsonObject summary = value.toObject();
+        if (summary.value(QStringLiteral("id")).toString() != roomId) {
+            continue;
+        }
+        // The family is the id's head (lsb-7185000), as the panel reads it.
+        const qsizetype dash = roomId.indexOf(QLatin1Char('-'));
+        const QString family = summary.contains(QStringLiteral("family"))
+            ? summary.value(QStringLiteral("family")).toString()
+            : (dash > 0 ? roomId.left(dash) : QString());
+        tuneHere(summary.value(QStringLiteral("hz")).toInteger(), family);
+        return;
+    }
 }
 
 AppletPanelWidget* RoundtableApplet::host() const

@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24: the Roundtable tags on every pan: wirePanRoundtableTags,
+//               refreshRoundtableTags and onRoundtableRoomClicked
+//               (Roundtable plan Task 14). J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-24: m_roundtableApplet (Roundtable plan Task 13). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-24: openRoundtableFirstRunIfNeeded and m_roundtableFirstRun
@@ -696,6 +700,10 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private slots:
+    /// Roundtable plan Task 14 (design 11.2): a pan's Roundtable tag, or a
+    /// row of its fold list, tunes the active slice to that room. A slot so
+    /// wirePanRoundtableTags can re-arm with Qt::UniqueConnection.
+    void onRoundtableRoomClicked(const QString& roomId);
     /// Phase 3F: repaint every pan's status overlay from the slice that pan
     /// is showing (its own activeSliceIndex), with the ADC chain resolved
     /// through RadioModel::sliceChainIndex so the CH tag agrees with the WIDE
@@ -795,6 +803,14 @@ private slots:
     /// The handlers below are SLOTS, not lambdas, so Qt::UniqueConnection is
     /// actually honoured on the re-arm.
     void wirePanNotchHandlers();
+
+    /// Roundtable plan Task 14: connect every pan's roundtableRoomClicked
+    /// (re-armed from PanadapterStack::countChanged, as the notch handlers).
+    void wirePanRoundtableTags();
+    /// Every pan's Roundtable tags from the Roundtable model, at most once
+    /// per event-loop pass however many of its signals arrive.
+    void scheduleRoundtableRefresh();
+    void refreshRoundtableTags();
 
     /// TNF inbound handlers. Each mutates the single global NotchModel; the
     /// frequencies arrive already resolved in the emitting pan's own
@@ -2239,6 +2255,7 @@ private:
     class TunerApplet*      m_tunerApplet{nullptr};
     class RotorApplet*      m_rotorApplet{nullptr};
     class RoundtableApplet* m_roundtableApplet{nullptr};  // Roundtable plan Task 13
+    bool m_roundtableRefreshPending{false};               // Roundtable plan Task 14
 
     // Phase 3P-III Task 14: RF-Kit RF2K-S applet.
     class Rf2ksApplet*      m_rfKitApplet{nullptr};

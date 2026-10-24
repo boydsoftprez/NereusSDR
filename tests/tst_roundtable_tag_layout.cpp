@@ -12,7 +12,10 @@
 // widen only when the tags still don't fit; your slice's room and rooms
 // that name you never fold; zooming in opens folds. Then the tags a
 // RoundtableModel gives (labels, members, mine, mentions, your own turn)
-// and how a pan shows them for each link state (U4).
+// and how a pan shows them for each link state (U4). Then a pan's drawing:
+// the tags along the foot of the spectrum, clear of the VFO flags and the
+// band plan; a click tunes, +N lists its rooms by frequency and a row
+// tunes; offline greys them, connecting hides them; no tune while keyed.
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -22,14 +25,28 @@
 
 #include <QtTest/QtTest>
 
+#include <QAction>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QLoggingCategory>
+#include <QMenu>
+#include <QPainter>
+#include <QSignalSpy>
 
 #include "OperatorWording.h"
 #include "core/roundtable/RoundtableState.h"
 #include "core/session/IStationLink.h"
+#include "core/ConnectionState.h"
+#include "core/WdspTypes.h"
+#include "gui/applets/RoundtableApplet.h"
+#include "gui/SpectrumWidget.h"
 #include "gui/roundtable/RoundtableTagLayout.h"
+#include "gui/widgets/VfoWidget.h"
+#include "models/BandPlanManager.h"
+#include "models/RadioModel.h"
 #include "models/RoundtableModel.h"
+#include "models/SliceModel.h"
 
 using namespace NereusSDR;
 
@@ -94,6 +111,77 @@ QJsonObject summary(const QString& id, qint64 hz, const QString& state, const QJ
     return QJsonObject{{QStringLiteral("id"), id},         {QStringLiteral("hz"), hz},
                        {QStringLiteral("state"), state},   {QStringLiteral("talkers"), talkers},
                        {QStringLiteral("members"), members}};
+}
+
+QtMessageHandler g_previousHandler = nullptr;
+
+constexpr double kPanCenterHz = 7'200'000.0;
+constexpr double kPanSpanHz = 192'000.0;
+
+// A 40 m pan 1200 x 760 with the band plan on and slice 0's flag at
+// 7.200, drawn by the CPU painter into an image the pan's size.
+struct Pan {
+    BandPlanManager plans;
+    SpectrumWidget widget;
+    VfoWidget* flag = nullptr;
+
+    explicit Pan(int height = 760)
+    {
+        plans.loadPlans();
+        widget.setUpdatesEnabled(false);
+        widget.resize(1200, height);
+        widget.setSampleRate(kPanSpanHz);
+        widget.setDdcCenterFrequency(kPanCenterHz);
+        widget.setFrequencyRange(kPanCenterHz, kPanSpanHz);
+        widget.setBandPlanManager(&plans);
+        widget.setConnectionState(ConnectionState::Connected);
+        flag = widget.addVfoWidget(0);
+        flag->setFrequency(kPanCenterHz);
+        widget.show();
+        widget.updateVfoPositions();
+    }
+
+    QImage draw()
+    {
+        QImage image(widget.size(), QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::black);
+        QPainter painter(&image);
+        widget.drawRoundtableTagsForTest(painter, widget.roundtableTagSpectrumRectForTest());
+        return image;
+    }
+};
+
+QList<RoundtableTag> panTags()
+{
+    QList<RoundtableTag> tags;
+    // Under the flag, two lone rooms, and five 50 Hz apart that fold.
+    RoundtableTag mine = tagAt(QStringLiteral("lsb-7200000"), 7200000, true);
+    mine.label = QStringLiteral("W1TLK");
+    tags.append(mine);
+    RoundtableTag quiet = tagAt(QStringLiteral("lsb-7150000"), 7150000);
+    quiet.state = static_cast<int>(RoundtableGlyph::Quiet);
+    quiet.label = QStringLiteral("Quiet");
+    tags.append(quiet);
+    RoundtableTag doubled = tagAt(QStringLiteral("lsb-7250000"), 7250000);
+    doubled.state = static_cast<int>(RoundtableGlyph::Doubled);
+    doubled.label = QStringLiteral("Doubled");
+    tags.append(doubled);
+    for (int i = 0; i < 5; ++i) {
+        RoundtableTag close = tagAt(QStringLiteral("lsb-%1").arg(7185000 + i * 50), 7185000 + i * 50);
+        close.label = QStringLiteral("K%1ABC").arg(i);
+        tags.append(close);
+    }
+    return tags;
+}
+
+const SpectrumWidget::RoundtableTagHit* hitFor(const SpectrumWidget& widget, const QString& roomId)
+{
+    for (const SpectrumWidget::RoundtableTagHit& hit : widget.roundtableTagHitsForTest()) {
+        if (hit.roomIds.contains(roomId)) {
+            return &hit;
+        }
+    }
+    return nullptr;
 }
 
 } // namespace
@@ -246,6 +334,37 @@ private slots:
         QVERIFY(layoutRoundtableTags(tags, 100.0, 7150000, 0.0, kTagWidth, kGap).isEmpty());
     }
 
+    void tagsKeepClearOfAFlagOverTheirRow()
+    {
+        // A flag over 300 to 560 px: the room under its left half goes to
+        // the left of it, the one under its right half to the right.
+        const QList<RoundtableTag> tags{tagAt(QStringLiteral("left"), 7150000 + 340 * 100),
+                                        tagAt(QStringLiteral("right"), 7150000 + 540 * 100),
+                                        tagAt(QStringLiteral("far"), 7150000 + 700 * 100)};
+        const QList<RoundtableKeepOut> flag{{300.0, 560.0}};
+        const auto placements =
+            layoutRoundtableTags(tags, 100.0, 7150000, 800.0, kTagWidth, kGap, flag);
+        QCOMPARE(placements.size(), 3);
+        QVERIFY(placements.at(0).rect.right() <= 300.0 - kGap + 1e-9);
+        QVERIFY(placements.at(1).rect.left() >= 560.0 + kGap - 1e-9);
+        QVERIFY(!anyOverlap(placements));
+        for (const RoundtableTagPlacement& placement : placements) {
+            QVERIFY(placement.rect.right() <= 300.0 || placement.rect.left() >= 560.0);
+        }
+
+        // Only the stretches beside the flag count: across 800 px with
+        // 600 px kept out, the five rooms 50 Hz apart fold, and with the
+        // whole pan kept out nothing is placed.
+        const auto crowded = layoutRoundtableTags(fiveClose(), 1.0, 7184800, 800.0, 40.0, kGap,
+                                                  {{100.0, 700.0}});
+        QVERIFY(crowded.size() < 5);
+        QVERIFY(!anyOverlap(crowded));
+        for (const RoundtableTagPlacement& placement : crowded) {
+            QVERIFY(placement.rect.right() <= 100.0 || placement.rect.left() >= 700.0);
+        }
+        QVERIFY(layoutRoundtableTags(tags, 100.0, 7150000, 800.0, kTagWidth, kGap, {{0.0, 800.0}}).isEmpty());
+    }
+
     void theModelsRoomsBecomeTags()
     {
         NullLink link;
@@ -327,6 +446,196 @@ private slots:
             QCOMPARE(roundtableTagDisplayFor(&model), display);
         }
         model.detach();
+    }
+
+    void initTestCase()
+    {
+        // A pan's start-up lines say nothing about the tags.
+        QLoggingCategory::setFilterRules(QStringLiteral("nereussdr.bandplan.info=false\n"
+                                                        "nereussdr.rt_audio.info=false\n"
+                                                        "nereus.memlock.info=false\n"
+                                                        "nereus.spectrum.info=false\n"
+                                                        "nereus.connection=false\n"
+                                                        "nereus.freedv.rade.bridge.debug=false\n"
+                                                        "qt.qpa.fonts.warning=false"));
+        // Offscreen there is no GPU: the pan says so once per pan.
+        g_previousHandler = qInstallMessageHandler(
+            [](QtMsgType type, const QMessageLogContext& context, const QString& message) {
+                if (message.startsWith(QLatin1String("QRhiWidget: QRhi is not supported"))) {
+                    return;
+                }
+                g_previousHandler(type, context, message);
+            });
+    }
+
+    void aPanDrawsItsTagsAlongTheFootClearOfFlagsAndBandPlan()
+    {
+        Pan pan;
+        pan.widget.setRoundtableTags(panTags(), RoundtableTagDisplay::Live);
+        pan.draw();
+        const auto& hits = pan.widget.roundtableTagHitsForTest();
+        // Mine, the quiet and doubled rooms, and one fold of five.
+        QCOMPARE(hits.size(), 4);
+        const QRect spec = pan.widget.roundtableTagSpectrumRectForTest();
+        const int bandH = pan.widget.bandPlanStripHeightForTest();
+        QVERIFY(bandH > 0);
+        const int bandTop = spec.bottom() + 1 - bandH;
+        const QRegion flags = pan.widget.receiverFlagRegion();
+        QVERIFY(!flags.isEmpty());
+        for (const auto& hit : hits) {
+            QCOMPARE(hit.rect.height(), 22);
+            QVERIFY(hit.rect.left() >= spec.left());
+            QVERIFY(hit.rect.right() <= spec.right());
+            // Above the band plan, with room for the tick.
+            QCOMPARE(hit.rect.bottom() + 1, bandTop - 8);
+            QVERIFY2(!flags.intersects(hit.rect), "a tag is under a VFO flag");
+        }
+        const auto* fold = hitFor(pan.widget, QStringLiteral("lsb-7185100"));
+        QVERIFY(fold != nullptr);
+        QVERIFY(fold->folded);
+        QCOMPARE(fold->roomIds.size(), 5);
+        QVERIFY(!hitFor(pan.widget, QStringLiteral("lsb-7200000"))->folded);
+    }
+
+    void aShortPansTagsMoveOutFromUnderTheFlag()
+    {
+        // A pan this short has its flag over the tag row.
+        Pan pan(300);
+        pan.widget.setRoundtableTags(panTags(), RoundtableTagDisplay::Live);
+        pan.draw();
+        const QRegion flags = pan.widget.receiverFlagRegion();
+        const QRect spec = pan.widget.roundtableTagSpectrumRectForTest();
+        const int bandTop = spec.bottom() + 1 - pan.widget.bandPlanStripHeightForTest();
+        QVERIFY(flags.intersects(QRect(spec.left(), bandTop - 30, spec.width(), 22)));
+        const auto& hits = pan.widget.roundtableTagHitsForTest();
+        QVERIFY(hits.size() >= 3);
+        for (const auto& hit : hits) {
+            QVERIFY2(!flags.intersects(hit.rect), "a tag is under a VFO flag");
+        }
+        QVERIFY(hitFor(pan.widget, QStringLiteral("lsb-7200000")) != nullptr);
+    }
+
+    void aTagClickTunesAndAFoldListsItsRooms()
+    {
+        Pan pan;
+        pan.widget.setRoundtableTags(panTags(), RoundtableTagDisplay::Live);
+        pan.draw();
+        QSignalSpy tuned(&pan.widget, &SpectrumWidget::roundtableRoomClicked);
+        QSignalSpy plainTune(&pan.widget, &SpectrumWidget::frequencyClicked);
+
+        const auto* quietHit = hitFor(pan.widget, QStringLiteral("lsb-7150000"));
+        QVERIFY(quietHit != nullptr);
+        const QRect quiet = quietHit->rect;
+        QTest::mouseClick(&pan.widget, Qt::LeftButton, Qt::NoModifier, quiet.center());
+        QCOMPARE(tuned.count(), 1);
+        QCOMPARE(tuned.first().first().toString(), QStringLiteral("lsb-7150000"));
+        QCOMPARE(plainTune.count(), 0);
+
+        // The fold's list: a heading, then the rooms by frequency.
+        const auto* fold = hitFor(pan.widget, QStringLiteral("lsb-7185000"));
+        QVERIFY(fold != nullptr);
+        const QStringList foldRooms = fold->roomIds;
+        QMenu menu;
+        pan.widget.buildRoundtableFoldMenu(foldRooms, menu);
+        QList<QAction*> rows;
+        for (QAction* action : menu.actions()) {
+            if (!action->isSeparator() && action->isEnabled()) {
+                rows.append(action);
+            }
+        }
+        QCOMPARE(menu.actions().first()->text(), QStringLiteral("5 rooms here"));
+        QVERIFY(!menu.actions().first()->isEnabled());
+        QCOMPARE(rows.size(), 5);
+        QCOMPARE(rows.first()->text(), QStringLiteral("7.185   K0ABC   3"));
+        QCOMPARE(rows.at(1)->text(), QStringLiteral("7.18505   K1ABC   3"));
+        for (QAction* row : menu.actions()) {
+            if (row->isSeparator()) {
+                continue;
+            }
+            QVERIFY2(OperatorWording::isPlain(row->text()), qPrintable(row->text()));
+        }
+        rows.at(2)->trigger();
+        QCOMPARE(tuned.count(), 2);
+        QCOMPARE(tuned.last().first().toString(), QStringLiteral("lsb-7185100"));
+
+        // Keyed, a tag tunes nothing.
+        pan.widget.setMoxOverlay(true);
+        QTest::mouseClick(&pan.widget, Qt::LeftButton, Qt::NoModifier, quiet.center());
+        rows.at(0)->trigger();
+        QCOMPARE(tuned.count(), 2);
+    }
+
+    void aTagTunesTheActiveSliceToItsRoom()
+    {
+        // As MainWindow wires it: a pan's tag click to the applet's tune.
+        NullLink link;
+        RoundtableState state;
+        RoundtableModel model;
+        model.attachStation(&link, &state);
+        state.applyStationValue("linkState", static_cast<int>(RoundtableModel::LinkState::Live));
+        model.applyRooms(QJsonObject{
+            {QStringLiteral("rooms"),
+             QJsonArray{summary(QStringLiteral("lsb-7150000"), 7150000, QStringLiteral("quiet"), QJsonArray{}, 2),
+                        summary(QStringLiteral("usb-14212000"), 14212000, QStringLiteral("talking"),
+                                QJsonArray{QStringLiteral("VE3XYZ")}, 12)}}});
+        RadioModel radio;
+        radio.addSlice();
+        radio.setActiveSlice(0);
+        SliceModel* slice = radio.activeSlice();
+        QVERIFY(slice != nullptr);
+        slice->setDspMode(DSPMode::USB);
+        slice->setFrequency(14212000.0);
+        RoundtableApplet applet(&radio, &model, nullptr);
+
+        Pan pan;
+        QObject::connect(&pan.widget, &SpectrumWidget::roundtableRoomClicked, &applet,
+                         &RoundtableApplet::tuneToRoom);
+        pan.widget.setRoundtableTags(roundtableTagsFor(&model, QList<int>{0}), roundtableTagDisplayFor(&model));
+        pan.draw();
+        const auto* hit = hitFor(pan.widget, QStringLiteral("lsb-7150000"));
+        QVERIFY(hit != nullptr);
+        QTest::mouseClick(&pan.widget, Qt::LeftButton, Qt::NoModifier, hit->rect.center());
+        QCOMPARE(std::llround(slice->frequency()), 7150000LL);
+        QCOMPARE(slice->dspMode(), DSPMode::LSB);
+        model.detach();
+    }
+
+    void offlineGreysThePansTagsAndConnectingHidesThem()
+    {
+        Pan pan;
+        pan.widget.setRoundtableTags(panTags(), RoundtableTagDisplay::Live);
+        const QImage live = pan.draw();
+        const auto* doubledHit = hitFor(pan.widget, QStringLiteral("lsb-7250000"));
+        QVERIFY(doubledHit != nullptr);
+        const QRect doubled = doubledHit->rect;
+        const QPoint edge(doubled.center().x(), doubled.top());
+        QCOMPARE(QColor(live.pixel(edge)).name(), QStringLiteral("#c25a5c"));
+
+        pan.widget.setRoundtableTags(panTags(), RoundtableTagDisplay::Stale);
+        const QImage stale = pan.draw();
+        QCOMPARE(pan.widget.roundtableTagHitsForTest().size(), 4);
+        QCOMPARE(QColor(stale.pixel(edge)).name(), QStringLiteral("#606066"));
+
+        pan.widget.setRoundtableTags(panTags(), RoundtableTagDisplay::Hidden);
+        pan.draw();
+        QVERIFY(pan.widget.roundtableTagHitsForTest().isEmpty());
+        QSignalSpy tuned(&pan.widget, &SpectrumWidget::roundtableRoomClicked);
+        QTest::mouseClick(&pan.widget, Qt::LeftButton, Qt::NoModifier, doubled.center());
+        QCOMPARE(tuned.count(), 0);
+    }
+
+    void newTagsMarkTheGpuOverlayForRedraw()
+    {
+        Pan pan;
+        pan.widget.clearOverlayStaticDirtyForTest();
+        pan.widget.setRoundtableTags(panTags(), RoundtableTagDisplay::Live);
+#ifdef NEREUS_GPU_SPECTRUM
+        QVERIFY(pan.widget.overlayStaticDirtyForTest());
+        // The same tags again change nothing.
+        pan.widget.clearOverlayStaticDirtyForTest();
+        pan.widget.setRoundtableTags(panTags(), RoundtableTagDisplay::Live);
+        QVERIFY(!pan.widget.overlayStaticDirtyForTest());
+#endif
     }
 
     void frequenciesAsTheFoldListShowsThem()
