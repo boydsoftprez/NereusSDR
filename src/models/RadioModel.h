@@ -18,6 +18,10 @@
 //                Ported from Longpath PR 37 (fd894ded, Martin Fischer
 //                OE5SOS) by J.J. Boyd (KG4VCF), with AI-assisted
 //                transformation via Claude Code.
+//   2026-10-22 - setAgcGain / agcGain comment: TCI agc_gain is the AGC-T
+//                (rfGain), after Longpath f1d0c181 (Martin Fischer,
+//                OE5SOS). J.J. Boyd (KG4VCF), with AI-assisted
+//                transformation via Claude Code.
 //   2026-10-22 - rejoinCandidateStreams: the receivers a lone slice may
 //                share with when it tunes into their range (JJ's ruling
 //                2026-10-22), compared on the slice's new-band label.
@@ -6000,7 +6004,11 @@ public slots:
     Q_INVOKABLE void    setAgcMode(int rx, const QString& mode);
     Q_INVOKABLE QString agcMode(int rx) const;
 
-    // AGC gain (threshold) — routes to SliceModel::agcThreshold (-20..120).
+    // AGC gain: TCI agc_gain is Thetis's AGC-T (SetAgcT / GetAgcT, the
+    // ptbRF value, -20..120), the WDSP AGC top, so it routes to
+    // SliceModel::rfGain. Not agcThreshold, the -160..+2 threshold point.
+    // From Thetis TCIServer.cs:5011-5026, console.cs:51803-51833
+    // [v2.10.3.15].
     Q_INVOKABLE void setAgcGain(int rx, int gain);
     Q_INVOKABLE int  agcGain(int rx) const;
 
