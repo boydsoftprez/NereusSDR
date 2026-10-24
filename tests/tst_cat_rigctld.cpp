@@ -233,6 +233,13 @@ private slots:
         QVERIFY(state.contains("0x81030900\n0x81030900\n0x8\n0x8\n0\n0\n"));
         QVERIFY(state.contains("has_power2mW=0\n")); QVERIFY(!state.contains("FLEX"));
         QCOMPARE(exchange(socket,"F VFOB 7102000\nM VFOB CWR 500\nf VFOB\nm VFOB\n","RPRT 0\nRPRT 0\n7102000\nCWR\n500\n"),QByteArray("RPRT 0\nRPRT 0\n7102000\nCWR\n500\n"));
+        // PKTUSB and PKTLSB advertise and default to 3000 Hz: DIGU/DIGL start on F1 3.0k
+        // (NereusSDR's own default, for FT8), so a passband of 0 gives 0..3000 and -3710..-710.
+        QVERIFY(state.contains("0x800 3000\n")); QVERIFY(state.contains("0x400 3000\n"));
+        QCOMPARE(exchange(socket,"M VFOA PKTUSB 0\nm VFOA\n","RPRT 0\nPKTUSB\n3000\n"),QByteArray("RPRT 0\nPKTUSB\n3000\n"));
+        QCOMPARE(qMakePair(f.model.sliceById(0)->filterLow(),f.model.sliceById(0)->filterHigh()),qMakePair(0,3000));
+        QCOMPARE(exchange(socket,"M VFOA PKTLSB 0\nm VFOA\n","RPRT 0\nPKTLSB\n3000\n"),QByteArray("RPRT 0\nPKTLSB\n3000\n"));
+        QCOMPARE(qMakePair(f.model.sliceById(0)->filterLow(),f.model.sliceById(0)->filterHigh()),qMakePair(-3710,-710));
         QCOMPARE(exchange(socket,"S VFOA 1 VFOB\ns VFOA\nT VFOA 1\nt VFOA\n","RPRT 0\n1\nVFOB\nRPRT 0\n1\n"),QByteArray("RPRT 0\n1\nVFOB\nRPRT 0\n1\n"));
         QCOMPARE(exchange(socket,"T VFOA 0\n","RPRT 0\n"),QByteArray("RPRT 0\n")); QTRY_VERIFY(!f.model.moxController()->isMox());
         QCOMPARE(exchange(socket,"S VFOA 0 VFOA\n","RPRT 0\n"),QByteArray("RPRT 0\n"));
