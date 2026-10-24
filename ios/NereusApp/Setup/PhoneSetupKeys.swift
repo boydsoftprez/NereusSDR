@@ -964,6 +964,10 @@ enum DisplayPhoneGroups {
         // DUP joins the transmit scale (spec section 7.2).
         Group(pageId: "display.txDisplay", title: "Transmit scale", tag: .thisPhone, placement: .into("Transmit scale"),
               rows: ["setupDuplex"]),
+        // The strongest signal's color, which the desktop has no Setup row
+        // for, joins the spectrum's colors in Appearance.
+        Group(pageId: "appearance.colorsTheme", title: "Spectrum", tag: .thisPhone, placement: .into("Spectrum"),
+              rows: ["peakValueColour"]),
     ]
 
     /// The desktop's rows a phone has nothing to do with, left off FFT &
@@ -1055,7 +1059,7 @@ enum DisplayPhoneGroups {
         "peakBlobsInsideOnly": .described(page: "display.spectrumPeaks", group: "Peak markers", key: "DisplayPeakBlobsInsideFilterOnly"),
         "peakHoldColour": .described(page: "display.spectrumPeaks", group: "Peak trace", key: "DisplayActivePeakHoldColor"),
         "peakHoldDelay": .described(page: "display.spectrumDefaults", group: "Peak hold", key: "DisplayPeakHoldResetMs"),
-        "peakValueColour": .noDesktopRow,
+        "peakValueColour": .phone(page: "appearance.colorsTheme", group: "Spectrum", row: "peakValueColour"),
         "peakValueCorner": .described(page: "display.spectrumPeaks", group: "Peak value", key: "DisplayPeakValuePosition"),
         "peakValueDelay": .described(page: "display.spectrumPeaks", group: "Peak value", key: "DisplayPeakTextDelayMs"),
         "resetDisplay": .described(page: "display.spectrumDefaults", group: "Reset", key: "smoothDefaults"),

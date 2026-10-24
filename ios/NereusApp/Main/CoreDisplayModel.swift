@@ -506,6 +506,22 @@ final class CoreDisplayModel: ObservableObject {
         set(size, to: option.value)
     }
 
+    /// The Display pill's line under FFT Size: bin width and time per
+    /// transform at the running size, in the desktop pill's words; nil
+    /// before a running size.
+    // From src/gui/DisplayFftReadout.h:57-68 (displayFftReadoutText)
+    var fftReadoutText: String? {
+        guard let bin = runningBinWidthHz, bin.isFinite, bin > 0 else {
+            return nil
+        }
+        let rate = subscriber.plannedSampleRateHz ?? runningFftSize.map { bin * Double($0) }
+        guard let rate, rate > 0 else {
+            return nil
+        }
+        return String(format: "%.2f Hz per bin \u{00B7} %.2f s per transform at %@ kHz", bin, 1 / bin,
+                      String(format: "%g", rate / 1000))
+    }
+
     /// The bin width readout's label: the Core's, or the phone's own.
     var binWidthLabel: String { description?.binWidth.label ?? Self.binWidthFallbackLabel }
 

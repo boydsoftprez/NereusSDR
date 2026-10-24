@@ -166,10 +166,15 @@ struct DropSheetShotTests {
         band.receive(.context(try #require(BandFlagShotTests.context())))
         // The Core describes Display at version 29: its own description file.
         var properties = model.mirror.capabilities.keys.sorted().compactMap { name -> LinkMessage.PropertyEntry? in
-            guard name != "setupDescriptionVersion", let value = model.mirror.capabilities[name] else { return nil }
+            guard name != "setupDescriptionVersion", name != "displayExtrasVersion",
+                  let value = model.mirror.capabilities[name] else { return nil }
             return LinkMessage.PropertyEntry(name: name, value: value.wireValue)
         }
         properties.append(.init(name: "setupDescriptionVersion", value: .i64(29)))
+        // A Core with media on sends display extras 4
+        // (src/core/session/StationServer.cpp:4776-4784), which Floor
+        // Offset and Keep range need.
+        properties.append(.init(name: "displayExtrasVersion", value: .i64(4)))
         await station.deliver(.capabilities(LinkMessage.Capabilities(properties: properties)))
         let json = try String(contentsOf: DisplayPillTests.setupFolder.appendingPathComponent("display.json"),
                               encoding: .utf8)
@@ -178,6 +183,8 @@ struct DropSheetShotTests {
         for tab in DisplayPillTab.allCases {
             try await shoot("display-pill-\(tab.rawValue)", sheet: .display, sideways: false, model: model,
                             displayTab: tab)
+            try await shoot("display-pill-\(tab.rawValue)-scrolled", sheet: .display, sideways: false, model: model,
+                            displayTab: tab, scrolled: true)
         }
         await model.disconnect()
     }
@@ -280,7 +287,7 @@ struct DropSheetShotTests {
     /// Draws the main screen with `sheet` open. `feed` fills the band; the
     /// scene's synthetic rows by default.
     private func shoot(_ name: String, sheet: OpenSheet?, sideways: Bool, model: AppModel,
-                       displayTab: DisplayPillTab = .spectrum,
+                       displayTab: DisplayPillTab = .spectrum, scrolled: Bool = false,
                        feed: ((ShotWait.BandDrawing) async throws -> Void)? = nil) async throws {
         let size = sideways ? CGSize(width: 874, height: 402) : CGSize(width: 402, height: 874)
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
@@ -307,6 +314,14 @@ struct DropSheetShotTests {
             BandFlagShotTests.feed(band, width: bandDraw.requestedPixels, lines: Int(size.height * 3))
         }
         try await ShotWait.requireBandShown(model.main.band, in: window, after: bandDraw)
+        if scrolled {
+            // The sheet's foot: each scroll view taller than its frame, at its end.
+            for scroll in Self.scrollViews(in: window) where scroll.contentSize.height > scroll.bounds.height + 1 {
+                let bottom = scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom
+                scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: bottom), animated: false)
+            }
+            try await Task.sleep(for: .milliseconds(300))
+        }
         let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
             window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
         }
@@ -316,6 +331,11 @@ struct DropSheetShotTests {
             try data.write(to: url)
             print("Wrote \(url.path)")
         }
+    }
+
+    private static func scrollViews(in view: UIView) -> [UIScrollView] {
+        let own: [UIScrollView] = (view as? UIScrollView).map { [$0] } ?? []
+        return own + view.subviews.flatMap { scrollViews(in: $0) }
     }
 }
 

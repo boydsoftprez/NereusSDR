@@ -4,6 +4,7 @@
 import Combine
 import NereusBand
 import NereusMirror
+import NereusModels
 import SwiftUI
 import UIKit
 
@@ -33,8 +34,11 @@ final class DisplayPillPhoneKeys: SetupPhoneKeys {
         }
     }
 
+    /// The display settings the pill's pan draws with now.
+    var settings: BandDisplaySettings { main.displayEditingSettings }
+
     /// The pill's pan is drawn on the transmit scale now.
-    private var transmitting: Bool {
+    var transmitting: Bool {
         pan == .first && main.band.transmitOverlay
     }
 
@@ -46,8 +50,25 @@ final class DisplayPillPhoneKeys: SetupPhoneKeys {
         inner.value(forPhoneKey: key)
     }
 
+    /// Why the pill holds a row the description leaves free: the 3D rows
+    /// in the 2D view and Peak Hold's time while Peak Hold is off, as the
+    /// desktop pill greys them.
+    func pillHeldReason(_ key: String) -> String? {
+        let settings = settings
+        if DisplayPillReasons.threeDKeys.contains(key), settings.spectrumView == .flat {
+            return DisplayPillReasons.only3D
+        }
+        if key == Self.peakHoldTimeKey, !settings.peakHold {
+            return DisplayPillReasons.peakHoldOff
+        }
+        return nil
+    }
+
+    static let peakHoldTimeKey = "DisplayPeakHoldResetMs"
+    static let retuneKey = "ClarityRetune"
+
     func set(_ value: SetupValue, forPhoneKey key: String) -> Bool {
-        guard !heldForTransmit(key) else { return false }
+        guard !heldForTransmit(key), pillHeldReason(key) == nil else { return false }
         focus()
         return inner.set(value, forPhoneKey: key)
     }
@@ -90,7 +111,21 @@ final class DisplayPillPhoneKeys: SetupPhoneKeys {
         if heldForTransmit(key) {
             return Self.transmitLevelsReason
         }
-        return inner.unavailableReason(forPhoneKey: key)
+        if key == Self.retuneKey, settings.waterfallLevelMode != .clarity {
+            // The desktop pill's words for Re-tune outside Clarity.
+            return DisplayPillReasons.retune
+        }
+        if let reason = inner.unavailableReason(forPhoneKey: key) {
+            // The desktop pill's words for the rows Track floor sets.
+            if key == "DisplayGridMin", settings.gridFollowsNoiseFloor {
+                return DisplayPillReasons.dbMinTracked
+            }
+            if key == "DisplayGridMax", settings.gridFollowsNoiseFloor, settings.gridKeepsRange {
+                return DisplayPillReasons.dbMaxKept
+            }
+            return reason
+        }
+        return pillHeldReason(key)
     }
 }
 
@@ -141,6 +176,47 @@ final class DisplayPillSource {
     func control(for key: String) -> SetupDescription.Control? {
         description.flatMap { DisplayPillRows.control(for: key, in: $0) }
     }
+
+    /// The control as the pill draws it: the dispatcher's state, with the
+    /// desktop pill's words in place of Setup's "Needs a different choice
+    /// above." for the row bound to the desktop key `key`.
+    func state(of control: SetupDescription.Control, key: String) -> SetupControlState {
+        let state = dispatcher.state(of: control, in: Self.category)
+        guard state.reason == SetupControlDispatcher.dependsReason,
+              let words = DisplayPillReasons.depends(DisplayPillRows.descriptionKey(for: key), settings: keys.settings,
+                                                     sizing: dispatcher.sizingMode) else {
+            return state
+        }
+        return SetupControlState(value: state.value, editable: state.editable, reason: words)
+    }
+
+    /// The label on a row's line: the description's without its colon; a
+    /// per-band row names its band ("dB Max \u{00B7} 40 m"), and dB Max and
+    /// dB Min add that the Core keeps them (spec DC3).
+    func label(of control: SetupDescription.Control, key: String) -> String {
+        Self.label(control.label, perBand: control.perBand != nil ? keys.perBandName : nil,
+                   onCore: Self.coreBandKeys.contains(key))
+    }
+
+    /// dB Max and dB Min: each band's, kept on the Core.
+    static let coreBandKeys: Set<String> = ["DisplayGridMax", "DisplayGridMin"]
+
+    static func label(_ described: String, perBand band: String?, onCore: Bool) -> String {
+        var label = described.trimmingCharacters(in: .whitespaces)
+        if label.hasSuffix(":") {
+            label.removeLast()
+        }
+        guard let band else { return label }
+        return "\(label) \u{00B7} \(spacedBand(band))\(onCore ? ", on the Core" : "")"
+    }
+
+    /// "40m" reads "40 m", as the board writes it.
+    static func spacedBand(_ band: String) -> String {
+        guard let last = band.last, last == "m", band.dropLast().allSatisfy(\.isNumber), band.count > 1 else {
+            return band
+        }
+        return "\(band.dropLast()) m"
+    }
 }
 
 /// The Display pill as the toolbar's sheet (R-IOS-55, spec 5.1 and 5.2):
@@ -179,8 +255,9 @@ struct DisplayPill: View {
                 .accessibilityIdentifier("displayPillPan")
         } content: {
             tabs
-            DisplayPillRowsView(rows: DisplayPillRows.rows(tab), source: main.displayPillSource,
-                                display: main.display, core: core, main: main, onOpenPage: onOpenPage)
+            DisplayPillRowsView(tab: tab, source: main.displayPillSource, display: main.display, core: core,
+                                main: main, onOpenPage: onOpenPage)
+                .environment(\.panelButtonHeight, 30)
         }
         .onAppear {
             main.displayPillSource?.keys.pan = pan
@@ -202,9 +279,9 @@ struct DisplayPill: View {
     }
 }
 
-/// One tab's rows.
+/// One tab's lines, compact as the board draws them.
 private struct DisplayPillRowsView: View {
-    let rows: [DisplayPillRow]
+    let tab: DisplayPillTab
     let source: DisplayPillSource?
     @ObservedObject var display: DisplaySheetModel
     @ObservedObject var core: CoreDisplayModel
@@ -212,14 +289,18 @@ private struct DisplayPillRowsView: View {
     let onOpenPage: (String) -> Void
 
     var body: some View {
-        ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-            switch row {
-            case .group(let title):
-                SheetCaption(title)
-            case .setting(let key):
-                setting(key)
-            case .phone(let phoneRow):
-                phone(phoneRow)
+        ForEach(Array(DisplayPillLayout.lines(tab).enumerated()), id: \.offset) { _, line in
+            switch line {
+            case .caption(let title):
+                DisplayPillCaption(title)
+            case .coreHead:
+                coreHead
+            case .chips(let chips, let columns):
+                if let source {
+                    DisplayPillChipsLine(chips: chips, columns: columns, source: source, display: display)
+                }
+            case .phone(let row):
+                phone(row)
             case .link(let title, let pageId):
                 Button(title) { onOpenPage(pageId) }
                     .font(.system(size: 12, weight: .semibold))
@@ -227,122 +308,89 @@ private struct DisplayPillRowsView: View {
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("displayPillLink.\(pageId)")
             case .fftReadout:
-                SheetNote("\(core.binWidthLabel): \(core.binWidthText ?? "")")
+                // From src/gui/DisplayFftReadout.h:57-68 (the line under FFT Size)
+                Text(core.fftReadoutText ?? "")
+                    .font(.system(size: 11))
+                    .foregroundStyle(ChromeColours.textDim)
                     .accessibilityIdentifier("displayPillFftReadout")
+            case .segment(let key, _), .menu(let key, _, _), .slider(let key, _, _, _), .toggle(let key),
+                 .picture(let key), .retune(let key):
+                if let source {
+                    DisplayPillSettingLine(line: line, source: source, band: main.band)
+                } else {
+                    DisplayPillMissingRow(key: key)
+                }
             }
         }
     }
 
-    @ViewBuilder
-    private func setting(_ key: String) -> some View {
-        if let source {
-            DisplayPillDescribedRow(key: key, source: source, pages: source.pages)
-        } else {
-            Self.missingRow(key)
+    /// The FFT tab's head: these values are the Core's, one for every device.
+    private var coreHead: some View {
+        // The board's head: the Core tag and its line, in place of the FFT caption.
+        HStack(spacing: 6) {
+            SetupTagBadge(tag: .core)
+            Text(DisplayPillLayout.coreHeadText)
+                .font(.system(size: 11))
+                .foregroundStyle(ChromeColours.textDim)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
         }
-    }
-
-    /// A row the Core does not describe. Disabled, never hidden: the row
-    /// stays in its place with its reason.
-    static func missingRow(_ key: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(Self.fallbackLabel(key))
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(ChromeColours.text)
-            Text(SetupControlDispatcher.needsNewerCoreReason)
-                .font(.footnote)
-                .foregroundStyle(WorkspacePalette.textSecondary)
-                .accessibilityIdentifier("displayPill.\(key).reason")
-        }
-        .opacity(WorkspacePalette.disabledOpacity)
         .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("displayPill.\(key)")
-    }
-
-    /// A label for a row the Core does not describe: the desktop key in
-    /// words ("DisplayWfBlackLevel" reads "Wf Black Level").
-    static func fallbackLabel(_ key: String) -> String {
-        let name = key.hasPrefix("Display") ? String(key.dropFirst("Display".count)) : key
-        var words = ""
-        for character in name {
-            if character.isUppercase, let last = words.last, !last.isUppercase, last != " " {
-                words.append(" ")
-            }
-            words.append(character)
-        }
-        return words
+        .accessibilityIdentifier("displayPillCoreHead")
     }
 
     @ViewBuilder
     private func phone(_ row: PhoneRow) -> some View {
         switch row {
         case .spectrumHeight:
-            SheetCaption("Spectrum Height (this phone)")
-            PanelSliderRow(label: nil, value: display.spectrumHeight,
-                           range: DisplaySheetModel.spectrumHeightRange, accessibility: "Spectrum height",
-                           format: DisplaySheetModel.percentText) { display.setSpectrumHeight($0) }
-                .accessibilityIdentifier("displayPillSpectrumHeight")
+            VStack(alignment: .leading, spacing: 2) {
+                DisplayPillLabel(text: "Spectrum Height")
+                    .frame(minHeight: 26)
+                PanelSliderRow(label: nil, value: display.spectrumHeight,
+                               range: DisplaySheetModel.spectrumHeightRange, accessibility: "Spectrum height",
+                               format: DisplaySheetModel.percentText) { display.setSpectrumHeight($0) }
+                    .accessibilityIdentifier("displayPillSpectrumHeight")
+            }
         case .lookBack:
-            SheetCaption("Look back (this phone)")
-            HStack(spacing: 8) {
-                PanelSliderRow(label: nil, value: display.lookBackSeconds,
-                               range: display.lookBackRange.max > 0 ? display.lookBackRange : nil,
-                               accessibility: "Look back", format: DisplaySheetModel.lookBackText) {
-                    display.setLookBack(seconds: $0)
+            VStack(alignment: .leading, spacing: 2) {
+                DisplayPillLabel(text: "Look back")
+                    .frame(minHeight: 26)
+                HStack(spacing: 8) {
+                    PanelSliderRow(label: nil, value: display.lookBackSeconds,
+                                   range: display.lookBackRange.max > 0 ? display.lookBackRange : nil,
+                                   accessibility: "Look back", format: DisplaySheetModel.lookBackText) {
+                        display.setLookBack(seconds: $0)
+                    }
+                    .accessibilityIdentifier("displayPillLookBack")
+                    PanelButton(label: "LIVE", lit: display.lookBackSeconds == 0, style: .blue,
+                                disabled: display.lookBackSeconds == 0) { display.goLive() }
+                        .frame(width: 64)
+                        .accessibilityIdentifier("displayPillLookBackLive")
                 }
-                .accessibilityIdentifier("displayPillLookBack")
-                PanelButton(label: "LIVE", lit: display.lookBackSeconds == 0, style: .blue,
-                            disabled: display.lookBackSeconds == 0) { display.goLive() }
-                    .frame(width: 64)
-                    .accessibilityIdentifier("displayPillLookBackLive")
             }
-        case .ctun:
-            HStack(spacing: 8) {
-                PanelButton(label: "CTUN", lit: display.ctun, style: .dsp) { display.setCtun(!display.ctun) }
-                    .frame(width: 84)
-                    .accessibilityIdentifier("displayPillCtun")
-                SheetNote(display.ctun ? DisplaySheetModel.ctunOnNote : DisplaySheetModel.ctunOffNote)
-            }
-        case .dup:
-            HStack(spacing: 8) {
-                // DUP, the desktop's display duplex: greyed with its reason
-                // on a Core that cannot keep the receiver on the band.
-                PanelButton(label: "DUP", lit: display.duplex && display.duplexAvailable, style: .dsp,
-                            disabled: !display.duplexAvailable) { display.setDuplex(!display.duplex) }
-                    .frame(width: 84)
-                    .accessibilityLabel("Display duplex")
-                    .accessibilityHint(display.duplexAvailable ? "" : DisplaySheetModel.duplexUnavailableText)
-                    .accessibilityIdentifier("displayPillDup")
-                SheetNote(display.duplexNote)
+        case .ctun, .dup:
+            if let source {
+                DisplayPillChipsLine(chips: [.phone(row)], columns: 1, source: source, display: display)
             }
         case .decimation:
             let range = BandDisplaySettings.decimationRange
-            SetupNumberRow(title: "Decimation", value: Double(main.band.settings.decimation),
-                           range: Double(range.lowerBound)...Double(range.upperBound), step: 1, unit: "",
-                           enabled: display.gates.decimation, id: "displayPillDecimation") { value in
-                main.displayPillSource?.keys.focus()
-                main.changeDisplay { $0.decimation = Int(value) }
+            VStack(alignment: .leading, spacing: 2) {
+                DisplayPillLabel(text: "Decimation")
+                    .frame(minHeight: 26)
+                    .setupGreyed(!display.gates.decimation)
+                PanelSliderRow(label: nil, value: Double(main.band.settings.decimation),
+                               range: StationCatalog.Range(min: Double(range.lowerBound),
+                                                           max: Double(range.upperBound), step: 1),
+                               accessibility: "Decimation", format: { String(Int($0.rounded())) },
+                               greyed: !display.gates.decimation) { value in
+                    main.displayPillSource?.keys.focus()
+                    main.changeDisplay { $0.decimation = Int(value.rounded()) }
+                }
+                .accessibilityIdentifier("displayPillDecimation")
+                if !display.gates.decimation {
+                    DisplayPillReason(text: CatalogFeed.needsNewerCoreText)
+                }
             }
-            if !display.gates.decimation {
-                SheetNote(CatalogFeed.needsNewerCoreText)
-            }
-        }
-    }
-}
-
-/// A row the Core describes, drawn as Setup draws it; redrawn when the
-/// Core's description changes.
-private struct DisplayPillDescribedRow: View {
-    let key: String
-    let source: DisplayPillSource
-    @ObservedObject var pages: SetupDescribedPages
-
-    var body: some View {
-        if let control = source.control(for: key) {
-            DescribedControl(control: control, category: DisplayPillSource.category, dispatcher: source.dispatcher)
-                .id(control.id)
-        } else {
-            DisplayPillRowsView.missingRow(key)
         }
     }
 }

@@ -187,6 +187,7 @@ enum DisplayPillRows {
     private static let view: [DisplayPillRow] = [
         .group("View"), // :4235
         .setting(key: "DisplaySpectrumRenderMode"), // :4240
+        .group("3D"), // the board's 3D caption
         .setting(key: "Display3DFloor"), // :4253
         .setting(key: "Display3DGain"), // :4260
         .setting(key: "Display3DSpan"), // :4268

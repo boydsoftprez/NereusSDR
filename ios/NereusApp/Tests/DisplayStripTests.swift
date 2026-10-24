@@ -156,7 +156,9 @@ struct DisplayStripTests {
                 #expect(found?.rows.contains(row) == true, "\(id): no \(row) in this phone's \(group) on \(page)")
                 switch found?.placement {
                 case .before(let anchor)?, .after(let anchor)?, .into(let anchor)?:
-                    #expect(section(page, anchor) != nil, "\(id): \(page) has no \(anchor) group")
+                    let anchored = section(page, anchor)
+                        ?? appearance.pages.first { $0.id == page }?.sections.first { $0.title == anchor }
+                    #expect(anchored != nil, "\(id): \(page) has no \(anchor) group")
                 case .end?, nil:
                     break
                 }
@@ -167,7 +169,7 @@ struct DisplayStripTests {
             case .notARow:
                 break
             case .noDesktopRow:
-                #expect(id == "peakValueColour")
+                Issue.record("\(id) has no place")
             }
         }
         // Spec 7.2's named places.
@@ -181,6 +183,8 @@ struct DisplayStripTests {
         #expect(places["setupCtun"] == .phone(page: "display.threeD", group: "On this phone", row: "setupCtun"))
         #expect(places["extendedView"] == .phone(page: "display.threeD", group: "On this phone", row: "extendedView"))
         #expect(places["setupDuplex"] == .phone(page: "display.txDisplay", group: "Transmit scale", row: "setupDuplex"))
+        #expect(places["peakValueColour"] == .phone(page: "appearance.colorsTheme", group: "Spectrum",
+                                                    row: "peakValueColour"))
         #expect(places["bandPlanSize"] == .phone(page: "display.threeD", group: "Band plan", row: "bandPlanSize"))
         if case .appearance = places["gridColour"] {} else { Issue.record("grid colour is not in Appearance") }
 

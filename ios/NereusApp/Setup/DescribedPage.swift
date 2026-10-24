@@ -58,7 +58,11 @@ struct DescribedPage: View {
 
     /// This phone's groups on this page, placed `where`.
     private func phoneGroups(_ placement: DisplayPhoneGroups.Placement) -> [DisplayPhoneGroups.Group] {
-        guard displayV29 else { return [] }
+        // Appearance holds this phone's strongest-signal color beside the
+        // spectrum's, once the Core's Display pages are version 29.
+        let appearanceV29 = category == "appearance"
+            && (pages.categories["display"]?.version ?? 0) >= SetupTree.displayPagesVersion
+        guard displayV29 || appearanceV29 else { return [] }
         return DisplayPhoneGroups.groups(on: pageId).filter { $0.placement == placement }
     }
 
@@ -313,6 +317,13 @@ private struct DisplayPhoneGroupRows: View {
                            isOn: Binding(get: { display.duplex && display.duplexAvailable },
                                          set: { display.setDuplex($0) }),
                            enabled: display.duplexAvailable, id: "setupDuplex")
+        case "peakValueColour":
+            ColorPicker("Strongest signal",
+                        selection: Binding(get: { BandColours.withAlpha(main.displayEditingSettings.peakValueColour) },
+                                           set: { colour in
+                main.changeDisplay { $0.peakValueColour = DisplayOnThisPhonePage.hexWithAlpha(colour) }
+            }), supportsOpacity: true)
+            .accessibilityIdentifier("peakValueColour")
         default:
             EmptyView()
         }
