@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24: Roundtable plan Task 13: the Roundtable applet in the right
+//               column, following the active slice; its Settings open the
+//               Spot Hub on the Roundtable tab. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-24: Roundtable plan Task 12: the Spot Hub gets the Roundtable
 //               model (its Roundtable tab), Start / Stop go to the spot
 //               source host, and opening the tab asks the first-run
@@ -1273,6 +1277,7 @@ warren@wpratt.com
 #include "setup/CatLogWindow.h"
 #include "applets/TunerApplet.h"
 #include "applets/RotorApplet.h"
+#include "applets/RoundtableApplet.h"
 // Phase 23: TCI server + applets (guarded so non-WebSocket builds still compile)
 #ifdef HAVE_WEBSOCKETS
 #  include "applets/TciApplet.h"
@@ -1361,6 +1366,7 @@ warren@wpratt.com
 #include <QProgressDialog>
 #include <QMessageBox>
 #include <QStandardPaths>
+#include <QTabWidget>
 #include <QTimer>
 #include <QThread>
 #include <QFile>          // /proc/stat reader for Linux system-CPU path
@@ -11242,6 +11248,28 @@ void MainWindow::populateDefaultMeter()
     m_rotorApplet = new RotorApplet(m_radioModel, nullptr);
     panel->addApplet(m_rotorApplet);
 
+    // Roundtable plan Task 13 (design 11.2 Panel): the Roundtable applet,
+    // following the active slice. Its Settings open the Spot Hub on the
+    // Roundtable tab.
+    m_roundtableApplet = new RoundtableApplet(m_radioModel);
+    panel->addApplet(m_roundtableApplet);
+    connect(m_roundtableApplet, &RoundtableApplet::settingsRequested, this, [this]() {
+        openSpotHub();
+        if (!m_spotHubDialog) {
+            return;
+        }
+        auto* tabs = m_spotHubDialog->findChild<QTabWidget*>();
+        auto* page = m_spotHubDialog->findChild<QWidget*>(QStringLiteral("roundtableTab"));
+        if (tabs == nullptr || page == nullptr) {
+            return;
+        }
+        for (int i = 0; i < tabs->count(); ++i) {
+            if (tabs->widget(i) == page || tabs->widget(i)->isAncestorOf(page)) {
+                tabs->setCurrentIndex(i);
+            }
+        }
+    });
+
     // The tuner's scale follows actual OPERATE state from either amplifier,
     // including the Core's mirrored devices in a remote window.
     if (m_tunerApplet) {
@@ -11456,6 +11484,7 @@ void MainWindow::populateDefaultMeter()
     m_appletsById[QStringLiteral("Amp")]        = m_ampApplet;
     m_appletsById[QStringLiteral("Tuner")]      = m_tunerApplet;
     m_appletsById[QStringLiteral("Rotor")]      = m_rotorApplet;
+    m_appletsById[QStringLiteral("Roundtable")] = m_roundtableApplet;
     m_appletsById[QStringLiteral("RfKit")]      = m_rfKitApplet;
     m_appletsById[QStringLiteral("Cat")]        = m_catApplet;
 #ifdef HAVE_WEBSOCKETS
@@ -11511,6 +11540,9 @@ void MainWindow::populateDefaultMeter()
     // no rotor it stays, greyed with the reason (disabled, never hidden).
     m_appletVis->registerApplet(QStringLiteral("Rotor"),
                                 QStringLiteral("Rotor"),        true);
+    // Roundtable plan Task 13: shown by default (design 11.2 Panel).
+    m_appletVis->registerApplet(QStringLiteral("Roundtable"),
+                                QStringLiteral("Roundtable"),   true);
     m_appletVis->registerApplet(QStringLiteral("Cat"),QStringLiteral("CAT"),true);
     m_appletVis->registerApplet(QStringLiteral("RfKit"),
                                 QStringLiteral("RF-Kit RF2K-S"), true);

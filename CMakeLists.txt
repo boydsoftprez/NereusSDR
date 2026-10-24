@@ -2239,6 +2239,7 @@ set(GUI_SOURCES
     src/gui/applets/AccessoryReadouts.cpp
     src/gui/applets/TunerApplet.cpp
     src/gui/applets/RotorApplet.cpp
+    src/gui/applets/RoundtableApplet.cpp
     src/gui/applets/AmpApplet.cpp
     src/gui/applets/Rf2ksApplet.cpp
     src/gui/applets/TciApplet.cpp

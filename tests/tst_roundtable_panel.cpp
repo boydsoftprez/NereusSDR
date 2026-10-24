@@ -13,7 +13,9 @@
 // and Tune A here, the keyed TX line, the connection line's states, Send
 // while not live, drafts, the counter, Not sent and Try again, the message
 // menus, the mute fold, the new and mention pills, following at the end,
-// and the keyboard.
+// and the keyboard. The applet: it follows the active slice, Tune A here
+// tunes that slice, tuning it anywhere goes back to following it, and
+// Archive opens the web sign-in link.
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -23,12 +25,15 @@
 
 #include <QtTest/QtTest>
 
+#include <cmath>
+
 #include <QApplication>
 #include <QClipboard>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
+#include <QLoggingCategory>
 #include <QMenu>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -36,13 +41,18 @@
 #include <QScrollBar>
 #include <QSignalSpy>
 #include <QToolButton>
+#include <QUrl>
 #include <QVBoxLayout>
 
 #include "core/AppSettings.h"
 #include "core/roundtable/RoundtableState.h"
 #include "core/session/IStationLink.h"
+#include "core/WdspTypes.h"
+#include "gui/applets/RoundtableApplet.h"
 #include "gui/roundtable/RoundtablePanel.h"
+#include "models/RadioModel.h"
 #include "models/RoundtableModel.h"
+#include "models/SliceModel.h"
 
 using namespace NereusSDR;
 
@@ -119,6 +129,10 @@ public:
     CommandOutcome requestRoundtableMarkMentionRead(qint64 upToMs) override
     {
         return note(QStringLiteral("markMentionRead %1").arg(upToMs));
+    }
+    CommandOutcome requestRoundtableWebSignIn() override
+    {
+        return note(QStringLiteral("webSignIn"));
     }
 
 private:
@@ -291,6 +305,10 @@ private slots:
     void initTestCase()
     {
         g_previousHandler = qInstallMessageHandler(quietPlatformNotes);
+        // A radio with no connection says so as its slices tune; not the
+        // applet's.
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false\n"
+                                                        "nereus.freedv.*.debug=false"));
         RoundtableModel::setClockForTest([] { return g_now; });
         AppSettings::instance().setValue(QStringLiteral("User/Callsign"), QStringLiteral("KG4VCF"));
     }
@@ -918,6 +936,75 @@ private slots:
         QVERIFY(!column->isVisible());
         QVERIFY(child<QWidget>(&panel, QStringLiteral("roundtableContent"))
                     ->isAncestorOf(child<QWidget>(&panel, QStringLiteral("roundtableMessages"))));
+    }
+
+    void appletFollowsTheActiveSliceAndTunes()
+    {
+        Posed p;
+        p.state.applyStationValue("sliceRooms",
+                                  QStringLiteral("{\"0\":\"%1\",\"1\":\"%2\"}").arg(kRoom, kOther));
+        p.model.applyRoom(talkingRoom());
+        p.model.applyRoom(roomOf(kOther, {}, {}, {}));
+        RadioModel radio;
+        radio.addSlice();
+        radio.addSlice();
+        radio.setActiveSlice(0);
+        SliceModel* first = radio.activeSlice();
+        QVERIFY(first != nullptr);
+        first->setDspMode(DSPMode::USB);
+        first->setFrequency(7185000.0);
+        RoundtableApplet applet(&radio, &p.model, nullptr);
+        applet.resize(340, 900);
+        applet.show();
+        settle();
+        RoundtablePanel* panel = applet.panel();
+        QCOMPARE(panel->followedSlice(), first->sliceIndex());
+        QCOMPARE(panel->roomId(), kRoom);
+        radio.setActiveSlice(1);
+        QCOMPARE(panel->roomId(), kOther);
+        radio.setActiveSlice(0);
+        QCOMPARE(panel->roomId(), kRoom);
+
+        // Tune A here: the active slice to the room, in its family's mode.
+        panel->readRoom(kOther);
+        settle();
+        child<QPushButton>(panel, QStringLiteral("roundtableTuneHereBtn"))->click();
+        QCOMPARE(std::llround(first->frequency()), 7249000LL);
+        QCOMPARE(first->dspMode(), DSPMode::LSB);
+        QVERIFY(!panel->isReading());
+
+        // Tuning anywhere goes back to following the slice.
+        panel->readRoom(kOther);
+        QVERIFY(panel->isReading());
+        first->setFrequency(14200000.0);
+        QVERIFY(!panel->isReading());
+    }
+
+    void appletArchiveOpensTheSignInLink()
+    {
+        Posed p;
+        p.model.applyRoom(talkingRoom());
+        RoundtableApplet applet(nullptr, &p.model, nullptr);
+        QList<QUrl> opened;
+        applet.setUrlOpener([&opened](const QUrl& url) { opened.append(url); });
+        applet.resize(340, 900);
+        applet.show();
+        settle();
+        const QUrl link(QStringLiteral("https://roundtable.example/signin?t=1"));
+        // A link nobody asked for opens nothing.
+        p.model.applyWebLink(link);
+        QVERIFY(opened.isEmpty());
+        applet.panel()->findChild<QToolButton*>(QStringLiteral("roundtableMenuBtn"))->click();
+        QMenu* menu = openMenu(QStringLiteral("roundtablePanelMenu"));
+        QVERIFY(menu != nullptr);
+        actionNamed(menu, QStringLiteral("Archive"))->trigger();
+        menu->close();
+        QVERIFY(p.link.calls.contains(QStringLiteral("webSignIn")));
+        p.model.applyWebLink(link);
+        QCOMPARE(opened, QList<QUrl>{link});
+        p.model.applyWebLink(link);
+        QCOMPARE(opened.size(), 1);
+        settle();
     }
 };
 

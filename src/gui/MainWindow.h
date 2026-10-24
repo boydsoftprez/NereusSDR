@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24: m_roundtableApplet (Roundtable plan Task 13). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-24: openRoundtableFirstRunIfNeeded and m_roundtableFirstRun
 //               (Roundtable plan Task 12). J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
@@ -2236,6 +2238,7 @@ private:
     QPointer<class CatLogWindow> m_catLogWindow;
     class TunerApplet*      m_tunerApplet{nullptr};
     class RotorApplet*      m_rotorApplet{nullptr};
+    class RoundtableApplet* m_roundtableApplet{nullptr};  // Roundtable plan Task 13
 
     // Phase 3P-III Task 14: RF-Kit RF2K-S applet.
     class Rf2ksApplet*      m_rfKitApplet{nullptr};

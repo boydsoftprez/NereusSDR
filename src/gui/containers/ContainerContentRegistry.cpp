@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-24 - The Roundtable applet (applet:roundtable), Roundtable plan
+//                 Task 13, by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-09 - Workspace preview only: a preview tile has no background of
 //                 its own, so the container's background shows through it as
 //                 it does around the applet in the window. J.J. Boyd
@@ -163,7 +166,7 @@ QString ContainerContentRegistry::appletTypeForVisibilityId(const QString& id)
         {"Rx","rx"},{"Display","Display"},{"Tx","TX"},{"PhoneCw","PHCW"},
         {"Rade","RADE"},{"Vax","vax"},{"PureSignal","pure_signal"},
         {"ModMon","mod_monitor"},{"Tci","tci"},{"ClientChain","tci_clients"},
-        {"Cat","cat"},{"Amp","amp"},{"Tuner","tuner"},{"Rotor","rotor"},{"RfKit","RfKit"},
+        {"Cat","cat"},{"Amp","amp"},{"Tuner","tuner"},{"Rotor","rotor"},{"Roundtable","roundtable"},{"RfKit","RfKit"},
         {"SMeter","s_meter"}};
     return aliases.contains(id) ? QStringLiteral("applet:") + aliases.value(id) : QString();
 }
@@ -301,6 +304,7 @@ QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
     result.append({QStringLiteral("applet:amp"), QStringLiteral("Amplifier"), true, true, {}});
     result.append({QStringLiteral("applet:tuner"), QStringLiteral("Tuner"), true, true, {}});
     result.append({QStringLiteral("applet:rotor"), QStringLiteral("Rotor"), true, true, {}});
+    result.append({QStringLiteral("applet:roundtable"), QStringLiteral("Roundtable"), true, true, {}});
     result.append({QStringLiteral("applet:RfKit"), QStringLiteral("RF Kit"), true, true, {}});
     result.append({QStringLiteral("applet:s_meter"), QStringLiteral("S-Meter"), true, true, {}});
     for (auto& descriptor : result) {
