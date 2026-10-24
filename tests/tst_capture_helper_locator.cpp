@@ -179,13 +179,21 @@ private slots:
     }
 #endif
 
-    // The supervisor's default program comes from the locator.  This test
-    // binary has no helper beside it, so demand fails with HelperMissing
-    // and nothing is spawned.
+    // The supervisor's default program comes from the locator: it has a
+    // helper exactly when the locator finds one beside this test binary.
+    // Demand is placed only when none is found, where it fails with
+    // HelperMissing and nothing is spawned.  A runtime folder can hold the
+    // product's helper beside the test (a combined build); demand there
+    // would start the real helper and open a microphone, so the case stops
+    // at the comparison.
     void supervisorDefaultProgramUsesLocator()
     {
-        QCOMPARE(locateCaptureHelper(), QString());
+        const bool located = !locateCaptureHelper().isEmpty();
         CaptureSupervisor supervisor;
+        QCOMPARE(supervisor.helperAvailable(), located);
+        if (located) {
+            return;
+        }
         auto lease = supervisor.acquire(CaptureSupervisor::Demand::TestMic);
         QVERIFY(lease.isActive());
         QTRY_COMPARE_WITH_TIMEOUT(supervisor.status().state,

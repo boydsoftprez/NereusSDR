@@ -124,6 +124,18 @@ CaptureSupervisor::Options fakeOptions(const QString& scenario)
     return options;
 }
 
+// A program path where no helper exists.  A case that means "no helper"
+// uses this rather than the default lookup, which finds the product's
+// nereus-audio-capture when it sits beside this test binary (a combined
+// runtime folder) and would start the real helper and open a microphone.
+CaptureSupervisor::Options missingHelperOptions()
+{
+    CaptureSupervisor::Options options;
+    options.program = QDir(QDir::tempPath()).absoluteFilePath(
+        QStringLiteral("nereus-audio-capture-that-does-not-exist"));
+    return options;
+}
+
 // Waits on statusChanged until pred(status()) holds.
 bool waitFor(CaptureSupervisor& supervisor, const std::function<bool(const Status&)>& pred,
              int timeoutMs)
@@ -634,17 +646,16 @@ private slots:
 
     void missingProgramFailsWithoutSpawning()
     {
-        CaptureSupervisor unconfigured;
+        // The default lookup is covered by tst_capture_helper_locator; here
+        // both demands meet an explicit missing program.
+        CaptureSupervisor unconfigured(missingHelperOptions());
         auto lease = unconfigured.acquire(CaptureSupervisor::Demand::LocalSession);
         QVERIFY(lease.isActive());
         QVERIFY(waitForState(unconfigured, State::Failed, 2000));
         QCOMPARE(unconfigured.status().reason, Reason::HelperMissing);
         QCOMPARE(unconfigured.helperProcessId(), qint64(0));
 
-        CaptureSupervisor::Options options;
-        options.program = QDir(QDir::tempPath()).absoluteFilePath(
-            QStringLiteral("nereus-audio-capture-that-does-not-exist"));
-        CaptureSupervisor absent(options);
+        CaptureSupervisor absent(missingHelperOptions());
         auto lease2 = absent.acquire(CaptureSupervisor::Demand::TestMic);
         QVERIFY(waitForState(absent, State::Failed, 2000));
         QCOMPARE(absent.status().reason, Reason::HelperMissing);
@@ -1202,7 +1213,7 @@ private slots:
 
     void retryWithoutDemandClearsFailure()
     {
-        CaptureSupervisor unconfigured;
+        CaptureSupervisor unconfigured(missingHelperOptions());
         auto lease = unconfigured.acquire(CaptureSupervisor::Demand::LocalSession);
         QVERIFY(waitForState(unconfigured, State::Failed, 2000));
         lease.release();
@@ -1359,7 +1370,7 @@ private slots:
     // A missing helper answers at once: no drivers, and an open fails.
     void asioWithoutTheHelperAnswersAtOnce()
     {
-        CaptureSupervisor unconfigured;
+        CaptureSupervisor unconfigured(missingHelperOptions());
         QSignalSpy caps(&unconfigured, &CaptureSupervisor::asioCaps);
         QSignalSpy states(&unconfigured, &CaptureSupervisor::asioState);
         unconfigured.describeAsio(QString());
