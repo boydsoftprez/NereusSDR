@@ -327,6 +327,9 @@ extension PhoneSetupKeysV29Tests {
 
 
 extension PhoneSetupKeysV29Tests {
+    // Each band's dB Max and dB Min are the Core's now (CoreBandScale); on
+    // this older Core the phone keeps one scale for every band, so All's
+    // band choice edits that one scale, and 3D Floor still per band.
     @Test func allBandPickerEditsAnInactiveKeptBandWithoutRetuningOrChangingTheLivePicture() throws {
         let rig = try Rig()
         let defaults = try #require(UserDefaults(suiteName: rig.suite))
@@ -346,7 +349,7 @@ extension PhoneSetupKeysV29Tests {
         rig.main.displayEditScope = .all
         rig.main.displayBandChoice = "5"
         #expect(rig.main.displayEditingBand == "5")
-        #expect(keys.value(forPhoneKey: "DisplayGridMax") == .integer(-40))
+        #expect(keys.value(forPhoneKey: "DisplayGridMax") == .integer(-30))
         #expect(keys.unavailableReason(forPhoneKey: "DisplayGridMax") == nil)
         let maxAccepted = keys.set(.integer(-52), forPhoneKey: "DisplayGridMax")
         let minAccepted = keys.set(.integer(-142), forPhoneKey: "DisplayGridMin")
@@ -356,9 +359,10 @@ extension PhoneSetupKeysV29Tests {
         stored.enterBand("5")
         #expect(stored.scaleTopDbm == -52 && stored.scaleBottomDbm == -142 && stored.threeDFloorDb == 11)
         stored.enterBand("7")
-        #expect(stored.scaleTopDbm == -30 && stored.scaleBottomDbm == -130 && stored.threeDFloorDb == 8)
+        #expect(stored.scaleTopDbm == -52 && stored.scaleBottomDbm == -142 && stored.threeDFloorDb == 8)
         #expect(rig.main.band.settings.scaleBand == live.scaleBand)
-        #expect(rig.main.band.settings.scaleTopDbm == live.scaleTopDbm && rig.main.band.settings.scaleBottomDbm == live.scaleBottomDbm)
+        #expect(rig.main.band.settings.scaleTopDbm == -52 && rig.main.band.settings.scaleBottomDbm == -142)
+        #expect(rig.main.band.settings.threeDFloorDb == live.threeDFloorDb)
         #expect(rig.main.band.state.frame == frame && rig.main.band.requestedView == view)
         #expect(rig.mirror.object("slice:0")?["frequency"] == vfo)
         #expect(rig.sent.count == subscriptions && rig.retunes.isEmpty && rig.recorded.settingsSent.isEmpty)
@@ -383,7 +387,8 @@ extension PhoneSetupKeysV29Tests {
         #expect(restoredKeys.value(forPhoneKey: "DisplayGridMax") == .integer(-55))
         restarted.main.displayEditScope = .pan(.first)
         #expect(restarted.main.displayEditingBand == "7")
-        #expect(restoredKeys.value(forPhoneKey: "DisplayGridMax") == .integer(-30))
+        // The phone's one scale, on this older Core.
+        #expect(restoredKeys.value(forPhoneKey: "DisplayGridMax") == .integer(-55))
         #expect(restarted.recorded.settingsSent.isEmpty && restarted.retunes.isEmpty)
     }
 }

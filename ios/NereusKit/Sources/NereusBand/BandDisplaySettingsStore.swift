@@ -69,6 +69,12 @@ public final class BandDisplaySettingsStore {
         "threeDSpan", "threeDAngle", "threeDSliceShadow",
     ]
 
+    /// Fields an earlier build kept that this one no longer reads: each
+    /// band's own Top and Bottom (`bandScales`), now the Core's per-band
+    /// dB Max and dB Min. Dropped from a kept pan as it loads, leaving its
+    /// other fields as they were.
+    public static let droppedFields: Set<String> = ["bandScales"]
+
     private static func dictionary(_ settings: BandDisplaySettings) -> [String: Any] {
         guard let data = try? JSONEncoder().encode(settings),
               var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
@@ -102,6 +108,7 @@ public final class BandDisplaySettingsStore {
         var stored = read(key)
         stored.removeValue(forKey: "sideways")
         stored.removeValue(forKey: "storeSnapshotVersion")
+        for field in Self.droppedFields { stored.removeValue(forKey: field) }
         Self.readEarlierStrip(&stored)
         Self.readEarlierDefaults(&stored)
         Self.readEarlierLevelMode(&stored)
@@ -157,6 +164,9 @@ public final class BandDisplaySettingsStore {
             for field in Self.sharedFields { own.removeValue(forKey: field) }
             for field in Self.pictureFields where Self.equal(own[field], inherited[field]) { own.removeValue(forKey: field) }
             own["scopeStorageVersion"] = 29
+            write(own, key: panKey)
+        } else if !Self.droppedFields.isDisjoint(with: own.keys) {
+            for field in Self.droppedFields { own.removeValue(forKey: field) }
             write(own, key: panKey)
         }
         return own

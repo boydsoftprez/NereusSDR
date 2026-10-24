@@ -193,6 +193,8 @@ final class BandSubscriber: ObservableObject {
         band.$requestedPixels.sink { [weak self] _ in self?.queueReplan() }.store(in: &watches)
         band.$requestedView.sink { [weak self] _ in self?.queueReplan() }.store(in: &watches)
         band.$settings.sink { [weak self] _ in self?.queueReplan() }.store(in: &watches)
+        // The Core's scale for the band moves the quantisation window as the pan's own does.
+        band.$sharedScale.sink { [weak self] _ in self?.queueReplan() }.store(in: &watches)
         band.$coarseCoreLevels.sink { [weak self] _ in self?.queueReplan() }.store(in: &watches)
         band.$extendedSpanCeilingHz.sink { [weak self] _ in self?.queueReplan() }.store(in: &watches)
         band.$transmit.sink { [weak self] _ in self?.queueReplan() }.store(in: &watches)
@@ -512,7 +514,8 @@ final class BandSubscriber: ObservableObject {
         // Waterfall Detector and Averaging). With the display extras the
         // Core times the averaging from the phone's settings; an older
         // Core gets both planes unaveraged, as it cannot time them.
-        let display = band.settings
+        // The band's scale as drawn: the Core's for the band when it keeps it.
+        let display = band.scaledSettings
         let trace = DisplaySubscription.Plane(detector: display.spectrumDetector.rawValue,
                                               averageMode: gates.displayExtras ? display.spectrumAveraging.rawValue
                                                                                : Self.noAveraging,

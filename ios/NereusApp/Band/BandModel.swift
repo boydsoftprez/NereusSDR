@@ -75,6 +75,35 @@ final class BandModel: ObservableObject {
         }
     }
 
+    // MARK: The scale the Core keeps for each band
+
+    /// The Core's dB Max and dB Min for the band shown on the pan
+    /// (`DisplayGridMax_<band>` / `DisplayGridMin_<band>`), set by
+    /// ``CoreBandScale`` on a Core that shares the scale; nil otherwise, when
+    /// the pan's own Top and Bottom are drawn. It is never saved.
+    @Published var sharedScale: BandDisplaySettings.BandScale? {
+        didSet {
+            guard sharedScale != oldValue else { return }
+            // A scale set elsewhere: the tracking starts again from it.
+            gridTracker.reset()
+            applyToState()
+            changed()
+        }
+    }
+
+    /// ``settings`` with the Core's scale for the band in place of the
+    /// pan's own Top and Bottom when the Core shares it. For drawing only;
+    /// never kept.
+    var scaledSettings: BandDisplaySettings {
+        guard let shared = sharedScale else {
+            return settings
+        }
+        var scaled = settings
+        scaled.scaleTopDbm = shared.topDbm
+        scaled.scaleBottomDbm = shared.bottomDbm
+        return scaled
+    }
+
     // MARK: The split while another slice's band shows
 
     /// While the band shows another slice's band upright, the least share of
@@ -110,7 +139,7 @@ final class BandModel: ObservableObject {
     /// split held at the jumped view's floor. For drawing and placing only;
     /// never kept.
     var shownSettings: BandDisplaySettings {
-        Self.raised(settings, floor: jumpedShareFloor)
+        Self.raised(scaledSettings, floor: jumpedShareFloor)
     }
 
     /// `settings` with the split at least at `floor`, within the split's limits.
@@ -254,7 +283,7 @@ final class BandModel: ObservableObject {
 
     /// Runs the tracking rule now; a change is drawn.
     private func trackGrid() {
-        if gridTracker.run(settings, transmitting: transmitOverlay, at: clock()) {
+        if gridTracker.run(scaledSettings, transmitting: transmitOverlay, at: clock()) {
             changed()
         }
     }
@@ -792,7 +821,7 @@ final class BandModel: ObservableObject {
     /// keyed on it their transmit overlay.
     var drawnSettings: BandDisplaySettings {
         // The keyed overlay follows no floor; otherwise the tracked grid shows.
-        transmitOverlay ? settings.keyedOverlay : gridTracker.applied(to: settings)
+        transmitOverlay ? settings.keyedOverlay : gridTracker.applied(to: scaledSettings)
     }
 
     /// Display duplex is on and the Core takes it (`txDisplayVersion` 3):

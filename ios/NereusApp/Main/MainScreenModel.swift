@@ -73,6 +73,8 @@ final class MainScreenModel: ObservableObject {
     let display: DisplaySheetModel
     /// The Core's display settings, as its catalogue describes them.
     let coreDisplay: CoreDisplayModel
+    /// Each band's dB Max and dB Min, as the Core keeps them for every device.
+    let bandScale: CoreBandScale
     /// The flags' step menu and number pad.
     let tuning: BandTuningModel
     /// What the flags' buttons open and run: the antenna and more menus
@@ -210,10 +212,12 @@ final class MainScreenModel: ObservableObject {
         pan = PanSheetModel(store: mirror, slices: slices, catalogFeed: catalogFeed, commands: commands, band: band,
                             changeDisplay: change)
         sliceList.pan = pan
-        display = DisplaySheetModel(band: band, slices: slices, subscriber: subscriber, store: mirror,
-                                    catalogFeed: catalogFeed, settingsProxy: settings, changeDisplay: change)
         coreDisplay = CoreDisplayModel(band: band, slices: slices, subscriber: subscriber, catalogFeed: catalogFeed,
                                        settingsProxy: settings, changeDisplay: change)
+        bandScale = CoreBandScale(band: band, mirror: mirror, settingsProxy: settings, coreDisplay: coreDisplay)
+        display = DisplaySheetModel(band: band, slices: slices, subscriber: subscriber, store: mirror,
+                                    catalogFeed: catalogFeed, settingsProxy: settings, bandScale: bandScale,
+                                    changeDisplay: change)
         catalogFeed.$catalog.sink { [weak self] catalog in
             guard let self else {
                 return
@@ -348,8 +352,7 @@ final class MainScreenModel: ObservableObject {
             // the real active band before saving so no runtime band/frame/VFO
             // changes, and editing a picture field never materializes a new
             // band's untouched defaults.
-            if selected.isDisjoint(with: ["scaleTopDbm", "scaleBottomDbm", "threeDFloorDb", "bandScales", "threeDFloors"]) {
-                edited.bandScales = band.settings.bandScales
+            if selected.isDisjoint(with: ["scaleTopDbm", "scaleBottomDbm", "threeDFloorDb", "threeDFloors"]) {
                 edited.threeDFloors = band.settings.threeDFloors
             }
             edited.enterBand(band.settings.scaleBand)
@@ -505,8 +508,8 @@ final class MainScreenModel: ObservableObject {
         if band.stackOffered != offered {
             band.stackOffered = offered
         }
-        // Each band keeps its own dBm scale, as the desktop's per-band grid:
-        // the active slice's band, by the Core's number.
+        // The band the pan is on, by the Core's number: the Core's scale for
+        // it (CoreBandScale) and its 3D Floor follow it.
         if let bandNumber = slices.active?.band {
             changeDisplay { $0.enterBand(String(bandNumber)) }
         }

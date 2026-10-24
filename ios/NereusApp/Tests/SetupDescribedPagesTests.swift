@@ -778,9 +778,9 @@ struct SetupDescribedPagesTests {
             #expect(controls.state(of: try control(id), in: "display").reason
                     == SetupControlDispatcher.dependsReason, "\(id)")
         }
-        // The per-band scale: kept for the band the pan is on.
+        // The scale: on this Core below version 29, the phone's own, not the Core's per band.
+        #expect(!app.main.bandScale.isShared && app.main.bandScale.shownRange == nil)
         if let band = app.main.band.settings.scaleBand {
-            #expect(app.main.band.settings.bandScales[band] == .init(topDbm: -30, bottomDbm: -150))
             let name = SetupDescription.bandNames[Int(band) ?? 0]
             #expect(controls.label(of: try control("gridScales.dbMax")) == "dB Max (\(name)):")
         }

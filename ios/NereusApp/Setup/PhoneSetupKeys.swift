@@ -70,6 +70,7 @@ final class PhoneSetupKeys: SetupPhoneKeys {
             .merge(with: main.$displayBandChoice.map { _ in () })
             .merge(with: main.band.$transmit.map { _ in () })
             .merge(with: main.band.$showsTransmit.map { _ in () })
+            .merge(with: main.bandScale.$revision.map { _ in () })
             .eraseToAnyPublisher()
         guard let paValues else { return existing }
         return existing.merge(with: paValues.objectWillChange.map { _ in () }).eraseToAnyPublisher()
@@ -134,9 +135,10 @@ final class PhoneSetupKeys: SetupPhoneKeys {
             return FrequencyLabelAlignment.allCases.firstIndex(of: settings.frequencyLabelAlignment)
                 .map { .integer(Int64($0)) }
         case "DisplayGridMax":
-            return .integer(Int64(settings.scaleTopDbm.rounded()))
+            // The Core's dB Max for the band on the pan, when it keeps it.
+            return .integer(Int64((main.bandScale.shownRange?.maxDbm ?? settings.scaleTopDbm).rounded()))
         case "DisplayGridMin":
-            return .integer(Int64(settings.scaleBottomDbm.rounded()))
+            return .integer(Int64((main.bandScale.shownRange?.minDbm ?? settings.scaleBottomDbm).rounded()))
         case "DisplaySpectrumDetector":
             return .integer(Int64(settings.spectrumDetector.rawValue))
         case "DisplaySpectrumAveraging":
@@ -281,12 +283,23 @@ final class PhoneSetupKeys: SetupPhoneKeys {
             guard let index = whole, FrequencyLabelAlignment.allCases.indices.contains(index) else { return false }
             changeDisplay(forPhoneKey: key) { $0.frequencyLabelAlignment = FrequencyLabelAlignment.allCases[index] }
         case "DisplayGridMax":
-            // The band the pan is on keeps it, as the desktop's per-band dB Max.
+            // The Core keeps it for the band the pan is on, as the desktop's
+            // per-band dB Max; an older Core leaves it on this phone.
             guard let top = whole else { return false }
-            changeDisplay(forPhoneKey: key) { $0.scaleTopDbm = Double(top) }
+            if let shared = main.bandScale.shownRange, let band = main.bandScale.shownBand {
+                // From src/models/PanadapterModel.cpp:248-251 (setPerBandDbMax)
+                main.bandScale.set(maxDbm: Double(top), minDbm: shared.minDbm, band: band)
+            } else {
+                changeDisplay(forPhoneKey: key) { $0.scaleTopDbm = Double(top) }
+            }
         case "DisplayGridMin":
             guard let bottom = whole else { return false }
-            changeDisplay(forPhoneKey: key) { $0.scaleBottomDbm = Double(bottom) }
+            if let shared = main.bandScale.shownRange, let band = main.bandScale.shownBand {
+                // From src/models/PanadapterModel.cpp:253-256 (setPerBandDbMin)
+                main.bandScale.set(maxDbm: shared.maxDbm, minDbm: Double(bottom), band: band)
+            } else {
+                changeDisplay(forPhoneKey: key) { $0.scaleBottomDbm = Double(bottom) }
+            }
         case "DisplaySpectrumDetector":
             guard let detector = whole.flatMap(SpectrumDetector.init(rawValue:)) else { return false }
             changeDisplay(forPhoneKey: key) { $0.spectrumDetector = detector }
@@ -444,14 +457,28 @@ final class PhoneSetupKeys: SetupPhoneKeys {
         case "smoothDefaults":
             main.applySmoothDisplayDefaults()
         case "copySpectrumMinMax":
-            // The pan's scale as it is drawn now becomes the thresholds.
+            // The pan's scale as it is drawn now becomes the thresholds: the
+            // Core's for the band when it keeps it.
+            let shared = main.bandScale.shownRange
             main.changeDisplay { settings in
-                let scale = settings.scaleRange
+                var scaled = settings
+                if let shared {
+                    scaled.scaleTopDbm = shared.maxDbm
+                    scaled.scaleBottomDbm = shared.minDbm
+                }
+                let scale = scaled.scaleRange
                 settings.waterfallHighDbm = scale.upperBound
                 settings.waterfallLowDbm = scale.lowerBound
             }
         case "copyWaterfallThresholds":
-            // The band's dB Max and dB Min become the thresholds, rounded.
+            // The band's dB Max and dB Min become the thresholds, rounded:
+            // written to the Core when it keeps them.
+            if main.bandScale.shownRange != nil, let band = main.bandScale.shownBand {
+                let levels = main.displayEditingSettings
+                main.bandScale.set(maxDbm: levels.waterfallHighDbm.rounded(), minDbm: levels.waterfallLowDbm.rounded(),
+                                   band: band)
+                return true
+            }
             main.changeDisplay { settings in
                 settings.scaleTopDbm = settings.waterfallHighDbm.rounded()
                 settings.scaleBottomDbm = settings.waterfallLowDbm.rounded()
@@ -692,9 +719,15 @@ final class PhoneSetupKeys: SetupPhoneKeys {
         "WaterfallAGCOffsetDb", "DisplayWfLowLevel", "DisplayWfHighLevel",
         "ClarityRetune", "copySpectrumMinMax",
     ]
+    /// The rows and action that write the Core's scale for the band, greyed
+    /// while the link is lost.
+    private static let sharedScaleKeys: Set<String> = ["DisplayGridMax", "DisplayGridMin", "copyWaterfallThresholds"]
     private func displayUnavailableReason(forPhoneKey key: String) -> String? {
         if main.displayEditScope == .pan(.first), main.band.transmitOverlay, Self.receiveLevelsKeys.contains(key) {
             return "Pan 1 is transmitting. Receive scale and level settings are kept until it stops. Change transmit settings on Transmit Display."
+        }
+        if Self.sharedScaleKeys.contains(key), main.bandScale.greyed {
+            return CoreBandScale.notConnectedText
         }
         let display = main.displayEditingSettings
         if display.gridFollowsNoiseFloor {

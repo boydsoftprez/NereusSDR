@@ -171,17 +171,12 @@ public struct BandDisplaySettings: Equatable, Sendable, Codable {
 
     /// The dB between horizontal grid lines.
     public var gridStepDb: Double = 10
-    /// The dBm scale's top and bottom. Each band keeps its own (the
-    /// desktop's per-band dB Max and dB Min): a change is kept for the band
-    /// the pan is on, and a new band brings its own back; see ``enterBand(_:)``.
-    public var scaleTopDbm: Double = BandDisplaySettings.scaleTopDefaultDbm {
-        didSet { keepBandScale() }
-    }
-    public var scaleBottomDbm: Double = BandDisplaySettings.scaleBottomDefaultDbm {
-        didSet { keepBandScale() }
-    }
-    /// Each band's top and bottom, by the Core's band number as text.
-    public var bandScales: [String: BandScale] = [:]
+    /// The dBm scale's top and bottom on this phone, drawn on a Core that
+    /// does not share each band's dB Max and dB Min. A Core that shares them
+    /// keeps them for every device, and the band draws the Core's instead
+    /// (the app's `CoreBandScale`); the phone keeps no scale per band.
+    public var scaleTopDbm: Double = BandDisplaySettings.scaleTopDefaultDbm
+    public var scaleBottomDbm: Double = BandDisplaySettings.scaleBottomDefaultDbm
     /// The band the pan is on, by the Core's band number as text; nil
     /// before the Core names one.
     public var scaleBand: String?
@@ -407,7 +402,7 @@ public struct BandDisplaySettings: Equatable, Sendable, Codable {
     /// The ``desktopValuesVersion`` this build writes.
     public static let desktopValuesCurrent = 1
 
-    /// One band's dBm scale.
+    /// One band's dBm scale: the Core's dB Max and dB Min for it.
     public struct BandScale: Equatable, Sendable, Codable {
         public var topDbm: Double
         public var bottomDbm: Double
@@ -418,7 +413,7 @@ public struct BandDisplaySettings: Equatable, Sendable, Codable {
         }
     }
 
-    /// The scale a band starts with before it keeps its own.
+    /// The scale before any is set: the desktop's dB Max and dB Min defaults.
     public static let scaleTopDefaultDbm = -40.0
     public static let scaleBottomDefaultDbm = -140.0
 
@@ -457,24 +452,16 @@ public struct BandDisplaySettings: Equatable, Sendable, Codable {
     public static let calibrationReason = "The Core calibrates the display for its radio."
 
     /// The pan is now on `band` (the Core's band number as text): its own
-    /// top and bottom come back, or, for a band that kept none, the
-    /// defaults. The first band named keeps the scale as it is, so a scale
-    /// set before bands were kept is not lost.
+    /// 3D Floor comes back, or, for a band that kept none, the default. The
+    /// first band named keeps 3D Floor as it is, so one set before bands
+    /// were kept is not lost. The scale is not the band's here: the Core
+    /// keeps each band's dB Max and dB Min.
     public mutating func enterBand(_ band: String?) {
         guard let band, band != scaleBand else {
             return
         }
-        let first = scaleBand == nil && bandScales.isEmpty
+        let first = scaleBand == nil && threeDFloors.isEmpty
         scaleBand = band
-        if let kept = bandScales[band] {
-            scaleTopDbm = kept.topDbm
-            scaleBottomDbm = kept.bottomDbm
-        } else if first {
-            keepBandScale()
-        } else {
-            scaleTopDbm = Self.scaleTopDefaultDbm
-            scaleBottomDbm = Self.scaleBottomDefaultDbm
-        }
         // 3D Floor the same way: the band's own, or the default for a new one.
         if let kept = threeDFloors[band] {
             threeDFloorDb = kept
@@ -503,17 +490,6 @@ public struct BandDisplaySettings: Equatable, Sendable, Codable {
         threeDSpan = StackedTrace.spanDefault
         threeDAngle = StackedTrace.angleDefault
         threeDSliceShadow = false
-    }
-
-    /// Keeps the scale for the band the pan is on.
-    private mutating func keepBandScale() {
-        guard let band = scaleBand else {
-            return
-        }
-        let scale = BandScale(topDbm: scaleTopDbm, bottomDbm: scaleBottomDbm)
-        if bandScales[band] != scale {
-            bandScales[band] = scale
-        }
     }
 
     /// The waterfall's Color Gain and Black Level, as the history applies
@@ -655,7 +631,6 @@ public struct BandDisplaySettings: Equatable, Sendable, Codable {
         let range = min(max(txGridRangeDb, Self.txGridRangeRange.lowerBound), Self.txGridRangeRange.upperBound)
         keyed.scaleTopDbm = txGridTopDbm
         keyed.scaleBottomDbm = txGridTopDbm - range
-        keyed.bandScales = bandScales
         keyed.gridFollowsNoiseFloor = false
         keyed.waterfallLevelMode = .manual
         keyed.useSpectrumMinMax = false

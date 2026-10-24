@@ -77,9 +77,15 @@ struct DisplaySheet: View {
             fft
             PanelSliderRow(label: "Top", value: model.top,
                            range: model.topLimits, accessibility: "Reference level",
-                           greyed: !model.flatControlsAvailable) { model.setTop($0) }
+                           greyed: !model.flatControlsAvailable || model.scaleGreyed,
+                           notConfirmed: model.scaleUnconfirmed) { model.setTop($0) }
             PanelSliderRow(label: "Range", value: model.range, range: model.rangeRange,
-                           accessibility: "Dynamic range") { model.setRange($0) }
+                           accessibility: "Dynamic range", greyed: model.scaleGreyed,
+                           notConfirmed: model.scaleUnconfirmed) { model.setRange($0) }
+            if let note = model.scaleNote {
+                SheetNote(note)
+                    .accessibilityIdentifier("scaleNote")
+            }
             SheetCaption("While transmitting:")
             HStack(spacing: 8) {
                 // DUP, the desktop's display duplex: greyed with its reason
