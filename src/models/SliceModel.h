@@ -8,10 +8,14 @@
 //   Project Files/Source/Console/console.cs, original licence from Thetis source is included below
 //   Project Files/Source/Console/radio.cs, original licence from Thetis source is included below
 //   Project Files/Source/Console/setup.designer.cs (upstream has no top-of-file header — project-level LICENSE applies)
+//   Project Files/Source/Console/console.designer.cs (upstream has no top-of-file header — project-level LICENSE applies)
 //   Project Files/Source/Console/TuneStep.cs, original licence from Thetis source is included below
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-10-22 - m_rfGain comment: -20..120, the AGC-T range. After Longpath
+//              f1d0c181 (Martin Fischer, OE5SOS). J.J. Boyd (KG4VCF), with
+//              AI-assisted transformation via Claude Code.
 // 2026-10-22 - rxAntennaLabelFor, the receive-label rule of
 //              refreshAntennasFromAlex on its own. J.J. Boyd (KG4VCF),
 //              AI-assisted via Anthropic Claude Code.
@@ -1771,7 +1775,7 @@ private:
     // From Thetis console.cs:1984 [v2.10.3.15]: Thetis starts at tune_step_index = 2 (10 Hz).
     int     m_stepHz{100};               // kTuneStepList[5]; NereusSDR default kept pending maintainer review
     int     m_afGain{50};                // 0-100, maps to 0.0-1.0 volume
-    int     m_rfGain{80};                // 0-100, maps to AGC gain
+    int     m_rfGain{80};                // -20..120, AGC-T / WDSP AGC top (Thetis ptbRF, console.designer.cs:3708-3709 [v2.10.3.15])
     QString m_rxAntenna{QStringLiteral("ANT1")};
     QString m_txAntenna{QStringLiteral("ANT1")};
     bool    m_active{false};

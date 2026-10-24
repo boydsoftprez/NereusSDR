@@ -193,6 +193,16 @@
 //                workgroup, whose Core Audio lookup could hold up the first
 //                frames and stopTxIqSender's join. J.J. Boyd (KG4VCF), with
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-22 - Lost DDC packets emit iqSequenceGap for each stream the
+//                packet carries, before its samples, ported from Longpath
+//                src/core/P2RadioConnection.cpp:3228-3244 [@383f058] (PR 62):
+//                forward loss only (delta > 0), at most once per 20 ms
+//                (kIqSequenceGapMinIntervalMs). J.J. Boyd (KG4VCF), with
+//                AI-assisted transformation via Claude Code.
+//   2026-10-24 - The throttle reads iqSequenceGapClockMs(), the wall clock
+//                or a test's (RadioConnection::setIqSequenceGapClockForTest).
+//                J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                Claude Code.
 // =================================================================
 
 //
@@ -4895,6 +4905,10 @@ void P2RadioConnection::processIqPacket(const QByteArray& data, int ddcIndex)
 
     // From Thetis ReadUDPFrame:619-626 — sequence error detection
     bool seqError = false;
+    // Set when this packet shows lost packets and the throttle lets the
+    // gap through; iqSequenceGap goes out just before the packet's samples
+    // below.
+    bool gapSignal = false;
     if (seq != (1 + m_rx[ddcIndex].rxInSeqNo) && seq != 0
         && m_rx[ddcIndex].rxInSeqNo != 0) {
         m_rx[ddcIndex].rxInSeqErr += 1;
@@ -4902,6 +4916,29 @@ void P2RadioConnection::processIqPacket(const QByteArray& data, int ddcIndex)
         qCDebug(lcProtocol) << "P2: DDC" << ddcIndex
                             << "seq error this:" << seq
                             << "last:" << m_rx[ddcIndex].rxInSeqNo;
+        // From Longpath src/core/P2RadioConnection.cpp:3228-3244 [@383f058]
+        // (PR 62). Longpath's window report (m_iqSeqWndEvents,
+        // m_iqSeqWndLost) is not taken; the emit itself waits for the
+        // packet's samples below, so it is a flag here.
+        // Network investigation 2026-08-11: book the gap size for the
+        // window report (positive delta = packets the kernel never
+        // handed us; negative = reorder/duplicate, no loss).
+        const qint32 delta = static_cast<qint32>(
+            seq - (m_rx[ddcIndex].rxInSeqNo + 1));
+        if (delta > 0) {
+            // Fehlende Pakete: das angefangene FFT-Fenster ist wertlos.
+            // Gedrosselt wie in P1 (20 ms), sonst flutet ein schlechter
+            // Funkweg die Ereignisschlange. Ein Umsortieren oder ein
+            // Doppelpaket (delta < 0) laesst das Fenster in Ruhe.
+            // NereusSDR (2026-10-24): Longpath reads
+            // QDateTime::currentMSecsSinceEpoch() here; iqSequenceGapClockMs()
+            // is that clock, or a test's (setIqSequenceGapClockForTest).
+            const qint64 nowGap = iqSequenceGapClockMs();
+            if (nowGap - m_lastGapSignalMs >= kIqSequenceGapMinIntervalMs) {
+                m_lastGapSignalMs = nowGap;
+                gapSignal = true;
+            }
+        }
     }
     m_rx[ddcIndex].rxInSeqNo = seq;
 
@@ -5002,6 +5039,14 @@ void P2RadioConnection::processIqPacket(const QByteArray& data, int ddcIndex)
     }
 
     if (nstreams == 1) {
+        // NereusSDR, 2026-10-22, after Longpath PR 62
+        // (src/core/P2RadioConnection.cpp:3243 [@383f058], the emit):
+        // lost packets leave a jump in this DDC's display FFT window. Sent
+        // just before the packet's samples so each engine drops its window
+        // first.
+        if (gapSignal) {
+            emit iqSequenceGap(ddcIndex);
+        }
         emit iqDataReceived(ddcIndex, buf);
     } else {
         // De-interleave: input buf has packet sample order
@@ -5075,6 +5120,11 @@ void P2RadioConnection::processIqPacket(const QByteArray& data, int ddcIndex)
         // no longer drives PS; it remains the source of truth for all
         // non-PS DDC consumers.
         for (int s = 0; s < nstreams; ++s) {
+            // NereusSDR, 2026-10-22: a gap in DDC0's synchronized packets
+            // is a gap in every stream folded into them.
+            if (gapSignal) {
+                emit iqSequenceGap(streamDdc[s]);
+            }
             emit iqDataReceived(streamDdc[s], streamBufs[s]);
         }
     }

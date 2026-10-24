@@ -6532,6 +6532,13 @@ nereus_add_test(tst_spectrum_tx_overlay)
 # setPresetsForMode reorder persists, presetsChanged fires on every mutator.
 nereus_add_test(tst_filter_preset_store)
 
+# ── Longpath bug-fix port, bug 3: filter presets match Thetis ───────────────
+# Table-driven: every F1..F10 slot of LSB, USB, DIGL, DIGU, CWL, CWU, AM, SAM
+# and DSB against Thetis InitFilterPresets (console.cs:5188-5582
+# [v2.10.3.15]), F5 as the default filter, and the CW slots following the CW
+# pitch with the CWPitch setter's image-limit slide.
+nereus_add_test(tst_filter_presets_thetis)
+
 # ── Issue #175 Task 1: per-SKU PA UI constants for HL2 mi0bot parity ─────────
 # 5 tests asserting the 9 constexpr helpers + 2 attenuator constants added
 # in HpsdrModel.h for HL2 (HERMESLITE) mi0bot-Thetis slider/spinbox parity:
@@ -6788,6 +6795,14 @@ endif()
 if(Qt6WebSockets_FOUND)
     nereus_add_test(tst_tci_iq_roundtrip)
     target_link_libraries(tst_tci_iq_roundtrip PRIVATE Qt6::WebSockets)
+endif()
+
+# Longpath cf756d8b: receive audio and I/Q to an app that stops reading are
+# dropped once 256 KiB or more waits for it, not queued without limit. A raw
+# socket does the handshake by hand and then reads nothing.
+if(Qt6WebSockets_FOUND)
+    nereus_add_test(tst_tci_binary_backpressure)
+    target_link_libraries(tst_tci_binary_backpressure PRIVATE Qt6::WebSockets)
 endif()
 
 # ── Phase 3J-1 Task 17.1: TX audio binary pipeline + single-client mutex ──────
@@ -9170,6 +9185,14 @@ target_link_libraries(tst_juice_dual_stack_port PRIVATE datachannel-static)
 target_include_directories(tst_juice_dual_stack_port PRIVATE
     "${libdatachannel_SOURCE_DIR}/include"
     "${libjuice_SOURCE_DIR}/src")
+# libjuice offers each IPv6 /64 once, and on macOS with the address the
+# system sends from rather than the first one listed
+# (cmake/patches/libjuice-0005).
+nereus_add_test(tst_juice_ipv6_source_address CORE_ONLY EXTRA_LABELS session)
+target_link_libraries(tst_juice_ipv6_source_address PRIVATE datachannel-static)
+target_include_directories(tst_juice_ipv6_source_address PRIVATE
+    "${libdatachannel_SOURCE_DIR}/include"
+    "${libjuice_SOURCE_DIR}/src")
 # iPhone app plan Task 27 (R-IOS-08, R-IOS-16): the rendezvous wire and its
 # crypto and control vectors, the Core's and the desktop's conformance
 # runners (rendezvous/conformance/v1/), and the Core against the Python
@@ -11035,6 +11058,13 @@ nereus_add_test(tst_display_settings_model)
 # unit and from fake radios on both protocols.
 nereus_add_test(tst_radio_link_stats fakes/P1FakeRadio.cpp fakes/P2FakeRadio.cpp)
 target_compile_definitions(tst_radio_link_stats PRIVATE NEREUS_BUILD_TESTS)
+
+# A lost I/Q packet does not paint a line across the spectrum: the display
+# FFT drops its window in progress on a sequence gap, which both protocols
+# send before the samples after it. Ported from Longpath PR 62
+# (tests/tst_fft_window_after_gap.cpp [@383f058]) and extended, 2026-10-22.
+nereus_add_test(tst_fft_window_after_gap fakes/P1FakeRadio.cpp fakes/P2FakeRadio.cpp)
+target_compile_definitions(tst_fft_window_after_gap PRIVATE NEREUS_BUILD_TESTS)
 
 # RADE threads lane (2026-09-30): one Protocol 2 socket drain's I/Q reaches
 # the DSP worker as one post per stream, with the same samples in order.

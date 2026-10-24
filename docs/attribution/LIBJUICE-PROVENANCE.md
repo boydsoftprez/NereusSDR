@@ -97,6 +97,25 @@ libjuice (v1.7.4 and master on 2026-10-16) has the same `src/udp.c` and
 no option for this. The notice and the MPL-2.0 terms are kept as for the
 other patches; `tests/tst_juice_dual_stack_port.cpp` holds it.
 
+`cmake/patches/libjuice-0005-offer-kernel-source-per-ipv6-prefix.patch`
+(desktop and Core, applied after 0004) and
+`ios/patches/libjuice/0004-offer-kernel-source-per-ipv6-prefix.patch` (the
+iPhone and iPad copy) make the same change to `src/udp.c` (2026-10-24).
+libjuice offers one host candidate per IPv6 /64 (`has_duplicate_addr`
+compares the first 64 bits) and takes the first address `getifaddrs`
+lists. macOS and iOS often list the secured address first and send from the
+temporary one (`net.inet6.ip6.prefer_tempaddr`), so the address offered and
+the address checks come from differ, and stateful IPv6 firewalls at both
+ends drop the checks: the IPv6 pair never succeeded and media settled on
+IPv4. Under `__APPLE__` only, each listed IPv6 address now asks the system
+which source it uses for a host in the same /64 (a connected UDP socket and
+`getsockname`; nothing is sent) and is skipped when that source is another
+listed address of the /64. When the system can't answer (no IPv6 route, no
+socket) the address is kept, which is the earlier behavior. Upstream
+libjuice master (`cb523763`, 2026-10-24) has the same code. The notice and
+the MPL-2.0 terms are kept as for the other patches;
+`tests/tst_juice_ipv6_source_address.cpp` holds it.
+
 ## Build wiring
 
 `Package.swift` builds the C target `CJuice` with the defines its CMake
