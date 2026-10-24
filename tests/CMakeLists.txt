@@ -571,6 +571,10 @@ if(TARGET wdsp_static)
     # 2026-10-22: dsplock.c counts noise-reduction calls over 50 ms per
     # channel for the Core log (RadioModel::reportSlowNrCalls).
     nereus_add_test(tst_wdsp_slow_nr_calls EXTRA_LABELS core)
+    # 2026-10-23: a chunk shorter than a channel's WDSP input block (a slice
+    # on a slower stream before its rate change lands) never reaches
+    # fexchange2, and a NaN burst inside WDSP flushes out of the audio.
+    nereus_add_test(tst_rx_rate_change_non_finite EXTRA_LABELS core)
     if(NOT WIN32)
         # wdsp_static arrives through the core library, as for tst_wdsp_nnr;
         # linking it again here made the linker warn about a duplicate library.
