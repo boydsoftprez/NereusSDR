@@ -46,14 +46,17 @@ def _members(harness, *callsigns):
 
 def _wait(harness, ms, *stations):
     """Advance `ms` while the stations keep sending readings, so none goes
-    silent (6.4) and leaves its room."""
-    step = 20000
+    silent (6.4) and leaves its room. What arrives meanwhile is dropped, as
+    a reading client would, so no queue grows past its limit."""
+    step = 10000
     while ms > 0:
         n = min(step, ms)
         harness.advance(n)
         ms -= n
         for s in stations:
             s.send(reading(0, -90.0, harness.clock.wall_ms(), False))
+            s.take()
+            assert s.closed is None
 
 
 class Helper:
@@ -120,6 +123,8 @@ ROUTES_POST = (
     "/v1/review/stop-counting",
     "/v1/review/leave",
     "/v1/review/undo",
+    "/v1/review/unblock",
+    "/v1/review/resume-counting",
     "/v1/review/helpers/add",
     "/v1/review/helpers/remove",
 )
@@ -151,6 +156,12 @@ def test_a_non_helper_gets_403_on_every_review_route(harness, browser):
     assert not harness.store.station_blocked(a.station_id, harness.clock.wall_ms())
     assert not harness.service.is_helper(b.station_id)
     assert [e["version"] for e in h.entries()] == [1]
+    # Nor can a non-helper lift a mark a helper placed.
+    assert h.post("/v1/review/block", report=str(entry["id"]), version="1", until="forever").status == 200
+    for target in ("/v1/review/unblock", "/v1/review/resume-counting"):
+        r = browser.post(target, {"csrf": csrf, "station": a.station_id}, cookie)
+        assert r.status == 403 and body_json(r)["error"] == "not-helper", target
+    assert harness.store.station_blocked(a.station_id, harness.clock.wall_ms())
 
 
 def test_an_action_needs_a_report_and_its_version(harness, browser):
@@ -480,3 +491,100 @@ def test_reports_of_one_item_are_one_entry_oldest_first_with_the_count_older_tha
     assert got["olderThanDay"] == 1
     assert [(e["message"]["id"], e["count"]) for e in got["reports"]] == [(old, 1), (new, 2)]
     assert got["reports"][0]["reports"][0]["reason"] is None
+
+
+# ----------------------------------------------------------- lifts
+
+
+def _rejoin(harness, *stations):
+    for i, s in enumerate(stations):
+        s.send(presence(s.callsign, "EM73", [slice_(0, 14212000 + 10 * i)]))
+    harness.advance(10000)
+    for s in stations:
+        s.take()
+
+
+def test_a_block_for_good_lifted_after_a_day_lets_the_station_post_again(harness, browser):
+    a, b = _members(harness, "K4ABC", "KG4VCF")
+    _report_station(harness, b, a)
+    h = Helper(harness, browser, "192.0.2.9")
+    entry = h.entries()[0]
+    assert h.post("/v1/review/block", report=str(entry["id"]), version="1", until="forever").status == 200
+    harness.advance(86400000)
+    _rejoin(harness, a, b)
+    a.send({"type": "post", "room": ROOM, "text": "still here", "clientId": "c1"})
+    assert [(m["ok"], m["code"]) for m in a.take() if m["type"] == "posted"] == [(False, "blocked")]
+    # Undo is long past; the lift works at any time.
+    block_id = body_json(h.get("/v1/review/log"))["actions"][0]["id"]
+    assert h.post("/v1/review/undo", action=str(block_id), version="2").status == 409
+    for bad in ("K4ABC", a.station_id.upper(), ""):
+        assert h.post("/v1/review/unblock", station=bad).status == 400, bad
+    assert h.post("/v1/review/unblock", station=identity.key_id(b"x" * 32)).status == 404
+    r = h.post("/v1/review/unblock", station=a.station_id)
+    assert r.status == 200, r.body
+    lifted = body_json(r)["action"]
+    assert (lifted["action"], lifted["helper"], lifted["target"], lifted["t"]) == (
+        "unblock", h.id, a.station_id, harness.clock.wall_ms()
+    )
+    assert lifted["detail"] == {"prior": {"until": None, "forever": True}}
+    assert not harness.store.station_blocked(a.station_id, harness.clock.wall_ms())
+    _post(a, "back again", "c2")
+    # Nothing left to lift.
+    r = h.post("/v1/review/unblock", station=a.station_id)
+    assert r.status == 409 and body_json(r)["error"] == "not-blocked"
+    log = body_json(h.get("/v1/review/log"))["actions"]
+    assert [(e["action"], e["helper"], e["target"]) for e in log][:2] == [
+        ("unblock", h.id, a.station_id),
+        ("block", h.id, a.station_id),
+    ]
+    # The lift is logged without a review entry.
+    assert log[0]["report"] is None
+
+
+def test_a_stop_counting_for_good_lifted_restores_live_counting_and_turn_crediting(harness, browser):
+    a, b, c = _members(harness, "K4ABC", "KG4VCF", "W4XYZ")
+    room = harness.service.book.live(ROOM)
+    a_ref = _ref(harness, a)
+    _report_station(harness, b, a)
+    h = Helper(harness, browser, "192.0.2.9")
+    entry = h.entries()[0]
+    assert h.post("/v1/review/stop-counting", report=str(entry["id"]), version="1", until="forever").status == 200
+    r = h.post("/v1/review/resume-counting", station=b.station_id)
+    assert r.status == 409 and body_json(r)["error"] == "not-stopped"
+    _wait(harness, 86400000, a, b, c)
+    for s in (a, b, c):
+        s.take()
+    assert a.station_id not in [row.station_id for row in room.shown_rows()]
+
+    r = h.post("/v1/review/resume-counting", station=a.station_id)
+    assert r.status == 200, r.body
+    assert body_json(r)["action"]["detail"] == {"prior": {"until": None, "forever": True}}
+    assert not harness.store.station_not_counted(a.station_id, harness.clock.wall_ms())
+    # Live again: in the room and its member count.
+    assert [row.callsign for row in room.shown_rows()] == ["K4ABC", "KG4VCF", "W4XYZ"]
+    assert room.summary()["members"] == 3
+    harness.advance(1000)
+    shown = [m for msg in b.take() if msg["type"] == "delta" for m in msg["members"]]
+    assert [m["ref"] for m in shown if m["callsign"] == "K4ABC"] == [a_ref]
+    # Its readings credit turns again.
+    c.send(presence("W4XYZ", "EM73", [slice_(0, 14212020, keyed=True)]))
+    harness.advance(1000)
+    a.send(reading(0, -70.0, harness.clock.wall_ms(), True))
+    b.send(reading(0, -75.0, harness.clock.wall_ms(), True))
+    turn = room.engine.open[0]
+    assert turn.heard() == 2
+    c.send(presence("W4XYZ", "EM73", [slice_(0, 14212020)]))
+    harness.advance(3000)
+    rows = harness.store.db.execute(
+        "SELECT station_id, not_counted FROM turn_readings WHERE turn_id = ?", (turn.id,)
+    ).fetchall()
+    assert {r[0]: r[1] for r in rows} == {a.station_id: 0, b.station_id: 0}
+    # Its own keying opens a turn.
+    harness.advance(1000)
+    a.send(presence("K4ABC", "EM73", [slice_(0, 14212000, keyed=True)]))
+    assert [t.talker.callsign for t in room.engine.open] == ["K4ABC"]
+    log = body_json(h.get("/v1/review/log"))["actions"]
+    assert [(e["action"], e["target"]) for e in log][:2] == [
+        ("resume-counting", a.station_id),
+        ("stop-counting", a.station_id),
+    ]

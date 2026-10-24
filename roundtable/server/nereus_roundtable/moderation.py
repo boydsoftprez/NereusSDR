@@ -38,6 +38,11 @@ JSON (`Cache-Control: no-store`):
 - `POST /v1/review/undo` (action, version): undoes the entry's latest
   action within 600000 ms of it, and opens the entry again if that action
   closed it.
+- `POST /v1/review/unblock`, `/resume-counting` (station): lift a block or
+  a stop-counting at any time, "for good" ones included, by station id.
+  Refused `409` `not-blocked` or `not-stopped` when there is none to lift.
+  Logged like the others; it is not tied to an entry and has no Undo. The
+  station is sent no notice (wire spec 5.4 has none for a lift).
 - `POST /v1/review/helpers/add`, `/remove` (station): by station id only.
 - `GET /v1/review/log`: `{"time","actions":[action...],"helpers":[{"id",
   "callsign","added","config"}]}`, newest first.
@@ -93,6 +98,8 @@ REASONS: Dict[str, Tuple[int, str]] = {
     "changed": (409, "Another helper acted on this report first."),
     "too-late": (409, "Undo is possible for 10 minutes after an action."),
     "gone": (409, "That message has no text to remove or restore."),
+    "not-blocked": (409, "That station is not blocked."),
+    "not-stopped": (409, "That station's readings are being counted."),
     "server": (503, "Roundtable can't answer right now."),
 }
 
@@ -141,6 +148,8 @@ class Moderation:
         app.route("POST", "/v1/review/stop-counting", self.stop_counting)
         app.route("POST", "/v1/review/leave", self.leave)
         app.route("POST", "/v1/review/undo", self.undo)
+        app.route("POST", "/v1/review/unblock", self.unblock)
+        app.route("POST", "/v1/review/resume-counting", self.resume_counting)
         app.route("POST", "/v1/review/helpers/add", self.helper_add)
         app.route("POST", "/v1/review/helpers/remove", self.helper_remove)
         # Text kept for an Undo that ran out before a restart.
@@ -489,6 +498,55 @@ class Moderation:
             elif kind == "stop-counting":
                 self.service.apply_counting(action["target"])
         return self._answer(item["id"], undo_id)
+
+    # ----------------------------------------------------------- lifts
+
+    def _lift(self, request: Request, kind: str) -> Response:
+        """Unblock or resume counting a station, by station id, at any
+        time; its mark goes and the live rooms follow at once."""
+        helper, form, refused = self._helper_post(request)
+        if refused is not None:
+            return refused
+        assert helper is not None
+        station = form.get("station", "")
+        if not _STATION_ID.match(station):
+            return _refuse("bad-request")
+        row = self.store.station_get(station)
+        if row is None:
+            return _refuse("no-station")
+        now = self.clock.wall_ms()
+        if kind == "unblock":
+            was = (row.get("posting_block_until"), bool(row.get("posting_block_forever")))
+            if not self.store.station_blocked(station, now):
+                return _refuse("not-blocked")
+        else:
+            was = (row.get("not_counted_until"), bool(row.get("not_counted_forever")))
+            if not self.store.station_not_counted(station, now):
+                return _refuse("not-stopped")
+        detail = {"prior": {"until": was[0], "forever": was[1]}}
+        with self.service.event():
+            try:
+                with self.store.transaction():
+                    if kind == "unblock":
+                        self.store.station_block_set(station, None, False)
+                    else:
+                        self.store.station_not_counted_set(station, None, False)
+                    action_id = self.store.action_add(helper, kind, station, detail, now)
+            except sqlite3.Error as exc:
+                log.error("a database error lifting a mark (%s)", type(exc).__name__)
+                return _refuse("server")
+            log.info("helper %s: %s station %s", short(helper), kind, short(station))
+            if kind == "resume-counting":
+                self.service.apply_counting(station)
+        action = self.store.action_get(action_id)
+        assert action is not None
+        return _json(200, {"action": self._action_object(action)})
+
+    def unblock(self, request: Request) -> Response:
+        return self._lift(request, "unblock")
+
+    def resume_counting(self, request: Request) -> Response:
+        return self._lift(request, "resume-counting")
 
     # ----------------------------------------------------------- helpers
 
