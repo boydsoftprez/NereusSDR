@@ -15,11 +15,6 @@ SESSIONS = [f for f in load_manifest()["fixtures"] if f["kind"] == "session"]
 # Fixtures whose server behavior a later task of the Roundtable plan builds.
 # Each later task removes its own entries; nothing else is skipped.
 LATER = {
-    "reading-while-joining-dropped": "Task 3 (readings and turns)",
-    "reading-unknown-slice": "Task 3 (readings and turns)",
-    "reading-keyed-slice": "Task 3 (readings and turns)",
-    "read-room": "Task 3 (room views and reads)",
-    "resync": "Task 3 (room views and resync)",
     "post-not-member": "Task 4 (messages)",
     "post-away": "Task 4 (messages)",
     "post-cleaned": "Task 4 (messages)",

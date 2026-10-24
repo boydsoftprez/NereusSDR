@@ -17,7 +17,7 @@ later version can move an older file forward.
 from __future__ import annotations
 
 import sqlite3
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 SCHEMA_VERSION = 1
 
@@ -249,6 +249,116 @@ class Store:
             "UPDATE keys SET revoked = ? WHERE key_hash = ? AND revoked IS NULL", (now, bytes(key_hash))
         )
         return cursor.rowcount == 1
+
+    # ------------------------------------------------------------- rooms
+
+    def _next_id(self, table: str, column: str) -> int:
+        # Ids increase with time and are never reused (wire spec 4.4). No
+        # AUTOINCREMENT, which would add a table of its own.
+        row = self.db.execute(f"SELECT COALESCE(MAX({column}), 0) + 1 FROM {table}").fetchone()
+        return int(row[0])
+
+    def opening_open(self, room_id: str, band: str, family: str, center_hz: int, now: int) -> int:
+        """A room opens: a new opening, whose id is returned."""
+        opening_id = self._next_id("rooms", "opening_id")
+        self.db.execute(
+            "INSERT INTO rooms (opening_id, room_id, band, family, center_hz, opened, last_active, closed)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, NULL)",
+            (opening_id, room_id, band, family, int(center_hz), now, now),
+        )
+        return opening_id
+
+    def opening_touch(self, opening_id: int, now: int) -> None:
+        """The opening was active at `now`: the restart rule's clock."""
+        self.db.execute(
+            "UPDATE rooms SET last_active = MAX(last_active, ?) WHERE opening_id = ?", (now, opening_id)
+        )
+
+    def opening_close(self, opening_id: int, now: int) -> None:
+        self.db.execute("UPDATE rooms SET closed = ? WHERE opening_id = ? AND closed IS NULL", (now, opening_id))
+
+    def openings_reload(self, now: int, window_ms: int) -> List[Dict[str, Any]]:
+        """Wire spec 6.3 "Restart": the openings still open and active in
+        the last `window_ms`, in opening order. Older ones still open are
+        closed at their last activity plus the window, and every turn left
+        open in any opening ends at the opening's last activity (open turns
+        end at a restart)."""
+        with self.db:
+            self.db.execute("BEGIN")
+            self.db.execute(
+                """
+                UPDATE turns SET end_ms = MAX(start_ms,
+                    (SELECT last_active FROM rooms WHERE rooms.opening_id = turns.opening_id))
+                WHERE end_ms IS NULL
+                """
+            )
+            self.db.execute(
+                "UPDATE rooms SET closed = last_active + ? WHERE closed IS NULL AND last_active < ?",
+                (window_ms, now - window_ms),
+            )
+            rows = self.db.execute(
+                "SELECT * FROM rooms WHERE closed IS NULL ORDER BY opening_id"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def opening_get(self, opening_id: int) -> Optional[Dict[str, Any]]:
+        row = self.db.execute("SELECT * FROM rooms WHERE opening_id = ?", (opening_id,)).fetchone()
+        return dict(row) if row is not None else None
+
+    # ------------------------------------------------------------- turns
+
+    def turn_open(self, opening_id: int, kind: str, talkers: List[Tuple[str, str]], start: int) -> int:
+        """A turn opens; its id is returned. `talkers` is (station id,
+        callsign) in keying order; the first two are stored."""
+        turn_id = self._next_id("turns", "id")
+        first = talkers[0] if talkers else (None, None)
+        second = talkers[1] if len(talkers) > 1 else (None, None)
+        self.db.execute(
+            "INSERT INTO turns (id, opening_id, kind, talker_id, talker_callsign, second_talker_id,"
+            " second_talker_callsign, start_ms, end_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+            (turn_id, opening_id, kind, first[0], first[1], second[0], second[1], start),
+        )
+        return turn_id
+
+    def turn_talkers(self, turn_id: int, talkers: List[Tuple[str, str]]) -> None:
+        first = talkers[0] if talkers else (None, None)
+        second = talkers[1] if len(talkers) > 1 else (None, None)
+        self.db.execute(
+            "UPDATE turns SET talker_id = ?, talker_callsign = ?, second_talker_id = ?,"
+            " second_talker_callsign = ? WHERE id = ?",
+            (first[0], first[1], second[0], second[1], turn_id),
+        )
+
+    def turn_end(self, turn_id: int, end: int) -> None:
+        self.db.execute("UPDATE turns SET end_ms = ? WHERE id = ?", (end, turn_id))
+
+    def turns_of(self, opening_id: int) -> List[Dict[str, Any]]:
+        rows = self.db.execute(
+            "SELECT * FROM turns WHERE opening_id = ? ORDER BY start_ms, id", (opening_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def tracks_write(self, turn_id: int, tracks: List[Tuple[Any, ...]]) -> None:
+        """Write (or rewrite) one turn's tracks: each is (station id,
+        callsign, offset Hz, km, first second, last second, dBm bytes,
+        present bits, not counted)."""
+        if not tracks:
+            return
+        with self.db:
+            self.db.execute("BEGIN")
+            for sid, callsign, offset, km, first, last, dbm, bits, not_counted in tracks:
+                self.db.execute(
+                    "INSERT OR REPLACE INTO turn_readings (turn_id, station_id, callsign, offset_hz, km,"
+                    " first_second, last_second, dbm_track, present_track, not_counted)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (turn_id, sid, callsign, offset, km, first, last, bytes(dbm), bytes(bits), 1 if not_counted else 0),
+                )
+
+    def tracks_of(self, turn_id: int) -> List[Dict[str, Any]]:
+        rows = self.db.execute(
+            "SELECT * FROM turn_readings WHERE turn_id = ? ORDER BY station_id", (turn_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     # ------------------------------------------------------------- schema
 
