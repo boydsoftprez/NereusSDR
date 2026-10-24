@@ -122,6 +122,26 @@ NEREUS_GUI_EXPORT QList<RoundtableTag> roundtableTagsFor(const RoundtableModel* 
 /// see everything).
 NEREUS_GUI_EXPORT RoundtableTagDisplay roundtableTagDisplayFor(const RoundtableModel* model);
 
+/// What a VFO flag's Roundtable line shows.
+struct RoundtableFlagLine {
+    bool visible = false;
+    int glyph = 0;     // a RoundtableGlyph
+    QString text;      // "Roundtable · 9 · K4ABC"
+    int mentions = 0;  // @N, drawn in cyan after the text
+    bool operator==(const RoundtableFlagLine& other) const
+    {
+        return visible == other.visible && glyph == other.glyph && text == other.text
+            && mentions == other.mentions;
+    }
+    bool operator!=(const RoundtableFlagLine& other) const { return !(*this == other); }
+};
+
+/// The line for slice `sliceId`'s flag (design 11.2): the room's member
+/// count and who is talking, "N hear you" while you transmit there, the
+/// link state while Roundtable is not live, and the count of messages
+/// naming you. Not visible while Roundtable is off or not running here.
+NEREUS_GUI_EXPORT RoundtableFlagLine roundtableFlagLineFor(const RoundtableModel* model, int sliceId);
+
 /// The state colors (design 11): talking green, unknown amber, doubled
 /// red, you cyan, quiet grey; waiting amber, offline red.
 NEREUS_GUI_EXPORT QColor roundtableGlyphColor(int glyph);

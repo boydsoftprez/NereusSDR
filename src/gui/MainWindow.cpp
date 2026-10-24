@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24: Roundtable plan Task 14: every flag shows its slice's
+//               Roundtable line, and a click on it shows the panel on that
+//               slice. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 //   2026-10-24: Roundtable plan Task 14: every pan shows the Roundtable
 //               tags (refreshRoundtableTags, coalesced), and a tag click
 //               tunes the active slice through the Roundtable applet.
@@ -5532,6 +5536,11 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     // selected nothing at all.
     connect(newFlag, &VfoWidget::sliceActivationRequested, this,
             [this](int sliceId) { selectSliceForWindow(sliceId); });
+    // Roundtable plan Task 14 (design 11.2): the flag's Roundtable line
+    // opens the panel on this slice; the line itself follows the model.
+    connect(newFlag, &VfoWidget::roundtableLineClicked, this,
+            [this, sliceIndex]() { openRoundtableForSlice(sliceIndex); });
+    scheduleRoundtableRefresh();
     // Phase 3F closeout — AntennaPickerMenu selection forwards to
     // SliceModel::setRxAntenna. Sub-Epic E Task 5 consumer wire-up.
     connect(newFlag, &VfoWidget::antennaChangeRequested, this,
@@ -6461,6 +6470,25 @@ void MainWindow::refreshRoundtableTags()
         SpectrumWidget* sw = applet ? applet->spectrumWidget() : nullptr;
         if (sw) { sw->setRoundtableTags(tags, display); }
     }
+    for (auto it = m_vfoWidgetsBySlice.constBegin(); it != m_vfoWidgetsBySlice.constEnd(); ++it) {
+        if (it.value()) { it.value()->setRoundtableLine(roundtableFlagLineFor(roundtable, it.key())); }
+    }
+}
+
+void MainWindow::openRoundtableForSlice(int sliceId)
+{
+    selectSliceForWindow(sliceId);
+    if (!m_roundtableApplet) { return; }
+    if (m_roundtableApplet->isPoppedOut()) {
+        if (QWidget* window = m_roundtableApplet->floatingWindow()) {
+            window->show();
+            window->raise();
+            window->activateWindow();
+        }
+        return;
+    }
+    if (m_appletVis) { m_appletVis->setVisible(QStringLiteral("Roundtable"), true); }
+    m_roundtableApplet->raise();
 }
 
 void MainWindow::onRoundtableRoomClicked(const QString& roomId)

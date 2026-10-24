@@ -13,6 +13,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24 - The Roundtable line at the foot of the flag: glyph,
+//                "Roundtable · 9 · K4ABC", @N in cyan; a click asks for the
+//                panel (Roundtable plan Task 14). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code (Claude Opus 5.5).
 //   2026-10-21 - setFilterFromDrag: a filter edge drag on the pan sets this
 //                flag's slice's filter. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code (Claude Opus 5.5).
@@ -478,6 +482,7 @@ warren@wpratt.com
 #include <QEvent>
 #include <QGuiApplication>
 #include <QPainter>
+#include <QAbstractButton>
 #include <QContextMenuEvent>
 #include <QMouseEvent>
 #include <QWheelEvent>
@@ -498,6 +503,119 @@ warren@wpratt.com
 namespace NereusSDR {
 
 namespace {
+
+// The Roundtable line (design 11.2; board.html .rt-fline): a dark strip
+// with the state glyph, the text, and @N in cyan or a chevron at the end.
+constexpr int kRoundtableLineHeight = 21;
+constexpr int kRoundtableLinePad = 5;
+constexpr int kRoundtableLineFontPx = 11;
+constexpr qreal kRoundtableLineGlyph = 9.0;
+constexpr int kRoundtableBadgeHeight = 15;
+constexpr int kRoundtableBadgeMinWidth = 15;
+
+class RoundtableLineButton final : public QAbstractButton {
+public:
+    explicit RoundtableLineButton(QWidget* parent) : QAbstractButton(parent)
+    {
+        setObjectName(QStringLiteral("roundtableFlagLine"));
+        setCursor(Qt::PointingHandCursor);
+        setFocusPolicy(Qt::TabFocus);
+        setToolTip(QStringLiteral("Open the Roundtable panel"));
+        setFixedHeight(kRoundtableLineHeight);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    }
+
+    void setLine(const RoundtableFlagLine& line)
+    {
+        m_line = line;
+        QString name = line.text;
+        if (line.mentions > 0) {
+            name += line.mentions == 1 ? QStringLiteral(", 1 message names you")
+                                       : QStringLiteral(", %1 messages name you").arg(line.mentions);
+        }
+        setAccessibleName(name);
+        update();
+    }
+
+    QSize sizeHint() const override { return QSize(120, kRoundtableLineHeight); }
+
+    // How wide the line's text would be, unelided (for tests and fit).
+    int textWidth() const { return QFontMetrics(lineFont()).horizontalAdvance(m_line.text); }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        const QRectF frame = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+        p.setPen(QPen(hasFocus() ? QColor(0x00, 0xd4, 0xff, 160)
+                                 : QColor(255, 255, 255, underMouse() ? 46 : 26), 1.0));
+        p.setBrush(QColor(0, 0, 0, 89));
+        p.drawRoundedRect(frame, 3.0, 3.0);
+
+        const qreal midY = height() / 2.0;
+        paintRoundtableGlyph(p, QPointF(kRoundtableLinePad + kRoundtableLineGlyph / 2.0, midY),
+                             kRoundtableLineGlyph, m_line.glyph);
+
+        // The end: @N in cyan when a message names you, else a chevron.
+        QFont end = lineFont();
+        int endLeft = width() - kRoundtableLinePad;
+        if (m_line.mentions > 0) {
+            end.setWeight(QFont::ExtraBold);
+            const QString at = QStringLiteral("@%1").arg(m_line.mentions);
+            const int w = std::max(kRoundtableBadgeMinWidth, QFontMetrics(end).horizontalAdvance(at) + 8);
+            const QRectF badge(width() - kRoundtableLinePad - w, midY - kRoundtableBadgeHeight / 2.0, w,
+                               kRoundtableBadgeHeight);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(0x00, 0xd4, 0xff));
+            p.drawRoundedRect(badge, kRoundtableBadgeHeight / 2.0, kRoundtableBadgeHeight / 2.0);
+            p.setFont(end);
+            p.setPen(QColor(0x04, 0x16, 0x1c));
+            p.drawText(badge, Qt::AlignCenter, at);
+            endLeft = static_cast<int>(badge.left());
+        } else {
+            const QString chevron = QStringLiteral("\u203a");
+            const int w = QFontMetrics(end).horizontalAdvance(chevron);
+            p.setFont(end);
+            p.setPen(QColor(0xa6, 0xa6, 0xac));
+            const QRect box(width() - kRoundtableLinePad - w, 0, w, height());
+            p.drawText(box, Qt::AlignVCenter | Qt::AlignRight, chevron);
+            endLeft = box.left();
+        }
+
+        const QFont font = lineFont();
+        p.setFont(font);
+        p.setPen(QColor(0xdc, 0xdc, 0xe1));
+        const int textLeft = kRoundtableLinePad + static_cast<int>(kRoundtableLineGlyph) + kRoundtableLinePad;
+        const int textRight = endLeft - kRoundtableLinePad;
+        const QString text = QFontMetrics(font).elidedText(m_line.text, Qt::ElideRight,
+                                                           std::max(0, textRight - textLeft));
+        p.drawText(QRect(textLeft, 0, std::max(0, textRight - textLeft), height()),
+                   Qt::AlignVCenter | Qt::AlignLeft, text);
+    }
+
+    void enterEvent(QEnterEvent* event) override
+    {
+        update();
+        QAbstractButton::enterEvent(event);
+    }
+    void leaveEvent(QEvent* event) override
+    {
+        update();
+        QAbstractButton::leaveEvent(event);
+    }
+
+private:
+    static QFont lineFont()
+    {
+        QFont font;
+        font.setPixelSize(kRoundtableLineFontPx);
+        font.setWeight(QFont::DemiBold);
+        return font;
+    }
+
+    RoundtableFlagLine m_line;
+};
 
 // JJ's option B, 2026-10-12 (Codex): keep the AUTO badge's original
 // palette and classic box, and fit the final workspace font after updates.
@@ -844,6 +962,10 @@ void VfoWidget::buildUI()
 
     mainLayout->addWidget(m_tabStack);
     m_tabStack->hide();  // Hidden by default — click tab to expand
+
+    // Roundtable (design 11.2): the line at the foot of the flag, hidden
+    // until Roundtable runs here.
+    buildRoundtableLine();
     m_activeTab = -1;    // No tab active initially
 
     // Per user directive 2026-04-23: flag height shrinks to fit the
@@ -1148,6 +1270,42 @@ void VfoWidget::buildSnrRow()
     // Row container stays mounted (so the layout reserves its slot)
     // but the visible label is hidden until setRadeActive(true) fires.
     m_snrRow->setVisible(true);
+}
+
+void VfoWidget::buildRoundtableLine()
+{
+    auto* button = new RoundtableLineButton(this);
+    m_roundtableLineButton = button;
+    connect(button, &QAbstractButton::clicked, this, &VfoWidget::roundtableLineClicked);
+    static_cast<QVBoxLayout*>(layout())->addWidget(button);
+    button->hide();
+}
+
+void VfoWidget::setRoundtableLine(const RoundtableFlagLine& line)
+{
+    if (line == m_roundtableLine || !m_roundtableLineButton) {
+        return;
+    }
+    const bool resize = line.visible != m_roundtableLine.visible;
+    m_roundtableLine = line;
+    static_cast<RoundtableLineButton*>(m_roundtableLineButton)->setLine(line);
+    if (!resize) {
+        return;
+    }
+    if (m_collapsed) {
+        // The fold keeps it hidden; unfolding shows it only if visible.
+        if (line.visible) {
+            m_hiddenBeforeCollapse.remove(m_roundtableLineButton);
+        } else {
+            m_hiddenBeforeCollapse.insert(m_roundtableLineButton);
+        }
+        return;
+    }
+    m_roundtableLineButton->setVisible(line.visible);
+    adjustSize();
+    if (parentWidget()) {
+        parentWidget()->update();
+    }
 }
 
 // 2026-05-11 bench: unified RADE status row renderer.

@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24: the Roundtable line on every flag:
+//               openRoundtableForSlice (Roundtable plan Task 14).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-24: the Roundtable tags on every pan: wirePanRoundtableTags,
 //               refreshRoundtableTags and onRoundtableRoomClicked
 //               (Roundtable plan Task 14). J.J. Boyd (KG4VCF), AI-assisted
@@ -811,6 +814,8 @@ private slots:
     /// per event-loop pass however many of its signals arrive.
     void scheduleRoundtableRefresh();
     void refreshRoundtableTags();
+    // A flag's Roundtable line: activate its slice and show the panel.
+    void openRoundtableForSlice(int sliceId);
 
     /// TNF inbound handlers. Each mutates the single global NotchModel; the
     /// frequencies arrive already resolved in the emitting pan's own

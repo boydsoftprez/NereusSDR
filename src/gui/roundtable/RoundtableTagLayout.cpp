@@ -381,6 +381,81 @@ RoundtableTagDisplay roundtableTagDisplayFor(const RoundtableModel* model)
     return RoundtableTagDisplay::Hidden;
 }
 
+RoundtableFlagLine roundtableFlagLineFor(const RoundtableModel* model, int sliceId)
+{
+    using LinkState = RoundtableModel::LinkState;
+    RoundtableFlagLine line;
+    if (model == nullptr || !model->available()) {
+        return line;
+    }
+    const QString prefix = QStringLiteral("Roundtable \u00b7 ");
+    line.visible = true;
+    switch (model->linkState()) {
+    case LinkState::Off:
+        line.visible = false;
+        return line;
+    case LinkState::Connecting:
+        line.glyph = static_cast<int>(RoundtableGlyph::Waiting);
+        line.text = prefix + QStringLiteral("Connecting");
+        return line;
+    case LinkState::Reconnecting:
+        line.glyph = static_cast<int>(RoundtableGlyph::Waiting);
+        line.text = prefix + QStringLiteral("Reconnecting");
+        return line;
+    case LinkState::Offline:
+        line.glyph = static_cast<int>(RoundtableGlyph::Offline);
+        line.text = prefix + QStringLiteral("Offline");
+        return line;
+    case LinkState::Live:
+    case LinkState::Hidden:
+        // Hidden still sees everything (D21): the room, as when live.
+        break;
+    }
+
+    const QString roomId = model->sliceRoomId(sliceId);
+    QJsonObject summary;
+    if (!roomId.isEmpty()) {
+        for (const QJsonValue& value : model->rooms()) {
+            if (value.toObject().value(QStringLiteral("id")).toString() == roomId) {
+                summary = value.toObject();
+                break;
+            }
+        }
+    }
+    const int members = summary.value(QStringLiteral("members")).toInt();
+    if (summary.isEmpty() || members <= 0) {
+        line.glyph = static_cast<int>(RoundtableGlyph::Quiet);
+        line.text = prefix + QStringLiteral("Nobody here");
+        return line;
+    }
+    line.mentions = model->mentionCount(roomId);
+
+    // U3: while you transmit there, how many stations hear you: the others
+    // whose reading of you is present.
+    const QJsonObject room = model->room(roomId);
+    if (youAreTalking(room)) {
+        int hearing = 0;
+        for (const QJsonValue& value : room.value(QStringLiteral("members")).toArray()) {
+            const QJsonObject member = value.toObject();
+            const QJsonValue reading = member.value(QStringLiteral("reading"));
+            if (!member.value(QStringLiteral("you")).toBool() && reading.isObject()
+                && reading.toObject().value(QStringLiteral("present")).toBool(true)) {
+                ++hearing;
+            }
+        }
+        line.glyph = static_cast<int>(RoundtableGlyph::You);
+        line.text = prefix + QStringLiteral("%1 hear you").arg(hearing);
+        return line;
+    }
+
+    const RoundtableGlyph glyph = glyphOfState(summary.value(QStringLiteral("state")).toString());
+    line.glyph = static_cast<int>(glyph);
+    line.text = prefix + QStringLiteral("%1 \u00b7 %2")
+                             .arg(members)
+                             .arg(labelOf(glyph, summary.value(QStringLiteral("talkers")).toArray()));
+    return line;
+}
+
 QColor roundtableGlyphColor(int glyph)
 {
     switch (static_cast<RoundtableGlyph>(glyph)) {

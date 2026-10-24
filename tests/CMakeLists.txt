@@ -9772,6 +9772,10 @@ nereus_add_test(tst_roundtable_panel)
 # lone neighbor moves aside, folds widen only when the tags don't fit),
 # the tags a model gives, and how each link state shows them.
 nereus_add_test(tst_roundtable_tag_layout)
+# Roundtable plan Task 14: the Roundtable line on a VFO flag: members and
+# who talks, @N, "N hear you" while keyed, the link state when not live,
+# its fit at the flag's width, the fold, and a click asking for the panel.
+nereus_add_test(tst_roundtable_flag_line)
 # Roundtable plan Task 11: Roundtable on the station link: the
 # stationRoundtableVersion capability and `roundtable` object only for a
 # peer that declared roundtable, the thirteen verbs, the room streams and

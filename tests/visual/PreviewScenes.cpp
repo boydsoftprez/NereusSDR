@@ -11,6 +11,10 @@
 // transmit scene refuses to run if one exists).
 //
 // Modification history (NereusSDR):
+//   2026-10-24 - Roundtable plan Task 14: the roundtable-flag-live,
+//                 -mention, -keyed, -offline and -connecting scenes, each
+//                 checking slice A's Roundtable line, its text and fit.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-24 - Roundtable plan Task 14: the roundtable-tags,
 //                 roundtable-tags-crowded, roundtable-tags-offline and
 //                 roundtable-tags-connecting scenes, with the CPU painter's
@@ -267,6 +271,7 @@
 #include <QHoverEvent>
 #include <QLabel>
 #include <QFontInfo>
+#include <QAbstractButton>
 #include <QFontMetrics>
 #include <QGroupBox>
 #include <QMenu>
@@ -6921,6 +6926,62 @@ void checkRoundtableTags(SceneContext& ctx, const QString& name)
     }
 }
 
+// Slice A's flag on pan 1: its Roundtable line shows `text` with @N for
+// `mentions`, at the flag's foot, the text unelided at the flag's width.
+void checkRoundtableFlag(SceneContext& ctx, const QString& name, const QString& text, int mentions)
+{
+    SpectrumWidget* s = panOne(ctx);
+    VfoWidget* flag = s != nullptr ? s->vfoWidget(0) : nullptr;
+    QAbstractButton* button = flag != nullptr ? flag->roundtableLineButtonForTest() : nullptr;
+    if (button == nullptr) {
+        ctx.failure = QStringLiteral("%1: no slice A flag on pan 1").arg(name);
+        return;
+    }
+    const RoundtableFlagLine line = flag->roundtableLine();
+    // The line's own font and pads (VfoWidget.cpp RoundtableLineButton).
+    QFont font;
+    font.setPixelSize(11);
+    font.setWeight(QFont::DemiBold);
+    QFont badge = font;
+    badge.setWeight(QFont::ExtraBold);
+    const int endW = line.mentions > 0
+        ? std::max(15, QFontMetrics(badge).horizontalAdvance(QStringLiteral("@%1").arg(line.mentions)) + 8)
+        : QFontMetrics(font).horizontalAdvance(QStringLiteral("\u203a"));
+    const int room = button->width() - (5 + 9 + 5) - 5 - endW - 5;
+    const int needed = QFontMetrics(font).horizontalAdvance(line.text);
+    const bool fits = needed <= room;
+    const bool atFoot = button->isVisible() && button->geometry().bottom() < flag->height()
+        && button->geometry().right() < flag->width();
+    const bool right = line.visible && line.text == text && line.mentions == mentions;
+    ctx.checks.append(QJsonObject{{QStringLiteral("check"), QStringLiteral("roundtable-flag-line")},
+                                  {QStringLiteral("scene"), name},
+                                  {QStringLiteral("text"), line.text},
+                                  {QStringLiteral("glyph"), line.glyph},
+                                  {QStringLiteral("mentions"), line.mentions},
+                                  {QStringLiteral("text_width"), needed},
+                                  {QStringLiteral("text_room"), room},
+                                  {QStringLiteral("fits"), fits},
+                                  {QStringLiteral("at_flag_foot"), atFoot},
+                                  {QStringLiteral("as_expected"), right}});
+    ctx.notes.append(QStringLiteral("%1: slice A's flag line reads \"%2\"%3; text %4 px of %5 px")
+                         .arg(name, line.text,
+                              line.mentions > 0 ? QStringLiteral(" with @%1").arg(line.mentions) : QString())
+                         .arg(needed).arg(room));
+    if (!right || !fits || !atFoot) {
+        ctx.failure = QStringLiteral("%1: slice A's flag line is \"%2\" @%3 (expected \"%4\" @%5), fits %6, "
+                                     "at the foot %7")
+                          .arg(name, line.text).arg(line.mentions).arg(text).arg(mentions)
+                          .arg(fits).arg(atFoot);
+    }
+    CapturedImage img;
+    img.name = name + QStringLiteral("--flag");
+    img.kind = QStringLiteral("detail");
+    img.image = grabWidget(flag);
+    img.logicalSize = flag->size();
+    img.dpr = img.image.devicePixelRatio();
+    ctx.images.append(img);
+}
+
 void appendRoundtableScenes(QVector<Scene>& scenes)
 {
     // The panel in the right column, 340 px wide: in a room, reading
@@ -7172,6 +7233,56 @@ void appendRoundtableScenes(QVector<Scene>& scenes)
         rt.live(false);
         rt.setLink(RoundtableModel::LinkState::Connecting, kRoundtableNow - 4000);
     });
+
+    // Slice A's flag line: live in room 7.185 (six there, W1TLK talking),
+    // two messages naming you, you transmitting there, offline and
+    // connecting. Slice B, on 20 m, is in no room.
+    const QString dot = QStringLiteral(" \u00b7 ");
+    const auto flagScene = [&scenes](const QString& name, const std::function<void(WindowRoundtable&)>& pose,
+                                     const QString& text, int mentions) {
+        scenes.append({name, QStringLiteral("2v"), false, [name, pose, text, mentions](SceneContext& ctx) {
+            onRoundtableClock([&] {
+                WindowRoundtable rt(ctx.model);
+                if (rt.model == nullptr) {
+                    ctx.failure = QStringLiteral("the window has no Roundtable model");
+                    return;
+                }
+                runWindowScene(ctx, twoBandPoses(), 0, [&rt, &pose](SceneContext&) {
+                    pose(rt);
+                });
+                if (!ctx.failure.isEmpty()) {
+                    return;
+                }
+                pump(kFinalSettleMs);
+                captureWindow(ctx, name);
+                checkRoundtableFlag(ctx, name, text, mentions);
+            });
+        }});
+    };
+    const QString room = QStringLiteral("Roundtable") + dot + QStringLiteral("%1") + dot + QStringLiteral("W1TLK");
+    flagScene(QStringLiteral("roundtable-flag-live"), [](WindowRoundtable& rt) { rt.live(false); },
+              room.arg(6), 0);
+    flagScene(QStringLiteral("roundtable-flag-mention"),
+              [](WindowRoundtable& rt) {
+                  rt.live(false);
+                  rt.rt.state.applyStationValue("mentionCounts",
+                                                QStringLiteral("{\"%1\":2}").arg(kRoundtableRoom));
+              },
+              room.arg(6), 2);
+    flagScene(QStringLiteral("roundtable-flag-keyed"), [](WindowRoundtable& rt) { rt.live(true); },
+              QStringLiteral("Roundtable") + dot + QStringLiteral("5 hear you"), 0);
+    flagScene(QStringLiteral("roundtable-flag-offline"),
+              [](WindowRoundtable& rt) {
+                  rt.live(false);
+                  rt.setLink(RoundtableModel::LinkState::Offline, kRoundtableNow - 25 * 60 * 1000);
+              },
+              QStringLiteral("Roundtable") + dot + QStringLiteral("Offline"), 0);
+    flagScene(QStringLiteral("roundtable-flag-connecting"),
+              [](WindowRoundtable& rt) {
+                  rt.live(false);
+                  rt.setLink(RoundtableModel::LinkState::Connecting, kRoundtableNow - 4000);
+              },
+              QStringLiteral("Roundtable") + dot + QStringLiteral("Connecting"), 0);
 }
 
 void appendMenuScenes(QVector<Scene>& scenes)

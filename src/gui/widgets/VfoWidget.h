@@ -15,6 +15,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24 - setRoundtableLine and roundtableLineClicked, the
+//                 Roundtable line on the flag (Roundtable plan Task 14).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
+//                 (Claude Opus 5.5).
 //   2026-10-21 - setFilterFromDrag, the pan's filter edge drag on this
 //                 flag's slice. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code (Claude Opus 5.5).
@@ -369,6 +373,7 @@ warren@wpratt.com
 #include "ScrollableLabel.h"
 #include "VfoModeContainers.h"
 #include "gui/WheelStepAccumulator.h"
+#include "gui/roundtable/RoundtableTagLayout.h"
 
 #include <QWidget>
 #include <QLabel>
@@ -780,7 +785,16 @@ public slots:
     // (Slice B+).
     void setRadioModel(NereusSDR::RadioModel* model);
 
+    // Roundtable (design 11.2): the line at the foot of the flag, "Roundtable
+    // · 9 · K4ABC" with its glyph and @N. Hidden while line.visible is false;
+    // a click emits roundtableLineClicked.
+    void setRoundtableLine(const RoundtableFlagLine& line);
+    RoundtableFlagLine roundtableLine() const { return m_roundtableLine; }
+    QAbstractButton* roundtableLineButtonForTest() const { return m_roundtableLineButton; }
+
 signals:
+    // The Roundtable line was clicked: open the Roundtable panel.
+    void roundtableLineClicked();
     void frequencyChanged(double hz);
     void modeChanged(NereusSDR::DSPMode mode);
     void filterChanged(int low, int high);
@@ -1042,6 +1056,11 @@ private:
     QLabel* m_snrLabel{nullptr};
     QLabel* m_snrValue{nullptr};
     QWidget* m_snrRow{nullptr};  // parent row for show/hide
+
+    // Roundtable line (Roundtable plan Task 14).
+    void buildRoundtableLine();
+    QAbstractButton* m_roundtableLineButton{nullptr};
+    RoundtableFlagLine m_roundtableLine;
     bool     m_radeActive{false};
 
     // 2026-05-11 bench: cached EOO-decoded speaker callsign + last SNR
