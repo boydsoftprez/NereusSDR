@@ -381,6 +381,155 @@ struct DisplayPillTests {
                                                 encoding: .utf8))
     }
 
+    // MARK: Own values, Reset this pan, Setup defaults and the peek
+
+    /// R-IOS-55, DC4: a pill change writes Pan 1's own value and its row
+    /// holds one (the amber dot); a tap on the dot follows Setup again.
+    @Test func aPillChangeIsThePansOwnValueAndItsDotFollowsSetupAgain() async throws {
+        let (rig, source, defaults) = try await Self.pill()
+        defer { defaults.removePersistentDomain(forName: rig.suite) }
+        let blanking = try #require(source.control(for: "WaterfallBlankingEnabled"))
+        #expect(DisplayPillPhoneKeys.holdsOwnValue(blanking))
+        let master = rig.store.masterSettings(forPan: PanIdentity.first.storeKey).waterfallBlanking
+        #expect(source.keys.ownFields(of: blanking).isEmpty)
+        #expect(source.keys.set(.bool(!master), forPhoneKey: "WaterfallBlankingEnabled"))
+        let fields = PhoneSetupKeys.displayFields(forPhoneKey: "WaterfallBlankingEnabled")
+        #expect(!fields.isEmpty)
+        #expect(source.keys.ownFields(of: blanking) == fields)
+        #expect(rig.main.ownDisplayFields(for: .first).isSuperset(of: fields))
+        #expect(source.keys.ownRowCount == 1)
+
+        source.keys.followSetup(source.keys.ownFields(of: blanking))
+        #expect(source.keys.ownFields(of: blanking).isEmpty)
+        #expect(rig.store.settings(forPan: PanIdentity.first.storeKey).waterfallBlanking == master)
+        #expect(rig.main.band.settings.waterfallBlanking == master)
+        #expect(source.keys.ownRowCount == 0)
+
+        // The same through the model, one field.
+        #expect(source.keys.set(.bool(!master), forPhoneKey: "WaterfallBlankingEnabled"))
+        for field in fields {
+            rig.main.clearOwnDisplayField(field, pan: .first)
+        }
+        #expect(rig.main.ownDisplayFields(for: .first).isDisjoint(with: fields))
+    }
+
+    /// DC4: the rows every pan shares never hold their own value: the
+    /// Core's rows, each band's dB Max and dB Min, and the phone's rows.
+    @Test func sharedRowsNeverShowADot() async throws {
+        let (rig, source, defaults) = try await Self.pill()
+        defer { defaults.removePersistentDomain(forName: rig.suite) }
+        for key in ["DisplayGridMax", "DisplayGridMin", "DisplayFftSize", "DisplaySpectrumFps"] {
+            let control = try #require(source.control(for: key), "\(key)")
+            #expect(!DisplayPillPhoneKeys.holdsOwnValue(control), "\(key)")
+            #expect(source.keys.ownFields(of: control).isEmpty, "\(key)")
+        }
+        // Each band's dB Max moved on Pan 1 is still no own value.
+        let max = try #require(source.control(for: "DisplayGridMax"))
+        _ = source.keys.set(.decimal(-20), forPhoneKey: "DisplayGridMax")
+        #expect(source.keys.ownFields(of: max).isEmpty)
+        #expect(source.keys.ownRowCount == 0)
+        // The phone's own rows and the FFT readout bind no description
+        // control, so they have nothing to own.
+        let unbound = DisplayPillTab.allCases.flatMap(DisplayPillRows.rows).filter { row in
+            if case .setting = row { return false }
+            return true
+        }
+        #expect(unbound.contains(.fftReadout))
+        #expect(unbound.contains(.phone(.spectrumHeight)))
+    }
+
+    /// DC4, spec section 5.3: Reset this pan clears every own value and keeps
+    /// the pan's view and band; with none it is greyed with its reason.
+    @Test func resetThisPanClearsEveryOwnValueAndKeepsThePlace() async throws {
+        let (rig, source, defaults) = try await Self.pill()
+        defer { defaults.removePersistentDomain(forName: rig.suite) }
+        #expect(DisplayPillFooterText.reset(ownCount: 0) == "Reset this pan")
+        #expect(DisplayPillFooterText.follows(.first) == "Pan 1 follows Setup")
+        let master = rig.store.masterSettings(forPan: PanIdentity.first.storeKey)
+        #expect(source.keys.set(.bool(!master.waterfallBlanking), forPhoneKey: "WaterfallBlankingEnabled"))
+        #expect(source.keys.set(.bool(!master.traceFill), forPhoneKey: "DisplayPanFill"))
+        #expect(source.keys.ownRowCount == 2)
+        #expect(DisplayPillFooterText.reset(ownCount: source.keys.ownRowCount) == "Reset this pan (2)")
+        let span = rig.main.band.settings.rxViewSpanHz
+        let band = rig.main.band.settings.scaleBand
+
+        source.keys.resetPan()
+        #expect(rig.main.ownDisplayFields(for: .first).isEmpty)
+        #expect(source.keys.ownRowCount == 0)
+        #expect(rig.main.band.settings.waterfallBlanking == master.waterfallBlanking)
+        #expect(rig.main.band.settings.traceFill == master.traceFill)
+        #expect(rig.main.band.settings.rxViewSpanHz == span)
+        #expect(rig.main.band.settings.scaleBand == band)
+    }
+
+    /// DC4: Setup defaults opens each tab's own Setup page.
+    @Test func eachTabsSetupDefaultsIsItsOwnPage() async throws {
+        let (rig, source, defaults) = try await Self.pill()
+        defer { defaults.removePersistentDomain(forName: rig.suite) }
+        let pages = Set(source.description?.pages.map(\.id) ?? [])
+        for tab in DisplayPillTab.allCases {
+            #expect(pages.contains(tab.setupPageId), "\(tab)")
+        }
+        #expect(Set(DisplayPillTab.allCases.map(\.setupPageId)).count == DisplayPillTab.allCases.count)
+    }
+
+    /// DC4: while a slider row is held only it draws; the title, tabs and
+    /// footer clear away, and lifting the finger brings them back.
+    @Test(arguments: DisplayPillTab.allCases)
+    func whileASliderIsHeldOnlyItsRowDraws(_ tab: DisplayPillTab) throws {
+        let lines = DisplayPillLayout.lines(tab)
+        let sliders = lines.compactMap(DisplayPillPeek.key(of:))
+        try #require(!sliders.isEmpty)
+        #expect(lines.allSatisfy { DisplayPillPeek.draws($0, held: nil) })
+        #expect(DisplayPillPeek.drawsChrome(held: nil))
+        for key in sliders {
+            let held = DisplayPillPeek.held(key, holding: true, current: nil)
+            #expect(held == key)
+            #expect(lines.filter { DisplayPillPeek.draws($0, held: held) }.count == 1)
+            #expect(!DisplayPillPeek.drawsChrome(held: held))
+            // Another row's lift leaves this one held; its own clears it.
+            #expect(DisplayPillPeek.held("other", holding: false, current: held) == key)
+            #expect(DisplayPillPeek.held(key, holding: false, current: held) == nil)
+        }
+    }
+
+    /// A pill change shows on Setup's page while it is open on the pan, and
+    /// an All change in Setup reaches a pan that follows at once.
+    @Test func thePillAndSetupShowTheSameValues() async throws {
+        let (rig, source, defaults) = try await Self.pill()
+        defer { defaults.removePersistentDomain(forName: rig.suite) }
+        let setup = PhoneSetupKeys(main: rig.main, defaults: defaults)
+        let master = rig.store.masterSettings(forPan: PanIdentity.first.storeKey).waterfallBlanking
+        #expect(source.keys.set(.bool(!master), forPhoneKey: "WaterfallBlankingEnabled"))
+        #expect(rig.main.displayEditScope == .pan(.first))
+        #expect(setup.value(forPhoneKey: "WaterfallBlankingEnabled") == .bool(!master))
+
+        // Back to Setup's value, then an All change in Setup.
+        source.keys.resetPan()
+        rig.main.displayEditScope = .all
+        #expect(setup.set(.bool(!master), forPhoneKey: "WaterfallBlankingEnabled"))
+        #expect(rig.main.band.settings.waterfallBlanking == !master)
+        #expect(source.keys.value(forPhoneKey: "WaterfallBlankingEnabled") == .bool(!master))
+        #expect(source.keys.ownRowCount == 0)
+    }
+
+    /// The pill opened while Setup shows a Display page: the page's strip
+    /// moves from All to the pill's pan. Outside Display nothing changes.
+    @Test func openingThePillMovesAnOpenDisplayPageToItsPan() {
+        let router = SetupRouter()
+        router.followPill(.first)
+        #expect(router.displayScope == .all)
+        #expect(router.open(describedPage: "display.levels"))
+        #expect(router.displayScope == .all)
+        router.followPill(.first)
+        #expect(router.displayScope == .pan(.first))
+        let navigation = RootView.navigation(setupRouter: router, toolsRouter: ToolsRouter(),
+                                             selectSetup: {}, selectTools: {})
+        router.displayScope = .all
+        navigation.followDisplayPan(.first)
+        #expect(router.displayScope == .pan(.first))
+    }
+
     /// A pill over the rig's main screen, its Core describing Display at
     /// version 29, off the air.
     static func pill() async throws -> (Rig, DisplayPillSource, UserDefaults) {

@@ -19,6 +19,9 @@ struct DropSheet<Trailing: View, Content: View>: View {
     let accessibilityIdentifier: String
     @ViewBuilder let trailing: () -> Trailing
     @ViewBuilder let content: () -> Content
+    /// While a Display pill row is held (its peek), the sheet's face and
+    /// title clear away so the band shows under the one row.
+    @Environment(\.dropSheetClear) private var clear
 
     /// Sideways, the sheet keeps to this width.
     static var sidewaysWidth: CGFloat { 420 }
@@ -32,6 +35,7 @@ struct DropSheet<Trailing: View, Content: View>: View {
                 Spacer(minLength: 0)
                 trailing()
             }
+            .opacity(clear ? 0 : 1)
             .padding(.horizontal, 8)
             .frame(maxWidth: .infinity, minHeight: 22, maxHeight: 22)
             .background(LinearGradient(stops: [.init(color: ChromeColours.titleTop, location: 0),
@@ -48,10 +52,11 @@ struct DropSheet<Trailing: View, Content: View>: View {
                 }
             }
         }
-        .background(ChromeColours.sheet)
+        .background(clear ? Color.clear : ChromeColours.sheet)
         .clipShape(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
-        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ChromeColours.sheetBorder, lineWidth: 1))
-        .shadow(color: .black.opacity(0.55), radius: 14, y: 10)
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius)
+            .strokeBorder(clear ? Color.clear : ChromeColours.sheetBorder, lineWidth: 1))
+        .shadow(color: .black.opacity(clear ? 0 : 0.55), radius: 14, y: 10)
         // The whole sheet takes its touches, title row included: none
         // falls through to the band's flags and buttons under it, or to
         // the layer behind that closes the sheet.

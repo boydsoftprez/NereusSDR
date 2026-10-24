@@ -63,4 +63,12 @@ final class SetupRouter: ObservableObject {
         displayScope = scope
         return true
     }
+
+    /// The Display pill opened on `pan`: an open Display page switches its
+    /// strip from All to that pan, so a pill change and the page agree.
+    /// Outside Display the scope stays All.
+    func followPill(_ pan: PanIdentity) {
+        guard Self.inDisplay(path) else { return }
+        displayScope = .pan(pan)
+    }
 }

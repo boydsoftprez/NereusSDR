@@ -53,6 +53,8 @@ struct MainScreen: View {
     @State private var sheet: OpenSheet?
     /// The Display pill's open tab, kept while the sheet closes and opens.
     @State private var displayTab: DisplayPillTab = .spectrum
+    /// The Display pill's row a finger holds: only it draws while held (spec DC4).
+    @State private var displayPeek: String?
     /// On an iPad on its side, the applet column shows (its corner button).
     @State private var columnShown: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -238,6 +240,7 @@ struct MainScreen: View {
                     .accessibilityLabel("Close the sheet")
                     .accessibilityAddTraits(.isButton)
                 dropped(sheet)
+                    .environment(\.displayPeek, $displayPeek)
                     .frame(maxWidth: sideways ? DropSheet<EmptyView, EmptyView>.sidewaysWidth : .infinity)
                     .padding(.top, 4)
                     .padding(.bottom, 8)
@@ -319,6 +322,8 @@ struct MainScreen: View {
                     openDescribedPage(tab.setupPageId, scope: .pan(pan))
                 }, onOpenPage: { pageId in
                     openDescribedPage(pageId)
+                }, onOpen: { pan in
+                    app.phoneNavigation?.followDisplayPan(pan)
                 })
             } else {
                 DisplaySheet(model: main.display, core: main.coreDisplay) {

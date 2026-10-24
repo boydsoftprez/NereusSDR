@@ -97,6 +97,45 @@ final class DisplayPillPhoneKeys: SetupPhoneKeys {
         return inner.perform(action, argument: argument, descriptionVersion: descriptionVersion)
     }
 
+    // MARK: The pan's own values (spec section 5.3, DC4)
+
+    /// A row that can hold a pan's own value: the pan's own picture row
+    /// on this phone. The Core's rows, each band's rows (dB Max, dB Min
+    /// and 3D Floor) and the buttons are shared and never show the dot,
+    /// as Setup's Display pages mark them (DescribedPage's own-value dot).
+    static func holdsOwnValue(_ control: SetupDescription.Control) -> Bool {
+        guard control.owner == .pan, control.perBand == nil, control.kind != .button,
+              case .phone? = control.binding else { return false }
+        return true
+    }
+
+    /// The kept fields the pill's pan holds its own value for in `control`;
+    /// empty for a shared row or one that follows Setup.
+    func ownFields(of control: SetupDescription.Control) -> Set<String> {
+        guard Self.holdsOwnValue(control), case .phone(let key)? = control.binding else { return [] }
+        return main.ownDisplayFields(among: PhoneSetupKeys.displayFields(forPhoneKey: key), pan: pan)
+    }
+
+    /// The pill's pan follows Setup again in `fields` (the dot's tap).
+    func followSetup(_ fields: Set<String>) {
+        for field in fields.sorted() {
+            main.clearOwnDisplayField(field, pan: pan)
+        }
+    }
+
+    /// How many rows the pill's pan keeps its own value in, on any page:
+    /// the four waterfall level mode fields are one choice.
+    var ownRowCount: Int {
+        let own = main.ownDisplayFields(for: pan)
+        let modes = BandDisplaySettingsStore.waterfallModeFields
+        return own.subtracting(modes).count + (own.isDisjoint(with: modes) ? 0 : 1)
+    }
+
+    /// Reset this pan.
+    func resetPan() {
+        main.resetDisplay(pan: pan)
+    }
+
     var perBandName: String? { inner.perBandName }
     var screenRefreshRate: Int? { inner.screenRefreshRate }
 
@@ -177,6 +216,17 @@ final class DisplayPillSource {
         description.flatMap { DisplayPillRows.control(for: key, in: $0) }
     }
 
+    /// The fields the pill's pan keeps its own value for in the rows bound
+    /// to the desktop keys `keys` (one line's slider, its switch and its
+    /// swatch); empty where they all follow Setup or are shared.
+    func ownFields(ofKeys keys: [String]) -> Set<String> {
+        keys.reduce(into: Set<String>()) { fields, key in
+            if let control = control(for: key) {
+                fields.formUnion(self.keys.ownFields(of: control))
+            }
+        }
+    }
+
     /// The control as the pill draws it: the dispatcher's state, with the
     /// desktop pill's words in place of Setup's "Needs a different choice
     /// above." for the row bound to the desktop key `key`.
@@ -233,10 +283,14 @@ struct DisplayPill: View {
     let onSetupDefaults: (DisplayPillTab, PanIdentity) -> Void
     /// Opens a described Setup page (the Spectrum tab's Peaks & Markers link).
     let onOpenPage: (String) -> Void
+    /// The pill opened on its pan: an open Setup Display page edits that pan too.
+    let onOpen: (PanIdentity) -> Void
+    /// The row a finger holds, from the sheet or column the pill sits in.
+    @Environment(\.displayPeek) private var peek
 
     init(pan: PanIdentity, device: String, tab: Binding<DisplayPillTab>, main: MainScreenModel,
          core: CoreDisplayModel, onSetupDefaults: @escaping (DisplayPillTab, PanIdentity) -> Void,
-         onOpenPage: @escaping (String) -> Void = { _ in }) {
+         onOpenPage: @escaping (String) -> Void = { _ in }, onOpen: @escaping (PanIdentity) -> Void = { _ in }) {
         self.pan = pan
         self.device = device
         _tab = tab
@@ -244,9 +298,11 @@ struct DisplayPill: View {
         self.core = core
         self.onSetupDefaults = onSetupDefaults
         self.onOpenPage = onOpenPage
+        self.onOpen = onOpen
     }
 
     var body: some View {
+        let chrome = DisplayPillPeek.drawsChrome(held: peek.wrappedValue)
         DropSheet(title: "Display", accessibilityIdentifier: "displayPill") {
             Text("\(pan.title) \u{00B7} \(device)")
                 .font(.system(size: 11, weight: .semibold))
@@ -255,13 +311,24 @@ struct DisplayPill: View {
                 .accessibilityIdentifier("displayPillPan")
         } content: {
             tabs
+                .modifier(DisplayPillPeekRow(draws: chrome, held: false))
             DisplayPillRowsView(tab: tab, source: main.displayPillSource, display: main.display, core: core,
                                 main: main, onOpenPage: onOpenPage)
                 .environment(\.panelButtonHeight, 30)
+            if let source = main.displayPillSource {
+                DisplayPillFooter(tab: tab, keys: source.keys, band: main.band, onSetupDefaults: onSetupDefaults)
+                    .modifier(DisplayPillPeekRow(draws: chrome, held: false))
+            }
         }
+        // The peek: the sheet's own face clears away with its chrome.
+        .environment(\.dropSheetClear, !chrome)
         .onAppear {
             main.displayPillSource?.keys.pan = pan
             main.displayPillSource?.keys.focus()
+            onOpen(pan)
+        }
+        .onDisappear {
+            peek.wrappedValue = nil
         }
     }
 
@@ -288,8 +355,20 @@ private struct DisplayPillRowsView: View {
     let main: MainScreenModel
     let onOpenPage: (String) -> Void
 
+    /// The row a finger holds; while one is, only it draws.
+    @Environment(\.displayPeek) private var peek
+
     var body: some View {
+        let held = peek.wrappedValue
         ForEach(Array(DisplayPillLayout.lines(tab).enumerated()), id: \.offset) { _, line in
+            self.line(line)
+                .modifier(DisplayPillPeekRow(draws: DisplayPillPeek.draws(line, held: held),
+                                             held: held != nil && DisplayPillPeek.key(of: line) == held))
+        }
+    }
+
+    @ViewBuilder
+    private func line(_ line: DisplayPillLine) -> some View {
             switch line {
             case .caption(let title):
                 DisplayPillCaption(title)
@@ -297,7 +376,8 @@ private struct DisplayPillRowsView: View {
                 coreHead
             case .chips(let chips, let columns):
                 if let source {
-                    DisplayPillChipsLine(chips: chips, columns: columns, source: source, display: display)
+                    DisplayPillChipsLine(chips: chips, columns: columns, source: source, display: display,
+                                         band: main.band)
                 }
             case .phone(let row):
                 phone(row)
@@ -321,6 +401,13 @@ private struct DisplayPillRowsView: View {
                     DisplayPillMissingRow(key: key)
                 }
             }
+    }
+
+    /// Holding or lifting the phone's slider `key`.
+    private func holding(_ key: String) -> (Bool) -> Void {
+        let peek = peek
+        return { holding in
+            peek.wrappedValue = DisplayPillPeek.held(key, holding: holding, current: peek.wrappedValue)
         }
     }
 
@@ -349,6 +436,7 @@ private struct DisplayPillRowsView: View {
                 PanelSliderRow(label: nil, value: display.spectrumHeight,
                                range: DisplaySheetModel.spectrumHeightRange, accessibility: "Spectrum height",
                                format: DisplaySheetModel.percentText) { display.setSpectrumHeight($0) }
+                    .onEditing(holding("phone.spectrumHeight"))
                     .accessibilityIdentifier("displayPillSpectrumHeight")
             }
         case .lookBack:
@@ -361,6 +449,7 @@ private struct DisplayPillRowsView: View {
                                    accessibility: "Look back", format: DisplaySheetModel.lookBackText) {
                         display.setLookBack(seconds: $0)
                     }
+                    .onEditing(holding("phone.lookBack"))
                     .accessibilityIdentifier("displayPillLookBack")
                     PanelButton(label: "LIVE", lit: display.lookBackSeconds == 0, style: .blue,
                                 disabled: display.lookBackSeconds == 0) { display.goLive() }
@@ -370,7 +459,8 @@ private struct DisplayPillRowsView: View {
             }
         case .ctun, .dup:
             if let source {
-                DisplayPillChipsLine(chips: [.phone(row)], columns: 1, source: source, display: display)
+                DisplayPillChipsLine(chips: [.phone(row)], columns: 1, source: source, display: display,
+                                     band: main.band)
             }
         case .decimation:
             let range = BandDisplaySettings.decimationRange
@@ -386,11 +476,78 @@ private struct DisplayPillRowsView: View {
                     main.displayPillSource?.keys.focus()
                     main.changeDisplay { $0.decimation = Int(value.rounded()) }
                 }
+                .onEditing(holding("phone.decimation"))
                 .accessibilityIdentifier("displayPillDecimation")
                 if !display.gates.decimation {
                     DisplayPillReason(text: CatalogFeed.needsNewerCoreText)
                 }
             }
+        }
+    }
+}
+
+/// The footer's words (src/gui/SpectrumOverlayPanel.cpp:1738-1770, :2464)
+/// and the phone's for a pan with no own values (spec section 5.3).
+enum DisplayPillFooterText {
+    /// Reset this pan, with how many rows the pan keeps its own value in.
+    // From src/gui/SpectrumOverlayPanel.cpp:2464 ("Reset this pan (%1)")
+    static func reset(ownCount: Int) -> String {
+        ownCount > 0 ? "Reset this pan (\(ownCount))" : "Reset this pan"
+    }
+
+    /// Under Reset this pan, greyed while the pan has no own values.
+    static func follows(_ pan: PanIdentity) -> String {
+        "\(pan.title) follows Setup"
+    }
+
+    /// The link to the Setup page for the open tab, as the pill's other link reads.
+    // From src/gui/SpectrumOverlayPanel.cpp:1770 ("Setup defaults \u{2192}")
+    static let setupDefaults = "Setup defaults \u{203A}"
+}
+
+/// The pill's footer (spec DC1, DC4): Reset this pan on the left, greyed
+/// with its reason while the pan follows Setup in every row, and Setup
+/// defaults on the right, opening the open tab's Setup page on this pan.
+struct DisplayPillFooter: View {
+    let tab: DisplayPillTab
+    let keys: DisplayPillPhoneKeys
+    /// The pan's kept values change the count.
+    @ObservedObject var band: BandModel
+    let onSetupDefaults: (DisplayPillTab, PanIdentity) -> Void
+
+    var body: some View {
+        let count = keys.ownRowCount
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                Button {
+                    keys.resetPan()
+                } label: {
+                    Text(DisplayPillFooterText.reset(ownCount: count))
+                        .font(.system(size: 12, weight: .semibold))
+                        .padding(.horizontal, 12)
+                        .frame(minHeight: 32)
+                }
+                .buttonStyle(WorkspaceButtonStyle(.raised))
+                .disabled(count == 0)
+                .accessibilityIdentifier("displayPillReset")
+                if count == 0 {
+                    DisplayPillReason(text: DisplayPillFooterText.follows(keys.pan))
+                        .accessibilityIdentifier("displayPillFollows")
+                }
+            }
+            Spacer(minLength: 8)
+            Button(DisplayPillFooterText.setupDefaults) {
+                onSetupDefaults(tab, keys.pan)
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(ChromeColours.accentText)
+            .buttonStyle(.plain)
+            .frame(minHeight: 32)
+            .accessibilityIdentifier("displayPillSetupDefaults")
+        }
+        .padding(.top, 8)
+        .overlay(alignment: .top) {
+            Rectangle().fill(ChromeColours.panelEdge).frame(height: 1)
         }
     }
 }
@@ -410,11 +567,12 @@ struct DisplayDropSheet: View {
     let openSetup: () -> Void
     let onSetupDefaults: (DisplayPillTab, PanIdentity) -> Void
     let onOpenPage: (String) -> Void
+    var onOpen: (PanIdentity) -> Void = { _ in }
 
     var body: some View {
         if source.description != nil {
             DisplayPill(pan: .first, device: device, tab: $tab, main: main, core: main.coreDisplay,
-                        onSetupDefaults: onSetupDefaults, onOpenPage: onOpenPage)
+                        onSetupDefaults: onSetupDefaults, onOpenPage: onOpenPage, onOpen: onOpen)
         } else {
             DisplaySheet(model: main.display, core: main.coreDisplay, topNote: Self.olderCoreNote,
                          openSetup: openSetup)

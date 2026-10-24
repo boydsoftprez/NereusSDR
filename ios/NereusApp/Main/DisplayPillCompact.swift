@@ -179,6 +179,106 @@ enum DisplayPillLayout {
     ]
 }
 
+extension EnvironmentValues {
+    /// The key of the pill row a finger holds on its slider (the peek), or
+    /// nil: the pill sets it, and the sheet or column it sits in draws only
+    /// that row while it is set (spec section 5.3).
+    @Entry var displayPeek: Binding<String?> = .constant(nil)
+    /// The drop sheet draws clear: no title, face, rim or shadow, only what
+    /// its content draws (the pill's peek).
+    @Entry var dropSheetClear: Bool = false
+}
+
+/// The peek (spec section 5.3, the board's `.dp-sheet.is-peek`): while a
+/// finger holds a slider the pill clears away but for that row, until the
+/// finger lifts.
+enum DisplayPillPeek {
+    /// The key a line's slider peeks with; nil for a line with no slider.
+    static func key(of line: DisplayPillLine) -> String? {
+        switch line {
+        case .slider(let key, _, _, _): key
+        case .phone(.spectrumHeight): "phone.spectrumHeight"
+        case .phone(.lookBack): "phone.lookBack"
+        case .phone(.decimation): "phone.decimation"
+        default: nil
+        }
+    }
+
+    /// Whether `line` draws while the row `held` is held: every line while
+    /// none is, only the held row while one is.
+    static func draws(_ line: DisplayPillLine, held: String?) -> Bool {
+        guard let held else { return true }
+        return key(of: line) == held
+    }
+
+    /// The pill's title, tabs and footer draw only while no row is held.
+    static func drawsChrome(held: String?) -> Bool {
+        held == nil
+    }
+
+    /// The new held key when the slider of `key` is held or lifted.
+    static func held(_ key: String, holding: Bool, current: String?) -> String? {
+        if holding {
+            return key
+        }
+        return current == key ? nil : current
+    }
+}
+
+/// A line kept in its place while another row is held, drawn clear; the
+/// held row on a panel of its own, so it reads over the band.
+struct DisplayPillPeekRow: ViewModifier {
+    let draws: Bool
+    let held: Bool
+
+    // One branch for both states: the held slider keeps its identity, so
+    // the finger's drag carries on, and its line does not move. The panel
+    // reaches out past the line rather than padding it.
+    func body(content: Content) -> some View {
+        content
+            .background {
+                Color.clear
+                    .workspacePanel()
+                    .padding(.horizontal, -8)
+                    .padding(.vertical, -2)
+                    .opacity(held ? 1 : 0)
+            }
+            .opacity(draws || held ? 1 : 0)
+            .allowsHitTesting(draws || held)
+            .accessibilityHidden(!(draws || held))
+    }
+}
+
+/// The amber dot: the pan has its own value in this row; a tap puts the
+/// row back to Setup's value (spec section 5.3, DC4).
+struct DisplayPillOwnDot: View {
+    let pan: PanIdentity
+    /// The row's name, for VoiceOver.
+    let name: String
+    let id: String
+    var diameter: CGFloat = 8
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Circle()
+                .fill(WorkspacePalette.amberText)
+                .frame(width: diameter, height: diameter)
+                .frame(width: diameter + 14, height: diameter + 14)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Self.label(pan, name: name))
+        .accessibilityIdentifier(id)
+    }
+
+    /// What the dot says: the desktop's tooltip, with a tap for its click.
+    // From src/gui/SpectrumOverlayPanel.cpp:2455-2456 ("Pan %1's own %2. Click the dot to follow the Setup default again.")
+    static func label(_ pan: PanIdentity, name: String) -> String {
+        "\(pan.title)'s own \(name). Tap the dot to follow the Setup default again."
+    }
+}
+
 /// The desktop pill's words for a greyed row (src/gui/SpectrumOverlayPanel.cpp
 /// `updatePillEnables`), in place of Setup's "Needs a different choice
 /// above." Keys are the description's.
@@ -356,6 +456,7 @@ struct DisplayPillSettingLine: View {
     @ObservedObject var dispatcher: SetupControlDispatcher
     @ObservedObject var band: BandModel
     @State private var problem: String?
+    @Environment(\.displayPeek) private var peek
 
     init(line: DisplayPillLine, source: DisplayPillSource, band: BandModel) {
         self.line = line
@@ -424,21 +525,30 @@ struct DisplayPillSettingLine: View {
         let state = source.state(of: control, key: key)
         let items = Self.items(dispatcher.resolved(control))
         let unavailable = dispatcher.unavailableOptions(of: control)
+        let label = source.label(of: control, key: key)
         return VStack(alignment: .leading, spacing: 4) {
             if showsLabel {
-                DisplayPillCaption(source.label(of: control, key: key))
-            }
-            SheetGrid(columns: max(items.count, 1)) {
-                ForEach(items, id: \.value) { item in
-                    PanelButton(label: item.label, lit: state.value?.whole == item.value, style: .blue,
-                                disabled: !state.editable || unavailable[item.value] != nil) {
-                        send(control, .integer(item.value))
-                    }
-                    .accessibilityAddTraits(state.value?.whole == item.value ? .isSelected : [])
+                HStack(spacing: 2) {
+                    ownDot([key], name: label, key: key)
+                    DisplayPillCaption(label)
                 }
             }
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel(source.label(of: control, key: key))
+            HStack(spacing: 4) {
+                if !showsLabel {
+                    ownDot([key], name: label, key: key)
+                }
+                SheetGrid(columns: max(items.count, 1)) {
+                    ForEach(items, id: \.value) { item in
+                        PanelButton(label: item.label, lit: state.value?.whole == item.value, style: .blue,
+                                    disabled: !state.editable || unavailable[item.value] != nil) {
+                            send(control, .integer(item.value))
+                        }
+                        .accessibilityAddTraits(state.value?.whole == item.value ? .isSelected : [])
+                    }
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel(label)
+            }
             reason(state)
         }
         .accessibilityIdentifier("displayPill.\(key)")
@@ -452,6 +562,7 @@ struct DisplayPillSettingLine: View {
         let chosen = items.first { $0.value == state.value?.whole }?.label ?? DescribedControl.unavailableText
         return VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
+                ownDot([toggle, key].compactMap { $0 }, name: title, key: key)
                 DisplayPillLabel(text: title)
                     .setupGreyed(!state.editable)
                 Spacer(minLength: 4)
@@ -502,6 +613,7 @@ struct DisplayPillSettingLine: View {
         let title = label ?? source.label(of: control, key: key)
         return VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
+                ownDot([toggle, swatch, key].compactMap { $0 }, name: title, key: key)
                 DisplayPillLabel(text: title)
                     .setupGreyed(!state.editable)
                 Spacer(minLength: 4)
@@ -511,7 +623,7 @@ struct DisplayPillSettingLine: View {
             }
             .frame(minHeight: 26)
             HStack(spacing: 8) {
-                sliderControl(control, drawn: drawn, state: state, title: title)
+                sliderControl(key, control, drawn: drawn, state: state, title: title)
                 if let swatch {
                     swatchControl(swatch)
                 }
@@ -522,8 +634,9 @@ struct DisplayPillSettingLine: View {
     }
 
     @ViewBuilder
-    private func sliderControl(_ control: SetupDescription.Control, drawn: SetupDescription.Control,
+    private func sliderControl(_ key: String, _ control: SetupDescription.Control, drawn: SetupDescription.Control,
                                state: SetupControlState, title: String) -> some View {
+        let peek = peek
         if let options = drawn.options, !options.isEmpty {
             // The options by index, their values written (the FFT sizes).
             let index = options.firstIndex { $0.value == state.value?.whole }
@@ -535,6 +648,9 @@ struct DisplayPillSettingLine: View {
                 let chosen = options[min(max(Int(position.rounded()), 0), options.count - 1)]
                 send(control, .integer(chosen.value))
             }
+            .onEditing { holding in
+                peek.wrappedValue = DisplayPillPeek.held(key, holding: holding, current: peek.wrappedValue)
+            }
         } else {
             let range = drawn.range.map { StationCatalog.Range(min: $0.minimum, max: $0.maximum, step: $0.step) }
             let decimals = Self.decimals(control)
@@ -542,6 +658,9 @@ struct DisplayPillSettingLine: View {
                            format: { Self.valueText($0, decimals: decimals, unit: control.unit) },
                            greyed: !state.editable) { number in
                 send(control, Self.value(number, control: control, decimals: decimals))
+            }
+            .onEditing { holding in
+                peek.wrappedValue = DisplayPillPeek.held(key, holding: holding, current: peek.wrappedValue)
             }
         }
     }
@@ -551,6 +670,7 @@ struct DisplayPillSettingLine: View {
         let title = source.label(of: control, key: key)
         return VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
+                ownDot([key], name: title, key: key)
                 DisplayPillLabel(text: title)
                     .setupGreyed(!state.editable)
                 Spacer(minLength: 4)
@@ -617,6 +737,20 @@ struct DisplayPillSettingLine: View {
     }
 
     // MARK: Parts
+
+    /// The amber dot when the pill's pan keeps its own value in the rows
+    /// bound to `keys` (the line's row, its switch and its swatch); a tap
+    /// clears those fields, and the line shows Setup's value again.
+    @ViewBuilder
+    private func ownDot(_ keys: [String], name: String, key: String) -> some View {
+        let fields = source.ownFields(ofKeys: keys)
+        if !fields.isEmpty {
+            let pill = source.keys
+            DisplayPillOwnDot(pan: pill.pan, name: name, id: "displayPillOwn.\(key)") {
+                pill.followSetup(fields)
+            }
+        }
+    }
 
     @ViewBuilder
     private func inlineSwitch(_ key: String) -> some View {
@@ -720,15 +854,19 @@ struct DisplayPillChipsLine: View {
     @ObservedObject var pages: SetupDescribedPages
     @ObservedObject var dispatcher: SetupControlDispatcher
     @ObservedObject var display: DisplaySheetModel
+    /// The pan's kept values move the chips' dots.
+    @ObservedObject var band: BandModel
     @State private var problem: String?
 
-    init(chips: [DisplayPillChip], columns: Int, source: DisplayPillSource, display: DisplaySheetModel) {
+    init(chips: [DisplayPillChip], columns: Int, source: DisplayPillSource, display: DisplaySheetModel,
+         band: BandModel) {
         self.chips = chips
         self.columns = columns
         self.source = source
         pages = source.pages
         dispatcher = source.dispatcher
         self.display = display
+        self.band = band
     }
 
     private struct Chip {
@@ -737,6 +875,8 @@ struct DisplayPillChipsLine: View {
         let on: Bool
         let enabled: Bool
         let reason: String?
+        /// The fields the pan keeps its own value for in this chip's row.
+        var own: Set<String> = []
         let action: () -> Void
     }
 
@@ -750,6 +890,18 @@ struct DisplayPillChipsLine: View {
                         .accessibilityValue(chip.on ? DescribedControl.onText : DescribedControl.offText)
                         .accessibilityHint(chip.reason ?? "")
                         .accessibilityIdentifier(chip.id)
+                        .overlay(alignment: .topTrailing) {
+                            // The board's chip dot (`.dp-cdot`), in the chip's corner.
+                            if !chip.own.isEmpty {
+                                let pill = source.keys
+                                DisplayPillOwnDot(pan: pill.pan, name: chip.label,
+                                                  id: chip.id.replacingOccurrences(of: "displayPill.",
+                                                                                   with: "displayPillOwn."),
+                                                  diameter: 7) {
+                                    pill.followSetup(chip.own)
+                                }
+                            }
+                        }
                 }
             }
             if let reason = drawn.first(where: { $0.reason != nil })?.reason {
@@ -771,7 +923,8 @@ struct DisplayPillChipsLine: View {
             let state = source.state(of: control, key: key)
             let on = state.value?.flag ?? false
             return Chip(id: "displayPill.\(key)", label: source.label(of: control, key: key), on: on,
-                        enabled: state.editable && state.value != nil, reason: state.reason) {
+                        enabled: state.editable && state.value != nil, reason: state.reason,
+                        own: source.keys.ownFields(of: control)) {
                 let dispatcher = dispatcher
                 Task { @MainActor in
                     problem = DescribedControl.problem(await dispatcher.edit(control, in: DisplayPillSource.category,

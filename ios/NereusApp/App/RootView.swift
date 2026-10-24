@@ -53,6 +53,7 @@ struct RootView: View {
             selectSetup()
             return true
         }
+        navigation.followDisplayPan = { pan in setupRouter.followPill(pan) }
         return navigation
     }
 

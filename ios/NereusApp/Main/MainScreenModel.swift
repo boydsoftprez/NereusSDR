@@ -61,6 +61,24 @@ final class MainScreenModel: ObservableObject {
     func ownDisplayFields(among fields: Set<String>, pan: PanIdentity) -> Set<String> {
         displaySettings.ownFields(forPan: Self.displayStoreKey(pan), among: fields)
     }
+    /// Every field `pan` keeps its own value for, on any page: what the
+    /// pill's Reset this pan clears (spec section 5.3, DC4).
+    func ownDisplayFields(for pan: PanIdentity) -> Set<String> {
+        ownDisplayFields(among: BandDisplaySettingsStore.pictureFields, pan: pan)
+    }
+    /// `pan` follows Setup again in `field`, the tap on a row's amber dot.
+    /// A waterfall levels mode field takes the other three with it, as the
+    /// store keeps the mode as one choice.
+    func clearOwnDisplayField(_ field: String, pan: PanIdentity) {
+        resetDisplayPicture(fields: [field], pan: pan)
+    }
+    /// Reset this pan: every own field of `pan` goes and it follows Setup in
+    /// every row. Its zoom (`rxViewSpanHz`), its band and the band's scale
+    /// are not picture fields, so they stay where they are.
+    func resetDisplay(pan: PanIdentity) {
+        displaySettings.reset(pan: Self.displayStoreKey(pan))
+        reloadDisplaySettings()
+    }
     func resetDisplayPicture(fields: Set<String>) {
         guard displayEditScope == .pan(.first) else { return }
         resetDisplayPicture(fields: fields, pan: .first)

@@ -25,6 +25,11 @@ enum UITestBand {
     /// Beside ``argument``: two spots on the band, one the Core can place (330 degrees) and one it cannot.
     static let spotsArgument = "-NereusSpotFixture"
     static let catalogueEnvironment = "NEREUS_UITEST_CATALOGUE"
+    /// Beside ``argument``: the Core describes Setup > Display at version
+    /// 29, read from the file this names (the repository's
+    /// `resources/setup/display.json`), so the Display pill and Setup's eight
+    /// Display pages show as they do with a Core.
+    static let displayEnvironment = "NEREUS_UITEST_DISPLAY"
     static let centreHz = 7_244_500.0
     static let spanHz = 48_000.0
     static let sliceHz = 7_236_400.0
@@ -39,6 +44,9 @@ enum UITestBand {
         let mirror = app.mirror
         let rotor = arguments.contains(rotorArgument)
         let noRotor = arguments.contains(noRotorArgument)
+        let display = environment[displayEnvironment].flatMap { path in
+            FileManager.default.contents(atPath: path).flatMap { String(data: $0, encoding: .utf8) }
+        }
         app.useBandFixturePropertySender { [weak mirror] write in
             guard write.key == "slice:0", write.properties.count == 1,
                   let entry = write.properties.first, entry.name == "afGain" else {
@@ -61,7 +69,16 @@ enum UITestBand {
             .init(ordinal: 0, name: BandSlicesModel.remoteTxCapability, value: .i64(1)),
             .init(ordinal: 1, name: "propertyResultVersion", value: .i64(1)),
             .init(ordinal: 2, name: "stationCatalogVersion", value: .i64(1)),
-        ] + (rotor || noRotor ? [.init(ordinal: 3, name: RotorModel.capability, value: .i64(1))] : []))))
+        ] + (rotor || noRotor ? [.init(ordinal: 3, name: RotorModel.capability, value: .i64(1))] : [])
+          + (display == nil ? [] : displayCapabilities))))
+        if let display {
+            mirror.apply(.schema(.init(className: "SetupDescription", fields: [
+                .init(ordinal: 0, name: "revision", kind: .i64), .init(ordinal: 1, name: "display", kind: .utf8),
+            ])))
+            mirror.apply(.objectCreate(.init(key: "setup", className: "SetupDescription", properties: [
+                .init(ordinal: 0, name: "revision", value: .i64(1)), .init(ordinal: 1, name: "display", value: .utf8(display)),
+            ])))
+        }
         if let path = environment[catalogueEnvironment], var json = catalogueJSON(path: path) {
             if rotor {
                 // The rotor set up, so the Core offers it.
@@ -120,6 +137,15 @@ enum UITestBand {
             band.receive(.context(context))
         }
     }
+
+    /// What a Core that describes Display at version 29 offers, as the
+    /// Display pill's tests deliver it.
+    private static let displayCapabilities: [LinkMessage.PropertyEntry] = [
+        .init(ordinal: 4, name: "setupDescriptionVersion", value: .i64(29)),
+        .init(ordinal: 5, name: "remoteMediaVersion", value: .i64(1)),
+        .init(ordinal: 6, name: "remoteWidebandDisplayVersion", value: .i64(1)),
+        .init(ordinal: 7, name: "displayExtrasVersion", value: .i64(4)),
+    ]
 
     /// A Yaesu-style rotor on an Easy Rotor Control at the Core, connected,
     /// pointing at 47 degrees, with three presets.

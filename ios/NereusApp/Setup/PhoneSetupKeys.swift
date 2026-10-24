@@ -923,6 +923,9 @@ struct PhoneNavigation {
     /// Opens a Display page with a pan or All pans chosen on its strip, as
     /// a pan's "Setup defaults" does (spec section 7.3); false when there is none.
     var openDisplayPage: (String, MainScreenModel.DisplayEditScope) -> Bool = { _, _ in false }
+    /// The Display pill opened on this pan: a Setup Display page already
+    /// open edits that pan too, so the two show the same values.
+    var followDisplayPan: (PanIdentity) -> Void = { _ in }
 }
 
 /// This phone's own Display rows on the Core's version 29 pages (spec
