@@ -5,9 +5,16 @@
 // Ported from Thetis sources:
 //   Project Files/Source/Console/console.cs, original licence from Thetis source is included below
 //   Project Files/Source/Console/display.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/console.designer.cs (upstream has no top-of-file header — project-level LICENSE applies)
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - setRfGain clamps to the AGC-T range -20..120 (Thetis
+//                ptbRF, console.designer.cs:3708-3709 [v2.10.3.15]) instead
+//                of 0..100, so TCI agc_gain and the AGC-top readback keep
+//                both ends. After Longpath f1d0c181 (Martin Fischer,
+//                OE5SOS). J.J. Boyd (KG4VCF), with AI-assisted
+//                transformation via Claude Code.
 //   2026-10-22 - rxAntennaLabelFor: refreshAntennasFromAlex's receive-label
 //                rule on its own, so the Core can compare the label a slice
 //                will have on a new band before it gets there. J.J. Boyd
@@ -834,7 +841,15 @@ void SliceModel::setAfGain(int gain)
 void SliceModel::setRfGain(int gain)
 {
     if (holdsListenerWrite(rfGain(), gain)) { return; }
-    gain = std::clamp(gain, 0, 100);
+    // rfGain is the AGC-T, the WDSP AGC top (RadioModel hands it to
+    // RxChannel::setAgcTop). From Thetis console.designer.cs:3708-3709
+    // [v2.10.3.15]: ptbRF.Maximum = 120, ptbRF.Minimum = -20, the range
+    // TCIServer.cs:5024 [v2.10.3.15] clamps agc_gain to and that
+    // RxChannel::readBackAgcTop applies. The 0..100 clamp here before
+    // 2026-10-22 was not from Thetis and folded both ends.
+    constexpr int kAgcTopMinDb = -20;
+    constexpr int kAgcTopMaxDb = 120;
+    gain = std::clamp(gain, kAgcTopMinDb, kAgcTopMaxDb);
     if (m_rfGain != gain) {
         m_rfGain = gain;
         emit rfGainChanged(gain);

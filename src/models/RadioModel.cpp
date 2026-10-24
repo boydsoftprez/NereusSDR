@@ -32,6 +32,13 @@
 //                Ported from Longpath PR 37 (fd894ded, Martin Fischer
 //                OE5SOS) by J.J. Boyd (KG4VCF), with AI-assisted
 //                transformation via Claude Code.
+//   2026-10-22 - TCI agc_gain sets and reads the AGC-T (SliceModel::rfGain,
+//                WDSP AGC top), as Thetis's handleAgcGain does through
+//                SetAgcT / GetAgcT (TCIServer.cs:5011-5026, console.cs:
+//                51803-51833 [v2.10.3.15]), instead of the AGC threshold
+//                point. After Longpath f1d0c181 (Martin Fischer, OE5SOS).
+//                J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//                Claude Code.
 //   2026-10-22 - Connect hold: discovery sends nothing from the moment a
 //                local connection is created until it reports Connected or
 //                ends, then waits the post-disconnect quiet period
@@ -1337,6 +1344,10 @@
 //                (m_deviceReservationsMac), and a letter's snapshot is
 //                dropped once a device is placed on it.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24 - An AGC top change (TCI's agc_gain) saves the band's
+//                threshold once the lane readback gives it, so the band's
+//                AGC comes back as it was left. J.J. Boyd (KG4VCF), with
+//                AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -25415,6 +25426,11 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
                     m_syncingAgc = true;
                     slice->setAgcThreshold(threshInt);
                     m_syncingAgc = wasSyncing;
+                    // The band keeps the threshold the new top gives, so the
+                    // band's AGC comes back as TCI's agc_gain left it. The
+                    // save scheduled below captured the band's values before
+                    // this lane readback landed.
+                    scheduleSettingsSave(slice);
                 }
             });
         }
@@ -31238,14 +31254,25 @@ QString RadioModel::agcMode(int rx) const
     return QStringLiteral("MED");
 }
 
-// ── AGC gain (threshold) ────────────────────────────────────────────────────
+// ── AGC gain (TCI agc_gain = Thetis AGC-T = WDSP AGC top) ──────────────────
+//
+// From Thetis TCIServer.cs:5011-5026 [v2.10.3.15]: handleAgcGain clamps the
+// value to -20..120 and calls consoleThreadSafe.SetAgcT(rx + 1, gain); the
+// query answers GetAgcT(rx + 1). SetAgcT / GetAgcT (console.cs:51803-51833
+// [v2.10.3.15]) set and read the RF property, the ptbRF slider (AGC-T,
+// -20..120, console.designer.cs:3708-3709 [v2.10.3.15]) whose value goes to
+// WDSP SetRXAAGCTop. Here that value is SliceModel::rfGain, which the
+// rfGainChanged handler hands to RxChannel::setAgcTop. It is not
+// agcThreshold, the -160..+2 threshold point SetRXAAGCThresh takes; this
+// shim wrote that until 2026-10-22. Found by Longpath f1d0c181 (Martin
+// Fischer, OE5SOS).
 void RadioModel::setAgcGain(int rx, int gain)
 {
-    if (auto* s = sliceById(rx)) { s->setAgcThreshold(gain); }
+    if (auto* s = sliceById(rx)) { s->setRfGain(gain); }
 }
 int RadioModel::agcGain(int rx) const
 {
-    if (const auto* s = sliceById(rx)) { return s->agcThreshold(); }
+    if (const auto* s = sliceById(rx)) { return s->rfGain(); }
     return 0;
 }
 

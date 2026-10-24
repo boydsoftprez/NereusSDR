@@ -6797,6 +6797,14 @@ if(Qt6WebSockets_FOUND)
     target_link_libraries(tst_tci_iq_roundtrip PRIVATE Qt6::WebSockets)
 endif()
 
+# Longpath cf756d8b: receive audio and I/Q to an app that stops reading are
+# dropped once 256 KiB or more waits for it, not queued without limit. A raw
+# socket does the handshake by hand and then reads nothing.
+if(Qt6WebSockets_FOUND)
+    nereus_add_test(tst_tci_binary_backpressure)
+    target_link_libraries(tst_tci_binary_backpressure PRIVATE Qt6::WebSockets)
+endif()
+
 # ── Phase 3J-1 Task 17.1: TX audio binary pipeline + single-client mutex ──────
 # Tests: TX mutex acquire/release, active-client-frame-lands, non-active-client-
 # frame-dropped (ring invariant).

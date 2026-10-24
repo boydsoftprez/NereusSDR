@@ -40,6 +40,9 @@
 //   2026-10-17 -- Teardown stops the TX worker before the audio engine
 //                 drops the input it reads (main CI crash at 4066a86b6).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24 -- A TCI agc_gain set (the AGC top) saves the band's
+//                 threshold from the lane readback.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -206,6 +209,41 @@ private slots:
         QCOMPARE(channel->filterLow(), 350.0);
         QCOMPARE(channel->filterHigh(), 2450.0);
         QCOMPARE(channel->agcThreshold(), -37);
+    }
+
+    // TCI's agc_gain sets the AGC top (rfGain) through RadioModel::setAgcGain.
+    // The band keeps the threshold point that top gives, read back on the
+    // receive lane; a save captured before the readback would bring the
+    // band's old threshold back on the next band change or restart.
+    void tciAgcGainSavesTheBandsThreshold()
+    {
+        AppSettings::instance().clear();
+        auto harness = ConnectableRadioModel::create(
+            10000, RadioModel::Role::Local, {}, HPSDRHW::HermesLite, false);
+        QVERIFY(harness);
+        RadioModel& radio = harness->model();
+        SliceModel* slice = radio.slices().first();
+        QVERIFY(slice);
+        slice->setFrequency(14225000.0);
+        radio.requestSettingsSave();
+        radio.flushPendingSettingsSave();
+        QVERIFY(radio.waitForReceiveLaneForTest());
+        const int thresholdBefore = slice->agcThreshold();
+
+        radio.setAgcGain(slice->sliceIndex(), 40);
+        QCOMPARE(radio.agcGain(slice->sliceIndex()), 40);
+        // The coalesced save can run before the lane's readback lands: flush
+        // here, before the readback reaches this thread, as that timer would.
+        radio.flushPendingSettingsSave();
+        QVERIFY(radio.waitForReceiveLaneForTest());
+        QTRY_VERIFY_WITH_TIMEOUT(slice->agcThreshold() != thresholdBefore, 5000);
+        radio.flushPendingSettingsSave();
+
+        AppSettings onDisk(AppSettings::instance().filePath());
+        onDisk.load();
+        const QString prefix = QStringLiteral("Slice%1/").arg(slice->sliceIndex());
+        QCOMPARE(onDisk.value(prefix + "RfGain").toInt(), 40);
+        QCOMPARE(onDisk.value(prefix + "Band20m/AgcThreshold").toInt(), slice->agcThreshold());
     }
 
     void reconnectPreservesLiveReceivers()

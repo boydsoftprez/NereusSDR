@@ -203,6 +203,43 @@ private slots:
                     .contains(QStringLiteral("rx_anf_enable:%1,false;").arg(b)));
     }
 
+    // agc_gain on the wire is Thetis's AGC-T: ptbRF_Scroll raises
+    // AGCGainChangedHandlers with ptbRF.Value (console.cs:28797
+    // [v2.10.3.15]), which TCIServer.cs:6752 [v2.10.3.15] routes to
+    // OnAGCGainChanged. Here that value is SliceModel::rfGain. The
+    // broadcast used to follow agcThresholdChanged and put the -160..+2
+    // threshold point on the wire as agc_gain.
+    void agc_gain_broadcasts_the_agc_top()
+    {
+        RadioModel model;
+        TciServer  server(&model);
+
+        const int a = model.addSlice(QStringLiteral("pan-0"));
+        SliceModel* sa = model.sliceById(a);
+        QVERIFY(sa);
+
+        TciProtocol* proto = server.protocolForTest();
+        QVERIFY(proto);
+        drainTick(proto);
+
+        sa->setRfGain(95);
+        const QStringList frames = drainTick(proto);
+        QVERIFY2(framesWithPrefix(frames, QStringLiteral("agc_gain:"))
+                     .contains(QStringLiteral("agc_gain:%1,95;").arg(a)),
+                 qPrintable(QStringLiteral(
+                     "an AGC-T change must broadcast agc_gain with its value; "
+                     "got: %1").arg(frames.join(QStringLiteral(" ")))));
+
+        // The threshold point alone is not agc_gain. With no WDSP engine
+        // there is no AGC-T readback, so no agc_gain frame at all follows.
+        sa->setAgcThreshold(-50);
+        const QStringList thresholdFrames = drainTick(proto);
+        QVERIFY2(framesWithPrefix(thresholdFrames, QStringLiteral("agc_gain:")).isEmpty(),
+                 qPrintable(QStringLiteral(
+                     "the AGC threshold point must not go out as agc_gain; "
+                     "got: %1").arg(thresholdFrames.join(QStringLiteral(" ")))));
+    }
+
     // Task 12 (R-R3-49): an app's if follows a tune inside the pan. Thetis's
     // VFO event sends if then vfo for the channel (TCIServer.cs:1396-1398
     // [v2.10.3.15]), the offset being vfo - centre + RIT; the centre did not
