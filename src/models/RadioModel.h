@@ -7,8 +7,17 @@
 // Ported from Thetis source:
 //   Project Files/Source/Console/console.cs, original licence from Thetis source is included below
 //
+// Ported from Longpath sources:
+//   src/models/RadioModel.h (setConnectionRateForTest), Longpath banner included below
+//
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - setConnectionRateForTest, a test seam standing in for
+//                connectToRadio()'s write of the connection's sample rate
+//                and active RX count.
+//                Ported from Longpath PR 37 (fd894ded, Martin Fischer
+//                OE5SOS) by J.J. Boyd (KG4VCF), with AI-assisted
+//                transformation via Claude Code.
 //   2026-10-22 - rejoinCandidateStreams: the receivers a lone slice may
 //                share with when it tunes into their range (JJ's ruling
 //                2026-10-22), compared on the slice's new-band label.
@@ -742,6 +751,27 @@
 //============================================================================================//
 
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
+
+// --- From RadioModel.h (Longpath, oe5sos/Longpath @383f058) ---
+// Longpath banner, byte for byte. The Thetis licence blocks it names are the
+// ones above.
+// =================================================================
+// src/models/RadioModel.h  (Longpath)
+// =================================================================
+//
+// Ported from Thetis source:
+//   Project Files/Source/Console/console.cs, original licence from Thetis source is included below
+//
+// =================================================================
+// Modification history (Longpath):
+//   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
+//                 (KG4VCF), with AI-assisted transformation via Anthropic
+//                 Claude Code.
+//                 Structural pattern follows AetherSDR (ten9876/AetherSDR,
+//                 GPLv3).
+//   2026-09-27 -- cwPitch()/setCwPitch()/cwPitchChanged(int) (Martin
+//                 Fischer, OE5SOS, AI-assisted via Anthropic Claude).
+// =================================================================
 
 #include "core/MoxController.h"
 #include "core/NereusCoreExport.h"
@@ -4898,6 +4928,13 @@ public:
     // a fake RadioConnection. Production transitions go through the
     // private setConnectionState() called from connection signals.
     void setConnectionStateForTest(ConnectionState s) { setConnectionState(s); }
+    // From Longpath src/models/RadioModel.h:1685-1690 [@383f058]
+    // Stands in for the connectToRadio() write of the wire rate / RX count
+    // so a test can replay the state sequence around it without a radio.
+    void setConnectionRateForTest(int rateHz, int activeRxCount) {
+        m_connectionSampleRateHz = rateHz;
+        m_connectionActiveRxCount = activeRxCount;
+    }
 
     // Test-only: walk the FULL Connected/Disconnected handler so tests
     // can drive the peripherals lifecycle (applyPeripheralsForCurrentMac

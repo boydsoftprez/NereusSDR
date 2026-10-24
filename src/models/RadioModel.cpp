@@ -15,8 +15,17 @@
 //   Project Files/Source/Console/HPSDR/NetworkIO.cs (upstream has no top-of-file header — project-level LICENSE applies)
 //   Project Files/Source/ChannelMaster/cmaster.c, original licence from Thetis source is included below
 //
+// Ported from Longpath sources:
+//   src/models/RadioModel.cpp (setConnectionState), Longpath banner included below
+//
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - The connection's sample rate and active RX count are
+//                cleared only on Disconnected, so a Probing or Connecting
+//                state queued after connectToRadio() no longer wipes them.
+//                Ported from Longpath PR 37 (fd894ded, Martin Fischer
+//                OE5SOS) by J.J. Boyd (KG4VCF), with AI-assisted
+//                transformation via Claude Code.
 //   2026-10-22 - Connect hold: discovery sends nothing from the moment a
 //                local connection is created until it reports Connected or
 //                ends, then waits the post-disconnect quiet period
@@ -1555,6 +1564,54 @@ mw0lge@grange-lane.co.uk
 // its original terms and is not affected by this dual-licensing statement in any way.        //
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
+
+// --- From RadioModel.cpp (Longpath, oe5sos/Longpath @383f058) ---
+// Longpath banner, byte for byte. The Thetis licence blocks it names are the
+// ones above.
+// =================================================================
+// src/models/RadioModel.cpp  (Longpath)
+// =================================================================
+//
+// Ported from Thetis sources:
+//   Project Files/Source/Console/console.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/setup.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/radio.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/dsp.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/HPSDR/NetworkIO.cs (upstream has no top-of-file header — project-level LICENSE applies)
+//   Project Files/Source/ChannelMaster/cmaster.c, original licence from Thetis source is included below
+//
+// =================================================================
+// Modification history (Longpath):
+//   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
+//                 (KG4VCF), with AI-assisted transformation via Anthropic
+//                 Claude Code.
+//   2026-05-03 — Phase 4 Agent 4A of issue #167 (PA calibration safety
+//                 hotfix — K2GX field report).  Drive-slider lambda
+//                 (lines ~830) and TUNE-engagement path (lines ~4280)
+//                 rewritten to route through
+//                 TransmitModel::setPowerUsingTargetDbm (Phase 3C deep-
+//                 parity port of Thetis SetPowerUsingTargetDBM,
+//                 console.cs:46645-46762 [v2.10.3.13]).  Wire-byte /
+//                 IQ-scalar topology corrected per Thetis MW0LGE-canonical
+//                 (audio.cs:262-271 wire NO SWR / cmaster.cs:1115-1119 IQ
+//                 HAS SWR via TxChannel::setTxFixedGain).  Replaces the
+//                 previous fork-specific linear formula (cited to mi0bot
+//                 NetworkIO.cs:209-211 [v2.10.3.14-beta1]) that produced
+//                 K2GX's >300 W output on a 200 W ANAN-8000DLE at 80m
+//                 TUN slider=50.  Adds RadioModel ownership of
+//                 PaProfileManager (mirrors MicProfileManager pattern);
+//                 active profile passed by const-ref to setPowerUsingTargetDbm
+//                 at every callsite.  Adds StepAttenuatorController
+//                 propagation to TransmitModel::setStepAttenuatorController
+//                 inside RadioModel::setStepAttController.  J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-27 -- CW pitch setter (Martin Fischer, OE5SOS, AI-assisted via
+//                 Anthropic Claude): setCwPitch/cwPitchChanged after the
+//                 console.cs CWPitch setter [@852bf0e] (RX part only;
+//                 sidetone and the MOX VFO shift are CW TX, deferred);
+//                 APF centre = CWPitch + tune from the setting instead of
+//                 a fixed 600 (setup.cs tbRX1APFTune_Scroll).
+// =================================================================
 
 #include "core/cat/CatService.h"
 #include "RadioModel.h"
@@ -28538,6 +28595,17 @@ void RadioModel::setConnectionState(ConnectionState s)
         m_connectionStartedAt.invalidate();
         m_connectionAgeOwner.clear();
         m_connectionAgeHadOwner = false;
+    }
+    // From Longpath src/models/RadioModel.cpp:13736-13747 [@383f058]
+    // Wire rate and active-RX count are written by connectToRadio() BEFORE
+    // the worker thread reports Probing/Connecting (those arrive queued,
+    // one event-loop turn later). Clearing them on every non-Connected
+    // state therefore wiped what connectToRadio had just stored, and the
+    // model reported rate 0 / rx2Enabled()==false for the whole session
+    // until the operator changed the rate by hand (HL2 simulator bench,
+    // 2026-09-21: NetworkDiagnosticsDialog showed "—", TCI iq_samplerate
+    // fell back to the cached default). Only a real teardown clears them.
+    if (s == ConnectionState::Disconnected) {
         m_connectionSampleRateHz = 0;
         m_connectionActiveRxCount = 0;       // Task 1.7: reset on disconnect
     }

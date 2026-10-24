@@ -37,6 +37,11 @@
 //   2026-08-02  J.J. Boyd / KG4VCF  Remote daemon R1, extraction 3 of 9.
 //                                    AI-assisted transformation via
 //                                    Anthropic Claude Code.
+//   2026-10-23  J.J. Boyd / KG4VCF  reduce() can also write the row the
+//                                    noise floor measures while the average
+//                                    warms up: the average with its
+//                                    starting value taken out.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/spectrum/SpectrumAvenger.h"
@@ -122,10 +127,18 @@ public:
     /// pixel count) is a no-op leaving pixelsOut untouched. That mirrors
     /// updateSpectrumLinear's early returns, which leave the last good frame
     /// on screen.
+    ///
+    /// measurementOut, when given, is the row a noise floor should measure
+    /// besides pixelsOut: while the average is still warming up from its
+    /// starting value (SpectrumAvenger::warmingUp), the average with that
+    /// value taken out (SpectrumAvenger::unseededDb: this frame alone on
+    /// the first, then the weighted mean of the frames so far); once it is
+    /// warm, empty, meaning pixelsOut itself.
     void reduce(const QVector<float>& binsLinear,
                 double windowEnb,
                 double dbmOffset,
-                QVector<float>& pixelsOut);
+                QVector<float>& pixelsOut,
+                QVector<float>* measurementOut = nullptr);
 
     /// Drop accumulated averaging history. Callers use this on anything
     /// that invalidates the running average: FFT size change, averaging

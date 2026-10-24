@@ -670,6 +670,13 @@ if(TARGET wdsp_static)
     nereus_add_test(tst_tx_analyzer_skirt EXTRA_LABELS core REALTIME)
     target_include_directories(tst_tx_analyzer_skirt PRIVATE ${FFTW3_INCLUDE_DIRS})
     target_compile_definitions(tst_tx_analyzer_skirt PRIVATE WDSP_STATIC_BUILD)
+    # 2026-10-23 (the iPhone S-meter at 3086.5 dBm): a WDSP meter leaves a
+    # non-finite sample out of its average and peak, so a short NaN burst in
+    # a receiver's output never pegs its S-meter readings (meter.c xmeter).
+    nereus_add_test(tst_wdsp_meter_non_finite WdspMeterProbe.c CORE_ONLY EXTRA_LABELS core)
+    set_source_files_properties(WdspMeterProbe.c PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    target_include_directories(tst_wdsp_meter_non_finite PRIVATE ${FFTW3_INCLUDE_DIRS})
+    target_compile_definitions(tst_wdsp_meter_non_finite PRIVATE WDSP_STATIC_BUILD)
 endif()
 
 # ── Issue #75: receiver leak across disconnect/reconnect ──────────────────
@@ -8141,6 +8148,12 @@ nereus_add_test(tst_spectrum_widget_display_signals)
 # and the frequency scale's text size (AetherSDR ports), and that Auto
 # spacing and 10 px text draw what they drew before. Test sandbox.
 nereus_add_test(tst_spectrum_widget_additions)
+
+# -- The GPU spectrum trace and its peak hold sit on their grid line with
+#    the band plan shown and with the 1 Hz normalization on, and a new bin
+#    count redraws the normalized grid. Ported from Longpath PR 100
+#    (tests/tst_spectrum_trace_on_grid.cpp [@383f058]), 2026-10-22 --
+nereus_add_test(tst_spectrum_trace_on_grid)
 
 # Display pill plan Task 3: the waterfall level model under Clarity (Black
 # Level and Color Gain against the noise floor, up = blacker), what the

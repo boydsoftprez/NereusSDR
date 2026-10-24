@@ -8,6 +8,25 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-23  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a
+//                 remote pan's warm-up holds for an NSDC v2 frame whose
+//                 trace was carried (traceCarried) and keeps the start's
+//                 share of the last fresh trace; a pan whose floor has no
+//                 estimate holds for one in any averaging mode.
+//   2026-10-23  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: the
+//                 pan's noise floor measures the trace's average with its
+//                 starting value taken out while it warms up, and not the
+//                 extended view's wing pixels that hold no data or whose
+//                 average still holds a placeholder. A remote pan takes the
+//                 Core's starting value out of a new picture's trace at Log
+//                 Recursive, or holds its estimate until the Core's average
+//                 is warm (noteRemoteTraceWarmUp). A same or moved picture
+//                 during that warm-up holds rather than takes the start out;
+//                 the grid follow and the 3D floor wait for an estimate; and
+//                 the noise floor's fast attack runs again from the end of
+//                 a hold for what its minimum had left when it began.
+//                 NF-AGC's run level takes nothing from rows before the
+//                 floor has an estimate (noiseFloorSeeded).
 //   2026-10-23  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
 //                 a loaded waterfall timestamp starts its one-second
 //                 ticker; a flag that resizes, moves, shows or hides marks
@@ -27,6 +46,13 @@
 //                 row period, the pointer leaving, the front slice, a
 //                 removed flag, the dBm strip arrows, a replaced history)
 //                 and the FPS readout counts frames outside the rebuild.
+//   2026-10-22  The GPU trace and its peak hold sit on their grid: the dBm
+//                 floor is the top of the band plan strip and the 1 Hz
+//                 normalization is added, as dbmToYf() does for the grid.
+//                 Ported from Longpath (Martin Fischer,
+//                 OE5SOS; PR 100, c3ce95bf, src/gui/SpectrumWidget.cpp
+//                 [@383f058]) by J.J. Boyd (KG4VCF), with AI-assisted
+//                 transformation via Claude Code.
 //   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a live
 //                 trace of a remote pan's row clock (starves, re-anchors,
 //                 two-row puts, paint gaps and a 10 s summary), gated on
@@ -638,6 +664,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <utility>
 
 namespace NereusSDR {
@@ -2744,6 +2771,20 @@ void SpectrumWidget::setRemoteSpectrumContext(const SpectrumEndpointContext& con
         && shown.codec.endpointId == context.codec.endpointId;
     m_remoteContextPicture = samePicture ? RemoteContextPicture::Same
         : movedPicture ? RemoteContextPicture::Moved : RemoteContextPicture::New;
+    // PR 628 re-review: a new picture may have started the Core's trace
+    // average again from its starting value; the same or a moved picture
+    // carries on with the average, whose encoder sequence starts again.
+    if (m_remoteContextPicture == RemoteContextPicture::New) {
+        m_remoteTraceStartShare = 1.0;
+        m_remoteTraceTakeStartOut = !m_noiseFloor.seeded();
+    } else if (m_remoteTraceStartShare > 0.0) {
+        // PR 628 round two: the start's share is carried from the last frame
+        // drawn, but the Core may have averaged frames this pan never drew,
+        // so the share is only an upper bound and taking it out would put
+        // the trace too high. The pan holds until the average is warm.
+        m_remoteTraceTakeStartOut = false;
+    }
+    m_remoteTraceStartShareAtContext = m_remoteTraceStartShare;
     if (samePicture) {
         m_remoteCodec = context.codec;
         m_remoteCapture = {context, sourceCentreHz, sampleRateHz};
@@ -2904,6 +2945,7 @@ bool SpectrumWidget::updateRemoteSpectrum(const DisplayCodecFrame& frame,
     } else {
         m_undentedPixels.clear();
     }
+    noteRemoteTraceWarmUp(frame);
     updateReducedSpectrumOverlays();
     // Only accepted encoder frames advance the measurement; duplicate/old
     // frames, waterfall replay and retained captures never advance its EMA.
@@ -5057,14 +5099,119 @@ void SpectrumWidget::setDisplayKeyed(bool keyed, qint64 holdLengthMs, int bandKe
 // Source-first port of Thetis processNoiseFloor — display.cs:5866-5912 [v2.10.3.13],
 // now in core/spectrum/DisplayFollowers (NoiseFloorFollower::process) so the
 // Core runs the same estimate for an app's display.
+void SpectrumWidget::noteRemoteTraceWarmUp(const DisplayCodecFrame& frame)
+{
+    // The Core averages each frame it sends and no other
+    // (SpectrumEndpoint::consume paces before it reduces), and a configure
+    // starts the encoder sequence again at 0, so the frame with sequence n
+    // is the (n + 1)th the average has taken since the context started. In
+    // the recursive modes each takes alpha of the starting value's share
+    // away; the alpha is the one this pan asks for (setAveragingFor in
+    // RemoteMediaController: averageAlphaForTimeMs at the Core's rate),
+    // and the mode the integer this pan asks for (requestFor's plane()).
+    if (frame.traceCarried) {
+        // NSDC v2: the trace is the last decoded one, carried into a frame
+        // whose own trace part was lost, so it is not the Core's average at
+        // this frame's sequence and the start's share cannot be taken out
+        // of it. Inside the warm-up the pan holds for this frame and keeps
+        // the share of the last fresh trace. A pan whose floor has no
+        // estimate yet holds too, in any mode: after a context change the
+        // decoder has no trace to carry and fills the bottom of the codec
+        // range, which would seed the floor there. Otherwise it measures
+        // the trace as any other frame's.
+        if (m_remoteTraceStartShare > 0.0 || !m_noiseFloor.seeded()) {
+            m_noiseFloorMeasurement.fill(std::numeric_limits<float>::quiet_NaN(),
+                                         frame.traceDbm.size());
+            m_noiseFloorMeasurementFresh = true;
+        }
+        return;
+    }
+    const int mode = static_cast<int>(m_spectrumAveraging);
+    if (m_remoteTraceStartShareAtContext <= 0.0 || (mode != 1 && mode != 3)) {
+        m_remoteTraceStartShare = 0.0;
+        return;
+    }
+    const int fps = std::max(1, m_remoteFps > 0 ? m_remoteFps : overlayFrameRate());
+    const double alpha = static_cast<double>(averageAlphaForTimeMs(m_spectrumAverageTimeMs, fps));
+    const double share = m_remoteTraceStartShareAtContext
+        * std::pow(std::clamp(alpha, 0.0, 1.0), static_cast<double>(frame.encoderSequence) + 1.0);
+    m_remoteTraceStartShare = share > SpectrumAvenger::kWarmSeedShare ? share : 0.0;
+    if (m_remoteTraceStartShare <= 0.0) {
+        return;
+    }
+    // Holding: no pixel is a measurement, so the follower keeps what it has.
+    const QVector<float>& trace = frame.traceDbm;
+    m_noiseFloorMeasurement.fill(std::numeric_limits<float>::quiet_NaN(), trace.size());
+    m_noiseFloorMeasurementFresh = true;
+    if (mode != 3 || !m_remoteTraceTakeStartOut) {
+        // Mode 1 averages linear power before the Core's scale, which the
+        // pan does not know, so the start cannot be taken out exactly.
+        return;
+    }
+    // At Log Recursive the trace is s * start + (1 - s) * (the frames'
+    // weighted mean), in the dBm the Core sends (SpectrumAvenger::unseededDb
+    // on the Core's side). A pixel the codec clamped to the bottom of its
+    // range is no measurement, nor is one the undoing puts above the top
+    // (a picture whose trace average had not started again after all).
+    const double minDbm = static_cast<double>(frame.context.minDbm);
+    const double maxDbm = static_cast<double>(frame.context.maxDbm);
+    const double halfStep = 0.5 * (maxDbm - minDbm) / 255.0;
+    // NereusSDR, not in Thetis: the codec rounds each pixel to the nearest
+    // of 256 levels, up to half a step out, and taking the start out
+    // divides that by (1 - s): at 650 ms and 30 fps the first frame's
+    // s is 0.95, which makes a third of a dB six. The pan holds until the
+    // rounding can move an undone pixel by at most this much.
+    constexpr double kMostUndoneRoundingDb = 1.0;
+    if (halfStep > kMostUndoneRoundingDb * (1.0 - share)) {
+        return;
+    }
+    for (int i = 0; i < trace.size(); ++i) {
+        const double dBm = static_cast<double>(trace[i]);
+        if (dBm <= minDbm + halfStep) {
+            continue;
+        }
+        const double undone = (dBm - share * SpectrumAvenger::kLogRecursiveStartDb)
+            / (1.0 - share);
+        if (undone <= maxDbm) {
+            m_noiseFloorMeasurement[i] = static_cast<float>(undone);
+        }
+    }
+}
+
 void SpectrumWidget::processNoiseFloor()
 {
     // The noise floor is a MEASUREMENT, so it reads the undented pixels
     // (design section 8.3).  Upstream does the same: its accumulator takes
     // max_copy from the pristine array while everything else in that loop
     // takes the dented max - display.cs:5256-5259 [v2.10.3.15].
-    const QVector<float>& src = measurementPixels();
+    // While the trace's average warms up from its starting value, or while
+    // an extended view's wing holds no data, the local reduce leaves the row
+    // to measure in m_noiseFloorMeasurement for this frame only (as the
+    // Core's DisplayCodecFrame::measurementDbm).
+    const bool useMeasurement = m_noiseFloorMeasurementFresh
+        && m_noiseFloorMeasurement.size() == measurementPixels().size();
+    m_noiseFloorMeasurementFresh = false;
+    const QVector<float>& src = useMeasurement ? m_noiseFloorMeasurement : measurementPixels();
     if (src.isEmpty()) { return; }
+    // NereusSDR, not in Thetis: a row with no measured pixel (a remote pan
+    // holding while the Core's average warms) changes nothing in the
+    // follower, so fast attack's time would pass while it measures nothing
+    // and it would leave fast attack on the first frame after the hold. From
+    // the end of a hold the fast attack runs for what its minimum had left
+    // when the hold began (all of it for a trigger inside the hold), so a
+    // MOX edge's keeps the hold length it was given.
+    const bool held = useMeasurement
+        && std::none_of(src.cbegin(), src.cend(), [](float dB) { return std::isfinite(dB); });
+    if (held && !m_noiseFloorHeldLastFrame) {
+        m_noiseFloorHoldStartMs = displayNowMs();
+    }
+    if (m_noiseFloorHeldLastFrame && !held
+        && m_noiseFloor.resumeFastAttackAfterHold(m_noiseFloorHoldStartMs, displayNowMs())) {
+        // As applyNoiseFloorFastAttack: the grid's reading is not good.
+        m_gridFollowNfGood = false;
+        if (m_showNoiseFloor) { markOverlayDirty(); }
+    }
+    m_noiseFloorHeldLastFrame = held;
     const int fps = overlayFrameRate();
     if (m_noiseFloor.process(src, fps, displayNowMs())) {
         if (m_showNoiseFloor) { markOverlayDirty(); }
@@ -5077,8 +5224,9 @@ void SpectrumWidget::processNoiseFloor()
     //         m_fNoiseFloorRX1 = m_fLerpAverageRX1 + _fNFshiftDBM;
     //         m_bNoiseFloorGoodRX1 = true;
     //     }
-    // Thetis computes it only while not local_mox.
-    if (!m_moxOverlay && !m_noiseFloor.fastAttack()) {
+    // Thetis computes it only while not local_mox. NereusSDR: nor before a
+    // frame with data has given the follower an estimate (it reads -200).
+    if (!m_moxOverlay && !m_noiseFloor.fastAttack() && m_noiseFloor.seeded()) {
         m_gridFollowNfDbm = m_noiseFloor.lerpAverage() + m_nfShiftDbm;
         m_gridFollowNfGood = true;
     }
@@ -7035,7 +7183,8 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
         // Keep the extracted reducer as the normal display path and as the
         // implementation shared with nereusd.
         m_spectrumReducer.reduce(binsLinear, windowEnb, dbmOffset,
-                                 m_renderedPixels);
+                                 m_renderedPixels, &m_noiseFloorMeasurement);
+        m_noiseFloorMeasurementFresh = !m_noiseFloorMeasurement.isEmpty();
     } else {
         // Extended mode composes the DDC island and the wideband wings in
         // linear power before the common avenger runs.
@@ -7053,7 +7202,8 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
                 invEnb, 0.0, static_cast<double>(sliceCount), 0.0);
         }
         fillWidebandWings(m_extendedSpectrumLinearPixels, islandFirstPx,
-                          islandLastPx, dbmOffset, m_spectrumDetector);
+                          islandLastPx, dbmOffset, m_spectrumDetector,
+                          &m_extendedSpectrumPlaceholder);
         if (cfg.averageMode == SpectrumAvenger::kTimeWindowMode) {
             m_extendedSpectrumAvenger.setNumAverage(cfg.averageFrames);
         }
@@ -7062,6 +7212,46 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
             avengerMode(m_spectrumAveraging),
             static_cast<double>(m_spectrumAverageAlpha), dbmScale,
             noCorrection, false, 0.0, m_renderedPixels);
+        // The row the noise floor measures, as the Core's
+        // ExtendedSpectrumReducer writes it: the average with its starting
+        // value taken out while it warms up, and no data (NaN) at a wing
+        // pixel that had none or whose average still holds a placeholder.
+        const int pixels = static_cast<int>(m_extendedSpectrumPlaceholder.size());
+        if (m_extendedSpectrumFramesWithData.size() != pixels) {
+            m_extendedSpectrumFramesWithData.fill(std::numeric_limits<int>::max(), pixels);
+        }
+        const int averageMode = avengerMode(m_spectrumAveraging);
+        const double averageAlpha = static_cast<double>(m_spectrumAverageAlpha);
+        const int averageFrames = m_extendedSpectrumAvenger.numAverage();
+        const auto pixelWarm = [&](int x) {
+            return SpectrumAvenger::warmAfterFrames(m_extendedSpectrumFramesWithData[x],
+                                                    averageMode, averageAlpha, averageFrames);
+        };
+        bool anyNoData = false;
+        for (int x = 0; x < pixels; ++x) {
+            int& frames = m_extendedSpectrumFramesWithData[x];
+            if (m_extendedSpectrumPlaceholder[x]) {
+                frames = 0;
+            } else if (frames < std::numeric_limits<int>::max()) {
+                ++frames;
+            }
+            anyNoData = anyNoData || !pixelWarm(x);
+        }
+        m_noiseFloorMeasurement.clear();
+        if (m_extendedSpectrumAvenger.warmingUp()) {
+            m_extendedSpectrumAvenger.unseededDb(dbmScale, m_noiseFloorMeasurement);
+        }
+        if (anyNoData && pixels == m_renderedPixels.size()) {
+            if (m_noiseFloorMeasurement.size() != pixels) {
+                m_noiseFloorMeasurement = m_renderedPixels;
+            }
+            for (int x = 0; x < pixels; ++x) {
+                if (!pixelWarm(x)) {
+                    m_noiseFloorMeasurement[x] = std::numeric_limits<float>::quiet_NaN();
+                }
+            }
+        }
+        m_noiseFloorMeasurementFresh = !m_noiseFloorMeasurement.isEmpty();
     }
 
     // FFT-replan crossfade (Option A from the 2026-05-08 design).  For the
@@ -9582,9 +9772,13 @@ std::pair<int, int> SpectrumWidget::listenableIslandPixels(int displayWidth) con
 void SpectrumWidget::fillWidebandWings(QVector<float>& linearPixels,
                                        int islandFirstPx, int islandLastPx,
                                        double dbmOffset,
-                                       SpectrumDetector detector) const
+                                       SpectrumDetector detector,
+                                       QVector<bool>* placeholder) const
 {
     const int width = static_cast<int>(linearPixels.size());
+    if (placeholder) {
+        placeholder->fill(false, std::max(width, 0));
+    }
     if (width <= 0 || m_bandwidthHz <= 0.0) {
         return;
     }
@@ -9628,6 +9822,7 @@ void SpectrumWidget::fillWidebandWings(QVector<float>& linearPixels,
         }
         if (!haveBins) {
             linearPixels[x] = static_cast<float>(floorLinear);
+            if (placeholder) { (*placeholder)[x] = true; }
             continue;
         }
 
@@ -9645,6 +9840,7 @@ void SpectrumWidget::fillWidebandWings(QVector<float>& linearPixels,
             // no wideband data to show there, so say so rather than smear
             // the nearest bin across it.
             linearPixels[x] = static_cast<float>(floorLinear);
+            if (placeholder) { (*placeholder)[x] = true; }
             continue;
         }
 
@@ -9941,6 +10137,7 @@ void SpectrumWidget::composeWaterfallActiveThresholds(const QVector<float>& wfPi
     // (core/session/media/DisplayExtras.cpp).
     settings.noiseFloorDbm = m_noiseFloor.lerpAverage() + displayCalOffsetDb();
     settings.noiseFloorSettled = m_noiseFloor.settled();
+    settings.noiseFloorSeeded = m_noiseFloor.seeded();
     settings.clarityActive = m_clarityActive;
     m_wfLevels.compose(wfPixelsDbm, settings,
                        m_wfActiveLowThreshold, m_wfActiveHighThreshold,
@@ -10198,7 +10395,11 @@ float SpectrumWidget::dssFloorDbm() const
     // same quantity NoiseFloorTracker::noiseFloor() exposes (both are the
     // Thetis display.cs:4628 lerp average). m_nfFftBinAverage is the
     // per-frame value and would make the surface jitter every frame.
-    return m_noiseFloor.lerpAverage() - static_cast<float>(m_dssFloorDepth);
+    // NereusSDR: before a frame with data has given the follower an
+    // estimate (it reads -200 dBm), the bottom of the dBm range stands in.
+    const float floorDbm = m_noiseFloor.seeded() ? m_noiseFloor.lerpAverage()
+                                                 : m_refLevel - m_dynamicRange;
+    return floorDbm - static_cast<float>(m_dssFloorDepth);
 }
 
 float SpectrumWidget::dssSpanDb() const
@@ -15493,9 +15694,43 @@ void SpectrumWidget::initialize(QRhiCommandBuffer* cb)
     m_rhiInitialized = true;
 }
 
+// The GPU trace's dBm floor in the spectrum viewport's normalized device
+// coordinates (-1 bottom, +1 top), and the dB it adds to every value: the
+// same floor and shift dbmToYf() gives the grid, the dBm scale and every
+// overlay, so the trace sits on its grid with the band plan shown and with
+// the 1 Hz normalization on.
+// From Longpath src/gui/SpectrumWidget.cpp:11648-11665 [@383f058]
+float SpectrumWidget::fftTraceFloorNdc(const QRect& specRect) const
+{
+    const float yBot = -1.0f;
+    // Boden der dBm-Achse: wie dbmToYf die OBERKANTE des Bandplan-
+    // Streifens, nicht der Rand des Bereichs. Bis 2026-09-25 rechnete
+    // die GPU-Kurve ueber die volle Hoehe, Gitter und Ueberlagerungen
+    // ohne den Streifen -- mit Bandplan lag die Kurve am Rauschboden
+    // um fast die Streifenhoehe zu tief (tst_spectrum_trace_on_grid).
+    // Die Fuellung reicht weiter bis yBot, wie im CPU-Pfad bis
+    // specRect.bottom().
+    const float stripFrac = (specRect.height() > 0)
+        ? static_cast<float>(bandPlanStripHeight()) / static_cast<float>(specRect.height())
+        : 0.0f;
+    return yBot + 2.0f * qBound(0.0f, stripFrac, 1.0f);
+}
+
+float SpectrumWidget::fftTraceShiftDb() const
+{
+    // Kalibrierung UND 1-Hz-Normierung, wie dbmToYf -- die Normierung
+    // fehlte hier, Gitter und Ueberlagerungen hatten sie schon.
+    // [original inline comment from Longpath src/gui/SpectrumWidget.cpp:11663-11664]
+    // NereusSDR: the calibration is displayCalOffsetDb(), as dbmToYf takes it.
+    return displayCalOffsetDb() + normalizeShiftDb();
+}
+
 // The trace and fill vertices renderGpuFrame() uploads, moved out of it
-// unchanged (Display pill plan Task 5) apart from the two colours below.
-void SpectrumWidget::buildFftTraceVertices(int n, bool buildFill,
+// (Display pill plan Task 5). Since then the two colors below follow the
+// trace and fill colours, and the dBm floor and shift are the grid's
+// (Longpath PR 100): yFloor is fftTraceFloorNdc() of the spectrum area,
+// computed once per frame by the caller and shared with the peak hold.
+void SpectrumWidget::buildFftTraceVertices(int n, float yFloor, bool buildFill,
                                            QVector<float>& lineVerts,
                                            QVector<float>& fillVerts) const
 {
@@ -15505,7 +15740,8 @@ void SpectrumWidget::buildFftTraceVertices(int n, bool buildFill,
     const float yTop = 1.0f;
 
     const float fa = m_fillAlpha;
-    const float cal = displayCalOffsetDb();
+    // From Longpath src/gui/SpectrumWidget.cpp:11665 [@383f058]
+    const float cal = fftTraceShiftDb();
 
     // Flat-mode colour picked from m_fillColor.
     const float flatR = m_fillColor.redF();
@@ -15536,7 +15772,8 @@ void SpectrumWidget::buildFftTraceVertices(int n, bool buildFill,
     for (int j = 0; j < n; ++j) {
         float x = (n > 1) ? 2.0f * j / (n - 1) - 1.0f : 0.0f;
         float t = qBound(0.0f, ((m_renderedPixels[j] + cal) - minDbm) / range, 1.0f);
-        float y = yBot + t * (yTop - yBot);
+        // From Longpath src/gui/SpectrumWidget.cpp:11753 [@383f058]
+        float y = yFloor + t * (yTop - yFloor);
 
         float cr, cg, cb2;
         if (m_gradientEnabled) {
@@ -15588,6 +15825,39 @@ void SpectrumWidget::buildFftTraceVertices(int n, bool buildFill,
     }
 }
 
+// The peak hold line's vertices renderGpuFrame() uploads, moved out of it
+// so a test can read them; on the same floor (yFloor, fftTraceFloorNdc())
+// and shift as the trace.
+void SpectrumWidget::buildFftPeakVertices(int n, float yFloor,
+                                          QVector<float>& peakVerts) const
+{
+    const float minDbm = m_refLevel - m_dynamicRange;
+    const float range  = m_dynamicRange;
+    const float yTop = 1.0f;
+    // From Longpath src/gui/SpectrumWidget.cpp:11660-11665 [@383f058]
+    const float cal = fftTraceShiftDb();
+
+    // Flat-mode colour picked from m_fillColor.
+    const float flatR = m_fillColor.redF();
+    const float flatG = m_fillColor.greenF();
+    const float flatB = m_fillColor.blueF();
+
+    peakVerts.resize(n * kFftVertStride);
+    for (int j = 0; j < n; ++j) {
+        float x = (n > 1) ? 2.0f * j / (n - 1) - 1.0f : 0.0f;
+        float t = qBound(0.0f, ((m_pxPeakHold[j] + cal) - minDbm) / range, 1.0f);
+        // From Longpath src/gui/SpectrumWidget.cpp:11894 [@383f058]
+        float y = yFloor + t * (yTop - yFloor);
+        int li = j * kFftVertStride;
+        peakVerts[li]     = x;
+        peakVerts[li + 1] = y;
+        peakVerts[li + 2] = flatR;
+        peakVerts[li + 3] = flatG;
+        peakVerts[li + 4] = flatB;
+        peakVerts[li + 5] = 0.55f;
+    }
+}
+
 QVector<float> SpectrumWidget::fftTraceRibbonForTest(float viewportWidthPx,
                                                      float viewportHeightPx,
                                                      float devicePixelRatio) const
@@ -15595,7 +15865,8 @@ QVector<float> SpectrumWidget::fftTraceRibbonForTest(float viewportWidthPx,
     const int n = static_cast<int>(qMin<qsizetype>(m_renderedPixels.size(), kMaxFftBins));
     QVector<float> lineVerts;
     QVector<float> fillVerts;
-    buildFftTraceVertices(n, false, lineVerts, fillVerts);
+    buildFftTraceVertices(n, fftTraceFloorNdc(spectrumLayout().spectrum), false,
+                          lineVerts, fillVerts);
     QVector<float> ribbon;
     buildSpectrumTraceRibbon(lineVerts, n, kFftVertStride, viewportWidthPx, viewportHeightPx,
                              m_lineWidth * devicePixelRatio, ribbon);
@@ -16346,24 +16617,18 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
     if (trace.writeLine) {
         const int n = qMin(m_renderedPixels.size(), kMaxFftBins);
         m_visibleBinCount = n;
-        const float minDbm = m_refLevel - m_dynamicRange;
-        const float range  = m_dynamicRange;
-        const float yBot = -1.0f;
-        const float yTop = 1.0f;
-
-        const float cal = displayCalOffsetDb();
-
-        // Flat-mode colour picked from m_fillColor.
-        const float flatR = m_fillColor.redF();
-        const float flatG = m_fillColor.greenF();
-        const float flatB = m_fillColor.blueF();
 
         // Display pill plan Task 5: the loop that was here is
         // buildFftTraceVertices(), so a test can read what is uploaded.
         QVector<float> lineVerts;
         const bool buildFill = trace.writeFill;
         QVector<float> fillVerts;
-        buildFftTraceVertices(n, buildFill, lineVerts, fillVerts);
+        // The trace's dBm floor, once per frame for the trace and the peak
+        // hold (it measures the band plan strip's font).
+        // From Longpath src/gui/SpectrumWidget.cpp:11660 [@383f058]: the floor
+        // (yFloor) is the top of the band plan strip; the fill still reaches yBot.
+        const float traceFloorNdc = fftTraceFloorNdc(specRect);
+        buildFftTraceVertices(n, traceFloorNdc, buildFill, lineVerts, fillVerts);
 
         // The live trace goes up as geometry of its line width, in device
         // pixels of the spectrum viewport the line pass below draws in.
@@ -16392,19 +16657,8 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
         // m_peakHoldHasData.  Per-display-pixel array (m_pxPeakHold) is
         // sized to m_renderedPixels in updateSpectrumLinear.
         if (trace.writePeak) {
-            QVector<float> peakVerts(n * kFftVertStride);
-            for (int j = 0; j < n; ++j) {
-                float x = (n > 1) ? 2.0f * j / (n - 1) - 1.0f : 0.0f;
-                float t = qBound(0.0f, ((m_pxPeakHold[j] + cal) - minDbm) / range, 1.0f);
-                float y = yBot + t * (yTop - yBot);
-                int li = j * kFftVertStride;
-                peakVerts[li]     = x;
-                peakVerts[li + 1] = y;
-                peakVerts[li + 2] = flatR;
-                peakVerts[li + 3] = flatG;
-                peakVerts[li + 4] = flatB;
-                peakVerts[li + 5] = 0.55f;
-            }
+            QVector<float> peakVerts;
+            buildFftPeakVertices(n, traceFloorNdc, peakVerts);
             batch->updateDynamicBuffer(m_fftPeakVbo, 0,
                 n * kFftVertStride * sizeof(float), peakVerts.constData());
         }
