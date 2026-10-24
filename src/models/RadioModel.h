@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24 - Roundtable plan Task 11: roundtableState() (the link's
+//                `roundtable` object) and roundtableModel() (what the
+//                Roundtable screens bind to), in every placement.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-10-24 - Roundtable plan Task 10 (R-RT-12): roundtableClient(), the
 //                Core's Roundtable connection on a model that runs its own
 //                radio, fed its slices, meters, keying, key and at radio
@@ -966,6 +971,8 @@ class StationPgxlController;
 class StationRfKitController;
 class StationRotorController;
 namespace RotorLink { class RotorModel; }
+class RoundtableState;
+class RoundtableModel;
 class StationTciController;
 class StationTciModel;
 class StationCatController;
@@ -3652,6 +3659,13 @@ public:
     // on a model that runs its own radio (a Core, an Everything desktop);
     // null in a remote window.
     RoundtableClient*     roundtableClient()    const { return m_roundtable.get(); }
+    // Roundtable plan Task 11: the `roundtable` object (bound to the
+    // client on a model that runs its own radio, the Core's values in a
+    // remote window) and the model the Roundtable screens bind to (fed by
+    // the client here, by StationClient in a remote window). Non-null from
+    // construction; Qt children.
+    RoundtableState*      roundtableState()     const { return m_roundtableState; }
+    RoundtableModel*      roundtableModel()     const { return m_roundtableModel; }
 
     /// Parity Task 19 (R-IOS-25): a remote window applies the Core's
     /// `spots` stream (the Core's cluster, RBN, POTA and PSK Reporter
@@ -9004,6 +9018,9 @@ private:
     StationRotorController* m_stationRotor{nullptr};
     // Rotor control plan Task 4b: see rotorModel(); Qt child.
     RotorLink::RotorModel*  m_rotorModel{nullptr};
+    // Roundtable plan Task 11: see roundtableState(), roundtableModel().
+    RoundtableState*        m_roundtableState{nullptr};
+    RoundtableModel*        m_roundtableModel{nullptr};
     // Rotor control plan Task 6: see lastRotorCommandId().
     quint32 m_lastRotorCommandId{0};
     // Final review I3: the open rotor setup views, and (on a remote Core)

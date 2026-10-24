@@ -1,0 +1,198 @@
+#pragma once
+// no-port-check: NereusSDR-original.
+// =================================================================
+// src/models/RoundtableModel.h  (NereusSDR)
+// =================================================================
+//
+// What the Roundtable screens bind to, the same in every placement
+// (design 10.3):
+//
+//   Everything (a desktop running its own radio, and the Core itself):
+//     attachLocal() feeds it from the Core's RoundtableClient (the band
+//     list and room views as the server sends them) and sends its actions
+//     to the Core's RoundtableState.
+//   A window of a Core: attachStation() sends its actions as the
+//     roundtable.* verbs; StationClient feeds it the `roundtableRooms` and
+//     `roundtableRoom:<id>` record streams (applyRecordBatch) and the
+//     verbs' answers.
+//
+// Either way the `roundtable` object (RoundtableState: the link state,
+// first-run answer, Hide my station, mention counts and slice rooms) is
+// read from the RoundtableState it is given.
+//
+// rooms() is the band list's summaries in ascending order of center
+// frequency. room() is one room in view: {id, band, family, hz, members
+// (joining order), now (open turns, oldest first), earlier (ended turns,
+// newest first), messages (the last 50, oldest first)}; each turn's names
+// are listed by count, highest first, then by name. The Core builds the
+// streams from the same two readers (roomsRecords, roomRecords), so both
+// placements hold equal rooms.
+//
+// =================================================================
+// Modification history (NereusSDR):
+//   2026-10-24: original implementation for NereusSDR by J.J. Boyd
+//               (KG4VCF), with AI-assisted implementation via Anthropic
+//               Claude Code (Roundtable plan Task 11).
+// =================================================================
+
+#include "core/NereusCoreExport.h"
+#include "core/roundtable/RoundtableClient.h"
+
+#include <QHash>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QMetaObject>
+#include <QObject>
+#include <QPointer>
+#include <QString>
+#include <QUrl>
+
+namespace NereusSDR {
+
+class IStationLink;
+class RoundtableState;
+struct RecordBatch;
+
+class NEREUS_CORE_EXPORT RoundtableModel : public QObject {
+    Q_OBJECT
+
+public:
+    using LinkState = RoundtableClient::LinkState;
+
+    /// The link's streams (design 10.3).
+    static constexpr const char* kRoomsStream = "roundtableRooms";
+    static constexpr const char* kRoomStreamPrefix = "roundtableRoom:";
+    static constexpr int kRoomsCapacity = 500;
+    static constexpr int kRoomCapacity = 400;
+    /// Wire spec 5.4.5: a room view holds the last 50 messages.
+    static constexpr int kRoomMessages = 50;
+
+    static QString roomStreamName(const QString& roomId);
+    /// The room id of a `roundtableRoom:<id>` stream, else empty.
+    static QString roomIdOfStream(const QString& stream);
+    /// The `roundtableRooms` records for rooms(): id the room id, fields
+    /// {kind: "room", ...summary}.
+    static QHash<QString, QJsonObject> roomsRecords(const QJsonArray& rooms);
+    /// The `roundtableRoom:<id>` records for room(): member:<ref>,
+    /// reading:<ref>, turn:<id>, name:<turn id>:<name> and message:<id>.
+    static QHash<QString, QJsonObject> roomRecords(const QJsonObject& room);
+
+    explicit RoundtableModel(QObject* parent = nullptr);
+    ~RoundtableModel() override;
+
+    /// Everything placement: fed by `client`, actions to `state` (the
+    /// Core's, bound to the same client). Neither is owned.
+    void attachLocal(RoundtableClient* client, RoundtableState* state);
+    /// Window placement: actions as the roundtable.* verbs over `link`,
+    /// the `roundtable` object in `state`. Neither is owned.
+    void attachStation(IStationLink* link, RoundtableState* state);
+    /// Neither: no rooms, actions refused.
+    void detach();
+
+    // ---- The server's views (Everything placement; public for tests).
+    void applyRooms(const QJsonObject& full);
+    void applyRoomsDelta(const QJsonObject& delta);
+    void applyRoom(const QJsonObject& full);
+    void applyRoomDelta(const QJsonObject& delta);
+
+    // ---- The Core's streams and answers (window placement).
+    /// One `roundtableRooms` or `roundtableRoom:<id>` batch; other streams
+    /// are ignored (false).
+    bool applyRecordBatch(const RecordBatch& batch);
+    void applyPostResult(const QString& clientId, bool ok, const QString& messageIdOrReason);
+    void applyWebLink(const QUrl& url);
+    /// A verb the Core refused (other than a post, which answers through
+    /// postResult).
+    void applyRefusal(const QString& verb, const QString& reason);
+    /// The window's link ended: no rooms in view.
+    void clearStationRooms();
+
+    // ---- Readers.
+    QJsonArray rooms() const;
+    /// Empty when the room is not in view.
+    QJsonObject room(const QString& roomId) const;
+    QStringList viewedRoomIds() const;
+    QString sliceRoomId(int sliceId) const;
+    /// The room this window reads (readRoom), or empty.
+    QString readingRoomId() const { return m_readingRoomId; }
+    LinkState linkState() const;
+    qint64 linkSince() const;
+    bool firstRunAnswered() const;
+    bool hidden() const;
+    int mentionCount(const QString& roomId) const;
+    bool muted(const QString& callsign) const;
+    /// What this window has typed in a room's box (not kept).
+    QString draft(const QString& roomId) const { return m_drafts.value(roomId); }
+    void setDraft(const QString& roomId, const QString& text);
+
+    // ---- Actions (the verbs). A refusal arrives as actionRefused, a
+    // post's answer as postResult, the web sign-in link as webLinkReady.
+    void post(const QString& roomId, const QString& text, const QString& clientId);
+    void deleteMessage(const QString& messageId);
+    void nameTurn(const QString& turnId, const QString& name);
+    void report(const QString& kind, const QString& target, const QString& reason);
+    void readRoom(const QString& roomId);
+    /// Stops reading the room readRoom() opened.
+    void unreadRoom();
+    void setHidden(bool hidden);
+    void answerFirstRun(bool live);
+    void mute(const QString& callsign);
+    void unmute(const QString& callsign);
+    void markMentionRead(qint64 upToMs);
+    void requestWebLink();
+    void deleteArchive(const QString& confirm);
+
+signals:
+    void roomsChanged();
+    void roomChanged(const QString& roomId);
+    void linkChanged();
+    void firstRunChanged();
+    void mentionsChanged();
+    void sliceRoomsChanged();
+    void readingRoomChanged();
+    void postResult(const QString& clientId, bool ok, const QString& messageIdOrReason);
+    void webLinkReady(const QUrl& url);
+    /// `verb` is the roundtable.* verb's name after the dot ("delete").
+    void actionRefused(const QString& verb, const QString& reason);
+
+private:
+    struct RoomView {
+        QHash<QString, QJsonObject> members;   // ref to member, with "seq"
+        qint64 nextSeq = 0;
+        QHash<qint64, QJsonObject> turns;      // id to turn
+        QHash<qint64, QJsonObject> messages;   // id to message
+    };
+
+    void connectState(RoundtableState* state);
+    void onStateChanged();
+    void upsertMember(RoomView& view, const QJsonObject& member);
+    void trimMessages(RoomView& view);
+    void rebuildRoomsFromRecords();
+    void rebuildRoomFromRecords(const QString& roomId);
+    void pushRoomsToState();
+    void refuse(const QString& verb, const QString& reason);
+    bool stationOutcome(const QString& verb, bool sent, const QString& reason);
+
+    QPointer<RoundtableClient> m_client;
+    QPointer<RoundtableState> m_state;
+    IStationLink* m_link = nullptr;
+    QList<QMetaObject::Connection> m_connections;
+
+    QHash<QString, QJsonObject> m_summaries;
+    QHash<QString, RoomView> m_views;
+    // Window placement: each stream's records as the Core sent them.
+    QHash<QString, QHash<QString, QJsonObject>> m_records;
+
+    QString m_readingRoomId;
+    QHash<QString, QString> m_drafts;
+
+    // The `roundtable` object as last seen, for the change signals.
+    LinkState m_seenLinkState = LinkState::Off;
+    qint64 m_seenLinkSince = 0;
+    bool m_seenFirstRun = false;
+    bool m_seenHidden = false;
+    QString m_seenMentions;
+    QString m_seenSliceRooms;
+};
+
+} // namespace NereusSDR

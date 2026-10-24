@@ -1247,6 +1247,8 @@ set(CORE_SOURCES
     src/core/roundtable/RoundtableWire.cpp
     src/core/roundtable/RoundtableSignalFloor.cpp
     src/core/roundtable/RoundtableClient.cpp
+    # Roundtable plan Task 11: the link's `roundtable` object.
+    src/core/roundtable/RoundtableState.cpp
     # Parity Task 19 (R-IOS-25): starts and stops the spot sources, locally
     # and on the Core, and is the mirrored `spotSources` object.
     src/core/SpotSourceHost.cpp
@@ -1286,6 +1288,7 @@ set(CORE_SOURCES
     src/models/RfKitModel.cpp
     src/models/StationTciModel.cpp
     src/models/RotorModel.cpp
+    src/models/RoundtableModel.cpp
     src/models/SpotBeamTurner.cpp
     src/models/StationCatModel.cpp
     # Phase 3P-II Phase 4 (Advanced UI + helpers)

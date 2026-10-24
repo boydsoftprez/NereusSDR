@@ -9749,6 +9749,18 @@ nereus_add_test(tst_roundtable_signal_floor)
 nereus_add_test(tst_roundtable_client)
 target_compile_definitions(tst_roundtable_client PRIVATE
     NEREUS_ROUNDTABLE_CONFORMANCE_DIR="${CMAKE_SOURCE_DIR}/roundtable/conformance/v1")
+# Roundtable plan Task 11: RoundtableModel holds the same rooms fed from the
+# Core's own client (Everything) and from the Core's record streams (a
+# window), and sends a window's actions over the link.
+nereus_add_test(tst_roundtable_model)
+# Roundtable plan Task 11: Roundtable on the station link: the
+# stationRoundtableVersion capability and `roundtable` object only for a
+# peer that declared roundtable, the thirteen verbs, the room streams and
+# their sweep, and two remote windows sharing the Core's answers. A fake
+# server is never reached; the Core's client is fed its views directly.
+nereus_add_test(tst_station_roundtable_link
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
 # Parity Task 19 (R-IOS-25, B7.1, B7.2): the Core's spots, consoles and
 # sources in a remote window over the loopback, and the Spot Hub's Core
 # settings in a real remote window. No RF, no audio device.

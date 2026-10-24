@@ -575,6 +575,11 @@
             "value": 1
         },
         {
+            "kind": "i64",
+            "name": "stationRoundtableVersion",
+            "value": 1
+        },
+        {
             "kind": "utf8",
             "name": "coreBuildInfo",
             "value": "{\"productVersion\":\"0.5.2\",\"sourceTag\":\"link-surface@fixture\"}"
@@ -1870,6 +1875,195 @@
             "capabilityVersion": 1,
             "minMinor": 11,
             "verb": "refreshRotorPorts"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "roomId",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "text",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "clientId",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "roundtable.post"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "messageId",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "roundtable.delete"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "turnId",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "name",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "roundtable.name"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "kind",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "target",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "reason",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "roundtable.report"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "roomId",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "roundtable.read"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "roomId",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "roundtable.unread"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "bool",
+                    "name": "hidden",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "roundtable.setHidden"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "bool",
+                    "name": "live",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "roundtable.answerFirstRun"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "callsign",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "roundtable.mute"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "callsign",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "roundtable.unmute"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
+                    "name": "upToMs",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "roundtable.markMentionRead"
+        },
+        {
+            "arguments": [
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "roundtable.webSignIn"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "confirm",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "roundtable.deleteArchive"
         },
         {
             "arguments": [
@@ -6197,6 +6391,54 @@
                 }
             ]
         },
+        "RoundtableState": {
+            "properties": [
+                {
+                    "direction": "outbound",
+                    "enumValues": [
+                        0,
+                        1,
+                        2,
+                        3,
+                        4,
+                        5
+                    ],
+                    "kind": "enum",
+                    "name": "linkState",
+                    "ordinal": 0
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "i64",
+                    "name": "linkSince",
+                    "ordinal": 1
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "bool",
+                    "name": "firstRunAnswered",
+                    "ordinal": 2
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "bool",
+                    "name": "hidden",
+                    "ordinal": 3
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "mentionCounts",
+                    "ordinal": 4
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "sliceRooms",
+                    "ordinal": 5
+                }
+            ]
+        },
         "SetupDescription": {
             "properties": [
                 {
@@ -9163,6 +9405,10 @@
             "key": "rotor"
         },
         {
+            "class": "RoundtableState",
+            "key": "roundtable"
+        },
+        {
             "class": "StationDevicesFacade",
             "key": "devices"
         },
@@ -9256,6 +9502,14 @@
             {
                 "key": "FreeDvReporter/FrequencyAsKhz",
                 "scope": "operatorLocal"
+            },
+            {
+                "key": "Roundtable/EarlierTurnsShown",
+                "scope": "operatorLocal"
+            },
+            {
+                "key": "Roundtable/PanelOpensOn",
+                "scope": "operatorLocal"
             }
         ],
         "operatorLocalKeys": [
@@ -9335,6 +9589,7 @@
             "Pota",
             "PskReporter",
             "FreeDv",
+            "Roundtable",
             "User/",
             "Notch",
             "DspOptions",

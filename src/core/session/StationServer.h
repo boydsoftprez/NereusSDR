@@ -181,6 +181,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24: Roundtable plan Task 11: stationRoundtableVersion(),
+//               peerGetsRoundtable(), the `roundtable` object, the
+//               roundtableRooms and roundtableRoom:<id> streams and the
+//               roundtable.* verbs. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-22: peerReadsRxOnlyPairs: RX-only antennas 0..5 for a peer
 //               that declared radioAntennaRows 2. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
@@ -1121,6 +1126,11 @@ public:
     // commands): a peer at minor 11 that declared stationCat 1, on a Core
     // that runs CAT.
     bool peerGetsStationCat(SessionTransport* transport) const;
+    // Roundtable plan Task 11: whether `transport` gets the Core's
+    // Roundtable (the `roundtable` object, the roundtableRooms and
+    // roundtableRoom:<id> streams and the roundtable.* verbs): a peer at
+    // minor 11 that declared roundtable 1, on a Core that runs Roundtable.
+    bool peerGetsRoundtable(SessionTransport* transport) const;
     /// ...and every other peer gets today's `stationTci`: those settings
     /// taken out of its schema, snapshot and deltas (a delta of only them is
     /// not sent: false).
@@ -1436,6 +1446,13 @@ public:
     int stationTciVersion() const;
     // CAT setup from a connected desktop: 1 on a Core that runs CAT.
     int stationCatVersion() const;
+    // Roundtable plan Task 11: 1 on a Core that runs Roundtable (its own
+    // radio model's RoundtableClient) and keeps its streams.
+    int stationRoundtableVersion() const { return m_roundtableOn ? 1 : 0; }
+    /// Roundtable plan Task 11: the room streams' sweep as if `msLater`
+    /// had passed (a stream no slice is in and no device read for 10
+    /// minutes goes).
+    void sweepRoundtableStreamsForTest(qint64 msLater) { sweepRoundtableStreams(msLater); }
     // R-R3-47 / R-R3-22: accessoryDataVersion. 2 on a Core that owns its
     // accessories (the `accessoryData` object and the setTxInterlockPolicy,
     // setPgxlPowerCap and clearAccessoryFaults verbs; from 2 the RF-Kit's
@@ -1894,6 +1911,17 @@ private:
     // connection's cfcParaEqData write.
     void handleCfcProfileCommand(SessionTransport* transport, const SessionMessage& message);
     void handleRecordsCommand(SessionTransport* transport, const SessionMessage& message);
+    // Roundtable plan Task 11: the streams, kept from the Core's
+    // RoundtableModel, and the verbs, answered for the asking connection.
+    void setUpRoundtable();
+    void handleRoundtableCommand(SessionTransport* transport, const SessionMessage& message);
+    void syncRoundtableStream(const QString& stream, const QHash<QString, QJsonObject>& records);
+    RecordStream* ensureRoundtableRoomStream(const QString& roomId);
+    void ensureRoundtableSliceRooms();
+    void sweepRoundtableStreams(qint64 msLater = 0);
+    void dropRoundtableReader(SessionTransport* transport, const QString& roomId);
+    void answerRoundtablePending(const QString& key, bool accepted, const QString& reason,
+                                 const QList<MirrorUpdate>& values);
     void scheduleRecordFlush();
     void flushRecordStreams();
     // Parity Task 33: the CFC display read every 50 ms while it is wanted.
@@ -2787,6 +2815,25 @@ private:
     quint64 m_consoleLineId = 0;
     // CAT setup from a connected desktop: the `catLog` records' ids.
     quint64 m_catLogLineId = 0;
+    // Roundtable plan Task 11: whether this Core shares Roundtable; each
+    // stream's records as last sent (to send only what changed); the
+    // connections reading each room; when each room stream was last
+    // needed (a slice in the room, or a reader), on m_roundtableClock; the
+    // sweep; and the answers that come later (a post, by its clientId; a
+    // web sign-in, by "weblink:<n>").
+    struct RoundtablePending {
+        SessionTransport* transport = nullptr;
+        QByteArray verb;
+        quint32 commandId = 0;
+    };
+    bool m_roundtableOn = false;
+    QHash<QString, QHash<QString, QJsonObject>> m_roundtableRecords;
+    QHash<QString, QSet<SessionTransport*>> m_roundtableReaders;
+    QHash<QString, qint64> m_roundtableNeededMs;
+    QElapsedTimer m_roundtableClock;
+    QTimer* m_roundtableSweepTimer = nullptr;
+    QHash<QString, RoundtablePending> m_roundtablePending;
+    quint64 m_roundtableWebLinkSerial = 0;
     QTimer* m_recordFlushTimer = nullptr;
     // Parity Task 22: the log sink's last line put in `coreLog`, the pull
     // that runs while it has a subscriber, the newest telemetry this Core

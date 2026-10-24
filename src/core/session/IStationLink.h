@@ -256,6 +256,10 @@
 //   2026-10-08  J.J. Boyd / KG4VCF  Final review I3:
 //                                    requestRefreshRotorPorts. AI-assisted
 //                                    via Anthropic Claude Code.
+//   2026-10-24  J.J. Boyd / KG4VCF  Roundtable plan Task 11:
+//                                    roundtableAvailable and the thirteen
+//                                    roundtable.* requests. AI-assisted via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 #include <QString>
@@ -550,6 +554,44 @@ public:
     /// its serial ports and looks for rotctld now and for the next 30 s.
     virtual CommandOutcome requestRefreshRotorPorts()
     { return { false, rotorUnavailableReason() }; }
+
+    /// Roundtable plan Task 11 (stationRoundtableVersion 1, to a peer whose
+    /// hello declared roundtable 1): the Core's Roundtable connection. The
+    /// `roundtable` object says how it is; the roundtableRooms and
+    /// roundtableRoom:<id> streams carry the rooms; these send the
+    /// roundtable.* verbs. A post's answer arrives later
+    /// (RoundtableModel::postResult), as does the web sign-in link.
+    virtual bool roundtableAvailable() const { return false; }
+    static QString roundtableUnavailableReason()
+    { return QStringLiteral("This Core cannot share Roundtable with this app. Updating the Core may help."); }
+    virtual CommandOutcome requestRoundtablePost(const QString& /*roomId*/, const QString& /*text*/,
+                                                 const QString& /*clientId*/)
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableDelete(const QString& /*messageId*/)
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableName(const QString& /*turnId*/, const QString& /*name*/)
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableReport(const QString& /*kind*/, const QString& /*target*/,
+                                                   const QString& /*reason*/)
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableRead(const QString& /*roomId*/)
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableUnread(const QString& /*roomId*/)
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableSetHidden(bool)
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableAnswerFirstRun(bool /*live*/)
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableMute(const QString& /*callsign*/)
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableUnmute(const QString& /*callsign*/)
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableMarkMentionRead(qint64 /*upToMs*/)
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableWebSignIn()
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableDeleteArchive(const QString& /*confirm*/)
+    { return { false, roundtableUnavailableReason() }; }
 
     /// R-R3-47 / R-R3-22 (remotePgxlControlVersion 3): the Core sends the
     /// Power Genius's own settings (name, hardware, network, Save & Reboot,

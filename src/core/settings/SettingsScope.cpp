@@ -192,6 +192,10 @@
 //   2026-10-15 - RemoteRigctld/ is OperatorLocal: a remote window's own
 //                rigctld. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-24 - Roundtable plan Task 11: Roundtable/ is the Core's
+//                (Station); Roundtable/EarlierTurnsShown and
+//                Roundtable/PanelOpensOn stay each window's. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/settings/SettingsScope.h"
@@ -301,6 +305,13 @@ const Rule kExceptions[] = {
     { "FreeDvReporter/DistanceMiles", SettingsScope::OperatorLocal },
     { "FreeDvReporter/DirectionAsCardinal", SettingsScope::OperatorLocal },
     { "FreeDvReporter/FrequencyAsKhz", SettingsScope::OperatorLocal },
+
+    // Roundtable plan Task 11 (design 10.3): how many earlier turns a
+    // Roundtable panel shows and what it opens on are each window's own
+    // preferences; every other Roundtable/ key is the Core's (prefix rule
+    // below).
+    { "Roundtable/EarlierTurnsShown", SettingsScope::OperatorLocal },
+    { "Roundtable/PanelOpensOn", SettingsScope::OperatorLocal },
 };
 
 // ---- 2. Prefixes ---------------------------------------------------------
@@ -439,6 +450,12 @@ const Rule kPrefixes[] = {
     { "Pota", SettingsScope::Station },
     { "PskReporter", SettingsScope::Station },
     { "FreeDv", SettingsScope::Station }, // FreeDvReporter/* and FreeDvSpot*
+    // Roundtable plan Task 11 (design 10.1, 10.3): the Core runs Roundtable
+    // and keeps its settings (Roundtable/AutoStart, AwayChoice,
+    // HighlightMentions, Callsign, GridSquare, FirstRunAnswer, Hidden,
+    // MuteList, MentionsSeenMs), so every device on the station sees the
+    // same (U5, U6).
+    { "Roundtable", SettingsScope::Station },
     // Parity Task 19 (R-IOS-25; remote design section 6.4): WSJT-X and
     // SpotCollector listen for programs on the computer they run on, so
     // each window runs its own and keeps its own settings (addresses,

@@ -17,6 +17,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24 - Roundtable plan Task 11: the `roundtable` object
+//                (RoundtableState) bound to the client with the Core's
+//                Roundtable/* answers, told the slices, and the
+//                RoundtableModel fed from the client. NereusSDR-original.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-24 - Roundtable plan Task 10 (R-RT-12): a model that runs its
 //                own radio owns the RoundtableClient and hands it to
 //                SpotSourceHost; its slices (active first, the keyed one
@@ -1723,6 +1728,8 @@ mw0lge@grange-lane.co.uk
 #include "models/RfKitModel.h"
 #include "models/StationTciModel.h"
 #include "models/RotorModel.h"
+#include "models/RoundtableModel.h"
+#include "core/roundtable/RoundtableState.h"
 #include "models/StationCatModel.h"
 #include "models/AccessoryDataModel.h"
 #include "models/AccessorySettingsModel.h"
@@ -3577,6 +3584,11 @@ RadioModel::RadioModel(Role role, QObject* parent)
     m_stationTciModel = new StationTciModel(this);
     // Rotor control plan Task 4b: the Core's rotor (`rotor`).
     m_rotorModel = new RotorLink::RotorModel(this);
+    // Roundtable plan Task 11: the `roundtable` object and the Roundtable
+    // screens' model, in every placement (wireRoundtable binds them here;
+    // StationClient feeds them in a remote window).
+    m_roundtableState = new RoundtableState(this);
+    m_roundtableModel = new RoundtableModel(this);
     // CAT setup from a connected desktop (stationCatVersion 1): the Core's
     // CAT as the `stationCat` object, filled from CatService on the Core.
     m_stationCatModel = new StationCatModel(this);
@@ -5964,6 +5976,12 @@ void RadioModel::wireRoundtable()
     // Everything desktop makes no key file until it goes live.
     m_roundtable->setIdentityProvider([this]() { return roundtableIdentity(); });
     m_spotSourceHost->setRoundtableClient(m_roundtable.get());
+    // Roundtable plan Task 11: the Roundtable/* answers fed to the client
+    // (read only until the first-run question is answered, D25), and the
+    // screens fed from it. A station server binds the state again to the
+    // settings its windows write through.
+    m_roundtableState->bindClient(m_roundtable.get(), &AppSettings::instance());
+    m_roundtableModel->attachLocal(m_roundtable.get(), m_roundtableState);
 
     // Slices: what each listens to, active first, and which one is keyed.
     const auto watch = [this](SliceModel* slice) {
@@ -6027,6 +6045,8 @@ void RadioModel::pushRoundtableSlices()
         }
     }
     m_roundtable->setSlices(states);
+    // Roundtable plan Task 11: and which room each is in (`sliceRooms`).
+    m_roundtableState->setSlices(states);
 }
 
 void RadioModel::pushRoundtableMeter()

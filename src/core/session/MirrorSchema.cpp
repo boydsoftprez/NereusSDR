@@ -68,6 +68,10 @@
 //   2026-10-08 - Rotor control plan Task 4b: RotorModel mirrored (`rotor`,
 //                 read-only). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-24 - Roundtable plan Task 11: RoundtableState mirrored
+//                 (`roundtable`, read-only); SpotSourceHost's
+//                 roundtableState and roundtableText excluded. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/MirrorSchema.h"
@@ -167,6 +171,9 @@ const char* const kMirroredClasses[] = {
     // Rotor control plan Task 4b (remoteRotorControlVersion 1): the Core's
     // antenna rotor, read-only; the rotor commands change it.
     "NereusSDR::RotorLink::RotorModel",
+    // Roundtable plan Task 11 (stationRoundtableVersion 1): the Core's
+    // Roundtable connection, read-only; the roundtable.* verbs change it.
+    "NereusSDR::RoundtableState",
 };
 
 // Per-property exclusions, as (class, property).
@@ -174,12 +181,19 @@ const char* const kMirroredClasses[] = {
 // sliceLetter is CONSTANT, derived entirely from sliceIndex (which IS
 // mirrored), and the only QChar in the whole surface. Dropping it here is
 // what keeps QChar off the wire without the codec needing a kind for it.
+//
+// SpotSourceHost's roundtableState and roundtableText (Roundtable plan
+// Task 10) stay off the wire: an older peer keeps its exact SpotSourceHost
+// schema, and a window reads the Roundtable connection from the
+// `roundtable` object (RoundtableState) instead.
 struct ExcludedProperty {
     const char* className;
     const char* property;
 };
 constexpr ExcludedProperty kExcludedProperties[] = {
     { "SliceModel", "sliceLetter" },
+    { "SpotSourceHost", "roundtableState" },
+    { "SpotSourceHost", "roundtableText" },
 };
 
 bool isExcludedProperty(const QByteArray& shortName, const char* property)

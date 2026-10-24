@@ -226,6 +226,8 @@
 //                 Code.
 //   2026-10-08 - Rotor control plan Task 4b: RotorModel, all Outbound.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24 - Roundtable plan Task 11: RoundtableState, all Outbound.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-10 - TransmitState's six peak readings (micPeakDb .. cfcPeakDb)
 //                 Outbound (txReadingsVersion 4). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -1016,6 +1018,15 @@ const MirrorPolicy::Entry kEntries[] = {
     { "RotorModel", "motion", MirrorDirection::Outbound },
     { "RotorModel", "presets", MirrorDirection::Outbound },
     { "RotorModel", "fault", MirrorDirection::Outbound },
+
+    // Roundtable plan Task 11 (stationRoundtableVersion 1): the Core's
+    // Roundtable connection, read-only; the roundtable.* verbs change it.
+    { "RoundtableState", "linkState", MirrorDirection::Outbound },
+    { "RoundtableState", "linkSince", MirrorDirection::Outbound },
+    { "RoundtableState", "firstRunAnswered", MirrorDirection::Outbound },
+    { "RoundtableState", "hidden", MirrorDirection::Outbound },
+    { "RoundtableState", "mentionCounts", MirrorDirection::Outbound },
+    { "RoundtableState", "sliceRooms", MirrorDirection::Outbound },
 
     // iPhone app Task 13 (R-IOS-08, deviceAdminVersion 1): the Core's paired
     // devices, label, claim, token and key backup, read-only. A device

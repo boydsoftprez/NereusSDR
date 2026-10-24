@@ -59,6 +59,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24: Roundtable plan Task 11: stationRoundtableVersion, after
+//               rxMeterStampsVersion, sent only when it is not 0. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22: RX meter stamps: rxMeterStampsVersion, after waveformVersion
 //               and before coreBuildInfo. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
@@ -644,6 +647,13 @@ struct StationCapabilities {
     /// waveformVersion and before coreBuildInfo, only to a peer whose hello
     /// declared `rxMeterStamps` 1; 0 otherwise.
     int rxMeterStampsVersion = 0;
+    /// Roundtable plan Task 11: 1 means the Core mirrors its Roundtable
+    /// connection as the read-only `roundtable` object, sends the
+    /// `roundtableRooms` and `roundtableRoom:<room id>` record streams and
+    /// takes the roundtable.* verbs. Sent after rxMeterStampsVersion and
+    /// before coreBuildInfo, only to a peer whose hello declared `roundtable`
+    /// 1; 0 otherwise.
+    int stationRoundtableVersion {0};
     /// CAT setup from a connected desktop: 1 means the Core sends its CAT
     /// as the read-only `stationCat` object and the `catLog` record stream,
     /// and takes setStationCatChannel, setStationCatGlobal,
