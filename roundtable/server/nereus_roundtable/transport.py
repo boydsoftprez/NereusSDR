@@ -12,8 +12,8 @@ and are handled here and nowhere else.
 
 The WebSocket listener serves `/v1/station` and `/v1/live`; a request to
 either that is not an upgrade gets 426 and any other path 404. The HTTP
-listener hands each connection to the HTTP app (the read API and the web
-pages); until there is one it answers 404.
+listener hands each connection to the HTTP app (`http.App`: the read API
+and the web pages), or answers 404 when it is given none.
 """
 
 from __future__ import annotations

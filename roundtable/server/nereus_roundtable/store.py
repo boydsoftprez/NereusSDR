@@ -317,6 +317,14 @@ class Store:
         row = self.db.execute("SELECT * FROM rooms WHERE opening_id = ?", (opening_id,)).fetchone()
         return dict(row) if row is not None else None
 
+    def opening_latest(self, room_id: str) -> Optional[Dict[str, Any]]:
+        """The room id's most recent opening, or None for a room id that has
+        never opened (wire spec 10.3)."""
+        row = self.db.execute(
+            "SELECT * FROM rooms WHERE room_id = ? ORDER BY opening_id DESC LIMIT 1", (room_id,)
+        ).fetchone()
+        return dict(row) if row is not None else None
+
     # ------------------------------------------------------------- turns
 
     def turn_open(self, opening_id: int, kind: str, talkers: List[Tuple[str, str]], start: int) -> int:

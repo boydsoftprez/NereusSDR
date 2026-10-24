@@ -15,10 +15,6 @@ SESSIONS = [f for f in load_manifest()["fixtures"] if f["kind"] == "session"]
 # Fixtures whose server behavior a later task of the Roundtable plan builds.
 # Each later task removes its own entries; nothing else is skipped.
 LATER = {
-    # `hidden` itself is Task 4's (test_messages.py); the fixture watches
-    # the room from a live reader, which Task 5 builds.
-    "hidden-ends-presence": "Task 5 (the live reader's view)",
-    "live-watch-not-found": "Task 5 (live readers)",
     "weblink": "Task 6 (website sign-in links)",
     "delete-archive": "Task 6 (archive deletion)",
 }
@@ -79,7 +75,7 @@ def test_websocket_paths_without_an_upgrade_get_426_and_others_404():
             assert status.split()[1] == "404", status
             status, _ = await _http(port, "/v1/station", upgrade=True)
             assert status.split()[1] == "101", status
-            # The HTTP listener answers 404 until there is a read API.
+            # With no HTTP app the HTTP listener answers 404.
             status, _ = await _http(live.listeners.http_port(), "/v1/api/rooms")
             assert status.split()[1] == "404", status
 

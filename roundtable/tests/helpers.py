@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from websockets.exceptions import ConnectionClosed
 
 from nereus_roundtable import identity, protocol, transport
+from nereus_roundtable.http import App
 from nereus_roundtable.clock import ManualClock
 from nereus_roundtable.service import Service
 from nereus_roundtable.store import Store
@@ -20,23 +21,32 @@ from runner import DEFAULT_ADDRESS, make_config, ws_connect
 
 
 class Live:
-    def __init__(self, service: Service, listeners: transport.Listeners) -> None:
+    def __init__(self, service: Service, listeners: transport.Listeners, http_app: Optional[App] = None) -> None:
         self.service = service
+        self.http_app = http_app
         self.listeners = listeners
         self.clock = service.clock
         self.base = f"ws://127.0.0.1:{listeners.ws_port()}"
         self.station_uri = self.base + transport.STATION_PATH
         self.live_uri = self.base + transport.LIVE_PATH
+        self.http_port = listeners.http_port()
 
 
 @asynccontextmanager
-async def live_service(setup: Optional[Dict[str, Any]] = None) -> AsyncIterator[Live]:
+async def live_service(
+    setup: Optional[Dict[str, Any]] = None, http_app: bool = False, static_dir: Optional[str] = None
+) -> AsyncIterator[Live]:
+    """A server on loopback with a ManualClock. With `http_app`, the HTTP
+    listener serves the read API and `static_dir`."""
     config = make_config(setup or {})
+    if static_dir is not None:
+        config.static_dir = static_dir
     store = Store(":memory:")
     service = Service(config, ManualClock(), store)
-    listeners = await transport.start(service, None, config)
+    app = App(service, store, config) if http_app else None
+    listeners = await transport.start(service, app, config)
     try:
-        yield Live(service, listeners)
+        yield Live(service, listeners, app)
     finally:
         await transport.stop(listeners, service, grace_s=0.05, timeout_s=5)
         store.close()

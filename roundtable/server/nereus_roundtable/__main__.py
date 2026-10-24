@@ -11,6 +11,7 @@ import sqlite3
 import sys
 
 from . import transport
+from .http import App
 from .clock import RealClock
 from .config import ConfigError, load
 from .service import Service
@@ -41,7 +42,7 @@ async def run(config_path: str) -> int:
         print(f"nereus_roundtable: database: {exc}", file=sys.stderr)
         return 1
     service = Service(config, RealClock(), store)
-    listeners = await transport.start(service, None, config)
+    listeners = await transport.start(service, App(service, store, config), config)
     log.info(
         "listening on %d WebSocket and %d HTTP addresses",
         len(listeners.ws_servers),

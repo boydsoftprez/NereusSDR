@@ -5,7 +5,9 @@ a station's presence, readings and views: `rooms`, `roomsDelta`,
 `room` and `delta`, with their generations, pacing and resync (5.3.2,
 5.3.3, 5.3.8 to 5.3.10, 5.4.3 to 5.4.6, 6.11), and its messages, names,
 reports, mentions and going hidden (5.3.4 to 5.3.7, 5.3.11, 5.3.14, 5.4.7,
-5.4.8, 6.9, 6.10).
+5.4.8, 6.9, 6.10), and a live reader's watched band list and rooms
+(3.2, 5.5): the same `rooms`, `roomsDelta`, `room` and `delta` a station
+gets, with every `you` false and every `mine` null.
 
 The service is transport-agnostic: a connection is anything with async
 send(text), close(code) and async iteration over incoming frames
@@ -128,6 +130,10 @@ class Connection:
         self.band_sent: Dict[str, Tuple[Optional[int], Dict[str, Any]]] = {}
         self.band_last_ms: Optional[int] = None
         self.band_timer: Optional[TimerHandle] = None
+        # Live path (5.5): the watched band ("all" or a band name, None
+        # before any `watchBand`) and the watched rooms.
+        self.watch_band: Optional[str] = None
+        self.watched: Set[str] = set()
 
     def send(self, message: Dict[str, Any], droppable: bool = False) -> bool:
         """Queue one message. A droppable one (a room delta or a band-list
@@ -243,6 +249,10 @@ class Service:
         self.on(STATION, "report", self._report)
         self.on(STATION, "mentionsSeen", self._mentions_seen)
         self.on(STATION, "hidden", self._hidden)
+        self.on(LIVE, "watchBand", self._watch_band)
+        self.on(LIVE, "watch", self._watch)
+        self.on(LIVE, "unwatch", self._unwatch)
+        self.on(LIVE, "resync", self._live_resync)
 
     # ----------------------------------------------------------- lifecycle
 
@@ -351,6 +361,7 @@ class Service:
         for room_id in list(conn.views):
             self._drop_view(conn, room_id)
         conn.reads.clear()
+        conn.watched.clear()
         conn.cancel_timer()
         self.connections.discard(conn)
         if conn.counted:
@@ -795,6 +806,47 @@ class Service:
         # joining slices are dropped.
         self.book.remove_station(sid)
 
+    # ----------------------------------------------------------- live
+
+    def _watch_band(self, conn: Connection, msg: Dict[str, Any]) -> None:
+        """Wire spec 5.5: the band list of one band, or of all; a new
+        `watchBand` replaces the old."""
+        conn.watch_band = msg["band"]
+        self._send_rooms(conn)
+
+    def _watch(self, conn: Connection, msg: Dict[str, Any]) -> None:
+        """Wire spec 5.5: a room's view, at most 4 at once."""
+        room = self.book.live(msg["room"])
+        if room is None:
+            conn.send(protocol.error_message("not-found", "watch", receiver=LIVE))
+            return
+        if room.id not in conn.watched:
+            if len(conn.watched) >= self.config.watches_per_live_socket:
+                conn.send(protocol.error_message("not-allowed-watch", "watch", receiver=LIVE))
+                return
+            conn.watched.add(room.id)
+        self._owe_full(conn, room.id)
+
+    def _unwatch(self, conn: Connection, msg: Dict[str, Any]) -> None:
+        """Wire spec 5.5: answered by nothing."""
+        conn.watched.discard(msg["room"])
+        self._drop_view(conn, msg["room"])
+
+    def _live_resync(self, conn: Connection, msg: Dict[str, Any]) -> None:
+        """Wire spec 5.5: the watched band list, or one watched room's view,
+        generation 1; `not-found` for what is not watched."""
+        room_id = msg["room"]
+        if room_id is None:
+            if conn.watch_band is None:
+                conn.send(protocol.error_message("not-found", "resync", receiver=LIVE))
+                return
+            self._send_rooms(conn)
+            return
+        if room_id not in conn.views or self.book.live(room_id) is None:
+            conn.send(protocol.error_message("not-found", "resync", receiver=LIVE))
+            return
+        self._owe_full(conn, room_id)
+
     # ----------------------------------------------------------- views
 
     def _in_rooms(self, conn: Connection) -> Set[str]:
@@ -851,10 +903,20 @@ class Service:
     def _band_now(self) -> Dict[str, Tuple[Optional[int], Dict[str, Any]]]:
         return {room.id: (room.opening_id, room.summary()) for room in self.book.live_rooms()}
 
+    @staticmethod
+    def _band_for(
+        conn: Connection, band: Dict[str, Tuple[Optional[int], Dict[str, Any]]]
+    ) -> Dict[str, Tuple[Optional[int], Dict[str, Any]]]:
+        """The band list as one connection views it: every live room for a
+        station, the watched band's for a live reader (5.4.3)."""
+        if conn.path != LIVE or conn.watch_band == "all":
+            return band
+        return {room_id: entry for room_id, entry in band.items() if entry[1]["band"] == conn.watch_band}
+
     def _send_rooms(self, conn: Connection) -> None:
         """A full band list, generation 1 (5.4.3)."""
-        band = self._band_now()
-        conn.send(protocol.message("rooms", STATION, gen=1, rooms=[summary for _, summary in band.values()]))
+        band = self._band_for(conn, self._band_now())
+        conn.send(protocol.message("rooms", conn.path, gen=1, rooms=[summary for _, summary in band.values()]))
         conn.band = _View()
         conn.band_sent = band
         conn.band_last_ms = self.clock.now_ms()
@@ -867,7 +929,10 @@ class Service:
         message, when the band list differs from what the connection last
         received (6.11 "Pacing")."""
         view = conn.band
-        if view is None or view.stale or conn.band_timer is not None or band == conn.band_sent:
+        if view is None or view.stale or conn.band_timer is not None:
+            return
+        band = self._band_for(conn, band)
+        if band == conn.band_sent:
             return
         now = self.clock.now_ms()
         last = conn.band_last_ms
@@ -880,7 +945,7 @@ class Service:
         conn.band_timer = None
         if conn.closing or conn.band is None or conn.band.stale:
             return
-        band = self._band_now()
+        band = self._band_for(conn, self._band_now())
         if band != conn.band_sent:
             self._send_rooms_delta(conn, band)
 
@@ -898,7 +963,7 @@ class Service:
         ]
         remove = [room_id for room_id in sent if room_id not in band]
         view.gen += 1
-        msg = protocol.message("roomsDelta", STATION, gen=view.gen, add=add, change=change, remove=remove)
+        msg = protocol.message("roomsDelta", conn.path, gen=view.gen, add=add, change=change, remove=remove)
         # A removal is always queued (9.1).
         if not self._send_view(conn, view, msg, droppable=not remove):
             return
@@ -919,7 +984,7 @@ class Service:
         sid = conn.station_id
         msg = protocol.message(
             "room",
-            STATION,
+            conn.path,
             gen=1,
             id=room.id,
             opening=room.opening_id,
@@ -946,7 +1011,7 @@ class Service:
             members = [dict(obj, you=True) if row.station_id == sid else obj for row, obj in diff.members]
             msg = protocol.message(
                 "delta",
-                STATION,
+                conn.path,
                 room=room.id,
                 gen=view.gen,
                 members=members,
@@ -959,6 +1024,7 @@ class Service:
             self._send_view(conn, view, msg, droppable=not diff.closed)
         if diff.closed:
             conn.reads.discard(room.id)
+            conn.watched.discard(room.id)
             self._drop_view(conn, room.id)
         elif room.id not in conn.reads and any(row.station_id == sid for row in diff.left):
             if room.id not in self._in_rooms(conn):
@@ -1001,13 +1067,18 @@ class Service:
         seen: Set[Connection] = set()
 
         def want(conn: Optional[Connection]) -> None:
-            if conn is not None and conn not in seen and conn.station_id is not None and not conn.closing and not conn.hidden:
+            if conn is None or conn in seen or conn.closing or conn.hidden:
+                return
+            if conn.station_id is not None or conn.path == LIVE:
                 seen.add(conn)
                 targets.append(conn)
 
         if band_changed:
             for conn in self.stations.values():
                 want(conn)
+            for conn in list(self.connections):
+                if conn.path == LIVE and conn.band is not None:
+                    want(conn)
         for conn in dirty:
             want(conn)
         for room, diff in diffs:

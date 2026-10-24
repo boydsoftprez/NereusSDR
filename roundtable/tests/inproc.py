@@ -1,6 +1,6 @@
 # no-port-check: NereusSDR-original.
 """The server in one process with no sockets, for tests of rooms, turns,
-readings and views.
+readings and views, for stations and live readers.
 
 A station here is a real Connection whose transport is never written: the
 test feeds it frames through the service's own reading path, one event per
@@ -19,7 +19,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from nereus_roundtable import identity, protocol
 from nereus_roundtable.clock import DEFAULT_WALL_START_MS, ManualClock
 from nereus_roundtable.config import Config
-from nereus_roundtable.service import STATION, Connection, Service, _Close
+from nereus_roundtable.service import LIVE, STATION, Connection, Service, _Close
 from nereus_roundtable.store import Store
 
 HOST = "roundtable.conformance.invalid"
@@ -36,9 +36,11 @@ class _NoTransport:
 class Station:
     """One station connection: send messages, take what arrived."""
 
+    PATH = STATION
+
     def __init__(self, harness: "Harness", address: str) -> None:
         self.harness = harness
-        self.conn = Connection(harness.service, _NoTransport(), STATION, address)
+        self.conn = Connection(harness.service, _NoTransport(), self.PATH, address)
         self.closed: Optional[int] = None
         self.station_id = ""
         harness.service.connections.add(self.conn)
@@ -65,7 +67,7 @@ class Station:
                 continue
             text, size = item
             self.conn.queued_bytes -= size
-            decoded = protocol.decode(text, "server", "station")
+            decoded = protocol.decode(text, "server", self.PATH)
             raw = json.loads(text)
             assert decoded == raw, f"keys the receiver does not know: {text[:200]}"
             out.append(raw)
@@ -78,6 +80,12 @@ class Station:
         service = self.harness.service
         service.peer_closes += 1
         service.detach(self.conn)
+
+
+class LiveReader(Station):
+    """One /v1/live connection: nothing is sent to it until it asks."""
+
+    PATH = LIVE
 
 
 class Harness:
@@ -131,6 +139,10 @@ class Harness:
         station.welcome = got[0]  # type: ignore[attr-defined]
         station.rooms = got[1]  # type: ignore[attr-defined]
         return station
+
+
+def live(harness: Harness, address: str = "192.0.2.1") -> LiveReader:
+    return LiveReader(harness, address)
 
 
 def presence(callsign: str, grid: Optional[str], slices: List[Dict[str, Any]], at_radio: bool = True) -> Dict[str, Any]:
