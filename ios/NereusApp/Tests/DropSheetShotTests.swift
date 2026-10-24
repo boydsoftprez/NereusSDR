@@ -142,6 +142,46 @@ struct DropSheetShotTests {
         await model.disconnect()
     }
 
+    /// R-IOS-55: the Display pill's five tabs, upright on the iPhone 17, on
+    /// a Core that describes Display at version 29, for comparing with the
+    /// board's five frames.
+    @Test("the Display pill's five tabs on a Core that describes Display at version 29", .timeLimit(.minutes(5)))
+    func displayPillShots() async throws {
+        let suite = "DropSheetShotTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(mediaPeerFactory: { IdlePeer() }, displaySettings: BandDisplaySettingsStore(defaults: defaults))
+        let station = try FakeStation(additions: .all)
+        await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
+                            transportFactory: station.transportFactory)
+        #expect(await station.waitUntilLive())
+        try await MainScreenShotTests.fill(station)
+        await station.deliver(.delta(LinkMessage.Delta(key: "slice:0", properties: [
+            .init(ordinal: 14, name: "band", value: .enumeration(3)),
+        ])))
+        #expect(await settle(seconds: 30) { model.main.slices.entries.count == 2 && model.main.coreName != nil })
+        model.main.changeDisplay { $0.traceFillOpacity = 0.7 }
+        let band = model.main.band
+        band.endpointId = 1
+        band.receive(.context(try #require(BandFlagShotTests.context())))
+        // The Core describes Display at version 29: its own description file.
+        var properties = model.mirror.capabilities.keys.sorted().compactMap { name -> LinkMessage.PropertyEntry? in
+            guard name != "setupDescriptionVersion", let value = model.mirror.capabilities[name] else { return nil }
+            return LinkMessage.PropertyEntry(name: name, value: value.wireValue)
+        }
+        properties.append(.init(name: "setupDescriptionVersion", value: .i64(29)))
+        await station.deliver(.capabilities(LinkMessage.Capabilities(properties: properties)))
+        let json = try String(contentsOf: DisplayPillTests.setupFolder.appendingPathComponent("display.json"),
+                              encoding: .utf8)
+        await station.deliverSetup([(id: "display", json: json)])
+        #expect(await settle(seconds: 30) { model.displayPill.description != nil })
+        for tab in DisplayPillTab.allCases {
+            try await shoot("display-pill-\(tab.rawValue)", sheet: .display, sideways: false, model: model,
+                            displayTab: tab)
+        }
+        await model.disconnect()
+    }
+
     @Test("the Band plan and Size rows, the picker open, a plan picked, and the strip at Small and Huge")
     func bandPlanShots() async throws {
         let suite = "DropSheetShotTests-\(UUID().uuidString)"
@@ -240,13 +280,14 @@ struct DropSheetShotTests {
     /// Draws the main screen with `sheet` open. `feed` fills the band; the
     /// scene's synthetic rows by default.
     private func shoot(_ name: String, sheet: OpenSheet?, sideways: Bool, model: AppModel,
+                       displayTab: DisplayPillTab = .spectrum,
                        feed: ((ShotWait.BandDrawing) async throws -> Void)? = nil) async throws {
         let size = sideways ? CGSize(width: 874, height: 402) : CGSize(width: 402, height: 874)
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(origin: CGPoint(x: 0, y: sideways ? 120 : 0), size: size)
         window.windowLevel = .alert + 1
-        let root = SheetShotRoot(model: model, sheet: sheet).preferredColorScheme(.dark)
+        let root = SheetShotRoot(model: model, sheet: sheet, displayTab: displayTab).preferredColorScheme(.dark)
         let host = ShotHosting.host(root)
         if sideways {
             host.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: 62, bottom: 21, right: 62)
@@ -282,11 +323,12 @@ struct DropSheetShotTests {
 private struct SheetShotRoot: View {
     @ObservedObject var model: AppModel
     let sheet: OpenSheet?
+    var displayTab: DisplayPillTab = .spectrum
 
     var body: some View {
         GeometryReader { proxy in
             VStack(spacing: 0) {
-                MainScreen(app: model, main: model.main, sheet: sheet)
+                MainScreen(app: model, main: model.main, sheet: sheet, displayTab: displayTab)
                 TabBar(selection: .constant(.panadapter), sideways: proxy.size.width > proxy.size.height)
             }
         }

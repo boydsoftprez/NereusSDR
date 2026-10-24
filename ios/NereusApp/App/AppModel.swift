@@ -128,6 +128,15 @@ final class AppModel: ObservableObject {
         paValues.configure(dispatcher)
         return dispatcher
     }()
+    /// The toolbar's Display pill: the Core's version 29 Display rows with
+    /// their own dispatcher, whose phone rows keep working while the link
+    /// is lost (spec section 9).
+    lazy var displayPill = DisplayPillSource(
+        pages: setupPages, store: mirror, feed: setupFeed, settings: settings, commands: commands,
+        captureSender: { [route] in route.captureCommandSender() },
+        selectedSlice: { [weak slices = main.slices] in slices?.activeSliceId },
+        selectionChanges: main.slices.$activeSliceId.eraseToAnyPublisher(),
+        main: main, inner: phoneSetupKeys)
     /// The clock the mirror stamps the Core's telemetry with, for its age.
     let mirrorClock: any LinkClock
     /// This phone's settings behind the described controls' phone keys.
@@ -329,6 +338,7 @@ final class AppModel: ObservableObject {
             }
             .store(in: &watches)
         main.transmit.bindProfileFlow(setupControls.txProfiles)
+        main.displayPillSource = displayPill
         wireTransmitAudio()
         wireDialHaptics()
     }

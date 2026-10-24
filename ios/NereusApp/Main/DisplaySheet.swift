@@ -15,6 +15,8 @@ import SwiftUI
 struct DisplaySheet: View {
     @ObservedObject var model: DisplaySheetModel
     @ObservedObject var core: CoreDisplayModel
+    /// A line over the rows: why the Display pill's tabs are not here.
+    var topNote: String? = nil
     /// Switches to the Setup tab.
     let openSetup: () -> Void
     @Environment(\.displayScale) private var displayScale
@@ -26,6 +28,10 @@ struct DisplaySheet: View {
                 .tracking(0.44)
                 .foregroundStyle(ChromeColours.textDim)
         } content: {
+            if let topNote {
+                SheetNote(topNote)
+                    .accessibilityIdentifier("displaySheetTopNote")
+            }
             // The View row, and in 3D its five settings and Reset (the 3D View board).
             DisplaySheetStackRows(model: model)
             Rectangle().fill(ChromeColours.sheetBorder).frame(height: 1).padding(.vertical, 2)

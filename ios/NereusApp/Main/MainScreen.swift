@@ -51,6 +51,8 @@ struct MainScreen: View {
     @State private var txPanelOpen: Bool
     @State private var soundPanelOpen = false
     @State private var sheet: OpenSheet?
+    /// The Display pill's open tab, kept while the sheet closes and opens.
+    @State private var displayTab: DisplayPillTab = .spectrum
     /// On an iPad on its side, the applet column shows (its corner button).
     @State private var columnShown: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -59,7 +61,8 @@ struct MainScreen: View {
     /// `rxPanelOpen` and `txPanelOpen` open the screen with that panel out,
     /// `sheet` with that sheet open.
     init(app: AppModel, main: MainScreenModel, flow: ConnectionFlow? = nil, rxPanelOpen: Bool = false,
-         txPanelOpen: Bool = false, sheet: OpenSheet? = nil, columnShown: Bool = true,
+         txPanelOpen: Bool = false, sheet: OpenSheet? = nil, displayTab: DisplayPillTab = .spectrum,
+         columnShown: Bool = true,
          openSetup: @escaping () -> Void = {}, openRadio: @escaping () -> Void = {},
          openPerformance: @escaping () -> Void = {}, openTransmitSettings: @escaping () -> Void = {}) {
         self.app = app
@@ -74,6 +77,7 @@ struct MainScreen: View {
         offline = flow?.offline ?? false
         _rxPanelOpen = State(initialValue: rxPanelOpen)
         _sheet = State(initialValue: sheet)
+        _displayTab = State(initialValue: displayTab)
         _columnShown = State(initialValue: columnShown)
     }
 
@@ -289,15 +293,34 @@ struct MainScreen: View {
         }
     }
 
+    /// Closes the sheet and opens a described Setup page.
+    private func openDescribedPage(_ pageId: String) {
+        sheet = nil
+        openSetup()
+        _ = app.phoneNavigation?.openSetupPage(pageId)
+    }
+
     @ViewBuilder
     private func dropped(_ kind: OpenSheet) -> some View {
         switch kind {
         case .pan:
             PanSheet(model: main.pan, sliceColour: main.sliceColour)
         case .display:
-            DisplaySheet(model: main.display, core: main.coreDisplay) {
-                sheet = nil
-                openSetup()
+            if let source = main.displayPillSource {
+                DisplayDropSheet(pages: source.pages, source: source, main: main, tab: $displayTab,
+                                 device: DisplayDropSheet.deviceWord, openSetup: {
+                    sheet = nil
+                    openSetup()
+                }, onSetupDefaults: { tab, _ in
+                    openDescribedPage(tab.setupPageId)
+                }, onOpenPage: { pageId in
+                    openDescribedPage(pageId)
+                })
+            } else {
+                DisplaySheet(model: main.display, core: main.coreDisplay) {
+                    sheet = nil
+                    openSetup()
+                }
             }
         case .slices:
             SliceListSheet(model: main.sliceList, slices: main.slices) {

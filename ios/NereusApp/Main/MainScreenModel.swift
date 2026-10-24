@@ -89,6 +89,9 @@ final class MainScreenModel: ObservableObject {
     /// The TX panel's AM Mod Monitor (D102); the app sets it once its
     /// record streams exist, and a screen test may leave it out.
     var modMonitor: ModMonitorModel?
+    /// The Display pill's rows and their dispatcher; the app sets and
+    /// holds it, and a screen test may leave it out.
+    weak var displayPillSource: DisplayPillSource?
     /// The Core's transmitter as the band follows it: keyed on one of its
     /// slices, the carrier, high SWR (Task 54f).
     let transmitDisplay: TransmitDisplayModel
