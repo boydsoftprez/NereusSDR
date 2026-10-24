@@ -1259,11 +1259,12 @@ private slots:
             {"src/gui/SpotHubDialog.cpp",
              {"Enter Callsign Here (4-12 characters, required to publish spots)",
               "Enter Grid Here (Maidenhead, e.g. EM73 or EM73XY)"}},
-            {"src/gui/applets/TxApplet.cpp",
-             {"TX Leveler: slow speech-leveling AGC. Improves intelligibility on weak speech.",
-              // Remote-window parity Task 32: the MON output pair below
-              // txMonitorAudioVersion 1.
-              "This Core does not send the transmit monitor. Updating the Core may help."}},
+            {"src/gui/applets/TxChainSection.cpp",
+             {"TX Leveler: slow speech-leveling AGC. Improves intelligibility on weak speech."}},
+            {"src/gui/applets/TxMonitorSection.cpp",
+             // Remote-window parity Task 32: the MON output pair below
+             // txMonitorAudioVersion 1.
+             {"This Core does not send the transmit monitor. Updating the Core may help."}},
             {"src/gui/diagnostics/DiagnosticsPhaseHPages.cpp",
              {"\u2713 No issues: every setting is within this radio's range.", "[%1] %2: %3"}},
             {"src/gui/diagnostics/RadioStatusPage.cpp",

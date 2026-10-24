@@ -9,6 +9,12 @@
 // independent trace/waterfall reducer histories and produces codec-ready dBm
 // rows; transport and subscription messages remain outside this class.
 //
+// Modification history (NereusSDR):
+//   2026-10-21: An endpoint slower than its source takes the source frame
+//               nearest each of its slots (earlyToleranceNs), so its rows
+//               are evenly spaced. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//
 // =================================================================
 
 #include "core/session/media/DaemonSpectrumSource.h"
@@ -192,8 +198,23 @@ public:
     /// an endpoint that takes every source frame this is the next source
     /// frame. Read-only: only consume() advances the schedule. Empty when
     /// consume() would take nothing from such a frame (not configured, not
-    /// newer than the last frame taken, or early).
-    std::optional<qint64> outputDeadlineNs(qint64 producedAtNs) const;
+    /// newer than the last frame taken, or early). `sourceFrameGapNs` is
+    /// the frame's DaemonSpectrumFrame::sourceFrameGapNs.
+    std::optional<qint64> outputDeadlineNs(qint64 producedAtNs,
+                                           qint64 sourceFrameGapNs = 0) const;
+
+    /// How early a frame may be against its slot and still fill it: half
+    /// the source's frame spacing, so the frame nearest the slot fills it
+    /// and the one before it does not, bounded by half this endpoint's
+    /// period, and never less than a twentieth of the period (the rule for
+    /// a frame whose spacing is unknown, 0).
+    ///
+    /// A twentieth alone took a frame only when it came no more than that
+    /// early. With a source at twice the endpoint's rate, a frame early by
+    /// more (its publish time jittered) was refused and the next one, a
+    /// source frame later, filled the slot late; the slot after came on
+    /// time. Rows then alternated 67 and 33 ms at 15 fps from 30.
+    static qint64 earlyToleranceNs(qint64 periodNs, qint64 sourceFrameGapNs);
 
     /// Whether the last accepted configure found that plane drawing the same
     /// picture as before (R-DISP-HOLD): true only for SpectrumPictureKind::

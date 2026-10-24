@@ -31,6 +31,12 @@
 //                 snapshots after unlocking, including callback-safe retunes.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //                 NereusSDR-original synchronization logic.
+//   2026-10-22 - I/Q level log in feedIqData (IqLevelMonitor, one line per
+//                 hardware DDC at most every 10 s: RMS and peak dBFS,
+//                 non-finite pairs, stream (logical receiver), ADC,
+//                 overload flag, DDC map) and noteAdcOverflow. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//                 NereusSDR-original.
 // =================================================================
 
 //=================================================================
@@ -88,6 +94,7 @@
 #include "LogCategories.h"
 
 #include <QThread>
+#include <optional>
 #include <QPointer>
 
 #include "codec/IP1Codec.h"
@@ -504,6 +511,20 @@ void ReceiverManager::feedIqData(int hwReceiverIndex, const QVector<float>& samp
     }
 
     QMutexLocker locker(&m_routingMutex);
+    // I/Q level diagnostics: every hardware DDC is measured, mapped or not;
+    // the lines are built under the lock (they name the map) and logged
+    // after it is released.
+    m_iqLevels.accumulate(hwReceiverIndex, samples.constData(), samples.size());
+    QStringList levelLines;
+    if (const std::optional<IqLevelMonitor::Report> report =
+            m_iqLevels.takeIfDue(enqueueClockNs())) {
+        levelLines = describeIqLevels(*report);
+    }
+    const auto logLevels = [&levelLines]() {
+        for (const QString& line : std::as_const(levelLines)) {
+            qCInfo(lcReceiver).noquote() << line;
+        }
+    };
     auto it = m_hwToLogical.constFind(hwReceiverIndex);
     if (it == m_hwToLogical.constEnd()) {
         if (!m_firstDropLogged) {
@@ -517,6 +538,7 @@ void ReceiverManager::feedIqData(int hwReceiverIndex, const QVector<float>& samp
                                   << "map=" << (mapped.isEmpty() ? QStringLiteral("(empty)") : mapped.join(','));
         }
         locker.unlock();
+        logLevels();
         flushHeldIq(full);
         return;
     }
@@ -543,7 +565,66 @@ void ReceiverManager::feedIqData(int hwReceiverIndex, const QVector<float>& samp
         }
     }
     locker.unlock();
+    logLevels();
     flushHeldIq(full);
+}
+
+void ReceiverManager::noteAdcOverflow(int adc)
+{
+    m_iqLevels.noteAdcOverflow(adc);
+}
+
+void ReceiverManager::setIqLevelReportIntervalNsForTest(qint64 intervalNs)
+{
+    QMutexLocker locker(&m_routingMutex);
+    m_iqLevels.setReportIntervalNsForTest(intervalNs);
+}
+
+QStringList ReceiverManager::describeIqLevels(const IqLevelMonitor::Report& report) const
+{
+    QStringList mapped;
+    for (auto mi = m_hwToLogical.constBegin(); mi != m_hwToLogical.constEnd(); ++mi) {
+        mapped << QStringLiteral("DDC%1->stream%2").arg(mi.key()).arg(mi.value());
+    }
+    const QString map = mapped.isEmpty() ? QStringLiteral("(empty)") : mapped.join(',');
+    QStringList overloaded;
+    for (int adc = 0; adc < 32; ++adc) {
+        if ((report.overloadMask & (quint32{1} << adc)) != 0) {
+            overloaded << QStringLiteral("ADC%1").arg(adc);
+        }
+    }
+    QStringList lines;
+    for (const IqLevelMonitor::DdcLevel& level : report.levels) {
+        QString receiver = QStringLiteral("no stream");
+        QString overload = overloaded.isEmpty()
+                               ? QStringLiteral("no ADC overload")
+                               : QStringLiteral("ADC overload on %1").arg(overloaded.join(','));
+        const auto hw = m_hwToLogical.constFind(level.ddc);
+        if (hw != m_hwToLogical.constEnd()) {
+            const auto rx = m_receivers.constFind(hw.value());
+            const int adc = rx != m_receivers.constEnd() ? rx->adcIndex : -1;
+            receiver = adc >= 0 ? QStringLiteral("stream %1 (ADC%2)").arg(hw.value()).arg(adc)
+                                : QStringLiteral("stream %1").arg(hw.value());
+            if (adc >= 0 && adc < 32) {
+                overload = QStringLiteral("ADC%1 overload %2")
+                               .arg(adc)
+                               .arg((report.overloadMask & (quint32{1} << adc)) != 0
+                                        ? QStringLiteral("yes")
+                                        : QStringLiteral("no"));
+            }
+        }
+        lines << QStringLiteral("I/Q level: DDC%1 -> %2: RMS %3 dBFS, peak %4 dBFS over %5 pairs, "
+                                "non-finite pairs %6; %7; DDC map %8")
+                     .arg(level.ddc)
+                     .arg(receiver)
+                     .arg(level.rmsDbfs, 0, 'f', 1)
+                     .arg(level.peakDbfs, 0, 'f', 1)
+                     .arg(level.pairs)
+                     .arg(level.nonFinite)
+                     .arg(overload)
+                     .arg(map);
+    }
+    return lines;
 }
 
 void ReceiverManager::beginIqBatch()

@@ -1056,6 +1056,7 @@ set(CORE_SOURCES
     src/core/ZipArchive.cpp
     src/core/SupportBundle.cpp
     src/core/RadioDiscovery.cpp
+    src/core/PinnedRadioWait.cpp
     src/core/RadioConnection.cpp
     src/core/RadioLinkStats.cpp
     src/core/TciProtocol.cpp
@@ -1075,6 +1076,8 @@ set(CORE_SOURCES
     src/core/P1RadioConnection.cpp
     src/core/P2RadioConnection.cpp
     src/core/ReceiverManager.cpp
+    src/core/IqLevelMonitor.cpp
+    src/core/IqLevelMonitor.h
     src/core/AudioEngine.cpp
     src/core/WdspEngine.cpp
     # R-R3-39: FFTW's planners made thread-safe, double and single precision.
@@ -1557,6 +1560,7 @@ set(CORE_SOURCES
     src/core/session/media/DisplayLoadGovernor.cpp
     src/core/session/media/DssWideRow.cpp
     src/core/session/media/SpectrumEndpoint.cpp
+    src/core/session/media/SpectrumSampleClock.cpp
     src/core/session/media/WidebandDisplayContext.cpp
     # R2 Task 20: where a GUI process gets its station address and token
     # from. A plain value struct plus one URL rule; deliberately carries no
@@ -1590,6 +1594,9 @@ list(APPEND CORE_SOURCES
     # iPhone app Task 19 (R-IOS-06): the mirrored `catalog` object.
     src/core/session/StationCatalog.cpp
     src/core/session/BandLinkFit.cpp
+    # RX-only antenna values 4 and 5 (Thetis's checkbox sum) for a peer
+    # that reads 0 to 3 only.
+    src/core/session/RxOnlyLinkFit.cpp
     # R-R3-49 / R-IOS-18: the Core's PA Gain profiles for a phone.
     src/core/session/PaProfilesFacade.cpp
     # iPhone app Task 25 (D41): the unbuilt features list the catalogue's
@@ -1655,6 +1662,7 @@ list(APPEND CORE_SOURCES
     src/core/session/MediaTunnel.cpp
     src/core/session/NetworkTrouble.cpp
     src/core/session/SystemProxy.cpp
+    src/core/session/HappyEyeballs.cpp
     src/core/session/media/RtpDuplicateFilter.cpp
     src/core/session/media/DualPathAudio.cpp
 )
@@ -1866,6 +1874,7 @@ set(GUI_SOURCES
     src/gui/VaxFirstRunDialog.cpp
     src/gui/VaxFirstRunCheck.cpp
     src/gui/SpectrumWidget.cpp
+    src/gui/WheelStepAccumulator.cpp
     src/gui/PanadapterApplet.cpp
     src/gui/PanadapterStack.cpp
     src/gui/PanFloatingWindow.cpp
@@ -1882,6 +1891,7 @@ set(GUI_SOURCES
     src/gui/popup_placement.cpp
     src/gui/SpectrumOverlayMenu.cpp
     src/gui/spectrum/WaterfallTicker.cpp
+    src/gui/spectrum/RemoteWaterfallRowClock.cpp
     src/gui/widgets/CenterMarkSlider.h
     src/gui/widgets/DexpPeakMeter.h
     src/gui/widgets/DexpPeakMeter.cpp
@@ -2189,6 +2199,14 @@ set(GUI_SOURCES
     src/gui/applets/AppletVisibilityController.cpp
     src/gui/applets/RxApplet.cpp
     src/gui/applets/TxApplet.cpp
+    src/gui/applets/TxFilterSection.cpp
+    src/gui/applets/TxProcessingSection.cpp
+    src/gui/applets/TxChainSection.cpp
+    src/gui/applets/TxKeyingSection.cpp
+    src/gui/applets/TxMonitorSection.cpp
+    src/gui/applets/TxSectionContent.cpp
+    src/gui/applets/TxPowerSection.cpp
+    src/gui/applets/TxVoxSection.cpp
     src/gui/applets/TxEqDialog.cpp
     src/gui/applets/TxCfcDialog.cpp
     src/gui/applets/PhoneCwApplet.cpp

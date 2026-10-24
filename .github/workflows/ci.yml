@@ -120,6 +120,15 @@ jobs:
         # the conformance fixtures out of everything but the tests.
         run: python3 scripts/verify-ios-provenance.py
 
+      - name: iOS chrome in the workspace look (no old navy colors)
+        # R-IOS-49. The app's chrome colors are written only in
+        # ios/Shared/WorkspacePalette.swift and the role files; this fails on
+        # an old navy chrome value in a view unless the script's KEPT table
+        # lists it as a data color with its reason. It also fails on a
+        # corner radius written as a number (W11: controls at chipRadius,
+        # panels at panelRadius) unless KEPT_RADII lists the instrument.
+        run: python3 scripts/verify-ios-workspace-colours.py
+
       - name: GUI must not reach into WdspEngine for an RX channel
         # Phase 3F Sub-Epic J Task 11. Not an attribution check, but the
         # same shape (whole-tree sweep, no upstream clone needed) so it

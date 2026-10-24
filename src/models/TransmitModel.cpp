@@ -114,6 +114,10 @@
 //                 gives Level 0 (Thetis) and the schema v10 reset of a
 //                 saved -6. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-18 - setTunePowerForTxBand sets the tune power only; the tune
+//                 drive source changes only from Setup > Transmit > Power,
+//                 as in Thetis. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 // --- From console.cs (Thetis v2.10.3.13) ---
@@ -834,9 +838,12 @@ void TransmitModel::setTunePowerForBand(Band band, int watts)
 // ── R-R3-49 (parity Task 2): tune power for the transmit band ─────────────
 //
 // NereusSDR-original. The TX applet's Tune Power slider sets the per-band
-// tune power and the tune drive source to TuneSlider (TxApplet.cpp); a
-// remote window reaches the same two through setTunePowerForTxBand on the
-// Core, for the band the Core transmits on.
+// tune power (TxApplet.cpp); a remote window reaches the same through
+// setTunePowerForTxBand on the Core, for the band the Core transmits on.
+// Neither changes the tune drive source: Thetis ptbTune_Scroll
+// (console.cs:46607-46630 [v2.10.3.15]) writes tunePower_by_band only, and
+// the Setup radios alone set _tuneDrivePowerSource (setup.cs:22902-22915
+// [v2.10.3.15]).
 
 int TransmitModel::tunePowerMax() const noexcept
 {
@@ -879,7 +886,6 @@ bool TransmitModel::setTunePowerForTxBand(int watts)
 {
     if (!m_tuneTxBandKnown) { return false; }
     setTunePowerForBand(m_tuneTxBand, watts);
-    setTuneDrivePowerSource(DrivePowerSource::TuneSlider);
     return true;
 }
 

@@ -192,6 +192,14 @@ final class TransmitModel: ObservableObject {
     @Published private(set) var psaReason: String?
     /// The two-tone test is on at the Core (PureSignal's `twoToneOn`).
     @Published private(set) var twoToneOn = false
+    /// TUNE is on at the Core (`transmit.tune`).
+    @Published private(set) var coreTune = false
+    /// The drive sources the desktop's Setup chose (`transmit`
+    /// `tuneDrivePowerSource` at `transmitSettingsVersion` 2 and
+    /// `twoToneDrivePowerSource`): 0 the drive slider (RF Power), 1 the
+    /// tune slider (Tune Pwr), 2 fixed. The phone never writes them.
+    @Published private(set) var tuneDrivePowerSource: Int64 = TransmitModel.driveSliderSource
+    @Published private(set) var twoToneDrivePowerSource: Int64 = TransmitModel.driveSliderSource
     /// The number pad open on the TX panel, if any.
     @Published private(set) var pad: ValuePadModel?
     /// The Core's configured SWR protection (Setup > Transmit > Power).
@@ -310,9 +318,18 @@ final class TransmitModel: ObservableObject {
     /// RF Power and Tune Pwr on a Core whose catalogue gives no transmit
     /// ranges: 0 to 100, shown as the number.
     static let powerFallback = StationCatalog.TransmitRange(min: 0, max: 100, step: 1)
-    /// `tuneDrivePowerSource`'s drive slider: RF Power sets it, as the
-    /// desktop's slider does, so TUNE follows RF Power until Tune Pwr moves.
+    /// The drive sources' values (the desktop's DrivePowerSource): the drive
+    /// slider (RF Power) and the tune slider (Tune Pwr).
     static let driveSliderSource: Int64 = 0
+    static let tuneSliderSource: Int64 = 1
+    /// Why a power slider is greyed by the drive sources, in the desktop
+    /// TX applet's words (TxApplet::applyDriveSourceGate).
+    static let tuneSourceSetupText = "TUNE's drive source is chosen in the desktop's Setup > Transmit > Power."
+    static let twoToneSourceSetupText =
+        "The two-tone test's drive source is chosen in the desktop's Setup > Test > Two-Tone IMD."
+    static let tuneNotUsingText = "TUNE is not using this slider. " + tuneSourceSetupText
+    static let twoToneNotUsingText = "The two-tone test is not using this slider. " + twoToneSourceSetupText
+    static let neitherUsesTuneText = "Neither TUNE nor the two-tone test uses this slider. " + tuneSourceSetupText
 
     /// PureSignal's automatic calibration on and off (`ps3.automatic`,
     /// `ps3.off`, at `psAlgorithmVersion` 3 and the agreed minor 5).
@@ -700,9 +717,9 @@ final class TransmitModel: ObservableObject {
         dismissNotice()
     }
 
-    /// The RF Power slider: `power`, then, on a Core at version 5, the tune
-    /// power source back to the drive slider, as the desktop's slider
-    /// writes it. The per-band power tables belong to the Core alone: the
+    /// The RF Power slider: `power` alone. It leaves `tuneDrivePowerSource`
+    /// as the desktop's Setup > Transmit > Power chose it, as the desktop's
+    /// slider does. The per-band power tables belong to the Core alone: the
     /// Core keeps the TX band's slot from `power`, and the phone never
     /// writes `powerByBandJson` or `tunePowerByBandJson`.
     func setRfPower(_ value: Double) {
@@ -711,10 +728,6 @@ final class TransmitModel: ObservableObject {
         }
         let watts = Int64(RxPanelModel.snapped(value, to: powerControl.range).rounded())
         write(Self.transmitKey, "power", .int(watts))
-        guard settingsEditable(5) else {
-            return
-        }
-        write(Self.transmitKey, "tuneDrivePowerSource", .enumeration(Self.driveSliderSource))
     }
 
     /// The Tune Pwr slider: the tune power for the band the Core transmits on.
@@ -836,6 +849,37 @@ final class TransmitModel: ObservableObject {
             return nil
         }
         return twoToneOn ? Self.onAirText : nil
+    }
+
+    /// Why RF Power is greyed by the drive sources, or nil while it is live:
+    /// during TUNE when TUNE's source is not the drive slider, during the
+    /// two-tone test when its source is not. The desktop TX applet's rule
+    /// (TxApplet::applyDriveSourceGate).
+    var rfPowerSourceReason: String? {
+        if coreTune {
+            return tuneDrivePowerSource == Self.driveSliderSource ? nil : Self.tuneNotUsingText
+        }
+        if twoToneOn {
+            return twoToneDrivePowerSource == Self.driveSliderSource ? nil : Self.twoToneNotUsingText
+        }
+        return nil
+    }
+
+    /// Why Tune Pwr is greyed by the drive sources, or nil while it is live:
+    /// during TUNE when TUNE's source is not the tune slider, during the
+    /// two-tone test when its source is not, and at any time while neither
+    /// source is the tune slider (where the desktop hides it).
+    var tunePowerSourceReason: String? {
+        if coreTune, tuneDrivePowerSource != Self.tuneSliderSource {
+            return Self.tuneNotUsingText
+        }
+        if !coreTune, twoToneOn, twoToneDrivePowerSource != Self.tuneSliderSource {
+            return Self.twoToneNotUsingText
+        }
+        if tuneDrivePowerSource != Self.tuneSliderSource, twoToneDrivePowerSource != Self.tuneSliderSource {
+            return Self.neitherUsesTuneText
+        }
+        return nil
     }
 
     /// PS-A: PureSignal's automatic calibration on, or off (off is always
@@ -1780,6 +1824,10 @@ final class TransmitModel: ObservableObject {
         // The transmit settings gate: the Core's version, and whether its radio is on the air.
         set(\.settingsVersion, mirror.capabilityVersion(Self.settingsCapability))
         set(\.twoToneOn, pureSignal?["twoToneOn"].flag ?? false)
+        set(\.coreTune, transmit?["tune"].flag == true)
+        set(\.tuneDrivePowerSource, RxPanelModel.whole(transmit?["tuneDrivePowerSource"]) ?? Self.driveSliderSource)
+        set(\.twoToneDrivePowerSource,
+            RxPanelModel.whole(transmit?["twoToneDrivePowerSource"]) ?? Self.driveSliderSource)
         // The radio's transmit inhibit (hl2-port-2): the Core's reason, or the
         // inhibit input's words when it sends none.
         let inhibitWords = radio?["txInhibitReason"].text ?? ""

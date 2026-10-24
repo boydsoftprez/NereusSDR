@@ -33,8 +33,9 @@ cmake_minimum_required(VERSION 3.16)
 set(_tag "${NEREUS_OVERRIDE}")
 
 if(NOT _tag AND NEREUS_GIT_EXECUTABLE)
-    # Release gate. release.yml checks out `ref: <tag>`, so HEAD sits exactly
-    # on a tag there and nowhere else. Release artifacts keep the clean
+    # Release gate. release.yml checks out the commit its tag names and
+    # fetches that tag ("Fetch the release tag" in each build job), so HEAD
+    # sits exactly on a tag there and nowhere else. Release artifacts keep the clean
     # "NereusSDR 0.5.2" title and get no tag, dirty tree or not: a release
     # build must never acquire a suffix just because a workflow step touched
     # a tracked file before the compile.

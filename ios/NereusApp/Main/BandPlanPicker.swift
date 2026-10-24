@@ -50,8 +50,8 @@ struct BandPlanPicker: View {
                     .padding(.horizontal, 12)
                     .frame(minWidth: 88, minHeight: 36)
                     .background(unavailable ? ChromeColours.buttonOff : ChromeColours.button,
-                                in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
+                                in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                         .strokeBorder(unavailable ? ChromeColours.buttonOffBorder : ChromeColours.buttonBorder,
                                       lineWidth: 1))
                     .contentShape(Rectangle())
@@ -86,7 +86,7 @@ struct BandPlanPicker: View {
                     .foregroundStyle(ChromeColours.text)
                     .padding(.horizontal, 12)
                     .frame(height: 36)
-                    .background(shown ? ChromeColours.button : .clear, in: RoundedRectangle(cornerRadius: 4))
+                    .background(shown ? ChromeColours.button : .clear, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -96,8 +96,8 @@ struct BandPlanPicker: View {
             }
         }
         .padding(4)
-        .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
+        .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("bandPlanList")
     }

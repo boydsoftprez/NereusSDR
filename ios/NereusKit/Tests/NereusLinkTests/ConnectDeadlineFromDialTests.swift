@@ -119,18 +119,30 @@ import Testing
     /// Over a real socket: a Core that accepts TCP and TLS and never answers
     /// the opening. The transport's own bound is set far beyond the test, so
     /// only the session's clock, moved by hand, can end it.
+    ///
+    /// The bound is proved on that clock: the deadline closes the connection
+    /// inside the advance that reaches it. Real time is only a hang guard.
+    /// It once also required the session to settle within 5 s of real time
+    /// after the advance; a loaded runner spends that much just scheduling
+    /// the tasks that carry the close back (PR 628's run, where the pairing
+    /// twin of this test took 5.2 s), which measures the runner, not the
+    /// deadline. The transport's own 600 s bound is far beyond the hang
+    /// guard, so a session that ends at all ended at its own bound.
     @Test(arguments: ["::1", "127.0.0.1"])
     func aSilentCoreOverTLSEndsAtTheSessionsBound(address: String) async throws {
         let listener = try SilentTLSListener(address: address)
         let port = try await listener.start()
         defer { listener.stop() }
         let clock = ManualLinkClock()
+        let made = Made()
         let session = StationSession(
             endpoint: StationEndpoint(host: address, port: port),
             trust: .identity(publicKey: Data(repeating: 4, count: 65)),
             authenticator: TokenAuthenticator(token: "conformance-token"), clock: clock,
             transportFactory: { endpoint, trust in
-                WebSocketLinkTransport(endpoint: endpoint, trust: trust, openDeadline: .seconds(600))
+                made.keep(ReceiptTransport(WebSocketLinkTransport(endpoint: endpoint, trust: trust,
+                                                                  openDeadline: .seconds(600)),
+                                           receipts: TestReceipts()))
             })
         let recorder = EventRecorder(session)
         let connecting = Task { await session.connect() }
@@ -140,15 +152,17 @@ import Testing
         }
         try #require(!listener.receivedRequests.isEmpty, "the listener saw no opening, so nothing was waited on")
         #expect(await session.state == .connecting)
-        let advanced = ContinuousClock.now
+        let transport = try #require(made.latest as? ReceiptTransport)
+        #expect(!transport.isClosedByApp)
         await clock.advance(by: 30_000)
+        // Closed by the session's deadline itself, within the advance.
+        #expect(transport.isClosedByApp)
         let ended = await recorder.wait(timeout: TestBackstop.hang) { events in
             events.contains(.stateChanged(.waitingToRetry(seconds: 1)))
         }
         #expect(ended)
         await session.disconnect()
         await connecting.value
-        #expect(ContinuousClock.now - advanced < .seconds(5))
     }
 
     @Test func aNormalConnectAfterASlowOpeningIsUnaffected() async throws {
@@ -191,13 +205,16 @@ import Testing
     }
 
     /// The error `task` ended with, or nil when it succeeded. Without the
-    /// bound a pairing would wait for ever: after 10 s of real time this
-    /// cancels it and closes `transport`, so a failure fails rather than
-    /// hangs, and the result is then a cancellation, never a pass.
+    /// bound a pairing would wait for ever: after ``TestBackstop/hang`` of
+    /// real time this cancels it and closes `transport`, so a failure fails
+    /// rather than hangs, and the result is then a cancellation, never a
+    /// pass. It was 10 s, shorter than the 13 s a loaded CI process has
+    /// been seen to go without running any task, which could turn a pairing
+    /// its own bound had already ended into a cancellation.
     private static func failure(_ task: Task<PairedStation, Error>,
                                 closing transport: any LinkTransport) async -> PairingError? {
         let backstop = Task {
-            try await Task.sleep(for: .seconds(10))
+            try await Task.sleep(for: TestBackstop.hang)
             task.cancel()
             transport.close()
         }
@@ -311,6 +328,17 @@ import Testing
         #expect(clock.pendingDueTimes.isEmpty)
     }
 
+    /// The bound is proved on the pairing's own clock: the deadline closes
+    /// the connection inside the advance that reaches it, and the pairing
+    /// then ends as one that never opened. The test's backstop cancels
+    /// instead, which ends it as a cancellation, so the result alone tells
+    /// the two apart.
+    ///
+    /// It once also required the end within 5 s of real time after the
+    /// advance. On PR 628's loaded CI run the deadline closed the connection
+    /// at once, then the opening took 2.2 s and the observer another 3 s
+    /// just to be scheduled (5.2 s in all): a measure of the runner, not of
+    /// the deadline, so the real-time bound is now only the hang guard.
     @Test(arguments: ["::1", "127.0.0.1"])
     func aPairingWithASilentCoreOverTLSEndsAtThePairingsBound(address: String) async throws {
         let receipts = TestReceipts()
@@ -340,15 +368,16 @@ import Testing
             try await Task.sleep(for: .milliseconds(20))
         }
         try #require(!listener.receivedRequests.isEmpty, "the listener saw no opening, so nothing was waited on")
-        let advanced = ContinuousClock.now
+        let transport = try #require(made.latest as? ReceiptTransport)
+        #expect(!transport.isClosedByApp)
         receipts.mark("observer advancing pairing clock")
         await clock.base.advance(by: 30_000)
         receipts.mark("observer clock advance returned")
-        let transport = try #require(made.latest)
+        // Closed by the pairing's deadline itself, within the advance.
+        #expect(transport.isClosedByApp)
+        // Ended by the pairing's bound, not by the test's backstop.
         #expect(await Self.failure(pairing, closing: transport) == .didNotOpen(localNetworkDenied: false))
         receipts.mark("pairing observer resumed")
-        // Ended by the pairing's bound, not by the test's backstop.
-        #expect(ContinuousClock.now - advanced < .seconds(5))
     }
 
     @Test func fixturePhaseAlreadyExpiredRegistrationStaysFailedAfterLateEntry() async throws {
@@ -549,7 +578,11 @@ private final class ReceiptClock: LinkClock, @unchecked Sendable {
 private final class ReceiptTransport: LinkTransport, @unchecked Sendable {
     let inner: any LinkTransport
     let receipts: TestReceipts
+    private let lock = NSLock()
+    private var closed = false
     init(_ inner: any LinkTransport, receipts: TestReceipts) { self.inner = inner; self.receipts = receipts }
+    /// Whether the code under test has closed this connection.
+    var isClosedByApp: Bool { lock.withLock { closed } }
     func open(onEvent: @escaping @Sendable (LinkTransportEvent) async -> Void) async throws -> Data {
         receipts.mark("transport opening entered")
         do {
@@ -565,6 +598,7 @@ private final class ReceiptTransport: LinkTransport, @unchecked Sendable {
     func ping() { inner.ping() }
     func close() {
         receipts.mark("transport close entered")
+        lock.withLock { closed = true }
         inner.close()
         receipts.mark("transport close returned")
     }

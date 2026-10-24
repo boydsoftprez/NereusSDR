@@ -175,6 +175,76 @@ class VerifyIosProvenanceTest(unittest.TestCase):
                 tree.close()
                 self.tree = None
 
+    def test_longpath_names_fail_outside_the_workspace_files(self) -> None:
+        for name in ("Longpath", "OE5SOS"):
+            for relative in ("ios/NereusApp/Main/ChromeColours.swift",
+                             "ios/Shared/Activity/ActivityColours.swift",
+                             "ios/Shared/WorkspaceOther.swift"):
+                with self.subTest(name=name, relative=relative):
+                    tree = self.make()
+                    tree.write(relative, HEADER + "// From " + name + " src/gui/StyleConstants.h:90\n")
+                    self.assertFails(tree, relative + ": upstream: names " + name)
+                    tree.close()
+                    self.tree = None
+
+    def test_longpath_names_pass_in_the_workspace_files(self) -> None:
+        # JJ's ruling of 2026-10-21 (phone workspace-look design, section 11).
+        tree = self.make()
+        for relative in ("ios/Shared/WorkspacePalette.swift",
+                         "ios/Shared/WorkspaceStyles.swift"):
+            tree.write(relative, HEADER
+                       + "// From Longpath src/gui/StyleConstants.h:90 [@551576e3]\n"
+                       + "// Longpath (OE5SOS, GPL-3)\n")
+        self.assertPasses(tree)
+
+    def test_workspace_files_still_refuse_other_upstreams(self) -> None:
+        tree = self.make()
+        relative = "ios/Shared/WorkspacePalette.swift"
+        tree.write(relative, HEADER + "// as AetherSDR does it\n")
+        self.assertFails(tree, relative + ": upstream: names AetherSDR")
+
+    # known open licence items ---------------------------------------------
+
+    ROTOR_DIAL = "ios/NereusApp/Accessories/RotorDial.swift"
+
+    def test_known_open_item_passes_and_prints_a_note(self) -> None:
+        tree = self.make()
+        tree.write(self.ROTOR_DIAL, HEADER + "/// after the mockup's Longpath-style dial\n")
+        result = tree.run()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("NOTE " + self.ROTOR_DIAL + ": names Longpath; open licence item",
+                      result.stdout)
+        self.assertIn("resolve before App Store submission", result.stdout)
+
+    def test_known_open_name_fails_in_any_other_file(self) -> None:
+        for relative in ("ios/NereusApp/Accessories/RotorPage.swift",
+                         "ios/NereusApp/Main/ChromeColours.swift"):
+            with self.subTest(relative=relative):
+                tree = self.make()
+                tree.write(self.ROTOR_DIAL, HEADER + "/// Longpath-style dial\n")
+                tree.write(relative, HEADER + "/// Longpath-style dial\n")
+                result = tree.run()
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn(relative + ": upstream: names Longpath", result.stderr)
+                self.assertNotIn(self.ROTOR_DIAL + ": upstream", result.stderr)
+                tree.close()
+                self.tree = None
+
+    def test_known_open_item_does_not_let_unlisted_names_through(self) -> None:
+        tree = self.make()
+        tree.write(self.ROTOR_DIAL, HEADER + "/// Longpath-style dial by OE5SOS\n")
+        self.assertFails(tree, self.ROTOR_DIAL + ": upstream: names OE5SOS")
+        result = tree.run()
+        self.assertNotIn(self.ROTOR_DIAL + ": upstream: names Longpath", result.stderr)
+
+    def test_real_tree_notes_the_rotor_dial(self) -> None:
+        result = subprocess.run(
+            [sys.executable, str(CHECKER)],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("NOTE " + self.ROTOR_DIAL + ": names Longpath", result.stdout)
+
     def test_copyright_line_fails(self) -> None:
         tree = self.make()
         relative = "ios/NereusKit/Sources/NereusMedia/Decoder.swift"

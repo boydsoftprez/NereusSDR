@@ -4,6 +4,11 @@
 //            J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-07 Remote reasons and the log window follow CatControl.
 //            J.J. Boyd / KG4VCF, AI tooling: Claude Code.
+// 2026-10-22: ports a test hands to a later listener come from
+// unusedLoopbackPort() (UnusedLoopbackPort.h), below the kernel's ephemeral
+// range, so a parallel test cannot take one between the pick and the listen.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+#include "UnusedLoopbackPort.h"
 #include <QtTest>
 #include <memory>
 #include <QPushButton>
@@ -20,12 +25,12 @@ class TstCatApplet : public QObject {
 private slots:
     void indicatorsExternalSyncAndCatOneScope() {
         AppSettings::instance().clear(); RadioModel model; CatService& service=*model.catService();
-        QTcpServer reservation; QVERIFY(reservation.listen(QHostAddress::LocalHost,0)); const int port=reservation.serverPort(); reservation.close();
+        const int port=unusedLoopbackPort(); QVERIFY(port != 0);
         CatEndpointConfig two=service.channelConfig(2); two.tcpEnabled=true; two.tcpPort=port; QVERIFY(service.applyChannelConfig(2,two));
         service.startConfigured(); CatApplet applet(&model); auto* tcp=applet.findChild<QPushButton*>("catTcpButton"); QVERIFY(tcp);
         QCOMPARE(applet.findChild<QLabel*>("catTcpLed2")->toolTip().contains("Listening"),true);
         QVERIFY(tcp->toolTip().contains("CAT1")); QSignalSpy changed(&service,&CatService::configurationChanged);
-        QTcpServer oneReservation; QVERIFY(oneReservation.listen(QHostAddress::LocalHost,0)); const int onePort=oneReservation.serverPort(); oneReservation.close();
+        const int onePort=unusedLoopbackPort(QHostAddress::LocalHost, quint16(port)); QVERIFY(onePort != 0);
         QVERIFY(onePort!=port); CatEndpointConfig one=service.channelConfig(1); one.tcpEnabled=true; one.tcpPort=onePort; QVERIFY(service.reconfigureChannel(1,one));
         QCOMPARE(changed.size(),1); QVERIFY(tcp->isChecked()); tcp->click(); QCOMPARE(changed.size(),2); QVERIFY(!service.channelConfig(1).tcpEnabled);
         QVERIFY(service.isListening(2)); QCOMPARE(service.boundPort(2),port);

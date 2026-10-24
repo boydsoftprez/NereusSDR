@@ -33,8 +33,8 @@ struct LevelCalBandLine: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
-                .background(StackNotice.card, in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(StackNotice.cardEdge, lineWidth: 1))
+                .background(StackNotice.card, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(StackNotice.cardEdge, lineWidth: 1))
                 .frame(maxWidth: sideways ? 546 : .infinity)
                 .padding(.horizontal, 10)
                 .offset(y: axes.layout.waterfall.minY + 8)

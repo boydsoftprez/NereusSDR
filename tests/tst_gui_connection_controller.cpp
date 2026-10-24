@@ -6,8 +6,13 @@
 // session-switch acceptance coverage.
 // 2026-10-17: run as three ctest entries (TestFunctionGroups). J.J. Boyd
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-22: ports a test hands to a later listener come from
+// unusedLoopbackPort() (UnusedLoopbackPort.h), below the kernel's ephemeral
+// range, so a parallel test cannot take one between the pick and the listen.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
+#include "UnusedLoopbackPort.h"
 #include <QtTest/QtTest>
 
 #include <QAction>
@@ -401,10 +406,8 @@ void TestGuiConnectionController::automaticLocalStartupDoesNotOpenSelector()
         ownership = std::make_unique<StationHandover>(AppSettings::profileOverride());
         QString error;
         QVERIFY2(ownership->acquire(0, &error), qPrintable(error));
-        QTcpServer port;
-        QVERIFY(port.listen(QHostAddress::LocalHost, 0));
-        const quint16 selectedPort = port.serverPort();
-        port.close();
+        const quint16 selectedPort = unusedLoopbackPort();
+        QVERIFY(selectedPort != 0);
         QFile config(configPath);
         QVERIFY(config.open(QIODevice::WriteOnly));
         const QByteArray bytes = QStringLiteral("remote_bind = 127.0.0.1\nremote_port = %1\n"

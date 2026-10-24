@@ -58,6 +58,9 @@
 //                                    Anthropic Claude Code.
 //   2026-09-28 - 2 m as its own band (R-IOS-26, R-R3-49). J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - RX-only values 0..5, Thetis's checkbox sum (XVTR with
+//                RX1 or RX2). J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -147,7 +150,8 @@ public:
     bool hasTxBandEditSender() const { return static_cast<bool>(m_txBandEditSender); }
 
     /// The Core (bound): one band's RX antenna (1..3) or RX-only antenna
-    /// (0..3), through the controller. Empty when taken as asked; otherwise
+    /// (0..5, the checkbox sum: 4 and 5 add XVTR to the first or second
+    /// input), through the controller. Empty when taken as asked; otherwise
     /// the plain reason the band kept another value.
     QString setRxAntForBand(Band band, int antenna);
     QString setRxOnlyAntForBand(Band band, int antenna);

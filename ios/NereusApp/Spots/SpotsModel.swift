@@ -229,7 +229,14 @@ final class SpotsModel: ObservableObject {
     // MARK: State
 
     /// The Core's spots, newest first.
-    @Published private(set) var spots: [Spot] = []
+    @Published private(set) var spots: [Spot] = [] {
+        didSet {
+            spotIndex = Dictionary(spots.indices.map { (spots[$0].id, $0) }, uniquingKeysWith: { first, _ in first })
+            bandSpots = spots.map { SpotLayout.Spot(id: $0.id, frequencyHz: $0.frequencyHz, call: $0.call, source: $0.source) }
+        }
+    }
+    /// Each spot's place in ``spots``, by its id: the band looks every label's spot up.
+    private var spotIndex: [String: Int] = [:]
     @Published private(set) var sourceStatus: [Source: SourceStatus] = [:]
     /// FreeDV Reporter's state at the Core, or nil when the Core does not send it.
     @Published private(set) var freeDvStatus: SourceStatus?
@@ -451,12 +458,11 @@ final class SpotsModel: ObservableObject {
     // MARK: The band
 
     /// The spots this phone's band shows, as the layout takes them.
-    var bandSpots: [SpotLayout.Spot] {
-        spots.map { SpotLayout.Spot(id: $0.id, frequencyHz: $0.frequencyHz, call: $0.call, source: $0.source) }
-    }
+    /// Every spot as the band lays them out, made once each time the spots change.
+    private(set) var bandSpots: [SpotLayout.Spot] = []
 
     func spot(id: String) -> Spot? {
-        spots.first { $0.id == id }
+        spotIndex[id].map { spots[$0] }
     }
 
     /// A spot's text colour, `#RRGGBB`: the override while it is on, else

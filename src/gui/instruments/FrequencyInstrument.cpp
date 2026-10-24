@@ -100,6 +100,10 @@
 //                 with Windows fonts the measured height came out below
 //                 74 plus the reservation. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-20 - Display controls for Frequency (Custom): digit size,
+//                 colour, centering, and each slice line on its own.
+//                 Defaults leave the ported instrument unchanged.
+//                 Brian Sutton, AI-assisted via xAI Grok.
 // =================================================================
 
 #include "gui/instruments/FrequencyInstrument.h"
@@ -115,11 +119,13 @@
 #include <QPainter>
 #include <QSpacerItem>
 #include <QStackedWidget>
+#include <QStringList>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 #include <QtMath>
 
 #include <cmath>
+#include <memory>
 
 namespace NereusSDR {
 
@@ -210,7 +216,7 @@ constexpr double kGroupGapOfCell = 0.35;
 
 } // namespace
 
-// From Longpath src/gui/instruments/FrequencyInstrument.cpp:105 [@551576e3]
+// From Longpath src/gui/instruments/FrequencyInstrument.cpp:105 [@551576e3] [modified in NereusSDR]
 FrequencyInstrument::FrequencyInstrument(QWidget* parent)
     : QWidget(parent)
 {
@@ -255,14 +261,7 @@ FrequencyInstrument::FrequencyInstrument(QWidget* parent)
 
     m_edit = new QLineEdit(m_stack);
     m_edit->setPlaceholderText(QStringLiteral("MHz"));
-    m_edit->setStyleSheet(Style::themed(QStringLiteral(
-        "QLineEdit { background: %1; color: %2; border: 1px solid %3;"
-        " border-radius: 6px; font-family: %5; font-size: %4px; }")
-        .arg(Style::kInsetBg, Style::kAmberText, Style::kBorder)
-        .arg(Style::kFontReading)
-        // NereusSDR: LP_MONO_QSS was a string-literal #define; the same
-        // families come from Workspace::kMonoQssFamilies.
-        .arg(QLatin1String(Style::kMonoQssFamilies))));
+    applyEditStyle();
     connect(m_edit, &QLineEdit::editingFinished,
             this, &FrequencyInstrument::commitEdit);
 
@@ -303,7 +302,7 @@ FrequencyInstrument::FrequencyInstrument(QWidget* parent)
     refreshVfoRow();
 }
 
-// From Longpath src/gui/instruments/FrequencyInstrument.cpp:194 [@551576e3]
+// From Longpath src/gui/instruments/FrequencyInstrument.cpp:194 [@551576e3] [modified in NereusSDR]
 QSize FrequencyInstrument::minimumSizeHint() const
 {
     // War {240, 74}, geraten statt gerechnet -- bei Style::kFontDisplay
@@ -312,7 +311,10 @@ QSize FrequencyInstrument::minimumSizeHint() const
     // braucht, gar nicht erst ziehen. Jetzt aus derselben Rechnung wie
     // resizeEvent()/buildDigits(), bei der kleinsten erlaubten Stufe:
     // das ist die einzige Breite, unter die dieses Widget nie faellt.
-    const int w = digitRowWidthAt(kMinDigitFontPx) + 28;
+    // A locked operator size cannot shrink, so the floor is that size.
+    // The ported instrument stays on the 12 px floor.
+    const int fontFloor = m_fontLocked ? m_digitFontPx : kMinDigitFontPx;
+    const int w = digitRowWidthAt(fontFloor) + 28;
 
     // Betreiber 2026-08-30, wieder: "das ist das kleinste Fenster" --
     // und trotzdem zu viel Abstand. Die 74 hier blieben stehen, auch
@@ -380,7 +382,7 @@ QSize FrequencyInstrument::sizeHint() const
 
 // ── Die Ziffern ──────────────────────────────────────────────────────
 
-// From Longpath src/gui/instruments/FrequencyInstrument.cpp:257 [@551576e3]
+// From Longpath src/gui/instruments/FrequencyInstrument.cpp:257 [@551576e3] [modified in NereusSDR]
 void FrequencyInstrument::buildDigits()
 {
     // Zweiter Aufruf (aus resizeEvent(), neue Schriftstufe): die alte
@@ -425,6 +427,12 @@ void FrequencyInstrument::buildDigits()
     const int sepWidth = qMax(2, qRound(cell * kSeparatorOfCell));
     const int groupGap = qMax(2, qRound(cell * kGroupGapOfCell));
 
+    // Frequency (Custom): equal slack on both sides centres the digits.
+    // The ported instrument keeps the trailing slack only.
+    if (m_centered) {
+        m_digitLayout->addStretch(1);
+    }
+
     for (int i = 0; i < kDigitCount; ++i) {
         auto* d = new QLabel(QStringLiteral("0"), m_digitRow);
         d->setAlignment(Qt::AlignCenter);
@@ -458,7 +466,7 @@ void FrequencyInstrument::buildDigits()
                 dot->setAlignment(Qt::AlignCenter);
                 dot->setStyleSheet(Style::themed(
                     QStringLiteral("QLabel { color: %1; }")
-                        .arg(Style::kAmberDim)));
+                        .arg(digitDimColor())));
                 m_digitLayout->addWidget(dot);
                 // Die Luft steht HINTER dem Trenner, nicht um ihn
                 // herum: er gehoert zur Gruppe links von ihm.
@@ -503,19 +511,24 @@ int FrequencyInstrument::digitRowWidthAt(int px)
     return w;
 }
 
-// From Longpath src/gui/instruments/FrequencyInstrument.cpp:378 [@551576e3]
-int FrequencyInstrument::fittingDigitFontPx(int availableWidth)
+// From Longpath src/gui/instruments/FrequencyInstrument.cpp:378 [@551576e3] [modified in NereusSDR]
+int FrequencyInstrument::fittingDigitFontPx(int availableWidth) const
 {
-    for (int px = kMaxDigitFontPx; px > kMinDigitFontPx; --px) {
+    const int ceiling = m_fontCeiling > 0 ? m_fontCeiling : kMaxDigitFontPx;
+    const int floor = qMin(kMinDigitFontPx, ceiling);
+    for (int px = ceiling; px > floor; --px) {
         if (digitRowWidthAt(px) <= availableWidth) { return px; }
     }
-    return kMinDigitFontPx;
+    return floor;
 }
 
-// From Longpath src/gui/instruments/FrequencyInstrument.cpp:386 [@551576e3]
+// From Longpath src/gui/instruments/FrequencyInstrument.cpp:386 [@551576e3] [modified in NereusSDR]
 void FrequencyInstrument::resizeEvent(QResizeEvent* ev)
 {
     QWidget::resizeEvent(ev);
+
+    // A locked operator size stays put. The ported instrument still fits.
+    if (m_fontLocked) { return; }
 
     // 28 = die seitlichen Raender aus dem VBoxLayout-Aufbau (14 je
     // Seite, siehe der Konstruktor).
@@ -528,7 +541,7 @@ void FrequencyInstrument::resizeEvent(QResizeEvent* ev)
     refreshDigits();
 }
 
-// From Longpath src/gui/instruments/FrequencyInstrument.cpp:401 [@551576e3]
+// From Longpath src/gui/instruments/FrequencyInstrument.cpp:401 [@551576e3] [modified in NereusSDR]
 void FrequencyInstrument::refreshDigits()
 {
     const qint64 hz = static_cast<qint64>(std::llround(m_hz));
@@ -553,7 +566,7 @@ void FrequencyInstrument::refreshDigits()
             QStringLiteral("QLabel { color: %1; padding: 2px 1px;"
                            " border-radius: 6px; }"
                            "QLabel:hover { background: %2; }")
-                .arg(dim ? Style::kAmberDim : Style::kAmberText,
+                .arg(dim ? digitDimColor() : digitBrightColor(),
                      Style::kBadgeWarnBg)));
     }
 }
@@ -578,7 +591,7 @@ QString FrequencyInstrument::groupedText() const
     return out;
 }
 
-// From Longpath src/gui/instruments/FrequencyInstrument.cpp:449 [@551576e3]
+// From Longpath src/gui/instruments/FrequencyInstrument.cpp:449 [@551576e3] [modified in NereusSDR]
 void FrequencyInstrument::refreshVfoRow()
 {
     // Beide Scheiben, die aktive hervorgehoben — Split ist damit ohne
@@ -593,16 +606,22 @@ void FrequencyInstrument::refreshVfoRow()
             .arg((v / 1000) % 1000, 3, 10, QLatin1Char('0'))
             .arg(v % 1000, 3, 10, QLatin1Char('0'));
     };
-    const QString on  = QString::fromLatin1(Style::kAmberText);
-    const QString off = QString::fromLatin1(Style::kAmberDim);
+    const QString on = digitBrightColor();
+    const QString off = digitDimColor();
     // NereusSDR: the letters come from setSliceLetters() (upstream
-    // hard-codes "A %2" and "B %4"; the defaults are the same).
-    m_vfoRow->setText(
-        QStringLiteral("<font color='%1'>%5 %2</font>"
-                       "&nbsp;&nbsp;<font color='%3'>%6 %4</font>")
-            .arg(m_activeIsThis ? on : off, fmt(m_hz),
-                 m_activeIsThis ? off : on, fmt(m_otherHz),
-                 QString(m_ownLetter), QString(m_otherLetter)));
+    // hard-codes "A %2" and "B %4"; the defaults are the same). With
+    // both slice lines shown the text is that same string. Frequency
+    // (Custom) may omit either line.
+    QStringList parts;
+    if (m_showOwn) {
+        parts.append(QStringLiteral("<font color='%1'>%2 %3</font>")
+                         .arg(m_activeIsThis ? on : off, QString(m_ownLetter), fmt(m_hz)));
+    }
+    if (m_showOther) {
+        parts.append(QStringLiteral("<font color='%1'>%2 %3</font>")
+                         .arg(m_activeIsThis ? off : on, QString(m_otherLetter), fmt(m_otherHz)));
+    }
+    m_vfoRow->setText(parts.join(QStringLiteral("&nbsp;&nbsp;")));
 }
 
 // ── Bedienen ─────────────────────────────────────────────────────────
@@ -806,6 +825,111 @@ void FrequencyInstrument::setVfoRowVisible(bool on)
 bool FrequencyInstrument::vfoRowVisible() const
 {
     return m_vfoRow && m_vfoRow->isVisible();
+}
+
+// NereusSDR: Frequency (Custom). The ported instrument never calls these.
+
+QString FrequencyInstrument::digitBrightColor() const
+{
+    return m_digitColor.isValid() ? m_digitColor.name(QColor::HexRgb)
+                                  : QString::fromLatin1(Style::kAmberText);
+}
+
+QString FrequencyInstrument::digitDimColor() const
+{
+    if (!m_digitColor.isValid()) {
+        return QString::fromLatin1(Style::kAmberDim);
+    }
+    return m_digitColor.darker(165).name(QColor::HexRgb);
+}
+
+void FrequencyInstrument::applyEditStyle()
+{
+    if (!m_edit) {
+        return;
+    }
+    // NereusSDR: LP_MONO_QSS was a string-literal #define; the same
+    // families come from Workspace::kMonoQssFamilies. With no operator
+    // colour, digitBrightColor() is Style::kAmberText.
+    m_edit->setStyleSheet(Style::themed(QStringLiteral(
+        "QLineEdit { background: %1; color: %2; border: 1px solid %3;"
+        " border-radius: 6px; font-family: %5; font-size: %4px; }")
+        .arg(Style::kInsetBg, digitBrightColor(), Style::kBorder)
+        .arg(Style::kFontReading)
+        .arg(QLatin1String(Style::kMonoQssFamilies))));
+}
+
+void FrequencyInstrument::setDigitFont(int fontPx, bool fitWidth)
+{
+    const int clamped = qBound(kMinDigitFontPx, fontPx, 160);
+    m_fontLocked = !fitWidth;
+    m_fontCeiling = m_fontLocked ? 0 : clamped;
+    const int wanted = m_fontLocked ? clamped
+                                    : (width() > 28 ? fittingDigitFontPx(width() - 28) : clamped);
+    if (wanted == m_digitFontPx && !m_digits.isEmpty()) {
+        updateGeometry();
+        return;
+    }
+    m_digitFontPx = wanted;
+    buildDigits();
+    refreshDigits();
+    updateGeometry();
+}
+
+void FrequencyInstrument::setDigitColor(const QColor& color)
+{
+    const QColor next = color.isValid() ? color : QColor();
+    if (next == m_digitColor) {
+        return;
+    }
+    m_digitColor = next;
+    applyEditStyle();
+    if (m_digitLayout) {
+        for (int i = 0; i < m_digitLayout->count(); ++i) {
+            QLayoutItem* item = m_digitLayout->itemAt(i);
+            auto* label = item ? qobject_cast<QLabel*>(item->widget()) : nullptr;
+            if (label && label->text() == QLatin1String(".")) {
+                label->setStyleSheet(Style::themed(
+                    QStringLiteral("QLabel { color: %1; }").arg(digitDimColor())));
+            }
+        }
+    }
+    refreshDigits();
+    refreshVfoRow();
+    update();
+}
+
+void FrequencyInstrument::setContentCentered(bool on)
+{
+    if (m_centered == on) {
+        return;
+    }
+    m_centered = on;
+    // The leading stretch exists only while centering is on, so the
+    // ported layout (no item above the digits) stays as it was.
+    if (auto* root = qobject_cast<QVBoxLayout*>(layout())) {
+        if (on) {
+            root->insertStretch(0, 1);
+        } else if (root->count() > 0 && root->itemAt(0)->spacerItem() != nullptr) {
+            const std::unique_ptr<QLayoutItem> stretch(root->takeAt(0));
+        }
+    }
+    if (m_vfoRow) {
+        m_vfoRow->setAlignment(on ? Qt::AlignHCenter : (Qt::AlignLeft | Qt::AlignVCenter));
+    }
+    setSizePolicy(QSizePolicy::Preferred,
+                  on ? QSizePolicy::Expanding : QSizePolicy::Maximum);
+    buildDigits();
+    refreshDigits();
+    updateGeometry();
+}
+
+void FrequencyInstrument::setSliceLinesVisible(bool own, bool other)
+{
+    m_showOwn = own;
+    m_showOther = other;
+    refreshVfoRow();
+    setVfoRowVisible(own || other);
 }
 
 // From Longpath src/gui/instruments/FrequencyInstrument.cpp:657 [@551576e3]

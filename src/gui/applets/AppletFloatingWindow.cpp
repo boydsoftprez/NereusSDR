@@ -84,6 +84,23 @@ AppletWidget* AppletFloatingWindow::releaseApplet()
 
 void AppletFloatingWindow::closeEvent(QCloseEvent* event)
 {
+    // Application quit closes every top-level window with a close event that
+    // is not spontaneous, and one ignored close cancels the whole quit. Accept
+    // it without docking: the window only hides, the applet stays floating in
+    // the panel and in Applet<Id>Floating, so the next launch restores it
+    // where the operator left it. The same rule as Longpath
+    // src/gui/PanFloatingWindow.cpp:240-243 [@383f058] (reference; no code
+    // ported).
+    // This window is used only by AppletPanelWidget's unmanaged path; the
+    // managed workspace floats applets as FloatingContainer, which already
+    // accepts its close during quit.
+    // A programmatic close() is not spontaneous either, so it hides the
+    // window without docking. To dock from code, emit dockRequested() (or
+    // call AppletPanelWidget::dockApplet()).
+    if (!event->spontaneous()) {
+        event->accept();
+        return;
+    }
     // Closing means "dock it back", never "lose the applet".
     emit dockRequested(m_applet.data());
     event->ignore();

@@ -84,7 +84,7 @@ struct DisplaySheet: View {
             HStack(spacing: 8) {
                 // DUP, the desktop's display duplex: greyed with its reason
                 // on a Core that cannot keep the receiver on the band.
-                PanelButton(label: "DUP", lit: model.duplex && model.duplexAvailable, style: .blue,
+                PanelButton(label: "DUP", lit: model.duplex && model.duplexAvailable, style: .dsp,
                             disabled: !model.duplexAvailable) { model.setDuplex(!model.duplex) }
                     .frame(width: 84)
                     .accessibilityLabel("Display duplex")
@@ -125,7 +125,7 @@ struct DisplaySheet: View {
                     model.setLookBack(seconds: $0)
                 }
                 .accessibilityIdentifier("lookBack")
-                PanelButton(label: "LIVE", lit: model.lookBackSeconds == 0, style: .red,
+                PanelButton(label: "LIVE", lit: model.lookBackSeconds == 0, style: .blue,
                             disabled: model.lookBackSeconds == 0) { model.goLive() }
                     .frame(width: 64)
                     .accessibilityIdentifier("lookBackLive")
@@ -215,8 +215,7 @@ struct DisplaySheet: View {
                     .foregroundStyle(ChromeColours.text)
                     .padding(.horizontal, 12)
                     .frame(minWidth: 88, minHeight: 36)
-                    .background(ChromeColours.button, in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.buttonBorder, lineWidth: 1))
+                    .background { WorkspaceFace(.raised) }
             }
             .accessibilityLabel("Palette")
             .accessibilityValue(model.paletteName ?? CatalogFeed.needsNewerCoreText)
@@ -236,7 +235,7 @@ struct DisplaySheet: View {
                     } label: {
                         Text("Re-tune")
                             .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(model.retuneAvailable ? ChromeColours.accent : ChromeColours.buttonOffText)
+                            .foregroundStyle(model.retuneAvailable ? ChromeColours.accentText : ChromeColours.buttonOffText)
                     }
                     .buttonStyle(.plain)
                     .disabled(!model.retuneAvailable)
@@ -258,7 +257,7 @@ struct DisplaySheet: View {
             Button(action: openSetup) {
                 Text("More display options in Setup \u{203A}")
                     .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(ChromeColours.accent)
+                    .foregroundStyle(ChromeColours.accentText)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, 8)
                     .padding(.bottom, 2)

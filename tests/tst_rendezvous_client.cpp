@@ -98,6 +98,10 @@
 //   2026-10-15: the Core keeps at most kMaxLiveIntroductions answers past
 //               their introductions; the next goes at once. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22: the service reached by name over IPv4 when its IPv6 path
+//               is silent, and checked against that name over TLS
+//               (HappyEyeballs.h). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -147,6 +151,7 @@
 #include "core/security/SpakeExchange.h"
 #include "core/security/StationIdentity.h"
 #include "core/session/DataChannelTransport.h"
+#include "core/session/HappyEyeballs.h"
 #include "core/session/IceDiagnostics.h"
 #include "core/session/RendezvousDialer.h"
 #include "core/session/StationDevicesFacade.h"
@@ -166,6 +171,7 @@
 
 #include "OperatorWording.h"
 #include "RendezvousTestHarness.h"
+#include "StalledListener.h"
 #include "fakes/UpgradedCoreToken.h"
 #include "fakes/LoginProxy.h"
 
@@ -2349,6 +2355,106 @@ private slots:
         QVERIFY(player.waitForConnection() != nullptr);
         QCOMPARE(player.hostHeaders,
                  QStringList({QStringLiteral("localhost:%1").arg(player.port())}));
+        client.stop();
+    }
+
+    // 2026-10-22, seen live: the service's name resolved IPv6 first and
+    // that path was silent (SYN_SENT until the 10 s hello timer, every
+    // attempt) while IPv4 answered. The Core now registers over IPv4 well
+    // inside the hello timer, still asking for the service by name. (The
+    // silent first address comes from tests/StalledListener.h.)
+    void theServiceIsReachedPastASilentAddress()
+    {
+        ServicePlayer player;
+        Test::StalledListener silent;
+        const QHostAddress silentAddress = silent.start(player.port());
+        if (silentAddress.isNull()) {
+            QSKIP(qPrintable(silent.whyNot));
+        }
+        const auto restore = qScopeGuard([] { HappyEyeballs::setResolverForTest({}); });
+        HappyEyeballs::setResolverForTest([silentAddress](const QString&) {
+            return QList<QHostAddress>{silentAddress, QHostAddress(QStringLiteral("127.0.0.1"))};
+        });
+        auto coreKey = makeKey();
+        RendezvousClient core;
+        core.setServers(RendezvousClient::serverUrls(
+            {QStringLiteral("ws://localhost:%1").arg(player.port())}));
+        QCOMPARE(core.helloTimeoutMs(), RendezvousClient::kHelloTimeoutMs);
+        QElapsedTimer clock;
+        clock.start();
+        core.registerStation(coreKey->spki(),
+                             [coreKey](const QByteArray& m) { return coreKey->sign(m); },
+                             [](const QByteArray&) { return QByteArray(); });
+        QWebSocket* socket = player.waitForConnection(3000);
+        QVERIFY(socket != nullptr);
+        QVERIFY2(clock.elapsed() < 3000, qPrintable(QString::number(clock.elapsed())));
+        QCOMPARE(player.hostHeaders,
+                 QStringList({QStringLiteral("localhost:%1").arg(player.port())}));
+        // Through the race (its tunnel's connection reached the service),
+        // not Qt's own one-address-at-a-time connect.
+        const auto* coreSocket = core.findChild<QWebSocket*>(QString(), Qt::FindDirectChildrenOnly);
+        QVERIFY(coreSocket != nullptr);
+        const QAbstractSocket* upstream = HappyEyeballs::upstreamOf(coreSocket);
+        QVERIFY(upstream != nullptr);
+        QCOMPARE(upstream->peerAddress(), QHostAddress(QStringLiteral("127.0.0.1")));
+        QCOMPARE(upstream->peerPort(), player.port());
+        registerOnPlayer(player, socket, Wire::rendezvousId(coreKey->spki()));
+        QTRY_VERIFY_WITH_TIMEOUT(core.isRegistered(), 3000);
+        core.stop();
+    }
+
+    // The tunnel keeps the name for TLS: the service's certificate is
+    // checked against the name it was asked for, never the address the
+    // race connected to.
+    void aServiceReachedByNameIsCheckedAgainstThatName_data()
+    {
+        QTest::addColumn<QByteArray>("altName");
+        QTest::addColumn<QString>("words");
+        QTest::newRow("the name") << QByteArray("DNS:localhost") << QString();
+        QTest::newRow("only the address") << QByteArray("IP:127.0.0.1")
+            << QStringLiteral("The secure connection answered with a certificate for another "
+                              "name. A Wi-Fi sign-in page is one possible cause. Check whether "
+                              "this network needs browser sign-in, then try again.");
+    }
+
+    void aServiceReachedByNameIsCheckedAgainstThatName()
+    {
+        if (!QSslSocket::supportsSsl()) {
+            QSKIP("Qt reports no working TLS backend on this machine");
+        }
+        QFETCH(QByteArray, altName);
+        QFETCH(QString, words);
+        QTemporaryDir dir;
+        const QSslCertificate certificate
+            = writeLoopbackCertificate(dir.path(), altName.constData());
+        QVERIFY(!certificate.isNull());
+        TrustedAuthority authority(certificate);
+        QFile keyFile(QDir(dir.path()).filePath(QStringLiteral("tls-key.pem")));
+        QVERIFY(keyFile.open(QIODevice::ReadOnly));
+        QSslConfiguration tls = QSslConfiguration::defaultConfiguration();
+        tls.setLocalCertificate(certificate);
+        tls.setPrivateKey(QSslKey(keyFile.readAll(), QSsl::Rsa));
+        QWebSocketServer service(QStringLiteral("service"), QWebSocketServer::SecureMode);
+        service.setSslConfiguration(tls);
+        QVERIFY(service.listen(QHostAddress::LocalHost, 0));
+        const auto restore = qScopeGuard([] { HappyEyeballs::setResolverForTest({}); });
+        HappyEyeballs::setResolverForTest(
+            [](const QString&) { return QList<QHostAddress>{QHostAddress::LocalHost}; });
+        RendezvousClient client;
+        client.setServers({QUrl(QStringLiteral("wss://localhost:%1/").arg(service.serverPort()))});
+        QSignalSpy unreachable(&client, &RendezvousClient::unreachable);
+        QSignalSpy arrived(&service, &QWebSocketServer::newConnection);
+        client.connectToService();
+        if (words.isEmpty()) {
+            QTRY_COMPARE_WITH_TIMEOUT(arrived.size(), 1, 15000);
+            QCOMPARE(unreachable.size(), 0);
+            QVERIFY(client.findChild<HappyEyeballsTunnel*>(QString(), Qt::FindChildrenRecursively)
+                    != nullptr);
+        } else {
+            QTRY_COMPARE_WITH_TIMEOUT(unreachable.size(), 1, 15000);
+            QCOMPARE(unreachable.at(0).at(0).toString(), words);
+            QCOMPARE(arrived.size(), 0);
+        }
         client.stop();
     }
 

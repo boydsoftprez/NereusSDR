@@ -81,6 +81,8 @@
 //               with a new canonical UUID, refused in a station message.
 //               J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //               Anthropic Claude Code.
+//   2026-10-22: The NSDC v2 Held disposition's name. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 // =================================================================
 
 #include "LinkFixtures.h"
@@ -2495,6 +2497,7 @@ QString LinkMediaVectors::nsdcDispositionName(DisplayCodecDisposition dispositio
     case DisplayCodecDisposition::Accepted: return QStringLiteral("accepted");
     case DisplayCodecDisposition::NeedKeyframe: return QStringLiteral("needKeyframe");
     case DisplayCodecDisposition::Rejected: return QStringLiteral("rejected");
+    case DisplayCodecDisposition::Held: return QStringLiteral("held");
     }
     return QString();
 }

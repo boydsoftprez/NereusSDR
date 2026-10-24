@@ -30,6 +30,9 @@ warren@wpratt.com
 // Claude Code; changes made between 2026-09-22 and 2026-09-30 against the
 // pinned TAPR WDSP 2.10 tree at b02d5bac): includes nnr_compat.h, the NereusSDR NNR
 // control and readback declarations.
+// NereusSDR modifications (2026-10-22, J.J. Boyd KG4VCF, AI-assisted via
+// Anthropic Claude Code): declares nnr_log_stage and nnr_log_state, read by
+// xrxa for the slow NR call log.
 
 #ifndef _nnr_h
 #define _nnr_h
@@ -74,6 +77,11 @@ extern void setSize_nnr (NNR a, int size);
 extern int getDelay_nnr (NNR a);
 
 extern int getRun_nnr(NNR a);
+
+// NereusSDR (2026-10-22): for the slow NR call log (see nnr.c).
+extern int nnr_log_stage (NNR a, int pos);
+
+extern int nnr_log_state (NNR a);
 
 
 // RXA Properties

@@ -17,7 +17,7 @@ import Testing
 
     @Test func newestCapabilitiesSitWhereTheSurfacePinsThem() throws {
         let capabilities = try #require(try Self.surface()["capabilities"] as? [[String: Any]])
-        #expect(capabilities.count == 115)
+        #expect(capabilities.count == 117)
         #expect(capabilities[69]["value"] == nil, "The loopback capture cannot advertise a live TX watch value")
         // The merged b44d638 surface inserts diversityControlVersion after
         // diversityPatternVersion. Capture b20ad1186 also includes the existing
@@ -61,7 +61,14 @@ import Testing
             // does not declare) goes before the build info as well, which
             // moves to 114.
             (113, "waveformVersion", "i64"),
-            (114, "coreBuildInfo", "utf8"),
+            // The RX meter stamps (feature `rxMeterStamps` 1, which the
+            // phone does not declare) go before the build info as well,
+            // which moves to 115.
+            (114, "rxMeterStampsVersion", "i64"),
+            // The display codec version (feature `displayCodec` 2, NSDC
+            // v2) goes before the build info as well, which moves to 116.
+            (115, "displayCodecVersion", "i64"),
+            (116, "coreBuildInfo", "utf8"),
         ]
         // Core trunk b26112687: sliceAccessVersion reads 3 (the Core's own
         // slice can be taken); nothing moved.
@@ -70,7 +77,7 @@ import Testing
         #expect((capabilities[105]["value"] as? NSNumber)?.intValue == 2)
         #expect((capabilities[84]["value"] as? NSNumber)?.intValue == 1)
         #expect((capabilities[108]["value"] as? NSNumber)?.intValue == 1)
-        #expect(Set(capabilities.compactMap { $0["name"] as? String }).count == 115)
+        #expect(Set(capabilities.compactMap { $0["name"] as? String }).count == 117)
         for entry in expected {
             try #require(capabilities.count > entry.index)
             #expect(capabilities[entry.index]["name"] as? String == entry.name, "\(entry.name)")
@@ -255,13 +262,19 @@ import Testing
     }
 
     /// The RADE reason (Core trunk 4582efc90, hello `radeReason` 1, which
-    /// the phone declares) is appended last on `SliceModel`, so the
-    /// RADE frequency offset the phone reads keeps its ordinal.
+    /// the phone declares) is appended after the RADE status on
+    /// `SliceModel`, so the RADE frequency offset the phone reads keeps its
+    /// ordinal. The RX meter stamp (hello `rxMeterStamps` 1, which the
+    /// phone does not declare) is appended after it and moves neither.
     @Test func sliceRadeReasonIsAppendedLast() throws {
         let classes = try #require(try Self.surface()["mirrorClasses"] as? [String: Any])
         let slice = try #require(classes["SliceModel"] as? [String: Any])
         let properties = try #require(slice["properties"] as? [[String: Any]])
-        #expect(properties.count == 154)
+        #expect(properties.count == 155)
+        let stamp = try #require(properties.first { $0["name"] as? String == "meterReadingNs" })
+        #expect((stamp["ordinal"] as? NSNumber)?.intValue == 154)
+        #expect(stamp["kind"] as? String == "i64")
+        #expect(stamp["direction"] as? String == "outbound")
         let offset = try #require(properties.first { $0["name"] as? String == "radeFreqOffsetHz" })
         #expect((offset["ordinal"] as? NSNumber)?.intValue == 152)
         #expect(offset["kind"] as? String == "f64")

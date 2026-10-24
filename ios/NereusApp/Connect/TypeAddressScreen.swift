@@ -78,8 +78,8 @@ struct AddressFields: View {
                 .focused(focused)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
-                .background(ConnectChrome.fieldFill, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.accent, lineWidth: 1))
+                .background(ConnectChrome.fieldFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.accent, lineWidth: 1))
                 .onChange(of: flow.addressText) { old, new in
                     flow.addressChanged(from: old, to: new)
                 }
@@ -93,8 +93,8 @@ struct AddressFields: View {
                 .keyboardType(.numberPad)
                 .padding(.horizontal, 14)
                 .frame(height: 50)
-                .background(ConnectChrome.fieldFill, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.accent, lineWidth: 1))
+                .background(ConnectChrome.fieldFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.accent, lineWidth: 1))
                 .containerRelativeFrame(.horizontal) { width, _ in width * 0.44 }
                 .accessibilityLabel("Port")
                 .accessibilityIdentifier("portField")

@@ -404,7 +404,8 @@ final class BandSubscriber: ObservableObject {
     }
 
     /// The view the band asks for: the zoom's, the double tap's or the
-    /// pan's, else the active slice in the middle of its whole sample rate.
+    /// pan's, else the active slice in the middle of the span last zoomed to
+    /// by hand, or of its whole sample rate before any.
     /// When the active slice itself moves out of view (another slice made
     /// active, or tuned from elsewhere), the view moves to keep it in the
     /// middle; a pan that leaves it off the band stays where it was dropped
@@ -423,7 +424,7 @@ final class BandSubscriber: ObservableObject {
         }
         let limits = band.spanLimits(sampleRateHz: sampleRateHz)
         var view = band.requestedView
-            ?? TuneGestures.View(centerHz: active.slice.frequencyHz, spanHz: sampleRateHz)
+            ?? TuneGestures.View(centerHz: active.slice.frequencyHz, spanHz: band.settings.rxViewSpanHz ?? sampleRateHz)
         view.spanHz = min(max(view.spanHz, limits.lowerBound), limits.upperBound)
         let hz = active.slice.frequencyHz
         let moved = lastActive.map { $0.id != active.id || $0.hz != hz } ?? true
@@ -450,7 +451,7 @@ final class BandSubscriber: ObservableObject {
         }
         let limits = band.spanLimits(sampleRateHz: sampleRateHz)
         var view = band.requestedView
-            ?? TuneGestures.View(centerHz: active.slice.frequencyHz, spanHz: sampleRateHz)
+            ?? TuneGestures.View(centerHz: active.slice.frequencyHz, spanHz: band.settings.rxViewSpanHz ?? sampleRateHz)
         view.spanHz = min(max(view.spanHz, limits.lowerBound), limits.upperBound)
         return view
     }

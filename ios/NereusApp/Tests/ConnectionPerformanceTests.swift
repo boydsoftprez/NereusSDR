@@ -195,7 +195,7 @@ struct ConnectionPerformanceTests {
                                                  onResetSessionStats: {})
                 .environment(\.dynamicTypeSize, large ? .accessibility2 : .large)
                 .preferredColorScheme(.dark)
-            let host = UIHostingController(rootView: page)
+            let host = ShotHosting.host(page)
             host.view.frame = CGRect(origin: .zero, size: size)
             window.rootViewController = host
             window.isHidden = false
@@ -267,7 +267,7 @@ struct ConnectionPerformanceTests {
         let page = ConnectionPerformanceView(input: input, initialSection: .connection,
                                              onSelectRange: { _ in }, onResetSessionStats: {})
             .environment(\.dynamicTypeSize, .large).preferredColorScheme(.dark)
-        let hosting = UIHostingController(rootView: page)
+        let hosting = ShotHosting.host(page)
         hosting.view.frame = CGRect(origin: .zero, size: size)
         window.rootViewController = hosting
         window.isHidden = false
@@ -299,7 +299,7 @@ struct ConnectionPerformanceTests {
             let page = ConnectionPerformanceView(input: fixture(), initialSection: section,
                                                  onSelectRange: { _ in }, onResetSessionStats: {})
                 .environment(\.dynamicTypeSize, dynamicType).preferredColorScheme(.dark)
-            let host = UIHostingController(rootView: page)
+            let host = ShotHosting.host(page)
             host.view.frame = CGRect(origin: .zero, size: size)
             window.rootViewController = host
             window.isHidden = false

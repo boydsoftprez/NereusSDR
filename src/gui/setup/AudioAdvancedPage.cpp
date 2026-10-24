@@ -38,6 +38,7 @@
 // =================================================================
 
 #include "AudioAdvancedPage.h"
+#include "gui/ScopedChildWidget.h"
 
 #include "core/AppSettings.h"
 #include "core/AudioEngine.h"
@@ -403,7 +404,9 @@ void AudioAdvancedPage::onResetClicked()
     // Addendum §2.5 — verbatim confirm modal copy.
     // R-R3-21 (2026-09-24): "device bindings" reads "device choices".
     // R-R3-21 (2026-09-24): "DSP sample rate" reads "Audio processing rate".
-    QMessageBox dlg(this);
+    // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+    ScopedChildWidget<QMessageBox> dlgOwner(this);
+    QMessageBox& dlg = *dlgOwner.get();
     dlg.setWindowTitle(QStringLiteral("Reset all audio to defaults?"));
     dlg.setText(QStringLiteral("Reset all audio to defaults?"));
     dlg.setInformativeText(
@@ -425,6 +428,8 @@ void AudioAdvancedPage::onResetClicked()
     dlg.setDefaultButton(cancelBtn);
 
     dlg.exec();
+    // The parent may have died in exec() and taken the dialog with it.
+    if (!dlgOwner) { return; }
 
     if (dlg.clickedButton() != resetBtn) {
         return;

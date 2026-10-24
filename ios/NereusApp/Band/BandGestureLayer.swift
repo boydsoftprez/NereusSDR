@@ -563,19 +563,21 @@ struct BandGestureLayer: View {
             }
             .onEnded { value in
                 pinching = false
-                pinched(value, from: pinchStart ?? geometry)
+                pinched(value, from: pinchStart ?? geometry, ended: true)
                 pinchStart = nil
             }
     }
 
-    private func pinched(_ value: MagnifyGesture.Value, from start: BandGeometry) {
+    /// The span is kept for the next launch once the fingers lift, not at
+    /// each step of the pinch.
+    private func pinched(_ value: MagnifyGesture.Value, from start: BandGeometry, ended: Bool = false) {
         guard value.magnification > 0 else {
             return
         }
         // Fingers spreading close in: the span shrinks by their spread.
         let about = start.hz(forX: Double(value.startLocation.x))
         band.requestView(TuneGestures.zoomed(start, by: 1 / Double(value.magnification), aboutHz: about,
-                                             spanLimits: spanLimits))
+                                             spanLimits: spanLimits), byHand: ended)
     }
 
     private func tap(atX x: CGFloat, geometry: BandGeometry) {
@@ -600,7 +602,7 @@ struct BandGestureLayer: View {
         case .tune(let hz):
             slices.tap(to: hz)
         case .view(let view):
-            band.requestView(view)
+            band.requestView(view, byHand: true)
         case nil:
             break
         }
@@ -612,7 +614,8 @@ struct BandGestureLayer: View {
 
     private func zoom(by factor: Double, geometry: BandGeometry) {
         let about = slices.active?.slice.frequencyHz ?? geometry.centerHz
-        band.requestView(TuneGestures.zoomed(geometry, by: factor, aboutHz: about, spanLimits: spanLimits))
+        band.requestView(TuneGestures.zoomed(geometry, by: factor, aboutHz: about, spanLimits: spanLimits),
+                         byHand: true)
     }
 
     private var spanLimits: ClosedRange<Double> {

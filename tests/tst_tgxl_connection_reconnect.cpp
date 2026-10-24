@@ -7,6 +7,7 @@
 // NereusSDR additions. No Thetis TGXL connection manager exists to port.
 // =================================================================
 
+#include "UnusedLoopbackPort.h"
 #include <QtTest/QtTest>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -28,11 +29,7 @@ constexpr int kRefusedDialMs = 8000;
 
 quint16 closedLoopbackPort()
 {
-    QTcpServer reservation;
-    if (!reservation.listen(QHostAddress::LocalHost, 0)) { return 0; }
-    const quint16 port = reservation.serverPort();
-    reservation.close();
-    return port;
+    return unusedLoopbackPort();
 }
 
 void answerVersion(QTcpServer& server, int& accepted,

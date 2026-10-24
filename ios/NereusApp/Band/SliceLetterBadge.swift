@@ -16,6 +16,6 @@ struct SliceLetterBadge: View {
             .font(.system(size: points, weight: .bold))
             .foregroundStyle(.white)
             .frame(width: size, height: size)
-            .background(colour, in: RoundedRectangle(cornerRadius: 3))
+            .background(colour, in: RoundedRectangle(cornerRadius: 3)) // kept-radius: swatch
     }
 }

@@ -7,6 +7,17 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22: NSDC v2 negotiation: displayCodecVersion, after
+//               rxMeterStampsVersion and before coreBuildInfo, for a peer
+//               that declared displayCodec 2. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-22: radioAntennaRowsVersion 2 is read and sent (RX-only
+//               antennas 0..5). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-22: RX meter stamps: rxMeterStampsVersion, after waveformVersion
+//               and before coreBuildInfo, for a peer that declared
+//               rxMeterStamps. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-12: The radio's second firmware number: firmwareBeta, after
 //               spectrumPictureVersion and before coreBuildInfo, for a peer
 //               that declared firmwareBeta. J.J. Boyd (KG4VCF), AI-assisted
@@ -437,7 +448,7 @@ QList<MirrorUpdate> StationCapabilities::toUpdates() const
         if (remoteRotorControlVersion > 0) {
             updates.append(intEntry("remoteRotorControlVersion", remoteRotorControlVersion));
         }
-        if (radioAntennaRowsVersion == 1) {
+        if (radioAntennaRowsVersion >= 1) {
             updates.append(intEntry("radioAntennaRowsVersion", radioAntennaRowsVersion));
         }
         // iPhone app plan Task 25: the station computer's VAX, only for a
@@ -599,6 +610,20 @@ QList<MirrorUpdate> StationCapabilities::toUpdates() const
     if (radioIdentityEntries && waveformVersion > 0) {
         updates.append(intEntry("waveformVersion", waveformVersion));
     }
+    // RX meter stamps: each slice's meterReadingNs, after waveformVersion
+    // (when sent) and before coreBuildInfo (which stays last), only for a
+    // peer that declared rxMeterStamps; any other peer is sent no entry, so
+    // its capabilities are today's.
+    if (rxMeterStampsVersion > 0) {
+        updates.append(intEntry("rxMeterStampsVersion", rxMeterStampsVersion));
+    }
+    // Display codec v2: after rxMeterStampsVersion (when sent) and before
+    // coreBuildInfo (which stays last), only for a peer that declared
+    // displayCodec 2; any other peer is sent no entry, so its capabilities
+    // are today's.
+    if (displayCodecVersion > 0) {
+        updates.append(intEntry("displayCodecVersion", displayCodecVersion));
+    }
     if (coreBuildInfo) {
         const QByteArray json = coreBuildInfo->toJson();
         if (!json.isEmpty()) updates.append(stringEntry("coreBuildInfo", QString::fromUtf8(json)));
@@ -622,6 +647,8 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
     int radioMicEntries = 0;
     int rxFilterLowPassEntries = 0;
     int radeReasonEntries = 0;
+    int rxMeterStampsEntries = 0;
+    int displayCodecEntries = 0;
     int stationCatEntries = 0;
     int radioSpeakerEntries = 0;
     int coreSpeakerEntries = 0;
@@ -665,6 +692,24 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                 && u.value.typeId() == QMetaType::LongLong) {
                 const qlonglong version = u.value.toLongLong();
                 caps.radeReasonVersion = version > 0 && version <= 65535
+                    ? static_cast<int>(version) : 0;
+            }
+        } else if (u.name == "rxMeterStampsVersion") {
+            // RX meter stamps: one entry, an Int64 of 1 or more.
+            if (++rxMeterStampsEntries == 1 && u.ordinal == 0
+                && u.kind == MirrorWireKind::Int64
+                && u.value.typeId() == QMetaType::LongLong) {
+                const qlonglong version = u.value.toLongLong();
+                caps.rxMeterStampsVersion = version > 0 && version <= 65535
+                    ? static_cast<int>(version) : 0;
+            }
+        } else if (u.name == "displayCodecVersion") {
+            // Display codec v2: one entry, an Int64 of 1 or more.
+            if (++displayCodecEntries == 1 && u.ordinal == 0
+                && u.kind == MirrorWireKind::Int64
+                && u.value.typeId() == QMetaType::LongLong) {
+                const qlonglong version = u.value.toLongLong();
+                caps.displayCodecVersion = version > 0 && version <= 65535
                     ? static_cast<int>(version) : 0;
             }
         } else if (u.name == "stationCatVersion") {
@@ -976,7 +1021,9 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                 } else if (u.name == "remoteRotorControlVersion") {
                     caps.remoteRotorControlVersion = version;
                 } else if (u.name == "radioAntennaRowsVersion") {
-                    caps.radioAntennaRowsVersion = version == 1 ? 1 : 0;
+                    // 1 or 2 (RX-only values 0..5); any other is unusable.
+                    caps.radioAntennaRowsVersion = version >= 1
+                        && version <= kRadioAntennaRowsVersion ? version : 0;
                 } else if (u.name == "vaxVersion") {
                     caps.vaxEntry = true;
                     caps.vaxVersion = version;

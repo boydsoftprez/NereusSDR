@@ -28,7 +28,7 @@ extension DisplayOnThisPhonePage {
     }
 
     private func coreGroup(_ title: String, _ controls: [StationCatalog.Display.Control], first: Bool) -> some View {
-        Section {
+        SetupPanelSection {
             ForEach(controls, id: \.label) { control in
                 CoreControlRow(core: core, control: control)
                 if control.settingsKey == CoreDisplayModel.fftSizeKey {
@@ -36,10 +36,7 @@ extension DisplayOnThisPhonePage {
                 }
             }
         } header: {
-            HStack(spacing: 6) {
-                Text(title)
-                SetupTagBadge(tag: CoreDisplayModel.tag(of: controls))
-            }
+            SetupPanelTitle(title: title, tag: CoreDisplayModel.tag(of: controls))
         } footer: {
             VStack(alignment: .leading, spacing: 4) {
                 if first {
@@ -71,33 +68,31 @@ extension DisplayOnThisPhonePage {
         LabeledContent(core.binWidthLabel) {
             Text(core.binWidthText ?? "")
                 .monospacedDigit()
-                .foregroundStyle(.secondary)
+                .foregroundStyle(WorkspacePalette.textSecondary)
         }
         .accessibilityIdentifier("coreBinWidth")
     }
 
     /// A Core without the description: its four settings shown greyed.
     private var olderCoreGroup: some View {
-        Section {
+        SetupPanelSection {
             ForEach(Self.olderCoreRows, id: \.key) { row in
                 LabeledContent(row.title) {
                     Text(core.settingValueText(row.key))
                         .monospacedDigit()
                 }
-                .foregroundStyle(.secondary)
+                // Shown greyed at 0.4; the footer says why.
+                .setupGreyed(true)
                 .accessibilityIdentifier("core.\(row.key)")
             }
             LabeledContent(core.binWidthLabel) {
                 Text(core.binWidthText ?? "")
                     .monospacedDigit()
             }
-            .foregroundStyle(.secondary)
+            .setupGreyed(true)
             .accessibilityIdentifier("coreBinWidth")
         } header: {
-            HStack(spacing: 6) {
-                Text("FFT")
-                SetupTagBadge(tag: .core)
-            }
+            SetupPanelTitle(title: "FFT", tag: .core)
         } footer: {
             Text(CoreDisplayModel.olderCoreText)
                 .accessibilityIdentifier("coreDisplayOlder")
@@ -151,6 +146,7 @@ struct CoreControlRow: View {
                 Text(option.label).tag(option.value)
             }
         }
+        .setupMenuRow(control.label)
     }
 
     /// Sizing: who sets the FFT size, as the app's segmented choice.
@@ -171,24 +167,15 @@ struct CoreControlRow: View {
     private var steps: some View {
         let value = core.value(control).map(control.clamped)
         let index = value.flatMap { value in control.options.firstIndex { $0.value == value } }
-        return Stepper {
-            HStack {
-                Text(control.label)
-                Spacer(minLength: 8)
-                Text(value.map(control.text) ?? "")
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-            }
-        } onIncrement: {
+        return SetupStepperRow(control.label, valueText: value.map(control.text) ?? "", id: id) {
             if let index, index + 1 < control.options.count {
                 core.set(control, to: control.options[index + 1].value)
             }
-        } onDecrement: {
+        } decrement: {
             if let index, index > 0 {
                 core.set(control, to: control.options[index - 1].value)
             }
         }
-        .accessibilityValue(value.map(control.text) ?? "")
     }
 
     /// A number within the Core's range: minus and plus for a step, and a
@@ -197,27 +184,20 @@ struct CoreControlRow: View {
         let value = core.value(control)
         let range = core.range(control)
         return VStack(alignment: .leading, spacing: 4) {
-            Stepper {
-                HStack {
-                    Text(control.label)
-                    Spacer(minLength: 8)
-                    Text(value.map(control.text) ?? "")
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                }
-            } onIncrement: {
+            SetupStepperRow(control.label, valueText: value.map(control.text) ?? "", id: id) {
                 if let value, let range {
                     core.set(control, to: min(value + range.step, range.max))
                 }
-            } onDecrement: {
+            } decrement: {
                 if let value, let range {
                     core.set(control, to: max(value - range.step, range.min))
                 }
             }
             if let range, (range.max - range.min) / range.step > 50 {
-                Slider(value: Binding(get: { value ?? range.min }, set: { core.set(control, to: $0) }),
-                       in: range.min...range.max)
-                    .accessibilityLabel(control.label)
+                SetupSlider(value: Binding(get: { value ?? range.min }, set: { core.set(control, to: $0) }),
+                            range: range.min...range.max, step: 0, label: control.label, identifier: id,
+                            valueText: value.map(control.text) ?? "")
+                    .setupGreyed(!enabled)
             }
         }
         .accessibilityValue(value.map(control.text) ?? "")

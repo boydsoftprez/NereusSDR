@@ -33,7 +33,7 @@ struct Thumbwheel: View {
 
     var body: some View {
         HStack(spacing: Self.gap) {
-            DialStepButton(label: tuning.dialStepLabel, outline: RoundedRectangle(cornerRadius: 6),
+            DialStepButton(label: tuning.dialStepLabel, outline: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius, style: .continuous),
                            size: CGSize(width: Self.stepWidth, height: Self.height)) {
                 tuning.toggleDialStepMenu()
             }
@@ -71,9 +71,9 @@ struct Thumbwheel: View {
                 .frame(width: 2)
                 .padding(.vertical, 4)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(DialColours.stepBorder, lineWidth: 1))
-        .contentShape(RoundedRectangle(cornerRadius: 6))
+        .clipShape(RoundedRectangle(cornerRadius: 6)) // kept-radius: thumbwheel
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(DialColours.stepBorder, lineWidth: 1)) // kept-radius: thumbwheel
+        .contentShape(RoundedRectangle(cornerRadius: 6)) // kept-radius: thumbwheel
         .gesture(rolling)
         .onDisappear { spinner.halt() }
         .opacity(tuning.dialTunes ? 1 : 0.45)

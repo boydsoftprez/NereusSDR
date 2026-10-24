@@ -18,7 +18,7 @@ extension DisplayOnThisPhonePage {
         + "sees the same."
 
     var transmitDisplay: some View {
-        Section {
+        SetupPanelSection {
             SetupNumberRow(title: "Top", value: settings.txGridTopDbm, range: BandDisplaySettings.txGridTopRange,
                            step: 1, unit: "dBm", id: "txGridTop") { value in change { $0.txGridTopDbm = value.rounded() } }
             SetupNumberRow(title: "Range", value: settings.txGridRangeDb,
@@ -41,15 +41,13 @@ extension DisplayOnThisPhonePage {
                 Text(BandPalette.customPaletteName).tag(BandPalette.customPaletteId)
             }
             .accessibilityIdentifier("txWaterfallPalette")
+            .setupMenuRow("Waterfall palette")
             SetupSwitchRow(title: "DUP", detail: display.duplexNote,
                            isOn: Binding(get: { display.duplex && display.duplexAvailable },
                                          set: { display.setDuplex($0) }),
                            enabled: display.duplexAvailable, id: "setupDuplex")
         } header: {
-            HStack(spacing: 6) {
-                Text("Transmit display")
-                SetupTagBadge(tag: .thisPhone)
-            }
+            SetupPanelTitle(title: "Transmit display", tag: .thisPhone)
         } footer: {
             Text(Self.transmitFooter)
         }
@@ -57,7 +55,7 @@ extension DisplayOnThisPhonePage {
     }
 
     var coreTransmitDisplay: some View {
-        Section {
+        SetupPanelSection {
             Picker("FFT size", selection: Binding(get: { coreTx.shownFftSize },
                                                   set: { coreTx.write(CoreTxDisplaySettings.fftSizeKey, String($0)) })) {
                 ForEach(CoreTxDisplaySettings.fftSizes, id: \.self) { size in
@@ -65,12 +63,13 @@ extension DisplayOnThisPhonePage {
                 }
             }
             .accessibilityIdentifier("coreTxFftSize")
+            .setupMenuRow("FFT size")
             HStack {
                 Text("Bin width")
                 Spacer(minLength: 8)
                 Text(CoreTxDisplaySettings.binWidthText(coreTx.shownFftSize))
                     .monospacedDigit()
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(WorkspacePalette.textSecondary)
             }
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("coreTxBinWidth")
@@ -81,18 +80,21 @@ extension DisplayOnThisPhonePage {
                 }
             }
             .accessibilityIdentifier("coreTxWindow")
+            .setupMenuRow("Window")
             Picker("Spectrum detector", selection: Binding(get: { coreTx.traceDetector },
                                                            set: { coreTx.write(CoreTxDisplaySettings.traceDetectorKey,
                                                                                String($0)) })) {
                 ForEach(SpectrumDetector.allCases, id: \.self) { Text($0.title).tag($0.rawValue) }
             }
             .accessibilityIdentifier("coreTxTraceDetector")
+            .setupMenuRow("Spectrum detector")
             Picker("Spectrum averaging", selection: Binding(get: { coreTx.traceAveraging },
                                                             set: { coreTx.write(CoreTxDisplaySettings.traceAveragingKey,
                                                                                 String($0)) })) {
                 ForEach(SpectrumAveraging.allCases, id: \.self) { Text($0.title).tag($0.rawValue) }
             }
             .accessibilityIdentifier("coreTxTraceAveraging")
+            .setupMenuRow("Spectrum averaging")
             SetupNumberRow(title: "Spectrum averaging time", value: Double(coreTx.traceAverageTimeMs),
                            range: CoreTxDisplaySettings.averageTimeRange, step: 10, unit: "ms",
                            enabled: coreTx.available, id: "coreTxTraceTime") { value in
@@ -110,6 +112,7 @@ extension DisplayOnThisPhonePage {
                 ForEach(SpectrumDetector.waterfallCases, id: \.self) { Text($0.title).tag($0.rawValue) }
             }
             .accessibilityIdentifier("coreTxWaterfallDetector")
+            .setupMenuRow("Waterfall detector")
             Picker("Waterfall averaging", selection: Binding(get: { coreTx.waterfallAveraging },
                                                              set: { coreTx.write(
                                                                  CoreTxDisplaySettings.waterfallAveragingKey,
@@ -117,16 +120,14 @@ extension DisplayOnThisPhonePage {
                 ForEach(SpectrumAveraging.allCases, id: \.self) { Text($0.title).tag($0.rawValue) }
             }
             .accessibilityIdentifier("coreTxWaterfallAveraging")
+            .setupMenuRow("Waterfall averaging")
             SetupNumberRow(title: "Waterfall averaging time", value: Double(coreTx.waterfallAverageTimeMs),
                            range: CoreTxDisplaySettings.averageTimeRange, step: 10, unit: "ms",
                            enabled: coreTx.available, id: "coreTxWaterfallTime") { value in
                 coreTx.write(CoreTxDisplaySettings.waterfallAverageTimeKey, String(Int(value)))
             }
         } header: {
-            HStack(spacing: 6) {
-                Text("The Core's transmit display")
-                SetupTagBadge(tag: .core)
-            }
+            SetupPanelTitle(title: "The Core's transmit display", tag: .core)
         } footer: {
             VStack(alignment: .leading, spacing: 4) {
                 if !coreTx.available {

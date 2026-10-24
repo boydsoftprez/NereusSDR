@@ -1,5 +1,8 @@
 // NereusSDR for iOS: the features the app declares in its hello
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-22: the app declares displayCodec 2 (NSDC v2).
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 /// The `features` object of the app's `hello` (link document section 6.1):
 /// what the Core must know about this app before it sends capabilities.
@@ -55,9 +58,11 @@
 /// their bounded answer; the Core then sends `settingsHygieneVersion`. At
 /// 1 the Core has no repair, and its greyed Reset is shown as it words it.
 ///
-/// `radioAntennaRows` 1: the app's per-band antenna tables send
+/// `radioAntennaRows` 2: the app's per-band antenna tables send
 /// `setAlexTxAntennaForRadio` and `setAlexRxAntennaForRadio` with the
 /// connected radio's address; the Core then sends `radioAntennaRowsVersion`.
+/// At 2 a band's receive-only value is the checkbox sum 0 to 5 (XVTR with
+/// the first or second receive-only input is 4 or 5); at 1 it is 0 to 3.
 ///
 /// `vax` 1: the app's VAX Audio page shows the VAX channels of the
 /// computer the Core runs on; the Core then sends `vaxVersion` and, at 1,
@@ -208,12 +213,26 @@
 /// which is the first alone; a Core that sends none is worded by the first
 /// number alone.
 ///
+/// `tuneDriveSource` 1: the app changes TUNE's drive source
+/// (`transmit`'s `tuneDrivePowerSource`) only as Setup > Transmit > Power
+/// does, never from the RF Power or Tune Pwr slider. The Core takes a
+/// change of it only from a client that declares this; it refuses one from
+/// an older app, whose RF Power slider set it to the drive slider. A Core
+/// from before this ignores the name.
+///
+/// `displayCodec` 2: the app decodes NSDC v2 display rows (the display
+/// codec v2 document): Rice-coded planes, frames split in two parts that
+/// it pairs, and rows that carry on without keyframes. The Core then sends
+/// `displayCodecVersion` 2 while it offers media and its NSDC v2 setting is
+/// on, and a media `start` may ask for it; a connection that did not ask
+/// gets NSDC v1 as before.
+///
 /// The PA readings need no declaration: the Core sends its telemetry to
 /// every peer at `stationTelemetryVersion` 4 or later.
 public enum LinkFeatures {
     public static let app: [String: Int] = ["deviceAuth": 1, "sessionHolder": 1, "remoteTx": 1,
                                             "setupDescription": 29, "settingsHygiene": 2,
-                                            "radioAntennaRows": 1,
+                                            "radioAntennaRows": 2,
                                             "vax": 1, "txEqCurve": 2,
                                             "diversityPattern": 1, "diversityControl": 1, "logCategoryList": 1, "radioModels": 1, "band2m": 1,
                                             CoreAddressList.featureName: 1,
@@ -224,5 +243,6 @@ public enum LinkFeatures {
                                             "radioMic": 1, "rxFilterLowPass": 1, "radeReason": 1,
                                             "audioQuality": 1, "stationCat": 1,
                                             "radioSpeaker": 1, "coreSpeaker": 1,
-                                            "spectrumPicture": 1, "firmwareBeta": 1]
+                                            "spectrumPicture": 1, "firmwareBeta": 1,
+                                            "tuneDriveSource": 1, "displayCodec": 2]
 }

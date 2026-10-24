@@ -216,6 +216,10 @@
 //                shows its dot in the inactive text colour (status lights
 //                by meaning, D21). J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-18 - The Tune group's drive source radios are the only place
+//                the tune drive source changes (Thetis parity); comment
+//                on the reverse path updated. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 #include "TransmitSetupPages.h"
 #include "gui/setup/SetupFit.h"
@@ -689,9 +693,9 @@ void PowerPage::buildTuneGroup()
             onTuneDriveSourceChanged(src);
         });
 
-        // Model → radio (reverse).  When the active source flips elsewhere
-        // (TxApplet RF-slider auto-switch in console.cs:46553 [v2.10.3.13]
-        // path), reflect the change on the page.
+        // Model → radio (reverse).  When the source changes elsewhere
+        // (settings load, or a remote window's Core reporting it), reflect
+        // the change on the page.  The TX applet's sliders never change it.
         connect(&tx, &TransmitModel::tuneDrivePowerSourceChanged,
                 this, [this](DrivePowerSource src) {
             QRadioButton* target = m_radTuneSlider;

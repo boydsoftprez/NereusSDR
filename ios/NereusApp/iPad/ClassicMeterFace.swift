@@ -14,12 +14,13 @@ struct ClassicMeterFace: View {
     /// Where the needle is drawn, 0 to 1.
     let needle: Double
 
-    // The desktop's colours.
-    nonisolated static let background = Color(hex: 0x0F0F1A)
-    nonisolated static let scale = Color(hex: 0xC8D8E8)
+    // The face's ground, scale and captions are the workspace's; the scale's
+    // colors (red, blue, the reading and the peak) are the desktop's, kept.
+    nonisolated static let background = WorkspacePalette.appBg
+    nonisolated static let scale = WorkspacePalette.textPrimary
     nonisolated static let red = Color(hex: 0xFF4444)
     nonisolated static let blue = Color(hex: 0x0080D0)
-    nonisolated static let caption = Color(hex: 0x8090A0)
+    nonisolated static let caption = WorkspacePalette.textSecondary
     nonisolated static let reading = Color(hex: 0x00B4D8)
     nonisolated static let peak = Color(hex: 0xFFAA00)
 

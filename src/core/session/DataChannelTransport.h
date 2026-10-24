@@ -82,6 +82,19 @@
 //   2026-10-15: setAnswererOpenDelayForTest(), a Core slow to see its own
 //               end open. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-22: the lingering close ends after kCloseDrainDeadlineMs
+//               with nothing more handed to SCTP, not kCloseDrainDeadlineMs
+//               after the close, and at kCloseDrainCeilingMs at most: a
+//               backlog slower than five seconds to drain lost its last
+//               messages (the session.end) when the deadline dropped the
+//               peer mid-transfer. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-22: setCloseDrainTimingForTest(), lingeringPeerCountForTest();
+//               kCloseDrainCeilingMs says what backlog it covers. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22: setDirectCandidateDelayForTest() (test builds only), so
+//               a test can have the web relay's pair nominated first.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/IceConfiguration.h"
@@ -192,11 +205,24 @@ public:
     /// anyone has signed in.
     static constexpr quint64 kMaxQueuedCaps = 4;
     /// closeLink() closes the channel and then the peer gracefully, and
-    /// the connection is kept until the peer reports it has closed, or for
-    /// at most this long, so what was already sent (a session.end behind a
-    /// backlog) is delivered even when the transport is deleted at once,
-    /// as a WebSocket's close waits for what it has written.
+    /// the connection is kept until the peer reports it has closed, so
+    /// what was already sent (a session.end behind a backlog) is delivered
+    /// even when the transport is deleted at once, as a WebSocket's close
+    /// waits for what it has written. The connection is let go sooner
+    /// when nothing more has been handed to SCTP for this long (the far
+    /// end has stopped taking it), and at kCloseDrainCeilingMs after the
+    /// close in any case. A backlog that is still moving is not cut off
+    /// at this deadline: that lost the messages behind it.
     static constexpr int kCloseDrainDeadlineMs = 5000;
+    /// The longest a closed connection is kept while its backlog drains.
+    /// A backlog that has stopped moving is let go at the deadline above,
+    /// so this bounds only one that is still moving, slowly: 60 s carries
+    /// about 7.5 MB at 1 Mbit/s, close to one message at the desktop's cap
+    /// (StationClient::kMaxIncomingMessageBytes, 8 MiB), or about 1.9 MB at
+    /// 256 kbit/s, six 300 KiB settings snapshots, over a slow relayed or
+    /// cellular path. What it costs is one closed connection (its socket,
+    /// and a relay allocation when relayed) held that long at most.
+    static constexpr int kCloseDrainCeilingMs = 60000;
 
     struct Options {
         Role role = Role::Offerer;
@@ -284,6 +310,21 @@ public:
     /// live on exists. The application's teardown deletes it; one left
     /// after an application has gone is a leak.
     static bool lingerTargetExistsForTest();
+    /// Test seam: the drain deadline and ceiling a lingering close uses
+    /// instead of kCloseDrainDeadlineMs and kCloseDrainCeilingMs (0: the
+    /// constant). Read when each drain check is scheduled.
+    static void setCloseDrainTimingForTest(int deadlineMs, int ceilingMs);
+    /// Test seam: how many closed connections are held while their
+    /// backlog drains.
+    static int lingeringPeerCountForTest();
+#ifdef NEREUS_BUILD_TESTS
+    /// Test seam (PR 616): a connection that has a candidate source (the
+    /// web relay's leg) takes each of the far end's signalled candidates
+    /// this long after it arrives, so the source's pair is checked, and
+    /// can be nominated, before any direct pair (0: at once). A connection
+    /// without a source is not delayed.
+    static void setDirectCandidateDelayForTest(int ms);
+#endif
     /// The ICE settings it was started with, the relay included once known.
     std::optional<IceConfiguration> iceConfiguration() const { return m_options.ice; }
     /// The ICE settings the session's media connection uses (the Task 28

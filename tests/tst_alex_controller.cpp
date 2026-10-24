@@ -271,8 +271,14 @@ private slots:
 
     void rxOnlyAnt_clamps_high() {
         AlexController a;
+        // Thetis stores the checkbox sum 0..5 (Alex.cs:88-95, setup.cs
+        // ProcessAlexAntCheckBox): 4 and 5 are XVTR with RX1 or RX2.
+        a.setRxOnlyAnt(Band::Band20m, 4);
+        QCOMPARE(a.rxOnlyAnt(Band::Band20m), 4);
         a.setRxOnlyAnt(Band::Band20m, 5);
-        QCOMPARE(a.rxOnlyAnt(Band::Band20m), 3);  // high clamp unchanged
+        QCOMPARE(a.rxOnlyAnt(Band::Band20m), 5);
+        a.setRxOnlyAnt(Band::Band20m, 6);
+        QCOMPARE(a.rxOnlyAnt(Band::Band20m), 5);
     }
 
     // Per-MAC persistence round-trip
@@ -345,7 +351,7 @@ private slots:
         f.setRxOnlyAntennas(QStringLiteral("-1,0,0,0,0,0,0,0,0,0,0,0,0,0"));
         QCOMPARE(a.rxOnlyAnt(Band::Band160m), 0);
         QCOMPARE(f.settleReason("rxOnlyAntennas"),
-                 QStringLiteral("The receive-only input is none or 1 to 3."));
+                 QStringLiteral("The receive-only input is a value from 0 to 5."));
     }
 
     // The transmit settings are reported as the controller holds them.

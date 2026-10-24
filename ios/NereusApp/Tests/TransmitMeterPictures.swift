@@ -18,7 +18,7 @@ enum TransmitMeterPictures {
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(origin: .zero, size: size)
         window.windowLevel = .alert + 1
-        let host = UIHostingController(rootView: view.preferredColorScheme(.dark))
+        let host = ShotHosting.host(view.preferredColorScheme(.dark))
         host.view.frame = window.bounds
         let wasAccessible = SetupTypedEntryTests.applicationAccessibility()
         SetupTypedEntryTests.setApplicationAccessibility(true)

@@ -12,10 +12,12 @@
 #include <cmath>
 #include <limits>
 #include <optional>
+#include <random>
 
 #include "core/WidebandFftEngine.h"
 #include "core/session/media/DssWideRow.h"
 #include "core/session/media/SpectrumEndpoint.h"
+#include "core/session/media/SpectrumSampleClock.h"
 #include "core/spectrum/ExtendedSpectrumReducer.h"
 #include "core/spectrum/WidebandDisplayReference.h"
 
@@ -439,6 +441,127 @@ private slots:
              offsetNs += 1'000'000) {
             QVERIFY(!afterStall.consume(frame(source, 2'000'000'000 + offsetNs)).has_value());
         }
+    }
+
+    // How early a frame may come and still fill its slot: half the
+    // source's spacing, within a twentieth and a half of the period.
+    void earlyToleranceIsHalfTheSourceSpacing()
+    {
+        constexpr qint64 kPeriodNs = 1'000'000'000LL / 15;
+        QCOMPARE(SpectrumEndpoint::earlyToleranceNs(kPeriodNs, 0), kPeriodNs / 20);
+        QCOMPARE(SpectrumEndpoint::earlyToleranceNs(kPeriodNs, -1), kPeriodNs / 20);
+        QCOMPARE(SpectrumEndpoint::earlyToleranceNs(kPeriodNs, 1'000'000), kPeriodNs / 20);
+        QCOMPARE(SpectrumEndpoint::earlyToleranceNs(kPeriodNs, 33'333'333),
+                 qint64(16'666'666));
+        QCOMPARE(SpectrumEndpoint::earlyToleranceNs(kPeriodNs, 200'000'000), kPeriodNs / 2);
+    }
+
+    // A 15 fps pan on a 30 fps source whose stamps jitter by up to 8 ms
+    // (the FFT publish times, as stamped before SpectrumSampleClock): every
+    // row gap is near 67 ms. Without the source spacing (the old twentieth
+    // of a period alone) the same frames gave 33 and 100 ms gaps.
+    void halfRatePanTakesEvenlySpacedRows()
+    {
+        const auto rowGaps = [](bool withSourceSpacing) {
+            SpectrumEndpoint endpoint;
+            const SpectrumEndpointSourceContext source = sourceContext();
+            SpectrumEndpointRequest pan = request();
+            pan.targetFps = 15;
+            pan.framesPerLine = 1;
+            if (!endpoint.configure(pan, source)) {
+                return QVector<qint64>{};
+            }
+            std::mt19937 random(598);
+            std::uniform_int_distribution<qint64> jitter(0, 8'000'000);
+            QVector<qint64> gaps;
+            qint64 previousStampNs = 0;
+            qint64 previousRowNs = 0;
+            for (int index = 0; index < 600; ++index) {
+                const qint64 stampNs =
+                    1'000'000'000 + index * 33'333'333LL + jitter(random);
+                DaemonSpectrumFrame next = frame(source, stampNs);
+                next.sourceFrameGapNs =
+                    withSourceSpacing && index > 0 ? stampNs - previousStampNs : 0;
+                previousStampNs = stampNs;
+                if (endpoint.consume(next).has_value()) {
+                    if (previousRowNs != 0) {
+                        gaps.append(stampNs - previousRowNs);
+                    }
+                    previousRowNs = stampNs;
+                }
+            }
+            return gaps;
+        };
+
+        const QVector<qint64> gaps = rowGaps(true);
+        QVERIFY(gaps.size() >= 295);
+        for (const qint64 gapNs : gaps) {
+            QVERIFY2(gapNs >= 58'000'000 && gapNs <= 75'500'000,
+                     qPrintable(QStringLiteral("row gap %1 ns").arg(gapNs)));
+        }
+        // The old rule on the same frames: the check above can fail.
+        const QVector<qint64> oldGaps = rowGaps(false);
+        QVERIFY(std::any_of(oldGaps.cbegin(), oldGaps.cend(), [](qint64 gapNs) {
+            return gapNs < 45'000'000 || gapNs > 90'000'000;
+        }));
+    }
+
+    // The same pan on stamps from the source's sample clock: the rows are
+    // even to within the clock's settling, against 8 ms of publish jitter.
+    void halfRatePanOnSampleClockStampsIsEven()
+    {
+        SpectrumEndpoint endpoint;
+        const SpectrumEndpointSourceContext source = sourceContext();
+        SpectrumEndpointRequest pan = request();
+        pan.targetFps = 15;
+        pan.framesPerLine = 1;
+        QVERIFY(endpoint.configure(pan, source));
+        SpectrumSampleClock clock;
+        std::mt19937 random(598);
+        std::uniform_int_distribution<qint64> jitter(0, 8'000'000);
+        constexpr qint64 kPairsPerFrame = 6400; // 30 fps at 192 kHz
+        qint64 previousStampNs = 0;
+        qint64 previousRowNs = 0;
+        int rows = 0;
+        for (int index = 0; index < 600; ++index) {
+            const qint64 position = (index + 1) * kPairsPerFrame;
+            const qint64 publishedAtNs =
+                1'000'000'000 + index * 33'333'333LL + jitter(random);
+            const qint64 stampNs = clock.stamp(position, source.sampleRateHz, publishedAtNs);
+            DaemonSpectrumFrame next = frame(source, stampNs);
+            next.sourceFrameGapNs = index > 0 ? stampNs - previousStampNs : 0;
+            previousStampNs = stampNs;
+            if (endpoint.consume(next).has_value()) {
+                if (previousRowNs != 0 && index >= 60) {
+                    const qint64 gapNs = stampNs - previousRowNs;
+                    QVERIFY2(std::abs(gapNs - 66'666'667) <= 3'000'000,
+                             qPrintable(QStringLiteral("row %1 gap %2 ns")
+                                            .arg(index).arg(gapNs)));
+                }
+                previousRowNs = stampNs;
+                ++rows;
+            }
+        }
+        QVERIFY(rows >= 295);
+    }
+
+    // The nearest-frame rule does not let a fast source past the pan's
+    // frame rate: a 100 fps source on a 30 fps pan is still capped.
+    void fasterProducerWithItsSpacingStaysCapped()
+    {
+        SpectrumEndpoint endpoint;
+        const SpectrumEndpointSourceContext source = sourceContext();
+        QVERIFY(endpoint.configure(request(), source));
+        int emitted = 0;
+        for (qint64 offsetNs = 0; offsetNs < 1'000'000'000; offsetNs += 10'000'000) {
+            DaemonSpectrumFrame next = frame(source, 1'000'000'000 + offsetNs);
+            next.sourceFrameGapNs = offsetNs > 0 ? 10'000'000 : 0;
+            if (endpoint.consume(next).has_value()) {
+                ++emitted;
+            }
+        }
+        QVERIFY(emitted <= 30);
+        QVERIFY(emitted >= 29);
     }
 
     void backwardAndDuplicateProducerTimestampsCannotEmitTwice()

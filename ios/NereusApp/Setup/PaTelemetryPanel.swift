@@ -26,11 +26,11 @@ struct PaTelemetryPanel: View {
                     let base = Self.text(reading, control: control)
                     Text(paValues?.text(base: base, control: control, category: category) ?? base)
                         .monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WorkspacePalette.textSecondary)
                 }
                 Text(reading.reason ?? Self.age(reading.ageMilliseconds ?? 0))
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(WorkspacePalette.textSecondary)
                     .accessibilityIdentifier("\(control.id).age")
             }
             .accessibilityElement(children: .combine)

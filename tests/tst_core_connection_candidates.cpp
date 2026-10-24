@@ -3,6 +3,14 @@
 // 2026-10-15 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code: a
 // saved Core whose learned addresses are IPv6 only still moves to its own
 // IPv4 address.
+// 2026-10-22 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code: a
+// saved paired Core's race also dials the addresses it announces on this
+// network (aSavedPairedCoreAlsoDialsWhereItAnnouncesItself).
+// 2026-10-22: ports a test hands to a later listener come from
+// unusedLoopbackPort() (UnusedLoopbackPort.h), below the kernel's ephemeral
+// range, so a parallel test cannot take one between the pick and the listen.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+#include "UnusedLoopbackPort.h"
 #include <QtTest>
 #include "core/session/RemoteStationOptions.h"
 #include "gui/GuiConnectionController.h"
@@ -11,6 +19,7 @@
 #include "core/session/RendezvousWire.h"
 #include "core/session/StationRendezvous.h"
 #include "core/session/PathRacer.h"
+#include "core/session/StationLanAnnouncement.h"
 #include "core/settings/SettingsProxy.h"
 using namespace NereusSDR;
 
@@ -38,6 +47,61 @@ private slots:
         target.connection.identityFingerprint = selected.connection.identityFingerprint;
         target.connection.reachFromAnywhere = false;
         QVERIFY(!GuiConnectionController::authenticatedSelectionMatchesSaved(selected, target));
+    }
+    // 2026-10-22, seen live: a Core saved for remote access, listed under
+    // Cores on this network at 192.168.109.19:47910, was raced through the
+    // remote access service alone on every retry ("Race started with 1
+    // attempt(s)"). Its announcement now joins the race when it carries
+    // the saved identity; another identity, or a pin alone, does not.
+    void aSavedPairedCoreAlsoDialsWhereItAnnouncesItself() {
+        SavedCoreTarget target; target.id = QStringLiteral("strix");
+        target.connection.identityFingerprint = QByteArray(kStationLanIdentityBytes, 'i');
+        target.connection.reachFromAnywhere = true;
+        target.connection.rendezvousId = QStringLiteral("abcdefghijklmnopqrstuvwxyz");
+        target.manualAddresses = {QStringLiteral("wss://saved.test:47910")};
+        StationLanEndpoint same;
+        // The announcement's certificate pin; a Core paired by identity
+        // saves none (RemoteStationOptions::isValidRemoteTarget).
+        const QString pin = QStringLiteral("AB:").repeated(31) + QStringLiteral("AB");
+        same.announcement = {47910, pin, QStringLiteral("STRIX"), {},
+            QStringLiteral("00:00:00:00:00:00"), false};
+        same.announcement.schema = kStationLanAnnouncementSchema2;
+        same.announcement.identity = target.connection.identityFingerprint;
+        same.announcement.claimed = true;
+        same.address = QHostAddress(QStringLiteral("192.168.109.19"));
+        QVERIFY(!encodeStationLanAnnouncement(same.announcement).isEmpty());
+        StationLanEndpoint sameOverIpv6 = same;
+        sameOverIpv6.address = QHostAddress(QStringLiteral("2001:db8::19"));
+        StationLanEndpoint another = same;
+        another.announcement.identity = QByteArray(kStationLanIdentityBytes, 'x');
+        another.address = QHostAddress(QStringLiteral("192.168.109.20"));
+        StationLanEndpoint pinOnly = same;
+        pinOnly.announcement.schema = kStationLanAnnouncementSchema1;
+        pinOnly.announcement.identity.clear();
+        pinOnly.announcement.claimed = false;
+        pinOnly.address = QHostAddress(QStringLiteral("192.168.109.21"));
+
+        const RemoteStationOptions saved = GuiConnectionController::connectionOptionsForTarget(target);
+        QCOMPARE(saved.directCandidates, QStringList({QStringLiteral("wss://saved.test:47910")}));
+        QVERIFY(GuiConnectionController::isReadyToConnect(saved));
+        const RemoteStationOptions raced = GuiConnectionController::withAdvertisedAddresses(
+            saved, {another, same, pinOnly, sameOverIpv6, same});
+        QCOMPARE(raced.directCandidates,
+                 QStringList({QStringLiteral("wss://saved.test:47910"),
+                              QStringLiteral("wss://192.168.109.19:47910"),
+                              QStringLiteral("wss://[2001:db8::19]:47910")}));
+        QVERIFY(GuiConnectionController::isReadyToConnect(raced));
+
+        // Without a saved identity, or saved to connect unpinned, nothing
+        // announced is added.
+        RemoteStationOptions unpinned = saved;
+        unpinned.allowUnpinned = true;
+        QCOMPARE(GuiConnectionController::withAdvertisedAddresses(unpinned, {same}).directCandidates,
+                 unpinned.directCandidates);
+        RemoteStationOptions unpaired = saved;
+        unpaired.identityFingerprint.clear();
+        QCOMPARE(GuiConnectionController::withAdvertisedAddresses(unpaired, {same}).directCandidates,
+                 unpaired.directCandidates);
     }
     void transientUnionPreservesHistoryAndRequiresPairedTrust() {
         SavedCoreTarget target;
@@ -136,10 +200,9 @@ private slots:
         QTemporaryDir keyDir;
         const auto key = std::make_shared<const ClientDeviceIdentity>(ClientDeviceIdentity::loadOrCreate(keyDir.path()));
         QVERIFY(core.pairComputer(*key));
-        QTcpServer closed;
-        QVERIFY(closed.listen(QHostAddress::LocalHost, 0));
-        const QUrl stale(QStringLiteral("wss://127.0.0.1:%1").arg(closed.serverPort()));
-        closed.close();
+        const quint16 closedPort = unusedLoopbackPort();
+        QVERIFY(closedPort != 0);
+        const QUrl stale(QStringLiteral("wss://127.0.0.1:%1").arg(closedPort));
         StationClient client(nullptr, nullptr);
         client.setDeviceIdentity(key, QStringLiteral("Test computer"));
         client.setReconnectBackoffUnitMs(50);

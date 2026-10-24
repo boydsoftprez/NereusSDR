@@ -1,4 +1,32 @@
 // Modification history (NereusSDR):
+//   2026-10-23  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//                 imdOverlayShown() and syncWfTimestampTicker() replace
+//                 imdMarkersDrawn() and sameImdMarkers(); test seams
+//                 wfTimestampTickerActiveForTest() and
+//                 overlayRebuildsEveryFrameForTest().
+//   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//                 imdMarkersDrawn(), sameImdMarkers() and
+//                 m_overlayRowPeriodMs, so the static overlay is marked
+//                 only when the IMD markers or the time scale change.
+//   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a live
+//                 trace of a remote pan's row clock, gated on
+//                 NEREUS_TRACE_REMOTE_ROWS=1 (diagnostics only).
+//   2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a remote
+//                 pan's waterfall scrolls by a steady row clock read each
+//                 frame; its rows are handed over early with the time each
+//                 is due and go in on a grid locked to those due times
+//                 (RemoteWaterfallRowClock). The row queue holds a full
+//                 hold's rows, a drawn frame takes at most two rows, and
+//                 rows due after the transmit view lets go are kept.
+//   2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a remote
+//                 pan's waterfall ticks and glides at the Core's row period.
+//   2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
+//                 (Claude Opus 5.5): a drag keeps the receiver's press
+//                 frequency, not an offset against the press-time view;
+//                 the filter edge drag's own slice and filter.
+//   2026-10-18  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
+//                 (Claude Opus 5.5): receiver grab hit test, drag offset
+//                 state and the wheel step accumulator.
 //   2026-10-13  J.J. Boyd (KG4VCF), OpenAI Codex: GUI cached IMD frame API.
 //   2026-10-13 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //                 Test-only friend for visible-plane IMD integration evidence.
@@ -423,7 +451,9 @@ mw0lge@grange-lane.co.uk
 #include "gui/ImdMeasurementPresenter.h"
 #include "gui/ImdWaterfallAnnotations.h"
 #include "gui/RemoteSpectrumCapture.h"
+#include "gui/spectrum/RemoteWaterfallRowClock.h"
 #include "gui/NereusGuiExport.h"
+#include "gui/WheelStepAccumulator.h"
 
 #include <QElapsedTimer>
 #include <QPointer>
@@ -444,6 +474,7 @@ mw0lge@grange-lane.co.uk
 #include <QPropertyAnimation>
 
 #include <functional>
+#include <deque>
 #include <optional>
 #include <QStringList>
 
@@ -698,9 +729,11 @@ public:
     };
     RemoteContextPicture remoteContextPicture() const { return m_remoteContextPicture; }
     bool updateRemoteSpectrum(const DisplayCodecFrame& frame);
+    /// queueRow false: the frame's waterfall row is not queued (it was
+    /// handed over early with its due time); the trace is drawn as ever.
     bool updateRemoteSpectrum(const DisplayCodecFrame& frame,
                               const NereusSDR::RemoteSpectrumCapture& capture,
-                              bool measurementCurrent = true);
+                              bool measurementCurrent = true, bool queueRow = true);
     /// R-R3-21 / R-R3-08: one remote waterfall row, captured at centreHz and
     /// spanHz, queued for the ticker without touching the trace: a gap row
     /// (blended or repeated) or a row presented after its pan was tuned. It
@@ -712,8 +745,30 @@ public:
     bool enqueueRemoteWaterfallRow(const QVector<float>& pixelsDbm,
                                    const QVector<float>& wideDbm,
                                    const NereusSDR::RemoteSpectrumCapture& capture);
-    /// Rows the ticker has not drawn yet; beyond this the oldest is dropped.
+    /// A row handed over before it is due: dueInNs from now (negative when
+    /// already past), on the caller's clock, so the caller's clock and this
+    /// widget's need not be the same. The row clock slides it in by then.
+    /// frameEncoderSequence: the row is a decoded frame's own row (its
+    /// trace is drawn at the due time by updateRemoteSpectrum with
+    /// queueRow false), not a synthesized one. The rows queued without a
+    /// due time (the overloads above) are due when queued.
+    bool enqueueRemoteWaterfallRow(const QVector<float>& pixelsDbm,
+                                   const QVector<float>& wideDbm,
+                                   const NereusSDR::RemoteSpectrumCapture& capture,
+                                   qint64 dueInNs,
+                                   std::optional<quint32> frameEncoderSequence = std::nullopt);
+    /// Forget the rows handed over early that are not due yet (the
+    /// presenter forgot their items: a key, a new context, a teardown).
+    /// Returns how many were forgotten.
+    int forgetEarlyRemoteRows();
+    /// Rows not drawn yet, beyond the rows a full hold hands over early
+    /// (remoteRowQueueCap()); past the cap the oldest is dropped.
     static constexpr int kMaxRemoteRowQueue = 32;
+    /// The row queue's cap: kMaxRemoteRowQueue plus the rows of the longest
+    /// hold the presenter trusts (RemoteDisplayPresenter::kMaxHoldNs) at the
+    /// Core's row period, so rows handed over early for a deep audio hold
+    /// are never dropped before they are due.
+    int remoteRowQueueCap() const;
     /// R-R3-21: a remote trace captured at centreHz and spanHz, drawn on the
     /// current axis (a frame presented after its pan was tuned). False
     /// outside a remote window, during MOX, or for a non-finite trace.
@@ -1426,7 +1481,19 @@ public:
     quint64 remoteRowsPushedForTest() const { return m_remoteRowsPushed; }
     QVector<float> lastRemoteRowPushedForTest() const { return m_lastRemoteRowPushed; }
     void setWaterfallTickerPausedForTest(bool paused) { m_waterfallTickerPausedForTest = paused; }
+    // The period the waterfall ticker runs at, in ns.
+    qint64 waterfallTickerPeriodNsForTest() const;
+    double waterfallRowPeriodMsForTest() const { return waterfallRowPeriodMs(); }
     void tickWaterfallForTest() { onWaterfallTick(); }
+    // The remote row clock run by hand, at a time of the test's choosing.
+    void setRemoteRowNowNsForTest(qint64 ns) { m_remoteRowNowNsForTest = ns; }
+    // A drawn frame's pump (paintEvent), and the ticker's.
+    void pumpRemoteWaterfallForTest() { pumpRemoteWaterfallOnFrame(); }
+    void tickRemoteWaterfallPumpForTest() { pumpRemoteWaterfallOnTick(); }
+    const RemoteWaterfallRowClock& remoteRowClockForTest() const { return m_remoteRowClock; }
+    qint64 remoteRowNowNsForTest() const { return remoteRowNowNs(); }
+    // When the queued row at index is due, on remoteRowNowNs()'s clock.
+    qint64 remoteRowDueNsForTest(int index) const { return m_remoteRowQueue.at(index).dueNs; }
     // Parity Task 18 (B3.5): the waterfall's rewind history, in rows.
     int  waterfallHistoryRowsForTest() const { return m_wfHistoryRowCount; }
     const QImage& liveWaterfallForTest() const { return m_waterfall; }
@@ -2806,6 +2873,13 @@ public:
         m_overlayStaticDirty = false;
 #endif
     }
+    // Whether the GPU path rebuilds the overlay on every frame (the IMD
+    // display is shown), which offscreen tests cannot run.
+    bool overlayRebuildsEveryFrameForTest() const { return imdOverlayShown(); }
+    // The waterfall timestamp's one-second overlay refresh.
+    bool wfTimestampTickerActiveForTest() const {
+        return m_wfTimestampTicker && m_wfTimestampTicker->isActive();
+    }
     // I2 fix seam: runs the same GPU-path 3D dBm-scale overlay-cache
     // freshness check updateSpectrumLinear() runs every frame (right
     // after processNoiseFloor()), without needing a synthetic FFT frame.
@@ -3268,6 +3342,10 @@ private:
     void  setWaterfallLive(bool live);
     void  appendHistoryRow(const QRgb* rowData, qint64 timestampMs,
                            bool imdEligible = false, quint64 acceptedOrdinal = 0);
+    // The IMD correction edge's annotation on history row rowSequence, if
+    // that row is the first eligible one accepted after the edge.
+    void  recordImdAnnotationForRow(quint64 rowSequence, bool imdEligible,
+                                    quint64 acceptedOrdinal);
     int   historyRowIndexForAge(int ageRows) const;
     std::optional<qreal> imdEventY(quint64 sequence, qreal glideRows) const;
     QString pausedTimeLabelForAge(int ageRows) const;
@@ -3392,6 +3470,9 @@ private:
     void drawImdOverlay(QPainter& p, const QRect& specRect);
     ImdInputContext imdInputContext(quint64 sequence, bool sourceEligible) const;
     void acceptImdVisibleSpectrum(quint64 sequence, bool sourceEligible);
+    // The IMD show condition: while it holds the GPU path rebuilds the
+    // static overlay every frame (its markers and gliding annotations).
+    bool imdOverlayShown() const;
     void invalidateImdMeasurement();
     qint64 imdFreshnessTimeoutMs() const;
     void checkImdFreshness(qint64 nowMs);
@@ -3784,6 +3865,9 @@ private:
     // remote pan (0 until its first context).
     int m_remoteFftSize{0};
     int m_remoteFps{0};
+    // The Core's frames per waterfall row for this remote pan (0 until its
+    // first context): with m_remoteFps, the period its rows come at.
+    int m_remoteFramesPerLine{0};
     // Display pill plan Task 15 (setRemoteDecimation).
     int m_remoteDecimation{1};
     RemoteContextPicture m_remoteContextPicture{RemoteContextPicture::New};
@@ -3810,7 +3894,25 @@ private:
         NereusSDR::RemoteSpectrumCapture capture;
         WaterfallRowDiagnostics diagnostics;
         quint64 imdAcceptedOrdinal{0};
+        // When the row was queued and when it is due on screen, on
+        // remoteRowNowNs()'s clock. A row queued with no due time is due
+        // when queued.
+        qint64 queuedNs{0};
+        qint64 dueNs{0};
+        // Handed over before it was due (enqueueRemoteWaterfallRow with a
+        // due time): forgotten with the presenter's items.
+        bool handedEarly{false};
     };
+    // An early frame row goes in about a row period before its trace is
+    // accepted for IMD: the history row each one wrote, by its encoder
+    // sequence, so the acceptance can tag it (attachImdOrdinalToEarlyRow).
+    struct ImdEarlyHistoryRow {
+        quint32 encoderSequence{0};
+        quint64 rowSequence{0};
+    };
+    std::deque<ImdEarlyHistoryRow> m_imdEarlyHistoryRows;
+    static constexpr int kMaxImdEarlyHistoryRows = 16;
+    void attachImdOrdinalToEarlyRow(quint32 encoderSequence, quint64 acceptedOrdinal);
     QList<RemoteWaterfallRow> m_remoteRowQueue;
     quint64 m_remoteRowsDropped{0};
     quint64 m_remoteRowsPushed{0};
@@ -3820,6 +3922,74 @@ private:
     float m_wfGlideRowsForTest{-1.0f};
     void onWaterfallTick();
     void drainRemoteWaterfallRows();
+    // Put the queue's oldest rows into the waterfall, at most rows of them.
+    void putRemoteWaterfallRows(int rows);
+    // Drop the oldest rows past remoteRowQueueCap().
+    void trimRemoteRowQueue();
+    // The pump on a drawn frame (paintEvent) and on a ticker tick. A drawn
+    // frame takes at most RemoteWaterfallRowClock::kMaxRowsPerFrame rows
+    // less those the ticks put in since the last drawn frame. A tick
+    // starts a budget of its own only when neither a frame nor a fresh
+    // budget came in the last half row period: ticks queued up behind a
+    // stall arrive back to back and share one, and a pan that is not
+    // drawing has its ticks (a row period apart) keep its rows going in.
+    void pumpRemoteWaterfallOnFrame();
+    void pumpRemoteWaterfallOnTick();
+    int m_remoteRowsByTicks{0};
+    qint64 m_remoteBudgetStartNs{0};
+    bool m_remoteBudgetStarted{false};
+    // The remote row clock: advance it to now and put in the rows it says
+    // are due, at most maxRows. Returns the rows put in. Run on every
+    // frame the pan draws and on every ticker tick.
+    int pumpRemoteWaterfallRows(int maxRows);
+    // The steady clock the remote rows are queued and put in by, in ns.
+    qint64 remoteRowNowNs() const;
+    // A remote pan's waterfall scrolls by this clock, at the Core's row
+    // period, on a grid locked to the rows' due times
+    // (RemoteWaterfallRowClock.h).
+    RemoteWaterfallRowClock m_remoteRowClock;
+    QElapsedTimer m_remoteRowSteadyClock;
+    // NEREUS_TRACE_REMOTE_ROWS=1, read once at construction: qCInfo lines
+    // (lcSpectrum, "REMOTE_ROWS ...") for the row clock's starves,
+    // re-anchors, two-row puts and paint gaps, at most
+    // kRemoteRowTraceEventCap a window, and a summary each window while the
+    // clock runs. Diagnostics only: nothing here changes a row.
+    static constexpr qint64 kRemoteRowTraceWindowNs = 10'000'000'000LL;
+    static constexpr int kRemoteRowTraceEventCap = 40;
+    static constexpr qint64 kRemoteRowTracePaintGapNs = 25'000'000;
+    struct RemoteRowTrace {
+        qint64 nowNs{0};            // the pump's now, for the clock's observer
+        qint64 windowStartNs{-1};
+        int eventLines{0};
+        int eventsSuppressed{0};
+        int rowsPut{0};
+        int starved{0};
+        int reanchors{0};
+        int twoRowPuts{0};
+        int paintPumps{0};
+        int tickPumps{0};
+        int paintGaps{0};
+        int minQueue{-1};
+        int maxQueue{-1};
+        QList<double> dueMinusNowMs;  // each row put in: its due time minus now
+        qint64 lastPaintPumpNs{-1};
+        qint64 lastPutNs{-1};
+        qint64 starveStartNs{-1};
+    };
+    bool m_traceRemoteRows{false};
+    RemoteRowTrace m_remoteRowTrace;
+    void traceRemoteRowEvent(const QString& line);
+    void traceRemoteRowWindow(qint64 nowNs);
+    void onRemoteRowClockEvent(const RemoteWaterfallRowClock::Event& event);
+    std::optional<qint64> m_remoteRowNowNsForTest;
+    // A remote pan's row period on the Core's clock: framesPerLine frames
+    // at the context's frame rate, in ns. 0 before the first context.
+    qint64 remoteWaterfallRowPeriodNs() const;
+    // The time between two waterfall rows: the Core's row period on a
+    // remote pan, the pan's update period otherwise.
+    double waterfallRowPeriodMs() const;
+    // Run the waterfall ticker at waterfallRowPeriodMs().
+    void applyWaterfallTickerPeriod();
     QVector<float> reprojectedToView(const QVector<float>& pixelsDbm,
                                      double centreHz, double spanHz) const;
     void refreshRemoteTraceProjection();
@@ -4023,6 +4193,8 @@ private:
     // 1 Hz overlay repaint tick for the waterfall timestamp; started on
     // demand when the user selects a non-None timestamp position.
     QTimer* m_wfTimestampTicker{nullptr};
+    // Starts the ticker while a timestamp is shown, stops it otherwise.
+    void syncWfTimestampTicker();
 
     // ---- Phase 3G-8 commit 5: grid / scales renderer state ----
 
@@ -4105,6 +4277,10 @@ private:
     int    m_fpsFrameCount{0};
     qint64 m_fpsLastUpdateMs{0};
     float  m_fpsDisplayValue{0.0f};
+
+    // The row period the waterfall time scale was last marked for
+    // (applyWaterfallTickerPeriod); 0 until the first.
+    double m_overlayRowPeriodMs{0.0};
 
     // Toggle for the in-spectrum perf overlay (drawn in a corner showing
     // paint/gap/fft/overlay-rebuild timings + audio underruns + memory
@@ -4585,9 +4761,59 @@ private:
     FilterEdge m_draggingFilter{FilterEdge::None};
     int  m_filterDragStartX{0};     // pixel X at grab time
     int  m_filterDragStartHz{0};    // filter edge Hz at grab time
+    // The grabbed receiver's flag (-1: the pan's own filter, no flag) and
+    // its filter as the drag has set it (2026-10-21). A flagged receiver's
+    // filter is set through its flag, never through this pan's
+    // m_filterLowHz/m_filterHighHz and filterEdgeDragged, which belong to
+    // the pan's own slice.
+    int  m_filterDragSliceIndex{-1};
+    int  m_filterDragLowHz{0};
+    int  m_filterDragHighHz{0};
 
     // Passband center drag (slide-to-tune) — AetherSDR:434
     bool m_draggingVfo{false};
+
+    // Receiver grab (2026-10-18). Which part of which receiver a point is
+    // over, for the press and the hover cursor alike: the selected
+    // receiver first, then the others topmost first. An edge of a receiver
+    // that is not selected tunes it like its body does.
+    enum class ReceiverGrabPart { None, LowEdge, HighEdge, Tune };
+    struct ReceiverGrab {
+        ReceiverGrabPart     part{ReceiverGrabPart::None};
+        SliceMarkerGeometry  marker;
+    };
+    ReceiverGrab receiverGrabAt(int mx, int my, const QRect& specRect) const;
+    // From AetherSDR src/gui/SpectrumWidget.cpp:360 [@1e0718ad]
+    static constexpr int kReceiverEdgeGrabPx = 8;
+    // From AetherSDR src/gui/SpectrumWidget.cpp:361 [@1e0718ad]
+    static constexpr int kReceiverMinBodyPx = 6;
+    // Half width of the slide-to-tune strip around a receiver's center line.
+    // From AetherSDR src/gui/SpectrumWidget.cpp:9952 [@1e0718ad]
+    static constexpr int kReceiverCenterGrabPx = 8;
+
+    // One drag-to-tune, from the spectrum or from a flag. The receiver's
+    // frequency and the press column are kept, so the receiver moves by the
+    // cursor's pixel travel at the current Hz per pixel and never jumps to
+    // the cursor, nor by a view change mid-drag (2026-10-21).
+    // A receiver with a flag, the selected one included, is tuned through
+    // its own flag (VfoWidget::tuneFromDrag), the path the flag's wheel
+    // uses, so the drag moves the receiver grabbed and not whichever slice
+    // the pan's frequencyClicked resolves to (2026-10-21).
+    struct ReceiverDrag {
+        int    sliceIndex{-1};   // -1: the pan's own VFO, no flag
+        bool   viaFlag{false};
+        double pressHz{0.0};     // the receiver's frequency at the press
+        int    pressX{0};
+        int    stepHz{1};
+        bool   moved{false};     // a move has left the press column
+    };
+    ReceiverDrag m_receiverDrag;
+    bool m_flagDragActive{false};
+    void beginReceiverDrag(int sliceIndex, bool viaFlag, double centerHz, int pressX);
+    void moveReceiverDrag(int mx, const QRect& specRect);
+
+    // Wheel and trackpad steps for every wheel branch (2026-10-18).
+    WheelStepAccumulator m_wheelSteps;
 
     // Divider drag (spectrum/waterfall split) — AetherSDR:419
     bool m_draggingDivider{false};
@@ -4603,8 +4829,8 @@ private:
     int    m_bwDragStartX{0};
     double m_bwDragStartBw{0.0};
 
-    // Filter edge grab zone — from AetherSDR line 1087: GRAB = 5
-    static constexpr int kFilterGrab = 5;
+    // (kFilterGrab, the 5 px edge zone from AetherSDR line 1087, gave way
+    // to kReceiverEdgeGrabPx and kReceiverMinBodyPx above on 2026-10-18.)
 
     // ---- HIGH SWR / PA safety overlay state ----
     // Ported from Thetis display.cs:4183-4201 [v2.10.3.13]

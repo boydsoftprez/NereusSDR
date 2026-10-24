@@ -2,11 +2,16 @@
 // src/gui/spectrum/WaterfallTicker.cpp  (NereusSDR-native)
 // =================================================================
 // 2026-05-25  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
+// 2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: ticks fall
+//             due at fixed multiples of a nanosecond period from an
+//             anchor, armed one at a time on a single-shot timer.
 // See WaterfallTicker.h for design rationale.
 // =================================================================
 #include "WaterfallTicker.h"
 
 #include <QThread>
+
+#include <algorithm>
 
 namespace NereusSDR {
 
@@ -23,8 +28,10 @@ WaterfallTicker::WaterfallTicker(QObject* parent)
     // lambdas below) re-parents m_timer onto the worker the first time
     // start()/setUpdatePeriodMs()/stop() lands there.
     m_timer.setTimerType(Qt::PreciseTimer);
-    m_timer.setInterval(m_periodMs.load());
-    m_timer.setSingleShot(false);
+    // Single-shot: each tick arms the next one for its own slot on the
+    // anchor's clock (scheduleNextTick), which a repeating timer's whole
+    // millisecond interval cannot do for a 66.67 ms period.
+    m_timer.setSingleShot(true);
     connect(&m_timer, &QTimer::timeout, this, &WaterfallTicker::onTimerTick);
 }
 
@@ -55,19 +62,33 @@ void WaterfallTicker::ensureTimerOnCurrentThread()
     }
 }
 
+int WaterfallTicker::msUntilTick(qint64 elapsedNs, qint64 nextTick, qint64 periodNs)
+{
+    const qint64 remainingNs = nextTick * periodNs - elapsedNs;
+    if (remainingNs <= 0) {
+        return 0;
+    }
+    return int((remainingNs + 999'999) / 1'000'000);
+}
+
 void WaterfallTicker::setUpdatePeriodMs(int ms)
 {
-    if (ms < 10) { ms = 10; }
-    if (ms > 500) { ms = 500; }
-    m_periodMs.store(ms);
+    setUpdatePeriodNs(qint64(ms) * 1'000'000);
+}
+
+void WaterfallTicker::setUpdatePeriodNs(qint64 ns)
+{
+    ns = std::clamp(ns, kMinPeriodNs, kMaxPeriodNs);
+    if (m_periodNs.exchange(ns) == ns) {
+        return;  // the cadence already runs at this period
+    }
 
     // Hop to worker thread to mutate the QTimer state.  QTimer is not
     // thread-safe; setInterval / start must run on the object's thread.
-    QMetaObject::invokeMethod(this, [this, ms]() {
+    QMetaObject::invokeMethod(this, [this]() {
         ensureTimerOnCurrentThread();
-        m_timer.setInterval(ms);
         if (m_running.load()) {
-            m_timer.start();
+            restartCadence();
         }
     }, Qt::QueuedConnection);
 }
@@ -79,7 +100,7 @@ void WaterfallTicker::start()
     }
     QMetaObject::invokeMethod(this, [this]() {
         ensureTimerOnCurrentThread();
-        m_timer.start();
+        restartCadence();
     }, Qt::QueuedConnection);
 }
 
@@ -94,11 +115,36 @@ void WaterfallTicker::stop()
     }, Qt::QueuedConnection);
 }
 
+void WaterfallTicker::restartCadence()
+{
+    m_anchor.start();
+    m_ticksSinceAnchor = 0;
+    scheduleNextTick();
+}
+
+void WaterfallTicker::scheduleNextTick()
+{
+    const qint64 periodNs = m_periodNs.load();
+    const qint64 nextTick = m_ticksSinceAnchor + 1;
+    if (m_anchor.nsecsElapsed() > nextTick * periodNs + periodNs) {
+        // More than a whole period behind (this thread was held): start
+        // again from now rather than fire the missed slots back to back.
+        m_anchor.start();
+        m_ticksSinceAnchor = 0;
+    }
+    m_timer.start(msUntilTick(m_anchor.nsecsElapsed(), m_ticksSinceAnchor + 1, periodNs));
+}
+
 void WaterfallTicker::onTimerTick()
 {
+    if (!m_running.load()) {
+        return;  // a stop() raced the timeout
+    }
+    ++m_ticksSinceAnchor;
     // Emit on the worker thread; Qt routes via auto-queued connection
     // to the SpectrumWidget slot on the main thread.
     emit tick();
+    scheduleNextTick();
 }
 
 } // namespace NereusSDR

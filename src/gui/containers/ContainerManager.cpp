@@ -206,6 +206,10 @@
 //                 when its content no longer fits; the resize that set it
 //                 is saved at once with auto height off (JJ, 2026-10-11).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF): dialogs exec()ed with a parent are
+//               built through ScopedChildWidget instead of on the stack, so
+//               a parent that dies while one is open no longer frees it
+//               twice. With AI-assisted transformation via Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -249,6 +253,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "ContainerManager.h"
+#include "gui/ScopedChildWidget.h"
 #include "gui/meters/MeterPoller.h"
 #include "ContainerArrangeController.h"
 #include <QGuiApplication>
@@ -2003,7 +2008,9 @@ void ContainerManager::wireContainer(ContainerWidget* container)
             }
             QWidget* shell = view->window();
             QWidget* owner = m_dockParent ? m_dockParent->window() : nullptr;
-            ContainerSettingsDialog dialog(view.data(), owner, this);
+            // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+            ScopedChildWidget<ContainerSettingsDialog> dialogOwner(view.data(), owner, this);
+            ContainerSettingsDialog& dialog = *dialogOwner.get();
             if (shell && shell != owner) {
                 // Over the shell, where it opened when the shell owned it.
                 if (shell->windowFlags().testFlag(Qt::WindowStaysOnTopHint)) {

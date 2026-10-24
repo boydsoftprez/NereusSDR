@@ -63,9 +63,11 @@ struct FifthDeviceSheet: View {
         .padding(.top, 8)
         .padding(.bottom, 20)
         .frame(maxWidth: .infinity)
-        .background(ConnectChrome.sheetFill, in: UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14))
+        .background(ConnectChrome.sheetFill, in: UnevenRoundedRectangle(topLeadingRadius: WorkspacePalette.panelRadius,
+                                                                        topTrailingRadius: WorkspacePalette.panelRadius))
         .overlay(alignment: .top) {
-            UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14)
+            UnevenRoundedRectangle(topLeadingRadius: WorkspacePalette.panelRadius,
+                                   topTrailingRadius: WorkspacePalette.panelRadius)
                 .stroke(ConnectChrome.sheetEdge, lineWidth: 1)
         }
         .accessibilityIdentifier("fifthDeviceSheet")
@@ -97,8 +99,8 @@ struct FifthDeviceSheet: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(9)
-            .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4)
+            .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                 .strokeBorder(selected ? ChromeColours.accent : ConnectChrome.rowBorder, lineWidth: 1))
         }
         .buttonStyle(.plain)
@@ -110,15 +112,15 @@ struct FifthDeviceSheet: View {
         let red = device.state == .transmitting
         return Button { Task { await flow.answerHeld() } } label: {
             HStack {
-                if flow.heldBusy { ProgressView().tint(.white) }
+                if flow.heldBusy { ProgressView().tint(workspaceForeground(red ? .danger : .glass)) }
                 Text(Self.buttonTitle(for: device))
             }
             .font(.system(size: 14, weight: .bold))
-            .foregroundStyle(.white)
+            .foregroundStyle(workspaceForeground(red ? .danger : .glass))
             .frame(maxWidth: .infinity)
             .frame(height: 48)
-            .background(red ? ConnectChrome.rgb(0xD8, 0x38, 0x38) : ChromeColours.buttonOnBlue,
-                        in: RoundedRectangle(cornerRadius: 4))
+            .background(red ? ConnectChrome.WideButton.stopFill : ChromeColours.buttonOnBlue,
+                        in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
         }
         .buttonStyle(.plain)
         .disabled(flow.heldBusy)

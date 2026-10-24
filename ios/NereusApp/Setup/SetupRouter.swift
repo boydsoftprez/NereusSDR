@@ -5,7 +5,11 @@ import Combine
 
 /// The Setup tab's navigation path. Another screen opens a page through it,
 /// as the Display sheet's "More display options in Setup" opens Display's
-/// page (spec section 5.1 item 15, D79).
+/// page (spec section 5.1 item 15, D79). The one list pushes the path; on a
+/// regular-width iPad ``SetupSplitView`` reads the same path as the page it
+/// shows beside the list (R-IOS-52, spec section 7.3), so each `open`
+/// selects the page there and pushes it on an iPhone, and a page stays open
+/// when the window changes width.
 @MainActor
 final class SetupRouter: ObservableObject {
     @Published var path: [SetupTree.Route] = []

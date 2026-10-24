@@ -979,7 +979,7 @@ struct TransmitTakeTests {
         window.windowLevel = .alert + 1
         let root = TakeScreenRoot(model: model, sideways: sideways, txPanelOpen: txPanelOpen)
             .preferredColorScheme(.dark).dynamicTypeSize(typeSize)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         if sideways {
             host.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: 62, bottom: 21, right: 62)
         }

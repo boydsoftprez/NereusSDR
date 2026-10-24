@@ -35,8 +35,13 @@
 // Modification history (NereusSDR):
 //   2026-10-11 - Written for NereusSDR by J.J. Boyd (KG4VCF), with
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-22, J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//     test ports come from unusedLoopbackPort() (UnusedLoopbackPort.h), below
+//     the kernel's ephemeral range, so a parallel test cannot take one between
+//     the pick and the listen.
 // =================================================================
 
+#include "UnusedLoopbackPort.h"
 #include <QtTest/QtTest>
 
 #include <QApplication>
@@ -233,13 +238,7 @@ QMap<QString, QString> flatten(const CoreFacts& facts)
 
 quint16 freeLoopbackPort()
 {
-    QTcpServer probe;
-    if (!probe.listen(QHostAddress::LocalHost, 0)) {
-        return 0;
-    }
-    const quint16 port = probe.serverPort();
-    probe.close();
-    return port;
+    return unusedLoopbackPort();
 }
 
 // The radio both Cores describe, beyond the board each was primed with.

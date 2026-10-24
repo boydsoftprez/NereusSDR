@@ -31,8 +31,13 @@
 //                                    sentence only when there is none.
 //                                    AI-assisted via Anthropic Claude
 //                                    Code.
+//   2026-10-22, J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//     test ports come from unusedLoopbackPort() (UnusedLoopbackPort.h), below
+//     the kernel's ephemeral range, so a parallel test cannot take one between
+//     the pick and the listen.
 // =================================================================
 
+#include "UnusedLoopbackPort.h"
 #include "MultiDeviceHarness.h"
 #include "SessionWait.h"
 
@@ -74,11 +79,7 @@ const QHash<QByteArray, int> kStationCat{{QByteArrayLiteral("stationCat"), 1}};
 
 quint16 freePort()
 {
-    QTcpServer reservation;
-    if (!reservation.listen(QHostAddress::LocalHost, 0)) { return 0; }
-    const quint16 port = reservation.serverPort();
-    reservation.close();
-    return port;
+    return unusedLoopbackPort();
 }
 
 QString text(const QJsonObject& object)

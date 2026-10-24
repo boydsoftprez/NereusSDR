@@ -190,7 +190,7 @@ Version 6 adds exactly two closed `kind: "table"` controls to the partial
 Hardware Config > Antenna / ALEX page: `hardware.antenna.txRows` and
 `hardware.antenna.rxRows`. Each has `binding.antennaRows` with
 `object: "alexAntennas"` and mode `tx` or `rx`, and requires
-`radioAntennaRowsVersion: 1`. The TX table also requires a fresh off-air
+`radioAntennaRowsVersion: 1` (1 or later). The TX table also requires a fresh off-air
 `txState`; the RX table has no added transmit-permission gate. The Core
 omits both tables for a peer without the row feature and omits the whole
 partial Hardware page on a board without Alex filters. V1–V5 peers retain
@@ -213,7 +213,14 @@ rxOnly1/rxOnly2/rxOnly3; TX has no column groups. Each row's `cells` carry
 the native button tooltips in column order. These are fixed display and
 source facts, not a command-template language. The source is the existing
 three 15-integer CSV mirrors `txAntennas`, `rxAntennas`, and
-`rxOnlyAntennas` (14 for a peer without `band2m`, 2 m last); RX-only value 0 means no button selected. The blocked
+`rxOnlyAntennas` (14 for a peer without `band2m`, 2 m last). The RX-only
+cells are Thetis's checkboxes, not radio buttons: the value is the sum of
+the checked columns' numbers, so 0 checks none, 1 to 3 check that column,
+4 checks rxOnly1 and rxOnly3, and 5 checks rxOnly2 and rxOnly3. rxOnly1
+and rxOnly2 rule each other out and rxOnly3 is independent; unchecking
+the last box sends 0. A peer offered `radioAntennaRowsVersion` 1 sees 4
+and 5 as 3 and may send only one column or 0 (station link section 9.1).
+The blocked
 TX-port mirrors disable columns 2 and 3. A phone checks all values,
 capability, canonical connected MAC and session freshness together, then
 uses only the existing `setAlexTxAntennaForRadio` or

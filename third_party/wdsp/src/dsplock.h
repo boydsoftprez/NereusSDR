@@ -104,6 +104,15 @@ boydsoftprez@gmail.com
 //                 while the caller runs ahead. One pointer test when none is
 //                 installed. By J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-10-22 - Slow noise-reduction call accounting (WdspNrCallStart,
+//                 WdspNrCallEnd, WdspNoteNrCall, TakeChannelSlowNrCalls,
+//                 test-only WDSPSetTestNrCallDelayUs): xrxa times each of its
+//                 two NR stage groups and counts the calls over 50 ms per
+//                 channel with the stages each ran (the NNR model that ran,
+//                 and a limit the worker applied inside the call), for the
+//                 Core log; RxChannel records DFNR and MNR the same way.
+//                 Measures only; NR behaviour is unchanged. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #ifndef _dsplock_h
@@ -225,6 +234,78 @@ PORT int GetChannelDspLoad (int channel, WdspChannelLoad* out);
 // sampler); a second caller would split its intervals. Returns -1 for an
 // invalid channel. Never takes csDSP.
 PORT long long TakeChannelDspIntervalMaxBlockUs (int channel);
+
+// Slow noise-reduction calls. xrxa (RXA.c) brackets each NR stage group
+// (anr, emnr, nnr, rnnr, sbnr at one position) with WdspNrCallStart and
+// WdspNrCallEnd, naming the stages that ran in that call; a call that ran a
+// stage and took longer than kWdspSlowNrCallNs (50 ms) is counted for the
+// channel. NereusSDR's RxChannel records its post-WDSP stages (DFNR, MNR)
+// through WdspNoteNrCall the same way. Two clock reads per group per block;
+// nothing else changes.
+//
+// The stages of one call, as bits. The NNR model bits are the model that ran
+// at the call's start. When the worker applied an NNR limit inside the call
+// (xnnr's nnr_sync_limit), WDSP_NR_NNR_LIMIT_APPLIED is set with the model
+// before (FROM) and after (TO); neither bit of a pair means NNR off.
+// src/core/wdsp_api.h declares the same values; the guard lets a file
+// include both headers.
+#ifndef NEREUS_WDSP_NR_STAGES_DEFINED
+#define NEREUS_WDSP_NR_STAGES_DEFINED
+enum
+{
+	WDSP_NR_STAGE_ANR = 0x0001,            // NR1
+	WDSP_NR_STAGE_EMNR = 0x0002,           // NR2
+	WDSP_NR_STAGE_RNNR = 0x0004,           // NR3
+	WDSP_NR_STAGE_SBNR = 0x0008,           // NR4
+	WDSP_NR_STAGE_NNR_STANDARD = 0x0010,   // NNR, model slot 0
+	WDSP_NR_STAGE_NNR_PREMIUM = 0x0020,    // NNR, model slot 1
+	WDSP_NR_NNR_LIMIT_APPLIED = 0x0040,
+	WDSP_NR_NNR_FROM_STANDARD = 0x0080,
+	WDSP_NR_NNR_FROM_PREMIUM = 0x0100,
+	WDSP_NR_NNR_TO_STANDARD = 0x0200,
+	WDSP_NR_NNR_TO_PREMIUM = 0x0400,
+	WDSP_NR_STAGE_DFNR = 0x1000,           // NereusSDR, after fexchange2
+	WDSP_NR_STAGE_MNR = 0x2000,            // NereusSDR, after fexchange2
+	WDSP_NR_STAGE_MASK = 0xFFFF
+};
+#endif
+
+long long WdspNrCallStart (void);
+// stages 0 (no NR stage ran and no limit was applied) records nothing.
+void WdspNrCallEnd (int channel, long long startNs, int stages);
+
+// Records one NR call of elapsedNs that ran these stages on the channel (what
+// WdspNrCallEnd does with its own clock read). Production: NereusSDR's
+// RxChannel times its post-WDSP stages with it on the DSP thread. Lock-free;
+// invalid channels and stages 0 are ignored.
+PORT void WdspNoteNrCall (int channel, long long elapsedNs, int stages);
+
+// The channel's slow NR calls since the previous take. src/core/wdsp_api.h
+// declares the same struct; the guard lets a file include both headers.
+#ifndef NEREUS_WDSP_SLOW_NR_CALLS_DEFINED
+#define NEREUS_WDSP_SLOW_NR_CALLS_DEFINED
+typedef struct
+{
+	long long count;      // calls over 50 ms
+	long long longestUs;  // the longest of them; 0 when its record went to
+	                      // the previous take (a call landing between the
+	                      // take's reads)
+	int longestStages;    // the stages that longest call ran (0 with it)
+	int stages;           // every stage the slow calls ran
+} WdspSlowNrCalls;
+#endif
+
+// Takes the channel's slow NR calls since the previous take into *out and
+// starts the next interval. One periodic reader owns this (NereusSDR's
+// RadioModel load sampler). Returns 0, or -1 for an invalid channel or a
+// null out. Never takes csDSP.
+PORT int TakeChannelSlowNrCalls (int channel, WdspSlowNrCalls* out);
+
+// Test-only: busy-wait this many microseconds inside each NR stage group call
+// that ran a stage, before the call's end is timed, so a test can make a real
+// NR call slow. Default 0 (off); when off WdspNrCallEnd pays one relaxed load.
+// Not for production use.
+PORT void WDSPSetTestNrCallDelayUs (int channel, int microseconds);
 
 // Test-only: busy-wait this many microseconds inside the worker's locked
 // section on every block, to simulate an overloaded DSP chain. Default 0

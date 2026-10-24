@@ -18,6 +18,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22: NSDC v2 interop (display codec v2, Task 6): media started
+//               through the tunnel agrees display codec v2, and the display
+//               frames it delivers are version 2 (DisplayVersionTap).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-09-29: load finding: the tunnel-only replacement case waits the
 //               product's ICE connect bound (IceConfiguration::
 //               kConnectDeadlineMs) for both pairs and on failure prints
@@ -63,6 +67,7 @@
 #include "core/session/TransmitStateFacade.h"
 #include "core/session/media/DaemonMediaController.h"
 #include "core/session/media/LibDataChannelMediaTransport.h"
+#include "fakes/DisplayVersionTap.h"
 #include "fakes/RemoteAudioSessionHarness.h"
 #include "fakes/LoopbackTransport.h"
 #include "core/session/MediaTunnel.h"
@@ -936,6 +941,77 @@ private slots:
         const qint64 audioResumeMs = silence.elapsed();
         qInfo("Tunnel recovery decoded audio after %lld ms and displayed a frame after %lld ms",
               static_cast<long long>(audioResumeMs), static_cast<long long>(displayResumeMs));
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // NSDC v2 interop (display codec v2, Task 6): media that runs through
+    // the tunnel agrees display codec v2 at its start, and every display
+    // frame the window's media connection delivers is version 2.
+    void aTunneledStartAgreesDisplayCodecV2()
+    {
+        IceConfiguration::setOnlyLoopbackShimCandidatesForTest(true);
+        Test::RemoteAudioSessionHarness h;
+        const int stream = h.station.sliceById(h.sliceA)->streamIndex();
+        QVERIFY(stream >= 0);
+        PanadapterStack stack;
+        auto* pan = stack.addPanadapter(QStringLiteral("tunnel"));
+        pan->setActiveSliceIndex(h.sliceA);
+        pan->spectrumWidget()->setDisplayWindowPreservingHistory(
+            h.station.streamCentreHz(stream), 48000);
+        stack.resize(600, 400);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        RemoteMediaController remoteMedia(&h.client, &h.remote, &stack);
+        DaemonMediaController daemonMedia(&h.server, &h.station);
+        Test::DisplayVersionTap tap(&remoteMedia);
+        QSignalSpy controls(&h.server, &StationServer::mediaControlReceived);
+        QSignalSpy frames(&remoteMedia, &RemoteMediaController::displayFrameReceived);
+        QTimer source;
+        source.setInterval(10);
+        QObject::connect(&source, &QTimer::timeout, &source, [&h] { h.feedMixedTone(); });
+        QVector<float> iq(2048);
+        for (int i = 0; i < iq.size(); i += 2) {
+            iq[i] = 0.01f * std::cos(double(i) * 0.17);
+            iq[i + 1] = 0.01f * std::sin(double(i) * 0.17);
+        }
+        QTimer display;
+        display.setInterval(20);
+        QObject::connect(&display, &QTimer::timeout, &display, [&h, stream, &iq] {
+            QMetaObject::invokeMethod(&h.station, "rawIqDataForStream", Qt::DirectConnection,
+                                      Q_ARG(int, stream), Q_ARG(QVector<float>, iq));
+        });
+        QTimer speaker;
+        speaker.setInterval(10);
+        QObject::connect(&speaker, &QTimer::timeout, &speaker, [&h] { h.remoteBus->render(480); });
+        source.start();
+        display.start();
+        speaker.start();
+        h.connectSession();
+        QCOMPARE(h.client.capabilities().mediaTunnelVersion, 1);
+        QCOMPARE(h.client.capabilities().displayCodecVersion, 2);
+        BinaryCount atCore(h.stationLink);
+        QTRY_VERIFY2_WITH_TIMEOUT((tap.follow(), !frames.isEmpty()
+                                                    && tap.allVersions().size() >= 4),
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
+        display.stop();
+        source.stop();
+        speaker.stop();
+        // The media ran through the tunnel.
+        QVERIFY(atCore.messages > 0);
+        int starts = 0;
+        for (const QList<QVariant>& call : controls) {
+            const QJsonObject control = call.at(0).toJsonObject();
+            if (control.value(QStringLiteral("op")).toString() == QLatin1String("start")) {
+                ++starts;
+                QCOMPARE(control.value(QStringLiteral("displayCodecVersion")).toInt(), 2);
+            }
+        }
+        QCOMPARE(starts, 1);
+        QCOMPARE(daemonMedia.displayCodecVersion(), quint32{2});
+        for (int version : tap.allVersions()) {
+            QCOMPARE(version, 2);
+        }
         h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 

@@ -9,11 +9,29 @@
 // pan froze ("QRhiWidget: No QRhi" once per display tick) and arrived with no
 // container chrome at all. Covers the adopt/take reparent contract, the
 // floating-only title strip, and per-pan geometry persistence.
+//
+// Modification history (NereusSDR):
+//   2026-10-22 - Application quit closes a floating pan without docking it
+//                 (ported from Longpath tests/tst_pan_floating_window.cpp:
+//                 33-52 [@383f058], Longpath PR 83); the close box still
+//                 docks. By J.J. Boyd (KG4VCF), with AI-assisted
+//                 transformation via Claude Code.
+// =================================================================
+//
+// --- From tst_pan_floating_window.cpp ---
+// =================================================================
+// tests/tst_pan_floating_window.cpp  (Longpath)
+// =================================================================
+// no-port-check: Longpath-original test infrastructure.
+//
+// Phase 3F Sub-Epic D Task 8: PanFloatingWindow construct + dock signal.
 // =================================================================
 #include <QtTest/QtTest>
 #include <QPointer>
 #include <QPushButton>
 #include <QSignalSpy>
+#include <QWindow>
+#include <qpa/qwindowsysteminterface.h>
 #include "gui/PanFloatingWindow.h"
 #include "gui/PanadapterApplet.h"
 #include "core/AppSettings.h"
@@ -63,6 +81,53 @@ private slots:
         QVERIFY2(!guarded.isNull(),
                  "takeApplet left the applet owned by the window");
         QCOMPARE(applet->parentWidget(), &destination);
+    }
+
+    // From Longpath tests/tst_pan_floating_window.cpp:33-52 [@383f058]
+    //   adapter: NereusSDR's window takes the applet through adoptApplet(),
+    //   and Longpath's kFensterFrist exposure timeout is the QtTest default.
+    // 2026-09-24: mit schwebendem Panadapter liess sich Longpath nicht
+    // beenden. Beim Beenden schliesst Qt alle Fenster der Reihe nach und
+    // bricht ab, sobald eines ablehnt -- und dieses lehnte ab, solange die
+    // Abbau-Sperre noch nicht gesetzt war. closeAllWindows() ist genau
+    // dieser Weg (nicht spontan). Das Fenster muss zugehen, ohne anzudocken.
+    void closing_all_windows_is_not_refused_and_does_not_dock()
+    {
+        auto* applet = new PanadapterApplet(QStringLiteral("pan-0"));
+        auto* w = new PanFloatingWindow(nullptr);
+        w->adoptApplet(applet);
+        QSignalSpy dockSpy(w, &PanFloatingWindow::dockRequested);
+        w->show();
+        QVERIFY(QTest::qWaitForWindowExposed(w));
+
+        QApplication::closeAllWindows();
+
+        QVERIFY2(!w->isVisible(),
+                 "a refused close cancels the whole application quit");
+        QCOMPARE(dockSpy.count(), 0);
+        delete w;
+    }
+
+    // The operator's close box arrives from the window system as a
+    // spontaneous close, and still asks the stack to dock the pan.
+    void close_box_still_requests_dock()
+    {
+        auto* applet = new PanadapterApplet(QStringLiteral("pan-close-box"));
+        auto* w = new PanFloatingWindow(nullptr);
+        w->adoptApplet(applet);
+        QSignalSpy dockSpy(w, &PanFloatingWindow::dockRequested);
+        w->show();
+        QVERIFY(QTest::qWaitForWindowExposed(w));
+        QVERIFY(w->windowHandle() != nullptr);
+
+        QWindowSystemInterface::handleCloseEvent<QWindowSystemInterface::SynchronousDelivery>(
+            w->windowHandle());
+
+        QCOMPARE(dockSpy.count(), 1);
+        QCOMPARE(dockSpy.at(0).at(0).toString(), QStringLiteral("pan-close-box"));
+        QVERIFY2(w->isVisible(),
+                 "the close box docks through the stack; the window stays until it does");
+        delete w;
     }
 
     void dock_requested_signal_emitted_on_request_dock()

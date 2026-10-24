@@ -12,6 +12,16 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22  J.J. Boyd / KG4VCF  NSDC v2 negotiation: the capture
+//                                    declares displayCodec 2, so
+//                                    displayCodecVersion and the start's
+//                                    declaration are captured. AI-assisted
+//                                    via Anthropic Claude Code.
+//   2026-10-22  J.J. Boyd / KG4VCF  RX meter stamps: the capture declares
+//                                    rxMeterStamps, so rxMeterStampsVersion
+//                                    and the slice's meterReadingNs are
+//                                    captured. AI-assisted via Anthropic
+//                                    Claude Code.
 //   2026-10-12  J.J. Boyd / KG4VCF  The radio's second firmware number: the
 //                                    capture declares firmwareBeta, so the
 //                                    firmwareBeta entry is captured.
@@ -223,6 +233,9 @@
 //   2026-10-08: rotor control plan Task 4b: RotorModel joins the mirrored
 //               classes. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-22: the capture declares radioAntennaRows 2, so the Core's
+//               RX-only checkbox sums (0..5) are captured unnarrowed.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "LinkSurface.h"
@@ -688,7 +701,7 @@ std::optional<QList<QByteArray>> liveSessionWire(
                                   {"settingsHygiene", 2}, {"coreBuildInfo", 1},
                                   {"settingsBackup", 1},
                                   {"setupDescription", 1}, {"miniDisplay", 1},
-                                  {"radioAntennaRows", 1},
+                                  {"radioAntennaRows", 2},
                                   // iPhone app plan Task 25: the `vax` object.
                                   {"vax", 1}, {"txEqCurve", 2}, {"band2m", 1},
                                   // Phone wire batch: each slice's
@@ -763,7 +776,13 @@ std::optional<QList<QByteArray>> liveSessionWire(
                                   {"spectrumPicture", 1},
                                   // The radio's second firmware number:
                                   // the firmwareBeta entry.
-                                  {"firmwareBeta", 1}})));
+                                  {"firmwareBeta", 1},
+                                  // RX meter stamps: rxMeterStampsVersion
+                                  // and each slice's meterReadingNs.
+                                  {"rxMeterStamps", 1},
+                                  // NSDC v2: displayCodecVersion and the
+                                  // start's declaration.
+                                  {"displayCodec", 2}})));
     clientEnd->sendText(SessionMessages::encode(SessionMessages::authRequest({}, block)));
 
     // The loopback delivers on later event-loop turns, as a socket would.
@@ -803,7 +822,7 @@ QJsonArray captureCapabilities()
     caps.waveformVersion = 1;
     caps.setupDescriptionVersion = 1;
     caps.miniDisplayVersion = 1;
-    caps.radioAntennaRowsVersion = 1;
+    caps.radioAntennaRowsVersion = 2;
     // Rotor control plan Task 4b: sent by a Core that owns a rotor.
     caps.remoteRotorControlVersion = 1;
     // iPhone app plan Task 25: sent to a peer that declared vax.
@@ -866,6 +885,10 @@ QJsonArray captureCapabilities()
     // The radio's second firmware number: sent to a peer that declared
     // firmwareBeta. The capture's radio reports none, so its value is 0.
     caps.firmwareBetaEntry = true;
+    // RX meter stamps: sent to a peer that declared rxMeterStamps.
+    caps.rxMeterStampsVersion = 1;
+    // NSDC v2: sent to a peer that declared displayCodec 2.
+    caps.displayCodecVersion = 2;
 
     // The values come from a live station with every feature a Core can
     // switch on: media, telemetry, an enforced display budget with its
@@ -1357,6 +1380,8 @@ QJsonObject guiToCoreOps()
         {QStringLiteral("miniDisplayVersion"), {QStringLiteral("miniDisplayVersion")}},
         // R-DISP-RETUNE: DaemonMediaController.cpp handleStart.
         {QStringLiteral("spectrumPictureVersion"), {QStringLiteral("spectrumPictureVersion")}},
+        // NSDC v2: DaemonMediaController.cpp handleStart.
+        {QStringLiteral("displayCodecVersion"), {QStringLiteral("displayCodecVersion")}},
         {QStringLiteral("audioProfileVersion"), {QStringLiteral("audioProfileVersion")}},
         {QStringLiteral("receiverAudioVersion"), {QStringLiteral("receiverAudioVersion")}},
         {QStringLiteral("remoteIqVersion"), {QStringLiteral("remoteIqVersion")}},

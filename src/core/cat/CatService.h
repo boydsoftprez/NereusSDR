@@ -179,6 +179,7 @@ private:
     void setPttState(const QString& state);
     void closeSerialChannel(int channel, const std::shared_ptr<CatSerialTransport>& transport);
     void startChannel(int channel);
+    void captureRestoredSlice(int sliceId);
     void startPty(int channel);
     void startRigctld(int channel);
     void setTransportState(int channel, CatTransportKind kind, const QString& state);

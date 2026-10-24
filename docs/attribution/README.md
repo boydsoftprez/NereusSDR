@@ -27,6 +27,7 @@ is compatible with Thetis's GPLv2-or-later terms.
 - [WDSP-PROVENANCE.md](WDSP-PROVENANCE.md) — WDSP 2.10 from TAPR/OpenHPSDR-wdsp at commit `b02d5bac`, vendored at `third_party/wdsp/`
 - [FFTW3-PROVENANCE.md](FFTW3-PROVENANCE.md) — FFTW3 3.3.5 binaries vendored at `third_party/fftw3/` (Windows only)
 - [THETIS-PROVENANCE.md](THETIS-PROVENANCE.md) — NereusSDR files derived from Thetis
+- [PIHPSDR-PROVENANCE.md](PIHPSDR-PROVENANCE.md): NereusSDR files that port from or cite piHPSDR (dl1ycf/pihpsdr at 4aa95c5)
 - [ASIO-SDK-PROVENANCE.md](ASIO-SDK-PROVENANCE.md): Steinberg ASIO SDK 2.3.4, vendored unchanged at `third_party/asiosdk/` (Windows only)
 - [LONGPATH-PROVENANCE.md](LONGPATH-PROVENANCE.md): NereusSDR files derived from Longpath (oe5sos/Longpath at 551576e3), the workspace preview palette
 - [LIBSODIUM-PROVENANCE.md](LIBSODIUM-PROVENANCE.md): libsodium 1.0.22, fetched by `cmake/NereusPairing.cmake` for the pairing code

@@ -108,12 +108,12 @@ struct VaxAudioPage: View {
                     .frame(width: 72, alignment: .leading)
                 GeometryReader { geometry in
                     ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 3).fill(ChromeColours.inset)
-                        RoundedRectangle(cornerRadius: 3)
+                        RoundedRectangle(cornerRadius: 3).fill(ChromeColours.inset) // kept-radius: meter
+                        RoundedRectangle(cornerRadius: 3) // kept-radius: meter
                             .fill(ChromeColours.accent)
                             .frame(width: geometry.size.width * CGFloat(min(max(level ?? 0, 0), 1)))
                     }
-                    .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
+                    .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(ChromeColours.insetBorder, lineWidth: 1)) // kept-radius: meter
                 }
                 .frame(height: 10)
                 ToolPageParts.ValueBox(text: level.map(VaxAudioModel.percent) ?? "--")

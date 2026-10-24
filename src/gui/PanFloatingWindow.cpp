@@ -18,6 +18,30 @@
 // See PanFloatingWindow.h for full Modification history (NereusSDR).
 // =================================================================
 
+// --- From PanFloatingWindow.cpp ---
+// The quit rule in closeEvent() is ported from Longpath
+// src/gui/PanFloatingWindow.cpp:230-243 [@383f058] (Longpath PR 83,
+// 3a997ed3). Longpath's banner for that file, byte for byte:
+// no-port-check: AetherSDR-derived Longpath file. Top-level QWidget
+// wrapper for detaching a PanadapterApplet to a second monitor is adapted
+// structurally from AetherSDR src/gui/PanFloatingWindow.{h,cpp} [@0cd4559].
+// Registered in docs/attribution/aethersdr-reconciliation.md.
+
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// =================================================================
+// src/gui/PanFloatingWindow.cpp  (Longpath)
+// =================================================================
+//
+// Ported (structurally) from AetherSDR src/gui/PanFloatingWindow.{h,cpp}
+// [@0cd4559].
+//   Copyright (C) 2024-2026  Jeremy (KK7GWY) / AetherSDR contributors
+//       per https://github.com/ten9876/AetherSDR (GPLv3; see LICENSE
+//       and About dialog for the live contributor list)
+//
+// See PanFloatingWindow.h for full Modification history (Longpath).
+// =================================================================
+
 #include "gui/PanFloatingWindow.h"
 #include "gui/PanadapterApplet.h"
 #include "core/AppSettings.h"
@@ -96,9 +120,33 @@ void PanFloatingWindow::updateWindowTitle()
 //   dockPanadapter owns the teardown, because it also has to move the applet
 //   out first -- letting Qt close the window here would delete the applet
 //   with it.
+//
+// From Longpath src/gui/PanFloatingWindow.cpp:230-243 [@383f058]
+//   Application quit closes every top-level window with a close event that
+//   is not spontaneous, and one ignored close cancels the whole quit. So a
+//   non-spontaneous close is accepted (the window only hides; the pan is not
+//   docked on the way out, and its geometry is saved) and only a close the
+//   window system sends -- the user's close box -- docks.
 void PanFloatingWindow::closeEvent(QCloseEvent* event)
 {
     saveWindowGeometry();
+    // ABER: ein ignore() beim Beenden bricht bei Qt das GANZE Beenden ab
+    // (QApplication schliesst alle Fenster der Reihe nach und gibt auf,
+    // sobald eines ablehnt). Am 2026-09-24 liess sich Longpath darum mit
+    // schwebendem Panadapter ueberhaupt nicht mehr beenden -- sechs
+    // Versuche hintereinander, jeder endete hier mit m_shuttingDown=false,
+    // spontaneous=false, und MainWindow::closeEvent lief nie. Das Schliessen
+    // aller Fenster beim Beenden kommt NICHT spontan an; darum wird es
+    // angenommen (versteckt nur, kein Andocken -- das Profil fragt
+    // isPanFloating() und die Lage des Fensters, nicht die Sichtbarkeit).
+    // Abgelehnt wird nur noch, was das Fenstersystem spontan schickt.
+    if (!event->spontaneous()) {
+        event->accept();
+        return;
+    }
+    // NereusSDR: a programmatic close() is not spontaneous either, so it
+    // hides the window without docking. To dock from code, call
+    // requestDock() (dockRequested -> PanadapterStack::dockPanadapter).
     requestDock();
     event->ignore();
 }

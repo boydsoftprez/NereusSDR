@@ -28,6 +28,8 @@
 //                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - barFormsShowTheSameTextForNoReading. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-20 - Frequency (Custom) font, colour, centering and slice lines.
+//                 Brian Sutton, AI-assisted via xAI Grok.
 #include <QtTest>
 #include <cstring>
 #include <QApplication>
@@ -44,6 +46,9 @@
 #include <QTimer>
 #include <QLabel>
 #include <QLayout>
+#include <QPushButton>
+#include <QSizePolicy>
+#include <QSpinBox>
 #include <QLoggingCategory>
 #include <QScopeGuard>
 #include <QSplitter>
@@ -407,8 +412,9 @@ private slots:
                 names.append(d.title);
             }
         }
-        QCOMPARE(names, (QStringList{QStringLiteral("Frequency (Longpath)"), QStringLiteral("Needle meter (Longpath)"),
-                                     QStringLiteral("Bar meter (Longpath)"), QStringLiteral("Filter passband (Longpath)")}));
+        QCOMPARE(names, (QStringList{QStringLiteral("Frequency (Longpath)"), QStringLiteral("Frequency (Custom)"),
+                                     QStringLiteral("Needle meter (Longpath)"), QStringLiteral("Bar meter (Longpath)"),
+                                     QStringLiteral("Filter passband (Longpath)")}));
 
         ContentEntry rx = registry.makeEntry(QString::fromLatin1(LongpathContent::kNeedleType));
         ContentEntry tx = registry.makeEntry(QString::fromLatin1(LongpathContent::kNeedleType));
@@ -857,7 +863,8 @@ private slots:
         QCOMPARE(needle->peakHold().value(), -73.0);
 
         // The frequency and filter previews follow no slice and run no timer.
-        for (const char* type : {LongpathContent::kFrequencyType, LongpathContent::kFilterType}) {
+        for (const char* type : {LongpathContent::kFrequencyType, LongpathContent::kFrequencyCustomType,
+                                 LongpathContent::kFilterType}) {
             const ContentEntry other = registry.makeEntry(QString::fromLatin1(type));
             QWidget parent;
             std::unique_ptr<QWidget> view(registry.createPreview(other, &parent, document.config));
@@ -1008,6 +1015,158 @@ private slots:
         QVERIFY(!advanced->isEnabled());
         QVERIFY(!advanced->isHidden());
         QCOMPARE(advanced->toolTip(), QStringLiteral("Not in this build."));
+    }
+
+    void customFrequencyEditorWritesDisplayConfig()
+    {
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, {});
+        ContentPropertyEditor editor(registry);
+        QSignalSpy edited(&editor, &ContentPropertyEditor::entryEdited);
+
+        editor.setEntry(registry.makeEntry(QString::fromLatin1(LongpathContent::kFrequencyCustomType)));
+        auto* form = editor.findChild<QComboBox*>(QStringLiteral("property_form"));
+        QVERIFY(form);
+        QCOMPARE(form->count(), 3);
+        auto* size = editor.findChild<QSpinBox*>(QStringLiteral("property_fontSize"));
+        QVERIFY(size);
+        QCOMPARE(size->value(), 26);
+        QCOMPARE(size->minimum(), 12);
+        QCOMPARE(size->maximum(), 160);
+        auto* fit = editor.findChild<QCheckBox*>(QStringLiteral("property_fitWidth"));
+        QVERIFY(fit);
+        QVERIFY(!fit->isChecked());
+        auto* color = editor.findChild<QPushButton*>(QStringLiteral("property_fontColor"));
+        QVERIFY(color);
+        QCOMPARE(color->text(), QStringLiteral("#d8a55f"));
+        auto* center = editor.findChild<QCheckBox*>(QStringLiteral("property_center"));
+        QVERIFY(center);
+        QVERIFY(!center->isChecked());
+        auto* own = editor.findChild<QCheckBox*>(QStringLiteral("property_showOwnSlice"));
+        auto* other = editor.findChild<QCheckBox*>(QStringLiteral("property_showOtherSlice"));
+        QVERIFY(own && other);
+        QVERIFY(own->isChecked());
+        QVERIFY(other->isChecked());
+
+        edited.clear();
+        size->setValue(48);
+        QCOMPARE(edited.size(), 1);
+        auto entry = edited.takeLast().at(0).value<ContentEntry>();
+        QCOMPARE(entry.config.value(QString::fromLatin1(LongpathContent::kFontSizeKey)).toInt(), 48);
+        fit->setChecked(true);
+        entry = edited.takeLast().at(0).value<ContentEntry>();
+        QCOMPARE(entry.config.value(QString::fromLatin1(LongpathContent::kFitWidthKey)), QJsonValue(true));
+        center->setChecked(true);
+        entry = edited.takeLast().at(0).value<ContentEntry>();
+        QCOMPARE(entry.config.value(QString::fromLatin1(LongpathContent::kCenterKey)), QJsonValue(true));
+        own->setChecked(false);
+        entry = edited.takeLast().at(0).value<ContentEntry>();
+        QCOMPARE(entry.config.value(QString::fromLatin1(LongpathContent::kShowOwnKey)), QJsonValue(false));
+
+        // The original object keeps its single form control.
+        editor.setEntry(registry.makeEntry(QString::fromLatin1(LongpathContent::kFrequencyType)));
+        QVERIFY(editor.findChild<QComboBox*>(QStringLiteral("property_form")));
+        QVERIFY(!editor.findChild<QSpinBox*>(QStringLiteral("property_fontSize")));
+        QVERIFY(!editor.findChild<QCheckBox*>(QStringLiteral("property_center")));
+    }
+
+    void customFrequencyHonorsFontColorCenterAndSliceLines()
+    {
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, {});
+        QWidget parent;
+
+        ContentEntry plain = registry.makeEntry(QString::fromLatin1(LongpathContent::kFrequencyCustomType));
+        std::unique_ptr<QWidget> plainWidget(registry.createWidget(plain, &parent));
+        auto* stock = qobject_cast<FrequencyInstrument*>(plainWidget.get());
+        QVERIFY(stock);
+        QVERIFY(stock->digitFontLocked());
+        QCOMPARE(stock->digitFontPx(), 26);
+        QVERIFY(!stock->contentCentered());
+        QCOMPARE(stock->sizePolicy().verticalPolicy(), QSizePolicy::Maximum);
+        QVERIFY(stock->ownSliceLineVisible());
+        QVERIFY(stock->otherSliceLineVisible());
+        // isVisible() is false while the parent is hidden, even when the
+        // slice line was not turned off.
+        parent.resize(800, 600);
+        parent.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&parent));
+        settle();
+        QVERIFY(stock->vfoRowVisible());
+        QVERIFY(!stock->digitColor().isValid());
+
+        ContentEntry entry = plain;
+        entry.config.insert(QString::fromLatin1(LongpathContent::kFontSizeKey), 36);
+        entry.config.insert(QString::fromLatin1(LongpathContent::kFitWidthKey), false);
+        entry.config.insert(QString::fromLatin1(LongpathContent::kFontColorKey), QStringLiteral("#44aaff"));
+        entry.config.insert(QString::fromLatin1(LongpathContent::kCenterKey), true);
+        entry.config.insert(QString::fromLatin1(LongpathContent::kShowOwnKey), false);
+        std::unique_ptr<QWidget> widget(registry.createWidget(entry, &parent));
+        auto* freq = qobject_cast<FrequencyInstrument*>(widget.get());
+        QVERIFY(freq);
+        freq->setFrequency(14200000.0);
+        freq->setOtherFrequency(7185000.0);
+        QCOMPARE(freq->digitFontPx(), 36);
+        QVERIFY(freq->digitFontLocked());
+        QCOMPARE(freq->digitColor(), QColor(QStringLiteral("#44aaff")));
+        QVERIFY(freq->contentCentered());
+        QCOMPARE(freq->sizePolicy().verticalPolicy(), QSizePolicy::Expanding);
+        QVERIFY(!freq->ownSliceLineVisible());
+        QVERIFY(freq->otherSliceLineVisible());
+        freq->show();
+        settle();
+        QVERIFY(freq->vfoRowVisible());
+
+        QLabel* digit = nullptr;
+        QString row;
+        for (QLabel* label : freq->findChildren<QLabel*>()) {
+            if (!digit && label->text() == QLatin1String("1")) {
+                digit = label;
+            }
+            if (label->text().contains(QLatin1String("<font"))) {
+                row = label->text();
+            }
+        }
+        QVERIFY(digit);
+        QCOMPARE(digit->font().pixelSize(), 36);
+        QVERIFY(digit->styleSheet().contains(QStringLiteral("#44aaff")));
+        QVERIFY2(row.contains(QStringLiteral(">B ")), qPrintable(row));
+        QVERIFY2(!row.contains(QStringLiteral(">A ")), qPrintable(row));
+
+        freq->setParent(nullptr);
+        freq->resize(720, 260);
+        freq->show();
+        QVERIFY(QTest::qWaitForWindowExposed(freq));
+        settle();
+        const QPoint origin = digit->mapTo(freq, QPoint(0, 0));
+        QVERIFY2(origin.x() > 60, qPrintable(QString::number(origin.x())));
+        QVERIFY2(origin.y() > 30, qPrintable(QString::number(origin.y())));
+
+        ContentEntry hidden = plain;
+        hidden.config.insert(QString::fromLatin1(LongpathContent::kShowOwnKey), false);
+        hidden.config.insert(QString::fromLatin1(LongpathContent::kShowOtherKey), false);
+        std::unique_ptr<QWidget> hiddenWidget(registry.createWidget(hidden, &parent));
+        auto* bothOff = qobject_cast<FrequencyInstrument*>(hiddenWidget.get());
+        QVERIFY(bothOff);
+        bothOff->show();
+        settle();
+        QVERIFY(!bothOff->vfoRowVisible());
+        QVERIFY(bothOff->minimumSizeHint().height() < stock->minimumSizeHint().height());
+
+        ContentEntry fitting = plain;
+        fitting.config.insert(QString::fromLatin1(LongpathContent::kFontSizeKey), 48);
+        fitting.config.insert(QString::fromLatin1(LongpathContent::kFitWidthKey), true);
+        std::unique_ptr<QWidget> fitWidget(registry.createWidget(fitting, &parent));
+        auto* fitted = qobject_cast<FrequencyInstrument*>(fitWidget.get());
+        QVERIFY(fitted);
+        QVERIFY(!fitted->digitFontLocked());
+        fitted->setParent(nullptr);
+        fitted->resize(180, 120);
+        fitted->show();
+        QVERIFY(QTest::qWaitForWindowExposed(fitted));
+        settle();
+        QVERIFY(fitted->digitFontPx() < 48);
+        QVERIFY(fitted->digitFontPx() >= 12);
     }
 
     void compactAndLabelReachTheWidgets()

@@ -4,6 +4,7 @@
 // The daemon helper is started with the words of the entry the GUI owner
 // registered, so what is proven is the hand over a real close performs.
 
+#include "UnusedLoopbackPort.h"
 #include <QtTest>
 
 #include <QApplication>
@@ -226,9 +227,8 @@ private slots:
         const QString profileDirectory = AppSettings::resolveConfigDir(profile);
         const auto cleanup = qScopeGuard([&] { QDir(profileDirectory).removeRecursively(); });
         QVERIFY(QDir().mkpath(profileDirectory));
-        QTcpServer reservation;
-        QVERIFY(reservation.listen(QHostAddress::LocalHost, 0));
-        const quint16 port = reservation.serverPort();
+        const quint16 port = unusedLoopbackPort();
+        QVERIFY(port != 0);
         const QString radioMac = QStringLiteral("02:00:00:00:00:49");
         QVERIFY(writeConfig(profileDirectory, port, radioMac));
         const QString settingsPath = QDir(profileDirectory).filePath(
@@ -261,7 +261,6 @@ private slots:
         paired.name = QStringLiteral("Refused handover client");
         paired.kind = QStringLiteral("computer");
         QVERIFY2(devices.add(paired), qPrintable(devices.lastError()));
-        reservation.close();
 
         QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
         env.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("offscreen"));
@@ -358,9 +357,8 @@ private slots:
             if (named) { QDir(profileDirectory).removeRecursively(); }
         });
         QVERIFY(QDir().mkpath(profileDirectory));
-        QTcpServer reservation;
-        QVERIFY(reservation.listen(QHostAddress::LocalHost, 0));
-        const quint16 port = reservation.serverPort();
+        const quint16 port = unusedLoopbackPort();
+        QVERIFY(port != 0);
         QVERIFY(writeConfig(profileDirectory, port));
         AppSettings saved(QDir(profileDirectory).filePath(QStringLiteral("NereusSDR.settings")));
         saved.setValue(QStringLiteral("DesktopCore/Run"), true);
@@ -379,7 +377,6 @@ private slots:
         paired.name = QStringLiteral("Handover test client");
         paired.kind = QStringLiteral("computer");
         QVERIFY2(devices.add(paired), qPrintable(devices.lastError()));
-        reservation.close();
 
         QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
         env.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("offscreen"));

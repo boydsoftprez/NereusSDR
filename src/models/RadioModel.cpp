@@ -17,6 +17,29 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - Connect hold: discovery sends nothing from the moment a
+//                local connection is created until it reports Connected or
+//                ends, then waits the post-disconnect quiet period
+//                (RadioDiscovery::beginConnectHold). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - A lone slice that tunes well inside another receiver of its
+//                pan goes back onto that receiver instead of moving its own
+//                (bindSliceToStream, rejoinCandidateStreams; JJ's ruling
+//                2026-10-22). Only the highest active receiver is freed: a
+//                lone slice on the lower one takes the other's slices down
+//                onto it instead. Antennas compare on the label the slice
+//                will have on its new band. J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
+//   2026-10-22 - Second review round: a rejoin or fold needs both receivers'
+//                DDCs on the same ADC, as the codec's published assignment
+//                says (receiveAdcForStream), the receivers' own C-Tune pins
+//                to match, and, for a fold, every moving slice to share the
+//                lone slice's noise-blanker state and device. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - RX-only antenna 4 and 5 (XVTR with an input, Thetis's
+//                checkbox sum) are named by the XVTR label, and a slice's
+//                echo of that label keeps the pair. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-17 - teardownConnection stops the TX worker before the audio
 //                engine, which destroys the TX input and VAX TX buses the
 //                worker reads. J.J. Boyd (KG4VCF), AI-assisted via
@@ -1249,6 +1272,39 @@
 //                local page's edit to every slice in the mode group, not
 //                the first receiver alone. J.J. Boyd (KG4VCF), AI-assisted
 //                via Anthropic Claude Code.
+//   2026-10-22 - SWR protection reaches the drive, as Thetis applies
+//                NetworkIO.SWRProtect: the controller's factor is the
+//                TransmitModel factor the wire pump reads, a wind-back
+//                change re-pumps once per poll and only while keyed
+//                (console.cs:26151-26158 [v2.10.3.15]), the poll runs only
+//                while transmitting (console.cs:25989-25991), and MOX off
+//                resets the factor and the wind-back latch
+//                (UIMOXChangedFalse, console.cs:29241-29246). Cross-checked
+//                against Longpath 99b20c81, which releases the latch at the
+//                hardware flip instead. Modified by J.J. Boyd (KG4VCF),
+//                with AI-assisted transformation via Claude Code.
+//   2026-10-22 - PR 604 fix wave: the ANAN-8000D alex_fwd_limit follows PWR
+//                before every SWR sample, MOX and TUNE alike
+//                (console.cs:26112-26114 [v2.10.3.15]); an open antenna
+//                drops MOX and shows Thetis's warning (console.cs:26036-26057,
+//                26177-26185); the SWR release runs on every unkey
+//                (moxChanging) and the poll is gated on MOX as `if (_mox)`.
+//                Modified by J.J. Boyd (KG4VCF), with AI-assisted
+//                transformation via Claude Code.
+//   2026-10-22 - PR 604 second pass: an open-antenna drop sets Stop All TX's
+//                latch so a held PTT or VOX does not key again until
+//                released (a deliberate departure from Thetis, JJ's ruling),
+//                and raises its stop reason so a remote window shows the
+//                antenna warning. Modified by J.J. Boyd (KG4VCF), with
+//                AI-assisted transformation via Claude Code.
+//   2026-10-22 - The I/Q level log hears ADC overloads
+//                (RadioConnection::adcOverflow to
+//                ReceiverManager::noteAdcOverflow), and reportDspDiagnostics
+//                logs each slice's noise-reduction calls over 50 ms with the
+//                stages that ran, and non-finite WDSP output (the load
+//                sampler's tick). Diagnostics only; NR and DSP
+//                parameters unchanged. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1714,6 +1770,24 @@ namespace NereusSDR {
 // preserved exactly per CLAUDE.md "Constants and Magic Numbers" rule.
 namespace {
 
+// SWR protection's trip floor, alex_fwd_limit, from the model and the PWR
+// slider (ptbPWR.Value).
+// From Thetis console.cs:26112-26114 [v2.10.3.15]:
+// Upstream tags preserved: //K2UE (from cited console.cs:26113) [v2.10.3.15]
+//   float alex_fwd_limit = 5.0f;
+//   if (HardwareSpecific.Model == HPSDRModel.ANAN8000D)        // K2UE idea:  try to determine if Hi-Z or Lo-Z load
+//       alex_fwd_limit = 2.0f * (float)ptbPWR.Value;        //    by comparing alex_fwd with power setting
+constexpr float kSwrAlexFwdLimitW = 5.0f;
+constexpr float kSwrAlexFwdLimit8000DPerPwr = 2.0f;
+
+float swrAlexFwdLimit(HPSDRModel model, int pwrSlider) noexcept
+{
+    if (model == HPSDRModel::ANAN8000D) {        // K2UE idea:  try to determine if Hi-Z or Lo-Z load
+        return kSwrAlexFwdLimit8000DPerPwr * static_cast<float>(pwrSlider);        //    by comparing alex_fwd with power setting
+    }
+    return kSwrAlexFwdLimitW;
+}
+
 // scaleFwdPowerWatts: lifted from this anonymous namespace into the
 // public PaTelemetryScaling API in Phase 1 Agent 1B of issue #167.
 // See src/core/PaTelemetryScaling.{h,cpp} — same Thetis-canonical math
@@ -2177,6 +2251,12 @@ RadioModel::RadioModel(Role role, QObject* parent)
         m_nnrGovernorClock.start();
         connect(m_dspLoadTimer, &QTimer::timeout, this, [this] {
             governNnrLoad(m_nnrGovernorClock.elapsed());
+        });
+        // 2026-10-22: noise-reduction calls over 50 ms and non-finite WDSP
+        // output, on the same tick. The slow-call labels were recorded at
+        // call time, so the governor's step above cannot relabel them.
+        connect(m_dspLoadTimer, &QTimer::timeout, this, [this] {
+            reportDspDiagnostics(m_nnrGovernorClock.elapsed());
         });
         m_dspLoadTimer->start();
     }
@@ -4765,22 +4845,72 @@ RadioModel::RadioModel(Role role, QObject* parent)
     connect(&m_transmitModel, &TransmitModel::audioVolumeChanged,
             this, &RadioModel::pumpAudioVolume);
 
-    // Connect TransmitModel::swrProtectFactorChanged → re-pump current
-    // audio_volume through the new SWR factor.  Mirrors Thetis
-    // console.cs:26102-26109 [v2.10.3.13]:
-    //   if (_swr_wind_back_power && swrprotection && old_swr_protect != NetworkIO.SWRProtect)
-    //   {
-    //       // setting SWRProtect does nothing unless power is changed,
-    //       // RadioVolume is the only code that uses SWRProtect using
-    //       // NetworkIO.SetOutputPower.
-    //       Audio.RadioVolume = Audio.RadioVolume;  // self-assign re-emits
-    //   }
-    // The NereusSDR cache (m_lastAudioVolume, updated inside pumpAudioVolume)
-    // stands in for Thetis's `radio_volume` backing field.
-    connect(&m_transmitModel, &TransmitModel::swrProtectFactorChanged,
-            this, [this](float /*factor*/) {
-        pumpAudioVolume(m_lastAudioVolume);
-    });
+    // SWR protection → drive.  TransmitModel's swrProtectFactor is
+    // NetworkIO.SWRProtect (NetworkIO.cs:192-197 [v2.10.3.15]); every
+    // write PollPAPWR makes to it is the controller's protectFactor, so the
+    // controller's factor is stored there as it changes:
+    // From Thetis console.cs:26042, 26122, 26129, 26137 [v2.10.3.15]
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:26038) [v2.10.3.15]
+    //   NetworkIO.SWRProtect = 0.01f;
+    //   NetworkIO.SWRProtect = (float)(_swrProtectionLimit / (swr + 1.0f));
+    //   NetworkIO.SWRProtect = 1.0f;
+    //   NetworkIO.SWRProtect = 0.01f;
+    // (open antenna, trip, clear, wind-back latch, in that order).
+    // Storing it sends nothing: SetOutputPower (NetworkIO.cs:199-212)
+    // multiplies it in when Audio.RadioVolume is next assigned
+    // (pumpAudioVolume here). The one reassignment PollPAPWR itself makes,
+    // with wind-back on, is in handlePaTelemetry after ingest().
+    //
+    // This replaces a connect that re-pumped on every factor change,
+    // which dropped the `_swr_wind_back_power && swrprotection` guard of
+    // console.cs:26151 [v2.10.3.15] and ran outside the keyed poll.
+    connect(&m_swrProt, &safety::SwrProtectionController::protectFactorChanged,
+            &m_transmitModel, &TransmitModel::setSwrProtectFactor);
+
+    // MOX off releases the SWR protection.
+    // From Thetis console.cs:29721-29722 [v2.10.3.15] (chkMOX_CheckedChanged2):
+    //   if (tx) UIMOXChangedTrue();
+    //   else UIMOXChangedFalse();
+    // and UIMOXChangedFalse, console.cs:29241-29246 [v2.10.3.15]:
+    //   //[2.10.3.7]MW0LGE reset
+    //   NetworkIO.SWRProtect = 1.0f;
+    //   _wind_back_engaged = false;
+    //   Display.PowerFoldedBack = false;
+    //   Audio.HighSWRScale = 1.0;
+    //   HighSWR = false;
+    // Thetis runs UIMOXChangedFalse on every unkey, synchronously. Here the
+    // release is hooked to moxChanging(true -> false), which MoxController
+    // emits on every real unkey before it commits MOX off. That is earlier
+    // than Thetis, which resets after the hardware unkey (console.cs:29721
+    // [v2.10.3.15]). It is safe: the factor it puts back to 1.0
+    // (TransmitModel::swrProtectFactor) is read only by pumpAudioVolume,
+    // which runs on a drive change (the PWR slider, TUNE, two-tone, the
+    // next key's drive restore), not on this reset, so the folded-back
+    // byte already sent stays until something sets the drive again. The
+    // caveat: the TX channel's drain and a RADE end-of-over tail still
+    // transmit after this point with the protection released; the poll no
+    // longer runs then (isMox() is false), so a high SWR during that tail
+    // is not acted on, and the drive byte already sent (folded back or
+    // not) stays until the walk ends. moxChanged
+    // fires only at the end of the TX-to-RX walk, which a quick re-key
+    // cancels, so a latch released there could survive into the next key.
+    // The SWR poll in handlePaTelemetry is gated on isMox() as Thetis's
+    // `if (_mox)`, so no sample after this point can trip it again. The
+    // controller's onMoxOff makes those resets and its factor signal
+    // stores 1.0 in TransmitModel; nothing is pumped, as upstream. The
+    // next key's drive restore (restoreNormalTxDrive, ptbPWR_Scroll) sends
+    // full drive. Not gated on the role: a window whose controller never
+    // keys never sees this edge.
+    // Cross-checked against Longpath 99b20c81 (2026-08-14), which calls
+    // onMoxOff from onMoxHardwareFlipped(false).
+    if (m_moxController) {
+        connect(m_moxController, &MoxController::moxChanging, this,
+                [this](int, bool oldMox, bool newMox) {
+            if (oldMox && !newMox) {
+                m_swrProt.onMoxOff();
+            }
+        });
+    }
 
     // (Codex-flagged duplicate audioVolumeChanged listener removed in 67298ff
     // follow-up.  The single canonical pump is RadioModel::pumpAudioVolume,
@@ -14547,6 +14677,104 @@ void RadioModel::activateStreamAt(int streamIndex, double centreHz)
         m_streamAllocator.streamSampleRateHz(streamIndex));
 }
 
+QVector<int> RadioModel::rejoinCandidateStreams(const SliceModel* slice,
+                                                int currentStream,
+                                                const QString& joinLabel) const
+{
+    QVector<int> candidates;
+    if (slice == nullptr || currentStream < 0 || slice->diversityEnabled()) {
+        return candidates;
+    }
+    // An empty pan key is pan 0, as restore and recovery read it.
+    const auto panOf = [](const SliceModel* s) {
+        return s->panKey().isEmpty() ? QStringLiteral("pan-0") : s->panKey();
+    };
+    const QString pan = panOf(slice);
+    // The ADC this slice's receiver reads now. Unknown (no codec yet, or no
+    // DDC) is not a match: nothing moves.
+    const int currentAdc = receiveAdcForStream(currentStream);
+    if (currentAdc < 0) {
+        return candidates;
+    }
+    const QByteArray subject = m_sliceOwnership != nullptr
+        ? m_sliceOwnership->mark(slice->sliceIndex()).subject() : QByteArray();
+    for (int st = 0; st < m_streamAllocator.streamCount(); ++st) {
+        if (st == currentStream || !m_streamAllocator.isStreamActive(st)) {
+            continue;
+        }
+        // Each pan keeps its own receivers: joining another pan's would
+        // couple the two pans (the 2026-07-30 and 2026-08-01 bench reports
+        // behind SliceStreamAllocator::placeSlice's preferOwnStream).
+        //
+        // The same receive antenna as every slice there, compared on the
+        // labels the codec reads (buildStreamConfigsForCodec takes a stream's
+        // antenna from its first slice in m_slices order, which may become
+        // this one), so the receiver's ADC cannot move under its slices.
+        // `joinLabel` is the label this slice will have on its new band (its
+        // labels are refreshed for the new band only after this bind, by
+        // crossBandForSlice, and then only when the station's band changes).
+        // Diversity on the receiver would change which DDC pair carries it.
+        bool qualifies = false;
+        for (const SliceModel* other : m_slices) {
+            if (other == nullptr || other == slice || other->streamIndex() != st) {
+                continue;
+            }
+            if (panOf(other) != pan || other->rxAntenna() != joinLabel
+                || other->diversityEnabled()) {
+                qualifies = false;
+                break;
+            }
+            qualifies = true;
+        }
+        if (!qualifies) {
+            continue;
+        }
+        // The same ADC. The label does not decide it on Protocol 1, where the
+        // bank-4 word routes each frame slot whatever the antenna (Thetis
+        // P1_adc_cntrl, networkproto1.c:519-520 [v2.10.3.15]): on a 2-ADC
+        // board with slot 2 on ADC1, slice B on stream 1 hears the RX2 input
+        // and stream 0 the Alex ports. Moving a slice between the two would
+        // move it to another input. Either way round (a join or a fold) the
+        // slices that move change DDCs, so the two DDCs must read one ADC.
+        if (receiveAdcForStream(st) != currentAdc) {
+            continue;
+        }
+        // C-Tune: the slice keeps the pin it had, and the receiver's is not
+        // touched, so neither slice's C-Tune changes. The receivers' own
+        // pins: the station-wide lock applies to both alike, and folding it
+        // in let two different pins compare equal.
+        if (streamCtunPinned(st) != streamCtunPinned(currentStream)) {
+            continue;
+        }
+        // Several devices on one Core: a receiver anchored by another device
+        // stays that device's.
+        if (m_sliceOwnership != nullptr && m_sliceOwnership->anchorOf(st) != subject) {
+            continue;
+        }
+        candidates.append(st);
+    }
+    return candidates;
+}
+
+int RadioModel::receiveAdcForStream(int stream) const
+{
+    // What the codec's assignment says the stream's DDC reads, as
+    // publishDdcAssignment decoded it (m_streamAdc), on either protocol. That
+    // assignment is what the wire carries: on Protocol 2 its ADC bytes; on
+    // Protocol 1 the Orion class composes its ADC bytes from the bank-4 word
+    // p1AdcCntrl, remapped while Diversity moves streams onto other frame
+    // slots, and applyDiversityAssignment sends the remapped word. Decoding
+    // p1AdcCntrl here instead read the un-remapped word at the remapped slot.
+    // The Hermes class and the HL2 publish ADC0, and have one ADC.
+    //
+    // No DDC (no codec has answered yet, or the stream is suspended) is
+    // unknown, and an unknown ADC never matches.
+    if (ddcForStream(stream) < 0) {
+        return -1;
+    }
+    return adcForStream(stream);
+}
+
 bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
                                     bool preferOwnStream, int requiredStream)
 {
@@ -14622,7 +14850,7 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
     // it (a confirmed pan move taking its slices to another receiver,
     // moveSlicesToStream); every other caller leaves requiredStream -1 on
     // a retune, as before.
-    const auto placement =
+    auto placement =
         (previousStream < 0 || (requiredStream >= 0 && requiredStream != previousStream))
             ? (requiredStream >= 0
                 ? m_streamAllocator.joinStream(requiredStream, frequencyHz)
@@ -14631,6 +14859,102 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
                                             ddcPinned, frequencyHz);
 
     using Outcome = NereusSDR::SliceStreamAllocator::Outcome;
+
+    // JJ's ruling 2026-10-22: a slice alone on its receiver that tunes well
+    // inside another receiver of its pan goes back onto that receiver,
+    // freeing one of the two, instead of dragging its own receiver along.
+    // STRIX, 2026-10-22: the Core restored A on 80 m and B on 40 m on two
+    // receivers; A was then tuned to 7.268 MHz, 6 kHz from B, and stayed
+    // alone (RetunedStream), so the window's pan cleared on every A/B click.
+    //
+    // Only where the retune would move this slice's own receiver
+    // (RetunedStream), and never for a caller that required a receiver. A
+    // C-Tune-pinned slice still inside its own window gets JoinedExisting on
+    // that window instead and is left there: joining another receiver would
+    // move the pan under it, which is what C-Tune exists to prevent.
+    //
+    // The receiver freed is always the highest active one, so the DDC enable
+    // mask keeps no gap (the 2026-07-26 G2E bench, a hole at DDC1 and a dead
+    // second pan; see SliceStreamAllocator::retuneSlice):
+    // - this slice's receiver is the highest: it joins the other at a shift
+    //   only (rejoinStream). That receiver's centre and rate stay, so the
+    //   slices on it hear nothing new; this slice gets one short gap as its
+    //   channel changes receivers.
+    // - the other receiver is the highest: this slice's receiver retunes as
+    //   before, and the other's slices come down onto it when they all sit
+    //   well inside its new window (canFoldDown); the other is freed. They
+    //   get the one short gap instead.
+    // - freeing either would leave a gap (a third receiver above): nothing
+    //   moves, as before.
+    bool rejoined = false;
+    int foldFrom = -1;
+    bool refreshJoinLabels = false;
+    const Band newBand = bandFromFrequency(frequencyHz);
+    if (requiredStream < 0 && placement.outcome == Outcome::RetunedStream
+        && previousStream >= 0 && placement.streamIndex == previousStream) {
+        // The receive label this slice will have on its new band, as
+        // crossBandForSlice will decide it: the relay keeps the applied
+        // band's antenna while another device listens through it, and the
+        // slice keeps its labels then; otherwise the new band's label.
+        const Band applied = m_keptRxAntennaBand.value_or(m_lastBand);
+        const bool kept = receiveAntennaDiffers(applied, newBand)
+                          && !devicesListeningThroughRelay(slice).isEmpty();
+        const SkuUiProfile sku = skuUiProfileFor(m_hardwareProfile.model);
+        const QString joinLabel =
+            kept ? slice->rxAntenna()
+                 : SliceModel::rxAntennaLabelFor(m_alexController, newBand, &sku);
+        const QVector<int> candidates =
+            rejoinCandidateStreams(slice, previousStream, joinLabel);
+        if (const auto rejoin =
+                m_streamAllocator.rejoinStream(previousStream, frequencyHz, candidates)) {
+            placement = *rejoin;
+            rejoined = true;
+        } else {
+            const int top = m_streamAllocator.highestActiveStream();
+            if (top > previousStream && candidates.contains(top)) {
+                // Every slice that would move must already agree with this
+                // one on what the fold would otherwise change for it:
+                // - the noise blanker. A slice joining an occupied receiver
+                //   adopts the blanker state there (the peer adoption below),
+                //   so a moving slice whose NB or NB2 differs would have it
+                //   changed although the operator never touched that slice.
+                // - the device. The candidate check compares the device
+                //   anchoring the receiver only; every slice that moves must
+                //   be this slice's device's, or another device's slice
+                //   would be moved by this one.
+                // Otherwise nothing folds, as before.
+                const QByteArray subject = m_sliceOwnership != nullptr
+                    ? m_sliceOwnership->mark(slice->sliceIndex()).subject() : QByteArray();
+                const auto sameBlanker = [slice](const SliceModel* other) {
+                    return other->nbMode() == slice->nbMode()
+                        && other->nb1Threshold() == slice->nb1Threshold()
+                        && other->nb1TransitionMs() == slice->nb1TransitionMs()
+                        && other->nb1LeadMs() == slice->nb1LeadMs()
+                        && other->nb1LagMs() == slice->nb1LagMs()
+                        && other->nb2Mode() == slice->nb2Mode();
+                };
+                bool movable = true;
+                QVector<double> frequencies;
+                for (int id : slicesOnStream(top)) {
+                    const SliceModel* other = sliceById(id);
+                    if (other == nullptr || !sameBlanker(other)
+                        || (m_sliceOwnership != nullptr
+                            && m_sliceOwnership->mark(id).subject() != subject)) {
+                        movable = false;
+                        break;
+                    }
+                    frequencies.append(other->frequency());
+                }
+                if (movable
+                    && m_streamAllocator.canFoldDown(previousStream, frequencyHz, top,
+                                                     frequencies)) {
+                    foldFrom = top;
+                }
+            }
+        }
+        refreshJoinLabels = (rejoined || foldFrom >= 0) && !kept
+                            && slice->rxAntenna() != joinLabel;
+    }
 
     // Placement diagnostic. Added 2026-08-01 chasing a bench report that a
     // second pan sometimes lands on the same DDC as the first, so tuning one
@@ -14659,7 +14983,14 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
             << " stream=" << placement.streamIndex
             << " shift=" << placement.shiftOffsetHz
             << " newCentre=" << (placement.newStreamCentreHz / 1.0e6)
-            << " occupantsBefore=" << occupants;
+            << " occupantsBefore=" << occupants
+            << (rejoined ? qPrintable(QStringLiteral(" (rejoined, receiver %1 freed)")
+                                          .arg(previousStream))
+                         : "")
+            << (foldFrom >= 0
+                    ? qPrintable(QStringLiteral(" (receiver %1's slices join it, receiver %1 freed)")
+                                     .arg(foldFrom))
+                    : "");
     }
 
     if (placement.outcome == Outcome::Rejected) {
@@ -14807,6 +15138,36 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
     // first block (defect H1).
     activateSliceChannel(slice);
     if (!current()) { return false; }
+
+    // A rejoin: the slice takes its new band's receive label now, so the
+    // receiver it shares reads one antenna from all its slices
+    // (crossBandForSlice would refresh it later, but only when the
+    // station's band changes). The label is the one the candidates were
+    // matched on, so this changes nothing on the receiver.
+    if (refreshJoinLabels) {
+        const SkuUiProfile sku = skuUiProfileFor(m_hardwareProfile.model);
+        slice->refreshAntennasFromAlex(m_alexController, newBand, &sku);
+        if (!current()) { return false; }
+    }
+
+    // The other way round (canFoldDown): the higher receiver's slices come
+    // down onto this slice's retuned receiver, and the last to leave frees
+    // it (the migration above, in each one's own bind).
+    if (foldFrom >= 0) {
+        const QVector<int> moving = slicesOnStream(foldFrom);
+        for (int id : moving) {
+            SliceModel* other = sliceById(id);
+            if (other == nullptr || other->streamIndex() != foldFrom) {
+                continue;
+            }
+            if (!bindSliceToStream(other, other->frequency(), false, placement.streamIndex)) {
+                qCWarning(lcConnection) << "Slice" << id << "could not join receiver"
+                                        << placement.streamIndex << "from receiver"
+                                        << foldFrom;
+            }
+            if (!current()) { return false; }
+        }
+    }
 
     // The active-DDC set may have changed, so the codec must recompute.
     requestDdcAssignment();
@@ -15121,6 +15482,123 @@ void RadioModel::governNnrLoadWith(qint64 nowMs,
         receiver.load = load(sliceId);
         if (const std::optional<NnrLimit> next = m_nnrGovernor.observe(sliceId, nowMs, receiver)) {
             applyNnrLimit(slice, *next);
+        }
+    }
+}
+
+namespace {
+
+// "A (index 0)": the slice letter and its index, which is also its WDSP
+// channel.
+QString sliceLogName(int sliceIndex)
+{
+    if (sliceIndex >= 0 && sliceIndex < 26) {
+        return QStringLiteral("%1 (index %2)")
+            .arg(QChar(QLatin1Char('A').unicode() + sliceIndex))
+            .arg(sliceIndex);
+    }
+    return QStringLiteral("index %1").arg(sliceIndex);
+}
+
+QString nnrModelNames(int stages, int standardBit, int premiumBit)
+{
+    QStringList names;
+    if ((stages & standardBit) != 0) {
+        names << QStringLiteral("Standard");
+    }
+    if ((stages & premiumBit) != 0) {
+        names << QStringLiteral("Premium");
+    }
+    return names.isEmpty() ? QStringLiteral("off") : names.join('/');
+}
+
+} // namespace
+
+QString RadioModel::nrStagesLogName(int stages)
+{
+    struct Stage {
+        int bit;
+        const char* name;
+    };
+    static constexpr Stage kStages[] = {
+        {WDSP_NR_STAGE_ANR, "NR1"},
+        {WDSP_NR_STAGE_EMNR, "NR2"},
+        {WDSP_NR_STAGE_RNNR, "NR3"},
+        {WDSP_NR_STAGE_SBNR, "NR4"},
+        {WDSP_NR_STAGE_NNR_STANDARD, "NNR Standard"},
+        {WDSP_NR_STAGE_NNR_PREMIUM, "NNR Premium"},
+        {WDSP_NR_STAGE_DFNR, "DFNR"},
+        {WDSP_NR_STAGE_MNR, "MNR"},
+    };
+    QStringList names;
+    for (const Stage& stage : kStages) {
+        if ((stages & stage.bit) != 0) {
+            names << QString::fromLatin1(stage.name);
+        }
+    }
+    if ((stages & WDSP_NR_NNR_LIMIT_APPLIED) != 0) {
+        names << QStringLiteral("the NNR limit switched NNR from %1 to %2 inside the call")
+                     .arg(nnrModelNames(stages, WDSP_NR_NNR_FROM_STANDARD,
+                                        WDSP_NR_NNR_FROM_PREMIUM),
+                          nnrModelNames(stages, WDSP_NR_NNR_TO_STANDARD,
+                                        WDSP_NR_NNR_TO_PREMIUM));
+    }
+    return names.isEmpty() ? QStringLiteral("no stage recorded") : names.join(QStringLiteral(", "));
+}
+
+QString RadioModel::slowNrCallLogLine(int sliceIndex, qint64 count, qint64 longestUs,
+                                      int longestStages, int stages)
+{
+    const QString longest =
+        longestUs > 0
+            ? QStringLiteral("%1 ms, ran %2")
+                  .arg(static_cast<double>(longestUs) / 1000.0, 0, 'f', 1)
+                  .arg(nrStagesLogName(longestStages))
+            : QStringLiteral("over 50 ms");
+    return QStringLiteral("Slice %1: %2 noise reduction call(s) over 50 ms since the last "
+                          "report, running %3; the longest took %4")
+        .arg(sliceLogName(sliceIndex))
+        .arg(count)
+        .arg(nrStagesLogName(stages))
+        .arg(longest);
+}
+
+QString RadioModel::outputNonFiniteLogLine(int sliceIndex, qint64 samples)
+{
+    return QStringLiteral("Slice %1: %2 non-finite samples in WDSP's output since the last "
+                          "report")
+        .arg(sliceLogName(sliceIndex))
+        .arg(samples);
+}
+
+void RadioModel::reportDspDiagnostics(qint64 nowMs)
+{
+    if (!m_wdspEngine) {
+        return;
+    }
+    for (SliceModel* slice : std::as_const(m_slices)) {
+        if (slice == nullptr) {
+            continue;
+        }
+        const int sliceId = slice->sliceIndex();
+        RxChannel* channel = m_wdspEngine->rxChannel(sliceId);
+        if (channel == nullptr) {
+            continue;
+        }
+        RxChannel::SlowNrCalls calls;
+        if (channel->takeSlowNrCalls(calls) && calls.count > 0) {
+            qCInfo(lcDsp).noquote()
+                << slowNrCallLogLine(sliceId, calls.count, calls.longestUs,
+                                     calls.longestStages, calls.stages);
+        }
+        OutputNonFiniteLog& nonFinite = m_outputNonFiniteLog[sliceId];
+        nonFinite.pending += channel->takeOutputNonFiniteSamples();
+        if (nonFinite.pending > 0
+            && (nonFinite.lastLogMs < 0
+                || nowMs - nonFinite.lastLogMs >= kOutputNonFiniteLogIntervalMs)) {
+            qCWarning(lcDsp).noquote() << outputNonFiniteLogLine(sliceId, nonFinite.pending);
+            nonFinite.pending = 0;
+            nonFinite.lastLogMs = nowMs;
         }
     }
 }
@@ -19212,6 +19690,17 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
         qCWarning(lcConnection) << "Failed to create connection for" << info.displayName();
         return;
     }
+    // Connect hold (2026-10-22): from here until this connection reports
+    // Connected (its first I/Q frame) or ends, discovery sends nothing:
+    // a running walk's next attempt, a new scan and a unicast probe all
+    // wait, in this process and on every NIC. The walk no longer blocks
+    // the thread, so the startup auto-connect (MainWindow::tryAutoReconnect,
+    // the turn after the walk starts) and a Connect pressed during a scan
+    // would otherwise broadcast at a radio that is starting, the same
+    // window as the 2026-07-27 ANAN-G2E lockups after a stop. The
+    // post-disconnect quiet period follows the hold
+    // (onConnectionStateChanged, teardownConnection).
+    RadioDiscovery::beginConnectHold(this);
     m_connection = conn.release();
     syncTransmitCutTargets();
 #ifdef NEREUS_BUILD_TESTS
@@ -20727,6 +21216,13 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
             this, [this](int ddcIndex, const QVector<float>& samples) {
         m_receiverManager->feedIqData(ddcIndex, samples);
     }, Qt::DirectConnection);
+    // 2026-10-22: the I/Q level log names an ADC overload reported in its
+    // interval. Lock-free on the ReceiverManager side, so it runs where the
+    // connection emits it.
+    connect(m_connection, &RadioConnection::adcOverflow,
+            this, [this](int adc) {
+        m_receiverManager->noteAdcOverflow(adc);
+    }, Qt::DirectConnection);
     // One socket drain's I/Q goes to the DSP worker as one post per stream
     // (ReceiverManager::beginIqBatch). Both run on the connection thread.
     connect(m_connection, &RadioConnection::iqBatchStarted,
@@ -21389,11 +21885,10 @@ void RadioModel::handlePaTelemetry(quint16 fwdRaw, quint16 revRaw,
     // meters show the physical truth (no TX → no forward power).
     //
     // Predicate: MoxController::state() == MoxState::Tx — the authoritative
-    // wire-level TX-active state.  TransmitModel's m_mox / m_tune flags are
-    // orphan state in the current codebase (never set true by any code
-    // path), so consulting them returned false during TUNE and force-zeroed
-    // the meters mid-transmit.  MoxController is the single source of truth
-    // for whether the radio is actually transmitting RF.
+    // wire-level TX-active state.  TransmitModel's mox flag only follows a
+    // key when no MoxController is present, and its tune flag is set by
+    // setTune, so neither tells whether the radio is transmitting RF right
+    // now; MoxController's walk state does.
     //
     // PA current / temperature / supply voltage are slow physical
     // quantities valid off-air; leave those samples alone.
@@ -21450,9 +21945,106 @@ void RadioModel::handlePaTelemetry(quint16 fwdRaw, quint16 revRaw,
     // skew the foldback math; raw bridge watts are the canonical input
     // Thetis uses for protection (console.cs alex_fwd path is independent
     // of CalibratedPAPower).
+    //
+    // From Thetis console.cs:25989-25993 [v2.10.3.15] (PollPAPWR): the SWR
+    // poll acts only while keyed,
+    //   while (chkPower.Checked)
+    //   {
+    //       if (_mox)
+    //       {
+    //           float old_swr_protect = NetworkIO.SWRProtect;
+    // so a sample arriving after the key is released (or before the walk
+    // reaches Tx) cannot trip the protection again after UIMOXChangedFalse
+    // reset it. inTx above is the same gate the TX readings use; isMox() is
+    // `_mox` itself, false from the moment an unkey starts (the RADE
+    // end-of-over tail and the rest of the TX-to-RX walk included), which is
+    // where the release (moxChanging) runs.
+    const bool swrPollKeyed = m_forceTxForTest
+        || (inTx && m_moxController && m_moxController->isMox());
+    if (!swrPollKeyed) {
+        return;
+    }
+    const float oldSwrProtect = m_transmitModel.swrProtectFactor();
+    // The model for the open-antenna check's 8000D test, which belongs to
+    // the open-antenna block (console.cs:26030-26057 [v2.10.3.15]):
+    // Upstream tags preserved: //-W2PA (from cited console.cs:26036) //MW0LGE (from cited console.cs:26038) [v2.10.3.15]
+    // From Thetis console.cs:26039 [v2.10.3.15]:
+    //       && HardwareSpecific.Model != HPSDRModel.ANAN8000D)) // open ant condition
+    m_swrProt.setHpsdrModel(model);
+    // From Thetis console.cs:26112-26114 [v2.10.3.15], worked out on every
+    // poll from the model and the PWR slider (ptbPWR.Value), MOX and TUNE
+    // alike:
+    // Upstream tags preserved: //K2UE (from cited console.cs:26113) [v2.10.3.15]
+    //   float alex_fwd_limit = 5.0f;
+    //   if (HardwareSpecific.Model == HPSDRModel.ANAN8000D)        // K2UE idea:  try to determine if Hi-Z or Lo-Z load
+    //       alex_fwd_limit = 2.0f * (float)ptbPWR.Value;        //    by comparing alex_fwd with power setting
+    m_swrProt.setAlexFwdLimit(swrAlexFwdLimit(model, m_transmitModel.power()));
     m_swrProt.ingest(static_cast<float>(fwdW),
                      static_cast<float>(revW),
                      m_transmitModel.isTune());
+
+    // Open antenna: Thetis drops MOX and warns.
+    // Upstream tags preserved: //-W2PA (from cited console.cs:26036) //MW0LGE (from cited console.cs:26038) [v2.10.3.15]
+    // From Thetis console.cs:26041-26055 [v2.10.3.15]:
+    //   swr = 50.0f;
+    //   NetworkIO.SWRProtect = 0.01f;
+    //   chkMOX.Checked = false;
+    //
+    //   if (this.InvokeRequired)
+    //   { this.Invoke(new MethodInvoker(() => { checkAntennaWarning(); })); }
+    //   else
+    //   { checkAntennaWarning(); }
+    // and checkAntennaWarning, console.cs:26177-26185 [v2.10.3.15]:
+    //   MessageBox.Show("Please check your antenna connection.",
+    //   "High SWR condition detected", ...);
+    // chkMOX.Checked = false is MoxController's own unkey (the controller's
+    // key, as stopAllTx releases it), so the normal TX-to-RX walk and the
+    // release above run. The warning goes out on transmitStopped, which
+    // MainWindow already shows; no new UI. A remote window gets the same
+    // words through transmitStopReasonRaised (TransmitState records them
+    // instead of "The Core stopped transmitting."), as the amplifier's own
+    // stops do. Thetis has no TUNE arm here: the check does not run while
+    // tuning (!chkTUN.Checked).
+    //
+    // Deliberate departure from Thetis (JJ, 2026-10-22: "A, hold the key off
+    // until release"): before the drop, Stop All TX's latch is set
+    // (latchStopAllTx), so a held mic PTT or VOX is held off until it is
+    // released. CAT and TCI keys are dropped by the unkey itself
+    // (dropPttOnUnkey), so they are not waited on, and the app's next key
+    // command keys normally; so does a fresh key from any source the latch
+    // is not waiting on. Thetis does not latch: chkMOX.Checked = false
+    // here (PollPAPWR, console.cs:26036-26057 [v2.10.3.15]) leaves PollPTT
+    // (console.cs:25470-25555 [v2.10.3.15]) free to key again from a held
+    // source on its next pass, which then keys into the open antenna, trips,
+    // drops and keys again. The latch stops that key/unkey chatter into an
+    // open antenna; the release, then a new press, keys normally.
+    if (m_swrProt.openAntennaDetected() && m_moxController && m_moxController->isMox()) {
+        m_lastTransmitStopReason =
+            TransmitStopReason{QByteArray(kOpenAntennaStopCode), QByteArray(), -1};
+        m_moxController->latchStopAllTx();
+        m_moxController->setMox(false);
+        emit transmitStopped(openAntennaStopText());
+        emit transmitStopReasonRaised(m_lastTransmitStopReason.code, -1);
+    }
+
+    // From Thetis console.cs:26151-26158 [v2.10.3.15]:
+    //   if (_swr_wind_back_power && swrprotection && old_swr_protect != NetworkIO.SWRProtect)
+    //   {
+    //       // there has been a change
+    //       // We need to change the output power, as setting SWRProtect does nothing unless
+    //       // power is changed, RadioVolume is the only code that uses SWRProtect using NetworkIO.SetOutputPower.
+    //       // So just assign it with its own data
+    //       Audio.RadioVolume = Audio.RadioVolume;
+    //   }
+    // m_lastAudioVolume (kept by pumpAudioVolume) is radio_volume.
+    if (m_swrProt.windBackEnabled() && m_swrProt.isEnabled()
+        && oldSwrProtect != m_transmitModel.swrProtectFactor()) {
+        // there has been a change
+        // We need to change the output power, as setting SWRProtect does nothing unless
+        // power is changed, RadioVolume is the only code that uses SWRProtect using NetworkIO.SetOutputPower.
+        // So just assign it with its own data
+        pumpAudioVolume(m_lastAudioVolume);
+    }
 }
 
 // Issue #182 — TransmitModel::micPttDisabled → RadioConnection wire bit.
@@ -23389,10 +23981,12 @@ QString RadioModel::receiveAntennaLabel(Band band) const
     // iPhone app Task 75: the receive antenna's name as a slice shows it
     // (SliceModel::refreshAntennasFromAlex): the SKU's RX-only label when
     // the bypass input is chosen, otherwise ANT1..ANT3.
-    const int rxOnly = m_alexController.rxOnlyAnt(band);
-    if (rxOnly >= 1 && rxOnly <= 3) {
+    // 4 and 5 (XVTR with an input) are named by the XVTR box, as Thetis
+    // names the winning box (AlexController::rxOnlyLabelSlot).
+    const int slot = AlexController::rxOnlyLabelSlot(m_alexController.rxOnlyAnt(band));
+    if (slot >= 0) {
         const SkuUiProfile sku = skuUiProfileFor(m_hardwareProfile.model);
-        const QString& label = sku.rxOnlyLabels[static_cast<size_t>(rxOnly - 1)];
+        const QString& label = sku.rxOnlyLabels[static_cast<size_t>(slot)];
         if (!label.isEmpty()) {
             return label;
         }
@@ -24322,10 +24916,16 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
             // RX-only label: find 1-based position in SkuUiProfile::rxOnlyLabels.
             const SkuUiProfile sku = skuUiProfileFor(m_hardwareProfile.model);
             const auto& lbls = sku.rxOnlyLabels;
+            const Band rxOnlyBand = bandFromFrequency(slice->frequency());
             for (int i = 0; i < static_cast<int>(lbls.size()); ++i) {
                 if (lbls[static_cast<size_t>(i)] == ant) {
-                    m_alexController.setRxOnlyAnt(
-                        bandFromFrequency(slice->frequency()), i + 1);
+                    // XVTR with an input (4, 5) is shown as XVTR: the
+                    // slice's echo of that label keeps the pair.
+                    if (AlexController::rxOnlyLabelSlot(
+                            m_alexController.rxOnlyAnt(rxOnlyBand)) == i) {
+                        break;
+                    }
+                    m_alexController.setRxOnlyAnt(rxOnlyBand, i + 1);
                     break;
                 }
             }
@@ -27778,6 +28378,10 @@ void RadioModel::teardownConnection()
     if (m_discovery) {
         m_discovery->holdOffScans(kPostDisconnectScanQuietMs);
     }
+    // A connection torn down before it reported Connected (a failed
+    // connect, a cancel, quit) ends its connect hold here; the quiet period
+    // above then runs from the end of the teardown.
+    RadioDiscovery::endConnectHold(this, kPostDisconnectScanQuietMs);
 }
 
 // Phase 3G-9b — 7 smooth-default recipe values. See docs/architecture/waterfall-tuning.md.
@@ -27985,6 +28589,14 @@ void RadioModel::onConnectionStateChanged(ConnectionState state)
     // Phase 3Q-1: route through setConnectionState() so m_connectionState
     // stays in sync and the signal carries the new state value.
     setConnectionState(state);
+
+    // Connect hold (see connectToRadioImpl): the connection is up, or it
+    // ended without coming up. Discovery waits the post-disconnect quiet
+    // period from now, then resumes. Probing and Connecting keep the hold.
+    if (state == ConnectionState::Connected || state == ConnectionState::Disconnected
+        || state == ConnectionState::LinkLost) {
+        RadioDiscovery::endConnectHold(this, kPostDisconnectScanQuietMs);
+    }
 
     switch (state) {
     case ConnectionState::Connected:
@@ -28221,10 +28833,10 @@ void RadioModel::onConnectionStateChanged(ConnectionState state)
 //   }
 // With HighSWRScale baseline-1.0, the IQ scalar is just audio_volume.
 //
-// Caches the value into m_lastAudioVolume so a subsequent
-// swrProtectFactorChanged emit can re-pump the same audio_volume through
-// updated SWR protect (mirrors console.cs:26102-26109 [v2.10.3.13]
-// `Audio.RadioVolume = Audio.RadioVolume` re-emit on _swr_protect change).
+// Caches the value into m_lastAudioVolume so handlePaTelemetry's wind-back
+// re-pump can send the same audio_volume through the updated SWR protect
+// (mirrors console.cs:26151-26158 [v2.10.3.15] `Audio.RadioVolume =
+// Audio.RadioVolume` re-emit on a SWRProtect change).
 // Ports the drive restore mi0bot performs on every MOX-to-TX transition, at
 // console.cs:30272 [v2.10.3.13-beta2] inside chkMOX_CheckedChanged2's
 // `if (tx)` branch:
@@ -29446,13 +30058,13 @@ void RadioModel::setTune(bool on)
         //     float alex_fwd_limit = 5.0f;
         //     if (HardwareSpecific.Model == HPSDRModel.ANAN8000D)        // K2UE idea: try to determine if Hi-Z or Lo-Z load
         //         alex_fwd_limit = 2.0f * (float)ptbPWR.Value;        //    by comparing alex_fwd with power setting
+        // ptbPWR.Value is the PWR slider, not the tune power; handlePaTelemetry
+        // sets it again before every sample (console.cs:26112-26114
+        // [v2.10.3.15]), so this only primes it.
         m_swrProt.setTunePowerSliderValue(tunePower);
         if (!lifetime || !tuneCycleCurrent(serial)) { return; }
-        const float alexFwdLimit =
-            (m_hardwareProfile.model == HPSDRModel::ANAN8000D)
-                ? 2.0f * static_cast<float>(tunePower)
-                : 5.0f;
-        m_swrProt.setAlexFwdLimit(alexFwdLimit);
+        m_swrProt.setAlexFwdLimit(
+            swrAlexFwdLimit(m_hardwareProfile.model, m_transmitModel.power()));
         if (!lifetime || !tuneCycleCurrent(serial)) { return; }
 
         // ── ENGAGE MOX via MoxController ─────────────────────────────────────
@@ -33688,6 +34300,15 @@ QString RadioModel::ampNotSwitchedText()
     // words (trying again never helps an amplifier that does not answer).
     return QStringLiteral("The amplifier did not answer. Put it in standby or disconnect it"
                           " in Setup to transmit without it.");
+}
+
+// The open-antenna warning, checkAntennaWarning's caption and text.
+// From Thetis console.cs:26177-26185 [v2.10.3.15]:
+//   MessageBox.Show("Please check your antenna connection.",
+//   "High SWR condition detected",
+QString RadioModel::openAntennaStopText()
+{
+    return QStringLiteral("High SWR condition detected. Please check your antenna connection.");
 }
 
 QString RadioModel::ampOperatedUnderKeyText()

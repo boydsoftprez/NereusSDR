@@ -4,6 +4,18 @@
 //
 // no-port-check: NereusSDR-original. R3 Core session presentation and actions.
 // =================================================================
+// Modification history (NereusSDR):
+//   2026-10-22: every column Interactive (dragged by the operator), fitted
+//               to its contents until one is dragged, the list scrolling
+//               sideways when they do not fit, and a tooltip with each
+//               cell's full text (JJ: "unable to see the whole column info
+//               and unable to resize"). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-22: fitted once when the list first fills, then grown (never
+//               shrunk) on refresh, so widths do not jump as status text
+//               changes. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
+// =================================================================
 
 #include "gui/ConnectionSelector.h"
 #include "gui/QtCocoaAccessibleTableCache.h"
@@ -13,6 +25,7 @@
 
 #include <QAbstractItemView>
 #include <QDialogButtonBox>
+#include <QEvent>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -71,10 +84,23 @@ ConnectionSelector::ConnectionSelector(QWidget* parent)
     m_targetTree->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_targetTree->setRootIsDecorated(false);
     m_targetTree->setUniformRowHeights(true);
-    m_targetTree->header()->setStretchLastSection(true);
-    m_targetTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    m_targetTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    m_targetTree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    // 2026-10-22: every column can be dragged; they fit their contents
+    // (fitColumnsToContents) until the operator drags one, and the list
+    // scrolls sideways when they are wider than the window. The last column
+    // no longer stretches: a stretched last section is squeezed to fit a
+    // narrow window instead of scrolling, which cut Status off.
+    QHeaderView* header = m_targetTree->header();
+    header->setStretchLastSection(false);
+    header->setSectionResizeMode(QHeaderView::Interactive);
+    header->setSectionsMovable(false);
+    m_targetTree->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_targetTree->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
+    header->viewport()->installEventFilter(this);
+    connect(header, &QHeaderView::sectionResized, this, [this](int, int, int) {
+        if (m_headerPressed) {
+            m_columnsSizedByUser = true;
+        }
+    });
     m_targetTree->setMinimumHeight(240);
     layout->addWidget(m_targetTree, 1);
 
@@ -252,6 +278,42 @@ void ConnectionSelector::setTargets(const QList<ConnectionTargetRow>& targets)
              tr("No saved Cores."), savedCores);
     setSelectedKey(previousKey);
     updateActions();
+    fitColumnsToContents();
+}
+
+void ConnectionSelector::fitColumnsToContents()
+{
+    if (m_columnsSizedByUser) {
+        return;
+    }
+    // Fitted exactly until the list first holds a target, then only grown:
+    // a refresh whose status text is shorter keeps the width, so the
+    // columns do not jump as the text changes.
+    // (Fitted, then the earlier width put back when it was wider, before
+    // anything is painted.)
+    for (int column = 0; column < m_targetTree->columnCount(); ++column) {
+        const int before = m_targetTree->columnWidth(column);
+        m_targetTree->resizeColumnToContents(column);
+        if (m_columnsFitted && m_targetTree->columnWidth(column) < before) {
+            m_targetTree->setColumnWidth(column, before);
+        }
+    }
+    if (!m_targets.isEmpty()) {
+        m_columnsFitted = true;
+    }
+}
+
+bool ConnectionSelector::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched == m_targetTree->header()->viewport()) {
+        if (event->type() == QEvent::MouseButtonPress
+            || event->type() == QEvent::MouseButtonDblClick) {
+            m_headerPressed = true;
+        } else if (event->type() == QEvent::MouseButtonRelease) {
+            m_headerPressed = false;
+        }
+    }
+    return QDialog::eventFilter(watched, event);
 }
 
 void ConnectionSelector::setCurrentConnection(const QString& summary, const QString& details,
@@ -308,11 +370,13 @@ void ConnectionSelector::addGroup(const QString& title, ConnectionTargetKind kin
     QTreeWidgetItem* group = groupForKind(kind);
     if (group == nullptr) {
         group = new QTreeWidgetItem(m_targetTree, {title});
+        group->setToolTip(0, title);
         group->setData(0, kKindRole, static_cast<int>(kind));
         group->setFirstColumnSpanned(true);
         group->setFlags(Qt::ItemIsEnabled);
     } else if (group->text(0) != title) {
         group->setText(0, title);
+        group->setToolTip(0, title);
     }
 
     if (targets.isEmpty()) {
@@ -321,12 +385,14 @@ void ConnectionSelector::addGroup(const QString& title, ConnectionTargetKind kin
             empty = group->child(0);
             if (empty->text(0) != emptyText) {
                 empty->setText(0, emptyText);
+                empty->setToolTip(0, emptyText);
             }
         } else {
             while (group->childCount() > 0) {
                 delete group->takeChild(group->childCount() - 1);
             }
             empty = new QTreeWidgetItem(group, {emptyText});
+            empty->setToolTip(0, emptyText);
             empty->setFirstColumnSpanned(true);
             empty->setFlags(Qt::ItemIsEnabled);
         }
@@ -373,6 +439,10 @@ void ConnectionSelector::addGroup(const QString& title, ConnectionTargetKind kin
         for (int column = 0; column < text.size(); ++column) {
             if (row->text(column) != text.at(column)) {
                 row->setText(column, text.at(column));
+            }
+            // The full text where the column is narrower than it.
+            if (row->toolTip(column) != text.at(column)) {
+                row->setToolTip(column, text.at(column));
             }
         }
         if (row->data(0, kKeyRole).toString() != target.key) {

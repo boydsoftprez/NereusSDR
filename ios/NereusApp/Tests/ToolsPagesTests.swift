@@ -298,24 +298,29 @@ struct ToolsPagesTests {
         await heldApp.disconnect()
     }
 
-    @Test("a greyed choice row shows its chosen choice in grey, never in the blue of one that can be pressed")
+    @Test("a greyed choice row shows its chosen choice in grey, never in the glass of one that can be pressed")
     func greyedChoiceIsNotBlue() {
         typealias Choices = ToolPageParts.Choices
         let chosen = Choices.look(chosen: true, enabled: true)
-        #expect(chosen.fill == ChromeColours.buttonOnBlue && chosen.border == ChromeColours.buttonOnBlueBorder)
+        #expect(chosen.face == .glass && chosen.outline == nil && chosen.opacity == 1)
+        #expect(chosen.text == workspaceForeground(.glass))
+        let other = Choices.look(chosen: false, enabled: true)
+        #expect(other.face == .raised && other.outline == nil && other.opacity == 1)
         let greyedChosen = Choices.look(chosen: true, enabled: false)
         let greyedOther = Choices.look(chosen: false, enabled: false)
-        let blues = [ChromeColours.buttonOnBlue, ChromeColours.buttonOnBlueBorder]
-        #expect(!blues.contains(greyedChosen.fill) && !blues.contains(greyedChosen.border))
-        #expect(greyedChosen.text != .white)
-        // Greyed like the rest of the row, and still told apart from the others.
-        #expect(greyedChosen.fill == ChromeColours.buttonOff && greyedOther.fill == ChromeColours.buttonOff)
-        #expect(greyedChosen.border != greyedOther.border && greyedChosen.text != greyedOther.text)
+        let blues = [WorkspacePalette.glassSelBorder, WorkspacePalette.glassSelBorderTop, WorkspacePalette.glassSelText]
+        #expect(greyedChosen.face != .glass && !blues.contains(greyedChosen.outline ?? .clear))
+        #expect(!blues.contains(greyedChosen.text))
+        // Greyed like the rest of the row: raised at 40 percent, as any greyed
+        // control, and still told apart from the others.
+        #expect(greyedChosen.face == .raised && greyedOther.face == .raised)
+        #expect(greyedChosen.opacity == WorkspacePalette.disabledOpacity
+                && greyedOther.opacity == WorkspacePalette.disabledOpacity)
+        #expect(greyedChosen.outline != greyedOther.outline && greyedChosen.text != greyedOther.text)
     }
 
     @Test("a greyed accessory choice and a greyed logging category keep their chosen one grey, as the choice rows do")
     func greyedChosenElsewhereIsNotBlue() {
-        let blues = [ChromeColours.buttonOnBlue, ChromeColours.buttonOnBlueBorder]
         for enabled in [true, false] {
             for chosen in [true, false] {
                 let rows = ToolPageParts.Choices.look(chosen: chosen, enabled: enabled)
@@ -324,9 +329,9 @@ struct ToolsPagesTests {
             }
         }
         let greyed = AccessoryChrome.ChoiceButton.look(lit: true, enabled: false)
-        #expect(!blues.contains(greyed.fill) && !blues.contains(greyed.border) && greyed.text != .white)
+        #expect(greyed.face != .glass && greyed.text != workspaceForeground(.glass))
         let greyedCategory = SupportBundlePage.CategoryButton.look(isOn: true, enabled: false)
-        #expect(!blues.contains(greyedCategory.fill) && !blues.contains(greyedCategory.border))
+        #expect(greyedCategory.face != .glass)
     }
 
     // MARK: PureSignal

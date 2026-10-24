@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original native serial CAT integration tests.
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-22: ports a test hands to a later listener come from
+// unusedLoopbackPort() (UnusedLoopbackPort.h), below the kernel's ephemeral
+// range, so a parallel test cannot take one between the pick and the listen.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+#include "UnusedLoopbackPort.h"
 #include <QtTest>
 #include "core/AppSettings.h"
 #include "core/cat/CatService.h"
@@ -82,7 +87,7 @@ private slots:
         QVERIFY(service.setSerialTransportFactoryForTest([device] { return std::make_shared<CatSerialTransport>(device); }));
         CatEndpointConfig config; config.serialEnabled = true; config.serialDevice = "test-owned";
         config.binding.primarySliceId = 0; config.binding.secondarySliceId = 1;
-        QTcpServer probe; QVERIFY(probe.listen(QHostAddress::LocalHost, 0)); config.tcpEnabled = true; config.tcpPort = probe.serverPort(); probe.close();
+        config.tcpEnabled = true; config.tcpPort = unusedLoopbackPort(); QVERIFY(config.tcpPort != 0);
         QVERIFY(service.applyChannelConfig(1, config));
         CatGlobalConfig global = service.globalConfig(); global.aiEnabled = true; global.allowKenwoodAi = true;
         QVERIFY(service.applyGlobalConfig(global)); service.startConfigured();

@@ -22,7 +22,7 @@ struct ForeignSliceLabel: View {
     static let aboveFoot: CGFloat = 30
     /// The note's width (the board's `.pan__fx-pop`).
     static let noteWidth: CGFloat = 210
-    static let away = Color(red: 0xDD / 255, green: 0xBB / 255, blue: 0)
+    static let away = ChromeColours.noticeWarn
 
     var body: some View {
         Button(action: toggle) {
@@ -31,7 +31,7 @@ struct ForeignSliceLabel: View {
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.white)
                     .frame(width: 16, height: 16)
-                    .background(colour, in: RoundedRectangle(cornerRadius: 3))
+                    .background(colour, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
                     .opacity(entry.slice.away ? 0.55 : 1)
                 Text(entry.slice.labelName)
                     .font(.system(size: 12, weight: .semibold))
@@ -51,10 +51,10 @@ struct ForeignSliceLabel: View {
             .padding(.leading, 3)
             .padding(.trailing, 7)
             .frame(height: Self.height)
-            .background(Color(red: 15 / 255, green: 15 / 255, blue: 26 / 255).opacity(0.9),
-                        in: RoundedRectangle(cornerRadius: 3))
-            .overlay(RoundedRectangle(cornerRadius: 3)
-                .strokeBorder(entry.slice.away ? Color(red: 0x60 / 255, green: 0x70 / 255, blue: 0x80 / 255) : colour,
+            .background(ChromeColours.page.opacity(0.9),
+                        in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
+                .strokeBorder(entry.slice.away ? ChromeColours.textFaint : colour,
                               style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
             .fixedSize()
         }
@@ -99,8 +99,8 @@ struct ForeignSliceLabel: View {
             .padding(.vertical, 9)
             .padding(.horizontal, 11)
             .frame(width: ForeignSliceLabel.noteWidth, alignment: .leading)
-            .background(Color(red: 0x0D / 255, green: 0x1B / 255, blue: 0x28 / 255), in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
+            .background(ChromeColours.sheet, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
             .shadow(color: .black.opacity(0.5), radius: 8, y: 6)
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("foreignSliceNote")

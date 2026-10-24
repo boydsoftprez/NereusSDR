@@ -75,6 +75,10 @@
 //   2026-10-10 : J.J. Boyd (KG4VCF): test-only friendship for the test of
 //                 a receive channel's first DSP > Options apply. AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-22 : MaxBin hold fix (Thetis #2681) by J.J. Boyd (KG4VCF):
+//                 maxBinHoldNextDbm declared, ported from Longpath PR 215
+//                 (src/core/WdspEngine.h:631-654 [@383f058]), with
+//                 AI-assisted transformation via Claude Code.
 // =================================================================
 
 /*  cmaster.cs
@@ -837,6 +841,40 @@ public:
     // analyzer DC is always the slice DC.  NereusSDR taps FFTEngine ahead
     // of the WDSP shift, so we apply the shift in our MaxBin scan.
     void setMaxBinSliceOffsetHz(int displayChannel, double sliceOffsetHz);
+
+    // From Longpath src/core/WdspEngine.h:631-654 [@383f058]
+    // (Longpath PR 215). In English: one frame of the MaxBin hold. It
+    // rises at once to a stronger reading and otherwise falls with the
+    // detector's time constant. Thetis's fall is proportional to |held|,
+    // so above 0 dBm it shrinks with the value and the hold never drops
+    // below 0 dBm (Thetis #2681). Here the fall has a 20 dB minimum
+    // reference: identical to Thetis below -20 dBm, and the hold falls
+    // again above it. Static so the step can be tested on its own.
+    //
+    // Ein Takt des MaxBin-Haltewerts: steigt sofort auf einen staerkeren
+    // Messwert, faellt sonst mit der Zeitkonstante des Detektors.
+    //
+    // Longpath-eigen seit 2026-10-09, und zwar als Fehlerbehebung.
+    // Thetis rechnet (wdsp/analyzer.c:815-818 [@501e3f5], bei uns bis
+    // heute Zeile fuer Zeile uebernommen):
+    //
+    //     held -= fabs((1 - decay) * held);
+    //
+    // Der Abzug ist also proportional zum BETRAG des Haltewerts. Unter
+    // 0 dBm geht das gut -- der Betrag ist dort der Abstand zu 0, und
+    // der Wert laeuft nach unten. Oberhalb 0 dBm schrumpft der Abzug
+    // mit dem Wert selbst: der Haltewert naehert sich 0 dBm und
+    // unterschreitet sie nie. Ein einziges sehr starkes Signal nagelt
+    // die Anzeige damit dauerhaft fest (im Thetis-Fehlerverzeichnis
+    // als #2681 gemeldet; die Vorlage hat denselben Fehler im Oktober
+    // 2026 behoben, mit einer anderen Formel als dieser hier).
+    //
+    // Hier bekommt derselbe Abzug einen Mindestbezug von 20 dB: im
+    // ganzen Arbeitsbereich dieses Instruments (unterhalb -20 dBm)
+    // rechnet er Zeile fuer Zeile wie bisher, oberhalb faellt der
+    // Haltewert endlich. Zwanzig dB sind gut drei S-Stufen je
+    // Zeitkonstante -- siehe die Begruendung an der Umsetzung.
+    static double maxBinHoldNextDbm(double heldDbm, double liveDbm, double decay);
 
 public slots:
     // Fed by FFTEngine::fftReady.  binsDbm is FFT-shifted (negative freqs

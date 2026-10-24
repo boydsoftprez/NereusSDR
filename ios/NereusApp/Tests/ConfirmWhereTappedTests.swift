@@ -313,7 +313,7 @@ struct ConfirmWhereTappedTests {
                 appMajors: [1], now: Date.init, browser: nil))
             flow.show(.band)
             window = try BandFlagShotTests.window(size: CGSize(width: 402, height: 874))
-            let host = UIHostingController(rootView: content(flow).preferredColorScheme(.dark))
+            let host = ShotHosting.host(content(flow).preferredColorScheme(.dark))
             host.view.frame = window.bounds
             window.rootViewController = host
             window.isHidden = false

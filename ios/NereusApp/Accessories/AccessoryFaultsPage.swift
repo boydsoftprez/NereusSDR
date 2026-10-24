@@ -48,8 +48,8 @@ struct AccessoryFaultsPage: View {
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(ChromeColours.revokeText)
                             .frame(maxWidth: .infinity, minHeight: 40)
-                            .background(ChromeColours.revoke, in: RoundedRectangle(cornerRadius: 4))
-                            .overlay(RoundedRectangle(cornerRadius: 4)
+                            .background(ChromeColours.revoke, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                                 .strokeBorder(ChromeColours.revokeBorder, lineWidth: 1))
                     }
                     .buttonStyle(.plain)

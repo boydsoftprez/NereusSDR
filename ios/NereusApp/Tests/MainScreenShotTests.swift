@@ -133,7 +133,7 @@ struct MainScreenShotTests {
         window.windowLevel = .alert + 1
         let root = ShotRoot(model: model, rxPanelOpen: screen.rxPanelOpen)
             .preferredColorScheme(.dark)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         if screen.sideways {
             host.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: 62, bottom: 21, right: 62)
         }

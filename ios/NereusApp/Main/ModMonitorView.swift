@@ -39,8 +39,8 @@ struct ModMonitorView: View {
                         .padding(.horizontal, 9)
                         .padding(.vertical, 8)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Self.reasonGround, in: RoundedRectangle(cornerRadius: 6))
-                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
+                        .background(Self.reasonGround, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
                         .accessibilityIdentifier("modMonitorReason")
                 }
                 controls
@@ -57,6 +57,7 @@ struct ModMonitorView: View {
         .onDisappear { model.disappear() }
         .sheet(isPresented: $settingsOpen) {
             ModMonitorSettingsSheet(model: model)
+                .workspacePresentationRoot()
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("AM Mod Monitor")
@@ -165,7 +166,7 @@ struct ModMonitorView: View {
                     .foregroundStyle(Self.chipText)
                     .lineLimit(1)
                     .padding(.horizontal, 6)
-                    .background(Self.chipGround, in: RoundedRectangle(cornerRadius: 3))
+                    .background(Self.chipGround, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
                     .accessibilityIdentifier("modMonitorChip")
             }
         }
@@ -243,8 +244,8 @@ struct ModMonitorView: View {
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 5)
-        .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 3))
-        .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
+        .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
         .accessibilityValue(reading)
@@ -267,19 +268,22 @@ struct ModMonitorView: View {
 
     // MARK: Colours (the desktop's palette)
 
-    static let reasonGround = Color(red: 0x14 / 255, green: 0x1C / 255, blue: 0x28 / 255)
-    static let whyText = Color(red: 0x90 / 255, green: 0xA4 / 255, blue: 0xB6 / 255)
-    static let chipGround = Color(red: 0x0F / 255, green: 0x24 / 255, blue: 0x36 / 255)
-    static let chipText = Color(red: 0x9A / 255, green: 0xD0 / 255, blue: 0xEC / 255)
-    static let doneText = Color(red: 0x80 / 255, green: 0xD0 / 255, blue: 0xA0 / 255)
+    static let reasonGround = ChromeColours.reason
+    static let whyText = ChromeColours.caption
+    static let chipGround = ChromeColours.buttonOnBlue
+    static let chipText = ChromeColours.toolbarOpenText
+    static let doneText = ChromeColours.linkUp
     static let offLamp = ModMonitorLamp.Colours(ground: ChromeColours.inset, border: ChromeColours.insetBorder,
-                                      text: Color(red: 0x40 / 255, green: 0x50 / 255, blue: 0x60 / 255))
-    static let redLamp = ModMonitorLamp.Colours(ground: ChromeColours.txRed, border: ChromeColours.gaugeRed, text: .white)
+                                      text: ChromeColours.iconMuted)
+    /// +PEAK, -PEAK and CARRIER HIGH: the muted red set, never the transmit red (W5), as the
+    /// desktop lights them (setLamp with kRedBg, kRedText, kRedBorder, src/gui/applets/ModMonitorApplet.cpp:630, :634, :640).
+    static let redLamp = ModMonitorLamp.Colours(ground: WorkspacePalette.redBg, border: WorkspacePalette.redBorder,
+                                                text: WorkspacePalette.redText)
     static let amberLamp = ModMonitorLamp.Colours(ground: ChromeColours.buttonOnAmber, border: ChromeColours.buttonOnAmberBorder,
                                         text: ChromeColours.buttonOnAmberText)
-    static let greenLamp = ModMonitorLamp.Colours(ground: Color(red: 0, green: 0x60 / 255, blue: 0x40 / 255),
-                                        border: Color(red: 0, green: 0xA0 / 255, blue: 0x60 / 255),
-                                        text: Color(red: 0, green: 1, blue: 0x88 / 255))
+    static let greenLamp = ModMonitorLamp.Colours(ground: ChromeColours.buttonOnGreen,
+                                        border: ChromeColours.buttonOnGreenBorder,
+                                        text: ChromeColours.buttonOnGreenText)
 
     static func lampColours(_ lamp: ModMonitorModel.Lamp) -> ModMonitorLamp.Colours {
         switch lamp {
@@ -339,8 +343,8 @@ struct ModMonitorSegment: View {
                 .foregroundStyle(foreground)
                 .padding(.horizontal, 4)
                 .frame(maxWidth: .infinity, minHeight: height)
-                .background(background, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(border, lineWidth: 1))
+                .background(background, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(border, lineWidth: 1))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -351,16 +355,14 @@ struct ModMonitorSegment: View {
 
     private var foreground: Color {
         if disabled {
-            return chosen ? Color(red: 0x78 / 255, green: 0x90 / 255, blue: 0xA8 / 255)
-                : Color(red: 0x50 / 255, green: 0x60 / 255, blue: 0x70 / 255)
+            return chosen ? ChromeColours.textDim : ChromeColours.iconMuted
         }
         return chosen ? .white : ChromeColours.text
     }
 
     private var background: Color {
         if disabled {
-            return chosen ? Color(red: 0x17 / 255, green: 0x30 / 255, blue: 0x48 / 255)
-                : Color(red: 0x12 / 255, green: 0x1A / 255, blue: 0x24 / 255)
+            return chosen ? ChromeColours.buttonOnBlue : ChromeColours.buttonOff
         }
         return chosen ? ChromeColours.buttonOnBlue : ChromeColours.button
     }
@@ -387,16 +389,9 @@ struct ModMonitorButton: View {
                 .font(.system(size: font + 1))
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
-                .foregroundStyle(disabled ? Color(red: 0x50 / 255, green: 0x60 / 255, blue: 0x70 / 255)
-                                 : ChromeColours.text)
                 .frame(maxWidth: .infinity, minHeight: height)
-                .background(disabled ? Color(red: 0x12 / 255, green: 0x1A / 255, blue: 0x24 / 255) : ChromeColours.button,
-                            in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(disabled ? ChromeColours.insetBorder : ChromeColours.buttonBorder, lineWidth: 1))
-                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(WorkspaceButtonStyle(.raised))
         .disabled(disabled)
         .accessibilityLabel(label)
     }
@@ -425,8 +420,8 @@ struct ModMonitorLamp: View {
             .foregroundStyle(colours.text)
             .padding(.horizontal, 6)
             .frame(minWidth: 60, maxWidth: wide ? .infinity : nil, minHeight: height)
-            .background(colours.ground, in: RoundedRectangle(cornerRadius: 3))
-            .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(colours.border, lineWidth: 1))
+            .background(colours.ground, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(colours.border, lineWidth: 1))
     }
 }
 
@@ -445,7 +440,7 @@ struct ModMonitorPeakBar: View {
             HStack {
                 Text(label)
                     .font(.system(size: font, weight: .semibold))
-                    .foregroundStyle(Color(red: 0xB0 / 255, green: 0xC0 / 255, blue: 0xD0 / 255))
+                    .foregroundStyle(ChromeColours.icon)
                 Spacer(minLength: 4)
                 Text("percent")
                     .font(.system(size: font))
@@ -481,7 +476,7 @@ struct ModMonitorPeakBar: View {
                     context.fill(Path(CGRect(x: at - 1, y: 0, width: 2, height: size.height)), with: .color(.white))
                 }
                 context.stroke(Path(roundedRect: CGRect(origin: .zero, size: size).insetBy(dx: 0.5, dy: 0.5),
-                                    cornerRadius: 2), with: .color(ChromeColours.insetBorder), lineWidth: 1)
+                                    cornerRadius: 2), with: .color(ChromeColours.insetBorder), lineWidth: 1) // kept-radius: canvas
             }
             .frame(height: height)
             GeometryReader { proxy in
@@ -536,9 +531,8 @@ struct ModMonitorScope: View {
             } else {
                 drawTrace(context, rect)
             }
-            context.stroke(Path(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 2),
-                           with: .color(vintage ? Color(red: 0x6A / 255, green: 0x6A / 255, blue: 0x78 / 255)
-                                        : ChromeColours.insetBorder), lineWidth: 1)
+            context.stroke(Path(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 2), // kept-radius: canvas
+                           with: .color(vintage ? ChromeColours.iconMuted : ChromeColours.insetBorder), lineWidth: 1)
         }
     }
 
@@ -556,7 +550,7 @@ struct ModMonitorScope: View {
             var path = Path()
             path.move(to: CGPoint(x: 0, y: y(line, height)))
             path.addLine(to: CGPoint(x: width, y: y(line, height)))
-            context.stroke(path, with: .color(Color(red: 0x20 / 255, green: 0x30 / 255, blue: 0x40 / 255)), lineWidth: 1)
+            context.stroke(path, with: .color(ChromeColours.sliderTrack), lineWidth: 1)
         }
         for line in [posFlash, -negFlash] {
             var path = Path()
@@ -565,7 +559,7 @@ struct ModMonitorScope: View {
             context.stroke(path, with: .color(ChromeColours.gaugeRed.opacity(0.8)),
                            style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
         }
-        let label = Color(red: 0x70 / 255, green: 0x80 / 255, blue: 0x90 / 255)
+        let label = ChromeColours.caption
         for (line, words) in [(100.0, "+100"), (0, "0"), (-100, "-100")] {
             context.draw(Text(words).font(.system(size: 9)).foregroundStyle(label),
                          at: CGPoint(x: 4, y: y(line, height) - 3), anchor: .bottomLeading)
@@ -677,7 +671,7 @@ struct ModMeterDial: View {
             }
             let ink = Color(red: 0x1A / 255, green: 0x1A / 255, blue: 0x1A / 255)
             let red = Color(red: 0xC0 / 255, green: 0x20 / 255, blue: 0x20 / 255)
-            let face = Path(roundedRect: CGRect(x: 1, y: 1, width: 126, height: 94), cornerRadius: 6)
+            let face = Path(roundedRect: CGRect(x: 1, y: 1, width: 126, height: 94), cornerRadius: 6) // kept-radius: canvas
             context.fill(face, with: .color(lit ? Color(red: 0xF3 / 255, green: 0xE2 / 255, blue: 0xB0 / 255)
                                             : Color(red: 0x3A / 255, green: 0x34 / 255, blue: 0x26 / 255)))
             context.stroke(face, with: .color(lit ? Color(red: 0xB0 / 255, green: 0x8A / 255, blue: 0x40 / 255)
@@ -738,16 +732,16 @@ struct ModMonitorAsymmetryBar: View {
             let scale = min(size.width / 22, size.height / 96)
             context.translateBy(x: (size.width - 22 * scale) / 2, y: (size.height - 96 * scale) / 2)
             context.scaleBy(x: scale, y: scale)
-            let label = Color(red: 0x80 / 255, green: 0x90 / 255, blue: 0xA0 / 255)
+            let label = ChromeColours.textDim
             context.draw(Text("Pos").font(.system(size: 7)).foregroundStyle(label), at: CGPoint(x: 11, y: 5))
             context.draw(Text("Neg").font(.system(size: 7)).foregroundStyle(label), at: CGPoint(x: 11, y: 91))
-            let track = Path(roundedRect: CGRect(x: 6, y: 10, width: 10, height: 76), cornerRadius: 2)
+            let track = Path(roundedRect: CGRect(x: 6, y: 10, width: 10, height: 76), cornerRadius: 2) // kept-radius: canvas
             context.fill(track, with: .color(ChromeColours.inset))
             context.stroke(track, with: .color(ChromeColours.insetBorder), lineWidth: 1)
             var zero = Path()
             zero.move(to: CGPoint(x: 4, y: 48))
             zero.addLine(to: CGPoint(x: 18, y: 48))
-            context.stroke(zero, with: .color(Color(red: 0x60 / 255, green: 0x70 / 255, blue: 0x80 / 255)), lineWidth: 1)
+            context.stroke(zero, with: .color(ChromeColours.textFaint), lineWidth: 1)
             let length = lit ? CGFloat(min(abs(value), 40) / 40 * 38) : 0
             if length > 0 {
                 let top = value >= 0 ? 48 - length : 48

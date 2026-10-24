@@ -9,17 +9,20 @@ import SwiftUI
 /// `.tsheet__note`): a sheet rising over the band, a device's row, a
 /// change's row, a row to pick, and the note under them.
 enum ConfirmationSheetChrome {
-    static let sheetFill = rgb(0x0A, 0x0A, 0x18)
-    static let sheetEdge = rgb(0x30, 0x40, 0x50)
-    static let rowFill = rgb(0x0D, 0x1B, 0x28)
-    static let rowEdge = rgb(0x20, 0x30, 0x40)
-    static let pickedFill = rgb(0x0D, 0x22, 0x36)
-    static let picked = rgb(0x00, 0x90, 0xE0)
-    static let dotOff = rgb(0x40, 0x50, 0x60)
-    static let frequency = rgb(0x00, 0xE5, 0xFF)
-    static let changedTo = rgb(0xFF, 0xD7, 0x00)
-    static let changedFrom = rgb(0x60, 0x70, 0x80)
-    static let refused = rgb(0xFF, 0x80, 0x80)
+    // In the desktop's workspace look (docs/architecture/2026-10-20-phone-workspace-look-design.md,
+    // appendix A and the board's mapping, make_board.py); the picked row is
+    // glass, a picked choice (W3).
+    static let sheetFill = WorkspacePalette.panelBg
+    static let sheetEdge = WorkspacePalette.border
+    static let rowFill = ConnectChrome.rowFill
+    static let rowEdge = ConnectChrome.rowBorder
+    static let pickedFill = WorkspacePalette.glassSelBot // glass
+    static let picked = WorkspacePalette.glassSelBorder // glass
+    static let dotOff = WorkspacePalette.textInactive
+    static let frequency = ConnectChrome.codeText // kept (W2), the frequency cyan
+    static let changedTo = WorkspacePalette.amberText
+    static let changedFrom = WorkspacePalette.textScale
+    static let refused = ChromeColours.refusalText
 
     /// The sheet: its grab, its heading and its content, rising from the
     /// foot of the band.
@@ -44,7 +47,8 @@ enum ConfirmationSheetChrome {
             .padding(.horizontal, 18)
             .padding(.bottom, 20)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(sheetFill, in: UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14))
+            .background(sheetFill, in: UnevenRoundedRectangle(topLeadingRadius: WorkspacePalette.panelRadius,
+                                                              topTrailingRadius: WorkspacePalette.panelRadius))
             .overlay(alignment: .top) {
                 Rectangle().fill(sheetEdge).frame(height: 1)
             }
@@ -76,8 +80,8 @@ enum ConfirmationSheetChrome {
                 Spacer(minLength: 0)
             }
             .padding(12)
-            .background(rowFill, in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(rowEdge, lineWidth: 1))
+            .background(rowFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(rowEdge, lineWidth: 1))
             .accessibilityElement(children: .combine)
         }
 
@@ -118,8 +122,8 @@ enum ConfirmationSheetChrome {
             }
             .padding(.vertical, 10)
             .padding(.horizontal, 12)
-            .background(rowFill, in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(rowEdge, lineWidth: 1))
+            .background(rowFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(rowEdge, lineWidth: 1))
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("\(label), from \(from) to \(to)")
         }
@@ -153,8 +157,8 @@ enum ConfirmationSheetChrome {
                 }
                 .padding(.vertical, 10)
                 .padding(.horizontal, 12)
-                .background(picked ? pickedFill : rowFill, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4)
+                .background(picked ? pickedFill : rowFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                     .strokeBorder(picked ? ConfirmationSheetChrome.picked : rowEdge, lineWidth: 1))
                 .opacity(enabled ? 1 : 0.55)
                 .contentShape(Rectangle())
@@ -223,9 +227,5 @@ enum ConfirmationSheetChrome {
                 }
             }
         }
-    }
-
-    private static func rgb(_ red: Int, _ green: Int, _ blue: Int) -> Color {
-        Color(red: Double(red) / 255, green: Double(green) / 255, blue: Double(blue) / 255)
     }
 }

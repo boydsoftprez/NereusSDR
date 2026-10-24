@@ -47,6 +47,11 @@
 //                                    power maps are the Core's own and
 //                                    refuse a peer's write.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-18  J.J. Boyd / KG4VCF  setTunePowerForTxBand leaves the tune
+//                                    drive source as Setup chose it; the
+//                                    applet case puts TUNE on the Tune
+//                                    slider, which is grayed otherwise.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -257,7 +262,7 @@ private slots:
     void eachSettingIsTakenOnTheAir();
     void keyingSetStaysRefused();
     void connectingNeverWritesTheWindowDefaults();
-    void tunePowerCommandSetsTheTxBandAndSource();
+    void tunePowerCommandSetsTheTxBandOnly();
     void tunePowerCommandRefusals();
     void coreBandChangeMovesTheTunePowerSlider();
     void firstKnownTransmitBandRepaintsTheTuneSlider();
@@ -797,7 +802,7 @@ void TstTransmitModelProperties::connectingNeverWritesTheWindowDefaults()
     QCOMPARE(coreTx.micGainDb(), mic);
 }
 
-void TstTransmitModelProperties::tunePowerCommandSetsTheTxBandAndSource()
+void TstTransmitModelProperties::tunePowerCommandSetsTheTxBandOnly()
 {
     Session s(m_securityDir.path(), this);
     QVERIFY(s.connect());
@@ -811,14 +816,16 @@ void TstTransmitModelProperties::tunePowerCommandSetsTheTxBandAndSource()
 
     const IStationLink::CommandOutcome outcome = s.client->requestTunePowerForTxBand(watts);
     QVERIFY2(outcome.sent, qPrintable(outcome.reason));
-    // As the local slider does: this band's tune power and the tune slider
-    // as the tune drive source, on the Core.
+    // As the local slider does: this band's tune power on the Core. The
+    // tune drive source stays as Setup chose it (Thetis ptbTune_Scroll
+    // never writes _tuneDrivePowerSource, console.cs:46607-46630
+    // [v2.10.3.15]).
     QTRY_COMPARE(coreTx.tunePowerForBand(Band::Band40m), watts);
-    QCOMPARE(coreTx.tuneDrivePowerSource(), DrivePowerSource::TuneSlider);
+    QCOMPARE(coreTx.tuneDrivePowerSource(), DrivePowerSource::DriveSlider);
     QCOMPARE(coreTx.tunePowerForTxBand(), watts);
     // The window shows the Core's.
     QTRY_COMPARE(windowTx.tunePowerForTxBand(), watts);
-    QTRY_COMPARE(windowTx.tuneDrivePowerSource(), DrivePowerSource::TuneSlider);
+    QCOMPARE(windowTx.tuneDrivePowerSource(), DrivePowerSource::DriveSlider);
     // Another band's is untouched.
     QVERIFY(coreTx.tunePowerForBand(Band::Band20m) != watts
             || coreTx.tunePowerForBand(Band::Band20m) == 50);
@@ -888,7 +895,8 @@ void TstTransmitModelProperties::coreBandChangeMovesTheTunePowerSlider()
     // or a wheel or key step).
     slider->setValue(31);
     QTRY_COMPARE(coreTx.tunePowerForBand(Band::Band40m), 31);
-    QCOMPARE(coreTx.tuneDrivePowerSource(), DrivePowerSource::TuneSlider);
+    // The Core keeps Setup's tune drive source (Thetis parity).
+    QCOMPARE(coreTx.tuneDrivePowerSource(), DrivePowerSource::DriveSlider);
     QCOMPARE(coreTx.tunePowerForBand(Band::Band80m), 50);
     QTRY_COMPARE(s.window.transmitModel().tunePowerForTxBand(), 31);
     QCOMPARE(slider->value(), 31);
@@ -935,8 +943,12 @@ void TstTransmitModelProperties::firstKnownTransmitBandRepaintsTheTuneSlider()
 void TstTransmitModelProperties::remoteTxAppletControlsReachTheCore()
 {
     Session s(m_securityDir.path(), this);
+    // TUNE on the Tune slider, so the applet's drive source gate leaves it
+    // live and the transmit settings gate is what is read below.
+    s.core->transmitModel().setTuneDrivePowerSource(DrivePowerSource::TuneSlider);
     QVERIFY(s.connect());
     TransmitModel& coreTx = s.core->transmitModel();
+    QTRY_COMPARE(s.window.transmitModel().tuneDrivePowerSource(), DrivePowerSource::TuneSlider);
     TxApplet applet(&s.window);
     const auto byName = [&applet](const char* objectName) {
         return applet.findChild<QPushButton*>(QString::fromLatin1(objectName));

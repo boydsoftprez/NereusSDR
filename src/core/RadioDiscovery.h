@@ -18,6 +18,22 @@
 //                 reply carries (firmwareBetaVersion) and words the two
 //                 in one place (firmwareText). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - The NIC walk no longer blocks the thread that starts it:
+//                 it runs from the event loop on a poll-window timer and
+//                 the socket's readyRead, its quiet-poll counter follows
+//                 Thetis, and each attempt has a hard deadline (a NereusSDR
+//                 addition). From Longpath PRs 9, 10, 251 and 267 by Martin
+//                 Fischer (OE5SOS). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-22 - m_scanHoldOffTimer: a running walk's next attempt waits
+//                 out the post-disconnect quiet period. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - isScanRunning() and walkBoundMs() for the startup
+//                 auto-connect wait (PinnedRadioWait). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - Connect hold: beginConnectHold() / endConnectHold()
+//                 pause discovery while a local connection starts. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  clsRadioDiscovery.cs
@@ -71,11 +87,13 @@ mw0lge@grange-lane.co.uk
 #include <QMap>
 #include <QMutex>
 #include <QMetaType>
+#include <QPointer>
 #include <QSet>
 #include <QStringList>
 
 #include <atomic>
 #include <chrono>
+#include <optional>
 
 namespace NereusSDR {
 
@@ -196,15 +214,55 @@ constexpr DiscoveryTiming timingFor(DiscoveryProfile p) noexcept {
 // Both P1 and P2 radios respond to UDP broadcasts on port 1024.
 // Uses the mi0bot/Thetis NIC-walk + tunable timing-profile pattern:
 // bind per NIC, send P1+P2 probes, poll up to attemptsPerNic×quietPollsBeforeResend×pollTimeoutMs.
+//
+// The walk runs from the owning thread's event loop (2026-10-22, from
+// Longpath PR 251): startDiscovery() emits discoveryStarted and returns at
+// once, replies arrive as radioDiscovered / radioUpdated while the walk
+// goes on, and discoveryFinished marks its end. The owning thread must run
+// an event loop (the GUI thread does; the Core's discovery worker runs a
+// QEventLoop until discoveryFinished).
 class NEREUS_CORE_EXPORT RadioDiscovery : public QObject {
     Q_OBJECT
 
 public:
+    // One NIC the walk probes: the local IPv4 address the walk's socket
+    // binds, the directed subnet broadcast (null when the NIC has none),
+    // whether 255.255.255.255 is probed too, and the destination port.
+    // A production walk builds these from QNetworkInterface; tests may
+    // supply their own (setScanNicsForTest) to keep every probe on the
+    // loopback.
+    struct ScanNic {
+        QString      name;
+        QHostAddress local;
+        QHostAddress directed;
+        bool         generalBroadcast{true};
+        quint16      port{1024};
+    };
+
+    // Counts from the most recent walk, for tests and logging. A quiet
+    // window is one poll window that ended with nothing readable; a
+    // readable window is one that a datagram ended early.
+    struct ScanStats {
+        int quietPolls{0};
+        int readableWindows{0};
+        int datagrams{0};
+        int attempts{0};
+        int deadlineEnds{0};
+    };
+
     explicit RadioDiscovery(QObject* parent = nullptr);
     ~RadioDiscovery() override;
 
     void startDiscovery();
     void stopDiscovery();
+
+    // True from the start of a walk until its discoveryFinished. A
+    // startDiscovery() deferred by the quiet period is not running yet.
+    bool isScanRunning() const { return m_scanRunning; }
+    // The longest the running walk can still take, in ms: the quiet period
+    // left plus every NIC's attempts at their hard deadline. 0 when no walk
+    // runs. PinnedRadioWait sizes its backstop from it.
+    qint64 walkBoundMs() const;
 
     // Post-disconnect quiet period (2026-07-27, ANAN-G2E lockup).
     //
@@ -221,6 +279,24 @@ public:
     // probe, just after the radio has finished stopping.
     void holdOffScans(std::chrono::milliseconds quiet);
     qint64 holdOffRemainingMs() const;
+
+    // Connect hold (2026-10-22). The walk runs from the event loop, so a
+    // local connection can start while it is still broadcasting on later
+    // NICs: the startup auto-connect does so every time. A radio that is
+    // starting up is in the same window as one that is stopping (the
+    // 2026-07-27 ANAN-G2E lockups), so RadioModel holds discovery from the
+    // moment it creates a connection until that connection reports
+    // Connected (its first I/Q frame) or ends, and then arms the quiet
+    // period above. While any hold is up, holdOffRemainingMs() reports at
+    // least kConnectHoldRecheckMs, so every path that already waits out the
+    // quiet period (startDiscovery(), probeAddress(), a running walk's next
+    // attempt, the Core's scans) waits for the hold too, and re-checks.
+    // Process-wide, like the quiet period; keyed by owner so a second
+    // begin is a no-op and an end with no begin arms nothing.
+    static void beginConnectHold(const void* owner);
+    static void endConnectHold(const void* owner, std::chrono::milliseconds quiet);
+    static bool connectHoldActive();
+    static constexpr qint64 kConnectHoldRecheckMs = 100;
 
     DiscoveryProfile profile() const { return m_profile; }
     void setProfile(DiscoveryProfile profile) { m_profile = profile; }
@@ -255,7 +331,17 @@ public:
     // The holdOffScans deadline is process-wide (see s_scanHoldOff), so it
     // survives across test functions and would defer probes in unrelated
     // cases. Call from a QTest init() for a clean slate.
-    static void clearHoldOffForTest();
+    static void clearHoldOffForTest();   // also drops every connect hold
+
+    // Walk these NICs instead of the machine's interfaces (an empty list
+    // restores the real ones), with this timing instead of the profile's.
+    void setScanNicsForTest(const QList<ScanNic>& nics) {
+        if (nics.isEmpty()) { m_scanNicsOverride.reset(); } else { m_scanNicsOverride = nics; }
+    }
+    void setTimingForTest(const DiscoveryTiming& timing) { m_timingOverride = timing; }
+    ScanStats scanStatsForTest() const { return m_scanStats; }
+    bool scanRunningForTest() const { return m_scanRunning; }
+    static constexpr int attemptDeadlineFactorForTest() { return kAttemptDeadlineFactor; }
 #endif
 
     // Public static parsers — exposed for unit-testing in Task 5.
@@ -298,10 +384,49 @@ private:
     // MAC extraction from raw bytes
     static QString macToString(const char* bytes);
 
-    // Per-NIC synchronous scan (mi0bot pattern).
+    // Per-NIC scan (mi0bot pattern), driven by the event loop.
     // Sends P1+P2 probes, polls for replies using the timing profile,
     // calls parseP1Reply / parseP2Reply and de-duplicates by MAC.
+    // scanAllNics() takes the NIC candidates and starts the first one,
+    // then returns; beginNextNic() binds a NIC's socket, beginAttempt()
+    // sends the probes and opens the first poll window, onScanPollWindow()
+    // closes a quiet window, onScanReadyRead() takes replies,
+    // onScanAttemptDeadline() ends an attempt that never went quiet, and
+    // finishScan() cleans up and emits discoveryFinished.
     void scanAllNics();
+    void beginNextNic();
+    void beginAttempt();
+    void endAttempt();
+    void onScanPollWindow();
+    void onScanReadyRead();
+    void onScanAttemptDeadline();
+    void finishScan();
+    void handleScanDatagram(const QByteArray& data, const QHostAddress& sender);
+
+    // Hard limit on one attempt's length, as a multiple of its quiet
+    // budget (quietPollsBeforeResend × pollTimeoutMs). NereusSDR addition:
+    // Thetis has no wall-clock limit (see onScanAttemptDeadline()).
+    static constexpr int kAttemptDeadlineFactor = 2;
+
+    // Walk state. One walk at a time per object; m_scanRunning is true
+    // from scanAllNics() until finishScan().
+    QList<ScanNic> m_scanNics;
+    int  m_scanNicIndex{-1};
+    int  m_scanAttempt{0};
+    int  m_scanQuietPolls{0};
+    bool m_scanRunning{false};
+    QPointer<QUdpSocket> m_scanSock;   // child of this object, one per NIC
+    QTimer m_scanPollTimer;            // one poll window, single shot
+    QTimer m_scanDeadlineTimer;        // one attempt's hard limit, single shot
+    QTimer m_scanHoldOffTimer;         // an attempt waiting out holdOffScans, single shot
+    QSet<QString> m_scanSeen;          // MAC de-duplication for this walk
+    qint64 m_scanNowMs{0};
+    QByteArray m_scanP1;
+    QByteArray m_scanP2;
+    DiscoveryTiming m_scanTiming{timingFor(DiscoveryProfile::SafeDefault)};
+    ScanStats m_scanStats;
+    std::optional<QList<ScanNic>> m_scanNicsOverride;   // tests only
+    std::optional<DiscoveryTiming> m_timingOverride;    // tests only
 
     DiscoveryProfile m_profile{DiscoveryProfile::SafeDefault};
 
@@ -328,6 +453,8 @@ private:
     // or wedge discovery.
     static QDeadlineTimer s_scanHoldOff;
     static QMutex s_scanHoldOffMutex;
+    // Owners of a connect hold (beginConnectHold), under the same mutex.
+    static QSet<quintptr> s_connectHolds;
     bool scanCancelled() const;
 
     // Per-instance: stops a burst of startDiscovery() calls on THIS object
@@ -346,6 +473,11 @@ private:
     // instead of blocking shutdown for several seconds. Atomic because
     // stopDiscovery may run from any thread context (main, in practice,
     // but cheap defense-in-depth).
+    //
+    // Since 2026-10-22 the walk runs from the event loop and blocks nothing:
+    // stopDiscovery() ends a running walk at once (finishScan()), and the
+    // poll-window and readyRead handlers still check this flag and thread
+    // interruption (the Core's discovery worker) on every event.
     std::atomic<bool> m_stopRequested{false};
 };
 

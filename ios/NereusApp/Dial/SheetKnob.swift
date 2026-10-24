@@ -45,9 +45,11 @@ struct SheetKnob: View {
         .padding(.horizontal, 14)
         .padding(.bottom, 14)
         .frame(maxWidth: .infinity)
-        .background(DialColours.sheet, in: UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14))
+        .background(DialColours.sheet, in: UnevenRoundedRectangle(topLeadingRadius: WorkspacePalette.panelRadius,
+                                                                  topTrailingRadius: WorkspacePalette.panelRadius))
         .overlay(alignment: .top) {
-            UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14)
+            UnevenRoundedRectangle(topLeadingRadius: WorkspacePalette.panelRadius,
+                                   topTrailingRadius: WorkspacePalette.panelRadius)
                 .strokeBorder(DialColours.sheetBorder, lineWidth: 1)
                 .mask(Rectangle().frame(height: 14).frame(maxHeight: .infinity, alignment: .top))
         }
@@ -84,8 +86,8 @@ struct SheetKnob: View {
                     .foregroundStyle(DialColours.stepText)
                     .padding(.horizontal, 14)
                     .frame(height: 34)
-                    .background(DialColours.button, in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(DialColours.buttonBorder, lineWidth: 1))
+                    .background(DialColours.button, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(DialColours.buttonBorder, lineWidth: 1))
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("dialSheetDone")
@@ -128,8 +130,8 @@ struct SheetKnob: View {
                 .lineLimit(1)
                 .padding(.horizontal, 10)
                 .frame(height: 30)
-                .background(lit ? DialColours.buttonOn : DialColours.button, in: RoundedRectangle(cornerRadius: 3))
-                .overlay(RoundedRectangle(cornerRadius: 3)
+                .background(lit ? DialColours.buttonOn : DialColours.button, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                     .strokeBorder(lit ? DialColours.buttonOnBorder : DialColours.buttonBorder, lineWidth: 1))
         }
         .buttonStyle(.plain)

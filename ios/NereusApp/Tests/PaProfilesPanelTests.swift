@@ -422,7 +422,7 @@ struct PaProfilesPanelTests {
         specialized.makePa = { control, category in
             AnyView(PaProfilesPanel(control: control, category: category, pages: rig.pages, dispatcher: rig.dispatcher))
         }
-        let host = UIHostingController(rootView: NavigationStack {
+        let host = ShotHosting.host(NavigationStack {
             DescribedPage(pages: rig.pages, dispatcher: rig.dispatcher, category: "pa", pageId: "pa.gain", specialized: specialized)
         })
         window.rootViewController = host
@@ -448,8 +448,15 @@ struct PaProfilesPanelTests {
         #expect(await edit.value?.reason == SetupControlDispatcher.noAnswerReason)
         if replace { #expect(owner.begin()) }
         await rig.answer(invoke, accepted: false, reason: "Actual late Core refusal.")
-        await MainQueue.drained()
-        #expect(owner.problem == (replace ? nil : "Actual late Core refusal."))
+        if replace {
+            await MainQueue.drained()
+            #expect(owner.problem == nil)
+        } else {
+            // The late refusal reaches the owner through the command client
+            // and the dispatcher, after more than the main queue's turn: on
+            // a busy runner one drain of the main queue came before it.
+            #expect(await ShotWait.until { owner.problem == "Actual late Core refusal." })
+        }
         #expect(rig.sent.invokes.count == 1)
     }
 
@@ -755,7 +762,7 @@ struct PaProfilesPanelTests {
             let root = NavigationStack {
                 DescribedPage(pages: rig.pages, dispatcher: rig.dispatcher, category: "pa", pageId: "pa.gain", specialized: specialized)
             }.valuePads(hostPads).environment(\.dynamicTypeSize, type).preferredColorScheme(scheme)
-            let host = UIHostingController(rootView: root)
+            let host = ShotHosting.host(root)
             host.view.frame = window.bounds
             window.rootViewController = host
             window.makeKeyAndVisible()

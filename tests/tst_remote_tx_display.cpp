@@ -18,6 +18,9 @@
 // pattern of tst_remote_peripherals). Nothing reaches a radio.
 //
 // Modification history (NereusSDR):
+//   2026-10-22 : NSDC v2 sender: on a connection whose start agreed
+//                 displayCodecVersion 2 the transmit display is v2 too.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-09-26 : Created for parity Task 28 by J.J. Boyd (KG4VCF).
 //                 AI-assisted implementation via Anthropic Claude Code.
 //   2026-09-26 : Tasks 27-29 fix wave (R-R3-49): the rise pan holds the
@@ -346,7 +349,7 @@ struct Harness {
         sessionReadyMs = realTimer.elapsed();
     }
 
-    bool start(bool declare, int version = 1, bool mini = false)
+    bool start(bool declare, int version = 1, bool mini = false, bool displayCodecV2 = false)
     {
         QJsonObject start{{QStringLiteral("op"), QStringLiteral("start")},
                           {QStringLiteral("connectionId"), QLatin1String(kConnectionId)}};
@@ -356,12 +359,16 @@ struct Harness {
         if (mini) {
             start.insert(QStringLiteral("miniDisplayVersion"), 1);
         }
+        if (displayCodecV2) {
+            start.insert(QStringLiteral("displayCodecVersion"), 2);
+        }
         return client.sendMediaControl(start, client.sessionEpoch());
     }
 
-    void startReadyPeer(bool declare, int version = 1, bool mini = false)
+    void startReadyPeer(bool declare, int version = 1, bool mini = false,
+                        bool displayCodecV2 = false)
     {
-        QVERIFY(start(declare, version, mini));
+        QVERIFY(start(declare, version, mini, displayCodecV2));
         QTRY_VERIFY(mediaTransport);
         mediaTransport->becomeReady();
         mediaReadyMs = realTimer.elapsed();
@@ -551,6 +558,7 @@ private slots:
     void capabilityFollowsTheAnalyzerAndTheMinor();
     void contextCodecCarriesTransmitOnlyWhenNegotiated();
     void riseSendsTheTransmitDisplayAndFallResumesReceive();
+    void aV2ConnectionSendsTheTransmitDisplayInV2();
     void xitWhileKeyedRenewsTheContext();
     void severalViewersShareTheGoverningView();
     void aSubscribeWhileKeyedMovesTheView();
@@ -822,6 +830,70 @@ void TstRemoteTxDisplay::riseSendsTheTransmitDisplayAndFallResumesReceive()
     // The analyzer stopped and its clip cleared.
     QVERIFY(!h.analyzer->isRunning());
     QCOMPARE(h.analyzer->spectrumWindowLowHz(), 0);
+    h.finish();
+}
+
+// NSDC v2 (Task 4): on a connection whose start agreed displayCodecVersion
+// 2, the transmit display is v2 too, encoded at its own endpoint's admitted
+// frame bytes, and it decodes to the pixels the analyzer emitted.
+void TstRemoteTxDisplay::aV2ConnectionSendsTheTransmitDisplayInV2()
+{
+    Harness h;
+    QVERIFY(h.slice());
+    h.slice()->setPanKey(QStringLiteral("pan-a"));
+    h.establishSession();
+    QTRY_COMPARE(h.client.capabilities().txDisplayVersion, 3);
+    QCOMPARE(h.client.capabilities().displayCodecVersion, 2);
+    QSignalSpy controls(&h.client, &StationClient::mediaControlReceived);
+    h.startReadyPeer(/*declare=*/true, 1, /*mini=*/false, /*displayCodecV2=*/true);
+    QCOMPARE(h.controller->displayCodecVersion(), quint32{2});
+
+    const double centre = h.radio.streamCentreHz(h.slice()->streamIndex());
+    QVERIFY(h.send(withTxWindow(subscription(1, 1, h.sliceId, centre))));
+    QTRY_VERIFY([&] {
+        h.feedSlice(h.sliceId);
+        return lastContext(controls, 1)
+            && framesFor(h.mediaTransport->displays, 1, std::nullopt) > 0;
+    }());
+    QVERIFY(h.key(true));
+    QTRY_VERIFY(isTransmit(lastContext(controls, 1)));
+    const quint32 txGeneration = static_cast<quint32>(
+        lastContext(controls, 1)->value(QStringLiteral("contextGeneration")).toInteger());
+    const QVector<float> trace = ramp(128, -70.0f, 0.5f);
+    const QVector<float> waterfall = ramp(128, 10.0f, -0.6f);
+    QTRY_VERIFY([&] {
+        h.emitPlanes(trace, waterfall);
+        return framesFor(h.mediaTransport->displays, 1, txGeneration) >= 3;
+    }());
+
+    DisplayCodecDecoder decoder;
+    int decoded = 0;
+    const float step = float((kTxMaxDbm - kTxMinDbm) / 255.0);
+    for (const QByteArray& packet : h.mediaTransport->displays) {
+        if (!packet.startsWith("NSDC")) {
+            continue;
+        }
+        // Receive and transmit frames alike are version 2.
+        QCOMPARE(static_cast<quint8>(packet.at(4)), quint8{2});
+        if (packetEndpoint(packet) != 1 || packetGeneration(packet) != txGeneration) {
+            continue;
+        }
+        const DisplayCodecDecodeResult result = decoder.decode(packet);
+        QCOMPARE(result.disposition, DisplayCodecDisposition::Accepted);
+        QCOMPARE(result.frameCount, 1);
+        QCOMPARE(result.frame.traceDbm.size(), 128);
+        QCOMPARE(result.frame.waterfallDbm.size(), 128);
+        for (int i = 0; i < 128; ++i) {
+            QVERIFY(std::abs(result.frame.traceDbm.at(i) - trace.at(i)) <= step);
+            QVERIFY(std::abs(result.frame.waterfallDbm.at(i) - waterfall.at(i)) <= step);
+        }
+        ++decoded;
+    }
+    QVERIFY(decoded >= 3);
+    const DaemonDisplayDiagnostics diagnostics = h.controller->displayDiagnostics();
+    QCOMPARE(diagnostics.displayKeyframesSent, quint64(0));
+    QVERIFY(diagnostics.displayFramesSent >= quint64(decoded));
+    QVERIFY(h.key(false));
     h.finish();
 }
 
@@ -1286,10 +1358,13 @@ void TstRemoteTxDisplay::txStateCarriesTheHighSwrState()
     QCOMPARE(state.highSwr(), true);
     QCOMPARE(state.swrWindBackLatched(), radio.swrProt().windBackLatched());
     QVERIFY(!changed.isEmpty());
-    // Protection off clears it.
+    // Protection off clears HighSWR; an engaged wind-back holds until MOX
+    // off, as in Thetis (console.cs:26134-26138 [v2.10.3.15]).
     radio.swrProt().setEnabled(false);
     radio.swrProt().ingest(50.0f, 30.0f, false);
     QVERIFY(!state.highSwr());
+    QVERIFY(state.swrWindBackLatched());
+    radio.swrProt().onMoxOff();
     QVERIFY(!state.swrWindBackLatched());
     // The window side: a plain apply of the Core's values.
     TransmitState window;

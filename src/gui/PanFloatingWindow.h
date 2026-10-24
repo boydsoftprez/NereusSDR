@@ -51,6 +51,15 @@
 //                                    [@1e0718ad]. AI-assisted
 //                                    transformation via Anthropic Claude
 //                                    Code.
+//   2026-10-22  Quitting is no longer refused while a pan floats: a
+//                                    close that is not spontaneous (the
+//                                    application quit sweep) is accepted
+//                                    without docking; the close box still
+//                                    docks. Ported from Longpath
+//                                    src/gui/PanFloatingWindow.cpp:230-243
+//                                    [@383f058], by J.J. Boyd (KG4VCF),
+//                                    with AI-assisted transformation via
+//                                    Claude Code.
 // =================================================================
 #pragma once
 

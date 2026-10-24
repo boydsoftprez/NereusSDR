@@ -6,6 +6,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - RX meter stamps: SliceModel meterReadingNs Outbound, gated
+//                 on rxMeterStamps (rxMeterStampsVersion 1). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09 - Core speaker: RadioModel coreSpeakerVolume,
 //                 coreSpeakerMuted, coreSpeakerDevice and coreSpeakerDetails
 //                 Bidirectional, coreSpeakerDevices and coreSpeakerState
@@ -292,7 +295,7 @@ namespace {
 // WRITE. Listing them keeps the table total, so the guard can name a
 // newly added property instead of silently accepting it.
 const MirrorPolicy::Entry kEntries[] = {
-    // ---- SliceModel (154 entries) ----
+    // ---- SliceModel (155 entries) ----
     { "SliceModel", "frequency", MirrorDirection::Bidirectional },
     { "SliceModel", "dspMode", MirrorDirection::Bidirectional },
     { "SliceModel", "filterLow", MirrorDirection::Bidirectional },
@@ -500,6 +503,10 @@ const MirrorPolicy::Entry kEntries[] = {
     // working decoder, read-only; only to a peer that declared radeReason
     // (StationServer::fitPeerOnlyProperties).
     { "SliceModel", "radeReason", MirrorDirection::Outbound },
+    // RX meter stamps (rxMeterStampsVersion 1): when the Core measured the
+    // slice's RX meter readings, read-only; only to a peer that declared
+    // rxMeterStamps (StationServer::fitPeerOnlyProperties).
+    { "SliceModel", "meterReadingNs", MirrorDirection::Outbound },
 
     // ---- TransmitModel (87 entries) ----
     // iPhone app plan Task 35 (R-IOS-13): MOX and TUNE travel from the
@@ -1374,6 +1381,10 @@ const QList<MirrorPolicy::FeatureGate>& MirrorPolicy::featureGates()
         // working decoder, to a peer that declared radeReason 1
         // (StationServer::fitPeerOnlyProperties).
         {"SliceModel", "radeReason", "radeReason", 1},
+        // RX meter stamps (rxMeterStampsVersion 1): when each slice's RX
+        // meter readings were measured, to a peer that declared
+        // rxMeterStamps 1 (StationServer::fitPeerOnlyProperties).
+        {"SliceModel", "meterReadingNs", "rxMeterStamps", 1},
         // radioHardwareVersion 10: radio's Alex-1 low-pass in use, to a peer
         // that declared alexLpf 1 (StationServer::fitPeerOnlyProperties).
         {"RadioModel", "alexLpfBits", "alexLpf", 1},

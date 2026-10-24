@@ -20,6 +20,14 @@
 //   2026-09-29 - R-R3-49 / R-IOS-18: profileSaved, bankLoaded and defaultProfileName,
 //                 for the Core's paProfiles mirror and verbs. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-18 - load() moves an untouched stored "Default - ANAN_G2E"
+//                 from the old shared ANAN7000D gain row to the G2E's own
+//                 53.0 dB row (PaGainProfile.cpp). NereusSDR-original.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-21 - The G2E move runs band by band: each untouched band
+//                 160 m to 6 m moves, every edited band is kept.
+//                 NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 // --- From setup.cs ---
@@ -82,6 +90,7 @@
 #include <QLoggingCategory>
 
 #include <algorithm>
+#include <cmath>
 
 namespace NereusSDR {
 
@@ -168,6 +177,35 @@ HPSDRModel modelFromFactoryName(const QString& name) noexcept
 // From Thetis setup.cs:23314 [v2.10.3.13] — `_sPA_PROFILE_BYPASS = "Bypass"`.
 constexpr const char* kBypassProfileName = "Bypass";
 
+// NereusSDR-original (2026-10-18). The 160 m to 6 m gains every stored
+// "Default - ANAN_G2E" was seeded with before the G2E got its own row:
+// the Thetis ANAN7000D row, from Thetis clsHardwareSpecific.cs:698-713
+// [v2.10.3.15]. Kept here, not read from PaGainProfile, so the check
+// still means "the old G2E seed" if that row ever changes.
+constexpr float kOldG2eHfGains[] = {
+    47.9f, 50.5f, 50.8f, 50.8f, 50.9f, 50.9f,
+    50.5f, 47.0f, 47.9f, 46.5f, 44.6f
+};
+constexpr int kOldG2eHfBandCount =
+    static_cast<int>(sizeof(kOldG2eHfGains) / sizeof(kOldG2eHfGains[0]));
+
+// True when band `band` of `p` still holds the old G2E seed `oldGain`
+// with no drive-step adjusts. A band the user edited (a different gain,
+// or any adjust) makes it false, and that band is left alone.
+bool bandHoldsOldG2eSeed(const PaProfile& p, Band band, float oldGain) noexcept
+{
+    constexpr float kTolerance = 0.005f;
+    if (std::fabs(p.getGainForBand(band) - oldGain) > kTolerance) {
+        return false;
+    }
+    for (int step = 0; step < PaProfile::kDriveSteps; ++step) {
+        if (p.getAdjust(band, step) != 0.0f) {
+            return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -233,6 +271,41 @@ void PaProfileManager::load(HPSDRModel connectedModel)
             PaProfile p;
             if (readProfileBlob(name, p)) {
                 m_profiles.insert(name, p);
+            }
+        }
+
+        // NereusSDR-original (2026-10-18): the G2E's factory row moved off
+        // the shared ANAN7000D row, which overdrives the G2E, to its own
+        // 53.0 dB row. Stored profiles win over factory values, so an
+        // existing "Default - ANAN_G2E" would keep the old gains. Move it
+        // band by band (2026-10-21): each band 160 m to 6 m that still
+        // holds the old seed with no adjusts takes the new row's value;
+        // every band the user edited keeps its stored gain and adjusts.
+        // Max-power settings and bands outside 160 m to 6 m stay as
+        // stored. Moved bands no longer match the old seed, so a later
+        // connect moves nothing.
+        const QString g2eDefault =
+            defaultProfileNameForModel(HPSDRModel::ANAN_G2E);
+        auto g2eIt = m_profiles.find(g2eDefault);
+        if (g2eIt != m_profiles.end() && g2eIt->isFactoryDefault()
+            && g2eIt->model() == HPSDRModel::ANAN_G2E) {
+            int moved = 0;
+            int kept = 0;
+            for (int n = 0; n < kOldG2eHfBandCount; ++n) {
+                const Band band = static_cast<Band>(n);
+                if (bandHoldsOldG2eSeed(*g2eIt, band, kOldG2eHfGains[n])) {
+                    g2eIt->setGainForBand(
+                        band, defaultPaGainsForBand(HPSDRModel::ANAN_G2E, band));
+                    ++moved;
+                } else {
+                    ++kept;
+                }
+            }
+            if (moved > 0) {
+                writeProfileBlob(g2eDefault, *g2eIt);
+                qCInfo(lcDsp) << "PA profile" << g2eDefault << "moved" << moved
+                              << "bands from the old shared gain row to the G2E row;"
+                              << kept << "edited bands kept";
             }
         }
 

@@ -432,6 +432,19 @@ private slots:
             QCOMPARE(existing->centerFrequency(), retainedCenter);
             QCOMPARE(existing->bandwidth(), retainedSpan);
             QCOMPARE(station.sliceById(1)->panKey(), QStringLiteral("pan-1"));
+            // The marker-only slice's filter and mode never reach this pan's
+            // passband, but its own marker is drawn from them, in the
+            // static overlay: each change marks it.
+            const double hostFilterLow = existing->filterLowForTest();
+            existing->clearOverlayStaticDirtyForTest();
+            station.sliceById(1)->setFilter(-1800, -300);
+            QTRY_COMPARE(existing->vfoWidget(1)->filterLow(), -1800);
+            QVERIFY(existing->overlayStaticDirtyForTest());
+            QCOMPARE(existing->filterLowForTest(), hostFilterLow);
+            existing->clearOverlayStaticDirtyForTest();
+            station.sliceById(1)->setDspMode(DSPMode::CWL);
+            QTRY_VERIFY(remote->sliceById(1)->dspMode() == DSPMode::CWL);
+            QVERIFY(existing->overlayStaticDirtyForTest());
             return;
         }
         const double aFrequency = remote->sliceById(0)->frequency();

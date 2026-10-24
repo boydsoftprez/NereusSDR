@@ -7,7 +7,7 @@ import SwiftUI
 /// NereusSDR's icon, the Core's name and the link; the active slice's frequency,
 /// mode and width; the signal (or a message) and the speaker. Keyed, the
 /// TX clock joins the head and the foot shows the readings and UNKEY, on
-/// red. Lost, LINK LOST with the retries. It stays under iOS's 160-point
+/// the TX badge's red. Lost, LINK LOST with the retries. It stays under iOS's 160-point
 /// limit. StandBy shows this same card at twice the size.
 struct ActivityCard: View {
     let state: StationActivityAttributes.ContentState
@@ -38,10 +38,18 @@ struct ActivityCard: View {
         .padding(.top, 12)
         .padding(.horizontal, 15)
         .padding(.bottom, 13)
-        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(edge, lineWidth: 1))
+        .background {
+            // The panel's top laid over iOS's tint, which carries its bottom.
+            if !state.keyed {
+                RoundedRectangle(cornerRadius: 24, style: .continuous) // kept-radius: live-activity
+                    .fill(LinearGradient(colors: [ActivityColours.cardLift, ActivityColours.cardLift.opacity(0)],
+                                         startPoint: .top, endPoint: .bottom))
+            }
+        }
+        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(edge, lineWidth: 1)) // kept-radius: live-activity
     }
 
-    /// The card's colour: red while keyed.
+    /// The card's color under it (iOS's tint): the panel, or the TX badge's red while keyed.
     static func background(_ state: StationActivityAttributes.ContentState) -> Color {
         state.keyed ? ActivityColours.cardKeyed : ActivityColours.card
     }

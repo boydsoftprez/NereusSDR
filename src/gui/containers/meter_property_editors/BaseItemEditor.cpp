@@ -12,6 +12,10 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF): dialogs exec()ed with a parent are
+//               built through ScopedChildWidget instead of on the stack, so
+//               a parent that dies while one is open no longer frees it
+//               twice. With AI-assisted transformation via Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -55,6 +59,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "BaseItemEditor.h"
+#include "gui/ScopedChildWidget.h"
 #include "gui/UnbuiltFeatures.h"
 
 #include "../../meters/MeterItem.h"
@@ -178,9 +183,11 @@ void BaseItemEditor::buildBaseForm()
     bindingLay->addWidget(btnVariable);
     connect(btnVariable, &QPushButton::clicked, this, [this, btnVariable]() {
         if (!m_item) { return; }
-        MmioVariablePickerPopup dlg(m_item->mmioGuid(),
-                                     m_item->mmioVariable(),
-                                     this);
+        // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+        ScopedChildWidget<MmioVariablePickerPopup> dlgOwner(m_item->mmioGuid(),
+                                                          m_item->mmioVariable(),
+                                                          this);
+        MmioVariablePickerPopup& dlg = *dlgOwner.get();
         if (dlg.exec() != QDialog::Accepted) { return; }
         if (dlg.wasCleared()) {
             m_item->clearMmioBinding();

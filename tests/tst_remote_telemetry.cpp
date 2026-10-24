@@ -1,4 +1,9 @@
 // no-port-check: NereusSDR-original. Remote telemetry lifecycle/presentation.
+//
+// Modification history (NereusSDR):
+//   2026-10-22: NSDC v2: the diagnostics line's displayMessagesLost and
+//               displayPartsLost follow displayKeyframeRequests. J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 #include <QTest>
 #include <algorithm>
 #include <QRegularExpression>
@@ -425,6 +430,28 @@ private slots:
 
     // R-R3-32/33: host values reach the view and the history; absent values
     // leave gaps. R-R3-07/33: one diagnostics line a minute for the soak.
+    // The diagnostics line's per-pan display fields (bench check of the
+    // Core's DisplayKeyframeEveryFrame, 2026-10-22): none without a pan,
+    // then each pan's three counts in pan id order.
+    void displayPanFieldsListEachPansCounts()
+    {
+        RemoteDisplayTelemetry telemetry;
+        QVERIFY(remoteDisplayPanDiagnosticsFields(telemetry).isEmpty());
+        telemetry.pans.insert(QStringLiteral("pan-1"), RemoteDisplayPanTelemetry{0, 0, 2});
+        telemetry.pans.insert(QStringLiteral("pan-0"), RemoteDisplayPanTelemetry{3, 14, 7});
+        telemetry.pans.insert(QStringLiteral("pan-0/mini"), RemoteDisplayPanTelemetry{1, 0, 0});
+        QCOMPARE(remoteDisplayPanDiagnosticsFields(telemetry).join(QLatin1Char(' ')),
+                 QStringLiteral("displayPanKeyframeWaits(pan-0)=3"
+                                " displayPanRowsBlended(pan-0)=14"
+                                " displayPanRowsRepeated(pan-0)=7"
+                                " displayPanKeyframeWaits(pan-0/mini)=1"
+                                " displayPanRowsBlended(pan-0/mini)=0"
+                                " displayPanRowsRepeated(pan-0/mini)=0"
+                                " displayPanKeyframeWaits(pan-1)=0"
+                                " displayPanRowsBlended(pan-1)=0"
+                                " displayPanRowsRepeated(pan-1)=2"));
+    }
+
     void coreHostValuesAndPeriodicDiagnosticsLine()
     {
         QTemporaryDir dir;
@@ -1033,9 +1060,11 @@ private slots:
             "deliveryDelayMs=60.0")),
                  qPrintable(g_diagnosticsLines.constLast()));
         // R-R3-21 / R-R3-08: the display counters follow, not measured
-        // until a display has run.
+        // until a display has run. NSDC v2: the decoders' lost messages and
+        // parts come right after the keyframe requests.
         QVERIFY2(g_diagnosticsLines.constLast().contains(QStringLiteral(
             "deliveryDelayMs=60.0 displayKeyframeWaits=0 displayKeyframeRequests=0 "
+            "displayMessagesLost=0 displayPartsLost=0 "
             "displayRowsBlended=0 displayRowsRepeated=0 "
             "displayLargestArrivalGapMs=not measured displayDelayMs=not measured "
             "displayItemsDropped=0 displayRowsDropped=0")),

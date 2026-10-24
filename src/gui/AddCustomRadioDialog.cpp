@@ -25,6 +25,9 @@
 //   2026-10-12 - The verified line shows the radio's second firmware number
 //                 where it reported one. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-19 - Editing a known radio keeps its reported firmware numbers
+//                 and receiver count. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  frmAddCustomRadio.cs
@@ -895,6 +898,22 @@ RadioInfo AddCustomRadioDialog::result() const
 
     info.firmwareVersion = 0;   // Unknown for manually added radios
     info.inUse           = false;
+
+    // An edit of a radio NereusSDR already knows keeps what that radio
+    // reported in discovery: the form has no field for its firmware or its
+    // receiver count, so rebuilding from the form alone saved them as none
+    // and every later connect read the firmware as "—" and the receiver
+    // count from the board table. A changed MAC is another radio, whose
+    // report this is not.
+    if (!m_probedInfo.macAddress.isEmpty()
+        && info.macAddress == m_probedInfo.macAddress) {
+        info.firmwareVersion     = m_probedInfo.firmwareVersion;
+        info.firmwareBetaVersion = m_probedInfo.firmwareBetaVersion;
+        info.reportedReceivers   = m_probedInfo.reportedReceivers;
+        if (info.reportedReceivers > 0) {
+            info.maxReceivers = info.reportedReceivers;
+        }
+    }
 
     return info;
 }

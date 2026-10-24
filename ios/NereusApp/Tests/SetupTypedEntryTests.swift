@@ -79,7 +79,15 @@ struct SetupTypedEntryTests {
             })
             entry.receive(Self.textOutcome(result), edit: submitted, owner: row)
         }
-        #expect(await Pages.settle { proxy.value(key) == "Submitted" })
+        // Settle on the recorded write, not on the shown value: the proxy
+        // shows "Submitted" before its send task runs, and a deadline that
+        // fires first retires the write unsent. The rig records on a later
+        // MainActor hop, so the clock waits for the recording itself.
+        #expect(await Pages.settle { rig.recorded.settingsSent.contains { message in
+            if case .settingsWrite(let write) = message { return write.key == key && write.properties.first?.value == .utf8("Submitted") }
+            return false
+        } })
+        #expect(proxy.value(key) == "Submitted")
         entry.modelChanged(proxy.value(key) ?? "")
         proxy.apply(.settingsValue(.init(key: key, origin: "another-phone", properties: [.init(name: key, value: .utf8("Latest Core"))])))
         if owner == 1 { entry.type("New unsent text") }

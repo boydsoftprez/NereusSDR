@@ -55,13 +55,19 @@ struct BandReadouts: View {
                         in: spectrum.insetBy(dx: 0, dy: 26), id: "cursorReadout",
                         background: BandColours.cursorBackground)
             }
-            if settings.timestampPosition != .none, let time = band.topLineTime {
-                let waterfall = layout.waterfall
-                readout(Self.timeText(time, utc: settings.timestampUtc), colour: BandColours.timestamp,
-                        size: BandColours.timestampPoints, weight: .regular,
-                        corner: settings.timestampPosition == .left ? .topLeft : .topRight,
-                        in: CGRect(x: 0, y: waterfall.minY, width: waterfall.width, height: waterfall.height),
-                        id: "timestampReadout")
+            if settings.timestampPosition != .none {
+                // The band's frames redraw only the band itself, so the
+                // top line's time is read again on a clock of its own.
+                TimelineView(.periodic(from: .now, by: Self.timestampRefreshSeconds)) { _ in
+                    if let time = band.topLineTime {
+                        let waterfall = layout.waterfall
+                        readout(Self.timeText(time, utc: settings.timestampUtc), colour: BandColours.timestamp,
+                                size: BandColours.timestampPoints, weight: .regular,
+                                corner: settings.timestampPosition == .left ? .topLeft : .topRight,
+                                in: CGRect(x: 0, y: waterfall.minY, width: waterfall.width, height: waterfall.height),
+                                id: "timestampReadout")
+                    }
+                }
             }
             if band.lookBackLines > 0 {
                 live(layout: layout)
@@ -88,7 +94,7 @@ struct BandReadouts: View {
             .foregroundStyle(colour)
             .padding(.horizontal, 6)
             .padding(.vertical, 3)
-            .background(background, in: RoundedRectangle(cornerRadius: 3))
+            .background(background, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
             .padding(6)
             .frame(width: max(rect.width, 0), height: max(rect.height, 0), alignment: alignment)
             .offset(x: rect.minX, y: rect.minY)
@@ -103,9 +109,9 @@ struct BandReadouts: View {
         } label: {
             Text(Self.liveText)
                 .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(workspaceForeground(Self.liveLook))
                 .frame(minWidth: 56, minHeight: 32)
-                .background(ChromeColours.txRed, in: RoundedRectangle(cornerRadius: 4))
+                .background { WorkspaceFace(Self.liveLook) }
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -119,6 +125,13 @@ struct BandReadouts: View {
     // MARK: The words
 
     static let liveText = "LIVE"
+
+    /// The LIVE button's face, shown only while the waterfall looks back.
+    /// The desktop fills its LIVE button red while paused (From
+    /// src/gui/SpectrumWidget.cpp:8261-8273, `0xc0, 0x20, 0x20` when
+    /// !m_wfLive); W5 keeps kTxRed for transmit, so every other red is the
+    /// muted danger set: kRedBg, kRedText, kRedBorder (WorkspacePalette.h:325-327).
+    static let liveLook: WorkspaceLook = .danger
 
     static func fpsText(_ fps: Double) -> String {
         String(format: "%.1f fps", fps)
@@ -162,11 +175,23 @@ struct BandReadouts: View {
     }
 
     /// A line's time as `HH:mm:ss`, UTC or the phone's own time zone.
+    /// How often the waterfall's timestamp is read again, in seconds: a
+    /// quarter of the second it shows.
+    static let timestampRefreshSeconds = 0.25
+
     static func timeText(_ time: Double, utc: Bool) -> String {
+        (utc ? utcFormatter : localFormatter).string(from: Date(timeIntervalSince1970: time)) + (utc ? " UTC" : "")
+    }
+
+    /// Made once: a formatter is slow to make, and the timestamp is read four times a second.
+    private static let localFormatter = timeFormatter(.autoupdatingCurrent)
+    private static let utcFormatter = timeFormatter(TimeZone(identifier: "UTC") ?? .gmt)
+
+    private static func timeFormatter(_ zone: TimeZone) -> DateFormatter {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = utc ? TimeZone(identifier: "UTC") : .current
-        return formatter.string(from: Date(timeIntervalSince1970: time)) + (utc ? " UTC" : "")
+        formatter.timeZone = zone
+        return formatter
     }
 }

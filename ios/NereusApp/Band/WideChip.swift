@@ -27,11 +27,10 @@ enum WideChip {
     static let accessibilityHint = "Opens the active slice's More menu, which says why"
     static let identifier = "bandWideChip"
 
-    /// The desktop pill's colours (SpectrumStatusOverlay's WIDE): its
-    /// ground, its word and its edge.
-    static let ground = Color(red: 0x60 / 255, green: 0x40 / 255, blue: 0x00 / 255)
-    static let text = Color(red: 0xFF / 255, green: 0xB8 / 255, blue: 0x00 / 255)
-    static let edge = Color(red: 0x90 / 255, green: 0x60 / 255, blue: 0x00 / 255)
+    /// The chip's treatment: lit amber, a caution state, as the desktop's
+    /// amber WIDE pill (docs/architecture/2026-10-20-phone-workspace-look-design.md,
+    /// sections 3 W4 and 5).
+    static let look: WorkspaceLook = .litAmber
 
     /// The pill that shows: 46 by 20 points, 56 by 24 in large type (the board's).
     static func pillSize(large: Bool) -> CGSize {
@@ -183,17 +182,16 @@ struct WideChipButton: View {
             Text(WideChip.word)
                 .font(.system(size: WideChip.wordPoints(large: large), weight: .bold, design: .monospaced))
                 .tracking(0.5)
-                .foregroundStyle(WideChip.text)
+                .foregroundStyle(workspaceForeground(WideChip.look))
                 .lineLimit(1)
                 .fixedSize()
                 .padding(.horizontal, 7)
                 .frame(minWidth: pill.width, minHeight: pill.height, maxHeight: pill.height)
-                .background(WideChip.ground, in: RoundedRectangle(cornerRadius: 3))
-                .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(WideChip.edge, lineWidth: 1))
+                .background { WorkspaceFace(WideChip.look) }
                 .overlay {
                     if expanded {
-                        RoundedRectangle(cornerRadius: 5)
-                            .strokeBorder(WideChip.text, lineWidth: 2)
+                        RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius + 2, style: .continuous)
+                            .strokeBorder(workspaceForeground(WideChip.look), lineWidth: 2)
                             .padding(-2)
                     }
                 }

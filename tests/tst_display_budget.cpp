@@ -5,6 +5,9 @@
 // no-port-check: NereusSDR-original tests for bounded display-codec accounting.
 //
 // Modification history (NereusSDR):
+//   2026-10-22: keyframeEveryFrameFitsTheAdmittedCostAtEveryPanWidth (the
+//               Core's bench setting DisplayKeyframeEveryFrame). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-04: Pace byte-only display extras with the shared spectrum
 //               budget; retain ordinary spectrum sample validation.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -220,6 +223,40 @@ private slots:
             }
         }
         QCOMPARE(shapes, int(pixelCounts.size() * wideCounts.size()));
+    }
+
+    // The Core's bench setting DisplayKeyframeEveryFrame (2026-10-22): at
+    // every pan width the codec takes (1 to 4096 points), with and without
+    // the 3D row, a keyframe is never larger than the frame bytes the
+    // endpoint was admitted for, so the sender never drops one as
+    // oversized; and a keyframe every frame at the admitted frame rate is
+    // exactly the admitted byte rate. The FFT size does not enter: the
+    // frame's planes are the granted pixels, whatever the source bins.
+    void keyframeEveryFrameFitsTheAdmittedCostAtEveryPanWidth()
+    {
+        QRandomGenerator random(0x4b455946u);
+        for (int pixels = 1; pixels <= DisplayCodecEncoder::kMaxSamplesPerPlane; ++pixels) {
+            for (const int wide : {0, 1, 767, 768}) {
+                const bool includeWide = wide > 0;
+                const SpectrumDisplayCost admitted = cost(pixels, 30, includeWide);
+                DisplayCodecEncoder encoder;
+                DisplayCodecFrame frame = spectrumFrame(pixels, wide);
+                frame.encoderSequence = 1;
+                fillRow(frame.traceDbm, random, pixels % 3);
+                fillRow(frame.waterfallDbm, random, pixels % 3);
+                fillRow(frame.wideDbm, random, pixels % 3);
+                const QByteArray keyframe = encoder.encode(frame, true);
+                QVERIFY(encoder.lastEncodedKeyframe());
+                QVERIFY2(quint32(keyframe.size()) <= admitted.maximumFrameBytes,
+                         qPrintable(QStringLiteral("%1/%2: %3 > %4").arg(pixels).arg(wide)
+                                        .arg(keyframe.size()).arg(admitted.maximumFrameBytes)));
+                if (wide == 0 || wide == SpectrumEndpoint::kMaxWideSamples) {
+                    QCOMPARE(quint32(keyframe.size()), admitted.maximumFrameBytes);
+                }
+                QCOMPARE(admitted.charge.applicationBytesPerSecond,
+                         quint64(admitted.maximumFrameBytes) * 30);
+            }
+        }
     }
 
     void checkedLedgerAndDescriptorValidation()

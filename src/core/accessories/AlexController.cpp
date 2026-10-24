@@ -56,6 +56,9 @@
 //                not its band names, so two filters under one name (WWV
 //                on 5 and 15 MHz) are a band difference. NereusSDR-original.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - setRxOnlyAnt keeps Thetis's checkbox sum 0..5 (XVTR
+//                with RX1 or RX2). J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 //
 // === Verbatim Thetis Console/HPSDR/Alex.cs header (lines 1-23) ===
@@ -408,6 +411,8 @@ void AlexController::setRxAnt(Band band, int ant)
 // Original: "if(ant>3){//ant=0;} idx=(int)band-(int)Band.B160M; RxOnlyAnt[idx]=ant;"
 // 1 = rx1, 2 = rx2, 3 = xv, 0 = none selected  [Alex.cs:58]
 // Uses clampRxOnlyAnt (allows 0) instead of clampAnt — fix for 3P-I-b T3.3.
+// 4 = rx1 + xv and 5 = rx2 + xv too: the value is the checked boxes' sum
+// (setup.cs:13682 ProcessAlexAntCheckBox [v2.10.3.15]), clamped to 0..5.
 void AlexController::setRxOnlyAnt(Band band, int ant)
 {
     const int b = perBandStateSlot(band);

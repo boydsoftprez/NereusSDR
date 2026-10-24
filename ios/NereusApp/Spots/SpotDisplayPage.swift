@@ -110,8 +110,8 @@ struct SpotDisplayPage: View {
                             .padding(.horizontal, 12)
                             .frame(height: 34)
                             .background(spots.clearReason == nil ? ChromeColours.revoke : ChromeColours.buttonOff,
-                                        in: RoundedRectangle(cornerRadius: 4))
-                            .overlay(RoundedRectangle(cornerRadius: 4)
+                                        in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                                 .strokeBorder(spots.clearReason == nil ? ChromeColours.revokeBorder
                                                                        : ChromeColours.buttonOffBorder, lineWidth: 1))
                             .contentShape(Rectangle())
@@ -193,8 +193,8 @@ struct SpotDisplayPage: View {
         }
         .font(.system(size: 13))
         .padding(12)
-        .background(ChromeColours.modesHead, in: RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
+        .background(ChromeColours.modesHead, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("spotDisplay.statistics")
     }
@@ -240,8 +240,8 @@ struct SpotDisplayPage: View {
             .foregroundStyle(ChromeColours.text)
             .lineLimit(1)
             .frame(width: width, height: 26)
-            .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 3))
-            .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
+            .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
             .accessibilityHidden(true)
     }
 }

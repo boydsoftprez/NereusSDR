@@ -4,6 +4,7 @@
 import CoreGraphics
 import CoreText
 import Foundation
+import os
 
 /// The spots on the band (R-IOS-25, D13, spec section 5.1 item 10). Each
 /// spot's callsign is a label centred on its frequency. Labels start at
@@ -101,7 +102,15 @@ public enum SpotLayout {
         result.levels = levels
         let maxBottom = startY + row * CGFloat(levels)
 
-        let shown = spots.filter { settings.shows(source: $0.source) }
+        // Only the spots in view (and a point either side, which the
+        // check below rounds in or out) are sorted: the Core keeps every band's.
+        let pointHz = geometry.spanHz / max(Double(width), 1)
+        let lowHz = geometry.lowHz - pointHz
+        let highHz = geometry.lowHz + geometry.spanHz + pointHz
+        let shown = spots.filter {
+            (geometry.spanHz <= 0 || ($0.frequencyHz >= lowHz && $0.frequencyHz <= highHz))
+                && settings.shows(source: $0.source)
+        }
             .sorted { $0.frequencyHz != $1.frequencyHz ? $0.frequencyHz < $1.frequencyHz : $0.id < $1.id }
         var placed: [CGRect] = []
         var overflow: [Int: [(id: String, x: CGFloat)]] = [:]
@@ -148,8 +157,34 @@ public enum SpotLayout {
         return result
     }
 
-    /// The width of `text` in the system font's bold face at `size` points.
+    /// The width of `text` in the system font's bold face at `size` points,
+    /// measured once for each callsign and size: the band lays its spots
+    /// out again at every step of a drag.
     public static func boldTextWidth(_ text: String, _ size: CGFloat) -> CGFloat {
+        let key = MeasuredText(text: text, size: size)
+        if let width = measuredWidths.withLock({ $0[key] }) {
+            return width
+        }
+        let width = measureBoldText(text, size)
+        measuredWidths.withLock { kept in
+            if kept.count >= measuredWidthsKept {
+                kept.removeAll(keepingCapacity: true)
+            }
+            kept[key] = width
+        }
+        return width
+    }
+
+    private struct MeasuredText: Hashable {
+        var text: String
+        var size: CGFloat
+    }
+
+    /// Past this many widths the kept ones are forgotten and measured again as needed.
+    static let measuredWidthsKept = 4_096
+    private static let measuredWidths = OSAllocatedUnfairLock(initialState: [MeasuredText: CGFloat]())
+
+    private static func measureBoldText(_ text: String, _ size: CGFloat) -> CGFloat {
         guard let font = CTFontCreateUIFontForLanguage(.emphasizedSystem, size, nil) else {
             return CGFloat(text.count) * size * 0.62
         }

@@ -1,4 +1,5 @@
 #include "SupportDialog.h"
+#include "gui/ScopedChildWidget.h"
 #include "StyleConstants.h"
 #include "core/LogCategories.h"
 #include "core/SupportBundle.h"
@@ -525,7 +526,9 @@ void SupportDialog::bundleWritten(const QString& path)
     m_statusLabel->setText(QStringLiteral("Bundle created: %1").arg(QFileInfo(path).fileName()));
 
     // Ask user what to do
-    QMessageBox msgBox(this);
+    // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+    ScopedChildWidget<QMessageBox> msgBoxOwner(this);
+    QMessageBox& msgBox = *msgBoxOwner.get();
     msgBox.setWindowTitle(QStringLiteral("Support Bundle Created"));
     msgBox.setText(QStringLiteral("Support bundle saved to:\n%1").arg(path));
     msgBox.setInformativeText(QStringLiteral(
@@ -545,6 +548,8 @@ void SupportDialog::bundleWritten(const QString& path)
     auto* issueBtn = msgBox.addButton(QStringLiteral("File an Issue"), QMessageBox::ActionRole);
     msgBox.addButton(QMessageBox::Close);
     msgBox.exec();
+    // The parent may have died in exec() and taken the dialog with it.
+    if (!msgBoxOwner) { return; }
 
     if (msgBox.clickedButton() == openBtn) {
         SupportBundle::openBundleFolder();

@@ -3,7 +3,8 @@
 
 import SwiftUI
 
-/// One row of the tree: a name, the line under it, and its mark.
+/// One row of the tree: a name, the line under it, its mark and, for a row
+/// that opens a page, its chevron.
 struct SetupRow: View {
     let title: String
     let detail: String?
@@ -16,11 +17,11 @@ struct SetupRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.body.weight(.semibold))
-                    .foregroundStyle(unavailable ? .secondary : .primary)
+                    .foregroundStyle(unavailable ? WorkspacePalette.textInactive : WorkspacePalette.textPrimary)
                 if let detail {
                     Text(detail)
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(unavailable ? WorkspacePalette.textScale : WorkspacePalette.textSecondary)
                         .lineLimit(unavailable ? nil : 1)
                         .fixedSize(horizontal: false, vertical: unavailable)
                 }
@@ -28,7 +29,11 @@ struct SetupRow: View {
             Spacer(minLength: 8)
             SetupTagBadge(tag: tag)
                 .opacity(unavailable ? 0.5 : 1)
+            if !unavailable {
+                SetupChevron()
+            }
         }
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(unavailable ? .isStaticText : [])
     }

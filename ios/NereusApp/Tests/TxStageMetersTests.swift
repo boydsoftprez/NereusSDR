@@ -288,18 +288,18 @@ struct TxStageMetersTests {
 
     // MARK: Drawing
 
-    /// What marks the strip in a picture: a bar's red ground, or the older
-    /// Core's reason box.
+    /// What marks the strip in a picture: a bar's red ground, found by its
+    /// color (ChromeColours.gaugeRedZone, a kept meter zone nothing else
+    /// draws), or the older Core's reason box, found by its accessibility
+    /// identifier. The box's ground is ChromeColours.reason, kGlassBtnBot,
+    /// which is also the lower stop of every raised button in the panel, so
+    /// its color cannot find it.
     enum Mark {
         case redGround
         case reason
 
-        var colour: (Int, Int, Int) {
-            switch self {
-            case .redGround: (0x1E, 0x0E, 0x12)
-            case .reason: (0x14, 0x1C, 0x28)
-            }
-        }
+        static let redGroundColour = (0x1E, 0x0E, 0x12)
+        static let reasonIdentifier = "txStagesReason"
     }
 
     /// The main screen with the TX panel open, the panel scrolled so the
@@ -314,16 +314,23 @@ struct TxStageMetersTests {
         let root = StageShotRoot(model: model)
             .environment(\.dynamicTypeSize, largeText ? .accessibility1 : .large)
             .preferredColorScheme(.dark)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         if sideways {
             host.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: 62, bottom: 21, right: 62)
         }
         host.view.frame = CGRect(origin: .zero, size: size)
+        // The reason box is found by its identifier, which SwiftUI gives
+        // only while the application's accessibility is on.
+        let wasOn = SetupTypedEntryTests.applicationAccessibility()
+        if mark == .reason {
+            SetupTypedEntryTests.setApplicationAccessibility(true)
+        }
         window.rootViewController = host
         window.isHidden = false
         defer {
             window.isHidden = true
             window.rootViewController = nil
+            SetupTypedEntryTests.setApplicationAccessibility(wasOn)
         }
         let bandDraw = try await ShotWait.requireBandLaidOut(model.main.band, in: window)
         BandFlagShotTests.feed(model.main.band, width: bandDraw.requestedPixels, lines: Int(size.height * 3))
@@ -340,7 +347,7 @@ struct TxStageMetersTests {
         let root = AppletColumn(main: model.main)
             .environment(\.horizontalSizeClass, .regular)
             .preferredColorScheme(.dark)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         host.view.frame = CGRect(origin: .zero, size: size)
         window.rootViewController = host
         window.isHidden = false
@@ -371,7 +378,7 @@ struct TxStageMetersTests {
         while found == nil {
             scroll.setContentOffset(CGPoint(x: 0, y: min(offset, furthest)), animated: false)
             await ShotWait.laidOut(window)
-            found = Self.firstRow(of: mark.colour, in: frame, image: render(window))
+            found = try locate(mark, in: frame, window: window)
             if offset >= furthest {
                 break
             }
@@ -384,7 +391,69 @@ struct TxStageMetersTests {
         let image = render(window)
         #expect(abs(scroll.contentOffset.y - target) < 1,
                 "scrolled to \(scroll.contentOffset.y), wanted \(target) of \(furthest), row \(row)")
+        if mark == .reason {
+            // The box found by its identifier is the box drawn: its edge on
+            // top in ChromeColours.reasonEdge and its ground inside.
+            let box = try #require(reasonBox(in: window), "the reason box went after the scroll")
+            let edge = try #require(Self.pixel(at: CGPoint(x: box.midX, y: box.minY + 0.5), image: image))
+            let ground = try #require(Self.pixel(at: CGPoint(x: box.midX, y: box.minY + 3), image: image))
+            #expect(Self.near(edge, WorkspacePaletteTests.hex(ChromeColours.reasonEdge)), "edge \(String(edge, radix: 16))")
+            #expect(Self.near(ground, WorkspacePaletteTests.hex(ChromeColours.reason)), "ground \(String(ground, radix: 16))")
+        }
         return image
+    }
+
+    /// The row where `mark` starts inside `rect`, in window points, or nil
+    /// when it is not on screen there.
+    private func locate(_ mark: Mark, in rect: CGRect, window: UIWindow) throws -> CGFloat? {
+        switch mark {
+        case .redGround:
+            return Self.firstRow(of: Mark.redGroundColour, in: rect, image: render(window))
+        case .reason:
+            guard let box = reasonBox(in: window), rect.contains(box) else {
+                return nil
+            }
+            return box.minY
+        }
+    }
+
+    /// The reason box's frame in the window, by its accessibility identifier.
+    private func reasonBox(in window: UIWindow) -> CGRect? {
+        guard let element = SetupTypedEntryTests.element(Mark.reasonIdentifier, in: window) else {
+            return nil
+        }
+        // An accessibility frame is in the screen's coordinates.
+        guard let screen = window.windowScene?.screen else {
+            return nil
+        }
+        let frame = window.convert(element.accessibilityFrame, from: screen.coordinateSpace)
+        return frame.isEmpty ? nil : frame
+    }
+
+    /// The pixel at `point` (window points) as 0xRRGGBB.
+    private static func pixel(at point: CGPoint, image: UIImage) -> UInt32? {
+        guard let cgImage = image.cgImage,
+              let space = CGColorSpace(name: CGColorSpace.sRGB) else {
+            return nil
+        }
+        let scale = CGFloat(cgImage.width) / image.size.width
+        let x = Int(point.x * scale), y = Int(point.y * scale)
+        guard x >= 0, y >= 0, x < cgImage.width, y < cgImage.height else {
+            return nil
+        }
+        var bytes = [UInt8](repeating: 0, count: 4)
+        guard let context = CGContext(data: &bytes, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                      space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            return nil
+        }
+        context.draw(cgImage, in: CGRect(x: -x, y: y - cgImage.height + 1, width: cgImage.width, height: cgImage.height))
+        return UInt32(bytes[0]) << 16 | UInt32(bytes[1]) << 8 | UInt32(bytes[2])
+    }
+
+    private static func near(_ a: UInt32, _ b: UInt32) -> Bool {
+        [16, 8, 0].allSatisfy { shift in
+            abs(Int((a >> UInt32(shift)) & 0xFF) - Int((b >> UInt32(shift)) & 0xFF)) <= 4
+        }
     }
 
     private func render(_ window: UIWindow) -> UIImage {

@@ -4,6 +4,10 @@
 //            J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-10-11 One serial device under two spellings is one assignment.
 //            J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-20 A saved channel whose slices are made after CAT starts keys and
+//            answers on them (Discord report: COM-port PTT dead after every
+//            restart until VFO A was picked again). J.J. Boyd (KG4VCF),
+//            AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include "CatFixtureHarness.h"
 #include "CatSerialTestDevice.h"
@@ -41,6 +45,42 @@ class TstCatSerialPtt : public QObject {
         return service.applyGlobalConfig(global);
     }
 private slots:
+    void slicesMadeAfterStartAreCapturedOnce() {
+        // A desktop starts CAT before the radio connects and makes slice 0,
+        // so the saved channel finds no slice to capture at start.
+        RxCatMockConnection connection; RadioModel model;
+        model.injectConnectionForTest(&connection);
+        model.moxController()->setTimerIntervals(0, 0, 0, 0, 0, 0);
+        model.moxController()->setMoxCheck([] { return safety::BandPlanGuard::MoxCheckResult{true, {}}; });
+        model.setBoardForTest(HPSDRHW::HermesLite); model.configureStreamPool(2, 3, 192000);
+        const auto device=std::make_shared<CatSerialTestDevice>(); CatService& service=*model.catService();
+        QVERIFY(configure(service,device)); service.startConfigured(); QVERIFY(model.slices().isEmpty());
+        const quint64 session=service.sessionIds(1).first();
+        QCOMPARE(service.channelConfig(1).binding.primaryIncarnation,quint64(0));
+        QSignalSpy changed(&service,&CatService::configurationChanged);
+        QCOMPARE(model.addSlice(),0); QCOMPARE(model.addSlice(),1);
+        for (SliceModel* slice : model.slices()) {
+            model.sliceOwnership()->setOwner(slice->sliceIndex(), SliceOwnership::stationDevice());
+            slice->setFrequency(14074000);
+        }
+        model.txSliceArbiter()->requestHandoff(0, SliceOwnership::stationDevice());
+        const CatBinding binding=service.channelConfig(1).binding;
+        QCOMPARE(binding.primaryIncarnation,model.sliceOwnership()->refOf(0).incarnation);
+        QCOMPARE(binding.secondaryIncarnation.value_or(0),model.sliceOwnership()->refOf(1).incarnation);
+        QCOMPARE(changed.size(),2);
+        // Captured in place: the open session and the PTT input keep running.
+        QVERIFY(service.session(session)); QCOMPARE(service.session(session)->binding(),binding);
+        QCOMPARE(service.processFrame(session,"FA;"),QByteArray("FA00014074000;"));
+        sample(service,device,1,false,false); sample(service,device,1,true,false);
+        QVERIFY(model.moxController()->isMox()); QCOMPARE(service.pttState(),QString("Asserted"));
+        sample(service,device,1,false,false); QVERIFY(!model.moxController()->isMox());
+        // A side that captured a slice still refuses its id once reused.
+        model.removeSlice(1); QCOMPARE(model.addSlice(),1);
+        model.sliceOwnership()->setOwner(1, SliceOwnership::stationDevice());
+        QCOMPARE(service.channelConfig(1).binding,binding);
+        QCOMPARE(service.processFrame(session,"FB;"),QByteArray("?;"));
+        service.stopAll(); pumpCat(); model.injectConnectionForTest(nullptr);
+    }
     void init() {
         for (const QString& key : AppSettings::instance().allKeys()) {
             if (key.startsWith("Cat/")) { AppSettings::instance().remove(key); }

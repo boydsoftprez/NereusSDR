@@ -309,6 +309,6 @@ all the rules above. Read the repo's `COPYING` and the header of each upstream
 file, and copy that header byte-for-byte; do not assume the header form, since
 files differ. Keep every `Copyright (C)` line and author tag, add the
 Modification history block, and carry inline comments verbatim. Add the row to
-`DESKHPSDR-PROVENANCE.md` for deskHPSDR; piHPSDR has no provenance file yet, so
-create one in the same commit as the first port. Both repos are
+`DESKHPSDR-PROVENANCE.md` for deskHPSDR or `PIHPSDR-PROVENANCE.md` for
+piHPSDR. Both repos are
 GPLv3-or-later, the licence NereusSDR ships under.

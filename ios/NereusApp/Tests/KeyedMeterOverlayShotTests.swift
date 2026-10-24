@@ -222,7 +222,7 @@ struct KeyedMeterOverlayShotTests {
         let size = sideways ? CGSize(width: 874, height: 402) : CGSize(width: 402, height: 874)
         let window = try BandFlagShotTests.window(size: size)
         if sideways { window.frame.origin.y = 120 }
-        let host = UIHostingController(rootView: KeyedMeterShotRoot(model: model)
+        let host = ShotHosting.host(KeyedMeterShotRoot(model: model)
             .environment(\.dynamicTypeSize, large ? .accessibility1 : .large)
             .preferredColorScheme(light ? .light : .dark))
         if sideways { host.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: 62, bottom: 21, right: 62) }

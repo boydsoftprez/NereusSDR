@@ -21,6 +21,11 @@
 //               Claude Code.
 //   2026-09-29: closing a leg whose WebSocket is still opening writes
 //               nothing to it (aLegClosedWhileOpeningWritesNothing).
+//   2026-10-22: a relay reached by name over IPv4 when IPv6 is silent
+//               (aLegReachesItsRelayByNamePastASilentAddress). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22: no Nagle on the tunnel's connection to the relay.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -46,6 +51,8 @@
 
 #include "OperatorWording.h"
 #include "core/security/StationIdentity.h"
+#include "StalledListener.h"
+#include "core/session/HappyEyeballs.h"
 #include "core/session/RelayLeg.h"
 #include "core/session/SystemProxy.h"
 #include "fakes/LoginProxy.h"
@@ -170,7 +177,11 @@ class TstRelayLeg final : public QObject {
 
 private slots:
     void initTestCase() { QStandardPaths::setTestModeEnabled(true); }
-    void cleanup() { SystemProxy::setProxyForTest(std::nullopt); }
+    void cleanup()
+    {
+        SystemProxy::setProxyForTest(std::nullopt);
+        HappyEyeballs::setResolverForTest({});
+    }
 
     void routeObservationFollowsUsablePeerAndCurrentSocket()
     {
@@ -768,6 +779,53 @@ private slots:
         QTRY_VERIFY(sawConnect);
         QTRY_VERIFY(!connection->received.isEmpty());
         QCOMPARE(connection->received.first(), QByteArray("\x80proxy-token", 12));
+        leg->close();
+    }
+    // 2026-10-22: the relay reached by NAME on a network whose IPv6 path
+    // is silent (its address leaves the connection unanswered) joins over
+    // IPv4 well inside the time a plain socket spends on IPv6 (here, a
+    // silent first address from tests/StalledListener.h), and the
+    // route names the relay's real address, not the loopback tunnel.
+    void aLegReachesItsRelayByNamePastASilentAddress()
+    {
+        RelayPlayer relay;
+        const quint16 port = relay.server->serverPort();
+        Test::StalledListener silent;
+        const QHostAddress silentAddress = silent.start(port);
+        if (silentAddress.isNull()) {
+            QSKIP(qPrintable(silent.whyNot));
+        }
+        HappyEyeballs::setResolverForTest([silentAddress](const QString&) {
+            return QList<QHostAddress>{silentAddress, QHostAddress(QStringLiteral("127.0.0.1"))};
+        });
+        auto leg = RelayLeg::create();
+        QVERIFY(leg);
+        auto source = leg->sourceFor(IceConfiguration::kControlLane);
+        QVERIFY(source);
+        source->start([](const QString&) {});
+        leg->open(QUrl(QStringLiteral("ws://localhost:%1/v1/relay").arg(port)),
+                  QStringLiteral("name-token"));
+        auto connection = relay.waitForConnection(3000);
+        QVERIFY(connection);
+        // Through the race (its tunnel's connection reached the relay), not
+        // Qt's own one-address-at-a-time connect.
+        const auto* legSocket = leg->findChild<QWebSocket*>(QString(), Qt::FindDirectChildrenOnly);
+        QVERIFY(legSocket != nullptr);
+        QAbstractSocket* upstream = HappyEyeballs::upstreamOf(legSocket);
+        QVERIFY(upstream != nullptr);
+        // Section 12.5: no Nagle on the leg, past the tunnel too.
+        QVERIFY(upstream->socketOption(QAbstractSocket::LowDelayOption).toInt() != 0);
+        QTRY_VERIFY(!connection->received.isEmpty());
+        QCOMPARE(connection->received.first(), QByteArray("\x80name-token", 11));
+        connection->socket->sendBinaryMessage(QByteArray("\x81\x01\x00", 3));
+        QTRY_COMPARE(leg->state(), RelayLeg::State::Joined);
+        connection->socket->sendBinaryMessage(QByteArray("\x82\x01", 2));
+        QTRY_VERIFY(leg->peerPresent());
+        const auto route = source->networkPathSnapshot();
+        QVERIFY(route);
+        QCOMPARE(route->remoteAddress, QStringLiteral("127.0.0.1"));
+        QCOMPARE(route->remotePort, port);
+        QVERIFY(route->localPort != 0);
         leg->close();
     }
 };

@@ -215,10 +215,10 @@ struct Listed {
 const Listed kKeptByDecision[] = {
     { "look-dialog-setup-hardware-config--antenna-alex*", "QFrame", "#140f12",
       "kept (settled 2026-10-10): the Block TX safety frame, danger at the source's 8 percent alpha "
-      "(AntennaAlexAntennaControlTab.cpp:247), a translucent tint the analyser does not model" },
+      "(AntennaAlexAntennaControlTab.cpp:302), a translucent tint the analyser does not model" },
     { "look-dialog-setup-hardware-config--antenna-alex*", "QLabel", "#1f161a",
       "kept (settled 2026-10-10): the Block TX safety note over that tint "
-      "(AntennaAlexAntennaControlTab.cpp:267)" },
+      "(AntennaAlexAntennaControlTab.cpp:322)" },
     { "look-dialog-lit-psa-on", "QLabel", "#ffaa70",
       "kept (settled 2026-10-10): the TX filter overlay label is the user's colour setting "
       "(StyleConstants:388)" },

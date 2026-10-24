@@ -74,6 +74,18 @@
 //   2026-10-11 - filterTypeLinearPhase(): the filter type the channel
 //                 holds, for tst_dsp_options_first_apply. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - RX meter stamps: meterReadings() returns every meter from
+//                 one lane refresh with the time the lane read them, on the
+//                 producer clock (meterClockNs), or the last whole read
+//                 if every attempt finds the lane mid-write. NereusSDR-original, by
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code.
+//   2026-10-22 - takeSlowNrCalls: the channel's noise-reduction calls over
+//                 50 ms since the previous take (dsplock.c), with the stages
+//                 that ran, DFNR and MNR included; takeOutputNonFiniteSamples:
+//                 non-finite samples in fexchange2's output. For the Core
+//                 log. Measures only. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code. NereusSDR-original.
 // =================================================================
 
 //=================================================================
@@ -1147,6 +1159,32 @@ public:
     // publish a stale reading treats the channel as having none yet.
     bool meterReadingReady() const;
 
+    // RX meter stamps (NereusSDR-original): every RxMeterType from one
+    // refresh, and when it was read. getMeter's reads are separate, so a
+    // lane refresh landing between two of them mixes two refreshes; these
+    // never do. readNs is meterClockNs() as the lane finished reading WDSP,
+    // 0 before its first refresh; with no lane (or on the lane) it is the
+    // time of this call. Off the lane this asks for a refresh, as getMeter.
+    // If every attempt finds the lane mid-write, it returns the last whole
+    // read (and warns once), never a torn one.
+    struct MeterReadings {
+        static constexpr int kCount = static_cast<int>(RxMeterType::AgcAvg) + 1;
+        std::array<double, kCount> values{};
+        qint64 readNs{0};
+        double value(RxMeterType type) const
+        {
+            const int index = static_cast<int>(type);
+            return index >= 0 && index < kCount ? values[static_cast<std::size_t>(index)]
+                                                : -140.0;
+        }
+    };
+    MeterReadings meterReadings() const;
+
+    // The clock meter readings are stamped on: steady nanoseconds, the
+    // Core's producer clock (DaemonSpectrumSource::monotonicNowNs and the
+    // audio capture clock, displayClockVersion 1).
+    static qint64 meterClockNs();
+
     // --- DSP load (R-R3-40, NereusSDR-original) ---
     //
     // Cumulative counters kept by this channel's WDSP worker since the
@@ -1184,6 +1222,28 @@ public:
     // periodic owner only: RadioModel's load sampler (a second caller would
     // split its intervals). Never waits for the worker.
     qint64 takeDspIntervalMaxBlockUs() const;
+
+    // The noise-reduction calls over 50 ms since the previous take: WDSP's NR
+    // stage group at one position (xrxa) and this channel's DFNR and MNR
+    // after fexchange2 (processIq). longestUs is 0 when the longest call's
+    // record went to the previous take; stages are dsplock.h's
+    // WDSP_NR_STAGE_* / WDSP_NR_NNR_* bits for what actually ran.
+    struct SlowNrCalls {
+        qint64 count{0};
+        qint64 longestUs{0};
+        int longestStages{0};
+        int stages{0};
+    };
+    // Takes them and starts the next interval. False (all 0) when the
+    // channel id is outside WDSP's range or WDSP is absent. One periodic
+    // owner only: RadioModel's load sampler. Never waits for the worker.
+    bool takeSlowNrCalls(SlowNrCalls& out) const;
+
+    // Non-finite samples (I and Q counted apart) in WDSP's output since the
+    // previous take, counted in processIq right after fexchange2, before
+    // DFNR or MNR. Diagnostics only; nothing is reset. Lock-free; one
+    // periodic owner only: RadioModel's load sampler.
+    qint64 takeOutputNonFiniteSamples() const;
 
     // --- Per-mode DSP-Options live-apply (Task 4.2) ---
     //
@@ -1315,12 +1375,21 @@ private:
     // this, isActive() follows m_active (R-R3-39). Equal without a lane.
     std::atomic<bool> m_dspActive{false};
     // getMeter's cache, one slot per RxMeterType, refreshed on the lane.
-    static constexpr int kRxMeterTypes = static_cast<int>(RxMeterType::AgcAvg) + 1;
+    static constexpr int kRxMeterTypes = MeterReadings::kCount;
     mutable std::array<std::atomic<double>, kRxMeterTypes> m_meterCache{};
     // Bumped by every change of the requested state; a refresh posted
     // before the change does not mark the cache ready.
     std::atomic<quint64> m_meterGeneration{0};
     mutable std::atomic<bool> m_meterCacheReady{false};
+    // RX meter stamps: odd while the lane writes the cache, so meterReadings
+    // can tell a whole refresh from a torn one; and when it read WDSP.
+    mutable std::atomic<quint64> m_meterCacheSequence{0};
+    mutable std::atomic<qint64> m_meterCacheReadNs{0};
+    // The last whole read meterReadings returned, for a read that finds the
+    // lane mid-write on every attempt. The lane never takes this mutex.
+    mutable std::mutex m_lastMeterReadingsMutex;
+    mutable std::optional<MeterReadings> m_lastMeterReadings;
+    mutable std::atomic<bool> m_tornMeterReadWarned{false};
     // NNR as the lane last read it, and the accepted tuning (the lane writes
     // what WDSP accepted). Guarded by m_nnrMutex: read on the owner's
     // thread, written on the lane.
@@ -1433,6 +1502,10 @@ private:
     std::atomic<bool> m_dfnrActive{false};
     std::atomic<bool> m_bnrActive{false};
     std::atomic<bool> m_mnrActive{false};
+
+    // 2026-10-22: non-finite samples in fexchange2's output since the last
+    // takeOutputNonFiniteSamples (written on the DSP thread, relaxed).
+    mutable std::atomic<qint64> m_outputNonFinite{0};
 
 #ifdef HAVE_DFNR
     // DeepFilterNet3 filter instance (Sub-epic C-1, Task 9).

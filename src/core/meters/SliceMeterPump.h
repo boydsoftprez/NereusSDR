@@ -76,6 +76,10 @@
 //                 reading from the window, not one value for every slice.
 //                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                 Anthropic Claude Code.
+//   2026-10-22 -- RX meter stamps: poll() reads each slice's readings from
+//                 one receive lane refresh and writes its read time as the
+//                 slice's meterReadingNs. J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs

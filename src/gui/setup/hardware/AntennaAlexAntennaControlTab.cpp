@@ -5,6 +5,8 @@
 // Ported from Thetis sources:
 //   Project Files/Source/Console/setup.designer.cs (~lines 5981-7000+,
 //     grpAlexAntCtrl + panelAlexTXAntControl + panelAlexRXAntControl)
+//   Project Files/Source/Console/setup.cs (13682-13770,
+//     ProcessAlexAntCheckBox: the RX-only checkboxes)
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -43,8 +45,15 @@
 //                (SetupFit::FitRow), the safety note wraps only when the
 //                row is narrow, and leftover height goes to the bottom.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - The RX-only trio is three checkboxes per band again, as in
+//                Thetis: RX1/RX2 (or their SKU names) rule each other out,
+//                XVTR is independent, and unchecking every box returns the
+//                band to none (processRxOnlyCheckBox, ported from
+//                setup.cs ProcessAlexAntCheckBox). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
+// --- From setup.designer.cs ---
 //=================================================================
 // setup.designer.cs
 //=================================================================
@@ -65,6 +74,52 @@
 // You should have received a copy of the GNU General Public License
 // along with this program; if not, write to the Free Software
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+//
+//=================================================================
+// Continual modifications Copyright (C) 2019-2026 Richard Samphire (MW0LGE)
+//=================================================================
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
+//
+// --- From setup.cs ---
+//=================================================================
+// setup.cs
+//=================================================================
+// Thetis is a C# implementation of a Software Defined Radio.
+// Copyright (C) 2004-2009  FlexRadio Systems
+// Copyright (C) 2010-2020  Doug Wigley
+//
+// This program is free software; you can redistribute it and/or
+// modify it under the terms of the GNU General Public License
+// as published by the Free Software Foundation; either version 2
+// of the License, or (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+//
+// You may contact us via email at: sales@flex-radio.com.
+// Paper mail may be sent to: 
+//    FlexRadio Systems
+//    8900 Marybank Dr.
+//    Austin, TX 78750
+//    USA
 //
 //=================================================================
 // Continual modifications Copyright (C) 2019-2026 Richard Samphire (MW0LGE)
@@ -488,37 +543,94 @@ void AntennaAlexAntennaControlTab::buildRxGrid(QBoxLayout* outerLayout)
         rowSep->setFrameShadow(QFrame::Sunken);
         layout->addWidget(rowSep, gridRow, 4);
 
-        // RX-only group
-        auto* rxOnlyGrp = new QButtonGroup(this);
-        m_rxOnlyGroups[b] = rxOnlyGrp;
-        const int currentRxOnly = rxOnlyAntOf(band);  // 1-based
+        // RX-only trio: three checkboxes, as Thetis's chkAlexNNR1 /
+        // chkAlexNNR2 / chkAlexNNXV (CheckBoxTS), all wired to
+        // ProcessAlexAntCheckBox.
+        // From Thetis setup.designer.cs:117-124, 6791-6947 [v2.10.3.15]
         for (int a = 0; a < 3; ++a) {
-            auto* rb = new QRadioButton(grp);
-            rb->setProperty("nereusAntennaBand", static_cast<int>(band));
-            rb->setProperty("nereusAntennaColumn", QStringLiteral("rxOnly%1").arg(a + 1));
-            rb->setChecked((a + 1) == currentRxOnly);
+            auto* cb = new QCheckBox(grp);
+            cb->setProperty("nereusAntennaBand", static_cast<int>(band));
+            cb->setProperty("nereusAntennaColumn", QStringLiteral("rxOnly%1").arg(a + 1));
             // Tooltip will be set by applySkuProfile() with SKU-specific label.
-            rxOnlyGrp->addButton(rb, a + 1);
-            m_rxOnlyButtons[b][a] = rb;
-            IndicatorColumn::fitToIndicator(rb);
-            layout->addWidget(rb, gridRow, 5 + a, Qt::AlignCenter);
+            m_rxOnlyButtons[b][a] = cb;
+            IndicatorColumn::fitToIndicator(cb);
+            layout->addWidget(cb, gridRow, 5 + a, Qt::AlignCenter);
 
-            connect(rb, &QRadioButton::toggled, this, [this, band, antNum = a + 1](bool checked) {
-                if (!checked) { return; }
-                if (m_remoteAlex) {
-                    m_remoteAlex->setRxOnlyAnt(band, antNum);
-                    syncRxRow(perBandStateSlot(band));
-                    return;
-                }
-                m_alex->setRxOnlyAnt(band, antNum);
+            connect(cb, &QCheckBox::toggled, this, [this, band, a](bool) {
+                processRxOnlyCheckBox(band, a);
             });
         }
 
         ++gridRow;
     }
+    // The RX-only boxes show the stored value (0..5).
+    for (int row = 0; row < kBandCount; ++row) {
+        syncRxRow(row);
+    }
 
     layout->setRowStretch(gridRow, 1);
     outerLayout->addWidget(grp, 2);
+}
+
+// ── processRxOnlyCheckBox ─────────────────────────────────────────────────────
+//
+// From Thetis setup.cs:13682-13770 ProcessAlexAntCheckBox [v2.10.3.15]
+// RX1 and RX2 (the SKU's first two RX-only names) rule each other out; XVTR
+// is independent; the band takes the sum of the checked boxes' (index + 1):
+// 0 none, 1 RX1, 2 RX2, 3 XVTR, 4 RX1 + XVTR, 5 RX2 + XVTR
+// (Alex.getAlex().setRxOnlyAnt(band, (byte)ant)). Thetis then names the
+// band's RX-only antenna by the "winning" box, which NereusSDR reads from
+// the value (AlexController::rxOnlyLabelSlot), and pushes the selection to
+// the radio through AlexAntCtrlEnabled, which AlexController's
+// antennaChanged does here. The Aries, path illustrator, NF and
+// AntennaAuxChangedHandlers calls have no NereusSDR counterpart.
+void AntennaAlexAntennaControlTab::processRxOnlyCheckBox(Band band, int changed)
+{
+    const int row = perBandStateSlot(band);
+    if (row < 0 || row >= kBandCount || changed < 0 || changed > 2) { return; }
+    const auto& cboxes = m_rxOnlyButtons[static_cast<std::size_t>(row)];
+    for (QCheckBox* box : cboxes) {
+        if (!box) { return; }
+    }
+
+    int ant = 0;
+
+    // find which button was changed 
+    for (int i = 0; i < 2; ++i) {
+        if (i == changed) {
+            if (cboxes[static_cast<std::size_t>(i)]->isChecked()) {
+                ant = i + 1;
+            }
+            break;
+        }
+    }
+
+    if (ant != 0) {
+        // turn off unselected antenna 
+        for (int i = 1; i <= 2; ++i) {
+            if (ant != i) {
+                QSignalBlocker block(cboxes[static_cast<std::size_t>(i - 1)]);
+                cboxes[static_cast<std::size_t>(i - 1)]->setChecked(false);
+            }
+        }
+    }
+
+    ant = 0;
+    for (int i = 0; i < 3; ++i) {
+        if (cboxes[static_cast<std::size_t>(i)]->isChecked()) {
+            ant += i + 1;
+        }
+    }
+
+    if (m_remoteAlex) {
+        // R-R3-46: the Core applies it; the row shows what the Core keeps
+        // (or keeps its value when the edit is refused).
+        m_remoteAlex->setRxOnlyAnt(band, ant);
+        syncRxRow(row);
+        return;
+    }
+    m_alex->setRxOnlyAnt(band, ant);
+    syncRxRow(row);
 }
 
 // ── controller accessor ───────────────────────────────────────────────────────
@@ -571,14 +683,22 @@ void AntennaAlexAntennaControlTab::syncRxRow(int row)
     auto band = bandFromPerBandStateSlot(row);
     const int currentRx1     = rxAntOf(band);
     const int currentRxOnly  = rxOnlyAntOf(band);
+    // The RX-only value is the checked boxes' (index + 1) summed, R1 and R2
+    // never both (setup.cs:13682 ProcessAlexAntCheckBox [v2.10.3.15]):
+    // 1 or 4 checks the first, 2 or 5 the second, 3 to 5 XVTR.
+    const std::array<bool, 3> rxOnlyChecked{
+        currentRxOnly == 1 || currentRxOnly == 4,
+        currentRxOnly == 2 || currentRxOnly == 5,
+        currentRxOnly >= 3,
+    };
     for (int a = 0; a < 3; ++a) {
         if (auto* rb = m_rx1Buttons[row][a]) {
             QSignalBlocker sb(rb);
             rb->setChecked((a + 1) == currentRx1);
         }
-        if (auto* rb = m_rxOnlyButtons[row][a]) {
-            QSignalBlocker sb(rb);
-            rb->setChecked((a + 1) == currentRxOnly);
+        if (auto* cb = m_rxOnlyButtons[row][a]) {
+            QSignalBlocker sb(cb);
+            cb->setChecked(rxOnlyChecked[static_cast<std::size_t>(a)]);
         }
     }
 }
@@ -800,12 +920,12 @@ void AntennaAlexAntennaControlTab::applySkuProfile()
         }
     }
 
-    // RX-only radio-button tooltips — re-bind to SKU label.
+    // RX-only checkbox tooltips — re-bind to SKU label.
     for (int b = 0; b < kBandCount; ++b) {
         const auto band = bandFromPerBandStateSlot(b);
         for (int a = 0; a < 3; ++a) {
-            if (auto* rb = m_rxOnlyButtons[b][a]) {
-                rb->setToolTip(tr("RX-only %1 for %2")
+            if (auto* cb = m_rxOnlyButtons[b][a]) {
+                cb->setToolTip(tr("RX-only %1 for %2")
                                    .arg(profile.rxOnlyLabels[a])
                                    .arg(bandLabel(band)));
             }
@@ -943,7 +1063,7 @@ QRadioButton* AntennaAlexAntennaControlTab::rxButtonForTest(Band band, int ant) 
         ? m_rx1Buttons[static_cast<std::size_t>(b)][static_cast<std::size_t>(ant - 1)] : nullptr;
 }
 
-QRadioButton* AntennaAlexAntennaControlTab::rxOnlyButtonForTest(Band band, int ant) const
+QCheckBox* AntennaAlexAntennaControlTab::rxOnlyButtonForTest(Band band, int ant) const
 {
     const int b = perBandStateSlot(band);
     return (b >= 0 && b < kBandCount && ant >= 1 && ant <= 3)

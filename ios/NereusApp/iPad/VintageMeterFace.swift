@@ -35,7 +35,7 @@ struct VintageMeterFace: View {
     nonisolated static let mirrorLineUnits = 12.0
     nonisolated static let capUnits = 26.0
     nonisolated static let screwUnits = 11.0
-    nonisolated static let surround = Color(hex: 0x0F0F1A)
+    nonisolated static let surround = WorkspacePalette.appBg
     /// The lettering's typeface, a geometric sans like the desktop's.
     nonisolated static let typeface = "Futura-Medium"
     nonisolated static let boldTypeface = "Futura-Bold"

@@ -43,7 +43,7 @@ struct TransmitDisplayTests {
         /// A Core at minor 11 with media and `txStateVersion` 2, sending its
         /// transmit display at `txDisplay` (0 for none), with slice A at
         /// 7.236.400 and XIT 1.5 kHz on.
-        init(txDisplay: Int64, txState: Bool = true) throws {
+        init(txDisplay: Int64, txState: Bool = true, defaults: UserDefaults? = nil) throws {
             let mirror = MirrorStore(send: { _ in })
             mirror.apply(.hello(LinkMessage.Hello(major: 1, minor: 11, settingsSchema: 0, peer: "nereusd")))
             mirror.apply(.capabilities(LinkMessage.Capabilities(properties: [
@@ -73,7 +73,9 @@ struct TransmitDisplayTests {
                 ])))
             }
             mirror.apply(.snapshotComplete)
-            let defaults = try #require(UserDefaults(suiteName: "TransmitDisplayTests-\(UUID().uuidString)"))
+            // The same defaults again are the next launch of the app.
+            let fresh = UserDefaults(suiteName: "TransmitDisplayTests-\(UUID().uuidString)")
+            let defaults = try #require(defaults ?? fresh)
             self.mirror = mirror
             let recorded = recorded
             settings = SettingsProxyClient(send: { message in
@@ -201,6 +203,36 @@ struct TransmitDisplayTests {
         #expect(await settle { !rig.band.transmit.keyedHere && rig.sent.last?.spanHz == 192_000 })
         #expect(rig.sent.last?.centreHz == Self.frequency)
         #expect(rig.band.drawnSettings.scaleRange == BandDisplaySettings.desktopDefaults.scaleRange)
+    }
+
+    @Test("a receive zoom made by hand comes back at the next launch; the keyed zoom and the band's own asks keep none")
+    func receiveZoomIsKept() async throws {
+        let defaults = try #require(UserDefaults(suiteName: "TransmitDisplayTests-\(UUID().uuidString)"))
+        let first = try Rig(txDisplay: 3, defaults: defaults)
+        first.main.receive(.mediaState(.connected))
+        #expect(await settle { first.sent.last?.spanHz == 192_000 })
+        // The band's own first view keeps nothing.
+        #expect(first.band.settings.rxViewSpanHz == nil)
+        first.band.requestView(TuneGestures.View(centerHz: Self.frequency, spanHz: 48_000), byHand: true)
+        #expect(await settle { first.sent.last?.spanHz == 48_000 })
+        #expect(first.band.settings.rxViewSpanHz == 48_000)
+        // A pinch still under the fingers keeps nothing until they lift.
+        first.band.requestView(TuneGestures.View(centerHz: Self.frequency, spanHz: 30_000))
+        #expect(first.band.settings.rxViewSpanHz == 48_000)
+        first.band.requestView(TuneGestures.View(centerHz: Self.frequency, spanHz: 48_000), byHand: true)
+        // A zoom while keyed is the transmit span's, never the receive one's.
+        first.key(true)
+        #expect(await settle { first.band.transmit.keyedHere && first.sent.last?.spanHz == 8_000 })
+        first.band.requestView(TuneGestures.View(centerHz: Self.frequency, spanHz: 20_000), byHand: true)
+        #expect(await settle { first.sent.last?.spanHz == 20_000 })
+        #expect(first.band.settings.rxViewSpanHz == 48_000)
+        first.key(false)
+        #expect(await settle { first.sent.last?.spanHz == 48_000 })
+
+        let next = try Rig(txDisplay: 3, defaults: defaults)
+        next.main.receive(.mediaState(.connected))
+        #expect(await settle { next.sent.last?.spanHz == 48_000 })
+        #expect(next.sent.last?.centreHz == Self.frequency)
     }
 
     @Test("a zoom while keyed is held to the transmit display's reach and kept for the next key")

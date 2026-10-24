@@ -12,6 +12,13 @@
 // session.
 //
 // Modification history (NereusSDR):
+//   2026-10-22: NSDC v2: push() takes whether the frame is a current
+//               receiver measurement (false for a frame whose trace the
+//               decoder carried over a lost part). J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
+//   2026-10-21: the rows each push() queues can be taken at once, with the
+//               time each is due, so a widget can slide a row in before its
+//               trace is due. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-02: Capture metadata retained through frame, blend and repeat presentation.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-26: created for R-R3-21 / R-R3-08 (display in step with audio).
@@ -123,7 +130,12 @@ public:
     /// A decoded frame. A waterfall row after a gap first queues the blended
     /// rows for the gap's slots that have not already repeated.
     void push(const DisplayCodecFrame& frame, double centreHz, double spanHz);
-    void push(const DisplayCodecFrame& frame, const RemoteSpectrumCapture& capture);
+    /// measurementCurrent sets the frame's Item::measurementCurrent: false
+    /// for a frame that is not a current receiver measurement (an NSDC v2
+    /// frame whose trace was carried over its lost trace part). It changes
+    /// nothing else; noteLoss() may still clear it while the item waits.
+    void push(const DisplayCodecFrame& frame, const RemoteSpectrumCapture& capture,
+              bool measurementCurrent = true);
     /// A lost message: the decoder waits for a keyframe. While it waits,
     /// each row slot that passes with nothing to show repeats the last row.
     /// A keyframe later than the slots already repeated owes those rows back:
@@ -135,6 +147,15 @@ public:
     /// Every item due at nowNs, in order, plus any repeats that fell due.
     /// Without a map everything queued is due now (an older Core).
     std::vector<Item> takeDue(qint64 nowNs, std::optional<qint64> mapNs);
+    /// The waterfall rows the last push() queued, in order, taken once: the
+    /// Blended rows for a gap and the frame's own row unless it was owed
+    /// back under row debt (a Frame item whose frame.waterfallAdvance is
+    /// true). They stay queued for takeDue() too. Repeated rows are made in
+    /// takeDue() and are not here.
+    std::vector<Item> takeQueuedRows();
+    /// When item is due at nowNs under mapNs (nowNs without a map, or for a
+    /// map that would hold it longer than kMaxHoldNs).
+    qint64 dueNs(const Item& item, qint64 nowNs, std::optional<qint64> mapNs) const;
     /// When the next item or repeat falls due, or nothing.
     std::optional<qint64> nextDueNs(qint64 nowNs, std::optional<qint64> mapNs) const;
     int queued() const { return int(m_queue.size()); }
@@ -153,11 +174,11 @@ private:
         /// presentation, or nothing while it is still queued.
         std::optional<qint64> presentedNs;
     };
-    qint64 dueNs(const Item& item, qint64 nowNs, std::optional<qint64> mapNs) const;
     std::optional<qint64> nextRepeatNs() const;
     void enqueue(Item item);
 
     std::deque<Item> m_queue;
+    std::vector<Item> m_queuedRows;
     std::optional<LastRow> m_lastRow;
     /// Rows repeated since the last good row, each one of its slots.
     int m_repeats = 0;

@@ -1960,6 +1960,11 @@ private slots:
         // As MainWindow's applyRemoteRoleGating does for these settings.
         window.applet.setTransmitSettingsPermitted(true, {});
         window.applet.setTransmitChainSettingsPermitted(true, {});
+        // TUNE uses the Tune slider, chosen in Setup > Transmit > Power;
+        // with the default Drive Slider source the Tune slider is grayed.
+        h.station.transmitModel().setTuneDrivePowerSource(DrivePowerSource::TuneSlider);
+        QTRY_COMPARE(h.remote.transmitModel().tuneDrivePowerSource(),
+                     DrivePowerSource::TuneSlider);
         QSlider* drive = nullptr;
         QSlider* tune = nullptr;
         for (QSlider* slider : window.applet.findChildren<QSlider*>()) {
@@ -1968,7 +1973,7 @@ private slots:
         }
         QVERIFY(drive && tune);
         QVERIFY(drive->isEnabled());
-        QVERIFY(tune->isEnabled());
+        QTRY_VERIFY(tune->isEnabled());
 
         TransmitModel& core = h.station.transmitModel();
         const int driveWanted = core.power() == 37 ? 38 : 37;
@@ -2000,11 +2005,17 @@ private slots:
         window.follow(h.client);
         window.applet.setTransmitSettingsPermitted(true, {});
         window.applet.setTransmitChainSettingsPermitted(true, {});
+        // TUNE uses the Tune slider, chosen in Setup > Transmit > Power;
+        // with the default Drive Slider source the Tune slider is grayed.
+        h.station.transmitModel().setTuneDrivePowerSource(DrivePowerSource::TuneSlider);
+        QTRY_COMPARE(h.remote.transmitModel().tuneDrivePowerSource(),
+                     DrivePowerSource::TuneSlider);
         QSlider* tune = nullptr;
         for (QSlider* slider : window.applet.findChildren<QSlider*>()) {
             if (slider->accessibleName() == QStringLiteral("Tune power")) { tune = slider; }
         }
-        QVERIFY(tune && tune->isEnabled());
+        QVERIFY(tune);
+        QTRY_VERIFY(tune->isEnabled());
         TransmitModel& core = h.station.transmitModel();
         TransmitModel& mirror = h.remote.transmitModel();
         QVERIFY(core.setTunePowerForTxBand(20));
@@ -2048,11 +2059,17 @@ private slots:
         window.follow(h.client);
         window.applet.setTransmitSettingsPermitted(true, {});
         window.applet.setTransmitChainSettingsPermitted(true, {});
+        // TUNE uses the Tune slider, chosen in Setup > Transmit > Power;
+        // with the default Drive Slider source the Tune slider is grayed.
+        h.station.transmitModel().setTuneDrivePowerSource(DrivePowerSource::TuneSlider);
+        QTRY_COMPARE(h.remote.transmitModel().tuneDrivePowerSource(),
+                     DrivePowerSource::TuneSlider);
         QSlider* tune = nullptr;
         for (QSlider* slider : window.applet.findChildren<QSlider*>()) {
             if (slider->accessibleName() == QStringLiteral("Tune power")) { tune = slider; }
         }
-        QVERIFY(tune && tune->isEnabled());
+        QVERIFY(tune);
+        QTRY_VERIFY(tune->isEnabled());
         TransmitModel& core = h.station.transmitModel();
         TransmitModel& mirror = h.remote.transmitModel();
         QVERIFY(core.setTunePowerForTxBand(20));

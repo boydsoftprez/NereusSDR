@@ -4,7 +4,7 @@
 import SwiftUI
 
 /// The flag's signal bar at card size: the Core's S-unit marks above a
-/// bar filled to the signal (blue up to S9, green past it), and the level
+/// bar filled to the signal (the accent blue up to S9, the live green past it), and the level
 /// beside it as the flag prints it (the app's text, in the Multimeter
 /// page's units). iOS limits how often the card changes, so the reading
 /// steps every few seconds.
@@ -26,7 +26,7 @@ struct ActivityLevelBar: View {
             }
             Text(dbm == nil ? "" : text ?? "")
                 .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(high ? ActivityColours.levelHigh : ActivityColours.levelLow)
+                .foregroundStyle(high ? ActivityColours.levelHigh : ActivityColours.levelLowText)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .frame(width: Self.dbmWidth, alignment: .leading)

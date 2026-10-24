@@ -181,6 +181,15 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22: NSDC v2 negotiation: kRemoteDisplayCodecV2SettingsKey,
+//               setDisplayCodecV2Enabled and displayCodecV2Available.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22: peerReadsRxOnlyPairs: RX-only antennas 0..5 for a peer
+//               that declared radioAntennaRows 2. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-21: Peer::tuneDriveSourceRefusalLogged, so a refused
+//               tuneDrivePowerSource is logged once per session.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11: R-DISP-RETUNE (third wave): spectrumPictureAvailable.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-09-29: the direct media ladder: the Core's STUN server for media
@@ -660,6 +669,12 @@ class TxWatchServer;
 /// request as the station device answers, asks or tells.
 using StationAnswer = std::function<void(const SessionMessage&)>;
 
+/// Display codec v2 (NSDC v2): the Core's fallback switch, an AppSettings
+/// boolean ("True" or "False"), read once at Core start. Absent or "True"
+/// lets a peer that declared displayCodec 2 agree version 2 display frames;
+/// anything else sends every connection version 1 frames.
+inline constexpr char kRemoteDisplayCodecV2SettingsKey[] = "RemoteDisplayCodecV2";
+
 class NEREUS_CORE_EXPORT StationServer : public QObject {
     Q_OBJECT
 
@@ -856,8 +871,14 @@ public:
     /// its hello, at minor 11), so it is sent Band 27 and the per-band
     /// lists with 2 m. Any other peer sees 2 m as GEN (BandLinkFit.h).
     bool peerKnows2m(SessionTransport* peer) const;
+    /// The peer reads and writes RX-only antenna values 0..5, Thetis's
+    /// checkbox sum (radioAntennaRows 2 in its hello, at minor 11). Any
+    /// other peer is sent 4 and 5 as 3 and may not write them
+    /// (RxOnlyLinkFit.h).
+    bool peerReadsRxOnlyPairs(SessionTransport* peer) const;
     /// The encoded `message` for `transport`: fitted by BandLinkFit for a
-    /// peer that does not know 2 m.
+    /// peer that does not know 2 m, and by RxOnlyLinkFit for one that
+    /// reads RX-only values 0..3 only.
     QByteArray encodeFor(SessionTransport* transport, const SessionMessage& message) const;
 
     /// The pairing token of a Core upgraded from before paired devices,
@@ -1291,6 +1312,16 @@ public:
     // spectrumPicture 1 in its hello and was told spectrumPictureVersion, so
     // its media start may declare it.
     bool spectrumPictureAvailable(quint64 epoch) const;
+    // Display codec v2 (NSDC v2): the Core's RemoteDisplayCodecV2 setting,
+    // read once at Core start (StationHost::start); on by default. Off, no
+    // peer is told displayCodecVersion and every connection is sent version
+    // 1 display frames.
+    void setDisplayCodecV2Enabled(bool enabled);
+    bool displayCodecV2Enabled() const;
+    // That session's peer agreed minor 11, declared displayCodec 2 in its
+    // hello and was told displayCodecVersion 2, so its media start may
+    // declare it.
+    bool displayCodecV2Available(quint64 epoch) const;
     // R-IOS-16 (iPhone app plan Task 28 fix wave, the safety review's
     // Important 5): controlChannelVersion. 1 when the Core has a bound
     // certificate, so it can answer an introduction through the remote
@@ -1801,6 +1832,9 @@ private:
         /// Desktop remote transmit: the refusal it was last sent with it
         /// (empty for a peer without remoteTx, or while permitted).
         TxRefusal txRefusalSent;
+        /// PR 588: a refused tuneDrivePowerSource write from this session
+        /// was logged; one line per session, not one per slider step.
+        bool tuneDriveSourceRefusalLogged = false;
         /// iPhone app Task 76: this admitted session's media epoch (never
         /// 0 once admitted, unique for the Core's life), its share of the
         /// display budget and why, and what its capabilities last said of
@@ -2982,6 +3016,9 @@ private:
     QTimer* m_graceTimer = nullptr;
     bool m_mediaEnabled = false;
     bool m_displayBudgetEnforcementEnabled = false;
+    // RemoteDisplayCodecV2; written once on the main thread before the
+    // server listens.
+    bool m_displayCodecV2Enabled = true;
     std::optional<DisplayBudgetLimits> m_displayBudget;
     bool m_displayBudgetForReasonPeersOnly = false;
     DisplayBudgetReason m_displayBudgetReason = DisplayBudgetReason::None;

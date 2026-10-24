@@ -51,8 +51,13 @@
 //               open is reported by name instead of passing silently into
 //               the status check. J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Anthropic Claude Code.
+//   2026-10-22, J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//     test ports come from unusedLoopbackPort() (UnusedLoopbackPort.h), below
+//     the kernel's ephemeral range, so a parallel test cannot take one between
+//     the pick and the listen.
 // =================================================================
 
+#include "UnusedLoopbackPort.h"
 #include <QtTest>
 
 #include <QHostInfo>
@@ -204,13 +209,7 @@ QString visibleText(const QString& html)
 
 int freePort(const QHostAddress& address)
 {
-    QTcpServer probe;
-    if (!probe.listen(address, 0)) {
-        return 0;
-    }
-    const int port = probe.serverPort();
-    probe.close();
-    return port;
+    return unusedLoopbackPort(address);
 }
 
 // A GET over `address`; the status code, 0 when nothing answered.

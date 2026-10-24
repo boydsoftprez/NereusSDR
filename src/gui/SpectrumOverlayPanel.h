@@ -90,6 +90,10 @@
 //                 the pill's own remembered target are gone. J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-10-22 - Closed-pill geometry refreshes wait for the pill to open;
+//                 unchanged remote/station gates and Clarity badge are
+//                 skipped; displayPillGeometryRefreshCountForTest. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #pragma once
@@ -252,6 +256,9 @@ public:
     void setPillPictureChooser(PillPictureChooser chooser) {
         m_pillPictureChooser = std::move(chooser);
     }
+    /// Test seam: how many times the Display pill's geometry has been
+    /// refreshed (refreshDisplayPillGeometry ran past its guards).
+    int displayPillGeometryRefreshCountForTest() const { return m_pillGeometryRefreshes; }
 
 public slots:
     // Phase 3P-I-a T18 — repopulate antenna combos from caps and hide
@@ -532,6 +539,10 @@ private:
     QVector<PillToggleGroup> m_pillToggleGroups;
     bool m_refreshingPillGeometry{false};
     bool m_pillGeometryQueued{false};
+    // A refresh was asked for while the pill was closed; showDisplayPill()
+    // lays it out on open.
+    bool m_pillGeometryStale{false};
+    int  m_pillGeometryRefreshes{0};
     QVector<QWidget*>        m_pillPages;       // in DisplayPillTab order
     QHash<QString, PillRow>  m_pillRows;        // by keyBase
     QStringList              m_pillRowOrder;
@@ -555,6 +566,8 @@ private:
     bool    m_gpuSliceShadowSupported{true};
     bool    m_remoteWindow{false};
     bool    m_coreOffersDecimation{false};
+    // False until setRemoteWindow() first applies, so its first call always does.
+    bool    m_remoteWindowApplied{false};
 
     // ── Waterfall tab: Clarity (display pill plan Task 17) ───────────────
     void updateClarityBadge();
@@ -564,6 +577,8 @@ private:
     bool m_clarityActive{false};
     bool m_clarityPaused{false};
     QLabel*      m_clarityBadge{nullptr};
+    // The state updateClarityBadge() last styled; empty until the first call.
+    QString      m_clarityBadgeState;
     QPushButton* m_clarityRetuneBtn{nullptr};
     QLabel*      m_waterfallNote{nullptr};
 
@@ -588,6 +603,8 @@ private:
     QLabel*  m_stationNote{nullptr};
     bool     m_stationRowsAvailable{true};
     QString  m_stationRowsReason;
+    // False until setStationRowsAvailable() first applies.
+    bool     m_stationRowsApplied{false};
 
     // ── VAX flyout ───────────────────────────────────────────────────────
     QWidget*   m_vaxFlyout{nullptr};

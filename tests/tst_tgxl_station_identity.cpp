@@ -25,6 +25,11 @@
 // 2026-10-01: RD-I11: the tuner's name is one word (Shack_Tuner); a name
 // with a space is refused on the Core and nothing reaches the tuner. J.J.
 // Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-22: ports a test hands to a later listener come from
+// unusedLoopbackPort() (UnusedLoopbackPort.h), below the kernel's ephemeral
+// range, so a parallel test cannot take one between the pick and the listen.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+#include "UnusedLoopbackPort.h"
 #include <QtTest/QtTest>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -449,10 +454,8 @@ private slots:
     // admission starts a new outage.
     void oneFaultPerOutage()
     {
-        QTcpServer reservation;
-        QVERIFY(reservation.listen(QHostAddress::LocalHost, 0));
-        const quint16 port = reservation.serverPort();
-        reservation.close();   // nothing answers: connection refused
+        const quint16 port = unusedLoopbackPort();   // nothing answers: connection refused
+        QVERIFY(port != 0);
 
         RadioModel model; prepare(model);
         model.tgxlConnection()->testSetReconnectBackoffUnitMs(20);

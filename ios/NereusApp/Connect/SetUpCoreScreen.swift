@@ -24,8 +24,8 @@ struct SetUpCoreScreen: View {
                         way("On a small box",
                             "Flash the NereusSDR Core card for a small single-board computer, plug it into your network next to the radio, and power it.")
                     }
-                    .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
+                    .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
                     ConnectChrome.Heading(text: "Then").padding(.top, 8)
                     VStack(spacing: 0) {
                         step(1, "It finds the radio by itself", "on the same network, as the desktop does today.")
@@ -34,8 +34,8 @@ struct SetUpCoreScreen: View {
                         Divider().overlay(ChromeColours.button)
                         step(3, "Come back and tap Find my Core", "or type its code from anywhere.")
                     }
-                    .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
+                    .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
                     ConnectChrome.Note(text: "The full guide is at nereussdr.com")
                         .padding(.top, 4)
                 }
@@ -59,7 +59,7 @@ struct SetUpCoreScreen: View {
         HStack(spacing: 12) {
             Text("\(number)")
                 .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(ChromeColours.accent)
+                .foregroundStyle(ChromeColours.accentText)
                 .frame(width: 22, height: 22)
                 .overlay(Circle().strokeBorder(ChromeColours.buttonBorder, lineWidth: 1))
             VStack(alignment: .leading, spacing: 2) {

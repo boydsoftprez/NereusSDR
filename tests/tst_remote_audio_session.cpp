@@ -4,6 +4,12 @@
 // Real DTLS/SRTP daemon-to-remote audio exercise.  LoopbackTransport is used
 // only for the authenticated control plane; both media peers use the default
 // LibDataChannel transport and carry actual RTP/Opus over their local link.
+//
+// Modification history (NereusSDR):
+//   2026-10-22: NSDC v2: the modern start also asks for displayCodecVersion
+//               2, which this Core offers a peer whose hello declares
+//               displayCodec 2; the minor 7 start stays bare. J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -177,9 +183,12 @@ double toneAmplitude(const QVector<float>& samples, int channel, double hz,
 // Core offers every peer whose hello declares spectrumPicture.
 // RADE V2: a peer that negotiates the waveform advertises waveformVersion in
 // the same modern start envelope, independently of audioProfileVersion.
+// NSDC v2: and displayCodecVersion 2, which this Core offers every peer whose
+// hello declares displayCodec 2 (the window does).
 QJsonObject modernStartWithoutConnection(bool audioProfile)
 {
     QJsonObject start{{QStringLiteral("op"), QStringLiteral("start")},
+                      {QStringLiteral("displayCodecVersion"), 2},
                       {QStringLiteral("mediaRelayRoutingVersion"), 1},
                       {QStringLiteral("mediaTunnelVersion"), 1},
                       {QStringLiteral("miniDisplayVersion"), 1},

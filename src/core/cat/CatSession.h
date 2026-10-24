@@ -12,6 +12,9 @@
 //              AI-assisted via OpenAI Codex.
 // 2026-10-04 - Native separate Hamlib dialect and guarded lifecycle integration,
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex; no new Thetis port.
+// 2026-10-20 - rebind: a restored channel's first capture of a slice made
+//              after CAT started reaches its open sessions. J.J. Boyd
+//              (KG4VCF), AI-assisted via Anthropic Claude Code.
 #pragma once
 #include "CatConfiguration.h"
 #include "CatStreamFramer.h"
@@ -33,6 +36,7 @@ public:
     CatSessionContext& context() { return m_context; }
     const CatSessionContext& context() const { return m_context; }
     const CatBinding& binding() const { return m_binding; }
+    void rebind(const CatBinding& binding) { m_binding = binding; }
     CatTransportKind transport() const { return m_transport; }
     CatStreamFramer& framer() { return m_framer; }
     void applyGuidResult(const CatRequest&, const CatCommandResult&);

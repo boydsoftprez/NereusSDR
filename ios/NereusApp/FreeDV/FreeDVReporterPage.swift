@@ -69,8 +69,8 @@ struct FreeDVReporterPage: View {
                     segment("Frequency", chosen: follow == .frequency, enabled: freedv.coreReason == nil,
                             identifier: "freedv.follow.frequency") { freedv.toggleFollow(.frequency) }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(FreeDVColours.segmentBorder, lineWidth: 1))
+                .clipShape(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(FreeDVColours.segmentBorder, lineWidth: 1))
             }
             if let bandReason, freedv.coreReason == nil {
                 AccessoryChrome.Note(text: bandReason)
@@ -93,8 +93,8 @@ struct FreeDVReporterPage: View {
                 .padding(.horizontal, 10)
                 .frame(height: 30)
                 .background(!enabled ? ChromeColours.buttonOff : (chosen ? ChromeColours.buttonOnBlue : ChromeColours.button),
-                            in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4)
+                            in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                     .strokeBorder(!enabled ? ChromeColours.buttonOffBorder
                                   : (chosen ? ChromeColours.buttonOnBlueBorder : ChromeColours.buttonBorder), lineWidth: 1))
                 .contentShape(Rectangle())
@@ -221,8 +221,8 @@ struct FreeDVReporterPage: View {
                 .font(.system(size: 13))
                 .padding(.horizontal, 8)
                 .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-                .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 3))
-                .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
+                .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)

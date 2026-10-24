@@ -37,6 +37,10 @@ warren@wpratt.com
 // and the model actually running. Later the same day: a request seen before
 // its owner channel stays pending (nnr_sync_limit), and SetRXANNRModel
 // requests its model through the limit instead of switching past it.
+// NereusSDR modifications (2026-10-22, J.J. Boyd KG4VCF, AI-assisted via
+// Anthropic Claude Code): nnr_log_stage and nnr_log_state give xrxa the NNR
+// model that runs and the applied limit, so a slow NR call is logged with the
+// model that actually ran. Read only; NNR behavior is unchanged.
 
 #include "comm.h"
 #include "nnet.h"
@@ -735,6 +739,23 @@ int getDelay_nnr (NNR a)
 int getRun_nnr(NNR a)
 {
 	return a->run;
+}
+
+/* NereusSDR (2026-10-22): the slow NR call log's view of NNR, read by xrxa
+ * under the channel DSP lock. nnr_log_stage: the model running at this
+ * position (dsplock.h WDSP_NR_STAGE_NNR_*), 0 when NNR does not run there.
+ * nnr_log_state: the applied limit and the model running anywhere,
+ * (limit << 2) | (run ? model + 1 : 0); it changes inside an xnnr call only
+ * when the worker applies a limit there. */
+int nnr_log_stage (NNR a, int pos)
+{
+	if (!a->run || a->position != pos) return 0;
+	return a->model == 1 ? WDSP_NR_STAGE_NNR_PREMIUM : WDSP_NR_STAGE_NNR_STANDARD;
+}
+
+int nnr_log_state (NNR a)
+{
+	return (a->limit << 2) | (a->run ? a->model + 1 : 0);
 }
 
 

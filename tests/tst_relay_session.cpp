@@ -52,6 +52,18 @@
 //   2026-10-15: the slow Core over the web relay with the window racing
 //               every path (PathRacer), as JJ's window dials. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22: the slow Core over a direct pair races, as a real window
+//               does, and runs both orders on every pass: direct first
+//               (rank ServiceDirect at connect) and relay first (the web
+//               relay at connect, moved to a direct pair within the first
+//               step of the better-path search). ICE nominating the web
+//               relay first on a loaded runner failed the old check.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22: NSDC v2 interop (display codec v2, Task 6): the media
+//               controllers' own connection over the web relay agrees
+//               display codec v2 at its start, and the display frames it
+//               delivers are version 2 (DisplayVersionTap). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -66,23 +78,34 @@
 #include <QWebSocketServer>
 
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <memory>
 #include <utility>
 
 #include "RendezvousTestHarness.h"
+#include "core/AudioEngine.h"
+#include "core/HpsdrModel.h"
 #include "core/security/ClientDeviceIdentity.h"
 #include "core/security/StationIdentity.h"
 #include "core/session/DataChannelTransport.h"
 #include "core/session/IceConfiguration.h"
 #include "core/session/PathRacer.h"
 #include "core/session/RelayLeg.h"
+#include "core/session/media/DaemonMediaController.h"
 #include "core/session/media/LibDataChannelMediaTransport.h"
 #include "core/session/StationClient.h"
 #include "core/session/StationRendezvous.h"
 #include "core/session/StationServer.h"
+#include "core/session/SwitchableTransport.h"
 #include "core/settings/SettingsProxy.h"
+#include "fakes/DisplayVersionTap.h"
+#include "gui/PanadapterApplet.h"
+#include "gui/PanadapterStack.h"
+#include "gui/RemoteMediaController.h"
+#include "gui/SpectrumWidget.h"
 #include "models/RadioModel.h"
+#include "models/SliceModel.h"
 
 using namespace NereusSDR;
 using namespace NereusSDR::Test::Rendezvous;
@@ -272,6 +295,7 @@ private slots:
         RelayLeg::setRelayUrlForTest(QUrl());
         DataChannelTransport::setAnswererOpenDelayForTest(0);
         RendezvousDialer::setLeavesServiceAtOpenForTest(false);
+        DataChannelTransport::setDirectCandidateDelayForTest(0);
     }
 
     // Only the web relay works: the session runs over it, both ends' legs
@@ -387,6 +411,100 @@ private slots:
         window.disconnectFromStation(QStringLiteral("test done"));
     }
 
+    // NSDC v2 interop (display codec v2, Task 6): with only the web relay
+    // working, the media controllers' own connection runs on the relay's
+    // media lane; its start agrees display codec v2, and every display
+    // frame it delivers to the window is version 2.
+    void relayedMediaAgreesDisplayCodecV2()
+    {
+        StandInRelay relay;
+        QVERIFY(relay.server->isListening());
+        LocalService service(/*stun=*/false, /*relay=*/false);
+        service.setRelayGrants(true);
+        RelayLeg::setRelayUrlForTest(QUrl(relay.url()));
+        QVERIFY2(service.start(), qPrintable(service.startFailure()));
+        CoreThroughService station;
+        // A radio with one slice whose stream the test feeds, and media on.
+        RadioModel& radio = *station.core.model;
+        radio.setBoardForTest(HPSDRHW::Saturn);
+        radio.configureStreamPool(/*userDdcCount=*/5, /*maxSlices=*/5,
+                                  /*defaultRateHz=*/192000);
+        radio.setConnectionStateForTest(ConnectionState::Connected);
+        const int sliceId = radio.addSlice();
+        QVERIFY(sliceId >= 0);
+        const int stream = radio.sliceById(sliceId)->streamIndex();
+        QVERIFY(stream >= 0);
+        station.core.server->setMediaEnabled(true);
+        DaemonMediaController daemonMedia(station.core.server.get(), &radio);
+        QVERIFY2(station.start(service), qPrintable(station.failure));
+        IceConfiguration::setOnlyLoopbackShimCandidatesForTest(true);
+
+        QTemporaryDir keyDir;
+        auto key = std::make_shared<const ClientDeviceIdentity>(
+            ClientDeviceIdentity::loadOrCreate(keyDir.path()));
+        QVERIFY(station.core.pairComputer(*key));
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.setConnectionStateForTest(ConnectionState::Connected);
+        remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
+        SettingsProxy proxy;
+        StationClient window(&remote, &proxy);
+        window.setDeviceIdentity(key, QStringLiteral("Shack MacBook"));
+        window.withholdFeatureForTest(QByteArrayLiteral("remoteTx")); // Display-only fixture.
+        PanadapterStack stack;
+        auto* pan = stack.addPanadapter(QStringLiteral("relay"));
+        pan->setActiveSliceIndex(sliceId);
+        pan->spectrumWidget()->setDisplayWindowPreservingHistory(
+            radio.streamCentreHz(stream), 48000);
+        stack.resize(600, 400);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        RemoteMediaController remoteMedia(&window, &remote, &stack);
+        Test::DisplayVersionTap tap(&remoteMedia);
+        QSignalSpy controls(station.core.server.get(), &StationServer::mediaControlReceived);
+        QSignalSpy frames(&remoteMedia, &RemoteMediaController::displayFrameReceived);
+        QVector<float> iq(2048);
+        for (int i = 0; i < iq.size(); i += 2) {
+            iq[i] = 0.01f * static_cast<float>(std::cos(double(i) * 0.17));
+            iq[i + 1] = 0.01f * static_cast<float>(std::sin(double(i) * 0.17));
+        }
+        QTimer display;
+        display.setInterval(20);
+        QObject::connect(&display, &QTimer::timeout, &display, [&radio, stream, &iq] {
+            QMetaObject::invokeMethod(&radio, "rawIqDataForStream", Qt::DirectConnection,
+                                      Q_ARG(int, stream), Q_ARG(QVector<float>, iq));
+        });
+        display.start();
+
+        QString why;
+        QVERIFY2(connectWindow(window, service, station, &why), qPrintable(why));
+        QCOMPARE(window.pathRank(), int(PathRacer::Floor));
+        QCOMPARE(window.capabilities().displayCodecVersion, 2);
+        EndWatch ends;
+        ends.watch(&window);
+        QVERIFY2(waitUntil([&] {
+                     tap.follow();
+                     return !frames.isEmpty() && tap.allVersions().size() >= 4;
+                 }, 60000, ends, QStringLiteral("display frames over the web relay"), &why),
+                 qPrintable(why));
+        display.stop();
+        // The media connection ran on the relay's media lane.
+        QVERIFY(!relay.forwarded[RelayLeg::kTagMedia].isEmpty());
+        int starts = 0;
+        for (const QList<QVariant>& call : controls) {
+            const QJsonObject control = call.at(0).toJsonObject();
+            if (control.value(QStringLiteral("op")).toString() == QLatin1String("start")) {
+                ++starts;
+                QCOMPARE(control.value(QStringLiteral("displayCodecVersion")).toInt(), 2);
+            }
+        }
+        QCOMPARE(starts, 1);
+        QCOMPARE(daemonMedia.displayCodecVersion(), quint32{2});
+        for (int version : tap.allVersions()) {
+            QCOMPARE(version, 2);
+        }
+        window.disconnectFromStation(QStringLiteral("test done"));
+    }
+
     // 2026-10-15: a Core that sees its own end open a second after the
     // window's (a busy Core, or one whose open came the long way round).
     // The window keeps its connection to the service until the Core speaks
@@ -497,12 +615,41 @@ private slots:
     // 2026-10-15: the same over a direct pair, every path open: the window
     // leaving the service at its own open ended every introduction the
     // service brokered, not only the relayed ones.
-    void aSlowCoreStillOpensOverADirectPair_data() { windowRows(); }
+    // PR 616: the window races, as a real window dials a paired Core, and
+    // both orders ICE can settle in are run on every pass. Direct first
+    // (the web relay's datagrams held back): the session opens on the
+    // direct pair. Relay first (the far end's signalled candidates held
+    // back on each connection that has the web relay's leg): the session
+    // opens on the web relay, and the window's better-path search moves it
+    // to a direct pair at the first step of its schedule.
+    void aSlowCoreStillOpensOverADirectPair_data()
+    {
+        QTest::addColumn<bool>("olderWindow");
+        QTest::addColumn<bool>("relayFirst");
+        QTest::newRow("this window, direct first") << false << false;
+        QTest::newRow("this window, relay first") << false << true;
+        QTest::newRow("older window, direct first") << true << false;
+        QTest::newRow("older window, relay first") << true << true;
+    }
     void aSlowCoreStillOpensOverADirectPair()
     {
         QFETCH(bool, olderWindow);
+        QFETCH(bool, relayFirst);
+        // Direct first: as aDirectPairStillWins, the relay's pair cannot
+        // succeed before the direct one. Relay first: the direct pairs are
+        // not formed until the web relay's pair has been nominated.
+        constexpr int kRelayHoldMs = 3000;
+        constexpr int kDirectDelayMs = 3000;
+        // The first step of the better-path search, then a whole new
+        // connection through the service, then the move.
+        constexpr int kUpgradeWaitMs = PathRacer::kUpgradeRetryMs.front() + kDirectDelayMs
+            + kServiceConnectBudgetMs + SwitchableTransport::kSwitchDeadlineMs;
         RendezvousDialer::setLeavesServiceAtOpenForTest(olderWindow);
         StandInRelay relay;
+        QVERIFY(relay.server->isListening());
+        if (!relayFirst) {
+            relay.holdDatagramsMs = kRelayHoldMs;
+        }
         LocalService service(/*stun=*/false, /*relay=*/false);
         service.setRelayGrants(true);
         RelayLeg::setRelayUrlForTest(QUrl(relay.url()));
@@ -510,6 +657,9 @@ private slots:
         CoreThroughService station;
         QVERIFY2(station.start(service), qPrintable(station.failure));
         DataChannelTransport::setAnswererOpenDelayForTest(1000);
+        if (relayFirst) {
+            DataChannelTransport::setDirectCandidateDelayForTest(kDirectDelayMs);
+        }
 
         QTemporaryDir keyDir;
         auto key = std::make_shared<const ClientDeviceIdentity>(
@@ -519,10 +669,23 @@ private slots:
         SettingsProxy proxy;
         StationClient window(&remote, &proxy);
         window.setDeviceIdentity(key, QStringLiteral("Shack MacBook"));
+        StationClient::ServiceRoute route;
+        route.servers = {service.url()};
+        route.rendezvousId = station.rendezvous->client()->stationId();
+        route.relayAllowed = true;
+        route.controlChannelVersion = 1;
+        window.setServiceRoute(route);
         QSignalSpy ended(station.rendezvous->client(), &RendezvousClient::introductionEnded);
+        EndWatch ends;
+        ends.watch(&window);
+        // A paired Core's identity key: the window races (link 21.1).
+        window.connectToStation(QUrl(), QString(), QString(), false,
+                                StationIdentity::fingerprintOf(
+                                    station.core.server->stationIdentity().publicKeySpki()));
         QString why;
-        QVERIFY2(connectWindow(window, service, station, &why), qPrintable(why));
-        QCOMPARE(window.pathRank(), int(PathRacer::ServiceDirect));
+        QVERIFY2(waitForHandshake(window, kServiceConnectBudgetMs, &why, nullptr, &ends),
+                 qPrintable(why));
+        QCOMPARE(window.pathRank(), int(relayFirst ? PathRacer::Floor : PathRacer::ServiceDirect));
         if (!olderWindow) {
             // This window's own fix, with or without the Core's: it stays
             // with the service until the Core speaks, so no introduction
@@ -530,6 +693,16 @@ private slots:
             const QString code = ended.isEmpty() ? QString() : ended.first().at(1).toString();
             QVERIFY2(ended.isEmpty(),
                      qPrintable(QStringLiteral("the introduction ended early: %1").arg(code)));
+        }
+        if (relayFirst) {
+            // waitUntil, not QTRY_*: it ends at its bound (or the session's
+            // end) and says why, where a QTRY_* wait runs on for twice its
+            // timeout, past QTest's function timeout at this bound.
+            QVERIFY2(waitUntil([&window] { return window.pathRank() == PathRacer::ServiceDirect; },
+                               kUpgradeWaitMs, ends,
+                               QStringLiteral("the session to move to a direct pair"), &why),
+                     qPrintable(QStringLiteral("%1 (rank %2)").arg(why).arg(window.pathRank())));
+            QVERIFY(window.isHandshakeComplete());
         }
         window.disconnectFromStation(QStringLiteral("test done"));
     }

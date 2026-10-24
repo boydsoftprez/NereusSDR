@@ -66,11 +66,11 @@ struct ModesOwnerBlock: View {
         .padding(.top, 8)
         .padding(.bottom, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(SliceListStyle.modesBlock, in: RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(colour, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+        .background(SliceListStyle.modesBlock, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(colour, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
         .overlay {
             if nudged {
-                RoundedRectangle(cornerRadius: 6).strokeBorder(SliceListStyle.nudge, lineWidth: 3).padding(-3)
+                RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(SliceListStyle.nudge, lineWidth: 3).padding(-3)
             }
         }
         .animation(.easeOut(duration: 0.2), value: nudged)

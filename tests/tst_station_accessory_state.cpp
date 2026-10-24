@@ -42,6 +42,11 @@
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-10-08: rotor control plan Task 4b: remoteRotorControlVersion now
 // travels last. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-22: ports a test hands to a later listener come from
+// unusedLoopbackPort() (UnusedLoopbackPort.h), below the kernel's ephemeral
+// range, so a parallel test cannot take one between the pick and the listen.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+#include "UnusedLoopbackPort.h"
 #include <QtTest/QtTest>
 #include <QFile>
 #include <QJsonArray>
@@ -259,7 +264,9 @@ private slots:
     void bindFailureIsObservedAndRepeatedEnableRetries()
     {
         QTcpServer blocker;
-        QVERIFY(blocker.listen(QHostAddress::LocalHost, 0));
+        const quint16 freedLater = unusedLoopbackPort();
+        QVERIFY(freedLater != 0);
+        QVERIFY(blocker.listen(QHostAddress::LocalHost, freedLater));
         const auto port = blocker.serverPort();
         RadioModel model;
         prepare(model);

@@ -2,6 +2,13 @@
 // src/gui/spectrum/WaterfallTicker.h  (NereusSDR-native)
 // =================================================================
 // 2026-05-25  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
+// 2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: the
+//             period is held in nanoseconds and each tick is due at a
+//             fixed multiple of it, so a remote pan can tick at the Core's
+//             row period (66.67 ms for two frames at 30 fps) with no drift.
+// 2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: exported
+//             from the GUI DLL (NEREUS_GUI_EXPORT), so a connect to tick()
+//             from another image works on Windows.
 //
 // Dedicated worker-thread ticker for waterfall row pushes.  Isolates
 // the timer from main-thread state so a momentarily-busy GUI thread
@@ -25,6 +32,8 @@
 //
 // API:
 //   * setUpdatePeriodMs(int)  -- thread-safe; reschedules the timer.
+//   * setUpdatePeriodNs(qint64) -- the same, for a period that is not a
+//                                  whole number of milliseconds.
 //   * start() / stop()        -- thread-safe; starts/stops the timer.
 //   * tick()                  -- signal, fires on worker thread.
 //
@@ -35,13 +44,16 @@
 // =================================================================
 #pragma once
 
+#include "gui/NereusGuiExport.h"
+
+#include <QElapsedTimer>
 #include <QObject>
 #include <QTimer>
 #include <atomic>
 
 namespace NereusSDR {
 
-class WaterfallTicker : public QObject {
+class NEREUS_GUI_EXPORT WaterfallTicker : public QObject {
     Q_OBJECT
 public:
     explicit WaterfallTicker(QObject* parent = nullptr);
@@ -64,11 +76,29 @@ public:
     // work on the worker thread.
     void moveToWorkerThread(QThread* target);
 
+    // The period's bounds: 10 ms to 500 ms, as setUpdatePeriodMs() has
+    // always clamped.
+    static constexpr qint64 kMinPeriodNs = 10'000'000;
+    static constexpr qint64 kMaxPeriodNs = 500'000'000;
+
+    // Milliseconds from elapsedNs (time since the cadence's anchor) until
+    // tick number nextTick falls due at nextTick * periodNs. Rounded up,
+    // so a tick never fires before its slot; 0 when it is already due.
+    // Each slot is a fixed multiple of the period, so the rounding never
+    // accumulates: 15 ticks of 66.67 ms span 1000 ms.
+    static int msUntilTick(qint64 elapsedNs, qint64 nextTick, qint64 periodNs);
+
+    qint64 updatePeriodNs() const { return m_periodNs.load(); }
+
 public slots:
     // Reschedule the timer.  Called from any thread; the internal
     // QMetaObject::invokeMethod hop ensures the start() lands on the
     // worker thread that owns m_timer.
     void setUpdatePeriodMs(int ms);
+    // The period in nanoseconds (a remote pan's row period, which is
+    // rarely whole milliseconds). Clamped to kMinPeriodNs..kMaxPeriodNs;
+    // the same period again leaves the cadence alone.
+    void setUpdatePeriodNs(qint64 ns);
 
     // Start / stop the timer.  Idempotent.
     void start();
@@ -84,10 +114,17 @@ private:
     // worker-thread context (e.g. inside the invokeMethod lambdas in
     // start / stop / setUpdatePeriodMs).
     void ensureTimerOnCurrentThread();
+    // Worker thread only: start the cadence again from now, and arm the
+    // single-shot timer for the next tick's slot.
+    void restartCadence();
+    void scheduleNextTick();
 
-    QTimer            m_timer;
-    std::atomic<int>  m_periodMs{33};
-    std::atomic<bool> m_running{false};
+    QTimer              m_timer;
+    // Worker thread only: the cadence's anchor and the ticks since it.
+    QElapsedTimer       m_anchor;
+    qint64              m_ticksSinceAnchor{0};
+    std::atomic<qint64> m_periodNs{33'000'000};
+    std::atomic<bool>   m_running{false};
 };
 
 } // namespace NereusSDR

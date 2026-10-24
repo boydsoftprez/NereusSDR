@@ -45,6 +45,10 @@
 //               X509_NAME, as OpenSSL 4's X509_get_subject_name() is
 //               const. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-22: a closed link is let go when its far end stops taking
+//               data, and at the drain ceiling while its backlog still
+//               moves (UdpHop between the two ends). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -67,10 +71,13 @@
 #include <QSslKey>
 #include <QSslSocket>
 #include <QTemporaryDir>
+#include <QTimer>
+#include <QUdpSocket>
 #include <QWebSocket>
 #include <QWebSocketServer>
 
 #include <chrono>
+#include <deque>
 #include <memory>
 #include <optional>
 #include <thread>
@@ -177,6 +184,191 @@ struct OpenPair {
         }
         return waitFor([this] { return offerer->isOpen() && answerer->isOpen(); }, 15000);
     }
+};
+
+// A UDP hop between the two ends of a pair, so a test can slow or cut the
+// path under a closing connection. Each end is given one candidate, the
+// hop's socket facing it, in place of the other end's own; the hop sends
+// what arrives from one end on to the other end's real port.
+class UdpHop {
+public:
+    enum class Mode { Forward, Throttle, Drop };
+
+    UdpHop()
+    {
+        m_ok = m_facingAnswerer.bind(QHostAddress::LocalHost, 0)
+            && m_facingOfferer.bind(QHostAddress::LocalHost, 0);
+        QObject::connect(&m_facingAnswerer, &QUdpSocket::readyRead, &m_facingAnswerer,
+                         [this] { fromAnswerer(); });
+        QObject::connect(&m_facingOfferer, &QUdpSocket::readyRead, &m_facingOfferer,
+                         [this] { fromOfferer(); });
+        m_pace.setInterval(5);
+        QObject::connect(&m_pace, &QTimer::timeout, &m_pace, [this] { releasePaced(); });
+    }
+
+    bool bound() const { return m_ok; }
+    /// Throttle: what the answerer sends leaves at `bytesPerSecond`, held
+    /// in order, none dropped; what the offerer sends is not slowed.
+    /// Drop: nothing crosses either way.
+    void setMode(Mode mode, qint64 bytesPerSecond = 0)
+    {
+        m_mode = mode;
+        m_bytesPerSecond = bytesPerSecond;
+        m_paced.clear();
+        m_budget = 0.0;
+        m_sincePace.start();
+        if (mode == Mode::Throttle) {
+            m_pace.start();
+        } else {
+            m_pace.stop();
+        }
+    }
+    qint64 bytesToOfferer() const { return m_bytesToOfferer; }
+
+    // `candidate` from `fromAnswerer`'s end, rewritten as the hop's socket
+    // facing the other end; empty for any but the first host candidate.
+    QString rewrite(const QString& candidate, bool fromAnswerer)
+    {
+        QStringList fields = candidate.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        if (fields.size() < 8 || fields.at(2).compare(QStringLiteral("UDP"), Qt::CaseInsensitive) != 0
+            || !fields.at(4).contains(QLatin1Char('.')) || fields.at(7) != QLatin1String("host")) {
+            return {};
+        }
+        bool ok = false;
+        const int port = fields.at(5).toInt(&ok);
+        quint16& known = fromAnswerer ? m_answererPort : m_offererPort;
+        if (!ok || port <= 0 || port > 65535 || known != 0) {
+            return {};
+        }
+        known = static_cast<quint16>(port);
+        const QUdpSocket& facing = fromAnswerer ? m_facingOfferer : m_facingAnswerer;
+        fields[4] = QStringLiteral("127.0.0.1");
+        fields[5] = QString::number(facing.localPort());
+        return fields.join(QLatin1Char(' '));
+    }
+
+private:
+    void fromAnswerer()
+    {
+        while (m_facingAnswerer.hasPendingDatagrams()) {
+            QByteArray datagram(static_cast<qsizetype>(m_facingAnswerer.pendingDatagramSize()),
+                                Qt::Uninitialized);
+            const qint64 read = m_facingAnswerer.readDatagram(datagram.data(), datagram.size());
+            if (read < 0 || m_mode == Mode::Drop || m_offererPort == 0) {
+                continue;
+            }
+            datagram.resize(read);
+            if (m_mode == Mode::Throttle) {
+                m_paced.push_back(datagram);
+            } else {
+                toOfferer(datagram);
+            }
+        }
+    }
+
+    void fromOfferer()
+    {
+        while (m_facingOfferer.hasPendingDatagrams()) {
+            QByteArray datagram(static_cast<qsizetype>(m_facingOfferer.pendingDatagramSize()),
+                                Qt::Uninitialized);
+            const qint64 read = m_facingOfferer.readDatagram(datagram.data(), datagram.size());
+            if (read < 0 || m_mode == Mode::Drop || m_answererPort == 0) {
+                continue;
+            }
+            datagram.resize(read);
+            m_facingAnswerer.writeDatagram(datagram, QHostAddress::LocalHost, m_answererPort);
+        }
+    }
+
+    void toOfferer(const QByteArray& datagram)
+    {
+        m_bytesToOfferer += datagram.size();
+        m_facingOfferer.writeDatagram(datagram, QHostAddress::LocalHost, m_offererPort);
+    }
+
+    void releasePaced()
+    {
+        m_budget += static_cast<double>(m_bytesPerSecond) * m_sincePace.restart() / 1000.0;
+        while (!m_paced.empty() && m_budget >= static_cast<double>(m_paced.front().size())) {
+            m_budget -= static_cast<double>(m_paced.front().size());
+            toOfferer(m_paced.front());
+            m_paced.pop_front();
+        }
+        if (m_paced.empty()) {
+            // An idle hop saves no budget for a later burst.
+            m_budget = 0.0;
+        }
+    }
+
+    QUdpSocket m_facingAnswerer;
+    QUdpSocket m_facingOfferer;
+    QTimer m_pace;
+    QElapsedTimer m_sincePace;
+    std::deque<QByteArray> m_paced;
+    Mode m_mode = Mode::Forward;
+    qint64 m_bytesPerSecond = 0;
+    double m_budget = 0.0;
+    qint64 m_bytesToOfferer = 0;
+    quint16 m_offererPort = 0;
+    quint16 m_answererPort = 0;
+    bool m_ok = false;
+};
+
+// As startDataChannelPair(), with every path between the two through `hop`:
+// candidates in a description are left out and each trickled one is
+// rewritten by the hop.
+bool startPairThroughHop(DataChannelTransport* offerer, DataChannelTransport* answerer, UdpHop& hop)
+{
+    const auto withoutCandidates = [](const QString& sdp) {
+        QStringList kept;
+        for (const QString& line : sdp.split(QStringLiteral("\r\n"))) {
+            if (!line.startsWith(QLatin1String("a=candidate"))
+                && !line.startsWith(QLatin1String("a=end-of-candidates"))) {
+                kept.append(line);
+            }
+        }
+        return kept.join(QStringLiteral("\r\n"));
+    };
+    QObject::connect(offerer, &DataChannelTransport::localDescription, answerer,
+                     [answerer, withoutCandidates](const QString& sdp, const QString& type) {
+        answerer->acceptDescription(withoutCandidates(sdp), type);
+    });
+    QObject::connect(answerer, &DataChannelTransport::localDescription, offerer,
+                     [offerer, withoutCandidates](const QString& sdp, const QString& type) {
+        offerer->acceptDescription(withoutCandidates(sdp), type);
+    });
+    QObject::connect(offerer, &DataChannelTransport::localCandidate, answerer,
+                     [answerer, &hop](const QString& candidate) {
+        const QString rewritten = hop.rewrite(candidate, /*fromAnswerer=*/false);
+        if (!rewritten.isEmpty()) {
+            answerer->acceptCandidate(rewritten);
+        }
+    });
+    QObject::connect(answerer, &DataChannelTransport::localCandidate, offerer,
+                     [offerer, &hop](const QString& candidate) {
+        const QString rewritten = hop.rewrite(candidate, /*fromAnswerer=*/true);
+        if (!rewritten.isEmpty()) {
+            offerer->acceptCandidate(rewritten);
+        }
+    });
+    DataChannelTransport::Options answer;
+    answer.role = DataChannelTransport::Role::Answerer;
+    answer.maxIncomingBytes = kStationCap;
+    DataChannelTransport::Options offer;
+    offer.role = DataChannelTransport::Role::Offerer;
+    offer.maxIncomingBytes = kClientCap;
+    return answerer->start(answer) && offerer->start(offer);
+}
+
+// Restores the product's close drain timing when a test ends.
+struct CloseDrainTiming {
+    CloseDrainTiming(int deadlineMs, int ceilingMs)
+    {
+        DataChannelTransport::setCloseDrainTimingForTest(deadlineMs, ceilingMs);
+    }
+    ~CloseDrainTiming() { DataChannelTransport::setCloseDrainTimingForTest(0, 0); }
+    CloseDrainTiming(const CloseDrainTiming&) = delete;
+    CloseDrainTiming& operator=(const CloseDrainTiming&) = delete;
 };
 
 class WatchSource final : public IceConfiguration::CandidateSource {
@@ -1208,6 +1400,78 @@ private slots:
         delete answerer;
         QTRY_COMPARE_WITH_TIMEOUT(atDevice.count(), 4, 20000);
         QCOMPARE(atDevice.last().first().toByteArray(), last);
+    }
+
+    // PR 616 fix wave: a closed link whose far end has stopped taking data
+    // (here nothing crosses the path any more, as when the far end went
+    // away without closing) is let go once nothing more has been handed to
+    // SCTP for one drain deadline: within about two deadlines of the
+    // close, long before the ceiling.
+    void aClosedLinkWhoseFarEndStopsTakingDataIsLetGo()
+    {
+        // A previous test's close is let go first, so the count is this one's.
+        QTRY_COMPARE_WITH_TIMEOUT(DataChannelTransport::lingeringPeerCountForTest(), 0, 15000);
+        constexpr int kDeadlineMs = 500;
+        const CloseDrainTiming timing(kDeadlineMs, 0);
+        UdpHop hop;
+        QVERIFY(hop.bound());
+        auto offerer = std::make_unique<DataChannelTransport>();
+        auto* answerer = new DataChannelTransport();
+        QVERIFY(startPairThroughHop(offerer.get(), answerer, hop));
+        QVERIFY(waitFor([&] { return offerer->isOpen() && answerer->isOpen(); }, 15000));
+        hop.setMode(UdpHop::Mode::Drop);
+        const QByteArray backlog = patterned(static_cast<qsizetype>(kStationCap) - 64);
+        for (int i = 0; i < 4; ++i) {
+            answerer->sendText(backlog);
+        }
+        answerer->closeLink(QStringLiteral("test"));
+        delete answerer;
+        QCOMPARE(DataChannelTransport::lingeringPeerCountForTest(), 1);
+        QTRY_COMPARE_WITH_TIMEOUT(DataChannelTransport::lingeringPeerCountForTest(), 0,
+                                  2 * kDeadlineMs + 1000);
+    }
+
+    // PR 616 fix wave: a closed link whose backlog keeps moving, slowly, is
+    // kept past many drain deadlines and let go at the ceiling, before
+    // the backlog has drained.
+    void aClosedLinkStillDrainingIsLetGoAtTheCeiling()
+    {
+        QTRY_COMPARE_WITH_TIMEOUT(DataChannelTransport::lingeringPeerCountForTest(), 0, 15000);
+        constexpr int kDeadlineMs = 300;
+        constexpr int kCeilingMs = 2000;
+        // Paced fast enough that a runner slow to service the hop still
+        // moves the backlog within every deadline, and slow enough that it
+        // cannot drain before the ceiling.
+        constexpr qint64 kBytesPerSecond = 512 * 1024;
+        const CloseDrainTiming timing(kDeadlineMs, kCeilingMs);
+        UdpHop hop;
+        QVERIFY(hop.bound());
+        auto offerer = std::make_unique<DataChannelTransport>();
+        auto* answerer = new DataChannelTransport();
+        QVERIFY(startPairThroughHop(offerer.get(), answerer, hop));
+        QVERIFY(waitFor([&] { return offerer->isOpen() && answerer->isOpen(); }, 15000));
+        QSignalSpy atDevice(offerer.get(), &SessionTransport::textReceived);
+        hop.setMode(UdpHop::Mode::Throttle, kBytesPerSecond);
+        // About 4 MiB: some 8 s at this rate, far past the ceiling.
+        const QByteArray backlog = patterned(static_cast<qsizetype>(kStationCap) - 64);
+        for (int i = 0; i < 4; ++i) {
+            answerer->sendText(backlog);
+        }
+        QElapsedTimer sinceClose;
+        sinceClose.start();
+        answerer->closeLink(QStringLiteral("test"));
+        delete answerer;
+        QCOMPARE(DataChannelTransport::lingeringPeerCountForTest(), 1);
+        // Three deadlines on, the backlog is still moving and still held.
+        const qint64 crossedAtClose = hop.bytesToOfferer();
+        QTest::qWait(3 * kDeadlineMs);
+        QVERIFY(hop.bytesToOfferer() > crossedAtClose);
+        QCOMPARE(DataChannelTransport::lingeringPeerCountForTest(), 1);
+        QTRY_COMPARE_WITH_TIMEOUT(DataChannelTransport::lingeringPeerCountForTest(), 0,
+                                  kCeilingMs + 2 * kDeadlineMs + 1000);
+        QVERIFY2(sinceClose.elapsed() >= kCeilingMs, qPrintable(QString::number(sinceClose.elapsed())));
+        // Let go before the backlog drained.
+        QVERIFY(atDevice.count() < 4);
     }
 
     void anUnknownFrameEndsTheConnection()

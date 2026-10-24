@@ -121,7 +121,8 @@ import Testing
                      rxAntennas: String = "1,1,1,1,1,1,1,1,1,1,1,1,1,1,1",
                      rxOnlyAntennas: String = "0,0,0,0,0,0,0,0,0,0,0,0,0,2,0", band2m: Bool = true,
                      telemetry: Int64 = 4, mac: String = SetupSpecializedTests.mac,
-                     hygieneVersion: Int64 = 2, legacyHygiene: Bool = false) async throws {
+                     hygieneVersion: Int64 = 2, legacyHygiene: Bool = false,
+                     antennaRowsVersion: Int64 = 2) async throws {
             route.use(session)
             await event(.stateChanged(.receivingSnapshot))
             let categories = try SetupSpecializedTests.categories(band2m: band2m, legacyHygiene: legacyHygiene)
@@ -137,7 +138,7 @@ import Testing
                     .init(name: "setupDescriptionVersion", value: .i64(10)),
                     .init(name: "notchControlVersion", value: .i64(2)),
                     .init(name: "settingsHygieneVersion", value: .i64(hygieneVersion)),
-                    .init(name: "radioAntennaRowsVersion", value: .i64(1)),
+                    .init(name: "radioAntennaRowsVersion", value: .i64(antennaRowsVersion)),
                     .init(name: "stationTelemetryVersion", value: .i64(telemetry)),
                 ]) + (band2m ? [.init(name: "band2mVersion", value: .i64(1))] : []) + [
                     .init(name: "macAddress", value: .utf8(mac)),
@@ -662,7 +663,67 @@ import Testing
         #expect(await receiving.value == .applied)
     }
 
+    /// Taps receive-only `column` on `band` and returns the antenna value sent.
+    private static func tapRxOnly(_ rig: Rig, band: Int, column: String) async throws -> Int64? {
+        let rx = rig.control("hardware", "hardware.antenna.rxRows")
+        let count = rig.route.sent.count
+        let admission = try rig.dispatcher.admitAntenna(rx, in: "hardware").get()
+        let tapping = Task { await rig.dispatcher.performAntenna(admission, band: band, column: column) }
+        #expect(await rig.route.waitForCount(count + 1, unless: tapping))
+        let sent = try #require(rig.invoke(count))
+        #expect(sent.verb == "setAlexRxAntennaForRadio")
+        #expect(sent.args.last == .init(name: "rxOnly", value: .bool(true)))
+        await rig.answer(count, accepted: true)
+        #expect(await tapping.value == .applied)
+        guard case .i64(let antenna)? = sent.args.first(where: { $0.name == "antenna" })?.value else { return nil }
+        return antenna
+    }
+
+    /// The receive-only cells are the desktop's checkboxes: the value is
+    /// the checked boxes' sum, 1 and
+    /// 2 rule each other out, XVTR stands alone, and the last box turned
+    /// off sends 0.
+    @Test func receiveOnlyCellsAreCheckboxesThatSendTheirSum() async throws {
+        let rig = Rig()
+        try await rig.connect(session: 1, rxOnlyAntennas: "4,5,3,0,1,2,0,0,0,0,0,0,0,0,0")
+        let rx = rig.control("hardware", "hardware.antenna.rxRows")
+        let grid = try #require(rig.dispatcher.antennaTable(rx, in: "hardware").grid)
+        #expect(grid.selected[0] == [true, false, false, true, false, true])
+        #expect(grid.selected[1] == [true, false, false, false, true, true])
+        #expect(grid.selected[2] == [true, false, false, false, false, true])
+        #expect(grid.selected[3] == [true, false, false, false, false, false])
+        #expect(grid.selected[4] == [true, false, false, true, false, false])
+        #expect(grid.selected[5] == [true, false, false, false, true, false])
+
+        #expect(try await Self.tapRxOnly(rig, band: 0, column: "rxOnly2") == 5)  // 1+3: 2 clears 1
+        #expect(try await Self.tapRxOnly(rig, band: 0, column: "rxOnly3") == 1)  // 1+3: XVTR off
+        #expect(try await Self.tapRxOnly(rig, band: 0, column: "rxOnly1") == 3)  // 1+3: first off
+        #expect(try await Self.tapRxOnly(rig, band: 2, column: "rxOnly3") == 0)  // XVTR off: none
+        #expect(try await Self.tapRxOnly(rig, band: 3, column: "rxOnly1") == 1)
+        #expect(try await Self.tapRxOnly(rig, band: 4, column: "rxOnly1") == 0)  // the last box off
+        #expect(try await Self.tapRxOnly(rig, band: 4, column: "rxOnly3") == 4)
+        #expect(try await Self.tapRxOnly(rig, band: 5, column: "rxOnly1") == 1)  // 1 clears 2
+        #expect(SetupSpecializedWire.rxOnlyAfterTap(0, antenna: 2) == 2)
+        #expect(SetupSpecializedWire.rxOnlyAfterTap(2, antenna: 3) == 5)
+    }
+
+    /// A Core at radioAntennaRowsVersion 1 takes one box or none: a tap
+    /// that would add a second box sends that box alone.
+    @Test func aCoreAtVersion1TakesTheTappedBoxAlone() async throws {
+        let rig = Rig()
+        try await rig.connect(session: 1, rxOnlyAntennas: "3,1,0,0,0,0,0,0,0,0,0,0,0,0,0", antennaRowsVersion: 1)
+        #expect(try await Self.tapRxOnly(rig, band: 0, column: "rxOnly1") == 1)
+        #expect(try await Self.tapRxOnly(rig, band: 1, column: "rxOnly3") == 3)
+        #expect(try await Self.tapRxOnly(rig, band: 0, column: "rxOnly3") == 0)
+        #expect(try await Self.tapRxOnly(rig, band: 1, column: "rxOnly2") == 2)
+    }
+
     @Test func unreadableAntennaValuesDisableTheWholeTable() async throws {
+        // A receive-only value past 5, the highest sum, makes the receive table unreadable.
+        let rig = Rig()
+        try await rig.connect(session: 1, rxOnlyAntennas: "6,0,0,0,0,0,0,0,0,0,0,0,0,0,0")
+        let rx = rig.control("hardware", "hardware.antenna.rxRows")
+        #expect(rig.dispatcher.antennaTable(rx, in: "hardware").grid == nil)
         // Fourteen entries where the Core described 2 m's row is unreadable too.
         for bad in ["1,1,1", "1,1,1,1,2,2,2,2,3,3,3,1,1,1,4", "1,1,1,1,2,2,2,2,3,3,3,1,1,1, 1", "1,1,1,1,2,2,2,2,3,3,3,1,1,1,",
                     "1,1,1,1,2,2,2,2,3,3,3,1,1,1"] {

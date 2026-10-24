@@ -218,6 +218,82 @@ SliceStreamAllocator::retuneSlice(int currentStream,
     return placeSlice(frequencyHz);
 }
 
+std::optional<SliceStreamAllocator::Placement>
+SliceStreamAllocator::rejoinStream(int currentStream, double frequencyHz,
+                                   const QVector<int>& candidateStreams) const
+{
+    if (currentStream < 0 || currentStream >= m_streams.size()
+        || !m_streams.at(currentStream).active) {
+        return std::nullopt;
+    }
+    // Freeing a stream below an active one leaves a gap in the DDC enable
+    // mask (the 2026-07-26 G2E bench; see retuneSlice).
+    if (highestActiveStream() != currentStream) {
+        return std::nullopt;
+    }
+    const int rateHz = m_streams.at(currentStream).sampleRateHz;
+    for (const int candidate : candidateStreams) {
+        if (candidate == currentStream || candidate < 0 || candidate >= m_streams.size()) {
+            continue;
+        }
+        const Stream& s = m_streams.at(candidate);
+        // The same rate, so the slice's channel keeps its geometry and the
+        // pan its width; a different rate keeps today's own-receiver retune.
+        if (!s.active || s.sampleRateHz <= 0 || s.sampleRateHz != rateHz) {
+            continue;
+        }
+        const double inner =
+            static_cast<double>(s.sampleRateHz) / 2.0 * kRejoinHalfWindowFraction;
+        const double offset = frequencyHz - s.centreHz;
+        if (offset > -inner && offset < inner) {
+            Placement p;
+            p.outcome       = Outcome::JoinedExisting;
+            p.streamIndex   = candidate;
+            p.shiftOffsetHz = offset;
+            return p;
+        }
+    }
+    return std::nullopt;
+}
+
+bool SliceStreamAllocator::canFoldDown(int lowerStream, double lowerCentreHz,
+                                       int higherStream,
+                                       const QVector<double>& frequenciesHz) const
+{
+    if (lowerStream < 0 || higherStream <= lowerStream || higherStream >= m_streams.size()
+        || frequenciesHz.isEmpty()) {
+        return false;
+    }
+    const Stream& lower = m_streams.at(lowerStream);
+    const Stream& higher = m_streams.at(higherStream);
+    // Only the highest active stream is freed, so the enable mask keeps no
+    // gap (the 2026-07-26 G2E bench; see retuneSlice).
+    if (!lower.active || !higher.active || highestActiveStream() != higherStream) {
+        return false;
+    }
+    // The same rate, so the moving slices' channels keep their geometry.
+    if (lower.sampleRateHz <= 0 || lower.sampleRateHz != higher.sampleRateHz) {
+        return false;
+    }
+    const double inner =
+        static_cast<double>(lower.sampleRateHz) / 2.0 * kRejoinHalfWindowFraction;
+    for (const double f : frequenciesHz) {
+        const double offset = f - lowerCentreHz;
+        if (!(offset > -inner && offset < inner)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+int SliceStreamAllocator::highestActiveStream() const
+{
+    for (int i = m_streams.size() - 1; i >= 0; --i) {
+        if (m_streams.at(i).active) { return i; }
+    }
+    return -1;
+}
+
 int SliceStreamAllocator::activeStreamCount() const
 {
     int n = 0;

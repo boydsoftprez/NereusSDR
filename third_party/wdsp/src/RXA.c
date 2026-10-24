@@ -31,6 +31,13 @@ warren@wpratt.com
 // destroy, xrxa, setSamplerate, setBuffers and setSize), includes nnr, rnnr
 // and sbnr in the bpsnba check, and RXAbp1Check reads the stage run states
 // itself from the channel.
+//
+// 2026-10-22 (J.J. Boyd KG4VCF, AI-assisted via Anthropic Claude Code): xrxa
+// times each of its two NR stage groups (WdspNrCallStart / WdspNrCallEnd in
+// dsplock.c) so the Core can log a noise-reduction call over 50 ms, with the
+// stages that ran in it (rxa_nr_stages) and an NNR limit the worker applied
+// inside it (rxa_nr_limit_bits). The stages, their order and their
+// parameters are unchanged.
 
 #include "comm.h"
 
@@ -657,6 +664,38 @@ void flush_rxa (int channel)
 	flush_resample (rxa[channel].rsmpout.p);
 }
 
+// NereusSDR (2026-10-22): the NR stages that run at this position, as
+// dsplock.h WDSP_NR_STAGE_* bits, for the slow NR call log. Read by the
+// worker under csDSP before the group runs.
+static int rxa_nr_stages (int channel, int pos)
+{
+	int stages = 0;
+	if (rxa[channel].anr.p->run && rxa[channel].anr.p->position == pos)
+		stages |= WDSP_NR_STAGE_ANR;
+	if (rxa[channel].emnr.p->run && rxa[channel].emnr.p->position == pos)
+		stages |= WDSP_NR_STAGE_EMNR;
+	if (rxa[channel].rnnr.p->run && rxa[channel].rnnr.p->position == pos)
+		stages |= WDSP_NR_STAGE_RNNR;
+	if (rxa[channel].sbnr.p->run && rxa[channel].sbnr.p->position == pos)
+		stages |= WDSP_NR_STAGE_SBNR;
+	return stages | nnr_log_stage (rxa[channel].nnr.p, pos);
+}
+
+// NereusSDR (2026-10-22): when the worker applied an NNR limit inside the
+// group (nnr_log_state before and after differ), the WDSP_NR_NNR_* bits for
+// the change and the model before and after it; 0 otherwise.
+static int rxa_nr_limit_bits (int before, int after)
+{
+	int bits;
+	if (before == after) return 0;
+	bits = WDSP_NR_NNR_LIMIT_APPLIED;
+	if ((before & 3) == 1) bits |= WDSP_NR_NNR_FROM_STANDARD;
+	if ((before & 3) == 2) bits |= WDSP_NR_NNR_FROM_PREMIUM;
+	if ((after & 3) == 1) bits |= WDSP_NR_NNR_TO_STANDARD;
+	if ((after & 3) == 2) bits |= WDSP_NR_NNR_TO_PREMIUM;
+	return bits;
+}
+
 void xrxa (int channel)
 {
 	xshift (rxa[channel].shift.p);
@@ -678,19 +717,33 @@ void xrxa (int channel)
 	xsnba (rxa[channel].snba.p);
 	xeqp (rxa[channel].eqp.p);
 	xanf (rxa[channel].anf.p, 0);
-	xanr (rxa[channel].anr.p, 0);
-	xemnr (rxa[channel].emnr.p, 0);
-	xnnr (rxa[channel].nnr.p, 0);
-	xrnnr (rxa[channel].rnnr.p, 0);
-	xsbnr (rxa[channel].sbnr.p, 0);
+	{
+		const long long nr_start = WdspNrCallStart ();
+		const int nr_stages = rxa_nr_stages (channel, 0);
+		const int nnr_state = nnr_log_state (rxa[channel].nnr.p);
+		xanr (rxa[channel].anr.p, 0);
+		xemnr (rxa[channel].emnr.p, 0);
+		xnnr (rxa[channel].nnr.p, 0);
+		xrnnr (rxa[channel].rnnr.p, 0);
+		xsbnr (rxa[channel].sbnr.p, 0);
+		WdspNrCallEnd (channel, nr_start,
+			nr_stages | rxa_nr_limit_bits (nnr_state, nnr_log_state (rxa[channel].nnr.p)));
+	}
 	xbandpass (rxa[channel].bp1.p, 0);
 	xwcpagc (rxa[channel].agc.p);
 	xanf (rxa[channel].anf.p, 1);
-	xanr (rxa[channel].anr.p, 1);
-	xemnr (rxa[channel].emnr.p, 1);
-	xnnr(rxa[channel].nnr.p, 1);
-	xrnnr (rxa[channel].rnnr.p, 1);
-	xsbnr (rxa[channel].sbnr.p, 1);
+	{
+		const long long nr_start = WdspNrCallStart ();
+		const int nr_stages = rxa_nr_stages (channel, 1);
+		const int nnr_state = nnr_log_state (rxa[channel].nnr.p);
+		xanr (rxa[channel].anr.p, 1);
+		xemnr (rxa[channel].emnr.p, 1);
+		xnnr(rxa[channel].nnr.p, 1);
+		xrnnr (rxa[channel].rnnr.p, 1);
+		xsbnr (rxa[channel].sbnr.p, 1);
+		WdspNrCallEnd (channel, nr_start,
+			nr_stages | rxa_nr_limit_bits (nnr_state, nnr_log_state (rxa[channel].nnr.p)));
+	}
 	xbandpass (rxa[channel].bp1.p, 1);
 	xmeter (rxa[channel].agcmeter.p);
 	xsiphon (rxa[channel].sip1.p, 0);

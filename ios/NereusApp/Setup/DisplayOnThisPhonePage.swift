@@ -166,7 +166,7 @@ struct DisplayOnThisPhonePage: View {
     // MARK: The page
 
     var body: some View {
-        List {
+        SetupPageContainer {
             bandPlan
             coreDisplay
             waterfall
@@ -192,7 +192,7 @@ struct DisplayOnThisPhonePage: View {
         }
         .modifier(DisplayV29Presentation(main: main, model: display))
         .onAppear { main.displayEditScope = .pan }
-        .navigationTitle("Display")
+        .setupPageTitle("Display")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 SetupTagBadge(tag: .both)
@@ -201,7 +201,7 @@ struct DisplayOnThisPhonePage: View {
     }
 
     private var bandPlan: some View {
-        Section {
+        SetupPanelSection {
             BandPlanPicker(model: display)
             Picker("Size", selection: Binding(get: { settings.bandPlanSize },
                                               set: { display.setBandPlanSize($0) })) {
@@ -213,10 +213,7 @@ struct DisplayOnThisPhonePage: View {
             .accessibilityLabel("Band plan size")
             .accessibilityIdentifier("bandPlanSize")
         } header: {
-            HStack(spacing: 6) {
-                Text("Band plan")
-                SetupTagBadge(tag: .both)
-            }
+            SetupPanelTitle(title: "Band plan", tag: .both)
         } footer: {
             Text(Self.planNote)
         }
@@ -224,7 +221,7 @@ struct DisplayOnThisPhonePage: View {
     }
 
     private var waterfall: some View {
-        Section {
+        SetupPanelSection {
             Picker("Palette", selection: Binding(get: { settings.waterfallPaletteId },
                                                  set: { display.selectPalette($0) })) {
                 if display.palettes.isEmpty && settings.waterfallPaletteId != BandPalette.customPaletteId {
@@ -236,6 +233,7 @@ struct DisplayOnThisPhonePage: View {
                 Text(BandPalette.customPaletteName).tag(BandPalette.customPaletteId)
             }
             .accessibilityIdentifier("displayPalette")
+            .setupMenuRow("Palette")
             Picker("Levels", selection: Binding(get: { settings.waterfallLevelMode },
                                                 set: { setLevelMode($0) })) {
                 ForEach(Self.levelModes, id: \.mode) { entry in
@@ -243,6 +241,7 @@ struct DisplayOnThisPhonePage: View {
                 }
             }
             .accessibilityIdentifier("waterfallLevels")
+            .setupMenuRow("Levels")
             SetupNumberRow(title: "High level", value: settings.waterfallHighDbm, range: Self.levelRange, step: 1,
                            unit: "dBm", id: "waterfallHigh") { setHighLevel($0) }
             SetupNumberRow(title: "Low level", value: settings.waterfallLowDbm, range: Self.levelRange, step: 1,
@@ -270,7 +269,7 @@ struct DisplayOnThisPhonePage: View {
     }
 
     private var spectrum: some View {
-        Section {
+        SetupPanelSection {
             Toggle("Fill", isOn: Binding(get: { settings.traceFill }, set: { on in change { $0.traceFill = on } }))
                 .accessibilityIdentifier("traceFill")
             SetupNumberRow(title: "Fill strength", value: display.fill, range: Self.percentRange, step: 5,
@@ -280,20 +279,12 @@ struct DisplayOnThisPhonePage: View {
                 .disabled(!settings.traceFill)
                 .accessibilityIdentifier("traceGradient")
             let line = DisplaySheetModel.lineRange(scale: displayScale)
-            Stepper {
-                HStack {
-                    Text("Line")
-                    Spacer(minLength: 8)
-                    Text(DisplaySheetModel.lineText(display.line(scale: displayScale)))
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                }
-            } onIncrement: {
+            SetupStepperRow("Line", valueText: DisplaySheetModel.lineText(display.line(scale: displayScale)),
+                            id: "traceLine") {
                 display.setLine(display.line(scale: displayScale) + line.step, scale: displayScale)
-            } onDecrement: {
+            } decrement: {
                 display.setLine(display.line(scale: displayScale) - line.step, scale: displayScale)
             }
-            .accessibilityValue(DisplaySheetModel.lineText(display.line(scale: displayScale)))
             .accessibilityIdentifier("traceLine")
             SetupNumberRow(title: "Spectrum height", value: display.spectrumHeight, range: Self.spectrumHeightRange,
                            step: 5, unit: "%", id: "setupSpectrumHeight") { display.setSpectrumHeight($0) }
@@ -348,7 +339,7 @@ struct DisplayOnThisPhonePage: View {
     }
 
     private var grid: some View {
-        Section {
+        SetupPanelSection {
             Toggle("Grid", isOn: Binding(get: { settings.grid }, set: { on in change { $0.grid = on } }))
                 .accessibilityIdentifier("grid")
             SetupNumberRow(title: "Grid step", value: settings.gridStepDb, range: Self.gridStepRange, step: 1,
@@ -364,7 +355,7 @@ struct DisplayOnThisPhonePage: View {
     }
 
     private var noiseFloor: some View {
-        Section {
+        SetupPanelSection {
             Toggle("Noise-floor line", isOn: Binding(get: { settings.noiseFloorLine },
                                                      set: { on in change { $0.noiseFloorLine = on } }))
                 .disabled(!extras)
@@ -378,7 +369,7 @@ struct DisplayOnThisPhonePage: View {
     }
 
     private var peaks: some View {
-        Section {
+        SetupPanelSection {
             Toggle("Peak hold", isOn: Binding(get: { settings.activePeakHold },
                                               set: { on in change { $0.activePeakHold = on } }))
                 .disabled(!extras)
@@ -425,7 +416,7 @@ struct DisplayOnThisPhonePage: View {
     }
 
     private var view: some View {
-        Section {
+        SetupPanelSection {
             Toggle("Extended view", isOn: Binding(get: { pan.extendedViewOn },
                                                   set: { _ in pan.toggleExtendedView() }))
                 .disabled(!pan.extendedViewAvailable)

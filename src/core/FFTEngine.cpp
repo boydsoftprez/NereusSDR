@@ -27,6 +27,11 @@
 //               the generation of the input purge it was computed after.
 //               J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //               Anthropic Claude Code.
+//   2026-10-21: NereusSDR-original: feedIQ counts the I/Q pairs it takes
+//               (frameInputPosition, for the Core's sample-time stamps), and
+//               a skip under the 5 ms minimum gap is counted and logged
+//               instead of silent. J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -346,6 +351,9 @@ void FFTEngine::feedIQ(const QVector<float>& interleavedIQ)
             continue;
         }
         if (m_iqWritePos >= m_currentFftSize) {
+            // NereusSDR-original (2026-10-21): where this frame's samples
+            // end, in pairs fed (frameInputPosition).
+            m_frameInputPosition = m_inputPairsFed + i;
             // Buffer full -- process and shift overlap region back to head.
             processFrame();
             // If processFrame returned WITHOUT running the FFT (defensive
@@ -355,6 +363,12 @@ void FFTEngine::feedIQ(const QVector<float>& interleavedIQ)
             // the cap by then).  Without this guard we'd overflow
             // m_iqRaw on the next sample write.
             if (m_iqWritePos >= m_currentFftSize) {
+                // NereusSDR-original (2026-10-21): the dropped pairs still
+                // passed in time, so the count takes the whole batch.
+                if (m_minimumGapHeldFrame) {
+                    noteMinimumGapSkip(numPairs - i);
+                }
+                m_inputPairsFed += numPairs;
                 return;
             }
             // R-R3-08/40 (NereusSDR-original): this sample triggered the
@@ -375,9 +389,41 @@ void FFTEngine::feedIQ(const QVector<float>& interleavedIQ)
         m_iqRaw[m_iqWritePos][1] = interleavedIQ[i * 2];      // I -> Q
         m_iqWritePos++;
     }
+    m_inputPairsFed += numPairs;
 #else
     Q_UNUSED(interleavedIQ);
 #endif
+}
+
+void FFTEngine::noteMinimumGapSkip(int droppedPairs)
+{
+    // NereusSDR-original (2026-10-21). The skip itself is processFrame's
+    // rule, unchanged. It was silent: a burst of input (the engine thread
+    // late, a radio packet burst) could lose tens of milliseconds of samples
+    // with nothing to show for it. Each is counted. A skip with overlapping
+    // transforms also joins the overlap tail to samples after a gap, so
+    // those are logged too, at most once an interval with the counts since
+    // the last line. Without overlap (the FFT shorter than one frame's
+    // advance) skips are the normal rate limit and are only counted.
+    m_minimumGapSkips.fetch_add(1);
+    m_minimumGapDroppedPairs.fetch_add(static_cast<quint64>(std::max(0, droppedPairs)));
+    if (m_lastOverlap <= 0) {
+        return;
+    }
+    if (m_minimumGapWarningTimer.isValid()
+        && m_minimumGapWarningTimer.elapsed() < kMinimumGapWarningIntervalMs) {
+        return;
+    }
+    m_minimumGapWarningTimer.start();
+    const quint64 skips = m_minimumGapSkips.load();
+    const quint64 pairs = m_minimumGapDroppedPairs.load();
+    qCWarning(lcDsp) << "FFTEngine" << m_receiverId
+                     << ": the 5 ms minimum frame gap dropped input:"
+                     << (skips - m_minimumGapSkipsWarned) << "skips,"
+                     << (pairs - m_minimumGapPairsWarned) << "I/Q pairs since the last report ("
+                     << skips << "skips in all)";
+    m_minimumGapSkipsWarned = skips;
+    m_minimumGapPairsWarned = pairs;
 }
 
 void FFTEngine::resetInputHistory()
@@ -618,6 +664,7 @@ void FFTEngine::computeWindow()
 void FFTEngine::processFrame()
 {
 #ifdef HAVE_FFTW3
+    m_minimumGapHeldFrame = false;
     if (!m_plan || m_iqWritePos < m_currentFftSize) {
         return;
     }
@@ -645,6 +692,7 @@ void FFTEngine::processFrame()
     // running the FFT.  This preserves the overlap region across the
     // (rare) cap fire.
     if (m_frameTimerStarted && m_frameTimer.elapsed() < 5) {
+        m_minimumGapHeldFrame = true;  // NereusSDR-original: feedIQ counts it
         return;  // buffer stays full; next feedIQ call retries
     }
 
@@ -751,6 +799,7 @@ void FFTEngine::processFrame()
     }
     advance = std::min(advance, m_currentFftSize);
     const int overlap = m_currentFftSize - advance;
+    m_lastOverlap = overlap;
     if (overlap > 0) {
         std::memmove(m_iqRaw,
                      m_iqRaw + advance,

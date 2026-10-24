@@ -208,6 +208,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22  J.J. Boyd / KG4VCF  RX meter stamps: declares
+//                                    rxMeterStamps 1 and holds a slice's
+//                                    stamped RX meter readings until their
+//                                    audio plays (setRxMeterHoldClock).
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-15  J.J. Boyd / KG4VCF  setSessionIceConfigurationForTest:
 //                                    a test stands in for the ICE settings
 //                                    of a session through the service.
@@ -506,6 +511,7 @@
 #include <QString>
 #include <QUrl>
 
+#include <deque>
 #include <memory>
 #include <functional>
 #include <optional>
@@ -1709,6 +1715,24 @@ public:
     void setHandshakeDeadlineMs(int ms);
     int handshakeDeadlineMs() const { return m_handshakeDeadlineMs; }
 
+    /// RX meter stamps (rxMeterStampsVersion 1): the clock a slice's RX
+    /// meter readings are held on. A slice delta that carries the Core's
+    /// meterReadingNs has its RX meter readings (the three signal readings,
+    /// ADC and AGC) applied at meterReadingNs + mapNs(), as the window
+    /// presents a spectrum frame: nowNs is the window's display clock and
+    /// mapNs its current producer-to-display map (nullopt while it has
+    /// none, or while it may be stale). Both are called on this object's
+    /// thread, where deltas apply. The rest of the delta applies at once. A reading applies on
+    /// arrival with no clock, with no map, or when it would wait longer
+    /// than kRxMeterMaxHoldNs. Empty functions remove the clock.
+    void setRxMeterHoldClock(std::function<qint64()> nowNs,
+                             std::function<std::optional<qint64>()> mapNs);
+    /// The longest an RX meter reading is held: RemoteDisplayPresenter's
+    /// kMaxHoldNs, the spectrum's own cap.
+    static constexpr qint64 kRxMeterMaxHoldNs = 1'500'000'000;
+    /// Readings held now, across slices (tests).
+    int heldRxMeterReadingsForTest() const { return static_cast<int>(m_heldRxMeters.size()); }
+
 signals:
     /// Parity Task 33: the Core's CFC display, one value per bin
     /// (TxChannel::kCfcDisplayBinCount, in dB to a tenth), read at
@@ -1919,6 +1943,15 @@ private:
     void handleObjectCreate(const SessionMessage& message);
     void handleObjectDestroy(const SessionMessage& message);
     void handleDelta(const SessionMessage& message);
+    /// RX meter stamps: moves a slice delta's RX meter readings (and its
+    /// meterReadingNs) out of `updates` into the hold queue when the delta
+    /// is stamped or that slice already has readings held.
+    void takeRxMeterReadings(QObject* target, const QByteArray& objectKey,
+                             QList<MirrorUpdate>& updates);
+    /// Applies every held reading that is due, in arrival order, and sets
+    /// the timer for the next one.
+    void applyDueRxMeterReadings();
+    void clearHeldRxMeterReadings();
     void handlePropertyResult(const SessionMessage& message);
     bool propertyResultsAvailable() const;
 
@@ -2109,6 +2142,18 @@ private:
     QSet<QByteArray> m_unheldDeltaKeys;
 
     QHash<QByteArray, QPointer<QObject>> m_objects;
+
+    /// RX meter stamps: one slice delta's held RX meter readings.
+    struct HeldRxMeterReadings {
+        QByteArray objectKey;
+        bool stamped = false;
+        qint64 producerNs = 0;
+        QList<MirrorUpdate> updates;
+    };
+    std::deque<HeldRxMeterReadings> m_heldRxMeters;
+    QTimer* m_rxMeterHoldTimer = nullptr;
+    std::function<qint64()> m_rxMeterNowNs;
+    std::function<std::optional<qint64>()> m_rxMeterMapNs;
 
     /// The outbound half. StateMirror is reused rather than reimplemented:
     /// its propertiesChanged() signal (tasks 7-8) fires for every watched

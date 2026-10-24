@@ -168,7 +168,7 @@ struct FilterPresetsPanel: View {
                         GridRow {
                             HStack {
                                 Button("\(row.slot + 1)") { editor.selectedSlot = row.slot }
-                                    .frame(minWidth: 44, minHeight: 44).buttonStyle(.bordered)
+                                    .frame(minWidth: 44, minHeight: 44).buttonStyle(SetupButtonStyle())
                                     .accessibilityIdentifier("\(control.id).slot\(row.slot)")
                                     .accessibilityValue(editor.selectedSlot == row.slot ? "Selected" : "")
                                 FilterPresetName(control: control, row: row, editor: editor, compact: true)
@@ -178,7 +178,7 @@ struct FilterPresetsPanel: View {
                             }
                             Text("\(row.widthHz)").monospacedDigit().frame(width: columnWidth).frame(minHeight: 44)
                                 .accessibilityLabel(binding.column("width")?.label ?? "")
-                        }.background(editor.selectedSlot == row.slot ? Color.accentColor.opacity(0.12) : Color.clear)
+                        }.background(editor.selectedSlot == row.slot ? WorkspacePalette.accentFill.opacity(0.12) : Color.clear)
                     }
                 }.accessibilityElement(children: .contain).accessibilityIdentifier("\(control.id).grid")
             }
@@ -192,7 +192,7 @@ private struct FilterPresetNotes: View {
     let reason: String?
     let problem: String?
     var body: some View {
-        if let reason { Text(reason).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("\(id).reason") }
+        if let reason { Text(reason).font(.footnote).foregroundStyle(WorkspacePalette.textSecondary).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("\(id).reason") }
         if let problem { Text(problem).font(.footnote).foregroundStyle(ConnectChrome.badText).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("\(id).problem") }
     }
 }
@@ -255,8 +255,9 @@ private struct FilterPresetNumber: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             if compact {
-                Button("\(value)") { openPad() }.buttonStyle(.borderless).frame(maxWidth: .infinity, minHeight: 44)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+                Button("\(value)") { openPad() }.buttonStyle(.borderless).tint(WorkspacePalette.accentText)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .workspaceInset()
                     .disabled(editor.reason(for: control) != nil || pads == nil).accessibilityIdentifier(id)
                     .accessibilityLabel("\(row.slot + 1) \(column.label)")
             } else if let range = column.range {
@@ -296,8 +297,8 @@ private struct FilterPresetReorder: View {
             .onChange(of: control) { _, _ in interaction.retire() }
             .onChange(of: editor.mode) { _, _ in interaction.retire() }
     }
-    private var up: some View { Button("Move up") { move(-1) }.buttonStyle(.bordered).frame(minHeight: 44).disabled(editor.reason(for: control) != nil || editor.selectedSlot == nil || editor.rows.first?.slot == editor.selectedSlot).accessibilityIdentifier("\(control.id).moveUp") }
-    private var down: some View { Button("Move down") { move(1) }.buttonStyle(.bordered).frame(minHeight: 44).disabled(editor.reason(for: control) != nil || editor.selectedSlot == nil || editor.rows.last?.slot == editor.selectedSlot).accessibilityIdentifier("\(control.id).moveDown") }
+    private var up: some View { Button("Move up") { move(-1) }.buttonStyle(SetupButtonStyle()).frame(minHeight: 44).disabled(editor.reason(for: control) != nil || editor.selectedSlot == nil || editor.rows.first?.slot == editor.selectedSlot).accessibilityIdentifier("\(control.id).moveUp") }
+    private var down: some View { Button("Move down") { move(1) }.buttonStyle(SetupButtonStyle()).frame(minHeight: 44).disabled(editor.reason(for: control) != nil || editor.selectedSlot == nil || editor.rows.last?.slot == editor.selectedSlot).accessibilityIdentifier("\(control.id).moveDown") }
     private func move(_ direction: Int) {
         guard let gesture = interaction.begin(control, slot: editor.selectedSlot) else { return }
         Task { await interaction.perform(gesture) { receive in await editor.move(gesture, direction: direction, onLateOutcome: receive) } }
@@ -320,7 +321,7 @@ private struct FilterPresetReset: View {
                 gesture = interaction.begin(control)
                 guard let gesture else { return }
                 if gesture.question != nil { asking = true } else { submit(gesture) }
-            }.buttonStyle(.bordered).frame(minHeight: 44).disabled(editor.reason(for: control) != nil).accessibilityIdentifier(control.id)
+            }.buttonStyle(SetupButtonStyle()).frame(minHeight: 44).disabled(editor.reason(for: control) != nil).accessibilityIdentifier(control.id)
             FilterPresetNotes(id: control.id, reason: editor.reason(for: control), problem: interaction.problem)
         }.alert(control.label, isPresented: $asking) {
             Button(DescribedControl.yesText) { if let gesture { submit(gesture) } }.accessibilityIdentifier("\(control.id).yes")

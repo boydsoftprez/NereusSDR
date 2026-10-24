@@ -21,11 +21,18 @@
 // currentGeneration(), so a frame held for the main thread is dropped after
 // a retune.
 // J.J. Boyd (KG4VCF), AI-assisted implementation via Anthropic Claude Code.
+// 2026-10-21: Frames are stamped with the time of their samples
+// (SpectrumSampleClock) in place of the FFT's publish time. Input queue
+// overflows are counted and logged, the engine's 5 ms skips and the clock's
+// re-anchors read out.
+// J.J. Boyd (KG4VCF), AI-assisted implementation via Anthropic Claude Code.
 
 #include "core/ControlRanges.h"
 #include "core/session/media/DaemonSpectrumSource.h"
 
 #include "core/FFTEngine.h"
+#include "core/LogCategories.h"
+#include "core/session/media/SpectrumSampleClock.h"
 #include "models/RadioModel.h"
 
 #include <QMetaObject>
@@ -44,6 +51,10 @@ namespace {
 // conversion (FFTEngine::fftReady's floor).
 constexpr float kFftPowerFloor = 1.0e-20f;
 constexpr float kFftDbmFloor = -200.0f;
+
+// The input queue overflow warning's interval: one line at most this often,
+// with the overflows since the last.
+constexpr qint64 kQueueOverflowWarningIntervalNs = 10'000'000'000LL;
 
 } // namespace
 
@@ -68,6 +79,19 @@ struct DaemonSpectrumSource::FrameState {
     /// Frames replaced in `latest` since the last one taken, with nobody
     /// having taken them (DaemonSpectrumFrame::replacedBefore).
     quint32 replacedSinceTaken{0};
+    /// Each frame's producedAtNs: the time of its samples. Reset wherever
+    /// the samples stop being continuous: the engine takes a new
+    /// configuration, or its input history is cleared for a discontinuity.
+    SpectrumSampleClock sampleClock;
+    /// The last published frame's producedAtNs, for the next frame's
+    /// sourceFrameGapNs; cleared with the clock.
+    bool hasPublishedStamp{false};
+    qint64 lastPublishedStampNs{0};
+    /// Full queues emptied for a new packet, and the warning's state.
+    quint64 inputQueueOverflows{0};
+    quint64 inputQueueOverflowsWarned{0};
+    qint64 inputQueueOverflowWarnedAtNs{0};
+    bool inputQueueOverflowWarned{false};
 };
 
 struct DaemonSpectrumSource::SourceEntry {
@@ -151,12 +175,15 @@ bool DaemonSpectrumSource::activate(const MediaSourceKey& key,
 
     entry.frameConnection = connect(
         engine, &FFTEngine::fftReadyLinear, this,
-        [this, key, state = entry.state](int receiverId,
-                                         const QVector<float>& binsLinear,
-                                         double windowEnb,
-                                         double dbmOffset) {
+        [this, key, engine, state = entry.state](int receiverId,
+                                                 const QVector<float>& binsLinear,
+                                                 double windowEnb,
+                                                 double dbmOffset) {
             if (receiverId == key.streamIndex) {
-                publishFrame(key, state, binsLinear, windowEnb, dbmOffset);
+                // On the engine's thread, inside its emit: the engine is
+                // alive and frameInputPosition() is this frame's.
+                publishFrame(key, state, binsLinear, windowEnb, dbmOffset,
+                             engine->frameInputPosition(), monotonicNowNs());
             }
         },
         Qt::DirectConnection);
@@ -377,6 +404,30 @@ bool DaemonSpectrumSource::frameWaitingForTest(const MediaSourceKey& key) const
     return it->state->hasLatest;
 }
 
+quint64 DaemonSpectrumSource::inputQueueOverflows(const MediaSourceKey& key) const
+{
+    const auto it = m_sources.constFind(key);
+    if (it == m_sources.cend()) { return 0; }
+    QMutexLocker lock(&it->state->mutex);
+    return it->state->inputQueueOverflows;
+}
+
+quint64 DaemonSpectrumSource::engineMinimumGapSkips(const MediaSourceKey& key) const
+{
+    const auto it = m_sources.constFind(key);
+    if (it == m_sources.cend() || !it->engine) { return 0; }
+    // An atomic in FFTEngine: safe to read off its thread.
+    return it->engine->minimumGapSkips();
+}
+
+quint64 DaemonSpectrumSource::sampleClockReanchors(const MediaSourceKey& key) const
+{
+    const auto it = m_sources.constFind(key);
+    if (it == m_sources.cend()) { return 0; }
+    QMutexLocker lock(&it->state->mutex);
+    return it->state->sampleClock.largeErrorReanchors();
+}
+
 int DaemonSpectrumSource::engineDecimation(const MediaSourceKey& key) const
 {
     const auto it = m_sources.constFind(key);
@@ -542,6 +593,8 @@ void DaemonSpectrumSource::enqueueIq(
         return;
     }
     bool queueDrain = false;
+    quint64 overflowsToReport = 0;
+    quint64 overflowsInAll = 0;
     {
         QMutexLocker lock(&state->mutex);
         if (state->retired || !state->active || state->configurationPending
@@ -562,6 +615,20 @@ void DaemonSpectrumSource::enqueueIq(
             state->pendingIq.clear();
             state->inputDiscontinuity = true;
             ++state->inputFramesDropped;
+            // 2026-10-21: counted on its own and logged, at most once an
+            // interval: it was silent, and each one drops queued samples.
+            ++state->inputQueueOverflows;
+            const qint64 nowNs = monotonicNowNs();
+            if (!state->inputQueueOverflowWarned
+                || nowNs - state->inputQueueOverflowWarnedAtNs
+                    >= kQueueOverflowWarningIntervalNs) {
+                overflowsToReport = state->inputQueueOverflows
+                    - state->inputQueueOverflowsWarned;
+                overflowsInAll = state->inputQueueOverflows;
+                state->inputQueueOverflowsWarned = state->inputQueueOverflows;
+                state->inputQueueOverflowWarnedAtNs = nowNs;
+                state->inputQueueOverflowWarned = true;
+            }
         }
         state->pendingIq += interleavedIq;
         if (!state->iqDrainQueued) {
@@ -578,6 +645,12 @@ void DaemonSpectrumSource::enqueueIq(
                 drainInput(engine, state);
             }, Qt::QueuedConnection);
         }
+    }
+    if (overflowsToReport != 0) {
+        qCWarning(lcSpectrum) << "Spectrum source: the FFT input queue was full and its"
+                              << "samples were dropped:" << overflowsToReport
+                              << "times since the last report (" << overflowsInAll
+                              << "in all)";
     }
 }
 
@@ -601,6 +674,9 @@ void DaemonSpectrumSource::drainInput(FFTEngine* engine,
         state->iqDrainQueued = false;
         if (resetInputHistory) {
             ++state->inputHistoryResets;
+            // The samples before the reset and after it are not continuous.
+            state->sampleClock.reset();
+            state->hasPublishedStamp = false;
         }
     }
     if (resetInputHistory) {
@@ -695,8 +771,23 @@ void DaemonSpectrumSource::queueConfiguredActivation(
         if (!state->retired && state->generation == generation) {
             state->configurationPending = false;
             state->active = true;
+            // A new configuration: the next frame takes a new anchor.
+            state->sampleClock.reset();
+            state->hasPublishedStamp = false;
         }
     }, Qt::QueuedConnection);
+}
+
+void DaemonSpectrumSource::noteSourceFrameGap(FrameState& state)
+{
+    // Under the state's lock. A stamp that did not move on is a test's own
+    // (the sample clock's always increase); it reads as unknown.
+    const qint64 stampNs = state.latest.producedAtNs;
+    state.latest.sourceFrameGapNs =
+        state.hasPublishedStamp && stampNs > state.lastPublishedStampNs
+        ? stampNs - state.lastPublishedStampNs : 0;
+    state.hasPublishedStamp = true;
+    state.lastPublishedStampNs = stampNs;
 }
 
 bool DaemonSpectrumSource::publishFrameForTest(const MediaSourceKey& key,
@@ -717,6 +808,7 @@ bool DaemonSpectrumSource::publishFrameForTest(const MediaSourceKey& key,
         state->latest.centreHz = state->config.centreHz;
         state->latest.sampleRateHz = state->config.sampleRateHz;
         state->latest.producedAtNs = producedAtNs;
+        noteSourceFrameGap(*state);
         state->latest.binsLinear = QVector<float>(state->config.fft.fftSize, binLinear);
         state->latest.windowEnb = 1.0;
         state->latest.dbmOffset = 0.0;
@@ -755,6 +847,7 @@ bool DaemonSpectrumSource::publishFrameForTest(const MediaSourceKey& key,
         state->latest.centreHz = state->config.centreHz;
         state->latest.sampleRateHz = state->config.sampleRateHz;
         state->latest.producedAtNs = producedAtNs;
+        noteSourceFrameGap(*state);
         state->latest.binsLinear = binsLinear;
         state->latest.windowEnb = 1.0;
         state->latest.dbmOffset = 0.0;
@@ -773,9 +866,35 @@ bool DaemonSpectrumSource::publishFrameForTest(const MediaSourceKey& key,
     return true;
 }
 
+std::optional<qint64> DaemonSpectrumSource::publishSampledFrameForTest(
+    const MediaSourceKey& key, qint64 inputPosition, qint64 publishedAtNs)
+{
+    const auto it = m_sources.constFind(key);
+    if (it == m_sources.cend()) {
+        return std::nullopt;
+    }
+    const QSharedPointer<FrameState> state = it->state;
+    int fftSize = 0;
+    {
+        QMutexLocker lock(&state->mutex);
+        if (!state->active || state->configurationPending) {
+            return std::nullopt;
+        }
+        fftSize = state->config.fft.fftSize;
+    }
+    publishFrame(key, state, QVector<float>(fftSize, 1.0e-6f), 1.0, 0.0,
+                 inputPosition, publishedAtNs);
+    QMutexLocker lock(&state->mutex);
+    if (!state->hasLatest) {
+        return std::nullopt;
+    }
+    return state->latest.producedAtNs;
+}
+
 void DaemonSpectrumSource::publishFrame(
     const MediaSourceKey& key, const QSharedPointer<FrameState>& state,
-    const QVector<float>& binsLinear, double windowEnb, double dbmOffset)
+    const QVector<float>& binsLinear, double windowEnb, double dbmOffset,
+    qint64 inputPosition, qint64 publishedAtNs)
 {
     // On the engine thread, outside the frame lock.
     QVector<float> binsDbm;
@@ -802,7 +921,10 @@ void DaemonSpectrumSource::publishFrame(
         state->latest.generation = state->generation;
         state->latest.centreHz = state->config.centreHz;
         state->latest.sampleRateHz = state->config.sampleRateHz;
-        state->latest.producedAtNs = monotonicNowNs();
+        // 2026-10-21: the time of the frame's samples, not of this publish.
+        state->latest.producedAtNs = state->sampleClock.stamp(
+            inputPosition, state->config.sampleRateHz, publishedAtNs);
+        noteSourceFrameGap(*state);
         state->latest.binsLinear = binsLinear;
         state->latest.windowEnb = windowEnb;
         state->latest.dbmOffset = dbmOffset;

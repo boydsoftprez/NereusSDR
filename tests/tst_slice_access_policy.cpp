@@ -49,8 +49,13 @@
 //               and the poll both call it); the scan's list names it
 //               there. J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Anthropic Claude Code.
+//   2026-10-22, J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//     test ports come from unusedLoopbackPort() (UnusedLoopbackPort.h), below
+//     the kernel's ephemeral range, so a parallel test cannot take one between
+//     the pick and the listen.
 // =================================================================
 
+#include "UnusedLoopbackPort.h"
 #include "MultiDeviceHarness.h"
 
 #include <QDirIterator>
@@ -72,13 +77,7 @@ const QByteArray kC = QByteArray(32, '\x43');
 
 quint16 freeTciPort()
 {
-    QTcpServer reservation;
-    if (!reservation.listen(QHostAddress::LocalHost, 0)) {
-        return 0;
-    }
-    const quint16 port = reservation.serverPort();
-    reservation.close();
-    return port;
+    return unusedLoopbackPort();
 }
 
 // An app on the station network: every text frame the server sends it.

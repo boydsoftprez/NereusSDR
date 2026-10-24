@@ -3,7 +3,7 @@
 
 import SwiftUI
 
-/// The band's link chip, at card size (the board's `.conn`): the dot, then
+/// The band's link chip, at card size (the board's `.conn`), an inset: the dot, then
 /// the round trip while up, Lost or Offline.
 struct ActivityLinkChip: View {
     let link: StationActivityAttributes.Link
@@ -21,7 +21,12 @@ struct ActivityLinkChip: View {
         .padding(.leading, 7)
         .padding(.trailing, 8)
         .frame(height: 26)
-        .background(ActivityColours.chip, in: RoundedRectangle(cornerRadius: 3))
+        .background {
+            let shape = RoundedRectangle(cornerRadius: ActivityColours.chipRadius, style: .continuous)
+            shape
+                .fill(ActivityColours.chip)
+                .overlay { shape.strokeBorder(ActivityColours.chipEdge, lineWidth: 1) }
+        }
         .accessibilityElement(children: .combine)
     }
 

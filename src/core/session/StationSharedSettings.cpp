@@ -124,6 +124,9 @@
 //               refusal drops a check for an empty name sliceHolderWords
 //               never returns. J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Anthropic Claude Code.
+//   2026-10-22: RX-only values 4 and 5 are worded as XVTR with the first
+//               or second input (rxOnlyWords). J.J. Boyd (KG4VCF), with
+//               AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationServer.h"
@@ -311,6 +314,25 @@ QString blankerWords(int mode)
         return QStringLiteral("NB2");
     }
     return QString::number(mode);
+}
+
+// An RX-only antenna value in the SKU's words: 4 and 5 (Thetis's checkbox
+// sum, AlexController::rxOnlyAnt) are XVTR with the first or second input.
+QString rxOnlyWords(const SkuUiProfile& sku, int value)
+{
+    const auto label = [&sku](int slot) {
+        const QString& text = sku.rxOnlyLabels[static_cast<size_t>(slot)];
+        return text.isEmpty() ? QString::number(slot + 1) : text;
+    };
+    if (value >= 1 && value <= 3) {
+        return label(value - 1);
+    }
+    if (value == 4 || value == 5) {
+        const QString xvtr = label(2);
+        const QString other = label(value - 4);
+        return QStringLiteral("%1 and %2").arg(xvtr, other);
+    }
+    return value == 0 ? QStringLiteral("None") : QString::number(value);
 }
 
 QString filterPolicyWords(int mode)
@@ -706,11 +728,7 @@ StationServer::SharedChange StationServer::classifyShared(const SessionMessage& 
                     if (n == "rxAntennas") {
                         return QStringLiteral("ANT%1").arg(value);
                     }
-                    if (value >= 1 && value <= 3
-                        && !sku.rxOnlyLabels[static_cast<size_t>(value - 1)].isEmpty()) {
-                        return sku.rxOnlyLabels[static_cast<size_t>(value - 1)];
-                    }
-                    return value == 0 ? QStringLiteral("None") : QString::number(value);
+                    return rxOnlyWords(sku, value);
                 };
                 const QString label = n == "rxAntennas" ? QStringLiteral("Receive antenna")
                                                         : QStringLiteral("Receive-only antenna");
@@ -1031,11 +1049,7 @@ StationServer::SharedChange StationServer::classifyShared(const SessionMessage& 
             if (!rxOnly) {
                 return QStringLiteral("ANT%1").arg(value);
             }
-            if (value >= 1 && value <= 3
-                && !sku.rxOnlyLabels[static_cast<size_t>(value - 1)].isEmpty()) {
-                return sku.rxOnlyLabels[static_cast<size_t>(value - 1)];
-            }
-            return value == 0 ? QStringLiteral("None") : QString::number(value);
+            return rxOnlyWords(sku, value);
         };
         words((rxOnly ? QStringLiteral("Receive-only antenna, %1") : QStringLiteral("Receive antenna, %1"))
                   .arg(ReceiverPlanner::bandWords(b)),

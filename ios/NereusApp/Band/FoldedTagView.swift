@@ -38,7 +38,7 @@ struct FoldedTagView: View {
             .accessibilityAddTraits(.isButton)
             if entry.diversityOn {
                 Button { openDiversity?() } label: {
-                    Text("DIV").font(.system(size: 10, weight: .bold)).foregroundStyle(ChromeColours.accent)
+                    Text("DIV").font(.system(size: 10, weight: .bold)).foregroundStyle(ChromeColours.accentText)
                         .frame(width: 44, height: 44).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -48,8 +48,8 @@ struct FoldedTagView: View {
         }
         .padding(.top, 1)
         .frame(width: size.width, height: size.height)
-        .background(BandColours.flagBackground, in: RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(BandColours.flagBorder, lineWidth: 1))
+        .background(BandColours.flagBackground, in: RoundedRectangle(cornerRadius: 4)) // kept-radius: flag
+        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(BandColours.flagBorder, lineWidth: 1)) // kept-radius: flag
         .overlay(alignment: .top) { Rectangle().fill(colour).frame(height: 2).padding(.horizontal, 1) }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("foldedFlag\(entry.slice.letter)")

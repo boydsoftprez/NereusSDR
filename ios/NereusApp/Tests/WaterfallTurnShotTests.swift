@@ -30,7 +30,7 @@ struct WaterfallTurnShotTests {
         band.receive(.context(context))
 
         let window = try BandFlagShotTests.window(size: Self.upright)
-        let host = UIHostingController(rootView: AnyView(Self.root(band, size: Self.upright)))
+        let host = UIHostingController(rootView: AnyView(ShotHosting.wrap(Self.root(band, size: Self.upright))))
         host.safeAreaRegions = []
         host.view.frame = CGRect(origin: .zero, size: Self.upright)
         window.rootViewController = host
@@ -95,7 +95,7 @@ struct WaterfallTurnShotTests {
     private func turn(_ window: UIWindow, host: UIHostingController<AnyView>, band: BandModel,
                       to size: CGSize) {
         window.frame = CGRect(origin: .zero, size: size)
-        host.rootView = AnyView(Self.root(band, size: size))
+        host.rootView = AnyView(ShotHosting.wrap(Self.root(band, size: size)))
         host.view.frame = CGRect(origin: .zero, size: size)
         // The caller awaits this view's draw at the new size before feeding.
     }

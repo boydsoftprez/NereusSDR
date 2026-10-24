@@ -12,6 +12,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-10-22 - rxAntennaLabelFor, the receive-label rule of
+//              refreshAntennasFromAlex on its own. J.J. Boyd (KG4VCF),
+//              AI-assisted via Anthropic Claude Code.
+// 2026-10-22 - meterReadingNs, when the Core measured the RX meter readings,
+//              declared last (rxMeterStampsVersion 1). J.J. Boyd (KG4VCF),
+//              AI-assisted via Anthropic Claude Code.
 // 2026-10-14 - Capture per-band persistence values before deferred saves.
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-14 - FM squelch threshold default is Thetis's 0 (console.cs:171
@@ -709,6 +715,17 @@ private:
     // (radeReasonVersion 1; the station link document, "The RADE status").
     // Declared last so every earlier property keeps its wire ordinal.
     Q_PROPERTY(QString radeReason READ radeReason NOTIFY radeReasonChanged)
+    // RX meter stamps: when the Core measured this slice's RX meter readings
+    // (signalStrengthDbm, signalPeakDbm, signalAverageDbm and the ADC and AGC
+    // readings above), in nanoseconds on its producer clock, the clock of
+    // its spectrum frames and audio (displayClockVersion 1). SliceMeterPump
+    // writes it with the readings; a remote window holds the readings until
+    // their audio plays (StationClient's RX meter hold). 0 until the first
+    // reading. Outbound, no WRITE, sent only to a peer that declared
+    // rxMeterStamps (rxMeterStampsVersion 1; the station link document,
+    // "The RX meter stamps"). Declared last so every earlier property keeps
+    // its wire ordinal.
+    Q_PROPERTY(qint64 meterReadingNs READ meterReadingNs NOTIFY meterReadingNsChanged)
 
 public:
     // Receive-layout admission bounds: general receive defaults, not a
@@ -878,6 +895,10 @@ public:
     /// is the writer (a remote window's, the Core's value as mirrored).
     QString radeReason() const { return m_radeReason; }
     void setRadeReason(const QString& reason);
+    /// See the meterReadingNs Q_PROPERTY. Change-only; SliceMeterPump is the
+    /// writer on the Core, the mirror in a remote window.
+    qint64 meterReadingNs() const { return m_meterReadingNs; }
+    void setMeterReadingNs(qint64 ns);
     void setMinNotchWidthHz(double hz);
     void setAdcPeakDbfs(double dbfs);
     void setAdcAverageDbfs(double dbfs);
@@ -1506,6 +1527,14 @@ public slots:
                                  NereusSDR::Band band,
                                  const NereusSDR::SkuUiProfile* sku = nullptr);
 
+    // The receive-antenna label refreshAntennasFromAlex gives a slice on
+    // `band` (the SKU's RX-only label when the bypass input is chosen,
+    // otherwise ANT1..ANT3). Unlike RadioModel::receiveAntennaLabel it does
+    // not follow useTxAntForRx, as the slice's own refresh does not.
+    static QString rxAntennaLabelFor(const NereusSDR::AlexController& alex,
+                                     NereusSDR::Band band,
+                                     const NereusSDR::SkuUiProfile* sku = nullptr);
+
 signals:
     void nnrDiagnosticsRequested(int testMode, int outputMode);
     void frequencyChanged(double freq);
@@ -1533,6 +1562,8 @@ signals:
     void radeFreqOffsetHzChanged(double hz);
     /// Why this RADE slice has no working decoder changed (empty: none).
     void radeReasonChanged(const QString& reason);
+    /// The RX meter readings' measurement time moved.
+    void meterReadingNsChanged(qint64 ns);
     void stationAutoAgcNoiseFloorChanged();
     void dspModeChanged(NereusSDR::DSPMode mode);
     void filterChanged(int low, int high);
@@ -1723,6 +1754,8 @@ private:
     double  m_radeFreqOffsetHz{0.0};
     // Why this RADE slice has no working decoder (radeReason).
     QString m_radeReason;
+    // When the RX meter readings were measured (meterReadingNs).
+    qint64 m_meterReadingNs{0};
     void noteDiversityPatternInputs();
     double  m_stationAutoAgcNoiseFloorDbm{-200.0};
     bool    m_stationAutoAgcNoiseFloorValid{false};

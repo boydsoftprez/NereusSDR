@@ -81,7 +81,7 @@ struct SetupSpecializedPanelsTests {
         let features = hello?.features ?? [:]
         #expect(features == LinkFeatures.app)
         #expect(features["setupDescription"] == 29)
-        #expect(features["settingsHygiene"] == 2 && features["radioAntennaRows"] == 1)
+        #expect(features["settingsHygiene"] == 2 && features["radioAntennaRows"] == 2)
         #expect(features["band2m"] == 1)
         #expect(rig.app.mirror.capabilityVersion("setupDescriptionVersion") == 11)
         #expect(rig.app.session?.signsWithDeviceKey == true)
@@ -230,6 +230,23 @@ struct SetupSpecializedPanelsTests {
         let receive = try controls.admitAntenna(rx, in: "hardware").get()
         #expect(await controls.performAntenna(receive, band: 13, column: "rxOnly2") == .applied)
         #expect(sent(rig.station, "setAlexRxAntennaForRadio").first?.args.last == .init(name: "rxOnly", value: .bool(true)))
+        // The receive-only cells are checkboxes: XVTR joins the second
+        // input (5), then turns off again, and the last box off sends 0.
+        #expect(await settle { controls.antennaTable(rx, in: "hardware").grid?.selected[13]
+            == [true, false, false, false, true, false] })
+        for (column, value, row) in [("rxOnly3", Int64(5), [true, false, false, false, true, true]),
+                                     ("rxOnly3", Int64(2), [true, false, false, false, true, false]),
+                                     ("rxOnly2", Int64(0), [true, false, false, false, false, false])] {
+            let tap = try controls.admitAntenna(rx, in: "hardware").get()
+            #expect(await controls.performAntenna(tap, band: 13, column: column) == .applied)
+            #expect(sent(rig.station, "setAlexRxAntennaForRadio").last?.args.first { $0.name == "antenna" }?.value
+                    == .i64(value))
+            #expect(await settle { controls.antennaTable(rx, in: "hardware").grid?.selected[13] == row })
+        }
+        let pick = try controls.admitAntenna(rx, in: "hardware").get()
+        #expect(await controls.performAntenna(pick, band: 13, column: "rxOnly2") == .applied)
+        #expect(await settle { controls.antennaTable(rx, in: "hardware").grid?.selected[13]
+            == [true, false, false, false, true, false] })
         try await SetupDescribedPagesTests.shoot("setup-panel-antennas", rig: rig,
                                                  path: [.category("Hardware"),
                                                         .described(category: "hardware", page: "hardware.antennaAlex")],

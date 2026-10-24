@@ -1,5 +1,6 @@
 // no-port-check: NereusSDR-original two-process station ownership tests.
 
+#include "UnusedLoopbackPort.h"
 #include <QtTest>
 
 #include <QDir>
@@ -616,10 +617,8 @@ private slots:
 
     void offlineRefusalDefersRecoveryAndKeepsOriginalModel()
     {
-        QTcpServer portProbe;
-        QVERIFY(portProbe.listen(QHostAddress::LocalHost, 0));
-        const quint16 port = portProbe.serverPort();
-        portProbe.close();
+        const quint16 port = unusedLoopbackPort();
+        QVERIFY(port != 0);
         DaemonConfig config = DaemonConfig::defaults();
         config.radioMac = QStringLiteral("02:00:00:00:00:54");
         config.remoteBind = QStringLiteral("127.0.0.1");
@@ -726,10 +725,8 @@ private slots:
 
     void stopAllTxIsFirstStationOperation()
     {
-        QTcpServer portProbe;
-        QVERIFY(portProbe.listen(QHostAddress::LocalHost, 0));
-        const quint16 port = portProbe.serverPort();
-        portProbe.close();
+        const quint16 port = unusedLoopbackPort();
+        QVERIFY(port != 0);
         DaemonConfig config = DaemonConfig::defaults();
         config.remoteBind = QStringLiteral("127.0.0.1");
         config.remotePort = port;
@@ -755,10 +752,8 @@ private slots:
     // the release does, before the station or the model goes.
     void stopStopsTransmitFirst()
     {
-        QTcpServer portProbe;
-        QVERIFY(portProbe.listen(QHostAddress::LocalHost, 0));
-        const quint16 port = portProbe.serverPort();
-        portProbe.close();
+        const quint16 port = unusedLoopbackPort();
+        QVERIFY(port != 0);
         DaemonConfig config = DaemonConfig::defaults();
         config.remoteBind = QStringLiteral("127.0.0.1");
         config.remotePort = port;

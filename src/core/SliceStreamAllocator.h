@@ -21,11 +21,24 @@
 //                                    every path that adds a slice keeps
 //                                    to it. AI-assisted transformation
 //                                    via Anthropic Claude Code.
+//   2026-10-22  J.J. Boyd / KG4VCF  rejoinStream: a lone slice that tunes
+//                                    well inside another receiver's window
+//                                    goes back onto it (JJ's ruling
+//                                    2026-10-22). AI-assisted via
+//                                    Anthropic Claude Code.
+//   2026-10-22  J.J. Boyd / KG4VCF  rejoinStream frees only the highest
+//                                    active stream; canFoldDown moves the
+//                                    higher receiver's slices down instead,
+//                                    so no rejoin leaves a gap in the DDC
+//                                    enable mask. AI-assisted via Anthropic
+//                                    Claude Code.
 // =================================================================
 #pragma once
 
 #include <QString>
 #include <QVector>
+
+#include <optional>
 
 namespace NereusSDR {
 
@@ -128,6 +141,54 @@ public:
                           bool soleOccupant,
                           bool ddcPinned,
                           double frequencyHz) const;
+
+    /// How far inside another stream's window a lone slice must sit before
+    /// it rejoins that stream: within this fraction of the half window, so
+    /// the inner 80% of the span. A slice leaves a shared window only at its
+    /// edge (windowContains), so the band between the two is hysteresis: a
+    /// slice tuned a hertz either side of an edge cannot bounce between a
+    /// receiver of its own and the shared one on every step.
+    static constexpr double kRejoinHalfWindowFraction = 0.8;
+
+    /// Should a slice that is alone on `currentStream`, retuning to
+    /// `frequencyHz`, go back onto another receiver instead of moving its
+    /// own? JJ's ruling 2026-10-22: two slices on one pan share a receiver
+    /// again when one tunes into the other's range, so the pan keeps its
+    /// history as the operator clicks between them.
+    ///
+    /// The first of `candidateStreams` (other than `currentStream`) that is
+    /// active, runs at `currentStream`'s rate, and holds `frequencyHz`
+    /// within kRejoinHalfWindowFraction of its half window. The placement is
+    /// JoinedExisting there with only the shift set: that stream's centre and
+    /// rate do not change, so its occupants hear nothing new. nullopt when
+    /// none qualifies, or `currentStream` is not active; the caller then
+    /// keeps the retune it had.
+    ///
+    /// Only when `currentStream` is the highest active stream, so freeing it
+    /// never leaves a gap in the DDC enable mask (the 2026-07-26 G2E bench:
+    /// a hole at DDC1 and a dead second pan; see retuneSlice). A lone slice
+    /// on a lower stream is handled the other way round (canFoldDown).
+    ///
+    /// The caller decides which streams are candidates (the same pan, the
+    /// same receive antenna and the same C-Tune pin; see
+    /// RadioModel::rejoinCandidateStreams) and asks only for a slice whose
+    /// retune would otherwise move its own receiver (Outcome::RetunedStream).
+    std::optional<Placement> rejoinStream(int currentStream, double frequencyHz,
+                                          const QVector<int>& candidateStreams) const;
+
+    /// JJ's ruling 2026-10-22, the other way round: a lone slice on
+    /// `lowerStream` retunes its receiver to `lowerCentreHz`, and the slices
+    /// on `higherStream` (their frequencies in `frequenciesHz`) could all go
+    /// down onto it, freeing `higherStream`. True only when `higherStream` is
+    /// above `lowerStream` and is the highest active stream (so freeing it
+    /// leaves no gap in the DDC enable mask), both are active at one rate,
+    /// and every frequency sits within kRejoinHalfWindowFraction of the half
+    /// window centred on `lowerCentreHz` at that rate.
+    bool canFoldDown(int lowerStream, double lowerCentreHz, int higherStream,
+                     const QVector<double>& frequenciesHz) const;
+
+    /// The highest active stream, or -1 when none is.
+    int  highestActiveStream() const;
 
     int  streamCount() const { return m_streams.size(); }
     int  activeStreamCount() const;

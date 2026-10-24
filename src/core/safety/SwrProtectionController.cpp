@@ -22,6 +22,18 @@
 //                applied (Thetis DisablePA and hf_tr_relay,
 //                transmitSettingsVersion 11). J.J. Boyd (KG4VCF), AI-assisted
 //                via Anthropic Claude Code.
+//   2026-10-22 - PR 604 fix wave: ingest() follows PollPAPWR
+//                (console.cs:25991-26159 [v2.10.3.15]) for the ANAN-8000D
+//                open-antenna exclusion, the alexpresent/apollopresent gate
+//                and swrprotection off (no early return, so a latched
+//                wind-back holds until MOX off); onMoxOff() keeps
+//                high_swr_count and alex_swr as UIMOXChangedFalse does, by
+//                J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//                Claude Code.
+//   2026-10-22 - PR 604 second pass: a clean sample zeroes high_swr_count
+//                while the wind-back latch holds too (console.cs:26126-26131
+//                [v2.10.3.15]), by J.J. Boyd (KG4VCF), with AI-assisted
+//                transformation via Claude Code.
 // =================================================================
 
 // --- From console.cs ---
@@ -133,6 +145,12 @@ void SwrProtectionController::setTunePowerSliderValue(int value) noexcept
     m_tunePowerSliderValue = std::clamp(value, 0, 100);
 }
 
+void SwrProtectionController::setHpsdrModel(HPSDRModel model) noexcept
+{
+    // console.cs:26039 [v2.10.3.15]: HardwareSpecific.Model
+    m_model = model;
+}
+
 void SwrProtectionController::ingest(float fwdW, float revW, bool tuneActive) noexcept
 {
     // From Thetis console.cs:25933-26120 [v2.10.3.13] (PollPAPWR loop)
@@ -145,36 +163,17 @@ void SwrProtectionController::ingest(float fwdW, float revW, bool tuneActive) no
     //   console.cs:25989  //[2.10.3.6]MW0LGE ignored if tuning, and returned the 10.0f
     //   console.cs:26064  // K2UE idea:  try to determine if Hi-Z or Lo-Z load
 
-    if (!m_enabled) {
-        // When protection is disabled, always pass-through at full power
-        // and clear all latched/observable state so re-enable starts clean.
-        // (Codex P2 follow-up to PR #139: previously left m_windBackLatched,
-        //  m_openAntennaDetected, and m_tripCount stale; phantom fault
-        //  state would survive into the re-enabled path.)
-        if (m_protectFactor != 1.0f) {
-            m_protectFactor = 1.0f;
-            emit protectFactorChanged(m_protectFactor);
-        }
-        if (m_highSwr) {
-            m_highSwr = false;
-            emit highSwrChanged(m_highSwr);
-        }
-        if (m_windBackLatched) {
-            m_windBackLatched = false;
-            emit windBackLatchedChanged(false);
-        }
-        if (m_openAntennaDetected) {
-            m_openAntennaDetected = false;
-            emit openAntennaDetectedChanged(false);
-        }
-        m_tripCount = 0;
-        return;
-    }
+    // From Thetis console.cs:25991-26159 [v2.10.3.15] (PollPAPWR, keyed).
+    // Every value is worked out first and the changes are emitted once at
+    // the end, so a sample never emits a transient value.
+    const float prevFactor   = m_protectFactor;
+    const bool  prevHighSwr  = m_highSwr;
+    const bool  prevWindBack = m_windBackLatched;
+    const bool  prevOpen     = m_openAntennaDetected;
 
     // ── SWR computation ───────────────────────────────────────────────────
-    // From Thetis console.cs:25972-25978 [v2.10.3.13]
-    // Tag preserved: //[2.10.3.6]MW0LGE (console.cs:25980 — SWR/tune config)
-
+    // From Thetis console.cs:26021-26027 [v2.10.3.15]
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:26029) [v2.10.3.15]
     float swr = 1.0f;
     float rho = std::sqrt(revW / fwdW);
     if (std::isnan(rho) || std::isinf(rho)) {
@@ -184,150 +183,182 @@ void SwrProtectionController::ingest(float fwdW, float revW, bool tuneActive) no
     }
 
     // Both fwd and rev ≤ 2W floor → clamp SWR to 1.0
-    // console.cs:25978 [v2.10.3.13]
     if ((fwdW <= kLowPowerFloor && revW <= kLowPowerFloor) || swr < 1.0f) {
         swr = 1.0f;
     }
 
-    // ── Open-antenna heuristic ────────────────────────────────────────────
-    // console.cs:25989-26009 [v2.10.3.6]MW0LGE
-    // in following 'if', K2UE recommends not checking open antenna for the 8000 model
-    // if (swrprotection && alex_fwd > 10.0f && (alex_fwd - alex_rev) < 1.0f)
-    //-W2PA Changed to allow 35w - some amplifier tuners need about 30w to reliably start working
-    //if (swrprotection && alex_fwd > 35.0f && (alex_fwd - alex_rev) < 1.0f
-    // [2.10.3.6]MW0LGE ignored if tuning, and returned the 10.0f
-    if (!tuneActive && fwdW > kOpenAntennaFwdMin && (fwdW - revW) < kOpenAntennaDeltaMax) {
-        // open ant condition
-        swr = kOpenAntennaSwr;
-
-        m_measuredSwr = swr;
-
-        bool prevOpen = m_openAntennaDetected;
-        m_openAntennaDetected = true;
-
-        float prevFactor = m_protectFactor;
-        m_protectFactor = kWindBackFactor;
-
-        bool prevHighSwr = m_highSwr;
-        m_highSwr = true;
-
-        if (prevFactor != m_protectFactor) {
-            emit protectFactorChanged(m_protectFactor);
+    // ── Open-antenna check, behind the Alex / Apollo gate ─────────────────
+    // From Thetis console.cs:26029-26065 [v2.10.3.15]:
+    //   //[2.10.3.6]MW0LGE modifications to use setup config for swr and tune ignore power. Implements #221 (https://github.com/ramdor/Thetis/issues/221)
+    //   if (alexpresent || apollopresent)
+    //   {
+    //       // open antenna connection dectection, ignored if tuning or 8000 model
+    //
+    //       // in following 'if', K2UE recommends not checking open antenna for the 8000 model
+    //       // if (swrprotection && alex_fwd > 10.0f && (alex_fwd - alex_rev) < 1.0f)
+    //       //-W2PA Changed to allow 35w - some amplifier tuners need about 30w to reliably start working
+    //       //if (swrprotection && alex_fwd > 35.0f && (alex_fwd - alex_rev) < 1.0f
+    //       if (!chkTUN.Checked && (swrprotection && alex_fwd > 10.0f && (alex_fwd - alex_rev) < 1.0f //[2.10.3.6]MW0LGE ignored if tuning, and returned the 10.0f
+    //           && HardwareSpecific.Model != HPSDRModel.ANAN8000D)) // open ant condition
+    //       {
+    //           swr = 50.0f;
+    //           NetworkIO.SWRProtect = 0.01f;
+    //           chkMOX.Checked = false;
+    //           ... checkAntennaWarning(); ...
+    //           goto end;
+    //       }
+    //   }
+    //   else
+    //   {
+    //       swr = 1.0f;
+    //       alex_fwd = 0;
+    //       alex_rev = 0;
+    //   }
+    // chkMOX.Checked = false and the warning are the caller's
+    // (RadioModel::handlePaTelemetry), which reads openAntennaDetected().
+    // NereusSDR also raises highSwr here so the overlay and the TX applet's
+    // SWR LED light (Thetis leaves HighSWR as it was).
+    bool openAntenna = false;
+    if (kAlexPresent || kApolloPresent) {
+        // open antenna connection dectection, ignored if tuning or 8000 model
+        // [original inline comment from console.cs:26032]
+        if (!tuneActive && (m_enabled && fwdW > kOpenAntennaFwdMin
+                            && (fwdW - revW) < kOpenAntennaDeltaMax //[2.10.3.6]MW0LGE ignored if tuning, and returned the 10.0f
+                            && m_model != HPSDRModel::ANAN8000D)) { // open ant condition
+            swr = kOpenAntennaSwr;
+            m_protectFactor = kWindBackFactor;
+            m_highSwr = true;
+            openAntenna = true;
         }
-        if (prevHighSwr != m_highSwr) {
-            emit highSwrChanged(m_highSwr);
-        }
-        if (prevOpen != m_openAntennaDetected) {
-            emit openAntennaDetectedChanged(m_openAntennaDetected);
-        }
-        return;
+    } else {
+        swr = 1.0f;
+        fwdW = 0.0f;
+        revW = 0.0f;
     }
 
-    // Clear open-antenna flag when condition no longer holds
-    if (m_openAntennaDetected) {
-        m_openAntennaDetected = false;
-        emit openAntennaDetectedChanged(false);
-    }
+    if (!openAntenna) {
+        // ── Tune-time bypass ──────────────────────────────────────────────
+        // From Thetis console.cs:26067-26107 [v2.10.3.15]:
+        //   if (chkTUN.Checked && disable_swr_on_tune && (alexpresent || apollopresent))
+        //   ...
+        //   if (alex_fwd >= 1.0f && alex_fwd <= _tunePowerSwrIgnore && tunePowerSliderValue <= 70)
+        //   {
+        //       swr_pass = true;
+        //   }
+        //   else swr_pass = false;
+        bool swrPass = false;
+        if (tuneActive && m_disableOnTune && (kAlexPresent || kApolloPresent)) {
+            if (fwdW >= 1.0f && fwdW <= m_tunePowerSwrIgnore && m_tunePowerSliderValue <= 70) {
+                swrPass = true;
+            } else {
+                swrPass = false;
+            }
+        }
 
-    // ── Tune-time bypass ──────────────────────────────────────────────────
-    // console.cs:26020-26057 [v2.10.3.13]
-    bool swrPass = false;
-    if (tuneActive && m_disableOnTune) {
-        // alex_fwd >= 1.0f && alex_fwd <= _tunePowerSwrIgnore && tunePowerSliderValue <= 70
-        // console.cs:26047-26053 [v2.10.3.13]
-        if (fwdW >= 1.0f && fwdW <= m_tunePowerSwrIgnore && m_tunePowerSliderValue <= 70) {
+        // "Disable HF PA": no trip with the HF PA off. NereusSDR has no
+        // transverter bands, so the tx_xvtr_index arm never applies.
+        // console.cs:26109-26110 [v2.10.3.15]
+        //   if (tx_xvtr_index >= 0 || hf_tr_relay)
+        //       swr_pass = true;
+        if (m_hfPaDisabled) {
             swrPass = true;
         }
-    }
 
-    // "Disable HF PA": no trip with the HF PA off. NereusSDR has no
-    // transverter bands, so the tx_xvtr_index arm never applies.
-    // console.cs:26109-26110 [v2.10.3.15]
-    //   if (tx_xvtr_index >= 0 || hf_tr_relay)
-    //       swr_pass = true;
-    if (m_hfPaDisabled) {
-        swrPass = true;
-    }
-
-    // ── Trip detection + foldback / windback ──────────────────────────────
-    // console.cs:26067-26091 [v2.10.3.13]
-
-    // alex_fwd_limit floor: suppresses false trips during TX ramp-up.
-    // console.cs:26064-26067 [v2.10.3.13]:
-    //   float alex_fwd_limit = 5.0f;
-    //   if (HardwareSpecific.Model == HPSDRModel.ANAN8000D)        // K2UE idea:  try to determine if Hi-Z or Lo-Z load
-    //       alex_fwd_limit = 2.0f * (float)ptbPWR.Value;        //    by comparing alex_fwd with power setting
-    //   if (swr > _swrProtectionLimit && alex_fwd > alex_fwd_limit && swrprotection && !swr_pass)
-    if (swr > m_limit && fwdW > m_alexFwdLimit && !swrPass) {
-        m_tripCount++;
-        if (m_tripCount >= kTripDebounceCount) {
-            // console.cs:26070-26075 [v2.10.3.13]
+        // ── Trip detection + foldback ─────────────────────────────────────
+        // From Thetis console.cs:26112-26131 [v2.10.3.15]:
+        //   float alex_fwd_limit = 5.0f;
+        //   if (HardwareSpecific.Model == HPSDRModel.ANAN8000D)        // K2UE idea:  try to determine if Hi-Z or Lo-Z load
+        //       alex_fwd_limit = 2.0f * (float)ptbPWR.Value;        //    by comparing alex_fwd with power setting
+        //
+        //   if (swr > _swrProtectionLimit && alex_fwd > alex_fwd_limit && swrprotection && !swr_pass)
+        //   {
+        //       high_swr_count++;
+        //       if (high_swr_count >= 4)
+        //       {
+        //           high_swr_count = 0;
+        //           NetworkIO.SWRProtect = (float)(_swrProtectionLimit / (swr + 1.0f));
+        //           HighSWR = true;
+        //       }
+        //   }
+        //   else
+        //   {
+        //       high_swr_count = 0;
+        //       NetworkIO.SWRProtect = 1.0f;
+        //       HighSWR = false;
+        //   }
+        // The caller sets alex_fwd_limit (setAlexFwdLimit) before each sample.
+        if (swr > m_limit && fwdW > m_alexFwdLimit && m_enabled && !swrPass) {
+            m_tripCount++;
+            if (m_tripCount >= kTripDebounceCount) {
+                m_tripCount = 0;
+                m_protectFactor = m_limit / (swr + 1.0f);
+                m_highSwr = true;
+            }
+        } else {
             m_tripCount = 0;
-
-            float newFactor = m_limit / (swr + 1.0f);
-            bool prevHighSwr = m_highSwr;
-            m_highSwr = true;
-
-            float prevFactor = m_protectFactor;
-            m_protectFactor = newFactor;
-
-            if (prevFactor != m_protectFactor) {
-                emit protectFactorChanged(m_protectFactor);
-            }
-            if (prevHighSwr != m_highSwr) {
-                emit highSwrChanged(m_highSwr);
+            m_protectFactor = 1.0f;
+            // NereusSDR keeps HighSWR up while the wind-back latch holds and
+            // protection is on, so the overlay stays lit with the drive
+            // folded back (Thetis shows Display.PowerFoldedBack for that);
+            // with protection off HighSWR clears as upstream. The trip count
+            // and the factor follow Thetis either way; the factor is 0.01
+            // once latched (below).
+            if (!m_enabled || !m_windBackLatched) {
+                m_highSwr = false;
             }
         }
-        // (below 4 trips: factor unchanged until trip debounce fires)
-    } else if (!m_windBackLatched) {
-        // Below limit and not latched: full power, clear trip counter
-        // console.cs:26078-26082 [v2.10.3.13]
-        m_tripCount = 0;
 
-        float prevFactor = m_protectFactor;
-        bool prevHighSwr = m_highSwr;
-
-        m_protectFactor = 1.0f;
-        m_highSwr = false;
-
-        if (prevFactor != m_protectFactor) {
-            emit protectFactorChanged(m_protectFactor);
+        // ── Catch-all: windback latch ─────────────────────────────────────
+        // From Thetis console.cs:26133-26142 [v2.10.3.15]:
+        //   //catch all
+        //   if (swrprotection && _swr_wind_back_power & !_wind_back_engaged && HighSWR) _wind_back_engaged = true; // this and NetworkIO.SWRProtect reset in UIMOXChangedFalse
+        //   if (_wind_back_engaged)
+        //   {
+        //       NetworkIO.SWRProtect = 0.01f;
+        //       Display.PowerFoldedBack = true;
+        //   }
+        // The latch is not tied to swrprotection once engaged: turning
+        // protection off keeps it (and 0.01) until MOX off.
+        if (m_enabled && m_windBackEnabled && !m_windBackLatched && m_highSwr) {
+            m_windBackLatched = true;
         }
-        if (prevHighSwr != m_highSwr) {
-            emit highSwrChanged(m_highSwr);
-        }
-    }
-
-    // ── Catch-all: windback latch ─────────────────────────────────────────
-    // console.cs:26083-26090 [v2.10.3.13]
-    // if (swrprotection && _swr_wind_back_power & !_wind_back_engaged && HighSWR)
-    //     _wind_back_engaged = true; // this and NetworkIO.SWRProtect reset in UIMOXChangedFalse
-    if (m_windBackEnabled && !m_windBackLatched && m_highSwr) {
-        m_windBackLatched = true;
-        emit windBackLatchedChanged(true);
-    }
-
-    if (m_windBackLatched) {
-        // console.cs:26087-26088 [v2.10.3.13]
-        float prevFactor = m_protectFactor;
-        m_protectFactor = kWindBackFactor;
-        if (prevFactor != m_protectFactor) {
-            emit protectFactorChanged(m_protectFactor);
+        if (m_windBackLatched) {
+            m_protectFactor = kWindBackFactor;
         }
     }
 
-    // ── Store measured SWR ────────────────────────────────────────────────
-    // console.cs:26096-26099 [v2.10.3.13] (alex_swr assignment after end: label)
+    // ── end: store measured SWR ───────────────────────────────────────────
+    // From Thetis console.cs:26143-26149 [v2.10.3.15]:
+    //   end:
+    //       swr_pass = false;
+    //       if (float.IsNaN(swr) || float.IsInfinity(swr) || swr < 1.0f)
+    //           alex_swr = 1.0f;
+    //       else
+    //           alex_swr = swr;
     if (std::isnan(swr) || std::isinf(swr) || swr < 1.0f) {
         m_measuredSwr = 1.0f;
     } else {
         m_measuredSwr = swr;
     }
+    m_openAntennaDetected = openAntenna;
+
+    if (prevFactor != m_protectFactor) {
+        emit protectFactorChanged(m_protectFactor);
+    }
+    if (prevHighSwr != m_highSwr) {
+        emit highSwrChanged(m_highSwr);
+    }
+    if (prevWindBack != m_windBackLatched) {
+        emit windBackLatchedChanged(m_windBackLatched);
+    }
+    if (prevOpen != m_openAntennaDetected) {
+        emit openAntennaDetectedChanged(m_openAntennaDetected);
+    }
 }
 
 void SwrProtectionController::onMoxOff() noexcept
 {
-    // From Thetis console.cs:29191-29195 [v2.10.3.13] (UIMOXChangedFalse)
+    // From Thetis console.cs:29241-29246 [v2.10.3.15] (UIMOXChangedFalse)
     //   //[2.10.3.7]MW0LGE reset
     //   NetworkIO.SWRProtect = 1.0f;
     //   _wind_back_engaged = false;
@@ -344,8 +375,8 @@ void SwrProtectionController::onMoxOff() noexcept
     m_highSwr             = false;
     m_windBackLatched     = false;
     m_openAntennaDetected = false;
-    m_tripCount           = 0;
-    m_measuredSwr         = 1.0f;
+    // high_swr_count and alex_swr are not reset there: the trip count and
+    // the measured SWR carry over to the next key, as in Thetis.
 
     if (prevFactor != m_protectFactor) {
         emit protectFactorChanged(m_protectFactor);

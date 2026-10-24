@@ -15,6 +15,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-21 - setFilterFromDrag, the pan's filter edge drag on this
+//                 flag's slice. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code (Claude Opus 5.5).
+//   2026-10-18 - Flag drag signals, tuneFromDrag, isLocked, stepHz and the
+//                 wheel step accumulator. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code (Claude Opus 5.5).
 //   2026-10-12 — J.J. Boyd (KG4VCF), gate experimental RADE V2 opt-in;
 //                AI-assisted implementation via OpenAI Codex.
 //   2026-10-13 — Export the widget's Qt signal addresses from the Windows
@@ -362,6 +368,7 @@ warren@wpratt.com
 #include "VfoLevelBar.h"
 #include "ScrollableLabel.h"
 #include "VfoModeContainers.h"
+#include "gui/WheelStepAccumulator.h"
 
 #include <QWidget>
 #include <QLabel>
@@ -514,6 +521,22 @@ public:
 
     // --- Lock state setter (S1.8a review — syncs m_lockBtn / Close-strip) ---
     void setLocked(bool v);
+    bool isLocked() const { return m_locked; }
+    int  stepHz() const { return m_stepHz; }
+
+    // Drag to tune (2026-10-18). The pan that owns this flag converts the
+    // cursor travel to Hz and calls this; it tunes as the wheel does, through
+    // frequencyChanged, and refuses a locked slice or one this window only
+    // listens to. Returns whether the frequency changed.
+    bool tuneFromDrag(double hz);
+    // Filter edge drag (2026-10-21). The pan sets this flag's filter from a
+    // drag on its edge, as a filter button does, through filterChanged;
+    // refuses a slice this window only listens to. Returns whether the
+    // filter changed.
+    bool setFilterFromDrag(int low, int high);
+    // Selects this flag's slice, as a click on the flag does.
+    void requestActivation() { emit sliceActivationRequested(m_sliceIndex); }
+    bool isFlagDragging() const { return m_flagDragging; }
 
     // --- DSP tab state setters (S1.8b — guarded against re-emit) ---
     // Thetis chkNB CheckState mirror — see console.cs:43513-43560 [v2.10.3.13].
@@ -781,6 +804,12 @@ signals:
     void openNbSetupRequested();
     void anfChanged(bool enabled);
     void sliceActivationRequested(int sliceIndex);
+    // Drag to tune (2026-10-18): a left press on the flag's own surface moved
+    // past QApplication::startDragDistance() horizontally. Global x of the
+    // press, then of each move; the owning SpectrumWidget converts and tunes.
+    void flagDragStarted(int pressGlobalX);
+    void flagDragMoved(int globalX);
+    void flagDragFinished();
     void closeRequested(int sliceIndex);
     void lockChanged(bool locked);
 
@@ -879,6 +908,8 @@ protected:
     void showEvent(QShowEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
     // Phase 3F Sub-Epic E Task 4: right-click pops the multi-pan context
     // menu (Make TX, Antenna >, Sample rate >, Diversity >, Filter policy,
@@ -1196,6 +1227,20 @@ private:
     static constexpr int kCollapsedFreqGap = 2;
     void updateCollapsedFreqLabel();
     void positionCollapsedFreqLabel();
+
+    // --- Drag to tune and wheel steps (2026-10-18) ---
+    // A left press on the flag's surface arms a drag; what a plain click does
+    // (fold on the letter badge, open when folded) waits for the release, so
+    // a press that turns into a drag does neither.
+    enum class ReleaseAction { None, Collapse, Expand };
+    ReleaseAction m_releaseAction{ReleaseAction::None};
+    bool m_dragArmed{false};
+    bool m_flagDragging{false};
+    int  m_pressGlobalX{0};
+    void endFlagDrag();
+    // True when pos (flag coordinates) lands on a ScrollableLabel.
+    bool pressOnScrollableLabel(const QPoint& pos) const;
+    WheelStepAccumulator m_wheelSteps;
 
     // --- Task 14a: slice access ---
     QLabel*     m_accessLine{nullptr};

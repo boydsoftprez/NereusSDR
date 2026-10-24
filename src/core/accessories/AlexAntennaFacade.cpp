@@ -31,6 +31,9 @@
 //                                    Claude Code.
 //   2026-09-28 - 2 m as its own band (R-IOS-26, R-R3-49). J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - RX-only values 0..5, Thetis's checkbox sum (XVTR with
+//                RX1 or RX2). J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 #include "core/accessories/AlexAntennaFacade.h"
@@ -48,6 +51,9 @@ namespace {
 constexpr int kAntFirst = 1;
 constexpr int kAntLast = 3;
 constexpr int kRxOnlyFirst = 0;
+// The checkbox sum: 4 is the first input with XVTR, 5 the second with XVTR
+// (AlexController::kRxOnlyAntMax).
+constexpr int kRxOnlyLast = AlexController::kRxOnlyAntMax;
 
 QString malformedListReason()
 {
@@ -61,7 +67,7 @@ QString antennaRangeReason()
 
 QString rxOnlyRangeReason()
 {
-    return QStringLiteral("The receive-only input is none or 1 to 3.");
+    return QStringLiteral("The receive-only input is a value from 0 to 5.");
 }
 
 QString txBlockedReason()
@@ -320,7 +326,7 @@ void AlexAntennaFacade::setRxOnlyAntennas(const QString& list)
     }
     BandList parsed = m_values.rxOnlyAnt;
     bool clamped = false;
-    if (!decode(list, kRxOnlyFirst, kAntLast, &parsed, &clamped)) {
+    if (!decode(list, kRxOnlyFirst, kRxOnlyLast, &parsed, &clamped)) {
         settle("rxOnlyAntennas", malformedListReason());
         return;
     }
@@ -514,7 +520,7 @@ QString AlexAntennaFacade::setRxOnlyAntForBand(Band band, int antenna)
     if (b < 0 || b >= kBandCount) {
         return malformedListReason();
     }
-    if (antenna < kRxOnlyFirst || antenna > kAntLast) {
+    if (antenna < kRxOnlyFirst || antenna > kRxOnlyLast) {
         return rxOnlyRangeReason();
     }
     if (c->rxOnlyAnt(band) != antenna) {

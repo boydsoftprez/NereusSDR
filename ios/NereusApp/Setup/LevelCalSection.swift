@@ -42,7 +42,7 @@ enum LevelCalSection {
                            unit: "dB", decimals: 1, enabled: false, id: "levelCalRx2Lna") { _ in }
             Text(LevelCalModel.rx2LnaNote)
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(WorkspacePalette.textSecondary)
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
                     button(LevelCalModel.startLabel, enabled: model.startEnabled, prominent: true,
@@ -55,11 +55,12 @@ enum LevelCalSection {
                 ForEach(model.reasons, id: \.self) { reason in
                     Text(reason)
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WorkspacePalette.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 HStack(spacing: 10) {
                     ProgressView(value: Double(model.percent), total: 100)
+                        .tint(WorkspacePalette.accentFill)
                         .accessibilityLabel("Level calibration progress")
                     Text("\(model.percent)%")
                         .font(.footnote.monospacedDigit().bold())
@@ -86,11 +87,7 @@ enum LevelCalSection {
             .disabled(!enabled)
             .accessibilityHint(enabled ? hint : "")
             .accessibilityIdentifier(id)
-            if prominent {
-                base.buttonStyle(.borderedProminent)
-            } else {
-                base.buttonStyle(.bordered)
-            }
+            base.buttonStyle(SetupButtonStyle(prominent ? .glass : .raised, fill: true))
         }
     }
 

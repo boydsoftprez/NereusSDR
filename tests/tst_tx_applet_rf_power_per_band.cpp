@@ -47,6 +47,18 @@
 // slice band's slot via the setPowerUsingTargetDbm txMode-0 side-
 // effect (TransmitModel.cpp:825).  Tests 7 and 8 below pin both
 // regressions.
+//
+// 2026-10-18: neither power slider changes the tune drive source; only
+// Setup > Transmit > Power's Tune radios do, as in Thetis (setup.cs:
+// 22902-22915 [v2.10.3.15]; ptbPWR_Scroll and ptbTune_Scroll never write
+// _tuneDrivePowerSource). The last tests pin that, locally and in a remote
+// window, and that TUNE follows the chosen source across a band change
+// whichever slider moved last. J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code.
+//
+// 2026-10-21: a grayed power slider's accessible description is the drive
+// source gate's reason, as the transmit gates set theirs. J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -55,6 +67,8 @@
 #include <QSlider>
 
 #include "core/AppSettings.h"
+#include "core/HpsdrModel.h"
+#include "core/PaProfile.h"
 #include "gui/applets/TxApplet.h"
 #include "models/Band.h"
 #include "models/RadioModel.h"
@@ -397,14 +411,12 @@ private slots:
         QCOMPARE(rm.transmitModel().power(), 5);
     }
 
-    // ── Group A fix wave, M3: an older Core takes `power` alone ─────────────
+    // ── A remote window's RF Power move sends `power` alone ────────────────
     //
-    // A remote window on a Core below transmitSettingsVersion 5 must not
-    // write tuneDrivePowerSource, which that Core refuses; on version 5 or
-    // later it writes that too. It never writes powerByBandJson: the Core
-    // is the table's only writer (it saves PWR into the transmit band's
-    // slot itself), so the window sends the power setting alone.
-    void slider_withoutPowerByBand_writesPowerOnly()
+    // It never writes powerByBandJson (the Core is the table's only writer:
+    // it saves PWR into the transmit band's slot itself) and never the tune
+    // drive source, which only Setup > Transmit > Power changes.
+    void remoteSlider_writesPowerOnly_leavesTuneSource()
     {
         RadioModel rm(RadioModel::Role::Remote);
         TxApplet applet(&rm);
@@ -412,20 +424,18 @@ private slots:
             QStringLiteral("TxRfPowerSlider"));
         QVERIFY(slider != nullptr);
         TransmitModel& tx = rm.transmitModel();
-        tx.setTuneDrivePowerSource(DrivePowerSource::TuneSlider);
         const int band20Before = tx.powerForBand(Band::Band20m);
 
-        applet.setPowerByBandPermitted(false);
-        slider->setValue(band20Before == 60 ? 61 : 60);
-        QCOMPARE(tx.power(), slider->value());
-        QCOMPARE(tx.powerForBand(Band::Band20m), band20Before);
-        QCOMPARE(tx.tuneDrivePowerSource(), DrivePowerSource::TuneSlider);
-
-        applet.setPowerByBandPermitted(true);
-        slider->setValue(33);
-        QCOMPARE(tx.power(), 33);
-        QCOMPARE(tx.powerForBand(Band::Band20m), band20Before);
-        QCOMPARE(tx.tuneDrivePowerSource(), DrivePowerSource::DriveSlider);
+        for (const DrivePowerSource source : {DrivePowerSource::TuneSlider,
+                                              DrivePowerSource::Fixed,
+                                              DrivePowerSource::DriveSlider}) {
+            tx.setTuneDrivePowerSource(source);
+            const int value = slider->value() == 33 ? 34 : 33;
+            slider->setValue(value);
+            QCOMPARE(tx.power(), value);
+            QCOMPARE(tx.powerForBand(Band::Band20m), band20Before);
+            QCOMPARE(tx.tuneDrivePowerSource(), source);
+        }
     }
 
     // ── PA on-air gate review: the Tune Power slider is the transmit band's ─
@@ -459,13 +469,282 @@ private slots:
         QCOMPARE(tx.tunePowerForBand(Band::Band40m), 5);
         QCOMPARE(tx.tunePowerForTxBand(), 30);
         QCOMPARE(slider->value(), tx.tunePowerForTxBand());
-        QCOMPARE(tx.tuneDrivePowerSource(), DrivePowerSource::TuneSlider);
+        // The tune drive source stays as Setup chose it (default DriveSlider).
+        QCOMPARE(tx.tuneDrivePowerSource(), DrivePowerSource::DriveSlider);
 
         // Repaints on the transmit band's change only.
         tx.setTunePowerForBand(Band::Band20m, 42);
         QCOMPARE(slider->value(), 42);
         tx.setTunePowerForBand(Band::Band40m, 7);
         QCOMPARE(slider->value(), 42);
+    }
+
+    // ── Neither slider changes the tune drive source (local window) ───────
+    //
+    // Thetis ptbPWR_Scroll and ptbTune_Scroll (console.cs:28682-28693 and
+    // 46607-46630 [v2.10.3.15]) never write _tuneDrivePowerSource; the
+    // Setup radios are its only writers (setup.cs:22902-22915 [v2.10.3.15]).
+    void sliders_leaveTuneSource_data()
+    {
+        QTest::addColumn<int>("source");
+        QTest::newRow("DriveSlider") << static_cast<int>(DrivePowerSource::DriveSlider);
+        QTest::newRow("TuneSlider")  << static_cast<int>(DrivePowerSource::TuneSlider);
+        QTest::newRow("Fixed")       << static_cast<int>(DrivePowerSource::Fixed);
+    }
+
+    void sliders_leaveTuneSource()
+    {
+        QFETCH(int, source);
+        const auto chosen = static_cast<DrivePowerSource>(source);
+        RadioModel rm;
+        rm.addSlice();
+        SliceModel* slice = rm.activeSlice();
+        QVERIFY(slice != nullptr);
+        slice->setFrequency(14'200'000.0);
+        TransmitModel& tx = rm.transmitModel();
+        tx.setTuneDrivePowerSource(chosen);
+        TxApplet applet(&rm);
+        auto* rf = applet.findChild<QSlider*>(QStringLiteral("TxRfPowerSlider"));
+        QSlider* tune = applet.tunePowerSlider();
+        QVERIFY(rf != nullptr);
+        QVERIFY(tune != nullptr);
+        QSignalSpy changed(&tx, &TransmitModel::tuneDrivePowerSourceChanged);
+
+        rf->setValue(rf->value() == 61 ? 62 : 61);
+        QCOMPARE(tx.tuneDrivePowerSource(), chosen);
+        tune->setValue(tune->value() == 23 ? 24 : 23);
+        QCOMPARE(tx.tuneDrivePowerSource(), chosen);
+        rf->setValue(rf->value() == 44 ? 45 : 44);
+        QCOMPARE(tx.tuneDrivePowerSource(), chosen);
+        QCOMPARE(changed.count(), 0);
+    }
+
+    // ── TUNE follows Setup's source across a band change ─────────────────
+    //
+    // The PA calibration case: per-band drive and tune power differ, and the
+    // operator touches both sliders in turn. TUNE (setPowerUsingTargetDbm
+    // txMode 1, Thetis console.cs:46757-46770 [v2.10.3.15]) must read the
+    // source Setup chose on every band, whichever slider moved last.
+    void tunePower_followsSetupSource_acrossBandChange_data()
+    {
+        QTest::addColumn<int>("source");
+        QTest::addColumn<int>("want20m");
+        QTest::addColumn<int>("want40m");
+        // Drive slider: PWR, which the transmit band change loads from
+        // power_by_band (20 m: the RF slider's 60; 40 m: 80).
+        QTest::newRow("DriveSlider")
+            << static_cast<int>(DrivePowerSource::DriveSlider) << 60 << 80;
+        // Tune slider: the band's tune power (20 m: the tune slider's 30;
+        // 40 m: 25).
+        QTest::newRow("TuneSlider")
+            << static_cast<int>(DrivePowerSource::TuneSlider) << 30 << 25;
+    }
+
+    void tunePower_followsSetupSource_acrossBandChange()
+    {
+        QFETCH(int, source);
+        QFETCH(int, want20m);
+        QFETCH(int, want40m);
+        const auto chosen = static_cast<DrivePowerSource>(source);
+        const PaProfile profile(QStringLiteral("Default - ANAN_G2"),
+                                HPSDRModel::ANAN_G2, true);
+
+        RadioModel rm;
+        rm.addSlice();
+        SliceModel* slice = rm.activeSlice();
+        QVERIFY(slice != nullptr);
+        slice->setFrequency(14'200'000.0);
+        TransmitModel& tx = rm.transmitModel();
+        tx.setTuneDrivePowerSource(chosen);
+        tx.setPowerForBand(Band::Band40m, 80);
+        tx.setTunePowerForBand(Band::Band40m, 25);
+        TxApplet applet(&rm);
+        auto* rf = applet.findChild<QSlider*>(QStringLiteral("TxRfPowerSlider"));
+        QSlider* tune = applet.tunePowerSlider();
+        QVERIFY(rf != nullptr);
+        QVERIFY(tune != nullptr);
+
+        const auto tunePower = [&](Band band) {
+            return tx.setPowerUsingTargetDbm(profile, band, /*bSetPower=*/false,
+                                             /*bFromTune=*/true, /*bTwoTone=*/false,
+                                             HPSDRModel::ANAN_G2).newPower;
+        };
+
+        // 20 m: tune slider, then RF Power last.
+        tune->setValue(30);
+        rf->setValue(60);
+        QCOMPARE(tx.tuneDrivePowerSource(), chosen);
+        QCOMPARE(tunePower(Band::Band20m), want20m);
+
+        // 40 m: the band change loads that band's PWR and tune power.
+        slice->setFrequency(7'150'000.0);
+        QCOMPARE(rf->value(), 80);
+        QCOMPARE(tune->value(), 25);
+        QCOMPARE(tunePower(Band::Band40m), want40m);
+
+        // Back to 20 m, RF Power then tune slider last: still Setup's source.
+        slice->setFrequency(14'200'000.0);
+        rf->setValue(60);
+        tune->setValue(30);
+        QCOMPARE(tx.tuneDrivePowerSource(), chosen);
+        QCOMPARE(tunePower(Band::Band20m), want20m);
+    }
+
+    // ── The slider TUNE or the two-tone test is not using is grayed ───────
+    //
+    // Thetis setupTuneDriveSlider (console.cs:46677-46709 [v2.10.3.15]):
+    // during TUN the slider the tune source does not name is disabled, and
+    // during 2TONE the one the two-tone source does not name; otherwise both
+    // are live, except that the Tune slider, which Thetis hides when neither
+    // source is the tune slider, is grayed (never hidden) with a reason.
+    void driveSourceGate_graysTheUnusedSlider()
+    {
+        RadioModel rm;
+        TransmitModel& tx = rm.transmitModel();
+        TxApplet applet(&rm);
+        auto* rf = applet.findChild<QSlider*>(QStringLiteral("TxRfPowerSlider"));
+        QSlider* tune = applet.tunePowerSlider();
+        QVERIFY(rf != nullptr);
+        QVERIFY(tune != nullptr);
+
+        // Idle, both sources DriveSlider (the default): RF Power live, the
+        // Tune slider grayed on screen with its reason.
+        QVERIFY(rf->isEnabled());
+        QVERIFY(!tune->isEnabled());
+        QVERIFY(!tune->isHidden());
+        QVERIFY(tune->toolTip().contains(QStringLiteral("Setup > Transmit > Power")));
+
+        // Idle, either source on the tune slider: both live.
+        tx.setTuneDrivePowerSource(DrivePowerSource::TuneSlider);
+        QVERIFY(rf->isEnabled());
+        QVERIFY(tune->isEnabled());
+        tx.setTuneDrivePowerSource(DrivePowerSource::DriveSlider);
+        tx.setTwoToneDrivePowerSource(DrivePowerSource::TuneSlider);
+        QVERIFY(tune->isEnabled());
+        tx.setTwoToneDrivePowerSource(DrivePowerSource::DriveSlider);
+        QVERIFY(!tune->isEnabled());
+
+        // During TUNE: only the slider the tune source names.
+        tx.setTune(true);
+        QVERIFY(rf->isEnabled());
+        QVERIFY(!tune->isEnabled());
+        tx.setTuneDrivePowerSource(DrivePowerSource::TuneSlider);
+        QVERIFY(!rf->isEnabled());
+        QVERIFY(rf->toolTip().contains(QStringLiteral("TUNE is not using this slider.")));
+        QVERIFY(tune->isEnabled());
+        tx.setTuneDrivePowerSource(DrivePowerSource::Fixed);
+        QVERIFY(!rf->isEnabled());
+        QVERIFY(!tune->isEnabled());
+        tx.setTune(false);
+        QVERIFY(rf->isEnabled());
+        QVERIFY(!rf->toolTip().contains(QStringLiteral("not using")));
+
+        // During the two-tone test: only the slider the two-tone source names.
+        tx.setTuneDrivePowerSource(DrivePowerSource::DriveSlider);
+        tx.setTwoToneDrivePowerSource(DrivePowerSource::TuneSlider);
+        tx.setTwoToneActive(true);
+        QVERIFY(!rf->isEnabled());
+        QVERIFY(tune->isEnabled());
+        tx.setTwoToneActive(false);
+        QVERIFY(rf->isEnabled());
+        QVERIFY(tune->isEnabled());
+    }
+
+    // A remote window's transmit settings gate and the drive source gate
+    // together: the slider comes back as the source says when the gate opens.
+    void driveSourceGate_underTransmitSettingsGate()
+    {
+        RadioModel rm(RadioModel::Role::Remote);
+        TransmitModel& tx = rm.transmitModel();
+        TxApplet applet(&rm);
+        QSlider* tune = applet.tunePowerSlider();
+        QVERIFY(tune != nullptr);
+
+        applet.setTransmitChainSettingsPermitted(false, QStringLiteral("Closed."));
+        QVERIFY(!tune->isEnabled());
+        tx.setTuneDrivePowerSource(DrivePowerSource::TuneSlider);
+        QVERIFY(!tune->isEnabled());
+        QCOMPARE(tune->toolTip(), QStringLiteral("Closed."));
+        applet.setTransmitChainSettingsPermitted(true);
+        QVERIFY(tune->isEnabled());
+
+        applet.setTransmitChainSettingsPermitted(false, QStringLiteral("Closed."));
+        tx.setTuneDrivePowerSource(DrivePowerSource::DriveSlider);
+        applet.setTransmitChainSettingsPermitted(true);
+        QVERIFY(!tune->isEnabled());
+        QVERIFY(tune->toolTip().contains(QStringLiteral("Setup > Transmit > Power")));
+    }
+
+    // The drive source gate's reason is the grayed slider's accessible
+    // description too, as the transmit gates set theirs (gateTransmitControl),
+    // and the description clears when the slider is live again; under a
+    // remote window's transmit settings gate it comes back with the slider.
+    void driveSourceGate_setsAccessibleDescription()
+    {
+        RadioModel rm;
+        TransmitModel& tx = rm.transmitModel();
+        TxApplet applet(&rm);
+        auto* rf = applet.findChild<QSlider*>(QStringLiteral("TxRfPowerSlider"));
+        QSlider* tune = applet.tunePowerSlider();
+        QVERIFY(rf != nullptr);
+        QVERIFY(tune != nullptr);
+
+        const QString neither = QStringLiteral(
+            "Neither TUNE nor the two-tone test uses this slider. "
+            "TUNE's drive source is chosen in Setup > Transmit > Power.");
+        QVERIFY(rf->accessibleDescription().isEmpty());
+        QCOMPARE(tune->accessibleDescription(), neither);
+        QVERIFY(tune->toolTip().endsWith(neither));
+
+        tx.setTuneDrivePowerSource(DrivePowerSource::TuneSlider);
+        QVERIFY(tune->accessibleDescription().isEmpty());
+        tx.setTune(true);
+        const QString tuneNotUsing = QStringLiteral(
+            "TUNE is not using this slider. "
+            "TUNE's drive source is chosen in Setup > Transmit > Power.");
+        QCOMPARE(rf->accessibleDescription(), tuneNotUsing);
+        QVERIFY(rf->toolTip().endsWith(tuneNotUsing));
+        QVERIFY(tune->accessibleDescription().isEmpty());
+        tx.setTune(false);
+        QVERIFY(rf->accessibleDescription().isEmpty());
+
+        tx.setTwoToneDrivePowerSource(DrivePowerSource::Fixed);
+        tx.setTwoToneActive(true);
+        const QString twoToneNotUsing = QStringLiteral(
+            "The two-tone test is not using this slider. The two-tone test's "
+            "drive source is chosen in Setup > Test > Two-Tone IMD.");
+        QCOMPARE(rf->accessibleDescription(), twoToneNotUsing);
+        QCOMPARE(tune->accessibleDescription(), twoToneNotUsing);
+        tx.setTwoToneActive(false);
+        QVERIFY(rf->accessibleDescription().isEmpty());
+        QVERIFY(tune->accessibleDescription().isEmpty());
+    }
+
+    void driveSourceGate_accessibleDescriptionUnderTransmitSettingsGate()
+    {
+        RadioModel rm(RadioModel::Role::Remote);
+        TransmitModel& tx = rm.transmitModel();
+        TxApplet applet(&rm);
+        QSlider* tune = applet.tunePowerSlider();
+        QVERIFY(tune != nullptr);
+        const QString neither = QStringLiteral(
+            "Neither TUNE nor the two-tone test uses this slider. "
+            "TUNE's drive source is chosen in Setup > Transmit > Power.");
+
+        applet.setTransmitChainSettingsPermitted(false, QStringLiteral("Closed."));
+        QCOMPARE(tune->accessibleDescription(), QStringLiteral("Closed."));
+        tx.setTuneDrivePowerSource(DrivePowerSource::TuneSlider);
+        QCOMPARE(tune->accessibleDescription(), QStringLiteral("Closed."));
+        applet.setTransmitChainSettingsPermitted(true);
+        QVERIFY(tune->isEnabled());
+        QVERIFY(tune->accessibleDescription().isEmpty());
+
+        applet.setTransmitChainSettingsPermitted(false, QStringLiteral("Closed."));
+        tx.setTuneDrivePowerSource(DrivePowerSource::DriveSlider);
+        QCOMPARE(tune->accessibleDescription(), QStringLiteral("Closed."));
+        applet.setTransmitChainSettingsPermitted(true);
+        QVERIFY(!tune->isEnabled());
+        QCOMPARE(tune->accessibleDescription(), neither);
     }
 };
 

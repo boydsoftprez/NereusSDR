@@ -15,6 +15,8 @@
 //                 via Anthropic Claude Code.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-20 - Integer and Color property kinds for Frequency (Custom).
+//                 Brian Sutton, AI-assisted via xAI Grok.
 #include "ContainerDocument.h"
 #include <QObject>
 #include <QMetaType>
@@ -41,7 +43,7 @@ struct ContentPropertyChoice {
 // goes to the draft like every other property. A Reading is a choice of
 // reading binding and sits with the other bindings.
 struct ContentProperty {
-    enum class Kind { Reading, Choice, Toggle, Text };
+    enum class Kind { Reading, Choice, Toggle, Text, Integer, Color };
     QString key, label;
     Kind kind = Kind::Choice;
     QVector<ContentPropertyChoice> choices;
@@ -51,6 +53,10 @@ struct ContentProperty {
     // rest of the config (a default that depends on another key).
     std::function<QJsonValue(const QJsonObject& config)> effectiveDefault;
     QString placeholder;        // Text: shown while the text is empty.
+    // Integer: the spin box range and the suffix after the number.
+    int minimum = 0;
+    int maximum = 1000000;
+    QString suffix;
 };
 // Workspace preview: a per-instance widget whose own controls change its
 // entry's config (the SIGNAL STRENGTH dial's right-click menu) gives itself

@@ -107,8 +107,8 @@ struct PureSignalPage: View {
                 .frame(width: 72, alignment: .leading)
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 3).fill(ChromeColours.sliderTrack)
-                    RoundedRectangle(cornerRadius: 3).fill(colour).frame(width: proxy.size.width * share)
+                    RoundedRectangle(cornerRadius: 3).fill(ChromeColours.sliderTrack) // kept-radius: meter
+                    RoundedRectangle(cornerRadius: 3).fill(colour).frame(width: proxy.size.width * share) // kept-radius: meter
                 }
             }
             .frame(height: 8)

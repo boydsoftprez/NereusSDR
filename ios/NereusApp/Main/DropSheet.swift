@@ -49,13 +49,13 @@ struct DropSheet<Trailing: View, Content: View>: View {
             }
         }
         .background(ChromeColours.sheet)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(ChromeColours.sheetBorder, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ChromeColours.sheetBorder, lineWidth: 1))
         .shadow(color: .black.opacity(0.55), radius: 14, y: 10)
         // The whole sheet takes its touches, title row included: none
         // falls through to the band's flags and buttons under it, or to
         // the layer behind that closes the sheet.
-        .contentShape(RoundedRectangle(cornerRadius: 6))
+        .contentShape(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(title)
         .accessibilityIdentifier(accessibilityIdentifier)

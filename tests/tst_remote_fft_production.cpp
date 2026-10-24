@@ -21,6 +21,7 @@
 #include <QSemaphore>
 #include <QThread>
 
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -642,6 +643,80 @@ private slots:
         QCOMPARE(frame->replacedBefore, quint32(0));
     }
 
+    // Waterfall row times at the source: frames whose samples are evenly
+    // spaced are stamped evenly however late the FFT published them, each
+    // frame carries the spacing from the frame before it, and an input
+    // reset (a MOX edge, a dropped packet) starts a new anchor.
+    void framesAreStampedWithTheTimeOfTheirSamples()
+    {
+        DaemonSpectrumSource source;
+        const MediaSourceKey key{0, FftTier::Wide};
+        QVERIFY(source.activate(key, sourceConfig(1024, 7100000.0, 48000.0)));
+        const auto ready = [&source, &key] {
+            const DaemonSpectrumSource::InputQueueDiagnostics queue =
+                source.inputQueueDiagnostics(key);
+            return queue.active && !queue.configurationPending;
+        };
+        QTRY_VERIFY(ready());
+
+        // 1600 pairs at 48 kHz: a frame every 33.3 ms, published up to 8 ms
+        // after its samples.
+        constexpr qint64 kPairsPerFrame = 1600;
+        constexpr qint64 kFramePeriodNs = 33'333'333;
+        constexpr qint64 kBaseNs = 5'000'000'000;
+        constexpr std::array<qint64, 8> kPublishDelayNs{
+            0, 7'000'000, 2'000'000, 6'000'000, 1'000'000, 8'000'000, 0, 4'000'000};
+        qint64 previousNs = 0;
+        qint64 largestPublishGapErrorNs = 0;
+        for (int index = 0; index < int(kPublishDelayNs.size()); ++index) {
+            const qint64 publishedAtNs =
+                kBaseNs + index * kFramePeriodNs + kPublishDelayNs[size_t(index)];
+            const std::optional<qint64> stampNs = source.publishSampledFrameForTest(
+                key, (index + 1) * kPairsPerFrame, publishedAtNs);
+            QVERIFY(stampNs.has_value());
+            QVERIFY(*stampNs <= publishedAtNs);
+            const auto frame = source.takeLatest(key);
+            QVERIFY(frame.has_value());
+            QCOMPARE(frame->producedAtNs, *stampNs);
+            if (index == 0) {
+                QCOMPARE(*stampNs, publishedAtNs);
+                QCOMPARE(frame->sourceFrameGapNs, qint64(0));
+            } else {
+                QCOMPARE(frame->sourceFrameGapNs, *stampNs - previousNs);
+                // The sample spacing, but for the clock's creep toward late
+                // publishes (at most 50 us a frame), which a frame published
+                // at the earliest latency takes back.
+                QVERIFY2(std::abs(frame->sourceFrameGapNs - kFramePeriodNs) <= 400'000,
+                         qPrintable(QStringLiteral("frame %1 gap %2 ns")
+                                        .arg(index).arg(frame->sourceFrameGapNs)));
+                largestPublishGapErrorNs = std::max(largestPublishGapErrorNs,
+                    std::abs(kPublishDelayNs[size_t(index)]
+                             - kPublishDelayNs[size_t(index - 1)]));
+            }
+            previousNs = *stampNs;
+        }
+        // The publish times themselves were 8 ms uneven.
+        QCOMPARE(largestPublishGapErrorNs, qint64(8'000'000));
+        QCOMPARE(source.sampleClockReanchors(key), quint64(0));
+        QCOMPARE(source.inputQueueOverflows(key), quint64(0));
+        QCOMPARE(source.engineMinimumGapSkips(key), quint64(0));
+
+        // After an input reset the samples are not continuous: the next
+        // frame is stamped with its own publish time and has no spacing.
+        const quint64 resets = source.inputHistoryResets(key);
+        source.resetInputHistoryAll();
+        QTRY_VERIFY(source.inputHistoryResets(key) > resets);
+        const qint64 afterResetNs = kBaseNs + 20 * kFramePeriodNs + 3'000'000;
+        const std::optional<qint64> resetStampNs = source.publishSampledFrameForTest(
+            key, 9 * kPairsPerFrame, afterResetNs);
+        QVERIFY(resetStampNs.has_value());
+        QCOMPARE(*resetStampNs, afterResetNs);
+        const auto afterReset = source.takeLatest(key);
+        QVERIFY(afterReset.has_value());
+        QCOMPARE(afterReset->sourceFrameGapNs, qint64(0));
+        QCOMPARE(source.sampleClockReanchors(key), quint64(0));
+    }
+
     void ingressIsBoundedAndReportsDroppedWholeFrames()
     {
         DaemonSpectrumSource source;
@@ -701,6 +776,7 @@ private slots:
         source.submitIq(0, syntheticIq(1026, 0.125));
         source.submitIq(0, syntheticIq(1026, 0.25));
         QCOMPARE(source.droppedInputFrames(key), quint64(1));
+        QCOMPARE(source.inputQueueOverflows(key), quint64(1));
         const auto blocked = source.inputQueueDiagnostics(key);
         QCOMPARE(blocked.maxPendingIqFloats, 4096);
         QCOMPARE(blocked.pendingIqFloats, 2052);

@@ -63,6 +63,9 @@
 //               (it logged 400.0 dB on every key of the HL2 retest).
 //               Logging only. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-22: PR 604: the SWR protection's open-antenna stop is a
+//               station stop in Thetis's warning words. J.J. Boyd (KG4VCF),
+//               with AI-assisted implementation via Claude Code.
 // =================================================================
 
 #include "core/session/TransmitStateFacade.h"
@@ -186,6 +189,12 @@ void TransmitState::bind(RadioModel* model)
                 // itself under the key: a station stop, in those words.
                 if (code == RadioModel::kAmpOperatedUnderKeyStopCode) {
                     recordStop(kStopStation, RadioModel::ampOperatedUnderKeyText());
+                    return;
+                }
+                // PR 604: the SWR protection dropped MOX on an open
+                // antenna: a station stop, with Thetis's warning words.
+                if (code == RadioModel::kOpenAntennaStopCode) {
+                    recordStop(kStopStation, RadioModel::openAntennaStopText());
                     return;
                 }
                 if (code != kStopTimeOut) {

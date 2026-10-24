@@ -63,6 +63,10 @@
 //                 the native overlay check is skipped where no meter asks
 //                 for a native window. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-22 - Eleven ctest entries, each about 45 s or less under load
+//                 (a case is mostly its MainWindow build); Duplicate is one
+//                 function per look. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 #include <QtTest>
 #include <QAction>
 #include <QApplication>
@@ -925,6 +929,110 @@ struct LiveFixture {
         return QString::fromLatin1(widget->metaObject()->className()) + QLatin1Char('#') + widget->objectName();
     }
 };
+
+// The rows and the body of the two duplicate cases (one per look) in
+// TstWorkspaceLiveInput.
+void addDuplicateRows(bool preview)
+{
+    QTest::addColumn<bool>("preview");
+    QTest::addColumn<bool>("fromDialog");
+    QTest::addColumn<int>("mode");
+    QTest::addColumn<bool>("visible");
+    const int floating = int(DockMode::Floating);
+    const int overlay = int(DockMode::OverlayDocked);
+    const char* look = preview ? "preview on" : "preview off";
+    for (const bool dialog : {false, true}) {
+        const char* path = dialog ? "Container Settings" : "manager";
+        QTest::addRow("%s, %s: hidden floating", look, path) << preview << dialog << floating << false;
+        QTest::addRow("%s, %s: visible floating", look, path) << preview << dialog << floating << true;
+        QTest::addRow("%s, %s: hidden docked", look, path) << preview << dialog << overlay << false;
+    }
+}
+
+void checkDuplicateIsShownBesideTheOriginal()
+{
+    QFETCH(bool, preview);
+    QFETCH(bool, fromDialog);
+    QFETCH(int, mode);
+    QFETCH(bool, visible);
+    constexpr int kOffset = 24;   // ContainerManager::kDuplicateOffsetPx
+    PreviewSwitch look(preview);
+    LiveFixture f;
+    QVERIFY(f.build());
+    const QString id = QStringLiteral("solo");
+    const QRect placed = DockMode(mode) == DockMode::Floating ? QRect(100, 100, 300, 200) : QRect(40, 60, 320, 220);
+    QVERIFY(f.edit([&](WorkspaceDocument& d) {
+        ContainerDocument solo;
+        solo.id = id;
+        solo.name = QStringLiteral("Solo");
+        solo.layout = ContentLayout::VerticalStack;
+        solo.dockMode = DockMode(mode);
+        solo.visible = visible;
+        solo.geometry = placed;
+        ContentEntry entry = f.registry->makeEntry(QStringLiteral("meter.customBar"));
+        entry.context["sliceId"] = 0;
+        solo.contents.append(entry);
+        d.containers.append(solo);
+    }));
+    ContainerWidget* original = f.manager->container(id);
+    QVERIFY(original);
+    const QRect originalOnScreen = DockMode(mode) == DockMode::Floating
+        ? f.document(id)->geometry
+        : QRect(original->mapToGlobal(QPoint(0, 0)), original->size());
+    const ContainerDocument before = *f.document(id);
+    QSet<QString> ids;
+    for (const auto& d : f.store->snapshot().containers) {
+        ids.insert(d.id);
+    }
+
+    if (fromDialog) {
+        auto dialog = std::make_unique<ContainerSettingsDialog>(original, f.window.get(), f.manager);
+        QPushButton* duplicate = nullptr;
+        QPushButton* apply = nullptr;
+        for (QPushButton* button : dialog->findChildren<QPushButton*>()) {
+            if (button->text() == QStringLiteral("Duplicate")) {
+                duplicate = button;
+            } else if (button->text() == QStringLiteral("Apply")) {
+                apply = button;
+            }
+        }
+        QVERIFY(duplicate && apply);
+        duplicate->click();
+        apply->click();
+        dialog.reset();
+    } else {
+        QVERIFY(f.manager->duplicateContainer(id));
+    }
+    settle();
+
+    QCOMPARE(*f.document(id), before);
+    QString copyId;
+    for (const auto& d : f.store->snapshot().containers) {
+        if (!ids.contains(d.id)) {
+            QVERIFY2(copyId.isEmpty(), "more than one new container");
+            copyId = d.id;
+        }
+    }
+    QVERIFY(!copyId.isEmpty());
+    const ContainerDocument* copy = f.document(copyId);
+    QVERIFY(copy->visible);
+    QVERIFY(copy->config.value("enabled").toBool(true));
+    QCOMPARE(copy->dockMode, DockMode::Floating);
+    ContainerWidget* widget = f.manager->container(copyId);
+    QVERIFY(widget && widget->isFloating());
+    QWidget* form = widget->window();
+    QVERIFY(form != f.window.get() && form->isVisible());
+    bool onScreen = false;
+    for (QScreen* screen : QGuiApplication::screens()) {
+        onScreen = onScreen || screen->availableGeometry().contains(form->geometry());
+    }
+    QVERIFY2(onScreen, qPrintable(describeRect(form->geometry())));
+    QVERIFY(form->geometry().topLeft() != originalOnScreen.topLeft());
+    if (DockMode(mode) == DockMode::Floating) {
+        QCOMPARE(copy->geometry, placed.translated(kOffset, kOffset));
+        QCOMPARE(form->geometry(), placed.translated(kOffset, kOffset));
+    }
+}
 
 } // namespace
 
@@ -1885,108 +1993,12 @@ private slots:
     // (its floating geometry, or where it sits on screen when docked) and
     // offset so it does not cover it, and on screen. The original is
     // unchanged. Both looks; the manager path and Container Settings.
-    void duplicateIsShownBesideTheOriginal_data()
-    {
-        QTest::addColumn<bool>("preview");
-        QTest::addColumn<bool>("fromDialog");
-        QTest::addColumn<int>("mode");
-        QTest::addColumn<bool>("visible");
-        const int floating = int(DockMode::Floating);
-        const int overlay = int(DockMode::OverlayDocked);
-        for (const bool preview : {false, true}) {
-            const char* look = preview ? "preview on" : "preview off";
-            for (const bool dialog : {false, true}) {
-                const char* path = dialog ? "Container Settings" : "manager";
-                QTest::addRow("%s, %s: hidden floating", look, path) << preview << dialog << floating << false;
-                QTest::addRow("%s, %s: visible floating", look, path) << preview << dialog << floating << true;
-                QTest::addRow("%s, %s: hidden docked", look, path) << preview << dialog << overlay << false;
-            }
-        }
-    }
-    void duplicateIsShownBesideTheOriginal()
-    {
-        QFETCH(bool, preview);
-        QFETCH(bool, fromDialog);
-        QFETCH(int, mode);
-        QFETCH(bool, visible);
-        constexpr int kOffset = 24;   // ContainerManager::kDuplicateOffsetPx
-        PreviewSwitch look(preview);
-        LiveFixture f;
-        QVERIFY(f.build());
-        const QString id = QStringLiteral("solo");
-        const QRect placed = DockMode(mode) == DockMode::Floating ? QRect(100, 100, 300, 200) : QRect(40, 60, 320, 220);
-        QVERIFY(f.edit([&](WorkspaceDocument& d) {
-            ContainerDocument solo;
-            solo.id = id;
-            solo.name = QStringLiteral("Solo");
-            solo.layout = ContentLayout::VerticalStack;
-            solo.dockMode = DockMode(mode);
-            solo.visible = visible;
-            solo.geometry = placed;
-            ContentEntry entry = f.registry->makeEntry(QStringLiteral("meter.customBar"));
-            entry.context["sliceId"] = 0;
-            solo.contents.append(entry);
-            d.containers.append(solo);
-        }));
-        ContainerWidget* original = f.manager->container(id);
-        QVERIFY(original);
-        const QRect originalOnScreen = DockMode(mode) == DockMode::Floating
-            ? f.document(id)->geometry
-            : QRect(original->mapToGlobal(QPoint(0, 0)), original->size());
-        const ContainerDocument before = *f.document(id);
-        QSet<QString> ids;
-        for (const auto& d : f.store->snapshot().containers) {
-            ids.insert(d.id);
-        }
-
-        if (fromDialog) {
-            auto dialog = std::make_unique<ContainerSettingsDialog>(original, f.window.get(), f.manager);
-            QPushButton* duplicate = nullptr;
-            QPushButton* apply = nullptr;
-            for (QPushButton* button : dialog->findChildren<QPushButton*>()) {
-                if (button->text() == QStringLiteral("Duplicate")) {
-                    duplicate = button;
-                } else if (button->text() == QStringLiteral("Apply")) {
-                    apply = button;
-                }
-            }
-            QVERIFY(duplicate && apply);
-            duplicate->click();
-            apply->click();
-            dialog.reset();
-        } else {
-            QVERIFY(f.manager->duplicateContainer(id));
-        }
-        settle();
-
-        QCOMPARE(*f.document(id), before);
-        QString copyId;
-        for (const auto& d : f.store->snapshot().containers) {
-            if (!ids.contains(d.id)) {
-                QVERIFY2(copyId.isEmpty(), "more than one new container");
-                copyId = d.id;
-            }
-        }
-        QVERIFY(!copyId.isEmpty());
-        const ContainerDocument* copy = f.document(copyId);
-        QVERIFY(copy->visible);
-        QVERIFY(copy->config.value("enabled").toBool(true));
-        QCOMPARE(copy->dockMode, DockMode::Floating);
-        ContainerWidget* widget = f.manager->container(copyId);
-        QVERIFY(widget && widget->isFloating());
-        QWidget* form = widget->window();
-        QVERIFY(form != f.window.get() && form->isVisible());
-        bool onScreen = false;
-        for (QScreen* screen : QGuiApplication::screens()) {
-            onScreen = onScreen || screen->availableGeometry().contains(form->geometry());
-        }
-        QVERIFY2(onScreen, qPrintable(describeRect(form->geometry())));
-        QVERIFY(form->geometry().topLeft() != originalOnScreen.topLeft());
-        if (DockMode(mode) == DockMode::Floating) {
-            QCOMPARE(copy->geometry, placed.translated(kOffset, kOffset));
-            QCOMPARE(form->geometry(), placed.translated(kOffset, kOffset));
-        }
-    }
+    void duplicateIsShownBesideTheOriginal_data() { addDuplicateRows(false); }
+    void duplicateIsShownBesideTheOriginal() { checkDuplicateIsShownBesideTheOriginal(); }
+    // The same in the workspace look: its own function, so the two looks
+    // run as separate ctest entries (main()).
+    void duplicateIsShownBesideTheOriginalInTheWorkspaceLook_data() { addDuplicateRows(true); }
+    void duplicateIsShownBesideTheOriginalInTheWorkspaceLook() { checkDuplicateIsShownBesideTheOriginal(); }
 
     // JJ on his Mac after 391a09306: the rail "closes when i try to move
     // mouse". On macOS each badge in the popover is a native view and cocoa
@@ -2170,32 +2182,64 @@ int main(int argc, char** argv)
     app.setAttribute(Qt::AA_Use96Dpi, true);
     TstWorkspaceLiveInput test;
     QTEST_SET_MAIN_SOURCE_PATH
-    // Each case builds a MainWindow (about 3 s of a 4 s case on a loaded
-    // machine), and 43 cases ran near and past ctest's 120 s limit under
-    // load (the limit is not raised). The Hidden, Duplicate and profile
-    // rail cases run as their own ctest entries,
-    // tst_workspace_live_input_hidden, _duplicate and _profiles
-    // (tests/CMakeLists.txt); the headers, drags, pop-outs and bottom strip
-    // as tst_workspace_live_input.
+    // Each case builds a MainWindow, and most of a case is that build: about
+    // 5 to 10 s at load 14 to 20 on a Mac, most of it the workspace
+    // reconciled again for every content registration (ContainerManager's
+    // runtimeChanged handler). The fixed waits come to well under 2 s a
+    // case. The whole binary took 328 s, and each of the four earlier
+    // entries 63 to 116 s, so under CI load every one ran past ctest's 120 s.
+    // The limit is not raised: the ten groups below run as
+    // tst_workspace_live_input_<group> (tests/CMakeLists.txt) and the header
+    // drags (and any case no group names) as tst_workspace_live_input,
+    // eleven entries of at most about 45 s at that load.
     const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
         test.metaObject(), app.arguments(), "NEREUS_WORKSPACE_LIVE_INPUT_GROUP",
-        {{QStringLiteral("hidden"),
-          {QStringLiteral("entryHideButtonHidesAndHiddenBringsItBack"),
+        {
+         {QStringLiteral("hidden"),
+          {
+           QStringLiteral("entryHideButtonHidesAndHiddenBringsItBack"),
            QStringLiteral("hiddenContainersComeBackWhereTheyWere"),
            QStringLiteral("groupHideButtonHidesTheContainer"),
-           QStringLiteral("hidingTheLastWidgetHidesItsContainer"),
-           QStringLiteral("hiddenMenuSitsInTheSamePlaceInBothLooks"),
+           QStringLiteral("hidingTheLastWidgetHidesItsContainer")}},
+         {QStringLiteral("hiddenmenu"),
+          {
+           QStringLiteral("hiddenMenuSitsInTheSamePlaceInBothLooks")}},
+         {QStringLiteral("previewoff"),
+          {
            QStringLiteral("previewOffHiddenBringsBackAHiddenContainer"),
            QStringLiteral("previewOffHiddenBringsBackAClosedFloatingContainer"),
            QStringLiteral("previewOffHiddenListsAHiddenApplet")}},
          {QStringLiteral("duplicate"),
-          {QStringLiteral("duplicateIsShownBesideTheOriginal")}},
+          {
+           QStringLiteral("duplicateIsShownBesideTheOriginal")}},
+         {QStringLiteral("duplicatelook"),
+          {
+           QStringLiteral("duplicateIsShownBesideTheOriginalInTheWorkspaceLook")}},
+         {QStringLiteral("menus"),
+          {
+           QStringLiteral("groupHeaderOptionsOpensTheMenuInArrange"),
+           QStringLiteral("entryHeaderOptionsOpensTheMenuInArrange"),
+           QStringLiteral("moveToEdgeFromTheMenu"),
+           QStringLiteral("popOutAnEntryFromItsMenu"),
+           QStringLiteral("arrangeDoesNotLookLocked")}},
+         {QStringLiteral("popout"),
+          {
+           QStringLiteral("entryPopOutButtonPopsTheEntryOut"),
+           QStringLiteral("entryPopOutButtonIsDisabledWhenPopOutIs"),
+           QStringLiteral("freeCanvasEntryPopOutButtonPopsTheEntryOut")}},
+         {QStringLiteral("strip"),
+          {
+           QStringLiteral("bottomStripSideBySide"),
+           QStringLiteral("nativeOverlaysLetClicksThrough")}},
          {QStringLiteral("profiles"),
-          {QStringLiteral("profileRailSwitchesAfterAddingAProfile"),
+          {
            QStringLiteral("profileRailStaysOpenWhenTheEnterNeverArrives"),
            QStringLiteral("profileRailClosesWhenTheCursorLeavesWithoutALeave"),
            QStringLiteral("profileRailRemoveCrossIsFourteenSquare"),
-           QStringLiteral("profileRailClosesOnLeaveAndEscapeAndOpensOnTab")}}});
+           QStringLiteral("profileRailClosesOnLeaveAndEscapeAndOpensOnTab")}},
+         {QStringLiteral("profileswitch"),
+          {
+           QStringLiteral("profileRailSwitchesAfterAddingAProfile")}}});
     return arguments ? QTest::qExec(&test, *arguments) : 1;
 }
 #include "tst_workspace_live_input.moc"

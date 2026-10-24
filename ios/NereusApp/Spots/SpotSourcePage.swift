@@ -86,8 +86,8 @@ struct SpotSourcePage: View {
                     .frame(minWidth: 88, minHeight: 40)
                     .background(reason != nil ? ChromeColours.buttonOff
                                 : (running ? ChromeColours.button : ChromeColours.buttonOnBlue),
-                                in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
+                                in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                         .strokeBorder(reason != nil ? ChromeColours.buttonOffBorder
                                       : (running ? ChromeColours.buttonBorder : ChromeColours.buttonOnBlueBorder),
                                       lineWidth: 1))
@@ -98,8 +98,8 @@ struct SpotSourcePage: View {
             .accessibilityIdentifier("spotSource.connect")
         }
         .padding(12)
-        .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.stationBorder, lineWidth: 1))
+        .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ChromeColours.stationBorder, lineWidth: 1))
     }
 
     @ViewBuilder
@@ -177,8 +177,8 @@ struct SpotSourcePage: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(height: 150)
-            .background(SpotColours.console, in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(SpotColours.consoleBorder, lineWidth: 1))
+            .background(SpotColours.console, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(SpotColours.consoleBorder, lineWidth: 1))
             .onAppear { reader.scrollTo(lines.count - 1, anchor: .bottomLeading) }
             .onChange(of: lines.count) { _, count in
                 reader.scrollTo(count - 1, anchor: .bottomLeading)
@@ -200,8 +200,8 @@ struct SpotSourcePage: View {
                     .onSubmit(send)
                     .padding(.horizontal, 8)
                     .frame(minHeight: 38)
-                    .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 3))
-                    .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
+                    .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
                     .disabled(reason != nil)
                     .accessibilityLabel("Command")
                     .accessibilityIdentifier("spotSource.command")
@@ -212,8 +212,8 @@ struct SpotSourcePage: View {
                         .foregroundStyle(ready ? Color.white : ChromeColours.buttonOffText)
                         .frame(minWidth: 72, minHeight: 38)
                         .background(ready ? ChromeColours.buttonOnBlue : ChromeColours.buttonOff,
-                                    in: RoundedRectangle(cornerRadius: 4))
-                        .overlay(RoundedRectangle(cornerRadius: 4)
+                                    in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                             .strokeBorder(ready ? ChromeColours.buttonOnBlueBorder : ChromeColours.buttonOffBorder,
                                           lineWidth: 1))
                         .contentShape(Rectangle())

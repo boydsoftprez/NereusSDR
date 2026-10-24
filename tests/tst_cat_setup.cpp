@@ -13,6 +13,12 @@
 //            J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-10-12 The serial and Input PTT Enable ticks wait for what they need.
 //            J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-22: ports a test hands to a later listener come from
+// unusedLoopbackPort() (UnusedLoopbackPort.h), below the kernel's ephemeral
+// range, so a parallel test cannot take one between the pick and the listen.
+// A listener held for the whole test keeps port 0. J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code.
+#include "UnusedLoopbackPort.h"
 #include <QtTest>
 #include <memory>
 #include <QCheckBox>
@@ -42,7 +48,7 @@
 #include "models/TransmitModel.h"
 using namespace NereusSDR;
 namespace {
-int unusedPort() { QTcpServer reservation; if (!reservation.listen(QHostAddress::LocalHost,0)) { return 0; } return reservation.serverPort(); }
+int unusedPort() { return unusedLoopbackPort(); }
 template<class T> T* control(QWidget& page,const char* name) { return page.findChild<T*>(QString::fromLatin1(name)); }
 }
 class TstCatSetup : public QObject {

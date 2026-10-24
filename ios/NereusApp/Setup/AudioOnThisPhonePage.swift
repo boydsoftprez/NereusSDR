@@ -98,8 +98,8 @@ struct AudioOnThisPhonePage: View {
     // MARK: The page
 
     var body: some View {
-        List {
-            Section {
+        SetupPageContainer {
+            SetupPanelSection {
                 if let audio {
                     // Watches the sound, so a choice here or in the band's
                     // Sound panel moves the tick at once.
@@ -112,7 +112,7 @@ struct AudioOnThisPhonePage: View {
             } header: {
                 Text("Play the band through")
             }
-            Section {
+            SetupPanelSection {
                 ForEach(MicrophoneChoice.allCases, id: \.self) { microphone in
                     choice(Self.title(microphone), Self.detail(microphone), chosen: settings.microphone == microphone,
                            id: "microphone.\(microphone.rawValue)") {
@@ -122,7 +122,7 @@ struct AudioOnThisPhonePage: View {
             } header: {
                 Text("Microphone")
             }
-            Section {
+            SetupPanelSection {
                 toggle("Mute the band while you talk", "So the speaker can't feed back into the microphone",
                        isOn: Binding(get: { settings.muteBandWhileTalking }, set: { setMuteBandWhileTalking($0) }),
                        id: "muteBandWhileTalking")
@@ -132,13 +132,13 @@ struct AudioOnThisPhonePage: View {
                 Text(Self.monRule)
                     .accessibilityIdentifier("monRule")
             }
-            Section {
+            SetupPanelSection {
                 HStack(spacing: 12) {
                     labels("iPhone voice processing", "Off: the Core's PROC, EQ and leveler shape your audio")
                     Spacer(minLength: 0)
                     Text("Off")
                         .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WorkspacePalette.textSecondary)
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("voiceProcessing")
@@ -156,7 +156,7 @@ struct AudioOnThisPhonePage: View {
                 }
             }
         }
-        .navigationTitle("On this phone")
+        .setupPageTitle("On this phone")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 SetupTagBadge(tag: .thisPhone)
@@ -185,7 +185,7 @@ struct AudioOnThisPhonePage: View {
                 .foregroundStyle(.primary)
             Text(detail)
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(WorkspacePalette.textSecondary)
         }
     }
 
@@ -195,13 +195,12 @@ struct AudioOnThisPhonePage: View {
             HStack(spacing: 12) {
                 labels(title, detail)
                 Spacer(minLength: 0)
-                Image(systemName: "checkmark")
-                    .foregroundStyle(ChromeColours.accent)
-                    .opacity(chosen ? 1 : 0)
+                SetupCheckMark(chosen: chosen)
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .setupPicked(chosen)
         .accessibilityAddTraits(chosen ? .isSelected : [])
         .accessibilityIdentifier(id)
     }
@@ -243,7 +242,7 @@ struct AudioQualitySection: View {
     static func section(inputs: AudioQualityModel.Inputs,
                         choose: @escaping (AudioQualityChoice) -> Void) -> some View {
         let shown = AudioQualityModel.shown(inputs)
-        return Section {
+        return SetupPanelSection {
             ForEach(AudioQualityModel.rows(inputs)) { row in
                 Button {
                     choose(row.choice)
@@ -252,13 +251,13 @@ struct AudioQualitySection: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(row.title)
                                 .font(.body.weight(.semibold))
-                                .foregroundStyle(row.enabled ? Color.primary : Color.secondary)
+                                .foregroundStyle(.primary)
                             Text(row.detail)
                                 .font(.footnote)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(WorkspacePalette.textSecondary)
                             Text(row.cost)
                                 .font(.footnote)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(WorkspacePalette.textSecondary)
                             if let warning = row.warning {
                                 Text(warning)
                                     .font(.footnote.weight(.semibold))
@@ -268,19 +267,20 @@ struct AudioQualitySection: View {
                             if let reason = row.reason {
                                 Text(reason)
                                     .font(.footnote)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(WorkspacePalette.textSecondary)
                                     .accessibilityIdentifier("quality.\(row.choice.rawValue).reason")
                             }
                         }
                         Spacer(minLength: 0)
-                        Image(systemName: "checkmark")
-                            .foregroundStyle(row.enabled ? ChromeColours.accent : Color.secondary)
-                            .opacity(shown == row.choice ? 1 : 0)
+                        SetupCheckMark(chosen: shown == row.choice)
                     }
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .setupPicked(shown == row.choice)
                 .disabled(!row.enabled)
+                // Greyed in place at 0.4, its reason the last line of the row.
+                .setupGreyed(!row.enabled)
                 .accessibilityAddTraits(shown == row.choice ? .isSelected : [])
                 .accessibilityIdentifier("quality.\(row.choice.rawValue)")
             }
@@ -290,7 +290,7 @@ struct AudioQualitySection: View {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(AudioQualityModel.notes(inputs), id: \.self) { note in
                     Text(note)
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(WorkspacePalette.textPrimary)
                         .accessibilityIdentifier("qualityNote")
                 }
                 Text(AudioQualityModel.footer)

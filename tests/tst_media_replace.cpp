@@ -31,6 +31,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22: NSDC v2 interop (display codec v2, Task 6): a window that
+//               replaces its media connection keeps display codec v2; the
+//               Core still reports version 2, the replacement's display
+//               frames are version 2, and the window asks no keyframe.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-17: a failure that is not retried, raised while the old peer is
 //               not ready between the Core's move and the window's, has its
 //               disable sent once on the new connection and nothing asked,
@@ -139,9 +144,13 @@
 #include "OperatorWording.h"
 #include "core/settings/SettingsProxy.h"
 #include "fakes/LoopbackTransport.h"
+#include "fakes/DisplayVersionTap.h"
 #include "fakes/RemoteAudioSessionHarness.h"
 #include "fakes/UpgradedCoreToken.h"
+#include "gui/PanadapterApplet.h"
+#include "gui/PanadapterStack.h"
 #include "gui/RemoteMediaController.h"
+#include "gui/SpectrumWidget.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "models/TransmitModel.h"
@@ -2248,6 +2257,103 @@ private slots:
             }
         }
         QCOMPARE(contextsAfter, contextsBefore);
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // NSDC v2 interop (display codec v2, Task 6): after the pattern of
+    // theCoreSendsOnBothThenTheNewPeerTakesOver, end to end. A window whose
+    // start agreed display codec v2 replaces its media connection while
+    // its pan draws. The Core still reports version 2 after the replace,
+    // every display frame the replacement delivers is version 2, and the
+    // window asks no keyframe before, during or after the move.
+    void aReplacementKeepsDisplayCodecV2()
+    {
+        Test::RemoteAudioSessionHarness h;
+        const int stream = h.station.sliceById(h.sliceA)->streamIndex();
+        QVERIFY(stream >= 0);
+        PanadapterStack stack;
+        auto* pan = stack.addPanadapter(QStringLiteral("replace"));
+        pan->setActiveSliceIndex(h.sliceA);
+        pan->spectrumWidget()->setDisplayWindowPreservingHistory(
+            h.station.streamCentreHz(stream), 48000);
+        stack.resize(600, 400);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        RemoteMediaController remoteMedia(&h.client, &h.remote, &stack);
+        DaemonMediaController daemonMedia(&h.server, &h.station);
+        Test::DisplayVersionTap tap(&remoteMedia);
+        QSignalSpy controls(&h.server, &StationServer::mediaControlReceived);
+        QSignalSpy frames(&remoteMedia, &RemoteMediaController::displayFrameReceived);
+        QTimer source;
+        source.setInterval(10);
+        source.setTimerType(Qt::PreciseTimer);
+        connect(&source, &QTimer::timeout, &source, [&h] { h.feedMixedTone(); });
+        QTimer speaker;
+        speaker.setInterval(10);
+        speaker.setTimerType(Qt::PreciseTimer);
+        connect(&speaker, &QTimer::timeout, &speaker, [&h] { h.remoteBus->render(480); });
+        QVector<float> iq(2048);
+        for (int i = 0; i < iq.size(); i += 2) {
+            iq[i] = 0.01f * static_cast<float>(std::cos(double(i) * 0.17));
+            iq[i + 1] = 0.01f * static_cast<float>(std::sin(double(i) * 0.17));
+        }
+        QTimer display;
+        display.setInterval(20);
+        connect(&display, &QTimer::timeout, &display, [&h, stream, &iq] {
+            QMetaObject::invokeMethod(&h.station, "rawIqDataForStream", Qt::DirectConnection,
+                                      Q_ARG(int, stream), Q_ARG(QVector<float>, iq));
+        });
+        source.start();
+        speaker.start();
+        display.start();
+        h.connectSession();
+        QVERIFY(h.client.capabilities().mediaReplaceVersion >= 1);
+        QCOMPARE(h.client.capabilities().displayCodecVersion, 2);
+        QTRY_VERIFY2_WITH_TIMEOUT((tap.follow(), !frames.isEmpty()
+                                                    && !tap.allVersions().isEmpty()),
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
+        QCOMPARE(controlsNamed(controls, QStringLiteral("start")).size(), 1);
+        QCOMPARE(controlsNamed(controls, QStringLiteral("start")).first()
+                     .value(QStringLiteral("displayCodecVersion")).toInt(), 2);
+        QCOMPARE(daemonMedia.displayCodecVersion(), quint32{2});
+        QCOMPARE(tap.follow(), 1);
+
+        const QString firstId = remoteMedia.mediaConnectionId();
+        QVERIFY(remoteMedia.replaceConnection());
+        QTRY_VERIFY_WITH_TIMEOUT((tap.follow(), !remoteMedia.replacingConnection()
+                                                    && remoteMedia.mediaConnectionId() != firstId),
+                                 20000);
+        QCOMPARE(tap.follow(), 2);
+        QVERIFY(!controlsNamed(controls, QStringLiteral("replace")).isEmpty());
+        // Frames go on over the replacement, still version 2.
+        const Test::DisplayVersionTap::Peer& replacement = *tap.peers().back();
+        const qsizetype onReplacement = replacement.versions.size();
+        const int framesAtMove = frames.count();
+        QTRY_VERIFY2_WITH_TIMEOUT(replacement.versions.size() >= onReplacement + 4
+                                      && frames.count() > framesAtMove + 2,
+                                  qPrintable(QStringLiteral("replacement %1 (at move %2), frames %3 "
+                                                            "(at move %4), peers %5, first peer %6")
+                                                 .arg(replacement.versions.size())
+                                                 .arg(onReplacement)
+                                                 .arg(frames.count())
+                                                 .arg(framesAtMove)
+                                                 .arg(tap.peers().size())
+                                                 .arg(tap.peers().front()->versions.size())),
+                                  10000);
+        source.stop();
+        speaker.stop();
+        display.stop();
+        QCOMPARE(daemonMedia.displayCodecVersion(), quint32{2});
+        for (int version : replacement.versions) {
+            QCOMPARE(version, 2);
+        }
+        for (int version : tap.allVersions()) {
+            QCOMPARE(version, 2);
+        }
+        QVERIFY(controlsNamed(controls, QStringLiteral("keyframe")).isEmpty());
+        // No new start: the replace kept what the start agreed.
+        QCOMPARE(controlsNamed(controls, QStringLiteral("start")).size(), 1);
         h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 

@@ -408,8 +408,21 @@ void MoxController::latchStopAllTx()
     // controller polls only on a source event, so it is clear at once when
     // no source is held.
     // //[2.10.3.6]MWLGE fixes #518  [original inline comment from console.cs:25481]
-    m_stopAllTxLatched = m_micPtt || m_catPtt || m_voxPtt || m_tciPtt;
-    if (m_stopAllTxLatched) {
+    //
+    // NereusSDR records which sources it waits on rather than one flag.
+    // Callers latch before their setMox(false), whose dropPttOnUnkey then
+    // drops CAT and TCI and takes them out of the wait (clearHeldBits), so
+    // the wait ends up as the sources still held after the unkey. With MOX
+    // already off (Stop All TX during a release, a tail or a tune) that
+    // setMox(false) runs no unkey, so a held CAT or TCI key stays waited on
+    // until the app releases it. Thetis's
+    // PollPTT tests all five levels on each pass and that unkey clears
+    // cat_ptt and _tci_ptt there too (console.cs:29406-29411), so only a
+    // held mic or VOX holds Thetis off as well. Unlike Thetis, a fresh key
+    // from a source not waited on keys while a waited-on one is still down
+    // (PR 604 third pass, controller ruling, listed for JJ's veto).
+    m_stopAllTxWait = heldSourceBits();
+    if (m_stopAllTxWait != 0) {
         qCInfo(lcDsp) << "MoxController: transmit stopped; a held PTT will not"
                          " key again until it is released";
     }
@@ -1690,7 +1703,24 @@ void MoxController::clearHeldBits(quint8 bits)
 {
     m_refusedHeld &= static_cast<quint8>(~bits);
     m_notQueuedHeld &= static_cast<quint8>(~bits);
+    sweepStopAllTxWait();
     reportIfSourcesReleased();
+}
+
+quint8 MoxController::heldSourceBits() const noexcept
+{
+    quint8 bits = 0;
+    if (m_tciPtt) { bits |= kRefusedTci; }
+    if (m_catPtt) { bits |= kRefusedCat; }
+    if (m_micPtt) { bits |= kRefusedMic; }
+    if (m_voxPtt) { bits |= kRefusedVox; }
+    return bits;
+}
+
+void MoxController::sweepStopAllTxWait()
+{
+    // PR 604 third pass: a source leaves StopAllTx's wait once released.
+    m_stopAllTxWait &= heldSourceBits();
 }
 
 void MoxController::reportIfSourcesReleased()
@@ -1744,8 +1774,8 @@ void MoxController::reportIfSourcesReleased()
 // mode (setMox(true) is not called again while m_mox is set).
 //
 // _stop_all_tx is ported (Task 33): RadioModel::stopAllTx sets it through
-// latchStopAllTx, and the receive branch below skips every source until all
-// are released.
+// latchStopAllTx, and the receive branch below skips each source the latch
+// waits on until that source is released (PR 604 third pass).
 //
 // _tx_inhibit and _ganymede_pa_issue are ported (Task 7 fix wave, I2):
 // RadioModel feeds them from TxInhibitMonitor and RadioModel::paTripped()
@@ -1768,6 +1798,9 @@ void MoxController::pollPtt()
     // (cw_ptt, on the lines below it, carries: //[2.10.3.9]MW0LGE only want to do this on semi breakin  [original inline comment from console.cs:25473])
     // The manual key, TX inhibit and the PA trip are ported (Task 7 and
     // its fix wave, I2); _rx_only is ported by Task 16 (setRxOnly).
+    // PR 604 third pass: a release seen during a blocked pass still ends
+    // that source's StopAllTx wait.
+    sweepStopAllTxWait();
     if (m_manualKey || transmitBlocked()) {
         return;
     }
@@ -1785,32 +1818,33 @@ void MoxController::pollPtt()
         //           _stop_all_tx = false;
         //   }
         // cw_ptt is 3M-2 (onCwPtt refuses every press).
-        if (m_stopAllTxLatched) {
-            if (m_micPtt || m_catPtt || m_voxPtt || m_tciPtt) {
-                return;
-            }
-            m_stopAllTxLatched = false;
-        }
+        // PR 604 third pass (controller ruling, for JJ's veto): only the
+        // sources still held since the stop are skipped, each until it is
+        // released (the sweep at the top of the pass); a fresh key from any
+        // other source keys. The latch is clear once nothing is waited on.
+        const quint8 waiting = m_stopAllTxWait;
 
         // From Thetis console.cs:25507-25511 [v2.10.3.15]
         // R-R3-36: a source refused because the microphone was not ready
         // is skipped until it is released (isHeldOff). Not in Thetis,
         // which has no microphone admission; its band-plan and interlock
         // refusals are still retried on every pass, as PollPTT does.
-        if (m_tciPtt && !isHeldOff(kRefusedTci)) {
+        if (m_tciPtt && (waiting & kRefusedTci) == 0 && !isHeldOff(kRefusedTci)) {
             tryPollKey(PttMode::Tci, kRefusedTci);
         }
         // From Thetis console.cs:25513-25517 [v2.10.3.15]
-        if (m_catPtt && !isHeldOff(kRefusedCat)) {
+        if (m_catPtt && (waiting & kRefusedCat) == 0 && !isHeldOff(kRefusedCat)) {
             tryPollKey(PttMode::Cat, kRefusedCat);
         }
         // From Thetis console.cs:25526-25541 [v2.10.3.15] (mode gate not
         // ported, see above; PTTMode.CW is never set before 3M-2)
-        if (m_micPtt && m_pttMode != PttMode::Cw && !isHeldOff(kRefusedMic)) {
+        if (m_micPtt && m_pttMode != PttMode::Cw && (waiting & kRefusedMic) == 0
+            && !isHeldOff(kRefusedMic)) {
             tryPollKey(PttMode::Mic, kRefusedMic);
         }
         // From Thetis console.cs:25543-25555 [v2.10.3.15]
-        if (m_voxPtt && isVoiceMode(m_currentMode) && !isHeldOff(kRefusedVox)) {
+        if (m_voxPtt && isVoiceMode(m_currentMode) && (waiting & kRefusedVox) == 0
+            && !isHeldOff(kRefusedVox)) {
             tryPollKey(PttMode::Vox, kRefusedVox);
         }
         return;
@@ -1833,12 +1867,16 @@ void MoxController::pollPtt()
             // R-R3-36: a source held off after a never-queued refusal is
             // not a fallback either; taking the key would key it without a
             // new press.
+            // PR 604 third pass: nor is a source StopAllTx still waits on;
+            // it stays off until released, as on the keying side.
+            const quint8 waiting = m_stopAllTxWait;
             PttMode fallback = PttMode::None;
-            if (m_catPtt && !isHeldOff(kRefusedCat)) {
+            if (m_catPtt && (waiting & kRefusedCat) == 0 && !isHeldOff(kRefusedCat)) {
                 fallback = PttMode::Cat;
-            } else if (m_micPtt && !isHeldOff(kRefusedMic)) {
+            } else if (m_micPtt && (waiting & kRefusedMic) == 0 && !isHeldOff(kRefusedMic)) {
                 fallback = PttMode::Mic;
-            } else if (m_voxPtt && isVoiceMode(m_currentMode) && !isHeldOff(kRefusedVox)) {
+            } else if (m_voxPtt && isVoiceMode(m_currentMode) && (waiting & kRefusedVox) == 0
+                       && !isHeldOff(kRefusedVox)) {
                 fallback = PttMode::Vox;
             }
             if (fallback == PttMode::None) {
@@ -1916,6 +1954,9 @@ void MoxController::clearPttSources()
     m_refusedHeld = 0;
     m_notQueuedHeld = 0;
     m_micTakePressDown = false;
+    // PR 604 third pass: nothing is held now, so StopAllTx waits on nothing
+    // and the first press after a reconnect keys.
+    m_stopAllTxWait = 0;
     reportIfSourcesReleased();
 }
 

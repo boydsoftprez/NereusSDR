@@ -1,6 +1,9 @@
 // no-port-check: NereusSDR-original. R-R3-38 operator target selection.
 // 2026-10-01: Authenticated Core address inventory and reconnect learning.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+// 2026-10-22: withAdvertisedAddresses(), a saved paired Core's LAN
+// announcements in its race. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+// Claude Code.
 
 #pragma once
 
@@ -37,6 +40,14 @@ public:
     CoreTargetStore& coreTargetStore() { return m_store; }
     bool coreTargetStoreLoaded() const { return m_storeLoaded; }
     static RemoteStationOptions connectionOptionsForTarget(const SavedCoreTarget& target);
+    /// 2026-10-22: `options` (a saved paired Core's, from
+    /// connectionOptionsForTarget) with the addresses that Core announces on
+    /// this network added to its direct candidates, matched by its identity
+    /// key alone (never by its certificate pin), so a race to a Core saved
+    /// for remote access also tries it on this network. The race still
+    /// proves the identity at the hello. Unchanged for an unpaired Core.
+    static RemoteStationOptions withAdvertisedAddresses(RemoteStationOptions options,
+                                                        const QList<StationLanEndpoint>& endpoints);
     /// Authenticated learned service metadata is separate from selected credentials.
     static bool authenticatedSelectionMatchesSaved(const StationStartupSelection& selection,
                                                    const SavedCoreTarget& target);

@@ -27,19 +27,37 @@
 // time taken into the blocks raises the busy share over the CPU share in
 // every interval, so a wrong edge leaves too few and fails.
 //
+// At load averages of 35 to 80 on an 18-core Mac no interval of 60 was
+// corroborated (busy share 0.7 to 1.0, CPU share 0.15 to 0.65, the edges
+// right), and the frame-like and uniform cases failed on the machine, not
+// the code. So a third reference shows the edges where the CPU share
+// cannot: a state poller reads the worker's scheduler state every
+// kPollInterval and places each read by the stamped block edges. A worker
+// preempted inside a block is ready to run; one whose block start was
+// stamped before it waited for its input is blocked inside the block, and
+// leaves no gap between blocks. An interval in which the worker waited
+// outside the blocks for a block period and was seldom found blocked inside
+// them shows the edges right however busy the machine is (see edgesShown).
+// The CPU claims stay on the corroborated intervals.
+//
 // Claims:
 //   - every interval reads the busy share within kBusyAgreement;
 //   - every corroborated interval reads the CPU share within the case's
-//     tolerance, both ways, and there are at least kMinCorroborated;
+//     tolerance, both ways, and the frame-like and uniform cases each have
+//     at least kMinCorroborated intervals that show the edges right, by the
+//     CPU share or by the state poller;
 //   - the frame-like load reads under the display line in every corroborated
-//     interval, and neither it nor the uniform load ever steps back (both are
-//     well under the governor's line of work, so a step-back is the Rock 5C
-//     symptom below);
+//     interval, and neither it nor the uniform load ever steps back in one
+//     (both are well under the governor's line of work, so a step-back is
+//     the Rock 5C symptom below);
 //   - the overload reads at least kOverloadMinLoad in every interval in
 //     which the worker never waited a block period for input (a fed
-//     interval), never reads under its CPU share, and steps back within
-//     kTicks. It needs kMinFed fed intervals, not corroborated ones: its
-//     claims hold whatever share of a core the worker gets (see the case).
+//     interval), never reads under its CPU share, and steps back by the end
+//     of its first kRunForStepBack intervals in a row that each read at
+//     least the governor's line (its averaging window and one more). It
+//     needs kMinFed fed
+//     intervals, not corroborated ones: its claims hold whatever share of a
+//     core the worker gets (see the case).
 //
 // The test keeps its own record of the conditions each claim needs, instead
 // of assuming a quiet machine. A busy machine can preempt the feeder, which
@@ -79,8 +97,11 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstring>
 #include <functional>
 #include <numbers>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -90,6 +111,10 @@
 #include <mach/mach.h>
 #include <mach/thread_act.h>
 #include <pthread/qos.h>
+#elif defined(Q_OS_LINUX)
+#include <fcntl.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 #endif
 
 #include "core/RxChannel.h"
@@ -132,14 +157,44 @@ constexpr int kTicks = 20;
 // The most intervals a case samples while waiting for the intervals its
 // claims need (about 30 s).
 constexpr int kMaxTicks = 60;
-// Corroborated intervals (busy share within the tolerance of the CPU share)
-// each case needs before its CPU claims count. A block start stamped before
-// the worker waits for its buffer left none of 20 in the frame-like and
-// uniform cases; a busy machine (load 19 to 25) left as few as 4 in the
-// uniform case with the edges right.
+// Intervals that show the block edges right (see edgesShown) each case
+// needs before its claims count. A block start stamped before the worker
+// waits for its buffer left none of 20 in the frame-like and uniform cases;
+// a busy machine (load 19 to 25) left as few as 4 corroborated by the CPU
+// share in the uniform case with the edges right, and at load averages of
+// 35 to 80 on an 18-core Mac none of 60 (busy share 0.7 to 1.0 against CPU
+// 0.15 to 0.65), so the state poller shows them there instead.
 constexpr int kMinCorroborated = 2;
+// How often the state poller reads the worker's state, and the polls inside
+// blocks an interval needs before what they found counts. Every 500 us, not
+// 100: in ten runs at load averages of 47 to 81 on an 18-core Mac every
+// interval had at least 216 polls inside blocks (medians 435 to 735),
+// against at least 890 (median 2003) in a run at 100 us at load 48. That is
+// still twice kMinPollsInBlock, for a fifth of the reads (each an open and
+// a read of /proc on Linux).
+constexpr std::chrono::microseconds kPollInterval{500};
+constexpr std::uint64_t kMinPollsInBlock = 100;
+// The most of an interval the poller may find the worker blocked inside
+// blocks for the interval to show the edges right. With the edges right the
+// worker still blocks inside a block now and then on a busy machine (on the
+// input ring's lock while a preempted feeder holds it, or on a page): up to
+// 0.053 of an interval at load averages of 45 to 62 on an 18-core Mac. A
+// start stamped before the worker waits for its input takes that wait in:
+// about 0.3 of each interval in the uniform case and 0.4 in the frame-like
+// case on a quiet machine.
+constexpr double kBlockedInBlockTolerance = 0.10;
 // Fed intervals the overload case needs before its floor counts.
 constexpr int kMinFed = 2;
+// Intervals in a row, each reading at least NnrLoadGovernor's line
+// (kNnrStepDownLoad), by whose end the overload must have stepped back: the
+// governor averages the load over kNnrStepDownHoldMs, so one interval more
+// than that window. A fed interval reads kOverloadMinLoad or more, over the
+// line; an interval in which a busy machine kept the feeder from the worker
+// can still read over it, and counts too. Runs of fed intervals alone were
+// too rare at a load average of 49 on an 18-core Mac: none of five in 60
+// intervals, with the governor stepping back at 2.0 s and 7.5 s.
+constexpr int kRunForStepBack =
+    int(NnrLoadGovernor::kNnrStepDownHoldMs / ReceiverDspLoadSampler::kSampleIntervalMs) + 1;
 // Time for the worker to settle after a delay changes.
 constexpr std::chrono::milliseconds kSettle{1000};
 
@@ -178,6 +233,9 @@ QMutex g_workerMutex;
 bool g_haveWorker = false;
 int g_workerStarts = 0;
 pthread_t g_worker{};
+#if defined(Q_OS_LINUX)
+pid_t g_workerTid = 0;
+#endif
 
 // Runs on a WDSP thread as it starts, and on a channel worker as it ends.
 void onWdspThreadStart(int kind, int channel)
@@ -188,6 +246,9 @@ void onWdspThreadStart(int kind, int channel)
     QMutexLocker lock(&g_workerMutex);
     if (kind == kWdspThreadRxMain) {
         g_worker = pthread_self();
+#if defined(Q_OS_LINUX)
+        g_workerTid = static_cast<pid_t>(syscall(SYS_gettid));
+#endif
         g_haveWorker = true;
         ++g_workerStarts;
     } else if (kind == kWdspThreadWorkerExit && g_haveWorker
@@ -317,6 +378,141 @@ qint64 workerCpuNs()
 #endif
 }
 
+// Whether the worker is blocked (asleep on a semaphore or a lock) rather
+// than running or ready to run and waiting for a core; nullopt when its
+// state cannot be read.
+std::optional<bool> workerBlocked()
+{
+    QMutexLocker lock(&g_workerMutex);
+    if (!g_haveWorker) {
+        return std::nullopt;
+    }
+#ifdef Q_OS_MAC
+    // TH_STATE_RUNNING covers a thread on a core and one on a run queue.
+    thread_basic_info_data_t info{};
+    mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+    if (thread_info(pthread_mach_thread_np(g_worker), THREAD_BASIC_INFO,
+                    reinterpret_cast<thread_info_t>(&info), &count) != KERN_SUCCESS) {
+        return std::nullopt;
+    }
+    return info.run_state != TH_STATE_RUNNING;
+#elif defined(Q_OS_LINUX)
+    // /proc/<pid>/task/<tid>/stat: "tid (comm) state ...", R for a thread on
+    // a core or a run queue.
+    char path[64];
+    std::snprintf(path, sizeof(path), "/proc/self/task/%d/stat", int(g_workerTid));
+    const int fd = ::open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        return std::nullopt;
+    }
+    char buffer[512];
+    const ssize_t n = ::read(fd, buffer, sizeof(buffer) - 1);
+    ::close(fd);
+    if (n <= 0) {
+        return std::nullopt;
+    }
+    buffer[n] = '\0';
+    const char* paren = std::strrchr(buffer, ')');
+    if (paren == nullptr || paren[1] != ' ' || paren[2] == '\0') {
+        return std::nullopt;
+    }
+    return paren[2] != 'R';
+#else
+    // No reader for this platform: the poller finds nothing, and only the
+    // CPU share shows the edges.
+    return std::nullopt;
+#endif
+}
+
+// dsplock.c's clock (dsplock_now_ns), which stamps the block edges.
+qint64 dsplockNowNs()
+{
+    timespec now{};
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return qint64(now.tv_sec) * 1'000'000'000LL + now.tv_nsec;
+}
+
+// One read of the worker's state by the state poller, between two reads of
+// dsplock.c's clock.
+struct StatePoll {
+    qint64 fromNs{0};
+    qint64 toNs{0};
+    bool blocked{false};
+};
+QMutex g_pollsMutex;
+std::vector<StatePoll> g_polls;
+
+void pollWorkerState()
+{
+    StatePoll poll;
+    poll.fromNs = dsplockNowNs();
+    const std::optional<bool> blocked = workerBlocked();
+    poll.toNs = dsplockNowNs();
+    if (!blocked) {
+        return;
+    }
+    poll.blocked = *blocked;
+    QMutexLocker lock(&g_pollsMutex);
+    g_polls.push_back(poll);
+}
+
+void clearPolls()
+{
+    QMutexLocker lock(&g_pollsMutex);
+    g_polls.clear();
+}
+
+// What the state poller found over [fromNs, toNs]: its polls, those taken
+// wholly inside one block as the block hook stamped it, and those that
+// found the worker blocked there. Placed by the stamped edges, not by when
+// the hook ran, so a start stamped early still takes the wait it covers.
+struct PollShare {
+    std::uint64_t polls{0};
+    std::uint64_t inBlock{0};
+    std::uint64_t blockedInBlock{0};
+};
+
+PollShare pollShare(qint64 fromNs, qint64 toNs)
+{
+    std::vector<StatePoll> polls;
+    {
+        QMutexLocker lock(&g_pollsMutex);
+        g_polls.erase(std::remove_if(g_polls.begin(), g_polls.end(),
+                                     [fromNs](const StatePoll& p) { return p.toNs < fromNs; }),
+                      g_polls.end());
+        polls = g_polls;
+    }
+    std::vector<BlockSpan> spans;
+    {
+        QMutexLocker lock(&g_blocksMutex);
+        spans = g_blocks;
+    }
+    PollShare share;
+    for (const StatePoll& p : polls) {
+        if (p.fromNs < fromNs || p.toNs > toNs) {
+            continue;
+        }
+        ++share.polls;
+        // The blocks run one at a time, in order of their starts.
+        const auto after = std::upper_bound(spans.begin(), spans.end(), p.fromNs,
+                                            [](qint64 t, const BlockSpan& b) {
+                                                return t < b.startNs;
+                                            });
+        if (after == spans.begin()) {
+            continue;
+        }
+        const BlockSpan& b = *std::prev(after);
+        const qint64 end = b.endNs < 0 ? toNs : b.endNs;
+        if (p.toNs <= end) {
+            ++share.inBlock;
+            if (p.blocked) {
+                ++share.blockedInBlock;
+            }
+        }
+    }
+    return share;
+}
+
 qint64 monotonicMs()
 {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -357,6 +553,10 @@ struct Sample {
     double cpuShare{0.0};
     // The busy share from the block hook over the same interval.
     double busyShare{0.0};
+    // The share of the state poller's polls in the interval that found the
+    // worker blocked inside a block, and how many polls were inside one.
+    double blockedInBlockShare{0.0};
+    std::uint64_t pollsInBlock{0};
     // The longest the worker waited outside a block in the interval.
     qint64 longestWaitNs{0};
     qint64 maxBlockUs{0};
@@ -384,6 +584,7 @@ Run sampleFor(int ticks, const std::function<bool(const Sample&)>& qualifies = {
 
     Run run;
     clearBlocks();
+    clearPolls();
     const auto start = Clock::now();
     auto next = start;
     ReceiverDspLoadSampler::Reading reading;
@@ -418,6 +619,10 @@ Run sampleFor(int ticks, const std::function<bool(const Sample&)>& qualifies = {
         const qint64 fromNs = previousReadNs;
         const qint64 toNs = reading.readNs;
         sample.cpuShare = toNs > fromNs ? double(cpu - previousCpu) / double(toNs - fromNs) : 0.0;
+        const PollShare polls = pollShare(fromNs, toNs);
+        sample.pollsInBlock = polls.inBlock;
+        sample.blockedInBlockShare = polls.polls > 0
+            ? double(polls.blockedInBlock) / double(polls.polls) : 0.0;
         sample.longestWaitNs = longestWaitNs(fromNs, toNs);
         sample.busyShare = busyShare(fromNs, toNs);
         if (snapshot) {
@@ -455,11 +660,30 @@ bool corroborated(const Sample& s, double tolerance)
     return s.busyShare - s.cpuShare <= tolerance;
 }
 
+// Whether this interval shows the block edges take no waiting in: either
+// the CPU share corroborates the busy share, or the worker waited outside
+// the blocks for at least a block period somewhere in the interval (so
+// there was a wait for an edge to take in) and the state poller, with
+// kMinPollsInBlock polls inside blocks, found it blocked inside a block for
+// at most kBlockedInBlockTolerance of the interval. A worker preempted
+// inside a block is ready to run, not blocked, so the second holds however
+// busy the machine is. A start stamped before the worker waits for its
+// buffer or its lock fails both: the wait is inside a block, the worker
+// blocked there, and no gap between blocks is left.
+bool edgesShown(const Sample& s, double tolerance)
+{
+    return corroborated(s, tolerance)
+        || (s.longestWaitNs >= kBlockPeriodNs && s.pollsInBlock >= kMinPollsInBlock
+            && s.blockedInBlockShare <= kBlockedInBlockTolerance);
+}
+
 void logRun(const char* name, const Run& run)
 {
     for (const Sample& s : run.samples) {
-        qInfo("%s t=%.1fs load=%.3f busy=%.3f cpu=%.3f max_block_us=%lld longest_wait_us=%lld%s%s",
-              name, s.atSeconds, s.load, s.busyShare, s.cpuShare,
+        qInfo("%s t=%.1fs load=%.3f busy=%.3f cpu=%.3f blocked_in_block=%.3f (%llu polls "
+              "in blocks) max_block_us=%lld longest_wait_us=%lld%s%s",
+              name, s.atSeconds, s.load, s.busyShare, s.cpuShare, s.blockedInBlockShare,
+              static_cast<unsigned long long>(s.pollsInBlock),
               static_cast<long long>(s.maxBlockUs),
               static_cast<long long>(s.longestWaitNs / 1000),
               s.idle ? " idle" : "", s.steppedBack ? " STEP-BACK" : "");
@@ -500,6 +724,7 @@ private slots:
         QVERIFY2(haveWorkerAfter(2), "the rebuilt channel's DSP worker never reported its start");
         QVERIFY2(workerCpuNs() >= 0, "the worker's CPU clock cannot be read");
         m_feeder = std::thread([this] { feed(); });
+        m_poller = std::thread([this] { poll(); });
         std::this_thread::sleep_for(kSettle);
     }
 
@@ -509,6 +734,9 @@ private slots:
         m_stop.store(true);
         if (m_feeder.joinable()) {
             m_feeder.join();
+        }
+        if (m_poller.joinable()) {
+            m_poller.join();
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         CloseChannel(kChannel);
@@ -561,10 +789,11 @@ private slots:
         WDSPSetTestPeriodicDelayUs(kChannel, kFrameDelayUs, kFrameEvery);
         std::this_thread::sleep_for(kSettle);
         const Run run = sampleFor(kTicks, [](const Sample& s) {
-            return corroborated(s, kFrameCpuTolerance);
+            return edgesShown(s, kFrameCpuTolerance);
         }, kMinCorroborated);
         logRun("frame-like", run);
         QVERIFY(run.samples.size() >= std::size_t(kTicks) - 2);
+        int shownIntervals = 0;
         int corroboratedIntervals = 0;
         int uncorroboratedStepBacks = 0;
         for (const Sample& s : run.samples) {
@@ -572,6 +801,9 @@ private slots:
             QVERIFY2(std::abs(s.load - s.busyShare) <= kBusyAgreement,
                      qPrintable(QStringLiteral("load %1 vs worker busy share %2 at %3 s")
                                     .arg(s.load).arg(s.busyShare).arg(s.atSeconds)));
+            if (edgesShown(s, kFrameCpuTolerance)) {
+                ++shownIntervals;
+            }
             if (corroborated(s, kFrameCpuTolerance)) {
                 ++corroboratedIntervals;
                 QVERIFY2(std::abs(s.load - s.cpuShare) <= kFrameCpuTolerance,
@@ -593,11 +825,11 @@ private slots:
                 ++uncorroboratedStepBacks;
             }
         }
-        QVERIFY2(corroboratedIntervals >= kMinCorroborated,
-                 qPrintable(QStringLiteral("%1 of %2 intervals had the busy share within %3 of the "
-                                           "worker's CPU")
-                                .arg(corroboratedIntervals).arg(run.samples.size())
-                                .arg(kFrameCpuTolerance)));
+        QVERIFY2(shownIntervals >= kMinCorroborated,
+                 qPrintable(QStringLiteral("%1 of %2 intervals showed the block edges right (%3 "
+                                           "with the busy share within %4 of the worker's CPU)")
+                                .arg(shownIntervals).arg(run.samples.size())
+                                .arg(corroboratedIntervals).arg(kFrameCpuTolerance)));
         QCOMPARE(run.stepBacks, uncorroboratedStepBacks);
     }
 
@@ -607,10 +839,11 @@ private slots:
         WDSPSetTestProcessDelayUs(kChannel, kUniformDelayUs);
         std::this_thread::sleep_for(kSettle);
         const Run run = sampleFor(kTicks, [](const Sample& s) {
-            return corroborated(s, kUniformCpuTolerance * s.cpuShare);
+            return edgesShown(s, kUniformCpuTolerance * s.cpuShare);
         }, kMinCorroborated);
         logRun("uniform-900us", run);
         QVERIFY(run.samples.size() >= std::size_t(kTicks) - 2);
+        int shownIntervals = 0;
         int corroboratedIntervals = 0;
         int uncorroboratedStepBacks = 0;
         for (const Sample& s : run.samples) {
@@ -619,6 +852,9 @@ private slots:
                      qPrintable(QStringLiteral("load %1 vs worker busy share %2 at %3 s")
                                     .arg(s.load).arg(s.busyShare).arg(s.atSeconds)));
             const double tolerance = kUniformCpuTolerance * s.cpuShare;
+            if (edgesShown(s, tolerance)) {
+                ++shownIntervals;
+            }
             if (corroborated(s, tolerance)) {
                 ++corroboratedIntervals;
                 QVERIFY2(std::abs(s.load - s.cpuShare) <= tolerance,
@@ -642,11 +878,12 @@ private slots:
             qInfo("%d step-backs in intervals the machine, not the DSP, saturated",
                   uncorroboratedStepBacks);
         }
-        QVERIFY2(corroboratedIntervals >= kMinCorroborated,
-                 qPrintable(QStringLiteral("%1 of %2 intervals had the busy share within %3 of the "
-                                           "worker's CPU")
-                                .arg(corroboratedIntervals).arg(run.samples.size())
-                                .arg(kUniformCpuTolerance)));
+        QVERIFY2(shownIntervals >= kMinCorroborated,
+                 qPrintable(QStringLiteral("%1 of %2 intervals showed the block edges right (%3 "
+                                           "with the busy share within %4 of the worker's CPU, "
+                                           "relative)")
+                                .arg(shownIntervals).arg(run.samples.size())
+                                .arg(corroboratedIntervals).arg(kUniformCpuTolerance)));
         QCOMPARE(run.stepBacks, uncorroboratedStepBacks);
     }
 
@@ -679,7 +916,22 @@ private slots:
         // Fed: the worker never waited a whole block period for input, so
         // the interval was the overload the case sets up.
         const auto fed = [](const Sample& s) { return s.longestWaitNs < kBlockPeriodNs; };
-        const Run run = sampleFor(kTicks, fed, kMinFed);
+        // At or over the governor's line, as the governor reads it.
+        const auto atLine = [](const Sample& s) {
+            return s.load >= NnrLoadGovernor::kNnrStepDownLoad;
+        };
+        // Samples until the load has read at the line for kRunForStepBack
+        // intervals in a row (the governor's whole averaging window) and
+        // the worker has been fed in kMinFed intervals, and at least kTicks.
+        int atLineInARow = 0;
+        bool hadRun = false;
+        int fedSoFar = 0;
+        const Run run = sampleFor(kTicks, [&](const Sample& s) {
+            atLineInARow = atLine(s) ? atLineInARow + 1 : 0;
+            hadRun = hadRun || atLineInARow >= kRunForStepBack;
+            fedSoFar += fed(s) ? 1 : 0;
+            return hadRun && fedSoFar >= kMinFed;
+        }, 1);
         logRun("overload-2x", run);
         QVERIFY(run.samples.size() >= std::size_t(kTicks) - 2);
         int fedIntervals = 0;
@@ -716,12 +968,32 @@ private slots:
         QVERIFY2(fedIntervals >= kMinFed,
                  qPrintable(QStringLiteral("%1 of %2 intervals had the worker fed throughout")
                                 .arg(fedIntervals).arg(run.samples.size())));
-        // Within kTicks, however long the case sampled after.
+        // By the end of the first kRunForStepBack intervals in a row at the
+        // governor's line, however long the machine kept the feeder from
+        // the worker before them. A busy machine can preempt the feeder (the
+        // radio's stand-in) until the worker waits for input and reads under
+        // the governor's line, correctly: at load averages of 30 to 78 on an
+        // 18-core Mac the step-back missed the first kTicks that way.
+        std::ptrdiff_t runEnd = -1;
+        int inARow = 0;
+        for (std::size_t i = 0; i < run.samples.size(); ++i) {
+            inARow = atLine(run.samples[i]) ? inARow + 1 : 0;
+            if (inARow == kRunForStepBack) {
+                runEnd = std::ptrdiff_t(i);
+                break;
+            }
+        }
+        QVERIFY2(runEnd >= 0,
+                 qPrintable(QStringLiteral("no %1 intervals in a row at the governor's line in %2")
+                                .arg(kRunForStepBack).arg(run.samples.size())));
         const bool steppedInTime = std::any_of(
-            run.samples.begin(),
-            run.samples.begin() + std::min<std::ptrdiff_t>(kTicks, std::ptrdiff_t(run.samples.size())),
+            run.samples.begin(), run.samples.begin() + runEnd + 1,
             [](const Sample& s) { return s.steppedBack; });
-        QVERIFY2(steppedInTime, "a real overload must step back");
+        QVERIFY2(steppedInTime,
+                 qPrintable(QStringLiteral("a real overload must step back (by %1 s, the end of "
+                                           "%2 intervals in a row at its line)")
+                                .arg(run.samples[std::size_t(runEnd)].atSeconds)
+                                .arg(kRunForStepBack)));
     }
 
     // A worker stuck inside one long block reads as fully busy.
@@ -805,7 +1077,20 @@ private:
         }
     }
 
+    // The worker's state every kPollInterval, at the worker's priority.
+    void poll()
+    {
+#ifdef Q_OS_MAC
+        pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+#endif
+        while (!m_stop.load()) {
+            pollWorkerState();
+            std::this_thread::sleep_for(kPollInterval);
+        }
+    }
+
     std::thread m_feeder;
+    std::thread m_poller;
     std::atomic<bool> m_stop{false};
 };
 

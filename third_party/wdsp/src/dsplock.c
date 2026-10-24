@@ -151,6 +151,15 @@ boydsoftprez@gmail.com
 //                 while the caller runs ahead. One pointer test when none is
 //                 installed. By J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-10-22 - Slow noise-reduction call accounting (WdspNrCallStart,
+//                 WdspNrCallEnd, WdspNoteNrCall, TakeChannelSlowNrCalls,
+//                 test-only WDSPSetTestNrCallDelayUs): xrxa times each of its
+//                 two NR stage groups and counts the calls over 50 ms per
+//                 channel with the stages each ran (the NNR model that ran,
+//                 and a limit the worker applied inside the call), for the
+//                 Core log; RxChannel records DFNR and MNR the same way.
+//                 Measures only; NR behavior is unchanged. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "comm.h"
@@ -224,6 +233,16 @@ static volatile long long block_start_ns[MAX_CHANNELS];
 // Odd while the worker is changing load_busy_ns or block_start_ns; each
 // change adds 2. GetChannelDspLoad reads the pair again when it moved.
 static volatile long long load_seq[MAX_CHANNELS];
+// NR calls over kWdspSlowNrCallNs since the last TakeChannelSlowNrCalls; the
+// longest of them packed as (microseconds << 16) | its stages, so the longest
+// and its stages are raised and taken as one value; and every stage they ran.
+static volatile long long slow_nr_calls[MAX_CHANNELS];
+static volatile long long slow_nr_longest[MAX_CHANNELS];
+static volatile long long slow_nr_stages[MAX_CHANNELS];
+// Test-only busy-wait inside an NR stage group call, microseconds; 0 = off.
+static volatile long test_nr_call_delay_us[MAX_CHANNELS];
+// An NR call longer than this (50 ms) is slow.
+static const int64_t kWdspSlowNrCallNs = 50000000;
 // Most times GetChannelDspLoad reads the pair before it takes what it has.
 // The worker's changes are a few instructions long, so a second read almost
 // always succeeds.
@@ -650,6 +669,94 @@ void WdspWaitWorkerExit (int channel)
 		}
 	}
 	load_store64 (&last_exit_wait_us[channel], (long long)(dsplock_now_us () - start));
+}
+
+// Raises *target's bits to include bits (lock-free; any thread).
+static void load_or64 (volatile long long* target, long long bits)
+{
+#ifdef _WIN32
+	long long current = InterlockedCompareExchange64 (target, 0, 0);
+	while ((current | bits) != current)
+	{
+		const long long seen = InterlockedCompareExchange64 (target, current | bits, current);
+		if (seen == current)
+		{
+			break;
+		}
+		current = seen;
+	}
+#else
+	__atomic_fetch_or (target, bits, __ATOMIC_RELEASE);
+#endif
+}
+
+static void nr_note_call (int channel, long long elapsedNs, int stages)
+{
+	const long long bits = (long long)(stages & WDSP_NR_STAGE_MASK);
+	if (elapsedNs <= kWdspSlowNrCallNs || bits == 0)
+	{
+		return;
+	}
+	// The stages and the longest first, then the count: a take that sees
+	// the count also sees these, or a later interval's.
+	load_or64 (&slow_nr_stages[channel], bits);
+	load_max64 (&slow_nr_longest[channel], ((elapsedNs / 1000) << 16) | bits);
+	load_add64 (&slow_nr_calls[channel], 1);
+}
+
+long long WdspNrCallStart (void)
+{
+	return (long long)dsplock_now_ns ();
+}
+
+void WdspNrCallEnd (int channel, long long startNs, int stages)
+{
+	if (stages == 0 || !valid_channel (channel))
+	{
+		return;
+	}
+#ifdef _WIN32
+	test_busy_wait_us (test_nr_call_delay_us[channel]);
+#else
+	test_busy_wait_us (__atomic_load_n (&test_nr_call_delay_us[channel], __ATOMIC_RELAXED));
+#endif
+	nr_note_call (channel, (long long)dsplock_now_ns () - startNs, stages);
+}
+
+PORT
+void WdspNoteNrCall (int channel, long long elapsedNs, int stages)
+{
+	if (!valid_channel (channel))
+	{
+		return;
+	}
+	nr_note_call (channel, elapsedNs, stages);
+}
+
+PORT
+int TakeChannelSlowNrCalls (int channel, WdspSlowNrCalls* out)
+{
+	long long longest;
+	if (!valid_channel (channel) || out == 0)
+	{
+		return -1;
+	}
+	out->count = load_exchange64 (&slow_nr_calls[channel], 0);
+	longest = load_exchange64 (&slow_nr_longest[channel], 0);
+	out->longestUs = longest >> 16;
+	out->longestStages = (int)(longest & WDSP_NR_STAGE_MASK);
+	out->stages = (int)(load_exchange64 (&slow_nr_stages[channel], 0) & WDSP_NR_STAGE_MASK);
+	return 0;
+}
+
+PORT
+void WDSPSetTestNrCallDelayUs (int channel, int microseconds)
+{
+	if (!valid_channel (channel))
+	{
+		return;
+	}
+	InterlockedExchange (&test_nr_call_delay_us[channel], microseconds > 0 ? (long)microseconds : 0L);
 }
 
 PORT

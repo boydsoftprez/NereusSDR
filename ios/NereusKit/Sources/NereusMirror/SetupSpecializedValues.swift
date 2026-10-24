@@ -223,6 +223,42 @@ public enum SetupSpecializedWire {
         return SetupHygieneReport(mac: answeredMac, issues: issues)
     }
 
+    /// Whether a band's receive-only value checks the box for `antenna`.
+    /// The value is the sum of the checked boxes' numbers, as the desktop's
+    /// Alex setup keeps it (0 none, 1 RX1, 2 RX2, 3 XVTR, 4 RX1+XVTR, 5 RX2+XVTR):
+    /// boxes 1 and 2 rule each other out and box 3 (XVTR) stands alone, so
+    /// 4 is 1 with 3 and 5 is 2 with 3.
+    public static func rxOnlyChecks(_ value: Int, antenna: Int) -> Bool {
+        switch antenna {
+        case 1: return value == 1 || value == 4
+        case 2: return value == 2 || value == 5
+        case 3: return value >= 3
+        default: return false
+        }
+    }
+
+    /// A band's receive-only value after a tap on `antenna`'s box: the tap
+    /// turns that box over, a box 1 or 2 turned on turns the other off, and
+    /// turning the last box off gives 0.
+    public static func rxOnlyAfterTap(_ value: Int, antenna: Int) -> Int {
+        var one = rxOnlyChecks(value, antenna: 1)
+        var two = rxOnlyChecks(value, antenna: 2)
+        var xvtr = rxOnlyChecks(value, antenna: 3)
+        switch antenna {
+        case 1:
+            one.toggle()
+            if one { two = false }
+        case 2:
+            two.toggle()
+            if two { one = false }
+        case 3:
+            xvtr.toggle()
+        default:
+            break
+        }
+        return (one ? 1 : 0) + (two ? 2 : 0) + (xvtr ? 3 : 0)
+    }
+
     /// One of the Core's per-band antenna lists (14 entries, 15 with 2 m):
     /// exactly `bands` whole numbers, comma-separated, each in `range`.
     static func antennaList(_ value: MirrorValue?, bands: Int, range: ClosedRange<Int>) -> [Int]? {

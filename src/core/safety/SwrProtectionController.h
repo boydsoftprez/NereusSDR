@@ -28,6 +28,16 @@
 //                applied (Thetis DisablePA and hf_tr_relay,
 //                transmitSettingsVersion 11). J.J. Boyd (KG4VCF), AI-assisted
 //                via Anthropic Claude Code.
+//   2026-10-22 - PR 604 fix wave: the ANAN-8000D open-antenna exclusion
+//                (setHpsdrModel), the alexpresent/apollopresent gate
+//                (kAlexPresent, kApolloPresent), disabling no longer clears
+//                the wind-back latch, and onMoxOff keeps the trip count and
+//                the measured SWR, all as PollPAPWR and UIMOXChangedFalse in
+//                console.cs [v2.10.3.15], by J.J. Boyd (KG4VCF), with
+//                AI-assisted transformation via Claude Code.
+//   2026-10-22 - PR 604 second pass: cite lines corrected (26030, 26039),
+//                by J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//                Claude Code.
 // =================================================================
 
 // --- From console.cs ---
@@ -80,6 +90,7 @@
 
 #pragma once
 
+#include "core/HpsdrModel.h"
 #include "core/NereusCoreExport.h"
 #include <QObject>
 
@@ -95,9 +106,10 @@ namespace NereusSDR::safety {
 ///   Cite: console.cs:26070 [v2.10.3.13] (high_swr_count >= 4),
 ///         console.cs:26083-26090 [v2.10.3.13] (catch-all windback block).
 ///
-/// Open-antenna heuristic: fwd > 10W and (fwd-rev) < 1W → swr=50, factor=0.01,
-///   highSwr=true, openAntennaDetected=true.
-///   Cite: console.cs:25989-26009 [v2.10.3.6]MW0LGE.
+/// Open-antenna heuristic: fwd > 10W and (fwd-rev) < 1W, not tuning, not the
+///   ANAN-8000D → swr=50, factor=0.01, highSwr=true, openAntennaDetected=true.
+///   The caller drops MOX on it, as Thetis does (chkMOX.Checked = false).
+///   Cite: console.cs:26030-26057 [v2.10.3.15].
 ///
 /// Tune-time bypass: disableOnTune=true + tuneActive=true + fwd in [1, tunePowerSwrIgnore]
 ///   + tunePowerSliderValue ≤ 70 → factor=1.0, highSwr cleared.
@@ -107,18 +119,26 @@ namespace NereusSDR::safety {
 ///   ANAN-8000D) for a trip to fire. Suppresses false trips during TX ramp-up.
 ///   Cite: console.cs:26067 [v2.10.3.13].
 ///
-/// onMoxOff() resets all latches and emits changes.
-///   Cite: console.cs:29191-29195 [v2.10.3.13] (UIMOXChangedFalse).
+/// onMoxOff() resets the factor, HighSWR and the wind-back latch and emits
+///   changes. The trip count and the measured SWR are left alone.
+///   Cite: console.cs:29241-29246 [v2.10.3.15] (UIMOXChangedFalse).
 ///
-/// The controller is inert (signals only, no radio I/O) until 3M-1a wires it.
+/// The controller does no radio I/O itself: RadioModel feeds it each PA
+/// telemetry sample while keyed, stores protectFactor in
+/// TransmitModel::swrProtectFactor (NetworkIO.SWRProtect), re-pumps the drive
+/// as PollPAPWR does, drops MOX on an open antenna and calls onMoxOff on
+/// every unkey.
 class NEREUS_CORE_EXPORT SwrProtectionController : public QObject
 {
     Q_OBJECT
 public:
     explicit SwrProtectionController(QObject* parent = nullptr);
 
-    /// Enable or disable the entire SWR protection subsystem.
-    /// When disabled, ingest() always sets factor=1.0 and clears all flags.
+    /// Enable or disable SWR protection (Thetis swrprotection).
+    /// When disabled, ingest() neither trips nor detects an open antenna and
+    /// clears HighSWR, but a wind-back latch already engaged keeps the factor
+    /// at 0.01 until onMoxOff(), as in Thetis.
+    /// Cite: console.cs:26039, 26116, 26134-26138 [v2.10.3.15].
     void setEnabled(bool on) noexcept;
     bool isEnabled() const noexcept;
 
@@ -158,6 +178,11 @@ public:
     /// Cite: console.cs:26020-26057 [v2.10.3.13] (tunePowerSliderValue).
     void setTunePowerSliderValue(int value) noexcept;
 
+    /// The radio model (HardwareSpecific.Model). The open-antenna check does
+    /// not run on the ANAN-8000D.
+    /// Cite: console.cs:26039 [v2.10.3.15].
+    void setHpsdrModel(HPSDRModel model) noexcept;
+
     /// Feed a new forward/reflected power pair.
     /// @param fwdW   forward power in watts (alex_fwd in Thetis)
     /// @param revW   reflected power in watts (alex_rev in Thetis)
@@ -166,8 +191,10 @@ public:
     /// Cite: console.cs:25933-26120 [v2.10.3.13] (PollPAPWR loop).
     void ingest(float fwdW, float revW, bool tuneActive) noexcept;
 
-    /// Called when MOX goes false. Resets all latches and emits changes.
-    /// Cite: console.cs:29191-29195 [v2.10.3.13] (UIMOXChangedFalse).
+    /// Called on every unkey. Resets the factor, HighSWR, the wind-back latch
+    /// and the open-antenna flag and emits changes; the trip count
+    /// (high_swr_count) and the measured SWR (alex_swr) survive, as in Thetis.
+    /// Cite: console.cs:29241-29246 [v2.10.3.15] (UIMOXChangedFalse).
     void onMoxOff() noexcept;
 
     // ── Accessors ──────────────────────────────────────────────────────────
@@ -221,6 +248,21 @@ private:
     // console.cs:26070 — number of consecutive trips before windback latches
     static constexpr int kTripDebounceCount = 4;
 
+    // Alex / Apollo presence for the PollPAPWR gate,
+    // console.cs:26030 [v2.10.3.15]: if (alexpresent || apollopresent).
+    // Thetis defaults alexpresent to true (console.cs:19135 [v2.10.3.15]:
+    // private bool alexpresent = true; setup.designer.cs:8620 [v2.10.3.15]:
+    // this.chkAlexPresent.Checked = true;) and Setup sets it for every ANAN
+    // and the Red Pitaya; mi0bot-Thetis runs the same gate
+    // (console.cs:26567 [v2.10.3.13-beta2]) with the HL2's Alex box enabled,
+    // hidden and checked (setup.cs:20191-20198 [v2.10.3.13-beta2]).
+    // apollopresent defaults to false (console.cs:19098 [v2.10.3.15]).
+    // NereusSDR has no "Alex present" setting, so the Hermes / HPSDR
+    // opt-out (unchecking Alex present) is not modeled: Alex is present on
+    // every board and the protection runs everywhere.
+    static constexpr bool kAlexPresent = true;
+    static constexpr bool kApolloPresent = false;
+
     // ── State ──────────────────────────────────────────────────────────────
 
     bool  m_enabled             = true;
@@ -233,6 +275,8 @@ private:
     float m_alexFwdLimit        = 5.0f;
     // console.cs:26020-26057 [v2.10.3.13]: tunePowerSliderValue (bypass only when ≤ 70)
     int   m_tunePowerSliderValue = 0;
+    // console.cs:26039 [v2.10.3.15]: HardwareSpecific.Model
+    HPSDRModel m_model          = HPSDRModel::FIRST;
 
     float m_protectFactor       = 1.0f;  // NetworkIO.SWRProtect
     bool  m_highSwr             = false; // HighSWR

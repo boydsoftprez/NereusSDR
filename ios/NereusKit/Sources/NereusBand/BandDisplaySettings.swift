@@ -366,6 +366,10 @@ public struct BandDisplaySettings: Equatable, Sendable, Codable {
     /// The keyed view's span, kept from the last zoom made while keyed
     /// (the desktop's `DisplayTxViewBandwidth`); 8 kHz before any.
     public var txViewSpanHz: Double = TransmitDisplay.firstSpanHz
+    /// The receive view's span, kept from the last zoom made by hand, as
+    /// the desktop keeps each pan's `DisplayBandwidth`; nil before any,
+    /// when the band opens on the slice's whole sample rate.
+    public var rxViewSpanHz: Double?
     /// Display duplex (DUP): while keyed the band keeps the receiver instead
     /// of the Core's transmit display. Off, the desktop's default.
     public var displayDuplex: Bool = false

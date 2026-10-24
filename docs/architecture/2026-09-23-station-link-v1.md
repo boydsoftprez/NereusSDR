@@ -1014,6 +1014,18 @@ it sees exactly the wire it was built for: no capability entry, and every
 `context` byte for byte as before. The station does not declare it; the
 desktop's remote window and the phone app do.
 
+**`displayCodec` 2** (display codec v2): the client's display decoder reads
+version 2 display frames (NSDC v2) as well as version 1. A peer that
+declares it at agreed minor 11, while media is available and the Core's
+`RemoteDisplayCodecV2` setting is on, is sent `displayCodecVersion` 2
+(section 6.3) and may declare `displayCodecVersion` 2 in its media `start`;
+that media connection's display frames are then version 2, and a `replace`
+of it keeps them (the media control document's "The display codec a
+connection agrees"). A peer that does not declare it sees exactly the wire
+it was built for: no capability entry, today's `start` and version 1 frames
+byte for byte. The station does not declare it; the desktop's remote window
+and the phone app do.
+
 **`firmwareBeta` 1** (the radio's second firmware number): the client words
 the firmware release of the Core's radio in full, as a window running that
 radio does. A release is two numbers (22 and 14 read "22.14"), and
@@ -1033,6 +1045,33 @@ itself a remote client, is sent `waveformVersion` (section 6.3) and may declare
 does not declare it sees exactly the wire it was built for: no capability
 entry, and none of the new ops. The station does not declare it; the
 desktop's remote window does (`StationClient`). The phone app does not.
+
+**`tuneDriveSource` 1** (PR 588, JJ's decision of 2026-10-21): the client
+changes TUNE's drive source (`transmit`'s `tuneDrivePowerSource`) only as
+Setup > Transmit > Power's Tune group does, never from a power slider, as
+in Thetis. A client from before this rule wrote the drive slider source
+with every RF Power move (the phone and the desktop's TX applet, on a
+Core at `transmitSettingsVersion` 5 or later). The Core takes a change of
+`tuneDrivePowerSource` only from a peer that declares it; from any other
+peer the write is refused with "Update this app to change TUNE's drive
+source on this Core." and the Core's value in the `property.result`, so
+that client shows the Core's source again. A write of the value the Core
+already has changes nothing and is taken, so an older app's RF Power
+slider shows no refusal while the source is the drive slider. Its other
+writes are taken as before, and every peer is still sent
+`tuneDrivePowerSource`. The Core logs the first refused write of each
+session once. `twoToneDrivePowerSource` needs no declaration: no client
+ever set it from a slider. Neither the station nor a Core declares it;
+the desktop's remote window and the phone app do, and a Core from before
+this ignores the name.
+
+**`rxMeterStamps` 1** (RX meter stamps): the client holds each slice's RX
+meter readings until the audio they describe plays. A peer that declares it
+is sent `rxMeterStampsVersion` (section 6.3) and each slice's
+`meterReadingNs` (section 7, "The RX meter stamps"); a peer that does not
+sees exactly the wire it was built for, with no `meterReadingNs`, and a
+change to it alone sends that peer no slice delta. The station does not
+declare it; the desktop's remote window does. The phone app does not.
 
 **`sessionHolder` 1** (iPhone app plan Task 71; the several-devices
 design, ruling 10.1): the Core admits up to four devices at once (section
@@ -1203,7 +1242,7 @@ table.
 | `miniDisplayVersion` | 1 |
 | `accessoryTxVersion` | 1 |
 | `remoteRotorControlVersion` | 1 |
-| `radioAntennaRowsVersion` | 1 |
+| `radioAntennaRowsVersion` | 2 |
 | `vaxVersion` | 1 |
 | `txEqCurveVersion` | 2 |
 | `band2mVersion` | 1 |
@@ -1230,6 +1269,8 @@ table.
 | `coreSpeakerVersion` | 1 |
 | `spectrumPictureVersion` | 1 |
 | `waveformVersion` | 1 |
+| `rxMeterStampsVersion` | 1 |
+| `displayCodecVersion` | 2 |
 
 <!-- /surface -->
 
@@ -1399,14 +1440,18 @@ When a feature is off, its version is 0:
   slice's receiver input for this app. Updating the Core may help.".
 - `radioAntennaRowsVersion`: optional and appended after
   `accessoryTxVersion` only at agreed minor 11 for a peer that declared
-  `radioAntennaRows` exactly 1, while the Core has a connected radio with
+  `radioAntennaRows` 1 or later, while the Core has a connected radio with
   a canonical MAC and a bound Alex controller on an Alex-filter board,
   and its existing complete antenna path offers `radioHardwareVersion`
   6 or later. The Core applies that same readiness check to each new verb.
   Version 1 adds `setAlexRxAntennaForRadio` and
-  `setAlexTxAntennaForRadio` (section 9.1). Missing, malformed and unknown
-  versions are unusable. Older peers receive byte-for-byte the previous
-  capability shape and keep the existing one-band verbs.
+  `setAlexTxAntennaForRadio` (section 9.1). Version 2 widens a band's
+  RX-only value to Thetis's checkbox sum, 0 to 5 (section 9.1). The Core
+  offers the lower of the peer's declared version and 2, so a peer that
+  declared a later version is offered 2. A client reads 1 and 2; missing,
+  malformed and later versions are unusable. Older peers receive
+  byte-for-byte the previous capability shape and keep the existing
+  one-band verbs.
 - `vaxVersion` (iPhone app plan Task 25, R-IOS-18): optional and appended
   after `radioAntennaRowsVersion`, only at agreed minor 11 for a peer
   whose hello declared `vax` 1; any other peer receives the previous
@@ -2383,6 +2428,23 @@ document). A peer that did not declare the feature is sent no entry. A client
 connected to a Core that sends no entry shows a waveform meter as unsupported
 ("This Core does not support exact waveform observation."); nothing else changes for it.
 
+**The RX meter stamps.** A client that declared `rxMeterStamps` 1 is sent
+`rxMeterStampsVersion`, an `i64`, 1, after `waveformVersion` (or after the
+last entry before it when that is absent) and before `coreBuildInfo`. At 1
+each `slice:<id>` object carries `meterReadingNs` (section 7). A peer that
+did not declare the feature is sent no entry and no `meterReadingNs`.
+
+**The display codec.** A client at agreed minor 11 that declared
+`displayCodec` 2 is sent `displayCodecVersion`, an `i64`, 2, while media is
+available and the Core's `RemoteDisplayCodecV2` setting is on, after
+`rxMeterStampsVersion` (or after the last entry before it when that is
+absent) and before `coreBuildInfo`. At 2 the client's media `start` may
+declare `displayCodecVersion` 2, and that connection's display frames are
+then version 2 (the
+[display codec v2 design](2026-10-22-display-codec-v2-intra-rows.md)). A
+peer that did not declare the feature, or any peer of a Core whose setting
+is off, is sent no entry, and a `start` carrying the field is refused.
+
 **Core executable identity.** A client at agreed minor 11 may declare
 `coreBuildInfo` 1. After authentication, a Core with a known product version
 appends one optional `coreBuildInfo` utf8 capability after all existing
@@ -2425,7 +2487,11 @@ declared `radioSpeaker`; `coreSpeakerVersion` only for a peer that declared
 for a peer that declared `spectrumPicture` while media is available;
 `firmwareBeta` only for a peer that declared `firmwareBeta`;
 `waveformVersion` only for a peer that declared `waveform` while media is
-available on a Core that is not itself a remote client. A client ignores a capability it does not know
+available on a Core that is not itself a remote client;
+`rxMeterStampsVersion` only for a peer that declared `rxMeterStamps`;
+`displayCodecVersion` only for a peer that declared `displayCodec` 2 while
+media is available and the Core's `RemoteDisplayCodecV2` setting is on. A
+client ignores a capability it does not know
 (`StationCapabilities::fromUpdates`).
 
 **Each device's share of the display budget** (iPhone app plan Task 76; the
@@ -2627,7 +2693,9 @@ older window sees only the values it was built for.
 | 112 | `spectrumPictureVersion` | `i64` |
 | 113 | `firmwareBeta` | `i64` |
 | 114 | `waveformVersion` | `i64` |
-| 115 | `coreBuildInfo` | `utf8` |
+| 115 | `rxMeterStampsVersion` | `i64` |
+| 116 | `displayCodecVersion` | `i64` |
+| 117 | `coreBuildInfo` | `utf8` |
 
 <!-- /surface -->
 
@@ -3019,7 +3087,7 @@ An enum property lists the values its domain allows.
 | 12 | `streamIndex` | `i64` | outbound |  |
 | 13 | `psPaused` | `bool` | outbound |  |
 
-**SliceModel** (154 properties)
+**SliceModel** (155 properties)
 
 | Ordinal | Property | Wire kind | Direction | Enum values |
 | --- | --- | --- | --- | --- |
@@ -3177,6 +3245,7 @@ An enum property lists the values its domain allows.
 | 151 | `radeSynced` | `bool` | outbound |  |
 | 152 | `radeFreqOffsetHz` | `f64` | outbound |  |
 | 153 | `radeReason` | `utf8` | outbound |  |
+| 154 | `meterReadingNs` | `i64` | outbound |  |
 
 **SpotSourceHost** (11 properties)
 
@@ -3602,7 +3671,7 @@ Notes on the keys:
   frequency offset in Hz, below ("The RADE status"). Sent only to a peer
   that declared `radeStatus` 1.
 - **`slice:<id>` RADE reason.** `radeReason` (utf8, outbound, no WRITE,
-  declared last in `SliceModel`; `radeReasonVersion` 1) is why the slice is
+  declared after `radeFreqOffsetHz` in `SliceModel`; `radeReasonVersion` 1) is why the slice is
   in RADE with no working RADE decoder, empty when it has one or is not in
   RADE, below ("The RADE reason"). Sent only to a peer that declared
   `radeReason` 1.
@@ -3619,6 +3688,10 @@ Notes on the keys:
   radio is on the air the pump leaves them where they were. They reach a
   window whatever `meterReadingsVersion` says; a window reads them only when
   it is at least 1 (section 6.3). A window never writes them back.
+- **`slice:<id>` RX meter stamp.** `meterReadingNs` (i64, outbound, no
+  WRITE, declared last in `SliceModel`; `rxMeterStampsVersion` 1) is when
+  the Core measured the slice's RX meter readings, below ("The RX meter
+  stamps"). Sent only to a peer that declared `rxMeterStamps` 1.
 - **Max Bin is measured by the client, not sent.** The S-meter's Max Bin
   mode (and a container meter bound to Max Bin) reads the strongest point
   of the slice's passband on the slice's own panadapter, from the trace as
@@ -3942,10 +4015,13 @@ Notes on the keys:
   Core transmits on (its transmit slice's band, as TUNE reads it), which
   the TX applet's Tune Power slider shows; it follows the transmit slice
   across bands. `tuneDrivePowerSource` (enum: 0 the drive slider, 1 the
-  tune slider, 2 the fixed tune power) is where TUNE takes its power from.
-  At version 2 both change only through `setTunePowerForTxBand`, and
-  `tuneDrivePowerSource` is outbound; at version 5 it is two-way (Setup >
-  Transmit > Power's Tune group), and `tunePowerForTxBand` stays outbound. None of these
+  tune slider, 2 the fixed tune power) is where TUNE takes its power from;
+  only Setup > Transmit > Power's Tune group changes it, as in Thetis, and
+  neither power slider does. At version 2 `tunePowerForTxBand` changes
+  only through `setTunePowerForTxBand`, and `tuneDrivePowerSource` is
+  outbound; at version 5 `tuneDrivePowerSource` is two-way (the Tune
+  group), taken only from a peer whose hello declared `tuneDriveSource` 1
+  (section 6.1), and `tunePowerForTxBand` stays outbound. None of these
   keys the radio. The MON output choice (speakers or phones) is not on the
   link: it is each window's own audio routing.
 - **`transmit` at `transmitSettingsVersion` 3.** The radio's microphone
@@ -4644,7 +4720,22 @@ window changes one band's TX antenna with the `setAlexTxAntenna` command
 instead (section 6.3), so its edit cannot put back another band the Core
 changed; the whole-list write stays for a window that sends it.
 
-For a peer offered `radioAntennaRowsVersion` 1, the two `ForRadio` verbs
+A band's RX-only value is Thetis's checkbox sum (setup.cs
+ProcessAlexAntCheckBox): 0 none, 1 and 2 the SKU's first and second
+receive-only inputs, which rule each other out, 3 XVTR, 4 XVTR with the
+first and 5 XVTR with the second. A peer whose hello declared
+`radioAntennaRows` 2 or later at agreed minor 11 reads and writes all six
+values in `rxOnlyAntennas` and in the `rxOnly` form of `setAlexRxAntenna`
+and `setAlexRxAntennaForRadio`. Any other peer reads 4 and 5 as 3 (XVTR,
+the box whose name Thetis shows) in every `rxOnlyAntennas` it is sent. A
+one-band write of 4 or 5 from such a peer changes nothing and is answered
+"Update this app to choose XVTR with another receive-only input on this
+Core."; its write of 0 to 3 replaces the band's value, as a single pick
+would. A whole `rxOnlyAntennas` list from such a peer keeps a band's 4 or
+5 where the peer sent back the 3 it was shown, and takes every other
+entry as written.
+
+For a peer offered `radioAntennaRowsVersion` 1 or later, the two `ForRadio` verbs
 carry the current radio's canonical MAC along with one band's existing
 antenna arguments. The Core checks the exact argument types and current
 connected MAC before it classifies a change, when a held confirmation
@@ -4881,6 +4972,44 @@ a saved layout waits to be placed.
 **Showing it as the desktop's flag does.** While `radeReason` is not
 empty the RADE row reads the prefix, a hollow gray dot and `off`
 (`RADE ○ off`), and the row's tooltip is the reason. The row stays shown.
+
+#### The RX meter stamps (`meterReadingNs`)
+
+`rxMeterStampsVersion` 1. A window shows its spectrum when the matching
+audio plays (displayClockVersion 1). Its RX meters do the same with this
+stamp.
+
+- **What it is.** The time, in nanoseconds on the Core's producer clock
+  (the clock of `producerTimestamp` and the audio capture times, section
+  6.3's displayClockVersion), at which the Core's receive lane read the
+  slice's WDSP meters. All eight readings sent with it come from that one
+  read: `signalStrengthDbm`, `signalPeakDbm`, `signalAverageDbm`,
+  `adcPeakDbfs`, `adcAverageDbfs`, `agcGainDb`, `agcPeakDb` and
+  `agcAverageDb`. A no-reading value (-400) the Core writes when the radio
+  link is not up, the slice has no receiver, or WDSP has not measured yet,
+  is stamped with the time it was written. 0 before the first reading.
+- **When it changes.** At each meter pump tick while receiving, with the
+  readings, in the same delta. While the radio is on the air the pump
+  writes neither.
+- **Read-only.** A write is refused as any outbound property is.
+- **Who gets it.** Only a peer whose hello declared `rxMeterStamps` 1. Its
+  `SliceModel` schema, its slice snapshots and its deltas carry it. Every
+  other peer's carry none, and a delta that would carry only it is not
+  sent to them.
+
+**Holding the readings as the desktop's remote window does.** When a slice
+delta carries `meterReadingNs`, the window takes the eight readings out of
+it and applies them, with the stamp, at `meterReadingNs + map`, where `map`
+is the producer-to-display map its spectrum is presented by. The rest of
+the delta applies at once. Readings apply in the order they arrived; an
+unstamped reading for a slice with readings waiting goes in behind them.
+A reading applies on arrival when the window has no map yet, from a Core
+without the display clock, while no pan or mini display is open (the map
+is measured only as display frames are presented, so it would be stale),
+or when it would wait more than 1.5 s (the spectrum's own longest hold).
+The window applies deltas and the held readings on its main thread, where
+the map is kept. Readings still waiting when the session ends
+are dropped, and so are a removed slice's.
 
 **The `vax` object** (iPhone app plan Task 25, `vaxVersion` 1). The Core
 takes a write of `ch<N>RxGain`, `ch<N>Muted` or `txGain` only from a peer
@@ -6683,9 +6812,11 @@ These command groups need a sentence beyond the table:
 - **The Tune Power slider.** `setTunePowerForTxBand` (`watts`, 0 to 100,
   0 to 99 on a Hermes Lite 2) does what the TX applet's Tune Power slider
   does in a local window: it sets the tune power for the band the Core
-  transmits on and sets the tune drive source to the tune slider, so TUNE
-  uses that power. The Core reports both on `transmit`
-  (`tunePowerForTxBand`, `tuneDrivePowerSource`). It keys nothing, so a
+  transmits on, which TUNE uses when Setup's tune drive source is the tune
+  slider. It leaves `tuneDrivePowerSource` alone; a Core from before this
+  change also set `tuneDrivePowerSource` to the tune slider on
+  `setTunePowerForTxBand`, so TUNE took that power. The Core reports the
+  power on `transmit` (`tunePowerForTxBand`). It keys nothing, so a
   receive-only Core takes it. Below `transmitSettingsVersion` 13 it is
   refused while the radio is on the air ("The radio is on the air. Try
   again when it stops."); at 13 it is taken on the air from a peer that may
@@ -7003,7 +7134,7 @@ Client to station:
 | `monitor-audio` | `txMonitorAudioVersion` | `connectionId`, `op`, `revision`, `route` | none | none |
 | `receiver-audio` | `receiverAudioVersion` | `connectionId`, `enabled`, `op`, `profile`, `revision`, `sliceId` | none | none |
 | `replace` | `mediaReplaceVersion` | `connectionId`, `op`, `replaces` | `mediaDirectVersion` with mediaDirectVersion | none |
-| `start` | `remoteMediaVersion` | `connectionId`, `op` | `audioProfileVersion` with audioProfileVersion; `headphonesMixVersion` with headphonesMixVersion; `mediaRelayRoutingVersion` with mediaRelayRoutingVersion; `mediaTunnelVersion` with mediaTunnelVersion; `miniDisplayVersion` with miniDisplayVersion; `receiverAudioVersion` with receiverAudioVersion; `remoteIqVersion` with remoteIqVersion; `remoteTxVersion` with remoteTxVersion; `spectrumPictureVersion` with spectrumPictureVersion; `txDisplayVersion` with txDisplayVersion; `txMonitorAudioVersion` with txMonitorAudioVersion; `waveformVersion` with waveformVersion | none |
+| `start` | `remoteMediaVersion` | `connectionId`, `op` | `audioProfileVersion` with audioProfileVersion; `displayCodecVersion` with displayCodecVersion; `headphonesMixVersion` with headphonesMixVersion; `mediaRelayRoutingVersion` with mediaRelayRoutingVersion; `mediaTunnelVersion` with mediaTunnelVersion; `miniDisplayVersion` with miniDisplayVersion; `receiverAudioVersion` with receiverAudioVersion; `remoteIqVersion` with remoteIqVersion; `remoteTxVersion` with remoteTxVersion; `spectrumPictureVersion` with spectrumPictureVersion; `txDisplayVersion` with txDisplayVersion; `txMonitorAudioVersion` with txMonitorAudioVersion; `waveformVersion` with waveformVersion | none |
 | `subscribe` | `remoteMediaVersion` | `centreHz`, `connectionId`, `endpointId`, `fftSize`, `fps`, `framesPerLine`, `maxDbm`, `minDbm`, `op`, `pixels`, `revision`, `sliceId`, `spanHz`, `tier`, `trace`, `waterfall`, `wideSpanFactor`, `windowType` | `activePeakHold` with displayExtrasVersion; `averageTimeMs` with displayExtrasVersion; `calibrationOffsetDb` with displayExtrasVersion; `decimation` with spectrumGrantVersion; `displayRole` with miniDisplayVersion; `duplex` with txDisplayVersion; `extendedView` with remoteWidebandDisplayVersion; `noiseFloor` with displayExtrasVersion; `normalize` with displayExtrasVersion; `peakBlobs` with displayExtrasVersion; `txMaxDbm` with txDisplayVersion; `txMinDbm` with txDisplayVersion; `waterfallAverageTimeMs` with displayExtrasVersion; `waterfallLevels` with displayExtrasVersion | `activePeakHold`: {enabled, fallDbPerSec, holdMs, onTx} or {enabled, fallDbPerSec, holdMs}; `noiseFloor`: {enabled, fastAttack, shiftDb} or {enabled, shiftDb}; `peakBlobs`: {count, fallDbPerSec, holdMs, insideOnly}; `trace`: {averageAlpha, averageMode, detector}; `waterfall`: {averageAlpha, averageMode, detector}; `waterfallLevels`: {highDbm, lowDbm, mode, offsetDb} |
 | `unsubscribe` | `remoteMediaVersion` | `connectionId`, `endpointId`, `op` | `revision` with remoteDisplayBudgetVersion | none |
 | `waveform-stream` | `waveformVersion` | `connectionId`, `enabled`, `kind`, `op`, `revision`, `sliceId` | none | none |
@@ -8001,6 +8132,8 @@ same on every machine.
 | `property-write` | A write and its `property.result` and side-effect `delta`; a refused outbound property and an unknown one; a write without a `writeId` answered by `delta`; a write to a slice's signal strength refused as outbound; on the receive-only Core, a `transmit` write of `power` taken off the air and a write of `mox` and `voxEnabled` refused with the receive-only reason; at `transmitSettingsVersion` 2, a write of `cpdrLevelDb` taken, and `micGainDb` and `monitorVolume` out of range refused with their ranges beside a write of the outbound `tunePowerForTxBand`; at `transmitSettingsVersion` 3, a write of `micBoost` and `lineInBoost` taken, and `lineInBoost` out of range refused with its range beside a write of the outbound `activeTxProfile`; at `transmitSettingsVersion` 4, a write of `txEqBandsJson`, `txEqUseLegacy` and `txLevelerDecay` taken, and a nine-value `txEqBandsJson`, a `cfcCompressionJson` with a value out of range and `txAlcDecay` out of range each refused whole with its range |
 | `tx-eq-curve` | `txEqCurveVersion` 1 (the client declares `txEqCurve` 1): the capability after `accessoryTxVersion`, `txEqCurve` last in the `TransmitModel` schema and, in the `transmit` snapshot, the flat default curve (`state` `default`) for the static station's empty `txEqParaEqData`; a write of the worked example's `txEqParaEqData` (section 7.1, "The TX EQ curve") taken, then the side-effect `delta` carrying its `txEqCurve` (`state` `saved`); a write to `txEqCurve` refused as outbound, the curve unchanged |
 | `tx-eq-set-curve` | `txEqCurveVersion` 2 (the client declares `txEqCurve` 2): the capability at 2; `txEq.setCurve` with the link document's worked example sent back as it was shown, but out of order and unrounded, taken: the side-effect `delta` carrying the new `txEqParaEqData` and the worked example's `txEqCurve`, then the accepted `command.result` whose `curve` is that `txEqCurve`; a four-point curve refused whole "Choose a curve of 5, 10 or 18 points." with nothing sent after; `txEq.resetCurve` taken, the `delta` and a `curve` of five flat points spread from 50 to 3000 Hz, preamp 0 |
+| `tune-drive-source` | The client declares `tuneDriveSource` 1: a write of `tuneDrivePowerSource` 2 (the fixed tune power) taken, then the `delta` carrying it |
+| `tune-drive-source-older-client` | A client that does not declare `tuneDriveSource` writes `power` 40 and `tuneDrivePowerSource` 1 (the tune slider): `power` taken, `tuneDrivePowerSource` refused "Update this app to change TUNE's drive source on this Core." with the Core's 0 (the drive slider), then the side-effect `delta` carrying `powerByBandJson` with 40 for the transmit band; then `tuneDrivePowerSource` 0, the Core's own value, taken. Runs on the station alone |
 | `cfc-set-profile` | `transmitSettingsVersion` 15 (the client declares `cfcProfile` 1): `cfcProfile` last in the `TransmitModel` schema at ordinal 88 and in the `transmit` snapshot; `cfc.setProfile` with a 5-band profile and the snapshot's revision taken: the side-effect `delta` carrying the new `cfcPostEqGainDb`, `cfcPrecompDb`, `cfcParaEqData` and `cfcProfile`, then the accepted `command.result` whose `profile` is the stored profile; the same profile sent again with the old revision refused "The CFC settings changed on the Core. Check the new values and try again." with nothing sent; a misnamed argument refused "The CFC settings were not understood." |
 | `settings-write` | A station-scoped write echoed with its origin; an operator-local write rejected; a removal sent as `settings.value` with no entry; on the receive-only Core, a DSP > Options TX key and a PA forward-power table key (`paCalibration/calPoint1`, version 6) taken off the air, an OC transmit pin (`oc/tx/20m/pin3`), an OC pin action (`oc/actions/pin1/action`) and TX Display Cal (`cal/txDisplayOffset`) taken off the air (version 8), and a transmit hardware key refused |
 | `unknown-verb` | `command.result` refused, "The Core does not know this request. Updating the Core may help."; the connection stays up |

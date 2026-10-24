@@ -552,7 +552,7 @@ struct SoundPanelTests {
                 .padding(.top, 20)
         }
         .preferredColorScheme(.dark)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         host.overrideUserInterfaceStyle = .dark
         host.view.frame = CGRect(origin: .zero, size: size)
         window.rootViewController = host

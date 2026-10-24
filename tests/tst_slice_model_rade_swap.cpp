@@ -75,6 +75,9 @@
 //                 boundary.  Closes PR #238 review P1 #1 + #2.
 //                 J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-10-22 - Opts in to experimental RADE V2 itself, so a direct
+//                 run of the binary matches ctest. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -132,6 +135,15 @@ class TestSliceModelRadeSwap : public QObject {
     };
 
 private slots:
+    void initTestCase()
+    {
+        // The V2 rows need the experimental opt-in. RadeV2Feature reads it
+        // once per process, so it is set here, before any case asks.
+        // ctest sets it too (tests/CMakeLists.txt); a direct run did not,
+        // and failed seven V2 cases.
+        qputenv("NEREUS_ENABLE_RADE_V2", "1");
+    }
+
     void earlyCallbackRetiresLiveRadeLifecycle_data()
     {
         QTest::addColumn<bool>("fromCallsign");

@@ -14,15 +14,15 @@ struct NavigationPage: View {
     @ObservedObject var settings: PhoneSettings
 
     var body: some View {
-        List {
-            Section {
+        SetupPageContainer {
+            SetupPanelSection {
                 ForEach(DialKind.allCases, id: \.self) { kind in
                     row(kind)
                 }
             } header: {
                 Text("Tuning dial")
             }
-            Section {
+            SetupPanelSection {
                 Toggle("Haptic tick on each detent", isOn: Binding(get: { settings.dialDetentTicks },
                                                                   set: { settings.dialDetentTicks = $0 }))
                     .disabled(settings.dialKind == .off)
@@ -38,7 +38,7 @@ struct NavigationPage: View {
             } footer: {
                 Text(settings.dialKind == .off ? Self.dialOffNote : Self.stepNote)
             }
-            Section {
+            SetupPanelSection {
                 toggle(Self.dragTitle, Self.dragDetail, isOn: Binding(get: { settings.dragToTune },
                                                                       set: { settings.dragToTune = $0 }),
                        id: "dragToTune")
@@ -56,10 +56,11 @@ struct NavigationPage: View {
                     Text("Double-tap action")
                 }
                 .accessibilityIdentifier("doubleTapAction")
+                .setupMenuRow("Double-tap action")
             } header: {
                 Text("Touch")
             }
-            Section {
+            SetupPanelSection {
                 toggle("Snap tap-to-tune to step", "A tap lands on the slice's nearest step",
                        isOn: Binding(get: { settings.snapTapToStep }, set: { settings.snapTapToStep = $0 }),
                        id: "snapTapToStep")
@@ -68,7 +69,7 @@ struct NavigationPage: View {
                 Text("Tuning")
             }
         }
-        .navigationTitle("Navigation")
+        .setupPageTitle("Navigation")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 SetupTagBadge(tag: .thisPhone)
@@ -99,7 +100,7 @@ struct NavigationPage: View {
                 Text(title)
                 Text(detail)
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(WorkspacePalette.textSecondary)
             }
         }
         .accessibilityIdentifier(id)
@@ -117,16 +118,15 @@ struct NavigationPage: View {
                         .foregroundStyle(.primary)
                     Text(Self.detail(kind))
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WorkspacePalette.textSecondary)
                 }
                 Spacer(minLength: 0)
-                Image(systemName: "checkmark")
-                    .foregroundStyle(ChromeColours.accent)
-                    .opacity(chosen ? 1 : 0)
+                SetupCheckMark(chosen: chosen)
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .setupPicked(chosen)
         .accessibilityAddTraits(chosen ? .isSelected : [])
         .accessibilityIdentifier("dialKind.\(kind.rawValue)")
     }

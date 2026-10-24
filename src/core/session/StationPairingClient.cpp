@@ -24,9 +24,13 @@
 //               web relay's leg (RelayLeg) and its per-connection candidate
 //               sources; the computer's own proxy settings (SystemProxy).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22: a typed Core name's addresses raced
+//               (HappyEyeballs.h). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/session/NetworkTrouble.h"
+#include "core/session/HappyEyeballs.h"
 #include "core/session/SystemProxy.h"
 #include "core/session/StationPairingClient.h"
 
@@ -103,7 +107,8 @@ SessionTransport* openWebSocket(const QUrl& url)
         socket->ignoreSslErrors(ignorable);
     });
     // Task 29 step 2b: the computer's own proxy settings (SystemProxy).
-    socket->setProxy(SystemProxy::forUrl(url));
+    // 2026-10-22: a typed name's addresses raced (HappyEyeballs.h).
+    socket->setProxy(HappyEyeballs::proxyForWebSocket(url, socket));
     socket->open(url);
     return transport;
 }

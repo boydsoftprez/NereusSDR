@@ -420,7 +420,7 @@ struct LiveControlsTests {
     private func shoot(_ name: String, scheme: ColorScheme, @ViewBuilder content: () -> some View) async throws {
         let size = CGSize(width: RxPanel.width, height: 700)
         let window = try BandFlagShotTests.window(size: size)
-        let host = UIHostingController(rootView: content()
+        let host = ShotHosting.host(content()
             .frame(width: size.width, height: size.height, alignment: .top)
             .preferredColorScheme(scheme))
         host.overrideUserInterfaceStyle = scheme == .dark ? .dark : .light

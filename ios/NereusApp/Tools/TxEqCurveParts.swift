@@ -13,11 +13,14 @@ import SwiftUI
 /// drawing is always the curve the Core sent back.
 enum TxEqCurveParts {
     // The board's colours for the curve (part-style-eqcurve.css).
-    static let plotGround = rgb(0x0A, 0x12, 0x1B)
-    static let grid = rgb(0x1D, 0x2A, 0x38)
-    static let zero = rgb(0x7F, 0x93, 0xA8)
-    static let axisText = rgb(0x83, 0x94, 0xA5)
-    static let axisName = rgb(0x5F, 0x6F, 0x80)
+    // The plot's ground, grid and axes, the cards' words and the notices are
+    // the workspace's chrome; the plot's series (the curve, its numbered
+    // marks and the preamp line) are the board's, kept.
+    static let plotGround = WorkspacePalette.insetBg
+    static let grid = WorkspacePalette.borderSubtle
+    static let zero = WorkspacePalette.textScale
+    static let axisText = WorkspacePalette.textScale
+    static let axisName = WorkspacePalette.textInactive
     static let preampLine = rgb(0xE9, 0xEE, 0xF4).opacity(0.7)
     static let preampText = rgb(0xDD, 0xE6, 0xEF)
     static let line = rgb(0x00, 0xB4, 0xD8)
@@ -26,26 +29,27 @@ enum TxEqCurveParts {
     static let markText = rgb(0xD9, 0xF5, 0xFB)
     static let chosenEdge = rgb(0xE8, 0xFB, 0xFF)
     static let chosenText = rgb(0x04, 0x14, 0x1C)
-    static let bigText = rgb(0xC9, 0xD3, 0xDC)
-    static let onAirCurve = rgb(0x6E, 0xE0, 0x7A)
-    static let onAirTen = rgb(0xF0, 0xB4, 0x4C)
-    static let onAirOff = rgb(0x6A, 0x76, 0x84)
-    static let transmittingGround = rgb(0x2A, 0x12, 0x14)
-    static let transmittingDot = rgb(0xFF, 0x4D, 0x4D)
-    static let transmittingHead = rgb(0xFF, 0xC7, 0xC2)
-    static let lineHead = rgb(0xE8, 0xF3, 0xEA)
-    static let lineBody = rgb(0x8E, 0x9D, 0xAB)
-    static let noticeGround = rgb(0x14, 0x30, 0x4A)
-    static let noticeText = rgb(0xCF, 0xE8, 0xFF)
-    static let refusalGround = rgb(0x3A, 0x1C, 0x18)
-    static let refusalText = rgb(0xFF, 0xB3, 0xA1)
-    static let softReason = rgb(0xC8, 0xA6, 0x4A)
-    static let hint = rgb(0x7F, 0x8E, 0x9D)
-    static let caption = rgb(0x9F, 0xB0, 0xC0)
-    static let rowChosen = rgb(0x11, 0x34, 0x4A)
-    static let rowText = rgb(0xD7, 0xE2, 0xEC)
-    static let rowHead = rgb(0x7D, 0x8B, 0x99)
-    static let rowLine = rgb(0x17, 0x22, 0x30)
+    static let bigText = WorkspacePalette.textPrimary
+    static let onAirCurve = WorkspacePalette.liveGreen
+    static let onAirTen = WorkspacePalette.amberText
+    static let onAirOff = WorkspacePalette.textInactive
+    // Transmitting is the transmit set (W5).
+    static let transmittingGround = WorkspacePalette.badgeTxBg
+    static let transmittingDot = WorkspacePalette.txRed
+    static let transmittingHead = WorkspacePalette.keyedRim
+    static let lineHead = WorkspacePalette.textBright
+    static let lineBody = WorkspacePalette.textSecondary
+    static let noticeGround = WorkspacePalette.glassSelBot
+    static let noticeText = WorkspacePalette.glassSelText
+    static let refusalGround = ChromeColours.revoke
+    static let refusalText = ChromeColours.refusalText
+    static let softReason = WorkspacePalette.noticeWarn
+    static let hint = WorkspacePalette.textScale
+    static let caption = WorkspacePalette.textTertiary
+    static let rowChosen = WorkspacePalette.glassSelBot
+    static let rowText = WorkspacePalette.textPrimary
+    static let rowHead = WorkspacePalette.textScale
+    static let rowLine = WorkspacePalette.borderSubtle
 
     static func rgb(_ red: Int, _ green: Int, _ blue: Int) -> Color {
         Color(red: Double(red) / 255, green: Double(green) / 255, blue: Double(blue) / 255)
@@ -234,7 +238,7 @@ enum TxEqCurveParts {
                             .foregroundStyle(TxEqCurveParts.bigText)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 4)
-                            .background(TxEqCurveParts.plotGround.opacity(0.9), in: RoundedRectangle(cornerRadius: 4))
+                            .background(TxEqCurveParts.plotGround.opacity(0.9), in: RoundedRectangle(cornerRadius: 4)) // kept-radius: eq-plot
                             .position(x: (frame.left + frame.right) / 2, y: (frame.top + frame.bottom) / 2)
                             .accessibilityIdentifier("txEq.curveMissing")
                     }
@@ -766,16 +770,9 @@ enum TxEqCurveParts {
             Button(action: action) {
                 Text(symbol)
                     .font(.system(size: large ? 22 : 18, weight: .semibold))
-                    .foregroundStyle(enabled ? ChromeColours.textBright : ChromeColours.buttonOffText)
                     .frame(width: large ? 48 : 38, height: large ? 44 : 34)
-                    .background(enabled ? ChromeColours.button : ChromeColours.buttonOff,
-                                in: RoundedRectangle(cornerRadius: 5))
-                    .overlay(RoundedRectangle(cornerRadius: 5)
-                        .strokeBorder(enabled ? ChromeColours.buttonBorder : ChromeColours.buttonOffBorder,
-                                      lineWidth: 1))
-                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(WorkspaceButtonStyle(.raised))
             .disabled(!enabled)
             .accessibilityLabel(label)
             .accessibilityIdentifier(identifier)
@@ -794,18 +791,11 @@ enum TxEqCurveParts {
             Button(action: action) {
                 Text(title)
                     .font(.system(size: large ? 16 : 13, weight: .semibold))
-                    .foregroundStyle(enabled ? ChromeColours.text : ChromeColours.buttonOffText)
                     .lineLimit(1)
                     .padding(.horizontal, 12)
                     .frame(maxWidth: large ? .infinity : nil, minHeight: large ? 44 : 34)
-                    .background(enabled ? ChromeColours.button : ChromeColours.buttonOff,
-                                in: RoundedRectangle(cornerRadius: 5))
-                    .overlay(RoundedRectangle(cornerRadius: 5)
-                        .strokeBorder(enabled ? ChromeColours.buttonBorder : ChromeColours.buttonOffBorder,
-                                      lineWidth: 1))
-                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(WorkspaceButtonStyle(.raised))
             .disabled(!enabled)
             .accessibilityIdentifier(identifier)
         }

@@ -129,15 +129,15 @@ struct FlagPopoverLayer: View {
 private struct FlagMenuShell<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
-    static var background: Color { Color(red: 0x12 / 255, green: 0x1A / 255, blue: 0x28 / 255) }
+    static var background: Color { ChromeColours.sheet }
 
     var body: some View {
         ViewThatFits(in: .vertical) {
             inner
             ScrollView { inner }
         }
-        .background(Self.background, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
+        .background(Self.background, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
         .shadow(color: .black.opacity(0.6), radius: 14, y: 10)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("flagMenu")
@@ -156,8 +156,8 @@ private struct FlagMenuShell<Content: View>: View {
 private enum FlagMenuChrome {
     static let itemText = ChromeColours.textBright
     static let why = ChromeColours.textDim
-    static let danger = Color(red: 0xFF / 255, green: 0x80 / 255, blue: 0x80 / 255)
-    static let separator = Color(red: 0x24 / 255, green: 0x34 / 255, blue: 0x46 / 255)
+    static let danger = ConnectChrome.badText // W5: standalone red words, not transmit
+    static let separator = ChromeColours.sheetBorder
     static let tick = ChromeColours.accent
 
     static func title(_ entry: BandSlicesModel.Entry, _ text: String, large: Bool) -> some View {
@@ -246,7 +246,7 @@ struct FlagAntennaMenu: View {
             }
             section("TX antenna", colour: BandColours.txAntenna)
             subsection("Main TX/RX")
-            grid(modes.txAntennas, style: .red, reason: modes.txAntennaReason, prefix: "flagTx") {
+            grid(modes.txAntennas, style: .txAntenna, reason: modes.txAntennaReason, prefix: "flagTx") {
                 modes.selectTxAntenna($0)
             }
             if let reason = modes.txAntennaReason {
@@ -312,7 +312,7 @@ struct FlagAntennaMenu: View {
         }
     }
 
-    static let switchOnGround = Color(red: 0x2A / 255, green: 0x2A / 255, blue: 0x1A / 255)
+    static let switchOnGround = ChromeColours.buttonOnAmber // RX bypass on, lit amber (W3)
 
     private func section(_ text: String, colour: Color) -> some View {
         Text(text)
@@ -447,7 +447,7 @@ struct FlagPanel: View {
     let sideways: Bool
     let large: Bool
 
-    static let ground = Color(red: 12 / 255, green: 18 / 255, blue: 30 / 255).opacity(0.97)
+    static let ground = ChromeColours.panel.opacity(0.97)
 
     var body: some View {
         VStack(spacing: 0) {
@@ -684,6 +684,7 @@ struct FlagDiversitySheet: ViewModifier {
                     }
                 }
             }
+            .workspacePresentationRoot()
         }
     }
 }

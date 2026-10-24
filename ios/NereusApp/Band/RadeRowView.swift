@@ -60,7 +60,7 @@ struct RadeRowView: View {
                     Text(prefix)
                     readings(dot: .hollow, value: RadeReception.offText)
                 }
-                .foregroundStyle(BandColours.radeRow)
+                .foregroundStyle(BandColours.radeRowText)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
                 .frame(minHeight: large ? nil : 14, alignment: .leading)
@@ -89,7 +89,7 @@ struct RadeRowView: View {
                         }
                     }
                 }
-                .foregroundStyle(BandColours.radeRow)
+                .foregroundStyle(BandColours.radeRowText)
                 .padding(.top, 2)
                 .padding(.bottom, 3)
             } else {
@@ -98,7 +98,7 @@ struct RadeRowView: View {
                     readings(dot: dot, value: value)
                     offsetText(offset)
                 }
-                .foregroundStyle(BandColours.radeRow)
+                .foregroundStyle(BandColours.radeRowText)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
                 .frame(height: Self.height)

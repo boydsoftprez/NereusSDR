@@ -629,6 +629,25 @@ private slots:
         QVERIFY(!rig.state.keyed());
     }
 
+    // PR 604: the SWR protection's open-antenna drop carries Thetis's
+    // antenna warning to a remote window, not the Core's generic words.
+    void anOpenAntennaStopCarriesTheAntennaWarning()
+    {
+        Rig rig;
+        rig.model.setHpsdrModelForTest(HPSDRModel::ANAN7000D);
+        rig.model.swrProt().setEnabled(true);
+        rig.key();
+        QTRY_COMPARE_WITH_TIMEOUT(rig.model.moxController()->state(), MoxState::Tx, 5000);
+        // About 26.8 W forward and 27.8 W reflected on the 7000D bridge: an
+        // open antenna (console.cs:26038-26039 [v2.10.3.15]).
+        rig.model.handlePaTelemetryForTest(1500, 1700, 0, 0, 0, 0);
+        QTRY_VERIFY_WITH_TIMEOUT(!rig.model.mox(), 5000);
+        pumpEvents();
+        QCOMPARE(rig.state.stopSerial(), quint32(1));
+        QCOMPARE(rig.state.stopReason(), QStringLiteral("station"));
+        QCOMPARE(rig.state.stopText(), RadioModel::openAntennaStopText());
+    }
+
     void aStopWithNoReasonOfItsOwnIsTheCoresOwn()
     {
         Rig rig;

@@ -139,8 +139,8 @@ struct TxEqualizerPage: View {
             .foregroundStyle(enabled ? ChromeColours.text : ChromeColours.buttonOffText)
             .padding(.horizontal, 8)
             .frame(minWidth: 96, minHeight: 30)
-            .background(enabled ? ChromeColours.button : ChromeColours.buttonOff, in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4)
+            .background(enabled ? ChromeColours.button : ChromeColours.buttonOff, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                 .strokeBorder(enabled ? ChromeColours.buttonBorder : ChromeColours.buttonOffBorder, lineWidth: 1))
         }
         .disabled(!enabled)

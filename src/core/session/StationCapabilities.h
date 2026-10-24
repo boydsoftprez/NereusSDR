@@ -59,6 +59,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22: NSDC v2 negotiation: displayCodecVersion, after
+//               rxMeterStampsVersion and before coreBuildInfo. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22: RX meter stamps: rxMeterStampsVersion, after waveformVersion
+//               and before coreBuildInfo. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-12: The radio's second firmware number: firmwareBeta, after
 //               spectrumPictureVersion and before coreBuildInfo. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -244,6 +250,9 @@
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-10 - txReadingsVersion 4: the six transmit peak readings.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - radioAntennaRowsVersion 2 (kRadioAntennaRowsVersion):
+//                RX-only antennas 0..5, Thetis's checkbox sum. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QByteArray>
@@ -280,6 +289,12 @@ inline constexpr int kTransmitSettingsDifferentBandVersion = 14;
 /// at once against the revision the app last saw. Against an older Core a
 /// window keeps writing the CFC properties one by one.
 inline constexpr int kTransmitSettingsCfcProfileVersion = 15;
+
+/// The newest radioAntennaRowsVersion. 1: the one-band Alex edits bound to
+/// the connected radio's MAC. 2: and `rxOnlyAntennas` entries 0..5, Thetis's
+/// RX-only checkbox sum (4 and 5 add XVTR to the first or second input),
+/// read and written by that peer; a peer at 1 or none reads 4 and 5 as 3.
+inline constexpr int kRadioAntennaRowsVersion = 2;
 
 /// Optional identity of the Core executable, never radio firmware identity.
 struct CoreBuildInfo {
@@ -343,7 +358,9 @@ struct StationCapabilities {
     /// not write `stepAtt`.
     int radioHardwareVersion = 0;
     /// One-band Alex edits bound to the connected radio's canonical MAC.
-    /// Optional at minor 11 for a peer declaring radioAntennaRows 1.
+    /// Optional at minor 11 for a peer declaring radioAntennaRows 1 or 2:
+    /// what it declared, up to kRadioAntennaRowsVersion. 2 adds RX-only
+    /// values 0..5.
     int radioAntennaRowsVersion = 0;
     /// iPhone app plan Task 25 (R-IOS-18): 1 means the Core sends the `vax`
     /// object (the station computer's VAX channels) and keeps the
@@ -624,6 +641,20 @@ struct StationCapabilities {
     /// decodes). Sent after rxFilterLowPassVersion and before coreBuildInfo,
     /// only to a peer whose hello declared `radeReason` 1; 0 otherwise.
     int radeReasonVersion = 0;
+    /// RX meter stamps: 1 means every slice carries `meterReadingNs`, when
+    /// the Core measured its RX meter readings on its producer clock, so a
+    /// window can hold them until their audio plays. Sent after
+    /// waveformVersion and before coreBuildInfo, only to a peer whose hello
+    /// declared `rxMeterStamps` 1; 0 otherwise.
+    int rxMeterStampsVersion = 0;
+    /// Display codec v2 (NSDC v2): 2 means the Core can send this peer
+    /// version 2 display frames, and the peer's media `start` may carry
+    /// `displayCodecVersion` 2 to ask for them on that connection. Sent
+    /// after rxMeterStampsVersion and before coreBuildInfo, only to a peer
+    /// at minor 11 with media on whose hello declared `displayCodec` 2, on a
+    /// Core whose RemoteDisplayCodecV2 setting is on; absent reads as 0: an
+    /// older Core, or one that sends version 1 frames only.
+    int displayCodecVersion = 0;
     /// CAT setup from a connected desktop: 1 means the Core sends its CAT
     /// as the read-only `stationCat` object and the `catLog` record stream,
     /// and takes setStationCatChannel, setStationCatGlobal,

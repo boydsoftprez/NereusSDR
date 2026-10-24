@@ -111,10 +111,10 @@ struct RotorPage: View {
         } label: {
             Text("Turn to \(RotorModel.headingText(selection))")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(ChromeColours.accent)
+                .foregroundStyle(ChromeColours.accentText)
                 .frame(maxWidth: .infinity, minHeight: 40)
-                .background(ChromeColours.accent.opacity(0.13), in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(ChromeColours.accent, lineWidth: 1))
+                .background(ChromeColours.accent.opacity(0.13), in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.accent, lineWidth: 1))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -170,14 +170,10 @@ struct RotorPage: View {
             Text("STOP")
                 .font(.system(size: 14, weight: .bold))
                 .tracking(1)
-                .foregroundStyle(enabled ? RotorColours.stopText : ChromeColours.buttonOffText)
                 .frame(maxWidth: .infinity, minHeight: 46)
-                .background(enabled ? RotorColours.stop : ChromeColours.buttonOff, in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(enabled ? RotorColours.stopBorder : ChromeColours.buttonOffBorder, lineWidth: 1))
-                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        // A stop is not transmit: the muted danger set (W5); greyed, raised.
+        .buttonStyle(WorkspaceButtonStyle(enabled ? .danger : .raised))
         .disabled(!enabled)
         .accessibilityLabel("Stop the rotor")
         .accessibilityIdentifier("rotor.stop")
@@ -191,14 +187,9 @@ struct RotorPage: View {
                 .font(.system(size: 11, weight: .semibold))
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
-                .foregroundStyle(enabled ? ChromeColours.text : ChromeColours.buttonOffText)
                 .frame(maxWidth: .infinity, minHeight: 32)
-                .background(enabled ? ChromeColours.button : ChromeColours.buttonOff, in: Capsule())
-                .overlay(Capsule().strokeBorder(enabled ? ChromeColours.buttonBorder : ChromeColours.buttonOffBorder,
-                                                lineWidth: 1))
-                .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(WorkspaceButtonStyle(.raised))
         .disabled(!enabled)
         .accessibilityLabel("Turn to \(preset.name), \(Int(preset.degrees.rounded())) degrees")
         .accessibilityIdentifier("rotor.preset.\(preset.id)")
@@ -218,15 +209,14 @@ struct RotorHoldButton: View {
 
     var body: some View {
         let held = model.holding == direction
+        // Held, the glass; at rest and greyed, raised, greyed at 40 percent.
+        let look: WorkspaceLook = enabled && held ? .glass : .raised
         Text(label)
             .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(enabled ? (held ? Color.white : ChromeColours.text) : ChromeColours.buttonOffText)
+            .foregroundStyle(workspaceForeground(look))
             .frame(maxWidth: .infinity, minHeight: 46)
-            .background(enabled ? (held ? ChromeColours.buttonOnBlue : ChromeColours.button) : ChromeColours.buttonOff,
-                        in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(enabled ? (held ? ChromeColours.buttonOnBlueBorder : ChromeColours.buttonBorder)
-                              : ChromeColours.buttonOffBorder, lineWidth: 1))
+            .background { WorkspaceFace(look) }
+            .opacity(enabled ? 1 : WorkspacePalette.disabledOpacity)
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0).updating($pressed) { _, state, _ in
                 state = true

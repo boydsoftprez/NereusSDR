@@ -2,6 +2,11 @@
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-06 AI and ZZAI last for this run only. J.J. Boyd (KG4VCF),
 //            AI-assisted via Anthropic Claude Code.
+// 2026-10-22: ports a test hands to a later listener come from
+// unusedLoopbackPort() (UnusedLoopbackPort.h), below the kernel's ephemeral
+// range, so a parallel test cannot take one between the pick and the listen.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+#include "UnusedLoopbackPort.h"
 #include <QtTest>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -32,9 +37,8 @@ struct CatReportingFixture {
     }
     bool configure(int channel, bool reverse = false)
     {
-        QTcpServer probe;
-        if (!probe.listen(QHostAddress::LocalHost, 0)) { return false; }
-        CatEndpointConfig config; config.tcpEnabled = true; config.tcpPort = probe.serverPort(); probe.close();
+        CatEndpointConfig config; config.tcpEnabled = true; config.tcpPort = unusedLoopbackPort();
+        if (config.tcpPort == 0) { return false; }
         config.binding.primarySliceId = reverse ? 1 : 0; config.binding.secondarySliceId = reverse ? 0 : 1;
         return service.applyChannelConfig(channel, config);
     }

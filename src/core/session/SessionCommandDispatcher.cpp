@@ -6,6 +6,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22  J.J. Boyd / KG4VCF  setAlexRxAntennaForRadio takes an
+//                                    RX-only value 0..5 (Thetis's checkbox
+//                                    sum). AI-assisted via Anthropic Claude
+//                                    Code.
 //   2026-09-30  J.J. Boyd / KG4VCF  Level Cal 2: startLevelCalibration
 //                                    calibrates only a slice the device may
 //                                    change, named or active. AI-assisted
@@ -1198,9 +1202,14 @@ QString SessionCommandDispatcher::radioAntennaRowRefusal(const SessionMessage& i
     // The shared-setting classifier reads this row before the facade's
     // setter. Reject an unusable port here so no other device is asked to
     // confirm a change the existing one-band setter would refuse.
-    if (antenna < (rx && rxOnly.toBool() ? 0 : 1) || antenna > 3) {
-        return rx && rxOnly.toBool()
-            ? QStringLiteral("The receive-only input is none or 1 to 3.")
+    // RX-only: 0..5, Thetis's checkbox sum (AlexController::kRxOnlyAntMax).
+    // StationServer::radioAntennaRowRefusal keeps 4 and 5 from a peer that
+    // did not declare radioAntennaRows 2.
+    const bool receiveOnly = rx && rxOnly.toBool();
+    if (antenna < (receiveOnly ? 0 : 1)
+        || antenna > (receiveOnly ? AlexController::kRxOnlyAntMax : 3)) {
+        return receiveOnly
+            ? QStringLiteral("The receive-only input is a value from 0 to 5.")
             : QStringLiteral("Antennas are numbered 1 to 3.");
     }
     if (radioModel == nullptr || radioModel->thread() != QThread::currentThread()

@@ -6,6 +6,11 @@
 // 2026-10-07 A level read through rigctl compares as a number, whatever
 //            Hamlib's float format. J.J. Boyd (KG4VCF), AI-assisted via
 //            Anthropic Claude Code.
+// 2026-10-22: ports a test hands to a later listener come from
+// unusedLoopbackPort() (UnusedLoopbackPort.h), below the kernel's ephemeral
+// range, so a parallel test cannot take one between the pick and the listen.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+#include "UnusedLoopbackPort.h"
 #include <QtTest>
 #include <limits>
 #include <QTcpServer>
@@ -41,10 +46,9 @@ struct RigFixture {
     }
     ~RigFixture() { service.stopAll(); model.moxController()->setMox(false); model.injectConnectionForTest(nullptr); }
     bool configure(int channel=1, bool secondary=true, bool reverse=false) {
-        QTcpServer a,b;
-        if (!a.listen(QHostAddress::LocalHost,0) || !b.listen(QHostAddress::LocalHost,0)) { return false; }
-        CatEndpointConfig config; config.tcpEnabled=true; config.tcpPort=a.serverPort();
-        config.rigctldEnabled=true; config.rigctldPort=b.serverPort(); a.close(); b.close();
+        CatEndpointConfig config; config.tcpEnabled=true; config.tcpPort=unusedLoopbackPort();
+        config.rigctldEnabled=true; config.rigctldPort=unusedLoopbackPort(QHostAddress::LocalHost, quint16(config.tcpPort));
+        if (config.tcpPort == 0 || config.rigctldPort == 0) { return false; }
         config.binding.primarySliceId=reverse ? 2 : 0;
         if (secondary) { config.binding.secondarySliceId=reverse ? 0 : 2; }
         return service.applyChannelConfig(channel,config);
@@ -355,8 +359,8 @@ private slots:
     void modeSetterCallbackDeletion() {
         QFETCH(QByteArray,command); QFETCH(int,targetId); QFETCH(bool,wholeModel);
         auto model=std::make_unique<RadioModel>(); CatRxFixtureHarness harness; harness.slices(*model);
-        QTcpServer reserve; QVERIFY(reserve.listen(QHostAddress::LocalHost,0)); CatEndpointConfig config;
-        config.rigctldEnabled=true; config.rigctldPort=reserve.serverPort(); reserve.close();
+        CatEndpointConfig config;
+        config.rigctldEnabled=true; config.rigctldPort=unusedLoopbackPort(); QVERIFY(config.rigctldPort != 0);
         config.binding.primarySliceId=0; config.binding.secondarySliceId=2;
         QVERIFY(model->catService()->applyChannelConfig(1,config)); model->catService()->startConfigured();
         QTcpSocket socket; socket.connectToHost(QHostAddress::LocalHost,model->catService()->rigctldBoundPort(1));
@@ -376,8 +380,8 @@ private slots:
     }
     void setterCallbackServiceAndModelDeletion() {
         auto model=std::make_unique<RadioModel>(); CatRxFixtureHarness harness; harness.slices(*model);
-        QTcpServer reserve; QVERIFY(reserve.listen(QHostAddress::LocalHost,0)); CatEndpointConfig config;
-        config.rigctldEnabled=true; config.rigctldPort=reserve.serverPort(); reserve.close(); config.binding.primarySliceId=0; config.binding.secondarySliceId=2;
+        CatEndpointConfig config;
+        config.rigctldEnabled=true; config.rigctldPort=unusedLoopbackPort(); QVERIFY(config.rigctldPort != 0); config.binding.primarySliceId=0; config.binding.secondarySliceId=2;
         QVERIFY(model->catService()->applyChannelConfig(1,config)); model->catService()->startConfigured();
         QTcpSocket socket; socket.connectToHost(QHostAddress::LocalHost,model->catService()->rigctldBoundPort(1)); QTRY_COMPARE(model->catService()->rigctldClientCount(1),1);
         QObject observer; connect(model->sliceById(2),&SliceModel::frequencyChanged,&observer,[&] { model.reset(); });

@@ -171,7 +171,7 @@ struct LongSessionShotTests {
         .background(ChromeColours.bar.ignoresSafeArea())
         .preferredColorScheme(.dark)
         .environment(\.dynamicTypeSize, largeText ? .accessibility1 : .large)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         host.view.frame = CGRect(origin: .zero, size: size)
         window.rootViewController = host
         window.isHidden = false
@@ -204,7 +204,7 @@ struct LongSessionShotTests {
         .background(ChromeColours.bar.ignoresSafeArea())
         .preferredColorScheme(colour)
         .environment(\.dynamicTypeSize, largeText ? .accessibility1 : .large)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         host.view.frame = CGRect(origin: .zero, size: size)
         window.rootViewController = host
         window.isHidden = false

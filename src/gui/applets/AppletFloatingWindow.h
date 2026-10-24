@@ -13,6 +13,13 @@
 // Modification history (NereusSDR):
 //   2026-09-09 — Created for the floating AM Mod Monitor (Lee,
 //                 AI-assisted via Anthropic Claude Code).
+//   2026-10-22 - Quitting is no longer refused while an applet floats:
+//                 a close that is not spontaneous (the application quit
+//                 sweep) is accepted without docking; the close box
+//                 still docks. Same rule as Longpath
+//                 src/gui/PanFloatingWindow.cpp (reference), by J.J. Boyd
+//                 (KG4VCF), with AI-assisted transformation via Claude
+//                 Code.
 // =================================================================
 #pragma once
 

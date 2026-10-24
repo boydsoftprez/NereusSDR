@@ -4,6 +4,9 @@
 //   2026-10-12 - J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-13 - Runtime level refresh event regressions. J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-22 - A closed pill is not laid out or restyled on each remote
+//                 telemetry tick or enables pass, and opens to the same
+//                 geometry. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 #include <QtTest/QtTest>
 #include <QApplication>
@@ -655,6 +658,137 @@ private slots:
         QFile receipt(directory + QStringLiteral("/workspace-pill-receipt.json"));
         QVERIFY(receipt.open(QIODevice::WriteOnly));
         QVERIFY(receipt.write(QJsonDocument(receipts).toJson(QJsonDocument::Indented)) > 0);
+    }
+
+    // MainWindow repeats the remote and station gates on every remote
+    // telemetry tick. A closed pill neither lays itself out nor touches
+    // its rows for an unchanged gate, or for another enables pass.
+    void closedPillSkipsRepeatedGateRefreshes() {
+        Harness h;
+        h.pan.setUpdatesEnabled(false);
+        const QString reason = QStringLiteral("Connect to the Core to change these.");
+        h.panel->setRemoteWindow(true, false);
+        h.panel->setStationRowsAvailable(false, reason);
+        drainPillEvents();
+        QVERIFY(!h.panel->displayPillVisible());
+        const int refreshes = h.panel->displayPillGeometryRefreshCountForTest();
+        PillRefreshEvents events;
+        events.watch(h.pill());
+        for (int tick = 0; tick < 5; ++tick) {
+            h.panel->setRemoteWindow(true, false);
+            h.panel->setStationRowsAvailable(false, reason);
+            drainPillEvents();
+        }
+        QCOMPARE(h.panel->displayPillGeometryRefreshCountForTest(), refreshes);
+        qInfo().noquote() << "repeated gates, closed pill" << events.counts();
+        QVERIFY2(events.enabledChanges == 0 && events.styleChanges == 0
+            && events.layoutEdits == 0, qPrintable(events.counts()));
+        // A full enables pass (a GPU capability report runs one) restyles
+        // nothing and lays nothing out while closed.
+        PillRefreshEvents enablesEvents;
+        enablesEvents.watch(h.pill());
+        for (int pass = 0; pass < 3; ++pass) {
+            h.panel->setGpuCapabilities(true, true);
+            drainPillEvents();
+        }
+        qInfo().noquote() << "enables passes, closed pill" << enablesEvents.counts();
+        QVERIFY2(enablesEvents.styleChanges == 0 && enablesEvents.layoutEdits == 0,
+            qPrintable(enablesEvents.counts()));
+        QCOMPARE(h.panel->displayPillGeometryRefreshCountForTest(), refreshes);
+        // Opening lays it out once, at once.
+        h.panel->openDisplayPill();
+        QVERIFY(h.panel->displayPillGeometryRefreshCountForTest() > refreshes);
+        drainPillEvents();
+        // While open, a change is still laid out.
+        const int openRefreshes = h.panel->displayPillGeometryRefreshCountForTest();
+        h.panel->setStationRowsAvailable(false, QStringLiteral("The Core is busy."));
+        drainPillEvents();
+        QVERIFY(h.panel->displayPillGeometryRefreshCountForTest() > openRefreshes);
+    }
+
+    // The reason alone changing still reaches the rows and the note while
+    // the pill is closed, and so does the remote gate.
+    void closedPillTakesAChangedReason() {
+        Harness h;
+        h.pan.setUpdatesEnabled(false);
+        const QString first = QStringLiteral("Connect to the Core to change these.");
+        const QString second = QStringLiteral("The Core is not answering.");
+        auto* note = h.control<QLabel>("pillStationNote");
+        auto* decimation = h.control<QSlider>("pillDisplayDecimation");
+        QVERIFY(note && decimation);
+        h.panel->setStationRowsAvailable(false, first);
+        drainPillEvents();
+        QCOMPARE(note->text(), first);
+        QCOMPARE(decimation->toolTip(), first);
+        QVERIFY(!decimation->isEnabled());
+        h.panel->setStationRowsAvailable(false, second);
+        drainPillEvents();
+        QCOMPARE(note->text(), second);
+        QCOMPARE(decimation->toolTip(), second);
+        h.panel->setStationRowsAvailable(true, QString());
+        drainPillEvents();
+        QVERIFY(note->isHidden());
+        QVERIFY(decimation->isEnabled());
+        h.panel->setRemoteWindow(true, false);
+        drainPillEvents();
+        QVERIFY(!note->isHidden());
+        QCOMPARE(note->text(), QStringLiteral("This Core is too old to change Decimation."));
+        h.panel->setRemoteWindow(true, true);
+        drainPillEvents();
+        QVERIFY(note->isHidden());
+        QVERIFY(!h.panel->displayPillVisible());
+    }
+
+    // Changes made while the pill is closed lay out on open exactly as the
+    // same changes made while it was open.
+    void pillOpenedAfterClosedChangesMatchesAnOpenPill() {
+        const auto change = [](Harness& h) {
+            h.panel->setRemoteWindow(true, false);
+            h.panel->setStationRowsAvailable(false,
+                QStringLiteral("Connect to the Core to change these settings, then try again."));
+            h.pan.setClarityEnabled(true);
+            h.panel->setClarityState(true, true, true);
+            drainPillEvents();
+        };
+        const auto shape = [](Harness& h) {
+            QStringList rows;
+            rows << QStringLiteral("pill %1x%2").arg(h.pill()->width()).arg(h.pill()->height());
+            const QList<QWidget*> widgets = h.pill()->findChildren<QWidget*>();
+            for (int index = 0; index < widgets.size(); ++index) {
+                const QWidget* w = widgets[index];
+                rows << QStringLiteral("%1 %2 min %3x%4 max %5x%6 hint %7x%8 hidden %9")
+                    .arg(index).arg(w->objectName())
+                    .arg(w->minimumWidth()).arg(w->minimumHeight())
+                    .arg(w->maximumWidth()).arg(w->maximumHeight())
+                    .arg(w->sizeHint().width()).arg(w->sizeHint().height())
+                    .arg(w->isHidden());
+            }
+            return rows;
+        };
+        Harness open;
+        open.pan.setUpdatesEnabled(false);
+        open.panel->openDisplayPill();
+        drainPillEvents();
+        change(open);
+        Harness closed;
+        closed.pan.setUpdatesEnabled(false);
+        change(closed);
+        closed.panel->openDisplayPill();
+        drainPillEvents();
+        QVERIFY(open.panel->displayPillVisible() && closed.panel->displayPillVisible());
+        for (Tab tab : {Tab::Spectrum, Tab::Fft, Tab::Levels, Tab::Waterfall, Tab::View3D}) {
+            open.panel->setDisplayPillTab(tab);
+            closed.panel->setDisplayPillTab(tab);
+            drainPillEvents();
+            const QStringList a = shape(open);
+            const QStringList b = shape(closed);
+            QCOMPARE(a.size(), b.size());
+            for (int row = 0; row < a.size(); ++row) {
+                QVERIFY2(a[row] == b[row],
+                         qPrintable(QStringLiteral("tab %1: open [%2] closed [%3]")
+                             .arg(static_cast<int>(tab)).arg(a[row], b[row])));
+            }
+        }
     }
 
     void dynamicReasonsAndNumberBoxesRemainWhole() {

@@ -37,8 +37,8 @@ struct KeyedMeterGauge: View {
 
     private func draw(in context: inout GraphicsContext, size: CGSize) {
         let bar = CGRect(x: 1, y: 1, width: max(0, size.width - 2), height: 14)
-        context.fill(Path(roundedRect: bar, cornerRadius: 2), with: .color(ChromeColours.gaugeGround))
-        context.stroke(Path(roundedRect: bar.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 2),
+        context.fill(Path(roundedRect: bar, cornerRadius: 2), with: .color(ChromeColours.gaugeGround)) // kept-radius: meter
+        context.stroke(Path(roundedRect: bar.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 2), // kept-radius: meter
                        with: .color(ChromeColours.gaugeBorder), lineWidth: 1)
         let inner = bar.insetBy(dx: 1, dy: 1)
         let yellow = sample.stage?.midAt ?? sample.linearPosition(sample.scale.yellowFrom)
@@ -46,7 +46,7 @@ struct KeyedMeterGauge: View {
         if let stage = sample.stage {
             context.fill(Path(CGRect(x: inner.minX + inner.width * stage.midAt, y: inner.minY,
                                      width: inner.width * (1 - stage.midAt), height: inner.height)),
-                         with: .color(Color(red: 0.12, green: 0.055, blue: 0.07)))
+                         with: .color(ChromeColours.gaugeRedZone))
         }
         if let fill = sample.position {
             zone(&context, inner, from: 0, to: min(fill, yellow), colour: ChromeColours.gaugeNormal)

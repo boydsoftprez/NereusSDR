@@ -70,7 +70,7 @@ struct BandView: UIViewRepresentable {
         }
 
         func attach(_ view: MTKView) {
-            changes = model.$revision.sink { [weak self, weak view] _ in
+            changes = model.draws.sink { [weak self, weak view] _ in
                 self?.requestDraw(view)
             }
         }

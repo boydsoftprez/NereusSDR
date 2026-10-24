@@ -15,8 +15,13 @@
 //                 Core's value and never switches it itself, and on the
 //                 Core the switch runs the amp through StationRfKitController.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22, J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//     test ports come from unusedLoopbackPort() (UnusedLoopbackPort.h), below
+//     the kernel's ephemeral range, so a parallel test cannot take one between
+//     the pick and the listen.
 // =================================================================
 
+#include "UnusedLoopbackPort.h"
 #include <QtTest/QtTest>
 #include "models/RadioModel.h"
 #include "core/AppSettings.h"
@@ -222,10 +227,8 @@ void RfKitEnabledTest::remoteWindowHoldsTheCoresSwitch()
 
 void RfKitEnabledTest::coreRunsTheSwitchThroughItsController()
 {
-    QTcpServer reservation;
-    QVERIFY(reservation.listen(QHostAddress::LocalHost, 0));
-    const quint16 closed = reservation.serverPort();
-    reservation.close();
+    const quint16 closed = NereusSDR::unusedLoopbackPort();
+    QVERIFY(closed != 0);
 
     NereusSDR::RadioModel core;
     core.enableStationAccessoryIdentity();

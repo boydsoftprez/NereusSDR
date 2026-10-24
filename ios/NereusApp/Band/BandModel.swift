@@ -290,6 +290,8 @@ final class BandModel: ObservableObject {
     var keyed = false {
         didSet {
             if keyed != oldValue {
+                // The 3D view's paused note reads it.
+                objectWillChange.send()
                 applyToState()
             }
         }
@@ -366,16 +368,36 @@ final class BandModel: ObservableObject {
         var linesSince: Int
     }
 
+    /// The marks still on the waterfall, kept apart from the band so that
+    /// a mark moving down with each line redraws only the marks' layer.
+    final class AwayMarks: ObservableObject {
+        /// Newest first.
+        @Published fileprivate(set) var marks: [AwayMark] = []
+    }
+    let away = AwayMarks()
     /// The marks still on the waterfall, newest first.
-    @Published private(set) var awayMarks: [AwayMark] = []
+    var awayMarks: [AwayMark] { away.marks }
     /// The waterfall's line count when the marks were last moved.
     private var markedLines: UInt64 = 0
 
     private(set) var state = BandState(waterfallLines: 1)
     /// The waterfall's rows on screen at the last draw.
     private(set) var visibleLines = 1
-    /// Counts changes worth a new draw.
-    @Published private(set) var revision: UInt64 = 0
+    /// Counts changes worth a new draw. Not published: a display frame
+    /// redraws the band's Metal view (``draws``) and nothing else, so the
+    /// flags, spots and readouts over the band are not built again thirty
+    /// times a second. A change those show goes through ``changed()``.
+    private(set) var revision: UInt64 = 0
+    /// Sends each change worth a new draw of the band's Metal view.
+    let draws = PassthroughSubject<Void, Never>()
+
+    /// The numbers the Display page shows live (the effective waterfall
+    /// levels and the scale), to the tenth of a dB it prints: published
+    /// apart from the band, and only when one of them moves.
+    final class EffectiveReadouts: ObservableObject {
+        @Published fileprivate(set) var shown: [Double?] = []
+    }
+    let effectiveReadouts = EffectiveReadouts()
     #if DEBUG
     /// Screenshot evidence only: one drawable generation of one view.
     struct DrawKey: Hashable {
@@ -451,7 +473,7 @@ final class BandModel: ObservableObject {
     /// line: every line after it arrives above the mark.
     func markAway(_ text: String) {
         markedLines = state.history.linesAppended
-        awayMarks.insert(AwayMark(text: text, linesSince: 0), at: 0)
+        away.marks.insert(AwayMark(text: text, linesSince: 0), at: 0)
         changed()
     }
 
@@ -465,12 +487,12 @@ final class BandModel: ObservableObject {
             return
         }
         let added = Int(min(lines - markedLines, UInt64(state.history.capacity)))
-        var moved = awayMarks
+        var moved = away.marks
         for index in moved.indices {
             moved[index].linesSince += added
         }
         moved.removeAll { $0.linesSince > state.history.capacity }
-        awayMarks = moved
+        away.marks = moved
     }
 
     /// Looks back `lines` lines at the waterfall (0 goes back to live),
@@ -584,12 +606,13 @@ final class BandModel: ObservableObject {
             moveMarks()
             countFrame()
             trackGrid()
+            noteEffectiveReadouts()
             stackFrameCount &+= 1
             if drawsStack, !pacer.draws(frame: stackFrameCount) {
                 // Half rate: this frame is kept but not drawn.
                 return
             }
-            changed()
+            redraw()
         case .noiseFloor(let floor) where floor.endpointId == endpointId:
             // The Core's full-source floor, Clarity's estimate, for the grid.
             guard floor.floorDbm.isFinite,
@@ -597,7 +620,8 @@ final class BandModel: ObservableObject {
             gridTracker.noteClarityFloor(floor.floorDbm, at: clock())
             applyToState()
             trackGrid()
-            changed()
+            noteEffectiveReadouts()
+            redraw()
         case .displayExtras(let extras) where extras.endpointId == endpointId:
             if let floor = extras.noiseFloorDbm, floor.isFinite {
                 // The 3D surface stands on the floor without the NF shift.
@@ -617,7 +641,8 @@ final class BandModel: ObservableObject {
                     coarseCoreLevels = coarse
                 }
             }
-            changed()
+            noteEffectiveReadouts()
+            redraw()
         default:
             break
         }
@@ -708,8 +733,18 @@ final class BandModel: ObservableObject {
                                                 dbmRange: drawn.scaleRange))
     }
 
-    /// Asks for a new centre and span: a zoom, a double tap or a pan.
-    func requestView(_ view: TuneGestures.View) {
+    /// Asks for a new centre and span: a zoom, a double tap or a pan. One
+    /// made by hand while the band shows the receiver keeps its span for the
+    /// next launch (``BandDisplaySettings/rxViewSpanHz``). The band's own
+    /// asks (the first view, a span held to the sample rate) keep nothing, so
+    /// a limit that holds only while the app starts never replaces the zoom.
+    func requestView(_ view: TuneGestures.View, byHand: Bool = false) {
+        if byHand, !keyedView, view.spanHz > 0, view.spanHz != settings.rxViewSpanHz {
+            var kept = settings
+            kept.rxViewSpanHz = view.spanHz
+            settings = kept
+            keepSettings(kept)
+        }
         guard view != requestedView else {
             return
         }
@@ -871,7 +906,28 @@ final class BandModel: ObservableObject {
         changed()
     }
 
+    /// A change the screens over the band show as well as the band itself.
     private func changed() {
+        objectWillChange.send()
+        redraw()
+    }
+
+    /// A change only the band's Metal view draws.
+    private func redraw() {
         revision &+= 1
+        draws.send()
+    }
+
+    /// Publishes the Display page's live numbers when one it prints moved.
+    private func noteEffectiveReadouts() {
+        let tenth = { (value: Double) in (value * 10).rounded() / 10 }
+        let levels = effectiveWaterfallLevels
+        let range = drawnSettings.scaleRange
+        let shown: [Double?] = [levels.map { tenth(Double($0.lowDbm)) }, levels.map { tenth(Double($0.highDbm)) },
+                                tenth(range.lowerBound), tenth(range.upperBound),
+                                gridTracker.clarityFloorDbm == nil ? 0 : 1]
+        if shown != effectiveReadouts.shown {
+            effectiveReadouts.shown = shown
+        }
     }
 }

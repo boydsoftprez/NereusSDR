@@ -12,6 +12,11 @@
 //               to the main thread; currentGeneration(), so a frame held
 //               for the main thread is dropped after a retune. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-21: producedAtNs is the time of the frame's samples
+//               (SpectrumSampleClock), not the FFT's publish time; input
+//               queue overflows, the engine's 5 ms skips and the clock's
+//               re-anchors are counted, and the first two logged. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/spectrum/FftEnginePool.h"
@@ -80,13 +85,22 @@ struct DaemonSpectrumSourceUpdate {
 
 /// A complete, unreduced FFT frame.  `generation` changes on every accepted
 /// activate/update so consumers can tell a previous frequency context.
-/// `producedAtNs` is a monotonic producer timestamp, not wall-clock time.
+/// `producedAtNs` is a monotonic producer timestamp, not wall-clock time:
+/// the time of the frame's samples on monotonicNowNs()'s clock
+/// (SpectrumSampleClock), so frames of one source are spaced as their
+/// samples are, free of the FFT's publish jitter.
 struct DaemonSpectrumFrame {
     MediaSourceKey source;
     quint64 generation{0};
     double centreHz{0.0};
     double sampleRateHz{0.0};
     qint64 producedAtNs{0};
+    /// producedAtNs less that of the frame the source published before this
+    /// one, whether or not anyone took it: the source's frame spacing, so an
+    /// endpoint slower than its source can take the frame nearest each of
+    /// its own slots (SpectrumEndpoint::consume). 0 for a source's first
+    /// frame and the first after its samples were interrupted.
+    qint64 sourceFrameGapNs{0};
     QVector<float> binsLinear;
     double windowEnb{0.0};
     double dbmOffset{0.0};
@@ -172,6 +186,17 @@ public:
     bool isActive(const MediaSourceKey& key) const;
     QList<MediaSourceKey> activeSources() const;
     quint64 droppedInputFrames(const MediaSourceKey& key) const;
+    /// Times a full input queue was emptied to take a new packet (a slow
+    /// engine thread): each also counts in droppedInputFrames and resets
+    /// the engine's input history. Logged at most once per 10 s.
+    quint64 inputQueueOverflows(const MediaSourceKey& key) const;
+    /// The engine's 5 ms minimum frame gap skips (FFTEngine::
+    /// minimumGapSkips), 0 for an unknown source.
+    quint64 engineMinimumGapSkips(const MediaSourceKey& key) const;
+    /// Times the source's sample clock took a new anchor for a large error
+    /// (SpectrumSampleClock::largeErrorReanchors): samples lost without a
+    /// reset, or a stall.
+    quint64 sampleClockReanchors(const MediaSourceKey& key) const;
     /// Number of completed engine I/Q handoffs since source activation.
     quint64 completedInputHandoffs(const MediaSourceKey& key) const;
     /// Frames the engine published into this source's latest-frame slot,
@@ -230,6 +255,15 @@ public:
     bool publishFrameForTest(const MediaSourceKey& key, qint64 producedAtNs,
                              const QVector<float>& binsLinear);
 
+    /// Test seam: publishes one frame as the engine would, stamped by the
+    /// source's sample clock for samples ending at `inputPosition` (I/Q
+    /// pairs) and published at `publishedAtNs`, so a test can check the
+    /// stamps the source gives a jittered publish. Returns the stamp, or
+    /// nothing for an unknown or inactive source.
+    std::optional<qint64> publishSampledFrameForTest(const MediaSourceKey& key,
+                                                     qint64 inputPosition,
+                                                     qint64 publishedAtNs);
+
     /// Test seam: whether a published frame waits in key's latest-frame
     /// slot, not yet taken.
     bool frameWaitingForTest(const MediaSourceKey& key) const;
@@ -286,7 +320,13 @@ private:
                       const QSharedPointer<FrameState>& state,
                       const QVector<float>& binsLinear,
                       double windowEnb,
-                      double dbmOffset);
+                      double dbmOffset,
+                      qint64 inputPosition,
+                      qint64 publishedAtNs);
+
+    /// Sets state.latest.sourceFrameGapNs from its producedAtNs and the
+    /// frame published before it. Under the state's lock.
+    static void noteSourceFrameGap(FrameState& state);
 
     /// Calls the wake, when one is set, for a frame just published, or
     /// says there is none. Engine threads and the owner's.

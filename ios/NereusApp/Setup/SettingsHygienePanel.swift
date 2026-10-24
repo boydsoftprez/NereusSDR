@@ -88,7 +88,7 @@ struct SettingsHygienePanel: View {
                     }
                     Text(issue.detail)
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WorkspacePalette.textSecondary)
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("\(control.id).issue.\(index)")
@@ -96,7 +96,7 @@ struct SettingsHygienePanel: View {
         } else if let reason = panel.reportReason {
             Text(reason)
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(WorkspacePalette.textSecondary)
                 .accessibilityIdentifier("\(control.id).reportReason")
         }
     }
@@ -113,13 +113,13 @@ struct SettingsHygienePanel: View {
                         perform: @escaping () -> Void) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Button(label, role: role, action: perform)
-                .buttonStyle(.bordered)
+                .buttonStyle(SetupButtonStyle(role == .destructive ? .danger : .raised))
                 .disabled(reason != nil)
                 .accessibilityIdentifier("\(control.id).\(id)")
             if let reason {
                 Text(reason)
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(WorkspacePalette.textSecondary)
                     .accessibilityIdentifier("\(control.id).\(id).reason")
             }
         }

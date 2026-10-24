@@ -69,8 +69,8 @@ int specMaxWattsFor(HPSDRModel m) noexcept {
         case HPSDRModel::ANAN_G2:
             return 100;
         case HPSDRModel::ANAN_G2E:
-            // A 100 W radio on the G2's gain row (HpsdrModel.h
-            // paMaxWattsFor), so it takes its place in the ceiling matrix.
+            // A 100 W radio (HpsdrModel.h paMaxWattsFor) on its own
+            // 53.0 dB gain row, so it takes its place in the ceiling matrix.
             return 100;
         case HPSDRModel::ANAN_G2_1K:
             return 1000;

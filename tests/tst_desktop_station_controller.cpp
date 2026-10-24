@@ -1,4 +1,5 @@
 // no-port-check: NereusSDR-original. Task 48 desktop hosting seam; no radio opened.
+#include "UnusedLoopbackPort.h"
 #include "gui/DesktopStationController.h"
 
 #include "core/AppSettings.h"
@@ -30,11 +31,7 @@ StationHostOptions optionsFor(AppSettings& settings, const QString& directory)
         QStringLiteral("Shack Mac mini"), QStringLiteral("Shack")};
     options.remoteBind = QStringLiteral("127.0.0.1");
     options.statusPage = false;
-    QTcpServer probe;
-    if (probe.listen(QHostAddress::LocalHost, 0)) {
-        options.remotePort = probe.serverPort();
-        probe.close();
-    }
+    options.remotePort = unusedLoopbackPort();
     return options;
 }
 

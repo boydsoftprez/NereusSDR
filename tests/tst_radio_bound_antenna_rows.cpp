@@ -4,6 +4,7 @@
 #include "core/accessories/AlexAntennaFacade.h"
 #include "core/StepAttenuatorController.h"
 #include "core/MoxController.h"
+#include "core/session/RxOnlyLinkFit.h"
 
 namespace {
 const QString kMac = QStringLiteral("AA:BB:CC:DD:EE:01");
@@ -165,15 +166,125 @@ private slots:
         readyAlex(unknownVersion, unknownStep);
         Device future;
         unknownVersion.pair(future);
+        // A later version than the Core knows is offered the Core's
+        // newest, 2, as txEqCurve is.
         auto futureFeature = kRows;
-        futureFeature.insert("radioAntennaRows", 2);
-        auto* unsupportedVersion = unknownVersion.signIn(future, futureFeature);
-        QVERIFY(admitted(unsupportedVersion));
-        QVERIFY(!capability(unsupportedVersion->received(),
-                            QStringLiteral("radioAntennaRowsVersion")));
-        QVERIFY(!unknownVersion.invoke(unsupportedVersion, "setAlexRxAntennaForRadio",
-                                       rxArgs(kMac, Band::Band40m, 2))
-                     .value("accepted").toBool());
+        futureFeature.insert("radioAntennaRows", 3);
+        auto* laterVersion = unknownVersion.signIn(future, futureFeature);
+        QVERIFY(admitted(laterVersion));
+        QCOMPARE(capability(laterVersion->received(), QStringLiteral("radioAntennaRowsVersion")),
+                 std::optional<qint64>(2));
+    }
+
+    // RX-only antennas as Thetis's checkbox sum (0..5): a peer that
+    // declared radioAntennaRows 2 reads and writes 4 and 5; any other reads
+    // them as 3 (XVTR, Thetis's winning box), may not write them, and its
+    // single pick 1..3 replaces the band's value.
+    void rxOnlyPairsFollowTheDeclaredVersion()
+    {
+        StepAttenuatorController step;
+        Core core;
+        readyAlex(core, step);
+        Device a(QStringLiteral("A"), QStringLiteral("phone"));
+        Device b(QStringLiteral("B"), QStringLiteral("phone"));
+        core.pair(a);
+        core.pair(b);
+        auto wideFeatures = kRows;
+        wideFeatures.insert("radioAntennaRows", 2);
+        auto* wide = core.signIn(a, wideFeatures);
+        auto* narrow = core.signIn(b, kRows);
+        QVERIFY(admitted(wide));
+        QVERIFY(admitted(narrow));
+        QCOMPARE(capability(wide->received(), QStringLiteral("radioAntennaRowsVersion")),
+                 std::optional<qint64>(2));
+        QCOMPARE(capability(narrow->received(), QStringLiteral("radioAntennaRowsVersion")),
+                 std::optional<qint64>(1));
+
+        const auto entry = [](const LoopbackTransport* app, Band band) {
+            const QStringList list = latest(app->received(), QStringLiteral("alexAntennas"),
+                                            QStringLiteral("rxOnlyAntennas"))
+                                         .toString().split(QLatin1Char(','));
+            const int slot = perBandStateSlot(band);
+            return slot < list.size() ? list.at(slot).toInt() : -1;
+        };
+        // With two devices signed in, a radio row change waits for its
+        // sender's yes; answer it and return the outcome.
+        const auto answered = [&core](LoopbackTransport* app, QJsonObject result) {
+            if (result.value(QStringLiteral("reason")).toString()
+                == QStringLiteral("Waiting for you to confirm.")) {
+                const QJsonObject question =
+                    ofType(app->received(), QStringLiteral("confirm.request")).last();
+                result = core.invoke(app, "confirm.proceed",
+                    {int64("id", question.value(QStringLiteral("id")).toInteger()),
+                     int64("choice", -1)});
+            }
+            return result;
+        };
+        const auto pick = [&](LoopbackTransport* app, int antenna) {
+            return answered(app, core.invoke(app, "setAlexRxAntennaForRadio",
+                                             rxArgs(kMac, Band::Band40m, antenna, true)));
+        };
+        for (const int pair : {4, 5}) {
+            const auto result = pick(wide, pair);
+            QVERIFY2(result.value(QStringLiteral("accepted")).toBool(),
+                     qPrintable(result.value(QStringLiteral("reason")).toString()));
+            QCOMPARE(core.model->alexController().rxOnlyAnt(Band::Band40m), pair);
+            QTRY_COMPARE(entry(wide, Band::Band40m), pair);
+            QTRY_COMPARE(entry(narrow, Band::Band40m), 3);
+        }
+        QVERIFY(!pick(wide, 6).value("accepted").toBool());
+        QCOMPARE(core.model->alexController().rxOnlyAnt(Band::Band40m), 5);
+
+        const auto refused = pick(narrow, 4);
+        QVERIFY(!refused.value(QStringLiteral("accepted")).toBool());
+        QCOMPARE(refused.value(QStringLiteral("reason")).toString(),
+                 QStringLiteral("Update this app to choose XVTR with another receive-only "
+                                "input on this Core."));
+        QCOMPARE(core.model->alexController().rxOnlyAnt(Band::Band40m), 5);
+
+        // A whole list from the narrow peer: the 3 it saw for 40 m keeps
+        // the Core's 5, and its 2 on 20 m is taken.
+        QStringList list = latest(narrow->received(), QStringLiteral("alexAntennas"),
+                                  QStringLiteral("rxOnlyAntennas")).toString().split(QLatin1Char(','));
+        list[perBandStateSlot(Band::Band20m)] = QStringLiteral("2");
+        narrow->sendText(SessionMessages::encode(SessionMessages::propertyWrite(
+            "alexAntennas", {utf8("rxOnlyAntennas", list.join(QLatin1Char(',')))}, 91)));
+        QTRY_VERIFY(!propertyResult(narrow, 91).isEmpty());
+        const QJsonObject written = answered(narrow,
+            propertyResult(narrow, 91).value(QStringLiteral("results")).toArray().at(0).toObject());
+        QVERIFY2(written.value(QStringLiteral("accepted")).toBool(),
+                 QJsonDocument(written).toJson().constData());
+        QCOMPARE(core.model->alexController().rxOnlyAnt(Band::Band20m), 2);
+        QCOMPARE(core.model->alexController().rxOnlyAnt(Band::Band40m), 5);
+
+        // The narrow peer's single pick replaces the pair, as Thetis's
+        // radio-style pick would.
+        QVERIFY(pick(narrow, 1).value("accepted").toBool());
+        QCOMPARE(core.model->alexController().rxOnlyAnt(Band::Band40m), 1);
+        QVERIFY(pick(narrow, 0).value("accepted").toBool());
+        QCOMPARE(core.model->alexController().rxOnlyAnt(Band::Band40m), 0);
+    }
+
+    void rxOnlyLinkFitNarrowsOnlyTheRxOnlyList()
+    {
+        using namespace NereusSDR::RxOnlyLinkFit;
+        QCOMPARE(narrowRxOnly(0), 0);
+        QCOMPARE(narrowRxOnly(3), 3);
+        QCOMPARE(narrowRxOnly(4), 3);
+        QCOMPARE(narrowRxOnly(5), 3);
+        const QByteArray delta = SessionMessages::encode(SessionMessages::delta(
+            "alexAntennas", {utf8("rxOnlyAntennas", QStringLiteral("0,4,5,3,1,2")),
+                             utf8("rxAntennas", QStringLiteral("1,2,3,1,2,3"))}));
+        const QByteArray fitted = forPeerWithoutPairs(delta);
+        QVERIFY(!QJsonDocument::fromJson(fitted).isNull());
+        QVERIFY2(fitted.contains("0,3,3,3,1,2"), fitted.constData());
+        QVERIFY2(fitted.contains("1,2,3,1,2,3"), fitted.constData());
+        QVERIFY(!fitted.contains("0,4,5"));
+        const QByteArray plain = SessionMessages::encode(SessionMessages::delta(
+            "alexAntennas", {utf8("rxOnlyAntennas", QStringLiteral("0,1,2,3"))}));
+        QCOMPARE(forPeerWithoutPairs(plain), plain);
+        QCOMPARE(keepPairsFromNarrowList(QStringLiteral("4,5,5,0"), QStringLiteral("3,3,1,5")),
+                 QStringLiteral("4,5,1,0"));
     }
 
     void malformedAndSwitchedRadioRefuse()
@@ -332,6 +443,8 @@ private slots:
                 continue;
             }
             entry.value = QVariant(qlonglong(2));
+            QCOMPARE(StationCapabilities::fromUpdates(updates).radioAntennaRowsVersion, 2);
+            entry.value = QVariant(qlonglong(3));
             QCOMPARE(StationCapabilities::fromUpdates(updates).radioAntennaRowsVersion, 0);
             entry.kind = MirrorWireKind::Utf8;
             entry.value = QVariant(QStringLiteral("1"));

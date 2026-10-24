@@ -4,8 +4,9 @@
 import SwiftUI
 
 /// A choice among several (the board's ticked rows): the whole row is the
-/// button. A choice that can't be made here is greyed and does nothing;
-/// its section says why.
+/// button, and the picked row is in the glass with its tick kept (spec
+/// section 7.1). A choice that can't be made here is greyed at 0.4 and does
+/// nothing; its section says why.
 struct SetupChoiceRow: View {
     let title: String
     let detail: String
@@ -20,20 +21,20 @@ struct SetupChoiceRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
                         .font(.body.weight(.semibold))
-                        .foregroundStyle(enabled ? Color.primary : Color.secondary)
+                        .foregroundStyle(.primary)
                     Text(detail)
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WorkspacePalette.textSecondary)
                 }
                 Spacer(minLength: 0)
-                Image(systemName: "checkmark")
-                    .foregroundStyle(enabled ? ChromeColours.accent : Color.secondary)
-                    .opacity(chosen ? 1 : 0)
+                SetupCheckMark(chosen: chosen)
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .setupPicked(chosen)
         .disabled(!enabled)
+        .setupGreyed(!enabled)
         .accessibilityAddTraits(chosen ? .isSelected : [])
         .accessibilityIdentifier(id)
     }

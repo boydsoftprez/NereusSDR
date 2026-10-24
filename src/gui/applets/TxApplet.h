@@ -14,6 +14,19 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-21 - A copy of a row made after the gates starts as gated as the
+//                applet's own; a preview of a row is inert. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-20 - connectRow: a row's connection ends with the row or the
+//                applet, whichever goes first. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-10-20 - The rows as independent container content: per-row
+//                wireXSect() methods, the list of copies (QPointers) and the
+//                margins a copy gives itself. Brian Sutton, AI-assisted via
+//                OpenCode.
+//   2026-10-18 - applyDriveSourceGate; setPowerByBandPermitted removed (the
+//                 sliders no longer write the tune drive source). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -222,9 +235,11 @@
 
 #include "AppletWidget.h"
 #include "gui/NereusGuiExport.h"
+#include <QMargins>
 #include <QPointer>
 #include <QList>
 #include <functional>
+#include <utility>
 #include <QString>
 #include "models/Band.h"
 #include "core/BoardCapabilities.h"  // setBoardCapabilities slot
@@ -250,6 +265,13 @@ class TwoToneController;
 class TxCfcDialog;
 class DexpPeakMeter;
 class SliceModel;
+class TxChainSection;
+class TxFilterSection;
+class TxKeyingSection;
+class TxProcessingSection;
+class TxMonitorSection;
+class TxPowerSection;
+class TxVoxSection;
 
 // TxApplet — transmit controls panel.
 //
@@ -399,12 +421,20 @@ public slots:
     void setMonitorOutputPermitted(bool permitted,
                                    const QString& unavailableReason = QString());
     static QString monitorOutputUnavailableReason();
-    // R-R3-49 (group A fix wave, M3): whether an RF Power move also writes
-    // the tune drive source (tuneDrivePowerSource on the link), which a Core
-    // takes from transmitSettingsVersion 5. MainWindow supplies false for an
-    // older Core, which would refuse it on every move. Always true locally.
-    // The per-band power is never written from a window: the Core owns it.
-    void setPowerByBandPermitted(bool permitted) { m_powerByBandPermitted = permitted; }
+    // A second, independent copy of the MON row, for a container that holds
+    // the monitor controls on their own. The applet wires it exactly as it
+    // wires its own, so both show and set the same state.
+    //
+    // With `preview` (a container's ContentRenderMode::Preview) the copy is
+    // inert: built as the row is, but not wired, not one of the applet's
+    // rows, disabled and taking no focus, so it can change nothing.
+    TxMonitorSection* createMonitorSection(QWidget* parent, bool preview = false);
+    TxPowerSection* createPowerSection(QWidget* parent, bool preview = false);
+    TxFilterSection* createFilterSection(QWidget* parent, bool preview = false);
+    TxChainSection* createChainSection(QWidget* parent, bool preview = false);
+    TxVoxSection* createVoxSection(QWidget* parent, bool preview = false);
+    TxProcessingSection* createProcessingSection(QWidget* parent, bool preview = false);
+    TxKeyingSection* createKeyingSection(QWidget* parent, bool preview = false);
     // R-R3-49 (parity Task 4): the CFC dialog (transmitSettingsVersion 4).
     // The EQ and CFC right-clicks open their dialogs in any window; this
     // greys the CFC dialog with the reason while a remote window cannot
@@ -422,8 +452,8 @@ public slots:
     void applyStationCfcCompression(const QList<double>& binsDb);
     void setStationCfcBarChartUnavailable(const QString& reason);
     // Parity Task 33: the RF Pwr and SWR bars, for a test.
-    BarInstrument* fwdPowerGauge() const { return m_fwdPowerGauge; }
-    BarInstrument* swrGauge() const { return m_swrGauge; }
+    BarInstrument* fwdPowerGauge() const;
+    BarInstrument* swrGauge() const;
     // R-R3-49 (parity Task 7): PS-A arms PureSignal and keys nothing. It
     // follows this gate (not setTransmitPermitted): a remote window whose
     // Core offers arming (transmitSettingsVersion 7) uses it while the
@@ -436,11 +466,11 @@ public:
     // ── Test accessors ──────────────────────────────────────────────────────
     // Always-on (no NEREUS_BUILD_TESTS guard) — same convention as
     // TestTwoTonePage (matches AudioTxInputPage / RxApplet patterns).
-    QComboBox*   profileCombo()      const { return m_profileCombo; }
-    QPushButton* twoToneButton()     const { return m_twoToneBtn; }
+    QComboBox*   profileCombo()      const;
+    QPushButton* twoToneButton()     const;
     // Task 16: the keying buttons receive only disables.
-    QPushButton* moxButton()         const { return m_moxBtn; }
-    QPushButton* tuneButton()        const { return m_tuneBtn; }
+    QPushButton* moxButton()         const;
+    QPushButton* tuneButton()        const;
     // Borrowed desktop host routes key requests through its holder gate.
     // Empty handlers restore direct-local behavior.
     void setDesktopKeyHandlers(std::function<void(bool)> mox,
@@ -479,10 +509,10 @@ public:
                                  std::function<TransmitSliceChoice(int)> availability = {});
     /// Rebuilds the letter row (a slice came or went, control changed).
     void refreshTransmitSliceChoices();
-    QList<QPushButton*> transmitSliceButtons() const { return m_txSliceButtons; }
-    QPushButton* voxButton()         const { return m_voxBtn; }
+    QList<QPushButton*> transmitSliceButtons() const;
+    QPushButton* voxButton()         const;
     // Issue #175 Task 7: HL2 slider rescale + dB label test access.
-    QSlider*     rfPowerSlider()    const noexcept { return m_rfPowerSlider; }
+    QSlider*     rfPowerSlider()    const noexcept;
     /// Fix wave I4: a remote window's line under MOX and TUNE saying who
     /// holds transmit on the Core ("Grant's iPhone holds transmit.",
     /// "... holds transmit and is away.", "Transmit is changing hands.").
@@ -493,11 +523,11 @@ public:
     /// window can take it. Outlined red while the holder is on the air.
     void setTakeTransmitOffered(bool offered, bool holderOnAir);
     bool takeTransmitOffered() const;
-    QPushButton* takeTransmitButton() const { return m_takeTransmitBtn; }
+    QPushButton* takeTransmitButton() const;
     QString transmitHolderText() const;
-    QSlider*     tunePowerSlider()  const noexcept { return m_tunePwrSlider; }
-    QLabel*      rfPowerLabel()     const noexcept { return m_rfPowerValue; }
-    QLabel*      tunePowerLabel()   const noexcept { return m_tunePwrValue; }
+    QSlider*     tunePowerSlider()  const noexcept;
+    QLabel*      rfPowerLabel()     const noexcept;
+    QLabel*      tunePowerLabel()   const noexcept;
 
     // ── Issue #175 Task 7: per-SKU power-slider rescale + dB labels ─────────
     // mi0bot-Thetis HL2 parity helpers.
@@ -573,10 +603,6 @@ private:
     void syncRemoteIndicators();
     // Fix wave GUI-I7: put back PS-A's tooltip under the facade's reason.
     void removePsaFacadeReason();
-    // R-R3-45: show the MON output choice (true = headphones) without
-    // writing it back, then refresh the notice.
-    void showMonitorOutput(bool headphones);
-    void updateMonitorOutputNotice();
     // K.2: slot called when SliceModel::dspModeChanged fires (via RadioModel).
     // Updates m_moxBtn->setToolTip(tooltipForMode(mode)).
     void onMoxModeChanged(DSPMode mode);
@@ -630,23 +656,14 @@ private:
     // 0. Mic-source badge (J.3 Phase 3M-1b) — read-only label above the gauges.
     QLabel*  m_micSourceBadge = nullptr;
     bool     m_micSourceBadgeAmber = false;   // native audio plan Task 20
-    QLabel*  m_holderLabel = nullptr;   // fix wave I4
-    QPushButton* m_takeTransmitBtn = nullptr;  // Task 78
     // 1. Forward Power gauge
-    BarInstrument*  m_fwdPowerGauge  = nullptr;
     // 2. SWR gauge
-    BarInstrument*  m_swrGauge       = nullptr;
     // EMA smoothing state for fwd-power gauge (Thetis-style envelope detector
     // not yet ported; this is a simple alpha=0.25 exponential-moving-average
     // to keep the displayed value calm — RadioStatus::powerChanged fires
     // ~twice per hardware sample, which makes raw values visibly jittery).
-    double   m_fwdPowerSmoothedW{0.0};
     // 3. RF Power
-    QSlider* m_rfPowerSlider  = nullptr;
-    QLabel*  m_rfPowerValue   = nullptr;
     // 4. Tune Power
-    QSlider* m_tunePwrSlider  = nullptr;
-    QLabel*  m_tunePwrValue   = nullptr;
     // ── 4b. VOX row (3M-3a-iii bench polish 2026-05-04) ───────────────────
     // Relocated from PhoneCwApplet (Phone tab Control #10).  Layout:
     //   [VOX btn 48px] [Threshold slider + DexpPeakMeter stack][-N dB inset]
@@ -657,29 +674,96 @@ private:
     // (setup.designer.cs:45005-45013 [v2.10.3.13]).
     // Bidirectional with TransmitModel::voxEnabled / voxThresholdDb /
     // voxHangTimeMs.  Right-click on the VOX button → openSetupRequested.
-    QPushButton*    m_voxBtn{nullptr};
-    QSlider*        m_voxSlider{nullptr};         // VOX threshold (-80..0 dB)
-    QLabel*         m_voxLvlLabel{nullptr};
-    QSlider*        m_voxDlySlider{nullptr};      // Hold time (1..2000 ms)
-    QLabel*         m_voxDlyLabel{nullptr};
-    DexpPeakMeter*  m_voxPeakMeter{nullptr};
-    // 100 ms QTimer driving m_voxPeakMeter.  Cadence matches Thetis
+    // 4b. VOX row — the VOX toggle, the threshold slider with the live
+    //     DexpPeakMeter strip, the hold-time slider and their inset
+    //     readouts — now in TxVoxSection (3M-3a-iii bench polish 2026-05-04).
+    //     The applet keeps the model wiring, the 100 ms peak poller and the
+    //     transmit-permission gates; the section owns the widgets.
+    // 1-4. The forward-power and SWR gauges and the RF Power and Tune Power
+    //      slider rows — now in TxPowerSection. The applet keeps the model
+    //      wiring and the smoothed forward-power reading it feeds the gauge;
+    //      the section owns the widgets and the per-SKU scaling.
+    // 4a/4b. The TUNE and MOX buttons, the transmit-slice letter row, the
+    //      label that says who holds transmit, and the Take transmit button —
+    //      now in TxKeyingSection. The applet keeps which slice transmits and
+    //      the model's answers; the section owns the widgets and the row.
+    // 4e. The LEV, EQ and CFC buttons and the TX Profile combo — now in
+    //      TxChainSection. The applet keeps the model wiring and the dialogs
+    //      the right-click opens; the section owns the widgets.
+    TxChainSection* m_chainSection = nullptr;
+    // 4g. The 2-Tone, PS-A and DUP buttons and the SWR protection LED —
+    //      now in TxProcessingSection. The applet keeps the model wiring and
+    //      the signals the buttons raise; the section owns the widgets.
+    TxProcessingSection* m_processingSection = nullptr;
+    // 4f. The TX bandpass filter cutoffs and the filter status label — now in
+    //      TxFilterSection. The applet keeps the model wiring; the section owns
+    //      the widgets.
+    TxFilterSection* m_filterSection = nullptr;
+    TxKeyingSection* m_keyingSection = nullptr;
+    TxPowerSection* m_powerSection = nullptr;
+    TxVoxSection* m_voxSection = nullptr;
+    // 100 ms QTimer driving the VOX peak meter.  Cadence matches Thetis
     // UpdateNoiseGate Task.Delay(100) at console.cs:25347 [v2.10.3.13].
     QTimer*         m_voxMeterTimer{nullptr};
-    // 4c. MON toggle (J.3 Phase 3M-1b) — bidirectional with TransmitModel::monEnabled
-    QPushButton* m_monBtn     = nullptr;
-    // 4d. Monitor volume slider (J.3 Phase 3M-1b) — 0..100 → monitorVolume 0.0..1.0
-    //     Default 50 (matches model default 0.5f from Thetis audio.cs:417).
-    QSlider*     m_monitorVolumeSlider = nullptr;
-    QLabel*      m_monitorVolumeValue  = nullptr;
-    // R-R3-45: where MON plays, beside the MON button. Exclusive pair
-    // bound to AudioEngine::txMonitorOutput (local window only), plus the
-    // plain notice shown when the headphones are chosen and not open.
-    QPushButton* m_monSpeakersBtn   = nullptr;
-    QPushButton* m_monHeadphonesBtn = nullptr;
-    QLabel*      m_monOutputNotice  = nullptr;
-    bool         m_headphonesAvailable = false;
-    bool         m_headphonesEnabled   = false;
+    // 4c/4d. MON toggle, the SPEAKERS / PHONES output pair, the notice that
+    //      says why MON is silent, and the monitor volume slider — all of it
+    //      now in TxMonitorSection (J.3 Phase 3M-1b, R-R3-45). The applet
+    //      keeps the wiring to the model, the audio engine and the gates;
+    //      the section owns the widgets and their presentation.
+    TxMonitorSection* m_monitorSection = nullptr;
+    // Independent copies of the MON row made for containers (see
+    // createMonitorSection). The applet wires each of them, and the
+    // transmit-permission gates reach all of them.
+    QList<QPointer<TxMonitorSection>> m_extraMonitorSections;
+    QList<QPointer<TxPowerSection>> m_extraPowerSections;
+    QList<QPointer<TxFilterSection>> m_extraFilterSections;
+    QList<QPointer<TxChainSection>> m_extraChainSections;
+    QList<QPointer<TxVoxSection>> m_extraVoxSections;
+    QList<QPointer<TxProcessingSection>> m_extraProcessingSections;
+    QList<QPointer<TxKeyingSection>> m_extraKeyingSections;
+    // The controls each transmit-permission gate covers, in the applet's own
+    // rows and in every independent copy of them.
+    QList<TxMonitorSection*> allMonitorSections() const;
+    QList<TxPowerSection*> allPowerSections() const;
+    QList<TxFilterSection*> allFilterSections() const;
+    QList<TxChainSection*> allChainSections() const;
+    QList<TxVoxSection*> allVoxSections() const;
+    QList<TxProcessingSection*> allProcessingSections() const;
+    QList<TxKeyingSection*> allKeyingSections() const;
+    QList<QWidget*> rxOnlyLockedControls() const;
+    void syncSectionInstances();
+    // Applies every gate again from the state the setters kept, so a copy
+    // made after the gates starts as gated as the applet's own row.
+    void reapplyGates();
+    void syncPsaFromFacadeIn(TxProcessingSection* s);
+    void refreshTransmitSliceChoicesIn(TxKeyingSection* s);
+    void removePsaFacadeReasonIn(TxProcessingSection* s);
+    QList<QWidget*> transmitSettingsGatedControls() const;
+    QList<QWidget*> chainSettingsGatedControls() const;
+    QList<QWidget*> profileGatedControls() const;
+    void wireMonitorSection(TxMonitorSection* section);
+    void wirePowerSection(TxPowerSection* section);
+    void wireFilterSection(TxFilterSection* section);
+    void wireChainSection(TxChainSection* section);
+    void wireVoxSection(TxVoxSection* section);
+    void wireProcessingSection(TxProcessingSection* section);
+    void wireKeyingSection(TxKeyingSection* section);
+    // Connects a signal to a handler for one row.  The connection ends with
+    // whichever goes first: the row, which a container may close while the
+    // applet lives, or the applet, which a copy in a container may outlive.
+    // The handlers use both, so neither one alone can be the context.
+    template <typename Sender, typename Signal, typename Handler>
+    void connectRow(QObject* row, const Sender* sender, Signal signal, Handler&& handler)
+    {
+        const QMetaObject::Connection c =
+            connect(sender, signal, row, std::forward<Handler>(handler));
+        connect(this, &QObject::destroyed, row, [c] { QObject::disconnect(c); });
+    }
+    int txRowSpacing() const;
+    QMargins txRowMargins() const;
+    QMargins txCopyMargins() const;
+    QList<QWidget*> monitorChainControls() const;
+    QList<QWidget*> monitorOutputControls() const;
     // 4e. TX-processing quick toggles — row of 3 (3M-3a-ii post-bench cleanup
     //     drops the duplicate PROC button; PROC lives on PhoneCwApplet which
     //     already had a wired button + slider sitting un-wired since 3I-3):
@@ -688,9 +772,6 @@ private:
     //          right-click → TxEqDialog (3M-3a-i Batch 3)
     //     CFC: bidirectional ↔ TransmitModel.cfcEnabled (3M-3a-ii Batch 6 Task A)
     //          right-click → TxCfcDialog (modeless, mirrors EQ launch pattern)
-    QPushButton* m_levBtn     = nullptr;
-    QPushButton* m_eqBtn      = nullptr;
-    QPushButton* m_cfcBtn     = nullptr;
     // ── 3M-3a-ii Batch 6 (Task A): modeless CFC dialog instance ─────────────
     // Lazy-created on first right-click of [CFC] or first call to
     // requestOpenCfcDialog(). Owned by the retained applet across container
@@ -700,32 +781,22 @@ private:
     std::function<void(bool)> m_stationCfcBarChart;
     QString m_stationCfcBarChartReason;
     // 5. MOX
-    QPushButton* m_moxBtn     = nullptr;
     // 6. TUNE
-    QPushButton* m_tuneBtn    = nullptr;
     // 7. TX Profile combo
-    QComboBox*   m_profileCombo = nullptr;
     // 8. 2-Tone test
-    QPushButton* m_twoToneBtn = nullptr;
     // 9. PS-A (Phase 3M-4 Task 13)
-    QPushButton* m_psaBtn     = nullptr;
-    QPushButton* m_dupBtn     = nullptr;
     // Shared session facade owned by RadioModel. setPureSignal() changes its
     // local coordinator only for the established standalone test seam.
     QPointer<NereusSDR::PureSignalSessionFacade> m_psFacade;
     // ── Plan 4 Cluster C (Task 4 / D2+D3+D9-status): TX BW spinbox row ─────────
     // Low/High cutoff spinboxes (Hz) — bidirectional with TransmitModel::filterLow
     // and filterHigh via the filterChanged(int,int) signal.
-    QSpinBox*    m_txFilterLowSpin{nullptr};
-    QSpinBox*    m_txFilterHighSpin{nullptr};
     // Status label below the spinbox row — shows "100-2900 Hz · 2.8k BW" or
     // "±2900 Hz · 5.8k BW" depending on whether the active slice mode is
     // symmetric.  Orange tint (#ffaa70) matches the future Style::kTxFilterOverlayLabel
     // constant (Cluster E will add it to StyleConstants.h).
-    QLabel*      m_txFilterStatusLabel{nullptr};
 
     // 10. SWR protection LED (wired to SwrProtectionController::highSwrChanged)
-    QLabel*      m_swrProtLed = nullptr;
     // Removed NYI members (re-add when their phases ship):
     //   m_atuBtn      — ATU phase (no plan yet)
     //   m_memBtn      — channel-memory phase
@@ -744,10 +815,17 @@ private:
     // the test calls rescalePowerSlidersForModel directly without rebuilding
     // the radio profile).  Default HPSDRModel::FIRST is the same sentinel
     // used by rescaleFwdGaugeForModel(HPSDRModel::FIRST) at construction.
-    HPSDRModel m_powerSliderModel{HPSDRModel::FIRST};
 
     // Flag preventing echo loops between the model and the UI.
     bool m_updatingFromModel{false};
+    // The state the applet has pushed into its own rows, so a copy made
+    // later starts where the applet's own row is.
+    bool m_takeTransmitOffered{false};
+    bool m_holderOnAir{false};
+    QString m_transmitHolderText;
+    bool m_dupChecked{false};
+    bool m_dupAvailable{false};
+    QString m_dupTooltip;
     std::function<void(bool)> m_desktopMoxRequest;
     std::function<void(bool)> m_desktopTuneRequest;
     std::function<bool()> m_desktopMoxOn;
@@ -755,8 +833,6 @@ private:
     std::function<void(bool)> m_desktopTwoToneRequest;
     std::function<SliceModel*()> m_transmitSliceResolver;
     // Slice control plan Task 11 (U8): the transmit-slice letter row.
-    QHBoxLayout* m_txSliceRow = nullptr;
-    QList<QPushButton*> m_txSliceButtons;
     std::function<bool(int)> m_txSliceControlled;
     std::function<void(int)> m_txSliceChoose;
     std::function<QString()> m_txSliceUnavailable;
@@ -766,15 +842,27 @@ private:
     // after handshake/capability evaluation.
     bool m_transmitPermitted{true};
     bool m_transmitSettingsPermitted{true};
+    QString m_transmitSettingsReason;
     bool m_transmitChainSettingsPermitted{true};
     QString m_transmitChainSettingsReason;
     bool m_monitorOutputPermitted{true};  // R-R3-49 (parity Task 32)
     QString m_monitorOutputReason;
     void applyMonitorOutputGate();
+    // Grays the power slider TUNE or the two-tone test is not using, with
+    // the reason (Thetis setupTuneDriveSlider, grayed where Thetis hides).
+    void applyDriveSourceGate();
+    // The VOX row's widgets, now owned by TxVoxSection. The applet keeps the
+    // model wiring, the 100 ms peak poller and the permission gates; these
+    // reach the section's widgets for it.
+    QSlider* voxThresholdSlider() const;
+    QLabel*  voxThresholdLabel()  const;
+    QSlider* voxHoldSlider()       const;
+    QLabel*  voxHoldLabel()        const;
     bool m_txProfilePermitted{true};
+    QString m_txProfileReason;
     bool m_txProcessingPermitted{true};   // R-R3-49 (parity Task 4)
-    bool m_powerByBandPermitted{true};    // R-R3-49 (group A fix wave, M3)
     bool m_psArmingPermitted{true};       // R-R3-49 (parity Task 7)
+    QString m_psArmingReason;
     // Fix round 1 (minor 5): the board is not known (no radio, so the caps
     // fall back to Unknown) and does not say it has PureSignal: PS-A shows,
     // disabled, with PureSignalSessionFacade::needsRadioReason().

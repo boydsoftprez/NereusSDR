@@ -676,11 +676,17 @@ public:
     // poll consumes it):
     //   // we can come in here from a ToT ( StopAllTX() ) //[2.10.3.6]MWLGE fixes #518
     //   // however we dont want switch anything back on, unless all of the above have been released
-    // latchStopAllTx: while a PTT source (mic, CAT, VOX, TCI) is still held,
-    // pollPtt keys nothing; the latch clears once every one of them has
-    // been released (at once when none is held).
+    // latchStopAllTx: records which PTT sources (mic, CAT, VOX, TCI) are
+    // still held after the stop's unkey; pollPtt keeps each of those off
+    // until that source is released. When the stop unkeys a live key, the
+    // unkey drops CAT and TCI itself (dropPttOnUnkey), so only a held mic
+    // PTT or VOX is waited on. When MOX is already off (a stop during a
+    // release, a tail or a tune), no unkey runs, so a held CAT or TCI key
+    // stays waited on until the app releases it. A fresh key from a source
+    // not waited on keys normally. The latch clears when nothing is waited
+    // on (at once when none is held).
     void latchStopAllTx();
-    bool isStopAllTxLatched() const noexcept { return m_stopAllTxLatched; }
+    bool isStopAllTxLatched() const noexcept { return m_stopAllTxWait != 0; }
 
     // Task 33: StopAllTx's `_manual_mox = false;` (console.cs:45332
     // [v2.10.3.15]). Clears the flag and emits manualMoxChanged(false) if
@@ -1853,9 +1859,14 @@ private:
     EndOfOverTailFn m_endOfOverTail;
     bool m_waitingForEndOfOverTail{false};
 
-    // Task 33: StopAllTx's latch (Thetis _stop_all_tx). pollPtt consumes it
-    // against the PTT source levels (m_micPtt, m_catPtt, m_voxPtt, m_tciPtt).
-    bool m_stopAllTxLatched{false};
+    // Task 33: StopAllTx's latch (Thetis _stop_all_tx), as the sources it
+    // waits on (kRefused* bits). A bit clears when its source is no longer
+    // held (sweepStopAllTxWait); pollPtt skips only the sources still in it.
+    quint8 m_stopAllTxWait{0};
+    // The kRefused* bits of the sources whose levels are held now.
+    quint8 heldSourceBits() const noexcept;
+    // Drops from m_stopAllTxWait every source that is no longer held.
+    void sweepStopAllTxWait();
 
     // iPhone app plan Task 34: the keying gate, who the key now on is for,
     // and the keyer a gate-admitted setMox(true) keys for.

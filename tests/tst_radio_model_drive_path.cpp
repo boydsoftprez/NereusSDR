@@ -27,6 +27,12 @@
 //   §6 TUNE engagement triggers full math chain.
 //   §7 No PaProfileManager / no active profile -> graceful no-op.
 //   §8 PaTelemetryScaling::scaleFwdPowerWatts public lift parity.
+//   §9 SWR protection reaches the drive: a trip sets the factor the pump
+//      reads, wind-back re-pumps at once, MOX off releases the latch, and
+//      disabled protection leaves the drive alone. PR 604 fix wave: the
+//      ANAN-8000D floor follows PWR, an open antenna drops MOX (not on the
+//      8000D), every unkey releases the latch, a sample after unkey is
+//      ignored, and Disable HF PA leaves the drive alone.
 //
 // Source references (cite comments only — no Thetis logic translated):
 //   audio.cs:262-271 [v2.10.3.13] — wire byte composition (NO SWR).
@@ -55,6 +61,7 @@
 #include "core/RadioConnection.h"
 #include "core/StepAttenuatorController.h"
 #include "core/TxChannel.h"
+#include "core/safety/SwrProtectionController.h"
 #include "core/TwoToneController.h"
 #include "models/Band.h"
 #include "models/RadioModel.h"
@@ -115,6 +122,55 @@ static void pump()
     QCoreApplication::processEvents();
     QCoreApplication::processEvents();
 }
+
+// Key through MoxController and wait until the walk reaches Tx.
+static void keyAndWait(RadioModel& model)
+{
+    MoxController* mox = model.moxController();
+    mox->setMoxCheck({});
+    mox->setMox(true);
+    pump();
+    QTRY_COMPARE(mox->state(), MoxState::Tx);
+}
+
+static void unkeyAndWait(RadioModel& model)
+{
+    MoxController* mox = model.moxController();
+    mox->setMox(false);
+    pump();
+    QTRY_COMPARE(mox->state(), MoxState::Rx);
+}
+
+// The wire byte pumpAudioVolume sends, as NetworkIO.SetOutputPower
+// (NetworkIO.cs:199-212 [v2.10.3.15]) computes it.
+static int expectedWire(double audioVolume, float swrProtect)
+{
+    double f = audioVolume * 1.02;
+    if (f < 0.0) { f = 0.0; }
+    if (f >= 1.0) { f = 1.0; }
+    return static_cast<int>(255.0 * f * static_cast<double>(swrProtect));
+}
+
+// Raw ANAN-8000D bridge counts for a high SWR (about 165.7 W forward, SWR
+// about 3.27), clear of the open-antenna test. The 8000D's alex_fwd_limit is
+// 2 x PWR (console.cs:26112-26114 [v2.10.3.15]): 100 W at PWR 50, so these
+// trip there, and 200 W at PWR 100, so they do not.
+constexpr quint16 kHighSwrFwdRaw = 3000;
+constexpr quint16 kHighSwrRevRaw = 1600;
+constexpr int kPwrBelowHighSwrFloor = 50;
+constexpr int kPwrAboveHighSwrFloor = 100;
+
+// Raw counts the open-antenna test catches (forward over 10 W, forward less
+// reflected under 1 W, console.cs:26038-26039 [v2.10.3.15]): about 26.8 W
+// forward and 27.8 W reflected on the ANAN-7000D bridge, about 40.9 W and
+// 52.9 W on the 8000D's.
+constexpr quint16 kOpenAntennaFwdRaw = 1500;
+constexpr quint16 kOpenAntennaRevRaw = 1700;
+
+// Thetis's open-antenna warning (checkAntennaWarning, console.cs:26177-26185
+// [v2.10.3.15]), caption then text, as transmitStopped carries it.
+constexpr const char* kOpenAntennaWarningText =
+    "High SWR condition detected. Please check your antenna connection.";
 
 // Set up the model with a connected slice + injected mock connection so
 // drive-slider / TUNE callsites have something to push wire bytes to.
@@ -414,6 +470,528 @@ private slots:
 
         // Detach before scope-exit destroys the TxChannel.
         model.injectTxChannelForTest(nullptr);
+    }
+
+    // ── §9 SWR protection reaches the drive ──────────────────────────────────
+    // Upstream tags preserved: //K2UE (from cited console.cs:26113) [v2.10.3.15]
+    // From Thetis console.cs:26110-26159 [v2.10.3.15] (PollPAPWR): four
+    // samples above the limit set NetworkIO.SWRProtect = limit / (swr + 1);
+    // with wind-back on the catch-all sets 0.01 and, because SWRProtect
+    // changed, Audio.RadioVolume is reassigned so SetOutputPower applies it.
+    // Without wind-back nothing reassigns RadioVolume: the factor reaches
+    // the wire at the next power set. UIMOXChangedFalse
+    // (console.cs:29241-29246 [v2.10.3.15]) resets SWRProtect to 1.0 and
+    // clears the wind-back latch.
+    void swrTrip_windBack_cutsDriveAtOnce()
+    {
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+        TxChannel txCh(/*channelId=*/1);
+        model.injectTxChannelForTest(&txCh);
+        auto detachTx = qScopeGuard([&]{ model.injectTxChannelForTest(nullptr); });
+
+        auto& prot = model.swrProt();
+        prot.setEnabled(true);
+        prot.setLimit(2.0f);
+        prot.setWindBackEnabled(true);
+        prot.setHfPaDisabled(false);
+
+        model.transmitModel().setPower(kPwrBelowHighSwrFloor);
+        pump();
+        keyAndWait(model);
+        QVERIFY(!conn->txDriveLog.isEmpty());
+        const int fullDrive = conn->txDriveLog.last();
+        const double audioVolume = txCh.lastFixedGainForTest();
+        QCOMPARE(fullDrive, expectedWire(audioVolume, 1.0f));
+        QVERIFY(fullDrive > 0);
+
+        conn->txDriveLog.clear();
+        for (int i = 0; i < 4; ++i) {
+            model.handlePaTelemetryForTest(kHighSwrFwdRaw, kHighSwrRevRaw, 0, 0, 0, 0);
+        }
+        pump();
+        QVERIFY2(prot.measuredSwr() > 2.0f,
+                 qPrintable(QString::number(prot.measuredSwr())));
+        QVERIFY(prot.highSwr());
+        QVERIFY(prot.windBackLatched());
+        QCOMPARE(prot.protectFactor(), 0.01f);
+        QCOMPARE(model.transmitModel().swrProtectFactor(), 0.01f);
+        // One reassignment of RadioVolume per poll, with the final factor.
+        QCOMPARE(conn->txDriveLog.size(), 1);
+        QCOMPARE(conn->txDriveLog.last(), expectedWire(audioVolume, 0.01f));
+        QVERIFY(conn->txDriveLog.last() < fullDrive);
+
+        // MOX off releases the latch and the factor; the next key starts at
+        // full drive.
+        unkeyAndWait(model);
+        QVERIFY(!prot.windBackLatched());
+        QVERIFY(!prot.highSwr());
+        QCOMPARE(prot.protectFactor(), 1.0f);
+        QCOMPARE(model.transmitModel().swrProtectFactor(), 1.0f);
+
+        conn->txDriveLog.clear();
+        keyAndWait(model);
+        QVERIFY(!conn->txDriveLog.isEmpty());
+        QCOMPARE(conn->txDriveLog.last(), fullDrive);
+        unkeyAndWait(model);
+    }
+
+    void swrTrip_noWindBack_factorAppliesAtNextPowerSet()
+    {
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+        TxChannel txCh(/*channelId=*/1);
+        model.injectTxChannelForTest(&txCh);
+        auto detachTx = qScopeGuard([&]{ model.injectTxChannelForTest(nullptr); });
+
+        auto& prot = model.swrProt();
+        prot.setEnabled(true);
+        prot.setLimit(2.0f);
+        prot.setWindBackEnabled(false);
+        prot.setHfPaDisabled(false);
+
+        model.transmitModel().setPower(kPwrBelowHighSwrFloor);
+        pump();
+        keyAndWait(model);
+
+        // Three samples above the limit: no trip yet.
+        conn->txDriveLog.clear();
+        for (int i = 0; i < 3; ++i) {
+            model.handlePaTelemetryForTest(kHighSwrFwdRaw, kHighSwrRevRaw, 0, 0, 0, 0);
+        }
+        QCOMPARE(model.transmitModel().swrProtectFactor(), 1.0f);
+        model.handlePaTelemetryForTest(kHighSwrFwdRaw, kHighSwrRevRaw, 0, 0, 0, 0);
+        pump();
+
+        const float swr = prot.measuredSwr();
+        QVERIFY2(swr > 2.0f, qPrintable(QString::number(swr)));
+        const float expectedFactor = 2.0f / (swr + 1.0f);
+        QVERIFY(prot.highSwr());
+        QVERIFY(!prot.windBackLatched());
+        QCOMPARE(prot.protectFactor(), expectedFactor);
+        QCOMPARE(model.transmitModel().swrProtectFactor(), expectedFactor);
+        // Without wind-back Thetis does not reassign RadioVolume.
+        QVERIFY(conn->txDriveLog.isEmpty());
+
+        // The next power set carries the factor to the wire.
+        model.transmitModel().setPower(90);
+        pump();
+        QVERIFY(!conn->txDriveLog.isEmpty());
+        QCOMPARE(conn->txDriveLog.last(),
+                 expectedWire(txCh.lastFixedGainForTest(), expectedFactor));
+
+        unkeyAndWait(model);
+        QCOMPARE(model.transmitModel().swrProtectFactor(), 1.0f);
+        QVERIFY(!prot.highSwr());
+    }
+
+    void swrProtectionDisabled_leavesDriveAlone()
+    {
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+
+        auto& prot = model.swrProt();
+        prot.setEnabled(false);
+        prot.setLimit(2.0f);
+        prot.setWindBackEnabled(true);
+        prot.setHfPaDisabled(false);
+
+        model.transmitModel().setPower(100);
+        pump();
+        keyAndWait(model);
+        conn->txDriveLog.clear();
+        for (int i = 0; i < 8; ++i) {
+            model.handlePaTelemetryForTest(kHighSwrFwdRaw, kHighSwrRevRaw, 0, 0, 0, 0);
+        }
+        pump();
+        QVERIFY(!prot.highSwr());
+        QVERIFY(!prot.windBackLatched());
+        QCOMPARE(model.transmitModel().swrProtectFactor(), 1.0f);
+        QVERIFY(conn->txDriveLog.isEmpty());
+        unkeyAndWait(model);
+    }
+
+    // PR 604 fix wave, item 1: the ANAN-8000D trips only above 2 x PWR.
+    // Upstream tags preserved: //K2UE (from cited console.cs:26113) [v2.10.3.15]
+    // From Thetis console.cs:26112-26116 [v2.10.3.15]: alex_fwd_limit =
+    // 2.0f * ptbPWR.Value, worked out on every poll. At PWR 100 the floor is
+    // 200 W; 165.7 W at SWR 3.27 does not trip however long it lasts.
+    void swrTrip_anan8000d_belowTwiceThePwr_noTrip()
+    {
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+
+        auto& prot = model.swrProt();
+        prot.setEnabled(true);
+        prot.setLimit(2.0f);
+        prot.setWindBackEnabled(true);
+        prot.setHfPaDisabled(false);
+
+        model.transmitModel().setPower(kPwrAboveHighSwrFloor);
+        pump();
+        keyAndWait(model);
+        conn->txDriveLog.clear();
+        for (int i = 0; i < 8; ++i) {
+            model.handlePaTelemetryForTest(kHighSwrFwdRaw, kHighSwrRevRaw, 0, 0, 0, 0);
+        }
+        pump();
+        QVERIFY2(prot.measuredSwr() > 2.0f,
+                 qPrintable(QString::number(prot.measuredSwr())));
+        QVERIFY(!prot.highSwr());
+        QVERIFY(!prot.windBackLatched());
+        QCOMPARE(model.transmitModel().swrProtectFactor(), 1.0f);
+        QVERIFY(conn->txDriveLog.isEmpty());
+
+        // Turning PWR down moves the floor under the forward power: the
+        // same samples now trip, as Thetis reads ptbPWR.Value each poll.
+        model.transmitModel().setPower(kPwrBelowHighSwrFloor);
+        pump();
+        for (int i = 0; i < 4; ++i) {
+            model.handlePaTelemetryForTest(kHighSwrFwdRaw, kHighSwrRevRaw, 0, 0, 0, 0);
+        }
+        pump();
+        QVERIFY(prot.highSwr());
+        QVERIFY(prot.windBackLatched());
+        unkeyAndWait(model);
+    }
+
+    // PR 604 fix wave, item 4 (Task 23): an open antenna while keyed drops
+    // MOX through MoxController and shows Thetis's warning.
+    // Upstream tags preserved: //K2UE (from cited console.cs:26034) //-W2PA (from cited console.cs:26036) //MW0LGE (from cited console.cs:26038) [v2.10.3.15]
+    // From Thetis console.cs:26036-26057 [v2.10.3.15]: swr = 50,
+    // NetworkIO.SWRProtect = 0.01f, chkMOX.Checked = false, then
+    // checkAntennaWarning().
+    void openAntenna_whileKeyed_dropsMoxAndWarns()
+    {
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN7000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+
+        auto& prot = model.swrProt();
+        prot.setEnabled(true);
+        prot.setLimit(2.0f);
+        prot.setWindBackEnabled(true);
+        prot.setHfPaDisabled(false);
+
+        model.transmitModel().setPower(kPwrAboveHighSwrFloor);
+        pump();
+        keyAndWait(model);
+        MoxController* mox = model.moxController();
+        QSignalSpy stopped(&model, &RadioModel::transmitStopped);
+        QSignalSpy factor(&prot, &safety::SwrProtectionController::protectFactorChanged);
+
+        model.handlePaTelemetryForTest(kOpenAntennaFwdRaw, kOpenAntennaRevRaw, 0, 0, 0, 0);
+        // The sample set 0.01 before the unkey released it.
+        QVERIFY(factor.count() >= 1);
+        QCOMPARE(factor.at(0).at(0).toFloat(), 0.01f);
+        QVERIFY(!mox->isMox());
+        QCOMPARE(stopped.count(), 1);
+        QCOMPARE(stopped.at(0).at(0).toString(),
+                 QString::fromLatin1(kOpenAntennaWarningText));
+        QCOMPARE(RadioModel::openAntennaStopText(),
+                 QString::fromLatin1(kOpenAntennaWarningText));
+        QCOMPARE(model.lastTransmitStopReason().code,
+                 QByteArray(RadioModel::kOpenAntennaStopCode));
+        QTRY_COMPARE(mox->state(), MoxState::Rx);
+        // The normal unkey ran UIMOXChangedFalse's reset.
+        QCOMPARE(prot.protectFactor(), 1.0f);
+        QCOMPARE(model.transmitModel().swrProtectFactor(), 1.0f);
+        QVERIFY(!prot.windBackLatched());
+    }
+
+    // PR 604 second pass, item 1 (JJ 2026-10-22: "A, hold the key off until
+    // release"): a mic PTT or VOX still held after an open-antenna drop does
+    // not key again until it is released, then keys normally. A deliberate
+    // departure from Thetis, whose PollPTT re-keys from a held source.
+    void openAntenna_heldPttOrVox_doesNotRekeyUntilReleased_data()
+    {
+        QTest::addColumn<bool>("vox");
+        QTest::newRow("mic PTT") << false;
+        QTest::newRow("VOX") << true;
+    }
+
+    void openAntenna_heldPttOrVox_doesNotRekeyUntilReleased()
+    {
+        QFETCH(bool, vox);
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN7000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+
+        auto& prot = model.swrProt();
+        prot.setEnabled(true);
+        prot.setLimit(2.0f);
+        prot.setWindBackEnabled(true);
+        prot.setHfPaDisabled(false);
+
+        MoxController* mox = model.moxController();
+        mox->setMoxCheck({});
+        if (vox) {
+            model.transmitModel().setVoxEnabled(true);
+        }
+        auto press = [&](bool down) {
+            if (vox) {
+                mox->onVoxActive(down);
+            } else {
+                mox->onMicPttFromRadio(down);
+            }
+        };
+        press(true);
+        pump();
+        QTRY_COMPARE(mox->state(), MoxState::Tx);
+
+        model.handlePaTelemetryForTest(kOpenAntennaFwdRaw, kOpenAntennaRevRaw, 0, 0, 0, 0);
+        QVERIFY(!mox->isMox());
+        QTRY_COMPARE(mox->state(), MoxState::Rx);
+
+        // The source stays held and keeps reporting: nothing keys.
+        for (int i = 0; i < 5; ++i) {
+            press(true);
+            pump();
+        }
+        QVERIFY(!mox->isMox());
+        QCOMPARE(mox->state(), MoxState::Rx);
+        QVERIFY(mox->isStopAllTxLatched());
+
+        // Released, then pressed again: a new press keys normally.
+        press(false);
+        pump();
+        QVERIFY(!mox->isStopAllTxLatched());
+        press(true);
+        pump();
+        QTRY_COMPARE(mox->state(), MoxState::Tx);
+        QCOMPARE(prot.protectFactor(), 1.0f);
+        press(false);
+        pump();
+        QTRY_COMPARE(mox->state(), MoxState::Rx);
+    }
+
+    // PR 604 third pass (controller ruling, for JJ's veto): a CAT or TCI key
+    // dropped by the open-antenna unkey is not waited on (the unkey drops
+    // its level), so the latch swallows nothing: a fresh mic press keys, and
+    // so does the app's next CAT or TCI key.
+    void openAntenna_catOrTciKey_nextKeysAreNotSwallowed_data()
+    {
+        QTest::addColumn<bool>("tci");
+        QTest::newRow("CAT") << false;
+        QTest::newRow("TCI") << true;
+    }
+
+    void openAntenna_catOrTciKey_nextKeysAreNotSwallowed()
+    {
+        QFETCH(bool, tci);
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN7000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+
+        auto& prot = model.swrProt();
+        prot.setEnabled(true);
+        prot.setLimit(2.0f);
+        prot.setWindBackEnabled(true);
+        prot.setHfPaDisabled(false);
+
+        MoxController* mox = model.moxController();
+        mox->setMoxCheck({});
+        auto appKey = [&](bool down) {
+            if (tci) {
+                mox->onTciPtt(down);
+            } else {
+                mox->onCatPtt(down);
+            }
+        };
+        appKey(true);
+        pump();
+        QTRY_COMPARE(mox->state(), MoxState::Tx);
+
+        model.handlePaTelemetryForTest(kOpenAntennaFwdRaw, kOpenAntennaRevRaw, 0, 0, 0, 0);
+        QVERIFY(!mox->isMox());
+        QTRY_COMPARE(mox->state(), MoxState::Rx);
+        // The unkey dropped the app's level, so nothing is waited on.
+        QVERIFY(!mox->isStopAllTxLatched());
+
+        // A fresh mic press keys.
+        mox->onMicPttFromRadio(true);
+        pump();
+        QTRY_COMPARE(mox->state(), MoxState::Tx);
+        mox->onMicPttFromRadio(false);
+        pump();
+        QTRY_COMPARE(mox->state(), MoxState::Rx);
+
+        // The app's next key command keys.
+        appKey(true);
+        pump();
+        QTRY_COMPARE(mox->state(), MoxState::Tx);
+        appKey(false);
+        pump();
+        QTRY_COMPARE(mox->state(), MoxState::Rx);
+    }
+
+    // PR 604 fix wave, item 2: the ANAN-8000D skips the open-antenna check.
+    // From Thetis console.cs:26038-26039 [v2.10.3.15]:
+    // Upstream tags preserved: //K2UE (from cited console.cs:26034) //-W2PA (from cited console.cs:26036) //MW0LGE (from cited console.cs:26038) [v2.10.3.15]
+    //   && HardwareSpecific.Model != HPSDRModel.ANAN8000D)) // open ant condition
+    void openAntenna_anan8000d_keepsMox()
+    {
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+
+        auto& prot = model.swrProt();
+        prot.setEnabled(true);
+        prot.setLimit(2.0f);
+        prot.setWindBackEnabled(true);
+        prot.setHfPaDisabled(false);
+
+        model.transmitModel().setPower(kPwrAboveHighSwrFloor);
+        pump();
+        keyAndWait(model);
+        QSignalSpy stopped(&model, &RadioModel::transmitStopped);
+        for (int i = 0; i < 4; ++i) {
+            model.handlePaTelemetryForTest(kOpenAntennaFwdRaw, kOpenAntennaRevRaw, 0, 0, 0, 0);
+        }
+        pump();
+        QVERIFY(!prot.openAntennaDetected());
+        QCOMPARE(prot.protectFactor(), 1.0f);
+        QVERIFY(model.moxController()->isMox());
+        QCOMPARE(stopped.count(), 0);
+        unkeyAndWait(model);
+    }
+
+    // PR 604 fix wave, item 6: an unkey cut short by a quick re-key still
+    // releases the latch. Thetis runs UIMOXChangedFalse on every unkey
+    // (console.cs:29721-29722 [v2.10.3.15]); MoxController's moxChanged
+    // fires only at the end of the TX-to-RX walk, which the re-key cancels.
+    void swrRelease_unkeyInterruptedByRekey_releasesLatch()
+    {
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+
+        auto& prot = model.swrProt();
+        prot.setEnabled(true);
+        prot.setLimit(2.0f);
+        prot.setWindBackEnabled(true);
+        prot.setHfPaDisabled(false);
+
+        model.transmitModel().setPower(kPwrBelowHighSwrFloor);
+        pump();
+        keyAndWait(model);
+        for (int i = 0; i < 4; ++i) {
+            model.handlePaTelemetryForTest(kHighSwrFwdRaw, kHighSwrRevRaw, 0, 0, 0, 0);
+        }
+        QVERIFY(prot.windBackLatched());
+
+        MoxController* mox = model.moxController();
+        QSignalSpy unkeyEnded(mox, &MoxController::moxChanged);
+        // Release and key again before the walk to receive runs.
+        mox->setMox(false);
+        mox->setMox(true);
+        QTRY_COMPARE(mox->state(), MoxState::Tx);
+        for (const QList<QVariant>& args : std::as_const(unkeyEnded)) {
+            QVERIFY2(!(args.at(1).toBool() && !args.at(2).toBool()),
+                     "the walk to receive was expected to be cut short");
+        }
+        QVERIFY(!prot.windBackLatched());
+        QCOMPARE(prot.protectFactor(), 1.0f);
+        QCOMPARE(model.transmitModel().swrProtectFactor(), 1.0f);
+        unkeyAndWait(model);
+    }
+
+    // PR 604 fix wave, item 8: the poll runs only while keyed.
+    // From Thetis console.cs:25991 [v2.10.3.15]: if (_mox). A sample the
+    // radio reports after the unkey goes through the production gate (not
+    // the seam that forces TX) and leaves the protection alone; the same
+    // samples while keyed trip it, so the seam reaches the poll.
+    void swrPoll_sampleAfterUnkey_leavesProtectionAlone()
+    {
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+
+        auto& prot = model.swrProt();
+        prot.setEnabled(true);
+        prot.setLimit(2.0f);
+        prot.setWindBackEnabled(true);
+        prot.setHfPaDisabled(false);
+
+        model.transmitModel().setPower(kPwrBelowHighSwrFloor);
+        pump();
+        keyAndWait(model);
+        unkeyAndWait(model);
+        for (int i = 0; i < 8; ++i) {
+            model.handlePaTelemetryAsReceivedForTest(kHighSwrFwdRaw, kHighSwrRevRaw);
+        }
+        QVERIFY(!prot.highSwr());
+        QVERIFY(!prot.windBackLatched());
+        QCOMPARE(model.transmitModel().swrProtectFactor(), 1.0f);
+
+        keyAndWait(model);
+        for (int i = 0; i < 4; ++i) {
+            model.handlePaTelemetryAsReceivedForTest(kHighSwrFwdRaw, kHighSwrRevRaw);
+        }
+        QVERIFY(prot.highSwr());
+        QVERIFY(prot.windBackLatched());
+        unkeyAndWait(model);
+    }
+
+    // PR 604 fix wave, item 8: Disable HF PA (hf_tr_relay) lets a high SWR
+    // pass, so the drive is left alone.
+    // From Thetis console.cs:26109-26110 [v2.10.3.15]:
+    // Upstream tags preserved: //K2UE (from cited console.cs:26113) [v2.10.3.15]
+    //   if (tx_xvtr_index >= 0 || hf_tr_relay)
+    //       swr_pass = true;
+    void swrProtection_hfPaDisabled_leavesDriveAlone()
+    {
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+
+        auto& prot = model.swrProt();
+        prot.setEnabled(true);
+        prot.setLimit(2.0f);
+        prot.setWindBackEnabled(true);
+        prot.setHfPaDisabled(true);
+
+        model.transmitModel().setPower(kPwrBelowHighSwrFloor);
+        pump();
+        keyAndWait(model);
+        conn->txDriveLog.clear();
+        for (int i = 0; i < 8; ++i) {
+            model.handlePaTelemetryForTest(kHighSwrFwdRaw, kHighSwrRevRaw, 0, 0, 0, 0);
+        }
+        pump();
+        QVERIFY2(prot.measuredSwr() > 2.0f,
+                 qPrintable(QString::number(prot.measuredSwr())));
+        QVERIFY(!prot.highSwr());
+        QVERIFY(!prot.windBackLatched());
+        QCOMPARE(model.transmitModel().swrProtectFactor(), 1.0f);
+        QVERIFY(conn->txDriveLog.isEmpty());
+        unkeyAndWait(model);
     }
 
     // ── §6 TUNE engagement triggers full math chain ──────────────────────────

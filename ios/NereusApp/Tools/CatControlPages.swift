@@ -109,8 +109,8 @@ enum CatParts {
                         .padding(.horizontal, 10)
                         .frame(minHeight: 34)
                         .background(enabled ? ChromeColours.button : ChromeColours.buttonOff,
-                                    in: RoundedRectangle(cornerRadius: 4))
-                        .overlay(RoundedRectangle(cornerRadius: 4)
+                                    in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                             .strokeBorder(enabled ? ChromeColours.buttonBorder : ChromeColours.buttonOffBorder,
                                           lineWidth: 1))
                     }
@@ -670,8 +670,8 @@ struct CatTestPage: View {
                 .onSubmit(send)
                 .padding(.horizontal, 8)
                 .frame(minHeight: 38)
-                .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 3))
-                .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
+                .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
                 .disabled(model.reason != nil)
                 .accessibilityLabel("Command")
                 .accessibilityIdentifier("cat.test.command")
@@ -681,8 +681,8 @@ struct CatTestPage: View {
                     .foregroundStyle(ready ? Color.white : ChromeColours.buttonOffText)
                     .frame(minWidth: 72, minHeight: 38)
                     .background(ready ? ChromeColours.buttonOnBlue : ChromeColours.buttonOff,
-                                in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
+                                in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                         .strokeBorder(ready ? ChromeColours.buttonOnBlueBorder : ChromeColours.buttonOffBorder,
                                       lineWidth: 1))
                     .contentShape(Rectangle())
@@ -790,8 +790,8 @@ struct CatTestPage: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(height: 220)
-            .background(SpotColours.console, in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(SpotColours.consoleBorder, lineWidth: 1))
+            .background(SpotColours.console, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(SpotColours.consoleBorder, lineWidth: 1))
             .onAppear {
                 if let target = model.scrollTarget {
                     reader.scrollTo(target, anchor: .bottomLeading)

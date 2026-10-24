@@ -379,10 +379,15 @@ final class ModesTabModel: ObservableObject {
     }
 
     /// The Core takes antenna changes for the connected radio by its
-    /// address: `radioAntennaRowsVersion` exactly 1 at agreed minor 11, the
-    /// desktop's test (StationClient.cpp:5531-5532).
+    /// address: `radioAntennaRowsVersion` 1 or 2 at agreed minor 11, the
+    /// desktop's test (StationClient.cpp:5531-5532). 2 widens only the
+    /// receive-only values, which this tab does not send.
     var radioBoundAntennas: Bool {
-        (store.agreedMinor ?? 0) >= Self.antennaRowsMinor && store.capabilities[Self.antennaRowsCapability] == .int(1)
+        guard (store.agreedMinor ?? 0) >= Self.antennaRowsMinor,
+              case .int(let version)? = store.capabilities[Self.antennaRowsCapability] else {
+            return false
+        }
+        return version == 1 || version == 2
     }
 
     /// The connected radio's address as the Core names it (`macAddress`),

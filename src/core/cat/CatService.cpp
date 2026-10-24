@@ -82,9 +82,15 @@ Added extended CAT commands for APF funtions - May 2017.
 //              broke (the validator's sentence, or the serial device already
 //              in use), and a refused global setting is logged. J.J. Boyd
 //              (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-20 - A restored channel whose slice is made after CAT starts (a
+//              desktop starts CAT before the radio connects and makes slice
+//              0) captures that slice when it arrives, instead of reading
+//              "Invalid binding" until the operator picks it again.
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "CatService.h"
 #include "RigctlProtocol.h"
 #include "core/AppSettings.h"
+#include "core/SliceOwnership.h"
 #include "core/LogCategories.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -117,6 +123,7 @@ CatService::CatService(RadioModel& model, QObject* parent)
             emit radioDisconnected();
         }
     });
+    connect(&model, &RadioModel::sliceAdded, this, [this](int sliceId) { captureRestoredSlice(sliceId); });
 }
 CatService::~CatService() { beginRetirement(); }
 void CatService::beginRetirement()
@@ -237,6 +244,39 @@ void CatService::startConfigured()
         startChannel(channel);
     }
     if (self && generation == m_lifecycleGeneration && m_started) { startPtt(); }
+}
+void CatService::captureRestoredSlice(int sliceId)
+{
+    // A saved channel names its slices by id only, and startConfigured
+    // captures each from the slices alive then. A desktop starts CAT before
+    // the radio connects and makes slice 0, so that capture found nothing
+    // (incarnation 0) and the channel stayed unbound for the run. The first
+    // slice made with the id is the one the channel was set up for. A side
+    // that captured a slice keeps refusing its id when reused.
+    if (m_destroying || !m_model) { return; }
+    const quint64 live = m_model->sliceOwnership()->incarnation(sliceId);
+    if (live == 0) { return; }
+    const QPointer<CatService> self(this);
+    for (int channel = 1; channel <= 4; ++channel) {
+        Channel& endpoint = m_channels[channel - 1];
+        if (!endpoint.configured) { continue; }
+        const CatBinding before = endpoint.config.binding;
+        CatBinding after = before;
+        if (before.primarySliceId == sliceId && before.primaryIncarnation == 0) { after.primaryIncarnation = live; }
+        if (before.secondarySliceId == sliceId && before.secondaryIncarnation.value_or(0) == 0) { after.secondaryIncarnation = live; }
+        if (after == before) { continue; }
+        endpoint.config.binding = after;
+        // Every session and the PTT input copied the channel's binding when it opened.
+        for (const auto& current : std::as_const(m_sessions)) {
+            if (current->context().channel == channel && current->binding() == before) { current->rebind(after); }
+        }
+        if (m_ptt && m_ptt->channel == channel && m_ptt->binding == before) { m_ptt->binding = after; }
+        qCInfo(lcCat) << "CAT" << channel << "captured slice" << sliceId << "made after CAT started";
+        emit configurationChanged(channel);
+        if (!self || m_destroying) { return; }
+        m_reporter->sessionsChanged(channel);
+        if (!self || m_destroying) { return; }
+    }
 }
 void CatService::startChannel(int channel)
 {

@@ -39,10 +39,10 @@ struct SliceListSheet: View {
             }
         }
         .background(ChromeColours.sheet)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(ChromeColours.sheetBorder, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ChromeColours.sheetBorder, lineWidth: 1))
         .shadow(color: .black.opacity(0.55), radius: 14, y: 10)
-        .contentShape(RoundedRectangle(cornerRadius: 6))
+        .contentShape(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(SliceListModel.title)
         .accessibilityIdentifier("sliceList")
@@ -153,8 +153,8 @@ struct SliceListSheet: View {
             }
         }
         .padding(10)
-        .background(SliceListStyle.refusedGround, in: RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(SliceListStyle.refusedEdge, lineWidth: 1))
+        .background(SliceListStyle.refusedGround, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(SliceListStyle.refusedEdge, lineWidth: 1))
         .padding(.top, 10)
     }
 
@@ -196,26 +196,23 @@ struct SliceListSheet: View {
 
 /// The list's colours, the board's.
 enum SliceListStyle {
-    static let rowRule = rgb(0x1A, 0x2A, 0x3A)
-    static let whereEdge = rgb(0x30, 0x40, 0x50)
-    static let whereText = rgb(0x8A, 0xA8, 0xC0)
-    static let hereEdge = rgb(0x20, 0x50, 0x70)
-    static let radeMode = rgb(0xB0, 0x70, 0xFF)
-    static let refusedGround = rgb(0x1A, 0x14, 0x10)
-    static let refusedEdge = rgb(0x5A, 0x40, 0x20)
-    static let refusedText = rgb(0xFF, 0xCC, 0x66)
-    static let greyed = rgb(0x1A, 0x1A, 0x2A)
-    static let greyedEdge = rgb(0x2A, 0x30, 0x40)
-    static let greyedText = rgb(0x6A, 0x78, 0x88)
-    static let muted = rgb(0xCC, 0x22, 0x22)
-    static let mutedEdge = rgb(0xFF, 0x44, 0x44)
-    static let valueEdge = rgb(0x20, 0x30, 0x40)
-    static let modesBlock = rgb(0x0E, 0x16, 0x24)
-    static let nudge = rgb(0xFF, 0xD8, 0x4A)
+    private typealias P = WorkspacePalette
 
-    private static func rgb(_ red: Int, _ green: Int, _ blue: Int) -> Color {
-        Color(red: Double(red) / 255, green: Double(green) / 255, blue: Double(blue) / 255)
-    }
+    static let rowRule = P.borderSubtle
+    static let whereEdge = P.border
+    static let whereText = P.titleText
+    static let hereEdge = P.glassSelBorder
+    static let radeMode = P.rgb(0xB070FF) // kept (W2): the RADE mode's violet
+    // A refusal reads in the amber set.
+    static let refusedGround = P.amberBg
+    static let refusedEdge = P.amberBorder
+    static let refusedText = P.amberText
+    // MUTE lit, as the phone's other MUTE buttons (lit green, W3).
+    static let muted = P.litGreenMid
+    static let mutedEdge = P.litGreenRim
+    static let valueEdge = P.borderSubtle
+    static let modesBlock = P.panelBg
+    static let nudge = P.amberText
 }
 
 /// One of the list's buttons (`.sll-btn`): 44 points tall at least, the
@@ -237,51 +234,25 @@ struct SliceListButton: View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: large ? 19 : 13, weight: .bold))
-                .foregroundStyle(foreground)
+                .foregroundStyle(workspaceForeground(look))
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .frame(maxWidth: .infinity, minHeight: 44)
-                .background(background, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(border, lineWidth: 1))
+                .background { WorkspaceFace(look) }
+                // Greyed: the raised face at 40 percent, still in place and
+                // still taking the tap that says why.
+                .opacity(kind == .greyed ? WorkspacePalette.disabledOpacity : 1)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityValue(kind == .greyed ? "Not available" : "")
     }
 
-    private var foreground: Color {
-        switch kind {
-        case .plain:
-            return ChromeColours.text
-        case .go:
-            return .white
-        case .greyed:
-            return SliceListStyle.greyedText
-        }
-    }
-
-    private var background: Color {
-        switch kind {
-        case .plain:
-            return ChromeColours.button
-        case .go:
-            return ChromeColours.buttonOnBlue
-        case .greyed:
-            return SliceListStyle.greyed
-        }
-    }
-
-    private var border: Color {
-        switch kind {
-        case .plain:
-            return ChromeColours.buttonBorder
-        case .go:
-            return ChromeColours.buttonOnBlueBorder
-        case .greyed:
-            return SliceListStyle.greyedEdge
-        }
+    /// The treatment: the glass for `go`, raised otherwise.
+    var look: WorkspaceLook {
+        kind == .go ? .glass : .raised
     }
 }
 
@@ -343,8 +314,8 @@ struct YourVolumeRow: View {
                 .font(.system(size: large ? 19 : 16))
                 .foregroundStyle(level.muted ? Color.white : ChromeColours.text)
                 .frame(width: 44, height: 44)
-                .background(level.muted ? SliceListStyle.muted : ChromeColours.button, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4)
+                .background(level.muted ? SliceListStyle.muted : ChromeColours.button, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                     .strokeBorder(level.muted ? SliceListStyle.mutedEdge : ChromeColours.buttonBorder, lineWidth: 1))
                 .contentShape(Rectangle())
         }
@@ -396,8 +367,8 @@ struct YourVolumeRow: View {
             .font(.system(size: large ? 19 : 12).monospacedDigit())
             .foregroundStyle(ChromeColours.text)
             .frame(maxWidth: .infinity, minHeight: large ? 32 : 28)
-            .background(ChromeColours.bar, in: RoundedRectangle(cornerRadius: 3))
-            .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(SliceListStyle.valueEdge, lineWidth: 1))
+            .background(ChromeColours.bar, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(SliceListStyle.valueEdge, lineWidth: 1))
             .accessibilityHidden(true)
     }
 }
@@ -451,7 +422,7 @@ private struct SliceListRow: View {
         .padding(.top, 8)
         .padding(.bottom, 10)
         .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 2).fill(colour).frame(width: 3).padding(.vertical, 8)
+            RoundedRectangle(cornerRadius: 2).fill(colour).frame(width: 3).padding(.vertical, 8) // kept-radius: swatch
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("sliceListSlice\(row.letter)")
@@ -500,7 +471,7 @@ private struct SliceListRow: View {
         let here = row.here
         let pill = Text(here ? SliceRoster.thisPanText : SliceRoster.anotherPanText)
             .font(.system(size: large ? 19 : 11))
-            .foregroundStyle(here ? ChromeColours.accent : SliceListStyle.whereText)
+            .foregroundStyle(here ? ChromeColours.accentText : SliceListStyle.whereText)
             .lineLimit(1)
             .fixedSize()
             .padding(.horizontal, 6)
@@ -531,8 +502,8 @@ private struct SliceListRow: View {
                     .foregroundStyle(lit ? colour : ChromeColours.text)
                     .padding(.horizontal, 8)
                     .frame(minWidth: 88, minHeight: large ? 30 : 26)
-                    .background(lit ? Color.clear : ChromeColours.button, in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
+                    .background(lit ? Color.clear : ChromeColours.button, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                         .strokeBorder(lit ? colour : ChromeColours.buttonBorder, lineWidth: 1))
                     .padding(.top, 6)
             }

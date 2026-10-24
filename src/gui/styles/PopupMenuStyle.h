@@ -6,7 +6,8 @@
 // theme rendered antenna menu items as dark-on-dark (only visible on
 // hover). Use via:
 //
-//     QMenu menu(this);
+//     ScopedChildWidget<QMenu> menuOwner(this);  // gui/ScopedChildWidget.h
+//     QMenu& menu = *menuOwner.get();
 //     menu.setStyleSheet(QString::fromLatin1(kPopupMenu));
 //
 // Every call site MUST set this stylesheet — enforced by

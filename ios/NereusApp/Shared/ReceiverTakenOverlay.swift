@@ -40,9 +40,7 @@ struct ReceiverTakenOverlay: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 22)
                         .frame(height: 44)
-                        .background(ChromeColours.buttonOnBlue, in: RoundedRectangle(cornerRadius: 4))
-                        .overlay(RoundedRectangle(cornerRadius: 4)
-                            .strokeBorder(ChromeColours.buttonOnBlueBorder, lineWidth: 1))
+                        .background { WorkspaceFace(.glass) }
                 }
                 .buttonStyle(.plain)
                 .disabled(notice.takingBack)
@@ -56,7 +54,7 @@ struct ReceiverTakenOverlay: View {
         .multilineTextAlignment(.center)
         .padding(.horizontal, 26)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(red: 10 / 255, green: 12 / 255, blue: 20 / 255).opacity(0.784))
+        .background(ChromeColours.cover)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("receiverTakenCover")
     }

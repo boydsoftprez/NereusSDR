@@ -20,9 +20,11 @@ import Testing
     @Test func everyAppFixturePassesThroughTheMirror() async throws {
         let classes = try SessionFixtures.mirrorClasses()
         let fixtures = try SessionFixtures.forApp()
-        #expect(fixtures.count == 87)
+        #expect(fixtures.count == 88)
         // The rotor's eight commands and refusals (remote rotor control v1).
         #expect(fixtures.contains { $0.id == "session-verbs-rotor" })
+        // TUNE and the two-tone test follow the Setup drive source.
+        #expect(fixtures.contains { $0.id == "session-tune-drive-source" })
         #expect(Set(fixtures.map(\.id)).count == fixtures.count)
         for id in Self.diversityProducerSessions {
             #expect(fixtures.contains { $0.id == id }, "\(id)")

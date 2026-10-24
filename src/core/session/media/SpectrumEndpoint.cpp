@@ -5,6 +5,10 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 Task 2.
 //
 // Modification history (NereusSDR):
+//   2026-10-21: Even row gaps: a frame fills its slot when it is nearer the
+//               slot than the source's next frame (earlyToleranceNs), not
+//               only within a twentieth of a period. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-15: The wide row is cropped and peak-reduced as powers and only
 //               the values sent are converted to dBm (wideRowDbm), in place
 //               of converting every FFT bin first. J.J. Boyd (KG4VCF),
@@ -491,13 +495,13 @@ std::optional<DisplayCodecFrame> SpectrumEndpoint::consume(
     m_lastProducerTimestampNs = frame.producedAtNs;
 
     const qint64 periodNs = 1'000'000'000LL / m_context.targetFps;
-    // Permit up to 5% early arrival against an advancing schedule. The
+    // Permit early arrival against an advancing schedule: at least 5%, and
+    // up to half the source's frame spacing (earlyToleranceNs). The
     // schedule itself advances by a full period, so a persistently fast
     // producer eventually spends its allowance and cannot exceed target FPS.
-    constexpr qint64 kEarlyToleranceDivisor = 20;
-    const qint64 earlyToleranceNs = periodNs / kEarlyToleranceDivisor;
+    const qint64 toleranceNs = earlyToleranceNs(periodNs, frame.sourceFrameGapNs);
     if (m_nextOutputDueNs != 0
-        && frame.producedAtNs < m_nextOutputDueNs - earlyToleranceNs) {
+        && frame.producedAtNs < m_nextOutputDueNs - toleranceNs) {
         return std::nullopt;
     }
 
@@ -560,7 +564,22 @@ std::optional<DisplayCodecFrame> SpectrumEndpoint::consume(
     return output;
 }
 
-std::optional<qint64> SpectrumEndpoint::outputDeadlineNs(qint64 producedAtNs) const
+qint64 SpectrumEndpoint::earlyToleranceNs(qint64 periodNs, qint64 sourceFrameGapNs)
+{
+    constexpr qint64 kEarlyToleranceDivisor = 20;
+    const qint64 floorNs = periodNs / kEarlyToleranceDivisor;
+    if (sourceFrameGapNs <= 0) {
+        return floorNs;
+    }
+    // A frame earlier than its slot by less than half the source's spacing
+    // is nearer the slot than the source frame after it. Half a period at
+    // most: a slower source fills every slot anyway, and a slot never takes
+    // a frame nearer the slot before it.
+    return std::max(floorNs, std::min(sourceFrameGapNs / 2, periodNs / 2));
+}
+
+std::optional<qint64> SpectrumEndpoint::outputDeadlineNs(qint64 producedAtNs,
+                                                         qint64 sourceFrameGapNs) const
 {
     if (!m_configured || producedAtNs < 0 || m_context.targetFps <= 0
         || (m_hasProducerTimestamp && producedAtNs <= m_lastProducerTimestampNs)) {
@@ -568,9 +587,8 @@ std::optional<qint64> SpectrumEndpoint::outputDeadlineNs(qint64 producedAtNs) co
     }
     // The same period and early tolerance as consume().
     const qint64 periodNs = 1'000'000'000LL / m_context.targetFps;
-    constexpr qint64 kEarlyToleranceDivisor = 20;
-    const qint64 earlyToleranceNs = periodNs / kEarlyToleranceDivisor;
-    if (m_nextOutputDueNs != 0 && producedAtNs < m_nextOutputDueNs - earlyToleranceNs) {
+    const qint64 toleranceNs = earlyToleranceNs(periodNs, sourceFrameGapNs);
+    if (m_nextOutputDueNs != 0 && producedAtNs < m_nextOutputDueNs - toleranceNs) {
         return std::nullopt;
     }
     // The slot this frame fills, as consume() would place it: on the

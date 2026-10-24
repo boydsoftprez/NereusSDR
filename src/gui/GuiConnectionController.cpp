@@ -13,8 +13,12 @@
 // 2026-10-16: The Core's explicit empty address list clears its saved Core
 // addresses, and the reached ones it no longer names, but for the one in
 // use. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-22: A saved paired Core's race (first connect and every retry)
+// also dials the addresses it announces on this network, matched by its
+// identity key. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "gui/GuiConnectionController.h"
+#include "gui/ScopedChildWidget.h"
 #include "core/security/StationLabel.h"
 
 #include "core/AppSettings.h"
@@ -331,7 +335,12 @@ void GuiConnectionController::attachWindow(MainWindow* window)
                         : QUrl(target->connection.url) != QUrl(trusted.url))) {
                     return std::nullopt;
                 }
-                RemoteStationOptions current = connectionOptionsForTarget(*target);
+                // 2026-10-22: and where it announces itself on this network,
+                // so a retry also tries the LAN (seen live: every retry raced
+                // the remote access service alone while the Core was listed
+                // under Cores on this network).
+                RemoteStationOptions current =
+                    withAdvertisedAddresses(connectionOptionsForTarget(*target), self->m_lan.endpoints());
                 current.url = trusted.url;
                 return current;
             });
@@ -692,6 +701,27 @@ RemoteStationOptions GuiConnectionController::connectionOptionsForTarget(const S
     return options;
 }
 
+RemoteStationOptions GuiConnectionController::withAdvertisedAddresses(
+    RemoteStationOptions options, const QList<StationLanEndpoint>& endpoints)
+{
+    if (options.identityFingerprint.size() != kStationLanIdentityBytes || options.allowUnpinned) {
+        return options;
+    }
+    for (const StationLanEndpoint& endpoint : endpoints) {
+        // A malformed or schema-1 announcement carries no identity to match.
+        if (endpoint.announcement.identity != options.identityFingerprint
+            || encodeStationLanAnnouncement(endpoint.announcement).isEmpty()) {
+            continue;
+        }
+        const QString address = endpoint.url().toString();
+        if (RemoteStationOptions::isValidStationUrl(address)
+            && !options.directCandidates.contains(address)) {
+            options.directCandidates.append(address);
+        }
+    }
+    return options;
+}
+
 bool GuiConnectionController::isReadyToConnect(const RemoteStationOptions& connection)
 {
     if (!connection.isValidRemoteTarget()) { return false; }
@@ -844,7 +874,8 @@ void GuiConnectionController::connectTarget(const QString& key)
     } else if (key.startsWith(QLatin1String("saved:"))) {
         const auto target = m_store.target(key.mid(6));
         if (!target) { m_selector->setNotice(tr("That saved Core is no longer available.")); return; }
-        const RemoteStationOptions options = connectionOptionsForTarget(*target);
+        const RemoteStationOptions options =
+            withAdvertisedAddresses(connectionOptionsForTarget(*target), m_lan.endpoints());
         if (!isReadyToConnect(options)) {
             if (target->connection.url.isEmpty() && target->connection.isValidRemoteTarget()) {
                 const QString reason = !target->connection.reachFromAnywhere
@@ -959,7 +990,9 @@ void GuiConnectionController::editCore(const QString& id)
             }
         }
     }
-    CoreTargetEditor editor(initial, m_selector.get());
+    // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+    ScopedChildWidget<CoreTargetEditor> editorOwner(initial, m_selector.get());
+    CoreTargetEditor& editor = *editorOwner.get();
     if (!id.isEmpty()) {
         editor.setCurrentOptionsSource([this, id]() -> std::optional<RemoteStationOptions> {
             observeNetworkGeneration();
@@ -977,7 +1010,9 @@ void GuiConnectionController::editCore(const QString& id)
 
 void GuiConnectionController::editRadio(const QString& mac)
 {
-    AddCustomRadioDialog editor(m_selector.get());
+    // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+    ScopedChildWidget<AddCustomRadioDialog> editorOwner(m_selector.get());
+    AddCustomRadioDialog& editor = *editorOwner.get();
     const auto saved = AppSettings::instance().savedRadio(mac);
     if (!mac.isEmpty()) {
         const RadioInfo info = m_radios.contains(mac) ? m_radios.value(mac)
@@ -1204,7 +1239,9 @@ void GuiConnectionController::addByCode(const QString& address)
         m_selector->setNotice(tr("The saved Core list could not be loaded. Correct the settings file before pairing."));
         return;
     }
-    AddCoreByCodeDialog dialog(address, m_selector.get());
+    // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+    ScopedChildWidget<AddCoreByCodeDialog> dialogOwner(address, m_selector.get());
+    AddCoreByCodeDialog& dialog = *dialogOwner.get();
     if (dialog.exec() != QDialog::Accepted) { return; }
     // The nested dialog event loop can process application shutdown.
     if (m_shuttingDown) { return; }

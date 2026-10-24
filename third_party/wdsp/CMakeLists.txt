@@ -212,6 +212,7 @@ set(WDSP_EDITED_SOURCES
     src/cfcomp.c
     src/cfir.c
     src/channel.c
+    src/delay.c
     src/dsplock.c
     src/emnr.c
     src/emph.c

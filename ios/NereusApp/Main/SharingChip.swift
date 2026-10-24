@@ -26,8 +26,9 @@ struct SharingChip: View {
                         .foregroundStyle(ChromeColours.noticeWarn)
                         .padding(.horizontal, 8)
                         .frame(height: 22)
-                        .background(ChromeColours.notice, in: RoundedRectangle(cornerRadius: 3))
-                        .overlay(RoundedRectangle(cornerRadius: 3)
+                        .background(ChromeColours.notice,
+                                    in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius, style: .continuous)
                             .strokeBorder(ChromeColours.noticeWarn.opacity(0.5), lineWidth: 1))
                 }
                 .buttonStyle(.plain)
@@ -39,8 +40,10 @@ struct SharingChip: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(10)
                         .frame(maxWidth: 300, alignment: .leading)
-                        .background(ChromeColours.notice, in: RoundedRectangle(cornerRadius: 4))
-                        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
+                        .background(ChromeColours.notice,
+                                    in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius, style: .continuous)
+                            .strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
                         .onTapGesture { open = false }
                         .accessibilityIdentifier("sharingNote")
                 }

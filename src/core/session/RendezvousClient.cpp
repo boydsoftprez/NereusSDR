@@ -28,10 +28,15 @@
 //               web relay's leg (RelayLeg) and its per-connection candidate
 //               sources; the computer's own proxy settings (SystemProxy).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22: the service's addresses raced, the next family 250 ms
+//               after the first (HappyEyeballs.h), so a silent IPv6 path
+//               no longer outlasts the hello timer. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/RendezvousClient.h"
 #include "core/session/NetworkTrouble.h"
+#include "core/session/HappyEyeballs.h"
 #include "core/session/SystemProxy.h"
 
 #include "core/security/StationIdentity.h"
@@ -520,7 +525,9 @@ void RendezvousClient::connectTo(int serverIndex)
                          << m_servers.at(serverIndex).host();
     // Task 29 step 2b (options survey B.5): the computer's own proxy
     // settings, for a network that reaches the web through one.
-    socket->setProxy(SystemProxy::forUrl(m_servers.at(serverIndex)));
+    // 2026-10-22: a name's addresses raced (HappyEyeballs.h), so a silent
+    // IPv6 path no longer outlasts the hello timer.
+    socket->setProxy(HappyEyeballs::proxyForWebSocket(m_servers.at(serverIndex), socket));
     socket->open(m_servers.at(serverIndex));
 }
 

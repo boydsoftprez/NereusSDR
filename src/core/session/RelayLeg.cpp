@@ -20,11 +20,14 @@
 //               ended(). LINK minor 14: legs are owned from
 //               construction, no raw delete. J.J. Boyd (KG4VCF), AI-
 //               assisted via Anthropic Claude Code.
+//   2026-10-22: the relay's addresses raced (HappyEyeballs.h).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/RelayLeg.h"
 
 #include "core/session/NetworkTrouble.h"
+#include "core/session/HappyEyeballs.h"
 #include "core/session/SystemProxy.h"
 
 #include <QAuthenticator>
@@ -461,7 +464,8 @@ void RelayLeg::connectNow()
     auto* socket = new QWebSocket(QString(), QWebSocketProtocol::VersionLatest, this);
     socket->setMaxAllowedIncomingMessageSize(kMaxDatagramBytes + 1 + 64);
     socket->setMaxAllowedIncomingFrameSize(kMaxDatagramBytes + 1 + 64);
-    socket->setProxy(SystemProxy::forUrl(m_url));
+    // 2026-10-22: a name's addresses raced (HappyEyeballs.h).
+    socket->setProxy(HappyEyeballs::proxyForWebSocket(m_url, socket));
     m_socket = socket;
     ++m_connections;
     connect(socket, &QWebSocket::connected, this, &RelayLeg::onConnected);

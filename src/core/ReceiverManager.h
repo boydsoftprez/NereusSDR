@@ -33,6 +33,11 @@
 //                 snapshots after unlocking, including callback-safe retunes.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //                 NereusSDR-original synchronization logic.
+//   2026-10-22 - I/Q level log (IqLevelMonitor): RMS and peak dBFS per
+//                 hardware DDC at most every 10 s, with its receiver, ADC,
+//                 the ADC overload flag and the DDC map; noteAdcOverflow and
+//                 setIqLevelReportIntervalNsForTest. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code. NereusSDR-original.
 // =================================================================
 
 //=================================================================
@@ -90,6 +95,7 @@
 #include <QVector>
 #include <QMap>
 #include <QMutex>
+#include <QStringList>
 
 #include <array>
 #include <atomic>
@@ -97,6 +103,7 @@
 
 #include "codec/CodecContext.h"   // PsDdcConfig + Q_DECLARE_METATYPE
 #include "HpsdrModel.h"           // HPSDRModel
+#include "core/IqLevelMonitor.h"
 #include "core/NereusCoreExport.h"
 
 namespace NereusSDR {
@@ -204,7 +211,16 @@ public:
     // --- I/Q Data Routing ---
     // Called when I/Q data arrives for a hardware DDC.
     // Routes to the correct logical receiver.
+    // Also measures each hardware DDC's I/Q level and, at most every
+    // IqLevelMonitor::kReportIntervalNs, logs one line per DDC (lcReceiver).
     void feedIqData(int hwReceiverIndex, const QVector<float>& samples);
+
+    // An ADC reported an overload (RadioConnection::adcOverflow, any
+    // thread); the next I/Q level line says so.
+    void noteAdcOverflow(int adc);
+
+    // Test seam: report I/Q levels on this interval instead of 10 s.
+    void setIqLevelReportIntervalNsForTest(qint64 intervalNs);
 
     // One socket drain's worth of I/Q, bracketed by the connection thread
     // (RadioConnection::iqBatchStarted / iqBatchFinished, DirectConnection).
@@ -426,6 +442,12 @@ private:
     QMutex m_iqBatchMutex;
     std::atomic<Qt::HANDLE> m_iqBatchThread{nullptr};
     QVector<HeldIqBatch> m_heldIq;
+
+    // I/Q level diagnostics, fed and read in feedIqData under
+    // m_routingMutex (noteAdcOverflow is lock-free).
+    IqLevelMonitor m_iqLevels;
+    // Caller holds m_routingMutex. One line per DDC in the report.
+    QStringList describeIqLevels(const IqLevelMonitor::Report& report) const;
 
     // Diagnostic: one-shot logging of first successful and first dropped feedIqData
     bool m_firstForwardLogged{false};

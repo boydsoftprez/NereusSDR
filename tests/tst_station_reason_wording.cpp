@@ -92,6 +92,9 @@
 //                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22  J.J. Boyd / KG4VCF  RX-only values 4 and 5 insert two of
+//                                    the SKU's receive-only names.
+//                                    AI tooling: Anthropic Claude Code.
 //   2026-10-12  J.J. Boyd / KG4VCF  CAT reconfiguration: scan both validators
 //                                    and serial conflicts; guard the exact
 //                                    validation refusal forwards.
@@ -1207,6 +1210,8 @@ const QList<ReasonSource>& reasonSources()
           QStringLiteral("ReceiverPlanner::joinWords(letters)"),
           QStringLiteral("antenna, names.first()"),
           QStringLiteral("antenna, ReceiverPlanner::joinWords(names)"),
+          // Two receive-only antenna names from the SKU (rxOnlyWords).
+          QStringLiteral("xvtr, other"),
           QStringLiteral("number"),
           QStringLiteral("QString::number(centreHz / 1e6, 'f', 6), "
                          "QString::number(std::lround(widthHz))"),

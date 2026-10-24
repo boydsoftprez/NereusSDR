@@ -12,13 +12,20 @@ import SwiftUI
 /// under those controls, never over them. Nothing here takes a touch.
 struct BandAwayMarks: View {
     @ObservedObject var band: BandModel
+    /// The marks themselves: they move with every line, and only this layer redraws for it.
+    @ObservedObject private var away: BandModel.AwayMarks
     @Environment(\.displayScale) private var displayScale
+
+    init(band: BandModel) {
+        self.band = band
+        away = band.away
+    }
 
     var body: some View {
         GeometryReader { proxy in
             if let axes = band.pointGeometry(size: proxy.size) {
                 ZStack(alignment: .topLeading) {
-                    ForEach(Array(band.awayMarks.enumerated()), id: \.offset) { _, mark in
+                    ForEach(Array(away.marks.enumerated()), id: \.offset) { _, mark in
                         awayMark(mark, layout: axes.layout)
                     }
                 }

@@ -100,16 +100,33 @@ struct TxPanel: View {
             // (on a Hermes Lite 2, drive in dB as its desktop shows it).
             PanelSliderRow(label: "RF Power", value: transmit.rfPower,
                            range: transmit.powerControl.range, accessibility: "RF power",
-                           format: transmit.powerControl.text, greyed: !transmit.settingsEditable(1), notConfirmed: transmit.isUnconfirmed("power")) { transmit.setRfPower($0) }
+                           format: transmit.powerControl.text,
+                           greyed: !transmit.settingsEditable(1) || transmit.rfPowerSourceReason != nil,
+                           notConfirmed: transmit.isUnconfirmed("power")) { transmit.setRfPower($0) }
                 .accessibilityIdentifier("txRfPower")
+                .accessibilityHint(transmit.rfPowerSourceReason ?? "")
             PanelSliderRow(label: "Tune Pwr", value: transmit.tunePower,
                            range: transmit.tuneControl.range, accessibility: "Tune power",
                            format: transmit.tuneControl.text,
-                           greyed: !(transmit.settingsEditable(2) && transmit.tunePowerAvailable), notConfirmed: transmit.isUnconfirmed("tunePowerForTxBand")) { transmit.setTunePower($0) }
+                           greyed: !(transmit.settingsEditable(2) && transmit.tunePowerAvailable)
+                               || transmit.tunePowerSourceReason != nil,
+                           notConfirmed: transmit.isUnconfirmed("tunePowerForTxBand")) { transmit.setTunePower($0) }
                 .accessibilityIdentifier("txTunePower")
+                .accessibilityHint(transmit.tunePowerSourceReason ?? "")
             if let reason = transmit.settingsReason(1) {
                 note("RF Power, Tune Pwr, TX filter and the settings below: " + reason)
                     .accessibilityIdentifier("txSettingsReason")
+            }
+            // The drive sources the desktop's Setup chose (its TX applet's
+            // drive source gate): the slider TUNE or the two-tone test is
+            // not using is greyed, with why.
+            if let reason = transmit.rfPowerSourceReason {
+                note("RF Power: " + reason)
+                    .accessibilityIdentifier("txRfPowerSourceReason")
+            }
+            if transmit.tunePowerAvailable, let reason = transmit.tunePowerSourceReason {
+                note("Tune Pwr: " + reason)
+                    .accessibilityIdentifier("txTunePowerSourceReason")
             }
             if let reason = transmit.twoToneReason {
                 note("2-Tone: " + reason)
@@ -313,8 +330,8 @@ struct TxPanel: View {
                     .padding(.horizontal, 8)
                     .frame(maxWidth: .infinity, minHeight: 44)
                     .background(editable ? ChromeColours.button : ChromeColours.buttonOff,
-                                in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
+                                in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                         .strokeBorder(editable ? ChromeColours.buttonBorder : ChromeColours.buttonOffBorder, lineWidth: 1))
                 }
                 .disabled(!editable)
@@ -562,8 +579,8 @@ struct TxPanel: View {
                     .foregroundStyle(accessory.operate ? .white : ChromeColours.text)
                     .frame(minWidth: 96, minHeight: 44)
                     .background(accessory.operate ? ChromeColours.operateOn : ChromeColours.operateOff,
-                                in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
+                                in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                         .strokeBorder(accessory.operate ? ChromeColours.operateOnBorder : ChromeColours.operateOffBorder,
                                       lineWidth: 1))
             }
@@ -651,7 +668,7 @@ private struct TxSwrGauge: View {
                                 .foregroundStyle(ConnectChrome.warn)
                                 .padding(.horizontal, 8)
                                 .frame(minHeight: 44)
-                                .background(ChromeColours.notice, in: RoundedRectangle(cornerRadius: 6))
+                                .background(ChromeColours.notice, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
                                 .contentShape(Rectangle())
                         }
                             .buttonStyle(.plain)

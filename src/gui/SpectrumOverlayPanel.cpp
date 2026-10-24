@@ -21,6 +21,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - A closed Display pill no longer lays itself out on every
+//                 remote telemetry tick: geometry refreshes wait for the
+//                 pill to open, unchanged remote and station gates and an
+//                 unchanged Clarity badge do nothing. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Claude Code.
 //   2026-10-14 - Keep Peak Value as the preferred wide-font overflow and
 //                 retain each Display choice's two-pixel text margin after
 //                 enabled-state styling. J.J. Boyd (KG4VCF), AI-assisted
@@ -1285,9 +1290,20 @@ void SpectrumOverlayPanel::scheduleDisplayPillGeometryRefresh()
 {
     if (!WorkspacePreview::enabled() || m_refreshingPillGeometry || m_pillGeometryQueued
         || m_pillPages.size() != 5) { return; }
+    // A closed pill is laid out when it opens: showDisplayPill() refreshes
+    // it before show(). Laying it out while closed blocked the GUI thread
+    // on every remote telemetry tick.
+    if (!displayPillVisible()) {
+        m_pillGeometryStale = true;
+        return;
+    }
     m_pillGeometryQueued = true;
     QTimer::singleShot(0, this, [this]() {
         m_pillGeometryQueued = false;
+        if (!displayPillVisible()) {
+            m_pillGeometryStale = true;
+            return;
+        }
         refreshDisplayPillGeometry();
     });
 }
@@ -1360,6 +1376,7 @@ void SpectrumOverlayPanel::refreshDisplayPillGeometry()
 {
     if (!WorkspacePreview::enabled() || !m_displayFlyout || m_refreshingPillGeometry) { return; }
     const QScopedValueRollback<bool> own(m_refreshingPillGeometry, true);
+    ++m_pillGeometryRefreshes;
     WorkspacePreview::themeSubtree(m_displayFlyout);
     static constexpr int kRoom = PillStyle::kWidth - 2 - 2 * PillStyle::kMarginH;
     for (const PillToggleGroup& group : std::as_const(m_pillToggleGroups)) {
@@ -2905,6 +2922,12 @@ void SpectrumOverlayPanel::setGpuCapabilities(bool rowSpanSupported, bool sliceS
 
 void SpectrumOverlayPanel::setRemoteWindow(bool remote, bool coreOffersDecimation)
 {
+    // MainWindow repeats this on every remote telemetry tick.
+    if (m_remoteWindowApplied && remote == m_remoteWindow
+        && coreOffersDecimation == m_coreOffersDecimation) {
+        return;
+    }
+    m_remoteWindowApplied = true;
     m_remoteWindow = remote;
     m_coreOffersDecimation = coreOffersDecimation;
     updatePillEnables();
@@ -3020,6 +3043,7 @@ void SpectrumOverlayPanel::showDisplayPill()
 
     bindDisplayPill();
     themeFlyout(m_displayFlyout);
+    m_pillGeometryStale = false;
     refreshDisplayPillGeometry();
     // adjustSize then position (from AetherSDR toggleDisplayPanel)
     // The bounded layout now supplies the size before positioning.
@@ -3029,6 +3053,13 @@ void SpectrumOverlayPanel::showDisplayPill()
     m_activeFlyout = m_displayFlyout;
     m_activeButton = dispBtn;
     dispBtn->setStyleSheet(menuBtnActiveStyle());
+    // A refresh asked for while show() ran (its Show and StyleChange
+    // events arrive before the pill counts as open) is queued now, as it
+    // was before closed pills stopped queueing.
+    if (m_pillGeometryStale) {
+        m_pillGeometryStale = false;
+        scheduleDisplayPillGeometryRefresh();
+    }
 }
 
 void SpectrumOverlayPanel::openDisplayPill()
@@ -3962,12 +3993,20 @@ void SpectrumOverlayPanel::setFftState(const DisplayPillFftState& state)
 
 void SpectrumOverlayPanel::setStationRowsAvailable(bool available, const QString& reason)
 {
-    m_stationRowsAvailable = available;
-    m_stationRowsReason = available ? QString() : reason;
+    const QString shownReason = available ? QString() : reason;
     if (!available && m_fftSizeKeyTimer) {
         // Nothing is asked of a station that cannot be reached.
         m_fftSizeKeyTimer->stop();
     }
+    // MainWindow repeats this on every remote telemetry tick. A changed
+    // reason alone still updates the rows and the note.
+    if (m_stationRowsApplied && available == m_stationRowsAvailable
+        && shownReason == m_stationRowsReason) {
+        return;
+    }
+    m_stationRowsApplied = true;
+    m_stationRowsAvailable = available;
+    m_stationRowsReason = shownReason;
     updatePillEnables();
 }
 
@@ -4171,9 +4210,17 @@ void SpectrumOverlayPanel::updateClarityBadge()
     }
     const bool paused = m_clarityEnabled && m_clarityPaused;
     const bool active = m_clarityEnabled && m_clarityActive && !paused;
-    m_clarityBadge->setProperty("clarityState", paused   ? QStringLiteral("paused")
-                                                : active ? QStringLiteral("active")
-                                                         : QStringLiteral("off"));
+    const QString state = paused   ? QStringLiteral("paused")
+                        : active ? QStringLiteral("active")
+                                 : QStringLiteral("off");
+    // An unchanged badge is not restyled: each setStyleSheet posts a
+    // StyleChange that asks for the pill's geometry again. The look's
+    // theming keeps the original sheet, so a theme change needs no re-set.
+    if (state == m_clarityBadgeState) {
+        return;
+    }
+    m_clarityBadgeState = state;
+    m_clarityBadge->setProperty("clarityState", state);
     m_clarityBadge->setStyleSheet(paused   ? PillStyle::kBadgePaused
                                   : active ? PillStyle::kBadgeActive
                                            : PillStyle::kBadgeOff);

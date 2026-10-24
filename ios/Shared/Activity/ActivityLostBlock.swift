@@ -62,14 +62,14 @@ struct ActivityLostBlock: View {
             + Text(timerInterval: at.addingTimeInterval(-3_600)...at, countsDown: true)
     }
 
+    /// Reconnect in the glass, Cancel in the muted danger set.
     private func stripLabel(_ title: String, go: Bool) -> some View {
-        Text(title)
+        let look = go ? ActivityColours.reconnect : ActivityColours.cancel
+        return Text(title)
             .font(.system(size: 13, weight: .bold))
-            .foregroundStyle(go ? Color.white : ActivityColours.cancelText)
+            .foregroundStyle(workspaceForeground(look))
             .padding(.horizontal, 14)
             .frame(height: 34)
-            .background(go ? ActivityColours.reconnect : ActivityColours.cancel, in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4)
-                .strokeBorder(go ? ActivityColours.reconnectEdge : ActivityColours.cancelEdge, lineWidth: 1))
+            .background { WorkspaceFace(look) }
     }
 }

@@ -36,6 +36,73 @@
 //                                    QFile round-trip.
 //                                    AI tooling: Anthropic Claude
 //                                    Code.
+//   2026-10-22  extractField tag regex fix ported from Longpath by
+//               J.J. Boyd (KG4VCF), with AI-assisted transformation
+//               via Claude Code. Fields that carry an ADIF data type
+//               indicator (<CALL:6:S>, <FREQ:6:N>) were dropped: the
+//               optional type group sat before the length capture,
+//               so <FIELD:len:T> never matched.
+//
+// Ported in part from Longpath source:
+//   src/core/AdifParser.cpp [@383f058] (commit a927f492, the
+//   extractField tag regex only); original header from Longpath
+//   source is included below.
+//
+// Longpath (Martin Fischer, OE5SOS, https://github.com/oe5sos/Longpath)
+// is a fork of NereusSDR distributed under the GNU General Public
+// License version 3 (its root LICENSE).
+//
+// --- From AdifParser.cpp ---
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Longpath - AdifParser: ADIF (.adi / .adif) amateur-radio log parser.
+//
+// Ported from AetherSDR src/core/AdifParser.cpp [@0cd4559].
+// AetherSDR is (C) its contributors and is licensed GPL-3.0-or-later
+// (see https://github.com/ten9876/AetherSDR/blob/main/LICENSE).
+//
+// Modification history (Longpath):
+//   2026-05-10  J.J. Boyd / KG4VCF  Phase 3J-2 Task C2. Initial port.
+//                                    AetherSDR's "AetherSDR" namespace
+//                                    becomes "Longpath". Public API
+//                                    (parseFile, parseFileAsync) and
+//                                    internal helpers (extractField,
+//                                    normaliseMode, freqToBand,
+//                                    parse) follow upstream
+//                                    byte-for-byte: header skip on
+//                                    <EOH>, <EOR>-delimited record
+//                                    iteration, ADIF tag regex
+//                                    `<FIELDNAME:length>value` with
+//                                    optional `:TYPE` segment, BAND
+//                                    fallback to FREQ -> freqToBand,
+//                                    submode-aware mode group
+//                                    classification (FT8 / FT4 /
+//                                    JS8 / JT65 / JT9 / WSPR /
+//                                    PSK31 / PSK63 / RTTY -> DATA),
+//                                    3-attempt open retry with
+//                                    500ms backoff on async path.
+//                                    Longpath addition:
+//                                    parseBytesForTest() public
+//                                    test seam (precedent: B1-B5)
+//                                    that delegates to the private
+//                                    parse() so tests can exercise
+//                                    the parser against an
+//                                    in-memory buffer without a
+//                                    QFile round-trip.
+//                                    AI tooling: Anthropic Claude
+//                                    Code.
+//   2026-08-10  J.J. Boyd / KG4VCF  extractField: fix tag regex so
+//                                    fields carrying an ADIF data
+//                                    type indicator (<CALL:6:S>)
+//                                    match. The optional type group
+//                                    sat BEFORE the length capture,
+//                                    so <FIELD:len:T> could never
+//                                    match and such fields were
+//                                    silently dropped. New pattern:
+//                                    <FIELD:(\d+)(?::[A-Z])?>.
+//                                    AI tooling: Anthropic Claude
+//                                    Code.
 
 #include "AdifParser.h"
 
@@ -57,9 +124,12 @@ namespace NereusSDR {
 static QString extractField(const QString& block, const QString& fieldName)
 {
     // e.g. <CALL:6>G3ABC  or <CALL:6:S>G3ABC
+    // From Longpath src/core/AdifParser.cpp:71-76 [@383f058]
+    // Tag grammar: <FIELDNAME:length> with an optional trailing
+    // :DataTypeIndicator (single letter, e.g. :S, :N, :D).
     // NOTE: do NOT make this regex static — the pattern depends on fieldName.
     const QRegularExpression re(
-        R"(<)" + QRegularExpression::escape(fieldName) + R"((?::\d+(?::[A-Z])?)?:(\d+)>)",
+        R"(<)" + QRegularExpression::escape(fieldName) + R"(:(\d+)(?::[A-Z])?>)",
         QRegularExpression::CaseInsensitiveOption);
     auto m = re.match(block);
     if (!m.hasMatch()) return {};

@@ -32,7 +32,7 @@ struct KeyBackupSheet: View {
                 .textSelection(.enabled)
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(ConnectChrome.fieldFill, in: RoundedRectangle(cornerRadius: 4))
+                .background(ConnectChrome.fieldFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
                 .accessibilityIdentifier("keyPath")
             Text(Self.privateNote)
                 .font(.system(size: 12))

@@ -1,8 +1,9 @@
 // no-port-check: smoke test for Antenna Control sub-sub-tab UI construction + AlexController wiring
 #include <QtTest/QtTest>
 #include <QApplication>
+#include <QCheckBox>
 #include <QLabel>
-#include <QRadioButton>
+#include <QAbstractButton>
 #include <QSignalSpy>
 
 #include "gui/setup/hardware/AntennaAlexAntennaControlTab.h"
@@ -121,6 +122,70 @@ private slots:
     // TX "Ant 1".."Ant 3") sits over its column of radio buttons, every
     // band row, in today's look and the workspace look (the RX "1" and "2"
     // sat off their columns).
+    // RX-only inputs are Thetis checkboxes (setup.cs ProcessAlexAntCheckBox):
+    // RX1 and RX2 rule each other out, XVTR stands alone, and the stored
+    // value is the sum of the checked boxes' numbers (0..5).
+    void rx_only_checkboxes_follow_thetis_sum()
+    {
+        RadioModel model;
+        AntennaAlexAntennaControlTab tab(&model);
+        const auto value = [&model]() { return model.alexController().rxOnlyAnt(Band::Band40m); };
+        QCheckBox* r1 = tab.rxOnlyButtonForTest(Band::Band40m, 1);
+        QCheckBox* r2 = tab.rxOnlyButtonForTest(Band::Band40m, 2);
+        QCheckBox* xv = tab.rxOnlyButtonForTest(Band::Band40m, 3);
+        QVERIFY(r1 && r2 && xv);
+        QCOMPARE(value(), 0);
+
+        xv->click();
+        QCOMPARE(value(), 3);
+        xv->click();  // XVTR can be turned off again
+        QCOMPARE(value(), 0);
+        QVERIFY(!xv->isChecked());
+
+        r1->click();
+        QCOMPARE(value(), 1);
+        r2->click();  // RX2 clears RX1
+        QCOMPARE(value(), 2);
+        QVERIFY(!r1->isChecked());
+        QVERIFY(r2->isChecked());
+        xv->click();
+        QCOMPARE(value(), 5);
+        r1->click();
+        QCOMPARE(value(), 4);
+        QVERIFY(!r2->isChecked());
+        r1->click();
+        xv->click();
+        QCOMPARE(value(), 0);
+        QVERIFY(!r1->isChecked() && !r2->isChecked() && !xv->isChecked());
+        QCOMPARE(model.alexController().rxOnlyAnt(Band::Band20m), 0);
+    }
+
+    void rx_only_checkboxes_show_the_model_value()
+    {
+        RadioModel model;
+        AntennaAlexAntennaControlTab tab(&model);
+        QCheckBox* r1 = tab.rxOnlyButtonForTest(Band::Band20m, 1);
+        QCheckBox* r2 = tab.rxOnlyButtonForTest(Band::Band20m, 2);
+        QCheckBox* xv = tab.rxOnlyButtonForTest(Band::Band20m, 3);
+        const struct { int value; bool one; bool two; bool three; } cases[] = {
+            {0, false, false, false}, {1, true, false, false}, {2, false, true, false},
+            {3, false, false, true},  {4, true, false, true},  {5, false, true, true},
+        };
+        for (const auto& c : cases) {
+            model.alexControllerMutable().setRxOnlyAnt(Band::Band20m, c.value);
+            QCOMPARE(model.alexController().rxOnlyAnt(Band::Band20m), c.value);
+            QCOMPARE(r1->isChecked(), c.one);
+            QCOMPARE(r2->isChecked(), c.two);
+            QCOMPARE(xv->isChecked(), c.three);
+        }
+        // The clamp keeps Thetis's whole range and nothing past it.
+        model.alexControllerMutable().setRxOnlyAnt(Band::Band20m, 6);
+        QCOMPARE(model.alexController().rxOnlyAnt(Band::Band20m), 5);
+        model.alexControllerMutable().setRxOnlyAnt(Band::Band20m, -1);
+        QCOMPARE(model.alexController().rxOnlyAnt(Band::Band20m), 0);
+        QVERIFY(!r1->isChecked() && !r2->isChecked() && !xv->isChecked());
+    }
+
     void column_labels_sit_over_their_columns_data()
     {
         QTest::addColumn<bool>("workspace");
@@ -156,7 +221,7 @@ private slots:
             ++columns;
             const qreal headerX = GridHeaderAlignment::labelCentreX(header, &page);
             int buttons = 0;
-            for (QRadioButton* button : tab->findChildren<QRadioButton*>()) {
+            for (QAbstractButton* button : tab->findChildren<QAbstractButton*>()) {
                 if (button->property("nereusAntennaColumn").toString() != column) {
                     continue;
                 }

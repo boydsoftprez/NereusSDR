@@ -127,8 +127,8 @@ struct SpotHubPage: View {
                 content()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
+            .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
         }
     }
 
@@ -226,8 +226,8 @@ struct SpotHubPage: View {
                     .foregroundStyle(isOn ? ChromeColours.buttonOnGreenText : ChromeColours.text)
                     .frame(width: 44, height: 30)
                     .background(isOn ? ChromeColours.buttonOnGreen : ChromeColours.button,
-                                in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
+                                in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                         .strokeBorder(isOn ? ChromeColours.buttonOnGreenBorder : ChromeColours.buttonBorder, lineWidth: 1))
                     .contentShape(Rectangle())
             }
@@ -261,8 +261,8 @@ struct SpotHubPage: View {
                             .frame(maxWidth: .infinity, minHeight: 32)
                             .background(on ? ChromeColours.buttonOnBlue
                                            : (enabled(source) ? ChromeColours.button : ChromeColours.buttonOff),
-                                        in: RoundedRectangle(cornerRadius: 4))
-                            .overlay(RoundedRectangle(cornerRadius: 4)
+                                        in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                                 .strokeBorder(on ? ChromeColours.buttonOnBlueBorder
                                                  : (enabled(source) ? ChromeColours.buttonBorder
                                                                     : ChromeColours.buttonOffBorder), lineWidth: 1))

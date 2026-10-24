@@ -64,6 +64,10 @@
 //                 form, bar compact, filter label); the bar's compact form
 //                 and the filter pane's label come from the entry config.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-20 - Frequency (Custom) registers beside Frequency (Longpath)
+//                 and applies font size, colour, centering and the slice
+//                 lines from the entry config. Brian Sutton,
+//                 AI-assisted via xAI Grok.
 // =================================================================
 
 #include "models/MainPowerMeter.h"
@@ -83,6 +87,7 @@
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
+#include <QColor>
 #include <QPointer>
 #include <QTimer>
 
@@ -243,6 +248,39 @@ QWidget* makeFrequency(const ContentEntry& entry, QWidget* parent, const Sources
     return w;
 }
 
+// Frequency (Custom). Absent keys are the defaults: 26 px, locked to
+// that size, the amber reading colour, top-left, both slice lines.
+void applyFrequencyDisplay(FrequencyInstrument* frequency, const QJsonObject& config)
+{
+    const int fontPx = config.value(QLatin1String(kFontSizeKey)).toInt(26);
+    const bool fit = config.value(QLatin1String(kFitWidthKey)).toBool(false);
+    frequency->setDigitFont(fontPx, fit);
+    const QString hex = config.value(QLatin1String(kFontColorKey)).toString();
+    if (!hex.isEmpty()) {
+        const QColor color(hex);
+        if (color.isValid()) {
+            frequency->setDigitColor(color);
+        }
+    }
+    if (config.value(QLatin1String(kCenterKey)).toBool(false)) {
+        frequency->setContentCentered(true);
+    }
+    const bool own = config.value(QLatin1String(kShowOwnKey)).toBool(true);
+    const bool other = config.value(QLatin1String(kShowOtherKey)).toBool(true);
+    if (!own || !other) {
+        frequency->setSliceLinesVisible(own, other);
+    }
+}
+
+QWidget* makeFrequencyCustom(const ContentEntry& entry, QWidget* parent, const Sources& sources, bool preview)
+{
+    QWidget* widget = makeFrequency(entry, parent, sources, preview);
+    if (auto* frequency = qobject_cast<FrequencyInstrument*>(widget)) {
+        applyFrequencyDisplay(frequency, entry.config);
+    }
+    return widget;
+}
+
 // Task 5b: the poller reads this widget's context on its own timer frame,
 // whether or not a MeterWidget shares the context. Called on creation; the
 // container host builds a new widget when the source or binding changes,
@@ -314,6 +352,53 @@ QVector<ContentProperty> frequencyProperties()
     return {form};
 }
 
+QVector<ContentProperty> frequencyDisplayProperties()
+{
+    QVector<ContentProperty> out = frequencyProperties();
+
+    ContentProperty size;
+    size.key = QLatin1String(kFontSizeKey);
+    size.label = QObject::tr("Font size");
+    size.kind = ContentProperty::Kind::Integer;
+    size.minimum = 12;
+    size.maximum = 160;
+    size.suffix = QObject::tr(" px");
+    size.defaultValue = 26;
+
+    ContentProperty fit;
+    fit.key = QLatin1String(kFitWidthKey);
+    fit.label = QObject::tr("Fit font to the width");
+    fit.kind = ContentProperty::Kind::Toggle;
+    fit.defaultValue = false;
+
+    ContentProperty color;
+    color.key = QLatin1String(kFontColorKey);
+    color.label = QObject::tr("Font color");
+    color.kind = ContentProperty::Kind::Color;
+    color.defaultValue = QStringLiteral("#d8a55f");
+
+    ContentProperty center;
+    center.key = QLatin1String(kCenterKey);
+    center.label = QObject::tr("Center in the box");
+    center.kind = ContentProperty::Kind::Toggle;
+    center.defaultValue = false;
+
+    ContentProperty own;
+    own.key = QLatin1String(kShowOwnKey);
+    own.label = QObject::tr("A/B line: this slice");
+    own.kind = ContentProperty::Kind::Toggle;
+    own.defaultValue = true;
+
+    ContentProperty other;
+    other.key = QLatin1String(kShowOtherKey);
+    other.label = QObject::tr("A/B line: other slice");
+    other.kind = ContentProperty::Kind::Toggle;
+    other.defaultValue = true;
+
+    out << size << fit << color << center << own << other;
+    return out;
+}
+
 QVector<ContentProperty> filterProperties()
 {
     ContentProperty label;
@@ -367,6 +452,13 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
             return makeFrequency(entry, parent, sources, mode == ContentRenderMode::Preview);
         },
         frequencyProperties());
+
+    registry.registerWidgetFactory(QLatin1String(kFrequencyCustomType),
+        {QLatin1String(kFrequencyCustomType), QStringLiteral("Frequency (Custom)"), false, true, {}},
+        [sources](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
+            return makeFrequencyCustom(entry, parent, sources, mode == ContentRenderMode::Preview);
+        },
+        frequencyDisplayProperties());
 
     const auto meterFactory = [sources](const ContentEntry& entry, QWidget* parent,
                                         ContentRenderMode mode) -> QWidget* {

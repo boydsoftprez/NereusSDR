@@ -493,6 +493,160 @@ private slots:
         QVERIFY(reason.contains("disconnected and connected again"));
     }
 
+    // 2026-10-22: a slow NR call is labeled with the NNR model that ran in
+    // it, recorded by WDSP's worker at call time. A call made before the
+    // standard-only limit stays Premium, the call in which the worker applies
+    // the limit says so, and later calls are Standard; RadioModel's log on
+    // the governor's tick reads these labels, so the step cannot relabel an
+    // earlier call.
+    void slowCallsNameTheNnrModelThatRan()
+    {
+        using Clock = std::chrono::steady_clock;
+        // Outside WdspEngine's reserved ids (slices 0-4, TX 5, PS feedback 6).
+        constexpr int kChannel = 13;
+        constexpr int kInSize = 1024;
+        constexpr int kDspSize = 4096;
+        constexpr int kRate = 48000;
+        // Busy-wait inside each NR group call that ran a stage, so every
+        // NNR call is over 50 ms.
+        constexpr int kNrCallDelayUs = 60000;
+
+        OpenChannel(kChannel, kInSize, kDspSize, kRate, kRate, kRate,
+                    0, 1, 0.010, 0.025, 0.000, 0.010,
+                    0);   // bfo off: the feeder never waits for output
+        const auto closeChannel = qScopeGuard([&] { CloseChannel(kChannel); });
+        NNRConfiguration premium{1, 0, -25.0, 1.0, 10.0, 2.0, 12.0, 0.0, 0.0};
+        NNRRuntimeStatus status{};
+        QVERIFY(ConfigureRXANNR(kChannel, &premium, &status));
+        SetRXANNRRun(kChannel, 1);
+        QVERIFY(GetRXANNRStatus(kChannel, &status));
+        QVERIFY(status.running);
+        QCOMPARE(status.active_model_slot, 1);
+
+        std::atomic<bool> stop{false};
+        std::thread feeder([&] {
+            std::array<float, kInSize> inI{}, inQ{}, outI{}, outQ{};
+            const auto period = std::chrono::duration_cast<Clock::duration>(
+                std::chrono::duration<double>(double(kInSize) / kRate / 2.0));
+            auto next = Clock::now();
+            double phase = 0.0;
+            while (!stop.load()) {
+                for (int i = 0; i < kInSize; ++i) {
+                    inI[i] = static_cast<float>(0.01 * std::cos(phase));
+                    inQ[i] = static_cast<float>(0.01 * std::sin(phase));
+                    phase = std::fmod(phase + 2.0 * std::numbers::pi * 1000.0 / kRate,
+                                      2.0 * std::numbers::pi);
+                }
+                int error = 0;
+                fexchange2(kChannel, inI.data(), inQ.data(), outI.data(), outQ.data(), &error);
+                next += period;
+                std::this_thread::sleep_until(next);
+            }
+        });
+        const auto stopFeeder = qScopeGuard([&] {
+            WDSPSetTestNrCallDelayUs(kChannel, 0);
+            stop.store(true);
+            feeder.join();
+            // Let the worker drain its backlog before the channel closes.
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        });
+        WDSPSetTestNrCallDelayUs(kChannel, kNrCallDelayUs);
+
+        const auto waitTwoBlocks = [&] {
+            const auto blocks = [&] {
+                WdspChannelLoad load{};
+                GetChannelDspLoad(kChannel, &load);
+                return load.blocks;
+            };
+            const long long start = blocks();
+            const auto deadline = Clock::now() + std::chrono::seconds(5);
+            while (blocks() < start + 2 && Clock::now() < deadline) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+            return blocks() >= start + 2;
+        };
+        const auto take = [&] {
+            WdspSlowNrCalls calls{};
+            [&] { QCOMPARE(TakeChannelSlowNrCalls(kChannel, &calls), 0); }();
+            return calls;
+        };
+
+        // Premium only: every slow call ran Premium.
+        QVERIFY(waitTwoBlocks());
+        take();
+        QVERIFY(waitTwoBlocks());
+        WdspSlowNrCalls calls = take();
+        QVERIFY(calls.count > 0);
+        QCOMPARE(calls.stages, int(WDSP_NR_STAGE_NNR_PREMIUM));
+        if (calls.longestUs > 0) {
+            QVERIFY(calls.longestUs > 50000);
+            QCOMPARE(calls.longestStages, int(WDSP_NR_STAGE_NNR_PREMIUM));
+        }
+
+        // The governor's standard-only step: the worker applies it inside a
+        // call that started under Premium.
+        take();
+        RequestRXANNRLimit(kChannel, 1);
+        QVERIFY(waitTwoBlocks());
+        calls = take();
+        QVERIFY(calls.count > 0);
+        const int stepCall = WDSP_NR_STAGE_NNR_PREMIUM | WDSP_NR_NNR_LIMIT_APPLIED
+                             | WDSP_NR_NNR_FROM_PREMIUM | WDSP_NR_NNR_TO_STANDARD;
+        QCOMPARE(calls.stages & stepCall, stepCall);
+        QCOMPARE(calls.stages & ~(stepCall | int(WDSP_NR_STAGE_NNR_STANDARD)), 0);
+        QVERIFY(GetRXANNRStatus(kChannel, &status));
+        QCOMPARE(status.active_model_slot, 0);
+
+        // After the step: Standard only.
+        QVERIFY(waitTwoBlocks());
+        calls = take();
+        QVERIFY(calls.count > 0);
+        QCOMPARE(calls.stages, int(WDSP_NR_STAGE_NNR_STANDARD));
+        if (calls.longestUs > 0) {
+            QCOMPARE(calls.longestStages, int(WDSP_NR_STAGE_NNR_STANDARD));
+        }
+        RequestRXANNRLimit(kChannel, 0);
+    }
+
+    // 2026-10-22: RxChannel::processIq counts non-finite samples in WDSP's
+    // output (diagnostics only). Finite input gives none; NaN input, once
+    // it reaches the output, is counted.
+    void nonFiniteWdspOutputIsCounted()
+    {
+        constexpr int kSlice = 3;
+        RxChannel* channel = m_engine->createRxChannel(kSlice, 256, 1024, 48000, 48000, 48000);
+        QVERIFY(channel);
+        const auto destroy = qScopeGuard([&] { m_engine->destroyRxChannel(kSlice); });
+        channel->setActive(true);
+        std::array<float, 256> inI{}, inQ{}, outI{}, outQ{};
+        for (int block = 0; block < 64; ++block) {
+            for (int i = 0; i < 256; ++i) {
+                const double phase = 2.0 * std::numbers::pi * 1000.0 * (block * 256 + i) / 48000.0;
+                inI[i] = static_cast<float>(0.01 * std::cos(phase));
+                inQ[i] = static_cast<float>(-0.01 * std::sin(phase));
+            }
+            channel->processIq(inI.data(), inQ.data(), outI.data(), outQ.data(), 256, 256);
+        }
+        QCOMPARE(channel->takeOutputNonFiniteSamples(), 0LL);
+
+        inI.fill(std::numeric_limits<float>::quiet_NaN());
+        inQ.fill(std::numeric_limits<float>::quiet_NaN());
+        qint64 seen = 0;
+        int nanOut = 0;
+        for (int block = 0; block < 64; ++block) {
+            channel->processIq(inI.data(), inQ.data(), outI.data(), outQ.data(), 256, 256);
+            for (int i = 0; i < 256; ++i) {
+                nanOut += std::isfinite(outI[i]) ? 0 : 1;
+                nanOut += std::isfinite(outQ[i]) ? 0 : 1;
+            }
+        }
+        seen = channel->takeOutputNonFiniteSamples();
+        QVERIFY2(nanOut > 0, "NaN input never reached WDSP's output");
+        QCOMPARE(seen, qint64(nanOut));
+        QCOMPARE(channel->takeOutputNonFiniteSamples(), 0LL);   // a take starts over
+        channel->setActive(false);
+    }
+
     void cleanupTestCase()
     {
         m_a = nullptr;

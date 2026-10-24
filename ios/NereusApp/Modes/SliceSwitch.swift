@@ -12,11 +12,9 @@ import SwiftUI
 struct SliceSwitch: View {
     @ObservedObject var model: ModesTabModel
 
-    private func border(_ choice: ModesTabModel.SliceChoice) -> Color {
-        if choice.listening {
-            return BandColours.slice(choice.colour)
-        }
-        return choice.active ? ChromeColours.accent : ChromeColours.buttonBorder
+    /// The active slice in the glass, the others raised (W3: a pick-one choice).
+    private func look(_ choice: ModesTabModel.SliceChoice) -> WorkspaceLook {
+        choice.active ? .glass : .raised
     }
 
     var body: some View {
@@ -32,13 +30,17 @@ struct SliceSwitch: View {
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                     }
-                    .foregroundStyle(choice.active ? ChromeColours.toolbarOpenText : ChromeColours.text)
+                    .foregroundStyle(workspaceForeground(look(choice)))
                     .frame(maxWidth: .infinity, minHeight: 40)
-                    .background(choice.active ? ChromeColours.sliceChosen : ChromeColours.button,
-                                in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
-                        .strokeBorder(border(choice),
-                                      style: StrokeStyle(lineWidth: 1, dash: choice.listening ? [4, 3] : [])))
+                    .background { WorkspaceFace(look(choice)) }
+                    .overlay {
+                        // A slice this phone only listens to: edged dashed in its colour.
+                        if choice.listening {
+                            RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius, style: .continuous)
+                                .strokeBorder(BandColours.slice(choice.colour),
+                                              style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                        }
+                    }
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)

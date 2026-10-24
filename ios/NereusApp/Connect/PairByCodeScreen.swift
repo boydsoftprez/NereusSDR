@@ -92,8 +92,8 @@ struct PairByCodeScreen: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
+            .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("pairingWith")
         } else {
@@ -116,8 +116,8 @@ struct PairByCodeScreen: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
-                    .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
+                    .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier("pairingWith")
                 }
@@ -143,8 +143,8 @@ struct PairByCodeScreen: View {
                 .focused($codeFocused)
                 .padding(.horizontal, 14)
                 .frame(height: 58)
-                .background(ConnectChrome.fieldFill, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4)
+                .background(ConnectChrome.fieldFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                     .strokeBorder(wrong ? ConnectChrome.badBorder : ChromeColours.accent, lineWidth: 1))
                 .accessibilityLabel("Pairing code")
                 .accessibilityIdentifier("codeField")
@@ -161,8 +161,8 @@ struct PairByCodeScreen: View {
                 .autocorrectionDisabled()
                 .padding(.horizontal, 14)
                 .frame(height: 46)
-                .background(ConnectChrome.fieldFill, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ConnectChrome.nameBorder, lineWidth: 1))
+                .background(ConnectChrome.fieldFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ConnectChrome.nameBorder, lineWidth: 1))
                 .accessibilityLabel("This phone's name on the Core")
                 .accessibilityIdentifier("nameField")
             ConnectChrome.WideButton(title: "Pair", look: .go,
@@ -192,8 +192,7 @@ struct PairByCodeScreen: View {
                     .foregroundStyle(ChromeColours.text)
                     .padding(.horizontal, 10)
                     .frame(height: 32)
-                    .background(ChromeColours.button, in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.buttonBorder, lineWidth: 1))
+                    .background { WorkspaceFace(.raised) }
                     .accessibilityIdentifier("suggestion-\(suggestion)")
             }
         }

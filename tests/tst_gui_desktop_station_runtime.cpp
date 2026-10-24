@@ -1,4 +1,5 @@
 // no-port-check: NereusSDR-original desktop Core runtime tests; temporary profile only.
+#include "UnusedLoopbackPort.h"
 #include "gui/GuiDesktopStationRuntime.h"
 #include "core/session/RemoteDevicesState.h"
 #include "core/AppSettings.h"
@@ -37,9 +38,7 @@ using namespace NereusSDR;
 namespace {
 int freePort()
 {
-    QTcpServer probe;
-    if (!probe.listen(QHostAddress::LocalHost, 0)) return 0;
-    return probe.serverPort();
+    return unusedLoopbackPort();
 }
 
 QString serviceConfigPath(AppSettings& settings)
@@ -604,7 +603,9 @@ private slots:
         QVERIFY(temp.isValid());
         AppSettings& settings = AppSettings::instance();
         QTcpServer occupied;
-        QVERIFY(occupied.listen(QHostAddress::LocalHost, 0));
+        const quint16 freedLater = unusedLoopbackPort();
+        QVERIFY(freedLater != 0);
+        QVERIFY(occupied.listen(QHostAddress::LocalHost, freedLater));
         const int port = occupied.serverPort();
         QVERIFY(writeConfig(serviceConfigPath(settings), port));
         StationServiceOptions service;

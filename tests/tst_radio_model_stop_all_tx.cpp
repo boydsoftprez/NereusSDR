@@ -268,6 +268,138 @@ private slots:
         QVERIFY(rig.conn.log.contains(QStringLiteral("MOX on")));
     }
 
+    // PR 604 third pass (controller ruling, for JJ's veto): the stop's unkey
+    // drops a CAT key's level, so the latch does not wait on CAT and a fresh
+    // mic press keys.
+    void catKeyStoppedThenFreshMicPressKeys()
+    {
+        Rig rig;
+        MoxController* mox = rig.model.moxController();
+        mox->onCatPtt(true);
+        pump();
+        QVERIFY(rig.model.mox());
+
+        rig.model.stopAllTx(QStringLiteral("Time Out Timer"));
+        pump();
+        QVERIFY(!rig.model.mox());
+        QVERIFY(!mox->isStopAllTxLatched());
+
+        rig.conn.log.clear();
+        mox->onMicPttFromRadio(true);
+        pump();
+        QVERIFY(rig.model.mox());
+        QVERIFY(rig.conn.log.contains(QStringLiteral("MOX on")));
+        mox->onMicPttFromRadio(false);
+        pump();
+        QVERIFY(!rig.model.mox());
+    }
+
+    // PR 604 third pass: a held mic is waited on; a fresh CAT key during
+    // the hold keys (CAT is not waited on), and its release leaves the
+    // still-held mic off until the mic is released.
+    void heldMicWaitsButAFreshCatKeyKeys()
+    {
+        Rig rig;
+        MoxController* mox = rig.model.moxController();
+        mox->onMicPttFromRadio(true);
+        pump();
+        QVERIFY(rig.model.mox());
+
+        rig.model.stopAllTx(QStringLiteral("Time Out Timer"));
+        pump();
+        QVERIFY(!rig.model.mox());
+        QVERIFY(mox->isStopAllTxLatched());
+
+        rig.conn.log.clear();
+        mox->onCatPtt(true);
+        pump();
+        QVERIFY(rig.model.mox());
+        QVERIFY(rig.conn.log.contains(QStringLiteral("MOX on")));
+
+        mox->onCatPtt(false);
+        pump();
+        QVERIFY(!rig.model.mox());
+        mox->onMicPttFromRadio(true);
+        pump();
+        QVERIFY(!rig.model.mox());
+        QVERIFY(mox->isStopAllTxLatched());
+
+        mox->onMicPttFromRadio(false);
+        pump();
+        QVERIFY(!mox->isStopAllTxLatched());
+        mox->onMicPttFromRadio(true);
+        pump();
+        QVERIFY(rig.model.mox());
+        mox->onMicPttFromRadio(false);
+        pump();
+    }
+
+    // PR 604 third pass: the TCI twin. A fresh TCI key during the held-mic
+    // wait keys; its release drops MOX and the held mic does not take the
+    // key (getFallbackPTTModeAfterTCIRelease skips a waited-on source).
+    void heldMicWaitsAndIsNoFallbackAfterAFreshTciKey()
+    {
+        Rig rig;
+        MoxController* mox = rig.model.moxController();
+        mox->onMicPttFromRadio(true);
+        pump();
+        QVERIFY(rig.model.mox());
+
+        rig.model.stopAllTx(QStringLiteral("Time Out Timer"));
+        pump();
+        QVERIFY(!rig.model.mox());
+        QVERIFY(mox->isStopAllTxLatched());
+
+        rig.conn.log.clear();
+        mox->onTciPtt(true);
+        pump();
+        QVERIFY(rig.model.mox());
+        QVERIFY(rig.conn.log.contains(QStringLiteral("MOX on")));
+
+        mox->onTciPtt(false);
+        pump();
+        QVERIFY2(!rig.model.mox(), "the held mic took the key after the TCI release");
+        QVERIFY(mox->isStopAllTxLatched());
+        mox->onMicPttFromRadio(true);
+        pump();
+        QVERIFY(!rig.model.mox());
+
+        mox->onMicPttFromRadio(false);
+        pump();
+        QVERIFY(!mox->isStopAllTxLatched());
+        mox->onMicPttFromRadio(true);
+        pump();
+        QVERIFY(rig.model.mox());
+        mox->onMicPttFromRadio(false);
+        pump();
+    }
+
+    // PR 604 third pass, minor 3: a disconnect (clearPttSources) after a stop
+    // clears the latch, so the first press after the reconnect keys.
+    void clearPttSourcesClearsTheLatch()
+    {
+        Rig rig;
+        MoxController* mox = rig.model.moxController();
+        mox->onMicPttFromRadio(true);
+        pump();
+        QVERIFY(rig.model.mox());
+
+        rig.model.stopAllTx(QStringLiteral("Time Out Timer"));
+        pump();
+        QVERIFY(mox->isStopAllTxLatched());
+
+        mox->clearPttSources();
+        QVERIFY(!mox->isStopAllTxLatched());
+
+        rig.conn.log.clear();
+        mox->onMicPttFromRadio(true);
+        pump();
+        QVERIFY(rig.model.mox());
+        QVERIFY(rig.conn.log.contains(QStringLiteral("MOX on")));
+        mox->onMicPttFromRadio(false);
+        pump();
+    }
+
     // A key whose hardware flip is still queued when the stop runs must not
     // key the radio afterwards; the next fresh key does.
     void aKeyQueuedBeforeTheStopDoesNotKey()

@@ -11,6 +11,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-23: A slice placed on a pan only as a marker redraws its marker
+//               when its mode or filter changes (refreshSliceFlags), now that
+//               the pan's overlay is rebuilt only on a change. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-20: The TX applet's rows are registered as container content
+//               (registerTxSectionContent). Brian Sutton, AI-assisted via
+//               OpenCode.
 //   2026-10-16: A remote window opens its speakers at window start, before
 //               the Core is asked for audio (openRemoteSpeakers), as a local
 //               start() opens them before the radio streams. J.J. Boyd
@@ -851,6 +858,19 @@
 //                works FT8 through a remote window with VAX. Set up in CAT &
 //                Network > rigctld. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF): right-click and drop-down menus are
+//               no longer built on the stack; ScopedChildWidget (ported
+//               from Longpath) frees each once, so a parent that dies
+//               while its menu is open no longer frees it twice. With
+//               AI-assisted transformation via Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF): the same for its dialogs. With
+//               AI-assisted transformation via Claude Code.
+//   2026-10-22 - Startup auto-connect to a pinned radio waits on the scan
+//                (PinnedRadioWait), not a fixed 3 s: a radio already listed
+//                connects at once, radioUpdated counts too, a joined startup
+//                scan is never stopped, and the "isn't reachable" toast comes
+//                only after the scan ends without the radio. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -1072,6 +1092,7 @@ warren@wpratt.com
 //============================================================================================//
 
 #include "MainWindow.h"
+#include "gui/ScopedChildWidget.h"
 #include "SessionEndSave.h"
 #include "gui/multidevice/DeviceWords.h"
 #include "gui/multidevice/MultiDeviceController.h"
@@ -1123,6 +1144,7 @@ warren@wpratt.com
 #include "core/BuildIdentity.h"
 #include "core/PaTempUnit.h"
 #include "core/RadioStatus.h"
+#include "core/PinnedRadioWait.h"
 #include "core/RadioDiscovery.h"
 #include "core/WdspEngine.h"
 #include "core/FFTEngine.h"
@@ -1213,6 +1235,7 @@ warren@wpratt.com
 #include "core/Rf2ksConnection.h"
 #include "core/SmartSdrApiListener.h"
 #include "applets/TxApplet.h"
+#include "applets/TxSectionContent.h"
 #include "applets/TxEqDialog.h"
 // Phase 3J-2 H1: Tools menu modeless singletons (Spot Hub + FreeDV Reporter).
 #include "SpotHubDialog.h"
@@ -5463,7 +5486,9 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     connect(newFlag, &VfoWidget::filterPolicyRequested, this,
             [this](int chainIdx) {
         if (!m_radioModel) { return; }
-        FilterPolicyDialog dlg(chainIdx, m_radioModel, this);
+        // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+        ScopedChildWidget<FilterPolicyDialog> dlgOwner(chainIdx, m_radioModel, this);
+        FilterPolicyDialog& dlg = *dlgOwner.get();
         dlg.exec();
     });
     connect(newFlag, &VfoWidget::removeSliceRequested, this,
@@ -5669,8 +5694,14 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     // pan hosting this slice rather than on whichever pan is active.
     hostHooks.modeChanged = [this, slice](DSPMode mode) {
         // The pan's passband and TX mode belong to the pan's VFO, which a
-        // slice placed there only as a marker never takes.
-        if (markerOnlyPlacement(slice->sliceIndex())) { return; }
+        // slice placed there only as a marker never takes. Its own marker
+        // (drawn from the flag's filter) still moves.
+        if (markerOnlyPlacement(slice->sliceIndex())) {
+            if (SpectrumWidget* host = spectrumForSlice(slice)) {
+                host->refreshSliceFlags();
+            }
+            return;
+        }
         if (SpectrumWidget* host = spectrumForSlice(slice)) {
             // TX filter overlay maps audio Hz to the right sideband from this.
             host->setTxMode(mode);
@@ -5680,7 +5711,12 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
         }
     };
     hostHooks.filterChanged = [this, slice](int low, int high) {
-        if (markerOnlyPlacement(slice->sliceIndex())) { return; }
+        if (markerOnlyPlacement(slice->sliceIndex())) {
+            if (SpectrumWidget* host = spectrumForSlice(slice)) {
+                host->refreshSliceFlags();
+            }
+            return;
+        }
         if (SpectrumWidget* host = spectrumForSlice(slice)) {
             host->setFilterOffset(low, high);
         }
@@ -7841,7 +7877,9 @@ void MainWindow::onPanChainTagClicked(const QString& panId, int chainIdx)
     if (chain < 0) { chain = chainIdx; }
     if (chain < 0) { return; }
 
-    FilterPolicyDialog dlg(chain, m_radioModel, this);
+    // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+    ScopedChildWidget<FilterPolicyDialog> dlgOwner(chain, m_radioModel, this);
+    FilterPolicyDialog& dlg = *dlgOwner.get();
     dlg.exec();
 }
 
@@ -10328,9 +10366,13 @@ void MainWindow::buildUI()
     connect(m_radioModel, &RadioModel::txBoundReRouteRequested, this,
             [this](const QString& proposed, const QString& existing) {
         if (!m_radioModel) { return; }
-        TxBoundConfirmDialog dlg(proposed, existing,
-                                  m_radioModel->slices(), this);
+        // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+        ScopedChildWidget<TxBoundConfirmDialog> dlgOwner(proposed, existing,
+                                                   m_radioModel->slices(), this);
+        TxBoundConfirmDialog& dlg = *dlgOwner.get();
         dlg.exec();
+        // The parent may have died in exec() and taken the dialog with it.
+        if (!dlgOwner) { return; }
         qCInfo(lcContainer) << "TxBoundConfirmDialog: outcome="
                              << int(dlg.outcome())
                              << "(0=Cancelled, 1=UseExistingAntenna, 2=ConfirmReroute)";
@@ -10606,7 +10648,9 @@ void MainWindow::rebuildEditContainerSubmenu()
             if (!m_containerManager) { return; }
             ContainerWidget* target = m_containerManager->container(id);
             if (!target) { return; }
-            ContainerSettingsDialog dialog(target, this, m_containerManager);
+            // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+            ScopedChildWidget<ContainerSettingsDialog> dialogOwner(target, this, m_containerManager);
+            ContainerSettingsDialog& dialog = *dialogOwner.get();
             dialog.exec();
         });
     }
@@ -11652,6 +11696,10 @@ void MainWindow::populateDefaultMeter()
         sources.spectrumForSlice = [this](SliceModel* s) { return spectrumForSlice(s); };
         LongpathContent::registerAll(*registry, sources);
         SMeterDialContent::registerDial(*registry, sources);
+        // The TX applet's rows as independent container content, so a
+        // container can hold the monitor controls (or any other row) on
+        // their own.  The applet's own panel is unchanged.
+        registerTxSectionContent(*registry, m_txApplet);
     }
     if (auto* host = m_containerManager->contentHost(c0->id())) { host->setBannerMenu(m_bannerAppletsMenu); }
     if (!m_containerManager->storageError().isEmpty()) {
@@ -12694,8 +12742,13 @@ void MainWindow::buildMenuBar()
             }
 
             // Open settings dialog so user can configure it
-            ContainerSettingsDialog dialog(c, this, m_containerManager);
-            if (dialog.exec() == QDialog::Rejected) {
+            // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+            ScopedChildWidget<ContainerSettingsDialog> dialogOwner(c, this, m_containerManager);
+            ContainerSettingsDialog& dialog = *dialogOwner.get();
+            const int result = dialog.exec();
+            // The parent may have died in exec() and taken the dialog with it.
+            if (!dialogOwner) { return; }
+            if (result == QDialog::Rejected) {
                 // User cancelled — destroy the container
                 m_containerManager->destroyContainer(c->id());
             }
@@ -13050,7 +13103,9 @@ void MainWindow::buildMenuBar()
 #endif
 
     helpMenu->addAction(QStringLiteral("&About NereusSDR"), this, [this]() {
-        AboutDialog dlg(this);
+        // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+        ScopedChildWidget<AboutDialog> dlgOwner(this);
+        AboutDialog& dlg = *dlgOwner.get();
         dlg.exec();
     });
 
@@ -15214,11 +15269,16 @@ void MainWindow::onContainerFilterContext(ContainerWidget* c, int index)
             : tr("This mode has no preset on that button."));
         return;
     }
-    QMenu menu(this);
+    // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+    ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+    QMenu& menu = *menuOwner.get();
     menu.setStyleSheet(QString::fromLatin1(kPopupMenu));
     QAction* editAct = menu.addAction(tr("Edit this preset…"));
     QAction* resetAct = menu.addAction(tr("Reset this preset"));
     QAction* chosen = menu.exec(QCursor::pos());
+    // Das Elternteil kann waehrend exec() gestorben sein — dann ist
+    // auch das Menue weg und `this` eine Leiche. Siehe ScopedChildWidget.h.
+    if (!menuOwner) { return; }
     if (chosen == editAct) {
         auto* dlg = new FilterPresetEditDialog(store, mode, slot, this);
         dlg->setAttribute(Qt::WA_DeleteOnClose);
@@ -16136,7 +16196,9 @@ void MainWindow::onCpuMenuRequested(const QPoint& localPos)
 {
     if (!m_systemTile) { return; }
 
-    QMenu menu(this);
+    // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+    ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+    QMenu& menu = *menuOwner.get();
     QAction* sysAct = menu.addAction(tr("System"));
     sysAct->setCheckable(true);
     sysAct->setChecked(m_cpuShowSystem);
@@ -16164,6 +16226,9 @@ void MainWindow::onCpuMenuRequested(const QPoint& localPos)
     }
 
     QAction* chosen = menu.exec(m_systemTile->mapToGlobal(localPos));
+    // Das Elternteil kann waehrend exec() gestorben sein — dann ist
+    // auch das Menue weg und `this` eine Leiche. Siehe ScopedChildWidget.h.
+    if (!menuOwner) { return; }
     if (!chosen) { return; }
 
     if (chosen == cycleAct || chosen == thisAct || chosen == coreAct) {
@@ -17752,9 +17817,6 @@ void MainWindow::applyRemoteRoleGating()
             TxApplet::monitorOutputUnavailableReason());
         m_txApplet->setTxProfilePermitted(profilePermitted, profileReason);
         m_txApplet->setTxProcessingPermitted(processingPermitted, processingReason);
-        // R-R3-49 (group A fix wave, M3): the RF Power slider's per-band
-        // and drive-source writes came with version 5.
-        m_txApplet->setPowerByBandPermitted(settingsAt(5));
         // R-R3-49 (parity Task 7): PS-A arms PureSignal (version 7).
         m_txApplet->setPureSignalArmingPermitted(
             holderReason.isEmpty() && pureSignalArmingPermitted(),
@@ -17975,7 +18037,9 @@ void MainWindow::showCoreRadioInfo()
 // use "Connect to other radio…" to re-select the same radio.
 void MainWindow::showSegmentContextMenu(const QPoint& globalPos)
 {
-    QMenu menu(this);
+    // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+    ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+    QMenu& menu = *menuOwner.get();
     if (!m_radioModel->ownsLocalDsp()) {
         menu.setToolTipsVisible(true);
         menu.addAction(m_actConnect);
@@ -18046,7 +18110,9 @@ void MainWindow::showStationContextMenu(const QPoint& globalPos)
         return;
     }
 
-    QMenu menu(this);
+    // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+    ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+    QMenu& menu = *menuOwner.get();
     if (!m_radioModel->ownsLocalDsp()) {
         menu.setToolTipsVisible(true);
         menu.addAction(m_actConnect);
@@ -18846,10 +18912,12 @@ void MainWindow::showPanLayoutDialog()
     // protocol (four on Protocol 1) and, on a remote window, the Core's.
     const int maxPanCount = panLayoutLimitFor(m_radioModel);
     const QString boardName = m_radioModel->name();
-    PanLayoutDialog dlg(maxPanCount,
-                        m_panStack ? m_panStack->currentLayoutId()
-                                   : QStringLiteral("1"),
-                        boardName, this);
+    // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+    ScopedChildWidget<PanLayoutDialog> dlgOwner(maxPanCount,
+                                         m_panStack ? m_panStack->currentLayoutId()
+                                                    : QStringLiteral("1"),
+                                         boardName, this);
+    PanLayoutDialog& dlg = *dlgOwner.get();
     if (dlg.exec() == QDialog::Accepted && !dlg.selectedLayout().isEmpty()) {
         applyPanLayout(dlg.selectedLayout());
     }
@@ -19425,10 +19493,15 @@ bool MainWindow::localDisconnectAvailable() const
 //      - Single autoConnect entry → use it directly.
 //      - Multiple entries → most-recently-connected MAC wins (radios/lastConnected);
 //        a one-time status-bar warning is posted via RadioModel::autoConnectAmbiguous.
-//   3a. pinToMac=true  → run a Fast-profile discovery, connect when the same MAC
-//      is seen. A 3-second kill timer fires if the MAC never appears; on timeout
-//      the ConnectionPanel opens with the target row highlighted and a status-bar
-//      message explains why.  RadioModel's m_autoConnectInProgress flag ensures
+//   3a. pinToMac=true  → connect when the same MAC is seen (PinnedRadioWait,
+//      2026-10-22). A MAC already listed connects at once; otherwise the wait
+//      joins the running startup scan (or runs a Fast-profile one) and listens
+//      for radioDiscovered and radioUpdated until that scan ends. If the scan
+//      ends without the MAC, the ConnectionPanel opens with the target row
+//      highlighted and a toast explains why. A joined scan is never stopped,
+//      so radios on later adapters still reach the list; until 2026-10-22 a
+//      fixed 3 s timer gave up mid-scan and stopped it.  RadioModel's
+//      m_autoConnectInProgress flag ensures
 //      the RadioConnection::connectFailed signal (if the radio replies but fails)
 //      also surfaces via RadioModel::autoConnectFailed → MainWindow lambdas.
 //   3b. pinToMac=false → direct connect to saved IP. Arm m_autoConnectInProgress
@@ -19486,36 +19559,42 @@ void MainWindow::tryAutoReconnect()
                          << "(pinToMac=" << saved->pinToMac << ")";
 
     if (saved->pinToMac) {
-        // Use Fast profile — ~480ms per NIC, shorter than the SafeDefault
-        // that the user's manual Start Discovery uses.
         RadioDiscovery* disc = m_radioModel->discovery();
-        disc->setProfile(DiscoveryProfile::Fast);
+        // Use Fast profile — ~480ms per NIC, shorter than the SafeDefault
+        // that the user's manual Start Discovery uses. Only for a scan the
+        // wait starts itself: a running scan (the startup scan) keeps the
+        // timing it started with, and the wait joins it.
+        const bool setFast = !disc->isScanRunning();
+        if (setFast) {
+            disc->setProfile(DiscoveryProfile::Fast);
+        }
         m_autoReconnectInProgress = true;
 
         // Arm the RadioModel flag so RadioConnection::connectFailed (which fires
         // if the radio replies but fails the handshake) is forwarded as
         // RadioModel::autoConnectFailed. This covers the pinToMac discovery-found
-        // but connect-failed path; the timeout path below handles unreachable.
+        // but connect-failed path; the gave-up path below handles unreachable.
         m_radioModel->setAutoConnectInProgress(true, chosenMac);
 
-        // Listen for a radio that matches our chosen MAC
-        // Both the discovery callback and its timeout own this handle. A
+        // Qt parent owns it; each handler releases it with deleteLater(). A
         // station switch may destroy the window before either fires.
-        auto connPtr = std::make_shared<QMetaObject::Connection>();
-        *connPtr = connect(disc, &RadioDiscovery::radioDiscovered,
-            this, [this, chosenMac, connPtr](const RadioInfo& found) {
+        auto* wait = new PinnedRadioWait(disc, chosenMac, this);
+        connect(wait, &PinnedRadioWait::found,
+            this, [this, wait, setFast](const RadioInfo& found) {
+            wait->deleteLater();
             if (m_shuttingDown) { return; }
-            if (found.macAddress != chosenMac) {
-                return;
+            if (setFast) {
+                m_radioModel->discovery()->setProfile(DiscoveryProfile::SafeDefault);
             }
+            m_autoReconnectInProgress = false;
             if (m_radioModel->isConnected()) {
-                return; // User beat us to it
+                // User beat us to it
+                m_radioModel->setAutoConnectInProgress(false);
+                return;
             }
             qCInfo(lcConnection) << "Auto-reconnect: MAC found —"
                                  << found.displayName()
                                  << found.address.toString();
-            QObject::disconnect(*connPtr);
-            m_autoReconnectInProgress = false;
             // Note: do NOT disarm m_radioModel->setAutoConnectInProgress here —
             // connectToRadio runs asynchronously and we want connectFailed to
             // still be forwarded if the handshake itself fails. RadioModel's
@@ -19529,27 +19608,23 @@ void MainWindow::tryAutoReconnect()
             m_radioModel->connectToRadio(ri);
         });
 
-        // Kick off the Fast-profile discovery
-        disc->startDiscovery();
-
-        // 3-second hard timeout — if the MAC never appears, the radio is
+        // The scan the wait was on ended without the MAC: the radio is
         // unreachable on this network. Open the panel + post a status message.
-        QTimer::singleShot(3000, this, [this, chosenMac, connPtr]() {
-            if (!m_autoReconnectInProgress) {
-                // Already connected (discovery lambda cleaned up) — nothing to do.
+        connect(wait, &PinnedRadioWait::gaveUp, this, [this, wait, chosenMac, setFast]() {
+            wait->deleteLater();
+            if (m_shuttingDown || !m_autoReconnectInProgress) {
                 return;
             }
-            qCInfo(lcConnection) << "Auto-reconnect: 3-second timeout — radio not found";
-            // Disconnect the listener so it doesn't fire on later scans
-            QObject::disconnect(*connPtr);
+            qCInfo(lcConnection) << "Auto-reconnect: the scan ended without the radio";
             m_autoReconnectInProgress = false;
-            // Disarm RadioModel flag — the Timeout path is surfaced here directly
+            // Disarm RadioModel flag — the not-found path is surfaced here directly
             // (not via connectFailed, which only fires after a reply is received).
             m_radioModel->setAutoConnectInProgress(false);
-            // Stop the discovery pass we started; restore SafeDefault profile
-            // so the user's next manual scan uses the full timing.
-            m_radioModel->discovery()->stopDiscovery();
-            m_radioModel->discovery()->setProfile(DiscoveryProfile::SafeDefault);
+            // Restore SafeDefault profile so the user's next manual scan uses
+            // the full timing.
+            if (setFast) {
+                m_radioModel->discovery()->setProfile(DiscoveryProfile::SafeDefault);
+            }
             // Phase 3Q Task 10: surface the failure — open panel + toast.
             const QString name = AppSettings::instance()
                 .savedRadio(chosenMac)
@@ -19566,6 +19641,8 @@ void MainWindow::tryAutoReconnect()
                     .arg(displayName),
                 ToastSeverity::Warning, 8000);
         });
+
+        wait->start();
     } else {
         // No MAC pinning — direct connect to saved IP address.
         // Arm m_autoConnectInProgress so that RadioConnection::connectFailed

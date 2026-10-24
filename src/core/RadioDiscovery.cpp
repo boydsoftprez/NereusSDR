@@ -34,6 +34,32 @@
 //                 clsRadioDiscovery.cs:1175 [v2.10.3.13-beta2]).
 //                 RadioInfo::firmwareText words the two numbers. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - Discovery no longer freezes the thread that starts it. The
+//                 NIC walk runs from the event loop (a poll-window timer and
+//                 the socket's readyRead in place of waitForReadyRead), the
+//                 quiet-poll counter follows Thetis (a readable poll leaves
+//                 it as it was, clsRadioDiscovery.cs:964-976 [v2.10.3.15]),
+//                 and each attempt has a hard deadline, a NereusSDR addition
+//                 since Thetis has none. From Longpath PRs 9 (988fa77e),
+//                 10 (2e967e3f), 251 (279ab925) and 267 (1ca46ba2) by Martin
+//                 Fischer (OE5SOS). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-22 - A running walk honors the post-disconnect quiet period:
+//                 an attempt (and so a NIC's first attempt) that would start
+//                 inside it waits for it to end, then sends. The probes are
+//                 delayed, never dropped. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-22 - A reply that arrives while an attempt waits out the quiet
+//                 period opens no poll window, so it cannot end that
+//                 attempt before it sends. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-10-22 - walkBoundMs(), the longest a running walk can still take,
+//                 for the startup auto-connect wait. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - Connect hold: while a local connection starts, every
+//                 scan, probe and running walk's next attempt waits, then
+//                 the quiet period follows. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  clsRadioDiscovery.cs
@@ -184,6 +210,22 @@ RadioDiscovery::RadioDiscovery(QObject* parent)
     // are now one-shot, user-triggered via ConnectionPanel. Async rewrite is
     // a follow-up.
     connect(&m_staleTimer, &QTimer::timeout, this, &RadioDiscovery::onStaleCheck);
+
+    // The async rewrite (2026-10-22, from Longpath PR 251 [@279ab925]): these
+    // two timers stand in for the waitForReadyRead() the walk used to block
+    // in. A poll window is pollTimeoutMs; PreciseTimer because its ticks
+    // measure the profile's documented bound. The deadline timer ends an
+    // attempt that never goes quiet.
+    m_scanPollTimer.setSingleShot(true);
+    m_scanPollTimer.setTimerType(Qt::PreciseTimer);
+    connect(&m_scanPollTimer, &QTimer::timeout, this, &RadioDiscovery::onScanPollWindow);
+    m_scanDeadlineTimer.setSingleShot(true);
+    connect(&m_scanDeadlineTimer, &QTimer::timeout, this, &RadioDiscovery::onScanAttemptDeadline);
+    // An attempt that met the post-disconnect quiet period waits on this
+    // timer and starts again when it fires (see beginAttempt()).
+    m_scanHoldOffTimer.setSingleShot(true);
+    m_scanHoldOffTimer.setTimerType(Qt::PreciseTimer);
+    connect(&m_scanHoldOffTimer, &QTimer::timeout, this, &RadioDiscovery::beginAttempt);
 }
 
 RadioDiscovery::~RadioDiscovery()
@@ -195,6 +237,7 @@ RadioDiscovery::~RadioDiscovery()
 // per-instance, and why it is monotonic rather than wall-clock.
 QDeadlineTimer RadioDiscovery::s_scanHoldOff;
 QMutex RadioDiscovery::s_scanHoldOffMutex;
+QSet<quintptr> RadioDiscovery::s_connectHolds;
 
 bool RadioDiscovery::scanCancelled() const
 {
@@ -207,8 +250,35 @@ void RadioDiscovery::clearHoldOffForTest()
 {
     const QMutexLocker lock(&s_scanHoldOffMutex);
     s_scanHoldOff = QDeadlineTimer();
+    s_connectHolds.clear();
 }
 #endif
+
+void RadioDiscovery::beginConnectHold(const void* owner)
+{
+    const QMutexLocker lock(&s_scanHoldOffMutex);
+    s_connectHolds.insert(reinterpret_cast<quintptr>(owner));
+}
+
+void RadioDiscovery::endConnectHold(const void* owner, std::chrono::milliseconds quiet)
+{
+    const QMutexLocker lock(&s_scanHoldOffMutex);
+    if (!s_connectHolds.remove(reinterpret_cast<quintptr>(owner))) {
+        return;
+    }
+    // The quiet period starts when the hold ends, as holdOffScans() keeps
+    // the later deadline.
+    const QDeadlineTimer candidate(quiet, Qt::PreciseTimer);
+    if (candidate > s_scanHoldOff) {
+        s_scanHoldOff = candidate;
+    }
+}
+
+bool RadioDiscovery::connectHoldActive()
+{
+    const QMutexLocker lock(&s_scanHoldOffMutex);
+    return !s_connectHolds.isEmpty();
+}
 
 void RadioDiscovery::holdOffScans(std::chrono::milliseconds quiet)
 {
@@ -230,7 +300,13 @@ qint64 RadioDiscovery::holdOffRemainingMs() const
     // guard covers the -1 "forever" encoding, which we never construct.
     const QMutexLocker lock(&s_scanHoldOffMutex);
     const qint64 remaining = s_scanHoldOff.remainingTime();
-    return remaining > 0 ? remaining : 0;
+    const qint64 quiet = remaining > 0 ? remaining : 0;
+    // A connect hold has no deadline of its own: report a short wait, so
+    // the caller waits and checks again (see beginConnectHold()).
+    if (!s_connectHolds.isEmpty()) {
+        return qMax(quiet, kConnectHoldRecheckMs);
+    }
+    return quiet;
 }
 
 void RadioDiscovery::startDiscovery()
@@ -257,15 +333,21 @@ void RadioDiscovery::startDiscovery()
     // main's cross-platform socket header fix (b3c2961) is preserved at
     // the top of this file, which is what scanAllNics() needs when it
     // does its own setsockopt(SO_BROADCAST) per NIC.
+    //
+    // One walk at a time (2026-10-22). The blocking walk ruled out a second
+    // walk on the same object by itself; now a start while a walk runs joins
+    // it: the running walk's replies and its discoveryFinished serve both.
+    // Two walks on one NIC would take each other's replies.
+    if (m_scanRunning) {
+        qCDebug(lcDiscovery) << "startDiscovery: a walk is already running; joining it";
+        return;
+    }
     m_stopRequested.store(false, std::memory_order_release);
     emit discoveryStarted();
-    scanAllNics();                              // one-shot NIC walk
-    if (!m_staleTimer.isActive()) {
-        // Sweep interval matches the discovered-only timeout so the first sweep
-        // fires no earlier than a radio can be considered stale (design §7.4).
-        m_staleTimer.start(kDiscoveredOnlyTimeoutMs);
-    }
-    emit discoveryFinished();
+    // Starts the walk and returns; the walk goes on from the event loop.
+    // discoveryFinished and the stale timer now come from finishScan(). When
+    // no NIC is usable finishScan() runs inside this call.
+    scanAllNics();
 }
 
 void RadioDiscovery::stopDiscovery()
@@ -279,7 +361,29 @@ void RadioDiscovery::stopDiscovery()
     // after the close path returns to the event loop.
     m_stopRequested.store(true, std::memory_order_release);
     m_staleTimer.stop();
+    // A running walk ends now (timers stopped, socket closed) and
+    // finishScan() emits discoveryFinished for it, once.
+    if (m_scanRunning) {
+        finishScan();
+        return;
+    }
     emit discoveryFinished();
+}
+
+qint64 RadioDiscovery::walkBoundMs() const
+{
+    if (!m_scanRunning) {
+        return 0;
+    }
+    // The same bound as the attempt deadline in beginAttempt(): NICs ×
+    // attempts × kAttemptDeadlineFactor × quietPollsBeforeResend ×
+    // pollTimeoutMs, counted over every NIC of the walk.
+    const qint64 perAttempt = qint64(kAttemptDeadlineFactor)
+        * qMax(1, m_scanTiming.quietPollsBeforeResend)
+        * qMax(10, m_scanTiming.pollTimeoutMs);
+    const qint64 attempts = qint64(qMax(1, int(m_scanNics.size())))
+        * qMax(1, m_scanTiming.attemptsPerNic);
+    return holdOffRemainingMs() + attempts * perAttempt;
 }
 
 QList<RadioInfo> RadioDiscovery::discoveredRadios() const
@@ -505,7 +609,7 @@ bool RadioDiscovery::parseP2Reply(const QByteArray& bytes, const QHostAddress& s
 }
 
 // ---------------------------------------------------------------------------
-// scanAllNics — mi0bot NIC-walk + per-NIC synchronous poll loop.
+// scanAllNics — mi0bot NIC-walk + per-NIC poll loop (event-driven since 2026-10-22).
 // From Thetis clsRadioDiscovery.cs DiscoverUsingAllNics() + discoverOnNic().
 //
 // For each eligible NIC:
@@ -575,63 +679,111 @@ static QByteArray buildP1DiscoveryProbe()
     return p;
 }
 
+// ---------------------------------------------------------------------------
+// The walk as a state machine, not a blocking loop (2026-10-22).
+//
+// Until 2026-10-22 scanAllNics() was one loop that waited in
+// QAbstractSocket::waitForReadyRead() for attemptsPerNic ×
+// quietPollsBeforeResend × pollTimeoutMs per NIC, on the thread that called
+// startDiscovery() (the GUI thread for ConnectionPanel and MainWindow).
+// Longpath measured the GUI held for 4656 ms per scan on a two-NIC machine
+// (Longpath PR 251 [@279ab925]). The constructor's comment had promised
+// this rewrite ("Async rewrite is a follow-up").
+//
+// What stays the same: NICs are walked one after another, each with
+// attemptsPerNic attempts, each attempt sending the same probes to the same
+// destinations and listening until quietPollsBeforeResend poll windows of
+// pollTimeoutMs pass with nothing readable. The NIC candidates and the
+// reply handling are unchanged. Only the waiting moved from poll() to a
+// timer, and the event loop runs between windows.
+//
+// The event-driven shape follows Longpath PR 251 [@279ab925]; the code is
+// fitted to NereusSDR's cancel, holdOffScans and stale-timer design.
+// ---------------------------------------------------------------------------
 void RadioDiscovery::scanAllNics()
 {
     // From Thetis clsRadioDiscovery.cs buildDiscoveryPacketP1()
-    QByteArray p1Packet = buildP1DiscoveryProbe();
+    m_scanP1 = buildP1DiscoveryProbe();
 
     // From Thetis clsRadioDiscovery.cs buildDiscoveryPacketP2()
-    QByteArray p2Packet(60, 0);
-    p2Packet[4] = static_cast<char>(0x02);
+    m_scanP2 = QByteArray(60, 0);
+    m_scanP2[4] = static_cast<char>(0x02);
 
-    const DiscoveryTiming timing = timingFor(m_profile);
-    const int attempts        = qMax(1, timing.attemptsPerNic);
-    const int quietBeforeStop = qMax(1, timing.quietPollsBeforeResend);
-    const int pollMs          = qMax(10, timing.pollTimeoutMs);
+    m_scanTiming = m_timingOverride.value_or(timingFor(m_profile));
 
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    m_scanNowMs = QDateTime::currentMSecsSinceEpoch();
 
     // Global MAC de-duplication across all NICs for this scan cycle
-    QSet<QString> seenThisScan;
+    m_scanSeen.clear();
+    m_scanStats = ScanStats{};
 
-    const auto interfaces = QNetworkInterface::allInterfaces();
-    for (const QNetworkInterface& iface : interfaces) {
-        // Cooperative cancel — see stopDiscovery(). Bail before touching
-        // a new NIC if a shutdown was requested. (Inner loop also checks.)
-        if (scanCancelled()) {
-            return;
-        }
-
-        // From Thetis isNicCandidate(): Up/Running, not loopback
-        if (!(iface.flags() & QNetworkInterface::IsUp)
-            || !(iface.flags() & QNetworkInterface::IsRunning)
-            || (iface.flags() & QNetworkInterface::IsLoopBack)) {
-            continue;
-        }
-
-        // Find the first IPv4 address on this NIC
-        QHostAddress nicIpv4;
-        QHostAddress nicBroadcast;
-        const auto entries = iface.addressEntries();
-        for (const QNetworkAddressEntry& entry : entries) {
-            if (entry.ip().protocol() != QAbstractSocket::IPv4Protocol) {
+    // The candidates are taken once per walk, as the blocking loop read
+    // QNetworkInterface::allInterfaces() once.
+    m_scanNics.clear();
+    if (m_scanNicsOverride) {
+        m_scanNics = *m_scanNicsOverride;
+    } else {
+        const auto interfaces = QNetworkInterface::allInterfaces();
+        for (const QNetworkInterface& iface : interfaces) {
+            // From Thetis isNicCandidate(): Up/Running, not loopback
+            if (!(iface.flags() & QNetworkInterface::IsUp)
+                || !(iface.flags() & QNetworkInterface::IsRunning)
+                || (iface.flags() & QNetworkInterface::IsLoopBack)) {
                 continue;
             }
-            nicIpv4 = entry.ip();
-            nicBroadcast = entry.broadcast();
-            break;
-        }
 
-        if (nicIpv4.isNull()) {
-            continue;
+            // Find the first IPv4 address on this NIC
+            const auto entries = iface.addressEntries();
+            for (const QNetworkAddressEntry& entry : entries) {
+                if (entry.ip().protocol() != QAbstractSocket::IPv4Protocol) {
+                    continue;
+                }
+                ScanNic nic;
+                nic.name = iface.name();
+                nic.local = entry.ip();
+                nic.directed = entry.broadcast();
+                nic.generalBroadcast = true;
+                nic.port = kDiscoveryPort;
+                m_scanNics.append(nic);
+                break;
+            }
         }
+    }
+
+    m_scanRunning  = true;
+    m_scanNicIndex = -1;
+    beginNextNic();
+}
+
+void RadioDiscovery::beginNextNic()
+{
+    // Close the previous NIC's socket before the next one binds.
+    if (m_scanSock) {
+        m_scanSock->disconnect(this);
+        m_scanSock->close();
+        m_scanSock->deleteLater();
+        m_scanSock = nullptr;
+    }
+
+    // Cooperative cancel — see stopDiscovery(). Bail before touching
+    // a new NIC if a shutdown was requested. (Inner loop also checks.)
+    if (scanCancelled()) {
+        finishScan();
+        return;
+    }
+
+    ++m_scanNicIndex;
+    while (m_scanNicIndex < m_scanNics.size()) {
+        const ScanNic& nic = m_scanNics.at(m_scanNicIndex);
 
         // From Thetis discoverOnNic(): bind to local IPv4 on ephemeral port
-        QUdpSocket sock;
-        sock.setSocketOption(QAbstractSocket::MulticastLoopbackOption, 0);
-        if (!sock.bind(nicIpv4, 0)) {
-            qCWarning(lcDiscovery) << "Failed to bind to" << nicIpv4.toString()
-                                   << "on" << iface.name() << "— skipping";
+        auto* sock = new QUdpSocket(this);
+        sock->setSocketOption(QAbstractSocket::MulticastLoopbackOption, 0);
+        if (!sock->bind(nic.local, 0)) {
+            qCWarning(lcDiscovery) << "Failed to bind to" << nic.local.toString()
+                                   << "on" << nic.name << "— skipping";
+            sock->deleteLater();
+            ++m_scanNicIndex;
             continue;
         }
 
@@ -640,7 +792,7 @@ void RadioDiscovery::scanAllNics()
         // is valid on both (main's fix b3c2961 for the legacy startDiscovery
         // path — Phase 3I's scanAllNics added a second call site that needs
         // the same treatment for Windows CI to build).
-        const auto fd = sock.socketDescriptor();
+        const auto fd = sock->socketDescriptor();
         if (fd >= 0) {
             int broadcastEnable = 1;
             ::setsockopt(static_cast<int>(fd), SOL_SOCKET, SO_BROADCAST,
@@ -648,98 +800,281 @@ void RadioDiscovery::scanAllNics()
                          sizeof(broadcastEnable));
         }
 
-        qCDebug(lcDiscovery) << "Scanning NIC" << iface.name()
-                             << nicIpv4.toString() << "profile" << static_cast<int>(m_profile);
+        connect(sock, &QUdpSocket::readyRead, this, &RadioDiscovery::onScanReadyRead);
+        m_scanSock = sock;
 
-        // From Thetis discoverOnNic(): attempts × (send + quiet-poll loop)
-        for (int attempt = 0; attempt < attempts; attempt++) {
-            if (scanCancelled()) {
-                return;
-            }
-            // Send P1 and P2 probes to directed subnet broadcast and 255.255.255.255
-            if (!nicBroadcast.isNull()) {
-                sock.writeDatagram(p1Packet, nicBroadcast, kDiscoveryPort);
-                sock.writeDatagram(p2Packet, nicBroadcast, kDiscoveryPort);
-            }
-            sock.writeDatagram(p1Packet, QHostAddress::Broadcast, kDiscoveryPort);
-            sock.writeDatagram(p2Packet, QHostAddress::Broadcast, kDiscoveryPort);
+        qCDebug(lcDiscovery) << "Scanning NIC" << nic.name
+                             << nic.local.toString() << "profile" << static_cast<int>(m_profile);
 
-            int quietPolls = 0;
-            while (quietPolls < quietBeforeStop) {
-                // Cooperative cancel — see stopDiscovery(). Checked after
-                // each waitForReadyRead window so shutdown latency is at
-                // most one pollTimeoutMs (~150 ms on SafeDefault).
-                if (scanCancelled()) {
-                    sock.close();
-                    return;
-                }
-                // From Thetis: s.Poll(pollMs * 1000, SelectMode.SelectRead)
-                bool readable = sock.waitForReadyRead(pollMs);
-                if (!readable) {
-                    quietPolls++;
-                    continue;
-                }
-                // Reset quiet counter on activity — replies may be bursty
-                quietPolls = 0;
-
-                while (sock.hasPendingDatagrams()) {
-                    if (scanCancelled()) {
-                        return;
-                    }
-                    QHostAddress senderAddr;
-                    quint16 senderPort = 0;
-                    QByteArray data;
-                    data.resize(static_cast<int>(sock.pendingDatagramSize()));
-                    sock.readDatagram(data.data(), data.size(), &senderAddr, &senderPort);
-
-                    if (data.size() < 11) {
-                        continue;
-                    }
-
-                    RadioInfo info;
-                    bool parsed = false;
-
-                    const quint8 firstByte = static_cast<quint8>(data[0]);
-                    if (firstByte == 0xEF) {
-                        parsed = parseP1Reply(data, senderAddr, info);
-                    } else if (firstByte == 0x00) {
-                        parsed = parseP2Reply(data, senderAddr, info);
-                    }
-
-                    if (!parsed) {
-                        continue;
-                    }
-
-                    // From Thetis: MAC-based de-duplication (seen set)
-                    if (info.macAddress.isEmpty()
-                        || info.macAddress == "00:00:00:00:00:00") {
-                        continue;
-                    }
-
-                    if (seenThisScan.contains(info.macAddress)) {
-                        continue;
-                    }
-                    seenThisScan.insert(info.macAddress);
-
-                    m_lastSeen[info.macAddress] = now;
-
-                    if (!m_radios.contains(info.macAddress)) {
-                        m_radios.insert(info.macAddress, info);
-                        qCDebug(lcDiscovery) << "Discovered:" << info.displayName()
-                                             << "P" << static_cast<int>(info.protocol)
-                                             << "fw" << info.firmwareText()
-                                             << "at" << info.address.toString();
-                        emit radioDiscovered(info);
-                    } else {
-                        m_radios[info.macAddress] = info;
-                        emit radioUpdated(info);
-                    }
-                }
-            }
-        }
-
-        sock.close();
+        m_scanAttempt = 0;
+        beginAttempt();
+        return;
     }
+
+    finishScan();
+}
+
+// From Thetis discoverOnNic(): attempts × (send + quiet-poll loop).
+// This is the send half of one attempt; onScanPollWindow() and
+// onScanReadyRead() are the quiet-poll loop.
+void RadioDiscovery::beginAttempt()
+{
+    if (scanCancelled()) {
+        finishScan();
+        return;
+    }
+    if (!m_scanSock || m_scanNicIndex < 0 || m_scanNicIndex >= m_scanNics.size()) {
+        finishScan();
+        return;
+    }
+
+    // Post-disconnect quiet period (2026-07-27, ANAN-G2E lockup). The walk
+    // no longer blocks the thread, so a disconnect can arm holdOffScans()
+    // while it runs. startDiscovery() only checks the quiet period when a
+    // walk starts; every attempt checks it again here, including a NIC's
+    // first. The attempt waits, with no poll or deadline timer running, and
+    // starts again (this function) when the quiet period ends: the probes
+    // are delayed, never dropped, and the walk does not end early. A
+    // stopDiscovery() meanwhile ends the walk and finishScan() stops this
+    // wait. The check is repeated on resume, since a later disconnect may
+    // have extended the deadline.
+    if (const qint64 waitMs = holdOffRemainingMs(); waitMs > 0) {
+        m_scanPollTimer.stop();
+        m_scanDeadlineTimer.stop();
+        qCDebug(lcDiscovery) << "Discovery attempt" << m_scanAttempt + 1
+                             << "waits" << waitMs << "ms for the post-disconnect quiet period or a connect hold";
+        m_scanHoldOffTimer.start(int(waitMs));
+        return;
+    }
+
+    const ScanNic& nic = m_scanNics.at(m_scanNicIndex);
+
+    // Send P1 and P2 probes to directed subnet broadcast and 255.255.255.255
+    if (!nic.directed.isNull()) {
+        m_scanSock->writeDatagram(m_scanP1, nic.directed, nic.port);
+        m_scanSock->writeDatagram(m_scanP2, nic.directed, nic.port);
+    }
+    if (nic.generalBroadcast) {
+        m_scanSock->writeDatagram(m_scanP1, QHostAddress::Broadcast, nic.port);
+        m_scanSock->writeDatagram(m_scanP2, QHostAddress::Broadcast, nic.port);
+    }
+
+    // From Thetis clsRadioDiscovery.cs:935-939 [v2.10.3.15]:
+    //   if (pollMs < 10) pollMs = 10;
+    //   if (quietBeforeResend < 1) quietBeforeResend = 1;
+    const int quietBeforeStop = qMax(1, m_scanTiming.quietPollsBeforeResend);
+    const int pollMs          = qMax(10, m_scanTiming.pollTimeoutMs);
+
+    // From Thetis clsRadioDiscovery.cs:964 [v2.10.3.15]: int quietPolls = 0;
+    m_scanQuietPolls = 0;
+    ++m_scanStats.attempts;
+
+    // NereusSDR addition: a hard deadline per attempt. Thetis has none
+    // (clsRadioDiscovery.cs:966 [v2.10.3.15], `while (quietPolls <
+    // quietBeforeResend)` is the only exit), so a datagram arriving more
+    // often than once per poll window holds an attempt open forever; Longpath
+    // found the same gap and bounded it (PR 9 [@988fa77e]). The limit is
+    // kAttemptDeadlineFactor quiet budgets: a walk whose replies all come in
+    // early ends at one quiet budget plus the time the replies took, so the
+    // deadline only ends attempts that would never have gone quiet. A walk
+    // is then bounded by NICs × attempts × kAttemptDeadlineFactor ×
+    // quietPollsBeforeResend × pollTimeoutMs.
+    m_scanDeadlineTimer.start(kAttemptDeadlineFactor * quietBeforeStop * pollMs);
+    // From Thetis: s.Poll(pollMs * 1000, SelectMode.SelectRead)
+    m_scanPollTimer.start(pollMs);
+}
+
+// One attempt is over: the next attempt on this NIC, or the next NIC.
+void RadioDiscovery::endAttempt()
+{
+    m_scanPollTimer.stop();
+    m_scanDeadlineTimer.stop();
+    ++m_scanAttempt;
+    if (m_scanAttempt < qMax(1, m_scanTiming.attemptsPerNic)) {
+        beginAttempt();
+    } else {
+        beginNextNic();
+    }
+}
+
+// A poll window passed with nothing readable: the place the blocking loop
+// came back from waitForReadyRead() with false.
+void RadioDiscovery::onScanPollWindow()
+{
+    if (!m_scanRunning) {
+        return;
+    }
+    // Cooperative cancel — see stopDiscovery(). Checked after
+    // each waitForReadyRead window so shutdown latency is at
+    // most one pollTimeoutMs (~150 ms on SafeDefault).
+    if (scanCancelled()) {
+        finishScan();
+        return;
+    }
+    // An attempt waiting out the quiet period has no poll window open:
+    // nothing counts toward it until it sends (beginAttempt() starts its
+    // quiet count from zero then).
+    if (m_scanHoldOffTimer.isActive()) {
+        return;
+    }
+
+    // From Thetis clsRadioDiscovery.cs:970-975 [v2.10.3.15]:
+    //   bool readable = s.Poll(pollMs * 1000, SelectMode.SelectRead);
+    //   if (!readable)
+    //   {
+    //       quietPolls++;
+    //       d.QuietPolls++;
+    //       continue;
+    //   }
+    ++m_scanQuietPolls;
+    ++m_scanStats.quietPolls;
+
+    const int quietBeforeStop = qMax(1, m_scanTiming.quietPollsBeforeResend);
+    if (m_scanQuietPolls >= quietBeforeStop) {
+        endAttempt();
+        return;
+    }
+    m_scanPollTimer.start(qMax(10, m_scanTiming.pollTimeoutMs));
+}
+
+// The socket became readable: the blocking loop's readable branch.
+void RadioDiscovery::onScanReadyRead()
+{
+    if (!m_scanRunning || !m_scanSock) {
+        return;
+    }
+    if (scanCancelled()) {
+        finishScan();
+        return;
+    }
+
+    // From Thetis clsRadioDiscovery.cs:964-976 [v2.10.3.15]: only the
+    // not-readable branch touches quietPolls. A readable poll neither counts
+    // as quiet nor resets the counter; the next Poll() starts a fresh
+    // pollMs window after the receive. Restarting the window timer here is
+    // that fresh window. Until 2026-10-22 NereusSDR reset the counter on
+    // every readable poll (`quietPolls = 0;`, commented "Reset quiet
+    // counter on activity — replies may be bursty"), which Thetis does not
+    // do, so a late reply bought a whole extra quiet budget (Longpath PR 10
+    // [@2e967e3f]).
+    //
+    // While an attempt waits out the quiet period (see beginAttempt()) a
+    // late reply is still taken, but opens no poll window: the quiet count
+    // is still full from the attempt that ended, and one window would end
+    // the waiting attempt without its probes ever being sent.
+    if (!m_scanHoldOffTimer.isActive()) {
+        ++m_scanStats.readableWindows;
+        m_scanPollTimer.start(qMax(10, m_scanTiming.pollTimeoutMs));
+    }
+
+    while (m_scanSock && m_scanSock->hasPendingDatagrams()) {
+        QHostAddress senderAddr;
+        quint16 senderPort = 0;
+        QByteArray data;
+        data.resize(static_cast<int>(m_scanSock->pendingDatagramSize()));
+        m_scanSock->readDatagram(data.data(), data.size(), &senderAddr, &senderPort);
+        ++m_scanStats.datagrams;
+        handleScanDatagram(data, senderAddr);
+        // A slot on radioDiscovered may have stopped the walk.
+        if (!m_scanRunning) {
+            return;
+        }
+    }
+}
+
+// The attempt never went quiet within its deadline: treated exactly like a
+// quiet end, so the walk moves on to the next attempt or NIC.
+void RadioDiscovery::onScanAttemptDeadline()
+{
+    if (!m_scanRunning) {
+        return;
+    }
+    ++m_scanStats.deadlineEnds;
+    qCDebug(lcDiscovery) << "Discovery attempt" << m_scanAttempt + 1 << "on"
+                         << (m_scanNicIndex >= 0 && m_scanNicIndex < m_scanNics.size()
+                                 ? m_scanNics.at(m_scanNicIndex).name : QString())
+                         << "reached its deadline without going quiet";
+    if (scanCancelled()) {
+        finishScan();
+        return;
+    }
+    endAttempt();
+}
+
+// The blocking loop's per-datagram body, unchanged.
+void RadioDiscovery::handleScanDatagram(const QByteArray& data, const QHostAddress& senderAddr)
+{
+    if (data.size() < 11) {
+        return;
+    }
+
+    RadioInfo info;
+    bool parsed = false;
+
+    const quint8 firstByte = static_cast<quint8>(data[0]);
+    if (firstByte == 0xEF) {
+        parsed = parseP1Reply(data, senderAddr, info);
+    } else if (firstByte == 0x00) {
+        parsed = parseP2Reply(data, senderAddr, info);
+    }
+
+    if (!parsed) {
+        return;
+    }
+
+    // From Thetis: MAC-based de-duplication (seen set)
+    if (info.macAddress.isEmpty()
+        || info.macAddress == "00:00:00:00:00:00") {
+        return;
+    }
+
+    if (m_scanSeen.contains(info.macAddress)) {
+        return;
+    }
+    m_scanSeen.insert(info.macAddress);
+
+    m_lastSeen[info.macAddress] = m_scanNowMs;
+
+    if (!m_radios.contains(info.macAddress)) {
+        m_radios.insert(info.macAddress, info);
+        qCDebug(lcDiscovery) << "Discovered:" << info.displayName()
+                             << "P" << static_cast<int>(info.protocol)
+                             << "fw" << info.firmwareText()
+                             << "at" << info.address.toString();
+        emit radioDiscovered(info);
+    } else {
+        m_radios[info.macAddress] = info;
+        emit radioUpdated(info);
+    }
+}
+
+void RadioDiscovery::finishScan()
+{
+    m_scanPollTimer.stop();
+    m_scanDeadlineTimer.stop();
+    m_scanHoldOffTimer.stop();
+    if (m_scanSock) {
+        m_scanSock->disconnect(this);
+        m_scanSock->close();
+        m_scanSock->deleteLater();
+        m_scanSock = nullptr;
+    }
+    m_scanNics.clear();
+    m_scanNicIndex = -1;
+
+    const bool wasRunning = m_scanRunning;
+    m_scanRunning = false;
+    if (!wasRunning) {
+        return;
+    }
+
+    // Sweep interval matches the discovered-only timeout so the first sweep
+    // fires no earlier than a radio can be considered stale (design §7.4).
+    // Not after stopDiscovery(), which has just stopped it.
+    if (!m_stopRequested.load(std::memory_order_acquire) && !m_staleTimer.isActive()) {
+        m_staleTimer.start(kDiscoveredOnlyTimeoutMs);
+    }
+    emit discoveryFinished();
 }
 
 void RadioDiscovery::onStaleCheck()

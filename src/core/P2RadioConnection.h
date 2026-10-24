@@ -40,6 +40,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - kConnectTimeoutMs and kEstablishedSilenceTimeoutMs are
+//                 public, so a test reads the product's watchdogs instead of
+//                 copying them. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-15 - wireMox(): the MOX state the wire carries, unkeyed while
 //                 the transmit is cut. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
@@ -416,6 +420,12 @@ public slots:
     int txSampleRate() const override { return m_tx[0].samplingRate * 1000; }
 
 public:
+    // The connect watchdog's budget and the established stream's silence
+    // timeout: the values setSilenceTimeoutsForTest() replaces. Every build
+    // sees them, as the member initializers below use them.
+    static constexpr int kConnectTimeoutMs = 2000;
+    static constexpr int kEstablishedSilenceTimeoutMs = 3000;
+
     // R-IOS-13, R-R3-42: the send path's counters since the last key.
     TxSendStats txSendStats() const override;
     // Radio codec: the ring's counters plus the port 1028 stream's.
@@ -678,8 +688,8 @@ private:
     bool m_linkLossLatched{false};
 
     // Connect watchdog budget — 2 s matches P1.
-    static constexpr int kConnectTimeoutMs = 2000;
-    static constexpr int kEstablishedSilenceTimeoutMs = 3000;
+    // (kConnectTimeoutMs and kEstablishedSilenceTimeoutMs are public, in the
+    // public section after txSampleRate().)
     int m_connectTimeoutMs{kConnectTimeoutMs};
     int m_establishedSilenceTimeoutMs{kEstablishedSilenceTimeoutMs};
 

@@ -8,6 +8,11 @@
 //            AI-assisted via Anthropic Claude Code.
 // 2026-10-12 Invalid reported radio model refusal uses operator words.
 //            J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-22: ports a test hands to a later listener come from
+// unusedLoopbackPort() (UnusedLoopbackPort.h), below the kernel's ephemeral
+// range, so a parallel test cannot take one between the pick and the listen.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+#include "UnusedLoopbackPort.h"
 #include <QtTest>
 #include <QTemporaryDir>
 #include <QTcpServer>
@@ -187,7 +192,7 @@ private slots:
     }
     void sameChannelStatusSupersessionDropsOldTransportSignal() {
         AppSettings::instance().clear(); RadioModel model; CatService& service=*model.catService();
-        QTcpServer reservation; QVERIFY(reservation.listen(QHostAddress::LocalHost,0)); const int port=reservation.serverPort(); reservation.close();
+        const int port=unusedLoopbackPort(); QVERIFY(port != 0);
         CatEndpointConfig config; config.tcpEnabled=true; config.tcpPort=port; QVERIFY(service.applyChannelConfig(1,config));
         bool replaced=false; int stale=0;
         connect(&service,&CatService::channelStateChanged,&model,[&](int channel,const QString& state) {

@@ -66,6 +66,9 @@
 //                chain's slices, after the bands in reasonText.
 //                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-22 - RX-only antenna holds Thetis's checkbox sum, 0..5
+//                 (XVTR with RX1 or RX2), and rxOnlyLabelSlot names it.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 // === Verbatim Thetis Console/HPSDR/Alex.cs header (lines 1-23) ===
@@ -295,10 +298,29 @@ public:
     // Source: HPSDR/Alex.cs:56-58 TxAnt/RxAnt/RxOnlyAnt fields [@501e3f5]
     int  txAnt(Band band) const;
     int  rxAnt(Band band) const;
-    int  rxOnlyAnt(Band band) const;  // 1 = rx1, 2 = rx2, 3 = xv, 0 = none selected [Alex.cs:58]
+    // 0 = none, 1 = rx1, 2 = rx2, 3 = xv, 4 = rx1 + xv, 5 = rx2 + xv: the sum
+    // of the checked RX-only boxes' (index + 1).
+    // From Thetis setup.cs:13682-13730 ProcessAlexAntCheckBox [v2.10.3.15]
+    int  rxOnlyAnt(Band band) const;
     void setTxAnt(Band band, int ant);     // clamps to [1, 3]; rejected if blockTxAntN
     void setRxAnt(Band band, int ant);
-    void setRxOnlyAnt(Band band, int ant);
+    void setRxOnlyAnt(Band band, int ant);  // clamps to [0, 5]
+
+    // 0..5: Thetis stores the checkbox sum as it is; the clamp in
+    // setRxOnlyAnt is commented out.
+    // From Thetis HPSDR/Alex.cs:88-95 setRxOnlyAnt [v2.10.3.15]
+    static constexpr int kRxOnlyAntMax = 5;
+
+    // The RX-only label slot (0..2) a stored value is named by, or -1 for
+    // none. Thetis names the "winning" box chk3 > chk2 > chk1, so 4 and 5
+    // are named by the XVTR slot.
+    // From Thetis setup.cs:13728-13733 [v2.10.3.15] — the third box's name
+    //    wins over the second's, the second's over the first's.
+    static int rxOnlyLabelSlot(int rxOnlyAnt)
+    {
+        if (rxOnlyAnt >= 3) { return 2; }
+        return rxOnlyAnt >= 1 ? rxOnlyAnt - 1 : -1;
+    }
 
     // ── Block-TX safety ──────────────────────────────────────────────────────
     // NereusSDR UI contract: when true, setTxAnt() rejects assignment to that port.
@@ -444,7 +466,7 @@ private:
 
     QString persistenceKey() const;  // "hardware/<mac>/alex/antenna"
     static int clampAnt(int v) { return v < 1 ? 1 : (v > 3 ? 3 : v); }
-    static int clampRxOnlyAnt(int v) { return v < 0 ? 0 : (v > 3 ? 3 : v); }  // allows 0 = none
+    static int clampRxOnlyAnt(int v) { return v < 0 ? 0 : (v > kRxOnlyAntMax ? kRxOnlyAntMax : v); }
 };
 
 } // namespace NereusSDR

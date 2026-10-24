@@ -718,7 +718,7 @@ Pinned source: ZZTO 6795-6856 [v2.10.3.15].
 
 Target: TransmitModel::tuneDrivePowerSource(), power()/setPower(int), tuneTxBandKnown(), tunePowerForTxBand()/tunePowerForBand(Band)/setTunePowerForBand(Band,int), tunePower()/setTunePower(int), powerLimit()/powerSliderLimitEnabled()/tunePowerLimit().
 
-Live tune-band/limit API TransmitModel.h553-576,738-755,815-816; RadioModel.cpp6981-7005 refreshes band state. Existing constrain formula cpp1962-1981. Keep real source selection; setTunePowerForTxBand(int) also changes source to TuneSlider so use setTunePowerForBand for selected-source CAT write, preserving tuneDrivePowerSource.
+Live tune-band/limit API TransmitModel.h553-576,738-755,815-816; RadioModel.cpp6981-7005 refreshes band state. Existing constrain formula cpp1962-1981. Keep real source selection; the selected-source CAT write uses setTunePowerForBand, preserving tuneDrivePowerSource. Since 2026-10-18 setTunePowerForTxBand(int) leaves tuneDrivePowerSource alone too (only Setup > Transmit > Power changes it, as in Thetis).
 
 `ZZTO`: ZZTO<zero-pad3 value>; DriveSlider: power(), constrained by powerLimit iff LimitReportedPower and powerSliderLimitEnabled; TuneSlider: actual TX-band tunePowerForTxBand(), constrained by tunePowerLimit iff LimitReportedPower; Fixed: tunePower() always unconstrained. Require known TX band for TuneSlider. Set/action: Exactly3 numeric suffix clamps source+existing model bounds, routes selected source setter; silent; no target/invalid ?; Scale: Source0..100; DriveSlider live ceiling HL2=90 else100; TuneSlider HL2=99 else100; Fixed existing model clampHL2=99 else100.
 

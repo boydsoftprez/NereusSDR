@@ -5,40 +5,43 @@ import SwiftUI
 
 /// The tuning dials' colours, as the board draws them
 /// (docs/architecture/2026-09-23-iphone-app-design/board.html, the `.knob`,
-/// `.dsheet` and `.twheel` styles): a machined knob in NereusSDR's navy
+/// `.dsheet` and `.twheel` styles): a machined knob in the workspace greys
 /// with its index mark at the top.
 enum DialColours {
-    static let knob = rgb(0x0A, 0x0A, 0x14).opacity(0.78)
-    static let ringTick = rgb(0x3A, 0x4A, 0x5C)
-    static let index = rgb(0x00, 0xB4, 0xD8)
-    /// The index mark as it flashes on a detent.
-    static let indexTick = rgb(0xC8, 0xF8, 0xFF)
-    static let indexGlow = rgb(0x00, 0xE5, 0xFF)
-    static let gripLight = rgb(0x33, 0x46, 0x5A)
-    static let gripMiddle = rgb(0x1C, 0x29, 0x38)
-    static let gripDark = rgb(0x12, 0x1B, 0x26)
-    static let knurlDark = rgb(0x0E, 0x16, 0x20)
-    static let knurlLight = rgb(0x2A, 0x3A, 0x4C)
-    static let dimpleDark = rgb(0x0A, 0x0F, 0x16)
-    static let dimpleLight = rgb(0x1B, 0x28, 0x36)
-    static let stepBackground = rgb(0x0F, 0x14, 0x20)
-    static let stepBorder = rgb(0x30, 0x40, 0x50)
-    static let stepText = rgb(0xC8, 0xD8, 0xE8)
-    static let stepCaption = rgb(0x60, 0x70, 0x80)
-    static let sheet = rgb(0x0A, 0x0A, 0x18)
-    static let sheetBorder = rgb(0x30, 0x40, 0x50)
-    static let grab = rgb(0x40, 0x50, 0x60)
-    static let frequency = rgb(0x00, 0xE5, 0xFF)
-    static let button = rgb(0x1A, 0x2A, 0x3A)
-    static let buttonBorder = rgb(0x30, 0x40, 0x50)
-    static let buttonOn = rgb(0x00, 0x70, 0xC0)
-    static let buttonOnBorder = rgb(0x00, 0x90, 0xE0)
-    static let trackEdge = rgb(0x23, 0x32, 0x44)
-    static let trackMiddle = rgb(0x0F, 0x16, 0x20)
-    static let wheelTick = rgb(0x4A, 0x5C, 0x70)
-    static let wheelFade = rgb(0x0A, 0x0A, 0x14).opacity(0.95)
+    // The desktop's workspace look (docs/architecture/2026-10-20-phone-workspace-look-design.md,
+    // appendix A): the body greys by the board's neutral fallback (make_board.py
+    // `neutral`, the grey's lightness kept and its blue cast dropped), the
+    // index in the workspace accent, the lit button glass, the step box an
+    // inset and the sheet a panel. The index tick and its glow are kept.
+    private typealias P = WorkspacePalette
 
-    private static func rgb(_ red: Int, _ green: Int, _ blue: Int) -> Color {
-        Color(red: Double(red) / 255, green: Double(green) / 255, blue: Double(blue) / 255)
-    }
+    static let knob = P.statusBarBg.opacity(0.78)
+    static let ringTick = P.rgb(0x4B4B4F)
+    static let index = P.accentFill
+    /// The index mark as it flashes on a detent (kept, W2).
+    static let indexTick = P.rgb(0xC8F8FF)
+    static let indexGlow = P.rgb(0x00E5FF)
+    static let gripLight = P.rgb(0x46464A)
+    static let gripMiddle = P.rgb(0x2A2A2E)
+    static let gripDark = P.rgb(0x1C1C20)
+    static let knurlDark = P.glassPanelTop // #0e1620 by the fallback
+    static let knurlLight = P.rgb(0x26262B)
+    static let dimpleDark = P.rgb(0x101014)
+    static let dimpleLight = P.rgb(0x28282C)
+    static let stepBackground = P.insetBg // inset
+    static let stepBorder = P.insetBorder // inset
+    static let stepText = P.textPrimary
+    static let stepCaption = P.textScale
+    static let sheet = P.panelBg // panel
+    static let sheetBorder = P.border // panel
+    static let grab = P.textInactive
+    static let frequency = P.rgb(0x00E5FF) // kept (W2)
+    static let button = P.rgb(0x1A1A1E)
+    static let buttonBorder = P.border
+    static let buttonOn = P.glassSelBot // glass
+    static let buttonOnBorder = P.glassSelBorder // glass
+    static let trackEdge = P.rgb(0x26262B)
+    static let trackMiddle = P.rgb(0x18181C)
+    static let wheelTick = P.rgb(0x5D5D61)
+    static let wheelFade = P.statusBarBg.opacity(0.95)
 }

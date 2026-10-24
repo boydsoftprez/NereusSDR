@@ -315,7 +315,7 @@ struct ToolsTab: View {
                 askingToClear = true
             }
             .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(spots.clearReason == nil ? ChromeColours.accent : ChromeColours.buttonOffText)
+            .foregroundStyle(spots.clearReason == nil ? ChromeColours.accentText : ChromeColours.buttonOffText)
             .disabled(spots.clearReason != nil)
             .accessibilityLabel("Clear all spots")
             .accessibilityIdentifier("spotList.clear")
@@ -325,7 +325,7 @@ struct ToolsTab: View {
             // The desktop's Open Website, in Safari.
             Link("Website", destination: FreeDVReporterModel.website)
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(ChromeColours.accent)
+                .foregroundStyle(ChromeColours.accentText)
                 .accessibilityIdentifier("freedv.website")
         case .spotHub, .spotHubPage(.display), .performance, .txEqualizer, .pureSignal, .diversity, .catControl,
              .catControlPage, .tciServer, .vaxAudio, .supportBundle, .rotor:

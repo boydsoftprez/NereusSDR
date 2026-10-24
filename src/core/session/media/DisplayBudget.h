@@ -8,6 +8,8 @@
 //   2026-10-04: Pace byte-only display extras with the shared spectrum
 //               budget; retain ordinary spectrum sample validation.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-22: NSDC v2 plane bound beside the v1 one.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //
 // The constants below are derived from the bounded NSDC and PS3D wire formats;
 // they are not a claim about a radio, link, or host's sustainable capacity.
@@ -65,6 +67,17 @@ constexpr quint32 displayCodecWorstCasePlaneBytes(quint32 samples)
 {
     return samples == 0 ? 0
         : 3 + 5 * ((samples + 127) / 128) + samples;
+}
+
+/// Largest NSDC v2 plane of `samples` samples (display codec v2 document,
+/// section 4.3): P(n) = 4 + n + ceil(3 * ceil((n - 1) / 64) / 8), the 4-byte
+/// prefix, every sample raw and a 3-bit parameter per 64-sample block. The
+/// encoder never does worse than that all-escape choice, and P(n) is at most
+/// displayCodecWorstCasePlaneBytes(n), so the v1 charge covers a v2 frame.
+constexpr quint32 displayCodecV2WorstCasePlaneBytes(quint32 samples)
+{
+    return samples == 0 ? 0
+        : 4 + samples + (3 * ((samples - 1 + 63) / 64) + 7) / 8;
 }
 
 /// Current bounded NSDC frame, using the actual endpoint/codec public maxima.

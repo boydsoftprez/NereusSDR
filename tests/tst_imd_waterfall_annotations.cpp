@@ -1,4 +1,9 @@
 // no-port-check: NereusSDR-original GUI history regression.
+// Modification history (NereusSDR):
+//   2026-10-21  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a remote
+//                 row handed over early and put in before its trace is
+//                 accepted takes the event on the frame where the source
+//                 turns eligible (remoteEarlyRowTakesTheEdgeAsEligibilityTurnsOn).
 #include "gui/ImdWaterfallAnnotations.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/PureSignalViewStyle.h"
@@ -264,6 +269,54 @@ private slots:
         QCOMPARE(widget.imdWaterfallAnnotationsForTest().events().size(), 1);
         QCOMPARE(widget.imdWaterfallAnnotationsForTest().events().first().rowSequence,
                  widget.waterfallRowSequenceForTest());
+    }
+    void remoteEarlyRowTakesTheEdgeAsEligibilityTurnsOn()
+    {
+        // A remote frame's row is handed over early and goes in about a row
+        // period before its trace is accepted. On the frame where the
+        // source turns eligible again (after a keyframe wait), that row
+        // went in while it was not yet eligible; the acceptance must still
+        // tag it, not the row after.
+        SpectrumWidget widget;
+        widget.resize(420, 240);
+        widget.show();
+        widget.setWaterfallTickerPausedForTest(true);
+        widget.setDisplayDuplex(true);
+        widget.setMoxOverlay(true);
+        widget.setTestingIMD(true);
+        widget.setShowIMDMeasurements(true);
+        SpectrumEndpointContext context;
+        context.codec = {43, 1, -180.0f, 0.0f, 400, 400, 0};
+        context.exactCentreHz = 14200000.0;
+        context.exactSpanHz = 48000.0;
+        widget.setRemoteSpectrumContext(context, 14200000.0, 192000.0);
+        const RemoteSpectrumCapture capture = ImdSpectrumTestAccess::remoteCapture(widget);
+        DisplayCodecFrame frame;
+        frame.context = context.codec;
+        frame.encoderSequence = 1;
+        frame.traceDbm = QVector<float>(400, -100.0f);
+        frame.waterfallDbm = frame.traceDbm;
+        frame.waterfallAdvance = false;
+        QVERIFY(widget.updateRemoteSpectrum(frame, capture));
+        QVERIFY(widget.imdMeasurementFrame().context.sourceEligible);
+        // A keyframe wait: the source is not eligible until a frame is
+        // accepted again.
+        widget.noteImdReceiverInputLost();
+        QVERIFY(!widget.imdMeasurementFrame().context.sourceEligible);
+        widget.queueImdCorrectionEdge(true);
+        frame.encoderSequence = 2;
+        frame.waterfallAdvance = true;
+        // Handed over early (due now), and in before its trace.
+        QVERIFY(widget.enqueueRemoteWaterfallRow(frame.waterfallDbm, {}, capture, 0,
+                                                 frame.encoderSequence));
+        widget.tickWaterfallForTest();
+        const quint64 earlyRow = widget.waterfallRowSequenceForTest();
+        QVERIFY(widget.imdWaterfallAnnotationsForTest().events().isEmpty());
+        // Its trace, accepted: the source turns eligible on this frame.
+        QVERIFY(widget.updateRemoteSpectrum(frame, capture, true, false));
+        QVERIFY(widget.imdMeasurementFrame().context.sourceEligible);
+        QCOMPARE(widget.imdWaterfallAnnotationsForTest().events().size(), 1);
+        QCOMPARE(widget.imdWaterfallAnnotationsForTest().events().first().rowSequence, earlyRow);
     }
     void nativeGpuWrapPauseRewindGlideCapture()
     {

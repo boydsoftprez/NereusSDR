@@ -64,7 +64,7 @@ struct BandFlagShotTests {
         }
         .frame(width: shot.size.width, height: shot.size.height)
         .background(Color.black)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         // The band's area alone: no status bar or home indicator to keep clear of.
         host.safeAreaRegions = []
         host.view.frame = CGRect(origin: .zero, size: shot.size)

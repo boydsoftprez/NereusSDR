@@ -23,7 +23,7 @@ struct StatusMessageEditor: View {
                 Spacer()
                 Button("Done") { freedv.editingMessage = false }
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(ChromeColours.accent)
+                    .foregroundStyle(ChromeColours.accentText)
                     .accessibilityIdentifier("freedv.status.done")
             }
             Text("Listed beside your station on FreeDV Reporter.")
@@ -36,8 +36,8 @@ struct StatusMessageEditor: View {
                 .onSubmit { send(text) }
                 .padding(.horizontal, 8)
                 .frame(minHeight: 40)
-                .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 3))
-                .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
+                .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
                 .disabled(reason != nil)
                 .accessibilityIdentifier("freedv.status.text")
             HStack(spacing: 8) {
@@ -70,7 +70,7 @@ struct StatusMessageEditor: View {
                         HStack {
                             Text(message)
                                 .font(.system(size: 13))
-                                .foregroundStyle(message == text ? ChromeColours.accent : ChromeColours.text)
+                                .foregroundStyle(message == text ? ChromeColours.accentText : ChromeColours.text)
                                 .lineLimit(2)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             if message == text {
@@ -88,8 +88,8 @@ struct StatusMessageEditor: View {
                     .accessibilityIdentifier("freedv.status.saved.\(index)")
                 }
             }
-            .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
+            .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
             if let note = freedv.note {
                 AccessoryChrome.Refusal(text: note) { freedv.note = nil }
             } else if let reason {

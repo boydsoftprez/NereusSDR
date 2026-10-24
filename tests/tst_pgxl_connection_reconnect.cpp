@@ -25,8 +25,13 @@
 //                 replacement test opens its listener before picking the
 //                 closed port; the OS could otherwise hand the just-released
 //                 port to the replacement, so the "closed" address answered.
+//   2026-10-22, J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//     test ports come from unusedLoopbackPort() (UnusedLoopbackPort.h), below
+//     the kernel's ephemeral range, so a parallel test cannot take one between
+//     the pick and the listen.
 // =================================================================
 
+#include "UnusedLoopbackPort.h"
 #include <QtTest/QtTest>
 #include <QPointer>
 #include <QRegularExpression>
@@ -47,18 +52,15 @@ constexpr int kRetryObservationMs = 500;
 // takes about 3.4 s on Windows, which retries the SYN after the reset.
 constexpr int kRefusedDialMs = 8000;
 
-// A loopback port nothing listens on. Call it after the test has opened its
-// own listeners and pass their ports: the OS may hand a port just released
-// here to the next listen(0), so the "closed" port must be picked last and
-// never be one of the test's own. Returns 0 when no such port is found.
+// A loopback port nothing listens on, never one of the test's own (`inUse`).
+// unusedLoopbackPort() picks below the kernel's ephemeral range, so the
+// next listen(0) is never handed it. Returns 0 when no such port is found.
 quint16 closedLoopbackPort(std::initializer_list<quint16> inUse = {})
 {
     constexpr int kMaxPicks = 16;
     for (int pick = 0; pick < kMaxPicks; ++pick) {
-        QTcpServer reservation;
-        if (!reservation.listen(QHostAddress::LocalHost, 0)) { return 0; }
-        const quint16 port = reservation.serverPort();
-        reservation.close();
+        const quint16 port = unusedLoopbackPort();
+        if (port == 0) { return 0; }
         if (std::find(inUse.begin(), inUse.end(), port) == inUse.end()) { return port; }
     }
     return 0;

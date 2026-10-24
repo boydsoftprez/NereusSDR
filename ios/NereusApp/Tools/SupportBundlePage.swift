@@ -45,8 +45,7 @@ struct SupportBundlePage: View {
                 }
                 .foregroundStyle(Color.white)
                 .frame(maxWidth: .infinity, minHeight: 40)
-                .background(ChromeColours.buttonOnBlue, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.buttonOnBlueBorder, lineWidth: 1))
+                .background { WorkspaceFace(.glass) }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -73,9 +72,7 @@ struct SupportBundlePage: View {
                         .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(ChromeColours.text)
                         .frame(maxWidth: .infinity, minHeight: 40)
-                        .background(ChromeColours.button, in: RoundedRectangle(cornerRadius: 4))
-                        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.buttonBorder,
-                                                                                lineWidth: 1))
+                        .background { WorkspaceFace(.raised) }
                 }
                 .disabled(model.files.isEmpty)
                 .accessibilityIdentifier("support.share")
@@ -129,7 +126,7 @@ struct SupportBundlePage: View {
         }
     }
 
-    /// One of the Core's logging categories, blue while it is on. Greyed,
+    /// One of the Core's logging categories, in the glass while it is on. Greyed,
     /// one that is on keeps a lighter grey outline and text, as the Tools
     /// pages' greyed choices do.
     struct CategoryButton: View {
@@ -152,8 +149,7 @@ struct SupportBundlePage: View {
                     .minimumScaleFactor(0.7)
                     .foregroundStyle(look.text)
                     .frame(maxWidth: .infinity, minHeight: 34)
-                    .background(look.fill, in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(look.border, lineWidth: 1))
+                    .background { look.background }
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -187,8 +183,8 @@ struct SupportBundlePage: View {
                         }
                     }
                     .frame(height: 240)
-                    .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
+                    .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                    .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
                     .accessibilityIdentifier("support.coreLog")
                     .onChange(of: log.lines.last?.id, initial: true) { _, _ in
                         reader.scrollTo(Self.logEnd, anchor: .bottomLeading)
@@ -225,8 +221,8 @@ struct SupportBundlePage: View {
                 .foregroundStyle(enabled ? ChromeColours.text : ChromeColours.buttonOffText)
                 .frame(maxWidth: .infinity, minHeight: 34)
                 .background(enabled ? ChromeColours.button : ChromeColours.buttonOff,
-                            in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4)
+                            in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                     .strokeBorder(enabled ? ChromeColours.buttonBorder : ChromeColours.buttonOffBorder, lineWidth: 1))
                 .contentShape(Rectangle())
         }

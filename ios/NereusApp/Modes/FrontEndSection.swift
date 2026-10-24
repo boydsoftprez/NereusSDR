@@ -79,7 +79,7 @@ struct FrontEndSection: View {
                         .accessibilityIdentifier("modesRx1Preamp")
                     }
                     if model.bypassPresent {
-                        PanelButton(label: "RX bypass", lit: model.bypass == true, style: .dsp,
+                        PanelButton(label: "RX bypass", lit: model.bypass == true, style: .amber,
                                     disabled: model.bypassReason != nil || model.bypass == nil) {
                             model.toggleBypass()
                         }
@@ -110,7 +110,7 @@ struct FrontEndSection: View {
                 ModesChrome.note("RX antenna: \(reason)")
             }
             ModesChrome.caption("TX antenna:")
-            antennaGrid(model.txAntennas, reason: model.txAntennaReason, style: .red, prefix: "modesTx") {
+            antennaGrid(model.txAntennas, reason: model.txAntennaReason, style: .txAntenna, prefix: "modesTx") {
                 model.selectTxAntenna($0)
             }
             if let reason = model.txAntennaReason {

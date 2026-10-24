@@ -74,8 +74,8 @@ enum ToolPageParts {
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
                 .frame(width: width, height: 28)
-                .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
+                .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
         }
     }
 
@@ -849,9 +849,11 @@ enum ToolPageParts {
         #endif
     }
 
-    /// A row of choices, the chosen one blue. Greyed, the chosen one keeps
-    /// a lighter grey outline and text, as a greyed Setup list keeps its
-    /// tick in grey: still readable, but plainly not something to press.
+    /// A row of choices, the chosen one in the glass, the others raised
+    /// (docs/architecture/2026-10-20-phone-workspace-look-design.md, section 5).
+    /// Greyed, the row is raised at 40 percent and the chosen one keeps a
+    /// lighter grey outline and text, as a greyed Setup list keeps its tick
+    /// in grey: still readable, but plainly not something to press.
     struct Choices: View {
         let options: [(id: Int64, label: String)]
         let selected: Int64?
@@ -859,28 +861,39 @@ enum ToolPageParts {
         let identifier: String
         let pick: (Int64) -> Void
 
-        /// How one choice is drawn.
+        /// How one choice is drawn: the treatment's face, an outline laid
+        /// over its rim (nil keeps the face's own), the text and the opacity.
         struct Look: Equatable {
-            let fill: Color
-            let border: Color
+            let face: WorkspaceLook
+            let outline: Color?
             let text: Color
             let opacity: Double
+
+            /// The face with its outline, for a label's background; built
+            /// on the main actor, as every view is.
+            @MainActor var background: some View {
+                WorkspaceFace(face)
+                    .overlay {
+                        if let outline {
+                            RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius, style: .continuous)
+                                .strokeBorder(outline, lineWidth: 1)
+                        }
+                    }
+            }
         }
 
         static func look(chosen: Bool, enabled: Bool) -> Look {
             switch (chosen, enabled) {
             case (true, true):
-                return Look(fill: ChromeColours.buttonOnBlue, border: ChromeColours.buttonOnBlueBorder,
-                            text: .white, opacity: 1)
+                return Look(face: .glass, outline: nil, text: workspaceForeground(.glass), opacity: 1)
             case (false, true):
-                return Look(fill: ChromeColours.button, border: ChromeColours.buttonBorder,
-                            text: ChromeColours.text, opacity: 1)
+                return Look(face: .raised, outline: nil, text: workspaceForeground(.raised), opacity: 1)
             case (true, false):
-                return Look(fill: ChromeColours.buttonOff, border: ChromeColours.caption,
-                            text: ChromeColours.caption, opacity: 1)
+                return Look(face: .raised, outline: ChromeColours.caption, text: ChromeColours.text,
+                            opacity: WorkspacePalette.disabledOpacity)
             case (false, false):
-                return Look(fill: ChromeColours.buttonOff, border: ChromeColours.buttonOffBorder,
-                            text: ChromeColours.buttonOffText, opacity: 0.7)
+                return Look(face: .raised, outline: nil, text: ChromeColours.textDim,
+                            opacity: WorkspacePalette.disabledOpacity)
             }
         }
 
@@ -898,8 +911,7 @@ enum ToolPageParts {
                             .minimumScaleFactor(0.8)
                             .foregroundStyle(look.text)
                             .frame(maxWidth: .infinity, minHeight: 32)
-                            .background(look.fill, in: RoundedRectangle(cornerRadius: 4))
-                            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(look.border, lineWidth: 1))
+                            .background { look.background }
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)

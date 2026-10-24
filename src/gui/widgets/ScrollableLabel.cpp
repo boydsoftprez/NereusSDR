@@ -19,6 +19,10 @@
 //                 via Anthropic Claude Code.
 //                 Qt6 pattern informed by AetherSDR
 //                 `src/gui/GuardedSlider.h:81-100`.
+//   2026-10-18 - Wheel steps through WheelStepAccumulator, so a trackpad
+//                 swipe moves the value one step per 15 px, not one per
+//                 event. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code (Claude Opus 5.5).
 // =================================================================
 
 // NereusSDR native widget; Qt skeleton patterns informed by AetherSDR's
@@ -112,10 +116,10 @@ std::optional<int> ScrollableLabel::parseValue(const QString& text) {
 }
 
 void ScrollableLabel::wheelEvent(QWheelEvent* event) {
-    const int delta = event->angleDelta().y();
-    if (delta > 0) {
+    const int steps = m_wheelSteps.stepsFor(*event);
+    if (steps > 0) {
         setValue(m_value + m_step);
-    } else if (delta < 0) {
+    } else if (steps < 0) {
         setValue(m_value - m_step);
     }
     event->accept();

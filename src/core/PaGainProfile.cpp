@@ -29,6 +29,16 @@
 //                 these slots don't block transmit.
 //   2026-09-28 - 2 m as its own band (R-IOS-26, R-R3-49). J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-18 - ANAN-G2E gets its own row at piHPSDR's 53.0 dB default
+//                instead of the Thetis ANAN7000D row it shares upstream.
+//                A bench G2E made 111 W at a 50 W target and 166 W at
+//                full drive on 20 m with the Thetis row. Deliberate
+//                divergence from Thetis at J.J. Boyd's direction; the
+//                value is cited from piHPSDR, not ported. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-21 - kAnanG2eRow comment: the 100 W hold is at full drive and
+//                the 53.0 dB figure is bench-checked on 20 m only. J.J.
+//                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // --- From clsHardwareSpecific.cs (Thetis v2.10.3.13) ---
@@ -223,12 +233,32 @@ constexpr HfRow kAnan8000dRow = {
     48.5f, 48.0f, 47.5f, 46.5f, 42.0f, 43.0f
 };
 
-// ANAN7000D / ANAN_G2E / ANAN_G2 / ANVELINAPRO3 / REDPITAYA shared row.
+// ANAN7000D / ANAN_G2 / ANVELINAPRO3 / REDPITAYA shared row. Thetis also
+// lists ANAN_G2E here; NereusSDR gives it kAnanG2eRow below.
 // From Thetis clsHardwareSpecific.cs:698-713 [v2.10.3.15].
 // Upstream tags preserved: //N1GP G2E added (clsHardwareSpecific.cs:699 [v2.10.3.15])
 constexpr HfRow kAnan7000dRow = {
     47.9f, 50.5f, 50.8f, 50.8f, 50.9f,
     50.9f, 50.5f, 47.0f, 47.9f, 46.5f, 44.6f
+};
+
+// ANAN_G2E row. NereusSDR-specific divergence: Thetis gives the G2E the
+// ANAN7000D row above, which overdrives this radio. A bench G2E (20 m, an
+// external wattmeter) made 111 W at a 50 W target and 166 W at full drive
+// with that row, which works out to about 54.4 dB of gain at 50 W and
+// 53.1 dB at 100 W against the row's 50.9 dB. piHPSDR's default PA
+// calibration, the same 53.0 dB on every band for every radio except the
+// Hermes Lite 2, keeps the G2E at or under its 100 W rating at full drive
+// on 20 m. The 53.0 dB figure is bench-checked on 20 m only; the other
+// bands use piHPSDR's band.c default unchecked. It is above every value
+// in the Thetis row, so on every band the G2E gets less drive, never more.
+// From piHPSDR src/band.c:320-330 [@4aa95c5] (pa_calibration 53.0 for
+// 160 m through 6 m; piHPSDR's drive formula in calcLevel at
+// src/radio.c:2537-2547 matches Thetis console.cs:46801-46838
+// [v2.10.3.15], so the value carries over as is).
+constexpr HfRow kAnanG2eRow = {
+    53.0f, 53.0f, 53.0f, 53.0f, 53.0f,
+    53.0f, 53.0f, 53.0f, 53.0f, 53.0f, 53.0f
 };
 
 // ANAN_G2_1K row — Thetis keeps it as its own case (values match
@@ -366,15 +396,21 @@ float defaultPaGainsForBand(HPSDRModel model, Band band) noexcept {
         case HPSDRModel::ANAN8000D:
             return lookupHfBand(kAnan8000dRow, band);
 
-        // ANAN7000D / ANAN_G2E / ANAN_G2 / ANVELINAPRO3 / REDPITAYA shared row.
+        // ANAN7000D / ANAN_G2 / ANVELINAPRO3 / REDPITAYA shared row.
         // From Thetis clsHardwareSpecific.cs:698-713 [v2.10.3.15].
-        // Upstream tags preserved: //N1GP G2E added (clsHardwareSpecific.cs:699 [v2.10.3.15])
+        // Thetis lists ANAN_G2E in this group too (//N1GP G2E added);
+        // NereusSDR moves it to its own case below (see kAnanG2eRow).
         case HPSDRModel::ANAN7000D:
-        case HPSDRModel::ANAN_G2E: //N1GP G2E added
         case HPSDRModel::ANAN_G2:
         case HPSDRModel::ANVELINAPRO3:
         case HPSDRModel::REDPITAYA:
             return lookupHfBand(kAnan7000dRow, band);
+
+        // ANAN_G2E — own row at piHPSDR's 53.0 dB (NereusSDR divergence).
+        // Thetis case label at clsHardwareSpecific.cs:699 [v2.10.3.15].
+        // Upstream tags preserved: //N1GP G2E added (clsHardwareSpecific.cs:699 [v2.10.3.15])
+        case HPSDRModel::ANAN_G2E: //N1GP G2E added
+            return lookupHfBand(kAnanG2eRow, band);
 
         // ANAN_G2_1K — separate case (values match ANAN7000D group).
         // From Thetis clsHardwareSpecific.cs:718-746 [v2.10.3.13].

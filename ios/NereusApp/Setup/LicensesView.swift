@@ -9,28 +9,40 @@ struct LicensesView: View {
     private let notices: [LicenseNotice] = (try? LicenseNotice.load()) ?? []
 
     var body: some View {
-        List(notices) { notice in
-            NavigationLink {
-                ScrollView {
-                    Text(notice.notice)
-                        .font(.footnote.monospaced())
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
+        SetupPageContainer {
+            SetupPanelSection {
+                ForEach(notices) { notice in
+                    row(notice)
                 }
-                .navigationTitle(notice.name)
-                .navigationBarTitleDisplayMode(.inline)
-            } label: {
+            }
+        }
+        .navigationTitle("Licenses")
+    }
+
+    private func row(_ notice: LicenseNotice) -> some View {
+        NavigationLink {
+            ScrollView {
+                Text(notice.notice)
+                    .font(.footnote.monospaced())
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+            }
+            .setupPlainPage()
+            .navigationTitle(notice.name)
+            .navigationBarTitleDisplayMode(.inline)
+        } label: {
+            SetupLinkLabel {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(notice.name)
                     Text("\(notice.licence), \(notice.version)")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WorkspacePalette.textSecondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
             }
         }
-        .navigationTitle("Licenses")
+        .buttonStyle(SetupLinkStyle())
     }
 }

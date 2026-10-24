@@ -121,6 +121,9 @@
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
 // Modification history (NereusSDR):
+//   2026-10-18 - setTunePowerForTxBand no longer sets the tune drive
+//                source (Thetis parity; Setup alone chooses it). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09 - VAX TX (virtual device) only where a VAX transmit device
 //                exists: greyed on Windows with the PC Mic route, a saved
 //                choice falls back to PC Mic (R-SPK-21, R-AUD-01).
@@ -732,6 +735,15 @@ public:
     //
     // Persisted per-MAC under hardware/<mac>/tx/TuneDrivePowerOrigin
     // (mirrors the existing TwoToneDrivePowerOrigin key).
+    //
+    // Only Setup > Transmit > Power's Tune radios set it, as in Thetis,
+    // where the radio handlers are the field's only writers
+    // (setup.cs:22902-22915 [v2.10.3.15]) and neither power slider's
+    // scroll handler touches it. Stock Thetis runs DRIVE_SLIDER until the
+    // operator picks another: the designer checks none of the three radios
+    // (setup.designer.cs:47289-47324 [v2.10.3.15]), so no handler fires on
+    // a new database, and console.cs:46631 [v2.10.3.15] keeps
+    //   private DrivePowerSource _tuneDrivePowerSource = DrivePowerSource.DRIVE_SLIDER;
     DrivePowerSource tuneDrivePowerSource() const noexcept {
         return m_tuneDrivePowerSource;
     }
@@ -751,7 +763,7 @@ public:
     /// until the next setTuneTxBand.
     void clearTuneTxBand();
     /// What the TX applet's Tune Power slider does locally: the transmit
-    /// band's tune power, and the tune drive source to TuneSlider. False,
+    /// band's tune power. The tune drive source is left alone. False,
     /// changing nothing, before the transmit band is known.
     bool setTunePowerForTxBand(int watts);
     /// The Tune Power range for this radio: 0 to 99 on a Hermes Lite 2,

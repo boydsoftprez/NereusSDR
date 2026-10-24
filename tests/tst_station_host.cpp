@@ -1,4 +1,9 @@
 // no-port-check: NereusSDR-original. Task 48, step 1. No radio hardware is opened here.
+//
+// Modification history (NereusSDR):
+//   2026-10-22: NSDC v2 negotiation: RemoteDisplayCodecV2 is read at start.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+#include "UnusedLoopbackPort.h"
 #include "core/AppSettings.h"
 #include "core/AudioEngine.h"
 #include "core/ConnectionState.h"
@@ -10,6 +15,8 @@
 #include "core/SliceOwnership.h"
 #include "core/settings/SettingsProxy.h"
 #include "core/station/StationHost.h"
+#include "core/session/media/DaemonMediaController.h"
+#include "core/settings/SettingsScope.h"
 #include "fakes/LoopbackTransport.h"
 #include <QJsonDocument>
 #include "fakes/UpgradedCoreToken.h"
@@ -33,11 +40,7 @@ StationHostOptions listenerOptions()
     options.remoteBind = QStringLiteral("127.0.0.1");
     options.statusPage = false;
     options.rendezvousServers.clear();
-    QTcpServer probe;
-    if (probe.listen(QHostAddress::LocalHost, 0)) {
-        options.remotePort = probe.serverPort();
-        probe.close();
-    }
+    options.remotePort = unusedLoopbackPort();
     return options;
 }
 }
@@ -103,6 +106,98 @@ private slots:
         QCOMPARE(host.server()->deviceSessions()->placesTaken(), 4);
         host.stop();
         QCOMPARE(model.sliceOwnership()->mark(foreign).owner, QByteArray("peer"));
+    }
+
+    // Bench setting (JJ approved 2026-10-22): the Core's own
+    // DisplayKeyframeEveryFrame reaches the media hub as the host starts;
+    // only "True" turns it on, and the settings proxy never carries it.
+    void displayKeyframeEveryFrameIsReadAtStart_data()
+    {
+        QTest::addColumn<QString>("stored");
+        QTest::addColumn<bool>("expected");
+        QTest::newRow("unset") << QString() << false;
+        QTest::newRow("False") << QStringLiteral("False") << false;
+        QTest::newRow("True") << QStringLiteral("True") << true;
+        QTest::newRow("lower-case true") << QStringLiteral("true") << false;
+    }
+
+    void displayKeyframeEveryFrameIsReadAtStart()
+    {
+        if (!QSslSocket::supportsSsl()) {
+            QSKIP("Qt reports no working TLS backend.");
+        }
+        QFETCH(QString, stored);
+        QFETCH(bool, expected);
+        QCOMPARE(QString::fromLatin1(kDisplayKeyframeEveryFrameSettingsKey),
+                 QStringLiteral("DisplayKeyframeEveryFrame"));
+        QCOMPARE(classifySettingsKey(QString::fromLatin1(kDisplayKeyframeEveryFrameSettingsKey)),
+                 SettingsScope::OperatorLocal);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("station.settings")));
+        if (!stored.isNull()) {
+            settings.setValue(QLatin1String(kDisplayKeyframeEveryFrameSettingsKey), stored);
+        }
+        RadioModel model;
+        StationHostOptions options = listenerOptions();
+        options.settings = &settings;
+        options.securityDirectory = directory.path();
+        StationHost host(&model, options);
+        QVERIFY(host.start());
+        QVERIFY(host.mediaHubForTest() != nullptr);
+        QCOMPARE(host.mediaHubForTest()->displayKeyframeEveryFrame(), expected);
+        host.stop();
+    }
+
+    // Display codec v2 (NSDC v2): the Core's fallback switch reaches the
+    // server as the host starts; absent and "True" leave it on, anything
+    // else turns it off, and the settings proxy never carries it.
+    void remoteDisplayCodecV2IsReadAtStart_data()
+    {
+        QTest::addColumn<QString>("stored");
+        QTest::addColumn<bool>("expected");
+        QTest::newRow("absent") << QString() << true;
+        QTest::newRow("True") << QStringLiteral("True") << true;
+        QTest::newRow("False") << QStringLiteral("False") << false;
+        QTest::newRow("lower-case true") << QStringLiteral("true") << false;
+        QTest::newRow("0") << QStringLiteral("0") << false;
+    }
+
+    void remoteDisplayCodecV2IsReadAtStart()
+    {
+        if (!QSslSocket::supportsSsl()) {
+            QSKIP("Qt reports no working TLS backend.");
+        }
+        QFETCH(QString, stored);
+        QFETCH(bool, expected);
+        QCOMPARE(QString::fromLatin1(kRemoteDisplayCodecV2SettingsKey),
+                 QStringLiteral("RemoteDisplayCodecV2"));
+        QCOMPARE(classifySettingsKey(QStringLiteral("RemoteDisplayCodecV2")),
+                 SettingsScope::OperatorLocal);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("station.settings")));
+        if (!stored.isNull()) {
+            settings.setValue(QLatin1String(kRemoteDisplayCodecV2SettingsKey), stored);
+        }
+        RadioModel model;
+        StationHostOptions options = listenerOptions();
+        options.settings = &settings;
+        options.securityDirectory = directory.path();
+        StationHost host(&model, options);
+        bool serverMade = false;
+        host.setServerCreatedForTest([&](StationServer* server) {
+            // The server is made with the default; the host sets it before
+            // the server listens.
+            QVERIFY(!server->isListening());
+            QVERIFY(server->displayCodecV2Enabled());
+            serverMade = true;
+        });
+        QVERIFY(host.start());
+        QVERIFY(serverMade);
+        QVERIFY(host.server() != nullptr);
+        QCOMPARE(host.server()->displayCodecV2Enabled(), expected);
+        host.stop();
     }
 
     void borrowedModelSurvivesStopAndRestart()

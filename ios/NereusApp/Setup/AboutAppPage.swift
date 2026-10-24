@@ -21,13 +21,13 @@ struct AboutAppPage: View {
     }
 
     var body: some View {
-        List {
-            Section {
+        SetupPageContainer {
+            SetupPanelSection {
                 HStack(spacing: 14) {
                     Image("WelcomeMark")
                         .resizable()
                         .frame(width: 52, height: 52)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .clipShape(RoundedRectangle(cornerRadius: 10)) // kept-radius: icon
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
                         Text("NereusSDR").font(.title2.bold())
@@ -45,11 +45,11 @@ struct AboutAppPage: View {
                 Text("Created by JJ Boyd · KG4VCF")
             }
 
-            Section("Standing on the Shoulders of Giants") {
+            SetupPanelSection("Standing on the Shoulders of Giants") {
                 Text(content?.texts.lineage ?? "Bundled About information could not be read.")
             }
 
-            Section("Contributors") {
+            SetupPanelSection("Contributors") {
                 ForEach((content?.roster ?? []).indices, id: \.self) { index in
                     let group = content!.roster[index]
                     VStack(alignment: .leading, spacing: 6) {
@@ -62,7 +62,7 @@ struct AboutAppPage: View {
                 }
             }
 
-            Section("Links") {
+            SetupPanelSection("Links") {
                 ForEach(content?.links ?? []) { link in
                     externalLink(link)
                 }
@@ -72,7 +72,7 @@ struct AboutAppPage: View {
                 }
             }
 
-            Section("Built With on this phone") {
+            SetupPanelSection("Built With on this phone") {
                 Text("The phone app uses native iOS frameworks. Its bundled third-party libraries are listed from this build's license manifest.")
                 if let notices = try? LicenseNotice.load(), !notices.isEmpty {
                     ForEach(notices) { notice in
@@ -81,21 +81,24 @@ struct AboutAppPage: View {
                 } else {
                     Text("The bundled library list could not be read.")
                 }
-                NavigationLink("Licenses and full third-party notices") {
+                NavigationLink {
                     LicensesView()
+                } label: {
+                    SetupLinkLabel("Licenses and full third-party notices")
                 }
+                .buttonStyle(SetupLinkStyle())
                 .accessibilityIdentifier("AboutLicences")
             }
 
-            Section("Desktop and Core components") {
+            SetupPanelSection("Desktop and Core components") {
                 Text(content?.texts.desktopLibraries ?? "Bundled About information could not be read.")
             }
 
-            Section("Copyright and licenses") {
+            SetupPanelSection("Copyright and licenses") {
                 Text(content?.texts.copyright ?? "Bundled About information could not be read.")
                 Text(content?.texts.warranty ?? "Bundled About information could not be read.")
                 Text(content?.texts.phoneLicence ?? "Bundled About information could not be read.")
-                NavigationLink("NereusSDR for iOS license and App Store permission") {
+                NavigationLink {
                     ScrollView {
                         Text(phoneLicense)
                             .font(.footnote.monospaced())
@@ -103,8 +106,12 @@ struct AboutAppPage: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding()
                     }
+                    .setupPlainPage()
                     .navigationTitle("iOS license")
+                } label: {
+                    SetupLinkLabel("NereusSDR for iOS license and App Store permission")
                 }
+                .buttonStyle(SetupLinkStyle())
                 Text(content?.texts.desktopLicence ?? "Bundled About information could not be read.")
                 ForEach(content?.legalLinks ?? []) { link in
                     externalLink(link)
@@ -113,7 +120,7 @@ struct AboutAppPage: View {
                 Text("HPSDR protocol © TAPR")
             }
         }
-        .navigationTitle("About this app")
+        .setupPageTitle("About this app")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if showsDone {
@@ -142,7 +149,9 @@ struct AboutAppPage: View {
             }
         } label: {
             Label(link.title, systemImage: "arrow.up.right.square")
+                .foregroundStyle(WorkspacePalette.accentText)
         }
+        .buttonStyle(SetupLinkStyle())
         .accessibilityLabel("Open \(link.title)")
         .accessibilityIdentifier("AboutLink-\(link.title)")
     }

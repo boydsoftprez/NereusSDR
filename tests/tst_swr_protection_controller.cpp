@@ -24,8 +24,18 @@ private slots:
     void lowPowerClampedToSwr1_0();
     void disableOnTune_bypassesProtection();
 
-    // Codex P2 follow-up to PR #139:
-    void setEnabled_false_clearsLatchedState();
+    // Codex P2 follow-up to PR #139, revised in the PR 604 fix wave to
+    // Thetis's behavior (the latch holds until MOX off):
+    void setEnabled_false_keepsWindBackLatchUntilMoxOff();
+
+    // PR 604 fix wave:
+    void openAntenna_anan8000d_notChecked();
+    void openAntenna_otherBoard_detected();
+    void moxOff_keepsTripCountAndMeasuredSwr();
+    void disableOnTuneOff_tuneDoesNotBypass();
+
+    // PR 604 second pass:
+    void latched_cleanSample_resetsTripCount();
 
     // F.3 TODO ports — console.cs:26067 + 26020-26057 [v2.10.3.13]:
     void alexFwdLimit_default5W_belowFloor_noTrip();
@@ -189,18 +199,27 @@ void TestSwrProtectionController::perSampleFoldback_oneTrip_windBackDisabled_fac
              qPrintable(QString("expected ~0.5, got %1").arg(factor)));
 }
 
-// Codex P2 follow-up to PR #139: when protection is disabled mid-flight while
-// the windback latch / open-antenna flag / trip count are non-default, the
-// disabled-path early-return MUST clear all of them. Previously only
-// m_protectFactor and m_highSwr were reset; the latch and trip-count would
-// survive into the re-enabled path, immediately re-asserting phantom fault
-// state.
-void TestSwrProtectionController::setEnabled_false_clearsLatchedState()
+// Codex P2 follow-up to PR #139 made disabling clear everything; the PR 604
+// fix wave restores Thetis's behavior. With swrprotection off PollPAPWR
+// neither trips nor checks for an open antenna and its else branch clears
+// HighSWR, but the catch-all keeps an engaged wind-back at 0.01 until
+// UIMOXChangedFalse.
+// From Thetis console.cs:26116-26142 [v2.10.3.15]:
+// Upstream tags preserved: //K2UE (from cited console.cs:26113) [v2.10.3.15]
+//   if (swr > _swrProtectionLimit && alex_fwd > alex_fwd_limit && swrprotection && !swr_pass)
+//   ...
+//   else
+//   {
+//       high_swr_count = 0;
+//       NetworkIO.SWRProtect = 1.0f;
+//       HighSWR = false;
+//   }
+//   if (swrprotection && _swr_wind_back_power & !_wind_back_engaged && HighSWR) _wind_back_engaged = true; // this and NetworkIO.SWRProtect reset in UIMOXChangedFalse
+//   if (_wind_back_engaged)
+//   {
+//       NetworkIO.SWRProtect = 0.01f;
+void TestSwrProtectionController::setEnabled_false_keepsWindBackLatchUntilMoxOff()
 {
-    // Drive the controller into latched + open-antenna state.
-    // Two-step: 4 trips engage the windback latch (per console.cs:26069);
-    // a follow-up open-antenna sample (fwd=15, fwd-rev<1, console.cs:25989)
-    // sets m_openAntennaDetected on top.
     m_ctrl->setWindBackEnabled(true);
     for (int i = 0; i < 4; ++i) {
         m_ctrl->ingest(100.0f, 25.0f, false); // SWR=3 > limit=2 → trip
@@ -209,45 +228,106 @@ void TestSwrProtectionController::setEnabled_false_clearsLatchedState()
     QVERIFY(m_ctrl->highSwr());
     QCOMPARE(m_ctrl->protectFactor(), 0.01f);
 
-    m_ctrl->ingest(15.0f, 14.5f, false); // open-antenna heuristic
-    QVERIFY(m_ctrl->openAntennaDetected());
-    QVERIFY(m_ctrl->windBackLatched());     // unchanged from earlier latch
-    QVERIFY(m_ctrl->highSwr());
-    QCOMPARE(m_ctrl->protectFactor(), 0.01f);
-
     QSignalSpy windSpy(m_ctrl, &SwrProtectionController::windBackLatchedChanged);
-    QSignalSpy openSpy(m_ctrl, &SwrProtectionController::openAntennaDetectedChanged);
-    QSignalSpy highSpy(m_ctrl, &SwrProtectionController::highSwrChanged);
     QSignalSpy factorSpy(m_ctrl, &SwrProtectionController::protectFactorChanged);
+    QSignalSpy highSpy(m_ctrl, &SwrProtectionController::highSwrChanged);
 
-    // Disable protection mid-flight, then ingest (which would normally
-    // re-trigger trip / open-antenna in enabled mode).
+    // Disable protection mid-flight, then keep sampling a high SWR and an
+    // open antenna: neither is acted on, the latch and 0.01 hold.
     m_ctrl->setEnabled(false);
-    m_ctrl->ingest(100.0f, 25.0f, false);
-
-    // All four observable flags must be clear.
+    for (int i = 0; i < 8; ++i) {
+        m_ctrl->ingest(100.0f, 25.0f, false);
+    }
+    m_ctrl->ingest(15.0f, 14.5f, false);
     QVERIFY(!m_ctrl->openAntennaDetected());
+    QVERIFY(m_ctrl->windBackLatched());
+    QVERIFY(!m_ctrl->highSwr());
+    QCOMPARE(m_ctrl->protectFactor(), 0.01f);
+    QCOMPARE(windSpy.count(), 0);
+    QCOMPARE(factorSpy.count(), 0);
+    QCOMPARE(highSpy.count(), 1);
+    QCOMPARE(highSpy.at(0).at(0).toBool(), false);
+
+    // MOX off releases it.
+    m_ctrl->onMoxOff();
+    QVERIFY(!m_ctrl->windBackLatched());
+    QCOMPARE(m_ctrl->protectFactor(), 1.0f);
+
+    // Still disabled: a high SWR on the next key does nothing.
+    for (int i = 0; i < 8; ++i) {
+        m_ctrl->ingest(100.0f, 25.0f, false);
+    }
     QVERIFY(!m_ctrl->windBackLatched());
     QVERIFY(!m_ctrl->highSwr());
     QCOMPARE(m_ctrl->protectFactor(), 1.0f);
+}
 
-    // Each transition emitted exactly once on disable.
-    QCOMPARE(windSpy.count(), 1);
-    QCOMPARE(windSpy.at(0).at(0).toBool(), false);
-    QCOMPARE(openSpy.count(), 1);
-    QCOMPARE(openSpy.at(0).at(0).toBool(), false);
-    QCOMPARE(highSpy.count(), 1);
-    QCOMPARE(highSpy.at(0).at(0).toBool(), false);
-    QCOMPARE(factorSpy.count(), 1);
-    QCOMPARE(factorSpy.at(0).at(0).toFloat(), 1.0f);
-
-    // Re-enable + ingest something safe → still clean (no phantom latch
-    // resurrects from stale state).
-    m_ctrl->setEnabled(true);
-    m_ctrl->ingest(100.0f, 0.0f, false);
-    QVERIFY(!m_ctrl->windBackLatched());
+// From Thetis console.cs:26038-26039 [v2.10.3.15]:
+// Upstream tags preserved: //K2UE (from cited console.cs:26034) //-W2PA (from cited console.cs:26036) [v2.10.3.15]
+//   if (!chkTUN.Checked && (swrprotection && alex_fwd > 10.0f && (alex_fwd - alex_rev) < 1.0f //[2.10.3.6]MW0LGE ignored if tuning, and returned the 10.0f
+//       && HardwareSpecific.Model != HPSDRModel.ANAN8000D)) // open ant condition
+void TestSwrProtectionController::openAntenna_anan8000d_notChecked()
+{
+    m_ctrl->setHpsdrModel(NereusSDR::HPSDRModel::ANAN8000D);
+    QSignalSpy openSpy(m_ctrl, &SwrProtectionController::openAntennaDetectedChanged);
+    m_ctrl->ingest(15.0f, 14.5f, false);
     QVERIFY(!m_ctrl->openAntennaDetected());
+    QCOMPARE(m_ctrl->protectFactor(), 1.0f);
     QVERIFY(!m_ctrl->highSwr());
+    QCOMPARE(openSpy.count(), 0);
+}
+
+void TestSwrProtectionController::openAntenna_otherBoard_detected()
+{
+    m_ctrl->setHpsdrModel(NereusSDR::HPSDRModel::ANAN7000D);
+    m_ctrl->ingest(15.0f, 14.5f, false);
+    QVERIFY(m_ctrl->openAntennaDetected());
+    QCOMPARE(m_ctrl->protectFactor(), 0.01f);
+    QCOMPARE(m_ctrl->measuredSwr(), 50.0f);
+}
+
+// UIMOXChangedFalse (console.cs:29241-29246 [v2.10.3.15]) resets
+// SWRProtect, _wind_back_engaged and HighSWR, not high_swr_count or
+// alex_swr: three samples before an unkey and one after trip.
+void TestSwrProtectionController::moxOff_keepsTripCountAndMeasuredSwr()
+{
+    m_ctrl->setWindBackEnabled(false);
+    for (int i = 0; i < 3; ++i) {
+        m_ctrl->ingest(100.0f, 25.0f, false);
+    }
+    QVERIFY(!m_ctrl->highSwr());
+    const float swr = m_ctrl->measuredSwr();
+    QVERIFY(swr > 2.0f);
+
+    m_ctrl->onMoxOff();
+    QCOMPARE(m_ctrl->measuredSwr(), swr);
+
+    m_ctrl->ingest(100.0f, 25.0f, false);
+    QVERIFY(m_ctrl->highSwr());
+}
+
+// disable_swr_on_tune off: tuning does not bypass the protection.
+// From Thetis console.cs:26067 [v2.10.3.15]:
+//   if (chkTUN.Checked && disable_swr_on_tune && (alexpresent || apollopresent))
+void TestSwrProtectionController::disableOnTuneOff_tuneDoesNotBypass()
+{
+    m_ctrl->setDisableOnTune(false);
+    m_ctrl->setTunePowerSwrIgnore(30.0f);
+    m_ctrl->setTunePowerSliderValue(50);
+    for (int i = 0; i < 4; ++i) {
+        m_ctrl->ingest(10.0f, 5.56f, /*tuneActive=*/true);
+    }
+    QVERIFY(m_ctrl->highSwr());
+    QCOMPARE(m_ctrl->protectFactor(), 0.01f);
+
+    // The same with it on bypasses.
+    m_ctrl->onMoxOff();
+    m_ctrl->setDisableOnTune(true);
+    for (int i = 0; i < 8; ++i) {
+        m_ctrl->ingest(10.0f, 5.56f, /*tuneActive=*/true);
+    }
+    QVERIFY(!m_ctrl->highSwr());
+    QCOMPARE(m_ctrl->protectFactor(), 1.0f);
 }
 
 // ── F.3 ports — console.cs:26067 + 26020-26057 [v2.10.3.13] ─────────────────
@@ -330,6 +410,31 @@ void TestSwrProtectionController::tuneBypass_sliderAt71_doesNotBypass()
     QVERIFY(m_ctrl->highSwr());
     QVERIFY(m_ctrl->windBackLatched());
     QCOMPARE(m_ctrl->protectFactor(), 0.01f);
+}
+
+// With the wind-back latch held, a clean sample still runs Thetis's else
+// branch (console.cs:26126-26131 [v2.10.3.15]): high_swr_count = 0. The
+// count survives an unkey (UIMOXChangedFalse leaves it), so after three
+// high samples, a clean one and an unkey, one high sample does not trip.
+void TestSwrProtectionController::latched_cleanSample_resetsTripCount()
+{
+    m_ctrl->setWindBackEnabled(true);
+    for (int i = 0; i < 4; ++i) {
+        m_ctrl->ingest(100.0f, 25.0f, false);
+    }
+    QVERIFY(m_ctrl->windBackLatched());
+    for (int i = 0; i < 3; ++i) {
+        m_ctrl->ingest(100.0f, 25.0f, false);
+    }
+    m_ctrl->ingest(100.0f, 0.0f, false); // clean
+    QVERIFY(m_ctrl->windBackLatched());
+    QVERIFY(m_ctrl->highSwr());          // NereusSDR keeps it up while latched
+    QCOMPARE(m_ctrl->protectFactor(), 0.01f);
+
+    m_ctrl->onMoxOff();
+    m_ctrl->ingest(100.0f, 25.0f, false);
+    QVERIFY(!m_ctrl->highSwr());
+    QCOMPARE(m_ctrl->protectFactor(), 1.0f);
 }
 
 QTEST_GUILESS_MAIN(TestSwrProtectionController)

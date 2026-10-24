@@ -19,7 +19,7 @@ struct PanelGlyph: Shape {
             CGPoint(x: origin.x + x * unit, y: origin.y + y * unit)
         }
         var path = Path(roundedRect: CGRect(origin: point(3, 4), size: CGSize(width: 18 * unit, height: 16 * unit)),
-                        cornerRadius: 2 * unit)
+                        cornerRadius: 2 * unit) // kept-radius: glyph
         let x: CGFloat = side == .leading ? 9 : 15
         path.move(to: point(x, 4))
         path.addLine(to: point(x, 20))

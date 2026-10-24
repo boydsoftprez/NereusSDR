@@ -89,7 +89,7 @@ struct LinkChip: View {
         .padding(.leading, 7)
         .padding(.trailing, 8)
         .frame(height: Self.height)
-        .background(ChromeColours.chip, in: RoundedRectangle(cornerRadius: 3))
+        .workspaceInset()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(link.spoken(core: core))
     }
@@ -97,23 +97,47 @@ struct LinkChip: View {
 
 /// The link's dot, gently pulsing while the link is up (the board's
 /// `conn-pulse`), still when motion is reduced.
+///
+/// The pulse is worked out from the time, 30 times a second. A SwiftUI
+/// animation repeating forever would have the whole app drawn at the
+/// screen's full rate, up to 120 times a second, for as long as the link
+/// is up, which costs the battery far more than the dot is worth.
 private struct LinkDot: View {
     let colour: Color
     let pulses: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var dim = false
+
+    /// One way of the pulse, in seconds; it then comes back.
+    static let pulseSeconds = 1.2
+    /// The pulse's frames a second.
+    static let pulseFps = 30.0
 
     var body: some View {
-        Circle()
-            .fill(pulses && dim && !reduceMotion ? ChromeColours.linkUpPulse : colour)
-            .frame(width: 10, height: 10)
-            .onAppear {
-                guard pulses, !reduceMotion else {
-                    return
+        Group {
+            if pulses && !reduceMotion {
+                TimelineView(.periodic(from: .now, by: 1 / Self.pulseFps)) { context in
+                    dot(dim: Self.dim(at: context.date.timeIntervalSinceReferenceDate))
                 }
-                withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
-                    dim = true
-                }
+            } else {
+                dot(dim: 0)
             }
+        }
+        .frame(width: 10, height: 10)
+    }
+
+    private func dot(dim: Double) -> some View {
+        Circle()
+            .fill(colour)
+            .overlay {
+                Circle().fill(ChromeColours.linkUpPulse).opacity(dim)
+            }
+    }
+
+    /// How far toward the pulse's colour the dot is at `seconds`: eased in
+    /// and out over each way of the pulse.
+    static func dim(at seconds: Double) -> Double {
+        let phase = seconds.truncatingRemainder(dividingBy: 2 * pulseSeconds) / pulseSeconds
+        let way = phase <= 1 ? phase : 2 - phase
+        return way * way * (3 - 2 * way)
     }
 }

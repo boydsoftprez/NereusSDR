@@ -93,7 +93,12 @@
 // 2026-10-11: reachableOwnAddress moved to ReachableOwnAddress.h, which
 // tst_station_tci_server now shares. J.J. Boyd (KG4VCF), AI-assisted via
 // Anthropic Claude Code.
+// 2026-10-22: ports a test hands to a later listener come from
+// unusedLoopbackPort() (UnusedLoopbackPort.h), below the kernel's ephemeral
+// range, so a parallel test cannot take one between the pick and the listen.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
+#include "UnusedLoopbackPort.h"
 #include <QtTest>
 
 #include <QDateTime>
@@ -536,11 +541,7 @@ public:
 
 quint16 freeLoopbackPort()
 {
-    QTcpServer reservation;
-    if (!reservation.listen(QHostAddress::LocalHost, 0)) { return 0; }
-    const quint16 port = reservation.serverPort();
-    reservation.close();
-    return port;
+    return unusedLoopbackPort();
 }
 
 TunerModel::StationConnectionState state(TunerModel::ConnectionPhase phase,

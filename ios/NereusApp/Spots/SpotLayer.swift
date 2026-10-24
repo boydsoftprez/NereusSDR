@@ -43,7 +43,7 @@ struct SpotLayer: View {
                         .font(.system(size: CGFloat(settings.fontSize) - SpotLayout.badgeFontReduction, weight: .bold))
                         .foregroundStyle(SpotColours.badgeText)
                         .frame(width: badge.rect.width, height: badge.rect.height)
-                        .background(SpotColours.badge, in: RoundedRectangle(cornerRadius: 3))
+                        .background(SpotColours.badge, in: RoundedRectangle(cornerRadius: 3)) // kept-radius: spot-label
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -87,7 +87,7 @@ private struct SpotLabel: View {
             .fixedSize()
             .foregroundStyle(colour)
             .frame(width: size.width, height: size.height)
-            .background(SpotColours.background(settings), in: RoundedRectangle(cornerRadius: 3))
+            .background(SpotColours.background(settings), in: RoundedRectangle(cornerRadius: 3)) // kept-radius: spot-label
             .contentShape(Rectangle())
             .gesture(LongPressGesture(minimumDuration: SpotLayer.holdSeconds)
                 .exclusively(before: TapGesture())

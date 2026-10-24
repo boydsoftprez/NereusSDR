@@ -107,8 +107,8 @@ struct AddressesScreen: View {
         .padding(.leading, 12)
         .padding(.trailing, 8)
         .frame(minHeight: 60)
-        .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
+        .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("address-\(ConnectionFlow.addressText(endpoint))")
     }
@@ -138,8 +138,8 @@ struct AddressesScreen: View {
         .padding(.leading, 12)
         .padding(.trailing, 8)
         .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
-        .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
+        .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("learned-\(ConnectionFlow.addressText(endpoint))")
     }

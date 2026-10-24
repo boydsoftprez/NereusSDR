@@ -19,7 +19,12 @@
 //   2026-10-16  J.J. Boyd / KG4VCF. A reveal that grows the layout docks
 //                another device's slice keyed to the pan it makes, flag and
 //                stream. AI-assisted via Anthropic Claude Code.
+//   2026-10-22, J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//     test ports come from unusedLoopbackPort() (UnusedLoopbackPort.h), below
+//     the kernel's ephemeral range, so a parallel test cannot take one between
+//     the pick and the listen.
 
+#include "UnusedLoopbackPort.h"
 #include "gui/HostingSliceActions.h"
 #include "gui/MainWindow.h"
 
@@ -118,11 +123,7 @@ StationHostOptions optionsFor(AppSettings& settings, const QString& directory)
         QStringLiteral("Shack Mac mini"), QStringLiteral("Shack")};
     options.remoteBind = QStringLiteral("127.0.0.1");
     options.statusPage = false;
-    QTcpServer probe;
-    if (probe.listen(QHostAddress::LocalHost, 0)) {
-        options.remotePort = probe.serverPort();
-        probe.close();
-    }
+    options.remotePort = unusedLoopbackPort();
     return options;
 }
 

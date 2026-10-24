@@ -30,8 +30,13 @@
 //   2026-10-15  J.J. Boyd / KG4VCF  The CAT pages survive the Core's
 //                                    echoes with accessibility on. AI-
 //                                    assisted via Anthropic Claude Code.
+//   2026-10-22, J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//     test ports come from unusedLoopbackPort() (UnusedLoopbackPort.h), below
+//     the kernel's ephemeral range, so a parallel test cannot take one between
+//     the pick and the listen.
 // =================================================================
 
+#include "UnusedLoopbackPort.h"
 #include "MultiDeviceHarness.h"
 #include "SessionWait.h"
 
@@ -83,11 +88,7 @@ const QString kConnect = QStringLiteral("Connect to the Core to set up its CAT."
 
 quint16 freePort()
 {
-    QTcpServer reservation;
-    if (!reservation.listen(QHostAddress::LocalHost, 0)) { return 0; }
-    const quint16 port = reservation.serverPort();
-    reservation.close();
-    return port;
+    return unusedLoopbackPort();
 }
 
 template<class T> T* control(QWidget& page, const char* name)

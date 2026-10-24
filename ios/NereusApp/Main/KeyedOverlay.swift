@@ -84,8 +84,8 @@ struct KeyedOverlay: View {
                             .font(.system(size: textSize.isAccessibilitySize ? 15 : 12, weight: .semibold))
                             .frame(maxWidth: .infinity, minHeight: 44)
                             .background(target == page ? ChromeColours.gaugeNormal.opacity(0.24) : ChromeColours.bar,
-                                        in: RoundedRectangle(cornerRadius: 4))
-                            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(
+                                        in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(
                                 target == page ? ChromeColours.gaugeNormal : ChromeColours.panelEdge, lineWidth: 1))
                     }
                     .buttonStyle(.plain)
@@ -120,8 +120,8 @@ struct KeyedOverlay: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(ChromeColours.notice, in: RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
+        .background(ChromeColours.notice, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
         .simultaneousGesture(DragGesture(minimumDistance: 30).onChanged { drag in
             if abs(drag.translation.width) >= 30, abs(drag.translation.width) > abs(drag.translation.height) {
                 suppressTapUntil = ProcessInfo.processInfo.systemUptime + 0.3
@@ -191,7 +191,7 @@ struct KeyedOverlay: View {
                                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                                     .padding(.horizontal, 6)
                                     .background(selected ? ChromeColours.gaugeNormal.opacity(0.24) : ChromeColours.bar,
-                                                in: RoundedRectangle(cornerRadius: 3))
+                                                in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
                             }
                             .buttonStyle(.plain)
                             .disabled(!availability.status(for: meter).isAvailable)
@@ -207,8 +207,8 @@ struct KeyedOverlay: View {
         .padding(10)
         .frame(height: maximumHeight)
         .foregroundStyle(ChromeColours.text)
-        .background(ChromeColours.notice, in: RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
+        .background(ChromeColours.notice, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Choose overlay meter")
         .accessibilityIdentifier("keyedMeterChooser")
@@ -282,8 +282,8 @@ struct TxNoticeCard: View {
                             .foregroundStyle(.white)
                             .padding(.horizontal, 12)
                             .frame(height: 32)
-                            .background(ChromeColours.operateOn, in: RoundedRectangle(cornerRadius: 4))
-                            .overlay(RoundedRectangle(cornerRadius: 4)
+                            .background(ChromeColours.operateOn, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
                                 .strokeBorder(ChromeColours.operateOnBorder, lineWidth: 1))
                     }
                     .buttonStyle(.plain)
@@ -299,8 +299,8 @@ struct TxNoticeCard: View {
         }
         .padding(.vertical, 10)
         .padding(.horizontal, 12)
-        .background(ChromeColours.notice, in: RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
+        .background(ChromeColours.notice, in: RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
         .contentShape(Rectangle())
     }
 

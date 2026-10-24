@@ -82,8 +82,8 @@ struct AskToQsySheet: View {
                         .foregroundStyle(ChromeColours.textBright)
                         .frame(width: 130, height: 32)
                         .padding(.horizontal, 8)
-                        .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 3))
-                        .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
+                        .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
                         .accessibilityLabel("Frequency in MHz")
                         .accessibilityIdentifier("freedv.qsy.typed")
                 } else {
@@ -92,14 +92,14 @@ struct AskToQsySheet: View {
                         .foregroundStyle(ChromeColours.textBright)
                         .frame(minWidth: 130, minHeight: 32, alignment: .trailing)
                         .padding(.horizontal, 8)
-                        .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 3))
-                        .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
+                        .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.panelEdge, lineWidth: 1))
                         .accessibilityIdentifier("freedv.qsy.frequency")
                 }
             }
             .padding(10)
-            .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
+            .background(ChromeColours.inset, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ChromeColours.insetBorder, lineWidth: 1))
             HStack(spacing: 6) {
                 FreeDVChrome.Choice(title: letter.map { "Slice \($0)" } ?? "Your slice", chosen: pick == .slice,
                                     enabled: freedv.sliceFrequencyHz != nil, identifier: "freedv.qsy.slice") {

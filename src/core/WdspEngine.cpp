@@ -20,6 +20,13 @@
 //                AI-assisted via Anthropic Claude Code.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - The MaxBin hold falls again after a very strong signal
+//                 (Thetis #2681): maxBinHoldNextDbm, ported from Longpath
+//                 PR 215 (src/core/WdspEngine.cpp:1779-1809 [@383f058]),
+//                 gives the per-frame fall a 20 dB minimum reference, so a
+//                 hold above 0 dBm no longer creeps toward 0 dBm for good.
+//                 Unchanged below -20 dBm. J.J. Boyd (KG4VCF), with
+//                 AI-assisted transformation via Claude Code.
 //   2026-10-15 - Each profile keeps an impulse cache file of its own in the
 //                 shared DSP folder, so one profile's close never deletes
 //                 the cache another profile saved; a plans rebuild clears
@@ -175,6 +182,7 @@ warren@wpratt.com
 #include "DspControlThread.h"
 #include "RxChannel.h"
 
+#include <algorithm>
 #include <cmath>
 #include "TxChannel.h"
 #include "PsFeedbackChannel.h"
@@ -2538,8 +2546,56 @@ void WdspEngine::onSpectrumBinsForMaxBin(int receiverId, const QVector<float>& b
     // For voice / modulated signals this rides peak frames at the
     // signal level and only falls between peaks, producing the
     // expected "pumping" behavior.
-    d.maxDb -= std::abs((1.0 - d.decay) * d.maxDb);
-    if (static_cast<double>(newMaxDb) > d.maxDb) { d.maxDb = static_cast<double>(newMaxDb); }
+    // From Longpath src/core/WdspEngine.cpp:1779 [@383f058]: the Thetis
+    // step (analyzer.c:818-820) moved into maxBinHoldNextDbm, with the
+    // fix for Thetis #2681.
+    d.maxDb = maxBinHoldNextDbm(d.maxDb, static_cast<double>(newMaxDb), d.decay);
+}
+
+// From Longpath src/core/WdspEngine.cpp:1782-1809 [@383f058]
+// (Longpath PR 215, commit 695a3511). Thetis v2.10.3.15 still carries
+// the unbounded step (wdsp/analyzer.c:818-820 [v2.10.3.15]):
+//   a->dmb_max_dB -= fabs((1.0 - a->dmb_decay) * a->dmb_max_dB);
+//   dmb_max_dB = 10.0 * mlog10(a->scale * dmb_max);
+//   if (dmb_max_dB > a->dmb_max_dB) a->dmb_max_dB = dmb_max_dB;
+// Below -20 dBm this function computes exactly that; above it the fall
+// uses a 20 dB minimum reference instead of |held|.
+//
+// Siehe die Herleitung im Kopf (WdspEngine.h): Abfall gegen einen Boden
+// statt gegen 0 dBm, sonst bleibt der Haltewert oberhalb 0 dBm fuer
+// immer stehen.
+double WdspEngine::maxBinHoldNextDbm(double heldDbm, double liveDbm, double decay)
+{
+    // Der Abzug je Takt bleibt der von Thetis -- (1 - decay) mal dem
+    // Betrag des Haltewerts -- bekommt aber einen Mindestbezug. Ohne
+    // ihn schrumpft der Abzug oberhalb 0 dBm mit dem Wert selbst und
+    // der Haltewert kommt nie unter null (Thetis #2681).
+    //
+    // 20 dB als Mindestbezug: eine S-Stufe sind 6 dB, zwanzig also gut
+    // drei Stufen je Zeitkonstante. Weniger waere im starken Bereich
+    // traeger als jede sinnvolle Ablesung, mehr wuerde den Haltewert
+    // dort wegreissen, wo er gebraucht wird. Unterhalb -20 dBm -- also
+    // im ganzen Arbeitsbereich dieses Instruments -- rechnet das Zeile
+    // fuer Zeile wie bisher.
+    //
+    // Ein frueherer Versuch mit einem Boden bei -160 dBm statt eines
+    // Mindestbezugs ist am Pruefstand gescheitert: er liess den
+    // Haltewert bei -42 dBm dreimal so schnell fallen wie bisher.
+    // From Longpath src/core/WdspEngine.cpp:1802 [@383f058]
+    constexpr double kMinFallReferenceDb = 20.0;
+    // Nicht unter den Sentinel aus Init_DetectMaxBin laufen lassen.
+    // From Longpath src/core/WdspEngine.cpp:1804 [@383f058]; the value is
+    // Thetis's Init_DetectMaxBin sentinel (wdsp/analyzer.c:703 [v2.10.3.15]).
+    constexpr double kUnsetDbm = -400.0;
+
+    // NereusSDR: the whole fall stays inside fabs as in Thetis
+    // (wdsp/analyzer.c:818 [v2.10.3.15]), so a decay above 1 can never
+    // make the hold rise. For decay in 0..1 the product is already
+    // non-negative and the result is bit-identical to Longpath's line,
+    // which applies std::abs to the held value only.
+    double next = heldDbm - std::abs((1.0 - decay) * std::max(std::abs(heldDbm), kMinFallReferenceDb));
+    if (next < kUnsetDbm) { next = kUnsetDbm; }
+    return liveDbm > next ? liveDbm : next;
 }
 
 } // namespace NereusSDR

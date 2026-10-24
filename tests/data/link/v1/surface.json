@@ -427,7 +427,7 @@
         {
             "kind": "i64",
             "name": "radioAntennaRowsVersion",
-            "value": 1
+            "value": 2
         },
         {
             "kind": "i64",
@@ -568,6 +568,16 @@
             "kind": "i64",
             "name": "waveformVersion",
             "value": 1
+        },
+        {
+            "kind": "i64",
+            "name": "rxMeterStampsVersion",
+            "value": 1
+        },
+        {
+            "kind": "i64",
+            "name": "displayCodecVersion",
+            "value": 2
         },
         {
             "kind": "utf8",
@@ -3824,6 +3834,9 @@
                 "conditional": {
                     "audioProfileVersion": [
                         "audioProfileVersion"
+                    ],
+                    "displayCodecVersion": [
+                        "displayCodecVersion"
                     ],
                     "headphonesMixVersion": [
                         "headphonesMixVersion"
@@ -7500,6 +7513,12 @@
                     "kind": "utf8",
                     "name": "radeReason",
                     "ordinal": 153
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "i64",
+                    "name": "meterReadingNs",
+                    "ordinal": 154
                 }
             ]
         },

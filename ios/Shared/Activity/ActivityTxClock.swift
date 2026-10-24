@@ -21,8 +21,8 @@ struct ActivityTxClock: View {
         .lineLimit(1)
         .padding(.horizontal, 7)
         .frame(height: 22)
-        .background(ActivityColours.txFill, in: RoundedRectangle(cornerRadius: 3))
-        .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(ActivityColours.txEdge, lineWidth: 1))
+        .background(ActivityColours.txFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+        .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius).strokeBorder(ActivityColours.txEdge, lineWidth: 1))
         .fixedSize()
     }
 }

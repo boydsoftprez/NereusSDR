@@ -133,7 +133,7 @@ struct SetupPanelState {
 
 extension FakeStation.Additions {
     /// The closed Setup panels: `settingsHygieneVersion` 2,
-    /// `radioAntennaRowsVersion` 1 and `stationTelemetryVersion` 4; the
+    /// `radioAntennaRowsVersion` 2 and `stationTelemetryVersion` 4; the
     /// notch row verbs, the settings check's three verbs and the two
     /// radio-bound antenna verbs, each played as the link contract says
     /// the Core answers it. ``FakeStation/deliverSetupPanels()`` sends the
@@ -303,12 +303,17 @@ extension FakeStation {
             guard case .utf8(let mac)? = argument("mac"), mac == Self.setupPanelsRadioMac,
                   case .i64(let band)? = argument("band"),
                   let entry = antennaEntry(band),
-                  case .i64(let antenna)? = argument("antenna"), (1...3).contains(antenna) else {
+                  case .i64(let antenna)? = argument("antenna") else {
                 return [result(false, Self.otherRadioReason)]
             }
             let transmit = invoke.verb == "setAlexTxAntennaForRadio"
             var rxOnly = false
             if case .bool(let flag)? = argument("rxOnly") { rxOnly = flag }
+            // A receive-only value is the checkbox sum 0 to 5 at
+            // radioAntennaRowsVersion 2; any other antenna is 1 to 3.
+            guard (!transmit && rxOnly ? 0...5 : 1...3).contains(antenna) else {
+                return [result(false, Self.otherRadioReason)]
+            }
             let accepted = withSetupPanels { state -> Bool in
                 if transmit {
                     if antenna == 2 && state.blockTx2 || antenna == 3 && state.blockTx3 { return false }

@@ -9,6 +9,24 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22  J.J. Boyd / KG4VCF  NSDC v2 negotiation: declares
+//                                    displayCodec 2. AI-assisted via
+//                                    Anthropic Claude Code.
+//   2026-10-22  J.J. Boyd / KG4VCF  Declares radioAntennaRows 2 (RX-only
+//                                    antennas 0..5) and takes version 1 or
+//                                    2. AI-assisted via Anthropic Claude
+//                                    Code.
+//   2026-10-22  J.J. Boyd / KG4VCF  RX meter stamps: declares rxMeterStamps
+//                                    1; a slice delta stamped with the
+//                                    Core's meterReadingNs has its RX meter
+//                                    readings held until stamp + the display
+//                                    map (setRxMeterHoldClock), the rest
+//                                    applied at once. AI-assisted via
+//                                    Anthropic Claude Code.
+//   2026-10-21  J.J. Boyd / KG4VCF  Declares tuneDriveSource 1: this window
+//                                    changes TUNE's drive source only from
+//                                    Setup. AI-assisted via Anthropic
+//                                    Claude Code.
 //   2026-10-15  J.J. Boyd / KG4VCF  A refused property write that carries no
 //                                    value puts the Core's last value back
 //                                    on screen. AI-assisted via Anthropic
@@ -564,6 +582,9 @@
 //   2026-10-12: a held change is logged as a confirmation request rather
 //               than a refusal. J.J. Boyd (KG4VCF), AI-assisted via
 //               OpenAI Codex.
+//   2026-10-22: a typed Core name's addresses raced in dialStation
+//               (HappyEyeballs.h). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 // 2026-10-01: Authenticated Core address inventory and reconnect learning.
@@ -572,6 +593,7 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include "core/session/NetworkTrouble.h"
+#include "core/session/HappyEyeballs.h"
 #include "core/session/SystemProxy.h"
 #include "core/session/StationClient.h"
 #include "core/session/RemoteStationOptions.h"
@@ -967,7 +989,8 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     m_declaredFeatures.insert(QByteArrayLiteral("coreBuildInfo"), 1);
     m_declaredFeatures.insert(QByteArrayLiteral("coreAddresses"), 1);
     m_declaredFeatures.insert(QByteArrayLiteral("settingsBackup"), 1);
-    m_declaredFeatures.insert(QByteArrayLiteral("radioAntennaRows"), 1);
+    // 2: the Alex tab's RX-only boxes write Thetis's checkbox sum, 0..5.
+    m_declaredFeatures.insert(QByteArrayLiteral("radioAntennaRows"), kRadioAntennaRowsVersion);
     // R-IOS-26 / R-R3-49: this window knows 2 m as its own band (Band 27).
     m_declaredFeatures.insert(QByteArray(BandLinkFit::kFeature), 1);
     // Manage Radios offers the models the Core accepts for each radio's
@@ -991,6 +1014,9 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // RADE reason: the VFO flag's RADE row says why the Core's RADE slice
     // has no working decoder (radeReasonVersion 1), as a local window's does.
     m_declaredFeatures.insert(QByteArrayLiteral("radeReason"), 1);
+    // RX meter stamps: the window holds each slice's RX meter readings until
+    // their audio plays, on the spectrum's map (rxMeterStampsVersion 1).
+    m_declaredFeatures.insert(QByteArrayLiteral("rxMeterStamps"), 1);
     // HL2 port part 2: this window shows why the Core's transmit is held
     // off (radio's txInhibitReason; txInhibitReasonVersion 1).
     m_declaredFeatures.insert(QByteArrayLiteral("txInhibitReason"), 1);
@@ -1027,6 +1053,11 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // computer" section shows the Core computer's VAX channels (the `vax`
     // object); this window's own VAX channels stay its own (R-R3-44).
     m_declaredFeatures.insert(QByteArrayLiteral("vax"), 1);
+    // PR 588 (JJ's decision, 2026-10-21): only Setup > Transmit > Power
+    // changes TUNE's drive source here, never a power slider, so the Core
+    // takes this window's tuneDrivePowerSource (tuneDriveSource 1). An
+    // older Core ignores the name.
+    m_declaredFeatures.insert(QByteArrayLiteral("tuneDriveSource"), 1);
     m_settingsBackupReplyTimer = new QTimer(this);
     m_settingsBackupReplyTimer->setSingleShot(true);
     connect(m_settingsBackupReplyTimer, &QTimer::timeout, this, [this]() {
@@ -1043,6 +1074,10 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // R-DISP-RETUNE: this client reads the picture a spectrum context
     // continues, when the Core states it.
     m_declaredFeatures.insert(QByteArrayLiteral("spectrumPicture"), 1);
+    // Display codec v2 (NSDC v2): this client reads version 2 display
+    // frames, so the Core may state displayCodecVersion; the connection
+    // uses them only when its media start asks for them.
+    m_declaredFeatures.insert(QByteArrayLiteral("displayCodec"), 2);
     // This client words the firmware release of the Core's radio with its
     // second number, when the Core sends it (the model reads it from the
     // capabilities).
@@ -1246,6 +1281,13 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     m_handshakeDeadlineTimer->setSingleShot(true);
     connect(m_handshakeDeadlineTimer, &QTimer::timeout,
             this, &StationClient::onHandshakeDeadline);
+
+    // RX meter stamps: armed for the next held reading's due time.
+    m_rxMeterHoldTimer = new QTimer(this);
+    m_rxMeterHoldTimer->setSingleShot(true);
+    m_rxMeterHoldTimer->setTimerType(Qt::PreciseTimer);
+    connect(m_rxMeterHoldTimer, &QTimer::timeout,
+            this, &StationClient::applyDueRxMeterReadings);
 
     // Task 19: the automatic-reconnect timer. Owned (parented to this,
     // dies with it), single-shot (armed fresh by scheduleReconnect() for
@@ -1930,7 +1972,8 @@ void StationClient::dialStation(const QUrl& url, const QString& token,
     // Task 29 step 2b (options survey B.5): the computer's own proxy
     // settings (SystemProxy), for a network that reaches out only through
     // one. The Core's identity check at its hello is unchanged.
-    socket->setProxy(SystemProxy::forUrl(url));
+    // 2026-10-22: a typed name's addresses raced (HappyEyeballs.h).
+    socket->setProxy(HappyEyeballs::proxyForWebSocket(url, socket));
     socket->open(url);
 }
 
@@ -2428,6 +2471,8 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
     m_forwardLocalChanges = false;
     m_pendingWrites.clear();
     m_coreValues.clear();
+    // RX meter stamps: readings from the session that ended never apply.
+    clearHeldRxMeterReadings();
     // Desktop remote transmit: the Core unkeys this device when the link
     // drops and never keys it again by itself; nothing of it is kept.
     if (m_remoteTransmit != nullptr) {
@@ -2518,6 +2563,7 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
     // ids (resolveOrCreate(), unchanged by this task), which is what lets
     // a GUI holding a raw pointer to one survive a reconnect unchanged.
     m_objects.clear();
+    clearHeldRxMeterReadings();
     m_audioOpusBitrates.reset();
     m_outboundMirror->unwatchAll();
     m_outboundCoalescer.clear();
@@ -4558,10 +4604,117 @@ void StationClient::handleDelta(const SessionMessage& message)
             held.append(value);
         }
     }
+    // RX meter stamps: a stamped slice delta's RX meter readings wait for
+    // their audio; everything else in it applies now.
+    takeRxMeterReadings(target, message.objectKey, current);
     applyUpdates(target, message.objectKey, current, SideEffectRule::Delta, held);
     // What the Core holds, applied or not: a later cancel falls back to it.
     for (const auto& value : held) {
         m_coreValues[message.objectKey].insert(value.name, value);
+    }
+    if (!m_heldRxMeters.empty()) {
+        applyDueRxMeterReadings();
+    }
+}
+
+namespace {
+
+// RX meter stamps: the slice readings SliceMeterPump writes each tick, and
+// the stamp that says when they were measured.
+constexpr const char* kRxMeterStampProperty = "meterReadingNs";
+bool isRxMeterReading(const QByteArray& name)
+{
+    return name == "signalStrengthDbm" || name == "signalPeakDbm"
+        || name == "signalAverageDbm" || name == "adcPeakDbfs"
+        || name == "adcAverageDbfs" || name == "agcGainDb" || name == "agcPeakDb"
+        || name == "agcAverageDb";
+}
+
+} // namespace
+
+void StationClient::setRxMeterHoldClock(std::function<qint64()> nowNs,
+                                        std::function<std::optional<qint64>()> mapNs)
+{
+    m_rxMeterNowNs = std::move(nowNs);
+    m_rxMeterMapNs = std::move(mapNs);
+    if (!m_heldRxMeters.empty()) {
+        applyDueRxMeterReadings();
+    }
+}
+
+void StationClient::takeRxMeterReadings(QObject* target, const QByteArray& objectKey,
+                                        QList<MirrorUpdate>& updates)
+{
+    if (qobject_cast<SliceModel*>(target) == nullptr) {
+        return;
+    }
+    HeldRxMeterReadings item;
+    item.objectKey = objectKey;
+    for (auto it = updates.begin(); it != updates.end();) {
+        if (it->name == kRxMeterStampProperty) {
+            if (it->kind == MirrorWireKind::Int64) {
+                item.stamped = true;
+                item.producerNs = it->value.toLongLong();
+            }
+            item.updates.append(*it);
+            it = updates.erase(it);
+        } else if (isRxMeterReading(it->name)) {
+            item.updates.append(*it);
+            it = updates.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (item.updates.isEmpty()) {
+        return;
+    }
+    // An unstamped reading (an older Core sends none) applies at once,
+    // unless this slice has readings held: then it goes in behind them, so
+    // readings never apply out of order.
+    const bool sliceHeld = std::any_of(
+        m_heldRxMeters.cbegin(), m_heldRxMeters.cend(),
+        [&](const HeldRxMeterReadings& held) { return held.objectKey == objectKey; });
+    if (!item.stamped && !sliceHeld) {
+        updates.append(item.updates);
+        return;
+    }
+    m_heldRxMeters.push_back(std::move(item));
+}
+
+void StationClient::applyDueRxMeterReadings()
+{
+    while (!m_heldRxMeters.empty()) {
+        const HeldRxMeterReadings& next = m_heldRxMeters.front();
+        // Due at stamp + map, the rule RemoteDisplayPresenter shows a
+        // spectrum frame by. No clock or no map yet: now. A wait beyond the
+        // presenter's cap means the map and the stamps disagree: now.
+        qint64 waitNs = 0;
+        if (next.stamped && m_rxMeterNowNs && m_rxMeterMapNs) {
+            if (const std::optional<qint64> map = m_rxMeterMapNs()) {
+                const qint64 wait = next.producerNs + *map - m_rxMeterNowNs();
+                waitNs = wait > kRxMeterMaxHoldNs ? 0 : wait;
+            }
+        }
+        if (waitNs > 0) {
+            constexpr qint64 kNsPerMs = 1'000'000;
+            m_rxMeterHoldTimer->start(static_cast<int>((waitNs + kNsPerMs - 1) / kNsPerMs));
+            return;
+        }
+        HeldRxMeterReadings due = std::move(m_heldRxMeters.front());
+        m_heldRxMeters.pop_front();
+        // A slice the Core has removed since: its readings are dropped.
+        if (QObject* target = m_objects.value(due.objectKey).data()) {
+            applyUpdates(target, due.objectKey, due.updates, SideEffectRule::Delta);
+        }
+    }
+    m_rxMeterHoldTimer->stop();
+}
+
+void StationClient::clearHeldRxMeterReadings()
+{
+    m_heldRxMeters.clear();
+    if (m_rxMeterHoldTimer != nullptr) {
+        m_rxMeterHoldTimer->stop();
     }
 }
 
@@ -5253,6 +5406,12 @@ bool StationClient::applyClientOnlyProperty(QObject* target, const QByteArray& c
         slice->setRadeReason(native.toString());
         return true;
     }
+    // rxMeterStampsVersion 1: when the Core measured the readings applied
+    // with it (held with them until their audio plays).
+    if (propertyName == "meterReadingNs") {
+        slice->setMeterReadingNs(native.toLongLong());
+        return true;
+    }
     if (propertyName == "band") {
         // Derived from frequency by SliceModel itself, on this client
         // exactly as on the daemon, so the frequency delta in the same
@@ -5912,7 +6071,7 @@ StationClient::CommandOutcome StationClient::requestAlexRxAntenna(Band band, int
         return {false, station2mUnavailableReason()};
     }
     const bool radioBound = m_agreedMinor >= kRadioIdentitySessionProtocolMinor
-        && m_capabilities.radioAntennaRowsVersion == 1;
+        && m_capabilities.radioAntennaRowsVersion >= 1;
     const QString mac = m_radioModel ? m_radioModel->currentRadioMac() : QString();
     if (radioBound && (mac.isEmpty() || AppSettings::normalizedRadioMac(mac) != mac)) {
         return {false, QStringLiteral("The Core's connected radio is not ready for this antenna change.")};
@@ -5937,7 +6096,7 @@ StationClient::CommandOutcome StationClient::requestAlexTxAntenna(Band band, int
         return {false, station2mUnavailableReason()};
     }
     const bool radioBound = m_agreedMinor >= kRadioIdentitySessionProtocolMinor
-        && m_capabilities.radioAntennaRowsVersion == 1;
+        && m_capabilities.radioAntennaRowsVersion >= 1;
     const QString mac = m_radioModel ? m_radioModel->currentRadioMac() : QString();
     if (radioBound && (mac.isEmpty() || AppSettings::normalizedRadioMac(mac) != mac)) {
         return {false, QStringLiteral("The Core's connected radio is not ready for this antenna change.")};

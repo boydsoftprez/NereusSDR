@@ -19,6 +19,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22  J.J. Boyd (KG4VCF): the right-click menu is freed only if
+//               it is still there after exec(), since a parent that dies
+//               while it is open takes it along. With AI-assisted
+//               transformation via Claude Code.
 //   2026-10-13  J.J. Boyd / KG4VCF  Export the applet's Qt signal
 //                addresses from the Windows GUI DLL. AI-assisted via
 //                OpenAI Codex.

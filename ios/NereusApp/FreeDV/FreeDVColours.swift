@@ -7,17 +7,20 @@ import SwiftUI
 /// `.fdseg` styles). The three tints are the desktop dialog's dim rust,
 /// slate and mauve.
 enum FreeDVColours {
-    static let transmitting = rgb(0x5E, 0x39, 0x33)
-    static let hearing = rgb(0x2E, 0x47, 0x50)
-    static let message = rgb(0x4D, 0x3D, 0x4D)
-    static let top = rgb(0x0A, 0x0A, 0x14)
-    static let topBorder = rgb(0x20, 0x30, 0x40)
-    static let rowDivider = rgb(0x1A, 0x2A, 0x3A)
-    static let callsign = rgb(0xE4, 0xEE, 0xF8)
-    static let frequency = rgb(0x00, 0xE5, 0xFF)
-    static let modeChip = rgb(0x5F, 0xA8, 0xFF).opacity(0.1)
-    static let modeText = rgb(0x5F, 0xA8, 0xFF)
-    static let segmentBorder = rgb(0x30, 0x40, 0x50)
+    // The row tints are kept (W2); the rest is the desktop's workspace look
+    // (docs/architecture/2026-10-20-phone-workspace-look-design.md, appendix A
+    // and the board's mapping, make_board.py).
+    static let transmitting = WorkspacePalette.rgb(0x5E3933)
+    static let hearing = WorkspacePalette.rgb(0x2E4750)
+    static let message = WorkspacePalette.rgb(0x4D3D4D)
+    static let top = WorkspacePalette.statusBarBg
+    static let topBorder = WorkspacePalette.borderSubtle
+    static let rowDivider = WorkspacePalette.rgb(0x1A1A1E)
+    static let callsign = WorkspacePalette.textBright
+    static let frequency = WorkspacePalette.rgb(0x00E5FF) // kept (W2)
+    static let modeChip = WorkspacePalette.accentText.opacity(0.1)
+    static let modeText = WorkspacePalette.accentText
+    static let segmentBorder = WorkspacePalette.border
 
     /// A tint's colour, or clear for none.
     static func colour(_ tint: FreeDVReporterModel.Tint?) -> Color {
@@ -27,9 +30,5 @@ enum FreeDVColours {
         case .hearing?: return hearing
         case nil: return .clear
         }
-    }
-
-    private static func rgb(_ red: Int, _ green: Int, _ blue: Int) -> Color {
-        Color(red: Double(red) / 255, green: Double(green) / 255, blue: Double(blue) / 255)
     }
 }

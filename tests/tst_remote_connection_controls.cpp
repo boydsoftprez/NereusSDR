@@ -1,4 +1,5 @@
 // no-port-check: NereusSDR-original. Remote GUI connection and hydration boundaries.
+#include "UnusedLoopbackPort.h"
 #include <QTest>
 #include <QCoreApplication>
 #include <QDialogButtonBox>
@@ -229,10 +230,8 @@ private slots:
     {
         SettingsProxy proxy;
         ScopedRemoteBackend remoteBackend(&proxy);
-        QTcpServer port;
-        QVERIFY(port.listen(QHostAddress::LocalHost, 0));
-        const quint16 unusedPort = port.serverPort();
-        port.close();
+        const quint16 unusedPort = unusedLoopbackPort();
+        QVERIFY(unusedPort != 0);
 
         MainWindow window({QStringLiteral("ws://127.0.0.1:%1").arg(unusedPort), {}, {}, true});
         RadioModel* const model = window.findChild<RadioModel*>();
@@ -428,10 +427,8 @@ private slots:
 
     void failedConnectShowsReasonAndCancelStopsBackoff()
     {
-        QTcpServer port;
-        QVERIFY(port.listen(QHostAddress::LocalHost, 0));
-        const quint16 unusedPort = port.serverPort();
-        port.close();
+        const quint16 unusedPort = unusedLoopbackPort();
+        QVERIFY(unusedPort != 0);
         RadioModel remote(RadioModel::Role::Remote);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);

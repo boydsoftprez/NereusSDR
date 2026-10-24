@@ -55,8 +55,13 @@
 //                                    direction is found while the Core
 //                                    streams. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-22, J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//     test ports come from unusedLoopbackPort() (UnusedLoopbackPort.h), below
+//     the kernel's ephemeral range, so a parallel test cannot take one between
+//     the pick and the listen.
 // =================================================================
 
+#include "UnusedLoopbackPort.h"
 #include <QtTest/QtTest>
 
 #include <QByteArray>
@@ -653,10 +658,8 @@ void TstSessionLinkLoss::autoReconnectUsesOwnedCancellableTimerWithExponentialBa
 
     // A guaranteed-refused port: bind then close, same trick
     // tst_station_session.cpp's failedInitialConnectReportsPromptly uses.
-    QTcpServer probe;
-    QVERIFY(probe.listen(QHostAddress::LocalHost, 0));
-    const quint16 deadPort = probe.serverPort();
-    probe.close();
+    const quint16 deadPort = unusedLoopbackPort();
+    QVERIFY(deadPort != 0);
 
     RadioModel clientModel(RadioModel::Role::Remote);
     SettingsProxy proxy;
@@ -1006,10 +1009,8 @@ void TstSessionLinkLoss::unpinnedRefusalDoesNotLeaveAPendingRetryArmed()
     // attaching; this one did not, so a retry armed by an earlier failed
     // dial (station "A") survived an unrelated refused attempt at station
     // "B" and would go on to silently redial A.
-    QTcpServer probe;
-    QVERIFY(probe.listen(QHostAddress::LocalHost, 0));
-    const quint16 deadPort = probe.serverPort();
-    probe.close();
+    const quint16 deadPort = unusedLoopbackPort();
+    QVERIFY(deadPort != 0);
 
     QTemporaryDir settingsDir;
     QVERIFY(settingsDir.isValid());
@@ -1080,10 +1081,8 @@ void TstSessionLinkLoss::startSessionClearsAnyPreviouslyLatchedRedialTarget()
         QSKIP(qPrintable(tlsSkipMessage()));
     }
 
-    QTcpServer probe;
-    QVERIFY(probe.listen(QHostAddress::LocalHost, 0));
-    const quint16 deadPort = probe.serverPort();
-    probe.close();
+    const quint16 deadPort = unusedLoopbackPort();
+    QVERIFY(deadPort != 0);
 
     QTemporaryDir settingsDir;
     QVERIFY(settingsDir.isValid());
@@ -1148,10 +1147,8 @@ void TstSessionLinkLoss::automaticRetryReconnectsToASuccessfulHandshake()
     // reached by the automatic path. This is the headline bench row:
     // "kill nereusd, restart it, the GUI returns unaided" -- nothing in
     // this slot calls startSession() or connectToStation() a second time.
-    QTcpServer probe;
-    QVERIFY(probe.listen(QHostAddress::LocalHost, 0));
-    const quint16 port = probe.serverPort();
-    probe.close();
+    const quint16 port = unusedLoopbackPort();
+    QVERIFY(port != 0);
 
     QTemporaryDir settingsDir;
     QVERIFY(settingsDir.isValid());

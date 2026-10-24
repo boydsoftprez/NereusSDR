@@ -780,7 +780,7 @@ public final class FakeStation: @unchecked Sendable {
         }
         if additions.contains(.setupPanels) {
             set("settingsHygieneVersion", 2)
-            set("radioAntennaRowsVersion", 1)
+            set("radioAntennaRowsVersion", 2)
             set("stationTelemetryVersion", 4)
         }
         if additions.contains(.accessoryOperate) {

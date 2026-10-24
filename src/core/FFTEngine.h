@@ -25,6 +25,11 @@
 //               (purgeInputForGeneration, fftReadyLinear's last argument).
 //               J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //               Anthropic Claude Code.
+//   2026-10-21: NereusSDR-original: frameInputPosition(), the I/Q pair
+//               count a frame's samples end at, for the Core's sample-time
+//               stamps; minimumGapSkips(), the 5 ms rule's skips counted
+//               and logged instead of silent. J.J. Boyd (KG4VCF), with
+//               AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -262,6 +267,22 @@ public:
     /// which holds no input from before it.
     void setInputGeneration(quint64 generation) { m_inputGeneration.store(generation); }
 
+    /// NereusSDR-original. How many I/Q pairs feedIQ had taken, before
+    /// decimation, when the frame being emitted was computed: the position
+    /// its samples end at, give or take one decimation step. It counts every
+    /// pair fed since construction, including pairs decimation passes over
+    /// and pairs the 5 ms rule drops, so the difference between two frames'
+    /// positions over the sample rate is the time between their samples.
+    /// Read it on this engine's thread, from a slot connected directly to
+    /// fftReady or fftReadyLinear.
+    qint64 frameInputPosition() const { return m_frameInputPosition; }
+
+    /// NereusSDR-original. Times processFrame's 5 ms minimum gap held a
+    /// full buffer back and feedIQ dropped the rest of its batch, and the
+    /// I/Q pairs so dropped. Any thread.
+    quint64 minimumGapSkips() const { return m_minimumGapSkips.load(); }
+    quint64 minimumGapDroppedPairs() const { return m_minimumGapDroppedPairs.load(); }
+
 signals:
     // Emitted when a new FFT frame is ready.
     // binsDbm contains fftSize float values (full FFT-shifted bins, neg-freq
@@ -319,6 +340,9 @@ private:
     void replanFft();
     void computeWindow();
     void processFrame();
+    // NereusSDR-original (2026-10-21): counts one 5 ms rule skip that
+    // dropped `droppedPairs` I/Q pairs, and warns at most once per interval.
+    void noteMinimumGapSkip(int droppedPairs);
 
     int m_receiverId;
 
@@ -388,6 +412,21 @@ private:
     // Output rate limiting
     QElapsedTimer m_frameTimer;
     bool m_frameTimerStarted{false};
+    // NereusSDR-original (2026-10-21): the 5 ms rule's skips, counted, and
+    // a warning at most once per kMinimumGapWarningIntervalMs for skips
+    // that broke an overlapped window (worker thread only, but the counts).
+    std::atomic<quint64> m_minimumGapSkips{0};
+    std::atomic<quint64> m_minimumGapDroppedPairs{0};
+    bool m_minimumGapHeldFrame{false};
+    int m_lastOverlap{0};
+    QElapsedTimer m_minimumGapWarningTimer;
+    quint64 m_minimumGapSkipsWarned{0};
+    quint64 m_minimumGapPairsWarned{0};
+    static constexpr qint64 kMinimumGapWarningIntervalMs = 10'000;
+    // NereusSDR-original (2026-10-21): I/Q pairs fed since construction,
+    // and the count at the frame being emitted (frameInputPosition()).
+    qint64 m_inputPairsFed{0};
+    qint64 m_frameInputPosition{0};
 
     // dBm calibration offset (accounts for window gain + FFT normalization)
     float m_dbmOffset{0.0f};

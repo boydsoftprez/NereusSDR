@@ -40,6 +40,11 @@ public extension SetupControlDispatcher {
     nonisolated static let repairVerb = "station.repairSettings"
     nonisolated static let txAntennaVerb = "setAlexTxAntennaForRadio"
     nonisolated static let rxAntennaVerb = "setAlexRxAntennaForRadio"
+    /// A band's receive-only value: 0 none, 1 to 3 one box, 4 and 5 XVTR
+    /// with box 1 or 2, the desktop's checkbox sum.
+    nonisolated static let rxOnlyMaximum = 5
+    /// The highest receive-only value a Core at `radioAntennaRowsVersion` 1 takes.
+    nonisolated static let rxOnlySingleMaximum = 3
 
     // MARK: The notch table
 
@@ -357,13 +362,28 @@ public extension SetupControlDispatcher {
         if grid.blocked[columnIndex] {
             return .notSent(Self.antennaBlockedReason)
         }
-        if grid.selected[rowIndex][columnIndex] {
+        let target = rows.columns[columnIndex]
+        var antenna = target.antenna
+        if target.field == "rxOnly" {
+            // The receive-only boxes are checkboxes: a tap turns its box
+            // over and sends the band's new sum (0 to 5).
+            var value = 0
+            for (index, column) in rows.columns.enumerated()
+            where column.field == "rxOnly" && grid.selected[rowIndex][index] {
+                value += column.antenna
+            }
+            antenna = SetupSpecializedWire.rxOnlyAfterTap(value, antenna: target.antenna)
+            // A Core at radioAntennaRowsVersion 1 takes one box or none;
+            // the tapped box then replaces the others.
+            if antenna > Self.rxOnlySingleMaximum, rxOnlyPairsVersion() < 2 {
+                antenna = target.antenna
+            }
+        } else if grid.selected[rowIndex][columnIndex] {
             return .applied
         }
-        let target = rows.columns[columnIndex]
         var arguments = [CommandArgument(name: "mac", value: .text(mac)),
                          CommandArgument(name: "band", value: .int(Int64(band))),
-                         CommandArgument(name: "antenna", value: .int(Int64(target.antenna)))]
+                         CommandArgument(name: "antenna", value: .int(Int64(antenna)))]
         let verb: String
         if rows.mode == "tx" {
             verb = Self.txAntennaVerb
@@ -372,6 +392,14 @@ public extension SetupControlDispatcher {
             arguments.append(CommandArgument(name: "rxOnly", value: .bool(target.field == "rxOnly")))
         }
         return await send(admission, verb: verb, arguments: arguments).outcome
+    }
+
+    /// The Core's `radioAntennaRowsVersion`, 0 when it sent none.
+    func rxOnlyPairsVersion() -> Int64 {
+        if case .int(let version)? = store.capabilities["radioAntennaRowsVersion"] {
+            return version
+        }
+        return 0
     }
 
     // MARK: The PA readings
@@ -529,7 +557,8 @@ extension SetupControlDispatcher {
             blocked3 = three
         } else {
             guard let rx = SetupSpecializedWire.antennaList(object["rxAntennas"], bands: bands, range: 1...3),
-                  let rxOnly = SetupSpecializedWire.antennaList(object["rxOnlyAntennas"], bands: bands, range: 0...3) else {
+                  let rxOnly = SetupSpecializedWire.antennaList(object["rxOnlyAntennas"], bands: bands,
+                                                                range: 0...Self.rxOnlyMaximum) else {
                 return .failure(unreadable)
             }
             lists["rx"] = rx
@@ -539,7 +568,13 @@ extension SetupControlDispatcher {
         // (band 27) is the fifteenth entry (link document section 6.1).
         var selected: [[Bool]] = []
         for position in rows.rows.indices {
-            selected.append(rows.columns.map { column in lists[column.field]?[position] == column.antenna })
+            selected.append(rows.columns.map { column in
+                guard let value = lists[column.field]?[position] else { return false }
+                if column.field == "rxOnly" {
+                    return SetupSpecializedWire.rxOnlyChecks(value, antenna: column.antenna)
+                }
+                return value == column.antenna
+            })
         }
         let blocked = rows.columns.map { column in
             column.field == "tx" && (column.antenna == 2 && blocked2 || column.antenna == 3 && blocked3)

@@ -42,6 +42,12 @@
 //                 slices every flag showed the one display-0 value, which
 //                 followed the active pan. J.J. Boyd (KG4VCF), with
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-22 -- RX meter stamps: each slice's readings come from one
+//                 receive lane refresh (RxChannel::meterReadings) and carry
+//                 its read time as the slice's meterReadingNs, so a remote
+//                 window can hold them until their audio plays. NereusSDR-
+//                 original. J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -168,8 +174,20 @@ namespace {
 
 // R-R3-13: all three readings of one slice go to the no-reading value.
 // Parity Task 15: the ADC and AGC readings with them.
+// RX meter stamps: a clear that changes a reading is stamped with the time
+// of this tick, so a remote window keeps it in order behind the readings
+// before it; one that changes nothing keeps the last stamp.
 void clearSliceReadings(SliceModel* slice)
 {
+    const double kNone = SliceMeterPump::kNoReadingDbm;
+    const bool alreadyClear = slice->signalStrengthDbm() == kNone
+        && slice->signalPeakDbm() == kNone && slice->signalAverageDbm() == kNone
+        && slice->adcPeakDbfs() == kNone && slice->adcAverageDbfs() == kNone
+        && slice->agcGainDb() == kNone && slice->agcPeakDb() == kNone
+        && slice->agcAverageDb() == kNone;
+    if (!alreadyClear) {
+        slice->setMeterReadingNs(RxChannel::meterClockNs());
+    }
     slice->setSignalStrengthDbm(SliceMeterPump::kNoReadingDbm);
     slice->setSignalPeakDbm(SliceMeterPump::kNoReadingDbm);
     slice->setSignalAverageDbm(SliceMeterPump::kNoReadingDbm);
@@ -285,8 +303,12 @@ void SliceMeterPump::poll()
         // The adjacent ADC_REAL case at dsp.cs:959 carries //MW0LGE [2.9.0.7]
         // attribution that we preserve verbatim per GPL inline-tag rule.
         // Display-side offset per console.cs:46824 [v2.10.3.13].
+        // RX meter stamps: every reading below comes from this one lane
+        // refresh, read when readings.readNs says (asking the lane for the
+        // next one, as getMeter did).
+        const RxChannel::MeterReadings readings = ch->meterReadings();
         const double signalPeakDbm =
-            ch->getMeter(RxMeterType::SignalPeak) + sliceOffsetDb;
+            readings.value(RxMeterType::SignalPeak) + sliceOffsetDb;
 
 
         // From Thetis Console/dsp.cs:957 [@501e3f5] (CalculateRXMeter):
@@ -295,7 +317,7 @@ void SliceMeterPump::poll()
         // attribution that we preserve verbatim per GPL inline-tag rule.
         // Display-side offset per console.cs:46828 [v2.10.3.13].
         const double signalAverageDbm =
-            ch->getMeter(RxMeterType::SignalAvg) + sliceOffsetDb;
+            readings.value(RxMeterType::SignalAvg) + sliceOffsetDb;
 
         // R-R3-39: the readings above come from the receive lane's cache,
         // and reading them asked the lane for a fresh one. Until the lane
@@ -364,11 +386,15 @@ void SliceMeterPump::poll()
         //   case MeterType.AGC_AV:   val = GetRXAMeter(channel, rxaMeterType.RXA_AGC_AV);
         // and console.cs:46910-46914 [v2.10.3.15], no offset on any of them;
         // AGC_GAIN is 0 - the reading (thetisAgcGainReading).
-        slice->setAdcPeakDbfs(ch->getMeter(RxMeterType::AdcPeak));
-        slice->setAdcAverageDbfs(ch->getMeter(RxMeterType::AdcAvg));
-        slice->setAgcGainDb(thetisAgcGainReading(ch->getMeter(RxMeterType::AgcGain)));
-        slice->setAgcPeakDb(ch->getMeter(RxMeterType::AgcPeak));
-        slice->setAgcAverageDb(ch->getMeter(RxMeterType::AgcAvg));
+        slice->setAdcPeakDbfs(readings.value(RxMeterType::AdcPeak));
+        slice->setAdcAverageDbfs(readings.value(RxMeterType::AdcAvg));
+        slice->setAgcGainDb(thetisAgcGainReading(readings.value(RxMeterType::AgcGain)));
+        slice->setAgcPeakDb(readings.value(RxMeterType::AgcPeak));
+        slice->setAgcAverageDb(readings.value(RxMeterType::AgcAvg));
+        // RX meter stamps: when the lane read them (before its first
+        // refresh, the time of this tick).
+        slice->setMeterReadingNs(readings.readNs > 0 ? readings.readNs
+                                                     : RxChannel::meterClockNs());
     }
 }
 

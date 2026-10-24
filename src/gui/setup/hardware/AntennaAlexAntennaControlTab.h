@@ -24,6 +24,10 @@
 //                 Claude Code.
 //   2026-09-28 - 2 m as its own band (R-IOS-26, R-R3-49). J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - The RX-only trio is three checkboxes per band again, as in
+//                Thetis (processRxOnlyCheckBox), so a band can go back to
+//                none. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
 //=================================================================
@@ -145,7 +149,7 @@ public:
 
 #ifdef NEREUS_BUILD_TESTS
     QRadioButton* rxButtonForTest(Band band, int ant) const;
-    QRadioButton* rxOnlyButtonForTest(Band band, int ant) const;
+    QCheckBox* rxOnlyButtonForTest(Band band, int ant) const;
     QRadioButton* txButtonForTest(Band band, int ant) const;
     QCheckBox* useTxAntForRxForTest() const { return m_chkUseTxAntForRx; }
     QCheckBox* blockTxAnt2ForTest() const { return m_blockTxAnt2; }
@@ -172,8 +176,14 @@ private:
 
     // Sync a single row's TX radio buttons from the model (no signal side-effects).
     void syncTxRow(int row);
-    // Sync a single row's RX1 and RX-only radio buttons from the model.
+    // Sync a single row's RX1 radio buttons and RX-only checkboxes from the
+    // model (the RX-only value 0..5 decoded to the three boxes).
     void syncRxRow(int row);
+    // Thetis ProcessAlexAntCheckBox: box `changed` (0..2) of `band`'s
+    // RX-only trio was toggled; R1 and R2 rule each other out, XV is
+    // independent, and the band takes the sum of the checked boxes'
+    // (index + 1), 0..5.
+    void processRxOnlyCheckBox(Band band, int changed);
     // Update TX radio button enabled states for blocked ports.
     void updateTxBlockedStates();
     // R-R3-46: re-read every row and switch (a remote window's source is the
@@ -225,9 +235,9 @@ private:
     std::array<QButtonGroup*, kBandCount> m_rx1Groups{};
     std::array<std::array<QRadioButton*, 3>, kBandCount> m_rx1Buttons{};
 
-    // Per-band RX-only antenna: button group per row
-    std::array<QButtonGroup*, kBandCount> m_rxOnlyGroups{};
-    std::array<std::array<QRadioButton*, 3>, kBandCount> m_rxOnlyButtons{};
+    // Per-band RX-only antenna: three checkboxes per row, as Thetis's
+    // chkAlexNNR1 / chkAlexNNR2 / chkAlexNNXV (setup.designer.cs:117-124).
+    std::array<std::array<QCheckBox*, 3>, kBandCount> m_rxOnlyButtons{};
 
     // Column sub-headers for RX-only grid — retargeted per SKU.
     // See SkuUiProfile::rxOnlyLabels.

@@ -1722,7 +1722,7 @@ private slots:
                 const QJsonArray cells = row.value("cells").toArray();
                 QCOMPARE(cells.size(), columns.size());
                 QStringList nativeCellOrder;
-                for (QRadioButton* button : group->findChildren<QRadioButton*>()) {
+                for (QAbstractButton* button : group->findChildren<QAbstractButton*>()) {
                     if (button->property("nereusAntennaBand").toInt() == band) {
                         nativeCellOrder << button->property("nereusAntennaColumn").toString();
                     }
@@ -1731,8 +1731,8 @@ private slots:
                 for (int i = 0; i < cells.size(); ++i) {
                     const QJsonObject cell = cells.at(i).toObject();
                     QCOMPARE(cell.value("column"), columns.at(i).toObject().value("id"));
-                    QList<QRadioButton*> buttons;
-                    for (QRadioButton* button : group->findChildren<QRadioButton*>()) {
+                    QList<QAbstractButton*> buttons;
+                    for (QAbstractButton* button : group->findChildren<QAbstractButton*>()) {
                         if (button->property("nereusAntennaBand").toInt() == band
                             && button->property("nereusAntennaColumn")
                                 == cell.value("column").toVariant()) {
@@ -1749,25 +1749,28 @@ private slots:
         auto* rxGroup = qobject_cast<QGroupBox*>(bySetupId(page,
             QStringLiteral("hardware.antenna.rxRows")));
         QVERIFY(rxGroup != nullptr);
+        radio.alexControllerMutable().setRxOnlyAnt(Band::Band40m, 5);
+        radio.alexControllerMutable().setRxOnlyAnt(Band::Band20m, 3);
         for (const Band b : kPerBandStateBands) {
             const int band = static_cast<int>(b);
             int selected = 0;
-            for (QRadioButton* button : rxGroup->findChildren<QRadioButton*>()) {
+            for (QAbstractButton* button : rxGroup->findChildren<QAbstractButton*>()) {
                 if (button->property("nereusAntennaBand").toInt() == band
                     && button->property("nereusAntennaColumn").toString().startsWith(
                         QStringLiteral("rxOnly")) && button->isChecked()) {
                     ++selected;
                 }
             }
-            QCOMPARE(selected, radio.alexController().rxOnlyAnt(static_cast<Band>(band)) == 0
-                                    ? 0 : 1);
+            // Thetis's checkbox sum: 4 and 5 check XVTR and one of RX1/RX2.
+            const int rxOnly = radio.alexController().rxOnlyAnt(static_cast<Band>(band));
+            QCOMPARE(selected, rxOnly == 0 ? 0 : (rxOnly >= 4 ? 2 : 1));
         }
         auto* txGroup = qobject_cast<QGroupBox*>(bySetupId(page,
             QStringLiteral("hardware.antenna.txRows")));
         QVERIFY(txGroup != nullptr);
         radio.alexControllerMutable().setBlockTxAnt2(true);
         radio.alexControllerMutable().setBlockTxAnt3(true);
-        for (QRadioButton* button : txGroup->findChildren<QRadioButton*>()) {
+        for (QAbstractButton* button : txGroup->findChildren<QAbstractButton*>()) {
             const QString column = button->property("nereusAntennaColumn").toString();
             QCOMPARE(button->isEnabled(), column == QLatin1String("tx1"));
         }
@@ -1806,8 +1809,8 @@ private slots:
             QVERIFY(header != nullptr);
             QCOMPARE(header->text(), columns.at(i).toObject().value("label").toString());
             for (int band = 0; band < 14; ++band) {
-                QRadioButton* button = nullptr;
-                for (QRadioButton* candidate : group->findChildren<QRadioButton*>()) {
+                QAbstractButton* button = nullptr;
+                for (QAbstractButton* candidate : group->findChildren<QAbstractButton*>()) {
                     if (candidate->property("nereusAntennaBand").toInt() == band
                         && candidate->property("nereusAntennaColumn").toString() == id) {
                         button = candidate;

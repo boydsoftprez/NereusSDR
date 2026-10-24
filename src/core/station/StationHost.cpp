@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original. Task 48 shared station hosting around a
 // borrowed model.
+//
+// Modification history (NereusSDR):
+//   2026-10-22: NSDC v2 negotiation: the Core's RemoteDisplayCodecV2
+//               setting is read once at start, before the server listens.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "core/station/StationHost.h"
 
 #include "core/AppSettings.h"
@@ -245,6 +250,33 @@ bool StationHost::start()
                                             ? QStringLiteral("fullband (sound up to 20 kHz)")
                                             : QStringLiteral("wideband (sound up to 8 kHz)"));
     m_mediaHub->setAudioLosslessAllowed(cfg.audioLosslessAllowed);
+    // Bench setting (JJ approved 2026-10-22, option C of the waterfall
+    // loss study): every display frame a keyframe. Read here, once, as the
+    // Core starts; default off, and said in the log only when on.
+    const bool keyframeEveryFrame =
+        cfg.settings->value(QLatin1String(kDisplayKeyframeEveryFrameSettingsKey),
+                            QStringLiteral("False")).toString()
+        == QLatin1String("True");
+    m_mediaHub->setDisplayKeyframeEveryFrame(keyframeEveryFrame);
+    if (keyframeEveryFrame) {
+        qCInfo(lcApp).noquote()
+            << QStringLiteral("DaemonApp: %1 is on: every display frame goes as a keyframe")
+                   .arg(QLatin1String(kDisplayKeyframeEveryFrameSettingsKey));
+    }
+    // Display codec v2 (NSDC v2): the fallback switch. Read here, once, as
+    // the Core starts; default on, and said in the log only when off, when
+    // no peer is told displayCodecVersion and every connection is sent
+    // version 1 display frames.
+    const bool displayCodecV2 =
+        cfg.settings->value(QLatin1String(kRemoteDisplayCodecV2SettingsKey),
+                            QStringLiteral("True")).toString()
+        == QLatin1String("True");
+    m_stationServer->setDisplayCodecV2Enabled(displayCodecV2);
+    if (!displayCodecV2) {
+        qCInfo(lcApp).noquote()
+            << QStringLiteral("DaemonApp: %1 is off: every connection gets version 1 display frames")
+                   .arg(QLatin1String(kRemoteDisplayCodecV2SettingsKey));
+    }
     // Install every source before advertising the capability. A client can
     // authenticate immediately after listen(), so there must be no window in
     // which telemetry is negotiated without a collector to publish it: each

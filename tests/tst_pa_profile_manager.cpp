@@ -16,6 +16,8 @@
 //   8. regenerateFactoryDefaults restores factory values, leaves customs
 //   9. activeProfile() accessor returns pointer to active profile
 //  10. factoryProfileNames includes ANAN_G2E (regression guard)
+//  11. Reconnect moves an untouched stored G2E default to the 53.0 dB row,
+//      band by band: edited bands (gain or adjust) are kept
 //
 // =================================================================
 
@@ -46,6 +48,30 @@ static QString activeKeyPath(const QString& mac)
 static QString manifestKeyPath(const QString& mac)
 {
     return QStringLiteral("hardware/%1/pa/profile/_names").arg(mac);
+}
+
+// The pre-2026-10-18 seed, from Thetis clsHardwareSpecific.cs:698-713
+// [v2.10.3.15].
+static PaProfile oldG2eSeed()
+{
+    PaProfile p(QStringLiteral("Default - ANAN_G2E"),
+                HPSDRModel::ANAN_G2E, /*isFactoryDefault=*/true);
+    const float oldRow[] = { 47.9f, 50.5f, 50.8f, 50.8f, 50.9f, 50.9f,
+                             50.5f, 47.0f, 47.9f, 46.5f, 44.6f };
+    for (int n = 0; n < 11; ++n) {
+        p.setGainForBand(static_cast<Band>(n), oldRow[n]);
+    }
+    return p;
+}
+
+// Seeds the bank, then stores `stored` over the G2E default, as an
+// install from before the change would have it.
+static void storeOverG2eDefault(const PaProfile& stored)
+{
+    PaProfileManager seed;
+    seed.setMacAddress(kMacA);
+    seed.load(HPSDRModel::ANAN_G2E);
+    QVERIFY(seed.saveProfile(QStringLiteral("Default - ANAN_G2E"), stored));
 }
 
 class TstPaProfileManager : public QObject {
@@ -574,7 +600,7 @@ private slots:
         QVERIFY(mgr.setActiveProfile(QStringLiteral("Default - ANAN_G2E")));
         const PaProfile* p = mgr.activeProfile();
         QVERIFY(p != nullptr);
-        // ANAN_G2E shares the ANAN7000D/ANAN_G2 PA gain row.
+        // ANAN_G2E has its own 53.0 dB row (PaGainProfile.cpp kAnanG2eRow).
         // 20m expected = defaultPaGainsForBand(ANAN_G2E, Band20m).
         const float expectedG2e = defaultPaGainsForBand(HPSDRModel::ANAN_G2E,
                                                          Band::Band20m);
@@ -582,6 +608,176 @@ private slots:
 
         // Sanity: must NOT equal the Hermes/FIRST bypass row (40.5 dB).
         QVERIFY(p->getGainForBand(Band::Band20m) != 40.5f);
+    }
+
+    // =========================================================================
+    // Test 11: reconnect moves an untouched stored G2E default (2026-10-18)
+    // =========================================================================
+    //
+    // NereusSDR-original. Before 2026-10-18 "Default - ANAN_G2E" was seeded
+    // from the shared ANAN7000D row. load() moves a stored copy to the
+    // G2E's own row band by band (2026-10-21): each band 160 m to 6 m that
+    // still holds the seed with no adjusts moves, and every edited band is
+    // kept.
+
+    void reconnect_movesUntouchedOldG2eSeed()
+    {
+        PaProfile stored = oldG2eSeed();
+        stored.setMaxPower(Band::Band20m, 100.0f);
+        stored.setMaxPowerUse(Band::Band20m, true);
+        storeOverG2eDefault(stored);
+
+        PaProfileManager mgr;
+        mgr.setMacAddress(kMacA);
+        mgr.load(HPSDRModel::ANAN_G2E);
+
+        const PaProfile* p =
+            mgr.profileByName(QStringLiteral("Default - ANAN_G2E"));
+        QVERIFY(p != nullptr);
+        for (int n = 0; n < 11; ++n) {
+            QCOMPARE(p->getGainForBand(static_cast<Band>(n)), 53.0f);
+        }
+        // Max-power settings stay as stored.
+        QCOMPARE(p->getMaxPower(Band::Band20m), 100.0f);
+        QVERIFY(p->getMaxPowerUse(Band::Band20m));
+
+        // Written back, so a reload reads the new row.
+        PaProfile reread;
+        QVERIFY(reread.dataFromString(AppSettings::instance().value(
+            profileBlobKey(kMacA, QStringLiteral("Default - ANAN_G2E"))).toString()));
+        QCOMPARE(reread.getGainForBand(Band::Band20m), 53.0f);
+    }
+
+    // One band edited: that band keeps its gain, the other ten move.
+    void reconnect_keepsEditedG2eBandMovesOthers()
+    {
+        PaProfile stored = oldG2eSeed();
+        stored.setGainForBand(Band::Band20m, 53.1f);
+        storeOverG2eDefault(stored);
+
+        PaProfileManager mgr;
+        mgr.setMacAddress(kMacA);
+        mgr.load(HPSDRModel::ANAN_G2E);
+
+        const PaProfile* p =
+            mgr.profileByName(QStringLiteral("Default - ANAN_G2E"));
+        QVERIFY(p != nullptr);
+        QCOMPARE(p->getGainForBand(Band::Band20m), 53.1f);
+        for (int n = 0; n < 11; ++n) {
+            const Band band = static_cast<Band>(n);
+            if (band != Band::Band20m) {
+                QCOMPARE(p->getGainForBand(band), 53.0f);
+            }
+        }
+
+        // Written back, so a reload reads the moved bands.
+        PaProfile reread;
+        QVERIFY(reread.dataFromString(AppSettings::instance().value(
+            profileBlobKey(kMacA, QStringLiteral("Default - ANAN_G2E"))).toString()));
+        QCOMPARE(reread.getGainForBand(Band::Band40m), 53.0f);
+        QCOMPARE(reread.getGainForBand(Band::Band20m), 53.1f);
+    }
+
+    // An adjust on one band: that band keeps its gain and adjust, the
+    // other ten move.
+    void reconnect_keepsG2eBandWithAdjustMovesOthers()
+    {
+        PaProfile stored = oldG2eSeed();
+        stored.setAdjust(Band::Band20m, 4, -1.3f);
+        storeOverG2eDefault(stored);
+
+        PaProfileManager mgr;
+        mgr.setMacAddress(kMacA);
+        mgr.load(HPSDRModel::ANAN_G2E);
+
+        const PaProfile* p =
+            mgr.profileByName(QStringLiteral("Default - ANAN_G2E"));
+        QVERIFY(p != nullptr);
+        QCOMPARE(p->getGainForBand(Band::Band20m), 50.9f);
+        QCOMPARE(p->getAdjust(Band::Band20m, 4), -1.3f);
+        for (int n = 0; n < 11; ++n) {
+            const Band band = static_cast<Band>(n);
+            if (band != Band::Band20m) {
+                QCOMPARE(p->getGainForBand(band), 53.0f);
+            }
+        }
+    }
+
+    // An edit only outside 160 m to 6 m: all eleven move, and the edited
+    // band outside the range stays as stored.
+    void reconnect_editOutsideHfMovesAllEleven()
+    {
+        PaProfile stored = oldG2eSeed();
+        stored.setGainForBand(Band::GEN, 12.3f);
+        stored.setAdjust(Band::GEN, 2, -0.7f);
+        storeOverG2eDefault(stored);
+
+        PaProfileManager mgr;
+        mgr.setMacAddress(kMacA);
+        mgr.load(HPSDRModel::ANAN_G2E);
+
+        const PaProfile* p =
+            mgr.profileByName(QStringLiteral("Default - ANAN_G2E"));
+        QVERIFY(p != nullptr);
+        for (int n = 0; n < 11; ++n) {
+            QCOMPARE(p->getGainForBand(static_cast<Band>(n)), 53.0f);
+        }
+        QCOMPARE(p->getGainForBand(Band::GEN), 12.3f);
+        QCOMPARE(p->getAdjust(Band::GEN, 2), -0.7f);
+    }
+
+    // A second connect after the move changes nothing: the moved bands no
+    // longer match the old seed, the edited band is still kept, and the
+    // stored blob is not rewritten.
+    void reconnect_secondConnectChangesNothing()
+    {
+        PaProfile stored = oldG2eSeed();
+        stored.setGainForBand(Band::Band20m, 50.0f);
+        storeOverG2eDefault(stored);
+
+        const QString key =
+            profileBlobKey(kMacA, QStringLiteral("Default - ANAN_G2E"));
+        {
+            PaProfileManager first;
+            first.setMacAddress(kMacA);
+            first.load(HPSDRModel::ANAN_G2E);
+        }
+        const QString afterFirst = AppSettings::instance().value(key).toString();
+
+        PaProfileManager second;
+        second.setMacAddress(kMacA);
+        second.load(HPSDRModel::ANAN_G2E);
+
+        QCOMPARE(AppSettings::instance().value(key).toString(), afterFirst);
+        const PaProfile* p =
+            second.profileByName(QStringLiteral("Default - ANAN_G2E"));
+        QVERIFY(p != nullptr);
+        QCOMPARE(p->getGainForBand(Band::Band20m), 50.0f);
+        QCOMPARE(p->getGainForBand(Band::Band40m), 53.0f);
+        QCOMPARE(p->getGainForBand(Band::Band160m), 53.0f);
+    }
+
+    // A custom profile holding the old values is never touched.
+    void reconnect_leavesCustomProfileWithOldValues()
+    {
+        PaProfile custom = oldG2eSeed();
+        PaProfile named(QStringLiteral("My G2E"), HPSDRModel::ANAN_G2E,
+                        /*isFactoryDefault=*/false);
+        named.copySettings(custom);
+        {
+            PaProfileManager seed;
+            seed.setMacAddress(kMacA);
+            seed.load(HPSDRModel::ANAN_G2E);
+            QVERIFY(seed.saveProfile(QStringLiteral("My G2E"), named));
+        }
+
+        PaProfileManager mgr;
+        mgr.setMacAddress(kMacA);
+        mgr.load(HPSDRModel::ANAN_G2E);
+
+        const PaProfile* p = mgr.profileByName(QStringLiteral("My G2E"));
+        QVERIFY(p != nullptr);
+        QCOMPARE(p->getGainForBand(Band::Band20m), 50.9f);
     }
 
     // ── #202 deep-fix: userVisibleProfileNames combo filter ──────────────────

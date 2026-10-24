@@ -81,10 +81,14 @@
 //                 Code.
 //   2026-10-08 - Adds otherFrequency() and activeIsThis() for tests.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-20 - Display controls for Frequency (Custom): digit size,
+//                 colour, centering, and each slice line on its own.
+//                 Brian Sutton, AI-assisted via xAI Grok.
 // =================================================================
 
 #pragma once
 
+#include <QColor>
 #include <QList>
 #include <QWidget>
 
@@ -142,6 +146,24 @@ public:
     void setVfoRowVisible(bool on);
     bool vfoRowVisible() const;
 
+    // NereusSDR: Frequency (Custom). Defaults keep the ported instrument:
+    // the digits fit the width from 12 px up to 26 px, the amber reading
+    // colour, top-left alignment, and both slice lines. setDigitFont()
+    // opts into an operator size. fitWidth still shrinks that size down
+    // to 12 px; without it the size stays put and the minimum width
+    // follows it. An invalid colour keeps the amber reading colours.
+    void setDigitFont(int fontPx, bool fitWidth);
+    bool digitFontLocked() const { return m_fontLocked; }
+    int digitFontPx() const { return m_digitFontPx; }
+    void setDigitColor(const QColor& color);
+    QColor digitColor() const { return m_digitColor; }
+    void setContentCentered(bool on);
+    bool contentCentered() const { return m_centered; }
+    // The two lines under the digits: this slice, then the other one.
+    void setSliceLinesVisible(bool own, bool other);
+    bool ownSliceLineVisible() const { return m_showOwn; }
+    bool otherSliceLineVisible() const { return m_showOther; }
+
     // ── Eingetippte Frequenz deuten ──────────────────────────────────
     //
     // Am 2026-08-18 aus VfoWidget herausgeloest, wo der Parser als
@@ -191,7 +213,12 @@ private:
     static int digitRowWidthAt(int px);
     /// Die groesste Stufe zwischen kMinDigitFontPx und kMaxDigitFontPx,
     /// die noch in availableWidth passt.
-    static int fittingDigitFontPx(int availableWidth);
+    // NereusSDR: Frequency (Custom). The ceiling is kMaxDigitFontPx, or the
+    // operator size when that size may still shrink to the width.
+    int fittingDigitFontPx(int availableWidth) const;
+    QString digitBrightColor() const;
+    QString digitDimColor() const;
+    void applyEditStyle();
     void refreshDigits();
     void refreshVfoRow();
     void beginEdit();
@@ -234,6 +261,15 @@ private:
     /// die Lesbarkeit der Uhr-Zone (siehe kMinDigitFontPx) und waechst
     /// nie ueber die urspruengliche Vorgabe hinaus (kMaxDigitFontPx).
     int m_digitFontPx{26};   // == kMaxDigitFontPx, siehe dort
+    // NereusSDR: Frequency (Custom). Locked ignores the width. A ceiling
+    // above zero replaces kMaxDigitFontPx while the width may still shrink
+    // the digits. An invalid colour keeps the amber reading colours.
+    bool m_fontLocked{false};
+    int m_fontCeiling{0};
+    QColor m_digitColor;
+    bool m_centered{false};
+    bool m_showOwn{true};
+    bool m_showOther{true};
     // From Longpath src/gui/instruments/FrequencyInstrument.h:195 [@551576e3]
     // Betreiber, 2026-08-30, nach dem ersten Versuch: "das fenster mit
     // der frequenz sollte man noch kleiner ziehen können." 20px war zu

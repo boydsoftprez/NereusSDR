@@ -131,7 +131,7 @@ struct TuningShotTests {
         window.frame = CGRect(origin: .zero, size: size)
         window.windowLevel = .alert + 1
         let root = TuningShotRoot(model: model, sheet: sheet).preferredColorScheme(.dark)
-        let host = UIHostingController(rootView: root)
+        let host = ShotHosting.host(root)
         host.view.frame = CGRect(origin: .zero, size: size)
         window.rootViewController = host
         window.isHidden = false
