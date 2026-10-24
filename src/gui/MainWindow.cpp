@@ -15,6 +15,12 @@
 //               when its mode or filter changes (refreshSliceFlags), now that
 //               the pan's overlay is rebuilt only on a change. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-23: The window's one-time slice wiring (spectrum first view,
+//               restore push, mode, AGC and NR menus, RADE and Phone/CW
+//               applets) follows the window's own starting slice
+//               (RadioModel::windowSliceId), not Slice A, which a Core
+//               inside the window may keep for a paired device. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-20: The TX applet's rows are registered as container content
 //               (registerTxSectionContent). Brian Sutton, AI-assisted via
 //               OpenCode.
@@ -9340,8 +9346,12 @@ void MainWindow::buildUI()
     // Wire spectrum display to SliceModel (values come from persisted state,
     // no longer hardcoded). Connection is deferred to wireSliceToSpectrum()
     // which runs after RadioModel creates slice 0.
+    // JJ 2026-10-23: the window's own starting slice (windowSliceId), which
+    // is Slice A unless a Core inside this window kept A for a returning
+    // paired device; that device's slice, made when it signs in, gets the
+    // per-slice flag path below and never this window-wide wiring.
     connect(m_radioModel, &RadioModel::sliceAdded, this, [this](int index) {
-        if (index == 0) {
+        if (index == m_radioModel->windowSliceId()) {
             wireSliceToSpectrum();
         }
     });
@@ -9370,7 +9380,7 @@ void MainWindow::buildUI()
     // display" step on power-on.
     connect(m_radioModel, &RadioModel::sliceStateRestored, this,
             [this](int index) {
-        if (index != 0 || !activeSpectrumWidget()) {
+        if (index != m_radioModel->windowSliceId() || !activeSpectrumWidget()) {
             return;
         }
         SliceModel* slice = m_radioModel->activeSlice();
@@ -9529,7 +9539,7 @@ void MainWindow::buildUI()
         // the active pan and, with no handler, stayed there.
         qCInfo(lcReceiver).noquote()
             << QStringLiteral("Slice %1 added in this window").arg(QChar(u'A' + sliceIndex));
-        if (sliceIndex != 0) {
+        if (sliceIndex != m_radioModel->windowSliceId()) {
             if (m_vfoWidgetsBySlice.contains(sliceIndex)) {
                 return;
             }
@@ -12453,7 +12463,7 @@ void MainWindow::buildMenuBar()
 
         // Sync AGC checked state when SliceModel changes
         connect(m_radioModel, &RadioModel::sliceAdded, this, [this](int index) {
-            if (index != 0) { return; }
+            if (index != m_radioModel->windowSliceId()) { return; }
             SliceModel* slice = m_radioModel->activeSlice();
             if (!slice) { return; }
             connect(slice, &SliceModel::agcModeChanged, this, [this](AGCMode mode) {
@@ -12476,7 +12486,7 @@ void MainWindow::buildMenuBar()
     // action's creation above), since it must track whichever slice is
     // active, not just slice 0.
     connect(m_radioModel, &RadioModel::sliceAdded, this, [this](int index) {
-        if (index != 0) { return; }
+        if (index != m_radioModel->windowSliceId()) { return; }
         SliceModel* slice = m_radioModel->activeSlice();
         if (!slice) { return; }
 
@@ -12680,7 +12690,7 @@ void MainWindow::buildMenuBar()
     // Sync checked mode action when SliceModel reports a mode change.
     // Connection is deferred until slice 0 is available (sliceAdded signal).
     connect(m_radioModel, &RadioModel::sliceAdded, this, [this](int index) {
-        if (index != 0) { return; }
+        if (index != m_radioModel->windowSliceId()) { return; }
         SliceModel* slice = m_radioModel->activeSlice();
         if (!slice) { return; }
         connect(slice, &SliceModel::dspModeChanged, this, [this](DSPMode mode) {
@@ -15708,7 +15718,9 @@ void MainWindow::wireSliceToSpectrum()
     // and reading activeSlice() here re-wired that slice and gave the new
     // Slice A no flag. The pan is the one hosting Slice A (the active pan
     // when it has no pan key yet), as for every other slice's flag.
-    SliceModel* slice = m_radioModel->sliceById(0);
+    // JJ 2026-10-23: the window's own starting slice (windowSliceId), Slice
+    // A unless a Core inside this window kept A for a paired device.
+    SliceModel* slice = m_radioModel->sliceById(m_radioModel->windowSliceId());
     SpectrumWidget* host = slice ? spectrumForSlice(slice) : nullptr;
     if (!slice || !host) {
         return;
