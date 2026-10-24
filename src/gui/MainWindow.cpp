@@ -11,6 +11,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24: Roundtable plan Task 12: the Spot Hub gets the Roundtable
+//               model (its Roundtable tab), Start / Stop go to the spot
+//               source host, and opening the tab asks the first-run
+//               question once (openRoundtableFirstRunIfNeeded).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-20: The TX applet's rows are registered as container content
 //               (registerTxSectionContent). Brian Sutton, AI-assisted via
 //               OpenCode.
@@ -1227,6 +1232,7 @@ warren@wpratt.com
 #include "applets/TxEqDialog.h"
 // Phase 3J-2 H1: Tools menu modeless singletons (Spot Hub + FreeDV Reporter).
 #include "SpotHubDialog.h"
+#include "gui/roundtable/RoundtableFirstRunDialog.h"
 #include "core/SpotSourceHost.h"
 #include "core/station/StationRadios.h"
 #include "gui/setup/ThisCorePage.h"
@@ -16996,6 +17002,7 @@ void MainWindow::refreshSpotHubAvailability()
         m_spotHubDialog->setStationSettingsAvailable(true, QString());
         m_spotHubDialog->setStationSourcesAvailable(true, QString());
         m_spotHubDialog->setStationFreedvAvailable(true, QString());
+        m_spotHubDialog->setStationRoundtableAvailable(true, QString());
         return;
     }
     const bool settings = stationSettingsAvailable();
@@ -17007,6 +17014,25 @@ void MainWindow::refreshSpotHubAvailability()
     const bool freedv = m_stationClient != nullptr && m_stationClient->stationFreedvAvailable();
     m_spotHubDialog->setStationFreedvAvailable(
         freedv, IStationLink::stationFreedvUnavailableReason());
+    // Roundtable plan Task 12: Roundtable is the Core's.
+    const bool roundtable = m_stationClient != nullptr && m_stationClient->roundtableAvailable();
+    m_spotHubDialog->setStationRoundtableAvailable(
+        roundtable, IStationLink::roundtableUnavailableReason());
+}
+
+void MainWindow::openRoundtableFirstRunIfNeeded()
+{
+    // Roundtable plan Task 12 (design 11.2, D25): asked once per station;
+    // another device's answer gives this computer a one-time note.
+    RoundtableModel* model = m_radioModel ? m_radioModel->roundtableModel() : nullptr;
+    if (m_roundtableFirstRun || !RoundtableFirstRunDialog::shouldShow(model)) {
+        return;
+    }
+    QWidget* parent = m_spotHubDialog ? static_cast<QWidget*>(m_spotHubDialog.data())
+                                      : static_cast<QWidget*>(this);
+    m_roundtableFirstRun = new RoundtableFirstRunDialog(model, parent);
+    m_roundtableFirstRun->setAttribute(Qt::WA_DeleteOnClose);
+    m_roundtableFirstRun->open();
 }
 
 void MainWindow::refreshFreedvReporterAvailability()
@@ -18347,7 +18373,8 @@ void MainWindow::openSpotHub()
             m_radioModel->spotModel(),
             m_radioModel->spotTableModel(),
             m_radioModel->dxccColorProvider(),
-            this);
+            this,
+            m_radioModel->roundtableModel());
         // Bridge spotsClearedAll (Display tab's "Clear All Spots" button)
         // to SpotModel::clear so the global QShortcut and the dialog
         // button share one truth-source.
@@ -18454,8 +18481,18 @@ void MainWindow::openSpotHub()
                     &SpotSourceHost::startPskReporter);
             connect(hub, &SpotHubDialog::pskStopRequested, host,
                     &SpotSourceHost::stopPskReporter);
+            // Roundtable plan Task 12: Roundtable's Start and Stop, the
+            // Core's in a remote window.
+            connect(hub, &SpotHubDialog::roundtableStartRequested, host,
+                    &SpotSourceHost::startRoundtable);
+            connect(hub, &SpotHubDialog::roundtableStopRequested, host,
+                    &SpotSourceHost::stopRoundtable);
             hub->setSourceHost(host);
         }
+        // Roundtable plan Task 12 (design 11.2 First run): the first time
+        // the station opens Roundtable, "Roundtable is public".
+        connect(m_spotHubDialog.data(), &SpotHubDialog::roundtableOpened, this,
+                &MainWindow::openRoundtableFirstRunIfNeeded);
         refreshSpotHubAvailability();
 
         // 2026-05-12 bench fix: Save & Propagate writes User/GridSquare

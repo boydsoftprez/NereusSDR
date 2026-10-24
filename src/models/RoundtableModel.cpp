@@ -10,10 +10,15 @@
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 11).
+//   2026-10-24: Roundtable plan Task 12: available(), muteList(), the
+//               Core's Roundtable settings and settingChanged. J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include "models/RoundtableModel.h"
 
+#include "core/AppSettings.h"
+#include "core/LogCategories.h"
 #include "core/roundtable/RoundtableState.h"
 #include "core/roundtable/RoundtableWire.h"
 #include "core/session/IStationLink.h"
@@ -155,12 +160,41 @@ QHash<QString, QJsonObject> RoundtableModel::roomRecords(const QJsonObject& room
     return records;
 }
 
+QStringList RoundtableModel::stationSettingNames()
+{
+    return {QStringLiteral("AutoStart"), QStringLiteral("AwayChoice"),
+            QStringLiteral("HighlightMentions"), QStringLiteral("Callsign"),
+            QStringLiteral("GridSquare")};
+}
+
+QString RoundtableModel::stationSettingDefault(const QString& name)
+{
+    // The defaults SpotSourceHost and RoundtableClient read (design C15).
+    if (name == QLatin1String("AutoStart") || name == QLatin1String("HighlightMentions")) {
+        return QStringLiteral("True");
+    }
+    if (name == QLatin1String("AwayChoice")) {
+        return QStringLiteral("Report");
+    }
+    return {};
+}
+
 RoundtableModel::RoundtableModel(QObject* parent)
     : QObject(parent)
 {
+    // Every placement's own writes, and on a Core a device's write applied
+    // through the settings proxy, land here.
+    m_settingsObserver = AppSettings::instance().addWriteObserver([this](const QString& key) {
+        noteSettingChanged(key);
+    });
 }
 
-RoundtableModel::~RoundtableModel() = default;
+RoundtableModel::~RoundtableModel()
+{
+    if (m_settingsObserver >= 0) {
+        AppSettings::instance().removeWriteObserver(m_settingsObserver);
+    }
+}
 
 void RoundtableModel::detach()
 {
@@ -642,6 +676,46 @@ int RoundtableModel::mentionCount(const QString& roomId) const
 bool RoundtableModel::muted(const QString& callsign) const
 {
     return m_state && m_state->muted(callsign);
+}
+
+QStringList RoundtableModel::muteList() const
+{
+    return m_state ? m_state->muteList() : QStringList();
+}
+
+bool RoundtableModel::available() const
+{
+    if (m_link != nullptr) {
+        return m_link->roundtableAvailable();
+    }
+    return !m_client.isNull() && !m_state.isNull();
+}
+
+QString RoundtableModel::stationSetting(const QString& name) const
+{
+    return AppSettings::instance()
+        .value(QStringLiteral("Roundtable/") + name, stationSettingDefault(name))
+        .toString();
+}
+
+bool RoundtableModel::setStationSetting(const QString& name, const QString& value)
+{
+    if (!stationSettingNames().contains(name)) {
+        qCWarning(lcDsp) << "Roundtable setting not written:" << name
+                         << "changes only through Roundtable";
+        return false;
+    }
+    auto& settings = AppSettings::instance();
+    settings.setValue(QStringLiteral("Roundtable/") + name, value);
+    settings.save();
+    return true;
+}
+
+void RoundtableModel::noteSettingChanged(const QString& key)
+{
+    if (key.isEmpty() || key.startsWith(QLatin1String("Roundtable/"), Qt::CaseInsensitive)) {
+        emit settingChanged(key);
+    }
 }
 
 void RoundtableModel::setDraft(const QString& roomId, const QString& text)

@@ -220,6 +220,16 @@
 //                                    when the tune happened
 //                                    (setTunedCheck).
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-24  J.J. Boyd / KG4VCF  Roundtable plan Task 12: the
+//                                    Roundtable tab after PSK Reporter,
+//                                    built when a RoundtableModel is given
+//                                    (the trailing constructor argument);
+//                                    setStationRoundtableAvailable,
+//                                    setRoundtableUrlOpener and the
+//                                    roundtableStartRequested /
+//                                    roundtableStopRequested /
+//                                    roundtableOpened signals.
+//                                    AI-assisted via Anthropic Claude Code.
 
 #pragma once
 
@@ -238,6 +248,11 @@ class QCheckBox;
 class QPlainTextEdit;
 class QTableView;
 class QMenu;
+class QComboBox;
+class QFrame;
+class QShowEvent;
+class QUrl;
+class QVBoxLayout;
 
 namespace NereusSDR {
 
@@ -253,6 +268,7 @@ class BandFilterProxy;
 class DxccColorProvider;
 class SpotSourceHost;
 class SpotBeamTurner;
+class RoundtableModel;
 
 // From AetherSDR src/gui/DxClusterDialog.h:79-215 [@0cd4559]
 //
@@ -284,7 +300,8 @@ public:
                            SpotModel* spotModel,
                            SpotTableModel* spotTableModel,
                            DxccColorProvider* dxccProvider,
-                           QWidget* parent = nullptr);
+                           QWidget* parent = nullptr,
+                           RoundtableModel* roundtable = nullptr);
 
     // 2026-05-12 bench fix (Gap #6).  Spot List ↔ panadapter hover
     // sync.  setHoveredPanadapterSpot(spotIdx) is called from
@@ -325,6 +342,14 @@ public:
     /// "Hide my station" are disabled with `reason` while the Core does not
     /// run FreeDV Reporter for this app.
     void setStationFreedvAvailable(bool available, const QString& reason);
+    /// Roundtable plan Task 12: the Roundtable tab's controls are disabled
+    /// with `reason` while Roundtable cannot be reached (a window's Core
+    /// does not offer it). The tab exists only when the constructor was
+    /// given a RoundtableModel.
+    void setStationRoundtableAvailable(bool available, const QString& reason);
+    /// What opens the Archive's sign-in link (a seam for tests); without
+    /// one, QDesktopServices::openUrl.
+    void setRoundtableUrlOpener(std::function<bool(const QUrl&)> opener);
 
     /// Rotor control plan Task 8: what answers the Spot List menu's "Turn
     /// beam to CALL (330°)". Without one it is shown greyed with the
@@ -376,6 +401,13 @@ signals:
     // Start would emit IPFIX datagrams with empty receiver fields.
     void pskStartRequested(const QString& callsign, const QString& gridSquare);
     void pskStopRequested();
+    // Roundtable plan Task 12: the Roundtable tab's Start and Stop
+    // (MainWindow: SpotSourceHost::startRoundtable / stopRoundtable).
+    void roundtableStartRequested();
+    void roundtableStopRequested();
+    // The Roundtable tab was shown (MainWindow asks the first-run question
+    // then, design 11.2).
+    void roundtableOpened();
     // Forwarded from the Spot List click-to-tune + the spot overlay.
     void tuneRequested(double freqMhz);
     // Rotor control plan Task 8: the operator tuned to a Spot List row
@@ -396,6 +428,9 @@ signals:
     void identitySaved(const QString& callsign,
                        const QString& gridSquare,
                        const QString& message);
+
+protected:
+    void showEvent(QShowEvent* event) override;
 
 private:
     // Parity Task 19: whether the station's sources are the Core's here.
@@ -429,6 +464,15 @@ private:
     void buildPotaTab(QTabWidget* tabs);
     void buildFreeDvTab(QTabWidget* tabs);
     void buildPskTab(QTabWidget* tabs);
+    // Roundtable plan Task 12 (design 11.2 Spot Hub tab).
+    void buildRoundtableTab(QTabWidget* tabs);
+    void refreshRoundtable();
+    void refreshRoundtableSettings();
+    void refreshRoundtableMutes();
+    void applyRoundtableAvailability();
+    void applyRoundtableOverride(QLineEdit* edit, const QString& name);
+    void onRoundtableRefused(const QString& verb, const QString& reason);
+    void noteRoundtableOpened();
     void buildSpotListTab(QTabWidget* tabs);
     void buildDisplayTab(QTabWidget* tabs);
 
@@ -565,6 +609,39 @@ private:
     QLabel*      m_statDxccEntities{nullptr};
     QLabel*      m_statNewDxcc{nullptr};
     QLabel*      m_statNewBands{nullptr};
+
+    // Roundtable tab (Roundtable plan Task 12). The Core's settings go
+    // through the model (setStationSetting, setHidden, unmute); the two
+    // combos of "This computer" are this computer's own settings.
+    QPointer<RoundtableModel> m_roundtable;
+    QTabWidget*  m_tabs{nullptr};
+    QWidget*     m_rtPage{nullptr};
+    bool         m_stationRoundtableAvailable{true};
+    QString      m_stationRoundtableReason;
+    bool         m_rtWebLinkPending{false};
+    std::function<bool(const QUrl&)> m_rtUrlOpener;
+    QLabel*      m_rtIdentityLabel{nullptr};
+    QLabel*      m_rtStatusLabel{nullptr};
+    QPushButton* m_rtAutoStartBtn{nullptr};
+    QPushButton* m_rtStartBtn{nullptr};
+    QPushButton* m_rtPublicPageBtn{nullptr};
+    QCheckBox*   m_rtHideChk{nullptr};
+    QLabel*      m_rtPreviewCaption{nullptr};
+    QLabel*      m_rtPreview{nullptr};
+    QComboBox*   m_rtAwayCombo{nullptr};
+    QCheckBox*   m_rtHighlightChk{nullptr};
+    QLineEdit*   m_rtCallEdit{nullptr};
+    QLineEdit*   m_rtGridEdit{nullptr};
+    QLabel*      m_rtStationNotice{nullptr};
+    QWidget*     m_rtMuteList{nullptr};
+    QVBoxLayout* m_rtMuteLayout{nullptr};
+    QLabel*      m_rtMuteNotice{nullptr};
+    QPushButton* m_rtArchiveBtn{nullptr};
+    QPushButton* m_rtDeleteBtn{nullptr};
+    QFrame*      m_rtDeleteConfirm{nullptr};
+    QLabel*      m_rtArchiveNotice{nullptr};
+    QComboBox*   m_rtEarlierCombo{nullptr};
+    QComboBox*   m_rtOpensOnCombo{nullptr};
 };
 
 } // namespace NereusSDR

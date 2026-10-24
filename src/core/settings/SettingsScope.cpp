@@ -199,6 +199,10 @@
 //   2026-10-24 - Roundtable plan Task 11 fix round: the four Roundtable
 //                keys the verbs change are model-owned. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24 - Roundtable plan Task 12: Roundtable/FirstRunSeen (this
+//                computer has asked the first-run question or shown its
+//                one-time note) stays each window's. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/settings/SettingsScope.h"
@@ -315,6 +319,10 @@ const Rule kExceptions[] = {
     // below).
     { "Roundtable/EarlierTurnsShown", SettingsScope::OperatorLocal },
     { "Roundtable/PanelOpensOn", SettingsScope::OperatorLocal },
+    // Roundtable plan Task 12 (design 11.2): whether this computer has
+    // asked the first-run question or shown the one-time note that another
+    // device answered it. The answer itself is the Core's.
+    { "Roundtable/FirstRunSeen", SettingsScope::OperatorLocal },
 };
 
 // ---- 2. Prefixes ---------------------------------------------------------

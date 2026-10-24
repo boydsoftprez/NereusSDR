@@ -11,6 +11,11 @@
 // transmit scene refuses to run if one exists).
 //
 // Modification history (NereusSDR):
+//   2026-10-24 - Roundtable plan Task 12: the roundtable-spothub,
+//                 roundtable-firstrun and roundtable-firstrun-hidden scenes;
+//                 dialog-spot-hub closes the first-run sheet its Roundtable
+//                 tab opens. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -276,6 +281,8 @@
 #include <QComboBox>
 #include <QVBoxLayout>
 #include <QHash>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QJsonDocument>
 #include <QListWidget>
 #include <QSet>
@@ -406,6 +413,9 @@
 #include "core/StationTciController.h"
 #include "models/StationTciModel.h"
 #include "fakes/FakeStationLink.h"
+#include "core/roundtable/RoundtableState.h"
+#include "gui/roundtable/RoundtableFirstRunDialog.h"
+#include "models/RoundtableModel.h"
 #include "gui/applets/RxApplet.h"
 #include "gui/widgets/AntennaSwitchToast.h"
 #include "gui/widgets/RxDashboard.h"
@@ -4750,6 +4760,11 @@ void appendInventoryDialogScenes(QVector<Scene>& scenes)
         for (int i = 0; i < tabs->count() && ctx.failure.isEmpty(); ++i) {
             tabs->setCurrentIndex(i);
             pump(kTabSettleMs);
+            // Roundtable plan Task 12: the Roundtable tab asks the first-run
+            // question in its own window (the roundtable-firstrun scenes).
+            for (auto* sheet : hub->findChildren<RoundtableFirstRunDialog*>()) {
+                sheet->close();
+            }
             captureDialog(ctx, hub, QStringLiteral("dialog-spot-hub--") + slug(tabs->tabText(i)));
         }
         ctx.notes.append(QStringLiteral("%1 tabs; no spot client is started (auto-start settings are "
@@ -6505,6 +6520,142 @@ void recordMenuNotShown(SceneContext& ctx)
              {"menu: Rf2ksApplet (C47)", "the applet needs a device setting that starts discovery or a device connection"}}) {
         noteNotShown(ctx, QString::fromLatin1(item), QString::fromLatin1(reason));
     }
+}
+
+// Roundtable plan Task 12 (design 11.2; mockups settings.html and the
+// board's first-run section). A window's Roundtable posed from the Core's
+// `roundtable` object (RoundtableState::applyStationValue) over a fake
+// station link, with one band list; nothing connects anywhere.
+struct PosedRoundtable {
+    Test::FakeStationLink link;
+    RoundtableState state;
+    RoundtableModel model;
+    QHash<QString, QVariant> saved;
+
+    PosedRoundtable()
+    {
+        // The station's identity and mute list, put back afterwards.
+        auto& settings = AppSettings::instance();
+        const QList<std::pair<QString, QString>> posed{
+            {QStringLiteral("User/Callsign"), QStringLiteral("KG4VCF")},
+            {QStringLiteral("User/GridSquare"), QStringLiteral("EM73tu")},
+            {QStringLiteral("Roundtable/MuteList"), QStringLiteral("N9JNK,KD9QRT,W2LOUD")}};
+        for (const auto& [key, value] : posed) {
+            saved.insert(key, settings.value(key));
+            settings.setValue(key, value);
+        }
+        model.attachStation(&link, &state);
+    }
+
+    ~PosedRoundtable()
+    {
+        model.detach();
+        auto& settings = AppSettings::instance();
+        for (auto it = saved.cbegin(); it != saved.cend(); ++it) {
+            if (it.value().isValid()) {
+                settings.setValue(it.key(), it.value());
+            } else {
+                settings.remove(it.key());
+            }
+        }
+    }
+
+    void live(bool hidden)
+    {
+        state.applyStationValue("firstRunAnswered", true);
+        state.applyStationValue("hidden", hidden);
+        state.applyStationValue("linkState", static_cast<int>(hidden
+            ? RoundtableModel::LinkState::Hidden : RoundtableModel::LinkState::Live));
+        state.applyStationValue("sliceRooms", QStringLiteral("{\"0\":\"lsb-7185000\"}"));
+        QJsonArray rooms;
+        const auto room = [](const QString& id, const QString& band, qint64 hz, int members) {
+            return QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("band"), band},
+                               {QStringLiteral("hz"), hz}, {QStringLiteral("members"), members}};
+        };
+        rooms.append(room(QStringLiteral("lsb-7185000"), QStringLiteral("40m"), 7185000,
+                          hidden ? 8 : 9));
+        rooms.append(room(QStringLiteral("usb-14212000"), QStringLiteral("20m"), 14212000, 412));
+        rooms.append(room(QStringLiteral("digu-14074000"), QStringLiteral("20m"), 14074000, 863));
+        model.applyRooms(QJsonObject{{QStringLiteral("rooms"), rooms}});
+    }
+};
+
+void appendRoundtableScenes(QVector<Scene>& scenes)
+{
+    // The Spot Hub's Roundtable tab: live, then hidden, then the delete
+    // confirm; each the dialog as it opens and the whole tab.
+    scenes.append({QStringLiteral("roundtable-spothub"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        PosedRoundtable rt;
+        rt.live(false);
+        SpotHubDialog hub(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                          ctx.model->spotTableModel(), nullptr, ctx.window, &rt.model);
+        auto* tabs = hub.findChild<QTabWidget*>();
+        auto* page = hub.findChild<QWidget*>(QStringLiteral("roundtableTab"));
+        if (tabs == nullptr || page == nullptr) {
+            ctx.failure = QStringLiteral("Spot Hub opened without its Roundtable tab");
+            return;
+        }
+        for (int i = 0; i < tabs->count(); ++i) {
+            if (tabs->tabText(i) == QLatin1String("Roundtable")) {
+                tabs->setCurrentIndex(i);
+            }
+        }
+        hub.show();
+        pump(kTabSettleMs);
+        captureDialog(ctx, &hub, QStringLiteral("roundtable-spothub"));
+        captureDialog(ctx, page, QStringLiteral("roundtable-spothub--whole-tab"));
+
+        rt.live(true);
+        pump(kTabSettleMs);
+        captureDialog(ctx, page, QStringLiteral("roundtable-spothub--hidden"));
+
+        rt.live(false);
+        if (auto* del = hub.findChild<QPushButton*>(QStringLiteral("roundtableDeleteBtn"))) {
+            del->click();
+        }
+        pump(kTabSettleMs);
+        captureDialog(ctx, page, QStringLiteral("roundtable-spothub--delete"));
+        hub.close();
+        ctx.notes.append(QStringLiteral("a window's Roundtable posed live on 7.185 MHz with three "
+                                        "muted stations; the tab is captured whole as well"));
+    }});
+
+    // The first-run sheet, asking (switch off: Go live is the main button),
+    // and the one-time note after another device answered.
+    scenes.append({QStringLiteral("roundtable-firstrun"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        PosedRoundtable rt;
+        AppSettings::instance().remove(QString::fromLatin1(RoundtableFirstRunDialog::kSeenKey));
+        {
+            RoundtableFirstRunDialog sheet(&rt.model, ctx.window);
+            sheet.show();
+            captureDialog(ctx, &sheet, QStringLiteral("roundtable-firstrun"));
+            sheet.close();
+        }
+        rt.live(false);
+        AppSettings::instance().remove(QString::fromLatin1(RoundtableFirstRunDialog::kSeenKey));
+        RoundtableFirstRunDialog note(&rt.model, ctx.window);
+        note.show();
+        captureDialog(ctx, &note, QStringLiteral("roundtable-firstrun--note"));
+        note.close();
+        AppSettings::instance().remove(QString::fromLatin1(RoundtableFirstRunDialog::kSeenKey));
+    }});
+
+    // The switch on: Stay hidden becomes the main button.
+    scenes.append({QStringLiteral("roundtable-firstrun-hidden"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        PosedRoundtable rt;
+        RoundtableFirstRunDialog sheet(&rt.model, ctx.window);
+        sheet.setHideSwitch(true);
+        sheet.show();
+        captureDialog(ctx, &sheet, QStringLiteral("roundtable-firstrun-hidden"));
+        sheet.close();
+        AppSettings::instance().remove(QString::fromLatin1(RoundtableFirstRunDialog::kSeenKey));
+    }});
 }
 
 void appendMenuScenes(QVector<Scene>& scenes)
@@ -8582,6 +8733,7 @@ QVector<Scene> fixedScenes()
         captureDialog(ctx, visibleTopLevel<DiversityDialog>(), QStringLiteral("dialog-diversity"));
     }});
     appendInventoryDialogScenes(scenes);
+    appendRoundtableScenes(scenes);
     appendMenuScenes(scenes);
     return scenes;
 }

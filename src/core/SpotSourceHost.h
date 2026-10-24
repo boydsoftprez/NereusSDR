@@ -65,6 +65,10 @@
 //                                    state and text last, started from the
 //                                    Roundtable/* settings. AI-assisted via
 //                                    Anthropic Claude Code.
+//   2026-10-24  J.J. Boyd / KG4VCF  Roundtable plan Task 12: the Spot
+//                                    Hub's Roundtable Start and Stop
+//                                    (startRoundtable, stopRoundtable).
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -311,6 +315,11 @@ public slots:
     /// identity. The Core's in a remote window.
     void startFreedvReporter();
     void stopFreedvReporter();
+    /// Roundtable plan Task 12: Roundtable's Start and Stop (the Roundtable
+    /// tab), from the saved Roundtable/* settings. The Core's in a remote
+    /// window; a refusal comes back as sourceRefused(kRoundtable, reason).
+    void startRoundtable();
+    void stopRoundtable();
     /// The FreeDV Reporter dialog's Send and Clear, Send QSY and the FreeDV
     /// tab's "Hide my station". The Core's in a remote window; a refusal
     /// comes back as sourceRefused(kFreedvReporter, reason).

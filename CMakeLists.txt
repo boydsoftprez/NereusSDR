@@ -1985,6 +1985,8 @@ set(GUI_SOURCES
     src/gui/DssRenderer.cpp
     src/gui/SpotHubDialog.cpp
     src/gui/SpotHubDialog.h
+    src/gui/roundtable/RoundtableFirstRunDialog.cpp
+    src/gui/roundtable/RoundtableFirstRunDialog.h
     src/gui/QtCocoaAccessibleTableCache.cpp
     src/gui/QtCocoaAccessibleTableCache.h
     src/gui/FreeDVReporterDialog.cpp

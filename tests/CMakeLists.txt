@@ -9753,6 +9753,15 @@ target_compile_definitions(tst_roundtable_client PRIVATE
 # Core's own client (Everything) and from the Core's record streams (a
 # window), and sends a window's actions over the link.
 nereus_add_test(tst_roundtable_model)
+# Roundtable plan Task 12 (R-RT-14, R-RT-16): the Spot Hub's Roundtable tab
+# writes the Core's Roundtable/* settings through RoundtableModel and shows
+# the Core's values; Hide, Unmute, Archive and Delete my archive go through
+# the model's actions; the first-run sheet's words, its switch and the
+# one-time note; and, against a fake Roundtable server on 127.0.0.1, nothing
+# about the station before Go live.
+nereus_add_test(tst_roundtable_spothub)
+target_compile_definitions(tst_roundtable_spothub PRIVATE
+    NEREUS_ROUNDTABLE_CONFORMANCE_DIR="${CMAKE_SOURCE_DIR}/roundtable/conformance/v1")
 # Roundtable plan Task 11: Roundtable on the station link: the
 # stationRoundtableVersion capability and `roundtable` object only for a
 # peer that declared roundtable, the thirteen verbs, the room streams and

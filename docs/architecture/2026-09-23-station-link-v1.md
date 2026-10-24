@@ -5914,6 +5914,7 @@ computer, never sent). `classifySettingsKey` (`SettingsScope.cpp`) decides:
 | 1. exact key (exception) | `FreeDvReporter/FrequencyAsKhz` | operatorLocal |
 | 1. exact key (exception) | `Roundtable/EarlierTurnsShown` | operatorLocal |
 | 1. exact key (exception) | `Roundtable/PanelOpensOn` | operatorLocal |
+| 1. exact key (exception) | `Roundtable/FirstRunSeen` | operatorLocal |
 | 2. prefix | `hardware/` | station |
 | 2. prefix | `Slice` | station |
 | 2. prefix | `Vfo` | station |
@@ -6003,8 +6004,11 @@ station-scoped: the Core keeps `Roundtable/AutoStart`, `AwayChoice`,
 `FirstRunAnswer` (`""`, `"Live"` or `"Hidden"`), `Hidden`, `MuteList`
 (comma-separated base callsigns) and `MentionsSeenMs`, so a first-run
 answer, Hide my station, a mute or a mention read on one device holds on
-every device. Two are each device's own: `Roundtable/EarlierTurnsShown`
-and `Roundtable/PanelOpensOn` (operatorLocal). `FirstRunAnswer`, `Hidden`,
+every device. Three are each device's own (operatorLocal):
+`Roundtable/EarlierTurnsShown`, `Roundtable/PanelOpensOn` and
+`Roundtable/FirstRunSeen` (Roundtable plan Task 12: this device has asked
+the first-run question, or shown the one-time note that another device
+answered it). `FirstRunAnswer`, `Hidden`,
 `MuteList` and `MentionsSeenMs` are the Core's own answers: a
 `settings.write` or `settings.remove` of any of them (in any letter case)
 is refused with "This Core changes its Roundtable choices only through

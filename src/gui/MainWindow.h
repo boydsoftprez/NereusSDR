@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24: openRoundtableFirstRunIfNeeded and m_roundtableFirstRun
+//               (Roundtable plan Task 12). J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-16: restoreMainWindowGeometry()'s note says the constructor
 //               calls it last (issue #525). J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
@@ -336,6 +339,7 @@ class RemoteMediaController;
 class SpotHubDialog;
 class SpotBeamTurner;
 class FreeDVReporterDialog;
+class RoundtableFirstRunDialog;
 
 class RxDashboard;
 class StationBlock;
@@ -1041,6 +1045,10 @@ private slots:
     // both dialogs are single-instance for the lifetime of MainWindow.
     void openSpotHub();
     void openFreeDVReporter();
+    /// Roundtable plan Task 12: the first-run question ("Roundtable is
+    /// public") or the one-time note, when RoundtableFirstRunDialog says
+    /// this computer should show it. Not modal; one at a time.
+    void openRoundtableFirstRunIfNeeded();
     /// Rotor control plan Task 8: the window's one SpotBeamTurner (made on
     /// first use), behind every pan's spot menu, the Spot Hub and
     /// auto-turn. Its refusals are toasted.
@@ -1684,6 +1692,7 @@ private:
     QPointer<SpotHubDialog>        m_spotHubDialog;
     SpotBeamTurner*                m_spotBeamTurner{nullptr};  // Qt child; rotor plan Task 8
     QPointer<FreeDVReporterDialog> m_freeDVReporterDialog;
+    QPointer<RoundtableFirstRunDialog> m_roundtableFirstRun;  // Roundtable plan Task 12
 
     // Status bar widgets (double-height AetherSDR design, 46px)
     //

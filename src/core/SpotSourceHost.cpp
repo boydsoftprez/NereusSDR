@@ -179,6 +179,12 @@
 //                                    refuse, means no start. NereusSDR-
 //                                    original. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-24  J.J. Boyd / KG4VCF  Roundtable plan Task 12:
+//                                    startRoundtable and stopRoundtable for
+//                                    the Spot Hub's Roundtable tab, sent to
+//                                    the Core in a remote window.
+//                                    NereusSDR-original. AI-assisted via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 #include "core/SpotSourceHost.h"
@@ -1145,6 +1151,25 @@ void SpotSourceHost::stopFreedvReporter()
         return;
     }
     disconnectSource(kFreedvReporter, nullptr);
+}
+
+void SpotSourceHost::startRoundtable()
+{
+    if (forward("spots.connect", kRoundtable) || !m_roundtable) {
+        return;
+    }
+    QString reason;
+    if (!startRoundtableWith(&reason)) {
+        emit sourceRefused(kRoundtable, reason);
+    }
+}
+
+void SpotSourceHost::stopRoundtable()
+{
+    if (forward("spots.disconnect", kRoundtable) || !m_roundtable) {
+        return;
+    }
+    disconnectSource(kRoundtable, nullptr);
 }
 
 void SpotSourceHost::sendFreedvMessage(const QString& text)

@@ -9522,6 +9522,10 @@
             {
                 "key": "Roundtable/PanelOpensOn",
                 "scope": "operatorLocal"
+            },
+            {
+                "key": "Roundtable/FirstRunSeen",
+                "scope": "operatorLocal"
             }
         ],
         "operatorLocalKeys": [

@@ -33,6 +33,10 @@
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 11).
+//   2026-10-24: Roundtable plan Task 12: available(), muteList(), the
+//               Core's Roundtable settings (stationSetting,
+//               setStationSetting) and settingChanged for the Spot Hub
+//               tab. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -76,6 +80,15 @@ public:
     /// The `roundtableRoom:<id>` records for room(): member:<ref>,
     /// reading:<ref>, turn:<id>, name:<turn id>:<name> and message:<id>.
     static QHash<QString, QJsonObject> roomRecords(const QJsonObject& room);
+
+    /// The Core's Roundtable settings a Spot Hub tab writes as settings
+    /// (design 10.3): AutoStart, AwayChoice, HighlightMentions, Callsign
+    /// and GridSquare, each under `Roundtable/`. FirstRunAnswer, Hidden,
+    /// MuteList and MentionsSeenMs change only through the actions below.
+    static QStringList stationSettingNames();
+    /// The default each reads as while unset: AutoStart "True",
+    /// AwayChoice "Report", HighlightMentions "True", the overrides "".
+    static QString stationSettingDefault(const QString& name);
 
     explicit RoundtableModel(QObject* parent = nullptr);
     ~RoundtableModel() override;
@@ -121,6 +134,23 @@ public:
     bool hidden() const;
     int mentionCount(const QString& roomId) const;
     bool muted(const QString& callsign) const;
+    /// The base callsigns muted on the Core, in the order they were muted.
+    QStringList muteList() const;
+    /// Whether the actions reach a Roundtable: the Core's own client, or a
+    /// window's link to a Core that offers Roundtable.
+    bool available() const;
+    /// `Roundtable/<name>` as the Core holds it (a window reads the Core's
+    /// value through the settings it shares), or its default while unset.
+    QString stationSetting(const QString& name) const;
+    /// Writes `Roundtable/<name>`, one of stationSettingNames(), through
+    /// the settings path (a window's write goes to the Core). False for
+    /// any other name.
+    bool setStationSetting(const QString& name, const QString& value);
+    /// A setting changed elsewhere (a window hears the Core's changes
+    /// through RadioModel::reportStationSettingChanged). Emits
+    /// settingChanged for a `Roundtable/` key, or for an empty key (a
+    /// whole snapshot).
+    void noteSettingChanged(const QString& key);
     /// What this window has typed in a room's box (not kept).
     QString draft(const QString& roomId) const { return m_drafts.value(roomId); }
     void setDraft(const QString& roomId, const QString& text);
@@ -154,6 +184,8 @@ signals:
     void webLinkReady(const QUrl& url);
     /// `verb` is the roundtable.* verb's name after the dot ("delete").
     void actionRefused(const QString& verb, const QString& reason);
+    /// A `Roundtable/` setting changed (empty: possibly all of them).
+    void settingChanged(const QString& key);
 
 private:
     struct RoomView {
@@ -193,6 +225,9 @@ private:
     bool m_seenHidden = false;
     QString m_seenMentions;
     QString m_seenSliceRooms;
+
+    // The AppSettings write observer feeding settingChanged.
+    int m_settingsObserver = -1;
 };
 
 } // namespace NereusSDR

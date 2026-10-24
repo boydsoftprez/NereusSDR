@@ -17,6 +17,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24 - Roundtable plan Task 12: a window's Core setting changes
+//                reach RoundtableModel (noteSettingChanged), so the Spot
+//                Hub's Roundtable tab shows the Core's values.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-10-24 - Roundtable plan Task 11: the `roundtable` object
 //                (RoundtableState) bound to the client with the Core's
 //                Roundtable/* answers, told the slices, and the
@@ -11173,6 +11178,11 @@ void RadioModel::reportStationSettingChanged(const QString& key)
         // Parity ruling C12: the Core's per-band grid reaches this window's
         // pans (empty key: a whole snapshot).
         applyPanGridSetting(key);
+        // Roundtable plan Task 12: the Core's Roundtable/ settings reach the
+        // Roundtable screens.
+        if (m_roundtableModel != nullptr) {
+            m_roundtableModel->noteSettingChanged(key);
+        }
         emit stationSettingChanged(key);
     }
 }

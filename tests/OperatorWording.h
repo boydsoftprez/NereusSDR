@@ -9,6 +9,11 @@
 // uses it to decide whether a reason it does not know may be shown as sent.
 // One list, so a test and the app can never disagree about a word.
 //
+// Modification history (NereusSDR):
+//   2026-10-24: Roundtable's ham-sense phrases set aside, by J.J. Boyd
+//               (KG4VCF), with AI-assisted implementation via Anthropic
+//               Claude Code (Roundtable plan Task 12).
+//
 // coreCalledStationIn() is the tests' one rule for "Core" and "station" in
 // user text (R-R3-21): both wording tests use it.
 #pragma once
@@ -50,7 +55,13 @@ inline QString coreCalledStationIn(const QString& text)
         QStringLiteral("--station[-A-Za-z]*"
                        "|\\bstation's (amplifier|tuner|transmitter|Power Genius|Tuner Genius)\\b"
                        "|\\bthe Core's station\\b|\\b(your|my) station\\b|\\bstation callsign\\b"
-                       "|\\bQSY to this station\\b|\\blive stations on qso\\.freedv\\.org\\b"),
+                       "|\\bQSY to this station\\b|\\blive stations on qso\\.freedv\\.org\\b"
+                       // Roundtable's words: a station there is a ham station,
+                       // known by its callsign and its key (design 11.2).
+                       "|\\bthis station's (key|sign-in)\\b|\\bthis station signed in to Roundtable\\b"
+                       "|\\bsent about this station\\b|\\ba station id\\b|\\bmuted stations\\b"
+                       "|%[0-9] (other )?stations (on|without you)\\b|\\bwith %[0-9] other stations\\b"
+                       "|\\bevery station's reading\\b|\\basked once (for this|per) station\\b"),
         QRegularExpression::CaseInsensitiveOption);
     static const QRegularExpression station(QStringLiteral("\\bstations?\\b"),
                                             QRegularExpression::CaseInsensitiveOption);

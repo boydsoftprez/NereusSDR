@@ -105,6 +105,8 @@
 // Modification history (NereusSDR):
 //   2026-10-24: Roundtable plan Task 11: the Roundtable/ rows. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24: Roundtable plan Task 12: Roundtable/FirstRunSeen. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QDir>
 #include <QDirIterator>
@@ -656,6 +658,8 @@ private slots:
             << QStringLiteral("Roundtable/EarlierTurnsShown") << int(SettingsScope::OperatorLocal);
         QTest::newRow("Roundtable/PanelOpensOn is OperatorLocal (a panel preference)")
             << QStringLiteral("Roundtable/PanelOpensOn") << int(SettingsScope::OperatorLocal);
+        QTest::newRow("Roundtable/FirstRunSeen is OperatorLocal (this computer asked)")
+            << QStringLiteral("Roundtable/FirstRunSeen") << int(SettingsScope::OperatorLocal);
 
         // The other three FftPoolConfig knobs (MainWindow.cpp:1512's "the
         // four display AppSettings-sourced knobs"). MainWindow.cpp is
