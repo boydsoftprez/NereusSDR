@@ -12,6 +12,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-23 - A TX Keying copy can hide its slice indicators.
+//                 Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-21 - Copies of a row carry the gates, follow the Core's 2-TONE
 //                and ask to take transmit; a preview of a row is inert.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -2169,7 +2171,7 @@ void TxApplet::setTakeTransmitOffered(bool offered, bool holderOnAir)
     m_holderOnAir = holderOnAir;
     for (TxKeyingSection* s : allKeyingSections()) {
         if (!s->takeTransmitButton()) { continue; }
-        s->takeTransmitButton()->setVisible(offered);
+        s->takeTransmitButton()->setVisible(offered && !s->sliceIndicatorsHidden());
         s->takeTransmitButton()->setProperty("holderOnAir", offered && holderOnAir);
         s->takeTransmitButton()->setStyleSheet(offered && holderOnAir
             ? QStringLiteral("QPushButton { color: #ff8080; border: 1px solid #ff4444;"
@@ -2189,7 +2191,7 @@ void TxApplet::setTransmitHolderText(const QString& text)
     for (TxKeyingSection* s : allKeyingSections()) {
         if (!s->holderLabel()) { continue; }
         s->holderLabel()->setText(text);
-        s->holderLabel()->setVisible(!text.isEmpty());
+        s->holderLabel()->setVisible(!text.isEmpty() && !s->sliceIndicatorsHidden());
     }
 }
 

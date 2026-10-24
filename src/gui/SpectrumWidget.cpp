@@ -53,6 +53,14 @@
 //                 OE5SOS; PR 100, c3ce95bf, src/gui/SpectrumWidget.cpp
 //                 [@383f058]) by J.J. Boyd (KG4VCF), with AI-assisted
 //                 transformation via Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
+//                 (Claude Opus 5.5): NB Blank judges a row by the median
+//                 of its bins against the median of accepted rows, blanks
+//                 at most two rows in a row and lets only accepted rows
+//                 into the baseline (WaterfallImpulseBlanker), so a loud
+//                 SSB station no longer freezes the waterfall; the rows it
+//                 replaces are counted (waterfallRowsBlanked). The 1.05
+//                 cap on a burst row's share of the baseline is gone.
 //   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a live
 //                 trace of a remote pan's row clock (starves, re-anchors,
 //                 two-row puts, paint gaps and a 10 s summary), gated on
@@ -1119,7 +1127,8 @@ constexpr bool   kPanDefaultDbmScaleVisible      = true;
 // From AetherSDR src/gui/SpectrumWidget.h:1772 [@1e0718ad] (off).
 constexpr bool   kPanDefaultWfBlankingEnabled    = false;
 // NereusSDR design (follow-up wave F1): the NB Blank threshold is how many
-// dB a row's mean power must be above the baseline to be replaced. 1 to
+// dB a row's level must be above the baseline to be replaced (the level is
+// the row's median in dB since 2026-10-22, WaterfallImpulseBlanker). 1 to
 // 20 dB in 1 dB steps, 6 dB unless set. AetherSDR's control (5 to 95,
 // default 15, src/gui/SpectrumOverlayMenu.cpp:1600 [@1e0718ad]) is a
 // factor of raw tile intensity and is not carried over; see
@@ -1127,12 +1136,11 @@ constexpr bool   kPanDefaultWfBlankingEnabled    = false;
 constexpr int    kPanDefaultWfBlankingThresholdDb = 6;
 constexpr int    kWfBlankingThresholdDbMin        = 1;
 constexpr int    kWfBlankingThresholdDbMax        = 20;
-// From AetherSDR src/gui/SpectrumWidget.cpp:8449 [@1e0718ad]: rows of
-// history needed before a row can be called a burst.
-constexpr int    kWfBlankerMinRows               = 8;
-// From AetherSDR src/gui/SpectrumWidget.cpp:8460 [@1e0718ad]: what a burst
-// row may add to the baseline, as a factor of the baseline.
-constexpr float  kWfBlankerBurstRingCap          = 1.05f;
+// The rows of history needed before a row can be called a burst (AetherSDR
+// src/gui/SpectrumWidget.cpp:8449 [@1e0718ad]) are
+// WaterfallImpulseBlanker::kMinRows. AetherSDR's cap on what a burst row
+// adds to the baseline (1.05x, :8460) is not kept: only accepted rows enter
+// the baseline now, and a lasting rise is let through after two rows.
 // From AetherSDR src/gui/SpectrumWidget.h:1426 [@1e0718ad] (0 = Auto).
 constexpr int    kPanDefaultFreqGridSpacingHz    = 0;
 // From AetherSDR src/gui/SpectrumWidget.cpp:3038 [@1e0718ad] (8 to 14).
@@ -6028,24 +6036,31 @@ void SpectrumWidget::setWaterfallBlankingThresholdDb(int db)
 // (setMoxOverlay); and on a settings load.
 void SpectrumWidget::resetWaterfallBlanker()
 {
-    m_wfBlankerRingCount = 0;
-    m_wfBlankerRingIdx = 0;
+    // The baseline and the run of blanked rows go together.
+    m_wfBlanker.reset();
     m_wfLastGoodRowDbm.clear();
 }
 
-// NereusSDR design, threshold in dB (follow-up wave F1). The idea and the
-// workflow are from AetherSDR: a ring of row levels as the rolling
-// baseline, rows of history before anything is called a burst, the burst
-// replaced by the last good row, the ring frozen while transmitting.
+// NereusSDR design. The idea and the workflow are from AetherSDR: a ring of
+// row levels as the rolling baseline, rows of history before anything is
+// called a burst, the burst replaced by the last good row, the ring frozen
+// while transmitting.
 // From AetherSDR src/gui/SpectrumWidget.cpp:8426-8468 [@1e0718ad]
 //
-// The test for a burst is NereusSDR's. A row here is dBm per pixel; each
-// value is converted to linear power (mW) and the row's level is the mean
-// of that power, expressed in dB (10 * log10). The baseline is the same
-// over the ring: the mean of the ring's row powers, in dB. A row is
-// replaced when its level is more than the threshold, in dB, above the
-// baseline. A mean of the dBm values themselves would barely move for a
-// burst that covers part of the row, so the mean stays on linear power.
+// The test for a burst is NereusSDR's, in WaterfallImpulseBlanker: a row's
+// level is the median of its bins in dB (a row here is dBm per pixel), the
+// baseline the median of the last 32 accepted rows' levels, and the row is
+// a burst when its level is more than the threshold, in dB, above the
+// baseline. At most two rows in a row are blanked; a third burst row and
+// those after it are a real change of level and are drawn and enter the
+// baseline. The header says what differs from AetherSDR (both its #277
+// blanker and its later #6117 decision) and why.
+//
+// History (2026-10-10 to 2026-10-22): the level was the row's mean LINEAR
+// power, and a burst row entered the ring capped at 1.05x the baseline. A
+// station 40 dB up on 5 % of the bins lifts that mean by about 27 dB, and
+// the capped ring crept up about 0.007 dB a row, so with the threshold at
+// 3 dB a talker held the waterfall frozen for about 20 s.
 //
 // Why AetherSDR's factor was not carried over: its blanker compares the
 // mean of raw waterfall tile intensity (binsIntensity, int16 / 128, an
@@ -6068,53 +6083,35 @@ void SpectrumWidget::blankWaterfallRow(QVector<float>& rowDbm)
     // TX-era row) for ~10–18 s while baseline slowly re-converges —
     // visible as a frozen, striped waterfall.  Freezing the ring across TX
     // means post-TX rows are compared against the pre-TX baseline instead.
+    // NereusSDR: the lines above are AetherSDR's (SpectrumWidget.cpp:8426-8433
+    // [@1e0718ad]). Here, as in AetherSDR's own setTransmitting (:7750-7751),
+    // the ring is frozen while keyed and then cleared at the end of the
+    // transmission (setMoxOverlay, resetWaterfallBlanker), so receive does
+    // not use the pre-TX baseline: it re-learns one, and nothing is blanked
+    // for the first 8 receive rows.
     if (m_wfBlankerEnabled && !(m_moxOverlay || m_txActiveForTest)) {
-        double rowSum = 0.0;
         const int binCount = rowDbm.size();
-        for (int i = 0; i < binCount; ++i) {
-            rowSum += std::pow(10.0, static_cast<double>(rowDbm[i]) / 10.0);
-        }
-        const float rowMean = (binCount > 0)
-            ? static_cast<float>(rowSum / binCount) : 0.0f;
-
-        // Compute rolling baseline
-        float baseline = 0.0f;
-        for (int i = 0; i < m_wfBlankerRingCount; ++i) {
-            baseline += m_wfBlankerRing[i];
-        }
-        if (m_wfBlankerRingCount > 0) {
-            baseline /= m_wfBlankerRingCount;
-        }
-
-        // Detect impulse (need ≥8 rows of history)
-        // NereusSDR: the row's level and the baseline in dB, and the
-        // threshold in dB between them (AetherSDR: rowMean > baseline *
-        // m_wfBlankerThreshold, :8449).
-        bool burst = false;
-        if (m_wfBlankerRingCount >= kWfBlankerMinRows && baseline > 0.0f
-                && rowMean > 0.0f) {
-            const float rowDb      = 10.0f * std::log10(rowMean);
-            const float baselineDb = 10.0f * std::log10(baseline);
-            burst = (rowDb - baselineDb) > static_cast<float>(m_wfBlankerThresholdDb);
-        }
-        if (burst) {
+        const WaterfallImpulseBlanker::Decision decision = m_wfBlanker.judge(
+            rowDbm.constData(), static_cast<std::size_t>(binCount),
+            static_cast<float>(m_wfBlankerThresholdDb));
+        switch (decision.verdict) {
+        case WaterfallImpulseBlanker::Verdict::Blanked:
             // Impulse detected — replace with last good row (interpolate)
             if (m_wfLastGoodRowDbm.size() == binCount) {
                 rowDbm = m_wfLastGoodRowDbm;
             } else {
                 // No previous good row yet — fill with noise floor color
-                const float floorDbm = 10.0f * std::log10(baseline);
-                std::fill(rowDbm.begin(), rowDbm.end(), floorDbm);
+                std::fill(rowDbm.begin(), rowDbm.end(), decision.baselineDb);
             }
-            m_wfBlankerRing[m_wfBlankerRingIdx] =
-                std::min(rowMean, baseline * kWfBlankerBurstRingCap);
-        } else {
+            ++m_wfRowsBlanked;
+            break;
+        case WaterfallImpulseBlanker::Verdict::Accepted:
+        case WaterfallImpulseBlanker::Verdict::AcceptedOverHold:
             m_wfLastGoodRowDbm = rowDbm;
-            m_wfBlankerRing[m_wfBlankerRingIdx] = rowMean;
-        }
-        m_wfBlankerRingIdx = (m_wfBlankerRingIdx + 1) % kWfBlankerN;
-        if (m_wfBlankerRingCount < kWfBlankerN) {
-            ++m_wfBlankerRingCount;
+            break;
+        case WaterfallImpulseBlanker::Verdict::NoFiniteBins:
+            // Drawn as it is; not a row to put in place of a later burst.
+            break;
         }
     }
 }

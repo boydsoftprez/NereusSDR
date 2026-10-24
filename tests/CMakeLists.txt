@@ -571,6 +571,10 @@ if(TARGET wdsp_static)
     # 2026-10-22: dsplock.c counts noise-reduction calls over 50 ms per
     # channel for the Core log (RadioModel::reportSlowNrCalls).
     nereus_add_test(tst_wdsp_slow_nr_calls EXTRA_LABELS core)
+    # 2026-10-23: a chunk shorter than a channel's WDSP input block (a slice
+    # on a slower stream before its rate change lands) never reaches
+    # fexchange2, and a NaN burst inside WDSP flushes out of the audio.
+    nereus_add_test(tst_rx_rate_change_non_finite EXTRA_LABELS core)
     if(NOT WIN32)
         # wdsp_static arrives through the core library, as for tst_wdsp_nnr;
         # linking it again here made the linker warn about a duplicate library.
@@ -3842,6 +3846,8 @@ nereus_add_test(tst_tx_applet_lev_eq_cfc)
 # copy shows and sets the same model state as the applet's own row and follows
 # the same transmit-permission gates.  The applet's own panel is unchanged.
 nereus_add_test(tst_tx_section_content)
+nereus_add_test(tst_rx_section_content)
+target_compile_definitions(tst_rx_section_content PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3M-VAX-toggle: TxApplet mic-source badge 3-way ────────────────────
 # The badge above the gauges previously read "PC mic" or "Radio mic".
@@ -8154,6 +8160,11 @@ nereus_add_test(tst_spectrum_widget_additions)
 #    count redraws the normalized grid. Ported from Longpath PR 100
 #    (tests/tst_spectrum_trace_on_grid.cpp [@383f058]), 2026-10-22 --
 nereus_add_test(tst_spectrum_trace_on_grid)
+
+# NB Blank's decision (WaterfallImpulseBlanker, NereusSDR-original, 2026-10-22):
+# a row's median against the median of accepted rows, at most two rows blanked
+# in a row. Fence pulses blanked, loud stations never, a lasting rise followed.
+nereus_add_test(tst_waterfall_impulse_blanker)
 
 # Display pill plan Task 3: the waterfall level model under Clarity (Black
 # Level and Color Gain against the noise floor, up = blacker), what the

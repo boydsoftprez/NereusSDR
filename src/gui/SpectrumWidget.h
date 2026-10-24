@@ -21,6 +21,11 @@
 //                 OE5SOS; PR 100, c3ce95bf [@383f058]) by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Claude
 //                 Code.
+//   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
+//                 (Claude Opus 5.5): NB Blank's decision is
+//                 WaterfallImpulseBlanker (a row's median against the
+//                 median of accepted rows, at most two rows blanked in a
+//                 row); waterfallRowsBlanked() counts the rows it replaced.
 //   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a live
 //                 trace of a remote pan's row clock, gated on
 //                 NEREUS_TRACE_REMOTE_ROWS=1 (diagnostics only).
@@ -466,6 +471,7 @@ mw0lge@grange-lane.co.uk
 #include "gui/RemoteSpectrumCapture.h"
 #include "gui/spectrum/RemoteWaterfallRowClock.h"
 #include "gui/NereusGuiExport.h"
+#include "gui/WaterfallImpulseBlanker.h"
 #include "gui/WheelStepAccumulator.h"
 
 #include <QElapsedTimer>
@@ -1320,20 +1326,23 @@ public:
     void setWaterfallStopOnTx(bool on);
     bool waterfallStopOnTx() const { return m_wfStopOnTx; }
 
-    // NB Blank: a waterfall row whose mean power jumps over a rolling
-    // baseline (a noise burst that would draw a stripe) is replaced by the
-    // last good row. Per pan, keys WaterfallBlankingEnabled (default off)
-    // and WaterfallBlankingThresholdDb (default 6).
+    // NB Blank: a waterfall row whose level (the median of its bins, in
+    // dB) jumps over a rolling baseline (a wideband burst that would draw a
+    // stripe) is replaced by the last accepted row, at most two rows in a
+    // row (WaterfallImpulseBlanker). Per pan, keys WaterfallBlankingEnabled
+    // (default off) and WaterfallBlankingThresholdDb (default 6).
     // From AetherSDR src/gui/SpectrumWidget.h:412-413 [@1e0718ad]
     // NereusSDR design (follow-up wave F1): the threshold is in dB, 1 to
-    // 20: how far above the baseline a row's mean power must be to be
-    // replaced. AetherSDR's is a factor of raw tile intensity, which has
+    // 20: how far above the baseline a row's level (the median of its
+    // pixels in dB) must be to be replaced. AetherSDR's is a factor of raw tile intensity, which has
     // no dB meaning; it is not carried over and its key
     // (WaterfallBlankingThreshold) is no longer read.
     bool waterfallBlankingEnabled() const { return m_wfBlankerEnabled; }
     void setWaterfallBlankingEnabled(bool on);
     int  waterfallBlankingThresholdDb() const { return m_wfBlankerThresholdDb; }
     void setWaterfallBlankingThresholdDb(int db);
+    // Rows NB Blank replaced, this widget's life (diagnostics only).
+    quint64 waterfallRowsBlanked() const { return m_wfRowsBlanked; }
 
     // The grid's and the frequency scale's spacing: 0 is Auto, otherwise
     // one of kFreqGridSpacingsHz. Any other value is refused. Per pan, key
@@ -4102,17 +4111,17 @@ private:
     bool  m_wfStopOnTx{false};
 
     // From AetherSDR src/gui/SpectrumWidget.h:1771-1779 [@1e0718ad]
-    // NereusSDR, based on AetherSDR: the ring holds each row's mean LINEAR
-    // power (rows here are dBm, AetherSDR's are intensity), the last good
-    // row is kept in dBm, and the unused fill / interpolate mode is left
-    // out.
+    // NereusSDR, based on AetherSDR: the ring (32 rows) and the decision
+    // are WaterfallImpulseBlanker's, which holds each accepted row's median
+    // in dB (rows here are dBm, AetherSDR's are intensity); the last
+    // accepted row is kept in dBm, and the unused fill / interpolate mode
+    // is left out.
     // NB Waterfall Blanker (#277)
     bool  m_wfBlankerEnabled{false};
-    static constexpr int kWfBlankerN = 32;
-    std::array<float, kWfBlankerN> m_wfBlankerRing{};
-    int   m_wfBlankerRingIdx{0};
-    int   m_wfBlankerRingCount{0};
+    WaterfallImpulseBlanker m_wfBlanker;
     QVector<float> m_wfLastGoodRowDbm;
+    // Rows NB Blank replaced (diagnostics; never reset).
+    quint64 m_wfRowsBlanked{0};
     // NereusSDR design (follow-up wave F1): the threshold in dB, 1 to 20,
     // in place of AetherSDR's m_wfBlankerThreshold{1.15f} (an impulse
     // multiplier vs the rolling baseline of tile intensity).

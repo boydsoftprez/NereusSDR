@@ -20,6 +20,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-23 - reportDspDiagnostics logs the I/Q chunks a slice's channel
+//                silenced because their size was not its WDSP input block
+//                (inputSizeMismatchLogLine) with the chunk size and input
+//                block the guard saw, at info up to 100 ms of audio per
+//                interval and as a warning above. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-22 - The connection's sample rate and active RX count are
 //                cleared only on Disconnected, so a Probing or Connecting
 //                state queued after connectToRadio() no longer wipes them.
@@ -15181,6 +15187,10 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
     // missing 768 off the end of the accumulator (iobuffs.c:532-536
     // [WDSP v1.29]). No-op whenever everything already agrees, which is every
     // retune on a single-rate radio.
+    // 2026-10-23: with a receive lane this ordering does not prevent it. The
+    // binding published above reaches the worker at once, while the re-rate
+    // below waits on the lane; RxChannel::processIq's input-size guard is
+    // what keeps the mismatched chunks out of fexchange2.
     applyStreamDspGeometry();
     if (!current()) { return false; }
 
@@ -15628,6 +15638,28 @@ QString RadioModel::outputNonFiniteLogLine(int sliceIndex, qint64 samples)
         .arg(samples);
 }
 
+QString RadioModel::inputSizeMismatchLogLine(int sliceIndex, qint64 chunks, int chunkSize,
+                                            int wdspInputSize)
+{
+    return QStringLiteral("Slice %1: %2 I/Q chunk(s) silenced since the last report (%3 ms of "
+                          "audio): chunks of %4 samples, WDSP's input block %5")
+        .arg(sliceLogName(sliceIndex))
+        .arg(chunks)
+        .arg(inputSizeMismatchAudioMs(chunks), 0, 'f', 1)
+        .arg(chunkSize)
+        .arg(wdspInputSize);
+}
+
+double RadioModel::inputSizeMismatchAudioMs(qint64 chunks)
+{
+    return static_cast<double>(chunks) * kBufferBaseSize * 1000.0 / kBufferBaseRate;
+}
+
+bool RadioModel::inputSizeMismatchIsLasting(qint64 chunks)
+{
+    return inputSizeMismatchAudioMs(chunks) > kInputSizeMismatchInfoMaxMs;
+}
+
 void RadioModel::reportDspDiagnostics(qint64 nowMs)
 {
     if (!m_wdspEngine) {
@@ -15656,6 +15688,27 @@ void RadioModel::reportDspDiagnostics(qint64 nowMs)
             qCWarning(lcDsp).noquote() << outputNonFiniteLogLine(sliceId, nonFinite.pending);
             nonFinite.pending = 0;
             nonFinite.lastLogMs = nowMs;
+        }
+        // 2026-10-23: chunks RxChannel::processIq kept out of WDSP.
+        InputSizeMismatchLog& mismatch = m_inputSizeMismatchLog[sliceId];
+        RxChannel::InputSizeMismatch taken;
+        if (channel->takeInputSizeMismatch(taken)) {
+            mismatch.pending += taken.chunks;
+            mismatch.chunkSize = taken.chunkSize;
+            mismatch.wdspInputSize = taken.wdspInputSize;
+        }
+        if (mismatch.pending > 0
+            && (mismatch.lastLogMs < 0
+                || nowMs - mismatch.lastLogMs >= kOutputNonFiniteLogIntervalMs)) {
+            const QString line = inputSizeMismatchLogLine(
+                sliceId, mismatch.pending, mismatch.chunkSize, mismatch.wdspInputSize);
+            if (inputSizeMismatchIsLasting(mismatch.pending)) {
+                qCWarning(lcDsp).noquote() << line;
+            } else {
+                qCInfo(lcDsp).noquote() << line;
+            }
+            mismatch.pending = 0;
+            mismatch.lastLogMs = nowMs;
         }
     }
 }

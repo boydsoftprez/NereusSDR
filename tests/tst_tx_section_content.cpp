@@ -804,6 +804,48 @@ private slots:
             QCOMPARE(row->smoothedForwardPowerW(), 0.0);
         }
     }
+
+    void keyingCanHideTheSliceIndicators()
+    {
+        RadioModel rm;
+        TxApplet applet(&rm);
+        ContainerContentRegistry registry;
+        registerTxSectionContent(registry, &applet);
+
+        const QVector<ContentProperty> properties = registry.declaredProperties(QStringLiteral("tx.keying"));
+        QCOMPARE(properties.size(), 1);
+        QCOMPARE(properties.at(0).key, QStringLiteral("hideSliceIndicators"));
+        QCOMPARE(properties.at(0).label, QStringLiteral("Hide slice indicators"));
+
+        QWidget host;
+        auto* shown = qobject_cast<TxKeyingSection*>(
+            registry.createWidget(registry.makeEntry(QStringLiteral("tx.keying")), &host));
+        QVERIFY(shown);
+        QVERIFY(shown->tuneButton());
+        QVERIFY(shown->moxButton());
+        QVERIFY(!shown->tuneButton()->isHidden());
+        QVERIFY(!shown->moxButton()->isHidden());
+        QVERIFY(shown->sliceIndicatorRow());
+        QVERIFY(!shown->sliceIndicatorRow()->isHidden());
+
+        ContentEntry hidden = registry.makeEntry(QStringLiteral("tx.keying"));
+        hidden.config.insert(QStringLiteral("hideSliceIndicators"), true);
+        auto* folded = qobject_cast<TxKeyingSection*>(registry.createWidget(hidden, &host));
+        QVERIFY(folded);
+        QVERIFY(folded->sliceIndicatorsHidden());
+        QVERIFY(folded->sliceIndicatorRow()->isHidden());
+        QVERIFY(!folded->tuneButton()->isHidden());
+        QVERIFY(!folded->moxButton()->isHidden());
+        QVERIFY(folded->holderLabel()->isHidden());
+        QVERIFY(folded->takeTransmitButton()->isHidden());
+
+        applet.setTransmitHolderText(QStringLiteral("Another device holds transmit"));
+        applet.setTakeTransmitOffered(true, false);
+        QVERIFY(folded->holderLabel()->isHidden());
+        QVERIFY(folded->takeTransmitButton()->isHidden());
+        QVERIFY(!shown->holderLabel()->isHidden());
+        QVERIFY(!shown->takeTransmitButton()->isHidden());
+    }
 };
 
 QTEST_MAIN(TestTxSectionContent)

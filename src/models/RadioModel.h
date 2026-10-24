@@ -699,6 +699,11 @@
 //                noise-reduction calls over 50 ms with the stages that ran,
 //                and non-finite samples in WDSP's output. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-23 - inputSizeMismatchLogLine: the Core log counts I/Q chunks a
+//                slice's channel silenced because their size was not its
+//                WDSP input block, with the sizes the guard saw; info for
+//                up to 100 ms of audio per interval, a warning above. J.J.
+//                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -2321,6 +2326,27 @@ public:
 
     /// The non-finite output line reportDspDiagnostics logs (lcDsp).
     static QString outputNonFiniteLogLine(int sliceIndex, qint64 samples);
+
+    /// 2026-10-23: the line reportDspDiagnostics logs (lcDsp), at most every
+    /// kOutputNonFiniteLogIntervalMs per slice, for I/Q chunks processIq
+    /// silenced because their size was not the channel's WDSP input block
+    /// (RxChannel::takeInputSizeMismatch). chunkSize and wdspInputSize are
+    /// the pair the guard saw, not the channel's block at log time.
+    static QString inputSizeMismatchLogLine(int sliceIndex, qint64 chunks, int chunkSize,
+                                            int wdspInputSize);
+
+    /// 2026-10-23: the audio silenced chunks stood for, in ms. Every stream
+    /// is drained in chunks of its own block, bufferSizeForRate(rate), which
+    /// is kBufferBaseSize samples at kBufferBaseRate scaled to the rate, so
+    /// each chunk is kBufferBaseSize / kBufferBaseRate s (1.33 ms) whatever
+    /// the rate (SampleRateCatalog.h).
+    static double inputSizeMismatchAudioMs(qint64 chunks);
+
+    /// 2026-10-23: up to this much silenced audio per log interval is the
+    /// expected short window of a slice moving to a stream at another rate
+    /// and logs at info; more means a lasting mismatch and logs a warning.
+    static constexpr double kInputSizeMismatchInfoMaxMs = 100.0;
+    static bool inputSizeMismatchIsLasting(qint64 chunks);
 
     SliceModel* activeSlice() const { return m_activeSlice; }
 
@@ -7809,6 +7835,15 @@ private:
         qint64 lastLogMs{-1};
     };
     QHash<int, OutputNonFiniteLog> m_outputNonFiniteLog;
+    // 2026-10-23: the same, for chunks silenced by RxChannel's input-size
+    // guard (pending counts chunks), with the last mismatched pair taken.
+    struct InputSizeMismatchLog {
+        qint64 pending{0};
+        qint64 lastLogMs{-1};
+        int chunkSize{0};
+        int wdspInputSize{0};
+    };
+    QHash<int, InputSizeMismatchLog> m_inputSizeMismatchLog;
     QThread*         m_dspThread{nullptr};
     std::unique_ptr<RadeWaveformModel> m_radeWaveforms;
     int m_waveformTxSlice = -1;

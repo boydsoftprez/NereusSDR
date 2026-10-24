@@ -14,6 +14,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-23 - A container copy can hide the slice-letter row.
+//                 Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-20 - A copy of this row in a container is told the outer
 //                 margins the applet's column gives the row (outerMargins);
 //                 the applet's own row is told none.
@@ -128,6 +130,12 @@ public:
                                         bool checked, bool enabled,
                                         const QString& toolTip);
 
+    // Container setting. Hides the slice-letter row, and keeps the holder
+    // line and Take transmit from appearing, so the copy shows TUNE and MOX.
+    void setSliceIndicatorsHidden(bool hidden);
+    bool sliceIndicatorsHidden() const { return m_hideSliceIndicators; }
+    QWidget* sliceIndicatorRow() const { return m_sliceIndicatorRow; }
+
 private:
     void buildUI(int rowSpacing);
     // The margins this section gives itself.  The applet's own rows
@@ -141,8 +149,10 @@ private:
     QLabel*      m_holderLabel = nullptr;
     QPushButton* m_takeTransmitBtn = nullptr;
 
+    QWidget* m_sliceIndicatorRow = nullptr;
     QHBoxLayout* m_txSliceRow = nullptr;
     QList<QPushButton*> m_txSliceButtons;
+    bool m_hideSliceIndicators = false;
 };
 
 } // namespace NereusSDR
