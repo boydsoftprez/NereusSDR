@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24 - Roundtable plan Task 10 (R-RT-12): roundtableClient(), the
+//                Core's Roundtable connection on a model that runs its own
+//                radio, fed its slices, meters, keying, key and at radio
+//                here and started by SpotSourceHost. NereusSDR-original.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22 - rejoinCandidateStreams: the receivers a lone slice may
 //                share with when it tunes into their range (JJ's ruling
 //                2026-10-22), compared on the slice's new-band label.
@@ -842,6 +847,8 @@ namespace NereusSDR { class VoltsAmpsLog; }
 namespace NereusSDR {
 
 class AppSettings;
+class RoundtableClient;
+class StationIdentity;
 class StationServer;
 class StationSliceOwnershipPolicy;
 class SessionTransport;
@@ -3641,6 +3648,10 @@ public:
     PskReporterClient*    pskReporter()         const { return m_pskReporter.get(); }
     // Parity Task 19 (R-IOS-25): the spot sources' starts and stops.
     SpotSourceHost*       spotSourceHost()      const { return m_spotSourceHost.get(); }
+    // Roundtable plan Task 10 (R-RT-12): the Core's Roundtable connection
+    // on a model that runs its own radio (a Core, an Everything desktop);
+    // null in a remote window.
+    RoundtableClient*     roundtableClient()    const { return m_roundtable.get(); }
 
     /// Parity Task 19 (R-IOS-25): a remote window applies the Core's
     /// `spots` stream (the Core's cluster, RBN, POTA and PSK Reporter
@@ -8861,6 +8872,21 @@ private:
     // above (all but FreeDV Reporter), locally and on the Core; the
     // mirrored `spotSources` object.
     std::unique_ptr<SpotSourceHost>       m_spotSourceHost;
+    // Roundtable plan Task 10 (R-RT-12): the Roundtable connection (Role::
+    // Local only), started and followed by m_spotSourceHost; the key it
+    // signs in with when no station server holds one (an Everything
+    // desktop with Remote Access off), loaded from the settings profile
+    // directory only when a station connection first needs it; and whether
+    // this model is the Core's (restoreStationSpotSources), where someone
+    // is at the radio while a device session is live.
+    std::unique_ptr<RoundtableClient>     m_roundtable;
+    std::unique_ptr<StationIdentity>      m_roundtableIdentity;
+    bool                                  m_roundtableOnCore = false;
+    void wireRoundtable();
+    void pushRoundtableSlices();
+    void pushRoundtableMeter();
+    void updateRoundtableAtRadio();
+    const StationIdentity* roundtableIdentity();
     // Parity Task 19: in a remote window, the Core's spot ids (the `spots`
     // stream's record ids) and the SpotModel index each is shown under,
     // beside this window's own WSJT-X and SpotCollector spots.

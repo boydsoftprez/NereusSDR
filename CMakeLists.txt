@@ -1242,6 +1242,11 @@ set(CORE_SOURCES
     src/core/FreeDVReporterClient.cpp
     src/core/FreeDVRadeReporterBridge.cpp
     src/core/PskReporterClient.cpp
+    # Roundtable plan Task 10 (R-RT-1, R-RT-6, R-RT-12 to R-RT-14): the
+    # Core's Roundtable wire, signal floor and connection.
+    src/core/roundtable/RoundtableWire.cpp
+    src/core/roundtable/RoundtableSignalFloor.cpp
+    src/core/roundtable/RoundtableClient.cpp
     # Parity Task 19 (R-IOS-25): starts and stops the spot sources, locally
     # and on the Core, and is the mirrored `spotSources` object.
     src/core/SpotSourceHost.cpp

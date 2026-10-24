@@ -170,6 +170,15 @@
 //                                    Core's grid square and its one cty.dat
 //                                    table. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-24  J.J. Boyd / KG4VCF  Roundtable plan Task 10 (R-RT-12):
+//                                    Roundtable as the last station source,
+//                                    started from Roundtable/AutoStart
+//                                    (default on) with the Roundtable/*
+//                                    callsign, grid and away choice; no
+//                                    callsign, or one the server would
+//                                    refuse, means no start. NereusSDR-
+//                                    original. AI-assisted via Anthropic
+//                                    Claude Code.
 // =================================================================
 
 #include "core/SpotSourceHost.h"
@@ -183,6 +192,8 @@
 #include "core/LogCategories.h"
 #include "core/PotaClient.h"
 #include "core/PskReporterClient.h"
+#include "core/roundtable/RoundtableClient.h"
+#include "core/roundtable/RoundtableWire.h"
 #include "core/SpotCollectorClient.h"
 #include "core/WsjtxClient.h"
 #include "models/Band.h"
@@ -200,6 +211,7 @@ const QString SpotSourceHost::kRbn = QStringLiteral("rbn");
 const QString SpotSourceHost::kPota = QStringLiteral("pota");
 const QString SpotSourceHost::kFreedvReporter = QStringLiteral("freedvReporter");
 const QString SpotSourceHost::kPskReporter = QStringLiteral("pskReporter");
+const QString SpotSourceHost::kRoundtable = QStringLiteral("roundtable");
 const QString SpotSourceHost::kWsjtx = QStringLiteral("wsjtx");
 const QString SpotSourceHost::kSpotCollector = QStringLiteral("spotCollector");
 
@@ -242,7 +254,7 @@ QString resolveGrid(const QString& perSourceKey)
 
 QStringList SpotSourceHost::stationSources()
 {
-    return {kDxCluster, kRbn, kPota, kFreedvReporter, kPskReporter};
+    return {kDxCluster, kRbn, kPota, kFreedvReporter, kPskReporter, kRoundtable};
 }
 
 QStringList SpotSourceHost::recordStreamSources()
@@ -539,6 +551,18 @@ void SpotSourceHost::restoreAutoStart(Placement placement)
         }
     }
 
+    // Roundtable (Roundtable plan Task 10): on unless Roundtable/AutoStart
+    // is "False". Until someone answers the first-run question it only
+    // reads (RoundtableClient).
+    if (station && m_roundtable
+        && s.value(QStringLiteral("Roundtable/AutoStart"), QStringLiteral("True")).toString()
+            == QStringLiteral("True")) {
+        QString reason;
+        if (!startRoundtableWith(&reason)) {
+            qCInfo(lcDsp) << "Roundtable auto-start skipped:" << reason;
+        }
+    }
+
     // PSK Reporter: send-only.  Identity refreshed from User/* fall-
     // back chain.  2026-05-12 bench fix: if PskReporterAutoStart is
     // True, arm the 5-minute auto-send timer now: source-first port
@@ -616,6 +640,9 @@ bool SpotSourceHost::connectSource(const QString& source, QString* reason)
     if (source == kFreedvReporter) {
         return startFreedvWith(reason);
     }
+    if (source == kRoundtable) {
+        return startRoundtableWith(reason);
+    }
     // PSK Reporter.
     if (m_pskReporter == nullptr) {
         return refuse(QStringLiteral("The Core does not run that spot source."));
@@ -652,6 +679,9 @@ bool SpotSourceHost::disconnectSource(const QString& source, QString* reason)
     } else if (source == kFreedvReporter && m_freedv) {
         m_freedv->stopConnection();
         setSource(kFreedvReporter, kOff);
+    } else if (source == kRoundtable && m_roundtable) {
+        m_roundtable->stop();
+        setSource(kRoundtable, kOff);
     } else if (source == kPskReporter && m_pskReporter) {
         // From freedv-gui main.cpp:2694 [@77e793a]:
         //   m_pskReporterTimer.Stop();
@@ -789,6 +819,107 @@ bool SpotSourceHost::setFreedvHidden(bool on, QString* reason)
     emit sourcesChanged();
     emit sourceChanged(kFreedvReporter);
     emit freedvHiddenChanged(on);
+    return true;
+}
+
+// ── Roundtable (Roundtable plan Task 10) ─────────────────────────────────
+
+void SpotSourceHost::setRoundtableClient(RoundtableClient* client)
+{
+    if (m_roundtable) {
+        disconnect(m_roundtable, nullptr, this, nullptr);
+    }
+    m_roundtable = client;
+    if (client == nullptr) {
+        return;
+    }
+    // Follow the client, whoever started it.
+    connect(client, &RoundtableClient::linkStateChanged, this, [this]() { followRoundtable(); });
+    connect(client, &RoundtableClient::statusTextChanged, this, [this]() { followRoundtable(); });
+}
+
+void SpotSourceHost::followRoundtable()
+{
+    if (!m_roundtable) {
+        return;
+    }
+    QString state = kOff;
+    switch (m_roundtable->linkState()) {
+    case RoundtableClient::LinkState::Off:
+        // A refused start keeps its reason until the next start.
+        if (this->state(kRoundtable) == kOff) {
+            return;
+        }
+        state = kOff;
+        break;
+    case RoundtableClient::LinkState::Connecting:
+    case RoundtableClient::LinkState::Reconnecting:
+        state = kConnecting;
+        break;
+    case RoundtableClient::LinkState::Live:
+    case RoundtableClient::LinkState::Hidden:
+        state = kConnected;
+        break;
+    case RoundtableClient::LinkState::Offline:
+        state = kError;
+        break;
+    }
+    setSource(kRoundtable, state, m_roundtable->statusText());
+}
+
+QString SpotSourceHost::roundtableCallsign()
+{
+    QString call = resolveCall(QStringLiteral("Roundtable/Callsign"));
+    if (call.isEmpty()) {
+        call = AppSettings::instance().value(QStringLiteral("StationCallsign")).toString();
+    }
+    return call.trimmed();
+}
+
+QString SpotSourceHost::roundtableGridSquare()
+{
+    return resolveGrid(QStringLiteral("Roundtable/GridSquare")).trimmed();
+}
+
+bool SpotSourceHost::startRoundtableWith(QString* reason)
+{
+    const auto refuse = [this, reason](const QString& why) {
+        if (reason != nullptr) {
+            *reason = why;
+        }
+        if (m_roundtable) {
+            setSource(kRoundtable, kOff, why);
+        }
+        return false;
+    };
+    if (m_roundtable == nullptr) {
+        if (reason != nullptr) {
+            *reason = QStringLiteral("The Core does not run that spot source.");
+        }
+        return false;
+    }
+    // No callsign, or one the server would refuse (wire spec 4.5), means
+    // no start, and the source says why.
+    const QString call = roundtableCallsign();
+    if (call.isEmpty()) {
+        return refuse(QStringLiteral("Enter your callsign in Spot Hub first."));
+    }
+    if (!RoundtableWire::isCallsign(call)) {
+        return refuse(QStringLiteral("Roundtable can't use the callsign %1. It needs 3 to 16 "
+                                     "letters, digits and /, with at least one letter and one "
+                                     "digit, and no / at either end or two together.")
+                          .arg(call));
+    }
+    auto& s = AppSettings::instance();
+    m_roundtable->setStationInfo(call, roundtableGridSquare());
+    m_roundtable->setStopWhenAway(
+        s.value(QStringLiteral("Roundtable/AwayChoice"), QStringLiteral("Report")).toString()
+        == QStringLiteral("Stop"));
+    const RoundtableClient::LinkState link = m_roundtable->linkState();
+    if (link == RoundtableClient::LinkState::Off || link == RoundtableClient::LinkState::Offline) {
+        m_roundtable->start();
+    }
+    followRoundtable();
     return true;
 }
 

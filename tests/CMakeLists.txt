@@ -9735,6 +9735,20 @@ nereus_add_test(tst_record_stream EXTRA_LABELS session)
 # refusals, a remote window's forwarding, a spot record's fields and the
 # listeners' settings scope. Loopback ports only.
 nereus_add_test(tst_spot_source_host EXTRA_LABELS session)
+# Roundtable plan Task 10 (R-RT-1): the Core's runner of the Roundtable
+# conformance suite (roundtable/conformance/v1/): control fixtures and the
+# crypto vectors.
+nereus_add_test(tst_roundtable_wire)
+target_compile_definitions(tst_roundtable_wire PRIVATE
+    NEREUS_ROUNDTABLE_CONFORMANCE_DIR="${CMAKE_SOURCE_DIR}/roundtable/conformance/v1")
+# Roundtable plan Task 10 (R-RT-6): a slice's signal-present decision.
+nereus_add_test(tst_roundtable_signal_floor)
+# Roundtable plan Task 10 (R-RT-6, R-RT-12 to R-RT-14): the Core's
+# Roundtable connection against a fake server on the loopback, with fake
+# clocks. No network beyond 127.0.0.1.
+nereus_add_test(tst_roundtable_client)
+target_compile_definitions(tst_roundtable_client PRIVATE
+    NEREUS_ROUNDTABLE_CONFORMANCE_DIR="${CMAKE_SOURCE_DIR}/roundtable/conformance/v1")
 # Parity Task 19 (R-IOS-25, B7.1, B7.2): the Core's spots, consoles and
 # sources in a remote window over the loopback, and the Spot Hub's Core
 # settings in a real remote window. No RF, no audio device.

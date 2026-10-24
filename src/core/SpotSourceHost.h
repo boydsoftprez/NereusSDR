@@ -60,6 +60,11 @@
 //   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 4a: the spot
 //                                    record's bearingDeg. AI-assisted via
 //                                    Anthropic Claude Code.
+//   2026-10-24  J.J. Boyd / KG4VCF  Roundtable plan Task 10 (R-RT-12):
+//                                    Roundtable as a station source, its
+//                                    state and text last, started from the
+//                                    Roundtable/* settings. AI-assisted via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -81,6 +86,7 @@ class FreeDVReporterClient;
 class FreeDVStationModel;
 class PotaClient;
 class PskReporterClient;
+class RoundtableClient;
 class SpotCollectorClient;
 class SpotModel;
 class WsjtxClient;
@@ -107,6 +113,11 @@ class NEREUS_CORE_EXPORT SpotSourceHost : public QObject {
     Q_PROPERTY(QString freedvReporterState READ freedvReporterState NOTIFY sourcesChanged)
     Q_PROPERTY(QString freedvReporterText READ freedvReporterText NOTIFY sourcesChanged)
     Q_PROPERTY(bool freedvReporterHidden READ freedvReporterHidden NOTIFY sourcesChanged)
+    // Roundtable plan Task 10: Roundtable, the same shape. Last, so no
+    // older peer's property ordinals move; the link mirrors these only to a
+    // peer that knows Roundtable.
+    Q_PROPERTY(QString roundtableState READ roundtableState NOTIFY sourcesChanged)
+    Q_PROPERTY(QString roundtableText READ roundtableText NOTIFY sourcesChanged)
 
 public:
     enum class Placement {
@@ -120,6 +131,7 @@ public:
     static const QString kPota;
     static const QString kFreedvReporter;
     static const QString kPskReporter;
+    static const QString kRoundtable;
     static const QString kWsjtx;
     static const QString kSpotCollector;
 
@@ -128,7 +140,8 @@ public:
     static const QString kConnected;
     static const QString kError;
 
-    /// The sources the Core runs, in the order the Spot Hub shows them.
+    /// The sources the Core runs, in the order the Spot Hub shows them;
+    /// Roundtable last.
     static QStringList stationSources();
     /// The station sources a Core with recordStreamVersion 1 runs whatever
     /// its stationFreedvVersion (every one but FreeDV Reporter).
@@ -229,6 +242,16 @@ public:
     bool setFreedvHidden(bool on, QString* reason);
     bool freedvReporterHidden() const;
 
+    // ── Roundtable (Roundtable plan Task 10) ───────────────────────────────
+    /// Roundtable's client (RadioModel owns it and keeps its slices, meters,
+    /// key and at-radio up to date). Set once, after construction.
+    void setRoundtableClient(RoundtableClient* client);
+    /// The callsign Roundtable signs in with: Roundtable/Callsign, else
+    /// User/Callsign, else StationCallsign.
+    static QString roundtableCallsign();
+    /// The grid square: Roundtable/GridSquare, else User/GridSquare.
+    static QString roundtableGridSquare();
+
     QString state(const QString& source) const;
     QString text(const QString& source) const;
     bool isRunning(const QString& source) const;
@@ -243,6 +266,8 @@ public:
     QString freedvReporterText() const { return text(kFreedvReporter); }
     QString pskReporterState() const { return state(kPskReporter); }
     QString pskReporterText() const { return text(kPskReporter); }
+    QString roundtableState() const { return state(kRoundtable); }
+    QString roundtableText() const { return text(kRoundtable); }
 
     // ── A remote window ─────────────────────────────────────────────────
     /// The station's sources are the Core's from now on (a remote window).
@@ -319,6 +344,8 @@ private:
     bool forward(const QByteArray& verb, const QString& source, const QString& text = {});
     void startPskReporterWith(const QString& callsign, const QString& gridSquare);
     bool startFreedvWith(QString* reason);
+    bool startRoundtableWith(QString* reason);
+    void followRoundtable();
     bool forwardFreedv(const QByteArray& verb, const QVariantMap& args);
 
     QPointer<DxClusterClient> m_dxCluster;
@@ -328,6 +355,7 @@ private:
     QPointer<PotaClient> m_pota;
     QPointer<PskReporterClient> m_pskReporter;
     QPointer<FreeDVReporterClient> m_freedv;
+    QPointer<RoundtableClient> m_roundtable;
     QPointer<FreeDVStationModel> m_freedvList;
     QPointer<SpotModel> m_spots;
     QHash<QString, SourceState> m_local;
