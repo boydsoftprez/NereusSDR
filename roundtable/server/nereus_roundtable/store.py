@@ -19,12 +19,20 @@ a station's consecutive talking turns in one room id with gaps under 10
 minutes are one session. Unknown and doubled turns never make one,
 whatever their names.
 
+The review list (design 11.7) groups the open reports of one item (a
+message, a turn, or a station whatever room it was reported from) into one
+entry, named by its first report's id (`reports.item`) and carrying a
+version that every helper action and undo raises. A removed message's text
+is kept in its review_actions row only while its Undo lasts (10 minutes),
+then cleared.
+
 The schema is created whole on first open; schema_version names it so a
 later version can move an older file forward.
 """
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import contextmanager
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Tuple
@@ -140,9 +148,13 @@ CREATE TABLE IF NOT EXISTS reports (
     reporter_id TEXT NOT NULL,
     t INTEGER NOT NULL,
     closed INTEGER,
-    closed_by TEXT
+    closed_by TEXT,
+    item INTEGER,
+    version INTEGER NOT NULL DEFAULT 1,
+    closed_action INTEGER
 );
 CREATE INDEX IF NOT EXISTS reports_by_reporter ON reports (reporter_id, target);
+CREATE INDEX IF NOT EXISTS reports_by_item ON reports (item);
 CREATE TABLE IF NOT EXISTS review_actions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     helper_id TEXT NOT NULL,
@@ -150,8 +162,11 @@ CREATE TABLE IF NOT EXISTS review_actions (
     target TEXT NOT NULL,
     detail TEXT,
     t INTEGER NOT NULL,
-    undone INTEGER
+    undone INTEGER,
+    report INTEGER,
+    undo_text TEXT
 );
+CREATE INDEX IF NOT EXISTS review_actions_by_report ON review_actions (report, id);
 CREATE TABLE IF NOT EXISTS helpers (
     station_id TEXT PRIMARY KEY,
     added INTEGER NOT NULL
@@ -615,12 +630,215 @@ class Store:
         ).fetchone()
         if found is not None:
             return False
-        self.db.execute(
-            "INSERT INTO reports (target, message_id, turn_id, room_id, row_ref, reported_station_id, reason,"
-            " reporter_id, t, closed, closed_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)",
-            (kind, message_id, turn_id, room_id, ref, station, reason, by, now),
-        )
+        # Reports of one item while it is open are one entry on the review
+        # list (design 11.7): a message or a turn by its id, a station by
+        # its station id whatever room it was reported from.
+        if kind == "station":
+            item_match = "reported_station_id = ?"
+            item_args: Tuple[Any, ...] = (station,)
+        else:
+            item_match, item_args = match, args
+        with self.transaction():
+            open_item = self.db.execute(
+                f"SELECT item, version FROM reports WHERE target = ? AND closed IS NULL AND {item_match}"
+                " ORDER BY id LIMIT 1",
+                (kind,) + item_args,
+            ).fetchone()
+            cursor = self.db.execute(
+                "INSERT INTO reports (target, message_id, turn_id, room_id, row_ref, reported_station_id, reason,"
+                " reporter_id, t, closed, closed_by, item, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)",
+                (
+                    kind,
+                    message_id,
+                    turn_id,
+                    room_id,
+                    ref,
+                    station,
+                    reason,
+                    by,
+                    now,
+                    open_item["item"] if open_item is not None else None,
+                    open_item["version"] if open_item is not None else 1,
+                ),
+            )
+            if open_item is None:
+                self.db.execute("UPDATE reports SET item = id WHERE id = ?", (cursor.lastrowid,))
         return True
+
+    # ------------------------------------------------------------- review
+
+    def review_item(self, item_id: int) -> Optional[Dict[str, Any]]:
+        """One entry of the review list: every report of one item, oldest
+        first, with the entry's version and whether it is closed."""
+        rows = [dict(r) for r in self.db.execute("SELECT * FROM reports WHERE item = ? ORDER BY id", (item_id,))]
+        if not rows:
+            return None
+        first = rows[0]
+        return {
+            "id": int(item_id),
+            "target": first["target"],
+            "message_id": first["message_id"],
+            "turn_id": first["turn_id"],
+            "room_id": first["room_id"],
+            "row_ref": first["row_ref"],
+            "station": first["reported_station_id"],
+            "version": int(first["version"]),
+            "closed": first["closed"],
+            "closed_by": first["closed_by"],
+            "closed_action": first["closed_action"],
+            "first": int(first["t"]),
+            "reports": rows,
+        }
+
+    def review_open(self) -> List[Dict[str, Any]]:
+        """The open entries of the review list, oldest first (design 11.7)."""
+        ids = [
+            int(r[0])
+            for r in self.db.execute(
+                "SELECT item, MIN(t) AS first FROM reports WHERE closed IS NULL GROUP BY item ORDER BY first, item"
+            )
+        ]
+        out = []
+        for item_id in ids:
+            item = self.review_item(item_id)
+            if item is not None:
+                out.append(item)
+        return out
+
+    def review_bump(self, item_id: int, version: int) -> None:
+        self.db.execute("UPDATE reports SET version = ? WHERE item = ?", (version, item_id))
+
+    def review_close(self, item_id: int, by: str, action_id: int, now: int) -> bool:
+        """Close the entry's open reports; True when any was open."""
+        cursor = self.db.execute(
+            "UPDATE reports SET closed = ?, closed_by = ?, closed_action = ? WHERE item = ? AND closed IS NULL",
+            (now, by, action_id, item_id),
+        )
+        return cursor.rowcount > 0
+
+    def review_reopen(self, item_id: int, action_id: int) -> None:
+        """Undo: the reports the action closed are open again."""
+        self.db.execute(
+            "UPDATE reports SET closed = NULL, closed_by = NULL, closed_action = NULL WHERE item = ? AND closed_action = ?",
+            (item_id, action_id),
+        )
+
+    def action_add(
+        self,
+        helper_id: str,
+        action: str,
+        target: str,
+        detail: Dict[str, Any],
+        t: int,
+        report: Optional[int] = None,
+        undo_text: Optional[str] = None,
+    ) -> int:
+        """One line of the helper log (design 11.7); its id."""
+        cursor = self.db.execute(
+            "INSERT INTO review_actions (helper_id, action, target, detail, t, undone, report, undo_text)"
+            " VALUES (?, ?, ?, ?, ?, NULL, ?, ?)",
+            (helper_id, action, target, json.dumps(detail, sort_keys=True), t, report, undo_text),
+        )
+        return int(cursor.lastrowid)
+
+    def action_get(self, action_id: int) -> Optional[Dict[str, Any]]:
+        row = self.db.execute("SELECT * FROM review_actions WHERE id = ?", (action_id,)).fetchone()
+        return dict(row) if row is not None else None
+
+    def action_latest(self, item_id: int) -> Optional[Dict[str, Any]]:
+        """The newest action taken on a review entry, an undo included."""
+        row = self.db.execute(
+            "SELECT * FROM review_actions WHERE report = ? ORDER BY id DESC LIMIT 1", (item_id,)
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def action_undone(self, action_id: int, now: int) -> None:
+        self.db.execute(
+            "UPDATE review_actions SET undone = ?, undo_text = NULL WHERE id = ?", (now, action_id)
+        )
+
+    def actions_log(self, limit: int = 200) -> List[Dict[str, Any]]:
+        """The helper log, newest first: every helper action and every
+        helper change. A history move by its own key is not a helper's."""
+        rows = self.db.execute(
+            "SELECT * FROM review_actions WHERE action != 'move-history' ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def undo_purge(self, before: int) -> int:
+        """A removed message's text is kept only while its Undo lasts:
+        clear what was kept for actions taken before `before`."""
+        cursor = self.db.execute(
+            "UPDATE review_actions SET undo_text = NULL WHERE undo_text IS NOT NULL AND t < ?", (before,)
+        )
+        return cursor.rowcount
+
+    def message_remove(self, message_id: int, helper_id: str) -> Optional[str]:
+        """A helper removes a shown message (design 11.7): its text goes,
+        `state` becomes `removed`. Returns the text it had, or None when it
+        had none to remove."""
+        row = self.message_get(message_id)
+        if row is None or row["state"] != "shown" or row["text"] is None:
+            return None
+        self.db.execute(
+            "UPDATE messages SET text = NULL, state = 'removed', removed_by = ? WHERE id = ?", (helper_id, message_id)
+        )
+        return str(row["text"])
+
+    def message_restore(self, message_id: int, text: str) -> bool:
+        """Undo of a removal: the text is shown again."""
+        cursor = self.db.execute(
+            "UPDATE messages SET text = ?, state = 'shown', removed_by = NULL WHERE id = ? AND state = 'removed'",
+            (text, message_id),
+        )
+        return cursor.rowcount == 1
+
+    # ------------------------------------------------------------- helpers
+
+    def helpers_list(self) -> List[Dict[str, Any]]:
+        return [dict(r) for r in self.db.execute("SELECT * FROM helpers ORDER BY added, station_id")]
+
+    def helper_is(self, station_id: str) -> bool:
+        return self.db.execute("SELECT 1 FROM helpers WHERE station_id = ?", (station_id,)).fetchone() is not None
+
+    def helper_add(self, station_id: str, now: int) -> bool:
+        cursor = self.db.execute("INSERT OR IGNORE INTO helpers (station_id, added) VALUES (?, ?)", (station_id, now))
+        return cursor.rowcount == 1
+
+    def helper_remove(self, station_id: str) -> bool:
+        return self.db.execute("DELETE FROM helpers WHERE station_id = ?", (station_id,)).rowcount == 1
+
+    def stations_by_callsign(self, base: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """The stations whose stored callsign has this base callsign (wire
+        spec 4.5), most recently seen first."""
+        rows = self.db.execute(
+            "SELECT * FROM stations WHERE callsign IS NOT NULL AND instr(upper(callsign), ?) > 0"
+            " ORDER BY last_seen DESC, id",
+            (base.upper(),),
+        ).fetchall()
+        out = [dict(r) for r in rows if messages.base_callsign(r["callsign"]) == base]
+        return out[:limit]
+
+    # ------------------------------------------------------------- retention
+
+    def messages_expire(self, before: int) -> List[Tuple[int, str]]:
+        """Design 6.4: every shown message posted before `before` loses its
+        text (`state` `expired`); the row, its sender, time and reading
+        stay. Returns (id, room id) of each."""
+        with self.transaction():
+            rows = [
+                (int(r["id"]), str(r["room_id"]))
+                for r in self.db.execute("SELECT id, room_id FROM messages WHERE state = 'shown' AND t < ?", (before,))
+            ]
+            self.db.execute(
+                "UPDATE messages SET text = NULL, mentions = '', state = 'expired' WHERE state = 'shown' AND t < ?",
+                (before,),
+            )
+        return rows
+
+    def row_counts(self) -> Dict[str, int]:
+        """Every table's row count, for the snapshot check."""
+        return {name: int(self.db.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]) for name in TABLES}
 
     # ------------------------------------------------------------- blocks
 
@@ -632,6 +850,31 @@ class Store:
             return False
         until = row["posting_block_until"]
         return bool(row["posting_block_forever"]) or (until is not None and until > now)
+
+    def station_not_counted(self, station_id: str, now: int) -> bool:
+        """Whether a helper has stopped counting the station's readings and
+        keyed state (design 11.7, C21) at `now`."""
+        row = self.station_get(station_id)
+        if row is None:
+            return False
+        until = row["not_counted_until"]
+        return bool(row["not_counted_forever"]) or (until is not None and until > now)
+
+    def station_block_set(self, station_id: str, until: Optional[int], forever: bool) -> None:
+        """Block the station from posting and naming turns until a time,
+        or for good; (None, False) lifts it."""
+        self.db.execute(
+            "UPDATE stations SET posting_block_until = ?, posting_block_forever = ? WHERE id = ?",
+            (until, 1 if forever else 0, station_id),
+        )
+
+    def station_not_counted_set(self, station_id: str, until: Optional[int], forever: bool) -> None:
+        """Stop counting the station until a time, or for good; (None,
+        False) counts it again."""
+        self.db.execute(
+            "UPDATE stations SET not_counted_until = ?, not_counted_forever = ? WHERE id = ?",
+            (until, 1 if forever else 0, station_id),
+        )
 
     # ------------------------------------------------------------- profile
 
@@ -889,6 +1132,12 @@ class Store:
                 "UPDATE messages SET text = NULL, mentions = '',"
                 " state = CASE WHEN state = 'shown' THEN 'deleted' ELSE state END"
                 " WHERE station_id = ?",
+                (station_id,),
+            )
+            # A removed message's text kept for its Undo goes too.
+            self.db.execute(
+                "UPDATE review_actions SET undo_text = NULL WHERE action = 'remove' AND undo_text IS NOT NULL"
+                " AND target IN (SELECT CAST(id AS TEXT) FROM messages WHERE station_id = ?)",
                 (station_id,),
             )
         return cleared

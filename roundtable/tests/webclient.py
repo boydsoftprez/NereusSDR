@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlencode
 from inproc import Harness, Station
 from nereus_roundtable import identity, protocol
 from nereus_roundtable.http import App, Request, Response, split_path
+from nereus_roundtable.moderation import Moderation
 from nereus_roundtable.rooms import band_of
 from nereus_roundtable.web import Web
 
@@ -28,6 +29,7 @@ class Browser:
         self.harness = harness
         self.app = App(harness.service, harness.store, harness.config)
         self.web = Web(harness.service, harness.store, harness.config, self.app)
+        self.moderation = Moderation(self.web, self.app)
         self.origin = f"https://{harness.config.public_host}"
 
     def request(

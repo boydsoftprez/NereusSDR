@@ -500,7 +500,7 @@ class App:
         base = messages.base_callsign(callsign)
         rows = []
         for room in self.service.book.live_rooms():
-            for row in room.rows.values():
+            for row in room.shown_rows():
                 if messages.base_callsign(row.callsign) == base:
                     rows.append({"callsign": row.callsign, "room": room.id, "ref": row.ref})
         rows.sort(key=lambda r: (r["room"], r["ref"]))
@@ -541,7 +541,7 @@ def live_view(room: Room) -> Dict[str, Any]:
         "band": room.band,
         "family": room.family,
         "hz": room.center,
-        "members": [room.member_object(row, False) for row in room.rows.values()],
+        "members": [room.member_object(row, False) for row in room.shown_rows()],
         "now": [room.turn_object(t) for t in room.now_turns()],
         "earlier": [room.turn_object(t) for t in room.earlier_turns()],
         "messages": room.recent_messages(),

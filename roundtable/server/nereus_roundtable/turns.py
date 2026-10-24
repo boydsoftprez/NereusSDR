@@ -168,7 +168,10 @@ class Turn:
         true; always 0 for a doubled turn (6.8)."""
         if self.kind == "doubled":
             return 0
-        return sum(1 for tr in self.tracks.values() if tr.latest is not None and tr.latest.present)
+        # A track a helper stopped counting is stored, never shown (C21).
+        return sum(
+            1 for tr in self.tracks.values() if not tr.not_counted and tr.latest is not None and tr.latest.present
+        )
 
     def cancel_timer(self) -> None:
         if self.timer is not None:
@@ -281,6 +284,11 @@ class TurnEngine:
             if t.kind == "talking" and t.talker is row:
                 return t
         return None
+
+    def turn_for_reading(self) -> Optional[Turn]:
+        """The turn a reading arriving now is stored with (6.7), without
+        any turn rule running: for a station a helper stopped counting."""
+        return self._turn_for_reading()
 
     def _turn_for_reading(self) -> Optional[Turn]:
         """Wire spec 6.7: in other families the one open turn; in digital

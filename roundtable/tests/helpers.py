@@ -14,6 +14,7 @@ from websockets.exceptions import ConnectionClosed
 
 from nereus_roundtable import identity, protocol, transport
 from nereus_roundtable.http import App
+from nereus_roundtable.moderation import Moderation
 from nereus_roundtable.clock import ManualClock
 from nereus_roundtable.service import Service
 from nereus_roundtable.store import Store
@@ -46,7 +47,7 @@ async def live_service(
     service = Service(config, ManualClock(), store)
     app = App(service, store, config) if http_app else None
     if app is not None:
-        Web(service, store, config, app)
+        Moderation(Web(service, store, config, app), app)
     listeners = await transport.start(service, app, config)
     try:
         yield Live(service, listeners, app)

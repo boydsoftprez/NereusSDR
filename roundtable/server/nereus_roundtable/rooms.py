@@ -170,6 +170,10 @@ class Row:
         self.reading_turn: Optional[Turn] = None
         # False once the row has left its room.
         self.present = True
+        # False while a helper has stopped counting the station (design
+        # 11.7, C21): the row is then in no view, and the turn rules treat
+        # it as absent.
+        self.counted = True
 
     @property
     def joining(self) -> bool:
@@ -305,6 +309,11 @@ class Room:
     def members(self) -> List[Row]:
         return [row for row in self.rows.values() if row.member]
 
+    def shown_rows(self) -> List[Row]:
+        """The rows views show: every row but those of a station a helper
+        stopped counting (wire spec 6.4 "Not counted")."""
+        return [row for row in self.rows.values() if row.counted]
+
     def km_of(self, row: Row) -> Optional[int]:
         """Wire spec 6.8: with exactly one talking turn open, the distance
         from the row's grid to the talker's; otherwise null."""
@@ -371,6 +380,7 @@ class Room:
             and self.live
             and row["opening_id"] == self.opening_id
             and sender.present
+            and sender.counted
             and self.rows.get(sender.station_id) is sender
         ):
             ref = sender.ref
@@ -424,7 +434,7 @@ class Room:
             "hz": self.center,
             "state": self.state(),
             "talkers": [row.callsign for t in self.now_turns() for row in t.talkers],
-            "members": len(self.members()),
+            "members": len([row for row in self.members() if row.counted]),
             "messages": self.message_count,
             "last": self.last,
             "folded": self.folded(),
@@ -450,7 +460,7 @@ class Room:
             return None
         current: Dict[str, Tuple[Row, Dict[str, Any]]] = {}
         members: List[Tuple[Row, Dict[str, Any]]] = []
-        for row in self.rows.values():
+        for row in self.shown_rows():
             obj = self.member_object(row)
             current[row.ref] = (row, obj)
             sent = self.sent_members.get(row.ref)
@@ -489,6 +499,8 @@ class RoomBook:
         self.rooms: Dict[str, Room] = {}
         self.stations: Dict[str, _StationEntry] = {}
         self.earlier: Dict[str, List[Turn]] = {}
+        # Stations a helper stopped counting (design 11.7, C21).
+        self.not_counted: Set[str] = set()
         self.touched: "OrderedDict[int, Room]" = OrderedDict()
         self.band_version = 0
         self._tick: Any = None
@@ -596,7 +608,7 @@ class RoomBook:
                 seen.append(room)
                 self._settle(station_id, room)
         for row in self.rows_of(station_id):
-            if row.member:
+            if row.member and row.counted:
                 row.room.engine.on_presence(row, row.keyed)
 
     def place(self, station_id: str, slice: Dict[str, Any], profile: Optional[Profile] = None) -> str:
@@ -656,6 +668,9 @@ class RoomBook:
         earlier turns and the rows that posted messages, takes the new one,
         so a later write stores nothing under the old id. The station's
         own rows have already left with its connection."""
+        if old in self.not_counted:
+            self.not_counted.discard(old)
+            self.not_counted.add(new)
         turns: List[Turn] = []
         for room in self.rooms.values():
             turns.extend(room.engine.open)
@@ -678,11 +693,53 @@ class RoomBook:
                 turn.members_during.discard(old)
                 turn.members_during.add(new)
 
+    def set_counted(self, station_id: str, counted: bool) -> None:
+        """A helper stopped counting the station, or it counts again
+        (design 11.7, C21; wire spec 6.4 "Not counted"). While not counted
+        its rows are in no view and the turn rules treat it as absent: its
+        keyed state opens and holds no turn, and a turn it was talking in
+        ends as when a talker leaves. Its readings are still stored with
+        the turn open, marked. Counted again, its rows show and its keyed
+        state counts from that moment."""
+        if counted == (station_id not in self.not_counted):
+            return
+        if counted:
+            self.not_counted.discard(station_id)
+        else:
+            self.not_counted.add(station_id)
+        for row in self.rows_of(station_id):
+            room = row.room
+            if counted:
+                row.counted = True
+                if row.member and row.keyed:
+                    room.engine.on_presence(row, True)
+            else:
+                if row.member:
+                    room.engine.on_leave(row)
+                row.counted = False
+                row.reading = None
+                row.reading_turn = None
+                for turn in room.engine.open:
+                    track = turn.tracks.get(station_id)
+                    if track is not None:
+                        track.not_counted = True
+            self.touch(room)
+
     def reading(self, row: Row, dbm: float, t: int, present: bool) -> Optional[Turn]:
         """An accepted reading from a member's counted slice (6.7)."""
         room = row.room
         wall = self.clock.wall_ms()
         reading = Reading(wall, dbm, t, present)
+        if not row.counted:
+            # Stored with the turn open, marked, and shown nowhere; it
+            # opens no turn and moves no turn rule (C21).
+            turn = room.engine.turn_for_reading()
+            if turn is not None:
+                track = turn.add_reading(row, reading)
+                track.not_counted = True
+                track.offset_hz = offset_hz(row.hz, room.center)
+                track.km = room.km_of(row)
+            return turn
         turn = room.engine.on_reading(row, reading)
         row.reading = reading
         row.reading_turn = turn
@@ -755,6 +812,7 @@ class RoomBook:
         while nth in taken:
             nth += 1
         row = Row(room, p.station_id, profile, p, self._new_ref(room), nth)
+        row.counted = p.station_id not in self.not_counted
         room.rows[p.station_id] = row
         if room.live:
             room.last = max(room.last, self.clock.wall_ms())
@@ -799,7 +857,7 @@ class RoomBook:
             if row.station_id not in turn.members_during:
                 turn.members_during.add(row.station_id)
                 self.store.turn_members(turn.id, turn.members_during)
-        if row.keyed:
+        if row.keyed and row.counted:
             room.engine.on_presence(row, True)
 
     def _dwell_done(self, p: Placement) -> None:

@@ -6,9 +6,10 @@ a station's presence, readings and views: `rooms`, `roomsDelta`,
 5.3.3, 5.3.8 to 5.3.10, 5.4.3 to 5.4.6, 6.11), and its messages, names,
 reports, mentions and going hidden (5.3.4 to 5.3.7, 5.3.11, 5.3.14, 5.4.7,
 5.4.8, 6.9, 6.10), its web sign-in links and Delete my archive (5.3.12,
-5.3.13, 5.4.10), and a live reader's watched band list and rooms
+5.3.13, 5.4.10), a live reader's watched band list and rooms
 (3.2, 5.5): the same `rooms`, `roomsDelta`, `room` and `delta` a station
-gets, with every `you` false and every `mine` null.
+gets, with every `you` false and every `mine` null, and what a helper's
+actions change live: notices (5.4.9, 8.4) and stations not counted (6.4).
 
 The service is transport-agnostic: a connection is anything with async
 send(text), close(code) and async iteration over incoming frames
@@ -243,6 +244,8 @@ class Service:
         self._viewers: Dict[str, Set[Connection]] = {}
         # Connections owed a full view at the end of the event.
         self._dirty: Set[Connection] = set()
+        # When a helper's "stop counting" for a time ends, by station id.
+        self._counting_timers: Dict[str, TimerHandle] = {}
         self.book = RoomBook(_EventClock(self), self.store, random)
         self.book.reload()
         self.on(STATION, "presence", self._presence)
@@ -384,6 +387,10 @@ class Service:
             # Its rows leave every room (6.4).
             self.book.remove_station(conn.station_id)
             del self.stations[conn.station_id]
+            timer = self._counting_timers.pop(conn.station_id, None)
+            if timer is not None:
+                timer.cancel()
+            self.book.not_counted.discard(conn.station_id)
             log.info("station %s left", short(conn.station_id))
 
     def shutdown(self) -> None:
@@ -508,6 +515,12 @@ class Service:
         )
         self._send_rooms(conn)
         self._heard_from(conn)
+        # What a helper set while the station was away is told again.
+        row = self.store.station_get(station_id) or {}
+        if self.store.station_blocked(station_id, now):
+            self.notice(station_id, "blocked", None if row.get("posting_block_forever") else row.get("posting_block_until"))
+        if self.apply_counting(station_id):
+            self.notice(station_id, "not-counted", None if row.get("not_counted_forever") else row.get("not_counted_until"))
 
     def mentions_for(self, station_id: str) -> List[Dict[str, Any]]:
         """Messages naming the station posted after its last `mentionsSeen`,
@@ -856,6 +869,51 @@ class Service:
                     room.message_changed(row)
         log.info("station %s deleted its archive", short(station_id))
 
+    # ----------------------------------------------------------- moderation
+
+    def is_helper(self, station_id: str) -> bool:
+        """A Roundtable helper (design 7.5): in the config's list, or added
+        on the review list."""
+        return station_id in self.config.helpers or self.store.helper_is(station_id)
+
+    def notice(self, station_id: str, code: str, until: Optional[int]) -> None:
+        """Wire spec 5.4.9 and 8.4: plain operator text to a connected
+        station. A hidden station gets nothing but answers."""
+        conn = self.stations.get(station_id)
+        if conn is None or conn.closing or conn.hidden:
+            return
+        conn.send(protocol.message("notice", STATION, code=code, text=protocol.NOTICES[code], until=until))
+
+    def apply_counting(self, station_id: str) -> bool:
+        """Make the rooms match the station's stored "not counted" mark
+        (design 11.7, C21) and, for a mark that ends at a time, count it
+        again then. True while it is not counted. Only a connected station
+        has rows; the mark is applied again at its next sign-in."""
+        timer = self._counting_timers.pop(station_id, None)
+        if timer is not None:
+            timer.cancel()
+        if station_id not in self.stations:
+            return False
+        row = self.store.station_get(station_id) or {}
+        wall = self.clock.wall_ms()
+        until = row.get("not_counted_until")
+        off = self.store.station_not_counted(station_id, wall)
+        with self.event():
+            self.book.set_counted(station_id, not off)
+        if off and not row.get("not_counted_forever") and until is not None:
+            self._counting_timers[station_id] = self.call_later(until - wall, lambda: self.apply_counting(station_id))
+        return off
+
+    def message_changed(self, message_id: int) -> None:
+        """A stored message's state changed: the live room that holds it
+        shows the change in its next delta."""
+        row = self.store.message_get(message_id)
+        if row is None:
+            return
+        room = self.book.live(row["room_id"])
+        if room is not None:
+            room.message_changed(row)
+
     def revoke_station(self, station_id: str) -> None:
         """The station's website key was revoked: its connection closes
         with 4004 and no message (wire spec 2.4, 4.2), and its rows leave."""
@@ -1055,7 +1113,7 @@ class Service:
             band=room.band,
             family=room.family,
             hz=room.center,
-            members=[room.member_object(row, row.station_id == sid) for row in room.rows.values()],
+            members=[room.member_object(row, row.station_id == sid) for row in room.shown_rows()],
             now=[room.turn_object(t, t.given.get(sid or "")) for t in room.now_turns()],
             earlier=[room.turn_object(t, t.given.get(sid or "")) for t in room.earlier_turns()],
             messages=room.recent_messages(),
