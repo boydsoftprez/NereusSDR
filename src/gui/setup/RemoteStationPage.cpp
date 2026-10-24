@@ -1,6 +1,7 @@
 // no-port-check: NereusSDR-original presentation for the local Core.
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/setup/RemoteStationPage.h"
+#include "gui/ScopedChildWidget.h"
 #include "gui/StyleConstants.h"
 #include "gui/multidevice/ConnectedDevicesList.h"
 
@@ -205,10 +206,14 @@ bool RemoteStationPage::confirm(const QString& title, const QString& text, const
     if (m_confirmation) {
         return m_confirmation(title, text, goAhead);
     }
-    QMessageBox box(QMessageBox::Warning, title, text, QMessageBox::Cancel, this);
+    // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+    ScopedChildWidget<QMessageBox> boxOwner(QMessageBox::Warning, title, text, QMessageBox::Cancel, this);
+    QMessageBox& box = *boxOwner.get();
     QPushButton* proceed = box.addButton(goAhead, QMessageBox::DestructiveRole);
     box.setDefaultButton(QMessageBox::Cancel);
     box.exec();
+    // The parent may have died in exec() and taken the dialog with it.
+    if (!boxOwner) { return false; }
     return box.clickedButton() == proceed;
 }
 

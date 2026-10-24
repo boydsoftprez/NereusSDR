@@ -1,5 +1,8 @@
 // NereusSDR for iOS: the media control client's operations, gates, endpoint checks, keyframes, contexts and reconnects
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-22: NSDC v2 start, keyframe, replacement and frame-loop cases.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import LinkSessionTestSupport
@@ -2158,6 +2161,147 @@ import Testing
             MediaControlEvent.Rejection(endpointId: 1, revision: 1, reason: "That display is no longer open on the Core."))))
         #expect(!rig.recorder.events.contains { if case .clarityRetuneRefused = $0 { true } else { false } })
         #expect(await rig.client.endpointIds == [])
+    }
+
+    // MARK: The display codec (NSDC v2)
+
+    /// Every capability with the grant and the display codec at 2.
+    static let withDisplayCodec: [String: Int64] = everyFeature.merging(["displayCodecVersion": 2]) { $1 }
+
+    // The display codec rides the minor-11 block on the context's grant
+    // shape, and only a Core that sends version 2 or later offers it.
+    @Test func theDisplayCodecGateNeedsMinor11TheGrantAndVersion2() {
+        #expect(MediaFeatureGates.displayCodecMinor == 11)
+        let cases: [(UInt16, [String: Int64], Bool)] = [
+            (11, Self.withDisplayCodec, true),
+            (11, Self.everyFeature.merging(["displayCodecVersion": 3]) { $1 }, true),
+            (10, Self.withDisplayCodec, false),
+            (11, Self.everyFeature, false),
+            (11, Self.everyFeature.merging(["displayCodecVersion": 1]) { $1 }, false),
+            (11, ["remoteMediaVersion": 1, "displayCodecVersion": 2], false),
+        ]
+        for (minor, capabilities, open) in cases {
+            let gates = MediaFeatureGates(agreedMinor: minor) { capabilities[$0] ?? 0 }
+            #expect(gates.displayCodecV2 == open, "minor \(minor), \(capabilities)")
+        }
+        #expect(!MediaFeatureGates.none.displayCodecV2)
+    }
+
+    // A Core that offers the display codec gets displayCodecVersion 2 in the
+    // start and nothing else changes; one that does not gets today's start.
+    @Test func theStartAsksForTheDisplayCodecOnlyFromACoreThatOffersIt() async throws {
+        let rig = try Rig()
+        await rig.open(minor: 11, capabilities: Self.withDisplayCodec)
+        _ = try await rig.connectionId
+        let older = try Rig()
+        await older.open(minor: 11, capabilities: Self.everyFeature)
+        _ = try await older.connectionId
+        #expect(rig.recorder.sent("start").count == 1)
+        #expect(older.recorder.sent("start").count == 1)
+        var start = try #require(rig.recorder.sent("start").first)
+        var plain = try #require(older.recorder.sent("start").first)
+        #expect(start["displayCodecVersion"] == .number(2))
+        #expect(plain["displayCodecVersion"] == nil)
+        start["displayCodecVersion"] = nil
+        start["connectionId"] = nil
+        plain["connectionId"] = nil
+        #expect(start == plain)
+    }
+
+    // A connection that agreed NSDC v2 asks for no keyframe when a context
+    // is accepted; a v1 frame on it still asks. A v1 connection asks as before.
+    @Test(arguments: [true, false])
+    func aContextAsksForAKeyframeOnlyOnAV1Connection(codec: Bool) async throws {
+        let vectors = try LinkFixtureLoader.mediaVectors()
+        let delta = try #require(vectors["media-nsdc1-delta"]).bytes
+        let rig = try Rig()
+        await rig.open(minor: 11, capabilities: codec ? Self.withDisplayCodec : Self.everyFeature)
+        let id = try await rig.connectionId
+        let peer = try rig.peer
+        try await rig.client.subscribe(Self.subscription(endpointId: 1))
+        await rig.deliver(Self.context(id, generation: 1, grant: true))
+        // Events reach the recorder on their own stream.
+        await rig.recorder.settle { rig.recorder.events.contains { if case .context = $0 { true } else { false } } }
+        #expect(rig.recorder.events.contains { if case .context = $0 { true } else { false } })
+        #expect(rig.recorder.sent("keyframe").count == (codec ? 0 : 1))
+        // The fixture is endpoint 1, generation 1: a v1 delta with nothing
+        // to build on, which asks for a keyframe on either connection.
+        peer.receiveDisplay(delta)
+        await rig.recorder.settle { rig.recorder.sent("keyframe").count == (codec ? 1 : 2) }
+        #expect(rig.recorder.sent("keyframe").count == (codec ? 1 : 2))
+        #expect(rig.recorder.sent("keyframe").last?["contextGeneration"] == .number(1))
+    }
+
+    // A message releases zero, one or two frames: each plays, oldest first,
+    // exactly as the decoder released it (a carried trace included), and a
+    // held part plays nothing and asks for nothing.
+    @Test func everyFrameAV2MessageReleasesPlaysInOrder() async throws {
+        let sequence = try #require(try DisplayCodecV2VectorTests.vectors().sequences.first {
+            $0.name == "lost-trace-part-then-newer-whole"
+        })
+        let messages = try sequence.messages.map { Data(try DisplayCodecV2VectorTests.bytes($0)) }
+        try #require(messages.count == 3)
+        // The same messages through a decoder of their own: what must play.
+        let reference = DisplayFrameDecoder()
+        let results = messages.map { reference.decode($0) }
+        #expect(results.map(\.disposition) == [.accepted, .held, .accepted])
+        #expect(results.map(\.frames.count) == [1, 0, 2])
+        let released = results.flatMap(\.frames)
+        #expect(released.map(\.traceCarried) == [false, true, false])
+
+        let rig = try Rig()
+        await rig.open(minor: 11, capabilities: Self.withDisplayCodec)
+        let id = try await rig.connectionId
+        let peer = try rig.peer
+        func frames() -> [DisplayFrame] {
+            rig.recorder.events.compactMap { event -> DisplayFrame? in
+                if case .displayFrame(let frame) = event { return frame } else { return nil }
+            }
+        }
+        // The vectors are endpoint 257, context generation 3.
+        try await rig.client.subscribe(Self.subscription(endpointId: 257))
+        await rig.deliver(Self.context(id, endpointId: 257, generation: 3, grant: true))
+        peer.receiveDisplay(messages[0])
+        await rig.recorder.settle { frames().count == 1 }
+        #expect(frames() == Array(released.prefix(1)))
+        peer.receiveDisplay(messages[1])
+        await rig.recorder.settle { false }
+        #expect(frames().count == 1, "a held part plays nothing")
+        peer.receiveDisplay(messages[2])
+        await rig.recorder.settle { frames().count == 3 }
+        #expect(frames() == released)
+        #expect(rig.recorder.sent("keyframe").isEmpty)
+    }
+
+    // A replacement keeps the codec its connection agreed (the Core's does
+    // too), so on NSDC v2 neither the replacement nor a context on it asks
+    // for a keyframe. On v1 both still ask.
+    @Test(arguments: [true, false])
+    func aReplacementKeepsTheDisplayCodec(codec: Bool) async throws {
+        let rig = try Rig()
+        let base = DualReceiveTests.replaceFeatures.merging(Self.everyFeature) { $1 }
+        await rig.open(minor: 11, capabilities: codec ? base.merging(["displayCodecVersion": 2]) { $1 } : base)
+        try await rig.connect()
+        let oldId = try await rig.connectionId
+        #expect(rig.recorder.sent("start").first?["displayCodecVersion"] == (codec ? LinkJSON.number(2) : nil))
+        try await rig.client.subscribe(Self.subscription(endpointId: 1))
+        await rig.deliver(Self.context(oldId, generation: 1, grant: true))
+        #expect(rig.recorder.sent("keyframe").count == (codec ? 0 : 1))
+        await rig.client.controlRouteDidMove(peerFactory: rig.recorder.peerFactory,
+                                             connectDeadline: .seconds(5), safeToReplace: { true })
+        let replace = try #require(rig.recorder.sent("replace").last)
+        // The Core's replacement inherits the codec: the replace names none.
+        #expect(Set(replace.keys) == ["op", "connectionId", "replaces"])
+        let newId = try #require(MediaControlDecoder.string(replace["connectionId"]))
+        await rig.deliver(["op": "replace", "connectionId": .string(newId), "replaces": .string(oldId)])
+        #expect(await rig.client.connectionId == newId)
+        await rig.recorder.settle { rig.recorder.sent("keyframe").count == (codec ? 1 : 2) }
+        #expect(rig.recorder.sent("keyframe").count == (codec ? 0 : 2))
+        await rig.deliver(Self.context(newId, generation: 2, grant: true))
+        func contexts() -> Int { rig.recorder.events.filter { if case .context = $0 { true } else { false } }.count }
+        await rig.recorder.settle { contexts() == 2 }
+        #expect(contexts() == 2)
+        #expect(rig.recorder.sent("keyframe").count == (codec ? 0 : 3))
     }
 
     // MARK: The extended view's ceiling

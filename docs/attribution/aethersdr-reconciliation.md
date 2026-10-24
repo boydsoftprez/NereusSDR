@@ -1534,3 +1534,9 @@ The 3D-specific SpectrumWidget history and both shader headers carry
 complete project attribution. Both shader implementations and every
 original inline shader comment match the pinned AetherSDR source;
 NereusSDR adds attribution and its existing producer annotation.
+
+## October 22, 2026 scoped owner for dialogs (Longpath bug-fix ports)
+
+| NereusSDR file | AetherSDR source | Notes |
+|---|---|---|
+| `src/gui/ScopedChildWidget.h` | `src/gui/ScopedChildWidget.h:15-19` [@9befcd2] | The forwarding constructor of the scoped owner, so stack dialogs and one QDrag are built through it. The rest of the file is Longpath's (LONGPATH-PROVENANCE.md), itself from AetherSDR [@b9e96a94]. Recorded in AETHERSDR-PROVENANCE.md. |

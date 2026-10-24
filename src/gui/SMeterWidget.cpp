@@ -9,6 +9,10 @@
 //   NereusSDR is also GPLv3. Attribution follows GPLv3 section 5 requirements.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22  J.J. Boyd (KG4VCF): the right-click menu is freed only if
+//               it is still there after exec(), since a parent that dies
+//               while it is open takes it along. With AI-assisted
+//               transformation via Claude Code.
 //   2026-10-12 - Add explicit display marker/top scale by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-05-19  Ported in C++20/Qt6 for NereusSDR by J.J. Boyd (KG4VCF),
@@ -121,6 +125,7 @@
 #include <QActionGroup>
 #include <QContextMenuEvent>
 #include <QMenu>
+#include <QPointer>
 #include <QPainter>
 #include <QPainterPath>
 #include <QSet>
@@ -1482,8 +1487,13 @@ void SMeterWidget::resetPeak()
 void SMeterWidget::contextMenuEvent(QContextMenuEvent* ev)
 {
     QMenu* menu = buildContextMenu(this);
+    // The menu's parent can die in exec() and take the menu with it; free it
+    // only if it is still there (see ScopedChildWidget.h).
+    const QPointer<QMenu> guard(menu);
     menu->exec(ev->globalPos());
-    menu->deleteLater();
+    if (guard) {
+        guard->deleteLater();
+    }
 }
 
 QMenu* SMeterWidget::buildContextMenu(QObject* parent)

@@ -8,9 +8,14 @@
 //               AI-assisted via Anthropic Claude Code.
 //   2026-10-09: native audio fix wave (R-AUD-19): askAsioSwitchAll().
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF): dialogs exec()ed with a parent are
+//               built through ScopedChildWidget instead of on the stack, so
+//               a parent that dies while one is open no longer frees it
+//               twice. With AI-assisted transformation via Claude Code.
 // =================================================================
 
 #include "gui/setup/AsioSwitchAllDialog.h"
+#include "gui/ScopedChildWidget.h"
 
 #include "gui/setup/AudioDriverList.h"
 
@@ -87,7 +92,9 @@ bool askAsioSwitchAll(const AsioSwitchPlan& plan, AudioRole role, const QString&
                       move.pair.channelCount > 0 ? audioPairLabel(move.direction, move.pair)
                                                  : QStringLiteral("(no channels)")});
     }
-    AsioSwitchAllDialog dialog(asioRoleName(role), driverName, moves, parent);
+    // Owned by ScopedChildWidget: freed once even if the parent dies in exec().
+    ScopedChildWidget<AsioSwitchAllDialog> dialogOwner(asioRoleName(role), driverName, moves, parent);
+    AsioSwitchAllDialog& dialog = *dialogOwner.get();
     return dialog.exec() == QDialog::Accepted;
 }
 

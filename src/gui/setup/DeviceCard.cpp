@@ -65,6 +65,9 @@
 //   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
 //               (resetItemsBeforeRowChange), so accessibility cannot read a
 //               deleted cell. AI-assisted via Anthropic Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF): return at once when the ASIO question's
+//               event loop took this card with it. With AI-assisted
+//               transformation via Claude Code.
 // =================================================================
 
 #include "DeviceCard.h"
@@ -88,6 +91,7 @@
 #include <QPainter>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QPointer>
 #include <QSignalBlocker>
 #include <QStandardItemModel>
 #include <QStyledItemDelegate>
@@ -1390,7 +1394,10 @@ void DeviceCard::onDevicePicked()
     if (idx < 0) {
         return;
     }
+    // The ASIO question runs the event loop, and the card can die in it.
+    const QPointer<DeviceCard> self(this);
     if (m_deviceCombo->itemData(idx, kGroupHeadingRole).toBool() || !confirmAsioSwitch(idx)) {
+        if (!self) { return; }
         // A heading is never a choice; a cancelled switch keeps the
         // previous selection and writes nothing (R-AUD-19).
         const bool suppressed = m_suppressSignals;

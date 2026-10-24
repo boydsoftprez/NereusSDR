@@ -8,6 +8,25 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-23  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//                 a loaded waterfall timestamp starts its one-second
+//                 ticker; a flag that resizes, moves, shows or hides marks
+//                 the overlay (its marker triangle hangs off the flag), as
+//                 does a new flag; a pointer move marks it while the cursor
+//                 readout shows. An accepted or invalidated IMD frame no
+//                 longer marks it: the GPU path rebuilds it every frame
+//                 while the IMD display is shown.
+//   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//                 the static overlay is no longer rebuilt and uploaded on
+//                 every frame. An accepted IMD frame, or an IMD
+//                 invalidation, marks it only when the IMD markers it draws
+//                 change or go; the inputs that leaned on the per-frame
+//                 rebuild mark it themselves (sample rate, DDC center in the
+//                 extended view, local FFT size under the normalization or
+//                 the Hz/bin readout, a pan turning remote, the waterfall
+//                 row period, the pointer leaving, the front slice, a
+//                 removed flag, the dBm strip arrows, a replaced history)
+//                 and the FPS readout counts frames outside the rebuild.
 //   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a live
 //                 trace of a remote pan's row clock (starves, re-anchors,
 //                 two-row puts, paint gaps and a 10 s summary), gated on
@@ -380,6 +399,11 @@
 //                 change, hands it to the pan menu, and setCtunEnabled then
 //                 changes neither the pan nor its saved setting. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22  J.J. Boyd (KG4VCF): right-click and drop-down menus are
+//               no longer built on the stack; ScopedChildWidget (ported
+//               from Longpath) frees each once, so a parent that dies
+//               while its menu is open no longer frees it twice. With
+//               AI-assisted transformation via Claude Code.
 // =================================================================
 
 // =================================================================
@@ -529,6 +553,7 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
 #include "SpectrumWidget.h"
+#include "gui/ScopedChildWidget.h"
 #include "gui/PureSignalViewStyle.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/PanadapterStack.h"
@@ -1505,6 +1530,9 @@ void SpectrumWidget::loadSettings()
                                  static_cast<int>(TimestampPosition::None));
     m_wfTimestampPos = static_cast<TimestampPosition>(qBound(0, tsPosRaw,
                            static_cast<int>(TimestampPosition::Count) - 1));
+    // The clock is drawn into the static overlay, which only its ticker
+    // refreshes; a timestamp loaded on must start it, as the setter does.
+    syncWfTimestampTicker();
     const int tsModeRaw = readInt(QStringLiteral("DisplayWfTimestampMode"),
                                   static_cast<int>(TimestampMode::UTC));
     m_wfTimestampMode = static_cast<TimestampMode>(qBound(0, tsModeRaw,
@@ -2569,6 +2597,11 @@ void SpectrumWidget::invalidateRemoteSpectrumFrame()
     invalidateImdMeasurement();
     m_hasImdRemoteFrame = false;
     traceRxHistoryEvent(RxHistoryEvent::FrameRenewal);
+    if (!m_remoteSpectrum) {
+        // A remote pan's frames carry the Core's calibration, so the grid
+        // and dBm scale drop this pan's own (displayCalOffsetDb).
+        markOverlayDirty();
+    }
     m_remoteSpectrum = true;
     recomputeExtendedMode();
     m_remoteCodec = {};
@@ -3418,6 +3451,13 @@ double SpectrumWidget::waterfallRowPeriodMs() const
 
 void SpectrumWidget::applyWaterfallTickerPeriod()
 {
+    // The waterfall time scale is labeled at the row period; a remote pan's
+    // follows the Core's frame rate and frames per line.
+    const double rowPeriodMs = waterfallRowPeriodMs();
+    if (rowPeriodMs != m_overlayRowPeriodMs) {
+        m_overlayRowPeriodMs = rowPeriodMs;
+        markOverlayDirty();
+    }
     if (!m_waterfallTicker) {
         return;
     }
@@ -3649,6 +3689,9 @@ void SpectrumWidget::setDdcCenterFrequency(double hz)
     if (!qFuzzyCompare(m_ddcCenterHz, hz)) {
         m_ddcCenterHz = hz;
         invalidateImdMeasurement();
+        if (m_extendedMode) {
+            markOverlayDirty();  // the DDC island bounds move
+        }
         update();
         // Notify listeners (MainWindow wires this to refresh MaxBin's
         // slice-offset so its scan window follows the slice when the
@@ -3662,6 +3705,9 @@ void SpectrumWidget::setSampleRate(double hz)
     if (!qFuzzyCompare(m_sampleRateHz, hz)) {
         m_sampleRateHz = hz;
         invalidateImdMeasurement();
+        // The bin width (normalization shift, Hz/bin readout) and the DDC
+        // island bounds follow the sample rate.
+        markOverlayDirty();
         update();
         // Phase 3F Sub-Epic F Tasks 7-10: sample-rate change rebases the
         // extended-mode derivation (operator may have e.g. switched a
@@ -6193,6 +6239,7 @@ void SpectrumWidget::setWfUpdatePeriodMs(int ms)
     if (m_wfUpdatePeriodMs == ms) { return; }
     m_wfUpdatePeriodMs = ms;
     scheduleSettingsSave();
+    markOverlayDirty();  // the waterfall time scale's seconds
 
     // 2026-05-25 KG4VCF bench fix: retune the timer-driven waterfall
     // push to the new period so a slider drag actually changes scroll
@@ -6258,12 +6305,10 @@ void SpectrumWidget::setWfAverageMode(AverageMode m)
     update();
 }
 
-void SpectrumWidget::setWfTimestampPosition(TimestampPosition p)
+// Start/stop the 1 Hz overlay refresh timer so the clock ticks live.
+void SpectrumWidget::syncWfTimestampTicker()
 {
-    if (m_wfTimestampPos == p) { return; }
-    m_wfTimestampPos = p;
-    // Start/stop the 1 Hz overlay refresh timer so the clock ticks live.
-    if (p != TimestampPosition::None) {
+    if (m_wfTimestampPos != TimestampPosition::None) {
         if (!m_wfTimestampTicker) {
             m_wfTimestampTicker = new QTimer(this);
             m_wfTimestampTicker->setInterval(1000);
@@ -6274,6 +6319,13 @@ void SpectrumWidget::setWfTimestampPosition(TimestampPosition p)
     } else if (m_wfTimestampTicker) {
         m_wfTimestampTicker->stop();
     }
+}
+
+void SpectrumWidget::setWfTimestampPosition(TimestampPosition p)
+{
+    if (m_wfTimestampPos == p) { return; }
+    m_wfTimestampPos = p;
+    syncWfTimestampTicker();
     scheduleSettingsSave();
     markOverlayDirty();
     announceDisplaySetting(QStringLiteral("DisplayWfTimestampPos"));
@@ -6805,6 +6857,12 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     if (m_imdLocalSource != receiverId) { invalidateImdMeasurement(); }
     m_imdLocalSource = receiverId;
     m_localSpectrumSource = receiverId;
+    // A new FFT size is a new bin width: the 1 Hz normalization shift (grid and
+    // dBm scale) and the Hz/bin readout in the static overlay move with it.
+    if (m_fullLinearBins.size() != binsLinear.size()
+        && (normalizeActive() || m_showBinWidth)) {
+        markOverlayDirty();
+    }
 
     // FFT size change detection.  When the FFTEngine replans (e.g. via
     // auto-zoom on bandwidth change), the per-pixel resolution shifts:
@@ -9068,6 +9126,7 @@ void SpectrumWidget::ensureWaterfallHistory()
         m_wfHistoryRowCount = 0;
         m_wfHistoryOffsetRows = 0;
         m_wfLive = true;
+        markOverlayDirty();  // the time scale and LIVE button go live
     }
     m_waterfallHistory = newHistory;
 }
@@ -12362,7 +12421,21 @@ void SpectrumWidget::invalidateImdMeasurement()
         : !context.duplex ? ImdStatus::DuplexRequired : ImdStatus::WaitingForSpectrum;
     m_imdPresenter.invalidate(status, context);
     emit imdMeasurementChanged(m_imdPresenter.frame());
-    markOverlayDirty();
+    // No overlay mark: while the IMD display is shown the GPU path rebuilds
+    // the overlay every frame (imdOverlayShown()), and the CPU path repaints
+    // all of it on each frame. The display transmit path and remote held
+    // traces invalidate on every frame, so a mark here rebuilt the overlay
+    // on each one. Callers that change anything else the overlay draws mark
+    // it themselves.
+}
+
+// Thetis display.cs:5008 show condition, which drawImdOverlay() and
+// drawWaterfallChrome() require before they draw any IMD marker, guide or
+// annotation.
+bool SpectrumWidget::imdOverlayShown() const
+{
+    return m_moxOverlay && m_testingIMD && m_showIMDMeasurements
+        && m_displayDuplex;
 }
 
 void SpectrumWidget::queueImdCorrectionEdge(bool correctionsApplied)
@@ -12427,7 +12500,11 @@ void SpectrumWidget::acceptImdVisibleSpectrum(quint64 sequence, bool sourceEligi
         ++m_imdAcceptedFrameOrdinal;
     }
     emit imdMeasurementChanged(m_imdPresenter.frame());
-    markOverlayDirty();
+    // The markers live in the static overlay, but this runs on every local
+    // and remote frame, so it does not mark it: while the markers can be
+    // drawn (imdOverlayShown()) the GPU path rebuilds the overlay every
+    // frame anyway, and the CPU path repaints all of it on each frame. A
+    // mark here rebuilt and uploaded the whole overlay on every frame.
 }
 
 void SpectrumWidget::setImdSelectedProduct(ImdProduct product)
@@ -12591,6 +12668,22 @@ void SpectrumWidget::paintMoxOverlay(QPainter& p)
 // This eventFilter forwards them to our mouseMoveEvent/mousePressEvent/etc.
 bool SpectrumWidget::eventFilter(QObject* obj, QEvent* ev)
 {
+    // This pan's slice flags (addVfoWidget): the marker triangle sits at the
+    // flag's bottom edge.
+    if (obj->parent() == this && qobject_cast<VfoWidget*>(obj)) {
+        switch (ev->type()) {
+        case QEvent::Resize:
+        case QEvent::Move:
+        case QEvent::Show:
+        case QEvent::Hide:
+            markOverlayDirty();
+            break;
+        default:
+            break;
+        }
+        return false;
+    }
+
     // Phase 3Q-8: clicks on the disconnect-overlay label open the connection panel.
     if (obj == m_disconnectLabel) {
         if (ev->type() == QEvent::MouseButtonPress) {
@@ -12626,7 +12719,7 @@ bool SpectrumWidget::eventFilter(QObject* obj, QEvent* ev)
             return true;
         case QEvent::Leave:
             m_mouseInWidget = false;
-            update();
+            markOverlayDirty();  // the cursor readout goes
             return true;
         default:
             break;
@@ -13184,9 +13277,14 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
         if (my < specH && mx <= specRect.right()) {
             const int hitNotch = notchAtPixel(mx, specRect);
             if (hitNotch >= 0) {
-                QMenu menu(this);
+                // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+                ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+                QMenu& menu = *menuOwner.get();
                 buildNotchContextMenu(hitNotch, menu);
                 menu.exec(event->globalPosition().toPoint());
+                // Das Elternteil kann waehrend exec() gestorben sein — dann ist
+                // auch das Menue weg und `this` eine Leiche. Siehe ScopedChildWidget.h.
+                if (!menuOwner) { return; }
                 event->accept();
                 return;
             }
@@ -13219,9 +13317,14 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
             if (hitMarkerIdx >= 0 && hitMarkerIdx < m_spotMarkers.size()) {
                 // Rotor control plan Task 8: the menu is built by
                 // buildSpotContextMenu, so a test can read it.
-                QMenu menu(this);
+                // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+                ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+                QMenu& menu = *menuOwner.get();
                 buildSpotContextMenu(hitMarkerIdx, menu);
                 menu.exec(event->globalPosition().toPoint());
+                // Das Elternteil kann waehrend exec() gestorben sein — dann ist
+                // auch das Menue weg und `this` eine Leiche. Siehe ScopedChildWidget.h.
+                if (!menuOwner) { return; }
                 event->accept();
                 return;
             }
@@ -13425,7 +13528,7 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
             }
             emit dbmRangeChangeRequested(m_refLevel - m_dynamicRange, m_refLevel);
             scheduleSettingsSave();
-            update();
+            markOverlayDirty();  // grid and dBm scale
             syncDisplaySettingsFromWidget(); // Task 18
             return;
         }
@@ -13603,6 +13706,12 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
 
 void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
 {
+    // The cursor frequency readout (drawCursorInfo) is in the static
+    // overlay and reads m_mousePos. Mark it here, before the hover and drag
+    // branches below, several of which return without marking.
+    if (m_showCursorFreq && (!m_mouseInWidget || event->pos() != m_mousePos)) {
+        markOverlayDirty();
+    }
     m_mousePos = event->pos();
     m_mouseInWidget = true;
     int mx = static_cast<int>(event->position().x());
@@ -14447,6 +14556,7 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
 void SpectrumWidget::leaveEvent(QEvent* event)
 {
     m_mouseInWidget = false;
+    markOverlayDirty();  // the cursor readout goes
     QToolTip::hideText();
     if (m_hoverSpotIndex != -1) {
         m_hoverSpotIndex = -1;
@@ -15759,14 +15869,32 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             m_overlayStaticDirty = true;
         }
 
-        // Phase 3M-4 Task 12 — IMD overlay needs live re-rendering each
-        // frame because peak detection runs against the current spectrum
-        // buffer. Force the otherwise-static overlay to rebuild while the
+        // Phase 3M-4 Task 12 — the IMD overlay needs live re-rendering
+        // each frame: its correction annotations glide down the waterfall
+        // with the sub-row scroll (drawWaterfallChrome, imdEventY with
+        // m_imdWaterfallGlideRows), and its markers follow each accepted
+        // frame. Force the otherwise-static overlay to rebuild while the
         // IMD show condition is satisfied. Cost is one QImage repaint per
         // frame; only paid during PureSignal two-tone calibration.
-        if (m_moxOverlay && m_testingIMD && m_showIMDMeasurements
-                && m_displayDuplex) {
+        if (imdOverlayShown()) {
             m_overlayStaticDirty = true;
+        }
+
+        // FPS readout: count every GPU frame here, outside the rebuild, and
+        // rebuild once a second with the new value. Counted inside the
+        // rebuild it reported the overlay's rebuild rate, not the frame rate.
+        if (m_showFps) {
+            const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+            m_fpsFrameCount++;
+            if (m_fpsLastUpdateMs == 0) {
+                m_fpsLastUpdateMs = nowMs;
+            } else if (nowMs - m_fpsLastUpdateMs >= 1000) {
+                const double elapsed = (nowMs - m_fpsLastUpdateMs) / 1000.0;
+                m_fpsDisplayValue = static_cast<float>(m_fpsFrameCount / elapsed);
+                m_fpsFrameCount   = 0;
+                m_fpsLastUpdateMs = nowMs;
+                m_overlayStaticDirty = true;
+            }
         }
 
         // 2026-05-26 KG4VCF perf instrumentation: time the overlay-
@@ -15890,17 +16018,8 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             // texture means it only updates on state changes or VFO
             // tuning — good enough for a diagnostic counter and avoids
             // re-uploading every frame.
+            // The value is counted per frame above, refreshed once a second.
             if (m_showFps) {
-                const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-                m_fpsFrameCount++;
-                if (m_fpsLastUpdateMs == 0) {
-                    m_fpsLastUpdateMs = nowMs;
-                } else if (nowMs - m_fpsLastUpdateMs >= 1000) {
-                    const double elapsed = (nowMs - m_fpsLastUpdateMs) / 1000.0;
-                    m_fpsDisplayValue = static_cast<float>(m_fpsFrameCount / elapsed);
-                    m_fpsFrameCount   = 0;
-                    m_fpsLastUpdateMs = nowMs;
-                }
                 const QString fpsText =
                     QStringLiteral("%1 fps").arg(m_fpsDisplayValue, 0, 'f', 1);
                 QFont ff = WorkspacePreview::readableFont(p.font(), p.device());
@@ -16813,9 +16932,16 @@ VfoWidget* SpectrumWidget::addVfoWidget(int sliceIndex)
     connect(w, &VfoWidget::flagDragFinished, this, [this]() {
         m_flagDragActive = false;
     });
+    // The marker's triangle hangs off the flag's bottom edge
+    // (drawSliceMarker), and the markers are in the static overlay: a flag
+    // that changes size (a tab opened or closed), moves, shows or hides
+    // marks it (eventFilter).
+    w->installEventFilter(this);
     w->show();
     w->raise();
     emit flagsRaised();
+    // The new slice's marker, whatever else is or is not marking.
+    markOverlayDirty();
     return w;
 }
 
@@ -16832,7 +16958,7 @@ void SpectrumWidget::removeVfoWidget(int sliceIndex)
         w->destroyFloatingButtons();
         delete w;
         refreshReceiverFlagRegion();
-        update();
+        markOverlayDirty();  // its off-screen arrow, if it had one
     }
 }
 
@@ -16870,6 +16996,9 @@ void SpectrumWidget::refreshSliceFlags()
 // so the pin survives past the next position pass.
 void SpectrumWidget::setFrontSliceIndex(int sliceIndex)
 {
+    if (m_frontSliceIndex != sliceIndex) {
+        markOverlayDirty();  // the off-screen arrow takes the front slice's color
+    }
     m_frontSliceIndex = sliceIndex;
     raiseFrontVfoWidget();
     if (!m_vfoWidgets.isEmpty()) {

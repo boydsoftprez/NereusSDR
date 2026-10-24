@@ -1,14 +1,26 @@
-// NereusSDR for iOS: decodes one endpoint's NSDC v1 display frames from the Core
+// NereusSDR for iOS: decodes one endpoint's NSDC v1 and v2 display frames from the Core
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-22: NSDC v2 path (header and flag rules, the Rice plane, pairing of
+//   split parts, counters, reset), chosen by the version byte.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-23: The v2 header's interval compares by value, as the desktop's
+//   decoder does, so -0.0 equals +0.0. J.J. Boyd (KG4VCF), AI-assisted via
+//   Claude Code.
 
 import Foundation
 
-/// Decodes one display endpoint's NSDC v1 datagrams, written from
-/// docs/architecture/2026-09-20-display-codec-v1.md. Keep one decoder per
-/// endpoint: a delta is rebuilt from this decoder's previous reconstruction.
+/// Decodes one display endpoint's NSDC datagrams. Version 1 is written from
+/// docs/architecture/2026-09-20-display-codec-v1.md, version 2 from
+/// docs/architecture/2026-10-22-display-codec-v2-intra-rows.md; the version
+/// byte chooses the path. Keep one decoder per endpoint: a v1 delta is
+/// rebuilt from this decoder's previous reconstruction.
 ///
-/// A datagram that is refused or needs a keyframe never changes the history
-/// (the last accepted context, sequence and reconstructed rows).
+/// A v1 datagram that is refused or needs a keyframe never changes the
+/// history (the last accepted context, sequence and reconstructed rows). A v2
+/// message depends on no history: the decoder keeps only its context, the
+/// last released sequence, at most one held part of a split frame, and the
+/// last decoded planes used to fill a released frame's absent planes.
 public final class DisplayFrameDecoder {
     /// The fixed header, in bytes.
     static let headerBytes = 42
@@ -23,6 +35,21 @@ public final class DisplayFrameDecoder {
     private static let waterfallAdvanceFlag: UInt8 = 0x02
     private static let wideFlag: UInt8 = 0x04
     private static let blockSizes = [16, 32, 64, 128]
+
+    // NSDC v2 (v2 document section 4).
+    private static let versionTwoByte: UInt8 = 2
+    private static let v2TraceFlag: UInt8 = 0x08
+    private static let v2WaterfallFlag: UInt8 = 0x10
+    private static let v2SplitFlag: UInt8 = 0x20
+    /// Every flag bit version 2 defines; any other bit is `unknownFlags`.
+    private static let v2KnownFlags: UInt8 = 0x3E
+    /// The only valid flag combinations (section 4.1).
+    private static let v2ValidFlags: Set<UInt8> = [0x08, 0x1A, 0x1E, 0x2A, 0x32, 0x36]
+    /// Plane coding 2: previous-bin Rice.
+    private static let v2PlaneCoding: UInt8 = 2
+    private static let v2BlockSizes = [16, 32, 64]
+    /// A block's `k` of 7 means its samples follow raw, 8 bits each.
+    private static let v2RawEscape = 7
 
     /// The accepted context and reconstruction a delta builds on.
     private struct History {
@@ -41,8 +68,25 @@ public final class DisplayFrameDecoder {
     private var sequenceGapPending = false
     /// A delta of this newer generation arrived; only its keyframe helps.
     private var pendingGeneration: UInt32?
+    /// The NSDC v2 context, its last released sequence, held part and fills.
+    private var versionTwo: VersionTwoContext?
+
+    /// What the decoder has counted. NSDC v2 messages and refusals made
+    /// before the version is known (oversized, bad magic, unsupported
+    /// version, truncated before the version byte) move it; the v1 path does
+    /// not. It survives `reset()`.
+    public private(set) var counters = DisplayDecodeCounters()
 
     public init() {}
+
+    /// Forgets every context: the v1 history and the v2 context, its held
+    /// part (discarded, not released) and its fill planes. The counters stay.
+    public func reset() {
+        history = nil
+        sequenceGapPending = false
+        pendingGeneration = nil
+        versionTwo = nil
+    }
 
     /// Whether the decoder cannot use a delta until the Core sends a keyframe:
     /// nothing has been accepted yet, a frame was lost, or the Core moved to a
@@ -52,8 +96,43 @@ public final class DisplayFrameDecoder {
     }
 
     public func decode(_ datagram: Data) -> DisplayDecodeResult {
+        let bytes = Array(datagram)
+        if let reason = Self.versionRefusal(bytes) {
+            counters.malformed += 1
+            return Self.refusal(.rejected, reason)
+        }
+        if bytes[4] == Self.versionTwoByte {
+            return decodeVersionTwo(bytes)
+        }
+        return decodeVersionOne(bytes)
+    }
+
+    /// The checks both versions share, in v1's order, before the version
+    /// byte chooses a path; nil when the datagram is a version 1 or 2 NSDC
+    /// datagram within the bound.
+    private static func versionRefusal(_ bytes: [UInt8]) -> DisplayDecodeReason? {
+        if bytes.count > maximumFrameBytes {
+            return .oversized
+        }
+        if bytes.count < 4 {
+            return .truncated
+        }
+        let found = bytes[0..<4].reduce(UInt32(0)) { $0 << 8 | UInt32($1) }
+        if found != magic {
+            return .badMagic
+        }
+        if bytes.count < 5 {
+            return .truncated
+        }
+        if bytes[4] != version && bytes[4] != versionTwoByte {
+            return .unsupportedVersion
+        }
+        return nil
+    }
+
+    private func decodeVersionOne(_ bytes: [UInt8]) -> DisplayDecodeResult {
         let packet: Packet
-        switch Self.parse(Array(datagram)) {
+        switch Self.parse(bytes) {
         case .failure(let failure):
             return Self.refusal(.rejected, failure.reason)
         case .success(let parsed):
@@ -387,6 +466,419 @@ public final class DisplayFrameDecoder {
 
         mutating func u64() throws -> UInt64 {
             try take(8).reduce(0) { $0 << 8 | UInt64($1) }
+        }
+    }
+
+    // MARK: NSDC v2
+
+    /// Which message of a frame this is (section 4.1).
+    private enum VersionTwoKind: Equatable {
+        /// A whole frame: `0x08`, `0x1A` or `0x1E`.
+        case whole
+        /// The trace part of a split frame, `0x2A`.
+        case tracePart
+        /// The row part of a split frame, `0x32` or `0x36`.
+        case rowPart
+    }
+
+    /// Every header field but the flags; two parts agree when these are equal.
+    /// The interval compares by value, never by bit pattern, so -0.0 equals
+    /// +0.0 (the desktop's decoder has the same rule). A NaN end never gets
+    /// here: the parse refuses a non-finite interval as malformed.
+    private struct VersionTwoHeader: Equatable {
+        let endpointId: UInt32
+        let contextGeneration: UInt32
+        let sequence: UInt32
+        let timestamp: UInt64
+        let minDbm: Float
+        let maxDbm: Float
+        let traceLength: Int
+        let waterfallLength: Int
+        let wideLength: Int
+
+        /// The same context: the interval and the three row lengths.
+        func sameShape(as other: VersionTwoHeader) -> Bool {
+            minDbm == other.minDbm && maxDbm == other.maxDbm
+                && traceLength == other.traceLength && waterfallLength == other.waterfallLength
+                && wideLength == other.wideLength
+        }
+    }
+
+    /// A version 2 message whose structure is valid; its planes are the
+    /// quantized samples it carries (nil when absent).
+    private struct VersionTwoMessage {
+        let header: VersionTwoHeader
+        let kind: VersionTwoKind
+        let trace: [UInt8]?
+        let waterfall: [UInt8]?
+        let wide: [UInt8]?
+    }
+
+    /// The accepted v2 context (section 9.1).
+    private struct VersionTwoContext {
+        let header: VersionTwoHeader
+        /// `L`, the last released sequence; nil before the first release.
+        var lastReleased: UInt32?
+        /// `H`, at most one part of a split frame waiting for its partner.
+        var held: VersionTwoMessage?
+        /// The last decoded planes, only to fill a released frame's absent ones.
+        var fillTrace: [UInt8]?
+        var fillWaterfall: [UInt8]?
+        var fillWide: [UInt8]?
+
+        init(header: VersionTwoHeader) {
+            self.header = header
+        }
+    }
+
+    private func decodeVersionTwo(_ bytes: [UInt8]) -> DisplayDecodeResult {
+        let message: VersionTwoMessage
+        switch Self.parseVersionTwo(bytes) {
+        case .failure(let failure):
+            counters.malformed += 1
+            return Self.refusal(.rejected, failure.reason)
+        case .success(let parsed):
+            message = parsed
+        }
+
+        var released: [DisplayFrame] = []
+        var context: VersionTwoContext
+        if let current = versionTwo {
+            if message.header.endpointId != current.header.endpointId {
+                return Self.refusal(.rejected, .contextMismatch)
+            }
+            if message.header.contextGeneration != current.header.contextGeneration {
+                if !Self.isNewer(message.header.contextGeneration, than: current.header.contextGeneration) {
+                    return Self.refusal(.rejected, .oldContext)
+                }
+                // A newer generation: the held part goes out as a partial
+                // frame of the old context, then the new context starts
+                // with no `L` and no fills.
+                var old = current
+                if let held = old.held {
+                    old.held = nil
+                    released.append(release(held, partial: true, in: &old))
+                }
+                context = VersionTwoContext(header: message.header)
+            } else {
+                if !message.header.sameShape(as: current.header) {
+                    return Self.refusal(.rejected, .contextMismatch)
+                }
+                context = current
+            }
+        } else {
+            context = VersionTwoContext(header: message.header)
+        }
+
+        let result = pair(message, in: &context, after: released)
+        if result.disposition != .rejected {
+            versionTwo = context
+        }
+        return result
+    }
+
+    /// Applies a message within its context's generation: the table of
+    /// section 9.2. `earlier` holds frames already released by a generation
+    /// change; it is non-empty only for a fresh context, where nothing can
+    /// be refused.
+    private func pair(_ message: VersionTwoMessage, in context: inout VersionTwoContext,
+                      after earlier: [DisplayFrame]) -> DisplayDecodeResult {
+        var frames = earlier
+        let sequence = message.header.sequence
+        if let last = context.lastReleased, !Self.isNewer(sequence, than: last) {
+            counters.staleMessages += 1
+            return Self.refusal(.rejected, .staleSequence)
+        }
+        guard let held = context.held else {
+            if message.kind == .whole {
+                frames.append(release(message, partial: false, in: &context))
+            } else {
+                context.held = message
+            }
+            return Self.released(frames)
+        }
+        let heldSequence = held.header.sequence
+        if sequence == heldSequence {
+            if message.kind == .whole {
+                // A sequence is whole or split, never both.
+                counters.malformed += 1
+                return Self.refusal(.rejected, .malformed)
+            }
+            if message.kind == held.kind {
+                counters.duplicateParts += 1
+                return Self.refusal(.rejected, .staleSequence)
+            }
+            if message.header != held.header {
+                counters.malformed += 1
+                return Self.refusal(.rejected, .malformed)
+            }
+            let trace = message.kind == .tracePart ? message : held
+            let row = message.kind == .rowPart ? message : held
+            let merged = VersionTwoMessage(header: message.header, kind: .whole, trace: trace.trace,
+                                           waterfall: row.waterfall, wide: row.wide)
+            context.held = nil
+            frames.append(release(merged, partial: false, in: &context))
+            return Self.released(frames)
+        }
+        if Self.isNewer(sequence, than: heldSequence) {
+            context.held = nil
+            frames.append(release(held, partial: true, in: &context))
+            if message.kind == .whole {
+                frames.append(release(message, partial: false, in: &context))
+            } else {
+                context.held = message
+            }
+            return Self.released(frames)
+        }
+        // Newer than `L` and older than the held part: released now, the
+        // held part stays.
+        frames.append(release(message, partial: message.kind != .whole, in: &context))
+        return Self.released(frames)
+    }
+
+    /// `accepted` with the frames, or `held` when nothing was released.
+    private static func released(_ frames: [DisplayFrame]) -> DisplayDecodeResult {
+        if frames.isEmpty {
+            return DisplayDecodeResult(disposition: .held, reason: .none, frames: [])
+        }
+        return DisplayDecodeResult(disposition: .accepted, reason: .none, frames: frames)
+    }
+
+    /// Releases `message` (whole, merged or partial): counts it, makes its
+    /// sequence `L`, fills its absent planes from the last decoded ones (or
+    /// minimum dBm), then keeps the planes it carried as the new fills.
+    private func release(_ message: VersionTwoMessage, partial: Bool,
+                         in context: inout VersionTwoContext) -> DisplayFrame {
+        let header = message.header
+        if let last = context.lastReleased {
+            counters.framesLost += UInt64(header.sequence &- last &- 1)
+        }
+        context.lastReleased = header.sequence
+        if partial {
+            counters.partsLost += 1
+        }
+        let trace = message.trace ?? context.fillTrace
+            ?? [UInt8](repeating: 0, count: header.traceLength)
+        let waterfall = message.waterfall ?? context.fillWaterfall
+            ?? [UInt8](repeating: 0, count: header.waterfallLength)
+        let wide = message.wide ?? context.fillWide
+            ?? [UInt8](repeating: 0, count: header.wideLength)
+        if let carried = message.trace {
+            context.fillTrace = carried
+        }
+        if let carried = message.waterfall {
+            context.fillWaterfall = carried
+        }
+        if let carried = message.wide {
+            context.fillWide = carried
+        }
+        let minimum = Double(header.minDbm)
+        let maximum = Double(header.maxDbm)
+        let dbm = { (row: [UInt8]) -> [Float] in
+            row.map { Self.dbm($0, minimum: minimum, maximum: maximum) }
+        }
+        return DisplayFrame(
+            endpointId: header.endpointId, contextGeneration: header.contextGeneration,
+            encoderSequence: header.sequence, producerTimestamp: header.timestamp,
+            isKeyframe: false, waterfallAdvance: message.waterfall != nil,
+            minDbm: header.minDbm, maxDbm: header.maxDbm,
+            traceDbm: dbm(trace), waterfallDbm: dbm(waterfall), wideDbm: dbm(wide),
+            traceCarried: message.trace == nil)
+    }
+
+    /// The structure of a version 2 message, before any state is read: the
+    /// header, the flag combination and every plane.
+    private static func parseVersionTwo(_ bytes: [UInt8]) -> Result<VersionTwoMessage, ParseFailure> {
+        var reader = ByteReader(bytes)
+        do {
+            // Magic and version were checked before the version chose this path.
+            _ = try reader.u32()
+            _ = try reader.u8()
+            let flags = try reader.u8()
+            let size = try reader.u16()
+            if flags & ~v2KnownFlags != 0 {
+                return .failure(ParseFailure(.unknownFlags))
+            }
+            if Int(size) != headerBytes {
+                return .failure(ParseFailure(.malformed))
+            }
+            let header = VersionTwoHeader(
+                endpointId: try reader.u32(), contextGeneration: try reader.u32(),
+                sequence: try reader.u32(), timestamp: try reader.u64(),
+                minDbm: Float(bitPattern: try reader.u32()),
+                maxDbm: Float(bitPattern: try reader.u32()),
+                traceLength: Int(try reader.u16()), waterfallLength: Int(try reader.u16()),
+                wideLength: Int(try reader.u16()))
+
+            let hasTrace = flags & v2TraceFlag != 0
+            let hasWaterfall = flags & v2WaterfallFlag != 0
+            let hasWide = flags & wideFlag != 0
+            let rowsValid = (1...maximumRowSamples).contains(header.traceLength)
+                && (1...maximumRowSamples).contains(header.waterfallLength)
+                && header.wideLength <= maximumRowSamples
+            // The wide flag is set exactly when a waterfall plane is present
+            // and the context has a wide row.
+            let wideValid = !hasWaterfall || hasWide == (header.wideLength != 0)
+            guard v2ValidFlags.contains(flags), rowsValid, wideValid,
+                  header.minDbm.isFinite, header.maxDbm.isFinite, header.maxDbm > header.minDbm else {
+                return .failure(ParseFailure(.malformed))
+            }
+
+            // The planes, in trace, waterfall, wide order: any fault from
+            // here on is a malformed message.
+            do {
+                let trace = hasTrace ? try readVersionTwoPlane(&reader, length: header.traceLength) : nil
+                let waterfall = hasWaterfall
+                    ? try readVersionTwoPlane(&reader, length: header.waterfallLength) : nil
+                let wide = hasWide ? try readVersionTwoPlane(&reader, length: header.wideLength) : nil
+                guard reader.atEnd else {
+                    return .failure(ParseFailure(.malformed))
+                }
+                let kind: VersionTwoKind
+                if flags & v2SplitFlag == 0 {
+                    kind = .whole
+                } else {
+                    kind = hasTrace ? .tracePart : .rowPart
+                }
+                return .success(VersionTwoMessage(header: header, kind: kind, trace: trace,
+                                                  waterfall: waterfall, wide: wide))
+            } catch {
+                return .failure(ParseFailure(.malformed))
+            }
+        } catch let failure as ParseFailure {
+            return .failure(failure)
+        } catch {
+            return .failure(ParseFailure(.malformed))
+        }
+    }
+
+    /// Decodes one version 2 plane at `offset` of exactly `length` quantized
+    /// samples and moves `offset` past it; nil, with `offset` unchanged, for
+    /// anything the plane rules refuse (section 4.2).
+    static func decodeVersionTwoPlane(_ bytes: [UInt8], offset: inout Int, length: Int) -> [UInt8]? {
+        guard offset >= 0, offset <= bytes.count, (1...maximumRowSamples).contains(length) else {
+            return nil
+        }
+        var reader = ByteReader(bytes, at: offset)
+        guard let samples = try? readVersionTwoPlane(&reader, length: length) else {
+            return nil
+        }
+        offset = reader.position
+        return samples
+    }
+
+    /// Reads one plane: coding, block size code, payload bytes, the bit stream.
+    private static func readVersionTwoPlane(_ reader: inout ByteReader, length: Int) throws -> [UInt8] {
+        let coding = try reader.u8()
+        let code = Int(try reader.u8())
+        let payloadBytes = Int(try reader.u16())
+        guard coding == v2PlaneCoding, code < v2BlockSizes.count else {
+            throw ParseFailure(.malformed)
+        }
+        let payload = try reader.take(payloadBytes)
+        guard let samples = decodeRice(payload, length: length, blockSize: v2BlockSizes[code]) else {
+            throw ParseFailure(.malformed)
+        }
+        return samples
+    }
+
+    /// The bit stream of a plane: the first sample in 8 bits, then blocks of
+    /// `blockSize`, each a 3-bit `k` and its samples (raw when `k` is 7,
+    /// otherwise zigzag Rice residuals against the previous sample, in 8-bit
+    /// arithmetic that wraps), then a zero pad to the byte. Nil when the
+    /// payload runs out, a `z` passes 255, a pad bit is set or bytes remain.
+    private static func decodeRice(_ payload: [UInt8], length: Int, blockSize: Int) -> [UInt8]? {
+        var bits = BitReader(payload)
+        guard let first = bits.read(8) else {
+            return nil
+        }
+        var row: [UInt8] = []
+        row.reserveCapacity(length)
+        row.append(UInt8(first))
+        while row.count < length {
+            let count = min(blockSize, length - row.count)
+            guard let k = bits.read(3) else {
+                return nil
+            }
+            for _ in 0..<count {
+                if k == v2RawEscape {
+                    guard let raw = bits.read(8) else {
+                        return nil
+                    }
+                    row.append(UInt8(raw))
+                    continue
+                }
+                // A quotient above 255 >> k would make `z` exceed 255.
+                guard let quotient = bits.zeros(atMost: 255 >> k), let low = bits.read(k) else {
+                    return nil
+                }
+                let z = quotient << k | low
+                let residual = z & 1 == 0 ? z >> 1 : -((z + 1) >> 1)
+                row.append(row[row.count - 1] &+ UInt8(truncatingIfNeeded: residual))
+            }
+        }
+        guard bits.endsOnZeroPad else {
+            return nil
+        }
+        return row
+    }
+
+    /// Reads bits most significant first.
+    private struct BitReader {
+        private let bytes: [UInt8]
+        private var position = 0
+
+        init(_ bytes: [UInt8]) {
+            self.bytes = bytes
+        }
+
+        private var remaining: Int { bytes.count * 8 - position }
+
+        private mutating func bit() -> Int {
+            defer { position += 1 }
+            return Int(bytes[position >> 3] >> (7 - position & 7)) & 1
+        }
+
+        /// The next `count` bits as an unsigned value, or nil past the end.
+        mutating func read(_ count: Int) -> Int? {
+            guard count <= remaining else {
+                return nil
+            }
+            var value = 0
+            for _ in 0..<count {
+                value = value << 1 | bit()
+            }
+            return value
+        }
+
+        /// The zero bits before the next one bit (which is consumed), or nil
+        /// when there are more than `limit` of them or the bits run out.
+        mutating func zeros(atMost limit: Int) -> Int? {
+            var count = 0
+            while remaining > 0 {
+                if bit() == 1 {
+                    return count
+                }
+                count += 1
+                if count > limit {
+                    return nil
+                }
+            }
+            return nil
+        }
+
+        /// The stream ends within the last byte and its pad bits are zero.
+        var endsOnZeroPad: Bool {
+            guard remaining < 8 else {
+                return false
+            }
+            var reader = self
+            while reader.remaining > 0 {
+                if reader.bit() != 0 {
+                    return false
+                }
+            }
+            return true
         }
     }
 }
