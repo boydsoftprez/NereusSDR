@@ -9,8 +9,13 @@
 //                 settings changed from its widget (the dial's right-click
 //                 menu). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-24 - setPopOutOverride: an entry whose widget has a window of
+//                 its own (the Roundtable applet) pops out into it, not a
+//                 pop-out shell (Roundtable plan Task 13). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "ContainerDocument.h"
 #include <QObject>
+#include <functional>
 namespace NereusSDR
 {
 class ContainerWorkspaceStore;
@@ -29,6 +34,12 @@ class ContainerArrangeController : public QObject
     ArrangeResult placeFreeCanvas(const QString& entryId,const QRectF& rect,const QRectF& original);
     ArrangeResult move(const QString& entryId, const QString& destinationId, int insertionIndex);
     ArrangeResult popOut(const QString& entryId);
+    // Asked by popOut for an entry it may pop out (found, not locked)
+    // before it builds a pop-out shell: true when the entry's widget opened
+    // a window of its own instead, and popOut then succeeds with the
+    // arrangement unchanged. An empty function removes it.
+    using PopOutOverride = std::function<bool(const ContentEntry&)>;
+    void setPopOutOverride(PopOutOverride handler);
     ArrangeResult returnEntry(const QString& entryId);
     ArrangeResult closeContainer(const QString& containerId);
     // Workspace preview: an entry's saved visibility (the header's hide
@@ -60,5 +71,6 @@ class ContainerArrangeController : public QObject
     ContainerWorkspaceStore& m_store;
     ContainerManager* m_manager;
     const QString m_identity;
+    PopOutOverride m_popOutOverride;
 };
 } // namespace NereusSDR

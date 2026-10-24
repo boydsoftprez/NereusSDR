@@ -20,6 +20,10 @@
 //                createFloatingWindow) floats and docks through the panel
 //                (Roundtable plan Task 13). J.J. Boyd (KG4VCF), AI-assisted
 //                via Anthropic Claude Code.
+//   2026-10-24 - Managed workspace: the arrange controller's pop-out
+//                override, kPanelProperty and the own window's restore at
+//                launch (Roundtable plan Task 13). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
@@ -63,7 +67,15 @@ class AppletPanelWidget : public QWidget {
     Q_OBJECT
 public:
     explicit AppletPanelWidget(QWidget* parent = nullptr);
+    // Also installs the controller's pop-out override: an applet with a
+    // window of its own (AppletWidget::createFloatingWindow) pops out into
+    // it from every Pop Out path, other applets into a pop-out shell.
     void setArrangeController(ContainerArrangeController* controller);
+
+    // The property naming an applet's panel (a QPointer<QObject>), set by addApplet
+    // and insertApplet: a container that hosts the applet reparents it, so
+    // an ancestor search does not find the panel in a managed workspace.
+    static constexpr const char* kPanelProperty = "nereusAppletPanel";
     void setManagedWorkspace(bool managed) { m_managedWorkspace = managed; }
 
     // Set a header widget (e.g., MeterWidget) that stays visible above
@@ -149,6 +161,9 @@ private:
     QMap<AppletWidget*, QPointer<QWidget>> m_ownWindows;
     QMap<AppletWidget*, QMetaObject::Connection> m_ownDocked;
     void forgetOwnWindow(AppletWidget* applet);
+    // Opens the applet's own window and tracks it; false when it has none.
+    bool floatOwnWindow(AppletWidget* applet);
+    void restoreOwnWindow(AppletWidget* applet);
     QMap<AppletWidget*, bool> m_wantVisible;   // last setAppletVisible() request
     QWidget* makeFloatButton(AppletWidget* applet);
     void restoreFloatState(AppletWidget* applet);

@@ -16,6 +16,9 @@
 //   2026-10-24: Roundtable plan Task 13: earlier turns of the last 30
 //               minutes only, pruned on a timer, and the test clock.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-24: Roundtable plan Task 13: recentNames(), the names used on
+//               a room's frequency in the last 24 hours (design 8.6).
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include "models/RoundtableModel.h"
@@ -414,6 +417,7 @@ void RoundtableModel::applyRoom(const QJsonObject& full)
         }
     }
     trimMessages(view);
+    noteRecentNames(id, view);
     pruneView(view, nowMs() - kEarlierWindowMs);
     m_views.insert(id, view);
     schedulePrune();
@@ -456,6 +460,7 @@ void RoundtableModel::applyRoomDelta(const QJsonObject& delta)
         }
     }
     trimMessages(view);
+    noteRecentNames(id, view);
     pruneView(view, nowMs() - kEarlierWindowMs);
     schedulePrune();
     emit roomChanged(id);
@@ -548,6 +553,7 @@ void RoundtableModel::rebuildRoomFromRecords(const QString& roomId)
     for (auto it = view.turns.begin(); it != view.turns.end(); ++it) {
         it->insert(QStringLiteral("names"), names.value(it.key()));
     }
+    noteRecentNames(roomId, view);
     pruneView(view, nowMs() - kEarlierWindowMs);
     m_views.insert(roomId, view);
     schedulePrune();
@@ -979,6 +985,63 @@ bool RoundtableModel::pruneView(RoomView& view, qint64 cutoffMs)
         }
     }
     return pruned;
+}
+
+void RoundtableModel::noteRecentNames(const QString& roomId, const RoomView& view)
+{
+    const qint64 now = nowMs();
+    QHash<QString, RecentName>& names = m_recentNames[roomId];
+    const auto note = [&names](const QString& given, qint64 usedMs) {
+        const QString name = given.trimmed().toUpper();
+        const QString base = RoundtableWire::baseCallsign(name);
+        if (base.isEmpty()) {
+            return;
+        }
+        RecentName& entry = names[base];
+        if (usedMs >= entry.usedMs) {
+            entry.name = name;
+            entry.usedMs = usedMs;
+        }
+    };
+    for (const QJsonObject& turn : view.turns) {
+        const qint64 usedMs = isOpen(turn) ? now : turn.value(QStringLiteral("end")).toInteger();
+        for (const QJsonValue& value : turn.value(QStringLiteral("talkers")).toArray()) {
+            note(value.toObject().value(QStringLiteral("callsign")).toString(), usedMs);
+        }
+        for (const QJsonValue& value : turn.value(QStringLiteral("names")).toArray()) {
+            note(value.toObject().value(QStringLiteral("name")).toString(), usedMs);
+        }
+    }
+    const qint64 cutoff = now - kRecentNamesWindowMs;
+    for (auto it = names.begin(); it != names.end();) {
+        if (it->usedMs < cutoff) {
+            it = names.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (names.isEmpty()) {
+        m_recentNames.remove(roomId);
+    }
+}
+
+QStringList RoundtableModel::recentNames(const QString& roomId) const
+{
+    const qint64 cutoff = nowMs() - kRecentNamesWindowMs;
+    QList<RecentName> recent;
+    for (const RecentName& entry : m_recentNames.value(roomId)) {
+        if (entry.usedMs >= cutoff) {
+            recent.append(entry);
+        }
+    }
+    std::sort(recent.begin(), recent.end(), [](const RecentName& a, const RecentName& b) {
+        return a.usedMs != b.usedMs ? a.usedMs > b.usedMs : a.name < b.name;
+    });
+    QStringList out;
+    for (const RecentName& entry : recent) {
+        out.append(entry.name);
+    }
+    return out;
 }
 
 void RoundtableModel::pruneEarlierTurns()

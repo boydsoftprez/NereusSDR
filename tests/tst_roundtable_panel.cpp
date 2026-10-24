@@ -29,6 +29,7 @@
 #include <QtTest/QtTest>
 
 #include <cmath>
+#include <functional>
 
 #include <QApplication>
 #include <QClipboard>
@@ -43,6 +44,8 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSignalSpy>
+#include <QSplitter>
+#include <QTemporaryDir>
 #include <QToolButton>
 #include <QUrl>
 #include <QListWidget>
@@ -54,7 +57,12 @@
 #include "core/session/IStationLink.h"
 #include "core/WdspTypes.h"
 #include "gui/applets/AppletPanelWidget.h"
+#include "gui/applets/ModMonitorApplet.h"
 #include "gui/applets/RoundtableApplet.h"
+#include "gui/containers/ContainerArrangeController.h"
+#include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/ContainerManager.h"
+#include "gui/containers/ContainerWorkspaceStore.h"
 #include "gui/roundtable/RoundtablePanel.h"
 #include "gui/roundtable/RoundtableWindow.h"
 #include "models/RadioModel.h"
@@ -303,6 +311,59 @@ void settle()
     }
 }
 
+// The real MainWindow runs the panel in a managed workspace: a
+// container hosts the applet and every Pop Out goes through the
+// arrange controller.
+struct ManagedWorkspace {
+    QTemporaryDir dir;
+    AppSettings settings{dir.filePath(QStringLiteral("settings.xml"))};
+    ContainerWorkspaceStore store{settings};
+    AppletPanelWidget host;
+    QWidget pane;
+    QSplitter splitter;
+    ContainerContentRegistry registry;
+    std::unique_ptr<ContainerManager> manager;
+    RoundtableApplet* roundtable = nullptr;
+    ModMonitorApplet* monitor = nullptr;
+    QString roundtableEntry;
+    QString monitorEntry;
+
+    explicit ManagedWorkspace(RoundtableModel* model)
+    {
+        host.setManagedWorkspace(true);
+        roundtable = new RoundtableApplet(nullptr, model, nullptr);
+        monitor = new ModMonitorApplet(nullptr);
+        host.addApplet(roundtable);
+        host.addApplet(monitor);
+        registry.attachSingleton(QStringLiteral("applet:roundtable"), roundtable);
+        registry.attachSingleton(QStringLiteral("applet:mod_monitor"), monitor);
+        manager = std::make_unique<ContainerManager>(&pane, &splitter);
+        manager->setWorkspaceAdapter(&store, &registry);
+        host.setArrangeController(manager->arrangeController());
+        WorkspaceDocument d;
+        d.mainContainerId = QStringLiteral("main");
+        ContainerDocument c;
+        c.id = QStringLiteral("main");
+        c.layout = ContentLayout::VerticalStack;
+        const ContentEntry rt = registry.makeEntry(QStringLiteral("applet:roundtable"));
+        const ContentEntry mm = registry.makeEntry(QStringLiteral("applet:mod_monitor"));
+        roundtableEntry = rt.id;
+        monitorEntry = mm.id;
+        c.contents = {rt, mm};
+        d.containers = {c};
+        ok = manager->commitWorkspace(d, 0).status == CommitStatus::Saved;
+        pane.resize(340, 900);
+        pane.show();
+    }
+
+    ~ManagedWorkspace()
+    {
+        host.setArrangeController(nullptr);
+    }
+
+    bool ok = false;
+};
+
 } // namespace
 
 class TstRoundtablePanel : public QObject {
@@ -315,7 +376,8 @@ private slots:
         // A radio with no connection says so as its slices tune; not the
         // applet's.
         QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false\n"
-                                                        "nereus.freedv.*.debug=false"));
+                                                        "nereus.freedv.*.debug=false\n"
+                                                        "nereus.container.debug=false"));
         RoundtableModel::setClockForTest([] { return g_now; });
         AppSettings::instance().setValue(QStringLiteral("User/Callsign"), QStringLiteral("KG4VCF"));
     }
@@ -643,8 +705,18 @@ private slots:
         panel.show();
         settle();
         auto* box = child<QPlainTextEdit>(&panel, QStringLiteral("roundtableBox"));
+        // The mockup's hint: who you hear, then your reading as an S unit
+        // once you have one.
         QCOMPARE(child<QLabel>(&panel, QStringLiteral("roundtableHint"))->text(),
-                 QStringLiteral("Sent with your reading of W1TLK"));
+                 QStringLiteral("Sent with your reading: hearing W1TLK"));
+        QJsonObject withMine = talkingRoom();
+        QJsonArray who = members();
+        who[0] = member(QStringLiteral("me"), QStringLiteral("KG4VCF"), -1, reading(-73, 500), true);
+        withMine.insert(QStringLiteral("members"), who);
+        p.model.applyRoom(withMine);
+        settle();
+        QCOMPARE(child<QLabel>(&panel, QStringLiteral("roundtableHint"))->text(),
+                 QStringLiteral("Sent with your reading: hearing W1TLK · S9"));
         box->setPlainText(QStringLiteral("first"));
         box->setFocus();
         QTest::keyClick(box, Qt::Key_Return);
@@ -769,6 +841,105 @@ private slots:
         }
         QVERIFY(last != nullptr);
         QVERIFY(last->mapTo(messages, QPoint(0, last->height())).y() < 300);
+    }
+
+    void readingAnotherRoomFitsTheViewport()
+    {
+        // Reading another room at the docked width: the read bar (spec
+        // 11.1, "Reading 7.249 · Tune A here · Back to my slice"), the
+        // two-line count, every readings column and the AWAY note all sit
+        // inside the viewport.
+        Posed p;
+        p.model.applyRoom(talkingRoom());
+        QJsonObject other = talkingRoom(QJsonArray{
+            message(9, QStringLiteral("b"), QStringLiteral("N3XYZ"), QStringLiteral("Anyone up for a contact on 40?"))});
+        other.insert(QStringLiteral("id"), kOther);
+        p.model.applyRoom(other);
+        RoundtablePanel panel(&p.model);
+        panel.resize(340, 900);
+        panel.followSlice(0);
+        panel.show();
+        settle();
+        panel.readRoom(kOther);
+        settle();
+        QVERIFY(panel.isReading());
+        auto* scroll = child<QScrollArea>(&panel, QStringLiteral("roundtableScroll"));
+        auto* content = child<QWidget>(&panel, QStringLiteral("roundtableContent"));
+        const int viewport = scroll->viewport()->width();
+        // What asks for more than the viewport, for the failure message.
+        QStringList asking;
+        for (QWidget* w : content->findChildren<QWidget*>()) {
+            const int hint = w->layout() != nullptr ? w->layout()->minimumSize().width()
+                                                    : w->minimumSizeHint().width();
+            if (w->isVisibleTo(content) && std::max(hint, w->minimumWidth()) > viewport) {
+                asking.append(QStringLiteral("%1 %2 %3").arg(QString::fromLatin1(w->metaObject()->className()),
+                                                              w->objectName()).arg(std::max(hint, w->minimumWidth())));
+            }
+        }
+        QVERIFY2(content->width() <= viewport,
+                 qPrintable(QStringLiteral("content %1 in %2: %3").arg(content->width()).arg(viewport)
+                                .arg(asking.join(QStringLiteral("; ")))));
+        QStringList wide;
+        for (QWidget* w : content->findChildren<QWidget*>()) {
+            if (!w->isVisibleTo(content)) {
+                continue;
+            }
+            const int right = w->mapTo(content, QPoint(w->width(), 0)).x();
+            if (right > viewport) {
+                wide.append(QStringLiteral("%1 %2 ends at %3").arg(QString::fromLatin1(w->metaObject()->className()),
+                                                                    w->objectName()).arg(right));
+            }
+        }
+        QVERIFY2(wide.isEmpty(), qPrintable(wide.join(QStringLiteral("; "))));
+        // Room for a scroll bar too, so the scroll area cannot flip.
+        const int withBar = 340 - panel.style()->pixelMetric(QStyle::PM_ScrollBarExtent);
+        QVERIFY2(content->minimumSizeHint().width() <= withBar,
+                 qPrintable(QString::number(content->minimumSizeHint().width())));
+        // NOT TUNED HERE moved to its own line; the count is on two.
+        QCOMPARE(texts(&panel, QStringLiteral("roundtableTag")), QStringList{QStringLiteral("NOT TUNED HERE")});
+        QCOMPARE(texts(&panel, QStringLiteral("roundtableCount")),
+                 QStringList{QStringLiteral("5 in the room\n1 away")});
+        // Wide, the tag is back in the row and the count on one line.
+        panel.resize(700, 900);
+        settle();
+        QCOMPARE(texts(&panel, QStringLiteral("roundtableCount")),
+                 QStringList{QStringLiteral("5 in the room · 1 away")});
+        QCOMPARE(texts(&panel, QStringLiteral("roundtableTag")), QStringList{QStringLiteral("NOT TUNED HERE")});
+        QLabel* inRow = nullptr;
+        for (QLabel* tag : panel.findChildren<QLabel*>(QStringLiteral("roundtableTag"))) {
+            if (tag->isVisibleTo(&panel)) {
+                inRow = tag;
+            }
+        }
+        QVERIFY(inRow != nullptr);
+        QCOMPARE(inRow->mapTo(&panel, QPoint(0, 0)).y(),
+                 child<QLabel>(&panel, QStringLiteral("roundtableFrequency"))->mapTo(&panel, QPoint(0, 0)).y()
+                     + (child<QLabel>(&panel, QStringLiteral("roundtableFrequency"))->height() - inRow->height()) / 2);
+        panel.resize(340, 900);
+        settle();
+        // The bar's three parts in the spec's order, with its separators.
+        auto* bar = child<QWidget>(&panel, QStringLiteral("roundtableReadBar"));
+        QVERIFY(bar->isVisible());
+        // In layout order: the bar may wrap onto two lines.
+        QStringList parts;
+        std::function<void(QLayout*)> walk = [&parts, &walk, bar](QLayout* layout) {
+            for (int i = 0; i < layout->count(); ++i) {
+                QLayoutItem* item = layout->itemAt(i);
+                if (item->layout() != nullptr) {
+                    walk(item->layout());
+                } else if (QWidget* w = item->widget(); w != nullptr && w->isVisibleTo(bar)) {
+                    if (auto* label = qobject_cast<QLabel*>(w)) {
+                        parts.append(label->text());
+                    } else if (auto* button = qobject_cast<QPushButton*>(w)) {
+                        parts.append(button->text());
+                    } else if (w->layout() != nullptr) {
+                        walk(w->layout());
+                    }
+                }
+            }
+        };
+        walk(bar->layout());
+        QCOMPARE(parts.join(QLatin1Char(' ')), QStringLiteral("Reading 7.249 · Tune A here · Back to my slice"));
     }
 
     void mutedMessagesFold()
@@ -1230,6 +1401,127 @@ private slots:
         settle();
         QVERIFY(!host.isAppletFloating(applet));
         QVERIFY(!applet->isPoppedOut());
+    }
+
+    void managedPopOutOpensTheRoundtableWindow()
+    {
+        Posed p;
+        p.model.applyRoom(talkingRoom());
+        ManagedWorkspace w(&p.model);
+        QVERIFY(w.ok);
+        settle();
+        // A container hosts the applet, not the panel.
+        QVERIFY(w.roundtable->parentWidget() != &w.host);
+        QVERIFY(!w.roundtable->isPoppedOut());
+
+        // The container menu's Pop Out: the Roundtable window, no shell,
+        // the entry where it was.
+        ContainerArrangeController* arrange = w.manager->arrangeController();
+        const quint64 revision = w.store.snapshot().revision;
+        QVERIFY(arrange->popOut(w.roundtableEntry).ok);
+        settle();
+        QVERIFY(w.roundtable->isPoppedOut());
+        QVERIFY(w.roundtable->floatingWindow()->isVisible());
+        QVERIFY(w.host.isAppletFloating(w.roundtable));
+        QCOMPARE(w.store.snapshot().containers.size(), 1);
+        QCOMPARE(w.store.snapshot().revision, revision);
+        QCOMPARE(w.store.snapshot().containers.first().contents.first().id, w.roundtableEntry);
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("AppletroundtableFloating")).toString(),
+                 QStringLiteral("True"));
+
+        // Its close box docks it, and the panel knows.
+        QWindowSystemInterface::handleCloseEvent<QWindowSystemInterface::SynchronousDelivery>(
+            w.roundtable->floatingWindow()->windowHandle());
+        settle();
+        QVERIFY(!w.roundtable->isPoppedOut());
+        QVERIFY(!w.host.isAppletFloating(w.roundtable));
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("AppletroundtableFloating")).toString(),
+                 QStringLiteral("False"));
+
+        // The panel's own arrow finds the panel through the container and
+        // opens the same window; Put it back docks it.
+        emit w.roundtable->panel()->popOutRequested();
+        settle();
+        QVERIFY(w.roundtable->isPoppedOut());
+        QVERIFY(w.host.isAppletFloating(w.roundtable));
+        child<QPushButton>(w.roundtable, QStringLiteral("roundtablePutBackBtn"))->click();
+        settle();
+        QVERIFY(!w.roundtable->isPoppedOut());
+        QVERIFY(!w.host.isAppletFloating(w.roundtable));
+        QCOMPARE(w.store.snapshot().containers.size(), 1);
+
+        // Every other applet keeps the pop-out shell.
+        QVERIFY(arrange->popOut(w.monitorEntry).ok);
+        settle();
+        QCOMPARE(w.store.snapshot().containers.size(), 2);
+        QVERIFY(w.store.snapshot().containers.last().popOutShell);
+        QCOMPARE(w.store.snapshot().containers.last().contents.first().id, w.monitorEntry);
+        QVERIFY(w.host.isAppletFloating(w.monitor));
+        QVERIFY(!w.roundtable->isPoppedOut());
+    }
+
+    void managedWindowReopensAtLaunch()
+    {
+        Posed p;
+        p.model.applyRoom(talkingRoom());
+        // Last session: the window at 700 x 480 at (40, 60), open at quit.
+        {
+            QWidget owner;
+            RoundtableWindow window(&p.model, &owner);
+            window.showAtSavedGeometry();
+            settle();
+            window.resize(700, 480);
+            window.move(40, 60);
+            settle();
+            window.close();
+        }
+        QVERIFY(!AppSettings::instance().value(QLatin1String(RoundtableWindow::kGeometryKey)).toString().isEmpty());
+        AppSettings::instance().setValue(QStringLiteral("AppletroundtableFloating"), QStringLiteral("True"));
+
+        {
+            ManagedWorkspace w(&p.model);
+            QVERIFY(w.ok);
+            settle();
+            QVERIFY(w.roundtable->isPoppedOut());
+            RoundtableWindow* window = w.roundtable->floatingWindow();
+            QVERIFY(window->isVisible());
+            QCOMPARE(window->size(), QSize(700, 480));
+            QCOMPARE(window->pos(), QPoint(40, 60));
+            QCOMPARE(window->screen(), QGuiApplication::screenAt(QPoint(40 + 350, 60 + 240)));
+            QVERIFY(w.host.isAppletFloating(w.roundtable));
+            // No shell for it, and the monitor's own key did not move it.
+            QCOMPARE(w.store.snapshot().containers.size(), 1);
+            QVERIFY(!w.host.isAppletFloating(w.monitor));
+
+            // Quit closes the window without docking it: it stays open for
+            // the next launch.
+            QApplication::closeAllWindows();
+            settle();
+            QVERIFY(!window->isVisible());
+            QCOMPARE(AppSettings::instance().value(QStringLiteral("AppletroundtableFloating")).toString(),
+                     QStringLiteral("True"));
+        }
+
+        // The next launch: open again; its close box docks it, and the
+        // launch after that leaves it docked.
+        {
+            ManagedWorkspace w(&p.model);
+            QVERIFY(w.ok);
+            settle();
+            QVERIFY(w.roundtable->isPoppedOut());
+            QWindowSystemInterface::handleCloseEvent<QWindowSystemInterface::SynchronousDelivery>(
+                w.roundtable->floatingWindow()->windowHandle());
+            settle();
+            QVERIFY(!w.roundtable->isPoppedOut());
+            QCOMPARE(AppSettings::instance().value(QStringLiteral("AppletroundtableFloating")).toString(),
+                     QStringLiteral("False"));
+        }
+        {
+            ManagedWorkspace w(&p.model);
+            QVERIFY(w.ok);
+            settle();
+            QVERIFY(!w.roundtable->isPoppedOut());
+        }
     }
 
     void windowKeyboard()

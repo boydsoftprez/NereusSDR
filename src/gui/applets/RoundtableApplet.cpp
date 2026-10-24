@@ -10,6 +10,9 @@
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 13).
+//   2026-10-24: host() falls back to the panel named on the applet, for a
+//               managed workspace. J.J. Boyd (KG4VCF), AI-assisted via
+//               Claude Code.
 // =================================================================
 
 #include "RoundtableApplet.h"
@@ -199,7 +202,10 @@ AppletPanelWidget* RoundtableApplet::host() const
             return panelHost;
         }
     }
-    return nullptr;
+    // In a managed workspace a container hosts the applet, so the panel
+    // that holds it is named on the applet instead.
+    return qobject_cast<AppletPanelWidget*>(
+        property(AppletPanelWidget::kPanelProperty).value<QPointer<QObject>>().data());
 }
 
 bool RoundtableApplet::isPoppedOut() const

@@ -352,6 +352,10 @@ ArrangeResult ContainerArrangeController::popOut(const QString& id)
         return failure(tr("Arrangement is locked"));
     }
     auto entry = d.containers[source].contents[index];
+    if (m_popOutOverride && m_popOutOverride(entry)) {
+        // Its own window: the entry stays where it is.
+        return ArrangeResult{true, {}};
+    }
     remember(entry, d.containers[source], index);
     ContainerDocument shell;
     shell.id = newId();
@@ -381,6 +385,10 @@ ArrangeResult ContainerArrangeController::popOut(const QString& id)
     d.containers[source].contents.removeAt(index);
     d.containers.append(shell);
     return commit(d);
+}
+void ContainerArrangeController::setPopOutOverride(PopOutOverride handler)
+{
+    m_popOutOverride = std::move(handler);
 }
 ArrangeResult ContainerArrangeController::returnBatch(WorkspaceDocument& d, int source,
                                                       const QVector<ContentEntry>& entries)

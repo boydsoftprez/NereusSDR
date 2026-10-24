@@ -6674,8 +6674,9 @@ void poseRoundtableRooms(RoundtableModel& model)
 QJsonArray roundtableMembers()
 {
     return QJsonArray{
+        // Your own reading of the talker: the box's hint carries it.
         roundtableMember(QStringLiteral("me"), QStringLiteral("KG4VCF"), QStringLiteral("EM73"), -1,
-                         QJsonValue::Null, true),
+                         roundtableReading(-73, 600), true),
         roundtableMember(QStringLiteral("t"), QStringLiteral("W1TLK"), QStringLiteral("FN42"), 1290,
                          roundtableReading(-71, 800)),
         roundtableMember(QStringLiteral("a"), QStringLiteral("W4ABC"), QStringLiteral("EM85"), 210,
@@ -6800,6 +6801,14 @@ void appendRoundtableScenes(QVector<Scene>& scenes)
                        "linkState", static_cast<int>(RoundtableModel::LinkState::Reconnecting));
                },
                QStringLiteral("the room while Roundtable reconnects"));
+    panelScene(QStringLiteral("roundtable-panel-hidden"),
+               [](PosedRoundtable& rt, RoundtablePanel&) {
+                   rt.state.applyStationValue("hidden", true);
+                   rt.state.applyStationValue("linkSince", kRoundtableNow - 60000);
+                   rt.state.applyStationValue("linkState",
+                                              static_cast<int>(RoundtableModel::LinkState::Hidden));
+               },
+               QStringLiteral("the room while your station is hidden: you see everything, nothing is sent"));
 
     // You are transmitting: the TX line and the readings of you.
     scenes.append({QStringLiteral("roundtable-keyed"), QStringLiteral("2v"), true, [](SceneContext& ctx) {

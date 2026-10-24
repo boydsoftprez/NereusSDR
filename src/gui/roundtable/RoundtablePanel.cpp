@@ -80,6 +80,8 @@ constexpr int kValueWidth = 46;
 constexpr int kAgeWidth = 40;
 // The rooms the empty state offers to read.
 constexpr int kEmptyRooms = 8;
+// Name chips beside the callsign box (design 8.6 names).
+constexpr int kNameChips = 3;
 // A message box two lines tall.
 constexpr int kBoxHeight = 46;
 // S9 is -73 dBm, 6 dB an S-unit (the mockup's sText).
@@ -418,12 +420,20 @@ RoundtablePanel::RoundtablePanel(RoundtableModel* model, QWidget* parent)
     m_readBar->setStyleSheet(QStringLiteral("QWidget#roundtableReadBar { background: #151518; %1 }")
                                  .arg(rule()));
     {
+        // "Reading 7.249 · Tune A here · Back to my slice", one line that
+        // fits the docked width with room for a scroll bar.
         auto* row = new QHBoxLayout(m_readBar);
         row->setContentsMargins(8, 4, 8, 4);
-        row->setSpacing(6);
+        row->setSpacing(4);
+        const auto separator = [this]() {
+            QLabel* dot = makeLabel(m_readBar, QStringLiteral("·"), kDim, kSmallPx);
+            dot->setObjectName(QStringLiteral("roundtableReadSeparator"));
+            return dot;
+        };
         m_readLabel = makeLabel(m_readBar, QString(), kText, kSmallPx, true);
         m_readLabel->setObjectName(QStringLiteral("roundtableReadLabel"));
         row->addWidget(m_readLabel);
+        row->addWidget(separator());
         QPushButton* tune = makeButton(m_readBar, QStringLiteral("Tune A here"), kPrimaryStyle);
         tune->setObjectName(QStringLiteral("roundtableTuneHereBtn"));
         tune->setToolTip(QStringLiteral("Tune the slice to this room"));
@@ -434,11 +444,12 @@ RoundtablePanel::RoundtablePanel(RoundtableModel* model, QWidget* parent)
             }
         });
         row->addWidget(tune);
-        row->addStretch(1);
+        row->addWidget(separator());
         QPushButton* back = makeButton(m_readBar, QStringLiteral("Back to my slice"), kLinkStyle);
         back->setObjectName(QStringLiteral("roundtableBackBtn"));
         connect(back, &QPushButton::clicked, this, &RoundtablePanel::backToSlice);
         row->addWidget(back);
+        row->addStretch(1);
     }
     m_contentLayout->addWidget(m_readBar);
 
@@ -831,30 +842,21 @@ QJsonObject RoundtablePanel::openTurn(const QJsonObject& room) const
 
 QStringList RoundtablePanel::nameSuggestions(const QJsonObject& room) const
 {
-    // The names given to turns in view, then the room's callsigns.
+    // Design 8.6: names are picked from those used on that frequency in
+    // the last 24 hours (newest first), or typed. Three chips fit beside
+    // the box at the docked width.
     QStringList out;
-    const QString mine = myCallsign(room);
-    const auto add = [&out, &mine](const QString& name) {
-        const QString upper = name.trimmed().toUpper();
-        if (!upper.isEmpty() && upper != mine && !out.contains(upper)) {
-            out.append(upper);
-        }
-    };
-    for (const QString& key : {QStringLiteral("now"), QStringLiteral("earlier")}) {
-        for (const QJsonValue& turn : room.value(key).toArray()) {
-            for (const QJsonValue& name : turn.toObject().value(QStringLiteral("names")).toArray()) {
-                add(name.toObject().value(QStringLiteral("name")).toString());
-            }
-            for (const QJsonValue& talker : turn.toObject().value(QStringLiteral("talkers")).toArray()) {
-                add(talker.toObject().value(QStringLiteral("callsign")).toString());
-            }
-        }
+    if (!m_model) {
+        return out;
     }
-    for (const QJsonValue& member : room.value(QStringLiteral("members")).toArray()) {
-        add(member.toObject().value(QStringLiteral("callsign")).toString());
-    }
-    while (out.size() > 6) {
-        out.removeLast();
+    const QString mine = RoundtableWire::baseCallsign(myCallsign(room));
+    for (const QString& name : m_model->recentNames(room.value(QStringLiteral("id")).toString())) {
+        if (RoundtableWire::baseCallsign(name) != mine) {
+            out.append(name);
+        }
+        if (out.size() == kNameChips) {
+            break;
+        }
     }
     return out;
 }
@@ -983,24 +985,45 @@ void RoundtablePanel::rebuildHead(const QJsonObject& room)
     body->setObjectName(QStringLiteral("roundtableHeaderBody"));
     body->setAttribute(Qt::WA_StyledBackground, true);
     body->setStyleSheet(QStringLiteral("QWidget#roundtableHeaderBody { %1 }").arg(rule()));
-    auto* row = new QHBoxLayout(body);
-    row->setContentsMargins(8, 6, 8, 4);
+    auto* stack = new QVBoxLayout(body);
+    stack->setContentsMargins(8, 6, 8, 4);
+    stack->setSpacing(4);
+    auto* row = new QHBoxLayout();
+    row->setContentsMargins(0, 0, 0, 0);
     row->setSpacing(6);
 
     const QChar letter(QLatin1Char(static_cast<char>('A' + std::clamp(m_sliceId, 0, 25))));
+    const auto notTunedTag = [body]() {
+        QLabel* label = makeLabel(body, QStringLiteral("NOT TUNED HERE"), kUnknown, kSmallPx, true);
+        label->setStyleSheet(label->styleSheet()
+                             + QStringLiteral(" border: 1px solid #6b5426; padding: 0 4px;"
+                                              " border-radius: 2px;"));
+        label->setObjectName(QStringLiteral("roundtableTag"));
+        return label;
+    };
+    m_tagInline = nullptr;
+    m_tagAbove = nullptr;
     QLabel* tag = nullptr;
     if (tunedHere()) {
         tag = makeLabel(body, QString(letter), "#001018", kSmallPx, true);
         tag->setStyleSheet(tag->styleSheet()
                            + QStringLiteral(" background: %1; padding: 0 4px; border-radius: 2px;")
                                  .arg(QLatin1String(kAccent)));
+        tag->setObjectName(QStringLiteral("roundtableTag"));
     } else {
-        tag = makeLabel(body, QStringLiteral("NOT TUNED HERE"), kUnknown, kSmallPx, true);
-        tag->setStyleSheet(tag->styleSheet()
-                           + QStringLiteral(" border: 1px solid #6b5426; padding: 0 4px;"
-                                            " border-radius: 2px;"));
+        tag = notTunedTag();
+        m_tagInline = tag;
+        // The same tag on a line of its own, shown instead when the row
+        // would not fit the docked width.
+        auto* above = new QHBoxLayout();
+        above->setContentsMargins(0, 0, 0, 0);
+        m_tagAbove = notTunedTag();
+        m_tagAbove->hide();
+        above->addWidget(m_tagAbove);
+        above->addStretch(1);
+        stack->addLayout(above);
     }
-    tag->setObjectName(QStringLiteral("roundtableTag"));
+    stack->addLayout(row);
     row->addWidget(tag);
     QLabel* freq = makeLabel(body, headerFrequency(roomHz(id)), kAccent, 15, false, true);
     freq->setObjectName(QStringLiteral("roundtableFrequency"));
@@ -1059,32 +1082,63 @@ void RoundtablePanel::rebuildHead(const QJsonObject& room)
 
 void RoundtablePanel::fitCount()
 {
-    // "N in the room · N away" goes onto two lines before it widens the
-    // 340 px panel (not a word-wrapping label: one with a height for its
-    // width makes the scroll area lay out mid-rebuild).
-    if (m_countLabel == nullptr || m_countTwoLines.isEmpty()) {
+    // The header row fits the 340 px panel: "N in the room · N away" goes
+    // onto two lines first, then NOT TUNED HERE moves to a line of its
+    // own (not a word-wrapping label: one with a height for its width
+    // makes the scroll area lay out mid-rebuild).
+    if (m_countLabel == nullptr) {
         return;
     }
     // Measured, not laid out: nothing here may relayout the content.
-    auto* row = static_cast<QHBoxLayout*>(m_countLabel->parentWidget()->layout());
-    const QMargins margins = row->contentsMargins();
-    int need = margins.left() + margins.right();
+    auto* row = qobject_cast<QHBoxLayout*>(m_countLabel->parentWidget()->layout()->itemAt(
+        m_countLabel->parentWidget()->layout()->count() - 1)->layout());
+    if (row == nullptr) {
+        return;
+    }
+    const QMargins margins = m_countLabel->parentWidget()->layout()->contentsMargins();
+    const QFontMetrics metrics(m_countLabel->font());
+    const int oneLine = metrics.horizontalAdvance(m_countOneLine);
+    int twoLines = oneLine;
+    if (!m_countTwoLines.isEmpty()) {
+        twoLines = 0;
+        for (const QString& line : m_countTwoLines.split(QLatin1Char('\n'))) {
+            twoLines = std::max(twoLines, metrics.horizontalAdvance(line));
+        }
+    }
+    int others = margins.left() + margins.right();
     int widgets = 0;
+    int tagWidth = 0;
     for (int i = 0; i < row->count(); ++i) {
         QWidget* w = row->itemAt(i)->widget();
-        if (w == nullptr || w->isHidden()) {
+        if (w == nullptr || (w->isHidden() && w != m_tagInline)) {
+            continue;
+        }
+        ++widgets;
+        if (w == m_countLabel) {
             continue;
         }
         w->ensurePolished();
-        need += w == m_countLabel ? QFontMetrics(w->font()).horizontalAdvance(m_countOneLine)
-                                  : w->sizeHint().width();
-        ++widgets;
+        if (w == m_tagInline) {
+            tagWidth = w->sizeHint().width() + row->spacing();
+        } else {
+            others += w->sizeHint().width();
+        }
     }
-    need += std::max(0, widgets - 1) * row->spacing();
+    others += std::max(0, widgets - 1) * row->spacing() - (tagWidth > 0 ? row->spacing() : 0);
     const int room = m_scroll->viewport()->width() > 0 ? m_scroll->viewport()->width() : width();
-    const QString& text = need > room ? m_countTwoLines : m_countOneLine;
+    bool twoLineCount = false;
+    bool tagAbove = false;
+    if (others + tagWidth + oneLine > room) {
+        twoLineCount = !m_countTwoLines.isEmpty();
+        tagAbove = m_tagInline != nullptr && others + tagWidth + twoLines > room;
+    }
+    const QString& text = twoLineCount ? m_countTwoLines : m_countOneLine;
     if (m_countLabel->text() != text) {
         m_countLabel->setText(text);
+    }
+    if (m_tagInline != nullptr && m_tagAbove != nullptr && m_tagAbove->isHidden() != !tagAbove) {
+        m_tagInline->setVisible(!tagAbove);
+        m_tagAbove->setVisible(tagAbove);
     }
 }
 
@@ -2093,15 +2147,32 @@ void RoundtablePanel::updateFooter()
             hint = QStringLiteral("Sent with no reading, nobody is talking");
         } else if (turn.value(QStringLiteral("mine")).toBool()) {
             hint = QStringLiteral("Sent as transmitting");
-        } else if (turn.value(QStringLiteral("kind")).toString() == QLatin1String("unknown")
-                   || talkers.isEmpty()) {
-            hint = QStringLiteral("Sent with your reading of the talker");
         } else {
-            QStringList who;
-            for (const QJsonValue& value : talkers) {
-                who.append(withNth(value.toObject()));
+            // The mockup's compose hint (placement.html composeBlock): who
+            // you hear, and your reading of them as an S unit.
+            QString who;
+            if (turn.value(QStringLiteral("kind")).toString() == QLatin1String("unknown")
+                || talkers.isEmpty()) {
+                const QJsonArray given = turn.value(QStringLiteral("names")).toArray();
+                who = given.isEmpty()
+                          ? QStringLiteral("unknown")
+                          : given.first().toObject().value(QStringLiteral("name")).toString();
+            } else {
+                QStringList calls;
+                for (const QJsonValue& value : talkers) {
+                    calls.append(withNth(value.toObject()));
+                }
+                who = calls.join(QStringLiteral(" + "));
             }
-            hint = QStringLiteral("Sent with your reading of %1").arg(who.join(QStringLiteral(" + ")));
+            hint = QStringLiteral("Sent with your reading: hearing %1").arg(who);
+            for (const QJsonValue& value : room.value(QStringLiteral("members")).toArray()) {
+                const QJsonObject member = value.toObject();
+                const QJsonValue reading = member.value(QStringLiteral("reading"));
+                if (member.value(QStringLiteral("you")).toBool() && reading.isObject()) {
+                    hint += QStringLiteral(" · %1")
+                                .arg(sText(reading.toObject().value(QStringLiteral("dbm")).toDouble()));
+                }
+            }
         }
     }
     m_hint->setText(hint);

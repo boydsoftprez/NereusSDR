@@ -21,6 +21,9 @@
 //   2026-10-24: Roundtable plan Task 13: earlier turns of the last 30
 //               minutes in both placements, on a test clock. J.J. Boyd
 //               (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-24: Roundtable plan Task 13: the names used on a frequency
+//               in the last 24 hours, in both placements. J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -592,6 +595,85 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(changed.size() >= 1, 4000);
         QVERIFY(earlierIds(p.local.room(kRoom)).isEmpty());
         QVERIFY(earlierIds(p.remote.room(kRoom)).isEmpty());
+        RoundtableModel::setClockForTest([] { return qint64(2000); });
+    }
+
+    void recentNamesAreTheLastDayOnThatFrequency()
+    {
+        // Design 8.6: names are picked from those used on that frequency
+        // in the last 24 hours.
+        constexpr qint64 kMinute = 60LL * 1000LL;
+        constexpr qint64 kHour = 60LL * kMinute;
+        qint64 now = 30LL * kHour;
+        RoundtableModel::setClockForTest([&now] { return now; });
+
+        const auto talked = [](qint64 id, qint64 start, const QJsonValue& end, const QString& callsign,
+                               const QJsonArray& names) {
+            QJsonObject t = turn(id, start, end, names);
+            t.insert(QStringLiteral("talkers"),
+                     QJsonArray{QJsonObject{{QStringLiteral("ref"), QJsonValue::Null},
+                                            {QStringLiteral("callsign"), callsign},
+                                            {QStringLiteral("nth"), 1}}});
+            return t;
+        };
+        QJsonObject full = roomFull();
+        full.insert(QStringLiteral("now"), QJsonArray{});
+        // K4ABC/P talked 10 minutes ago; an unknown turn 5 minutes ago was
+        // named W4XYZ by two and k9awy by one.
+        full.insert(QStringLiteral("earlier"),
+                    QJsonArray{talked(1, now - 12 * kMinute, now - 10 * kMinute, QStringLiteral("K4ABC/P"),
+                                      QJsonArray{}),
+                               turn(2, now - 6 * kMinute, now - 5 * kMinute,
+                                    QJsonArray{name(QStringLiteral("W4XYZ"), 2),
+                                               name(QStringLiteral("k9awy"), 1)})});
+        Placements p;
+        emit p.client.roomReceived(full);
+        p.carry();
+        const QStringList firstSeen{QStringLiteral("K9AWY"), QStringLiteral("W4XYZ"),
+                                    QStringLiteral("K4ABC/P")};
+        QCOMPARE(p.local.recentNames(kRoom), firstSeen);
+        QCOMPARE(p.remote.recentNames(kRoom), firstSeen);
+        QVERIFY(p.local.recentNames(kOtherRoom).isEmpty());
+
+        // Two hours on, the earlier turns are gone from the room; their
+        // names are not. W1AW talks now: used now, so first. A name
+        // given as the base callsign of one already listed replaces it.
+        now += 2 * kHour;
+        p.local.pruneEarlierTurns();
+        p.carry();
+        QVERIFY(p.local.room(kRoom).value(QStringLiteral("earlier")).toArray().isEmpty());
+        emit p.client.roomDeltaReceived(QJsonObject{
+            {QStringLiteral("room"), kRoom},
+            {QStringLiteral("turns"),
+             QJsonArray{talked(3, now - kMinute, QJsonValue::Null, QStringLiteral("W1AW"),
+                               QJsonArray{name(QStringLiteral("K4ABC"), 1)})}}});
+        p.carry();
+        const QStringList later{QStringLiteral("K4ABC"), QStringLiteral("W1AW"), QStringLiteral("K9AWY"),
+                                QStringLiteral("W4XYZ")};
+        QCOMPARE(p.local.recentNames(kRoom), later);
+        QCOMPARE(p.remote.recentNames(kRoom), later);
+
+        // The room closes and reopens on the same center: the same room
+        // for this, so its names stay.
+        emit p.client.roomDeltaReceived(
+            QJsonObject{{QStringLiteral("room"), kRoom}, {QStringLiteral("closed"), true}});
+        p.carry();
+        QVERIFY(p.local.room(kRoom).isEmpty());
+        QCOMPARE(p.local.recentNames(kRoom), later);
+        QJsonObject reopened = roomFull();
+        reopened.insert(QStringLiteral("now"), QJsonArray{});
+        reopened.insert(QStringLiteral("earlier"), QJsonArray{});
+        emit p.client.roomReceived(reopened);
+        p.carry();
+        QCOMPARE(p.local.recentNames(kRoom), later);
+
+        // A day after each was last used, it leaves the list: the names of
+        // turn 2 (ended at 30 h less 5 minutes) go first.
+        now = 30LL * kHour - 5 * kMinute + RoundtableModel::kRecentNamesWindowMs + 1;
+        QCOMPARE(p.local.recentNames(kRoom), (QStringList{QStringLiteral("K4ABC"), QStringLiteral("W1AW")}));
+        now = 32LL * kHour + RoundtableModel::kRecentNamesWindowMs + 1;
+        QVERIFY(p.local.recentNames(kRoom).isEmpty());
+        QVERIFY(p.remote.recentNames(kRoom).isEmpty());
         RoundtableModel::setClockForTest([] { return qint64(2000); });
     }
 };

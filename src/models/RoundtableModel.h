@@ -41,6 +41,10 @@
 //               minutes only (wire spec 5.4.6: receivers drop the rest
 //               themselves), with a clock tests can set. J.J. Boyd
 //               (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-24: Roundtable plan Task 13: recentNames(), the names used on
+//               a room's frequency in the last 24 hours (design 8.6), for
+//               naming a turn. J.J. Boyd (KG4VCF), AI-assisted via Claude
+//               Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -81,6 +85,9 @@ public:
     /// the last 30 minutes; a turn that leaves the window is not announced,
     /// receivers drop it themselves.
     static constexpr qint64 kEarlierWindowMs = 30LL * 60LL * 1000LL;
+    /// Design 8.6: names to name a turn with are picked from those used on
+    /// that frequency in the last 24 hours.
+    static constexpr qint64 kRecentNamesWindowMs = 24LL * 60LL * 60LL * 1000LL;
 
     /// The Unix time in ms the model reads (the wall clock unless a test
     /// set its own).
@@ -194,6 +201,14 @@ public:
     /// own when the oldest earlier turn ages out.
     void pruneEarlierTurns();
 
+    /// The names used on a room's frequency in the last 24 hours (design
+    /// 8.6), newest first: the callsigns of its known talkers and the names
+    /// given to its turns, as this model has seen them, upper case, one per
+    /// base callsign (design 7.1). The list outlives the 30-minute earlier
+    /// turns and a room that closed and reopened on the same center (the
+    /// same room id). A turn still open counts as used now.
+    QStringList recentNames(const QString& roomId) const;
+
 signals:
     void roomsChanged();
     void roomChanged(const QString& roomId);
@@ -227,6 +242,7 @@ private:
     void refuse(const QString& verb, const QString& reason);
     bool stationOutcome(const QString& verb, bool sent, const QString& reason);
     static bool pruneView(RoomView& view, qint64 cutoffMs);
+    void noteRecentNames(const QString& roomId, const RoomView& view);
     void schedulePrune();
 
     QPointer<RoundtableClient> m_client;
@@ -252,6 +268,13 @@ private:
 
     // The AppSettings write observer feeding settingChanged.
     int m_settingsObserver = -1;
+
+    // recentNames(): room id to base callsign to {name, last used ms}.
+    struct RecentName {
+        QString name;
+        qint64 usedMs = 0;
+    };
+    QHash<QString, QHash<QString, RecentName>> m_recentNames;
 
     // Fires when the oldest earlier turn leaves the 30-minute window.
     QTimer m_pruneTimer;

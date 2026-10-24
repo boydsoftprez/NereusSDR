@@ -214,6 +214,10 @@ private:
     QPointer<QLabel> m_countLabel;
     QString m_countOneLine;
     QString m_countTwoLines;
+    // NOT TUNED HERE sits in the header row, or on its own line above it
+    // when the row would not fit (fitCount).
+    QPointer<QLabel> m_tagInline;
+    QPointer<QLabel> m_tagAbove;
     QWidget* m_head = nullptr;
     QLabel* m_connection = nullptr;
     QWidget* m_txLine = nullptr;
