@@ -883,6 +883,16 @@
 //                scan is never stopped, and the "isn't reachable" toast comes
 //                only after the scan ends without the radio. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - Each stream's FFT engine drops its window in progress on
+//                RadioModel::iqSequenceGapForStream, queued in order with the
+//                samples (after Longpath
+//                src/gui/MainWindow.cpp:16439-16458 [@383f058], PR 62).
+//                J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//                Claude Code.
+//   2026-10-24 - The gap wiring's comment names the engine's bound on that
+//                reset (JJ's ruling, option i), and then option c, a gap
+//                within four windows of the last one let through. J.J. Boyd
+//                (KG4VCF), with AI-assisted implementation via Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -6113,6 +6123,25 @@ FFTEngine* MainWindow::ensureStreamWired(int streamIndex)
             [engine, streamIndex](int idx, const QVector<float>& samples) {
         if (idx != streamIndex) { return; }
         engine->feedIQ(samples);
+    });
+
+    // A lost I/Q packet on this stream (or on every stream, -1): on a
+    // healthy link the engine drops its window in progress, so the jump at
+    // the seam does not paint a line across the spectrum (NereusSDR,
+    // 2026-10-22, after Longpath PR 62, MainWindow::onIqSequenceGap). On a
+    // lossy link the engine lets gaps through instead (a gap within
+    // FFTEngine::kGapLossyLinkWindows windows of the last one, once a frame
+    // has come since the last reset, 2026-10-24, JJ's ruling, option c; or
+    // no frame for FFTEngine::kGapResetStallFrameIntervals frame
+    // intervals), so frames keep their normal rate with a slight smear.
+    // Engine-scoped like the samples above: both are queued from the
+    // Connection thread onto the FFT thread, in the order they were sent,
+    // so the reset lands after the samples before the gap and before the
+    // samples after it.
+    connect(m_radioModel, &RadioModel::iqSequenceGapForStream, engine,
+            [engine, streamIndex](int idx) {
+        if (idx >= 0 && idx != streamIndex) { return; }
+        engine->requestWindowReset();
     });
 
     // One NoiseFloorTracker per stream, fed by that stream's own FFT.
