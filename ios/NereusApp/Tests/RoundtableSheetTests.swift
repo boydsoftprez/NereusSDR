@@ -12,6 +12,9 @@
 // 2026-10-25: Roundtable fix wave re-review: the first-run PTT unkeys while
 // the key is still coming up, and a PTT takes a touch only in its circle.
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: JJ's decision: a touch in either PTT's corners keys nothing
+// and never reaches the band under it; one just outside still does.
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -426,17 +429,17 @@ struct RoundtableSheetTests {
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.addSubview(view)
-        view.begin(at: .zero)
+        view.begin(at: CGPoint(x: 38, y: 38))
         view.removeFromSuperview()
         #expect(view.phase == .idle)
         view.lift()
         #expect(taps == 0)
         view.enabled = false
-        view.begin(at: .zero)
+        view.begin(at: CGPoint(x: 38, y: 38))
         view.lift()
         #expect(taps == 0)
         view.enabled = true
-        view.begin(at: .zero)
+        view.begin(at: CGPoint(x: 38, y: 38))
         view.lift()
         #expect(taps == 1)
     }
@@ -640,46 +643,91 @@ struct RoundtableSheetTests {
         await model.disconnect()
     }
 
-    @Test("a touch in the corner of either PTT's square keys nothing; one in its circle keys")
-    func pttTakesTouchesInItsCircleOnly() async throws {
+    @Test("a touch in the corner of either PTT's square keys nothing and never reaches the band; one in its circle keys")
+    func pttCornersDoNothing() async throws {
         #expect(PttButton.inFace(CGPoint(x: 38, y: 38), of: CGRect(x: 0, y: 0, width: 76, height: 76)))
         #expect(PttButton.inFace(CGPoint(x: 38, y: 0), of: CGRect(x: 0, y: 0, width: 76, height: 76)))
         #expect(!PttButton.inFace(CGPoint(x: 4, y: 4), of: CGRect(x: 0, y: 0, width: 76, height: 76)))
         let (model, station) = try await connected()
         let transmit = model.main.transmit
-        let (window, _) = try host(ZStack {
-            Color.black
-            PttButton(transmit: transmit, linkUp: true)
-        })
-        defer { window.isHidden = true }
-        let tap = try #require(await settleView(PttTapView.self, in: window))
-        #expect(tap.bounds.width > 0)
-        /// Deliver a tap where UIKit would: to the view a hit test finds.
-        func touch(_ point: CGPoint) -> Bool {
-            let atWindow = tap.convert(point, to: window)
-            guard let hit = window.hitTest(atWindow, with: nil), hit === tap || hit.isDescendant(of: tap) else {
-                return false
+        for mode in [PttButton.Mode.tap, .hold(diameter: PttButton.holdDiameter)] {
+            // The band under the PTT, as a view a touch that falls through lands on.
+            let (window, _) = try host(ZStack {
+                BandUnderPtt()
+                PttButton(transmit: transmit, linkUp: true, mode: mode)
+            })
+            defer { window.isHidden = true }
+            window.layoutIfNeeded()
+            let band = try #require(await settleView(BandUnderPttView.self, in: window))
+            let ptt: UIView
+            if mode == .tap {
+                ptt = try #require(await settleView(PttTapView.self, in: window))
+            } else {
+                ptt = try #require(await settleView(PttHoldView.self, in: window))
             }
-            tap.begin(at: point)
-            tap.lift()
-            return true
+            #expect(ptt.bounds.width > 0, "\(mode)")
+            /// The view UIKit hands a touch at `point` (in the PTT's bounds) to.
+            func hit(_ point: CGPoint) -> UIView? {
+                window.hitTest(ptt.convert(point, to: window), with: nil)
+            }
+            func onPtt(_ point: CGPoint) -> Bool {
+                hit(point).map { $0 === ptt || $0.isDescendant(of: ptt) } == true
+            }
+            func onBand(_ point: CGPoint) -> Bool {
+                hit(point).map { $0 === band || $0.isDescendant(of: band) } == true
+            }
+            /// A whole touch, delivered where UIKit would, held past the hold's delay.
+            func press(_ point: CGPoint) {
+                let start = ProcessInfo.processInfo.systemUptime
+                if let tap = ptt as? PttTapView {
+                    tap.begin(at: point)
+                    tap.lift()
+                } else if let hold = ptt as? PttHoldView {
+                    hold.begin(at: point, time: start)
+                    hold.tick(time: start + PttHold.delay + 0.05)
+                    hold.lift()
+                }
+            }
+            // The square's corners: the PTT owns the touch, so it never
+            // reaches the band to tune, and it keys nothing.
+            let w = ptt.bounds.width
+            for corner in [CGPoint(x: 3, y: 3), CGPoint(x: w - 3, y: 3), CGPoint(x: 3, y: w - 3),
+                           CGPoint(x: w - 3, y: w - 3)] {
+                #expect(onPtt(corner), "\(mode) \(corner)")
+                #expect(!onBand(corner), "\(mode) \(corner)")
+                press(corner)
+            }
+            if let hold = ptt as? PttHoldView {
+                #expect(hold.phase == .idle)
+            }
+            await TransmitScreenTests.barrier(model, station)
+            await transmit.settleHold()
+            #expect(!transmit.ptt.transmitting && !station.keyed, "\(mode)")
+            #expect(!transmit.holding, "\(mode)")
+            // Just outside the square, the band still takes the touch.
+            for outside in [CGPoint(x: w / 2, y: -3), CGPoint(x: w + 3, y: w / 2), CGPoint(x: w + 3, y: -3)] {
+                #expect(onBand(outside), "\(mode) \(outside)")
+                #expect(!onPtt(outside), "\(mode) \(outside)")
+            }
+            // Its center keys.
+            let centre = CGPoint(x: ptt.bounds.midX, y: ptt.bounds.midY)
+            #expect(onPtt(centre), "\(mode)")
+            if let tap = ptt as? PttTapView {
+                tap.begin(at: centre)
+                tap.lift()
+                #expect(await settle { transmit.ptt.state.isKeyed && station.keyed })
+                tap.begin(at: centre)
+                tap.lift()
+            } else if let hold = ptt as? PttHoldView {
+                let start = ProcessInfo.processInfo.systemUptime
+                hold.begin(at: centre, time: start)
+                hold.tick(time: start + PttHold.delay + 0.05)
+                #expect(await settle { transmit.ptt.state.isKeyed && station.keyed })
+                hold.lift()
+                await transmit.settleHold()
+            }
+            #expect(await settle { transmit.ptt.state == .idle && !station.keyed }, "\(mode)")
         }
-        // The square's corners: no touch reaches the PTT, nothing keys.
-        let w = tap.bounds.width
-        for corner in [CGPoint(x: 3, y: 3), CGPoint(x: w - 3, y: 3), CGPoint(x: 3, y: w - 3), CGPoint(x: w - 3, y: w - 3)] {
-            #expect(!touch(corner), "\(corner)")
-        }
-        await TransmitScreenTests.barrier(model, station)
-        #expect(!transmit.ptt.transmitting && !station.keyed)
-        // Its center keys, and a second tap there unkeys.
-        #expect(touch(CGPoint(x: tap.bounds.midX, y: tap.bounds.midY)))
-        #expect(await settle { transmit.ptt.state.isKeyed && station.keyed })
-        #expect(touch(CGPoint(x: tap.bounds.midX, y: tap.bounds.midY)))
-        #expect(await settle { transmit.ptt.state == .idle && !station.keyed })
-        // The hold PTT's view answers the same circle.
-        let holdView = PttHoldView(frame: CGRect(x: 0, y: 0, width: PttButton.holdDiameter, height: PttButton.holdDiameter))
-        #expect(!holdView.point(inside: CGPoint(x: 3, y: 3), with: nil))
-        #expect(holdView.point(inside: CGPoint(x: PttButton.holdDiameter / 2, y: PttButton.holdDiameter / 2), with: nil))
         await model.disconnect()
     }
 
@@ -1031,6 +1079,18 @@ private struct HoldHost: View {
         }
     }
 }
+
+/// The band under a PTT: a plain view, so a hit test shows a touch that falls through to it.
+private struct BandUnderPtt: UIViewRepresentable {
+    func makeUIView(context: Context) -> BandUnderPttView {
+        BandUnderPttView()
+    }
+
+    func updateUIView(_ view: BandUnderPttView, context: Context) {}
+}
+
+/// See ``BandUnderPtt``.
+final class BandUnderPttView: UIView {}
 
 /// The main screen with the Roundtable sheet open.
 private struct SheetHost: View {

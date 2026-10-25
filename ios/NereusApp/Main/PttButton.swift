@@ -16,6 +16,10 @@
 // unkeys whenever the sheet shows it keyed (holdKeyed, keying included),
 // and both PTTs take a touch only inside their circle (inFace). J.J. Boyd
 // (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: JJ's decision: a touch in the square's corners does nothing.
+// Both PTTs own their whole square, so a corner touch never reaches the
+// band under it to tune, and only a touch that lands in the circle
+// (inFace) can key. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusLink
 import SwiftUI
@@ -83,7 +87,6 @@ struct PttButton: View {
             face
                 .overlay {
                     PttTapSurface(enabled: linkUp) { transmit.tapPtt() }
-                        .clipShape(Circle())
                 }
                 // Never hidden: with no link it cannot be used; on a Core without
                 // remote transmit a tap says why.
@@ -105,7 +108,6 @@ struct PttButton: View {
                         Self.perform(action, on: transmit)
                         holdObserver?(action)
                     }
-                    .clipShape(Circle())
                 }
                 .opacity(linkUp && transmit.offered ? 1 : 0.4)
                 // Leaving the screen ends the press.
@@ -147,8 +149,10 @@ struct PttButton: View {
         ptt.transmitting
     }
 
-    /// A point inside the round face of a PTT drawn in `bounds`: the
-    /// square's corners, over the waterfall, take no touch.
+    /// A point inside the round face of a PTT drawn in `bounds`. Only a
+    /// touch that lands there keys; the square's corners own their touch
+    /// and do nothing with it, so it neither keys nor tunes the band under
+    /// it.
     static func inFace(_ point: CGPoint, of bounds: CGRect) -> Bool {
         let radius = min(bounds.width, bounds.height) / 2
         return hypot(point.x - bounds.midX, point.y - bounds.midY) <= radius
@@ -289,7 +293,9 @@ struct PttButton: View {
                 }
             }
             .shadow(color: .black.opacity(0.5), radius: 8, y: 6)
-            .contentShape(Circle())
+            // The whole square takes the touch, so a corner never falls
+            // through to the band and tunes; only the circle keys (inFace).
+            .contentShape(Rectangle())
         }
     }
 
@@ -552,17 +558,12 @@ final class PttHoldView: UIView {
         backgroundColor = .clear
     }
 
-    /// Only the round face takes a touch, not the square's corners.
-    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        PttButton.inFace(point, of: bounds)
-    }
-
     required init?(coder: NSCoder) {
         nil
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard enabled, let touch = touches.first else {
+        guard enabled, let touch = touches.first, PttButton.inFace(touch.location(in: self), of: bounds) else {
             return
         }
         begin(at: touch.location(in: self), time: touch.timestamp)
@@ -585,9 +586,11 @@ final class PttHoldView: UIView {
         lift()
     }
 
-    /// A finger landed at `point` (touchesBegan, and the tests).
+    /// A finger landed at `point` (touchesBegan, and the tests). One in
+    /// the square's corners, outside the circle, is swallowed: it keys
+    /// and unkeys nothing.
     func begin(at point: CGPoint, time: TimeInterval) {
-        guard enabled else {
+        guard enabled, PttButton.inFace(point, of: bounds) else {
             return
         }
         perform(hold.down(at: point, time: time, keyed: keyed))
@@ -729,11 +732,6 @@ final class PttTapView: UIView {
         backgroundColor = .clear
     }
 
-    /// Only the round face takes a touch, not the square's corners.
-    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        PttButton.inFace(point, of: bounds)
-    }
-
     required init?(coder: NSCoder) {
         nil
     }
@@ -767,9 +765,12 @@ final class PttTapView: UIView {
         }
     }
 
-    /// A finger landed at `point` (touchesBegan, and the tests).
+    /// A finger landed at `point` (touchesBegan, and the tests). One in
+    /// the square's corners, outside the circle, is swallowed: its lift
+    /// taps nothing.
     func begin(at point: CGPoint) {
-        guard enabled else {
+        guard enabled, PttButton.inFace(point, of: bounds) else {
+            reader.cancel()
             return
         }
         reader.down(at: point)
