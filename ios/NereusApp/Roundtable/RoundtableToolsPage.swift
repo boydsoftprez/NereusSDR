@@ -6,6 +6,9 @@
 // its room page. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-25: Roundtable plan Task 19, a room's row its own view for the
 // iPad's widened applet to share. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable fix wave: the rooms grouped and sorted by band
+// once (groups), for the widened applet's list to age each second.
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusBand
 import SwiftUI
@@ -87,9 +90,26 @@ enum RoundtableToolsList {
     /// The rooms under `chip`, by frequency.
     static func rows(_ rooms: [RoundtableModel.RoomSummary], chip: String, sliceRooms: [Int64: String],
                      letters: [Int64: String], mentionCounts: [String: Int], now: Int64) -> [Row] {
+        rows(ordered: ordered(rooms, chip: chip), sliceRooms: sliceRooms, letters: letters,
+             mentionCounts: mentionCounts, now: now)
+    }
+
+    /// The rooms under `chip`, by frequency, then id.
+    static func ordered(_ rooms: [RoundtableModel.RoomSummary], chip: String) -> [RoundtableModel.RoomSummary] {
         rooms.filter { chip == allChip || band($0) == chip }
             .sorted { ($0.hz, $0.id) < ($1.hz, $1.id) }
-            .map { room in
+    }
+
+    /// Each band's chip with its rooms in order: worked out once per change
+    /// of the band list, so a list that ages each second sorts nothing.
+    static func groups(_ rooms: [RoundtableModel.RoomSummary]) -> [(chip: Chip, rooms: [RoundtableModel.RoomSummary])] {
+        chips(rooms).filter { $0.id != allChip }.map { ($0, ordered(rooms, chip: $0.id)) }
+    }
+
+    /// Rows for rooms already in order.
+    static func rows(ordered rooms: [RoundtableModel.RoomSummary], sliceRooms: [Int64: String],
+                     letters: [Int64: String], mentionCounts: [String: Int], now: Int64) -> [Row] {
+        rooms.map { room in
                 let glyph = RoundtableFlagLine.glyph(ofState: room.state)
                 let mine = sliceRooms.filter { $0.value == room.id }.keys.sorted().compactMap { letters[$0] }
                 return Row(id: room.id, hz: room.hz, frequency: RoundtableText.shortFrequency(room.hz),

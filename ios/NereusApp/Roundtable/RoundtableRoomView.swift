@@ -7,6 +7,9 @@
 // 2026-10-25: Roundtable plan Task 19, the room laid in a scroll it does not
 // own (the iPad's applet column), its pills its own view, and the narrow
 // readings columns. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable fix wave: a row's UTC time and its mention match
+// build no formatter and compile no pattern; the TX line's clock is read
+// in the room's timeline. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import SwiftUI
 import UIKit
@@ -65,12 +68,14 @@ enum RoundtableText {
         return "\(seconds / 60):" + String(format: "%02d", seconds % 60)
     }
 
+    /// The UTC hour and minute of `unixMs`, as "HH:mm". Worked out from
+    /// the number, not with a formatter: every message row asks on every
+    /// pass.
     static func utcText(_ unixMs: Int64) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(identifier: "UTC")
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(unixMs) / 1000))
+        let msPerDay: Int64 = 86_400_000
+        let ofDay = ((unixMs % msPerDay) + msPerDay) % msPerDay
+        let minutes = ofDay / 60_000
+        return String(format: "%02d:%02d", Int(minutes / 60), Int(minutes % 60))
     }
 
     static func withNth(_ callsign: String, _ nth: Int64) -> String {
@@ -124,14 +129,35 @@ enum RoundtableText {
         }
     }
 
-    /// A message names `callsign`: its words hold the callsign as a word, any case.
+    /// A message names `callsign`: its words hold the callsign as a word,
+    /// any case, with no letter, digit or "/" before it and no letter or
+    /// digit after. Matched without a pattern: every message row asks on
+    /// every pass, and a pattern would be compiled each time.
     static func names(_ text: String?, callsign: String) -> Bool {
         let call = RoundtableModel.baseCallsign(callsign)
         guard let text, !call.isEmpty else {
             return false
         }
-        let pattern = "(?<![A-Za-z0-9/])" + NSRegularExpression.escapedPattern(for: call) + "(?![A-Za-z0-9])"
-        return text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
+        var from = text.startIndex
+        while from < text.endIndex,
+              let found = text.range(of: call, options: [.caseInsensitive], range: from..<text.endIndex) {
+            let before = found.lowerBound > text.startIndex ? text[text.index(before: found.lowerBound)] : nil
+            let after = found.upperBound < text.endIndex ? text[found.upperBound] : nil
+            if !(before.map { isCallCharacter($0) || $0 == "/" } ?? false)
+                && !(after.map(isCallCharacter) ?? false) {
+                return true
+            }
+            from = text.index(after: found.lowerBound)
+        }
+        return false
+    }
+
+    /// An ASCII letter or digit, as a callsign is written.
+    private static func isCallCharacter(_ character: Character) -> Bool {
+        guard character.isASCII, let ascii = character.asciiValue else {
+            return false
+        }
+        return (ascii >= 0x30 && ascii <= 0x39) || (ascii >= 0x41 && ascii <= 0x5A) || (ascii >= 0x61 && ascii <= 0x7A)
     }
 
     /// A message that names you: shown, not yours, and naming your callsign.
@@ -351,8 +377,11 @@ struct RoundtableRoomView: View {
     let full: Bool
     /// This phone is transmitting.
     let keyed: Bool
-    /// The keyed clock's start.
-    var keyedSeconds: Int = 0
+    /// When this phone's key went on, for the TX line's clock, which is
+    /// read in the room's own timeline; nil reads `keyedForSeconds`.
+    var keyedSince: ContinuousClock.Instant?
+    /// The Core's count of the transmission's seconds.
+    var keyedForSeconds = 0
     /// A slice of this phone is tuned to the room: it may post and name.
     let tunedHere: Bool
     /// The station's callsign, when the room has no row of you.
@@ -393,7 +422,16 @@ struct RoundtableRoomView: View {
     private var away: Bool { you?.away ?? false }
     private var live: Bool { roundtable.linkState == .live }
 
+    #if DEBUG
+    /// Each pass of a room's body (the tests: a scroll of the iPad's column
+    /// must not redraw the room per frame).
+    static var passesForTesting = 0
+    #endif
+
     var body: some View {
+        #if DEBUG
+        let _ = Self.passesForTesting += 1
+        #endif
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let now = Int64(context.date.timeIntervalSince1970 * 1000)
             Group {
@@ -646,7 +684,8 @@ struct RoundtableRoomView: View {
                 .background(ChromeColours.txRed, in: RoundedRectangle(cornerRadius: 2))
             Text("You \u{00B7} \(hearing) hear you").font(.system(size: 12, weight: .bold))
                 .foregroundStyle(RoundtableColours.you)
-            Text(PttButton.clock(seconds: keyedSeconds)).font(.system(size: 12).monospacedDigit())
+            Text(PttButton.clock(seconds: PttButton.keyedSeconds(since: keyedSince, fallback: keyedForSeconds)))
+                .font(.system(size: 12).monospacedDigit())
                 .foregroundStyle(RoundtableColours.text)
             if draftKept {
                 tag("Draft kept").accessibilityIdentifier("roundtableDraftKept")

@@ -5,6 +5,8 @@
 // hold PTT's record for the UI tests. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-25: Roundtable plan Task 18, the record of every ask to key, for
 // the swipes' never-key tests. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable fix wave: the hold record names a quick tap's
+// unkey. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 #if DEBUG
 import Combine
@@ -289,7 +291,14 @@ final class UITestHoldLog: ObservableObject {
     @Published private(set) var actions: [String] = []
 
     func record(_ action: PttHold.Action) {
-        actions.append(action == .press ? "press" : "release")
+        switch action {
+        case .press:
+            actions.append("press")
+        case .release:
+            actions.append("release")
+        case .unkey:
+            actions.append("unkey")
+        }
     }
 
     /// The tiny element that carries the record.

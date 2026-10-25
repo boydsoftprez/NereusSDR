@@ -4,6 +4,9 @@
 // Modification history (NereusSDR):
 // 2026-10-25: Roundtable plan Task 19, the iPad applet's tests.
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable fix wave: scrolling the column does not redraw
+// the room per frame; the widened list's groups. J.J. Boyd (KG4VCF),
+// AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -155,6 +158,78 @@ struct RoundtableAppletTests {
         #expect(width("AA5ABC", call) + 4 + width("AWAY", tag) + 6 <= station)
         // The phone's columns still fit its own room.
         #expect(RoundtableReadingColumns.regular.stationWidth(rowWidth: 402) >= station)
+    }
+
+    // MARK: Work per pass
+
+    @Test("the widened list groups the rooms by band, lowest first, each by frequency")
+    func wideListGroups() {
+        func room(_ id: String, _ hz: Int64) -> RoundtableModel.RoomSummary {
+            RoundtableModel.RoomSummary(id: id, band: "", family: "usb", hz: hz, state: "quiet", talkers: [],
+                                        members: 1, messages: 0, last: 0, folded: false, start: nil, heard: 0,
+                                        readings: [], lastMessage: nil, ended: nil)
+        }
+        let rooms = [room("usb-14250000", 14_250_000), room("lsb-7200000", 7_200_000),
+                     room("usb-14200000", 14_200_000), room("lsb-3800000", 3_800_000)]
+        let groups = RoundtableToolsList.groups(rooms)
+        #expect(groups.map(\.chip.id) == ["80m", "40m", "20m"])
+        #expect(groups.last?.rooms.map(\.id) == ["usb-14200000", "usb-14250000"])
+        #expect(groups.map(\.chip.count) == [1, 1, 2])
+        // The rows from the groups are the rows the chip gives.
+        let rows = RoundtableToolsList.rows(ordered: groups[2].rooms, sliceRooms: [:], letters: [:],
+                                            mentionCounts: [:], now: 0)
+        #expect(rows == RoundtableToolsList.rows(rooms, chip: "20m", sliceRooms: [:], letters: [:],
+                                                 mentionCounts: [:], now: 0))
+    }
+
+    @Test("scrolling the applet column does not redraw the room on every frame")
+    func columnScrollKeepsTheRoom() async throws {
+        let side = CGSize(width: 1376, height: 1032)
+        let (model, station) = try await shotStation()
+        model.phoneSettings.roundtableFirstRunNoteSeen = true
+        try await station.deliverRoundtable(RoundtableSheetTests.boardScene())
+        #expect(await settle { model.roundtable.room != nil && model.roundtable.available })
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(origin: .zero, size: side)
+        window.windowLevel = .alert + 1
+        let host = ShotHosting.host(AppletShotRoot(model: model, columnShown: true, wide: false, detent: nil)
+            .preferredColorScheme(.dark))
+        host.view.frame = CGRect(origin: .zero, size: side)
+        window.rootViewController = host
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        // The column's scroll: the one on the right that is taller inside than out.
+        func scrolls(_ view: UIView) -> [UIScrollView] {
+            ((view as? UIScrollView).map { [$0] } ?? []) + view.subviews.flatMap(scrolls)
+        }
+        var column: UIScrollView?
+        #expect(await settle {
+            window.layoutIfNeeded()
+            column = scrolls(window).first { scroll in
+                let frame = scroll.convert(scroll.bounds, to: window)
+                return frame.minX >= side.width - AppletColumn.width - 2 && frame.height > side.height / 2
+                    && scroll.contentSize.height > scroll.bounds.height + 200
+            }
+            return column != nil
+        })
+        let scroll = try #require(column)
+        try await Task.sleep(for: .milliseconds(500))
+        RoundtableRoomView.passesForTesting = 0
+        let frames = 40
+        for frame in 1...frames {
+            scroll.setContentOffset(CGPoint(x: 0, y: CGFloat(frame) * 4), animated: false)
+            window.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(16))
+        }
+        let passes = RoundtableRoomView.passesForTesting
+        // A pass or two for the room's own changes (its end leaving view, the box pinning, a second's tick of
+        // the screen above), never one a frame.
+        #expect(passes < frames / 4, "the room redrew \(passes) times in \(frames) scroll frames")
+        await model.disconnect()
     }
 
     // MARK: Pictures

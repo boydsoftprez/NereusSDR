@@ -5,6 +5,8 @@
 // 2026-10-24: Roundtable plan Task 16, the phone's link model tests, the
 // windows tested as tests/tst_roundtable_model.cpp tests the desktop's.
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable fix wave: a room is built once per change of its
+// records. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -99,6 +101,35 @@ struct RoundtableModelTests {
         let messages = try #require(rt.room?.messages)
         #expect(messages.count == RoundtableModel.roomMessages)
         #expect(messages.first?.id == 110)
+    }
+
+    @Test("a room is built once per change of its records, not on every read")
+    func roomBuiltOncePerChange() async throws {
+        let (_, station, rt, clock) = try await connected()
+        let minute = Self.minute
+        await clock.advance(by: 100 * minute)
+        try await station.deliverRoundtable(Self.scene([
+            FakeStation.roundtableMember(ref: "a/1", callsign: "W1AW", seq: 0),
+            FakeStation.roundtableTurn(id: 2, start: 70 * minute, end: 75 * minute),
+        ]))
+        #expect(await settle { rt.room?.earlier.map(\.id) == [2] })
+        let first = rt.view(of: Self.usb)
+        let builds = rt.roomBuildsForTesting
+        // The flag lines, the tags and the sheet ask on every pass.
+        for _ in 0..<50 {
+            #expect(rt.view(of: Self.usb) == first)
+            _ = RoundtableFlagLine.line(rt, sliceId: 0)
+        }
+        #expect(rt.roomBuildsForTesting == builds)
+        // A change to its records builds it anew.
+        await station.deliverRoundtableRoom(Self.usb, upserts: [
+            FakeStation.roundtableMember(ref: "c/2", callsign: "K1ABC", seq: 2),
+        ])
+        #expect(await settle { rt.view(of: Self.usb)?.members.map(\.ref) == ["a/1", "c/2"] })
+        #expect(rt.roomBuildsForTesting > builds)
+        // So does its earlier turn leaving the 30 minutes, with no record changed.
+        await clock.advance(by: 5 * minute + 1)
+        #expect(rt.view(of: Self.usb)?.earlier.isEmpty == true)
     }
 
     // MARK: Reading another room

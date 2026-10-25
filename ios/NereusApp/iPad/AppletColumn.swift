@@ -5,6 +5,9 @@
 // the S-Meter (movable), the column one scroll with the room's box pinned
 // at its foot while the applet is in view, and widened to the room list
 // plus the room. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable fix wave: the applet's place in the scroll is
+// kept only as whether its box is pinned, so a scroll frame no longer
+// redraws the column. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import SwiftUI
 
@@ -30,7 +33,12 @@ struct AppletColumn: View {
     @State private var roundtablePosition: Int
     @StateObject private var roomScroll = RoundtableRoomScroll()
     @State private var viewportHeight: CGFloat = 0
-    @State private var appletFrame: CGRect = .zero
+    /// The applet fills enough of the column for its box to pin. Kept as
+    /// a Bool, not the applet's frame: the frame moves on every scroll
+    /// frame, and a write of it would redraw the whole column each time.
+    @State private var appletInView = false
+    /// Where the applet sits in the scroll, held where a write redraws nothing.
+    @State private var appletPlace = AppletPlace()
     @State private var footHeight: CGFloat = 0
 
     init(main: MainScreenModel, openRadio: @escaping () -> Void = {}, openSettings: @escaping () -> Void = {},
@@ -63,7 +71,7 @@ struct AppletColumn: View {
               roundtable.roundtable.coreReason == nil else {
             return false
         }
-        return RoundtableAppletFoot.boxPinned(applet: appletFrame, viewportHeight: viewportHeight)
+        return appletInView
     }
 
     var body: some View {
@@ -101,7 +109,10 @@ struct AppletColumn: View {
                 }
             }
             .coordinateSpace(name: Self.space)
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewportHeight = $0 }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                viewportHeight = height
+                placeApplet()
+            }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if pinned, let roundtable {
                     RoundtableAppletFoot(roundtable: roundtable.roundtable, transmit: transmit, scroll: roomScroll,
@@ -144,7 +155,10 @@ struct AppletColumn: View {
                                                                         - (pinned ? footHeight : 0)),
                                  firstRunNoteSeen: roundtable.firstRunNoteSeen, askFirstRun: roundtable.askFirstRun)
                     .id(RoundtableApplet.id)
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.space)) } action: { appletFrame = $0 }
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.space)) } action: { frame in
+                        appletPlace.frame = frame
+                        placeApplet()
+                    }
             }
         case .rx:
             RxPanel(model: rx, sliceColour: main.sliceColour, width: nil, scrolls: false)
@@ -152,6 +166,14 @@ struct AppletColumn: View {
             TxPanel(transmit: transmit, accessories: main.accessories, micLevel: main.micLevel, modes: main.modes,
                     meters: main.band.catalog?.meters, openRadio: openRadio, width: nil, scrolls: false,
                     modMonitor: main.modMonitor, take: main.take, openSettings: openSettings)
+        }
+    }
+
+    /// Writes whether the box pins only when that changes.
+    private func placeApplet() {
+        let now = RoundtableAppletFoot.boxPinned(applet: appletPlace.frame, viewportHeight: viewportHeight)
+        if now != appletInView {
+            appletInView = now
         }
     }
 
@@ -166,4 +188,10 @@ struct AppletColumn: View {
             roundtable.roundtable.activeSliceId = main.slices.activeSliceId.map(Int64.init)
         }
     }
+}
+
+/// The Roundtable applet's frame in the column's scroll: a reference, so
+/// the scroll writing it each frame redraws nothing (``AppletColumn``).
+final class AppletPlace {
+    var frame: CGRect = .zero
 }

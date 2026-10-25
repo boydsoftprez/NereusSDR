@@ -4,6 +4,11 @@
 // Modification history (NereusSDR):
 // 2026-10-24: Roundtable plan Task 17, the phone's Roundtable sheet and its
 // press-and-hold PTT. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable fix wave: the tap PTT after a cancelled drag, a
+// quick tap unkeying from the hold PTT, the hold PTT on the first run while
+// keyed, the hold view pressed before it leaves, VoiceOver's activate, the
+// TX line's clock, and every roundtable verb before the first-run answer.
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -114,6 +119,32 @@ struct RoundtableSheetTests {
                         message(3, "K4QRS", "KG4VCF again"), message(4, "W9ABC", "KG4VCF gone", state: "deleted")]
         #expect(RoundtableText.unreadMentionIds(messages, count: 2, myRef: nil, callsign: "KG4VCF") == [1, 3])
         #expect(RoundtableText.unreadMentionIds(messages, count: 1, myRef: nil, callsign: "KG4VCF") == [3])
+        // A word: nothing letter, digit or "/" before it, nothing letter or digit after.
+        #expect(RoundtableText.names("KG4VCF", callsign: "KG4VCF"))
+        #expect(RoundtableText.names("copy KG4VCF/P, 59", callsign: "KG4VCF"))
+        #expect(RoundtableText.names("(kg4vcf)", callsign: "KG4VCF"))
+        #expect(!RoundtableText.names("W1/KG4VCF portable", callsign: "KG4VCF"))
+        #expect(!RoundtableText.names("XKG4VCF", callsign: "KG4VCF"))
+        #expect(RoundtableText.names("KG4VCFX then KG4VCF.", callsign: "KG4VCF"))
+        #expect(!RoundtableText.names("KG4VC", callsign: "KG4VCF"))
+        #expect(!RoundtableText.names(nil, callsign: "KG4VCF") && !RoundtableText.names("KG4VCF", callsign: ""))
+    }
+
+    @Test("a message's time reads UTC hours and minutes")
+    func utcTimes() {
+        #expect(RoundtableText.utcText(0) == "00:00")
+        #expect(RoundtableText.utcText(86_399_999) == "23:59")
+        #expect(RoundtableText.utcText(1_761_400_000_000) == "13:46")
+        #expect(RoundtableText.utcText(-60_000) == "23:59")
+    }
+
+    @Test("the TX line's clock reads the key's start, else the Core's count")
+    func keyedClock() {
+        let now = ContinuousClock.now
+        #expect(PttButton.keyedSeconds(since: now - .seconds(5), fallback: 0, now: now) == 5)
+        #expect(PttButton.keyedSeconds(since: now - .milliseconds(61_900), fallback: 9, now: now) == 61)
+        #expect(PttButton.keyedSeconds(since: nil, fallback: 9, now: now) == 9)
+        #expect(PttButton.keyedSince(PttController.Snapshot()) == nil)
     }
 
     @Test("Send is on only tuned here, live, not away, and within 500 characters and 10 lines")
@@ -232,19 +263,179 @@ struct RoundtableSheetTests {
         #expect(hold.phase == .held)
     }
 
-    @Test("the hold view's surface ends a held press when it leaves the window")
-    func holdViewLeavesWindow() throws {
+    @Test("a quick tap on the hold PTT while the key is on unkeys; a swipe or a cancel does not")
+    func holdQuickTapUnkeys() {
+        var hold = PttHold()
+        #expect(hold.down(at: .zero, time: 10, keyed: true) == nil)
+        #expect(hold.up() == .unkey)
+        #expect(hold.phase == .idle)
+        // Held long enough, the key becomes the hold's: lifting lets go of it.
+        _ = hold.down(at: .zero, time: 20, keyed: true)
+        #expect(hold.tick(time: 20 + 2 * PttHold.delay) == .press)
+        #expect(hold.up() == .release)
+        // A swipe across a keyed button does nothing.
+        _ = hold.down(at: .zero, time: 30, keyed: true)
+        _ = hold.move(to: CGPoint(x: PttHold.slop + 1, y: 0), inside: true)
+        #expect(hold.up() == nil)
+        // A cancelled touch does nothing.
+        _ = hold.down(at: .zero, time: 40, keyed: true)
+        #expect(hold.cancel() == nil)
+        #expect(hold.phase == .idle)
+    }
+
+    @Test("the hold view held past the delay lets go once when it leaves the window, and once when disabled")
+    func holdViewLeavesWindow() async throws {
+        let (model, station) = try await connected()
+        let transmit = model.main.transmit
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        for leave in ["window", "disabled"] {
+            var actions: [PttHold.Action] = []
+            let view = PttHoldView(frame: CGRect(x: 0, y: 0, width: 58, height: 58))
+            view.act = { action in
+                actions.append(action)
+                PttButton.perform(action, on: transmit)
+            }
+            window.addSubview(view)
+            let start = ProcessInfo.processInfo.systemUptime
+            view.begin(at: CGPoint(x: 29, y: 29), time: start)
+            view.tick(time: start + PttHold.delay + 0.05)
+            #expect(actions == [.press], "\(leave)")
+            #expect(view.phase == .held)
+            #expect(await settle { transmit.ptt.state.isKeyed && station.keyed }, "\(leave)")
+            if leave == "window" {
+                view.removeFromSuperview()
+            } else {
+                view.enabled = false
+            }
+            #expect(actions == [.press, .release], "\(leave)")
+            #expect(!transmit.holding)
+            await transmit.settleHold()
+            #expect(await settle { transmit.ptt.state == .idle && !station.keyed }, "\(leave)")
+            // Nothing more once it has let go.
+            view.removeFromSuperview()
+            view.enabled = false
+            #expect(actions == [.press, .release], "\(leave)")
+        }
+        await model.disconnect()
+    }
+
+    @Test("an idle hold view leaving the window or disabled sends nothing")
+    func idleHoldViewLeavesQuietly() throws {
         var actions: [PttHold.Action] = []
         let view = PttHoldView(frame: CGRect(x: 0, y: 0, width: 58, height: 58))
         view.act = { actions.append($0) }
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.addSubview(view)
-        // Nothing pressed: leaving sends nothing.
         view.removeFromSuperview()
         #expect(actions.isEmpty)
         view.enabled = false
         #expect(actions.isEmpty)
+    }
+
+    // MARK: The tap PTT, as a finger moves
+
+    @Test("a still finger on the tap PTT taps; one that moved past the slop does not, even lifting on it")
+    func tapReader() {
+        var tap = PttTap()
+        tap.down(at: CGPoint(x: 38, y: 38))
+        tap.move(to: CGPoint(x: 38 + PttButton.tapSlop, y: 38))
+        do { let tapped = tap.up(); #expect(tapped == true) }
+        tap.down(at: CGPoint(x: 38, y: 38))
+        tap.move(to: CGPoint(x: 38, y: 38 - PttButton.tapSlop - 1))
+        #expect(tap.phase == .spent)
+        tap.move(to: CGPoint(x: 38, y: 38))
+        do { let tapped = tap.up(); #expect(tapped == false) }
+        #expect(tap.phase == .idle)
+    }
+
+    @Test("a cancelled drag on the tap PTT leaves nothing behind: the next tap taps")
+    func tapAfterCancelledDrag() {
+        var tap = PttTap()
+        tap.down(at: .zero)
+        tap.move(to: CGPoint(x: 80, y: 0))
+        tap.cancel()
+        #expect(tap.phase == .idle)
+        tap.down(at: .zero)
+        do { let tapped = tap.up(); #expect(tapped == true) }
+        // A touch whose end never came: the next touch starts fresh anyway.
+        tap.down(at: .zero)
+        tap.move(to: CGPoint(x: 80, y: 0))
+        tap.down(at: .zero)
+        do { let tapped = tap.up(); #expect(tapped == true) }
+    }
+
+    @Test("after a cancelled drag the tap PTT still keys, a drag neither keys nor unkeys, and a tap unkeys")
+    func tapViewAfterCancelledDrag() async throws {
+        let (model, station) = try await connected()
+        let transmit = model.main.transmit
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        var taps = 0
+        let view = PttTapView(frame: CGRect(x: 0, y: 0, width: 76, height: 76))
+        view.tap = {
+            taps += 1
+            transmit.tapPtt()
+        }
+        window.addSubview(view)
+        defer { view.removeFromSuperview() }
+        let centre = CGPoint(x: 38, y: 38)
+        // A drag the system cancels (a call, Control Center): no key.
+        view.begin(at: centre)
+        view.move(to: CGPoint(x: 38, y: -40))
+        view.touchesCancelled([], with: nil)
+        #expect(view.phase == .idle)
+        // A drag that lifts on the button: no key.
+        view.begin(at: centre)
+        view.move(to: CGPoint(x: 70, y: 38))
+        view.move(to: centre)
+        view.lift()
+        await TransmitScreenTests.barrier(model, station)
+        #expect(taps == 0 && !station.keyed && !transmit.ptt.transmitting)
+        // The tap after them keys.
+        view.begin(at: centre)
+        view.lift()
+        #expect(taps == 1)
+        #expect(await settle { transmit.ptt.state.isKeyed && station.keyed })
+        // Keyed, a drag cancelled midway and a drag that lifts change nothing.
+        view.begin(at: centre)
+        view.move(to: CGPoint(x: 38, y: 90))
+        view.touchesCancelled([], with: nil)
+        view.begin(at: centre)
+        view.move(to: CGPoint(x: 0, y: 38))
+        view.lift()
+        await TransmitScreenTests.barrier(model, station)
+        #expect(taps == 1 && transmit.ptt.state.isKeyed && station.keyed)
+        // And the tap that unkeys still reaches it.
+        view.begin(at: centre)
+        view.lift()
+        #expect(taps == 2)
+        #expect(await settle { transmit.ptt.state == .idle && !station.keyed })
+        await model.disconnect()
+    }
+
+    @Test("the tap PTT's view taps nothing disabled, and forgets its touch on leaving the window")
+    func tapViewDisabledAndLeaving() throws {
+        var taps = 0
+        let view = PttTapView(frame: CGRect(x: 0, y: 0, width: 76, height: 76))
+        view.tap = { taps += 1 }
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.addSubview(view)
+        view.begin(at: .zero)
+        view.removeFromSuperview()
+        #expect(view.phase == .idle)
+        view.lift()
+        #expect(taps == 0)
+        view.enabled = false
+        view.begin(at: .zero)
+        view.lift()
+        #expect(taps == 0)
+        view.enabled = true
+        view.begin(at: .zero)
+        view.lift()
+        #expect(taps == 1)
     }
 
     // MARK: The hold, keying a fake Core
@@ -358,6 +549,88 @@ struct RoundtableSheetTests {
         await model.disconnect()
     }
 
+    @Test("a quick tap on the hold PTT unkeys a key made by a tap")
+    func holdQuickTapUnkeysATapKey() async throws {
+        let (model, station) = try await connected()
+        let transmit = model.main.transmit
+        transmit.tapPtt()
+        #expect(await settle { transmit.ptt.state.isKeyed && station.keyed })
+        var actions: [PttHold.Action] = []
+        let view = PttHoldView(frame: CGRect(x: 0, y: 0, width: 58, height: 58))
+        view.act = { action in
+            actions.append(action)
+            PttButton.perform(action, on: transmit)
+        }
+        view.keyed = PttButton.look(transmit.ptt) == .keyed
+        let start = ProcessInfo.processInfo.systemUptime
+        view.begin(at: CGPoint(x: 29, y: 29), time: start)
+        view.lift()
+        #expect(actions == [.unkey])
+        await transmit.settleHold()
+        #expect(await settle { transmit.ptt.state == .idle && !station.keyed })
+        // Not keyed now, a quick tap keys nothing.
+        view.keyed = false
+        view.begin(at: CGPoint(x: 29, y: 29), time: start + 1)
+        view.lift()
+        await TransmitScreenTests.barrier(model, station)
+        #expect(actions == [.unkey] && !station.keyed && !transmit.ptt.transmitting)
+        await model.disconnect()
+    }
+
+    @Test("VoiceOver's activate on the hold PTT keys, and the next unkeys, a tap's key too")
+    func holdAccessibilityActivate() async throws {
+        let (model, station) = try await connected()
+        let transmit = model.main.transmit
+        PttButton.accessibilityActivate(transmit, keyed: PttButton.look(transmit.ptt) == .keyed)
+        #expect(transmit.holding)
+        #expect(await settle { transmit.ptt.state.isKeyed && station.keyed })
+        PttButton.accessibilityActivate(transmit, keyed: PttButton.look(transmit.ptt) == .keyed)
+        #expect(!transmit.holding)
+        await transmit.settleHold()
+        #expect(await settle { transmit.ptt.state == .idle && !station.keyed })
+        transmit.tapPtt()
+        #expect(await settle { transmit.ptt.state.isKeyed && station.keyed })
+        PttButton.accessibilityActivate(transmit, keyed: PttButton.look(transmit.ptt) == .keyed)
+        await transmit.settleHold()
+        #expect(await settle { transmit.ptt.state == .idle && !station.keyed })
+        #expect(PttButton.holdHint == "Double-tap to talk, and double-tap again to stop.")
+        await model.disconnect()
+    }
+
+    @Test("keyed with the first-run question open, the sheet shows a PTT, and a tap on it unkeys")
+    func firstRunKeyedShowsAPtt() async throws {
+        #expect(RoundtableSheet.showsKeyedFoot(asking: true, keyed: true, dialOn: false))
+        #expect(!RoundtableSheet.showsKeyedFoot(asking: true, keyed: false, dialOn: false))
+        #expect(!RoundtableSheet.showsKeyedFoot(asking: true, keyed: true, dialOn: true))
+        #expect(!RoundtableSheet.showsKeyedFoot(asking: false, keyed: true, dialOn: false))
+        let (model, station) = try await connected(additions: [.remoteTx, .roundtable])
+        var scene = Self.boardScene()
+        scene.firstRunAnswered = false
+        try await station.deliverRoundtable(scene)
+        let rt = model.roundtable
+        #expect(await settle { rt.available && rt.room != nil && rt.askingFirstRun })
+        let transmit = model.main.transmit
+        transmit.tapPtt()
+        #expect(await settle { transmit.ptt.state.isKeyed && station.keyed })
+        let (window, _) = try host(SheetHost(model: model, detent: .half))
+        defer { window.isHidden = true }
+        // Some PTT is on screen while keyed, on top and touchable: a touch at
+        // its center lands on it.
+        let hold = try #require(await settleView(PttHoldView.self, in: window))
+        #expect(hold.window != nil && !hold.isHidden && hold.bounds.width > 0)
+        #expect(await settle {
+            let center = hold.convert(CGPoint(x: hold.bounds.midX, y: hold.bounds.midY), to: window)
+            return window.hitTest(center, with: nil).map { $0 === hold || $0.isDescendant(of: hold) } == true
+        })
+        #expect(await settle { hold.keyed })
+        let start = ProcessInfo.processInfo.systemUptime
+        hold.begin(at: CGPoint(x: hold.bounds.midX, y: hold.bounds.midY), time: start)
+        hold.lift()
+        await transmit.settleHold()
+        #expect(await settle { transmit.ptt.state == .idle && !station.keyed })
+        await model.disconnect()
+    }
+
     @Test("with the sheet closed the band's PTT still taps to key and taps again to unkey")
     func tapStillToggles() async throws {
         let (model, station) = try await connected()
@@ -434,8 +707,11 @@ struct RoundtableSheetTests {
         await TransmitScreenTests.barrier(model, station)
         #expect(station.roundtableAnswered.isEmpty)
         #expect(station.roundtablePosts.isEmpty)
+        // D25: no roundtable verb of any kind went before the answer.
+        #expect(Self.roundtableVerbs(station) == [])
         #expect(await rt.answerFirstRun(live: false) == nil)
         #expect(station.roundtableAnswered == ["answerFirstRun"])
+        #expect(Self.roundtableVerbs(station).first == "roundtable.answerFirstRun")
         #expect(await settle { rt.firstRunAnswered })
         await model.disconnect()
     }
@@ -560,6 +836,33 @@ struct RoundtableSheetTests {
         model.main.band.endpointId = 1
         model.main.band.receive(.context(try #require(BandFlagShotTests.context())))
         return (model, station)
+    }
+
+    /// Every roundtable verb the phone sent, in order.
+    private static func roundtableVerbs(_ station: FakeStation) -> [String] {
+        station.messages.compactMap(TransmitScreenTests.invoke).map(\.verb).filter { $0.hasPrefix("roundtable.") }
+    }
+
+    /// The first `type` view in `window`, once one is there.
+    private func settleView<V: UIView>(_ type: V.Type, in window: UIWindow) async -> V? {
+        func find(_ view: UIView) -> V? {
+            if let match = view as? V {
+                return match
+            }
+            for child in view.subviews {
+                if let match = find(child) {
+                    return match
+                }
+            }
+            return nil
+        }
+        var found: V?
+        _ = await settle {
+            window.layoutIfNeeded()
+            found = find(window)
+            return found != nil
+        }
+        return found
     }
 
     private static func verbs(_ station: FakeStation, _ verb: String) -> Int {

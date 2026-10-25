@@ -4,6 +4,9 @@
 // Modification history (NereusSDR):
 // 2026-10-25: Roundtable plan Task 19, the iPad's Roundtable applet.
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable fix wave: the widened list sorts its rooms once
+// per change, not each second; the TX line's clock is read in the room's
+// timeline. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import SwiftUI
 
@@ -193,7 +196,9 @@ struct RoundtableAppletRoom: View {
                 }
                 if let room = roundtable.room {
                     RoundtableRoomView(roundtable: roundtable, room: room, full: true, keyed: keyed,
-                                       keyedSeconds: keyedSeconds, tunedHere: roundtable.tunedToShownRoom,
+                                       keyedSince: PttButton.keyedSince(transmit.ptt),
+                                       keyedForSeconds: Int(transmit.keyedForSeconds),
+                                       tunedHere: roundtable.tunedToShownRoom,
                                        stationCallsign: stationCallsign,
                                        ownDbm: slices.active?.signalDbm,
                                        sliceLetter: slices.active?.slice.letter ?? "A",
@@ -218,13 +223,6 @@ struct RoundtableAppletRoom: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .accessibilityIdentifier("roundtableEmpty")
-    }
-
-    private var keyedSeconds: Int {
-        if case .keyed(let since) = transmit.ptt.state {
-            return Int((ContinuousClock.now - since).components.seconds)
-        }
-        return Int(transmit.keyedForSeconds)
     }
 
     private func tuneHere(_ room: RoundtableModel.Room) {
@@ -323,20 +321,21 @@ struct RoundtableWideApplet: View {
     }
 
     private var list: some View {
-        ScrollView {
+        // Grouped and sorted once per pass of the list; each second only ages the rows.
+        let groups = RoundtableToolsList.groups(roundtable.rooms)
+        return ScrollView {
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 let now = Int64(context.date.timeIntervalSince1970 * 1000)
-                let bands = RoundtableToolsList.chips(roundtable.rooms).filter { $0.id != RoundtableToolsList.allChip }
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    if bands.isEmpty {
+                    if groups.isEmpty {
                         Text("Nobody on Roundtable is on the air.")
                             .font(.system(size: 12))
                             .foregroundStyle(RoundtableColours.dim)
                             .padding(12)
                     }
-                    ForEach(bands) { band in
-                        bandHead(band)
-                        let rows = RoundtableToolsList.rows(roundtable.rooms, chip: band.id,
+                    ForEach(groups, id: \.chip.id) { group in
+                        bandHead(group.chip)
+                        let rows = RoundtableToolsList.rows(ordered: group.rooms,
                                                             sliceRooms: roundtable.sliceRooms, letters: letters,
                                                             mentionCounts: roundtable.mentionCounts, now: now)
                         ForEach(rows) { row in

@@ -7,6 +7,11 @@
 // 2026-10-25: Roundtable plan Task 18, a touch on the tap PTT that moves
 // past tapSlop is a swipe and keys nothing. J.J. Boyd (KG4VCF),
 // AI-assisted via Claude Code.
+// 2026-10-25: Roundtable fix wave: the tap PTT reads its finger on a UIKit
+// surface (PttTap), so a cancelled touch never leaves a swipe behind to
+// swallow the next tap; a quick tap on a keyed hold PTT unkeys (.unkey);
+// VoiceOver keys and unkeys the hold PTT with its action. J.J. Boyd
+// (KG4VCF), AI-assisted via Claude Code.
 
 import NereusLink
 import SwiftUI
@@ -25,7 +30,8 @@ import UIKit
 /// hold (``Mode/hold(diameter:)``): a dashed ring and "Hold", keyed only
 /// while a finger rests on it (``PttHold``). A swipe, a scroll or a drag
 /// never keys; letting go, a cancelled touch and the button leaving the
-/// screen unkey.
+/// screen unkey. A quick tap while this device's key is on unkeys it, so
+/// a key made with a tap or TUNE never needs a press to come off.
 struct PttButton: View {
     @ObservedObject var transmit: TransmitModel
     /// The session is up: PTT can be used.
@@ -48,7 +54,8 @@ struct PttButton: View {
     static let diameter: CGFloat = 76
     /// How far a touch on the tap PTT may move and still be a tap. Past
     /// it the touch is a swipe or a drag, and lifting keys nothing (spec
-    /// 11.3: a swipe never keys), even when it lifts on the button.
+    /// 11.3: a swipe never keys), even when it lifts on the button
+    /// (``PttTap``).
     static let tapSlop: CGFloat = 10
     /// Its inset from the waterfall's bottom left corner.
     static let inset: CGFloat = 14
@@ -61,52 +68,37 @@ struct PttButton: View {
     }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    /// The touch on the tap PTT moved past ``tapSlop``: its lift keys nothing.
-    @State private var swiped = false
 
     var body: some View {
         switch mode {
         case .tap:
-            Button {
-                // A touch that moved is a swipe, not a tap.
-                guard !swiped else {
-                    return
+            // A finger lands on the surface over the face, which tells a tap
+            // from a swipe. VoiceOver and the UI tests see a plain button
+            // instead (it draws nothing and takes no touch), so a PTT with no
+            // link reads as not enabled.
+            face
+                .overlay {
+                    PttTapSurface(enabled: linkUp) { transmit.tapPtt() }
+                        .clipShape(Circle())
                 }
-                transmit.tapPtt()
-            } label: {
-                face
-            }
-            .buttonStyle(.plain)
-            .simultaneousGesture(
-                DragGesture(minimumDistance: Self.tapSlop)
-                    .onChanged { _ in
-                        swiped = true
+                // Never hidden: with no link it cannot be used; on a Core without
+                // remote transmit a tap says why.
+                .disabled(!linkUp)
+                .opacity(linkUp && transmit.offered ? 1 : 0.4)
+                .accessibilityRepresentation {
+                    Button("Push to talk, tap to key and tap again to unkey") {
+                        transmit.tapPtt()
                     }
-                    .onEnded { _ in
-                        // After the button has seen the lift.
-                        DispatchQueue.main.async {
-                            swiped = false
-                        }
-                    }
-            )
-            // Never hidden: with no link it cannot be used; on a Core without
-            // remote transmit a tap says why.
-            .disabled(!linkUp)
-            .opacity(linkUp && transmit.offered ? 1 : 0.4)
-            .accessibilityLabel("Push to talk, tap to key and tap again to unkey")
-            .accessibilityValue(spoken)
-            .accessibilityAddTraits(look == .keyed ? .isSelected : [])
-            .accessibilityIdentifier("ptt")
+                    .disabled(!linkUp)
+                }
+                .accessibilityValue(spoken)
+                .accessibilityAddTraits(look == .keyed ? .isSelected : [])
+                .accessibilityIdentifier("ptt")
         case .hold:
             face
                 .overlay {
-                    PttHoldSurface(enabled: linkUp) { action in
-                        switch action {
-                        case .press:
-                            transmit.holdPtt()
-                        case .release:
-                            transmit.releaseHeldPtt()
-                        }
+                    PttHoldSurface(enabled: linkUp, keyed: look == .keyed) { action in
+                        Self.perform(action, on: transmit)
                         holdObserver?(action)
                     }
                     .clipShape(Circle())
@@ -117,9 +109,44 @@ struct PttButton: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Push to talk, press and hold to talk")
                 .accessibilityValue(spoken)
+                .accessibilityHint(linkUp ? Self.holdHint : "")
                 .accessibilityAddTraits(look == .keyed ? [.isButton, .isSelected] : .isButton)
                 .accessibilityRespondsToUserInteraction(linkUp)
+                // VoiceOver cannot rest a finger: its activate keys, and the next unkeys.
+                .accessibilityAction {
+                    guard linkUp else {
+                        return
+                    }
+                    Self.accessibilityActivate(transmit, keyed: look == .keyed)
+                }
                 .accessibilityIdentifier("ptt")
+        }
+    }
+
+    /// What a hold's action does to transmit.
+    static func perform(_ action: PttHold.Action, on transmit: TransmitModel) {
+        switch action {
+        case .press:
+            transmit.holdPtt()
+        case .release:
+            transmit.releaseHeldPtt()
+        case .unkey:
+            transmit.unkeyFromHold()
+        }
+    }
+
+    /// What VoiceOver's activate does on the hold PTT.
+    static let holdHint = "Double-tap to talk, and double-tap again to stop."
+
+    /// VoiceOver's activate on the hold PTT: unkeys this device's key when
+    /// one is on or the hold owns one on its way, and otherwise keys and
+    /// holds it until the next activate, the sheet closing, the scene or
+    /// the link.
+    static func accessibilityActivate(_ transmit: TransmitModel, keyed: Bool) {
+        if keyed || transmit.holding {
+            transmit.unkeyFromHold()
+        } else {
+            transmit.holdPtt()
         }
     }
 
@@ -252,11 +279,26 @@ struct PttButton: View {
 
     /// Seconds on the air: from the PTT's own key, else the Core's count.
     private var elapsedSeconds: Int {
-        if case .keyed(let since) = transmit.ptt.state {
-            let parts = (ContinuousClock.now - since).components
-            return Int(parts.seconds)
+        Self.keyedSeconds(since: Self.keyedSince(transmit.ptt), fallback: Int(transmit.keyedForSeconds))
+    }
+
+    /// When this device's key went on, while it is on.
+    static func keyedSince(_ ptt: PttController.Snapshot) -> ContinuousClock.Instant? {
+        if case .keyed(let since) = ptt.state {
+            return since
         }
-        return Int(transmit.keyedForSeconds)
+        return nil
+    }
+
+    /// Seconds on the air at `now`: from the key's start, else `fallback`
+    /// (the Core's count). The PTT and the Roundtable TX line both read it,
+    /// each in its own timeline, so neither waits for a parent to redraw.
+    static func keyedSeconds(since: ContinuousClock.Instant?, fallback: Int,
+                             now: ContinuousClock.Instant = .now) -> Int {
+        guard let since else {
+            return fallback
+        }
+        return Int((now - since).components.seconds)
     }
 
     /// At rest, the danger set's ground with the transmit red edge; keyed,
@@ -347,17 +389,22 @@ private struct TurningRing: View {
 /// when its touch is cancelled (a scroll or the system taking it), or when
 /// it slides off the button. A touch that moves first is spent: it never
 /// keys, even if it comes to rest later. A drag that starts elsewhere
-/// never reaches the button's touches at all.
+/// never reaches the button's touches at all. While this device's key is
+/// on (a tap's, TUNE's), a finger that lifts before the delay without
+/// moving unkeys it (``Action/unkey``).
 struct PttHold: Equatable {
     enum Action: Equatable {
         case press
         case release
+        /// A quick tap while the key was on: unkey it.
+        case unkey
     }
 
     enum Phase: Equatable {
         case idle
-        /// A finger is down at `start` since `since`, not yet held long enough.
-        case pressing(start: CGPoint, since: TimeInterval)
+        /// A finger is down at `start` since `since`, not yet held long
+        /// enough; `keyed` says this device's key was on as it landed.
+        case pressing(start: CGPoint, since: TimeInterval, keyed: Bool)
         /// The key is on for this press.
         case held
         /// This touch moved first, or slid off: nothing more until it lifts.
@@ -371,12 +418,13 @@ struct PttHold: Equatable {
 
     private(set) var phase: Phase = .idle
 
-    /// A finger down at `point`; a second finger is ignored.
-    mutating func down(at point: CGPoint, time: TimeInterval) -> Action? {
+    /// A finger down at `point`, `keyed` while this device's key is on; a
+    /// second finger is ignored.
+    mutating func down(at point: CGPoint, time: TimeInterval, keyed: Bool = false) -> Action? {
         guard phase == .idle else {
             return nil
         }
-        phase = .pressing(start: point, since: time)
+        phase = .pressing(start: point, since: time, keyed: keyed)
         return nil
     }
 
@@ -384,7 +432,7 @@ struct PttHold: Equatable {
     /// the button (its bounds grown by ``slop``).
     mutating func move(to point: CGPoint, inside: Bool) -> Action? {
         switch phase {
-        case .pressing(let start, _):
+        case .pressing(let start, _, _):
             if hypot(point.x - start.x, point.y - start.y) > Self.slop || !inside {
                 phase = .spent
             }
@@ -402,23 +450,34 @@ struct PttHold: Equatable {
 
     /// Time passed: a finger at rest long enough keys.
     mutating func tick(time: TimeInterval) -> Action? {
-        guard case .pressing(_, let since) = phase, time - since >= Self.delay else {
+        guard case .pressing(_, let since, _) = phase, time - since >= Self.delay else {
             return nil
         }
         phase = .held
         return .press
     }
 
-    /// The finger lifted.
+    /// The finger lifted: a held press lets go, and a quick tap on a key
+    /// that was on unkeys it.
     mutating func up() -> Action? {
+        let was = phase
+        phase = .idle
+        switch was {
+        case .held:
+            return .release
+        case .pressing(_, _, let keyed):
+            return keyed ? .unkey : nil
+        case .idle, .spent:
+            return nil
+        }
+    }
+
+    /// The touch was cancelled, or the button left the screen: a held press
+    /// lets go; anything else is forgotten.
+    mutating func cancel() -> Action? {
         let held = phase == .held
         phase = .idle
         return held ? .release : nil
-    }
-
-    /// The touch was cancelled, or the button left the screen.
-    mutating func cancel() -> Action? {
-        up()
     }
 }
 
@@ -427,18 +486,22 @@ struct PttHold: Equatable {
 /// screen) arrives as its own event.
 struct PttHoldSurface: UIViewRepresentable {
     let enabled: Bool
+    /// This device's key is on: a quick tap unkeys it.
+    var keyed = false
     let act: (PttHold.Action) -> Void
 
     func makeUIView(context: Context) -> PttHoldView {
         let view = PttHoldView()
         view.act = act
         view.enabled = enabled
+        view.keyed = keyed
         return view
     }
 
     func updateUIView(_ view: PttHoldView, context: Context) {
         view.act = act
         view.enabled = enabled
+        view.keyed = keyed
     }
 
     static func dismantleUIView(_ view: PttHoldView, coordinator: ()) {
@@ -456,8 +519,13 @@ final class PttHoldView: UIView {
             }
         }
     }
+    /// This device's key is on: a quick tap unkeys it.
+    var keyed = false
     private var hold = PttHold()
     private var timer: Timer?
+
+    /// Where the press stands (the tests).
+    var phase: PttHold.Phase { hold.phase }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -473,12 +541,11 @@ final class PttHoldView: UIView {
         guard enabled, let touch = touches.first else {
             return
         }
-        perform(hold.down(at: touch.location(in: self), time: touch.timestamp))
+        begin(at: touch.location(in: self), time: touch.timestamp)
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: PttHold.delay, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self else { return }
-                self.perform(self.hold.tick(time: ProcessInfo.processInfo.systemUptime))
+                self?.tick(time: ProcessInfo.processInfo.systemUptime)
             }
         }
     }
@@ -487,13 +554,36 @@ final class PttHoldView: UIView {
         guard let touch = touches.first else {
             return
         }
-        let point = touch.location(in: self)
+        move(to: touch.location(in: self))
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        lift()
+    }
+
+    /// A finger landed at `point` (touchesBegan, and the tests).
+    func begin(at point: CGPoint, time: TimeInterval) {
+        guard enabled else {
+            return
+        }
+        perform(hold.down(at: point, time: time, keyed: keyed))
+    }
+
+    /// Time passed with the finger down (the timer, and the tests).
+    func tick(time: TimeInterval) {
+        perform(hold.tick(time: time))
+    }
+
+    /// The finger moved to `point` (touchesMoved, and the tests).
+    func move(to point: CGPoint) {
         let inside = bounds.insetBy(dx: -PttHold.slop, dy: -PttHold.slop).contains(point)
         perform(hold.move(to: point, inside: inside))
     }
 
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+    /// The finger lifted (touchesEnded, and the tests).
+    func lift() {
         timer?.invalidate()
+        timer = nil
         perform(hold.up())
     }
 
@@ -519,5 +609,157 @@ final class PttHoldView: UIView {
         if let action {
             act(action)
         }
+    }
+}
+
+/// A tap on the tap PTT, as its surface reads a finger (spec 11.3: a swipe
+/// never keys): a finger that lifts without having moved past
+/// ``PttButton/tapSlop`` is a tap; one that moved is spent until it lifts.
+/// A cancelled touch (a call, Control Center, a notification, the button
+/// leaving the screen) is forgotten, and every new touch starts fresh, so
+/// nothing a touch leaves behind can swallow the next tap, the one that
+/// may be unkeying the radio.
+struct PttTap: Equatable {
+    enum Phase: Equatable {
+        case idle
+        /// A finger is down at `start` and has not moved past the slop.
+        case pressing(start: CGPoint)
+        /// This touch moved past the slop: its lift is not a tap.
+        case spent
+    }
+
+    private(set) var phase: Phase = .idle
+
+    /// A finger down at `point`: a new touch, whatever the last one left.
+    mutating func down(at point: CGPoint) {
+        phase = .pressing(start: point)
+    }
+
+    /// The finger moved to `point`.
+    mutating func move(to point: CGPoint) {
+        if case .pressing(let start) = phase,
+           hypot(point.x - start.x, point.y - start.y) > PttButton.tapSlop {
+            phase = .spent
+        }
+    }
+
+    /// The finger lifted: true for a tap.
+    mutating func up() -> Bool {
+        let tapped: Bool
+        if case .pressing = phase {
+            tapped = true
+        } else {
+            tapped = false
+        }
+        phase = .idle
+        return tapped
+    }
+
+    /// The touch was cancelled, or the button left the screen.
+    mutating func cancel() {
+        phase = .idle
+    }
+}
+
+/// The finger's surface for ``PttTap``: a UIKit view, so a cancelled touch
+/// arrives as its own event and resets the tap.
+struct PttTapSurface: UIViewRepresentable {
+    let enabled: Bool
+    let tap: () -> Void
+
+    func makeUIView(context: Context) -> PttTapView {
+        let view = PttTapView()
+        view.tap = tap
+        view.enabled = enabled
+        return view
+    }
+
+    func updateUIView(_ view: PttTapView, context: Context) {
+        view.tap = tap
+        view.enabled = enabled
+    }
+
+    static func dismantleUIView(_ view: PttTapView, coordinator: ()) {
+        view.end()
+    }
+}
+
+/// See ``PttTapSurface``.
+final class PttTapView: UIView {
+    var tap: () -> Void = {}
+    var enabled = true {
+        didSet {
+            if !enabled {
+                end()
+            }
+        }
+    }
+    private var reader = PttTap()
+
+    /// Where the touch stands (the tests).
+    var phase: PttTap.Phase { reader.phase }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isMultipleTouchEnabled = false
+        backgroundColor = .clear
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let touch = touches.first else {
+            return
+        }
+        begin(at: touch.location(in: self))
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let touch = touches.first else {
+            return
+        }
+        move(to: touch.location(in: self))
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        lift()
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        end()
+    }
+
+    override func willMove(toWindow newWindow: UIWindow?) {
+        super.willMove(toWindow: newWindow)
+        if newWindow == nil {
+            end()
+        }
+    }
+
+    /// A finger landed at `point` (touchesBegan, and the tests).
+    func begin(at point: CGPoint) {
+        guard enabled else {
+            return
+        }
+        reader.down(at: point)
+    }
+
+    /// The finger moved to `point` (touchesMoved, and the tests).
+    func move(to point: CGPoint) {
+        reader.move(to: point)
+    }
+
+    /// The finger lifted (touchesEnded, and the tests): a tap taps.
+    func lift() {
+        if reader.up() && enabled {
+            tap()
+        }
+    }
+
+    /// The touch ended without a tap, whatever ended it.
+    func end() {
+        reader.cancel()
     }
 }

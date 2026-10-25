@@ -8,6 +8,10 @@
 // 2026-10-24: Roundtable plan Task 17, the app that owns the model: once it
 // is freed the model is no longer connected. J.J. Boyd (KG4VCF),
 // AI-assisted via Claude Code.
+// 2026-10-25: Roundtable fix wave: a room built by view(of:) is kept until
+// its records change or an earlier turn leaves the window, so the flag
+// lines, the tags and the sheet do not sort it again on every pass.
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -254,7 +258,25 @@ final class RoundtableModel: ObservableObject {
     private var cancellables: Set<AnyCancellable> = []
     private let sliceOwner = Owner()
     private let readOwner = Owner()
-    private var views: [String: View] = [:]
+    private var views: [String: View] = [:] {
+        didSet {
+            // Any change to a room's records makes each room built from them anew.
+            builtRooms.removeAll(keepingCapacity: true)
+        }
+    }
+    /// A room as ``view(of:)`` last built it, until its records change or
+    /// its oldest earlier turn leaves the 30 minutes: the flag lines, the
+    /// band's tags and the sheet ask for it on every pass.
+    private struct BuiltRoom {
+        let builtMs: Int64
+        let validUntilMs: Int64
+        let room: Room
+    }
+    private var builtRooms: [String: BuiltRoom] = [:]
+    #if DEBUG
+    /// Each room ``view(of:)`` built rather than reused (the tests).
+    private(set) var roomBuildsForTesting = 0
+    #endif
     /// Each room stream's records as last read, to rebuild only what changed.
     private var seen: [String: [LinkMessage.RecordBatch.Record]] = [:]
     private var recentNames: [String: [String: RecentName]] = [:]
@@ -470,13 +492,20 @@ final class RoundtableModel: ObservableObject {
 
     /// A room in view (the desktop's room()), or nil when it is not followed.
     func view(of roomId: String) -> Room? {
+        let nowMs = clock.nowMilliseconds
+        if let built = builtRooms[roomId], nowMs >= built.builtMs, nowMs < built.validUntilMs {
+            return built.room
+        }
         guard let view = views[roomId] else {
             return nil
         }
+        #if DEBUG
+        roomBuildsForTesting += 1
+        #endif
         let dash = roomId.firstIndex(of: "-")
         let family = dash.map { String(roomId[..<$0]) } ?? ""
         let hz = dash.flatMap { Int64(roomId[roomId.index(after: $0)...]) } ?? 0
-        let cutoff = clock.nowMilliseconds - Self.earlierWindowMs
+        let cutoff = nowMs - Self.earlierWindowMs
         var open: [Turn] = []
         var ended: [Turn] = []
         for turn in view.turns.values {
@@ -493,10 +522,15 @@ final class RoundtableModel: ObservableObject {
         open.sort { $0.start != $1.start ? $0.start < $1.start : $0.id < $1.id }
         ended.sort { ($0.end ?? 0) != ($1.end ?? 0) ? ($0.end ?? 0) > ($1.end ?? 0) : $0.id > $1.id }
         let messages = view.messages.keys.sorted().suffix(Self.roomMessages).compactMap { view.messages[$0] }
-        return Room(id: roomId, band: Self.bandOf(hz), family: dash == nil ? "" : family, hz: hz,
-                    members: view.members.sorted { $0.seq < $1.seq }.map(\.member),
-                    now: open.map(Self.withSortedNames), earlier: ended.map(Self.withSortedNames),
-                    messages: Array(messages))
+        let room = Room(id: roomId, band: Self.bandOf(hz), family: dash == nil ? "" : family, hz: hz,
+                        members: view.members.sorted { $0.seq < $1.seq }.map(\.member),
+                        now: open.map(Self.withSortedNames), earlier: ended.map(Self.withSortedNames),
+                        messages: Array(messages))
+        // Good until the oldest earlier turn shown leaves the window (an
+        // ended turn shows while end >= now - window).
+        let validUntil = ended.compactMap(\.end).min().map { $0 + Self.earlierWindowMs + 1 } ?? .max
+        builtRooms[roomId] = BuiltRoom(builtMs: nowMs, validUntilMs: validUntil, room: room)
+        return room
     }
 
     /// The names used on a room's frequency in the last 24 hours (design

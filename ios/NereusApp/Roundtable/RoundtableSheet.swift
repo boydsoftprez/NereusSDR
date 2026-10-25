@@ -8,6 +8,9 @@
 // message box made their own views for the iPad's applet to share, and the
 // first-run question asked in a form sheet on an iPad. J.J. Boyd (KG4VCF),
 // AI-assisted via Claude Code.
+// 2026-10-25: Roundtable fix wave: keyed while the first-run question is
+// open, the hold PTT shows at its foot; the TX line's clock is read in the
+// room's timeline. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import SwiftUI
 
@@ -77,11 +80,13 @@ struct RoundtableSheet: View {
                 header
                 RoundtableFirstRunPrompt(ask: askFirstRun)
                 Spacer(minLength: 0)
+                keyedFoot
             } else if asking {
                 RoundtableFirstRunSheet(roundtable: roundtable, callsign: stationCallsign, grid: stationGrid) {
                     answeredHere = true
                     firstRunNoteSeen = true
                 }
+                keyedFoot
             } else {
                 if noting {
                     RoundtableFirstRunNote(hidden: roundtable.hidden) { firstRunNoteSeen = true }
@@ -114,6 +119,27 @@ struct RoundtableSheet: View {
         .onChange(of: slices.activeSliceId) { _, id in roundtable.activeSliceId = id.map(Int64.init) }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("roundtableSheet")
+    }
+
+    /// Keyed while the question is open, the band's PTT hidden under the
+    /// sheet: the hold PTT, so a key made before the sheet opened (a tap's,
+    /// TUNE's) can come off here with a tap. With a dial on, PTT is in the
+    /// strip below already.
+    static func showsKeyedFoot(asking: Bool, keyed: Bool, dialOn: Bool) -> Bool {
+        asking && keyed && !dialOn
+    }
+
+    @ViewBuilder
+    private var keyedFoot: some View {
+        if Self.showsKeyedFoot(asking: asking, keyed: keyed, dialOn: dialOn) {
+            HStack(spacing: 0) {
+                PttButton(transmit: transmit, linkUp: linkUp, mode: .hold(diameter: PttButton.holdDiameter),
+                          holdObserver: holdObserver)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        }
     }
 
     // MARK: Handle and header
@@ -179,7 +205,8 @@ struct RoundtableSheet: View {
             message(reason, detail: nil)
         } else if let room {
             RoundtableRoomView(roundtable: roundtable, room: room, full: detent == .full, keyed: keyed,
-                               keyedSeconds: keyedSeconds, tunedHere: tunedHere, stationCallsign: stationCallsign,
+                               keyedSince: PttButton.keyedSince(transmit.ptt),
+                               keyedForSeconds: Int(transmit.keyedForSeconds), tunedHere: tunedHere, stationCallsign: stationCallsign,
                                ownDbm: slices.entries.first { $0.id == slices.activeSliceId }?.signalDbm,
                                sliceLetter: activeLetter, draftKept: dialOn && keyed && !draft.isEmpty,
                                tuneHere: roundtable.readingRoomId == nil ? nil : { tuneHere(room) },
@@ -203,13 +230,6 @@ struct RoundtableSheet: View {
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .accessibilityIdentifier("roundtableEmpty")
-    }
-
-    private var keyedSeconds: Int {
-        if case .keyed(let since) = transmit.ptt.state {
-            return Int((ContinuousClock.now - since).components.seconds)
-        }
-        return Int(transmit.keyedForSeconds)
     }
 
     private func tuneHere(_ room: RoundtableModel.Room) {

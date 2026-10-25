@@ -11,6 +11,9 @@
 // column: the flag line scrolls to it, the tab bar's swipe widens it, the
 // phone's sheet with the column hidden, and the first run as a form sheet.
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable fix wave: the swipes' model is a @StateObject, made
+// once when the screen makes its own. J.J. Boyd (KG4VCF), AI-assisted via
+// Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -94,7 +97,7 @@ struct MainScreen: View {
     /// Told each press and release of the hold PTT (the UI tests' record).
     private let holdObserver: ((PttHold.Action) -> Void)?
     /// The Panadapter tab's swipes, shared with the root's tab bar.
-    @ObservedObject private var swipes: SwipeShortcutModel
+    @StateObject private var swipes: SwipeShortcutModel
     /// The swipes act here (the phone's root); off in pictures and tests that host the screen alone.
     private let swipesOn: Bool
     /// Where each panel sits and the side it slid in from: the toolbar's
@@ -122,7 +125,8 @@ struct MainScreen: View {
         _roundtableWide = State(initialValue: roundtableWide)
         _firstRunNoteSeen = State(initialValue: app.phoneSettings.roundtableFirstRunNoteSeen)
         self.holdObserver = holdObserver
-        self.swipes = swipes ?? SwipeShortcutModel(settings: app.phoneSettings)
+        // Made once for this screen when the root shares none (pictures, tests).
+        _swipes = StateObject(wrappedValue: swipes ?? SwipeShortcutModel(settings: app.phoneSettings))
         swipesOn = swipes != nil
         _txPanelOpen = State(initialValue: txPanelOpen)
         self.flow = flow

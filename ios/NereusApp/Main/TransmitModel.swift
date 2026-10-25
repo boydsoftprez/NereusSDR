@@ -5,6 +5,9 @@
 // Roundtable sheet is open. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-25: Roundtable plan Task 18, the UI tests' record of every ask to
 // key. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable fix wave, unkeyFromHold: a quick tap on the hold
+// PTT takes off a key it does not hold. J.J. Boyd (KG4VCF), AI-assisted via
+// Claude Code.
 
 import Combine
 import Foundation
@@ -708,6 +711,19 @@ final class TransmitModel: ObservableObject {
         guard holding else {
             return
         }
+        stopAfterHold()
+    }
+
+    /// A quick tap on the hold PTT while this device's key is on (a tap's,
+    /// TUNE's, or the hold's own under VoiceOver): unkeys it, after any
+    /// press still on its way, whether or not a press holds it. The sheet's
+    /// PTT is then never one that cannot take a key off.
+    func unkeyFromHold() {
+        stopAfterHold()
+    }
+
+    /// Ends the hold and stops this device's key behind the hold's sends.
+    private func stopAfterHold() {
         holding = false
         let controller = controller
         let owner = microphoneOwner
