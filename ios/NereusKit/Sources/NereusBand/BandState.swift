@@ -1,5 +1,7 @@
 // NereusSDR for iOS: one band's latest frame, its extras and its waterfall, as the Core's display events arrive
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-23: J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code (Claude Opus 5.5):
+//   NB Blank is reset when transmit ends, as the desktop's is.
 
 import Foundation
 import NereusMedia
@@ -32,7 +34,12 @@ public struct BandState: Equatable, Sendable {
         didSet { if !waterfallBlanking { blanker.reset() } }
     }
     public var waterfallBlankingThresholdDb = 6
-    public var transmittingWaterfall = false
+    public var transmittingWaterfall = false {
+        // Transmit has ended: the blanker forgets its baseline, its burst
+        // run and its last accepted row, as the desktop's does, so the first
+        // receive rows are drawn as they are and build a new baseline.
+        didSet { if oldValue && !transmittingWaterfall { blanker.reset() } }
+    }
     private var blanker = WaterfallBlanker()
     public var stackRowDivider = 0
     /// Visible waterfall geometry, independent of retained rewind capacity.

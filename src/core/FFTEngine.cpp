@@ -32,6 +32,34 @@
 //               a skip under the 5 ms minimum gap is counted and logged
 //               instead of silent. J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Anthropic Claude Code.
+//   2026-10-22: feedIQ takes a pending window reset first, ported from
+//               Longpath src/core/FFTEngine.cpp:241-249 [@383f058]
+//               (Longpath PR 62, caddf95b): after a lost I/Q packet the
+//               next frame is built only from samples after the gap.
+//               Longpath's banner on this file is NereusSDR's own header
+//               renamed, with no Longpath author entry, so it is not
+//               copied; the project-level LICENSE applies. Ported by
+//               J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//               Claude Code.
+//   2026-10-23: NereusSDR-original stall bound on that reset
+//               (applyPendingWindowReset, frameIntervalPairs): with no frame
+//               for kGapResetStallFrameIntervals frame intervals, the gap is
+//               let through and counted in windowResetsSkipped(). JJ's
+//               ruling (option a). J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Claude Code.
+//   2026-10-24: Once a gap has been let through, every gap is let through
+//               until a whole window of samples passes with no gap
+//               (m_lettingGapsThrough, m_pairsSinceGap). JJ's ruling (option
+//               i): a lossy link keeps its full frame rate with a slight
+//               smear. J.J. Boyd (KG4VCF), with AI-assisted implementation
+//               via Claude Code.
+//   2026-10-24: JJ's ruling (option c) replaces that one-window rule
+//               (m_lettingGapsThrough is gone): a gap less than
+//               kGapLossyLinkWindows windows after the last gap of any kind
+//               is let through once a frame has come since the last reset
+//               (m_pairsSinceGap, m_refillingAfterReset), so gaps one to
+//               four windows apart no longer crawl. J.J. Boyd (KG4VCF), with
+//               AI-assisted implementation via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -316,6 +344,17 @@ void FFTEngine::setDecimation(int factor)
 void FFTEngine::feedIQ(const QVector<float>& interleavedIQ)
 {
 #ifdef HAVE_FFTW3
+    // From Longpath src/core/FFTEngine.cpp:241-249 [@383f058] (PR 62).
+    // Ein Loch im Strom macht das angefangene Fenster wertlos: der
+    // Sprung an der Nahtstelle ist breitbandig und malt einen Schmierer
+    // ueber das ganze Bild. requestWindowReset() setzt die Fahne von
+    // irgendeinem Faden, abgeholt wird sie hier, auf dem Faden, dem das
+    // Fenster gehoert.
+    // NereusSDR: the flag is taken in applyPendingWindowReset(), which
+    // drops the window as Longpath does (m_iqWritePos = 0 and the count)
+    // unless the bound lets the gap through (see requestWindowReset()).
+    applyPendingWindowReset();
+
     // Apply any pending FFT size change (coalesces rapid slider drags)
     int pending = m_pendingFftSize.exchange(0);
     if (pending > 0 && pending != m_currentFftSize) {
@@ -345,6 +384,13 @@ void FFTEngine::feedIQ(const QVector<float>& interleavedIQ)
             }
             m_decimationCounter = (m_decimationCounter + 1) % dec;
         }
+        // NereusSDR-original (2026-10-23): input since the last frame, for
+        // the gap-reset stall bound; skipped pairs count too, as they pass
+        // in time between frames.
+        ++m_pairsSinceFrame;
+        // NereusSDR-original (2026-10-24), option c: input since the last
+        // gap, for the lossy-link rule.
+        ++m_pairsSinceGap;
         if (m_skipPending > 0) {
             // Between two transforms' windows: not analysed.
             --m_skipPending;
@@ -393,6 +439,60 @@ void FFTEngine::feedIQ(const QVector<float>& interleavedIQ)
 #else
     Q_UNUSED(interleavedIQ);
 #endif
+}
+
+bool FFTEngine::applyPendingWindowReset()
+{
+    if (!m_windowResetPending.exchange(false)) {
+        return false;
+    }
+    // NereusSDR-original (2026-10-23), JJ's ruling (option a): the stall
+    // bound. Each reset makes the next frame wait for a whole window of new
+    // samples, so a link that loses packets more often than once a window
+    // would never finish one and the display would freeze on its last
+    // frame. After kGapResetStallFrameIntervals frame intervals with no
+    // frame, the gap is let through: the window keeps what it has, and the
+    // next frame shows a slightly smeared line instead.
+    // 2026-10-24, JJ's ruling (option c): a link that lost a packet within
+    // the last kGapLossyLinkWindows windows (counted in feedIQ from the
+    // last gap, let through or reset) is lossy, and its gap is let through
+    // too, so gaps up to that many windows apart keep the normal frame
+    // rate, each frame slightly smeared. While the window refills after a
+    // reset, with no frame since, the stall bound alone decides. On a
+    // healthy link a single gap still drops the window below.
+    const bool lossyLink = !m_refillingAfterReset
+        && m_pairsSinceGap
+            < static_cast<qint64>(kGapLossyLinkWindows) * m_currentFftSize;
+    const bool stalled = m_pairsSinceFrame
+        >= static_cast<qint64>(kGapResetStallFrameIntervals) * frameIntervalPairs();
+    m_pairsSinceGap = 0;
+    if (lossyLink || stalled) {
+        m_windowResetsSkipped.fetch_add(1);
+        return false;
+    }
+    // From Longpath src/core/FFTEngine.cpp:246-249 [@383f058] (PR 62).
+    m_iqWritePos = 0;
+    m_refillingAfterReset = true;
+    m_windowResets.fetch_add(1);
+    return true;
+}
+
+qint64 FFTEngine::frameIntervalPairs() const
+{
+    // NereusSDR-original (2026-10-23): the advance processFrame() takes
+    // between frames, in decimated input pairs. Clamped to the FFT size as
+    // there, unless transforms follow the frame rate, when the samples
+    // skipped between windows make up the rest of the interval.
+    const double sr  = m_sampleRate.load();
+    const int    fps = qMax(1, m_targetFps.load());
+    qint64 advance = (sr > 0.0)
+        ? static_cast<qint64>(std::round(sr / static_cast<double>(fps)))
+        : static_cast<qint64>(m_currentFftSize);
+    advance = std::max<qint64>(1, advance);
+    if (!m_transformsFollowFrameRate.load() && m_currentFftSize > 0) {
+        advance = std::min<qint64>(advance, m_currentFftSize);
+    }
+    return advance;
 }
 
 void FFTEngine::noteMinimumGapSkip(int droppedPairs)
@@ -759,6 +859,12 @@ void FFTEngine::processFrame()
     // Restart frame timer
     m_frameTimer.restart();
     m_frameTimerStarted = true;
+    // NereusSDR-original (2026-10-23): the gap-reset stall bound counts
+    // from here.
+    m_pairsSinceFrame = 0;
+    // NereusSDR-original (2026-10-24, option c): a frame after a reset ends
+    // the refill, so the lossy-link rule applies again.
+    m_refillingAfterReset = false;
 
     // Emit both signals in lock-step.  fftReady serves chrome / AGC
     // consumers that need full-band dBm (ClarityController, NoiseFloorTracker);

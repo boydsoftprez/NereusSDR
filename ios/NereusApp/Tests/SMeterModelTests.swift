@@ -134,6 +134,98 @@ struct SMeterModelTests {
         #expect(main.sMeter.display.right == "-60.0 dBm")
     }
 
+    @Test("The flag's more menu sets the S-meter source: every flag reads Peak, Average or Max Bin, kept on this device")
+    func flagMeterSource() async throws {
+        let mirror = MirrorStore(send: { _ in })
+        mirror.apply(.hello(LinkMessage.Hello(major: 1, minor: 11, settingsSchema: 0, peer: "nereusd")))
+        mirror.apply(.capabilities(LinkMessage.Capabilities(properties: [
+            .init(name: "remoteMediaVersion", value: .i64(1)),
+        ])))
+        mirror.apply(.objectCreate(LinkMessage.ObjectCreate(key: "slice:0", className: "SliceModel", properties: [
+            .init(ordinal: 1, name: "frequency", value: .f64(7_236_400)),
+            .init(ordinal: 3, name: "filterLow", value: .i64(-2_900)),
+            .init(ordinal: 4, name: "filterHigh", value: .i64(-100)),
+            .init(ordinal: 11, name: "active", value: .bool(true)),
+            .init(ordinal: 13, name: "sliceIndex", value: .i64(0)),
+            .init(ordinal: 15, name: "signalStrengthDbm", value: .f64(-90)),
+            .init(ordinal: 16, name: "signalPeakDbm", value: .f64(-80)),
+            .init(ordinal: 17, name: "signalAverageDbm", value: .f64(-90)),
+            .init(ordinal: 27, name: "panKey", value: .utf8("pan-0")),
+            .init(ordinal: 28, name: "sampleRateHz", value: .i64(192_000)),
+        ])))
+        let defaults = try #require(UserDefaults(suiteName: "SMeterFlagTests-\(UUID().uuidString)"))
+        let main = MainScreenModel(mirror: mirror, settings: SettingsProxyClient(send: { _ in }), commands: nil,
+                                   operations: BandSubscriber.Operations(subscribe: { _ in }, unsubscribe: { _ in }),
+                                   meterSettings: SMeterSettingsStore(defaults: defaults))
+        _ = main.band.prepareToDraw(size: CGSize(width: 320, height: 480), scale: 2)
+        main.receive(.mediaState(.connected))
+        #expect(await settle { main.subscriber.acceptedDisplay != nil && main.slices.active != nil })
+        let entry = try #require(main.slices.active)
+
+        // The desktop's default, S-Meter: the flag reads the peak, with no tag.
+        #expect(main.meterRxMode == .signal)
+        #expect(FlagMeterChoice(main.meterRxMode).tag == nil)
+        #expect(main.sMeter.flagLevel(for: entry) == -80)
+        // Max Bin is greyed, with the reason, until this slice's pan is drawn.
+        #expect(main.sMeter.flagMaxBinReason(for: entry) == SMeterReadings.maxBinUnavailableText)
+
+        main.flagControls.pickFlagMeter(.average)
+        #expect(await settle { main.meterRxMode == .signalAverage })
+        #expect(FlagMeterChoice(main.meterRxMode).tag == "AV")
+        #expect(main.sMeter.flagLevel(for: entry) == -90)
+
+        let request = try #require(main.subscriber.acceptedDisplay).subscription
+        let payload: [String: LinkJSON] = [
+            "op": .string("context"), "connectionId": .string("meter"),
+            "endpointId": .number(Double(request.endpointId)), "revision": .number(Double(request.revision)),
+            "contextGeneration": .number(1), "sourceStream": .number(0),
+            "sourceCentreHz": .number(7_236_400), "sampleRateHz": .number(192_000),
+            "centreHz": .number(7_236_400), "spanHz": .number(48_000),
+            "wideCentreHz": .number(0), "wideSpanHz": .number(0),
+            "traceSamples": .number(6), "waterfallSamples": .number(6), "wideSamples": .number(0),
+            "minDbm": .number(-160), "maxDbm": .number(0), "fps": .number(30), "framesPerLine": .number(1),
+        ]
+        main.receive(.context(try #require(MediaControlDecoder.context(payload, wideband: false, grant: false))))
+        main.receive(.displayFrame(DisplayFrame(endpointId: request.endpointId, contextGeneration: 1,
+                                                encoderSequence: 1, producerTimestamp: 0, isKeyframe: true,
+                                                waterfallAdvance: true, minDbm: -160, maxDbm: 0,
+                                                traceDbm: [-100, -90, -50, -100, -80, -100],
+                                                waterfallDbm: [-100, -100, -100, -100, -100, -100], wideDbm: [])))
+        #expect(main.sMeter.flagMaxBinReason(for: entry) == nil)
+        main.flagControls.pickFlagMeter(.maxBin)
+        #expect(await settle { main.meterRxMode == .maxBin })
+        #expect(FlagMeterChoice(main.meterRxMode).tag == "MAX")
+        #expect(main.sMeter.flagLevel(for: entry) == -50)
+
+        // The pan is drawn, but tuned away from the slice: Max Bin says the
+        // passband is outside the span, not that the display is closed.
+        var away = payload
+        away["contextGeneration"] = .number(2)
+        away["centreHz"] = .number(7_300_000)
+        away["sourceCentreHz"] = .number(7_300_000)
+        main.receive(.context(try #require(MediaControlDecoder.context(away, wideband: false, grant: false))))
+        main.receive(.displayFrame(DisplayFrame(endpointId: request.endpointId, contextGeneration: 2,
+                                                encoderSequence: 2, producerTimestamp: 0, isKeyframe: true,
+                                                waterfallAdvance: true, minDbm: -160, maxDbm: 0,
+                                                traceDbm: [-100, -90, -50, -100, -80, -100],
+                                                waterfallDbm: [-100, -100, -100, -100, -100, -100], wideDbm: [])))
+        #expect(await settle { main.sMeter.flagMaxBinReason(for: entry) == SMeterReadings.maxBinOutsideSpanText })
+        #expect(main.sMeter.flagLevel(for: entry) == nil)
+
+        // One of the more menu's lists is open at a time.
+        main.flagControls.toggleRateList()
+        main.flagControls.toggleMeterList()
+        #expect(main.flagControls.meterListOpen && !main.flagControls.rateListOpen)
+        main.flagControls.toggleRateList()
+        #expect(main.flagControls.rateListOpen && !main.flagControls.meterListOpen)
+
+        // Kept on this device, with the meter's other choices.
+        #expect(SMeterSettingsStore(defaults: defaults).settings.rxMode == .maxBin)
+        main.flagControls.pickFlagMeter(.peak)
+        #expect(await settle { main.meterRxMode == .signal })
+        #expect(main.sMeter.flagLevel(for: entry) == -80)
+    }
+
     @Test("Max Bin is off without this slice's pan trace; a stray wire property cannot enable it")
     func maxBinNeedsPan() async throws {
         let (model, station, _) = try await connected()

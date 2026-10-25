@@ -1,5 +1,9 @@
 // NereusSDR for iOS: the Setup tab's tree: Devices first, then the desktop's categories in order, each marked
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: General's Filters page after Options, listed greyed with a
+//   reason on a Core that does not describe it. J.J. Boyd (KG4VCF),
+//   AI-assisted via Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -113,7 +117,7 @@ enum SetupTree {
                  native: [PageEntry(page: .devices, title: "Devices", tag: .core)], opensPage: .devices),
         Skeleton(coreId: "general", title: "General", tag: .both,
                  pageOrder: ["Startup & Preferences", "UI Scale & Theme", "Navigation", "Battery and sessions",
-                             "Options"],
+                             "Options", "Filters"],
                  native: [PageEntry(page: .navigation, title: "Navigation", tag: .thisPhone),
                           PageEntry(page: .batteryAndSessions, title: "Battery and sessions", tag: .thisPhone)],
                  opensPage: nil),
@@ -190,6 +194,24 @@ enum SetupTree {
         return pages + [greyed]
     }
 
+    /// General's Filters page (General V30) and its title.
+    static let filtersPageId = "general.filters"
+    static let filtersPageTitle = "Filters"
+    static let filtersCoreOlderText = "This Core does not offer the Filters page. Updating the Core may help."
+
+    /// General's pages with the Filters page: a Core that describes General
+    /// but not the Filters page (below description 30) lists it greyed
+    /// with the reason, never left out.
+    private static func withFiltersPage(_ pages: [PageEntry], description: SetupDescription?) -> [PageEntry] {
+        guard let description, description.category.id == "general",
+              !description.pages.contains(where: { $0.id == filtersPageId }) else {
+            return pages
+        }
+        var greyed = PageEntry(category: "general", pageId: filtersPageId, title: filtersPageTitle, tag: .core)
+        greyed.unavailableReason = filtersCoreOlderText
+        return pages + [greyed]
+    }
+
     /// The tree: the app's own pages and the Core's described ones, each in
     /// its place. A category the desktop does not have (a newer Core's)
     /// follows Diagnostics with the Core's name and mark.
@@ -201,8 +223,9 @@ enum SetupTree {
                 result.append(contentsOf: extraCategories(described: described, order: order, unreadable: unreadable))
             }
             let description = skeleton.coreId.flatMap { described[$0] }
-            let pages = withStackPage(merged(skeleton, description: description), description: description,
-                                      stackOffered: stackOffered)
+            let pages = withFiltersPage(withStackPage(merged(skeleton, description: description),
+                                                      description: description, stackOffered: stackOffered),
+                                        description: description)
                 .filter { showPaValues || $0.destination != .described(category: "pa", page: "pa.values") }
             let notice = skeleton.coreId.flatMap { unreadable[$0] }
             guard !pages.isEmpty || notice != nil else {

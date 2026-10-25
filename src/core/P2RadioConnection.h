@@ -132,6 +132,10 @@
 //   2026-10-06 - Radio speaker (R-SPK-09, R-SPK-15): the speaker amplifier
 //                setters. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-23 - m_lastGapSignalMs, the iqSequenceGap throttle, ported from
+//                Longpath src/core/P2RadioConnection.h:449 [@383f058] (PR 62).
+//                J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//                Claude Code.
 // =================================================================
 
 /*
@@ -659,6 +663,9 @@ private:
     // with P1 so Phase F P2 OC wiring can read it without further changes.
     // Phase 3P-D Task 3.
     const OcMatrix* m_ocMatrix{nullptr};
+
+    // From Longpath src/core/P2RadioConnection.h:449 [@383f058] (PR 62).
+    qint64 m_lastGapSignalMs{0};   // Drossel fuer iqSequenceGap()
 
     // Non-owning pointer to RadioModel's CalibrationController.
     // When non-null, hzToPhaseWord() multiplies by effectiveFreqCorrectionFactor().

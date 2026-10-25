@@ -163,7 +163,7 @@ First launch generates FFTW wisdom (~15 min), cached in `~/.config/NereusSDR/`.
   (github.com/dl1bz/deskhpsdr), `../n1gp-Anvelina_PROIII/`
   (github.com/n1gp/Anvelina_PROIII, pinned), `../TAPR-OpenHPSDR-Firmware/`
   (github.com/TAPR/OpenHPSDR-Firmware, pinned), `../Longpath/`
-  (github.com/oe5sos/Longpath, a GPL-3 NereusSDR fork, pinned `551576e`).
+  (github.com/oe5sos/Longpath, a GPL-3 NereusSDR fork, pinned `bb9f675c`, v0.8.2-6).
 * Vendored: `third_party/wdsp/` (WDSP 2.10, TAPR b02d5bac), `third_party/rade/` (rade_c
   c8a3dc1, BSD-2), `third_party/r8brain/` (MIT resampler), `third_party/fftw3/`
   (Windows DLL).

@@ -41,6 +41,7 @@
 #include "models/RadioModel.h"
 #include "fakes/FakeAudioBus.h"
 #include "fakes/P1FakeRadio.h"
+#include "fakes/NoCaptureHelper.h"
 
 using namespace NereusSDR;
 using NereusSDR::Test::P1FakeRadio;
@@ -209,6 +210,7 @@ private slots:
         P1FakeRadio fake;
         fake.start();
         RadioModel model(RadioModel::Role::Local);
+        Test::useNoCaptureHelper(model);
         model.audioEngine()->setStartInitializerForTest(installOpenAudioBuses);
         model.wdspEngine()->setSynchronousInitForTest(true);
         ConnectRecord rec;
@@ -271,6 +273,7 @@ private slots:
         fake.start();
         fake.goSilent();
         RadioModel model(RadioModel::Role::Local);
+        Test::useNoCaptureHelper(model);
         model.audioEngine()->setStartInitializerForTest(installOpenAudioBuses);
         model.wdspEngine()->setSynchronousInitForTest(true);
         ConnectRecord rec;

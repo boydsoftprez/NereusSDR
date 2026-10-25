@@ -1,4 +1,7 @@
 // no-port-check: NereusSDR-original Setup description versus desktop widgets.
+// 2026-10-24: General version 30, the Filters page's Limit filter edges to
+// sidebands row against GeneralFiltersPage. J.J. Boyd (KG4VCF), AI-assisted
+// via Anthropic Claude Code.
 #include <QtTest>
 
 #include "core/setup/SetupDescriptionService.h"
@@ -8,6 +11,7 @@
 #include "core/StepAttenuatorController.h"
 #include "core/settings/SettingsScope.h"
 #include "gui/setup/GeneralOptionsPage.h"
+#include "gui/setup/GeneralFiltersPage.h"
 #include "gui/setup/AppearanceSetupPages.h"
 #include "gui/SMeterWidget.h"
 #include "gui/ColorSwatchButton.h"
@@ -1255,6 +1259,49 @@ private slots:
         QCOMPARE(compared, 11);
     }
 
+    // Version 30: General > Filters' row is the desktop Filters page's one
+    // checkbox: the page title, the box's text and tooltip, and the setting
+    // the box writes.
+    void describedV30LimitFilterEdgesMatchesNativePage()
+    {
+        AppSettings::instance().clear();
+        RadioModel model;
+        GeneralFiltersPage filters(&model);
+        SetupDescriptionService service;
+        const QJsonObject general = projectedCategory(service.general(), 30);
+        QJsonObject control;
+        QString pageTitle;
+        QString sectionTitle;
+        for (const QJsonValue& page : general.value("pages").toArray()) {
+            for (const QJsonValue& section : page.toObject().value("sections").toArray()) {
+                for (const QJsonValue& raw : section.toObject().value("controls").toArray()) {
+                    if (raw.toObject().value("requiresDescriptionVersion") == QJsonValue(30)) {
+                        QVERIFY(control.isEmpty());
+                        control = raw.toObject();
+                        pageTitle = page.toObject().value("title").toString();
+                        sectionTitle = section.toObject().value("title").toString();
+                    }
+                }
+            }
+        }
+        QCOMPARE(control.value("id"), QJsonValue("general.filters.limitFilterEdgesToSidebands"));
+        auto* box = qobject_cast<QCheckBox*>(bySetupId(filters, control.value("id").toString()));
+        QVERIFY(box != nullptr);
+        QCOMPARE(box->objectName(), QStringLiteral("chkLimitFilterEdgesToSidebands"));
+        QCOMPARE(box->text(), control.value("label").toString());
+        QCOMPARE(box->toolTip(), control.value("tooltip").toString());
+        QCOMPARE(filters.pageTitle(), pageTitle);
+        QCOMPARE(sectionTitle, pageTitle);
+        compareControl(filters, control);
+        const QString key = control.value("binding").toObject().value("setting").toString();
+        QCOMPARE(key, QString::fromLatin1(RadioModel::kLimitFiltersToSidebandsKey));
+        const QJsonObject encoding = control.value("valueEncoding").toObject();
+        box->setChecked(true);
+        QCOMPARE(AppSettings::instance().value(key).toString(), encoding.value("true").toString());
+        box->setChecked(false);
+        QCOMPARE(AppSettings::instance().value(key).toString(), encoding.value("false").toString());
+    }
+
     // Version 23: Calibration's Rx1 6m LNA row matches the desktop tab's
     // box: its group, label, tooltip, range, step, places and default.
     void describedV23Rx1SixMeterLnaMatchesNativeTab()
@@ -1980,6 +2027,7 @@ private slots:
         service.setBoardCapabilities(model.boardCapabilities());
         StartupPrefsPage startup(&model);
         GeneralOptionsPage options(&model);
+        GeneralFiltersPage filters(&model);
         TestTwoTonePage test(&model);
         CatTciServerPage cat;
         NrAnfSetupPage nr(&model);
@@ -1994,8 +2042,10 @@ private slots:
         FilterPresetsSetupPage filterPresets(model.filterPresetStore(), &model);
         for (const QJsonValue& raw : controls(service.category(QStringLiteral("general")))) {
             const QJsonObject c = raw.toObject();
-            QWidget& page = c.value("id").toString().startsWith("general.startup.")
-                ? static_cast<QWidget&>(startup) : static_cast<QWidget&>(options);
+            const QString id = c.value("id").toString();
+            QWidget& page = id.startsWith("general.startup.") ? static_cast<QWidget&>(startup)
+                : id.startsWith("general.filters.") ? static_cast<QWidget&>(filters)
+                : static_cast<QWidget&>(options);
             compareControl(page, c);
         }
         for (const QJsonValue& raw : controls(service.category(QStringLiteral("test")))) {

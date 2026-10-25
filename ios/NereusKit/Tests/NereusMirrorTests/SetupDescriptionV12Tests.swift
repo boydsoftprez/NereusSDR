@@ -1,5 +1,8 @@
 // NereusSDR for iOS: Setup description V12, the rest of Setup > Display and Reset all colors, parsed from the Core's own files
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: the app reads Setup description 30 (General's Filters
+//   page). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import Testing
@@ -190,9 +193,9 @@ import Testing
     }
 
     @Test func aDocumentAboveTheHighestIsRefusedAndOlderVersionsStillParse() throws {
-        #expect(SetupDescription.highestVersion == 29)
+        #expect(SetupDescription.highestVersion == 30)
         var root = try Self.resource("display")
-        root["version"] = 30
+        root["version"] = 31
         #expect(throws: SetupDescription.ParseError.self) { try Self.parse(root) }
         var raw = Self.rawControls(try Self.resource("display")).first { $0["id"] as? String == "display.gridScales.showGrid" }!
         raw["requiresDescriptionVersion"] = 13

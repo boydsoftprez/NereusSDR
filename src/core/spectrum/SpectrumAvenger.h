@@ -39,6 +39,13 @@
 //                                    daemon build split (R1).  No logic
 //                                    change.  AI-assisted transformation via
 //                                    Anthropic Claude Code.
+//   2026-10-23  J.J. Boyd / KG4VCF  warmingUp() and unseededDb(): whether
+//                                    the recursive average still carries
+//                                    its starting value, and the average
+//                                    with that value taken out, for the
+//                                    noise floor; warmAfterFrames() for a
+//                                    pixel that held no data.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -153,6 +160,45 @@ public:
                double normOneHzDb,
                QVector<float>& pixelsOut);
 
+    /// NereusSDR, not in WDSP: the share of the recursive average (modes 1
+    /// and 3) still held by the starting value WDSP seeds it with (1e-12
+    /// linear, -160 dB log) at or below which the average counts as warm:
+    /// e^-4, four time constants. Mode 3 then reads within 1 dB of a band
+    /// 50 dB above its seed.
+    static constexpr double kWarmSeedShare = 0.018315638888734179;
+
+    /// Whether the average still carries enough of its starting value to
+    /// read below the band: true from a resize() or clear() until the
+    /// recursive average has run kWarmSeedShare down. The other modes are
+    /// warm after their first frame.
+    bool warmingUp() const { return m_seedShare > kWarmSeedShare; }
+
+    /// The recursive averages' starting values, as apply() seeds them after
+    /// a resize() or clear(). From Thetis wdsp/analyzer.c:1854-1872
+    /// [v2.10.3.15], SetDisplayAverageMode: 1.0e-12 for mode 1
+    /// (linear) and -160.0 dB for mode 3 (log).
+    static constexpr double kLinearRecursiveStart = 1.0e-12;
+    static constexpr double kLogRecursiveStartDb = -160.0;
+
+    /// NereusSDR, not in WDSP: the last row apply() wrote with its starting
+    /// value taken out, for a recursive average that is warming up. The
+    /// average after n frames is s * start + (1 - s) * (the frames' own
+    /// weighted mean), with s the share warmingUp() tests, so the row is
+    /// (average - s * start) / (1 - s): the first frame exactly, and then
+    /// the weighted mean of the frames so far. In mode 3 it is taken in dB,
+    /// in mode 1 in linear power before 10*log10(scale * ...), with no
+    /// correction and no normalization (the reducers use neither). Empty
+    /// when the average is warm, before its first frame, or in another
+    /// mode.
+    void unseededDb(double scale, QVector<float>& pixelsOut) const;
+
+    /// NereusSDR, not in WDSP: whether an average in `avMode` holds none of
+    /// a pixel's earlier value (by the warmingUp() rule) once `frames` new
+    /// frames have gone in: avBackmult^frames at most kWarmSeedShare for
+    /// modes 1 and 3, a full window of numAverage frames for mode 2, and one
+    /// frame for the others.
+    static bool warmAfterFrames(int frames, int avMode, double avBackmult, int numAverage);
+
     int  numPixels()   const { return m_avSum.size(); }
     int  numAverage()  const { return m_numAverage; }
     int  availFrames() const { return m_availFrames; }
@@ -176,6 +222,10 @@ private:
     int m_avInIdx{0};
     int m_avOutIdx{0};
     int m_availFrames{0};
+    // The share of the average still held by its starting value.
+    double m_seedShare{1.0};
+    // The mode of the last apply(), for unseededDb().
+    int m_lastMode{0};
 };
 
 }  // namespace NereusSDR

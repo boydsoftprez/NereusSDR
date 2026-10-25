@@ -16,6 +16,9 @@
 //               while radio PTT keys it closes only after the radio
 //               unkeys. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-23: a returning device's slice keeps its tuning step and AGC-T
+//               AUTO. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 // =================================================================
 //
 // A real Core over loopback links, with the session registry's clock
@@ -605,6 +608,41 @@ private slots:
         QTRY_COMPARE(core.model->sliceById(0)->diversityGainDb(), 6.0);
         QCOMPARE(static_cast<int>(ofType(appA->received(), QStringLiteral("confirm.request")).size()),
                  asked);
+    }
+
+    // JJ's report 2026-10-23 (step and AGC auto do not persist between
+    // launches): a paired device's slice closes when it leaves and is made
+    // again when it returns. The slice comes back with the tuning step and
+    // the AGC-T AUTO switch it had, as it does with its frequency.
+    void aReturningDevicesSliceKeepsItsStepAndAuto()
+    {
+        Core core;
+        core.model->configureStreamPool(5, 5, 192000);
+        Device a;
+        core.pair(a);
+        LoopbackTransport* appA = core.signIn(a, kShares);
+        QVERIFY(admitted(appA));
+        const int a0 = onlySliceOf(core, a);
+        QVERIFY(a0 >= 0);
+        SliceModel* slice = core.model->sliceById(a0);
+        slice->setFrequency(7074000.0);
+        slice->setStepHz(5000);
+        slice->setAutoAgcEnabled(true);
+
+        QVERIFY(accepted(core.invoke(appA, "session.leave")));
+        QTRY_VERIFY(core.model->sliceById(a0) == nullptr);
+        const QList<SavedSlice> saved = DeviceLayoutStore::load(
+            AppSettings::instance(), core.model->currentRadioMac(), a.key.fingerprint());
+        QCOMPARE(saved.size(), 1);
+
+        LoopbackTransport* back = core.signIn(a, kShares);
+        QVERIFY(admitted(back));
+        const int restored = onlySliceOf(core, a);
+        QVERIFY(restored >= 0);
+        SliceModel* again = core.model->sliceById(restored);
+        QCOMPARE(again->frequency(), 7074000.0);
+        QCOMPARE(again->stepHz(), 5000);
+        QVERIFY(again->autoAgcEnabled());
     }
 };
 

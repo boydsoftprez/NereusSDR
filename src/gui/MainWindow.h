@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24: sliceAccessChanged(), so container instruments follow a
+//               remote window's slice access. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-16: restoreMainWindowGeometry()'s note says the constructor
 //               calls it last (issue #525). J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
@@ -499,6 +502,10 @@ signals:
     /// rows again from it. Emitted on the GUI thread, after the value is in
     /// place.
     void stationFftSettingsChanged();
+    /// A remote window's slice access changed (SliceAccessMirror::changed
+    /// for `sliceId`). Container instruments that follow a slice ask for
+    /// it again.
+    void sliceAccessChanged(int sliceId);
 
 public:
     // Workspace preview only: the profile rail, collapsed to the active

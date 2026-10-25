@@ -1,5 +1,8 @@
 // NereusSDR for iOS: typed Setup metadata received from the Core
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: reads description version 30 (General's Filters page).
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import CoreFoundation
 import Foundation
@@ -266,7 +269,7 @@ public struct SetupDescription: Equatable, Sendable {
 
     /// The highest description version this parser reads. What the phone
     /// asks the Core for is separate: `LinkFeatures`' `setupDescription`.
-    public static let highestVersion = 29
+    public static let highestVersion = 30
 
     /// The desktop's band names, by the Core's band number, as a per-band
     /// row's label names them (`src/models/Band.h`).

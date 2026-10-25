@@ -138,6 +138,11 @@ struct VfoFlagView: View {
     let meter: StationCatalog.Meters.SMeter?
     /// How the level beside the bar is printed.
     var readout: SMeterReadout = .desktopDefaults
+    /// The level the bar shows, from the S-meter's RX Mode
+    /// (``FlagMeterChoice``); nil shows the Core's `signalStrengthDbm`.
+    var level: (@MainActor (BandSlicesModel.Entry) -> Double?)?
+    /// Which reading `level` is, for the bar's tag.
+    var meterSource: FlagMeterChoice = .peak
     var openPad: (() -> Void)?
     /// The radio's own PTT is on the air on this slice (spec section 5.9
     /// item 3): the flag says ON AIR in its TX button and its frequency
@@ -239,7 +244,8 @@ struct VfoFlagView: View {
                 ownerRow(metrics)
             }
             frequencyRow(metrics)
-            FlagLevelBar(dbm: entry.signalDbm, meter: meter, readout: readout)
+            FlagLevelBar(dbm: level.map { $0(entry) } ?? entry.signalDbm, meter: meter, readout: readout,
+                         source: level == nil ? .peak : meterSource)
                 .frame(height: FlagMetrics.levelHeight)
                 .padding(.top, FlagMetrics.levelTop)
             if let rade = entry.rade {

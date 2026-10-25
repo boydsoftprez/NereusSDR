@@ -128,15 +128,19 @@ import Testing
         #expect(!current.contains(-40))
     }
 
-    @Test func waterfallBlankerSuppressesAnImpulseAndFreezesItsReceiveBaselineDuringTransmit() {
+    // 2026-10-23: transmit's end now resets the blanker, as the desktop's
+    // does (PR 625 parity), so the impulse is checked before keying.
+    @Test func waterfallBlankerSuppressesAnImpulseAndStartsOverWhenTransmitEnds() {
         var blanker = WaterfallBlanker()
         let quiet = [Float](repeating: -100, count: 16)
         let impulse = [Float](repeating: -80, count: 16)
         for _ in 0..<8 {
             #expect(blanker.filtered(quiet, enabled: true, transmitting: false, thresholdDb: 6) == quiet)
         }
-        #expect(blanker.filtered(impulse, enabled: true, transmitting: true, thresholdDb: 6) == impulse)
         #expect(blanker.filtered(impulse, enabled: true, transmitting: false, thresholdDb: 6) == quiet)
+        #expect(blanker.filtered(impulse, enabled: true, transmitting: true, thresholdDb: 6) == impulse)
+        #expect(blanker.filtered(impulse, enabled: true, transmitting: false, thresholdDb: 6) == impulse)
+        #expect(blanker.historyRows == 1)
         #expect(blanker.filtered(impulse, enabled: false, transmitting: false, thresholdDb: 6) == impulse)
     }
 

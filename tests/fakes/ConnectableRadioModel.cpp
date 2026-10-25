@@ -6,6 +6,7 @@
 
 #include "ConnectableRadioModel.h"
 #include "FakeAudioBus.h"
+#include "NoCaptureHelper.h"
 
 #include "core/AudioEngine.h"
 #include "core/DspControlThread.h"
@@ -108,6 +109,12 @@ std::unique_ptr<ConnectableRadioModel> ConnectableRadioModel::create(
     // Harmless to arm for Role::Remote too: initialize() is never called
     // on that path, so the flag just goes unread.
     harness->m_model->wdspEngine()->setSynchronousInitForTest(true);
+
+    // The connect path demands the PC mic once WDSP is up; with no helper
+    // program it fails at once instead of starting a real helper found
+    // beside the test binary (NoCaptureHelper.h).  beforeConnect may
+    // install its own capture options after this.
+    useNoCaptureHelper(*harness->m_model);
 
     if (beforeConnect) {
         beforeConnect(*harness->m_model);

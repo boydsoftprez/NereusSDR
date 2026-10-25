@@ -1,6 +1,8 @@
 // NereusSDR for iOS: closed V29 Display/Appearance description regressions
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // J.J. Boyd (KG4VCF), October 12, 2026; AI-assisted via OpenAI Codex.
+// 2026-10-24: the app asks for Setup description 30 (General's Filters
+//   page). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusLink
@@ -86,14 +88,14 @@ import Testing
 
     @MainActor
     @Test func thePhoneAsksFor29AndProjectsBothChangedCategories() throws {
-        #expect(SetupDescription.highestVersion == 29)
-        #expect(LinkFeatures.app["setupDescription"] == 29)
+        #expect(SetupDescription.highestVersion == 30)
+        #expect(LinkFeatures.app["setupDescription"] == 30)
         for (category, oldVersion) in [("display", 28), ("appearance", 27)] {
             #expect(SetupDescriptionFeed.projectedVersion(maximum: 28, category: category) == oldVersion)
             #expect(SetupDescriptionFeed.projectedVersion(maximum: 29, category: category) == 29)
         }
         var beyond = try Self.document("display")
-        beyond["version"] = 30
+        beyond["version"] = 31
         #expect(throws: SetupDescription.ParseError.self) { try SetupDescriptionV12Tests.parse(beyond) }
     }
 
