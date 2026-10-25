@@ -1346,6 +1346,17 @@ public final class FakeStation: @unchecked Sendable {
         }
         if payload["op"] == .string("subscribe"), let endpoint = payload["endpointId"], let revision = payload["revision"] {
             lock.withLock { endpointRevisions[endpoint] = revision }
+            if case .number(let id) = endpoint, let reason = takeRefusal(Self.subscribeRefusalKey(UInt32(id))) {
+                // Refused as the Core refuses a display it cannot place
+                // (src/core/session/media/DaemonMediaController.cpp:3863-4066): a `rejected` for that endpoint.
+                return [.mediaControl(LinkMessage.MediaControl(payload: [
+                    "op": .string("rejected"),
+                    "connectionId": payload["connectionId"] ?? .string(""),
+                    "endpointId": endpoint,
+                    "revision": revision,
+                    "reason": .string(reason),
+                ]))]
+            }
             if additions.contains(.wideband), let context = context(for: payload) {
                 return [context]
             }
@@ -1368,6 +1379,12 @@ public final class FakeStation: @unchecked Sendable {
             "revision": revision,
             "reason": .string(reason),
         ]))]
+    }
+
+    /// The key ``refuseNext(_:reason:)`` takes to refuse the next
+    /// `subscribe` for display endpoint `endpointId`, in the Core's words.
+    public static func subscribeRefusalKey(_ endpointId: UInt32) -> String {
+        "subscribe:\(endpointId)"
     }
 
     // MARK: Media with the extended view

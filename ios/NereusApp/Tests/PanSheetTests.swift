@@ -191,7 +191,9 @@ struct PanSheetTests {
         let sent = invokes(station, PanSheetModel.addSliceVerb)
         #expect(!sent.isEmpty)
         #expect(sent.allSatisfy { $0.args == [.init(name: "panId", value: .utf8(PanIdentity.first.corePanKey))] })
-        #expect(pan.addSliceOnPanReason(radio: "ANAN-G2") == "The ANAN-G2 runs \(limit) slices.")
+        // The number as a word, as the board writes it (Task 9: was digits).
+        #expect(pan.addSliceOnPanReason(radio: "ANAN-G2") == "The ANAN-G2 runs \(RadioWords.number(limit)) slices.")
+        #expect(limit == 5 && RadioWords.number(limit) == "five")
         // At the limit +RX sends nothing.
         pan.addSlice(on: .first)
         await quiet()

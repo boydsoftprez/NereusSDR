@@ -1,0 +1,327 @@
+// NereusSDR for iOS: the iPad's pans against a fake Core: the radio's limit, Add a pan, Close this pan, a smaller radio, the iPhone
+// SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+
+import CoreGraphics
+import Foundation
+import NereusBand
+import NereusKitTesting
+import NereusLink
+import NereusMedia
+import NereusMirror
+@testable import NereusSDR
+import Testing
+
+/// R-IOS-59, DC9, DC10 (spec section 6.3): the pans the iPad shows, up to
+/// the radio's limit; a new pan takes a spare slice or asks the Core for
+/// one; a closed pan's slices move to Pan 1 and its own values stay; a
+/// smaller radio closes the highest pans without writing to their slices;
+/// an iPhone never opens a second pan. Each action's status line names the
+/// slices that moved, and every refusal shows the Core's words.
+@Suite("Pan stack", .serialized)
+@MainActor
+struct PanStackTests {
+    private func settle(_ condition: () -> Bool) async -> Bool {
+        for _ in 0..<50_000 {
+            if condition() {
+                return true
+            }
+            await Task.yield()
+        }
+        return condition()
+    }
+
+    private func quiet() async {
+        for _ in 0..<5_000 {
+            await Task.yield()
+        }
+    }
+
+    @MainActor
+    private struct Connected {
+        let model: AppModel
+        let station: FakeStation
+        let store: BandDisplaySettingsStore
+        var stack: PanStackModel { model.main.panStack }
+    }
+
+    /// A model connected to a fake Core (five slices, two receivers) with
+    /// the ANAN-G2 catalogue, as an iPad.
+    private func connected(media: Bool = false) async throws -> Connected {
+        // The extended view's fake answers subscribes and opens media, as PanSheetTests' withMedia.
+        let station = try FakeStation(additions: media ? .wideband : [])
+        let suite = "PanStackTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        let store = BandDisplaySettingsStore(defaults: defaults)
+        let model = media ? AppModel(mediaPeerFactory: station.mediaPeerFactory, displaySettings: store)
+            : AppModel(displaySettings: store)
+        model.main.panStack.allowsMorePans = true
+        await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
+                            transportFactory: station.transportFactory)
+        #expect(await station.waitUntilLive())
+        let json = try #require(MainScreenTests.catalogueJSON())
+        await station.deliver(.delta(LinkMessage.Delta(key: "catalog", properties: [
+            .init(ordinal: 0, name: "json", value: .utf8(station.catalogue(json))),
+            .init(ordinal: 1, name: "revision", value: .i64(2)),
+        ])))
+        #expect(await settle { model.main.catalogFeed.catalog != nil && model.main.pan.sliceLetter == "A" })
+        await quiet()
+        return Connected(model: model, station: station, store: store)
+    }
+
+    private func invokes(_ station: FakeStation, _ verb: String) -> [LinkMessage.CommandInvoke] {
+        station.messages.compactMap {
+            if case .commandInvoke(let invoke) = $0, invoke.verb == verb {
+                return invoke
+            }
+            return nil
+        }
+    }
+
+    /// Every `panKey` write the app sent: the slice's key and the pan.
+    private func panKeyWrites(_ station: FakeStation) -> [(key: String, pan: String)] {
+        station.messages.compactMap {
+            if case .propertyWrite(let write) = $0, let entry = write.properties.first(where: { $0.name == "panKey" }),
+               case .utf8(let pan) = entry.value {
+                return (write.key, pan)
+            }
+            return nil
+        }
+    }
+
+    private static let second = PanIdentity(number: 2)
+
+    // MARK: The limit
+
+    @Test("Add a pan works up to the radio's limit, then greys with the radio's name and the number as a word")
+    func limitAndItsReason() async throws {
+        let rig = try await connected()
+        let stack = rig.stack
+        #expect(stack.limit == 2)
+        #expect(stack.open == [.first])
+        #expect(stack.addPanState() == (true, nil))
+        stack.addPan()
+        #expect(await settle { stack.status != nil })
+        #expect(stack.open == [.first, Self.second])
+        #expect(stack.addPanState() == (false, "The ANAN-G2 can show two pans."))
+        // At the limit Add a pan sends nothing.
+        let asked = invokes(rig.station, PanSheetModel.addSliceVerb).count
+        stack.addPan()
+        await quiet()
+        #expect(invokes(rig.station, PanSheetModel.addSliceVerb).count == asked)
+        #expect(stack.open == [.first, Self.second])
+        // One shared helper words both limits.
+        #expect(RadioWords.panLimit(radio: "Hermes Lite 2", limit: 2) == "The Hermes Lite 2 can show two pans.")
+        #expect(RadioWords.panLimit(radio: nil, limit: 1) == "The radio can show one pan.")
+        #expect(RadioWords.sliceLimit(radio: "ANAN-G2", limit: 5) == "The ANAN-G2 runs five slices.")
+        await rig.model.disconnect()
+    }
+
+    @Test("Close this pan is greyed on Pan 1 with its reason")
+    func firstStaysOpen() async throws {
+        let rig = try await connected()
+        #expect(rig.stack.closePanState(.first) == (false, "Pan 1 stays open."))
+        rig.stack.closePan(.first)
+        await quiet()
+        #expect(rig.stack.open == [.first])
+        #expect(panKeyWrites(rig.station).isEmpty)
+        await rig.model.disconnect()
+    }
+
+    @Test("before the Core's snapshot is whole Add a pan waits for the Core")
+    func notConnected() {
+        let model = AppModel(displaySettings: BandDisplaySettingsStore(
+            defaults: UserDefaults(suiteName: "PanStackTests-\(UUID().uuidString)") ?? .standard))
+        model.main.panStack.allowsMorePans = true
+        #expect(model.main.panStack.addPanState() == (false, "Wait for the Core to connect."))
+    }
+
+    // MARK: Add a pan
+
+    @Test("with no spare slice Add a pan asks for a slice on the new pan by its Core key and never moves Pan 1's only slice")
+    func addWithoutASpare() async throws {
+        let rig = try await connected()
+        let stack = rig.stack
+        stack.addPan()
+        #expect(await settle { stack.status != nil })
+        let sent = try #require(invokes(rig.station, PanSheetModel.addSliceVerb).last)
+        #expect(sent.args == [.init(name: "panId", value: .utf8("pan-1"))])
+        #expect(stack.status == "Pan 2 opened below Pan 1. Slice B added on Pan 2.")
+        #expect(rig.station.panKey(ofSlice: 1) == "pan-1")
+        // Pan 1's single slice stays where it is.
+        #expect(rig.station.panKey(ofSlice: 0) == "pan-0")
+        #expect(panKeyWrites(rig.station).isEmpty)
+        #expect(stack.lastTouched == Self.second)
+        // Each band draws its own pan's slices.
+        #expect(await settle { stack.band(for: Self.second).slices.entries.map(\.id) == [1] })
+        #expect(stack.band(for: .first).slices.entries.map(\.id) == [0])
+        await rig.model.disconnect()
+    }
+
+    @Test("with a spare Add a pan moves it by its panKey and says which slice came from where")
+    func addTakesASpare() async throws {
+        let rig = try await connected()
+        let stack = rig.stack
+        // +RX adds a second slice on Pan 1.
+        rig.model.main.pan.addSlice(on: .first)
+        #expect(await settle { rig.model.main.slices.entries.count == 2 })
+        let asked = invokes(rig.station, PanSheetModel.addSliceVerb).count
+        stack.addPan()
+        #expect(await settle { stack.status != nil })
+        #expect(stack.status == "Pan 2 opened below Pan 1. Slice B moved to it from Pan 1, which had a spare.")
+        #expect(panKeyWrites(rig.station).map(\.key) == ["slice:1"])
+        #expect(panKeyWrites(rig.station).map(\.pan) == ["pan-1"])
+        #expect(await settle { rig.station.panKey(ofSlice: 1) == "pan-1" })
+        #expect(rig.station.panKey(ofSlice: 0) == "pan-0")
+        // Nothing new was asked for.
+        #expect(invokes(rig.station, PanSheetModel.addSliceVerb).count == asked)
+        await rig.model.disconnect()
+    }
+
+    @Test("a refused Add a pan closes the new pan again and shows the Core's words")
+    func refusedAdd() async throws {
+        let rig = try await connected()
+        let stack = rig.stack
+        let words = "No receiver is free for another pan."
+        rig.station.refuseNext(PanSheetModel.addSliceVerb, reason: words)
+        stack.addPan()
+        #expect(await settle { stack.status != nil })
+        #expect(stack.status == words)
+        #expect(stack.open == [.first])
+        #expect(stack.lastTouched == .first)
+        #expect(stack.addPanState() == (true, nil))
+        await rig.model.disconnect()
+    }
+
+    // MARK: Close this pan
+
+    @Test("Close this pan moves its slices to Pan 1 by panKey, keeps its own values and says where they went")
+    func closeMovesSlicesHome() async throws {
+        let rig = try await connected()
+        let stack = rig.stack
+        stack.addPan()
+        #expect(await settle { stack.status != nil && rig.station.panKey(ofSlice: 1) == "pan-1" })
+        #expect(await settle { stack.band(for: Self.second).slices.entries.map(\.id) == [1] })
+        // Pan 2 keeps a value of its own.
+        var own = rig.store.settings(forPan: Self.second.storeKey)
+        own.noiseFloorLine.toggle()
+        rig.store.setSettings(own, forPan: Self.second.storeKey)
+        let kept = rig.store.settings(forPan: Self.second.storeKey)
+        let ownFields = rig.store.ownFields(forPan: Self.second.storeKey, among: BandDisplaySettingsStore.pictureFields)
+
+        #expect(stack.closePanState(Self.second) == (true, nil))
+        stack.closePan(Self.second)
+        #expect(stack.open == [.first])
+        #expect(stack.lastTouched == .first)
+        #expect(await settle { rig.station.panKey(ofSlice: 1) == "pan-0" })
+        #expect(panKeyWrites(rig.station).map(\.key) == ["slice:1"])
+        #expect(panKeyWrites(rig.station).map(\.pan) == ["pan-0"])
+        let status = try #require(stack.status)
+        #expect(status.hasPrefix("Pan 2 closed. Slice B moved to Pan 1, at "))
+        #expect(status.hasSuffix(" Pan 2's own values are kept for next time."))
+        // Its own values are where they were.
+        #expect(rig.store.settings(forPan: Self.second.storeKey) == kept)
+        #expect(rig.store.ownFields(forPan: Self.second.storeKey, among: BandDisplaySettingsStore.pictureFields)
+                == ownFields)
+        // Pan 1 alone draws every slice again.
+        #expect(await settle { rig.model.main.slices.entries.map(\.id) == [0, 1] })
+        await rig.model.disconnect()
+    }
+
+    // MARK: A smaller radio and a lost link
+
+    @Test("a Core reporting fewer pans closes the highest with the limit's words and writes nothing to their slices")
+    func lowerLimitClosesWithoutWrites() async throws {
+        let rig = try await connected()
+        let stack = rig.stack
+        stack.addPan()
+        #expect(await settle { stack.status != nil && stack.open.count == 2 })
+        let writes = panKeyWrites(rig.station).count
+        // The radio the Core runs now has one receiver.
+        let lowered = rig.model.mirror.capabilities.map { name, value in
+            LinkMessage.PropertyEntry(ordinal: 0, name: name,
+                                      value: name == "userDdcCount" ? .i64(1) : value.wireValue)
+        }
+        await rig.station.deliver(.capabilities(LinkMessage.Capabilities(properties: lowered)))
+        #expect(await settle { stack.open == [.first] })
+        #expect(stack.limit == 1)
+        #expect(stack.status == "The ANAN-G2 can show one pan. Pan 2 closed.")
+        await quiet()
+        #expect(panKeyWrites(rig.station).count == writes)
+        #expect(stack.addPanState() == (false, "The ANAN-G2 can show one pan."))
+        await rig.model.disconnect()
+    }
+
+    @Test("a lost link closes no pan")
+    func lostLinkKeepsPans() async throws {
+        let rig = try await connected()
+        let stack = rig.stack
+        stack.addPan()
+        #expect(await settle { stack.status != nil && stack.open.count == 2 })
+        let status = stack.status
+        await rig.model.disconnect()
+        await quiet()
+        #expect(stack.open == [.first, Self.second])
+        #expect(stack.status == status)
+    }
+
+    // MARK: The iPhone
+
+    @Test("an iPhone shows one pan and never opens another")
+    func iPhoneNeverOpensASecondPan() async throws {
+        let rig = try await connected()
+        let stack = rig.stack
+        stack.allowsMorePans = false
+        #expect(stack.addPanState() == (false, "An iPhone shows one pan."))
+        stack.addPan()
+        await quiet()
+        #expect(stack.open == [.first])
+        #expect(invokes(rig.station, PanSheetModel.addSliceVerb).isEmpty)
+        #expect(panKeyWrites(rig.station).isEmpty)
+        await rig.model.disconnect()
+    }
+
+    // MARK: Pan 2's display
+
+    /// The subscriptions the app sent the fake, in order.
+    private func subscribes(_ station: FakeStation) -> [[String: LinkJSON]] {
+        station.messages.compactMap {
+            if case .mediaControl(let control) = $0, control.payload["op"] == .string("subscribe") {
+                return control.payload
+            }
+            return nil
+        }
+    }
+
+    @Test("Pan 2 subscribes on its own slice with its own endpoint, and a Core that refuses it says why on Pan 2")
+    func secondPanDisplayRefused() async throws {
+        let rig = try await connected(media: true)
+        let stack = rig.stack
+        _ = rig.model.main.band.prepareToDraw(size: CGSize(width: 1206, height: 1500), scale: 3)
+        #expect(await settle { !self.subscribes(rig.station).isEmpty })
+        #expect(subscribes(rig.station).allSatisfy { $0["endpointId"] == .number(1) })
+        let pan2Endpoint = BandSubscriber.firstEndpointId(for: Self.second)
+        #expect(pan2Endpoint == 16_777_217)
+        let words = "The Core has no display free for another pan."
+        rig.station.refuseNext(FakeStation.subscribeRefusalKey(pan2Endpoint), reason: words)
+        stack.addPan()
+        #expect(await settle { stack.status != nil && rig.station.panKey(ofSlice: 1) == "pan-1" })
+        // The fake's new slice carries its index and pan; give it a receiver's rate and a frequency.
+        await rig.station.deliver(.delta(LinkMessage.Delta(key: "slice:1", properties: [
+            .init(ordinal: 1, name: "frequency", value: .f64(7_213_000)),
+            .init(ordinal: 28, name: "sampleRateHz", value: .i64(192_000)),
+        ])))
+        _ = stack.band(for: Self.second).band.prepareToDraw(size: CGSize(width: 1206, height: 700), scale: 3)
+        #expect(await settle {
+            self.subscribes(rig.station).contains { $0["endpointId"] == .number(Double(pan2Endpoint)) }
+        })
+        let second = try #require(subscribes(rig.station).first { $0["endpointId"] == .number(Double(pan2Endpoint)) })
+        #expect(second["sliceId"] == .number(1))
+        #expect(await settle { stack.displayRefusals[Self.second] == words })
+        #expect(stack.band(for: Self.second).subscriber.displayRefusal == words)
+        #expect(stack.displayRefusals[.first] == nil)
+        // Closing the pan clears its refusal.
+        stack.closePan(Self.second)
+        #expect(stack.displayRefusals.isEmpty)
+        await rig.model.disconnect()
+    }
+}

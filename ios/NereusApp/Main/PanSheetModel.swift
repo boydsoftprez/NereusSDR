@@ -155,10 +155,10 @@ final class PanSheetModel: ObservableObject {
         return nil
     }
 
-    /// "The <radio> runs <n> slices." (spec sections 6.2 and 9).
+    /// "The <radio> runs <n> slices." (spec sections 6.2 and 9), the
+    /// number a word as the board writes it (``RadioWords``).
     static func sliceLimitReason(radio: String?, limit: Int) -> String {
-        let name = radio.flatMap { $0.isEmpty ? nil : $0 } ?? "radio"
-        return "The \(name) runs \(limit) \(limit == 1 ? "slice" : "slices")."
+        RadioWords.sliceLimit(radio: radio, limit: limit)
     }
 
     // MARK: Asking the Core

@@ -298,7 +298,9 @@ final class BandSlicesModel: ObservableObject {
         }
     }
 
-    /// The pan this band draws; nil shows every slice.
+    /// The pan this band draws; nil shows every slice. Set while the iPad
+    /// shows more than one pan (``PanStackModel``): each pan's band draws
+    /// its own slices, and those the Core keeps on no pan.
     var panKey: String? {
         didSet {
             if panKey != oldValue {
@@ -1267,7 +1269,12 @@ final class BandSlicesModel: ObservableObject {
             takenHere = stillTaken
             takenAtRevision = takenAtRevision.filter { stillTaken.contains($0.key) }
         }
+        // A band that draws one pan of several (``panKey``): the Core marks
+        // one active slice for the whole device, which may be on another
+        // pan, so this pan's own active slice is then its first own slice
+        // (R-IOS-59: each pan subscribes on a slice of its own pan).
         let own = nextActive ?? anyActive
+            ?? (panKey == nil ? nil : (next.first { !$0.listening && $0.panKey == panKey } ?? next.first)?.id)
         if own != ownActiveSliceId {
             ownActiveSliceId = own
         }

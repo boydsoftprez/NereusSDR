@@ -8,6 +8,7 @@ import NereusLink
 import NereusMedia
 import NereusMirror
 import NereusModels
+import UIKit
 
 /// The main screen's models (R-IOS-11): the Core's catalogue, the band and
 /// its slices, the display subscription the band sends, and the RX panel.
@@ -23,6 +24,8 @@ final class MainScreenModel: ObservableObject {
     let band: BandModel
     let slices: BandSlicesModel
     let subscriber: BandSubscriber
+    /// The iPad's pans: Pan 1 is this band; the others open below it.
+    let panStack: PanStackModel
     let rx: RxPanelModel
     /// Setup edits either the focused supportedPan1 or the device master.
     /// Rendering/subscription always uses the same effective liveBandModel.
@@ -220,8 +223,13 @@ final class MainScreenModel: ObservableObject {
         devices?.tookControlBack = { [weak slices] sliceId, revision in
             slices?.tookControl(sliceId, revision: revision)
         }
+        let shared = SharedDisplayAllocator()
         subscriber = BandSubscriber(band: band, slices: slices, mirror: mirror, settings: settings,
-                                    operations: operations, deadline: deadline)
+                                    operations: operations, deadline: deadline, pan: .first, shared: shared)
+        panStack = PanStackModel(first: PanBand(pan: .first, band: band, slices: slices, subscriber: subscriber),
+                                 mirror: mirror, settings: settings, commands: commands, operations: operations,
+                                 displaySettings: displaySettings, shared: shared, deadline: deadline,
+                                 catalogFeed: catalogFeed, allowsMorePans: UIDevice.current.userInterfaceIdiom == .pad)
         transmitDisplay = TransmitDisplayModel(band: band, slices: slices, mirror: mirror)
         coreTxDisplay = CoreTxDisplaySettings(settings: settings, mirror: mirror)
         rx = RxPanelModel(store: mirror, slices: slices, catalogFeed: catalogFeed, commands: commands)
@@ -354,6 +362,18 @@ final class MainScreenModel: ObservableObject {
         display.focusPan = { [weak self] in self?.displayEditScope = .pan(.first) }
     }
 
+    /// The radio's name: the catalogue's product label, else the radio
+    /// object's model; nil while neither says.
+    static func radioName(catalog: StationCatalog?, radio: MirrorObject?) -> String? {
+        if let label = catalog?.board.productLabel {
+            return label
+        }
+        if case .text(let model)? = radio?["model"], !model.isEmpty {
+            return model
+        }
+        return nil
+    }
+
     /// The notice kind for a tuner tune that ended without keying.
     static let tuneEndedNotice = SeveralDevices.NoticeKind.other("tuneEnded")
     /// The `tuneEnded` notices already passed to the PTT.
@@ -375,6 +395,7 @@ final class MainScreenModel: ObservableObject {
         transmit.monitorEvent(event)
         band.receive(event)
         subscriber.receive(event)
+        panStack.receive(event)
         display.receive(event)
         sMeter.refresh()
     }
@@ -539,10 +560,7 @@ final class MainScreenModel: ObservableObject {
         if radioWaiting != waiting {
             radioWaiting = waiting
         }
-        var radio = catalogFeed.catalog?.board.productLabel
-        if radio == nil, case .text(let model)? = radioObject?["model"], !model.isEmpty {
-            radio = model
-        }
+        let radio = Self.radioName(catalog: catalogFeed.catalog, radio: radioObject)
         if radioName != radio {
             radioName = radio
         }

@@ -74,3 +74,44 @@ enum PanLimits {
         return nil
     }
 }
+
+/// How the radio's limits are worded, as the approved board words them:
+/// the radio by the name the Core reports, and the count as a word
+/// ("The Hermes Lite 2 can show two pans."). One place for +RX's reason
+/// and Add a pan's.
+enum RadioWords {
+    /// The radio's name, or "radio" when the Core gives none.
+    static func name(_ radio: String?) -> String {
+        radio.flatMap { $0.isEmpty ? nil : $0 } ?? "radio"
+    }
+
+    /// `count` as the board writes it: a word from one to twelve, digits past that.
+    static func number(_ count: Int) -> String {
+        let words = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+                     "eleven", "twelve"]
+        return words.indices.contains(count) ? words[count] : String(count)
+    }
+
+    /// `count` and its noun, singular for one: "one slice", "five slices".
+    static func count(_ count: Int, _ singular: String, _ plural: String) -> String {
+        "\(number(count)) \(count == 1 ? singular : plural)"
+    }
+
+    /// +RX's reason at the slice limit: "The <radio> runs <n> slices." (spec sections 6.2 and 9).
+    static func sliceLimit(radio: String?, limit: Int) -> String {
+        "The \(name(radio)) runs \(count(limit, "slice", "slices"))."
+    }
+
+    /// Add a pan's reason at the pan limit: "The <radio> can show <n> pans." (spec sections 6.3 and 9).
+    static func panLimit(radio: String?, limit: Int) -> String {
+        "The \(name(radio)) can show \(count(limit, "pan", "pans"))."
+    }
+
+    /// Letters or pan names joined as the board joins them: "C", "B and C", "A, B and C".
+    static func list(_ items: [String]) -> String {
+        guard items.count > 1, let last = items.last else {
+            return items.joined()
+        }
+        return items.dropLast().joined(separator: ", ") + " and " + last
+    }
+}

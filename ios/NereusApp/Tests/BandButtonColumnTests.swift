@@ -54,8 +54,8 @@ struct BandButtonColumnTests {
 
     @Test("+RX at the slice limit names the radio as the Core reports it")
     func sliceLimitWords() {
-        #expect(PanSheetModel.sliceLimitReason(radio: "ANAN-G2", limit: 5) == "The ANAN-G2 runs 5 slices.")
-        #expect(PanSheetModel.sliceLimitReason(radio: "Hermes Lite 2", limit: 1) == "The Hermes Lite 2 runs 1 slice.")
-        #expect(PanSheetModel.sliceLimitReason(radio: nil, limit: 4) == "The radio runs 4 slices.")
+        #expect(PanSheetModel.sliceLimitReason(radio: "ANAN-G2", limit: 5) == "The ANAN-G2 runs five slices.")
+        #expect(PanSheetModel.sliceLimitReason(radio: "Hermes Lite 2", limit: 1) == "The Hermes Lite 2 runs one slice.")
+        #expect(PanSheetModel.sliceLimitReason(radio: nil, limit: 4) == "The radio runs four slices.")
     }
 }

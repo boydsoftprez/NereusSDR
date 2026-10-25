@@ -587,4 +587,62 @@ struct BandSubscriberTests {
         #expect(rig.sent.subscriptions.map(\.endpointId) == [1, 1])
         #expect(rig.sent.subscriptions.map(\.revision) == [1, 1])
     }
+
+    // MARK: Several pans (Task 9)
+
+    @Test("two pans' subscribers share one budget, each on its own pan's slice with its own endpoint IDs, and a refusal stays with its pan")
+    func twoPansShareOneAllocator() async throws {
+        let rig = rig()
+        rig.store.apply(.delta(LinkMessage.Delta(key: "slice:0", properties: [
+            .init(ordinal: 27, name: "panKey", value: .utf8("pan-0")),
+        ])))
+        rig.store.apply(.objectCreate(LinkMessage.ObjectCreate(key: "slice:1", className: "SliceModel", properties: [
+            .init(ordinal: 1, name: "frequency", value: .f64(14_100_000)),
+            .init(ordinal: 3, name: "filterLow", value: .i64(100)),
+            .init(ordinal: 4, name: "filterHigh", value: .i64(2800)),
+            .init(ordinal: 13, name: "sliceIndex", value: .i64(1)),
+            .init(ordinal: 27, name: "panKey", value: .utf8("pan-1")),
+            .init(ordinal: 28, name: "sampleRateHz", value: .i64(Self.sampleRate)),
+        ])))
+        let shared = SharedDisplayAllocator()
+        func make(_ pan: PanIdentity, _ sent: Sent) -> BandSubscriber {
+            let band = BandModel()
+            let slices = BandSlicesModel(store: rig.store, commands: nil)
+            slices.panKey = pan.corePanKey
+            let subscriber = BandSubscriber(band: band, slices: slices, mirror: rig.store, settings: rig.settings,
+                                            operations: BandSubscriber.Operations(
+                                                subscribe: { sent.operations.append(.subscribe($0)) },
+                                                unsubscribe: { sent.operations.append(.unsubscribe($0)) }),
+                                            pan: pan, shared: shared)
+            _ = band.prepareToDraw(size: CGSize(width: 1206, height: 700), scale: 3)
+            return subscriber
+        }
+        let sentFirst = Sent()
+        let sentSecond = Sent()
+        let first = make(.first, sentFirst)
+        let second = make(PanIdentity(number: 2), sentSecond)
+        first.receive(.mediaState(.connected))
+        second.receive(.mediaState(.connected))
+        #expect(await settle { !sentFirst.subscriptions.isEmpty && !sentSecond.subscriptions.isEmpty })
+        let one = try #require(sentFirst.subscriptions.last)
+        let two = try #require(sentSecond.subscriptions.last)
+        #expect(one.sliceId == 0 && one.endpointId == 1)
+        #expect(two.sliceId == 1 && two.endpointId == BandSubscriber.firstEndpointId(for: PanIdentity(number: 2)))
+        #expect(two.endpointId == 16_777_217)
+        // One allocation holds both wishes, and both pans get frames.
+        #expect(Set(shared.intents.map(\.panId)) == ["1", "2"])
+        #expect(shared.quality(forPan: "1") != nil && shared.quality(forPan: "2") != nil)
+        // A refusal of Pan 2's request is Pan 2's alone, in the Core's words.
+        second.receive(result(for: two, accepted: false, reason: "No display is free for this pan."))
+        #expect(await settle { second.displayRefusal == "No display is free for this pan." })
+        #expect(first.displayRefusal == nil)
+        // An empty reason still says something.
+        first.receive(result(for: try #require(sentFirst.subscriptions.last), accepted: false, reason: ""))
+        #expect(await settle { first.displayRefusal == BandSlicesModel.refusedText })
+        // Closing Pan 2 drops its wish from the shared budget.
+        second.close()
+        #expect(await settle { !shared.intents.contains { $0.panId == "2" } })
+        // Its refused endpoint is let go at once, as the Core holds nothing for it.
+        #expect(await settle { second.holdsNothing && sentSecond.operations.last == .unsubscribe(two.endpointId) })
+    }
 }
