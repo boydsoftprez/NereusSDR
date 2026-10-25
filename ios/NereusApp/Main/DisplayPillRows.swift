@@ -69,7 +69,7 @@ enum DisplayPillRows {
     }
 
     /// The key a version 29 description binds for a desktop pill key. Most
-    /// are the same; these four rows are named differently in Setup.
+    /// are the same; these five are named differently in Setup.
     static let descriptionKeys: [String: String] = [
         // From src/gui/SpectrumOverlayPanel.cpp:3494 (SpectrumScaleMode); Setup's Levels page row.
         "SpectrumScaleMode": "DisplaySpectrumScaleMode",
@@ -79,7 +79,13 @@ enum DisplayPillRows {
         "Display3DFloor": "Display3DFloorDepth",
         // From src/gui/SpectrumOverlayPanel.cpp:4368 (the Choose button's row); Setup's View page button.
         "DisplayBackgroundImage": "chooseBackgroundImage",
+        // From src/gui/SpectrumOverlayPanel.cpp:4369 (the Clear button's row); Setup's View page button.
+        "DisplayBackgroundImageClear": "clearBackgroundImage",
     ]
+
+    /// The desktop pill's Clear beside Choose, the description's "Clear picture" button.
+    // From src/gui/SpectrumOverlayPanel.cpp:4369 (DisplayBackgroundImageClear)
+    static let clearPictureKey = "DisplayBackgroundImageClear"
 
     static func descriptionKey(for key: String) -> String {
         descriptionKeys[key] ?? key

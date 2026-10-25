@@ -13,10 +13,14 @@ enum OpenSheet: String, Equatable {
 
 /// A sheet dropped under the toolbar over the band, as the board's
 /// `.dropsheet` draws it (picture 25): the applet title row with its words
-/// at the right, then the body, scrolling when the band is too short for it.
+/// at the right, then the body, scrolling when the band is too short for it,
+/// and a footer, when given, pinned under the body (the Display pill's
+/// Reset this pan and Setup defaults, as the board's `.dp-foot`).
 struct DropSheet<Trailing: View, Content: View>: View {
     let title: String
     let accessibilityIdentifier: String
+    /// Pinned at the sheet's foot while the body scrolls.
+    var footer: AnyView? = nil
     @ViewBuilder let trailing: () -> Trailing
     @ViewBuilder let content: () -> Content
     /// While a Display pill row is held (its peek), the sheet's face and
@@ -50,6 +54,12 @@ struct DropSheet<Trailing: View, Content: View>: View {
                 ScrollView {
                     body(content)
                 }
+            }
+            if let footer {
+                footer
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .background(clear ? Color.clear : ChromeColours.sheet)

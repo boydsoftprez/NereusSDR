@@ -32,6 +32,63 @@ struct BandButtonColumnTests {
         #expect(beside.minX == sidewaysColumn.maxX + BandColumnLayout.clearance)
     }
 
+    @Test("DC14: on a band too short for the column, two columns of four side by side, all in view")
+    func twoColumnsOfFour() {
+        // The column: eight 30 point buttons, 2 point gaps and padding.
+        #expect(BandColumnLayout.columnHeight(rows: 8) == 258)
+        #expect(BandColumnLayout.columnHeight(rows: 4) == 130)
+        #expect(BandColumnLayout.columnWidth(columns: 1) == BandColumnLayout.columnWidth)
+        #expect(BandColumnLayout.columnWidth(columns: 2) == 166)
+        // The iPad's band: one column. The phone sideways (about 182 points): two of four, which fit.
+        #expect(BandColumnLayout.columns(bandHeight: 700) == 1)
+        #expect(BandColumnLayout.columns(bandHeight: 266) == 1)
+        #expect(BandColumnLayout.columns(bandHeight: 265) == 2)
+        #expect(BandColumnLayout.columns(bandHeight: 182) == 2)
+        #expect(BandColumnLayout.columnHeight(rows: 4) <= BandColumnLayout.menuMaxHeight(bandHeight: 182))
+    }
+
+    @Test("the PTT moves right of a full flag it would cover, past the column first")
+    func pttKeepsOffAFlag() {
+        let home = CGRect(x: 76, y: 94, width: 76, height: 76)
+        let column = CGRect(x: 66, y: 4, width: BandColumnLayout.columnWidth(columns: 2), height: 130)
+        // Slice A's flag, open, reaching down past the PTT's row, just right of the column.
+        let flag = CGRect(x: 238, y: 0, width: 252, height: 157)
+        let moved = BandColumnLayout.pttFrame(home: home, avoid: [column], flags: [flag])
+        #expect(moved.minX == flag.maxX + BandColumnLayout.clearance)
+        #expect(!moved.intersects(flag) && !moved.intersects(column))
+        // A second flag beside the first: past that one too.
+        let next = CGRect(x: 500, y: 0, width: 120, height: 120)
+        let past = BandColumnLayout.pttFrame(home: home, avoid: [column], flags: [flag, next])
+        #expect(past.minX == next.maxX + BandColumnLayout.clearance)
+        // A flag above the PTT's row, or folded away, leaves it where the column put it.
+        let short = CGRect(x: 238, y: 0, width: 252, height: 60)
+        #expect(BandColumnLayout.pttFrame(home: home, avoid: [column], flags: [short]).minX
+                == column.maxX + BandColumnLayout.clearance)
+    }
+
+    @Test("the column's note sits at the band's lower right, clear of the pill, the flags and the PTT")
+    func notePlace() {
+        let band = CGSize(width: 874, height: 182)
+        let free = BandColumnLayout.notePlace(bandSize: band, trailingInset: 62, height: 40, maxWidth: 360, avoid: [])
+        #expect(free.maxX == 874 - 62 - BandColumnLayout.noteTrailingInset)
+        #expect(free.width == 360)
+        #expect(free.maxY == 182 - BandColumnLayout.noteBottomInset)
+        // The zoom buttons stay clear below it.
+        #expect(free.maxY + ZoomButtons.buttonSize.height + ZoomButtons.inset <= band.height)
+        // The pill beside the two columns reaches down to it: the note keeps right of the pill.
+        let pill = CGRect(x: 66 + 166 + 2, y: 4, width: 340, height: 174)
+        let beside = BandColumnLayout.notePlace(bandSize: band, trailingInset: 62, height: 40, maxWidth: 360,
+                                                avoid: [pill])
+        #expect(beside.minX >= pill.maxX + BandColumnLayout.clearance)
+        #expect(beside.maxX == free.maxX)
+        // A flag at the right reaching its row: the note takes the gap left of it, if wide enough.
+        let flag = CGRect(x: 700, y: 0, width: 120, height: 150)
+        let left = BandColumnLayout.notePlace(bandSize: band, trailingInset: 62, height: 40, maxWidth: 360,
+                                              avoid: [pill, flag])
+        #expect(!left.intersects(flag) && !left.intersects(pill))
+        #expect(left.width >= BandColumnLayout.noteMinWidth)
+    }
+
     @Test("the keyed meters keep their place, move right of the column, or go above the moved PTT")
     func keyedMetersPlace() {
         let needed: CGFloat = 330

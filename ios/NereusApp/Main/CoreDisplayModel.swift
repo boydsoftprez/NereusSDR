@@ -507,9 +507,10 @@ final class CoreDisplayModel: ObservableObject {
     }
 
     /// The Display pill's line under FFT Size: bin width and time per
-    /// transform at the running size, in the desktop pill's words; nil
-    /// before a running size.
-    // From src/gui/DisplayFftReadout.h:57-68 (displayFftReadoutText)
+    /// transform at the running size, in the desktop pill's words, the time
+    /// in milliseconds to one place as the board writes it ("21.3 ms"),
+    /// where the desktop's "0.02 s" would hide it; nil before a running size.
+    // From src/gui/DisplayFftReadout.h:57-68 (displayFftReadoutText: "%1 Hz per bin · %2 s per transform at %3 kHz")
     var fftReadoutText: String? {
         guard let bin = runningBinWidthHz, bin.isFinite, bin > 0 else {
             return nil
@@ -518,8 +519,14 @@ final class CoreDisplayModel: ObservableObject {
         guard let rate, rate > 0 else {
             return nil
         }
-        return String(format: "%.2f Hz per bin \u{00B7} %.2f s per transform at %@ kHz", bin, 1 / bin,
-                      String(format: "%g", rate / 1000))
+        return Self.fftReadoutText(binWidthHz: bin, sampleRateHz: rate)
+    }
+
+    /// The readout's words for a bin width and a sample rate: one transform
+    /// lasts 1 / bin width.
+    static func fftReadoutText(binWidthHz bin: Double, sampleRateHz rate: Double) -> String {
+        String(format: "%.2f Hz per bin \u{00B7} %.1f ms per transform at %@ kHz", bin, 1000 / bin,
+               String(format: "%g", rate / 1000))
     }
 
     /// The bin width readout's label: the Core's, or the phone's own.

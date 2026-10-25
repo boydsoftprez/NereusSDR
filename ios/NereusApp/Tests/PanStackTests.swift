@@ -151,7 +151,9 @@ struct PanStackTests {
         #expect(stack.closePanState(Self.second) == (true, nil))
         let sent = try #require(invokes(rig.station, PanSheetModel.addSliceVerb).last)
         #expect(sent.args == [.init(name: "panId", value: .utf8("pan-1"))])
-        #expect(stack.status == "Pan 2 opened below Pan 1. Slice B added on Pan 2.")
+        #expect(stack.status == "Pan 2 opened below Pan 1. Slice B added on it.")
+        // The band shows it for a moment from when it was set (the board's 3.2 s).
+        #expect(stack.statusSerial > 0 && stack.statusSince != nil)
         #expect(rig.station.panKey(ofSlice: 1) == "pan-1")
         // Pan 1's single slice stays where it is.
         #expect(rig.station.panKey(ofSlice: 0) == "pan-0")

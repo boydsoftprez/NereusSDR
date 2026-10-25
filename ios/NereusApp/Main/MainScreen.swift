@@ -196,6 +196,12 @@ struct MainScreen: View {
         let pttAt = BandColumnLayout.pttFrame(home: pttHome, avoid: boxes)
         let pttMoved = pttAt != pttHome
         let stacked = column && panStack.open.count > 1
+        // With the column, the PTT also keeps off a flag's words (R-IOS-58).
+        // Pan 1's flags are in the band's space only while it is alone.
+        let pttFlags = column && !stacked ? main.slices : nil
+        // Two columns of four where one does not fit (DC14); the chip keeps right of them.
+        let columnWidth = BandColumnLayout.columnWidth(
+            columns: columnFolded || stacked ? 1 : BandColumnLayout.columns(bandHeight: bandSize.height))
         return ZStack(alignment: .topLeading) {
             if stacked {
                 PanStack(stack: panStack) { pan in
@@ -219,11 +225,14 @@ struct MainScreen: View {
                                      spectrumShare: main.band.shownSpectrumShare, sideways: sideways,
                                      leadingInset: sideways ? leadingInset : 0)
             }
-            keyedOverlay(sideways: sideways, avoid: boxes + (pttMoved ? [pttAt] : []), movedPtt: pttMoved ? pttAt : nil)
+            PttPlace(flags: pttFlags, home: pttHome, boxes: boxes) { placed in
+                let moved = placed != pttHome
+                keyedOverlay(sideways: sideways, avoid: boxes + (moved ? [placed] : []), movedPtt: moved ? placed : nil)
+            }
             SharingChip(subscriber: main.subscriber, transmit: transmit)
             .padding(.top, 6)
             .padding(.leading, 8 + (sideways ? leadingInset : 0)
-                     + (column ? BandColumnLayout.origin + BandColumnLayout.columnWidth : 0))
+                     + (column ? BandColumnLayout.origin + columnWidth : 0))
             GeometryReader { proxy in
                 SessionNoteCard(session: app.longSession, sideways: sideways, bandSize: proxy.size,
                                 showsStrip: main.band.settings.bandPlanStrip,
@@ -233,6 +242,7 @@ struct MainScreen: View {
             if column && !stacked {
                 BandButtonColumn(pan: .first, open: $columnMenu, folded: $columnFolded, main: main,
                                  displayTab: $displayTab, leadingInset: sideways ? leadingInset : 0,
+                                 trailingInset: sideways ? trailingInset : 0,
                                  openSetup: {
                                      columnMenu = nil
                                      openSetup()
@@ -247,10 +257,12 @@ struct MainScreen: View {
                                  })
                     .environment(\.displayPeek, $displayPeek)
             }
-            PttButton(transmit: transmit, linkUp: app.connection == .connected)
-                .padding(.leading, PttButton.inset + (sideways ? leadingInset : 0) + (pttAt.minX - pttHome.minX))
-                .padding(.bottom, PttButton.bottomInset)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+            PttPlace(flags: pttFlags, home: pttHome, boxes: boxes) { placed in
+                PttButton(transmit: transmit, linkUp: app.connection == .connected)
+                    .padding(.leading, PttButton.inset + (sideways ? leadingInset : 0) + (placed.minX - pttHome.minX))
+                    .padding(.bottom, PttButton.bottomInset)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+            }
             // A spot's details or a badge's list, over PTT and under the covers.
             SpotLayer.Popups(spots: app.spots, sideways: sideways)
                 .padding(.trailing, sideways ? trailingInset : 0)
@@ -445,7 +457,7 @@ struct MainScreen: View {
             bandLayers(controls, sideways: sideways, leadingInset: leadingInset, trailingInset: trailingInset,
                        menuBinding: menu)
             BandButtonColumn(pan: pan, open: open, folded: folded, main: main, displayTab: $displayTab,
-                             leadingInset: leadingInset,
+                             leadingInset: leadingInset, trailingInset: trailingInset,
                              openSetup: {
                                  columnMenu = nil
                                  openSetup()
@@ -573,6 +585,36 @@ struct MainScreen: View {
             SliceListSheet(model: main.sliceList, slices: main.slices) {
                 sheet = nil
             }
+        }
+    }
+}
+
+/// The PTT's place on the band (``BandColumnLayout/pttFrame(home:avoid:flags:)``):
+/// right of the column's frames that reach its row and, with `flags`, of a
+/// full flag it would cover. Only this view follows the flags as they move,
+/// not the whole screen.
+private struct PttPlace<Content: View>: View {
+    let flags: BandSlicesModel?
+    let home: CGRect
+    let boxes: [CGRect]
+    @ViewBuilder let content: (CGRect) -> Content
+
+    var body: some View {
+        if let flags {
+            Following(slices: flags, home: home, boxes: boxes, content: content)
+        } else {
+            content(BandColumnLayout.pttFrame(home: home, avoid: boxes))
+        }
+    }
+
+    private struct Following: View {
+        @ObservedObject var slices: BandSlicesModel
+        let home: CGRect
+        let boxes: [CGRect]
+        let content: (CGRect) -> Content
+
+        var body: some View {
+            content(BandColumnLayout.pttFrame(home: home, avoid: boxes, flags: slices.flagRects))
         }
     }
 }

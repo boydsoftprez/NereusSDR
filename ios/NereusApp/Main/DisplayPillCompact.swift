@@ -295,6 +295,8 @@ enum DisplayPillReasons {
     static let waterfallAveragingNone = "WF Avg is None, so there is no time to set."
     // From src/gui/SpectrumOverlayPanel.cpp:2680
     static let blankingOff = "NB Blank is off, so there is no threshold to set."
+    // From src/gui/SpectrumOverlayPanel.cpp:2710 (Clear greyed with no picture chosen)
+    static let noPicture = "No picture is chosen, so there is nothing to clear."
     // From src/gui/SpectrumOverlayPanel.cpp:2683
     static let fillOff = "Fill is off."
     // From src/gui/SpectrumOverlayPanel.cpp:2713 and :2717
@@ -655,7 +657,8 @@ struct DisplayPillSettingLine: View {
             let range = drawn.range.map { StationCatalog.Range(min: $0.minimum, max: $0.maximum, step: $0.step) }
             let decimals = Self.decimals(control)
             PanelSliderRow(label: nil, value: state.value?.number, range: range, accessibility: title,
-                           format: { Self.valueText($0, decimals: decimals, unit: control.unit) },
+                           format: { DisplayPillValueText.text(key: key, number: $0, decimals: decimals,
+                                                               unit: control.unit) },
                            greyed: !state.editable) { number in
                 send(control, Self.value(number, control: control, decimals: decimals))
             }
@@ -687,6 +690,8 @@ struct DisplayPillSettingLine: View {
 
     private func picture(_ key: String, _ control: SetupDescription.Control) -> some View {
         let state = source.state(of: control, key: key)
+        let clear = source.control(for: DisplayPillRows.clearPictureKey)
+        let picture = !source.keys.settings.backgroundImagePath.isEmpty
         return VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
                 DisplayPillLabel(text: source.label(of: control, key: key))
@@ -697,9 +702,21 @@ struct DisplayPillSettingLine: View {
                     send(control, nil)
                 }
                 .frame(width: 96)
+                // From src/gui/SpectrumOverlayPanel.cpp:4333-4335, 4362-4366 (Clear beside Choose: it removes the picture)
+                PanelButton(label: "Clear", lit: false, style: .blue,
+                            disabled: !state.editable || clear == nil || !picture) {
+                    if let clear {
+                        send(clear, nil)
+                    }
+                }
+                .frame(width: 72)
+                .accessibilityIdentifier("displayPill.\(DisplayPillRows.clearPictureKey)")
             }
             .frame(minHeight: 30)
             reason(state)
+            if state.editable, !picture {
+                DisplayPillReason(text: DisplayPillReasons.noPicture)
+            }
         }
         .accessibilityIdentifier("displayPill.\(key)")
     }
@@ -978,4 +995,40 @@ struct DisplayPillMissingRow: View {
         }
         return words
     }
+}
+
+/// The pill's value words where the desktop pill writes its own
+/// (`SpectrumOverlayPanel::buildPillLevelsPage` and `buildPillView3DPage`)
+/// rather than the number with the description's unit.
+@MainActor
+enum DisplayPillValueText {
+    static func text(key: String, number: Double, decimals: Int, unit: String?) -> String {
+        let whole = Int(number.rounded())
+        switch key {
+        case "Display3DGain", "Display3DSpan", "Display3DAngle":
+            // From src/gui/SpectrumOverlayPanel.cpp:4236, 4260-4284 (the plain number, no unit)
+            return String(whole)
+        case "Display3DSpeed":
+            // From src/gui/SpectrumOverlayPanel.cpp:4286-4293 (0 reads "Match")
+            return whole == 0 ? "Match" : String(whole)
+        case "DisplayWfBlackLevel":
+            // From src/gui/SpectrumOverlayPanel.cpp:3601-3613 (whole dB from the noise floor N, a half dB reads down)
+            let offset = Int((Double(whole - blackLevelAtNoise) * blackLevelDbPerStep).rounded(.down))
+            return "N\(offset < 0 ? "-" : "+")\(abs(offset)) dB"
+        case "DisplayWfColorGain":
+            // From src/gui/SpectrumOverlayPanel.cpp:3616-3621 (qRound(colorSpanDb(v)) dB)
+            return "\(Int((colorSpanAtZeroGainDb - Double(whole) * colorSpanDbPerGainStep).rounded())) dB"
+        default:
+            return DisplayPillSettingLine.valueText(number, decimals: decimals, unit: unit)
+        }
+    }
+
+    // From src/core/spectrum/ClarityLevels.h:62 (kBlackLevelAtNoise)
+    static let blackLevelAtNoise = 50
+    // From src/core/spectrum/ClarityLevels.h:68 (kBlackLevelDbPerStep 0.5f)
+    static let blackLevelDbPerStep = 0.5
+    // From src/core/spectrum/ClarityLevels.h:77 (kColorSpanAtZeroGainDb 80.0f)
+    static let colorSpanAtZeroGainDb = 80.0
+    // From src/core/spectrum/ClarityLevels.h:78 (kColorSpanDbPerGainStep 0.7f)
+    static let colorSpanDbPerGainStep = 0.7
 }

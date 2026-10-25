@@ -309,7 +309,7 @@ struct DisplayPill: View {
 
     var body: some View {
         let chrome = DisplayPillPeek.drawsChrome(held: peek.wrappedValue)
-        DropSheet(title: "Display", accessibilityIdentifier: "displayPill") {
+        DropSheet(title: "Display", accessibilityIdentifier: "displayPill", footer: footer(chrome: chrome)) {
             Text("\(pan.title) \u{00B7} \(device)")
                 .font(.system(size: 11, weight: .semibold))
                 .tracking(0.44)
@@ -321,11 +321,6 @@ struct DisplayPill: View {
             DisplayPillRowsView(tab: tab, source: main.displayPillSource, display: controls.display, core: core,
                                 main: main, band: controls.band.band, onOpenPage: onOpenPage)
                 .environment(\.panelButtonHeight, 30)
-            if let source = main.displayPillSource {
-                DisplayPillFooter(tab: tab, keys: source.keys, band: controls.band.band,
-                                  onSetupDefaults: onSetupDefaults)
-                    .modifier(DisplayPillPeekRow(draws: chrome, held: false))
-            }
         }
         // The peek: the sheet's own face clears away with its chrome.
         .environment(\.dropSheetClear, !chrome)
@@ -337,6 +332,17 @@ struct DisplayPill: View {
         .onDisappear {
             peek.wrappedValue = nil
         }
+    }
+
+    /// Reset this pan and Setup defaults, pinned at the pill's foot while
+    /// its rows scroll (the board's `.dp-pill .dp-foot`).
+    private func footer(chrome: Bool) -> AnyView? {
+        guard let source = main.displayPillSource else {
+            return nil
+        }
+        return AnyView(DisplayPillFooter(tab: tab, keys: source.keys, band: controls.band.band,
+                                         onSetupDefaults: onSetupDefaults)
+            .modifier(DisplayPillPeekRow(draws: chrome, held: false)))
     }
 
     /// The pick-one tabs, the open one in the glass.

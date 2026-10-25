@@ -222,6 +222,8 @@ import Testing
 
     @Test func thePhoneOffersTheCoresRewindDepthsAndReadsOthersAsTheNearest() throws {
         #expect(BandDisplaySettings.rewindChoices == [60, 300, 900, 1200])
+        // The desktop's default depth, 20 minutes (src/gui/SpectrumWidget.h:3648).
+        #expect(BandDisplaySettings().rewindSeconds == 1200)
         #expect(BandDisplaySettings.nearestRewind(60) == 60 && BandDisplaySettings.nearestRewind(120) == 60)
         #expect(BandDisplaySettings.nearestRewind(200) == 300 && BandDisplaySettings.nearestRewind(1000) == 900)
         // Halfway (the phone's old 10 minutes): the longer.

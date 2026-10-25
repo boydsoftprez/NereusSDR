@@ -79,7 +79,16 @@ final class PanStackModel: ObservableObject {
         }
     }
     /// What the last action did, in the column's status line; nil before any.
-    @Published private(set) var status: String?
+    @Published private(set) var status: String? {
+        didSet {
+            statusSince = .now
+            statusSerial &+= 1
+        }
+    }
+    /// When ``status`` was last set: the band shows it for a moment from then.
+    private(set) var statusSince: ContinuousClock.Instant?
+    /// Counts each time ``status`` is set, the same words again included.
+    @Published private(set) var statusSerial = 0
     /// Each open pan whose display the Core refused, with its words
     /// (``BandSubscriber/displayRefusal``): a second pan's subscribe can be
     /// refused, and the pan says so rather than staying blank.
@@ -250,7 +259,8 @@ final class PanStackModel: ObservableObject {
                 return
             }
             let added = result.affectedKeys.compactMap(Self.sliceIndex(ofKey:)).first
-            let said = added.map { opened + " Slice \(BandSlice.letter(forIndex: $0)) added on \(pan.title)." } ?? opened
+            // The board's words for a slice added (its "Slice C added on Pan 2"), the pan named once.
+            let said = added.map { opened + " Slice \(BandSlice.letter(forIndex: $0)) added on it." } ?? opened
             self?.finishAdding(pan, accepted: result.accepted, reason: result.reason, said: said)
         }
     }

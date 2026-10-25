@@ -36,7 +36,8 @@ struct PanDisplayRefusalNotice: View {
                     .accessibilityIdentifier("panDisplayRefusal")
                     .frame(maxWidth: sideways ? 546 : .infinity)
                     // Clear of the band's button column, which sits over the band's leading edge.
-                    .padding(.leading, leadingInset + BandColumnLayout.origin + BandColumnLayout.columnWidth
+                    .padding(.leading, leadingInset + BandColumnLayout.origin
+                             + BandColumnLayout.columnWidth(columns: BandColumnLayout.columns(bandHeight: proxy.size.height))
                              + BandColumnLayout.clearance)
                     .padding(.trailing, trailingInset + 10)
                     .offset(y: top)

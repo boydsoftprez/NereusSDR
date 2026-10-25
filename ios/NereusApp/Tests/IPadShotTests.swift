@@ -135,6 +135,10 @@ struct IPadShotTests {
           },
           .timeLimit(.minutes(10)))
     func twoPanShots() async throws {
+        // The pans' status line stays up while the shots draw (it shows 3.2 s on the band).
+        let noteDuration = BandButtonColumn.noteDuration
+        BandButtonColumn.noteDuration = .seconds(600)
+        defer { BandButtonColumn.noteDuration = noteDuration }
         let suite = "IPadShotTests-pans-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -182,6 +186,10 @@ struct IPadShotTests {
           },
           .timeLimit(.minutes(10)))
     func refusedPanShot() async throws {
+        // The pans' status line stays up while the shot draws, to show it clear of the refusal.
+        let noteDuration = BandButtonColumn.noteDuration
+        BandButtonColumn.noteDuration = .seconds(600)
+        defer { BandButtonColumn.noteDuration = noteDuration }
         let suite = "IPadShotTests-refused-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -238,6 +246,12 @@ struct IPadShotTests {
         let notice = await settleElement(seconds: 10, "panDisplayRefusal", in: window)
         #expect(notice != nil)
         #expect(notice?.accessibilityLabel == words)
+        // The status line at Pan 2's lower right, clear of the refusal at its waterfall's top.
+        let status = await settleElement(seconds: 10, "bandColumnPanStatus", in: window)
+        #expect(status != nil)
+        if let status, let notice {
+            #expect(!status.accessibilityFrame.intersects(notice.accessibilityFrame))
+        }
         let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
             window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
         }

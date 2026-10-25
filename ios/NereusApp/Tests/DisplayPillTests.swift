@@ -20,6 +20,46 @@ import Testing
 struct DisplayPillTests {
     typealias Rig = DisplaySheetTests.Rig
 
+    // MARK: The desktop pill's value words
+
+    @Test("the value boxes read as the desktop pill writes them: plain 3D numbers, Match, N+3 dB, 38 dB")
+    func valueWords() {
+        // From src/gui/SpectrumOverlayPanel.cpp:4260-4293: 3D Gain, Span and Angle plain; Speed 0 is Match.
+        #expect(DisplayPillValueText.text(key: "Display3DGain", number: 70, decimals: 0, unit: "%") == "70")
+        #expect(DisplayPillValueText.text(key: "Display3DSpan", number: 100, decimals: 0, unit: "%") == "100")
+        #expect(DisplayPillValueText.text(key: "Display3DAngle", number: 50, decimals: 0, unit: "%") == "50")
+        #expect(DisplayPillValueText.text(key: "Display3DSpeed", number: 0, decimals: 0, unit: nil) == "Match")
+        #expect(DisplayPillValueText.text(key: "Display3DSpeed", number: 4, decimals: 0, unit: nil) == "4")
+        // From :3601-3621: Black Level whole dB from N, a half dB down; Color Gain the span.
+        #expect(DisplayPillValueText.text(key: "DisplayWfBlackLevel", number: 57, decimals: 0, unit: nil) == "N+3 dB")
+        #expect(DisplayPillValueText.text(key: "DisplayWfBlackLevel", number: 50, decimals: 0, unit: nil) == "N+0 dB")
+        #expect(DisplayPillValueText.text(key: "DisplayWfBlackLevel", number: 45, decimals: 0, unit: nil) == "N-3 dB")
+        #expect(DisplayPillValueText.text(key: "DisplayWfColorGain", number: 60, decimals: 0, unit: nil) == "38 dB")
+        #expect(DisplayPillValueText.text(key: "DisplayWfColorGain", number: 0, decimals: 0, unit: nil) == "80 dB")
+        #expect(DisplayPillValueText.text(key: "DisplayWfColorGain", number: 100, decimals: 0, unit: nil) == "10 dB")
+        // Every other row: the number with the description's unit.
+        #expect(DisplayPillValueText.text(key: "DisplayWfOpacity", number: 80, decimals: 0, unit: "%") == "80%")
+        #expect(DisplayPillValueText.text(key: "Display3DFloor", number: 6, decimals: 0, unit: "dB") == "6 dB")
+    }
+
+    @Test("the FFT readout keeps the desktop's words with the time in milliseconds to one place")
+    func fftReadoutWords() {
+        // 192 kHz over 4096 bins: 46.875 Hz a bin, 21.33 ms a transform.
+        #expect(CoreDisplayModel.fftReadoutText(binWidthHz: 46.875, sampleRateHz: 192_000)
+                == "46.88 Hz per bin \u{00B7} 21.3 ms per transform at 192 kHz")
+        #expect(CoreDisplayModel.fftReadoutText(binWidthHz: 5.859375, sampleRateHz: 48_000)
+                == "5.86 Hz per bin \u{00B7} 170.7 ms per transform at 48 kHz")
+    }
+
+    @Test("Clear sits beside Choose, bound to the description's Clear picture button")
+    func clearBesideChoose() throws {
+        #expect(DisplayPillRows.descriptionKey(for: DisplayPillRows.clearPictureKey) == "clearBackgroundImage")
+        let clear = try #require(DisplayPillRows.control(for: DisplayPillRows.clearPictureKey,
+                                                         in: try Self.description()))
+        #expect(clear.kind == .button)
+        #expect(DisplayPillReasons.noPicture == "No picture is chosen, so there is nothing to clear.")
+    }
+
     // MARK: The tables
 
     /// The brief's lists, from src/gui/SpectrumOverlayPanel.cpp's pill page

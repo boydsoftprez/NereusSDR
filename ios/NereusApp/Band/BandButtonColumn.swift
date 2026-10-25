@@ -41,6 +41,25 @@ enum BandColumnLayout {
     static let origin: CGFloat = 4
     /// The column's width, its padding included.
     static let columnWidth = buttonWidth + 2 * padding
+    /// The column's buttons: ◀, +RX, +TNF, BAND, ANT, Display, VAX and ATT.
+    static let buttonCount = 8
+
+    /// The column's height with `rows` buttons down it, its padding included.
+    static func columnHeight(rows: Int) -> CGFloat {
+        CGFloat(rows) * buttonHeight + CGFloat(max(rows - 1, 0)) * gap + 2 * padding
+    }
+
+    /// The column's width with `columns` columns of buttons side by side.
+    static func columnWidth(columns: Int) -> CGFloat {
+        CGFloat(columns) * buttonWidth + CGFloat(max(columns - 1, 0)) * gap + 2 * padding
+    }
+
+    /// How many columns the buttons take on a band `bandHeight` tall: one
+    /// while all eight fit down the band, else two columns of four side by
+    /// side, all in view (spec DC14, JJ 2026-10-24).
+    static func columns(bandHeight: CGFloat) -> Int {
+        columnHeight(rows: buttonCount) <= menuMaxHeight(bandHeight: bandHeight) ? 1 : 2
+    }
     /// Between the column and a menu beside it.
     static let menuGap: CGFloat = 2
     /// The space the PTT and the keyed meters keep from what is open.
@@ -72,13 +91,61 @@ enum BandColumnLayout {
     }
 
     /// The PTT's frame: at `home`, or just right of whatever of the column's
-    /// frames reaches down to its row (the board's `shiftSideways`).
-    static func pttFrame(home: CGRect, avoid: [CGRect]) -> CGRect {
+    /// frames reaches down to its row (the board's `shiftSideways`); then
+    /// right of any full flag it would sit on, so it never covers a flag's
+    /// words (`flags`, the band's ``BandSlicesModel/flagRects``).
+    static func pttFrame(home: CGRect, avoid: [CGRect], flags: [CGRect] = []) -> CGRect {
+        var frame = home
         let reaching = avoid.filter { $0.maxY > home.minY && $0.minY < home.maxY }
-        guard let edge = reaching.map(\.maxX).max(), edge + clearance > home.minX else {
-            return home
+        if let edge = reaching.map(\.maxX).max(), edge + clearance > home.minX {
+            frame.origin.x = edge + clearance
         }
-        return CGRect(x: edge + clearance, y: home.minY, width: home.width, height: home.height)
+        let inRow = flags.filter { $0.maxY > home.minY && $0.minY < home.maxY }
+        // Each step moves right past one flag, so this ends.
+        for _ in 0...inRow.count {
+            guard let edge = inRow.filter({ $0.minX < frame.maxX + clearance && $0.maxX + clearance > frame.minX })
+                .map(\.maxX).max() else {
+                break
+            }
+            frame.origin.x = edge + clearance
+        }
+        return frame
+    }
+
+    /// The column's note from the foot of the band: clear of the zoom buttons.
+    static let noteBottomInset = ZoomButtons.inset + ZoomButtons.buttonSize.height + clearance
+    /// The column's note from the band's right edge.
+    static let noteTrailingInset: CGFloat = 12
+    /// The narrowest the note goes in a gap before it takes the widest one.
+    static let noteMinWidth: CGFloat = 160
+
+    /// Where the column's note goes (the board's `.dp-colnote`): at the
+    /// band's lower right, above the zoom buttons, no wider than `maxWidth`,
+    /// in the rightmost gap between what it keeps clear of (`avoid`: the
+    /// column, its open menu or pill, the flags and the PTT) that is wide
+    /// enough, else in the widest.
+    static func notePlace(bandSize: CGSize, trailingInset: CGFloat, height: CGFloat, maxWidth: CGFloat,
+                          avoid: [CGRect]) -> CGRect {
+        let bottom = bandSize.height - noteBottomInset
+        let top = bottom - height
+        let right = bandSize.width - trailingInset - noteTrailingInset
+        var gaps: [(start: CGFloat, end: CGFloat)] = []
+        var cursor: CGFloat = 0
+        for blocker in avoid.filter({ $0.minY < bottom && $0.maxY > top }).sorted(by: { $0.minX < $1.minX }) {
+            if blocker.minX - clearance > cursor {
+                gaps.append((cursor, min(blocker.minX - clearance, right)))
+            }
+            cursor = max(cursor, blocker.maxX + clearance)
+        }
+        if right > cursor {
+            gaps.append((cursor, right))
+        }
+        gaps = gaps.filter { $0.end > $0.start }
+        let gap = gaps.last { $0.end - $0.start >= noteMinWidth }
+            ?? gaps.max { $0.end - $0.start < $1.end - $1.start }
+            ?? (right - noteMinWidth, right)
+        let width = min(maxWidth, gap.end - gap.start)
+        return CGRect(x: gap.end - width, y: top, width: width, height: height)
     }
 
     /// Where the keyed meters go.
@@ -121,6 +188,13 @@ enum BandColumnLayout {
 /// is open at a time and a tap anywhere else on the band closes it. A
 /// button that cannot act stays, greyed, with its reason beside it.
 ///
+/// On a band too short for all eight down it (the phone sideways) the
+/// buttons stand in two columns of four side by side, read down the first
+/// and then the second, all in view (spec DC14). What the column did, and
+/// what the last Add a pan or Close this pan did, shows for a moment at the
+/// band's lower right, clear of the column, its menus, the flags and the
+/// PTT (the board's `.dp-colnote`).
+///
 /// The view fills the band; only the column, the open menu and the layer
 /// that closes it take touches.
 struct BandButtonColumn: View {
@@ -130,32 +204,42 @@ struct BandButtonColumn: View {
     let main: MainScreenModel
     @ObservedObject var sheet: PanSheetModel
     @ObservedObject var slices: BandSlicesModel
-    /// The pans, for the status line under the pan last touched's column.
+    /// The pans, for the status line on the pan last touched's band.
     @ObservedObject var stack: PanStackModel
     /// This pan's flags' menus (ANT, VAX), its pill's model and its band.
     let controls: PanControls
     /// The pill's open tab, kept while it closes and opens.
     @Binding var displayTab: DisplayPillTab
-    /// The phone's rounded edge sideways; 0 on the iPad.
+    /// The phone's rounded edges sideways; 0 on the iPad.
     var leadingInset: CGFloat = 0
+    var trailingInset: CGFloat = 0
     let openSetup: () -> Void
     let onSetupDefaults: (DisplayPillTab, PanIdentity) -> Void
     let onOpenPage: (String) -> Void
     let onOpen: (PanIdentity) -> Void
 
-    /// The Core's words for the column's last refused request, shown for a moment under it.
+    /// The Core's words for the column's last refused request, shown for a moment.
     @State private var shownNote: String?
     @State private var noteGeneration = 0
+    /// The pans' status line while it shows.
+    @State private var shownStatus: String?
+    /// The note's height as drawn, for its place.
+    @State private var noteHeight: CGFloat = 30
 
-    /// How long a refusal stays under the column (the board's 3.2 s, rounded up).
-    static let noteSeconds: Duration = .seconds(4)
+    /// How long a note stays: the board's 3.2 s (its `say`). A shot test
+    /// may hold it longer to draw it.
+    static var noteDuration: Duration = .milliseconds(3200)
+    /// The note's widest: the board's 360 sideways, 420 on the iPad.
+    static let noteMaxWidthSideways: CGFloat = 360
+    static let noteMaxWidth: CGFloat = 420
     /// The desktop's ◀ and ▶.
     // From src/gui/SpectrumOverlayPanel.cpp:815-816 ("◀" expanded, "▶" folded)
     static let foldText = "\u{25C0}"
     static let unfoldText = "\u{25B6}"
 
     init(pan: PanIdentity, open: Binding<BandColumnMenu?>, folded: Binding<Bool>, main: MainScreenModel,
-         displayTab: Binding<DisplayPillTab>, leadingInset: CGFloat = 0, openSetup: @escaping () -> Void,
+         displayTab: Binding<DisplayPillTab>, leadingInset: CGFloat = 0, trailingInset: CGFloat = 0,
+         openSetup: @escaping () -> Void,
          onSetupDefaults: @escaping (DisplayPillTab, PanIdentity) -> Void,
          onOpenPage: @escaping (String) -> Void, onOpen: @escaping (PanIdentity) -> Void) {
         self.pan = pan
@@ -169,6 +253,7 @@ struct BandButtonColumn: View {
         stack = main.panStack
         _displayTab = displayTab
         self.leadingInset = leadingInset
+        self.trailingInset = trailingInset
         self.openSetup = openSetup
         self.onSetupDefaults = onSetupDefaults
         self.onOpenPage = onOpenPage
@@ -179,6 +264,9 @@ struct BandButtonColumn: View {
         GeometryReader { proxy in
             let x = leadingInset + BandColumnLayout.origin
             let y = BandColumnLayout.origin
+            let maxHeight = BandColumnLayout.menuMaxHeight(bandHeight: proxy.size.height)
+            let columns = folded ? 1 : BandColumnLayout.columns(bandHeight: proxy.size.height)
+            let columnWidth = BandColumnLayout.columnWidth(columns: columns)
             ZStack(alignment: .topLeading) {
                 if open != nil {
                     Color.black.opacity(0.001)
@@ -188,50 +276,31 @@ struct BandButtonColumn: View {
                         .accessibilityAddTraits(.isButton)
                         .accessibilityIdentifier("bandColumnClose")
                 }
-                VStack(alignment: .leading, spacing: 4) {
-                    // On a band shorter than the column (the phone sideways)
-                    // the column scrolls, its buttons kept at 30 points.
-                    ViewThatFits(in: .vertical) {
-                        column
-                        ScrollView(.vertical, showsIndicators: false) { column }
-                            .frame(width: BandColumnLayout.columnWidth)
-                    }
-                    .frame(maxHeight: BandColumnLayout.menuMaxHeight(bandHeight: proxy.size.height), alignment: .top)
-                    .reportsBandColumnFrame()
-                    if let status = stack.status, stack.lastTouched == pan, !folded {
-                        // What the last Add a pan or Close this pan did (spec section 6.3).
-                        Text(status)
-                            .font(.system(size: 12))
-                            .foregroundStyle(ChromeColours.textDim)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .frame(maxWidth: 260, alignment: .leading)
-                            .workspacePanel()
-                            .accessibilityIdentifier("bandColumnPanStatus")
-                    }
-                    if let shownNote, !folded {
-                        Text(shownNote)
-                            .font(.system(size: 12))
-                            .foregroundStyle(ChromeColours.refusalText)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .frame(maxWidth: 260, alignment: .leading)
-                            .workspacePanel()
-                            .accessibilityIdentifier("bandColumnNote")
+                // Two columns of four fit every band the phone draws; on a
+                // band too short even for those they scroll, the open
+                // button kept in view.
+                ViewThatFits(in: .vertical) {
+                    column(columns: columns)
+                    ScrollViewReader { reader in
+                        ScrollView(.vertical, showsIndicators: false) { column(columns: columns) }
+                            .frame(width: columnWidth)
+                            .onAppear { reveal(open, reader) }
+                            .onChange(of: open) { _, menu in reveal(menu, reader) }
                     }
                 }
+                .frame(maxHeight: maxHeight, alignment: .top)
+                .reportsBandColumnFrame()
                 .padding(.leading, x)
                 .padding(.top, y)
                 if let open, !folded {
                     menu(open)
-                        .frame(maxHeight: BandColumnLayout.menuMaxHeight(bandHeight: proxy.size.height),
-                               alignment: .top)
-                        .padding(.leading, x + BandColumnLayout.columnWidth + BandColumnLayout.menuGap)
+                        .frame(maxHeight: maxHeight, alignment: .top)
+                        .padding(.leading, x + columnWidth + BandColumnLayout.menuGap)
                         .padding(.top, y)
                         .transition(.opacity)
                 }
+                note(bandSize: proxy.size, x: x, y: y, columnWidth: columnWidth, columns: columns,
+                     maxHeight: maxHeight)
                 if open == .attenuator {
                     ColumnPadLayer(modes: main.modes)
                 }
@@ -246,41 +315,151 @@ struct BandButtonColumn: View {
         .onChange(of: sheet.note) { _, note in
             show(note)
         }
+        // The pans' status line, on the pan last touched, while it is new.
+        .task(id: StatusShown(serial: stack.statusSerial, here: stack.lastTouched == pan)) {
+            await showStatus()
+        }
+    }
+
+    /// What the status line's showing follows.
+    private struct StatusShown: Equatable {
+        let serial: Int
+        let here: Bool
+    }
+
+    // MARK: The note
+
+    /// The status line and the column's refusal at the band's lower right.
+    @ViewBuilder
+    private func note(bandSize: CGSize, x: CGFloat, y: CGFloat, columnWidth: CGFloat, columns: Int,
+                      maxHeight: CGFloat) -> some View {
+        if shownStatus != nil || shownNote != nil {
+            let place = notePlace(bandSize: bandSize, x: x, y: y, columnWidth: columnWidth, columns: columns,
+                                  maxHeight: maxHeight)
+            VStack(alignment: .trailing, spacing: 4) {
+                if let shownStatus {
+                    // What the last Add a pan or Close this pan did (spec section 6.3).
+                    noteText(shownStatus, colour: ChromeColours.text)
+                        .accessibilityIdentifier("bandColumnPanStatus")
+                }
+                if let shownNote {
+                    noteText(shownNote, colour: ChromeColours.refusalText)
+                        .accessibilityIdentifier("bandColumnNote")
+                }
+            }
+            .frame(width: place.width, alignment: .trailing)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { noteHeight = $0 }
+            .offset(x: place.minX, y: place.minY)
+            .allowsHitTesting(false)
+            .transition(.opacity)
+        }
+    }
+
+    private func noteText(_ text: String, colour: Color) -> some View {
+        Text(text)
+            .font(.system(size: 12))
+            .foregroundStyle(colour)
+            .lineSpacing(2)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .workspacePanel()
+    }
+
+    /// The note's place, clear of the column, its open menu or pill, the
+    /// flags and where the PTT goes.
+    private func notePlace(bandSize: CGSize, x: CGFloat, y: CGFloat, columnWidth: CGFloat, columns: Int,
+                           maxHeight: CGFloat) -> CGRect {
+        let rows = folded ? 1 : BandColumnLayout.buttonCount / columns
+        let column = CGRect(x: x, y: y, width: columnWidth,
+                            height: min(BandColumnLayout.columnHeight(rows: rows), maxHeight))
+        var avoid = [column]
+        if let open, !folded {
+            // The menu's full height: what it draws is never taller.
+            avoid.append(CGRect(x: column.maxX + BandColumnLayout.menuGap, y: y,
+                                width: BandColumnLayout.width(of: open), height: maxHeight))
+        }
+        let flags = slices.flagRects
+        let ptt = BandColumnLayout.pttFrame(home: PttButton.frame(bandSize: bandSize, leadingInset: leadingInset),
+                                            avoid: avoid, flags: flags)
+        return BandColumnLayout.notePlace(bandSize: bandSize, trailingInset: trailingInset, height: noteHeight,
+                                          maxWidth: leadingInset > 0 ? Self.noteMaxWidthSideways
+                                              : Self.noteMaxWidth,
+                                          avoid: avoid + flags + [ptt])
+    }
+
+    private func show(_ note: String?) {
+        noteGeneration &+= 1
+        let generation = noteGeneration
+        shownNote = note
+        guard note != nil else {
+            return
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: Self.noteDuration)
+            if generation == noteGeneration {
+                shownNote = nil
+            }
+        }
+    }
+
+    /// Shows the pans' status line for what is left of its moment, on the
+    /// pan last touched: a pan's band drawn just after (Pan 1's alone
+    /// again after Close this pan) still shows it.
+    private func showStatus() async {
+        guard stack.lastTouched == pan, let status = stack.status, let since = stack.statusSince else {
+            shownStatus = nil
+            return
+        }
+        let left = Self.noteDuration - (ContinuousClock.now - since)
+        guard left > .zero else {
+            shownStatus = nil
+            return
+        }
+        shownStatus = status
+        try? await Task.sleep(for: left)
+        if !Task.isCancelled {
+            shownStatus = nil
+        }
     }
 
     // MARK: The column
 
-    private var column: some View {
-        VStack(alignment: .leading, spacing: BandColumnLayout.gap) {
-            columnButton(folded ? Self.unfoldText : Self.foldText, id: "fold", lit: false) {
-                folded.toggle()
-            }
-            .accessibilityLabel(folded ? "Show the buttons" : "Fold the buttons away")
-            if !folded {
-                let rxReason = sheet.addSliceOnPanReason(radio: main.radioName)
-                withReason(rxReason) {
-                    // From src/gui/SpectrumOverlayPanel.cpp:474 ("+RX")
-                    columnButton("+RX", id: "rx", lit: false, disabled: rxReason != nil) {
-                        sheet.addSlice(on: pan)
+    /// The buttons in their order: down one column, or down the first of
+    /// two and then the second (spec DC14).
+    @ViewBuilder
+    private func column(columns: Int) -> some View {
+        Group {
+            if folded {
+                foldButton
+            } else if columns > 1 {
+                HStack(alignment: .top, spacing: BandColumnLayout.gap) {
+                    VStack(alignment: .leading, spacing: BandColumnLayout.gap) {
+                        foldButton
+                        rxButton(columns: columns)
+                        tnfButton(columns: columns)
+                        // From src/gui/SpectrumOverlayPanel.cpp:500-535 ("BAND", "ANT", "Display", "VAX", "ATT"), in its order
+                        menuButton("BAND", .band, id: "band")
                     }
-                    .accessibilityLabel("Add a slice on this pan")
-                    .accessibilityHint(rxReason ?? "")
-                }
-                let tnfReason = sheet.canAddNotch ? nil : sheet.notchUnavailableReason
-                withReason(tnfReason) {
-                    // From src/gui/SpectrumOverlayPanel.cpp:489 ("+TNF")
-                    columnButton("+TNF", id: "tnf", lit: false, disabled: tnfReason != nil) {
-                        sheet.addNotch()
+                    VStack(alignment: .leading, spacing: BandColumnLayout.gap) {
+                        menuButton("ANT", .antenna, id: "antenna")
+                        menuButton("Display", .display, id: "display")
+                        menuButton("VAX", .vax, id: "vax")
+                        menuButton("ATT", .attenuator, id: "attenuator")
                     }
-                    .accessibilityLabel("Add a notch in the active slice's passband")
-                    .accessibilityHint(tnfReason ?? "")
                 }
-                // From src/gui/SpectrumOverlayPanel.cpp:500-535 ("BAND", "ANT", "Display", "VAX", "ATT"), in its order
-                menuButton("BAND", .band, id: "band")
-                menuButton("ANT", .antenna, id: "antenna")
-                menuButton("Display", .display, id: "display")
-                menuButton("VAX", .vax, id: "vax")
-                menuButton("ATT", .attenuator, id: "attenuator")
+            } else {
+                VStack(alignment: .leading, spacing: BandColumnLayout.gap) {
+                    foldButton
+                    rxButton(columns: columns)
+                    tnfButton(columns: columns)
+                    // From src/gui/SpectrumOverlayPanel.cpp:500-535 ("BAND", "ANT", "Display", "VAX", "ATT"), in its order
+                    menuButton("BAND", .band, id: "band")
+                    menuButton("ANT", .antenna, id: "antenna")
+                    menuButton("Display", .display, id: "display")
+                    menuButton("VAX", .vax, id: "vax")
+                    menuButton("ATT", .attenuator, id: "attenuator")
+                }
             }
         }
         .padding(BandColumnLayout.padding)
@@ -289,11 +468,61 @@ struct BandButtonColumn: View {
         .accessibilityIdentifier("bandColumn")
     }
 
+    private var foldButton: some View {
+        columnButton(folded ? Self.unfoldText : Self.foldText, id: "fold", lit: false) {
+            folded.toggle()
+        }
+        .accessibilityLabel(folded ? "Show the buttons" : "Fold the buttons away")
+    }
+
+    private func rxButton(columns: Int) -> some View {
+        let rxReason = sheet.addSliceOnPanReason(radio: main.radioName)
+        return withReason(rxReason, columns: columns) {
+            // From src/gui/SpectrumOverlayPanel.cpp:474 ("+RX")
+            columnButton("+RX", id: "rx", lit: false, disabled: rxReason != nil) {
+                sheet.addSlice(on: pan)
+            }
+            .accessibilityLabel("Add a slice on this pan")
+            .accessibilityHint(rxReason ?? "")
+        }
+    }
+
+    private func tnfButton(columns: Int) -> some View {
+        let tnfReason = sheet.canAddNotch ? nil : sheet.notchUnavailableReason
+        return withReason(tnfReason, columns: columns) {
+            // From src/gui/SpectrumOverlayPanel.cpp:489 ("+TNF")
+            columnButton("+TNF", id: "tnf", lit: false, disabled: tnfReason != nil) {
+                sheet.addNotch()
+            }
+            .accessibilityLabel("Add a notch in the active slice's passband")
+            .accessibilityHint(tnfReason ?? "")
+        }
+    }
+
+    /// Scrolls the open menu's button into view, where the column scrolls.
+    private func reveal(_ menu: BandColumnMenu?, _ reader: ScrollViewProxy) {
+        guard let menu else {
+            return
+        }
+        reader.scrollTo(Self.buttonId(menu))
+    }
+
+    static func buttonId(_ menu: BandColumnMenu) -> String {
+        switch menu {
+        case .band: "band"
+        case .antenna: "antenna"
+        case .display: "display"
+        case .vax: "vax"
+        case .attenuator: "attenuator"
+        }
+    }
+
     private func menuButton(_ label: String, _ menu: BandColumnMenu, id: String) -> some View {
         columnButton(label, id: id, lit: open == menu) {
             open = open == menu ? nil : menu
         }
         .accessibilityValue(open == menu ? "Open" : "")
+        .id(id)
     }
 
     /// One of the column's buttons: raised, or in the glass while its menu
@@ -313,9 +542,10 @@ struct BandButtonColumn: View {
         .accessibilityIdentifier("bandColumn.\(id)")
     }
 
-    /// A greyed button with its reason beside it, outside the column's
-    /// frame so the PTT keeps to the column.
-    private func withReason(_ reason: String?, @ViewBuilder button: () -> some View) -> some View {
+    /// A greyed button with its reason beside the whole column (past the
+    /// second column when there are two), outside the column's frame so
+    /// the PTT keeps to the column.
+    private func withReason(_ reason: String?, columns: Int, @ViewBuilder button: () -> some View) -> some View {
         button()
             .overlay(alignment: .leading) {
                 if let reason {
@@ -328,7 +558,7 @@ struct BandButtonColumn: View {
                         .padding(.vertical, 3)
                         .workspacePanel(radius: WorkspacePalette.chipRadius)
                         .frame(width: Self.reasonWidth, alignment: .leading)
-                        .offset(x: BandColumnLayout.buttonWidth + 6)
+                        .offset(x: BandColumnLayout.columnWidth(columns: columns) - 2 * BandColumnLayout.padding + 6)
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                         .accessibilityIdentifier("bandColumnReason")
@@ -338,21 +568,6 @@ struct BandButtonColumn: View {
 
     /// The widest a greyed button's reason beside it runs.
     static let reasonWidth: CGFloat = 220
-
-    private func show(_ note: String?) {
-        noteGeneration &+= 1
-        let generation = noteGeneration
-        shownNote = note
-        guard note != nil else {
-            return
-        }
-        Task { @MainActor in
-            try? await Task.sleep(for: Self.noteSeconds)
-            if generation == noteGeneration {
-                shownNote = nil
-            }
-        }
-    }
 
     // MARK: The menus
 

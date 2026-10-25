@@ -322,8 +322,11 @@ public struct BandDisplaySettings: Equatable, Sendable, Codable {
     public var peakHoldColour: String = "#FFD700FF"
     public var peakBlobColour: String = "#FF4500FF"
     public var peakBlobTextColour: String = "#7FFF00FF"
-    /// How far back the waterfall can be looked at, in seconds.
-    public var rewindSeconds: Int = 300
+    /// How far back the waterfall can be looked at, in seconds: the
+    /// desktop's 20 minutes by default.
+    // From src/gui/SpectrumWidget.h:3648 (kDefaultWaterfallHistoryMs = 20 min); the Core's Rewind row's default
+    // (src/core/setup/SetupDescriptionService.cpp:96, 1200000)
+    public var rewindSeconds: Int = 1200
     /// The time at the waterfall's top edge: none, left or right, UTC or local.
     public var timestampPosition: TimestampPosition = .none
     public var timestampUtc: Bool = true
