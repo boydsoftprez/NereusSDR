@@ -75,6 +75,7 @@
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "LoopbackTransport.h"
+#include "NoCaptureHelper.h"
 #include "PacedAudioBus.h"
 
 #include <QHash>
@@ -306,6 +307,10 @@ struct RemoteAudioSessionHarness {
         station.setConnectionStateForTest(ConnectionState::Connected);
         stationAudio = station.audioEngine();
         Q_ASSERT(stationAudio != nullptr);
+        // Neither end may start a real helper found beside the test binary
+        // (NoCaptureHelper.h); a case that wants one installs the fake.
+        NereusSDR::Test::useNoCaptureHelper(station);
+        NereusSDR::Test::useNoCaptureHelper(remote);
         stationAudio->masterMixForTest().setRampFrames(1);
         stationAudio->masterMixForTest().setSlewUpFrames(0);
         sliceA = station.addSlice();

@@ -1,8 +1,15 @@
 // =================================================================
 // tests/tst_sample_rate_live_apply.cpp  (NereusSDR)
 // =================================================================
-// no-port-check: NereusSDR-original test infrastructure; the Thetis filename
+// NereusSDR-original test infrastructure, except the case
+// stored_rate_survives_probing_and_connecting, ported from Longpath and
+// registered in docs/attribution/LONGPATH-PROVENANCE.md. The Thetis filename
 // reference below is a comment-only provenance note, not a code port.
+//
+// Ported from Longpath sources:
+//   tests/tst_sample_rate_live_apply.cpp (stored_rate_survives_probing_and_connecting).
+//   Longpath's banner on that file is this NereusSDR header with the project
+//   name changed, so it is not copied here.
 //
 // NereusSDR-original infrastructure — no Thetis source ported here.
 // RadioModel::setSampleRateLive() is a NereusSDR coordinator; the P1
@@ -21,6 +28,12 @@
 // The "under glitch budget" test is vacuously satisfied in the unconnected
 // case; the full timing path is verified by the integration bench when
 // a real ANAN-G2 is attached (see Task 1.8).
+//
+// Modification history (NereusSDR):
+//   2026-10-22 - stored_rate_survives_probing_and_connecting, ported from
+//                Longpath PR 37 (fd894ded, Martin Fischer OE5SOS) by J.J.
+//                Boyd (KG4VCF), with AI-assisted transformation via Claude
+//                Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -121,6 +134,39 @@ private slots:
         radio.setSampleRateLive(0);  // same as m_connectionSampleRateHz{0}
 
         QCOMPARE(spy.count(), 0);
+    }
+
+    // From Longpath tests/tst_sample_rate_live_apply.cpp:126-156 [@383f058]
+    // ── The stored rate survives Probing/Connecting ─────────────────────────
+    //
+    // connectToRadio() writes the wire rate and the active-RX count, then
+    // the worker thread reports Probing → Connecting → Connected one event-
+    // loop turn later. Until 2026-09-21 every non-Connected state cleared
+    // both fields, so the write was undone before Connected ever arrived:
+    // the model reported rate 0 and rx2Enabled()==false for the whole
+    // session (HL2 simulator bench). The idempotent guard of
+    // setSampleRateLive() is the probe here: it returns 0 exactly when the
+    // requested rate equals the stored one, and -1 otherwise (no radio).
+    void stored_rate_survives_probing_and_connecting()
+    {
+        RadioModel radio;
+        radio.setConnectionRateForTest(192000, 2);
+
+        radio.setConnectionStateForTest(ConnectionState::Probing);
+        radio.setConnectionStateForTest(ConnectionState::Connecting);
+        radio.setConnectionStateForTest(ConnectionState::Connected);
+        QCOMPARE(radio.setSampleRateLive(192000), qint64(0));
+        QVERIFY(radio.rx2Enabled());
+
+        // A lost link may come back; it is not a teardown.
+        radio.setConnectionStateForTest(ConnectionState::LinkLost);
+        QCOMPARE(radio.setSampleRateLive(192000), qint64(0));
+        QVERIFY(radio.rx2Enabled());
+
+        // Only Disconnected clears the pair.
+        radio.setConnectionStateForTest(ConnectionState::Disconnected);
+        QCOMPARE(radio.setSampleRateLive(0), qint64(0));
+        QVERIFY(!radio.rx2Enabled());
     }
 };
 

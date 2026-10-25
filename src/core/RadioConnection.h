@@ -44,6 +44,24 @@
 //               may set that unkeys on this object's thread and refuses a
 //               key until it is cleared. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-22: iqSequenceGap, lost I/Q datagrams, sent before the samples
+//               after them, so the display FFTs drop their window in
+//               progress. After Longpath src/core/RadioConnection.h:533-548
+//               [@383f058] (PR 62, caddf95b), which declares the same
+//               signal; AetherSDR PR 5744 (a449dee4) had the idea first.
+//               J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//               Claude Code.
+//   2026-10-23: kIqSequenceGapMinIntervalMs, Longpath's 20 ms throttle on
+//               iqSequenceGap, ported from Longpath
+//               src/core/P1RadioConnection.cpp:2717-2722 [@383f058]; the
+//               signal is sent on forward loss only, as Longpath sends it.
+//               J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//               Claude Code.
+//   2026-10-24: setIqSequenceGapClockForTest and iqSequenceGapClockMs, a
+//               test seam for the clock that throttle reads, so a test
+//               holds it still instead of racing the wall clock.
+//               NereusSDR-original. J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Claude Code.
 
 #include "core/NereusCoreExport.h"
 #include "ConnectionState.h"
@@ -62,6 +80,7 @@
 #include <algorithm>
 #include <atomic>
 #include <array>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -186,6 +205,20 @@ public:
     /// it to this figure (packaging/nereusd-receive-buffer.conf, which
     /// tests/release/test_core_receive_buffer_limit.py holds to it).
     static constexpr int kRadioSocketReceiveBufferBytes = 0x400000;
+    /// The least time between two iqSequenceGap signals from one
+    /// connection. From Longpath src/core/P1RadioConnection.cpp:2717-2722
+    /// and src/core/P2RadioConnection.cpp:3236-3241 [@383f058], where it is
+    /// the literal 20 in `nowGap - m_lastGapSignalMs >= 20`.
+    static constexpr qint64 kIqSequenceGapMinIntervalMs = 20;
+    /// Test seam, NereusSDR-original (2026-10-24): the clock, in ms, the
+    /// iqSequenceGap throttle reads in place of
+    /// QDateTime::currentMSecsSinceEpoch(). Empty (the default) restores
+    /// the wall clock. Set before connectToRadio(); the clock is called on
+    /// the thread that reads the radio's datagrams.
+    void setIqSequenceGapClockForTest(std::function<qint64()> clock)
+    {
+        m_iqSequenceGapClockForTest = std::move(clock);
+    }
     /// The receive buffer the system granted, from the size a socket
     /// reports. Linux doubles a request to leave room for its own
     /// bookkeeping and reports the doubled figure (socket(7), SO_RCVBUF), so
@@ -974,6 +1007,14 @@ public slots:
     void clearTransmitCut();
 
 protected:
+    // NereusSDR-original (2026-10-24): the iqSequenceGap throttle's clock,
+    // in ms: the test clock when one is set, the wall clock otherwise.
+    qint64 iqSequenceGapClockMs() const
+    {
+        return m_iqSequenceGapClockForTest ? m_iqSequenceGapClockForTest()
+                                           : QDateTime::currentMSecsSinceEpoch();
+    }
+
     // This object's thread. The default unkeys as the emergency stop does:
     // setMox(false); setTrxRelay(false). P1 then puts bank 0 on its next
     // frame and drops queued TX I/Q; P2 sends its high-priority packet at
@@ -1034,6 +1075,20 @@ signals:
     // hwReceiverIndex: 0-based hardware receiver number.
     // samples: interleaved float I/Q pairs, normalized to [-1.0, 1.0].
     void iqDataReceived(int hwReceiverIndex, const QVector<float>& samples);
+
+    // Lost I/Q datagrams (a forward jump in the sequence number; a repeated
+    // or reordered packet sends nothing), emitted on the connection thread
+    // just before the samples of the packet that showed the loss, so it
+    // reaches each consumer in order with those samples, and at most once
+    // per kIqSequenceGapMinIntervalMs. hwReceiverIndex is the hardware
+    // receiver the gap belongs to, as iqDataReceived names it, or -1 for
+    // every receiver (a Protocol 1 EP6 frame carries all of them
+    // interleaved). The display FFTs discard their window in progress on
+    // it; the audio path does not listen. After Longpath
+    // src/core/RadioConnection.h:533-548 [@383f058] (PR 62, caddf95b),
+    // which declares the same signal with the same meaning of -1; the idea
+    // is AetherSDR PR 5744's (a449dee4).
+    void iqSequenceGap(int hwReceiverIndex);
 
     // Bracket one socket drain on the connection thread (Protocol 2's
     // onReadyRead). Every iqDataReceived between them belongs to that
@@ -1205,6 +1260,9 @@ signals:
     void alexLpfBitsComposed(quint8 bits);
 
 private:
+    // setIqSequenceGapClockForTest's clock (2026-10-24); empty in use.
+    std::function<qint64()> m_iqSequenceGapClockForTest;
+
     // Radio codec (2026-09-30): pushRadioAudio's ring, 16384 stereo frames
     // (341 ms at 48 kHz), and its counters. m_radioAudioFlowing belongs to
     // the consumer thread alone.

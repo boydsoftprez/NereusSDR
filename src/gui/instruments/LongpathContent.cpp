@@ -68,6 +68,16 @@
 //                 and applies font size, colour, centering and the slice
 //                 lines from the entry config. Brian Sutton,
 //                 AI-assisted via xAI Grok.
+//   2026-10-23 - The slice follower also rebinds when station ownership or
+//                 the selected RX changes. A direct connection publishes the
+//                 slice before the station adopts it, and that adoption does
+//                 not emit activeSliceChanged when the slice is already
+//                 active, so the frequency stayed on the empty reading.
+//                 Brian Sutton, AI-assisted via xAI Grok.
+//   2026-10-24 - The slice follower also rebinds when a remote window's
+//                 slice access changes (Sources::watchSliceAccess), so a
+//                 remote window's frequency shows its digits too.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "models/MainPowerMeter.h"
@@ -75,6 +85,7 @@
 #include "gui/instruments/LongpathContent.h"
 
 #include "core/ControlRanges.h"
+#include "core/SliceOwnership.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/instruments/BarInstrument.h"
@@ -119,12 +130,25 @@ QString sliceLabel(const SliceModel* slice)
 }
 
 // Rebinds an instrument when the slice its context names may have
-// changed (a slice opened or closed, the selected RX moved).
+// changed (a slice opened or closed, the selected RX moved, or the
+// station took the slice).
 //
 // Two parts: `bind` wires the instrument to its own slice and runs only
 // when that slice changes; `refresh` covers what depends on the other
 // slices and on which slice is active, and runs on every slice added,
 // removed or made active, even when the own slice is unchanged.
+//
+// Ownership is separate from those three RadioModel signals. On a direct
+// connection the slice is published while it is still unowned, and the
+// station adopts it from its own sliceAdded slot. applyActiveSlices then
+// sees the same active slice and emits nothing. The instrument has to
+// ask for the slice again on SliceOwnership::activeChanged, or it stays
+// on the empty reading. activeRxChanged covers a receive-focus move that
+// does not change which slice is active.
+//
+// A remote window does not keep its own SliceOwnership. It finds its
+// slice through the Core's slice access, whose entries arrive after the
+// snapshot's slices, so it rebinds on that access too (watchSliceAccess).
 class SliceFollower : public QObject {
 public:
     SliceFollower(QWidget* owner, const Sources& sources, QJsonObject context)
@@ -141,6 +165,14 @@ public:
             connect(radio, &RadioModel::sliceAdded, this, [this](int) { rebind(); });
             connect(radio, &RadioModel::sliceRemoved, this, [this](int) { rebind(); });
             connect(radio, &RadioModel::activeSliceChanged, this, [this](int) { rebind(); });
+            if (SliceOwnership* ownership = radio->sliceOwnership()) {
+                connect(ownership, &SliceOwnership::activeChanged, this, [this] { rebind(); });
+                connect(ownership, &SliceOwnership::activeRxChanged, this,
+                        [this](const QByteArray&) { rebind(); });
+            }
+        }
+        if (m_sources.watchSliceAccess) {
+            m_sources.watchSliceAccess(this, [this] { rebind(); });
         }
         rebind();
     }

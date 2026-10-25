@@ -217,16 +217,52 @@ final class SMeterModel: ObservableObject {
     /// active slice and its pan. A cached frame from a former subscription
     /// or media session cannot light Max Bin.
     private func maxBinReading(for active: BandSlicesModel.Entry?) -> (available: Bool, value: Double?) {
-        guard let active, let panKey = active.panKey, !panKey.isEmpty,
-              let accepted = subscriber.acceptedDisplay,
-              accepted.subscription.sliceId == active.id,
-              accepted.panKey == panKey,
-              accepted.subscription.endpointId == band.endpointId,
-              accepted.subscription.revision == band.frameRevision,
+        maxBinReading(for: active, subscribedSliceOnly: true)
+    }
+
+    // MARK: The flags
+
+    /// The level `entry`'s flag shows: the reading the S-meter's RX Mode
+    /// chooses (``FlagMeterChoice``), as a desktop window's flags follow its
+    /// S-meter; nil for none.
+    func flagLevel(for entry: BandSlicesModel.Entry) -> Double? {
+        let mode = state.settings.rxMode
+        let maxBin = FlagMeterChoice(mode) == .maxBin ? flagMaxBin(for: entry).value : nil
+        return FlagMeterChoice.level(mode: mode, peakDbm: entry.signalPeakDbm, averageDbm: entry.signalAverageDbm,
+                                     legacyDbm: entry.signalDbm, maxBinDbm: maxBin)
+    }
+
+    /// Max Bin for `entry`'s flag: the strongest point of its passband on
+    /// the pan this device draws, when that is the slice's own pan.
+    func flagMaxBin(for entry: BandSlicesModel.Entry) -> (available: Bool, value: Double?) {
+        maxBinReading(for: entry, subscribedSliceOnly: false)
+    }
+
+    /// Why Max Bin is off on `entry`'s flag, nil when it can be shown: the
+    /// slice's pan is not drawn here, or it is but the slice's passband is
+    /// outside the span it shows.
+    func flagMaxBinReason(for entry: BandSlicesModel.Entry) -> String? {
+        if flagMaxBin(for: entry).available {
+            return nil
+        }
+        return maxBinPanShown(for: entry, subscribedSliceOnly: false)
+            ? SMeterReadings.maxBinOutsideSpanText : SMeterReadings.maxBinUnavailableText
+    }
+
+    /// The flags' choice of reading, from the more menu: it sets the
+    /// S-meter's RX Mode, kept on this device as the meter's menu keeps it.
+    func chooseFlagMeter(_ choice: FlagMeterChoice) {
+        chooseRx(choice.rxMode(from: state.settings.rxMode))
+    }
+
+    /// `subscribedSliceOnly`: the accepted display must be the one this
+    /// slice subscribed (the meter's active slice); a flag takes any slice
+    /// on the drawn pan, whose trace is that pan's.
+    private func maxBinReading(for active: BandSlicesModel.Entry?,
+                               subscribedSliceOnly: Bool) -> (available: Bool, value: Double?) {
+        guard let active, maxBinPanShown(for: active, subscribedSliceOnly: subscribedSliceOnly),
               let frame = band.state.frame,
-              let coverage = band.state.frameCoverage,
-              frame.endpointId == band.endpointId,
-              !band.paused, !band.showsTransmit else {
+              let coverage = band.state.frameCoverage else {
             return (false, nil)
         }
         let slice = active.slice
@@ -235,5 +271,23 @@ final class SMeterModel: ObservableObject {
                                          lowHz: slice.frequencyHz + slice.filterLowHz,
                                          highHz: slice.frequencyHz + slice.filterHighHz)
         return (value != nil, value)
+    }
+
+    /// Whether this device shows a live frame of `active`'s pan that Max Bin
+    /// may read, whatever span it covers.
+    private func maxBinPanShown(for active: BandSlicesModel.Entry?, subscribedSliceOnly: Bool) -> Bool {
+        guard let active, let panKey = active.panKey, !panKey.isEmpty,
+              let accepted = subscriber.acceptedDisplay,
+              !subscribedSliceOnly || accepted.subscription.sliceId == active.id,
+              accepted.panKey == panKey,
+              accepted.subscription.endpointId == band.endpointId,
+              accepted.subscription.revision == band.frameRevision,
+              let frame = band.state.frame,
+              band.state.frameCoverage != nil,
+              frame.endpointId == band.endpointId,
+              !band.paused, !band.showsTransmit else {
+            return false
+        }
+        return true
     }
 }

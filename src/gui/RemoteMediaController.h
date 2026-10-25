@@ -4,6 +4,9 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 //
 // Modification history (NereusSDR):
+//   2026-10-22: RemoteDisplayTelemetry::rowsBlanked, the waterfall rows the
+//               pans' NB Blank replaced, for the diagnostics line.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22: NSDC v2: RemoteDisplayTelemetry::messagesLost and
 //               partsLost, and requestContextKeyframe (no keyframe is asked
 //               for a context on a connection that agreed v2). J.J. Boyd
@@ -217,6 +220,9 @@ struct RemoteDisplayTelemetry {
     /// rows the pans' waterfalls dropped for the same reason (never expected).
     quint64 itemsDropped = 0;
     quint64 rowsDropped = 0;
+    /// Waterfall rows the pans' NB Blank replaced with the last accepted
+    /// row (SpectrumWidget::waterfallRowsBlanked, every pan together).
+    quint64 rowsBlanked = 0;
     /// How far behind the Core's capture the display is presented now (the
     /// audio's delay, or the last known one), or nothing while each frame is
     /// drawn on arrival (an older Core, or no clock echo yet).

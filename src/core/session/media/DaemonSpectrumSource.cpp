@@ -26,6 +26,26 @@
 // overflows are counted and logged, the engine's 5 ms skips and the clock's
 // re-anchors read out.
 // J.J. Boyd (KG4VCF), AI-assisted implementation via Anthropic Claude Code.
+// 2026-10-22: RadioModel::iqSequenceGapForStream marks the stream's sources
+// through the dropped-packet path (inputDiscontinuity), so a lost I/Q packet
+// does not paint a line across the spectrum (after Longpath PR 62).
+// J.J. Boyd (KG4VCF), with AI-assisted transformation via Claude Code.
+// 2026-10-23: a gap is marked at its place in the queued I/Q (gapAtFloat)
+// instead, and the drain asks the engine for the same bounded window reset
+// the desktop app's engines take (FFTEngine::applyPendingWindowReset), so
+// the Core and the app behave alike; engineWindowResets and
+// engineWindowResetsSkipped read the engine's counts. J.J. Boyd (KG4VCF),
+// with AI-assisted implementation via Claude Code.
+// 2026-10-24: every gap queued before a drain keeps its own place
+// (gapsAtFloat, in order), and the drain applies each at its sample
+// position under the engine's rule, which now keeps letting gaps through
+// on a lossy link until a whole window passes with none (JJ's ruling,
+// option i). J.J. Boyd (KG4VCF), with AI-assisted implementation via
+// Claude Code.
+// 2026-10-24: the engine's rule is now option c (JJ's ruling): a gap
+// within four windows of the last one is let through once a frame has
+// come since the last reset; the drain's comment says so. J.J. Boyd
+// (KG4VCF), with AI-assisted implementation via Claude Code.
 
 #include "core/ControlRanges.h"
 #include "core/session/media/DaemonSpectrumSource.h"
@@ -39,6 +59,7 @@
 #include <QMutex>
 #include <QMutexLocker>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <utility>
@@ -72,6 +93,11 @@ struct DaemonSpectrumSource::FrameState {
     bool inputDiscontinuity{false};
     int maxPendingIqFloats{0};
     QVector<float> pendingIq;
+    /// Where in pendingIq each I/Q sequence gap from the radio falls (the
+    /// floats before it came before the gap), in the order they came, one
+    /// entry per place. Cleared wherever pendingIq is emptied, for a
+    /// discontinuity, which resets the input history whole, or on retire.
+    QVector<int> gapsAtFloat;
     quint64 inputFramesDropped{0};
     quint64 completedInputHandoffs{0};
     quint64 publishedFrames{0};
@@ -99,6 +125,9 @@ struct DaemonSpectrumSource::SourceEntry {
     QPointer<FFTEngine> engine;
     QSharedPointer<FrameState> state;
     QMetaObject::Connection iqConnection;
+    /// RadioModel::iqSequenceGapForStream for this stream (attachRadioIq);
+    /// made and taken down with iqConnection.
+    QMetaObject::Connection gapConnection;
     QMetaObject::Connection frameConnection;
 };
 
@@ -123,6 +152,7 @@ DaemonSpectrumSource::~DaemonSpectrumSource()
         entry.state->replacedSinceTaken = 0;
         entry.state->notificationQueued = false;
         entry.state->pendingIq.clear();
+        entry.state->gapsAtFloat.clear();
     }
     // R-R3-49: take the radio's I/Q route down before any engine goes, as
     // deactivate() does. The radio emits on its connection thread straight
@@ -133,6 +163,8 @@ DaemonSpectrumSource::~DaemonSpectrumSource()
     for (SourceEntry& entry : m_sources) {
         QObject::disconnect(entry.iqConnection);
         entry.iqConnection = {};
+        QObject::disconnect(entry.gapConnection);
+        entry.gapConnection = {};
     }
     m_sources.clear();
     m_pool.reset();
@@ -146,6 +178,8 @@ void DaemonSpectrumSource::setRadioModel(RadioModel* radioModel)
     for (SourceEntry& entry : m_sources) {
         QObject::disconnect(entry.iqConnection);
         entry.iqConnection = {};
+        QObject::disconnect(entry.gapConnection);
+        entry.gapConnection = {};
     }
     m_radioModel = radioModel;
     for (SourceEntry& entry : m_sources) {
@@ -268,6 +302,9 @@ bool DaemonSpectrumSource::update(const MediaSourceKey& key,
             it->state->pendingIq.clear();
             ++it->state->inputFramesDropped;
         }
+        if (resetInputHistory) {
+            it->state->gapsAtFloat.clear();
+        }
         generation = ++m_nextGeneration;
         it->state->generation = generation;
     }
@@ -325,8 +362,10 @@ void DaemonSpectrumSource::deactivate(const MediaSourceKey& key)
         it->state->replacedSinceTaken = 0;
         it->state->notificationQueued = false;
         it->state->pendingIq.clear();
+        it->state->gapsAtFloat.clear();
     }
     QObject::disconnect(it->iqConnection);
+    QObject::disconnect(it->gapConnection);
     QObject::disconnect(it->frameConnection);
     m_pool->removeSource(key);
     m_sources.erase(it);
@@ -418,6 +457,22 @@ quint64 DaemonSpectrumSource::engineMinimumGapSkips(const MediaSourceKey& key) c
     if (it == m_sources.cend() || !it->engine) { return 0; }
     // An atomic in FFTEngine: safe to read off its thread.
     return it->engine->minimumGapSkips();
+}
+
+quint64 DaemonSpectrumSource::engineWindowResets(const MediaSourceKey& key) const
+{
+    const auto it = m_sources.constFind(key);
+    if (it == m_sources.cend() || !it->engine) { return 0; }
+    // An atomic in FFTEngine: safe to read off its thread.
+    return it->engine->windowResets();
+}
+
+quint64 DaemonSpectrumSource::engineWindowResetsSkipped(const MediaSourceKey& key) const
+{
+    const auto it = m_sources.constFind(key);
+    if (it == m_sources.cend() || !it->engine) { return 0; }
+    // An atomic in FFTEngine: safe to read off its thread.
+    return it->engine->windowResetsSkipped();
 }
 
 quint64 DaemonSpectrumSource::sampleClockReanchors(const MediaSourceKey& key) const
@@ -603,6 +658,7 @@ void DaemonSpectrumSource::enqueueIq(
             // from the next accepted packet. Never join samples across that
             // unknown gap in the FFT overlap ring.
             state->pendingIq.clear();
+            state->gapsAtFloat.clear();
             state->inputDiscontinuity = true;
             ++state->inputFramesDropped;
             return;
@@ -613,6 +669,7 @@ void DaemonSpectrumSource::enqueueIq(
             // ring, and keep this individually valid whole packet. The
             // already queued drain (if any) will take the replacement.
             state->pendingIq.clear();
+            state->gapsAtFloat.clear();
             state->inputDiscontinuity = true;
             ++state->inputFramesDropped;
             // 2026-10-21: counted on its own and logged, at most once an
@@ -660,17 +717,20 @@ void DaemonSpectrumSource::drainInput(FFTEngine* engine,
     // On the engine's worker thread.
     QVector<float> iq;
     bool resetInputHistory = false;
+    QVector<int> gapsAtFloat;
     {
         QMutexLocker lock(&state->mutex);
         if (state->retired || !state->active
             || state->configurationPending) {
             state->pendingIq.clear();
+            state->gapsAtFloat.clear();
             state->iqDrainQueued = false;
             return;
         }
         resetInputHistory = state->inputDiscontinuity;
         state->inputDiscontinuity = false;
         iq.swap(state->pendingIq);
+        gapsAtFloat.swap(state->gapsAtFloat);
         state->iqDrainQueued = false;
         if (resetInputHistory) {
             ++state->inputHistoryResets;
@@ -682,8 +742,39 @@ void DaemonSpectrumSource::drainInput(FFTEngine* engine,
     if (resetInputHistory) {
         engine->resetInputHistory();
     }
-    if (!iq.isEmpty()) {
-        engine->feedIQ(iq);
+    bool fed = false;
+    // NereusSDR, 2026-10-23: I/Q sequence gaps from the radio. 2026-10-24:
+    // each gap queued before this drain, in order (two or more can wait
+    // when the engine thread lags). The samples before a gap go in first,
+    // then the engine takes the gap as the desktop app's engines do
+    // (FFTEngine::requestWindowReset): it drops its window on a healthy
+    // link, and lets the gap through on a lossy one (the last gap, let
+    // through or reset, less than FFTEngine::kGapLossyLinkWindows windows
+    // before, once a frame has come since the last reset; or no frame for
+    // FFTEngine::kGapResetStallFrameIntervals frame intervals). Only a
+    // dropped window restarts the sample clock, before the samples after
+    // the gap make a frame.
+    int fedTo = 0;
+    for (const int gapAt : std::as_const(gapsAtFloat)) {
+        const int split = std::clamp(gapAt, fedTo, static_cast<int>(iq.size())) & ~1;
+        if (split > fedTo) {
+            engine->feedIQ(iq.mid(fedTo, split - fedTo));
+            fed = true;
+            fedTo = split;
+        }
+        engine->requestWindowReset();
+        if (engine->applyPendingWindowReset()) {
+            QMutexLocker lock(&state->mutex);
+            ++state->inputHistoryResets;
+            state->sampleClock.reset();
+            state->hasPublishedStamp = false;
+        }
+    }
+    if (fedTo < iq.size()) {
+        engine->feedIQ(fedTo == 0 ? iq : iq.mid(fedTo));
+        fed = true;
+    }
+    if (fed) {
         QMutexLocker lock(&state->mutex);
         ++state->completedInputHandoffs;
     }
@@ -712,6 +803,7 @@ void DaemonSpectrumSource::resetInputHistoryAll()
             continue;
         }
         state->pendingIq.clear();
+        state->gapsAtFloat.clear();
         state->inputDiscontinuity = true;
         if (!state->iqDrainQueued) {
             // No drain is waiting: post one, so the reset does not wait for
@@ -748,6 +840,33 @@ void DaemonSpectrumSource::attachRadioIq(SourceEntry& entry)
          streamIndex](int receivedStream, const QVector<float>& samples) {
             if (receivedStream == streamIndex) {
                 enqueueIq(engine, state, samples);
+            }
+        }, Qt::DirectConnection);
+    // A lost I/Q packet on this stream (-1: every stream). NereusSDR,
+    // 2026-10-22, after Longpath PR 62: the window in progress is dropped
+    // so the jump at the seam does not paint a line across the spectrum.
+    // Sent on the connection thread between the samples before the gap
+    // and after it. 2026-10-23: the gap's place in the queued samples is
+    // marked (gapsAtFloat; 2026-10-24, every gap's, in order), and the
+    // drain the next packet posts feeds the samples before each, then has
+    // the engine take the gap under the same rule as the desktop app
+    // (FFTEngine::applyPendingWindowReset), then feeds the samples after
+    // it.
+    entry.gapConnection = connect(
+        m_radioModel, &RadioModel::iqSequenceGapForStream, entry.engine,
+        [state = entry.state, streamIndex](int gapStream) {
+            if (gapStream >= 0 && gapStream != streamIndex) {
+                return;
+            }
+            QMutexLocker lock(&state->mutex);
+            if (state->retired) {
+                return;
+            }
+            // Two gaps at one place are one, as two requestWindowReset()
+            // calls before one feedIQ() are in the desktop app.
+            const int at = static_cast<int>(state->pendingIq.size());
+            if (state->gapsAtFloat.isEmpty() || state->gapsAtFloat.constLast() != at) {
+                state->gapsAtFloat.append(at);
             }
         }, Qt::DirectConnection);
 }

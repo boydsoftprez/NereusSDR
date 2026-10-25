@@ -81,6 +81,10 @@
 #               program's IPv4 socket (a data channel that never opened).
 #               J.J. Boyd (KG4VCF), with AI-assisted implementation via
 #               Anthropic Claude Code.
+#   2026-10-24: libjuice-0005: on macOS each IPv6 /64 offers the address
+#               the system sends from, so the IPv6 pair can pass stateful
+#               firewalls at both ends. J.J. Boyd (KG4VCF), with
+#               AI-assisted implementation via Anthropic Claude Code.
 #
 # =================================================================
 
@@ -296,6 +300,9 @@ function(nereus_add_remote_media_dependency)
     # same on every system.
     _nereus_apply_vendor_patch("${_dc_build_source}/deps/libjuice"
         "libjuice-0004-dual-stack-owns-ipv4-port-on-macos.patch")
+    # Also compiled on Apple systems only.
+    _nereus_apply_vendor_patch("${_dc_build_source}/deps/libjuice"
+        "libjuice-0005-offer-kernel-source-per-ipv6-prefix.patch")
     _nereus_apply_vendor_patch("${_dc_build_source}"
         "libdatachannel-0003-retain-juice-agent-through-turn-release.patch")
     _nereus_apply_vendor_patch("${_dc_build_source}"

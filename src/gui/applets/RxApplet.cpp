@@ -9,6 +9,19 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24 - Review fixes for the container copies: a copy's RX1
+//                 preamp, step attenuator and preamp edits go through the
+//                 applet's own controls (one state); the filter preset
+//                 click and edit/reset menu are one helper for the row and
+//                 its copies; a preview copy is inert and never rebuilds
+//                 the row; copies leave the copy lists when destroyed; the
+//                 moved comments are restored. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-23 - RX Filter copies honour hideTop and hideBottom.
+//                 Brian Sutton, AI-assisted via xAI Grok.
+//   2026-10-23 - The RX applet's jobs as container copies. The applet's
+//                 own panel is unchanged; the applet wires each copy.
+//                 Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-22 - RX-only 4 and 5 are named by the XVTR label. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-14 - Create/hide the existing RX1 preamp toggle on local late
@@ -221,6 +234,7 @@
 //============================================================================================//
 
 #include "RxApplet.h"
+#include "RxControlSections.h"
 #include "gui/ScopedChildWidget.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/TuneStepLabel.h"
@@ -577,6 +591,7 @@ void RxApplet::refreshAttForSlice()
                                               : QString());
         }
     }
+    pushStateToCopies();
 }
 
 // Level Cal: RX1's list (Thetis SetComboPreampForHPSDR) or RX2's own.
@@ -605,6 +620,7 @@ void RxApplet::fillPreampCombo(bool rx2)
     m_preampShowsRx2 = rx2;
     const int keep = current.isValid() ? m_preampCombo->findData(current) : -1;
     m_preampCombo->setCurrentIndex(keep >= 0 ? keep : 0);
+    pushStateToCopies();
 }
 
 void RxApplet::showPreampModeForSlice()
@@ -631,6 +647,7 @@ void RxApplet::showPreampModeForSlice()
         QSignalBlocker blk(m_preampCombo);
         m_preampCombo->setCurrentIndex(at);
     }
+    pushStateToCopies();
 }
 
 void RxApplet::showStepAttValueForSlice()
@@ -670,6 +687,7 @@ void RxApplet::showStepAttValueForSlice()
     QSignalBlocker blk(m_stepAttSpin);
     m_stepAttSpin->setMaximum(maxDb);
     m_stepAttSpin->setValue(dB);
+    pushStateToCopies();
 }
 
 void RxApplet::applyRemoteStepAttAvailability()
@@ -685,6 +703,16 @@ void RxApplet::applyRemoteStepAttAvailability()
                        static_cast<QWidget*>(m_rx1PreampToggle)}) {
         if (w) {
             setAttControlState(w, available, tip);
+        }
+    }
+    for (const auto& section : m_attCopies) {
+        if (!section) { continue; }
+        for (QWidget* w : {static_cast<QWidget*>(section->stack()),
+                           static_cast<QWidget*>(section->label()),
+                           static_cast<QWidget*>(section->rx1Preamp()),
+                           static_cast<QWidget*>(section->preampCombo()),
+                           static_cast<QWidget*>(section->stepSpin())}) {
+            if (w) { setAttControlState(w, available, tip); }
         }
     }
     showRemoteStepAttValues();
@@ -706,24 +734,8 @@ void RxApplet::ensureRx1PreampToggle()
     // Phase 3P-B Task 10: RX1 preamp wires to P2RadioConnection::setRx1Preamp
     // which routes to CodecContext.p2Rx1Preamp → byte 1403 bit 1.
     connect(m_rx1PreampToggle, &QCheckBox::toggled, this, [this](bool on) {
-        if (!m_model) { return; }
-        if (isListening()) { return; }  // TX rulings (item 3)
-        // R-R3-46: a remote window has no connection of its own;
-        // the toggle writes the Core's `stepAtt` object instead.
-        if (!m_model->ownsLocalDsp()) {
-            if (StepAttenuatorFacade* stepAtt = m_model->stepAttFacade()) {
-                stepAtt->setRx1Preamp(on);
-            }
-            return;
-        }
-        auto* conn = qobject_cast<class P2RadioConnection*>(m_model->connection());
-        if (!conn) { return; }
-        // P2RadioConnection lives on m_connThread.  Dispatch onto its
-        // event loop so the m_rx[1].preamp mutation and the resulting
-        // sendCmdHighPriority() run on the connection thread, not the
-        // GUI thread.  (Codex PR #94 review.)
-        QMetaObject::invokeMethod(conn, [conn, on] { conn->setRx1Preamp(on); },
-                                  Qt::QueuedConnection);
+        onRx1PreampToggled(on);
+        pushStateToCopies();
     });
     m_ovlRow->addWidget(m_rx1PreampToggle);
     // TX rulings (item 3): built while listening, it is held at once.
@@ -836,40 +848,7 @@ void RxApplet::buildUi()
             "QPushButton:hover { color: #66aaff; }"  // §A2 one-off hover derived from #4488ff
         ));
         connect(m_rxAntBtn, &QPushButton::clicked, this, [this] {
-            if (isListening()) { return; }  // Task 15: another device controls it
-            // B3: AntennaPopupBuilder — capability-gated popup (Phase 3P-I-a T22).
-            // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
-            ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
-            QMenu& menu = *menuOwner.get();
-            // Dark popup palette — without this, Ubuntu's default theme renders
-            // items as dark-on-dark (only visible on hover). Issue #98.
-            menu.setStyleSheet(QStringLiteral(
-                "QMenu { background: #1a2a3a; color: #e0e8f0;"
-                "        border: 1px solid #304050; }"
-                "QMenu::item { padding: 4px 20px; }"
-                "QMenu::item:selected { background: #2a5a8a; color: #ffffff; }"));
-            const QString cur = m_slice ? m_slice->rxAntenna() : QString{};
-            if (m_popupCaps && m_popupSku) {
-                AntennaPopupBuilder::populate(&menu, *m_popupCaps, *m_popupSku,
-                    AntennaPopupBuilder::Mode::RX, cur);
-            } else {
-                for (const QString& ant : m_antList) {
-                    QAction* act = menu.addAction(ant);
-                    act->setCheckable(true);
-                    act->setChecked(ant == cur);
-                }
-            }
-            menu.setStyleSheet(QString::fromLatin1(kPopupMenu));  // Phase 3P-I-a T22 — issue #98
-            const QAction* sel = menu.exec(
-                m_rxAntBtn->mapToGlobal(QPoint(0, m_rxAntBtn->height())));
-            // Das Elternteil kann waehrend exec() gestorben sein — dann ist
-            // auch das Menue weg und `this` eine Leiche. Siehe ScopedChildWidget.h.
-            if (!menuOwner) { return; }
-            if (sel && m_slice) {
-                const QString text = sel->data().isValid() ? sel->data().toString()
-                                                           : sel->text();
-                m_slice->setRxAntenna(text);
-            }
+            showRxAntennaMenu(m_rxAntBtn);
         });
         row->addWidget(m_rxAntBtn);
 
@@ -889,52 +868,7 @@ void RxApplet::buildUi()
             "QPushButton:hover { color: #ff6666; }"  // §A2 one-off hover derived from #ff4444
         ));
         connect(m_txAntBtn, &QPushButton::clicked, this, [this] {
-            if (isListening()) { return; }  // Task 15: another device controls it
-            // Follow the Setup grid's blocked-port refusal, using the facade
-            // for both local controller state and the remote Core's mirror.
-            auto isBlocked = [this](const QString& ant) {
-                const AlexAntennaFacade* const alex = m_model ? m_model->alexAntennaFacade() : nullptr;
-                return alex && ((ant == QStringLiteral("ANT2") && alex->blockTxAnt2())
-                             || (ant == QStringLiteral("ANT3") && alex->blockTxAnt3()));
-            };
-            // B3: AntennaPopupBuilder TX mode — only main ANT1-3 (Phase 3P-I-a T22).
-            // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
-            ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
-            QMenu& menu = *menuOwner.get();
-            // Dark popup palette — see RX button above. Issue #98.
-            menu.setStyleSheet(QStringLiteral(
-                "QMenu { background: #1a2a3a; color: #e0e8f0;"
-                "        border: 1px solid #304050; }"
-                "QMenu::item { padding: 4px 20px; }"
-                "QMenu::item:selected { background: #2a5a8a; color: #ffffff; }"));
-            const QString cur = m_slice ? m_slice->txAntenna() : QString{};
-            if (m_popupCaps && m_popupSku) {
-                AntennaPopupBuilder::populate(&menu, *m_popupCaps, *m_popupSku,
-                    AntennaPopupBuilder::Mode::TX, cur);
-            } else {
-                for (const QString& ant : m_antList) {
-                    QAction* act = menu.addAction(ant);
-                    act->setCheckable(true);
-                    act->setChecked(ant == cur);
-                }
-            }
-            for (QAction* action : menu.actions()) {
-                const QString ant = action->data().isValid() ? action->data().toString()
-                                                            : action->text();
-                if (isBlocked(ant)) { action->setEnabled(false); }
-            }
-            menu.setStyleSheet(QString::fromLatin1(kPopupMenu));  // Phase 3P-I-a T22 — issue #98
-            const QAction* sel = menu.exec(
-                m_txAntBtn->mapToGlobal(QPoint(0, m_txAntBtn->height())));
-            // Das Elternteil kann waehrend exec() gestorben sein — dann ist
-            // auch das Menue weg und `this` eine Leiche. Siehe ScopedChildWidget.h.
-            if (!menuOwner) { return; }
-            if (sel && m_slice) {
-                const QString text = sel->data().isValid() ? sel->data().toString()
-                                                           : sel->text();
-                // Block flags can change while the popup's event loop runs.
-                if (!isBlocked(text)) { m_slice->setTxAntenna(text); }
-            }
+            showTxAntennaMenu(m_txAntBtn);
         });
         row->addWidget(m_txAntBtn);
 
@@ -1570,6 +1504,28 @@ void RxApplet::buildUi()
     m_xitOnBtn->setToolTip(QStringLiteral("Transmit Incremental Tuning - offset TX frequency by the value below in Hz."));
 }
 
+namespace {
+
+// A filter preset's button text and tooltip, for the applet's own row and
+// its container copies alike.
+QString filterPresetLabel(int low, int high)
+{
+    const int widthHz = qAbs(high - low);
+    if (widthHz >= 1000) {
+        return QStringLiteral("%1K").arg(widthHz / 1000.0, 0, 'g', 2);
+    }
+    return QStringLiteral("%1").arg(widthHz);
+}
+
+QString filterPresetToolTip(const QString& name, int slot, int low, int high)
+{
+    return QStringLiteral("%1: %2 Hz to %3 Hz")
+        .arg(name.isEmpty() ? QStringLiteral("F%1").arg(slot + 1) : name)
+        .arg(low).arg(high);
+}
+
+} // namespace
+
 void RxApplet::rebuildFilterButtons(DSPMode mode)
 {
     // Remove all existing buttons from grid
@@ -1578,6 +1534,7 @@ void RxApplet::rebuildFilterButtons(DSPMode mode)
         btn->deleteLater();
     }
     m_filterBtns.clear();
+    m_filterPresetsMode = mode;
 
     // Stage C2: prefer FilterPresetStore (user overrides over Thetis defaults).
     // Fall back to SliceModel::presetsForMode if no store is available.
@@ -1612,15 +1569,7 @@ void RxApplet::rebuildFilterButtons(DSPMode mode)
 
     for (int i = 0; i < count; ++i) {
         const FilterPreset& fp = storePresets[i];
-        const int widthHz = qAbs(fp.high - fp.low);
-        QString label;
-        if (widthHz >= 1000) {
-            label = QStringLiteral("%1K").arg(widthHz / 1000.0, 0, 'g', 2);
-        } else {
-            label = QStringLiteral("%1").arg(widthHz);
-        }
-
-        auto* btn = blueToggle(label, -1, 20);
+        auto* btn = blueToggle(filterPresetLabel(fp.low, fp.high), -1, 20);
         btn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
         btn->setCheckable(true);
         // Smaller padding than base style to fit narrow column
@@ -1628,80 +1577,21 @@ void RxApplet::rebuildFilterButtons(DSPMode mode)
         btn->setStyleSheet(btn->styleSheet() + QStringLiteral(
             "QPushButton { padding: 1px 2px; }"));
         // Tooltip: show name + filter edges
-        btn->setToolTip(QStringLiteral("%1: %2 Hz to %3 Hz")
-            .arg(fp.name.isEmpty() ? QStringLiteral("F%1").arg(i + 1) : fp.name)
-            .arg(fp.low).arg(fp.high));
+        btn->setToolTip(filterPresetToolTip(fp.name, i, fp.low, fp.high));
 
         const int low  = fp.low;
         const int high = fp.high;
-        connect(btn, &QPushButton::clicked, this, [this, low, high, mode] {
-            if (isRade2DspMode(mode) && (!m_model || !m_model->radeV2Enabled())) { return; }
-            // Task 15: another device controls this slice; neither the RX
-            // preset nor the Shift-click TX match applies.
-            if (isListening()) { return; }
-            applyFilterPreset(low, high);
-            // Shift+click — also snap the TX passband to match the RX preset
-            // (Thetis-style alignment shortcut).  Convert IQ-space preset
-            // values to TX audio Hz: LSB family flips magnitude order, USB
-            // family is identity, symmetric uses (0, |high|).
-            if (QGuiApplication::keyboardModifiers() & Qt::ShiftModifier) {
-                // R-R3-49 (parity Task 1): the TX passband match is a
-                // transmit setting; when it cannot be made, say why.
-                if (!m_model) { return; }
-                if (!m_transmitSettingsPermitted) {
-                    emit transmitSettingRefused(m_transmitSettingsReason);
-                    return;
-                }
-                const bool isSymmetric =
-                    mode == DSPMode::AM || mode == DSPMode::SAM
-                 || mode == DSPMode::DSB || mode == DSPMode::FM
-                 || mode == DSPMode::DRM;
-                int audioLow, audioHigh;
-                if (isSymmetric) {
-                    audioLow  = 0;
-                    audioHigh = qAbs(high);
-                } else {
-                    const int aLow  = qAbs(low);
-                    const int aHigh = qAbs(high);
-                    audioLow  = qMin(aLow, aHigh);
-                    audioHigh = qMax(aLow, aHigh);
-                }
-                m_model->transmitModel().setFilterLow(audioLow);
-                m_model->transmitModel().setFilterHigh(audioHigh);
-            }
-        });
-
-        // Stage C2: right-click context menu → edit / reset this preset.
-        btn->setContextMenuPolicy(Qt::CustomContextMenu);
-        const int slot = i;
-        connect(btn, &QPushButton::customContextMenuRequested, this,
-                [this, slot, mode](const QPoint& pos) {
-            if (!m_model || !m_model->filterPresetStore()) { return; }
-            FilterPresetStore* store = m_model->filterPresetStore();
-            // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
-            ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
-            QMenu& menu = *menuOwner.get();
-            menu.setStyleSheet(QString::fromLatin1(kPopupMenu));  // Stage C2 — issue #98 parity
-            QAction* editAct = menu.addAction(QStringLiteral("Edit this preset…"));
-            QAction* resetAct = menu.addAction(QStringLiteral("Reset this preset"));
-            QAction* chosen = menu.exec(qobject_cast<QWidget*>(sender())->mapToGlobal(pos));
-            // Das Elternteil kann waehrend exec() gestorben sein — dann ist
-            // auch das Menue weg und `this` eine Leiche. Siehe ScopedChildWidget.h.
-            if (!menuOwner) { return; }
-            if (chosen == editAct) {
-                auto* dlg = new FilterPresetEditDialog(store, mode, slot, this);
-                dlg->setAttribute(Qt::WA_DeleteOnClose);
-                dlg->exec();
-            } else if (chosen == resetAct) {
-                store->resetPreset(mode, slot);
-            }
-        });
+        wireFilterPresetButton(btn, i, low, high, mode);
 
         m_filterBtns.append(btn);
         m_filterGrid->addWidget(btn, i / kCols, i % kCols);
         // Task 15: a rebuild while listening (the controlling device changed
         // the mode) holds the new buttons like the rest.
         holdForListening(btn);
+    }
+
+    for (const auto& section : m_filterCopies) {
+        if (section) { fillWorkspaceFilterButtons(section, mode); }
     }
 
     // 2026-05-12 bench fix (PR #238): force the grid to re-resolve
@@ -1745,16 +1635,19 @@ void RxApplet::updateFilterButtons()
         QSignalBlocker blocker(btn);
         btn->setChecked(match);
     }
+    pushStateToCopies();
 }
 
 void RxApplet::updateFilterLabel()
 {
     if (!m_slice) {
         m_filterWidthLbl->setText(QStringLiteral("---"));
+        pushStateToCopies();
         return;
     }
     m_filterWidthLbl->setText(
         formatFilterWidth(m_slice->filterLow(), m_slice->filterHigh()));
+    pushStateToCopies();
 }
 
 QString RxApplet::formatFilterWidth(int low, int high)
@@ -1840,6 +1733,67 @@ QList<QWidget*> RxApplet::listeningHeldControls() const
     };
     for (QPushButton* btn : m_filterBtns) {
         held.append(btn);
+    }
+    for (const auto& section : m_antennaCopies) {
+        if (section) {
+            held.append(section->rxButton());
+            held.append(section->txButton());
+        }
+    }
+    for (const auto& section : m_modeCopies) {
+        if (section) { held.append(section->combo()); }
+    }
+    for (const auto& section : m_stepCopies) {
+        if (section) {
+            held.append(section->down());
+            held.append(section->up());
+        }
+    }
+    for (const auto& section : m_filterCopies) {
+        if (!section) { continue; }
+        held.append(section->passband());
+        for (QPushButton* btn : section->buttons()) { held.append(btn); }
+    }
+    for (const auto& section : m_panCopies) {
+        if (section) { held.append(section->slider()); }
+    }
+    for (const auto& section : m_squelchCopies) {
+        if (section) {
+            held.append(section->button());
+            held.append(section->slider());
+        }
+    }
+    for (const auto& section : m_attCopies) {
+        if (section) {
+            held.append(section->label());
+            held.append(section->stack());
+            held.append(section->preampCombo());
+            held.append(section->stepSpin());
+            held.append(section->rx1Preamp());
+        }
+    }
+    for (const auto& section : m_agcCopies) {
+        if (section) {
+            held.append(section->combo());
+            held.append(section->slider());
+            held.append(section->autoButton());
+        }
+    }
+    for (const auto& section : m_ritCopies) {
+        if (section) {
+            held.append(section->onButton());
+            held.append(section->zeroButton());
+            held.append(section->minus());
+            held.append(section->plus());
+        }
+    }
+    for (const auto& section : m_xitCopies) {
+        if (section) {
+            held.append(section->onButton());
+            held.append(section->zeroButton());
+            held.append(section->minus());
+            held.append(section->plus());
+        }
     }
     held.removeAll(nullptr);
     return held;
@@ -2040,6 +1994,7 @@ void RxApplet::setAntennaList(const QStringList& ants)
         m_rxAntBtn->setText(m_slice->rxAntenna());
         m_txAntBtn->setText(m_slice->txAntenna());
     }
+    pushStateToCopies();
 }
 
 // R-R3-49 (parity Task 1): the transmit settings gate. Only the
@@ -2063,6 +2018,11 @@ void RxApplet::setBoardCapabilities(const BoardCapabilities& caps)
     const bool showAnt = caps.hasAlex && caps.antennaInputCount >= 3;
     if (m_rxAntBtn) { m_rxAntBtn->setVisible(showAnt); }
     if (m_txAntBtn) { m_txAntBtn->setVisible(showAnt); }
+    for (const auto& section : m_antennaCopies) {
+        if (!section) { continue; }
+        section->rxButton()->setVisible(showAnt);
+        section->txButton()->setVisible(showAnt);
+    }
 
     // hermes-filter-debug Bug 1: re-range the S-ATT spinbox from caps on
     // every board change.  The construction-time setRange (line 599) runs
@@ -2075,6 +2035,11 @@ void RxApplet::setBoardCapabilities(const BoardCapabilities& caps)
     // [v2.10.3.13-beta2]) takes effect as soon as caps are known.
     if (m_stepAttSpin && caps.attenuator.present) {
         m_stepAttSpin->setRange(caps.attenuator.minDb, caps.attenuator.maxDb);
+        for (const auto& section : m_attCopies) {
+            if (!section || !section->stepSpin()) { continue; }
+            QSignalBlocker block(section->stepSpin());
+            section->stepSpin()->setRange(caps.attenuator.minDb, caps.attenuator.maxDb);
+        }
     }
 
     // B3: store caps for AntennaPopupBuilder (popup lambdas read this).
@@ -2088,6 +2053,11 @@ void RxApplet::setBoardCapabilities(const BoardCapabilities& caps)
     }
     if (m_rx1PreampToggle) {
         m_rx1PreampToggle->setVisible(caps.p2PreampPerAdc);
+    }
+    for (const auto& section : m_attCopies) {
+        if (section && section->rx1Preamp()) {
+            section->rx1Preamp()->setVisible(caps.p2PreampPerAdc);
+        }
     }
 
     // R-R3-46: a remote window has no radio connection of its own, so
@@ -2104,6 +2074,7 @@ void RxApplet::setBoardCapabilities(const BoardCapabilities& caps)
         // whether the row (the toggle too) takes edits now.
         applyRemoteStepAttAvailability();
     }
+    pushStateToCopies();
 }
 
 // R-R3-46: the preamp items and the S-ATT range for one board, keeping the
@@ -2223,6 +2194,7 @@ void RxApplet::syncFromModel()
     // NB button + NB1 tuning sliders removed from RxApplet per strict Thetis
     // parity. NB state lives on VFO flag, Setup → DSP → NB/SNB, and menu bar.
 
+    pushStateToCopies();
     m_updatingFromModel = false;
 }
 
@@ -2243,6 +2215,7 @@ void RxApplet::connectSlice(SliceModel* s)
         updateFilterLabel();
         updateFilterButtons();
         m_filterPassband->setMode(name);
+        pushStateToCopies();
     });
 
     // AGC change → update combo
@@ -2256,6 +2229,7 @@ void RxApplet::connectSlice(SliceModel* s)
             }
         }
         m_updatingFromModel = false;
+        pushStateToCopies();
     });
 
     // AF gain slider removed from RxApplet (§B4) — signal handled by VfoWidget.
@@ -2265,14 +2239,17 @@ void RxApplet::connectSlice(SliceModel* s)
     connect(s, &SliceModel::audioPanChanged, this, [this](double pan) {
         QSignalBlocker bl(m_panSlider);
         m_panSlider->setValue(qRound(pan * 50.0 + 50.0));
+        pushStateToCopies();
     });
     connect(s, &SliceModel::ssqlEnabledChanged, this, [this](bool on) {
         QSignalBlocker bl(m_sqlBtn);
         m_sqlBtn->setChecked(on);
+        pushStateToCopies();
     });
     connect(s, &SliceModel::ssqlThreshChanged, this, [this](double thresh) {
         QSignalBlocker bl(m_sqlSlider);
         m_sqlSlider->setValue(qRound(thresh));
+        pushStateToCopies();
     });
 
     // AGC-T slider model→UI sync (§B1 fix-up).
@@ -2288,6 +2265,7 @@ void RxApplet::connectSlice(SliceModel* s)
                 m_agcTLabel->setText(QString::number(v));
             }
         }
+        pushStateToCopies();
     });
 
     // Filter change → update label + buttons + passband widget
@@ -2295,14 +2273,17 @@ void RxApplet::connectSlice(SliceModel* s)
         updateFilterLabel();
         updateFilterButtons();
         m_filterPassband->setFilter(lo, hi);
+        pushStateToCopies();
     });
 
     // Antenna changes → update button labels
     connect(s, &SliceModel::rxAntennaChanged, this, [this](const QString& ant) {
         m_rxAntBtn->setText(ant);
+        pushStateToCopies();
     });
     connect(s, &SliceModel::txAntennaChanged, this, [this](const QString& ant) {
         m_txAntBtn->setText(ant);
+        pushStateToCopies();
     });
 
     // Lock model → UI sync (S2.9)
@@ -2319,11 +2300,13 @@ void RxApplet::connectSlice(SliceModel* s)
         m_updatingFromModel = true;
         m_ritOnBtn->setChecked(on);
         m_updatingFromModel = false;
+        pushStateToCopies();
     });
     connect(s, &SliceModel::ritHzChanged, this, [this](int hz) {
         m_ritLabel->setText(QStringLiteral("%1%2 Hz")
             .arg(hz >= 0 ? QStringLiteral("+") : QString{})
             .arg(hz));
+        pushStateToCopies();
     });
 
     // XIT model → UI sync (B6)
@@ -2332,16 +2315,19 @@ void RxApplet::connectSlice(SliceModel* s)
         QSignalBlocker bl(m_xitOnBtn);
         m_xitOnBtn->setChecked(on);
         m_updatingFromModel = false;
+        pushStateToCopies();
     });
     connect(s, &SliceModel::xitHzChanged, this, [this](int hz) {
         m_xitLabel->setText(QStringLiteral("%1%2 Hz")
             .arg(hz >= 0 ? QStringLiteral("+") : QString{})
             .arg(hz));
+        pushStateToCopies();
     });
 
     // Step size model → label sync (Issue #69)
     connect(s, &SliceModel::stepHzChanged, this, [this](int hz) {
         m_stepLabel->setText(formatTuneStepLabel(hz));
+        pushStateToCopies();
     });
 
     // NB controls (button + tuning sliders) removed from RxApplet per strict
@@ -2558,6 +2544,7 @@ void RxApplet::updateAgcAutoVisuals(bool autoOn, float noiseFloorDbm, double off
             m_agcInfoLabel->hide();
         }
     }
+    pushStateToCopies();
 }
 
 // Phase 3P-F Task 4: Per-band antenna populate from AlexController.
@@ -2605,6 +2592,7 @@ void RxApplet::populateAntennaButtons(Band band)
     if (isListening()) {
         m_rxAntBtn->setText(m_slice->rxAntenna());
         m_txAntBtn->setText(txLabel);
+        pushStateToCopies();
         return;
     }
 
@@ -2616,6 +2604,650 @@ void RxApplet::populateAntennaButtons(Band band)
     if (m_slice->rxAntenna() != rxLabel) {
         m_slice->setRxAntenna(rxLabel);
     }
+    pushStateToCopies();
+}
+
+void RxApplet::showRxAntennaMenu(QPushButton* anchor)
+{
+    if (!anchor || isListening()) { return; }  // Task 15: another device controls it
+    // B3: AntennaPopupBuilder — capability-gated popup (Phase 3P-I-a T22).
+    // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+    ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+    QMenu& menu = *menuOwner.get();
+    // Dark popup palette — without this, Ubuntu's default theme renders
+    // items as dark-on-dark (only visible on hover). Issue #98.
+    menu.setStyleSheet(QStringLiteral(
+        "QMenu { background: #1a2a3a; color: #e0e8f0;"
+        "        border: 1px solid #304050; }"
+        "QMenu::item { padding: 4px 20px; }"
+        "QMenu::item:selected { background: #2a5a8a; color: #ffffff; }"));
+    const QString cur = m_slice ? m_slice->rxAntenna() : QString{};
+    if (m_popupCaps && m_popupSku) {
+        AntennaPopupBuilder::populate(&menu, *m_popupCaps, *m_popupSku,
+            AntennaPopupBuilder::Mode::RX, cur);
+    } else {
+        for (const QString& ant : m_antList) {
+            QAction* act = menu.addAction(ant);
+            act->setCheckable(true);
+            act->setChecked(ant == cur);
+        }
+    }
+    menu.setStyleSheet(QString::fromLatin1(kPopupMenu));  // Phase 3P-I-a T22 — issue #98
+    const QAction* sel = menu.exec(anchor->mapToGlobal(QPoint(0, anchor->height())));
+    // Das Elternteil kann waehrend exec() gestorben sein — dann ist
+    // auch das Menue weg und `this` eine Leiche. Siehe ScopedChildWidget.h.
+    if (!menuOwner) { return; }
+    if (sel && m_slice) {
+        const QString text = sel->data().isValid() ? sel->data().toString() : sel->text();
+        m_slice->setRxAntenna(text);
+    }
+}
+
+void RxApplet::showTxAntennaMenu(QPushButton* anchor)
+{
+    if (!anchor || isListening()) { return; }  // Task 15: another device controls it
+    // Follow the Setup grid's blocked-port refusal, using the facade
+    // for both local controller state and the remote Core's mirror.
+    auto isBlocked = [this](const QString& ant) {
+        const AlexAntennaFacade* const alex = m_model ? m_model->alexAntennaFacade() : nullptr;
+        return alex && ((ant == QStringLiteral("ANT2") && alex->blockTxAnt2())
+                     || (ant == QStringLiteral("ANT3") && alex->blockTxAnt3()));
+    };
+    // B3: AntennaPopupBuilder TX mode — only main ANT1-3 (Phase 3P-I-a T22).
+    // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+    ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+    QMenu& menu = *menuOwner.get();
+    // Dark popup palette — see RX button above. Issue #98.
+    menu.setStyleSheet(QStringLiteral(
+        "QMenu { background: #1a2a3a; color: #e0e8f0;"
+        "        border: 1px solid #304050; }"
+        "QMenu::item { padding: 4px 20px; }"
+        "QMenu::item:selected { background: #2a5a8a; color: #ffffff; }"));
+    const QString cur = m_slice ? m_slice->txAntenna() : QString{};
+    if (m_popupCaps && m_popupSku) {
+        AntennaPopupBuilder::populate(&menu, *m_popupCaps, *m_popupSku,
+            AntennaPopupBuilder::Mode::TX, cur);
+    } else {
+        for (const QString& ant : m_antList) {
+            QAction* act = menu.addAction(ant);
+            act->setCheckable(true);
+            act->setChecked(ant == cur);
+        }
+    }
+    for (QAction* action : menu.actions()) {
+        const QString ant = action->data().isValid() ? action->data().toString() : action->text();
+        if (isBlocked(ant)) { action->setEnabled(false); }
+    }
+    menu.setStyleSheet(QString::fromLatin1(kPopupMenu));  // Phase 3P-I-a T22 — issue #98
+    const QAction* sel = menu.exec(anchor->mapToGlobal(QPoint(0, anchor->height())));
+    // Das Elternteil kann waehrend exec() gestorben sein — dann ist
+    // auch das Menue weg und `this` eine Leiche. Siehe ScopedChildWidget.h.
+    if (!menuOwner) { return; }
+    if (sel && m_slice) {
+        const QString text = sel->data().isValid() ? sel->data().toString() : sel->text();
+        // Block flags can change while the popup's event loop runs.
+        if (!isBlocked(text)) { m_slice->setTxAntenna(text); }
+    }
+}
+
+void RxApplet::onRx1PreampToggled(bool on)
+{
+    if (m_updatingFromModel || !m_model) { return; }
+    if (isListening()) { return; }  // TX rulings (item 3)
+    // R-R3-46: a remote window has no connection of its own;
+    // the toggle writes the Core's `stepAtt` object instead.
+    if (!m_model->ownsLocalDsp()) {
+        if (StepAttenuatorFacade* stepAtt = m_model->stepAttFacade()) {
+            stepAtt->setRx1Preamp(on);
+        }
+        return;
+    }
+    auto* conn = qobject_cast<P2RadioConnection*>(m_model->connection());
+    if (!conn) { return; }
+    // P2RadioConnection lives on m_connThread.  Dispatch onto its
+    // event loop so the m_rx[1].preamp mutation and the resulting
+    // sendCmdHighPriority() run on the connection thread, not the
+    // GUI thread.  (Codex PR #94 review.)
+    QMetaObject::invokeMethod(conn, [conn, on] { conn->setRx1Preamp(on); },
+                              Qt::QueuedConnection);
+}
+
+void RxApplet::wireAntennasSection(RxAntennasSection* section)
+{
+    connect(section->rxButton(), &QPushButton::clicked, this, [this, section] {
+        showRxAntennaMenu(section->rxButton());
+    });
+    connect(section->txButton(), &QPushButton::clicked, this, [this, section] {
+        showTxAntennaMenu(section->txButton());
+    });
+}
+
+void RxApplet::wireModeSection(RxModeSection* section)
+{
+    connect(section->combo(), QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this, section](int) {
+        if (m_updatingFromModel || !m_slice || isListening()) { return; }
+        m_slice->setDspMode(SliceModel::modeFromName(section->combo()->currentText()));
+    });
+}
+
+void RxApplet::wireStepSection(RxStepSection* section)
+{
+    connect(section->down(), &QPushButton::clicked, this, [this] {
+        if (!m_slice || isListening()) { return; }
+        m_slice->changeTuneStepDown();
+    });
+    connect(section->up(), &QPushButton::clicked, this, [this] {
+        if (!m_slice || isListening()) { return; }
+        m_slice->changeTuneStepUp();
+    });
+}
+
+void RxApplet::wireFilterSection(RxFilterSection* section)
+{
+    connect(section->passband(), &FilterPassbandWidget::filterChanged,
+            this, [this](int lo, int hi) {
+        if (m_updatingFromModel || !m_slice || isListening()) { return; }
+        m_slice->setFilter(lo, hi);
+    });
+}
+
+void RxApplet::wirePanSection(RxPanSection* section)
+{
+    connect(section->slider(), &QSlider::valueChanged, this, [this](int val) {
+        if (m_updatingFromModel || !m_slice || isListening()) { return; }
+        m_slice->setAudioPan((val - 50) / 50.0);
+    });
+}
+
+void RxApplet::wireSquelchSection(RxSquelchSection* section)
+{
+    connect(section->button(), &QPushButton::toggled, this, [this](bool on) {
+        if (m_updatingFromModel || !m_slice || isListening()) { return; }
+        m_slice->setSsqlEnabled(on);
+    });
+    connect(section->slider(), &QSlider::valueChanged, this, [this](int val) {
+        if (m_updatingFromModel || !m_slice || isListening()) { return; }
+        m_slice->setSsqlThresh(static_cast<double>(val));
+    });
+}
+
+// A copy's attenuator row hands each edit to the applet's own control, so
+// the applet's handlers (local controller or the Core's `stepAtt` object)
+// apply it and the applet and every copy keep one state.
+void RxApplet::wireAttenuatorSection(RxAttenuatorSection* section)
+{
+    connect(section->stepSpin(), QOverload<int>::of(&QSpinBox::valueChanged),
+            this, [this](int val) {
+        if (m_updatingFromModel || isListening() || !m_stepAttSpin) { return; }
+        m_stepAttSpin->setValue(val);
+    });
+    connect(section->preampCombo(), QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int idx) {
+        if (idx < 0 || m_updatingFromModel || isListening() || !m_preampCombo) { return; }
+        m_preampCombo->setCurrentIndex(idx);
+    });
+    connect(section->rx1Preamp(), &QCheckBox::toggled, this, [this](bool on) {
+        if (m_updatingFromModel || isListening() || !m_rx1PreampToggle) { return; }
+        m_rx1PreampToggle->setChecked(on);
+    });
+}
+
+void RxApplet::wireAgcSection(RxAgcSection* section)
+{
+    connect(section->combo(), QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this, section](int idx) {
+        if (m_updatingFromModel || !m_slice || isListening()) { return; }
+        m_slice->setAgcMode(static_cast<AGCMode>(section->combo()->itemData(idx).toInt()));
+    });
+    connect(section->slider(), &QSlider::valueChanged, this, [this, section](int value) {
+        if (section->valueLabel()) { section->valueLabel()->setText(QString::number(value)); }
+        if (m_updatingFromModel || !m_slice || isListening()) { return; }
+        m_slice->setAgcThreshold(value);
+    });
+    connect(section->autoButton(), &QPushButton::toggled, this, [this](bool on) {
+        if (m_updatingFromModel || isListening()) { return; }
+        if (m_slice) { m_slice->setAutoAgcEnabled(on); }
+        emit autoAgcToggled(on);
+    });
+    section->slider()->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(section->slider(), &QWidget::customContextMenuRequested, this, [this](const QPoint&) {
+        emit openSetupRequested();
+    });
+}
+
+void RxApplet::wireRitSection(RxRitSection* section)
+{
+    connect(section->onButton(), &QPushButton::toggled, this, [this](bool on) {
+        if (m_updatingFromModel || !m_slice || isListening()) { return; }
+        m_slice->setRitEnabled(on);
+    });
+    connect(section->minus(), &QPushButton::clicked, this, [this] {
+        if (!m_slice || isListening()) { return; }
+        const int step = m_slice->stepHz();
+        m_slice->setRitHz(std::clamp(m_slice->ritHz() - step, -10000, 10000));
+    });
+    connect(section->plus(), &QPushButton::clicked, this, [this] {
+        if (!m_slice || isListening()) { return; }
+        const int step = m_slice->stepHz();
+        m_slice->setRitHz(std::clamp(m_slice->ritHz() + step, -10000, 10000));
+    });
+    connect(section->zeroButton(), &QPushButton::clicked, this, [this] {
+        if (!m_slice || isListening()) { return; }
+        m_slice->setRitHz(0);
+    });
+}
+
+void RxApplet::wireXitSection(RxXitSection* section)
+{
+    connect(section->onButton(), &QPushButton::toggled, this, [this](bool on) {
+        if (m_updatingFromModel || !m_slice || isListening()) { return; }
+        m_slice->setXitEnabled(on);
+    });
+    connect(section->minus(), &QPushButton::clicked, this, [this] {
+        if (!m_slice || isListening()) { return; }
+        const int step = m_slice->stepHz();
+        m_slice->setXitHz(std::clamp(m_slice->xitHz() - step, -10000, 10000));
+    });
+    connect(section->plus(), &QPushButton::clicked, this, [this] {
+        if (!m_slice || isListening()) { return; }
+        const int step = m_slice->stepHz();
+        m_slice->setXitHz(std::clamp(m_slice->xitHz() + step, -10000, 10000));
+    });
+    connect(section->zeroButton(), &QPushButton::clicked, this, [this] {
+        if (!m_slice || isListening()) { return; }
+        m_slice->setXitHz(0);
+    });
+}
+
+namespace {
+
+// A preview of a job (ContentRenderMode::Preview) shows it but can change
+// nothing: disabled, so neither a click nor a key reaches it, and no child
+// takes focus. The same rule as the TX applet's previews.
+void makeCopyInert(QWidget* copy)
+{
+    copy->setEnabled(false);
+    copy->setFocusPolicy(Qt::NoFocus);
+    for (QWidget* child : copy->findChildren<QWidget*>()) {
+        child->setFocusPolicy(Qt::NoFocus);
+    }
+}
+
+} // namespace
+
+template <typename Section>
+void RxApplet::trackCopy(QList<QPointer<Section>>& copies, Section* section)
+{
+    copies.append(section);
+    // The copy belongs to the container, which may destroy it when the
+    // operator closes the container or removes the item. The QPointer
+    // drops it on its own; this keeps the list from growing as copies
+    // come and go.
+    const QPointer<Section> guard(section);
+    connect(section, &QObject::destroyed, this, [&copies, guard] {
+        copies.removeAll(guard);
+    });
+}
+
+template <typename Section>
+void RxApplet::showStateOn(Section* section)
+{
+    if (!section || m_pushingCopies) { return; }
+    m_pushingCopies = true;
+    const bool savedGuard = m_updatingFromModel;
+    m_updatingFromModel = true;
+    syncCopy(section);
+    m_updatingFromModel = savedGuard;
+    m_pushingCopies = false;
+}
+
+// Each factory: a live copy joins the applet's copies and is wired; a
+// preview shows the applet's state once and is inert (it is not one of
+// the copies, follows no slice and changes nothing).
+template <typename Section>
+Section* RxApplet::finishCopy(Section* section, QList<QPointer<Section>>& copies, bool preview)
+{
+    showStateOn(section);
+    if (preview) {
+        makeCopyInert(section);
+        return section;
+    }
+    trackCopy(copies, section);
+    wireCopy(section);
+    applySliceAccess();
+    return section;
+}
+
+QWidget* RxApplet::createAntennasSection(QWidget* parent, bool preview)
+{
+    return finishCopy(new RxAntennasSection(parent), m_antennaCopies, preview);
+}
+
+QWidget* RxApplet::createModeSection(QWidget* parent, bool preview)
+{
+    return finishCopy(new RxModeSection(parent), m_modeCopies, preview);
+}
+
+QWidget* RxApplet::createStepSection(QWidget* parent, bool preview)
+{
+    return finishCopy(new RxStepSection(parent), m_stepCopies, preview);
+}
+
+QWidget* RxApplet::createFilterSection(QWidget* parent, const QJsonObject& config, bool preview)
+{
+    auto* section = new RxFilterSection(parent);
+    section->applyConfig(config);
+    // The copy's buttons are the applet's current presets; the applet's
+    // own row is not rebuilt for it.
+    fillWorkspaceFilterButtons(section, m_filterPresetsMode, !preview);
+    return finishCopy(section, m_filterCopies, preview);
+}
+
+QWidget* RxApplet::createPanSection(QWidget* parent, bool preview)
+{
+    return finishCopy(new RxPanSection(parent), m_panCopies, preview);
+}
+
+QWidget* RxApplet::createSquelchSection(QWidget* parent, bool preview)
+{
+    return finishCopy(new RxSquelchSection(parent), m_squelchCopies, preview);
+}
+
+QWidget* RxApplet::createAttenuatorSection(QWidget* parent, bool preview)
+{
+    return finishCopy(new RxAttenuatorSection(parent), m_attCopies, preview);
+}
+
+QWidget* RxApplet::createAgcSection(QWidget* parent, bool preview)
+{
+    return finishCopy(new RxAgcSection(parent), m_agcCopies, preview);
+}
+
+QWidget* RxApplet::createRitSection(QWidget* parent, bool preview)
+{
+    return finishCopy(new RxRitSection(parent), m_ritCopies, preview);
+}
+
+QWidget* RxApplet::createXitSection(QWidget* parent, bool preview)
+{
+    return finishCopy(new RxXitSection(parent), m_xitCopies, preview);
+}
+
+// The preset click (with the RADE v2 gate and Shift-click TX match) and
+// the edit/reset menu, for the applet's own filter row and its copies.
+void RxApplet::wireFilterPresetButton(QPushButton* btn, int slot, int low, int high, DSPMode mode)
+{
+    connect(btn, &QPushButton::clicked, this, [this, low, high, mode] {
+        if (isRade2DspMode(mode) && (!m_model || !m_model->radeV2Enabled())) { return; }
+        // Task 15: another device controls this slice; neither the RX
+        // preset nor the Shift-click TX match applies.
+        if (isListening()) { return; }
+        applyFilterPreset(low, high);
+        // Shift+click — also snap the TX passband to match the RX preset
+        // (Thetis-style alignment shortcut).  Convert IQ-space preset
+        // values to TX audio Hz: LSB family flips magnitude order, USB
+        // family is identity, symmetric uses (0, |high|).
+        if (QGuiApplication::keyboardModifiers() & Qt::ShiftModifier) {
+            // R-R3-49 (parity Task 1): the TX passband match is a
+            // transmit setting; when it cannot be made, say why.
+            if (!m_model) { return; }
+            if (!m_transmitSettingsPermitted) {
+                emit transmitSettingRefused(m_transmitSettingsReason);
+                return;
+            }
+            const bool isSymmetric =
+                mode == DSPMode::AM || mode == DSPMode::SAM
+             || mode == DSPMode::DSB || mode == DSPMode::FM
+             || mode == DSPMode::DRM;
+            int audioLow, audioHigh;
+            if (isSymmetric) {
+                audioLow  = 0;
+                audioHigh = qAbs(high);
+            } else {
+                const int aLow  = qAbs(low);
+                const int aHigh = qAbs(high);
+                audioLow  = qMin(aLow, aHigh);
+                audioHigh = qMax(aLow, aHigh);
+            }
+            m_model->transmitModel().setFilterLow(audioLow);
+            m_model->transmitModel().setFilterHigh(audioHigh);
+        }
+    });
+
+    // Stage C2: right-click context menu → edit / reset this preset.
+    btn->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(btn, &QPushButton::customContextMenuRequested, this,
+            [this, slot, mode](const QPoint& pos) {
+        if (!m_model || !m_model->filterPresetStore()) { return; }
+        FilterPresetStore* store = m_model->filterPresetStore();
+        // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
+        ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
+        QMenu& menu = *menuOwner.get();
+        menu.setStyleSheet(QString::fromLatin1(kPopupMenu));  // Stage C2 — issue #98 parity
+        QAction* editAct = menu.addAction(QStringLiteral("Edit this preset…"));
+        QAction* resetAct = menu.addAction(QStringLiteral("Reset this preset"));
+        QAction* chosen = menu.exec(qobject_cast<QWidget*>(sender())->mapToGlobal(pos));
+        // Das Elternteil kann waehrend exec() gestorben sein — dann ist
+        // auch das Menue weg und `this` eine Leiche. Siehe ScopedChildWidget.h.
+        if (!menuOwner) { return; }
+        if (chosen == editAct) {
+            auto* dlg = new FilterPresetEditDialog(store, mode, slot, this);
+            dlg->setAttribute(Qt::WA_DeleteOnClose);
+            dlg->exec();
+        } else if (chosen == resetAct) {
+            store->resetPreset(mode, slot);
+        }
+    });
+}
+
+void RxApplet::fillWorkspaceFilterButtons(RxFilterSection* section, DSPMode mode, bool wire)
+{
+    if (!section || !section->grid()) { return; }
+    QGridLayout* grid = section->grid();
+    QVector<QPushButton*>& buttons = section->buttons();
+    for (QPushButton* btn : buttons) {
+        grid->removeWidget(btn);
+        btn->deleteLater();
+    }
+    buttons.clear();
+
+    const int columns = qMax(1, section->columns());
+    const int count = qMin(m_filterPresets.size(), 10);
+    FilterPresetStore* store = m_model ? m_model->filterPresetStore() : nullptr;
+    const QList<FilterPreset> named = store ? store->presetsForMode(mode) : QList<FilterPreset>{};
+    for (int i = 0; i < count; ++i) {
+        const auto [low, high] = m_filterPresets.at(i);
+        auto* btn = new QPushButton(filterPresetLabel(low, high), section);
+        btn->setCheckable(true);
+        btn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        btn->setMinimumHeight(28);
+        btn->setStyleSheet(section->presetButtonStyle());
+        btn->setToolTip(filterPresetToolTip(i < named.size() ? named.at(i).name : QString(),
+                                            i, low, high));
+        buttons.append(btn);
+        grid->addWidget(btn, i / columns, i % columns);
+        if (wire) {
+            wireFilterPresetButton(btn, i, low, high, mode);
+            holdForListening(btn);
+        }
+    }
+    grid->invalidate();
+    if (QWidget* host = grid->parentWidget()) { host->updateGeometry(); }
+}
+
+void RxApplet::wireCopy(RxAntennasSection* section) { wireAntennasSection(section); }
+void RxApplet::wireCopy(RxModeSection* section) { wireModeSection(section); }
+void RxApplet::wireCopy(RxStepSection* section) { wireStepSection(section); }
+void RxApplet::wireCopy(RxFilterSection* section) { wireFilterSection(section); }
+void RxApplet::wireCopy(RxPanSection* section) { wirePanSection(section); }
+void RxApplet::wireCopy(RxSquelchSection* section) { wireSquelchSection(section); }
+void RxApplet::wireCopy(RxAttenuatorSection* section) { wireAttenuatorSection(section); }
+void RxApplet::wireCopy(RxAgcSection* section) { wireAgcSection(section); }
+void RxApplet::wireCopy(RxRitSection* section) { wireRitSection(section); }
+void RxApplet::wireCopy(RxXitSection* section) { wireXitSection(section); }
+
+namespace {
+
+void syncCombo(const QComboBox* from, QComboBox* to)
+{
+    if (!from || !to) { return; }
+    QSignalBlocker block(to);
+    bool same = to->count() == from->count();
+    for (int i = 0; same && i < from->count(); ++i) {
+        if (to->itemText(i) != from->itemText(i) || to->itemData(i) != from->itemData(i)) {
+            same = false;
+        }
+    }
+    if (!same) {
+        to->clear();
+        for (int i = 0; i < from->count(); ++i) {
+            to->addItem(from->itemText(i), from->itemData(i));
+            to->setItemData(i, from->itemData(i, Qt::ToolTipRole), Qt::ToolTipRole);
+        }
+    }
+    to->setCurrentIndex(from->currentIndex());
+    to->setPlaceholderText(from->placeholderText());
+}
+
+} // namespace
+
+void RxApplet::syncCopy(RxAntennasSection* section)
+{
+    if (!m_rxAntBtn || !m_txAntBtn) { return; }
+    section->rxButton()->setText(m_rxAntBtn->text());
+    section->txButton()->setText(m_txAntBtn->text());
+    section->rxButton()->setVisible(m_rxAntBtn->isVisible());
+    section->txButton()->setVisible(m_txAntBtn->isVisible());
+}
+
+void RxApplet::syncCopy(RxModeSection* section)
+{
+    syncCombo(m_modeCombo, section->combo());
+}
+
+void RxApplet::syncCopy(RxStepSection* section)
+{
+    if (m_stepLabel) { section->label()->setText(m_stepLabel->text()); }
+}
+
+void RxApplet::syncCopy(RxFilterSection* section)
+{
+    if (m_filterWidthLbl) { section->widthLabel()->setText(m_filterWidthLbl->text()); }
+    if (m_slice && section->passband()) {
+        QSignalBlocker block(section->passband());
+        section->passband()->setFilter(m_slice->filterLow(), m_slice->filterHigh());
+        section->passband()->setMode(SliceModel::modeName(m_slice->dspMode()));
+    }
+    const int n = qMin(m_filterBtns.size(), section->buttons().size());
+    for (int i = 0; i < n; ++i) {
+        QSignalBlocker block(section->buttons().at(i));
+        section->buttons().at(i)->setChecked(m_filterBtns.at(i)->isChecked());
+    }
+}
+
+void RxApplet::syncCopy(RxPanSection* section)
+{
+    if (!m_panSlider) { return; }
+    QSignalBlocker block(section->slider());
+    section->slider()->setValue(m_panSlider->value());
+}
+
+void RxApplet::syncCopy(RxSquelchSection* section)
+{
+    if (m_sqlBtn) {
+        QSignalBlocker block(section->button());
+        section->button()->setChecked(m_sqlBtn->isChecked());
+    }
+    if (m_sqlSlider) {
+        QSignalBlocker block(section->slider());
+        section->slider()->setValue(m_sqlSlider->value());
+    }
+}
+
+void RxApplet::syncCopy(RxAttenuatorSection* section)
+{
+    if (m_attLabel) { section->label()->setText(m_attLabel->text()); }
+    if (m_attStack) { section->stack()->setCurrentIndex(m_attStack->currentIndex()); }
+    syncCombo(m_preampCombo, section->preampCombo());
+    if (m_stepAttSpin && section->stepSpin()) {
+        QSignalBlocker block(section->stepSpin());
+        section->stepSpin()->setRange(m_stepAttSpin->minimum(), m_stepAttSpin->maximum());
+        section->stepSpin()->setValue(m_stepAttSpin->value());
+    }
+    if (section->rx1Preamp()) {
+        const bool show = m_rx1PreampToggle && m_rx1PreampToggle->isVisible();
+        section->rx1Preamp()->setVisible(show);
+        if (m_rx1PreampToggle) {
+            QSignalBlocker block(section->rx1Preamp());
+            section->rx1Preamp()->setChecked(m_rx1PreampToggle->isChecked());
+        }
+    }
+}
+
+void RxApplet::syncCopy(RxAgcSection* section)
+{
+    syncCombo(m_agcCombo, section->combo());
+    if (m_agcTSlider && section->slider()) {
+        QSignalBlocker block(section->slider());
+        section->slider()->setValue(m_agcTSlider->value());
+    }
+    if (m_agcTLabel && section->valueLabel()) {
+        section->valueLabel()->setText(m_agcTLabel->text());
+    }
+    if (section->autoButton()) {
+        QSignalBlocker block(section->autoButton());
+        section->autoButton()->setChecked(m_autoAgcActive);
+    }
+    if (m_agcInfoLabel && section->infoLabel()) {
+        section->infoLabel()->setText(m_agcInfoLabel->text());
+        section->infoLabel()->setVisible(m_agcInfoLabel->isVisible());
+    }
+}
+
+void RxApplet::syncCopy(RxRitSection* section)
+{
+    if (m_ritOnBtn) {
+        QSignalBlocker block(section->onButton());
+        section->onButton()->setChecked(m_ritOnBtn->isChecked());
+    }
+    if (m_ritLabel) { section->label()->setText(m_ritLabel->text()); }
+}
+
+void RxApplet::syncCopy(RxXitSection* section)
+{
+    if (m_xitOnBtn) {
+        QSignalBlocker block(section->onButton());
+        section->onButton()->setChecked(m_xitOnBtn->isChecked());
+    }
+    if (m_xitLabel) { section->label()->setText(m_xitLabel->text()); }
+}
+
+void RxApplet::pushStateToCopies()
+{
+    if (m_pushingCopies) { return; }
+    m_pushingCopies = true;
+    const bool savedGuard = m_updatingFromModel;
+    m_updatingFromModel = true;
+
+    const auto each = [this](const auto& copies) {
+        for (const auto& section : copies) {
+            if (section) { syncCopy(section.data()); }
+        }
+    };
+    each(m_antennaCopies);
+    each(m_modeCopies);
+    each(m_stepCopies);
+    each(m_filterCopies);
+    each(m_panCopies);
+    each(m_squelchCopies);
+    each(m_attCopies);
+    each(m_agcCopies);
+    each(m_ritCopies);
+    each(m_xitCopies);
+
+    m_updatingFromModel = savedGuard;
+    m_pushingCopies = false;
 }
 
 #ifdef NEREUS_BUILD_TESTS

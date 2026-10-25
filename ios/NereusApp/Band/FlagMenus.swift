@@ -375,7 +375,7 @@ struct FlagMoreMenu: View {
         }
         FlagMenuChrome.item(FlagControls.MoreItem.sampleRate, large: large, disabled: rates.isEmpty,
                             identifier: "flagMoreSampleRate") {
-            controls.rateListOpen.toggle()
+            controls.toggleRateList()
         }
         .accessibilityValue(controls.rateListOpen ? "Open" : "")
         if controls.rateListOpen {
@@ -389,6 +389,9 @@ struct FlagMoreMenu: View {
                 }
             }
             .padding(.leading, 12)
+        }
+        if let sMeter = controls.sMeter {
+            meterChoice(sMeter)
         }
         FlagMenuChrome.separatorLine()
         if let model = controls.diversity {
@@ -408,6 +411,38 @@ struct FlagMoreMenu: View {
         }
         if id == 0 {
             FlagMenuChrome.reason(FlagControls.sliceAStaysOpenText, large: large)
+        }
+    }
+}
+
+extension FlagMoreMenu {
+    /// The flags' S-meter source (JJ, 2026-10-23): Peak, Average or Max
+    /// Bin, the current one ticked. It is the S-meter's RX Mode, so every
+    /// flag follows it, as a desktop window's flags follow its S-meter. Max
+    /// Bin is greyed, with the reason, while this slice's pan is not drawn.
+    @ViewBuilder
+    func meterChoice(_ sMeter: SMeterModel) -> some View {
+        let current = FlagMeterChoice(sMeter.state.settings.rxMode)
+        FlagMenuChrome.item(FlagControls.MoreItem.sMeter(current), large: large, identifier: "flagMoreSMeter") {
+            controls.toggleMeterList()
+        }
+        .accessibilityValue(controls.meterListOpen ? "Open" : current.label)
+        if controls.meterListOpen {
+            let maxBinReason = sMeter.flagMaxBinReason(for: entry)
+            VStack(spacing: 0) {
+                ForEach(FlagMeterChoice.allCases, id: \.self) { choice in
+                    let reason = choice == .maxBin && current != .maxBin ? maxBinReason : nil
+                    FlagMenuChrome.item(choice.label, large: large, checked: choice == current,
+                                        disabled: reason != nil, identifier: "flagMeter\(choice.rawValue)",
+                                        hint: reason ?? "") {
+                        controls.pickFlagMeter(choice)
+                    }
+                    if let reason {
+                        FlagMenuChrome.reason(reason, large: large)
+                    }
+                }
+            }
+            .padding(.leading, 12)
         }
     }
 }

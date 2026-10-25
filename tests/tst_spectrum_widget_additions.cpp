@@ -17,9 +17,13 @@
 //   - Auto spacing draws the steps it drew before the fixed spacing existed,
 //     on the grid and on the scale (they are two ladders and differ);
 //   - the scale strip is 28 px tall and its text is the 10 px it was;
-//   - NB Blank off changes no row; on, it judges a row on linear power,
-//     replaces a 1.2x row and keeps a 1.1x row at the default threshold,
-//     and stands still while the pan transmits;
+//   - NB Blank off changes no row; on, it judges a row by the median of
+//     its pixels in dB (since 2026-10-22), replaces a row risen more than
+//     the threshold and keeps one risen less, and stands still while the
+//     pan transmits;
+//   - NB Blank on draws a loud station on 5 % of the pixels as it is, row
+//     after row, and replaces a fence charger's pulse (every pixel up),
+//     counting it in waterfallRowsBlanked();
 //   - a fixed spacing reaches both the grid and the scale, and crowded
 //     scale labels are thinned;
 //   - 14 px scale text is drawn inside the strip;
@@ -51,6 +55,13 @@
 // Isolation: TestSandboxInit redirects the settings path away from the
 // operator's profile, and init()/cleanup() clear the in-process store
 // around every slot (as tst_pan_display_settings_inherit does).
+//
+// Modification history (NereusSDR):
+//   2026-10-22  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
+//                 (Claude Opus 5.5): NB Blank's rows are risen across the
+//                 whole row (a median-judged blanker ignores one bright
+//                 pixel); a loud station is drawn as is and a fence pulse
+//                 is replaced and counted.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -61,6 +72,7 @@
 #include <QTemporaryDir>
 
 #include <cmath>
+#include <random>
 
 #include "core/AppSettings.h"
 #include "core/settings/PanDisplayKeys.h"
@@ -91,9 +103,9 @@ int countOf(const QSignalSpy& spy, const QString& keyBase)
 }
 
 // A row at kQuietDbm whose LINEAR-power mean is `factor` times a flat
-// kQuietDbm row's, with all of the extra power in the one middle pixel. Its
-// mean in dB barely moves (under 0.03 dB for the widths used here), so a
-// blanker that averaged dBm values would never call it a burst.
+// kQuietDbm row's, with all of the extra power in the one middle pixel.
+// Since 2026-10-22 NB Blank judges a row by its median, which one pixel does
+// not move, so this row is never a burst; it shows NB Blank off drawing it.
 QVector<float> burstRow(int n, double factor)
 {
     QVector<float> row(n, kQuietDbm);
@@ -103,10 +115,34 @@ QVector<float> burstRow(int n, double factor)
     return row;
 }
 
-// The same row with its mean power `db` dB above a flat kQuietDbm row's.
+// A flat row `db` dB above kQuietDbm in every pixel: what a wideband
+// impulse (a fence charger's click) does to a row.
 QVector<float> burstRowDb(int n, double db)
 {
-    return burstRow(n, std::pow(10.0, db / 10.0));
+    return QVector<float>(n, static_cast<float>(kQuietDbm + db));
+}
+
+// A noisy floor row: `floorDbm` with uniform +/-2 dB noise, and pixels
+// [signalFirst, signalFirst + signalPixels) `signalDb` over it.
+QVector<float> noisyRow(std::mt19937& rng, int n, float floorDbm,
+                        int signalFirst = 0, int signalPixels = 0, float signalDb = 0.0f)
+{
+    std::uniform_real_distribution<float> noise(-2.0f, 2.0f);
+    QVector<float> row(n);
+    for (int i = 0; i < n; ++i) {
+        row[i] = floorDbm + noise(rng);
+        if (i >= signalFirst && i < signalFirst + signalPixels) {
+            row[i] += signalDb;
+        }
+    }
+    return row;
+}
+
+// The newest waterfall row, every pixel.
+QImage newestLine(const SpectrumWidget& w)
+{
+    const QImage& img = w.liveWaterfallForTest();
+    return img.copy(0, w.liveWaterfallWriteRowForTest(), img.width(), 1);
 }
 
 // A shown widget with a waterfall image and fixed waterfall levels, so a
@@ -636,10 +672,7 @@ private slots:
 
     // ── NB Blank on at 6 dB: 7 dB over is replaced, 5 dB over is kept ───
     //
-    // Both rows differ from the baseline only in one pixel, so a mean of
-    // their dBm values is the baseline's to within 0.03 dB. Only a mean
-    // taken on linear power, then put in dB, tells them apart from a quiet
-    // row, and from each other.
+    // Both rows are risen in every pixel, as a wideband impulse is.
     void blankOn_replacesABurst_keepsARise()
     {
         SpectrumWidget w;
@@ -671,6 +704,7 @@ private slots:
         const NewestRow replaced = newestRow(w);
         QCOMPARE(replaced.middle, quiet.middle);
         QCOMPARE(replaced.first, quiet.first);
+        QCOMPARE(w.waterfallRowsBlanked(), quint64(1));
 
         // A wider threshold lets the same row through.
         w.setWaterfallBlankingThresholdDb(10);
@@ -704,9 +738,10 @@ private slots:
         }
         const NewestRow quiet = newestRow(w);
 
-        // Half a dB under the threshold: kept.
+        // Half a dB under the threshold: kept (half a dB may not change a
+        // pixel's colour, so the blanked-row count says it).
         w.pushWaterfallRowForTest(burstRowDb(n, thresholdDb - 0.5));
-        QVERIFY2(newestRow(w).middle != quiet.middle, "a row under the threshold was blanked");
+        QVERIFY2(w.waterfallRowsBlanked() == 0, "a row under the threshold was blanked");
 
         for (int i = 0; i < 40; ++i) {
             w.pushWaterfallRowForTest(QVector<float>(n, kQuietDbm));
@@ -714,6 +749,65 @@ private slots:
         // Half a dB over it: replaced.
         w.pushWaterfallRowForTest(burstRowDb(n, thresholdDb + 0.5));
         QCOMPARE(newestRow(w).middle, quiet.middle);
+        QCOMPARE(w.waterfallRowsBlanked(), quint64(1));
+    }
+
+    // ── A loud station is drawn as is; a fence pulse is replaced ────────
+    //
+    // NB Blank at 3 dB (JJ's setting) on a noisy -120 dBm floor. A station
+    // 40 dB up on 5 % of the pixels for 200 rows: every row is drawn as
+    // the same widget with NB Blank off draws it (the whole-row mean of
+    // linear power held the waterfall on rows like these). Then a fence
+    // charger's pulse, every pixel 10 dB up: replaced by the last accepted
+    // row, and counted.
+    void blankOn_loudStationDrawnAsIs_fencePulseReplaced()
+    {
+        SpectrumWidget on;
+        prepareWaterfall(on);
+        on.setWaterfallBlankingEnabled(true);
+        on.setWaterfallBlankingThresholdDb(3);
+        SpectrumWidget off;
+        prepareWaterfall(off);
+        const int n = on.liveWaterfallForTest().width();
+        QCOMPARE(off.liveWaterfallForTest().width(), n);
+        constexpr float kFloorDbm = -120.0f;
+
+        std::mt19937 rng(20261022u);
+        const auto push = [&](const QVector<float>& row) {
+            on.pushWaterfallRowForTest(row);
+            off.pushWaterfallRowForTest(row);
+        };
+        for (int i = 0; i < 32; ++i) {
+            push(noisyRow(rng, n, kFloorDbm));
+            QCOMPARE(newestLine(on), newestLine(off));
+        }
+        const int stationFirst = n / 2 - n / 40;
+        const int stationPixels = n / 20;
+        for (int i = 0; i < 200; ++i) {
+            push(noisyRow(rng, n, kFloorDbm, stationFirst, stationPixels, 40.0f));
+            QVERIFY2(newestLine(on) == newestLine(off),
+                     qPrintable(QStringLiteral("loud station row %1 was not drawn as pushed").arg(i)));
+        }
+        QCOMPARE(on.waterfallRowsBlanked(), quint64(0));
+
+        for (int i = 0; i < 32; ++i) {
+            push(noisyRow(rng, n, kFloorDbm));
+            QCOMPARE(newestLine(on), newestLine(off));
+        }
+        const QImage lastAccepted = newestLine(on);
+        QVector<float> pulse = noisyRow(rng, n, kFloorDbm);
+        for (float& dbm : pulse) {
+            dbm += 10.0f;
+        }
+        push(pulse);
+        QCOMPARE(newestLine(on), lastAccepted);
+        QVERIFY2(newestLine(off) != lastAccepted, "the pulse row draws like a floor row");
+        QCOMPARE(on.waterfallRowsBlanked(), quint64(1));
+
+        push(noisyRow(rng, n, kFloorDbm));
+        QCOMPARE(newestLine(on), newestLine(off));
+        QCOMPARE(on.waterfallRowsBlanked(), quint64(1));
+        QCOMPARE(off.waterfallRowsBlanked(), quint64(0));
     }
 
     // ── The factor's old key is not read ────────────────────────────────
@@ -766,7 +860,7 @@ private slots:
             w.pushWaterfallRowForTest(QVector<float>(n, kQuietDbm));
         }
         const NewestRow quiet = newestRow(w);
-        w.pushWaterfallRowForTest(burstRow(n, 10.0));
+        w.pushWaterfallRowForTest(burstRowDb(n, 10.0));
         QVERIFY(newestRow(w).middle != quiet.middle);
     }
 
@@ -785,7 +879,7 @@ private slots:
 
         w.setTxActiveForTest(true);
         // Not replaced: a burst pushed while keyed is drawn.
-        w.pushWaterfallRowForTest(burstRow(n, 10.0));
+        w.pushWaterfallRowForTest(burstRowDb(n, 10.0));
         QVERIFY2(newestRow(w).middle != quiet.middle, "a row was blanked during transmit");
         // Forty loud rows, more than the whole baseline ring holds.
         for (int i = 0; i < 40; ++i) {
@@ -820,7 +914,7 @@ private slots:
 
         w.setWaterfallBlankingEnabled(false);
         w.setWaterfallBlankingEnabled(true);
-        w.pushWaterfallRowForTest(burstRow(n, 10.0));
+        w.pushWaterfallRowForTest(burstRowDb(n, 10.0));
         QVERIFY2(newestRow(w).middle != quiet.middle,
                  "a row was judged against a baseline from before the blanker was turned off");
     }
@@ -843,7 +937,7 @@ private slots:
 
         w.setMoxOverlay(true);
         w.setMoxOverlay(false);
-        w.pushWaterfallRowForTest(burstRow(n, 10.0));
+        w.pushWaterfallRowForTest(burstRowDb(n, 10.0));
         QVERIFY2(newestRow(w).middle != quiet.middle,
                  "a row was judged against a baseline from before the transmission");
     }
@@ -861,7 +955,7 @@ private slots:
         const NewestRow quiet = newestRow(w);
 
         w.clearWaterfallHistory();
-        w.pushWaterfallRowForTest(burstRow(n, 10.0));
+        w.pushWaterfallRowForTest(burstRowDb(n, 10.0));
         QVERIFY2(newestRow(w).middle != quiet.middle,
                  "a row from before the waterfall was cleared was drawn after it");
     }

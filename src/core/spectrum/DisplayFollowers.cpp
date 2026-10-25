@@ -41,6 +41,23 @@
 //                 noise-floor fast attack takes a minimum length. J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-23 - The noise floor takes no estimate from a frame with no
+//                 data (empty, or every pixel at the FFT's -200 dBm floor
+//                 or not finite), and it seeds both estimates from the
+//                 first frame that has data, at the level the estimate
+//                 settles at on it, instead of climbing from -200 dBm. A display started or resumed
+//                 drew ordinary noise hot for about eight seconds. J.J.
+//                 Boyd (KG4VCF), with AI-assisted transformation via
+//                 Anthropic Claude Code.
+//   2026-10-23 - The seed turns fast attack on, as Thetis does when it
+//                 creates the display (display.cs:3698-3700). J.J. Boyd
+//                 (KG4VCF), with AI-assisted transformation via Anthropic
+//                 Claude Code.
+//   2026-10-23 - NF-AGC's run level takes nothing from rows before the
+//                 floor has an estimate and starts at the floor's target on
+//                 the row it first has one; a fast attack resumes after a
+//                 hold for what its minimum had left. J.J. Boyd (KG4VCF),
+//                 with AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 // --- From display.cs ---
@@ -116,6 +133,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 
 namespace NereusSDR {
 
@@ -156,6 +174,16 @@ bool NoiseFloorFollower::setFastAttack(bool on, qint64 nowMs, qint64 minMs)
     return true;
 }
 
+bool NoiseFloorFollower::resumeFastAttackAfterHold(qint64 holdStartMs, qint64 nowMs)
+{
+    if (!m_fastAttack) { return false; }
+    const qint64 ranBeforeHold = std::max<qint64>(0, holdStartMs - m_lastFastAttackMs);
+    m_fastAttackMinMs = std::max<qint64>(0, m_fastAttackMinMs - ranBeforeHold);
+    m_lastFastAttackMs = nowMs;
+    m_good = false;
+    return true;
+}
+
 // Source-first port of Thetis processNoiseFloor — display.cs:5866-5912 [v2.10.3.13].
 // Iterates the display pixels to count + linear-sum bins below the previous
 // frame's estimate, then updates the per-frame average and the smoothed
@@ -167,6 +195,50 @@ bool NoiseFloorFollower::process(const QVector<float>& src, int fps, qint64 nowM
 {
     const int width = src.size();
     if (width <= 0) { return false; }
+
+    // NereusSDR, not in Thetis: a pixel at or below -200 dBm (the floor
+    // FFTEngine writes for a bin with no power) or not finite is no
+    // measurement. A frame with no other pixel is a display that has no
+    // data yet, or a stream that paused; it would pull the estimate down to
+    // the bottom of the scale, so it is skipped.
+    const auto isMeasured = [](float dB) { return std::isfinite(dB) && dB > kInitialDbm; };
+    const int measuredCount = static_cast<int>(
+        std::count_if(src.cbegin(), src.cend(), isMeasured));
+    if (measuredCount == 0) { return false; }
+
+    // NereusSDR, based on Thetis display.cs:4639-4642 [v2.10.3.15] (both
+    // estimates start at -200): Thetis climbs from there, 1 dB a frame out
+    // of fast attack, and the line lags it by the attack time, so a display
+    // started or resumed reads far below the band for seconds and NF-AGC
+    // maps ordinary noise hot. Here both estimates start from the first
+    // frame that has data, at the level the estimate below settles at on
+    // such a frame: it falls while at least requireSamples measured pixels
+    // are below it and climbs while fewer are, so it holds where that many
+    // are, the pixel with that many below it. On a noisy band the median
+    // sits above that. The estimate runs from the next frame.
+    if (!m_seeded) {
+        QVector<float> measured;
+        measured.reserve(measuredCount);
+        std::copy_if(src.cbegin(), src.cend(), std::back_inserter(measured), isMeasured);
+        const int quietNeeded = qBound(0, (measuredCount * m_sensitivity) / 20,
+                                       measuredCount - 1);
+        const auto settlesAt = measured.begin() + quietNeeded;
+        std::nth_element(measured.begin(), settlesAt, measured.end());
+        m_fftBinAverage = qBound(kInitialDbm, *settlesAt, 200.0f);
+        m_lerpAverage = m_fftBinAverage;
+        m_seeded = true;
+        // From Thetis display.cs:3698-3700 [v2.10.3.15], when the display
+        // is created:
+        //   //[2.10.1.0] MW0LGE spectrum/bitmaps may be cleared or bad, so wait to settle
+        //   FastAttackNoiseFloorRX1 = true;
+        //   if(RX2Enabled) FastAttackNoiseFloorRX2 = true;
+        // NereusSDR: here at the seed, the first frame with data, so a
+        // display started, resumed or reset settles in fast attack from
+        // there: 3 dB a frame up and no attack lag, and not settled (NF-AGC
+        // and the grid wait) for at least the trigger's minimum. The setter
+        // clears the good flag; a longer trigger already running is kept.
+        return setFastAttack(true, nowMs);
+    }
 
     // Per-pixel accumulator — Thetis display.cs:5253-5258 [v2.10.3.13]:
     //   if (!mox && max_copy < currentAverage) {
@@ -180,6 +252,7 @@ bool NoiseFloorFollower::process(const QVector<float>& src, int fps, qint64 nowM
     int    averageCount = 0;
     for (int i = 0; i < width; ++i) {
         const float dB = src[i];
+        if (!isMeasured(dB)) { continue; }
         if (dB < currentAverage) {
             averageSum += std::pow(10.0, static_cast<double>(dB) / 10.0);
             averageCount++;
@@ -188,8 +261,10 @@ bool NoiseFloorFollower::process(const QVector<float>& src, int fps, qint64 nowM
 
     // Thetis default _NFsensitivity=3, clamp [0,19] (display.cs:5775+5783).
     // Match the formula exactly: int truncation of (width * sens / 20).
+    // NereusSDR: the width is the measured pixels, since pixels with no
+    // data cannot be quiet ones.
     const int requireSamples = qMax(1,
-        (width * m_sensitivity) / 20);
+        (measuredCount * m_sensitivity) / 20);
 
     // Per-frame fftBinAverage update — display.cs:5883-5896.
     if (averageCount >= requireSamples) {
@@ -377,6 +452,15 @@ void WaterfallLevelFollower::compose(const QVector<float>& wfPixelsDbm,
             m_agcRunMin = kAgcRestartFloorDbm;
             m_agcPrimed = true;
         }
+        // NereusSDR, not in Thetis (PR 628): a floor with no estimate yet
+        // reads -200 dBm, and the fixed restart floor ignores the band.
+        // The seed's fast attack keeps the floor unsettled for a second, so
+        // the run level is the low level for those rows. The run level
+        // takes nothing from a row before the floor has an estimate, and
+        // starts at the floor's target on the row it first has one.
+        if (settings.noiseFloorSeeded && !m_floorSeenSeeded) {
+            m_agcRunMin = noiseFloorTarget;
+        }
         // From Thetis display.cs:7653-7667 [v2.10.3.15]:
         //   //if (rx == 1)
         //   //    _RX1waterfallPreviousMinValue = (((_RX1waterfallPreviousMinValue * 8) + (waterfall_minimum * 2)) / 10) + 1; //wfagc
@@ -387,8 +471,11 @@ void WaterfallLevelFollower::compose(const QVector<float>& wfPixelsDbm,
         //   {
         //       _RX1waterfallPreviousMinValue = (_RX1waterfallPreviousMinValue * 0.6f) + (noiseFloorCompensationTarget * 0.4f);
         //   }
-        m_agcRunMin = m_agcRunMin * kNoiseFloorAgcKeepWeight
-            + noiseFloorTarget * kNoiseFloorAgcTargetWeight;
+        if (settings.noiseFloorSeeded) {
+            m_agcRunMin = m_agcRunMin * kNoiseFloorAgcKeepWeight
+                + noiseFloorTarget * kNoiseFloorAgcTargetWeight;
+        }
+        m_floorSeenSeeded = settings.noiseFloorSeeded;
     } else {
         // AGC without NF-AGC keeps NereusSDR's own follower on the row's
         // minimum (Phase 3G-9c). NereusSDR, based on Thetis display.cs:7666
@@ -407,6 +494,8 @@ void WaterfallLevelFollower::compose(const QVector<float>& wfPixelsDbm,
         } else {
             m_agcRunMin = kAgcAlpha * mn + (1.0f - kAgcAlpha) * m_agcRunMin;
         }
+        // A run level from the rows: NF-AGC turned on later carries on from it.
+        m_floorSeenSeeded = settings.noiseFloorSeeded;
     }
 
     if (settings.noiseFloorAgc) {

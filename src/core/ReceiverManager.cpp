@@ -31,6 +31,11 @@
 //                 snapshots after unlocking, including callback-safe retunes.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //                 NereusSDR-original synchronization logic.
+//   2026-10-22 - noteIqSequenceGap: an I/Q sequence gap routed through the
+//                 hardware-to-logical map the samples take, after Longpath
+//                 src/core/ReceiverManager.cpp:359 [@383f058] (PR 62
+//                 follow-up 7eccc204). J.J. Boyd (KG4VCF), with AI-assisted
+//                 transformation via Claude Code.
 //   2026-10-22 - I/Q level log in feedIqData (IqLevelMonitor, one line per
 //                 hardware DDC at most every 10 s: RMS and peak dBFS,
 //                 non-finite pairs, stream (logical receiver), ADC,
@@ -567,6 +572,28 @@ void ReceiverManager::feedIqData(int hwReceiverIndex, const QVector<float>& samp
     locker.unlock();
     logLevels();
     flushHeldIq(full);
+}
+
+void ReceiverManager::noteIqSequenceGap(int hwReceiverIndex)
+{
+    // NereusSDR, 2026-10-22, after Longpath PR 62 and its 2026-10-08
+    // follow-up (7eccc204): the gap goes through the map the samples take,
+    // or it could reach another stream's engine than the samples it broke.
+    if (hwReceiverIndex < 0) {
+        emit iqSequenceGapForReceiver(-1);
+        return;
+    }
+    int logicalIndex = -1;
+    {
+        QMutexLocker locker(&m_routingMutex);
+        const auto it = m_hwToLogical.constFind(hwReceiverIndex);
+        if (it != m_hwToLogical.constEnd()) {
+            logicalIndex = it.value();
+        }
+    }
+    if (logicalIndex >= 0) {
+        emit iqSequenceGapForReceiver(logicalIndex);
+    }
 }
 
 void ReceiverManager::noteAdcOverflow(int adc)

@@ -1,6 +1,12 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-23: a Core inside a desktop window gives a returning device
+//               the letters it kept for it (placeReservedSlicesFor), and a
+//               device admitted before the radio connects is placed when it
+//               does (m_placementAwaitingRadio); a saved slice never takes a
+//               letter kept for another device. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-22: NSDC v2 negotiation: displayCodecVersion 2 for a minor-11
 //               peer that declared displayCodec 2, media on, while the
 //               Core's RemoteDisplayCodecV2 setting is on
@@ -3715,6 +3721,31 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                     m_radioModel->applyDisableHfPaSetting(QVariant());
                 }
             });
+
+    // JJ 2026-10-23: devices admitted to a Core inside a desktop window
+    // before its radio connected are placed once it has (after the other
+    // Connected handlers, so the window's starting slice exists).
+    if (m_radioModel) {
+        connect(m_radioModel, &RadioModel::connectionStateChanged, this,
+                [this](ConnectionState state) {
+                    if (state != ConnectionState::Connected || m_placementAwaitingRadio.isEmpty()
+                        || m_radioModel.isNull() || m_radioModel->currentRadioMac().isEmpty()) {
+                        return;
+                    }
+                    const QSet<QByteArray> waiting = std::exchange(m_placementAwaitingRadio, {});
+                    const QList<DeviceSessionRegistry::Entry> entries = m_deviceSessions->entries();
+                    for (const QByteArray& device : waiting) {
+                        const bool admitted = std::any_of(
+                            entries.cbegin(), entries.cend(),
+                            [&device](const DeviceSessionRegistry::Entry& entry) {
+                                return entry.deviceId == device;
+                            });
+                        if (admitted) {
+                            placeSlicesForAdmission(device);
+                        }
+                    }
+                }, Qt::QueuedConnection);
+    }
 
     // A daemon can authenticate a GUI before its configured radio is
     // discoverable.  currentRadioChanged is emitted only after RadioModel's
@@ -10973,6 +11004,33 @@ void StationServer::placeSlicesForAdmission(const QByteArray& deviceId)
     // 1. Slices the station device held for it are its own again.
     ownership->returnHeld(deviceId);
 
+    // JJ 2026-10-23: a Core inside a desktop window keeps a returning
+    // device's letter from the saved layout, which it reads when the radio
+    // connects (RadioModel::addStartingSlices). A device admitted before
+    // that is placed when the radio connects, so it neither takes a letter
+    // kept for another device nor leaves the window without one. An older
+    // window (no sessionHolder) needs its slice at admission or it is
+    // refused (olderWindowWithoutSliceReason), so it is placed now, as
+    // before.
+    bool holdsSessions = false;
+    for (auto it = m_peers.cbegin(); it != m_peers.cend(); ++it) {
+        if (it.value().sessionDeviceId == deviceId && peerHoldsSessions(it.key())) {
+            holdsSessions = true;
+            break;
+        }
+    }
+    if (holdsSessions && m_radioModel->hostsStationDevice()
+        && m_radioModel->currentRadioMac().isEmpty()) {
+        m_placementAwaitingRadio.insert(deviceId);
+        m_connectedDevices->refresh();
+        return;
+    }
+    m_placementAwaitingRadio.remove(deviceId);
+
+    // 1b. The letters the Core inside the window kept for it, with their
+    //     settings, as a headless Core gives back the slices it held.
+    m_radioModel->placeReservedSlicesFor(deviceId);
+
     // 2. Its saved slices, where they fit: its old letter when free, else
     //    the lowest free, each with its own settings; what does not fit is
     //    kept in its store and recorded for the notice (Task 74). A token
@@ -10982,8 +11040,11 @@ void StationServer::placeSlicesForAdmission(const QByteArray& deviceId)
         const QList<SavedSlice> saved = DeviceLayoutStore::load(store, mac, deviceId);
         QList<SavedSlice> notRestored;
         for (const SavedSlice& entry : saved) {
+            // A letter a Core inside the window keeps for another device is
+            // not free (JJ 2026-10-23); lowestFreeSliceId skips those too.
             const int sliceId = m_radioModel->sliceById(entry.id) == nullptr
                     && entry.id < WdspEngine::kMaxSliceChannels
+                    && !m_radioModel->reservedSliceLetters().contains(entry.id)
                 ? entry.id
                 : m_radioModel->lowestFreeSliceId();
             if (sliceId < 0) {

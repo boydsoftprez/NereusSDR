@@ -15,8 +15,30 @@
 //   Project Files/Source/Console/HPSDR/NetworkIO.cs (upstream has no top-of-file header — project-level LICENSE applies)
 //   Project Files/Source/ChannelMaster/cmaster.c, original licence from Thetis source is included below
 //
+// Ported from Longpath sources:
+//   src/models/RadioModel.cpp (setConnectionState), Longpath banner included below
+//
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-23 - reportDspDiagnostics logs the I/Q chunks a slice's channel
+//                silenced because their size was not its WDSP input block
+//                (inputSizeMismatchLogLine) with the chunk size and input
+//                block the guard saw, at info up to 100 ms of audio per
+//                interval and as a warning above. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-10-22 - The connection's sample rate and active RX count are
+//                cleared only on Disconnected, so a Probing or Connecting
+//                state queued after connectToRadio() no longer wipes them.
+//                Ported from Longpath PR 37 (fd894ded, Martin Fischer
+//                OE5SOS) by J.J. Boyd (KG4VCF), with AI-assisted
+//                transformation via Claude Code.
+//   2026-10-22 - TCI agc_gain sets and reads the AGC-T (SliceModel::rfGain,
+//                WDSP AGC top), as Thetis's handleAgcGain does through
+//                SetAgcT / GetAgcT (TCIServer.cs:5011-5026, console.cs:
+//                51803-51833 [v2.10.3.15]), instead of the AGC threshold
+//                point. After Longpath f1d0c181 (Martin Fischer, OE5SOS).
+//                J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//                Claude Code.
 //   2026-10-22 - Connect hold: discovery sends nothing from the moment a
 //                local connection is created until it reports Connected or
 //                ends, then waits the post-disconnect quiet period
@@ -1272,6 +1294,11 @@
 //                local page's edit to every slice in the mode group, not
 //                the first receiver alone. J.J. Boyd (KG4VCF), AI-assisted
 //                via Anthropic Claude Code.
+//   2026-10-22 - RadioConnection::iqSequenceGap reaches iqSequenceGapForStream
+//                through ReceiverManager on the Connection thread, beside
+//                the samples (after Longpath PR 62). The audio path does not
+//                listen. J.J. Boyd (KG4VCF), with AI-assisted transformation
+//                via Claude Code.
 //   2026-10-22 - SWR protection reaches the drive, as Thetis applies
 //                NetworkIO.SWRProtect: the controller's factor is the
 //                TransmitModel factor the wire pump reads, a wind-back
@@ -1305,6 +1332,32 @@
 //                sampler's tick). Diagnostics only; NR and DSP
 //                parameters unchanged. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-23 - Slice letters across Core restarts (JJ: "the core
+//                headless and core inside window should be the same
+//                experience"): a Core inside a desktop window keeps its
+//                paired devices' letters and saved settings from the
+//                receive layout without making their slices, takes the
+//                lowest letter nobody keeps for the window, and gives a
+//                device its letter when it signs in; the window's layout
+//                save keeps every entry that is not a device's
+//                (setHostsStationDevice, addStartingSlices,
+//                placeReservedSlicesFor, captureHostedReceiveLayout). Each
+//                local connect snapshots the device letters' settings so a
+//                device never gets the window's; windowSliceId names the
+//                window's own starting slice for its one-time wiring.
+//                Kept letters belong to the radio they were kept for
+//                (m_deviceReservationsMac), and a letter's snapshot is
+//                dropped once a device is placed on it.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24 - An AGC top change (TCI's agc_gain) saves the band's
+//                threshold once the lane readback gives it, so the band's
+//                AGC comes back as it was left. J.J. Boyd (KG4VCF), with
+//                AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-24 - The AGC-T and RF gain sliders each save the value their
+//                lane readback gives (the RF gain, the band's threshold),
+//                so both come back as they were left on a restart. The AUTO
+//                tick still schedules no save. J.J. Boyd (KG4VCF), with
+//                AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1556,6 +1609,54 @@ mw0lge@grange-lane.co.uk
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+// --- From RadioModel.cpp (Longpath, oe5sos/Longpath @383f058) ---
+// Longpath banner, byte for byte. The Thetis licence blocks it names are the
+// ones above.
+// =================================================================
+// src/models/RadioModel.cpp  (Longpath)
+// =================================================================
+//
+// Ported from Thetis sources:
+//   Project Files/Source/Console/console.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/setup.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/radio.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/dsp.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/HPSDR/NetworkIO.cs (upstream has no top-of-file header — project-level LICENSE applies)
+//   Project Files/Source/ChannelMaster/cmaster.c, original licence from Thetis source is included below
+//
+// =================================================================
+// Modification history (Longpath):
+//   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
+//                 (KG4VCF), with AI-assisted transformation via Anthropic
+//                 Claude Code.
+//   2026-05-03 — Phase 4 Agent 4A of issue #167 (PA calibration safety
+//                 hotfix — K2GX field report).  Drive-slider lambda
+//                 (lines ~830) and TUNE-engagement path (lines ~4280)
+//                 rewritten to route through
+//                 TransmitModel::setPowerUsingTargetDbm (Phase 3C deep-
+//                 parity port of Thetis SetPowerUsingTargetDBM,
+//                 console.cs:46645-46762 [v2.10.3.13]).  Wire-byte /
+//                 IQ-scalar topology corrected per Thetis MW0LGE-canonical
+//                 (audio.cs:262-271 wire NO SWR / cmaster.cs:1115-1119 IQ
+//                 HAS SWR via TxChannel::setTxFixedGain).  Replaces the
+//                 previous fork-specific linear formula (cited to mi0bot
+//                 NetworkIO.cs:209-211 [v2.10.3.14-beta1]) that produced
+//                 K2GX's >300 W output on a 200 W ANAN-8000DLE at 80m
+//                 TUN slider=50.  Adds RadioModel ownership of
+//                 PaProfileManager (mirrors MicProfileManager pattern);
+//                 active profile passed by const-ref to setPowerUsingTargetDbm
+//                 at every callsite.  Adds StepAttenuatorController
+//                 propagation to TransmitModel::setStepAttenuatorController
+//                 inside RadioModel::setStepAttController.  J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-27 -- CW pitch setter (Martin Fischer, OE5SOS, AI-assisted via
+//                 Anthropic Claude): setCwPitch/cwPitchChanged after the
+//                 console.cs CWPitch setter [@852bf0e] (RX part only;
+//                 sidetone and the MOX VFO shift are CW TX, deferred);
+//                 APF centre = CWPitch + tune from the setting instead of
+//                 a fixed 600 (setup.cs tbRX1APFTune_Scroll).
+// =================================================================
+
 #include "core/cat/CatService.h"
 #include "RadioModel.h"
 #include "core/ClarityController.h"
@@ -1700,6 +1801,7 @@ mw0lge@grange-lane.co.uk
 #include "core/cat/StationCatController.h"
 #include "core/cat/CatControl.h"
 #include "core/SliceOwnership.h"
+#include "core/DeviceLayoutStore.h"
 #include "core/session/SliceAccessPolicy.h"
 #include "core/session/StationServer.h"
 #include "core/session/SessionTransport.h"
@@ -15124,6 +15226,10 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
     // missing 768 off the end of the accumulator (iobuffs.c:532-536
     // [WDSP v1.29]). No-op whenever everything already agrees, which is every
     // retune on a single-rate radio.
+    // 2026-10-23: with a receive lane this ordering does not prevent it. The
+    // binding published above reaches the worker at once, while the re-rate
+    // below waits on the lane; RxChannel::processIq's input-size guard is
+    // what keeps the mismatched chunks out of fexchange2.
     applyStreamDspGeometry();
     if (!current()) { return false; }
 
@@ -15571,6 +15677,28 @@ QString RadioModel::outputNonFiniteLogLine(int sliceIndex, qint64 samples)
         .arg(samples);
 }
 
+QString RadioModel::inputSizeMismatchLogLine(int sliceIndex, qint64 chunks, int chunkSize,
+                                            int wdspInputSize)
+{
+    return QStringLiteral("Slice %1: %2 I/Q chunk(s) silenced since the last report (%3 ms of "
+                          "audio): chunks of %4 samples, WDSP's input block %5")
+        .arg(sliceLogName(sliceIndex))
+        .arg(chunks)
+        .arg(inputSizeMismatchAudioMs(chunks), 0, 'f', 1)
+        .arg(chunkSize)
+        .arg(wdspInputSize);
+}
+
+double RadioModel::inputSizeMismatchAudioMs(qint64 chunks)
+{
+    return static_cast<double>(chunks) * kBufferBaseSize * 1000.0 / kBufferBaseRate;
+}
+
+bool RadioModel::inputSizeMismatchIsLasting(qint64 chunks)
+{
+    return inputSizeMismatchAudioMs(chunks) > kInputSizeMismatchInfoMaxMs;
+}
+
 void RadioModel::reportDspDiagnostics(qint64 nowMs)
 {
     if (!m_wdspEngine) {
@@ -15599,6 +15727,27 @@ void RadioModel::reportDspDiagnostics(qint64 nowMs)
             qCWarning(lcDsp).noquote() << outputNonFiniteLogLine(sliceId, nonFinite.pending);
             nonFinite.pending = 0;
             nonFinite.lastLogMs = nowMs;
+        }
+        // 2026-10-23: chunks RxChannel::processIq kept out of WDSP.
+        InputSizeMismatchLog& mismatch = m_inputSizeMismatchLog[sliceId];
+        RxChannel::InputSizeMismatch taken;
+        if (channel->takeInputSizeMismatch(taken)) {
+            mismatch.pending += taken.chunks;
+            mismatch.chunkSize = taken.chunkSize;
+            mismatch.wdspInputSize = taken.wdspInputSize;
+        }
+        if (mismatch.pending > 0
+            && (mismatch.lastLogMs < 0
+                || nowMs - mismatch.lastLogMs >= kOutputNonFiniteLogIntervalMs)) {
+            const QString line = inputSizeMismatchLogLine(
+                sliceId, mismatch.pending, mismatch.chunkSize, mismatch.wdspInputSize);
+            if (inputSizeMismatchIsLasting(mismatch.pending)) {
+                qCWarning(lcDsp).noquote() << line;
+            } else {
+                qCInfo(lcDsp).noquote() << line;
+            }
+            mismatch.pending = 0;
+            mismatch.lastLogMs = nowMs;
         }
     }
 }
@@ -15843,10 +15992,19 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     // list, where minting locally would drift the two apart after any
     // mid-list removal. addSliceWithStationId() has already refused a
     // colliding id before reaching here.
+    //
+    // A letter kept for a paired device that has not signed in yet
+    // (addStartingSlices, JJ 2026-10-23) is minted only when no other free
+    // letter is left.
     int index = requestedId >= 0 ? requestedId : 0;
     if (requestedId < 0) {
-        while (sliceById(index) != nullptr) {
-            ++index;
+        index = m_deviceSliceReservations.isEmpty()
+            ? -1 : lowestUnreservedFreeSliceId(sliceChannelLimit());
+        if (index < 0) {
+            index = 0;
+            while (sliceById(index) != nullptr) {
+                ++index;
+            }
         }
     }
     SlicePublication constructing{added, index};
@@ -17315,10 +17473,10 @@ void RadioModel::runOnDspWorkerFromLane(RxDspWorker* worker, const std::function
 // (console.cs:45978 [v2.10.3.13], GetRXAAGCTop after SetRXAAGCThresh), as a
 // lane readback. The RF gain is written with m_syncingAgc set, so its own
 // handler neither turns auto AGC off nor calls WDSP again, as before.
-void RadioModel::syncRfGainFromAgcTop(SliceModel* slice, RxChannel* channel)
+void RadioModel::syncRfGainFromAgcTop(SliceModel* slice, RxChannel* channel, bool scheduleSave)
 {
     const quint64 serial = ++m_agcReadbackSerial[slice];
-    channel->requestAgcReadBack(slice, [this, slice, serial](double top, double) {
+    channel->requestAgcReadBack(slice, [this, slice, serial, scheduleSave](double top, double) {
         // A newer AGC set on this slice has its own readback.
         if (m_agcReadbackSerial.value(slice) != serial) {
             return;
@@ -17329,6 +17487,13 @@ void RadioModel::syncRfGainFromAgcTop(SliceModel* slice, RxChannel* channel)
             m_syncingAgc = true;
             slice->setRfGain(rfGain);
             m_syncingAgc = wasSyncing;
+            // The slice keeps the RF gain the new threshold gives, so it comes
+            // back as the user left it. The save the caller scheduled captured
+            // the slice's values before this lane readback landed. The AUTO
+            // tick passes false: its writes schedule no save.
+            if (scheduleSave) {
+                scheduleSettingsSave(slice);
+            }
         }
     });
 }
@@ -18381,12 +18546,411 @@ quint32 RadioModel::advanceKeyingEpoch()
 
 int RadioModel::lowestFreeSliceId() const
 {
+    // A letter kept for a paired device that has not signed in yet
+    // (addStartingSlices) is taken only when no other is free.
+    const int unreserved = lowestUnreservedFreeSliceId(sliceChannelLimit());
+    if (unreserved >= 0) {
+        return unreserved;
+    }
     for (int id = 0; id < sliceChannelLimit(); ++id) {
         if (sliceById(id) == nullptr) {
             return id;
         }
     }
     return -1;
+}
+
+namespace {
+
+// The device a layout entry or a live slice is kept for: the device the
+// station device holds it for, else its owner.
+QByteArray layoutSubject(const QByteArray& owner, const QByteArray& heldFor)
+{
+    return heldFor.isEmpty() ? owner : heldFor;
+}
+
+// A paired device's id: not empty, not the station device, not a token
+// window (which has no saved slices of its own, StationServer step 2).
+bool isPairedDeviceSubject(const QByteArray& subject)
+{
+    return !subject.isEmpty() && subject != SliceOwnership::stationDevice()
+        && !subject.startsWith("token:");
+}
+
+} // namespace
+
+void RadioModel::setHostsStationDevice(bool hosts)
+{
+    if (role() != Role::Local || hosts == m_hostsStationDevice) {
+        return;
+    }
+    if (!hosts) {
+        // The last word before the window stops hosting: the layout as its
+        // paired devices left it, reservations included. The caller's save
+        // (saveForStationHandover, the quit) writes it to the file.
+        if (!m_receiveLayoutManaged) {
+            captureHostedReceiveLayout();
+        }
+        m_deviceSliceReservations.clear();
+        m_deviceReservationsMac.clear();
+        m_hostsStationDevice = false;
+        return;
+    }
+    m_hostsStationDevice = true;
+    // Run Core turned on after the window has its slices, connected or not
+    // (slices outlive a disconnect): the layout's device letters are kept
+    // now, for the radio the window last had. A letter the window already
+    // uses is not kept; its device gets the lowest free letter, with the
+    // settings its letter had at connect (the snapshot). With no radio
+    // address yet, or when the next connect is to another radio, that
+    // connect keeps them for its radio (addStartingSlices). Before
+    // the window has slices, addStartingSlices does this.
+    if (!m_receiveLayoutManaged && !m_slices.isEmpty()) {
+        reserveDeviceSlices(m_lastRadioInfo.macAddress);
+    }
+}
+
+QList<int> RadioModel::reservedSliceLetters() const
+{
+    QList<int> letters;
+    for (const DeviceSliceReservation& reservation : m_deviceSliceReservations) {
+        if (reservation.letterKept) {
+            letters.append(reservation.state.id);
+        }
+    }
+    std::sort(letters.begin(), letters.end());
+    return letters;
+}
+
+bool RadioModel::sliceLetterReserved(int id) const
+{
+    return std::any_of(m_deviceSliceReservations.cbegin(), m_deviceSliceReservations.cend(),
+                       [id](const DeviceSliceReservation& reservation) {
+                           return reservation.letterKept && reservation.state.id == id;
+                       });
+}
+
+int RadioModel::lowestUnreservedFreeSliceId(int cap) const
+{
+    for (int id = 0; id < cap; ++id) {
+        if (sliceById(id) == nullptr && !sliceLetterReserved(id)) {
+            return id;
+        }
+    }
+    return -1;
+}
+
+int RadioModel::startingSliceCap() const
+{
+    // The connect makes its starting slices before it sizes the stream
+    // pool, so the board's own limit stands in for the pool's then.
+    if (m_streamAllocator.streamCount() > 0) {
+        return sliceChannelLimit();
+    }
+    return deviceLayoutLimit();
+}
+
+void RadioModel::reserveDeviceSlices(const QString& radioMac)
+{
+    m_deviceSliceReservations.clear();
+    m_deviceReservationsMac.clear();
+    if (role() != Role::Local || m_receiveLayoutManaged || !m_hostsStationDevice
+        || AppSettings::normalizedRadioMac(radioMac).isEmpty()) {
+        return;
+    }
+    m_deviceReservationsMac = AppSettings::normalizedRadioMac(radioMac);
+    AppSettings& store = AppSettings::instance();
+    const ReceiveLayoutStore::LoadResult layout = ReceiveLayoutStore::load(store, radioMac);
+    if (layout.state != ReceiveLayoutStore::LoadState::Loaded) {
+        if (layout.state != ReceiveLayoutStore::LoadState::Missing) {
+            qCWarning(lcConnection) << "Receive layout: paired devices' letters not reserved:"
+                                    << layout.error;
+        }
+        return;
+    }
+    // The connect's snapshot when it is this radio's: what the device left
+    // on its letter, even when the window has since written that letter.
+    const bool snapshotHere = !m_deviceLetterSnapshotMac.isEmpty()
+        && AppSettings::normalizedRadioMac(m_deviceLetterSnapshotMac)
+            == AppSettings::normalizedRadioMac(radioMac);
+    const int cap = startingSliceCap();
+    for (const ReceiveSliceState& state : layout.slices) {
+        const QByteArray device = layoutSubject(state.owner, state.heldFor);
+        if (!isPairedDeviceSubject(device)) {
+            continue;
+        }
+        // A device already on this Core keeps the slice it has.
+        const SliceOwnership::Mark live = m_sliceOwnership->mark(state.id);
+        if (sliceById(state.id) != nullptr && layoutSubject(live.owner, live.heldFor) == device) {
+            continue;
+        }
+        // The letter's settings as the device left them, before anything
+        // else can write them.
+        QMap<QString, QString> settings = snapshotHere && m_deviceLetterSnapshot.contains(state.id)
+            ? m_deviceLetterSnapshot.value(state.id)
+            : DeviceLayoutStore::captureSliceSettings(store, radioMac, state.id);
+        m_deviceSliceReservations.append(
+            {device, state, std::move(settings),
+             state.id >= 0 && state.id < cap && sliceById(state.id) == nullptr});
+    }
+}
+
+int RadioModel::deviceLayoutLimit() const
+{
+    const int board = boardCapabilities().maxSlices;
+    return board > 0 ? std::min(board, WdspEngine::kMaxSliceChannels)
+                     : WdspEngine::kMaxSliceChannels;
+}
+
+void RadioModel::snapshotDeviceLetterSettings(const QString& radioMac)
+{
+    m_deviceLetterSnapshot.clear();
+    m_deviceLetterSnapshotMac.clear();
+    if (role() != Role::Local || m_receiveLayoutManaged
+        || AppSettings::normalizedRadioMac(radioMac).isEmpty()) {
+        return;
+    }
+    AppSettings& store = AppSettings::instance();
+    const ReceiveLayoutStore::LoadResult layout = ReceiveLayoutStore::load(store, radioMac);
+    if (layout.state != ReceiveLayoutStore::LoadState::Loaded) {
+        return;
+    }
+    m_deviceLetterSnapshotMac = radioMac;
+    for (const ReceiveSliceState& state : layout.slices) {
+        if (isPairedDeviceSubject(layoutSubject(state.owner, state.heldFor))) {
+            m_deviceLetterSnapshot.insert(
+                state.id, DeviceLayoutStore::captureSliceSettings(store, radioMac, state.id));
+        }
+    }
+}
+
+int RadioModel::addStartingSlices(const QString& radioMac)
+{
+    if (role() != Role::Local) {
+        return -1;
+    }
+    if (!m_slices.isEmpty()) {
+        // A reconnect keeps its slices. Connecting to another radio than
+        // the one the snapshot and the kept letters were made for (or Run
+        // Core turned on before any radio address was known): that
+        // radio's letters and settings, never the last radio's.
+        const QString mac = AppSettings::normalizedRadioMac(radioMac);
+        if (AppSettings::normalizedRadioMac(m_deviceLetterSnapshotMac) != mac) {
+            snapshotDeviceLetterSettings(radioMac);
+        }
+        if (m_hostsStationDevice && !m_receiveLayoutManaged && m_deviceReservationsMac != mac) {
+            reserveDeviceSlices(radioMac);
+        }
+        return -1;
+    }
+    // JJ 2026-10-23, the open behavior ruling: at every local connect, the
+    // paired devices' letters' settings as they are now, so a device that
+    // comes back later gets its own settings even when the window (Run Core
+    // off at connect) takes its letter and writes it.
+    snapshotDeviceLetterSettings(radioMac);
+    // JJ 2026-10-23: a Core inside a desktop window keeps a returning paired
+    // device's letter and settings for it, as the headless Core does, and
+    // the window takes the lowest letter nobody's device has. The device's
+    // slice is made only when it signs in (placeReservedSlicesFor), so
+    // nothing of it runs in the window. Without this the window took A at
+    // every start and a device that had A was given a new slice.
+    if (m_hostsStationDevice && !m_receiveLayoutManaged) {
+        reserveDeviceSlices(radioMac);
+        const int cap = startingSliceCap();
+        if (lowestUnreservedFreeSliceId(cap) < 0) {
+            // Every letter is a device's: the window takes the last, and
+            // that device gets the lowest free letter when it signs in,
+            // with its letter's settings as they were kept above.
+            for (DeviceSliceReservation& reservation : m_deviceSliceReservations) {
+                if (reservation.letterKept && reservation.state.id == cap - 1) {
+                    reservation.letterKept = false;
+                }
+            }
+        }
+    }
+    // The window's one-time wiring follows this slice (windowSliceId), and
+    // runs on its sliceAdded, so the id is known before the slice is made:
+    // addSliceImpl mints the lowest letter not kept, else the lowest free.
+    const int unkept = m_deviceSliceReservations.isEmpty()
+        ? -1 : lowestUnreservedFreeSliceId(sliceChannelLimit());
+    m_windowSliceId = unkept >= 0 ? unkept : 0;
+    const int id = addSlice();
+    SliceModel* slice = sliceById(id);
+    if (!slice) {
+        return -1;
+    }
+    if (id != m_windowSliceId) {
+        qCWarning(lcConnection) << "Starting slice" << receiverLetter(id)
+                                << "is not the letter the window expected"
+                                << receiverLetter(m_windowSliceId);
+        m_windowSliceId = id;
+    }
+    slice->setPanKey(QStringLiteral("pan-0"));
+    return id;
+}
+
+int RadioModel::placeReservedSlicesFor(const QByteArray& device)
+{
+    if (role() != Role::Local || device.isEmpty()) {
+        return 0;
+    }
+    const QString mac = currentRadioMac();
+    if (mac.isEmpty()) {
+        return 0;
+    }
+    // Letters kept for another radio are never placed on this one.
+    if (m_deviceReservationsMac != AppSettings::normalizedRadioMac(mac)) {
+        return 0;
+    }
+    QList<DeviceSliceReservation> mine;
+    QList<DeviceSliceReservation> others;
+    for (const DeviceSliceReservation& reservation : std::as_const(m_deviceSliceReservations)) {
+        (reservation.device == device ? mine : others).append(reservation);
+    }
+    if (mine.isEmpty()) {
+        return 0;
+    }
+    m_deviceSliceReservations = others;
+    AppSettings& store = AppSettings::instance();
+    int placed = 0;
+    for (const DeviceSliceReservation& reservation : std::as_const(mine)) {
+        const ReceiveSliceState& kept = reservation.state;
+        // Its letter when free, else the lowest letter free and not kept
+        // for another device (as StationServer step 2 places a saved slice).
+        const int cap = sliceChannelLimit();
+        const int sliceId = kept.id >= 0 && kept.id < cap && sliceById(kept.id) == nullptr
+            ? kept.id : lowestFreeSliceId();
+        const SavedSlice saved{kept.id, kept.panKey, kept.frequencyHz, kept.dspMode,
+                               reservation.settings};
+        if (sliceId < 0) {
+            DeviceLayoutStore::append(store, mac, device, saved, deviceLayoutLimit());
+            qCInfo(lcConnection) << "Receive layout: no free letter for a paired device's slice;"
+                                    " kept in its saved slices";
+            continue;
+        }
+        DeviceLayoutStore::writeSliceSettings(store, mac, sliceId, reservation.settings);
+        const ReceiveSliceState state{sliceId, kept.panKey, kept.frequencyHz, kept.dspMode,
+                                      {}, {}};
+        QString reason;
+        if (restoreSliceFor(device, sliceId, state, &reason) < 0) {
+            qCInfo(lcConnection) << "Receive layout: a paired device's slice did not fit:"
+                                 << reason;
+            if (sliceId != kept.id) {
+                DeviceLayoutStore::clearSliceSettings(store, mac, sliceId);
+            }
+            DeviceLayoutStore::append(store, mac, device, saved, deviceLayoutLimit());
+            continue;
+        }
+        // The device's settings for its kept letter now live on its slice
+        // (restoreSliceFor dropped that letter's snapshot).
+        m_deviceLetterSnapshot.remove(kept.id);
+        ++placed;
+    }
+    requestSettingsSave();
+    return placed;
+}
+
+bool RadioModel::captureHostedReceiveLayout()
+{
+    // Never blocks the window's own saves: a layout that cannot be staged
+    // is logged and the settings are saved as before.
+    if (role() != Role::Local || m_connectionState != ConnectionState::Connected) {
+        return true;
+    }
+    const QString mac = m_lastRadioInfo.macAddress;
+    if (AppSettings::normalizedRadioMac(mac).isEmpty()) {
+        return true;
+    }
+    AppSettings& store = AppSettings::instance();
+    const ReceiveLayoutStore::LoadResult existing = ReceiveLayoutStore::load(store, mac);
+    if (existing.state != ReceiveLayoutStore::LoadState::Loaded
+        && existing.state != ReceiveLayoutStore::LoadState::Missing) {
+        // A layout this Core cannot read is left as it is, never replaced.
+        qCWarning(lcConnection) << "Receive layout: kept unread, paired devices' slices not saved:"
+                                << existing.error;
+        return true;
+    }
+    QList<ReceiveSliceState> slices;
+    QSet<int> ids;
+    // The paired devices' live slices, owned or held for them.
+    for (const SliceModel* slice : std::as_const(m_slices)) {
+        const SliceOwnership::Mark mark = m_sliceOwnership->mark(slice->sliceIndex());
+        if (!isPairedDeviceSubject(layoutSubject(mark.owner, mark.heldFor))) {
+            continue;
+        }
+        slices.append({slice->sliceIndex(), slice->panKey(), slice->frequency(), slice->dspMode(),
+                       mark.owner, mark.heldFor});
+        ids.insert(slice->sliceIndex());
+    }
+    // Letters still kept for devices that have not signed in. Letters kept
+    // for another radio are not this radio's and are left as they are.
+    const bool reservationsHere =
+        m_deviceReservationsMac == AppSettings::normalizedRadioMac(mac);
+    QList<DeviceSliceReservation> reservations;
+    for (const DeviceSliceReservation& reservation : std::as_const(m_deviceSliceReservations)) {
+        if (!reservationsHere) {
+            reservations.append(reservation);
+            continue;
+        }
+        if (ids.contains(reservation.state.id) || sliceById(reservation.state.id) != nullptr) {
+            // Another slice has that letter now (a device's or the window's
+            // own): the device's saved slices keep this one, with its own
+            // settings, never the letter's current ones.
+            const ReceiveSliceState& kept = reservation.state;
+            DeviceLayoutStore::append(store, mac, reservation.device,
+                                      {kept.id, kept.panKey, kept.frequencyHz, kept.dspMode,
+                                       reservation.settings},
+                                      deviceLayoutLimit());
+            continue;
+        }
+        reservations.append(reservation);
+        slices.append(reservation.state);
+        ids.insert(reservation.state.id);
+    }
+    m_deviceSliceReservations = reservations;
+    // Never lose what this Core does not manage: entries with no paired
+    // device (a headless Core's unowned slices, a token window's) come
+    // through unchanged.
+    if (existing.state == ReceiveLayoutStore::LoadState::Loaded) {
+        for (const ReceiveSliceState& entry : existing.slices) {
+            if (isPairedDeviceSubject(layoutSubject(entry.owner, entry.heldFor))) {
+                continue;
+            }
+            if (ids.contains(entry.id)) {
+                qCInfo(lcConnection) << "Receive layout: a paired device now has letter"
+                                     << receiverLetter(entry.id) << "; its unowned entry is replaced";
+                continue;
+            }
+            slices.append(entry);
+            ids.insert(entry.id);
+        }
+    }
+    if (slices.isEmpty()) {
+        ReceiveLayoutStore::forget(store, mac);
+        return true;
+    }
+    // Two RADE slices need a named audio owner (ReceiveLayoutStore::validate):
+    // the one the layout named, else the lowest letter.
+    QList<int> radeIds;
+    for (const ReceiveSliceState& entry : std::as_const(slices)) {
+        if (isRadeDspMode(entry.dspMode)) {
+            radeIds.append(entry.id);
+        }
+    }
+    std::optional<int> radeOwner;
+    if (existing.radeRxOwnerId && radeIds.contains(*existing.radeRxOwnerId)) {
+        radeOwner = existing.radeRxOwnerId;
+    } else if (radeIds.size() > 1) {
+        radeOwner = *std::min_element(radeIds.cbegin(), radeIds.cend());
+    }
+    const std::optional<int> diversityOwner =
+        existing.diversityOwnerId && ids.contains(*existing.diversityOwnerId)
+            ? existing.diversityOwnerId : std::nullopt;
+    QString reason;
+    if (!ReceiveLayoutStore::stage(store, mac, slices, &reason, radeOwner, diversityOwner)) {
+        qCWarning(lcConnection) << "Receive layout: paired devices' slices not saved:" << reason;
+    }
+    return true;
 }
 
 int RadioModel::restoreSliceFor(const QByteArray& owner, int sliceId,
@@ -18422,6 +18986,10 @@ int RadioModel::restoreSliceFor(const QByteArray& owner, int sliceId,
         return refuse(rejection.isEmpty() ? tr("All the radio's receivers are in use.")
                                           : rejection);
     }
+    // A device is on this letter now (a kept letter, or a saved slice at
+    // admission): its connect-time snapshot is stale from here on, and a
+    // later Run Core off/on cycle reads the letter's current settings.
+    m_deviceLetterSnapshot.remove(id);
     if (reason) {
         reason->clear();
     }
@@ -19451,18 +20019,18 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
     // Create slice 0 and load persisted VFO state from AppSettings.
     // Slice A always lives on the default pan "pan-0"; seed its panKey so
     // flag migration (panKeyChanged) routes symmetrically with Slice B+.
-    if (m_slices.isEmpty()) {
-        addSlice();
-        if (!m_slices.isEmpty()) {
-            m_slices.first()->setPanKey(QStringLiteral("pan-0"));
-        }
-    }
+    // A Core inside a desktop window first gives paired devices their
+    // letters back, and its window takes the lowest free one
+    // (addStartingSlices).
+    const int startingSliceId = addStartingSlices(info.macAddress);
     for (SliceModel* slice : std::as_const(m_slices)) {
         slice->setSettingsRadioIdentity(info.macAddress);
         slice->restoreNnrSettings();
     }
     if (!preserveSlices && !m_receiveLayoutOverridesCount) {
-        setActiveSlice(0);
+        const qsizetype startingIndex =
+            startingSliceId >= 0 ? m_slices.indexOf(sliceById(startingSliceId)) : 0;
+        setActiveSlice(static_cast<int>(std::max<qsizetype>(0, startingIndex)));
         loadSliceState(m_activeSlice);
     }
 
@@ -21328,6 +21896,19 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
             this, [this](int receiverIndex, const QVector<float>& samples) {
         forkIqToTaps(receiverIndex, samples);
     }, Qt::DirectConnection);
+
+    // A lost I/Q packet: the display FFTs drop their window in progress
+    // (NereusSDR, 2026-10-22, after Longpath PR 62). The same path as the
+    // samples, all on the Connection thread, so rawIqDataForStream's
+    // consumers see the gap between the samples before it and after it.
+    // The audio path (iqDataForReceiverStamped, the DSP worker) does not
+    // listen: a gap reaches WDSP as it always has.
+    connect(m_connection, &RadioConnection::iqSequenceGap,
+            m_receiverManager, &ReceiverManager::noteIqSequenceGap,
+            Qt::DirectConnection);
+    connect(m_receiverManager, &ReceiverManager::iqSequenceGapForReceiver,
+            this, &RadioModel::iqSequenceGapForStream,
+            Qt::DirectConnection);
 
     // Step 2b: ReceiverManager → DSP worker (queued, off the main thread).
     // RxDspWorker accumulates samples into in_size chunks, runs each
@@ -24218,7 +24799,7 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
             // From Thetis console.cs:45978 — GetRXAAGCTop after SetRXAAGCThresh
             // R-R3-39: read on the receive lane after the set; at once
             // without a lane.
-            syncRfGainFromAgcTop(slice, rxCh);
+            syncRfGainFromAgcTop(slice, rxCh, true);
         }
         scheduleSettingsSave(slice);
     });
@@ -24875,6 +25456,11 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
                     m_syncingAgc = true;
                     slice->setAgcThreshold(threshInt);
                     m_syncingAgc = wasSyncing;
+                    // The band keeps the threshold the new top gives, so the
+                    // band's AGC comes back as the user or TCI's agc_gain
+                    // left it. The save scheduled below captured the band's
+                    // values before this lane readback landed.
+                    scheduleSettingsSave(slice);
                 }
             });
         }
@@ -26911,7 +27497,7 @@ void RadioModel::updateAutoAgc()
                 rxCh->setAgcThreshold(threshInt);
                 // From Thetis v2.10.3.13 console.cs:45978 — readback AGC top
                 // R-R3-39: read on the receive lane after the set.
-                syncRfGainFromAgcTop(slice, rxCh);
+                syncRfGainFromAgcTop(slice, rxCh, false);
             }
 
             // Update model (UI sync) — handler won't re-enter WDSP
@@ -27149,7 +27735,9 @@ void RadioModel::completeReceiveLayoutStartup()
 bool RadioModel::captureReceiveLayout(QString* error)
 {
     if (!m_receiveLayoutManaged) {
-        return true;
+        // A Core inside a desktop window keeps its paired devices' slices
+        // in the layout too, so a restart either way gives them back.
+        return m_hostsStationDevice ? captureHostedReceiveLayout() : true;
     }
     // Slice control plan Task 7 (ruling Q10): a Core left with no slice
     // saves no layout, so a restart starts as a first start does, with one
@@ -28538,6 +29126,17 @@ void RadioModel::setConnectionState(ConnectionState s)
         m_connectionStartedAt.invalidate();
         m_connectionAgeOwner.clear();
         m_connectionAgeHadOwner = false;
+    }
+    // From Longpath src/models/RadioModel.cpp:13736-13747 [@383f058]
+    // Wire rate and active-RX count are written by connectToRadio() BEFORE
+    // the worker thread reports Probing/Connecting (those arrive queued,
+    // one event-loop turn later). Clearing them on every non-Connected
+    // state therefore wiped what connectToRadio had just stored, and the
+    // model reported rate 0 / rx2Enabled()==false for the whole session
+    // until the operator changed the rate by hand (HL2 simulator bench,
+    // 2026-09-21: NetworkDiagnosticsDialog showed "—", TCI iq_samplerate
+    // fell back to the cached default). Only a real teardown clears them.
+    if (s == ConnectionState::Disconnected) {
         m_connectionSampleRateHz = 0;
         m_connectionActiveRxCount = 0;       // Task 1.7: reset on disconnect
     }
@@ -30685,14 +31284,25 @@ QString RadioModel::agcMode(int rx) const
     return QStringLiteral("MED");
 }
 
-// ── AGC gain (threshold) ────────────────────────────────────────────────────
+// ── AGC gain (TCI agc_gain = Thetis AGC-T = WDSP AGC top) ──────────────────
+//
+// From Thetis TCIServer.cs:5011-5026 [v2.10.3.15]: handleAgcGain clamps the
+// value to -20..120 and calls consoleThreadSafe.SetAgcT(rx + 1, gain); the
+// query answers GetAgcT(rx + 1). SetAgcT / GetAgcT (console.cs:51803-51833
+// [v2.10.3.15]) set and read the RF property, the ptbRF slider (AGC-T,
+// -20..120, console.designer.cs:3708-3709 [v2.10.3.15]) whose value goes to
+// WDSP SetRXAAGCTop. Here that value is SliceModel::rfGain, which the
+// rfGainChanged handler hands to RxChannel::setAgcTop. It is not
+// agcThreshold, the -160..+2 threshold point SetRXAAGCThresh takes; this
+// shim wrote that until 2026-10-22. Found by Longpath f1d0c181 (Martin
+// Fischer, OE5SOS).
 void RadioModel::setAgcGain(int rx, int gain)
 {
-    if (auto* s = sliceById(rx)) { s->setAgcThreshold(gain); }
+    if (auto* s = sliceById(rx)) { s->setRfGain(gain); }
 }
 int RadioModel::agcGain(int rx) const
 {
-    if (const auto* s = sliceById(rx)) { return s->agcThreshold(); }
+    if (const auto* s = sliceById(rx)) { return s->rfGain(); }
     return 0;
 }
 

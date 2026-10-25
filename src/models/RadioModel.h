@@ -7,8 +7,21 @@
 // Ported from Thetis source:
 //   Project Files/Source/Console/console.cs, original licence from Thetis source is included below
 //
+// Ported from Longpath sources:
+//   src/models/RadioModel.h (setConnectionRateForTest), Longpath banner included below
+//
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-22 - setConnectionRateForTest, a test seam standing in for
+//                connectToRadio()'s write of the connection's sample rate
+//                and active RX count.
+//                Ported from Longpath PR 37 (fd894ded, Martin Fischer
+//                OE5SOS) by J.J. Boyd (KG4VCF), with AI-assisted
+//                transformation via Claude Code.
+//   2026-10-22 - setAgcGain / agcGain comment: TCI agc_gain is the AGC-T
+//                (rfGain), after Longpath f1d0c181 (Martin Fischer,
+//                OE5SOS). J.J. Boyd (KG4VCF), with AI-assisted
+//                transformation via Claude Code.
 //   2026-10-22 - rejoinCandidateStreams: the receivers a lone slice may
 //                share with when it tunes into their range (JJ's ruling
 //                2026-10-22), compared on the slice's new-band label.
@@ -685,11 +698,41 @@
 //   2026-10-10 - rebuildDspOptionsForMode judges each slice by its own
 //                mode. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                Code.
+//   2026-10-22 - iqSequenceGapForStream: a lost I/Q packet on a stream, for
+//                the display FFTs (after Longpath PR 62). J.J. Boyd
+//                (KG4VCF), with AI-assisted transformation via Claude Code.
 //   2026-10-22 - reportDspDiagnostics, slowNrCallLogLine, nrStagesLogName
 //                and outputNonFiniteLogLine: the Core log names a slice's
 //                noise-reduction calls over 50 ms with the stages that ran,
 //                and non-finite samples in WDSP's output. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-23 - inputSizeMismatchLogLine: the Core log counts I/Q chunks a
+//                slice's channel silenced because their size was not its
+//                WDSP input block, with the sizes the guard saw; info for
+//                up to 100 ms of audio per interval, a warning above. J.J.
+//                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-23 - Slice letters across Core restarts (JJ: "the core
+//                headless and core inside window should be the same
+//                experience"): a Core inside a desktop window keeps its
+//                paired devices' letters and saved settings from the
+//                receive layout without making their slices, takes the
+//                lowest letter nobody keeps for the window, and gives a
+//                device its letter when it signs in; the window's layout
+//                save keeps every entry that is not a device's
+//                (setHostsStationDevice, addStartingSlices,
+//                placeReservedSlicesFor, captureHostedReceiveLayout). Each
+//                local connect snapshots the device letters' settings so a
+//                device never gets the window's; windowSliceId names the
+//                window's own starting slice for its one-time wiring.
+//                Kept letters belong to the radio they were kept for
+//                (m_deviceReservationsMac), and a letter's snapshot is
+//                dropped once a device is placed on it.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24 - iqSequenceGapForStream's comment names the engine's bound
+//                on the window reset (JJ's ruling, option i), and then
+//                option c, a gap within four windows of the last one let
+//                through. J.J. Boyd (KG4VCF), with AI-assisted
+//                implementation via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -742,6 +785,27 @@
 //============================================================================================//
 
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
+
+// --- From RadioModel.h (Longpath, oe5sos/Longpath @383f058) ---
+// Longpath banner, byte for byte. The Thetis licence blocks it names are the
+// ones above.
+// =================================================================
+// src/models/RadioModel.h  (Longpath)
+// =================================================================
+//
+// Ported from Thetis source:
+//   Project Files/Source/Console/console.cs, original licence from Thetis source is included below
+//
+// =================================================================
+// Modification history (Longpath):
+//   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
+//                 (KG4VCF), with AI-assisted transformation via Anthropic
+//                 Claude Code.
+//                 Structural pattern follows AetherSDR (ten9876/AetherSDR,
+//                 GPLv3).
+//   2026-09-27 -- cwPitch()/setCwPitch()/cwPitchChanged(int) (Martin
+//                 Fischer, OE5SOS, AI-assisted via Anthropic Claude).
+// =================================================================
 
 #include "core/MoxController.h"
 #include "core/NereusCoreExport.h"
@@ -2292,6 +2356,27 @@ public:
     /// The non-finite output line reportDspDiagnostics logs (lcDsp).
     static QString outputNonFiniteLogLine(int sliceIndex, qint64 samples);
 
+    /// 2026-10-23: the line reportDspDiagnostics logs (lcDsp), at most every
+    /// kOutputNonFiniteLogIntervalMs per slice, for I/Q chunks processIq
+    /// silenced because their size was not the channel's WDSP input block
+    /// (RxChannel::takeInputSizeMismatch). chunkSize and wdspInputSize are
+    /// the pair the guard saw, not the channel's block at log time.
+    static QString inputSizeMismatchLogLine(int sliceIndex, qint64 chunks, int chunkSize,
+                                            int wdspInputSize);
+
+    /// 2026-10-23: the audio silenced chunks stood for, in ms. Every stream
+    /// is drained in chunks of its own block, bufferSizeForRate(rate), which
+    /// is kBufferBaseSize samples at kBufferBaseRate scaled to the rate, so
+    /// each chunk is kBufferBaseSize / kBufferBaseRate s (1.33 ms) whatever
+    /// the rate (SampleRateCatalog.h).
+    static double inputSizeMismatchAudioMs(qint64 chunks);
+
+    /// 2026-10-23: up to this much silenced audio per log interval is the
+    /// expected short window of a slice moving to a stream at another rate
+    /// and logs at info; more means a lasting mismatch and logs a warning.
+    static constexpr double kInputSizeMismatchInfoMaxMs = 100.0;
+    static bool inputSizeMismatchIsLasting(qint64 chunks);
+
     SliceModel* activeSlice() const { return m_activeSlice; }
 
     /// Hand the transmitter to the slice with this ID, RF-safely.
@@ -2888,6 +2973,53 @@ public:
     /// Local only.
     int restoreSliceFor(const QByteArray& owner, int sliceId, const ReceiveSliceState& state,
                         QString* reason = nullptr);
+
+    /// Slice letters across Core restarts (JJ 2026-10-23, "the core
+    /// headless and core inside window should be the same experience"):
+    /// true while this model is the Core inside a desktop window, the
+    /// station device being that window (StationHost with a hosting device
+    /// sets it at start and clears it at stop). Such a Core keeps the
+    /// receive layout's paired-device entries as the headless Core does
+    /// (captureReceiveLayout), carrying every other entry through
+    /// unchanged, and keeps each returning device's letter and settings for
+    /// it (addStartingSlices) without making its slice until it signs in
+    /// (placeReservedSlicesFor). Set while the window already has its
+    /// slices (Run Core turned on later, connected or not), the letters are
+    /// kept at once; a letter the window already uses is not, and that
+    /// device gets the lowest free letter with the settings the letter held
+    /// when the radio connected (the connect's snapshot, so its own, never
+    /// the window's). Cleared, it stages the layout one last time and drops
+    /// the kept letters. Local only.
+    void setHostsStationDevice(bool hosts);
+    bool hostsStationDevice() const { return m_hostsStationDevice; }
+
+    /// The slices a connect starts with when there are none: one slice on
+    /// "pan-0". On a Core inside a desktop window it takes the lowest letter
+    /// not kept for a returning paired device, or the last letter when the
+    /// layout keeps them all (that device then gets the lowest free letter,
+    /// with its own settings, when it signs in). Returns the slice's id, or
+    /// -1 when none was made. Local only.
+    int addStartingSlices(const QString& radioMac);
+
+    /// StationServer admission, before a device's saved slices: makes the
+    /// slices kept for `device` (addStartingSlices), each on its letter when
+    /// free, else the lowest free letter, with the settings kept for it,
+    /// owned by the device. A slice that cannot be made goes to the
+    /// device's saved slices. Needs the radio connected. Returns how many
+    /// were made. Local only.
+    int placeReservedSlicesFor(const QByteArray& device);
+
+    /// The letters kept for paired devices that have not signed in, lowest
+    /// first.
+    QList<int> reservedSliceLetters() const;
+
+    /// The slice this window's one-time wiring follows (the spectrum's
+    /// first view, the VFO flag built with it, the mode, AGC and NR menus,
+    /// the RADE and Phone/CW applets, the restore push): the slice the
+    /// connect started this window on (addStartingSlices). Slice A unless a
+    /// Core inside the window kept A for a returning paired device, and
+    /// always A for a remote window.
+    int windowSliceId() const { return m_windowSliceId; }
 
     /// Phase 3F Sub-Epic C Task 7: AetherSDR-faithful slice creation entry
     /// point.  Creates a new SliceModel (delegates to addSlice) and tags it
@@ -4898,6 +5030,13 @@ public:
     // a fake RadioConnection. Production transitions go through the
     // private setConnectionState() called from connection signals.
     void setConnectionStateForTest(ConnectionState s) { setConnectionState(s); }
+    // From Longpath src/models/RadioModel.h:1685-1690 [@383f058]
+    // Stands in for the connectToRadio() write of the wire rate / RX count
+    // so a test can replay the state sequence around it without a radio.
+    void setConnectionRateForTest(int rateHz, int activeRxCount) {
+        m_connectionSampleRateHz = rateHz;
+        m_connectionActiveRxCount = activeRxCount;
+    }
 
     // Test-only: walk the FULL Connected/Disconnected handler so tests
     // can drive the peripherals lifecycle (applyPeripheralsForCurrentMac
@@ -5873,7 +6012,11 @@ public slots:
     Q_INVOKABLE void    setAgcMode(int rx, const QString& mode);
     Q_INVOKABLE QString agcMode(int rx) const;
 
-    // AGC gain (threshold) — routes to SliceModel::agcThreshold (-20..120).
+    // AGC gain: TCI agc_gain is Thetis's AGC-T (SetAgcT / GetAgcT, the
+    // ptbRF value, -20..120), the WDSP AGC top, so it routes to
+    // SliceModel::rfGain. Not agcThreshold, the -160..+2 threshold point.
+    // From Thetis TCIServer.cs:5011-5026, console.cs:51803-51833
+    // [v2.10.3.15].
     Q_INVOKABLE void setAgcGain(int rx, int gain);
     Q_INVOKABLE int  agcGain(int rx) const;
 
@@ -6423,6 +6566,20 @@ signals:
     // reach its own engine (and from there its own panadapter).
     // Emitted from the same Connection-thread fork as rawIqData.
     void rawIqDataForStream(int streamIndex, const QVector<float>& samples);
+
+    // An I/Q sequence gap on this stream (-1: every stream), emitted from
+    // the same Connection-thread path as rawIqDataForStream and before the
+    // samples after the gap. A display FFT fed by rawIqDataForStream takes
+    // it on the engine's thread in order with the samples
+    // (FFTEngine::requestWindowReset): on a healthy link it discards its
+    // window in progress; on a lossy link (a gap within
+    // FFTEngine::kGapLossyLinkWindows windows of the last one, once a frame
+    // has come since the last reset, or no frame for
+    // FFTEngine::kGapResetStallFrameIntervals frame intervals) it keeps
+    // the window, so frames keep their normal rate with a slight smear.
+    // NereusSDR, 2026-10-22, after Longpath PR 62; bound 2026-10-23,
+    // option c 2026-10-24.
+    void iqSequenceGapForStream(int streamIndex);
 
     // Phase 3Q-6: forwarded from the active RadioConnection::frameReceived()
     // so TitleBar::ConnectionSegment can pulse its activity LED without
@@ -7647,6 +7804,23 @@ private:
     bool activateRestoredRadeReceiveOwner(QString* error);
     void setReceiveLayoutRestoreStatus(const QString& state, const QString& message);
     bool captureReceiveLayout(QString* error);
+    // setHostsStationDevice / addStartingSlices: keeps the receive layout's
+    // paired-device letters, with each letter's settings as they are now.
+    void reserveDeviceSlices(const QString& radioMac);
+    bool sliceLetterReserved(int id) const;
+    int lowestUnreservedFreeSliceId(int cap) const;
+    // The slice limit before the connect sizes the stream pool: the board's.
+    int startingSliceCap() const;
+    // The board's own slice cap, as StationServer::deviceLayoutLimit, for
+    // a device's saved slices.
+    int deviceLayoutLimit() const;
+    // addStartingSlices: the layout's paired-device letters' settings as
+    // they are at connect, before the window's slice can write them.
+    void snapshotDeviceLetterSettings(const QString& radioMac);
+    // captureReceiveLayout for the Core inside a desktop window: the paired
+    // devices' slices and kept letters, never the window's own, with every
+    // other entry of the saved layout carried through.
+    bool captureHostedReceiveLayout();
 
     // RADE threads (2026-09-30): one receive route per RADE slice. The
     // channel decodes on its own thread; the DSP worker feeds it and plays
@@ -7730,8 +7904,10 @@ private:
     void wireRxChannelLaneSignals(int channelId);
     // Reads the AGC top back (on the lane) after an AGC-T set and puts it in
     // the slice's RF gain. m_agcReadbackSerial keeps only the newest
-    // readback per slice.
-    void syncRfGainFromAgcTop(SliceModel* slice, RxChannel* channel);
+    // readback per slice. `scheduleSave` saves the slice when the readback
+    // changes its RF gain: true for the AGC-T slider, false for the AUTO
+    // tick, whose writes are not the operator's and schedule no save.
+    void syncRfGainFromAgcTop(SliceModel* slice, RxChannel* channel, bool scheduleSave);
     QHash<const SliceModel*, quint64> m_agcReadbackSerial;
     // The live rate change (setSampleRateLiveAsync).
     struct SampleRateRequest {
@@ -7772,6 +7948,15 @@ private:
         qint64 lastLogMs{-1};
     };
     QHash<int, OutputNonFiniteLog> m_outputNonFiniteLog;
+    // 2026-10-23: the same, for chunks silenced by RxChannel's input-size
+    // guard (pending counts chunks), with the last mismatched pair taken.
+    struct InputSizeMismatchLog {
+        qint64 pending{0};
+        qint64 lastLogMs{-1};
+        int chunkSize{0};
+        int wdspInputSize{0};
+    };
+    QHash<int, InputSizeMismatchLog> m_inputSizeMismatchLog;
     QThread*         m_dspThread{nullptr};
     std::unique_ptr<RadeWaveformModel> m_radeWaveforms;
     int m_waveformTxSlice = -1;
@@ -8293,6 +8478,28 @@ private:
     bool m_stationHandoverSuppressedReceiverEdits{false};
     bool m_receiveLayoutPendingAdmission{false};
     bool m_receiveLayoutManaged{false};
+    // setHostsStationDevice: the Core inside a desktop window.
+    bool m_hostsStationDevice{false};
+    // addStartingSlices: a returning paired device's letter, kept for it
+    // until it signs in. letterKept is false when the window has the letter;
+    // the device then takes the lowest free one.
+    struct DeviceSliceReservation {
+        QByteArray device;
+        ReceiveSliceState state;
+        QMap<QString, QString> settings;
+        bool letterKept {false};
+    };
+    QList<DeviceSliceReservation> m_deviceSliceReservations;
+    // The normalized MAC of the radio m_deviceSliceReservations were made
+    // for (reserveDeviceSlices); empty when none were made this hosting
+    // run. Kept letters belong to that radio's layout and are never placed
+    // on, or saved into, another radio's.
+    QString m_deviceReservationsMac;
+    // snapshotDeviceLetterSettings: per letter, for m_deviceLetterSnapshotMac.
+    QString m_deviceLetterSnapshotMac;
+    QHash<int, QMap<QString, QString>> m_deviceLetterSnapshot;
+    // windowSliceId.
+    int m_windowSliceId{0};
     bool m_receiveLayoutOverridesCount{false};
     // Slice ids the saved layout hydrated, until admission completes: a
     // slice refused at admission is "restored" only if its id is here.
