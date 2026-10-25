@@ -1120,8 +1120,10 @@ private slots:
         worker.setBufferSizes(kInSize, 64);
         model.attachDspWorkerForTest(&worker);
         model.republishAllStreamBindings();
-        // republishStreamBindings posts a queued call; drain it.
-        QCoreApplication::processEvents();
+        // 2026-10-25: the bindings reach the worker through a receive-lane
+        // job (applyStreamDspGeometry, in step) and then a queued call;
+        // drain both.
+        QVERIFY(model.waitForReceiveLaneForTest());
 
         QCOMPARE(workerBindingsFor(worker, streamB, kInSize), QVector<int>{idB});
     }
@@ -1176,7 +1178,8 @@ private slots:
         secondWorker.setBufferSizes(kInSize, 64);
         model.attachDspWorkerForTest(&secondWorker);
         model.republishAllStreamBindings();
-        QCoreApplication::processEvents();
+        // 2026-10-25: a receive-lane job, then a queued call.
+        QVERIFY(model.waitForReceiveLaneForTest());
 
         QCOMPARE(workerBindingsFor(secondWorker, streamB, kInSize),
                  QVector<int>{idB});
