@@ -1,5 +1,7 @@
 // NereusSDR for iOS: the link's session fixtures, played against the mirror, the settings proxy and commands
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: the mirror runs Roundtable's verbs fixture. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import LinkSessionTestSupport
@@ -20,7 +22,9 @@ import Testing
     @Test func everyAppFixturePassesThroughTheMirror() async throws {
         let classes = try SessionFixtures.mirrorClasses()
         let fixtures = try SessionFixtures.forApp()
-        #expect(fixtures.count == 88)
+        #expect(fixtures.count == 89)
+        // Roundtable's thirteen verbs and the roundtable object.
+        #expect(fixtures.contains { $0.id == "session-verbs-roundtable" })
         // The rotor's eight commands and refusals (remote rotor control v1).
         #expect(fixtures.contains { $0.id == "session-verbs-rotor" })
         // TUNE and the two-tone test follow the Setup drive source.
