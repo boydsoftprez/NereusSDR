@@ -1,4 +1,4 @@
-// NereusSDR for iOS: the Roundtable sheet over the band: half and full height, the room and the pinned box
+// NereusSDR for iOS: the Roundtable sheet over the band: half and full height, the room, the pinned box and the hold PTT
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // no-port-check: NereusSDR-original.
 // Modification history (NereusSDR):
@@ -11,7 +11,8 @@ import SwiftUI
 /// line opens it at half height over the band, and a tap on the handle
 /// makes it full height. Half shows the talker and the readings with the
 /// Offset column; full adds the earlier turns with Name and the messages,
-/// in one scroll. The message box is pinned at its foot, clear of PTT.
+/// in one scroll. The message box is pinned at its foot with PTT beside
+/// it, smaller and 24 points clear, press and hold with a dashed ring.
 ///
 /// Keyed, the sheet drops below the keyed gauges and shows the TX line and
 /// every station's reading of you. With a tuning dial on, the sheet stops
@@ -34,6 +35,7 @@ struct RoundtableSheet: View {
     /// The station's callsign, as the Core's settings give it.
     let stationCallsign: String
     let close: () -> Void
+    var holdObserver: ((PttHold.Action) -> Void)?
 
     @State private var sending = false
     @State private var failed: String?
@@ -273,8 +275,9 @@ struct RoundtableSheet: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .center, spacing: 0) {
                 if !dialOn {
-                    // The band's PTT sits here, over the sheet.
-                    Spacer().frame(width: PttButton.diameter + PttButton.inset)
+                    PttButton(transmit: transmit, linkUp: linkUp, mode: .hold(diameter: PttButton.holdDiameter),
+                              holdObserver: holdObserver)
+                    Spacer().frame(width: PttButton.holdClearance)
                 }
                 if hiddenHere {
                     Text("Hidden stations can't post. Go live to join in.")
@@ -298,11 +301,11 @@ struct RoundtableSheet: View {
                         .foregroundStyle(RoundtableColours.accent)
                         .accessibilityIdentifier("roundtableTryAgain")
                 }
-                .padding(.leading, dialOn ? 0 : PttButton.diameter + PttButton.inset)
+                .padding(.leading, dialOn ? 0 : PttButton.holdDiameter + PttButton.holdClearance)
             } else if let hint, !hiddenHere {
                 Text(hint).font(.system(size: 11)).foregroundStyle(RoundtableColours.dim)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, dialOn ? 0 : PttButton.diameter + PttButton.inset)
+                    .padding(.leading, dialOn ? 0 : PttButton.holdDiameter + PttButton.holdClearance)
                     .accessibilityIdentifier("roundtableHint")
             }
         }

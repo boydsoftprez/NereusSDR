@@ -1,5 +1,8 @@
 // NereusSDR for iOS: the tab bar and the screen each tab opens
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: Roundtable plan Task 17, the UI tests' record of the hold
+// PTT. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import SwiftUI
 
@@ -108,12 +111,25 @@ struct RootView: View {
         }
     }
 
+    /// The UI tests' record of the hold PTT, in a debug build that asks for it.
+    @MainActor
+    private static var holdObserver: ((PttHold.Action) -> Void)? {
+        #if DEBUG
+        guard let log = UITestBand.holdLog else {
+            return nil
+        }
+        return { action in log.record(action) }
+        #else
+        return nil
+        #endif
+    }
+
     @ViewBuilder
     private func content(for tab: AppTab) -> some View {
         switch tab {
         case .panadapter:
             // More display options in Setup opens Setup's Display page (D79).
-            MainScreen(app: model, main: model.main, flow: flow, openSetup: {
+            MainScreen(app: model, main: model.main, flow: flow, holdObserver: Self.holdObserver, openSetup: {
                 setupRouter.open(.displayOnThisPhone)
                 selection = .setup
             },
@@ -122,6 +138,13 @@ struct RootView: View {
                            toolsRouter.openPerformance()
                            selection = .tools
                        }, openTransmitSettings: { txSettingsRouter.openTransmit() })
+            #if DEBUG
+            .overlay(alignment: .topLeading) {
+                if let log = UITestBand.holdLog {
+                    UITestHoldLog.Label(log: log)
+                }
+            }
+            #endif
         case .setup:
             SetupTab(app: model, flow: flow, router: setupRouter)
                 .onAppear {

@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // no-port-check: NereusSDR-original.
 // Modification history (NereusSDR):
-// 2026-10-24: Roundtable plan Task 17, the phone's Roundtable sheet.
-// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-24: Roundtable plan Task 17, the phone's Roundtable sheet and its
+// press-and-hold PTT. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -16,7 +16,8 @@ import Testing
 import UIKit
 
 /// Spec 11.2 and 11.3: the flag's Roundtable line, the sheet's places on
-/// the band. With `NEREUS_MAIN_SHOTS` set to a directory (through
+/// the band, and the hold PTT that never keys on a swipe or a drag and
+/// always lets go. With `NEREUS_MAIN_SHOTS` set to a directory (through
 /// `TEST_RUNNER_NEREUS_MAIN_SHOTS`), the sheet's states are written there
 /// for comparing with the board's phone pictures.
 @Suite("Roundtable sheet", .serialized)
@@ -144,6 +145,231 @@ struct RoundtableSheetTests {
         #expect(DialLayer.stripHeight == 92 && DialLayer.stripKnobDiameter == 76)
         #expect(MainScreen.keepsStrip(.waterfallKnob) && MainScreen.keepsStrip(.thumbwheel))
         #expect(!MainScreen.keepsStrip(.off) && !MainScreen.keepsStrip(.sheetKnob))
+        #expect(PttButton.holdDiameter < PttButton.diameter && PttButton.holdClearance == 24)
+    }
+
+    @Test("the hold PTT reads Hold where the tap PTT reads Tap")
+    func holdWords() {
+        let idle = PttController.Snapshot()
+        #expect(PttButton.words(idle, clock: "0:00").sub == "Tap")
+        #expect(PttButton.holdWords(idle, clock: "0:00").sub == "Hold")
+        #expect(PttButton.holdWords(idle, clock: "0:00").label == PttButton.words(idle, clock: "0:00").label)
+    }
+
+    // MARK: The hold, as a finger moves
+
+    @Test("a finger at rest for the delay keys, and lifting it unkeys")
+    func holdPressAndLift() {
+        var hold = PttHold()
+        #expect(hold.down(at: .zero, time: 10) == nil)
+        #expect(hold.tick(time: 10.1) == nil)
+        #expect(hold.tick(time: 10 + PttHold.delay) == .press)
+        #expect(hold.move(to: CGPoint(x: 4, y: 4), inside: true) == nil)
+        #expect(hold.up() == .release)
+        #expect(hold.phase == .idle)
+    }
+
+    @Test("a quick tap never keys")
+    func holdQuickTap() {
+        var hold = PttHold()
+        _ = hold.down(at: .zero, time: 10)
+        #expect(hold.up() == nil)
+        #expect(hold.tick(time: 11) == nil)
+    }
+
+    @Test("a swipe that starts on the button never keys, even if it comes to rest after")
+    func holdSwipeNeverKeys() {
+        var hold = PttHold()
+        _ = hold.down(at: .zero, time: 10)
+        #expect(hold.move(to: CGPoint(x: 0, y: -(PttHold.slop + 1)), inside: true) == nil)
+        #expect(hold.phase == .spent)
+        #expect(hold.tick(time: 12) == nil)
+        #expect(hold.move(to: CGPoint(x: 0, y: -(PttHold.slop + 1)), inside: true) == nil)
+        #expect(hold.tick(time: 14) == nil)
+        #expect(hold.up() == nil)
+    }
+
+    @Test("a drag out of the button before the delay never keys")
+    func holdDragOffNeverKeys() {
+        var hold = PttHold()
+        _ = hold.down(at: CGPoint(x: 20, y: 20), time: 10)
+        #expect(hold.move(to: CGPoint(x: 22, y: 21), inside: false) == nil)
+        #expect(hold.tick(time: 11) == nil)
+        #expect(hold.up() == nil)
+    }
+
+    @Test("a held finger sliding off the button unkeys, and coming back does not key again")
+    func holdSlideOffUnkeys() {
+        var hold = PttHold()
+        _ = hold.down(at: .zero, time: 10)
+        #expect(hold.tick(time: 11) == .press)
+        #expect(hold.move(to: CGPoint(x: 80, y: 0), inside: false) == .release)
+        #expect(hold.move(to: .zero, inside: true) == nil)
+        #expect(hold.tick(time: 12) == nil)
+        #expect(hold.up() == nil)
+    }
+
+    @Test("a cancelled touch unkeys a held press and ends a press not yet held")
+    func holdCancel() {
+        var held = PttHold()
+        _ = held.down(at: .zero, time: 10)
+        _ = held.tick(time: 11)
+        #expect(held.cancel() == .release)
+        #expect(held.phase == .idle)
+        var pressing = PttHold()
+        _ = pressing.down(at: .zero, time: 10)
+        #expect(pressing.cancel() == nil)
+        #expect(pressing.tick(time: 11) == nil)
+    }
+
+    @Test("a second finger is ignored")
+    func holdSecondFinger() {
+        var hold = PttHold()
+        _ = hold.down(at: .zero, time: 10)
+        _ = hold.tick(time: 11)
+        #expect(hold.down(at: CGPoint(x: 5, y: 5), time: 12) == nil)
+        #expect(hold.phase == .held)
+    }
+
+    @Test("the hold view's surface ends a held press when it leaves the window")
+    func holdViewLeavesWindow() throws {
+        var actions: [PttHold.Action] = []
+        let view = PttHoldView(frame: CGRect(x: 0, y: 0, width: 58, height: 58))
+        view.act = { actions.append($0) }
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.addSubview(view)
+        // Nothing pressed: leaving sends nothing.
+        view.removeFromSuperview()
+        #expect(actions.isEmpty)
+        view.enabled = false
+        #expect(actions.isEmpty)
+    }
+
+    // MARK: The hold, keying a fake Core
+
+    @Test("a held press keys with tx.key and letting go unkeys with tx.unkey")
+    func holdKeysAndUnkeys() async throws {
+        let (model, station) = try await connected()
+        let transmit = model.main.transmit
+        transmit.holdPtt()
+        #expect(transmit.holding)
+        #expect(await settle { transmit.ptt.state.isKeyed })
+        #expect(station.keyed)
+        transmit.releaseHeldPtt()
+        #expect(!transmit.holding)
+        await transmit.settleHold()
+        #expect(await settle { transmit.ptt.state == .idle && !station.keyed })
+        #expect(Self.verbs(station, "tx.unkey") > 0)
+        await model.disconnect()
+    }
+
+    @Test("a press let go at once never leaves the radio keyed")
+    func holdQuickRelease() async throws {
+        let (model, station) = try await connected()
+        let transmit = model.main.transmit
+        transmit.holdPtt()
+        transmit.releaseHeldPtt()
+        await transmit.settleHold()
+        await TransmitScreenTests.barrier(model, station)
+        #expect(await settle { transmit.ptt.state == .idle })
+        #expect(!station.keyed)
+        #expect(!transmit.ptt.transmitting)
+        await model.disconnect()
+    }
+
+    @Test("a second press while held keys nothing more, and one release unkeys")
+    func holdNeverToggles() async throws {
+        let (model, station) = try await connected()
+        let transmit = model.main.transmit
+        transmit.holdPtt()
+        #expect(await settle { transmit.ptt.state.isKeyed })
+        transmit.holdPtt()
+        await transmit.settleHold()
+        await TransmitScreenTests.barrier(model, station)
+        #expect(transmit.ptt.state.isKeyed && station.keyed)
+        transmit.releaseHeldPtt()
+        await transmit.settleHold()
+        #expect(await settle { transmit.ptt.state == .idle && !station.keyed })
+        await model.disconnect()
+    }
+
+    @Test("the scene losing focus lets go of a held press")
+    func holdSceneInactive() async throws {
+        let (model, station) = try await connected()
+        let transmit = model.main.transmit
+        transmit.holdPtt()
+        #expect(await settle { transmit.ptt.state.isKeyed })
+        transmit.sceneChanged(active: true)
+        #expect(transmit.holding)
+        transmit.sceneChanged(active: false)
+        #expect(!transmit.holding)
+        await transmit.settleHold()
+        #expect(await settle { transmit.ptt.state == .idle && !station.keyed })
+        await model.disconnect()
+    }
+
+    @Test("the link dropping lets go of a held press, and nothing keys again by itself")
+    func holdLinkDrops() async throws {
+        let (model, station) = try await connected()
+        let transmit = model.main.transmit
+        transmit.holdPtt()
+        #expect(await settle { transmit.ptt.state.isKeyed })
+        await station.dropLink()
+        #expect(await settle { !transmit.holding })
+        #expect(await settle { !transmit.ptt.transmitting })
+        #expect(!station.keyed)
+        await model.disconnect()
+    }
+
+    @Test("the hold PTT leaving the screen with the sheet unkeys a held press")
+    func holdSheetCloses() async throws {
+        let (model, station) = try await connected()
+        let transmit = model.main.transmit
+        let shown = Shown()
+        let (window, _) = try host(HoldHost(transmit: transmit, shown: shown))
+        defer { window.isHidden = true }
+        try await Task.sleep(for: .milliseconds(200))
+        transmit.holdPtt()
+        #expect(await settle { transmit.ptt.state.isKeyed })
+        shown.on = false
+        #expect(await settle { !transmit.holding })
+        await transmit.settleHold()
+        #expect(await settle { transmit.ptt.state == .idle && !station.keyed })
+        await model.disconnect()
+    }
+
+    @Test("a key made by a tap stays on when the sheet's hold PTT leaves the screen untouched")
+    func tapKeyOutlivesTheSheet() async throws {
+        let (model, station) = try await connected()
+        let transmit = model.main.transmit
+        let shown = Shown()
+        let (window, _) = try host(HoldHost(transmit: transmit, shown: shown))
+        defer { window.isHidden = true }
+        transmit.tapPtt()
+        #expect(await settle { transmit.ptt.state.isKeyed })
+        shown.on = false
+        try await Task.sleep(for: .milliseconds(300))
+        await TransmitScreenTests.barrier(model, station)
+        #expect(transmit.ptt.state.isKeyed && station.keyed)
+        transmit.tapPtt()
+        #expect(await settle { transmit.ptt.state == .idle })
+        await model.disconnect()
+    }
+
+    @Test("with the sheet closed the band's PTT still taps to key and taps again to unkey")
+    func tapStillToggles() async throws {
+        let (model, station) = try await connected()
+        let transmit = model.main.transmit
+        transmit.tapPtt()
+        #expect(await settle { transmit.ptt.state.isKeyed && station.keyed })
+        transmit.releaseHeldPtt()
+        await TransmitScreenTests.barrier(model, station)
+        // Not a hold's key: a release that holds nothing leaves it on.
+        #expect(transmit.ptt.state.isKeyed)
+        transmit.tapPtt()
+        #expect(await settle { transmit.ptt.state == .idle && !station.keyed })
+        await model.disconnect()
     }
 
     // MARK: The app that owns the model
@@ -315,6 +541,27 @@ struct RoundtableSheetTests {
             let url = URL(fileURLWithPath: directory).appendingPathComponent("roundtable-\(name).png")
             try data.write(to: url)
             print("Wrote \(url.path)")
+        }
+    }
+}
+
+/// Whether the hold PTT's host shows it.
+@MainActor
+private final class Shown: ObservableObject {
+    @Published var on = true
+}
+
+/// The sheet's hold PTT alone, shown until `shown` turns off, as the sheet closing takes it away.
+private struct HoldHost: View {
+    @ObservedObject var transmit: TransmitModel
+    @ObservedObject var shown: Shown
+
+    var body: some View {
+        ZStack {
+            Color.black
+            if shown.on {
+                PttButton(transmit: transmit, linkUp: true, mode: .hold(diameter: PttButton.holdDiameter))
+            }
         }
     }
 }

@@ -1,11 +1,13 @@
 // NereusSDR for iOS: a debug build's stand-in for the Core's band and one slice, for the UI tests of touches on the band
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // Modification history (NereusSDR):
-// 2026-10-24: Roundtable plan Task 17, a Roundtable room on slice A for the
-// UI tests. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-24: Roundtable plan Task 17, a Roundtable room on slice A and the
+// hold PTT's record for the UI tests. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 #if DEBUG
+import Combine
 import Foundation
+import SwiftUI
 import NereusLink
 import NereusMedia
 import NereusMirror
@@ -29,6 +31,8 @@ enum UITestBand {
     static let spotsArgument = "-NereusSpotFixture"
     /// Beside ``argument``: a Core running Roundtable, live, with slice A
     /// in a room of four, a talker on the air and a message naming you.
+    /// PTT takes presses with no Core, and each press and release the hold
+    /// PTT makes is written in ``UITestHoldLog``.
     static let roundtableArgument = "-NereusRoundtableFixture"
     static let roundtableRoomId = "lsb-7236400"
     static let catalogueEnvironment = "NEREUS_UITEST_CATALOGUE"
@@ -124,6 +128,7 @@ enum UITestBand {
         mirror.apply(.snapshotComplete)
         mirror.handle(.stateChanged(.ready))
         if roundtable {
+            holdLog = UITestHoldLog()
             let now = Int64(Date().timeIntervalSince1970 * 1000)
             // The model wants the band list and slice A's room once it reads the object.
             _ = app.roundtable
@@ -184,6 +189,9 @@ enum UITestBand {
             "bearingDeg": .number(bearing),
         ])
     }
+
+    /// The hold PTT's record while ``roundtableArgument`` is on, else nil.
+    @MainActor static var holdLog: UITestHoldLog?
 
     /// Slice A's room on the band list: four stations, K4ABC talking.
     private static func roundtableSummary(now: Int64) -> LinkMessage.RecordBatch.Record {
@@ -265,4 +273,28 @@ enum UITestBand {
     }
 }
 
+/// The hold PTT's presses and releases, for the UI tests to read: shown as
+/// the label of a tiny element, `pttHoldLog`, at the band's corner.
+@MainActor
+final class UITestHoldLog: ObservableObject {
+    @Published private(set) var actions: [String] = []
+
+    func record(_ action: PttHold.Action) {
+        actions.append(action == .press ? "press" : "release")
+    }
+
+    /// The tiny element that carries the record.
+    struct Label: View {
+        @ObservedObject var log: UITestHoldLog
+
+        var body: some View {
+            Text(log.actions.isEmpty ? "none" : log.actions.joined(separator: ","))
+                .font(.system(size: 1))
+                .foregroundStyle(Color.clear)
+                .frame(width: 1, height: 1)
+                .accessibilityIdentifier("pttHoldLog")
+                .allowsHitTesting(false)
+        }
+    }
+}
 #endif

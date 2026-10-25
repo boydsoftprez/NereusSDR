@@ -1,5 +1,8 @@
 // NereusSDR for iOS: the app's entry point
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: Roundtable plan Task 17, the hold PTT let go when the scene
+// is not active. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusLink
@@ -208,6 +211,8 @@ struct NereusSDRApp: App {
             // Locked or in another app is the background; a passing
             // Control Center or app switcher is not.
             model.longSession.sceneChanged(inForeground: phase != .background)
+            // A held PTT lets go when the scene loses focus or leaves the screen.
+            model.main.transmit.sceneChanged(active: phase == .active)
         }
     }
 

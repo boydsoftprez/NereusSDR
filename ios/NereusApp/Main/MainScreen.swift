@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // Modification history (NereusSDR):
 // 2026-10-24: Roundtable plan Task 17, the Roundtable line on each flag and
-// the Roundtable sheet over the band, with the dial strip under it.
+// the Roundtable sheet over the band, with the hold PTT and the dial strip.
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusBand
@@ -37,6 +37,7 @@ import SwiftUI
 /// A flag's Roundtable line opens the Roundtable sheet over the band (spec
 /// 11.3): half height, full height, below the keyed gauges while keyed,
 /// and above a 92-point strip with PTT and the dial when a dial is on.
+/// While it is open PTT is press and hold, and closing it lets go.
 struct MainScreen: View {
     @ObservedObject var app: AppModel
     @ObservedObject var main: MainScreenModel
@@ -66,6 +67,8 @@ struct MainScreen: View {
     @State private var roundtableSheet: RoundtableSheet.Detent?
     /// Where the keyed gauges end on the band, while keyed.
     @State private var gaugesFoot: CGFloat?
+    /// Told each press and release of the hold PTT (the UI tests' record).
+    private let holdObserver: ((PttHold.Action) -> Void)?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.horizontalSizeClass) private var widthClass
 
@@ -73,7 +76,7 @@ struct MainScreen: View {
     /// `sheet` with that sheet open.
     init(app: AppModel, main: MainScreenModel, flow: ConnectionFlow? = nil, rxPanelOpen: Bool = false,
          txPanelOpen: Bool = false, sheet: OpenSheet? = nil, columnShown: Bool = true,
-         roundtableSheet: RoundtableSheet.Detent? = nil,
+         roundtableSheet: RoundtableSheet.Detent? = nil, holdObserver: ((PttHold.Action) -> Void)? = nil,
          openSetup: @escaping () -> Void = {}, openRadio: @escaping () -> Void = {},
          openPerformance: @escaping () -> Void = {}, openTransmitSettings: @escaping () -> Void = {}) {
         self.app = app
@@ -81,6 +84,7 @@ struct MainScreen: View {
         transmit = main.transmit
         roundtable = app.roundtable
         _roundtableSheet = State(initialValue: roundtableSheet)
+        self.holdObserver = holdObserver
         _txPanelOpen = State(initialValue: txPanelOpen)
         self.flow = flow
         self.openSetup = openSetup
@@ -192,6 +196,16 @@ struct MainScreen: View {
                                 spectrumShare: main.band.shownSpectrumShare)
             }
             .allowsHitTesting(false)
+            if roundtableSheet == nil || dialStrip {
+                // With the Roundtable sheet open and a dial on, PTT stays here, in the strip, press and hold.
+                PttButton(transmit: transmit, linkUp: pttLinkUp,
+                          mode: roundtableSheet == nil ? .tap : .hold(diameter: PttButton.diameter),
+                          holdObserver: holdObserver)
+                    .padding(.leading, PttButton.inset + (sideways ? leadingInset : 0))
+                    .padding(.bottom, roundtableSheet == nil ? PttButton.bottomInset
+                             : (DialLayer.stripHeight - PttButton.diameter) / 2)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+            }
             // A spot's details or a badge's list, over PTT and under the covers.
             SpotLayer.Popups(spots: app.spots, sideways: sideways)
                 .padding(.trailing, sideways ? trailingInset : 0)
@@ -205,7 +219,7 @@ struct MainScreen: View {
                                                     set: { roundtableSheet = $0 }),
                                     dialOn: dialStrip, linkUp: pttLinkUp,
                                     stationCallsign: app.freedv.callsign,
-                                    close: closeRoundtable)
+                                    close: closeRoundtable, holdObserver: holdObserver)
                         .frame(maxWidth: sideways ? Self.roundtableSidewaysWidth : .infinity)
                         .frame(height: place.height)
                         .padding(.leading, sideways ? leadingInset : 0)
@@ -215,11 +229,6 @@ struct MainScreen: View {
                 .padding(.trailing, sideways ? trailingInset : 0)
                 .transition(.move(edge: .bottom))
             }
-            PttButton(transmit: transmit, linkUp: pttLinkUp)
-                .padding(.leading, PttButton.inset + (sideways ? leadingInset : 0))
-                .padding(.bottom, roundtableSheet == nil || !dialStrip ? PttButton.bottomInset
-                         : (DialLayer.stripHeight - PttButton.diameter) / 2)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
             if let flow {
                 LinkLostBanner(flow: flow, mirror: app.mirror, devices: main.devices)
             }
@@ -284,6 +293,12 @@ struct MainScreen: View {
         .clipped()
         .ignoresSafeArea(edges: sideways ? .horizontal : [])
         .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: roundtableSheet)
+        .onChange(of: roundtableSheet == nil) { _, closed in
+            if closed {
+                // Closing the sheet lets go of a held PTT.
+                transmit.releaseHeldPtt()
+            }
+        }
     }
 
     // MARK: Roundtable
@@ -322,7 +337,7 @@ struct MainScreen: View {
     }
 
     private var pttLinkUp: Bool {
-        app.connection == .connected
+        app.connection == .connected || holdObserver != nil
     }
 
     /// Each slice's Roundtable line, by its flag.
@@ -347,6 +362,7 @@ struct MainScreen: View {
 
     private func closeRoundtable() {
         roundtableSheet = nil
+        transmit.releaseHeldPtt()
     }
 
     /// The band itself: the trace, waterfall, scales, band-plan strip,
