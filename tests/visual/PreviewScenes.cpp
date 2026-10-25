@@ -20,6 +20,9 @@
 //                 scenes: you are hidden, the tags and flag line dimmed,
 //                 "Hidden" in place of Roundtable. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - roundtable-panel-twenty: slice A in 14.212 USB, the
+//                 header's 10-character frequency at 340, 298 and 260 px.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - Every roundtable-* scene runs with the workspace look on
 //                 (Scene::workspacePreview), the app's default. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -7098,6 +7101,25 @@ void appendRoundtableScenes(QVector<Scene>& scenes)
                    panel.readRoom(QStringLiteral("usb-14212000"));
                },
                QStringLiteral("slice A in 7.185 LSB, reading 14.212 USB with the read bar"));
+    panelScene(QStringLiteral("roundtable-panel-twenty"),
+               [](PosedRoundtable& rt, RoundtablePanel& panel) {
+                   rt.state.applyStationValue("sliceRooms", QStringLiteral("{\"0\":\"usb-14212000\"}"));
+                   rt.model.applyRoom(QJsonObject{
+                       {QStringLiteral("type"), QStringLiteral("room")},
+                       {QStringLiteral("id"), QStringLiteral("usb-14212000")},
+                       {QStringLiteral("members"), roundtableMembers()},
+                       {QStringLiteral("now"), QJsonArray{roundtableTurn(
+                            50, QStringLiteral("talking"),
+                            QJsonArray{roundtableTalker(QStringLiteral("b"), QStringLiteral("N3XYZ"))}, 15000,
+                            QJsonValue::Null)}},
+                       {QStringLiteral("earlier"), QJsonArray{}},
+                       {QStringLiteral("messages"),
+                        QJsonArray{roundtableMessage(9, QStringLiteral("b"), QStringLiteral("N3XYZ"), 90000,
+                                                     QStringLiteral("Anyone up for a contact on 20?"))}}});
+                   panel.setSliceFrequency(14212000);
+                   panel.followSlice(0);
+               },
+               QStringLiteral("slice A in 14.212 USB, a 10-character frequency in the header"));
     panelScene(QStringLiteral("roundtable-panel-empty"),
                [](PosedRoundtable& rt, RoundtablePanel& panel) {
                    rt.state.applyStationValue("sliceRooms", QStringLiteral("{}"));

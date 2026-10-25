@@ -38,6 +38,11 @@
 //   2026-10-25: aMissingOwnReadingShowsNone: hidden, your own reading of
 //               -400 (a cleared slice) shows "none", not S0. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25: sectionsInOrder takes its two-line width from the header's
+//               measured parts, not 340 px; aTenCharacterFrequencyFits: a
+//               14.212.000 room fits 260-298 px, the mode moving under the
+//               frequency when the row does not fit. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -49,6 +54,7 @@
 #include <QClipboard>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QFontMetrics>
 #include <QLabel>
 #include <QLineEdit>
 #include <QLoggingCategory>
@@ -324,6 +330,66 @@ QAction* actionNamed(QMenu* menu, const QString& text)
     return nullptr;
 }
 
+// The header row's parts as fitCount measures them: everything in the row
+// but the count (margins and spacings in), the count on one line and on two,
+// and how much of the panel's width is not the room the row has.
+struct HeaderFit {
+    int row = 0;
+    int spacing = 0;
+    int oneLine = 0;
+    int twoLines = 0;
+    int outside = 0;
+};
+
+HeaderFit headerFit(QWidget* panel, const QString& oneLine, const QString& twoLines, bool withTag = true)
+{
+    HeaderFit fit;
+    auto* body = panel->findChild<QWidget*>(QStringLiteral("roundtableHeaderBody"));
+    auto* freq = panel->findChild<QLabel*>(QStringLiteral("roundtableFrequency"));
+    QHBoxLayout* row = nullptr;
+    for (int i = 0; i < body->layout()->count(); ++i) {
+        auto* candidate = qobject_cast<QHBoxLayout*>(body->layout()->itemAt(i)->layout());
+        if (candidate != nullptr && candidate->indexOf(freq) >= 0) {
+            row = candidate;
+        }
+    }
+    fit.spacing = row->spacing();
+    const QMargins margins = body->layout()->contentsMargins();
+    fit.row = margins.left() + margins.right();
+    int parts = 0;
+    for (const QString& name : {QStringLiteral("roundtableTag"), QStringLiteral("roundtableFrequency"),
+                                QStringLiteral("roundtableMode"), QStringLiteral("roundtablePopBtn"),
+                                QStringLiteral("roundtableMenuBtn")}) {
+        for (QWidget* w : body->findChildren<QWidget*>(name)) {
+            const bool tag = name == QLatin1String("roundtableTag");
+            if (row->indexOf(w) >= 0 && (tag ? withTag && w->isVisibleTo(body) : true)) {
+                fit.row += w->sizeHint().width();
+                ++parts;
+            }
+        }
+    }
+    fit.row += (parts - 1) * fit.spacing;
+    QLabel* count = nullptr;
+    for (QLabel* label : panel->findChildren<QLabel*>(QStringLiteral("roundtableCount"))) {
+        if (label->isVisibleTo(panel)) {
+            count = label;
+        }
+    }
+    count->ensurePolished();
+    const QFontMetrics metrics(count->font());
+    fit.oneLine = metrics.horizontalAdvance(oneLine);
+    for (const QString& line : twoLines.split(QLatin1Char('\n'))) {
+        fit.twoLines = std::max(fit.twoLines, metrics.horizontalAdvance(line));
+    }
+    auto* scroll = panel->findChild<QScrollArea*>(QStringLiteral("roundtableScroll"));
+    const int viewport = scroll->viewport()->width();
+    const int room = scroll->verticalScrollBar()->isVisible()
+                      ? viewport
+                      : viewport - panel->style()->pixelMetric(QStyle::PM_ScrollBarExtent);
+    fit.outside = panel->width() - room;
+    return fit;
+}
+
 void settle()
 {
     for (int i = 0; i < 4; ++i) {
@@ -400,6 +466,7 @@ private slots:
                                                         "nereus.container.debug=false"));
         RoundtableModel::setClockForTest([] { return g_now; });
         AppSettings::instance().setValue(QStringLiteral("User/Callsign"), QStringLiteral("KG4VCF"));
+
     }
 
     void cleanupTestCase()
@@ -449,7 +516,15 @@ private slots:
         QCOMPARE(texts(&panel, QStringLiteral("roundtableTalkerName")), QStringList{QStringLiteral("W1TLK")});
         QCOMPARE(texts(&panel, QStringLiteral("roundtableReadingsTitle")),
                  QStringList{QStringLiteral("READINGS OF W1TLK")});
-        // 340 px wide the count takes two lines; wider, one.
+        // Where the row fits the count on two lines but not on one, it takes
+        // two; wider, one. The width comes from the header's measured parts,
+        // which differ by platform font.
+        const HeaderFit fit = headerFit(&panel, QStringLiteral("5 in the room · 1 away"),
+                                        QStringLiteral("5 in the room\n1 away"));
+        QVERIFY2(fit.twoLines < fit.oneLine, qPrintable(QStringLiteral("%1 %2").arg(fit.twoLines).arg(fit.oneLine)));
+        panel.resize(fit.outside + fit.row + fit.spacing + (fit.twoLines + fit.oneLine) / 2, 1400);
+        settle();
+        settle();
         QCOMPARE(texts(&panel, QStringLiteral("roundtableCount")),
                  QStringList{QStringLiteral("5 in the room\n1 away")});
         panel.resize(600, 1400);
@@ -1007,8 +1082,21 @@ private slots:
         const int withBar = 340 - panel.style()->pixelMetric(QStyle::PM_ScrollBarExtent);
         QVERIFY2(content->minimumSizeHint().width() <= withBar,
                  qPrintable(QString::number(content->minimumSizeHint().width())));
-        // NOT TUNED HERE moved to its own line; the count is on two.
+        // Where the row fits the count on two lines and no more, NOT TUNED
+        // HERE moves to its own line and the count takes two. The width
+        // comes from the header's measured parts, which differ by font.
+        const HeaderFit fit = headerFit(&panel, QStringLiteral("5 in the room · 1 away"),
+                                        QStringLiteral("5 in the room\n1 away"), false);
+        panel.resize(fit.outside + fit.row + fit.spacing + fit.twoLines + 2, 900);
+        settle();
+        settle();
         QCOMPARE(texts(&panel, QStringLiteral("roundtableTag")), QStringList{QStringLiteral("NOT TUNED HERE")});
+        for (QLabel* tag : panel.findChildren<QLabel*>(QStringLiteral("roundtableTag"))) {
+            if (tag->isVisibleTo(&panel)) {
+                QVERIFY(yIn(&panel, tag) + tag->height()
+                        <= yIn(&panel, child<QLabel>(&panel, QStringLiteral("roundtableFrequency"))));
+            }
+        }
         QCOMPARE(texts(&panel, QStringLiteral("roundtableCount")),
                  QStringList{QStringLiteral("5 in the room\n1 away")});
         // Wide, the tag is back in the row and the count on one line.
@@ -1220,6 +1308,109 @@ private slots:
             QVERIFY2(longCall->width() >= longCall->fontMetrics().horizontalAdvance(QStringLiteral("KH6/W1")),
                      qPrintable(QString::number(longCall->width())));
         }
+    }
+
+    void aTenCharacterFrequencyFits_data()
+    {
+        QTest::addColumn<int>("width");
+        QTest::addColumn<bool>("reading");
+        for (int width : {260, 280, 298}) {
+            QTest::newRow(qPrintable(QStringLiteral("tuned %1").arg(width))) << width << false;
+            QTest::newRow(qPrintable(QStringLiteral("reading %1").arg(width))) << width << true;
+        }
+    }
+
+    void aTenCharacterFrequencyFits()
+    {
+        // A 20 m room ("14.212.000", ten characters) in the docked column:
+        // the header fits, and when the row would not fit even with the
+        // count below it, the mode moves down beside the count.
+        QFETCH(int, width);
+        QFETCH(bool, reading);
+        const QString twenty = QStringLiteral("usb-14212000");
+        Posed p;
+        if (!reading) {
+            p.state.applyStationValue("sliceRooms", QStringLiteral("{\"0\":\"%1\"}").arg(twenty));
+        }
+        QJsonArray rooms{
+            QJsonObject{{QStringLiteral("id"), kRoom}, {QStringLiteral("hz"), 7185000},
+                        {QStringLiteral("members"), 5}},
+            QJsonObject{{QStringLiteral("id"), twenty}, {QStringLiteral("hz"), 14212000},
+                        {QStringLiteral("members"), 5}}};
+        p.model.applyRooms(QJsonObject{{QStringLiteral("rooms"), rooms}});
+        p.model.applyRoom(talkingRoom());
+        QJsonObject room = talkingRoom();
+        room.insert(QStringLiteral("id"), twenty);
+        p.model.applyRoom(room);
+        RoundtablePanel panel(&p.model);
+        panel.resize(width, 900);
+        panel.followSlice(0);
+        panel.show();
+        settle();
+        if (reading) {
+            panel.readRoom(twenty);
+            settle();
+            QVERIFY(panel.isReading());
+        }
+        settle();
+        QCOMPARE(panel.roomId(), twenty);
+        QCOMPARE(texts(&panel, QStringLiteral("roundtableFrequency")), QStringList{QStringLiteral("14.212.000")});
+        QCOMPARE(texts(&panel, QStringLiteral("roundtableMode")), QStringList{QStringLiteral("USB")});
+        QCOMPARE(texts(&panel, QStringLiteral("roundtableTag")).size(), 1);
+
+        auto* scroll = child<QScrollArea>(&panel, QStringLiteral("roundtableScroll"));
+        auto* content = child<QWidget>(&panel, QStringLiteral("roundtableContent"));
+        auto* header = child<QWidget>(&panel, QStringLiteral("roundtableHeader"));
+        const int viewport = scroll->viewport()->width();
+        const int allowed = scroll->verticalScrollBar()->isVisible()
+                             ? viewport
+                             : viewport - panel.style()->pixelMetric(QStyle::PM_ScrollBarExtent);
+        QStringList wide;
+        QList<QWidget*> parts = header->findChildren<QWidget*>();
+        parts.prepend(header);
+        for (QWidget* w : parts) {
+            if (!w->isVisibleTo(content)) {
+                continue;
+            }
+            const int right = w->mapTo(content, QPoint(w->width(), 0)).x();
+            const int hint = w->layout() != nullptr ? w->layout()->minimumSize().width()
+                                                    : w->minimumSizeHint().width();
+            if (auto* label = qobject_cast<QLabel*>(w); label != nullptr && !label->text().isEmpty()
+                                                         && label->width() < label->minimumSizeHint().width()) {
+                wide.append(QStringLiteral("QLabel %1 \"%2\" clipped to %3 of %4")
+                                .arg(label->objectName(), label->text())
+                                .arg(label->width())
+                                .arg(label->minimumSizeHint().width()));
+            }
+            if (right > viewport || std::max(hint, w->minimumWidth()) > allowed) {
+                wide.append(QStringLiteral("%1 %2 ends at %3, asks %4")
+                                .arg(QString::fromLatin1(w->metaObject()->className()), w->objectName())
+                                .arg(right)
+                                .arg(std::max(hint, w->minimumWidth())));
+            }
+        }
+        QVERIFY2(wide.isEmpty(), qPrintable(QStringLiteral("viewport %1: %2").arg(viewport).arg(
+                                                wide.join(QStringLiteral("; ")))));
+
+        // The mode is in the row exactly when the row (count aside) fits.
+        const HeaderFit fit = headerFit(&panel, QStringLiteral("5 in the room · 1 away"),
+                                        QStringLiteral("5 in the room\n1 away"));
+        QLabel* freq = child<QLabel>(&panel, QStringLiteral("roundtableFrequency"));
+        QLabel* mode = nullptr;
+        for (QLabel* label : panel.findChildren<QLabel*>(QStringLiteral("roundtableMode"))) {
+            if (label->isVisibleTo(&panel)) {
+                mode = label;
+            }
+        }
+        QVERIFY(mode != nullptr);
+        const bool rowFits = fit.row <= width - fit.outside;
+        const int freqBottom = yIn(&panel, freq) + freq->height();
+        QVERIFY2(rowFits ? yIn(&panel, mode) < freqBottom : yIn(&panel, mode) >= freqBottom,
+                 qPrintable(QStringLiteral("row %1 in %2, mode at %3, frequency ends %4")
+                                .arg(fit.row)
+                                .arg(width - fit.outside)
+                                .arg(yIn(&panel, mode))
+                                .arg(freqBottom)));
     }
 
     void mutedMessagesFold()

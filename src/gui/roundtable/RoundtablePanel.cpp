@@ -37,6 +37,12 @@
 //               clear), so it shows "none" like every other row, not S0
 //               (JJ's answer of 2026-10-25). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-25: the header's frequency is in the workspace's monospace
+//               families (Workspace::kMonoQssFamilies), and in the
+//               narrowest column, after the count, the mode goes under the
+//               frequency beside the count (fitCount), so a 10-character
+//               frequency fits 260 px with Linux and Mac fonts. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/roundtable/RoundtablePanel.h"
@@ -46,6 +52,7 @@
 #include "core/ControlRanges.h"
 #include "core/roundtable/RoundtableWire.h"
 #include "gui/StyleConstants.h"
+#include "gui/styles/WorkspaceStyle.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "models/RoundtableModel.h"
 
@@ -255,10 +262,12 @@ QString inputStyle()
              role(Style::kDisabledText, "disabled-text"), role(Style::kDisabledBorder, "disabled-border"));
 }
 
+// The monospace fallback chain the workspace's own instruments use, so a
+// machine without the first family still gets a fixed-pitch one (the
+// offscreen platform's system FixedFont on the Mac is proportional).
 QString mono()
 {
-    static const QString family = QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
-    return family;
+    return QLatin1String(Workspace::kMonoQssFamilies);
 }
 
 QString labelStyle(const QString& color, int px, bool bold, bool isMono)
@@ -270,7 +279,7 @@ QString labelStyle(const QString& color, int px, bool bold, bool isMono)
         style += QStringLiteral(" font-weight: bold;");
     }
     if (isMono) {
-        style += QStringLiteral(" font-family: \"%1\";").arg(mono());
+        style += QStringLiteral(" font-family: %1;").arg(mono());
     }
     return style;
 }
@@ -1239,6 +1248,8 @@ void RoundtablePanel::rebuildHead(const QJsonObject& room)
     };
     m_tagInline = nullptr;
     m_tagAbove = nullptr;
+    m_modeInline = nullptr;
+    m_modeBelow = nullptr;
     QLabel* tag = nullptr;
     if (tunedHere()) {
         tag = makeLabel(body, QString(letter), textColor(), kSmallPx, true);
@@ -1262,10 +1273,16 @@ void RoundtablePanel::rebuildHead(const QJsonObject& room)
     QLabel* freq = makeLabel(body, headerFrequency(roomHz(id)), accentColor(), 15, false, true);
     freq->setObjectName(QStringLiteral("roundtableFrequency"));
     row->addWidget(freq);
-    QLabel* mode = makeLabel(body, modeLabel(roomFamily(id)), role(Style::kTitleText, "title-text"), kSmallPx);
-    mode->setStyleSheet(mode->styleSheet()
-                        + QStringLiteral(" border: 1px solid %1; padding: 0 4px; border-radius: 2px;")
-                              .arg(role(Style::kBorder, "border-muted")));
+    const auto modeTag = [body, &id]() {
+        QLabel* label = makeLabel(body, modeLabel(roomFamily(id)), role(Style::kTitleText, "title-text"), kSmallPx);
+        label->setStyleSheet(label->styleSheet()
+                             + QStringLiteral(" border: 1px solid %1; padding: 0 4px; border-radius: 2px;")
+                                   .arg(role(Style::kBorder, "border-muted")));
+        label->setObjectName(QStringLiteral("roundtableMode"));
+        return label;
+    };
+    QLabel* mode = modeTag();
+    m_modeInline = mode;
     row->addWidget(mode);
     row->addStretch(1);
 
@@ -1312,10 +1329,20 @@ void RoundtablePanel::rebuildHead(const QJsonObject& room)
     menu->setFocusPolicy(Qt::ClickFocus);
     connect(menu, &QToolButton::clicked, this, &RoundtablePanel::showPanelMenu);
     row->addWidget(menu);
+    // The line under the row: the count, and the mode beside it when even
+    // the row without the count does not fit (fitCount).
+    auto* below = new QHBoxLayout();
+    below->setContentsMargins(0, 0, 0, 0);
+    below->setSpacing(row->spacing());
+    m_modeBelow = modeTag();
+    m_modeBelow->hide();
+    below->addWidget(m_modeBelow);
     m_countBelow = makeLabel(body, m_countOneLine, dimColor(), kSmallPx);
     m_countBelow->setObjectName(QStringLiteral("roundtableCount"));
     m_countBelow->hide();
-    stack->addWidget(m_countBelow);
+    below->addWidget(m_countBelow);
+    below->addStretch(1);
+    stack->addLayout(below);
     fitCount();
 }
 
@@ -1326,7 +1353,9 @@ void RoundtablePanel::fitCount()
     // own (not a word-wrapping label: one with a height for its width
     // makes the scroll area lay out mid-rebuild).
     // [Roundtable plan Task 15: and in the narrower real column, last, the
-    // count goes under the frequency.]
+    // count goes under the frequency.] Then, when even the row without the
+    // count does not fit (a 10-character frequency at 260 px), the mode
+    // joins the count on the line below, as NOT TUNED HERE moves above.
     if (m_countLabel == nullptr) {
         return;
     }
@@ -1345,6 +1374,9 @@ void RoundtablePanel::fitCount()
         return;
     }
     const QMargins margins = m_countLabel->parentWidget()->layout()->contentsMargins();
+    // Polished first: before its style sheet applies, the label's font is
+    // the application's, not the count's size.
+    m_countLabel->ensurePolished();
     const QFontMetrics metrics(m_countLabel->font());
     const int oneLine = metrics.horizontalAdvance(m_countOneLine);
     int twoLines = oneLine;
@@ -1359,7 +1391,7 @@ void RoundtablePanel::fitCount()
     int tagWidth = 0;
     for (int i = 0; i < row->count(); ++i) {
         QWidget* w = row->itemAt(i)->widget();
-        if (w == nullptr || (w->isHidden() && w != m_tagInline && w != m_countLabel)) {
+        if (w == nullptr || (w->isHidden() && w != m_tagInline && w != m_countLabel && w != m_modeInline)) {
             continue;
         }
         ++widgets;
@@ -1401,6 +1433,13 @@ void RoundtablePanel::fitCount()
         if (m_countBelow->isHidden() == below) {
             m_countLabel->setVisible(!below);
             m_countBelow->setVisible(below);
+        }
+        // The row without the count: one spacing fewer.
+        const bool modeBelow = below && m_modeInline != nullptr && m_modeBelow != nullptr
+                            && others - row->spacing() + (tagAbove ? 0 : tagWidth) > room;
+        if (m_modeInline != nullptr && m_modeBelow != nullptr && m_modeBelow->isHidden() == modeBelow) {
+            m_modeInline->setVisible(!modeBelow);
+            m_modeBelow->setVisible(modeBelow);
         }
     }
 }

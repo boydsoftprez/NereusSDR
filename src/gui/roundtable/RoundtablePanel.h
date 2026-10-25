@@ -277,6 +277,10 @@ private:
     // The count on a line of its own under the header row, when even two
     // lines beside the frequency would not fit (fitCount).
     QPointer<QLabel> m_countBelow;
+    // The mode tag sits in the header row, or beside the count below it
+    // when the row would not fit even without the count (fitCount).
+    QPointer<QLabel> m_modeInline;
+    QPointer<QLabel> m_modeBelow;
 };
 
 } // namespace NereusSDR
