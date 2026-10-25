@@ -3,6 +3,8 @@
 // Modification history (NereusSDR):
 // 2026-10-24: Roundtable plan Task 17, a Roundtable room on slice A and the
 // hold PTT's record for the UI tests. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable plan Task 18, the record of every ask to key, for
+// the swipes' never-key tests. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 #if DEBUG
 import Combine
@@ -131,6 +133,9 @@ enum UITestBand {
         mirror.handle(.stateChanged(.ready))
         if roundtable {
             holdLog = UITestHoldLog()
+            let keys = UITestKeyLog()
+            keyLog = keys
+            app.main.transmit.keyObserver = { [weak keys] ask in keys?.record(ask) }
             let now = Int64(Date().timeIntervalSince1970 * 1000)
             // The model wants the band list and slice A's room once it reads the object.
             _ = app.roundtable
@@ -194,6 +199,8 @@ enum UITestBand {
 
     /// The hold PTT's record while ``roundtableArgument`` is on, else nil.
     @MainActor static var holdLog: UITestHoldLog?
+    /// With ``roundtableArgument``: every ask to key, for the swipes' never-key tests.
+    @MainActor static var keyLog: UITestKeyLog?
 
     /// Slice A's room on the band list: four stations, K4ABC talking.
     private static func roundtableSummary(now: Int64) -> LinkMessage.RecordBatch.Record {
@@ -295,6 +302,29 @@ final class UITestHoldLog: ObservableObject {
                 .foregroundStyle(Color.clear)
                 .frame(width: 1, height: 1)
                 .accessibilityIdentifier("pttHoldLog")
+                .allowsHitTesting(false)
+        }
+    }
+}
+/// Every ask to key (PTT, MOX, the hold PTT, TUNE), for the UI tests to
+/// read: the label of a tiny element, `pttKeyLog`, at the band's corner.
+@MainActor
+final class UITestKeyLog: ObservableObject {
+    @Published private(set) var asks: [String] = []
+
+    func record(_ ask: String) {
+        asks.append(ask)
+    }
+
+    struct Label: View {
+        @ObservedObject var log: UITestKeyLog
+
+        var body: some View {
+            Text(log.asks.isEmpty ? "none" : log.asks.joined(separator: ","))
+                .font(.system(size: 1))
+                .foregroundStyle(Color.clear)
+                .frame(width: 1, height: 1)
+                .accessibilityIdentifier("pttKeyLog")
                 .allowsHitTesting(false)
         }
     }

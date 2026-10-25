@@ -4,6 +4,9 @@
 // 2026-10-24: Roundtable plan Task 17, press and hold with the dashed ring
 // and "Hold" while the Roundtable sheet is open. J.J. Boyd (KG4VCF),
 // AI-assisted via Claude Code.
+// 2026-10-25: Roundtable plan Task 18, a touch on the tap PTT that moves
+// past tapSlop is a swipe and keys nothing. J.J. Boyd (KG4VCF),
+// AI-assisted via Claude Code.
 
 import NereusLink
 import SwiftUI
@@ -43,6 +46,10 @@ struct PttButton: View {
     static let holdClearance: CGFloat = 24
 
     static let diameter: CGFloat = 76
+    /// How far a touch on the tap PTT may move and still be a tap. Past
+    /// it the touch is a swipe or a drag, and lifting keys nothing (spec
+    /// 11.3: a swipe never keys), even when it lifts on the button.
+    static let tapSlop: CGFloat = 10
     /// Its inset from the waterfall's bottom left corner.
     static let inset: CGFloat = 14
     /// Its inset from the band's foot.
@@ -54,16 +61,34 @@ struct PttButton: View {
     }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The touch on the tap PTT moved past ``tapSlop``: its lift keys nothing.
+    @State private var swiped = false
 
     var body: some View {
         switch mode {
         case .tap:
             Button {
+                // A touch that moved is a swipe, not a tap.
+                guard !swiped else {
+                    return
+                }
                 transmit.tapPtt()
             } label: {
                 face
             }
             .buttonStyle(.plain)
+            .simultaneousGesture(
+                DragGesture(minimumDistance: Self.tapSlop)
+                    .onChanged { _ in
+                        swiped = true
+                    }
+                    .onEnded { _ in
+                        // After the button has seen the lift.
+                        DispatchQueue.main.async {
+                            swiped = false
+                        }
+                    }
+            )
             // Never hidden: with no link it cannot be used; on a Core without
             // remote transmit a tap says why.
             .disabled(!linkUp)

@@ -3,6 +3,8 @@
 // Modification history (NereusSDR):
 // 2026-10-24: Roundtable plan Task 17, PTT press and hold while the
 // Roundtable sheet is open. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable plan Task 18, the UI tests' record of every ask to
+// key. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -616,8 +618,18 @@ final class TransmitModel: ObservableObject {
 
     // MARK: The operator
 
+    #if DEBUG
+    /// Told each ask to key (PTT, MOX, the hold PTT, TUNE, the tuner's
+    /// TUNE), before anything decides whether it may: the UI tests' record
+    /// that opening the TX panel by a swipe asks nothing.
+    var keyObserver: ((String) -> Void)?
+    #endif
+
     /// The PTT, and the TX panel's MOX.
     func tapPtt() {
+        #if DEBUG
+        keyObserver?("tap")
+        #endif
         guard offered else {
             heldNote = Self.noRemoteTransmitText
             return
@@ -658,6 +670,9 @@ final class TransmitModel: ObservableObject {
     /// hold's, so letting go unkeys it. Never toggles: a press while a key
     /// is on its way keys nothing more.
     func holdPtt() {
+        #if DEBUG
+        keyObserver?("hold")
+        #endif
         guard offered else {
             heldNote = Self.noRemoteTransmitText
             return
@@ -720,6 +735,9 @@ final class TransmitModel: ObservableObject {
 
     /// The TX panel's TUNE.
     func toggleTune() {
+        #if DEBUG
+        keyObserver?("tune")
+        #endif
         let controller = controller
         let operation = Task { await controller.toggleTune() }
         #if DEBUG
@@ -733,6 +751,9 @@ final class TransmitModel: ObservableObject {
     /// it too. Greyed with ``tunerTuneReason`` it starts nothing; this
     /// phone's own tune always ends.
     func toggleTunerTune() {
+        #if DEBUG
+        keyObserver?("tunerTune")
+        #endif
         guard tunerTuneReason == nil else {
             return
         }
