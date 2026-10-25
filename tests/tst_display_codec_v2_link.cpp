@@ -28,6 +28,11 @@
 // NeedKeyframe asks once and recovers, as before.
 //
 // Modification history (NereusSDR):
+//   2026-10-25  J.J. Boyd / KG4VCF  Roundtable merge: Roundtable's
+//                                    stationRoundtableVersion may follow
+//                                    displayCodecVersion before
+//                                    coreBuildInfo. AI-assisted via Claude
+//                                    Code.
 //   2026-10-22  J.J. Boyd / KG4VCF  Task 6: the interop matrix (older
 //                                    peer, fallback off, wide plane, a real
 //                                    window on a v2 Core and on a v1 Core).
@@ -466,8 +471,14 @@ private slots:
         const QStringList names = h.capabilityNames();
         QVERIFY(names.size() >= 3);
         QCOMPARE(names.last(), QStringLiteral("coreBuildInfo"));
-        QCOMPARE(names.at(names.size() - 2), kField);
-        QCOMPARE(names.at(names.size() - 3), QStringLiteral("rxMeterStampsVersion"));
+        // Roundtable's stationRoundtableVersion, when this Core runs
+        // Roundtable for a peer that declared it, sits between this entry
+        // and coreBuildInfo.
+        const qsizetype field = names.indexOf(kField);
+        QVERIFY(field >= 1);
+        QCOMPARE(names.at(field - 1), QStringLiteral("rxMeterStampsVersion"));
+        QCOMPARE(field + (names.contains(QStringLiteral("stationRoundtableVersion")) ? 3 : 2),
+                 names.size());
         QVERIFY(h.server.displayCodecV2Available(h.server.mediaSessionEpoch()));
         QVERIFY(h.startWith(2));
         QTRY_VERIFY_WITH_TIMEOUT(!h.mediaTransport.isNull(), 10'000);
@@ -721,7 +732,10 @@ private slots:
         QCOMPARE(names.last(), QStringLiteral("coreBuildInfo"));
         QCOMPARE(names.contains(kField), v2);
         if (v2) {
-            QCOMPARE(names.at(names.size() - 2), kField);
+            // stationRoundtableVersion may sit between it and coreBuildInfo.
+            const qsizetype after =
+                names.contains(QStringLiteral("stationRoundtableVersion")) ? 3 : 2;
+            QCOMPARE(names.at(names.size() - after), kField);
         }
         const QJsonObject start = lastOp(outbound, QStringLiteral("start"));
         QVERIFY(!start.isEmpty());
