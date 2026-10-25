@@ -15343,8 +15343,8 @@ void SpectrumWidget::initWaterfallPipeline()
 // (color x alpha^2), so anything translucent drew darker than the CPU
 // path: the hidden Roundtable tags at kRoundtableDimmedAlpha came out at
 // about half the CPU border's brightness. AetherSDR shares the original
-// SrcAlpha and fixed it the same way (its issue #3294):
-// From AetherSDR src/gui/SpectrumWidget.cpp:12409-12415 [@af68d3df]
+// SrcAlpha and fixed it the same way (its issue #3294, fix commit af68d3df):
+// From AetherSDR src/gui/SpectrumWidget.cpp:12409-12415 [@1e0718ad]
 QRhiGraphicsPipeline::TargetBlend SpectrumWidget::overlayTargetBlend()
 {
     QRhiGraphicsPipeline::TargetBlend blend;
