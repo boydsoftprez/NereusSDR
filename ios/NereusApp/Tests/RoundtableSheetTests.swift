@@ -18,6 +18,9 @@
 // 2026-10-25: JJ's answer: hidden, the flag line reads "Hidden · 9 · K4ABC"
 // with its glyph dimmed; live and the other link states are unchanged.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-25: JJ's answer: a missing reading, your own NOT SENT one
+// included, shows "none", not S0. J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code.
 
 import Foundation
 import NereusBand
@@ -133,6 +136,27 @@ struct RoundtableSheetTests {
                                                                    alpha: &dim.3))
         #expect(abs(dim.1 - live.1) < 0.01 && abs(dim.3 - CGFloat(RoundtableColours.dimmedOpacity)) < 0.01)
         #expect(live.3 > 0.99)
+    }
+
+    @Test("a missing reading shows none, your own NOT SENT one included, not S0")
+    func missingReadingShowsNone() {
+        // A cleared slice reads -400: your own row is not present.
+        let cleared = RoundtableReadings.ownUnsent(callsign: "KG4VCF", dbm: -400, t: 1_000)
+        #expect(cleared.reading?.present == false)
+        let room = Self.roomWith([Self.member("t", "K4ABC", dbm: -40), Self.member("a", "N4XYZ", dbm: -50)],
+                                 talker: "t")
+        let rows = RoundtableReadings.rows(room: room, keyed: false, ownUnsent: cleared)
+        let own = rows.first { $0.unsent }
+        #expect(own != nil)
+        #expect(RoundtableText.readingText(own?.member.reading) == "none")
+        // A real reading of yours still reads as one.
+        let real = RoundtableReadings.ownUnsent(callsign: "KG4VCF", dbm: -73, t: 1_000)
+        #expect(RoundtableText.readingText(real.reading) == "S9")
+        #expect(RoundtableText.readingText(RoundtableModel.Reading(dbm: -50, t: 0, present: false, turn: nil))
+                == "none")
+        #expect(RoundtableText.readingText(nil) == "")
+        #expect(RoundtableText.readingPresent(-160) && RoundtableText.readingPresent(94))
+        #expect(!RoundtableText.readingPresent(-160.5) && !RoundtableText.readingPresent(.nan))
     }
 
     @Test("readings drop the talker, and you while keyed, nearest first then by callsign")

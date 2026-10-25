@@ -10,6 +10,10 @@
 // 2026-10-25: Roundtable fix wave: a row's UTC time and its mention match
 // build no formatter and compile no pattern; the TX line's clock is read
 // in the room's timeline. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: JJ's answer: a reading that is not present shows "none", as
+// on the desktop, and your own NOT SENT reading is not present when the
+// slice has none (a dBm outside the wire's range, -400 after a clear).
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import SwiftUI
 import UIKit
@@ -36,6 +40,25 @@ enum RoundtableText {
             return "S\(min(9, max(0, units)))"
         }
         return "S9 +\(over)"
+    }
+
+    /// What a reading column shows: the S value, "none" when the reading
+    /// is not present (the desktop panel's), nothing without a reading.
+    static func readingText(_ reading: RoundtableModel.Reading?) -> String {
+        guard let reading else {
+            return ""
+        }
+        return reading.present ? sText(reading.dbm) : "none"
+    }
+
+    /// The range a reading's dbm may take (wire spec 6.5, the desktop's
+    /// RoundtableClient.cpp kMinDbm..kMaxDbm): outside it there is no
+    /// reading (a cleared slice reads -400).
+    static let minDbm = -160.0
+    static let maxDbm = 94.0
+
+    static func readingPresent(_ dbm: Double) -> Bool {
+        dbm.isFinite && dbm >= minDbm && dbm <= maxDbm
     }
 
     /// The reading's bar, 0.02 to 1.
@@ -223,6 +246,20 @@ enum RoundtableReadings {
         if let own = ownUnsent, !keyed, !rows.contains(where: \.member.you) {
             rows.append(Row(member: own, unsent: true))
         }
+        return sorted(rows)
+    }
+
+    /// Your own reading while hidden, as a member of the room: not present
+    /// when the slice has no reading, so it shows "none" like every other row.
+    static func ownUnsent(callsign: String, dbm: Double, t: Int64) -> RoundtableModel.Member {
+        RoundtableModel.Member(ref: "", callsign: callsign.isEmpty ? "You" : callsign, nth: 1, grid: nil,
+                               km: nil, offsetHz: 0, joining: false, away: false, keyed: false,
+                               software: "NereusSDR", softwareVersion: "", you: true,
+                               reading: .init(dbm: dbm, t: t, present: RoundtableText.readingPresent(dbm),
+                                              turn: nil))
+    }
+
+    private static func sorted(_ rows: [Row]) -> [Row] {
         return rows.sorted { a, b in
             switch (a.member.km, b.member.km) {
             case let (x?, y?) where x != y:
@@ -766,11 +803,8 @@ struct RoundtableRoomView: View {
         guard roundtable.linkState == .hidden, tunedHere, !keyed, let ownDbm, openTurn != nil else {
             return nil
         }
-        return RoundtableModel.Member(ref: "", callsign: callsign.isEmpty ? "You" : callsign, nth: 1, grid: nil,
-                                      km: nil, offsetHz: 0, joining: false, away: false, keyed: false,
-                                      software: "NereusSDR", softwareVersion: "", you: true,
-                                      reading: .init(dbm: ownDbm, t: Int64(Date().timeIntervalSince1970 * 1000),
-                                                     present: true, turn: nil))
+        return RoundtableReadings.ownUnsent(callsign: callsign, dbm: ownDbm,
+                                            t: Int64(Date().timeIntervalSince1970 * 1000))
     }
 
     private var header: some View {
@@ -820,9 +854,9 @@ struct RoundtableRoomView: View {
                 .frame(width: columns.offset, alignment: .trailing)
             HStack(spacing: 5) {
                 if columns.bar {
-                    bar(reading?.dbm, stale: stale, you: member.you)
+                    bar(reading?.present == false ? nil : reading?.dbm, stale: stale, you: member.you)
                 }
-                Text(reading.map { RoundtableText.sText($0.dbm) } ?? "")
+                Text(RoundtableText.readingText(reading))
                     .font(.system(size: 12, weight: .bold).monospacedDigit())
                     .foregroundStyle(tint)
                     .lineLimit(1)
@@ -856,8 +890,9 @@ struct RoundtableRoomView: View {
                 tag("AWAY")
             }
             Spacer(minLength: 2)
-            bar(member.reading?.dbm, stale: stale, you: false).frame(width: 24)
-            Text(member.reading.map { RoundtableText.sText($0.dbm) } ?? "")
+            bar(member.reading?.present == false ? nil : member.reading?.dbm, stale: stale, you: false)
+                .frame(width: 24)
+            Text(RoundtableText.readingText(member.reading))
                 .font(.system(size: 12, weight: .bold).monospacedDigit())
                 .frame(width: 44, alignment: .trailing)
         }

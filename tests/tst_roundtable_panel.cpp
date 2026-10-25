@@ -35,6 +35,9 @@
 //               room shows B in B's color. The stale age is the look's warn
 //               status. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-25: aMissingOwnReadingShowsNone: hidden, your own reading of
+//               -400 (a cleared slice) shows "none", not S0. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -491,6 +494,32 @@ private slots:
                 QCOMPARE(age->text(), QStringLiteral("20 s"));
             }
         }
+    }
+
+    void aMissingOwnReadingShowsNone()
+    {
+        // Hidden, your own reading is the NOT SENT row. A cleared slice
+        // reads -400: no reading, "none" like every other row, not S0.
+        Posed p;
+        p.model.applyRoom(talkingRoom());
+        p.setLink(RoundtableModel::LinkState::Hidden);
+        RoundtablePanel panel(&p.model);
+        panel.resize(340, 1400);
+        panel.followSlice(0);
+        panel.show();
+        settle();
+        panel.setOwnReading(-400.0, g_now);
+        settle();
+        QCOMPARE(texts(&panel, QStringLiteral("roundtableNotSentTag")), QStringList{QStringLiteral("NOT SENT")});
+        QCOMPARE(texts(&panel, QStringLiteral("roundtableReadingValue")),
+                 (QStringList{QStringLiteral("S7"), QStringLiteral("S9"), QStringLiteral("S6"),
+                              QStringLiteral("none")}));
+        // A real reading of yours reads as one.
+        panel.setOwnReading(-73.0, g_now);
+        settle();
+        QCOMPARE(texts(&panel, QStringLiteral("roundtableReadingValue")),
+                 (QStringList{QStringLiteral("S7"), QStringLiteral("S9"), QStringLiteral("S6"),
+                              QStringLiteral("S9")}));
     }
 
     void takesTheWorkspaceLook()
