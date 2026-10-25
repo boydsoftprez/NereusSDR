@@ -13,6 +13,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - The Roundtable line is drawn at Normal where the
+//                family has no semibold face (roundtableLineFontFor).
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
+//                (Claude Opus 5.5).
 //   2026-10-25 - While you are hidden the Roundtable line's glyph is
 //                dimmed (RoundtableFlagLine::dimmed). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code (Claude Opus 5.5).
@@ -483,6 +487,7 @@ warren@wpratt.com
 #include "gui/widgets/FilterPresetEditDialog.h"
 #include "core/AppSettings.h"
 
+#include <QFontInfo>
 #include <QFontMetrics>
 #include <QAccessible>
 #include <QAccessibleWidget>
@@ -521,6 +526,21 @@ constexpr int kRoundtableLineFontPx = 11;
 constexpr qreal kRoundtableLineGlyph = 9.0;
 constexpr int kRoundtableBadgeHeight = 15;
 constexpr int kRoundtableBadgeMinWidth = 15;
+
+// The line's font: semibold where the family has a semibold face. Where it
+// has none (DejaVu Sans, Linux's usual), Qt would take the Bold face for
+// DemiBold, about 8% wider, and the longest lines would elide; the line is
+// drawn at Normal there instead.
+QFont roundtableLineFontFor(const QFont& base)
+{
+    QFont font = base;
+    font.setPixelSize(kRoundtableLineFontPx);
+    font.setWeight(QFont::DemiBold);
+    if (QFontInfo(font).weight() > QFont::DemiBold) {
+        font.setWeight(QFont::Normal);
+    }
+    return font;
+}
 
 class RoundtableLineButton final : public QAbstractButton {
 public:
@@ -615,13 +635,7 @@ protected:
     }
 
 private:
-    static QFont lineFont()
-    {
-        QFont font;
-        font.setPixelSize(kRoundtableLineFontPx);
-        font.setWeight(QFont::DemiBold);
-        return font;
-    }
+    static QFont lineFont() { return roundtableLineFontFor(QFont()); }
 
     RoundtableFlagLine m_line;
 };
@@ -1298,6 +1312,11 @@ void VfoWidget::buildRoundtableLine()
     connect(button, &QAbstractButton::clicked, this, &VfoWidget::roundtableLineClicked);
     static_cast<QVBoxLayout*>(layout())->addWidget(button);
     button->hide();
+}
+
+QFont VfoWidget::roundtableLineFont()
+{
+    return roundtableLineFontFor(QFont());
 }
 
 void VfoWidget::setRoundtableLine(const RoundtableFlagLine& line)

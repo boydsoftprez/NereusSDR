@@ -23,11 +23,17 @@
 //   2026-10-25: Hidden reads "Hidden · 9 · K4ABC" with the
 //               glyph dimmed; live and the other link states are unchanged.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25: The longest lines are measured in the line's own font
+//               (VfoWidget::roundtableLineFont), and a family with no
+//               semibold face draws at Normal. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 
 #include <QAbstractButton>
+#include <QApplication>
+#include <QFontInfo>
 #include <QFontMetrics>
 #include <QImage>
 #include <QJsonArray>
@@ -154,6 +160,7 @@ private slots:
     {
         QLoggingCategory::setFilterRules(QStringLiteral("nereus.memlock.info=false\n"
                                                         "qt.qpa.fonts.warning=false"));
+
     }
 
     void aLiveRoomReadsMembersAndWhoTalks()
@@ -384,9 +391,8 @@ private slots:
 
         // The line's own font and pads (VfoWidget.cpp RoundtableLineButton):
         // 5 px pads, a 9 px glyph, the @N badge 8 px wider than its text.
-        QFont font;
-        font.setPixelSize(11);
-        font.setWeight(QFont::DemiBold);
+        const QFont font = VfoWidget::roundtableLineFont();
+        QCOMPARE(font.pixelSize(), 11);
         QFont badge = font;
         badge.setWeight(QFont::ExtraBold);
         const int badgeW = std::max(15, QFontMetrics(badge).horizontalAdvance(QStringLiteral("@12")) + 8);
@@ -411,6 +417,43 @@ private slots:
                                     .arg(text)
                                     .arg(QFontMetrics(font).horizontalAdvance(text))
                                     .arg(room)));
+        }
+    }
+
+    void noSemiboldFaceDrawsAtNormal()
+    {
+        // A family with no semibold face (DejaVu Sans on Linux; Arial,
+        // Verdana on the Mac) would give Bold for DemiBold, wider; the line
+        // is drawn at Normal there. A family with one keeps semibold.
+        const QFont previous = QApplication::font();
+        QString without;
+        for (const QString& family : {QStringLiteral("DejaVu Sans"), QStringLiteral("Arial"),
+                                      QStringLiteral("Verdana"), QStringLiteral("Liberation Sans")}) {
+            QFont probe(family);
+            probe.setPixelSize(11);
+            probe.setWeight(QFont::DemiBold);
+            const QFontInfo info(probe);
+            if (info.family() == family && info.weight() > QFont::DemiBold) {
+                without = family;
+                break;
+            }
+        }
+        if (without.isEmpty()) {
+            QSKIP("no family without a semibold face on this machine");
+        }
+        QApplication::setFont(QFont(without));
+        const QFont font = VfoWidget::roundtableLineFont();
+        const QFontInfo drawn(font);
+        QApplication::setFont(previous);
+        QCOMPARE(drawn.family(), without);
+        QCOMPARE(font.pixelSize(), 11);
+        QCOMPARE(drawn.weight(), static_cast<int>(QFont::Normal));
+
+        QFont asked = previous;
+        asked.setPixelSize(11);
+        asked.setWeight(QFont::DemiBold);
+        if (QFontInfo(asked).weight() == QFont::DemiBold) {
+            QCOMPARE(QFontInfo(VfoWidget::roundtableLineFont()).weight(), static_cast<int>(QFont::DemiBold));
         }
     }
 

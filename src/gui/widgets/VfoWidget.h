@@ -15,6 +15,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - roundtableLineFont: the Roundtable line is drawn at
+//                 Normal where the family has no semibold face. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code
+//                 (Claude Opus 5.5).
 //   2026-10-24 - setRoundtableLine and roundtableLineClicked, the
 //                 Roundtable line on the flag (Roundtable plan Task 14).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
@@ -791,6 +795,9 @@ public slots:
     void setRoundtableLine(const RoundtableFlagLine& line);
     RoundtableFlagLine roundtableLine() const { return m_roundtableLine; }
     QAbstractButton* roundtableLineButtonForTest() const { return m_roundtableLineButton; }
+    // The font the line's text is drawn in: 11 px semibold, or Normal where
+    // the application font's family has no semibold face.
+    static QFont roundtableLineFont();
 
 signals:
     // The Roundtable line was clicked: open the Roundtable panel.
