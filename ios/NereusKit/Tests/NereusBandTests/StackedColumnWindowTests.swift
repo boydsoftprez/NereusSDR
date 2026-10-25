@@ -10,8 +10,8 @@ import Testing
 /// The 3D stack's rows reduce each waterfall line to its columns by peak.
 /// Windows taken from each column's edges were one sample wider at some
 /// columns than at the rest, the same columns on every row, and stood as
-/// fixed ridges through the stack (found and measured on the desktop's 3D
-/// by Longpath, 2026-10-22). Equal windows give every column the same mean.
+/// fixed ridges through the stack (first seen and measured on the
+/// desktop's 3D, 2026-10-22). Equal windows give every column the same mean.
 @Suite struct StackedColumnWindowTests {
     static let coverage = BandCoverage(centerHz: 7_200_000, spanHz: 48_000)
 

@@ -104,7 +104,7 @@ public struct StackedTraceHistory: Equatable, Sendable {
     /// columns on every row, and the peak of more noise samples sits
     /// higher, so those columns stood as ridges through the stack. The
     /// desktop 3D takes the same windows (DssRenderer.cpp
-    /// resampledRawRow), where Longpath found the ridges first. Two
+    /// resampledRawRow), where the same ridges showed first. Two
     /// neighbouring windows start at most a window apart, so no sample
     /// between them is skipped.
     static func peak(_ samples: [Float], over coverage: BandCoverage, from low: Double, to high: Double) -> Float {
