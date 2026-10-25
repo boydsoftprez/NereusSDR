@@ -1,5 +1,8 @@
 // NereusSDR for iOS: what sits over the band: the flags and tags, the touches that pan, tune and zoom, the zoom buttons
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: Roundtable plan Task 17, each flag's Roundtable line and the
+// dial's strip under the Roundtable sheet. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import NereusBand
@@ -82,6 +85,14 @@ struct BandGestureLayer: View {
     /// The TX badges' take (JJ's ruling of 2026-09-30); nil draws each TX
     /// button as the transmit choice alone (the flag pictures).
     var take: TransmitTakeModel?
+    /// Each slice's Roundtable line, by slice id (spec 11.3); a slice not
+    /// here draws none.
+    var roundtableLines: [Int: RoundtableFlagLine] = [:]
+    /// A Roundtable line's tap, with its slice.
+    var openRoundtable: ((Int) -> Void)?
+    /// The Roundtable sheet is up over a dial: the dial sits in the 92-point
+    /// strip under it, the knob drawn smaller (spec 11.3).
+    var dialStrip = false
     @Environment(\.uprightBandWidth) private var uprightWidth
     @Environment(\.dynamicTypeSize) private var typeSize
 
@@ -111,7 +122,7 @@ struct BandGestureLayer: View {
                 GeometryReader { proxy in
                     if let axes = band.pointGeometry(size: proxy.size) {
                         DialLayer(tuning: tuning, slices: slices, settings: settings, layout: axes.layout,
-                                  sideways: sideways, trailingInset: trailingInset)
+                                  sideways: sideways, trailingInset: trailingInset, strip: dialStrip)
                     }
                 }
             }
@@ -143,7 +154,9 @@ struct BandGestureLayer: View {
         let entries = shown.flags
         let large = large
         let jumped = slices.jumped
-        let expected = Dictionary(entries.map { ($0.id, VfoFlagView.expectedHeight(for: $0, large: large)) },
+        let lines = roundtableLines
+        let expected = Dictionary(entries.map { ($0.id, VfoFlagView.expectedHeight(for: $0, large: large,
+                                                                                  roundtable: lines[$0.id] != nil)) },
                                   uniquingKeysWith: { first, _ in first })
         let measured = flagHeights
         let column = FlagLayout.sideColumnSize(button: FlagSideButtons.diameter(large: large))
@@ -263,9 +276,12 @@ struct BandGestureLayer: View {
             if let flagControls, let store = flagControls.store {
                 WideChipLayer(store: store, controls: flagControls, rect: chipRect, large: large)
             }
-            ZoomButtons(zoomOut: { zoom(by: 1 / TuneGestures.buttonZoomFactor, geometry: geometry) },
-                        zoomIn: { zoom(by: TuneGestures.buttonZoomFactor, geometry: geometry) })
-                .offset(x: zoomAt.x, y: zoomAt.y)
+            if !dialStrip {
+                // Under the Roundtable sheet zoom waits with the band; the strip keeps PTT and the dial only.
+                ZoomButtons(zoomOut: { zoom(by: 1 / TuneGestures.buttonZoomFactor, geometry: geometry) },
+                            zoomIn: { zoom(by: TuneGestures.buttonZoomFactor, geometry: geometry) })
+                    .offset(x: zoomAt.x, y: zoomAt.y)
+            }
             if let tuning {
                 // Over the flags: a tap outside the step menu closes it, and a drag there moves the band.
                 StepMenuLayer(tuning: tuning, flags: flags, bandWidth: geometry.size.width, large: large,
@@ -397,7 +413,12 @@ struct BandGestureLayer: View {
                         antennasOpen: controls?.isOpen(.antennas(id)) ?? false,
                         openTab: controls?.openTab(id),
                         bypassOn: controls?.bypassOn ?? false,
-                        openDiversity: controls.map { controls in { controls.openDiversity(entry) } })
+                        openDiversity: controls.map { controls in { controls.openDiversity(entry) } },
+                        roundtable: roundtableLines[id],
+                        openRoundtable: openRoundtable.map { open in {
+                            controls?.close()
+                            open(id)
+                        } })
                 .onTapGesture(coordinateSpace: .local) { point in
                     // Even if an ancestor recognises the tap, the DIV target never selects its band slice.
                     guard !entry.diversityOn || !FlagMetrics(large: large).diversity.contains(point) else { return }

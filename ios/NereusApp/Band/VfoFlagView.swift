@@ -1,5 +1,8 @@
 // NereusSDR for iOS: a slice's full VFO flag on the band, 200 points wide, every control a finger-sized button
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: Roundtable plan Task 17, the Roundtable line at the flag's
+// foot. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -175,6 +178,11 @@ struct VfoFlagView: View {
     /// RX bypass on transmit is on: the antenna button says BYPS.
     var bypassOn = false
     var openDiversity: (() -> Void)?
+    /// The Roundtable line at the flag's foot (spec 11.3, D17); nil draws
+    /// none and the flag keeps its height.
+    var roundtable: RoundtableFlagLine?
+    /// The Roundtable line's tap: opens the Roundtable sheet.
+    var openRoundtable: (() -> Void)?
 
     @Environment(\.dynamicTypeSize) private var typeSize
 
@@ -214,8 +222,10 @@ struct VfoFlagView: View {
     /// A flag's height: the plain flag, with the RADE row in RADE and the
     /// owner row on a slice this phone only listens to. One geometry at
     /// every text size, so large type does not change it.
-    static func expectedHeight(for entry: BandSlicesModel.Entry, large: Bool = false) -> CGFloat {
+    static func expectedHeight(for entry: BandSlicesModel.Entry, large: Bool = false,
+                               roundtable: Bool = false) -> CGFloat {
         let height = FlagMetrics(large: large).height(rade: entry.rade != nil, listening: entry.listening)
+            + (roundtable ? RoundtableFlagLine.height : 0)
         // An older Core's RADE reason, or the Core's reason for no RADE
         // decoder, takes a second line, measured once drawn.
         return entry.rade?.wraps == true ? height + olderRadeExtra : height
@@ -232,7 +242,7 @@ struct VfoFlagView: View {
 
     var body: some View {
         let metrics = metrics
-        let height = Self.expectedHeight(for: entry, large: metrics.large)
+        let height = Self.expectedHeight(for: entry, large: metrics.large, roundtable: roundtable != nil)
         VStack(alignment: .leading, spacing: 0) {
             header(metrics)
             if entry.listening {
@@ -256,6 +266,10 @@ struct VfoFlagView: View {
                 }
             }
             tabs(metrics)
+            if let roundtable {
+                RoundtableFlagLineView(line: roundtable, letter: letter, open: openRoundtable)
+                    .padding(.horizontal, -FlagMetrics.inset)
+            }
         }
         .padding(.top, FlagMetrics.top)
         .padding(.bottom, FlagMetrics.bottom)

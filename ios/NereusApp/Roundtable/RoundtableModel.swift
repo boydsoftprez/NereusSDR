@@ -5,6 +5,9 @@
 // 2026-10-24: Roundtable plan Task 16, the phone's link model, read as the
 // desktop's RoundtableModel reads a window's streams. J.J. Boyd (KG4VCF),
 // AI-assisted via Claude Code.
+// 2026-10-24: Roundtable plan Task 17, the app that owns the model: once it
+// is freed the model is no longer connected. J.J. Boyd (KG4VCF),
+// AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -266,12 +269,42 @@ final class RoundtableModel: ObservableObject {
     private var readAgain = false
     private var pruneTimer: (any LinkTimer)?
 
+    /// The app whose session the mirror and the clients carry, when one
+    /// was named: once it is freed its session is gone, and the model
+    /// reads as not connected, whatever the mirror last said.
+    private weak var owner: AnyObject?
+    private let owned: Bool
+
+    /// Tells the model, on the main actor, when the owner it is tied to is freed.
+    private final class OwnerWatch {
+        let gone: @Sendable () -> Void
+        init(gone: @escaping @Sendable () -> Void) {
+            self.gone = gone
+        }
+        deinit {
+            gone()
+        }
+    }
+
+    private static var ownerWatchKey: UInt8 = 0
+
+    /// `owner` is the app whose session `mirror`, `commands` and `records`
+    /// belong to; the model holds it weakly and stops reading as connected
+    /// once it is freed.
     init(mirror: MirrorStore, commands: CommandClient, records: RecordStreamClient,
-         clock: any LinkClock = RoundtableWallClock()) {
+         clock: any LinkClock = RoundtableWallClock(), owner: AnyObject? = nil) {
         self.mirror = mirror
         self.commands = commands
         self.records = records
         self.clock = clock
+        self.owner = owner
+        owned = owner != nil
+        if let owner {
+            let watch = OwnerWatch { [weak self] in
+                Task { @MainActor [weak self] in self?.readAll() }
+            }
+            objc_setAssociatedObject(owner, &Self.ownerWatchKey, watch, .OBJC_ASSOCIATION_RETAIN)
+        }
         let watch = ToolMirrorWatch(mirror: mirror) { [weak self] in self?.readAll() }
         watch.watch(records.$streams)
         self.watch = watch
@@ -281,11 +314,13 @@ final class RoundtableModel: ObservableObject {
     // MARK: Reading
 
     private func readAll() {
-        let next = mirror.capabilityVersion(Self.capabilityName)
+        // An owner freed took its session with it: nothing is followed or sent.
+        let alive = !owned || owner != nil
+        let next = alive ? mirror.capabilityVersion(Self.capabilityName) : 0
         if next != version {
             version = next
         }
-        let up = mirror.isSnapshotComplete && !mirror.isStale
+        let up = alive && mirror.isSnapshotComplete && !mirror.isStale
         if up != connected {
             if !up {
                 // The Core forgets this phone's reading with the session.
@@ -865,7 +900,7 @@ final class RoundtableModel: ObservableObject {
     }
 
     /// The longest `/`-separated part of a callsign, upper case (design 7.1).
-    static func baseCallsign(_ callsign: String) -> String {
+    nonisolated static func baseCallsign(_ callsign: String) -> String {
         var longest = ""
         for part in callsign.split(separator: "/", omittingEmptySubsequences: false) where part.count > longest.count {
             longest = String(part)

@@ -1,5 +1,8 @@
 // NereusSDR for iOS: a debug build's stand-in for the Core's band and one slice, for the UI tests of touches on the band
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: Roundtable plan Task 17, a Roundtable room on slice A for the
+// UI tests. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 #if DEBUG
 import Foundation
@@ -24,6 +27,10 @@ enum UITestBand {
     static let noRotorArgument = "-NereusNoRotorFixture"
     /// Beside ``argument``: two spots on the band, one the Core can place (330 degrees) and one it cannot.
     static let spotsArgument = "-NereusSpotFixture"
+    /// Beside ``argument``: a Core running Roundtable, live, with slice A
+    /// in a room of four, a talker on the air and a message naming you.
+    static let roundtableArgument = "-NereusRoundtableFixture"
+    static let roundtableRoomId = "lsb-7236400"
     static let catalogueEnvironment = "NEREUS_UITEST_CATALOGUE"
     static let centreHz = 7_244_500.0
     static let spanHz = 48_000.0
@@ -39,6 +46,7 @@ enum UITestBand {
         let mirror = app.mirror
         let rotor = arguments.contains(rotorArgument)
         let noRotor = arguments.contains(noRotorArgument)
+        let roundtable = arguments.contains(roundtableArgument)
         app.useBandFixturePropertySender { [weak mirror] write in
             guard write.key == "slice:0", write.properties.count == 1,
                   let entry = write.properties.first, entry.name == "afGain" else {
@@ -61,7 +69,8 @@ enum UITestBand {
             .init(ordinal: 0, name: BandSlicesModel.remoteTxCapability, value: .i64(1)),
             .init(ordinal: 1, name: "propertyResultVersion", value: .i64(1)),
             .init(ordinal: 2, name: "stationCatalogVersion", value: .i64(1)),
-        ] + (rotor || noRotor ? [.init(ordinal: 3, name: RotorModel.capability, value: .i64(1))] : []))))
+        ] + (rotor || noRotor ? [.init(ordinal: 3, name: RotorModel.capability, value: .i64(1))] : [])
+          + (roundtable ? [.init(ordinal: 4, name: RoundtableModel.capabilityName, value: .i64(1))] : []))))
         if let path = environment[catalogueEnvironment], var json = catalogueJSON(path: path) {
             if rotor {
                 // The rotor set up, so the Core offers it.
@@ -100,8 +109,30 @@ enum UITestBand {
                 .init(ordinal: 1, name: "driver", value: .enumeration(0)),
             ])))
         }
+        if roundtable {
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+            mirror.apply(.objectCreate(LinkMessage.ObjectCreate(key: RoundtableModel.objectKey,
+                                                               className: "RoundtableState", properties: [
+                .init(ordinal: 0, name: "linkState", value: .enumeration(2)),
+                .init(ordinal: 1, name: "linkSince", value: .i64(now - 600_000)),
+                .init(ordinal: 2, name: "firstRunAnswered", value: .bool(true)),
+                .init(ordinal: 3, name: "hidden", value: .bool(false)),
+                .init(ordinal: 4, name: "mentionCounts", value: .utf8(#"{"\#(roundtableRoomId)":1}"#)),
+                .init(ordinal: 5, name: "sliceRooms", value: .utf8(#"{"0":"\#(roundtableRoomId)"}"#)),
+            ])))
+        }
         mirror.apply(.snapshotComplete)
         mirror.handle(.stateChanged(.ready))
+        if roundtable {
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+            // The model wants the band list and slice A's room once it reads the object.
+            _ = app.roundtable
+            app.records.apply(LinkMessage.RecordBatch(stream: RoundtableModel.roomsStream, generation: 1, reset: true,
+                                                      upserts: [roundtableSummary(now: now)], removes: []))
+            app.records.apply(LinkMessage.RecordBatch(stream: RoundtableModel.roomStreamName(roundtableRoomId),
+                                                      generation: 1, reset: true,
+                                                      upserts: roundtableRecords(now: now), removes: []))
+        }
         if arguments.contains(spotsArgument) {
             app.records.apply(LinkMessage.RecordBatch(stream: RecordStreamClient.spotsStream, generation: 1, reset: true,
                                                       upserts: spotRecords, removes: []))
@@ -154,6 +185,67 @@ enum UITestBand {
         ])
     }
 
+    /// Slice A's room on the band list: four stations, K4ABC talking.
+    private static func roundtableSummary(now: Int64) -> LinkMessage.RecordBatch.Record {
+        LinkMessage.RecordBatch.Record(id: roundtableRoomId, fields: [
+            "record": .string("room"), "id": .string(roundtableRoomId), "band": .string("40m"),
+            "family": .string("lsb"), "hz": .number(7_236_400), "state": .string("talking"),
+            "talkers": .array([.string("K4ABC")]), "members": .number(4), "messages": .number(2),
+            "last": .number(Double(now)), "folded": .bool(false), "start": .null, "heard": .number(3),
+            "readings": .array([]), "lastMessage": .null, "ended": .null,
+        ])
+    }
+
+    /// Slice A's room: K4ABC on the air, three readings of it, you, an
+    /// earlier turn, and two messages, the newer naming you.
+    private static func roundtableRecords(now: Int64) -> [LinkMessage.RecordBatch.Record] {
+        func member(_ ref: String, _ callsign: String, km: Double?, offset: Double, seq: Int64,
+                    you: Bool = false) -> LinkMessage.RecordBatch.Record {
+            .init(id: "member:\(ref)", fields: [
+                "record": .string("member"), "ref": .string(ref), "callsign": .string(callsign), "nth": .number(1),
+                "grid": .string("EM73"), "km": km.map(LinkJSON.number) ?? .null, "offsetHz": .number(offset),
+                "joining": .bool(false), "away": .bool(false), "keyed": .bool(false),
+                "software": .string("NereusSDR"), "softwareVersion": .string("26.10.3"), "you": .bool(you),
+                "seq": .number(Double(seq)),
+            ])
+        }
+        func reading(_ ref: String, _ dbm: Double, ageMs: Int64) -> LinkMessage.RecordBatch.Record {
+            .init(id: "reading:\(ref)", fields: [
+                "record": .string("reading"), "ref": .string(ref), "dbm": .number(dbm),
+                "t": .number(Double(now - ageMs)), "present": .bool(true), "turn": .number(12),
+            ])
+        }
+        func message(_ id: Int64, _ callsign: String, _ text: String, ageMs: Int64) -> LinkMessage.RecordBatch.Record {
+            .init(id: "message:\(id)", fields: [
+                "record": .string("message"), "id": .number(Double(id)), "ref": .null, "callsign": .string(callsign),
+                "nth": .number(1), "t": .number(Double(now - ageMs)), "state": .string("shown"),
+                "text": .string(text), "dbm": .null,
+            ])
+        }
+        return [
+            member("k/1", "K4ABC", km: nil, offset: 0, seq: 0),
+            member("n/2", "N4XYZ", km: 215, offset: 0, seq: 1),
+            reading("n/2", -43, ageMs: 3_000),
+            member("q/3", "K4QRS", km: 593, offset: -20, seq: 2),
+            reading("q/3", -55, ageMs: 1_000),
+            member("y/4", "KG4VCF", km: 340, offset: 0, seq: 3, you: true),
+            reading("y/4", -61, ageMs: 1_000),
+            .init(id: "turn:12", fields: [
+                "record": .string("turn"), "id": .number(12), "kind": .string("talking"),
+                "talkers": .array([.object(["ref": .string("k/1"), "callsign": .string("K4ABC"), "nth": .number(1)])]),
+                "start": .number(Double(now - 78_000)), "end": .null, "ending": .bool(false), "heard": .number(3),
+                "mine": .null,
+            ]),
+            .init(id: "turn:11", fields: [
+                "record": .string("turn"), "id": .number(11), "kind": .string("talking"), "talkers": .array([]),
+                "start": .number(Double(now - 200_000)), "end": .number(Double(now - 140_000)),
+                "ending": .bool(false), "heard": .number(2), "mine": .null,
+            ]),
+            message(21, "N4XYZ", "good copy all", ageMs: 90_000),
+            message(22, "K4QRS", "KG4VCF you are S9 here", ageMs: 30_000),
+        ]
+    }
+
     /// The catalogue's JSON from a conformance-suite session file: the
     /// `json` property of its `catalog` message.
     private static func catalogueJSON(path: String) -> String? {
@@ -172,4 +264,5 @@ enum UITestBand {
         return nil
     }
 }
+
 #endif

@@ -1,5 +1,9 @@
 // NereusSDR for iOS: the main screen for listening: the toolbar, the band edge to edge, the RX panel and the sound notice
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: Roundtable plan Task 17, the Roundtable line on each flag and
+// the Roundtable sheet over the band, with the dial strip under it.
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -29,11 +33,16 @@ import SwiftUI
 /// the analog S-meter, and upright in three columns below the band
 /// (``IPadLayout``). The toolbar, flags, band plan, PTT and tabs are the
 /// phone's.
+///
+/// A flag's Roundtable line opens the Roundtable sheet over the band (spec
+/// 11.3): half height, full height, below the keyed gauges while keyed,
+/// and above a 92-point strip with PTT and the dial when a dial is on.
 struct MainScreen: View {
     @ObservedObject var app: AppModel
     @ObservedObject var main: MainScreenModel
     /// Transmit: the PTT, the TX panel and the keyed view.
     @ObservedObject private var transmit: TransmitModel
+    @ObservedObject private var roundtable: RoundtableModel
     /// The connection's covers over the band: the link lost, the radio off,
     /// the phone offline, and back on the air. Nil where no flow runs (tests).
     let flow: ConnectionFlow?
@@ -53,6 +62,10 @@ struct MainScreen: View {
     @State private var sheet: OpenSheet?
     /// On an iPad on its side, the applet column shows (its corner button).
     @State private var columnShown: Bool
+    /// The Roundtable sheet, open at this height, or closed.
+    @State private var roundtableSheet: RoundtableSheet.Detent?
+    /// Where the keyed gauges end on the band, while keyed.
+    @State private var gaugesFoot: CGFloat?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.horizontalSizeClass) private var widthClass
 
@@ -60,11 +73,14 @@ struct MainScreen: View {
     /// `sheet` with that sheet open.
     init(app: AppModel, main: MainScreenModel, flow: ConnectionFlow? = nil, rxPanelOpen: Bool = false,
          txPanelOpen: Bool = false, sheet: OpenSheet? = nil, columnShown: Bool = true,
+         roundtableSheet: RoundtableSheet.Detent? = nil,
          openSetup: @escaping () -> Void = {}, openRadio: @escaping () -> Void = {},
          openPerformance: @escaping () -> Void = {}, openTransmitSettings: @escaping () -> Void = {}) {
         self.app = app
         self.main = main
         transmit = main.transmit
+        roundtable = app.roundtable
+        _roundtableSheet = State(initialValue: roundtableSheet)
         _txPanelOpen = State(initialValue: txPanelOpen)
         self.flow = flow
         self.openSetup = openSetup
@@ -140,7 +156,8 @@ struct MainScreen: View {
         let overlay = KeyedOverlay(transmit: transmit, accessories: main.accessories, keyedMeters: main.keyedMeters,
                                    take: main.take, meters: main.band.catalog?.meters,
                                    showsStrip: main.band.settings.bandPlanStrip,
-                                   spectrumShare: main.band.shownSpectrumShare, sideways: sideways)
+                                   spectrumShare: main.band.shownSpectrumShare, sideways: sideways,
+                                   gaugesFoot: { foot in gaugesFoot = foot })
         if let flow {
             overlay.modifier(BandUnderCover(flow: flow) {})
         } else {
@@ -175,13 +192,34 @@ struct MainScreen: View {
                                 spectrumShare: main.band.shownSpectrumShare)
             }
             .allowsHitTesting(false)
-            PttButton(transmit: transmit, linkUp: app.connection == .connected)
-                .padding(.leading, PttButton.inset + (sideways ? leadingInset : 0))
-                .padding(.bottom, PttButton.bottomInset)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
             // A spot's details or a badge's list, over PTT and under the covers.
             SpotLayer.Popups(spots: app.spots, sideways: sideways)
                 .padding(.trailing, sideways ? trailingInset : 0)
+            if let detent = roundtableSheet {
+                GeometryReader { proxy in
+                    let place = Self.roundtablePlace(bandHeight: proxy.size.height, detent: detent,
+                                                     gaugesFoot: transmit.ptt.transmitting ? gaugesFoot : nil,
+                                                     dialStrip: dialStrip)
+                    RoundtableSheet(roundtable: roundtable, transmit: transmit, slices: main.slices,
+                                    detent: Binding(get: { roundtableSheet ?? .half },
+                                                    set: { roundtableSheet = $0 }),
+                                    dialOn: dialStrip, linkUp: pttLinkUp,
+                                    stationCallsign: app.freedv.callsign,
+                                    close: closeRoundtable)
+                        .frame(maxWidth: sideways ? Self.roundtableSidewaysWidth : .infinity)
+                        .frame(height: place.height)
+                        .padding(.leading, sideways ? leadingInset : 0)
+                        .offset(y: place.top)
+                        .frame(maxWidth: .infinity, alignment: sideways ? .trailing : .center)
+                }
+                .padding(.trailing, sideways ? trailingInset : 0)
+                .transition(.move(edge: .bottom))
+            }
+            PttButton(transmit: transmit, linkUp: pttLinkUp)
+                .padding(.leading, PttButton.inset + (sideways ? leadingInset : 0))
+                .padding(.bottom, roundtableSheet == nil || !dialStrip ? PttButton.bottomInset
+                         : (DialLayer.stripHeight - PttButton.diameter) / 2)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
             if let flow {
                 LinkLostBanner(flow: flow, mirror: app.mirror, devices: main.devices)
             }
@@ -245,6 +283,70 @@ struct MainScreen: View {
         }
         .clipped()
         .ignoresSafeArea(edges: sideways ? .horizontal : [])
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: roundtableSheet)
+    }
+
+    // MARK: Roundtable
+
+    /// The sheet's widest sideways, as the drop sheets'.
+    static let roundtableSidewaysWidth: CGFloat = 546
+    /// Half height: the sheet's top this far down the band (the board's).
+    static let roundtableHalfTop: CGFloat = 0.48
+    /// Its gap below the keyed gauges.
+    static let roundtableBelowGauges: CGFloat = 8
+
+    /// Where the sheet sits on a band `bandHeight` tall: half or full,
+    /// below the keyed gauges while keyed, and above the dial's strip.
+    static func roundtablePlace(bandHeight: CGFloat, detent: RoundtableSheet.Detent, gaugesFoot: CGFloat?,
+                                dialStrip: Bool) -> (top: CGFloat, height: CGFloat) {
+        var top: CGFloat = detent == .full ? 0 : (bandHeight * roundtableHalfTop).rounded()
+        if let gaugesFoot {
+            // Keyed: the gauges stay, and the sheet drops below them.
+            top = max(top, gaugesFoot + roundtableBelowGauges)
+        }
+        let bottom = bandHeight - (dialStrip ? DialLayer.stripHeight : 0)
+        return (top, max(0, bottom - top))
+    }
+
+    /// A dial is on that keeps the strip under the open sheet: the
+    /// waterfall knob or the thumbwheel (the sheet knob rises over the band).
+    private var dialStrip: Bool {
+        guard roundtableSheet != nil else {
+            return false
+        }
+        return Self.keepsStrip(app.phoneSettings.dialKind)
+    }
+
+    static func keepsStrip(_ kind: DialKind) -> Bool {
+        kind == .waterfallKnob || kind == .thumbwheel
+    }
+
+    private var pttLinkUp: Bool {
+        app.connection == .connected
+    }
+
+    /// Each slice's Roundtable line, by its flag.
+    private var roundtableLines: [Int: RoundtableFlagLine] {
+        var lines: [Int: RoundtableFlagLine] = [:]
+        for entry in main.slices.entries {
+            if let line = RoundtableFlagLine.line(roundtable, sliceId: Int64(entry.id)) {
+                lines[entry.id] = line
+            }
+        }
+        return lines
+    }
+
+    private func openRoundtable(_ sliceId: Int) {
+        sheet = nil
+        rxPanelOpen = false
+        txPanelOpen = false
+        main.slices.activate(sliceId)
+        roundtable.activeSliceId = Int64(sliceId)
+        roundtableSheet = .half
+    }
+
+    private func closeRoundtable() {
+        roundtableSheet = nil
     }
 
     /// The band itself: the trace, waterfall, scales, band-plan strip,
@@ -258,6 +360,13 @@ struct MainScreen: View {
             // The sound-only marks sit over the band and beneath every
             // control on it, so one scrolling down passes under the dial.
             BandAwayMarks(band: main.band)
+            if dialStrip {
+                // The strip under the Roundtable sheet that keeps PTT and the dial.
+                RoundtableColours.ground
+                    .frame(height: DialLayer.stripHeight)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .allowsHitTesting(false)
+            }
             BandGestureLayer(band: main.band, slices: main.slices, settings: app.phoneSettings, tuning: main.tuning,
                              keyed: transmit.ptt.transmitting, txFilterHz: transmit.txFilterHz,
                              onAirSliceId: transmit.radioOnAirSliceId, txZeroLineSliceId: transmit.txZeroLineSliceId,
@@ -268,7 +377,10 @@ struct MainScreen: View {
                              firstKeyRefused: BandSlicesModel.refusedForTransmitChoice(transmit.ptt),
                              flagControls: main.flagControls,
                              transmitReason: BandGestureLayer.transmitReason(transmit, take: main.take),
-                             take: main.take)
+                             take: main.take,
+                             roundtableLines: roundtableLines,
+                             openRoundtable: { id in openRoundtable(id) },
+                             dialStrip: dialStrip)
             DbmScaleArrows(display: main.display, band: main.band, trailingInset: trailingInset)
             BandReadouts(band: main.band, trailingInset: trailingInset)
             TransmitDisplayBanner(band: main.band)

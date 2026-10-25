@@ -1,5 +1,8 @@
 // NereusSDR for iOS: what transmit puts over the waterfall: the keyed gauges, and the Core's refusals and stops
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: Roundtable plan Task 17, the gauges' foot told to the band,
+// so the Roundtable sheet drops below them. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -27,6 +30,9 @@ struct KeyedOverlay: View {
     /// The spectrum's share of the band, the pan's split.
     var spectrumShare: CGFloat = BandLayout.spectrumShare
     let sideways: Bool
+    /// Told where the keyed gauges end on the band while keyed, and nil
+    /// once unkeyed: the Roundtable sheet drops below them (spec 11.3, U3).
+    var gaugesFoot: ((CGFloat?) -> Void)?
 
     static let gaugesWidth: CGFloat = 330
 
@@ -65,6 +71,9 @@ struct KeyedOverlay: View {
             .padding(.horizontal, 10)
             .frame(maxWidth: .infinity)
             .offset(y: top)
+            .onChange(of: transmit.ptt.transmitting ? top + height : -1, initial: true) { _, foot in
+                gaugesFoot?(foot < 0 ? nil : foot)
+            }
         }
         .onChange(of: transmit.ptt.transmitting) { _, keyed in if !keyed { editingSlot = nil } }
         .onChange(of: keyedMeters.settings.page) { _, _ in editingSlot = nil }
