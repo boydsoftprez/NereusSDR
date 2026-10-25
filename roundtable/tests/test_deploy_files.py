@@ -200,7 +200,10 @@ def test_website_setup_makes_the_sites_folder_before_validating() -> None:
 def test_caddy_validates_the_website_with_the_site_file(tmp_path: Path) -> None:
     caddy = shutil.which("caddy")
     if caddy is None:
-        pytest.skip("caddy is not installed here, so caddy validate cannot run")
+        pytest.skip(
+            "caddy is not installed here, so caddy validate cannot run. CI does not install it: Ubuntu 24.04 apt"
+            " has Caddy 2.6, and the site file uses stream_close_delay (Caddy 2.7), so this check is local only"
+        )
     sites = tmp_path / "sites"
     sites.mkdir()
     shutil.copy(DEPLOY / "roundtable.caddy", sites / "roundtable.caddy")
@@ -344,6 +347,7 @@ def test_pull_backup_takes_the_newest_and_keeps_seven(tmp_path: Path) -> None:
         NEREUS_RT_BACKUP_SOURCE="root@server.invalid",
         NEREUS_RT_BACKUP_REMOTE_DIR=str(remote),
         NEREUS_RT_BACKUP_DIR=str(local),
+        NEREUS_RT_BACKUP_TODAY="2026-11-10",
     )
     script = str(DEPLOY / "pull-backup.sh")
     before = tree(local)
@@ -380,6 +384,55 @@ def test_pull_backup_refuses_a_broken_copy(tmp_path: Path) -> None:
     assert run.returncode != 0
     assert "roundtable-2026-11-10.db" in run.stderr
     assert sorted(p.name for p in local.iterdir()) == []
+
+
+def test_pull_backup_ages_out_old_copies_when_nothing_new_comes(tmp_path: Path) -> None:
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    # The server has skipped nights: its newest is days old and already here.
+    snapshot_db(remote / "roundtable-2026-11-05.db", "newest there")
+    local = tmp_path / "local"
+    local.mkdir()
+    for day in (2, 3, 4, 5):
+        snapshot_db(local / f"roundtable-2026-11-0{day}.db", f"day {day}")
+    env = dict(
+        os.environ,
+        NEREUS_RT_SSH=str(fake_ssh(tmp_path)),
+        NEREUS_RT_BACKUP_REMOTE_DIR=str(remote),
+        NEREUS_RT_BACKUP_DIR=str(local),
+        NEREUS_RT_BACKUP_TODAY="2026-11-11",
+    )
+    script = str(DEPLOY / "pull-backup.sh")
+    dry = subprocess.run(["bash", script, "--dry-run"], capture_output=True, text=True, env=env, timeout=60)
+    assert dry.returncode == 0, dry.stdout + dry.stderr
+    assert dry.stdout.count("Would remove:") == 2
+    assert len(list(local.iterdir())) == 4
+    run = subprocess.run(["bash", script], capture_output=True, text=True, env=env, timeout=60)
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "Already here" in run.stdout
+    # 11-04 is exactly 7 days before 11-11 and stays; older ones go.
+    assert sorted(p.name for p in local.iterdir()) == ["roundtable-2026-11-04.db", "roundtable-2026-11-05.db"]
+
+
+def test_pull_backup_ages_out_old_copies_when_the_pull_fails(tmp_path: Path) -> None:
+    local = tmp_path / "local"
+    local.mkdir()
+    for day in (1, 2, 8, 9):
+        snapshot_db(local / f"roundtable-2026-11-0{day}.db", f"day {day}")
+    (local / "notes.txt").write_text("kept", "utf-8")
+    failing = tmp_path / "failing-ssh"
+    failing.write_text("#!/bin/sh\nexit 255\n", "utf-8")
+    failing.chmod(failing.stat().st_mode | stat.S_IXUSR)
+    env = dict(
+        os.environ,
+        NEREUS_RT_SSH=str(failing),
+        NEREUS_RT_BACKUP_DIR=str(local),
+        NEREUS_RT_BACKUP_TODAY="2026-11-10",
+    )
+    run = subprocess.run(["bash", str(DEPLOY / "pull-backup.sh")], capture_output=True, text=True, env=env, timeout=60)
+    assert run.returncode != 0
+    assert "could not list" in run.stderr
+    assert sorted(p.name for p in local.iterdir()) == ["notes.txt", "roundtable-2026-11-08.db", "roundtable-2026-11-09.db"]
 
 
 # ---------------------------------------------------------------- website

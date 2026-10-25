@@ -225,14 +225,14 @@
       "note": "U+00AD is a format character cleaning keeps; it ends a link run"
     },
     {
-      "name": "link-ends-at-arabic-letter-mark",
+      "name": "removed-u061c-in-a-link",
       "text": "https://example.org/a\u061cb",
-      "cleaned": "https://example.org/a\u061cb",
+      "cleaned": "https://example.org/ab",
       "refused": null,
       "links": [
-        "https://example.org/a"
+        "https://example.org/ab"
       ],
-      "note": "U+061C is not in the removed list; it stays and ends a link run"
+      "note": "U+061C, the Arabic letter mark, changes direction like U+200F and is removed (6.10)"
     },
     {
       "name": "crlf",
@@ -369,12 +369,12 @@
       "links": []
     },
     {
-      "name": "removal-after-nfc",
+      "name": "nfc-after-removal",
       "text": "e\u200b\u0301",
-      "cleaned": "e\u0301",
+      "cleaned": "\u00e9",
       "refused": null,
       "links": [],
-      "note": "NFC runs first (6.10), so a mark after a removed character is not composed; screens clean again when shown"
+      "note": "the removals come before NFC (6.10), so the mark after a removed character is composed"
     },
     {
       "name": "emoji-500",

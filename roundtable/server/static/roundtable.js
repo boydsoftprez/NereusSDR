@@ -97,20 +97,21 @@
 
   // ------------------------------------------------------------ text (wire spec 6.10)
 
-  const REMOVED = /[​‎‏‪-‮⁠⁦-⁩﻿]/g;
+  const REMOVED = /[\u061C\u200B\u200E\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]/g;
   const CONTROLS = /[\u0000-\u0009\u000B-\u001F\u007F-\u009F]/g;
   const LINK = /https?:\/\/[^\s\p{Cf}]*/gu;
   const EMPHASIS = /\*\*([^*\n]+)\*\*|\*([^*\n]+)\*/g;
 
-  /* Cleaning, in the wire spec's order: NFC; CR LF and lone CR become LF;
+  /* Cleaning, in the wire spec's order: CR LF and lone CR become LF;
      every other control character goes; the invisible and
-     direction-changing format characters go; then the ends are trimmed. */
+     direction-changing format characters go; NFC, after the removals;
+     then the ends are trimmed. */
   function clean(text) {
-    let out = String(text === null || text === undefined ? "" : text).normalize("NFC");
+    let out = String(text === null || text === undefined ? "" : text);
     out = out.replace(/\r\n?/g, "\n");
     out = out.replace(CONTROLS, "");
     out = out.replace(REMOVED, "");
-    return out.trim();
+    return out.normalize("NFC").trim();
   }
 
   /* The link runs a screen shows: from http:// or https:// to the next

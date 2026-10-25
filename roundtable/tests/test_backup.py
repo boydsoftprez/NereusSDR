@@ -102,6 +102,30 @@ def test_fourteen_percent_free_skips_the_snapshot_with_a_warning(harness, tmp_pa
     assert [r.levelname for r in caplog.records] == ["INFO"]
 
 
+def test_a_skipped_snapshot_still_removes_one_older_than_two_days(harness, tmp_path, caplog):
+    backup = tmp_path / "backup"
+    backup.mkdir()
+    for name in (
+        "roundtable-2026-10-21.db",  # 3 days before 2026-10-24: goes
+        "roundtable-2026-10-22.db",  # 2 days before: stays
+        "roundtable-2026-10-23.db",
+        "roundtable-2026-1x-01.db",  # not a snapshot name: stays
+        "notes.txt",
+    ):
+        (backup / name).write_bytes(b"old")
+    with caplog.at_level(logging.INFO, logger="nereus_roundtable"):
+        assert Retention(harness.store, _fake(14)).snapshot(str(backup), NIGHT) is None
+    assert sorted(os.listdir(backup)) == [
+        "notes.txt",
+        "roundtable-2026-10-22.db",
+        "roundtable-2026-10-23.db",
+        "roundtable-2026-1x-01.db",
+    ]
+    # Two nights later, still under 15% free: neither copy is kept.
+    assert Retention(harness.store, _fake(14)).snapshot(str(backup), NIGHT + 2 * DAY_MS) is None
+    assert sorted(os.listdir(backup)) == ["notes.txt", "roundtable-2026-1x-01.db"]
+
+
 def _config(tmp_path):
     path = tmp_path / "roundtable.ini"
     path.write_text(

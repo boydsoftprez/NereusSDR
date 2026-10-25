@@ -79,6 +79,7 @@ TEXT_ERRORS: Dict[int, str] = {
     405: "That method is not supported here.\n",
     413: "That request is too large.\n",
     431: "That request's headers are too large.\n",
+    500: "Something went wrong answering that request.\n",
 }
 
 CONTENT_TYPES: Dict[str, str] = {
@@ -263,7 +264,11 @@ class App:
                 return
             if request is None:
                 return
-            response = await self.answer(request)
+            try:
+                response = await self.answer(request)
+            except Exception as exc:  # noqa: BLE001 - the request gets a 500, the server goes on
+                log.error("an HTTP request failed (%s)", type(exc).__name__)
+                response = text_error(500)
             await self._write(writer, response, head_only=request.method == "HEAD")
         except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError):
             return
@@ -448,11 +453,10 @@ class App:
 
     def _stored_turn_object(self, row: Dict[str, Any]) -> Dict[str, Any]:
         talkers = []
-        for key in ("talker_callsign", "second_talker_callsign"):
+        for key, nth in (("talker_callsign", "talker_nth"), ("second_talker_callsign", "second_talker_nth")):
             if row[key]:
-                # The store keeps no row number for a talker; after a
-                # restart each shows as the first of its callsign.
-                talkers.append({"ref": None, "callsign": row[key], "nth": 1})
+                # The row number the talker had in the room, kept with the turn.
+                talkers.append({"ref": None, "callsign": row[key], "nth": int(row[nth])})
         heard = 0
         if row["kind"] != "doubled":
             for track in self.store.tracks_of(int(row["id"])):

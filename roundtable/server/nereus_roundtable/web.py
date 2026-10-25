@@ -362,22 +362,40 @@ class Web:
         raw = self._random(WEBSITE_KEY_BYTES)
         new_id = identity.key_id(raw)
         with self.service.event():
-            # The old key's connection closes first, so what its leaving
-            # writes (an ended turn, tracks) is moved with the rest.
-            self.service.revoke_station(old_id)
+            # The old key's connection leaves first, so what its leaving
+            # writes (an ended turn, tracks) is moved with the rest. It is
+            # told the key is revoked (4004) only once the move commits.
+            leaving = self.service.leave_for_move(old_id)
+            committed = False
             try:
-                moved = self.store.key_move(old_hash, identity.key_hash(raw), new_id, self.clock.wall_ms())
-            except sqlite3.Error as exc:
-                log.error("a database error moving a station's history (%s)", type(exc).__name__)
-                return _refuse("server")
-            if moved is None:
-                return _refuse("bad-key")
-            self.service.station_moved(moved, new_id)
+                try:
+                    moved = self.store.key_move(old_hash, identity.key_hash(raw), new_id, self.clock.wall_ms())
+                except sqlite3.Error as exc:
+                    log.error("a database error moving a station's history (%s)", type(exc).__name__)
+                    return _refuse("server")
+                if moved is None:
+                    return _refuse("bad-key")
+                committed = True
+                self.service.station_moved(moved, new_id)
+            finally:
+                self.service.end_after_move(leaving, committed)
         return _json(200, {"key": identity.to_b64url(raw)})
 
     # ----------------------------------------------------------- sign-in
 
     def signin(self, request: Request) -> Response:
+        if request.method == "HEAD":
+            # A link unfurler or mail scanner may send HEAD first: it learns
+            # nothing, and the one-time link stays good for the person.
+            return Response(
+                200,
+                b"",
+                [
+                    ("Content-Type", "text/plain; charset=utf-8"),
+                    ("Cache-Control", "no-store"),
+                    ("Referrer-Policy", "no-referrer"),
+                ],
+            )
         values = request.query.get("t", [])
         token = identity.b64url_of_length(values[0], TOKEN_BYTES) if len(values) == 1 else None
         station_id = self.store.weblink_use(identity.key_hash(token), self.clock.wall_ms()) if token else None

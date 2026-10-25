@@ -35,7 +35,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Set, Tuple
 
 from . import messages
 
@@ -92,7 +92,9 @@ CREATE TABLE IF NOT EXISTS turns (
     second_talker_callsign TEXT,
     start_ms INTEGER NOT NULL,
     end_ms INTEGER,
-    member_ids TEXT NOT NULL DEFAULT ''
+    member_ids TEXT NOT NULL DEFAULT '',
+    talker_nth INTEGER NOT NULL DEFAULT 1,
+    second_talker_nth INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS turns_by_opening ON turns (opening_id, start_ms);
 CREATE INDEX IF NOT EXISTS turns_by_talker ON turns (talker_id, start_ms);
@@ -136,6 +138,12 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS messages_by_room ON messages (room_id, id);
 CREATE INDEX IF NOT EXISTS messages_by_station ON messages (station_id);
+CREATE TABLE IF NOT EXISTS message_mentions (
+    base TEXT NOT NULL,
+    message_id INTEGER NOT NULL,
+    PRIMARY KEY (base, message_id)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS message_mentions_by_message ON message_mentions (message_id);
 CREATE TABLE IF NOT EXISTS reports (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     target TEXT NOT NULL CHECK (target IN ('message', 'turn', 'station')),
@@ -206,6 +214,7 @@ TABLES = (
     "turn_readings",
     "turn_names",
     "messages",
+    "message_mentions",
     "reports",
     "review_actions",
     "helpers",
@@ -229,10 +238,25 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.journal_mode = str(self.db.execute("PRAGMA journal_mode=WAL").fetchone()[0]).lower()
         self.db.execute("PRAGMA synchronous=NORMAL")
+        # Deleted rows and cleared text are overwritten, not left in free
+        # space, so neither the file nor a page-for-page snapshot keeps them
+        # (design 6.2, 6.4). The default depends on how SQLite was built.
+        self.db.execute("PRAGMA secure_delete=ON")
         self._create()
 
     def _create(self) -> None:
         self.db.executescript(SCHEMA)
+        # A file made before the talkers' row numbers were kept gains them;
+        # its old turns show each talker as the first of its callsign.
+        have = {r["name"] for r in self.db.execute("PRAGMA table_info(turns)")}
+        for column in ("talker_nth", "second_talker_nth"):
+            if column not in have:
+                self.db.execute(f"ALTER TABLE turns ADD COLUMN {column} INTEGER NOT NULL DEFAULT 1")
+        # A file made before message_mentions indexed the mentions column.
+        if self.db.execute("SELECT 1 FROM message_mentions LIMIT 1").fetchone() is None:
+            with self.transaction():
+                for r in self.db.execute("SELECT id, mentions FROM messages WHERE mentions != ''").fetchall():
+                    self._mentions_add(int(r["id"]), str(r["mentions"]).split())
         row = self.db.execute("SELECT version FROM schema_version").fetchone()
         if row is None:
             self.db.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
@@ -366,25 +390,35 @@ class Store:
 
     # ------------------------------------------------------------- turns
 
-    def turn_open(self, opening_id: int, kind: str, talkers: List[Tuple[str, str]], start: int) -> int:
+    @staticmethod
+    def _talker(talkers: Sequence[Sequence[Any]], index: int) -> Tuple[Optional[str], Optional[str], int]:
+        """(station id, callsign, nth) of one talker, nth 1 when not given."""
+        if len(talkers) <= index:
+            return None, None, 1
+        t = talkers[index]
+        return t[0], t[1], int(t[2]) if len(t) > 2 else 1
+
+    def turn_open(self, opening_id: int, kind: str, talkers: Sequence[Sequence[Any]], start: int) -> int:
         """A turn opens; its id is returned. `talkers` is (station id,
-        callsign) in keying order; the first two are stored."""
-        first = talkers[0] if talkers else (None, None)
-        second = talkers[1] if len(talkers) > 1 else (None, None)
+        callsign) or (station id, callsign, nth) in keying order; the first
+        two are stored, with the row number each had in the room."""
+        first = self._talker(talkers, 0)
+        second = self._talker(talkers, 1)
         cursor = self.db.execute(
             "INSERT INTO turns (opening_id, kind, talker_id, talker_callsign, second_talker_id,"
-            " second_talker_callsign, start_ms, end_ms) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)",
-            (opening_id, kind, first[0], first[1], second[0], second[1], start),
+            " second_talker_callsign, start_ms, end_ms, talker_nth, second_talker_nth)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+            (opening_id, kind, first[0], first[1], second[0], second[1], start, first[2], second[2]),
         )
         return int(cursor.lastrowid)
 
-    def turn_talkers(self, turn_id: int, talkers: List[Tuple[str, str]]) -> None:
-        first = talkers[0] if talkers else (None, None)
-        second = talkers[1] if len(talkers) > 1 else (None, None)
+    def turn_talkers(self, turn_id: int, talkers: Sequence[Sequence[Any]]) -> None:
+        first = self._talker(talkers, 0)
+        second = self._talker(talkers, 1)
         self.db.execute(
             "UPDATE turns SET talker_id = ?, talker_callsign = ?, second_talker_id = ?,"
-            " second_talker_callsign = ? WHERE id = ?",
-            (first[0], first[1], second[0], second[1], turn_id),
+            " second_talker_callsign = ?, talker_nth = ?, second_talker_nth = ? WHERE id = ?",
+            (first[0], first[1], second[0], second[1], first[2], second[2], turn_id),
         )
 
     def turn_end(self, turn_id: int, end: int) -> None:
@@ -532,7 +566,16 @@ class Store:
                 (" " + " ".join(words) + " ") if words else "",
             ),
         )
-        return int(cursor.lastrowid)
+        message_id = int(cursor.lastrowid)
+        self._mentions_add(message_id, words)
+        return message_id
+
+    def _mentions_add(self, message_id: int, words: Iterable[str]) -> None:
+        """The index unread_mentions reads: one row per base callsign named."""
+        self.db.executemany(
+            "INSERT OR IGNORE INTO message_mentions (base, message_id) VALUES (?, ?)",
+            [(w, message_id) for w in set(words)],
+        )
 
     def message_get(self, message_id: int) -> Optional[Dict[str, Any]]:
         row = self.db.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
@@ -591,9 +634,10 @@ class Store:
         base = messages.base_callsign(station["callsign"])
         seen = station["mentions_seen"]
         rows = self.db.execute(
-            "SELECT * FROM messages WHERE state = 'shown' AND station_id != ? AND t > ?"
-            " AND instr(mentions, ?) > 0 ORDER BY id DESC LIMIT ?",
-            (station_id, -1 if seen is None else seen, f" {base} ", limit),
+            "SELECT m.* FROM message_mentions x JOIN messages m ON m.id = x.message_id"
+            " WHERE x.base = ? AND m.state = 'shown' AND m.station_id != ? AND m.t > ?"
+            " ORDER BY x.message_id DESC LIMIT ?",
+            (base, station_id, -1 if seen is None else seen, limit),
         ).fetchall()
         return [dict(r) for r in reversed(rows)]
 
@@ -830,6 +874,11 @@ class Store:
                 (int(r["id"]), str(r["room_id"]))
                 for r in self.db.execute("SELECT id, room_id FROM messages WHERE state = 'shown' AND t < ?", (before,))
             ]
+            self.db.execute(
+                "DELETE FROM message_mentions WHERE message_id IN"
+                " (SELECT id FROM messages WHERE state = 'shown' AND t < ?)",
+                (before,),
+            )
             self.db.execute(
                 "UPDATE messages SET text = NULL, mentions = '', state = 'expired' WHERE state = 'shown' AND t < ?",
                 (before,),
@@ -1128,6 +1177,10 @@ class Store:
                     "SELECT id, room_id FROM messages WHERE station_id = ? AND text IS NOT NULL", (station_id,)
                 )
             ]
+            self.db.execute(
+                "DELETE FROM message_mentions WHERE message_id IN (SELECT id FROM messages WHERE station_id = ?)",
+                (station_id,),
+            )
             self.db.execute(
                 "UPDATE messages SET text = NULL, mentions = '',"
                 " state = CASE WHEN state = 'shown' THEN 'deleted' ELSE state END"

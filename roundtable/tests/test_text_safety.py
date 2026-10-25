@@ -38,7 +38,7 @@ def test_the_corpus_covers_every_format_character_cleaning_removes_and_the_two_i
     for cp in (0x200C, 0x200D):
         assert any(chr(cp) in (c["cleaned"] or "") for c in CASES), hex(cp)
     assert messages.REMOVED_FORMAT == frozenset(
-        [0x200B, 0x200E, 0x200F, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2060, 0x2066, 0x2067, 0x2068, 0x2069, 0xFEFF]
+        [0x061C, 0x200B, 0x200E, 0x200F, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2060, 0x2066, 0x2067, 0x2068, 0x2069, 0xFEFF]
     )
 
 
@@ -58,11 +58,12 @@ def test_clean(case):
         assert messages.links(case["cleaned"]) == case["links"]
 
 
-def test_cleaning_twice_changes_nothing_more_except_nfc():
+def test_cleaning_twice_changes_nothing():
     for case in CASES:
         if case["cleaned"] is not None:
-            again = messages.clean_text(case["cleaned"])
-            assert again == unicodedata.normalize("NFC", case["cleaned"]), case["name"]
+            # NFC runs after the removals, so what is stored is already NFC.
+            assert unicodedata.is_normalized("NFC", case["cleaned"]), case["name"]
+            assert messages.clean_text(case["cleaned"]) == case["cleaned"], case["name"]
 
 
 @pytest.fixture(scope="module")

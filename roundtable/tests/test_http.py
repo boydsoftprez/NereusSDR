@@ -195,6 +195,28 @@ def test_routes_later_parts_add(static):
     asyncio.run(go())
 
 
+def test_a_handler_that_raises_answers_500_and_logs_only_the_type(static, caplog):
+    async def go():
+        async with live_service(http_app=True, static_dir=static) as live:
+
+            def broken(req: rt_http.Request) -> Response:
+                raise RuntimeError("secret detail K4ABC")
+
+            live.http_app.route("GET", "/broken", broken)
+            answer = await request(live.http_port, "GET", "/broken")
+            assert answer.status == 500
+            assert answer.body == b"Something went wrong answering that request.\n"
+            assert answer.header("Content-Security-Policy") == CSP_TEXT
+            # The server goes on answering.
+            assert (await request(live.http_port, "GET", "/index.html")).status == 200
+
+    with caplog.at_level("INFO", logger="nereus_roundtable"):
+        asyncio.run(go())
+    said = [r.getMessage() for r in caplog.records]
+    assert "an HTTP request failed (RuntimeError)" in said
+    assert not any("secret" in m or "K4ABC" in m for m in said)
+
+
 def test_the_read_api_over_the_socket_and_its_address_groups(static):
     async def go():
         async with live_service(http_app=True, static_dir=static) as live:

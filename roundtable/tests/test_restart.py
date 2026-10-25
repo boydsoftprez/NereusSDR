@@ -120,3 +120,58 @@ def test_a_turn_left_open_by_a_crash_ends_at_the_restart(tmp_path):
     finally:
         h2.close()
         store.close()
+
+
+def test_a_talkers_row_number_survives_a_restart(tmp_path):
+    """Two stations sign as K4ABC; the second (nth 2) talks. After a
+    restart the closed room's earlier turn still names it the second."""
+    from test_read_api import _app, call
+
+    path = str(tmp_path / "rt.sqlite")
+    store = Store(path)
+    h = Harness(store=store)
+    a = h.sign_in(address="192.0.2.1")
+    a.send(presence("K4ABC", "EM73", [slice_(0, 14212000)]))
+    b = h.sign_in(address="192.0.2.2")
+    b.send(presence("K4ABC", "EM73", [slice_(0, 14212010)]))
+    h.advance(10000)
+    rows = h.service.book.live("usb-14212000").rows
+    assert sorted(r.nth for r in rows.values()) == [1, 2]
+    b.send(presence("K4ABC", "EM73", [slice_(0, 14212010, keyed=True)]))
+    h.advance(5000)
+    b.send(presence("K4ABC", "EM73", [slice_(0, 14212010)]))
+    h.advance(3000)
+    a.send(presence("K4ABC", "EM73", []))
+    b.send(presence("K4ABC", "EM73", []))
+    h.advance(10 * MINUTE)
+    assert h.service.book.live("usb-14212000") is None
+    end = h.clock.wall_ms()
+    h.close()
+    store.close()
+    h, store = _second_run(path, end + MINUTE)
+    try:
+        response, body = call(h, _app(h), "/v1/api/room/usb/14212000")
+        assert response.status == 200
+        assert [t["talkers"] for t in body["room"]["earlier"]] == [[{"ref": None, "callsign": "K4ABC", "nth": 2}]]
+    finally:
+        h.close()
+        store.close()
+
+
+def test_a_database_from_before_talker_row_numbers_gains_them(tmp_path):
+    path = str(tmp_path / "rt.sqlite")
+    Store(path).close()
+    import sqlite3
+
+    db = sqlite3.connect(path)
+    db.execute("ALTER TABLE turns DROP COLUMN talker_nth")
+    db.execute("ALTER TABLE turns DROP COLUMN second_talker_nth")
+    db.execute("INSERT INTO turns (opening_id, kind, talker_callsign, start_ms) VALUES (1, 'talking', 'K4ABC', 5)")
+    db.commit()
+    db.close()
+    store = Store(path)
+    try:
+        assert "talker_nth" in store.columns()["turns"] and "second_talker_nth" in store.columns()["turns"]
+        assert tuple(store.db.execute("SELECT talker_nth, second_talker_nth FROM turns").fetchone()) == (1, 1)
+    finally:
+        store.close()

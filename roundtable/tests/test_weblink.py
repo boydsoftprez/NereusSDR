@@ -47,6 +47,19 @@ def test_a_link_works_once(harness, browser):
     assert harness.store.db.execute("SELECT COUNT(*) FROM web_sessions").fetchone()[0] == 1
 
 
+def test_a_head_request_does_not_use_up_the_link(harness, browser):
+    station = harness.sign_in()
+    path = _path(browser, weblink(station))
+    head = browser.request("HEAD", path)
+    assert head.status == 200
+    assert head.head("Set-Cookie") is None
+    assert harness.store.db.execute("SELECT COUNT(*) FROM web_sessions").fetchone()[0] == 0
+    first = browser.get(path)
+    assert first.status == 303
+    assert first.head("Set-Cookie") is not None
+    assert browser.get(path).status == 403
+
+
 def test_a_link_does_not_work_after_5_minutes(harness, browser):
     station = harness.sign_in()
     early = _path(browser, weblink(station))
@@ -94,8 +107,11 @@ def test_a_signed_in_post_needs_the_origin_and_the_csrf_token(harness, browser, 
         browser.post(path, dict(form, csrf=browser.csrf(other)), cookie),
         browser.post(path, dict(form, csrf=csrf), cookie, origin="https://evil.example"),
         browser.post(path, dict(form, csrf=csrf), cookie, origin=None),
+        browser.post(path, dict(form, csrf=csrf), cookie, origin="null"),
+        browser.post(path, dict(form, csrf=csrf), cookie, origin="http://roundtable.conformance.invalid"),
+        browser.post(path, dict(form, csrf=csrf), cookie, origin=[browser.origin, browser.origin]),
     ]
-    assert [r.status for r in refusals] == [403] * 6
+    assert [r.status for r in refusals] == [403] * 9
     assert all(body_json(r)["error"] == "forbidden" for r in refusals)
     # Without a cookie it is not signed in.
     assert browser.post(path, dict(form, csrf=csrf)).status == 401

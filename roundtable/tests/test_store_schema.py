@@ -18,6 +18,7 @@ EXPECTED_TABLES = {
     "turn_readings",
     "turn_names",
     "messages",
+    "message_mentions",
     "reports",
     "review_actions",
     "helpers",
@@ -48,7 +49,7 @@ def test_wal(store, tmp_path):
 def test_tables(store):
     columns = store.columns()
     assert set(columns) == EXPECTED_TABLES == set(TABLES)
-    assert len(EXPECTED_TABLES) == 14
+    assert len(EXPECTED_TABLES) == 15
 
 
 def test_no_column_holds_an_address(store):
@@ -96,3 +97,24 @@ def test_keys(store):
     # Only the hash is stored, never the key.
     stored = store.db.execute("SELECT key_hash FROM keys").fetchall()
     assert [bytes(r[0]) for r in stored] == [digest]
+
+
+def test_cleared_text_is_not_left_in_the_file(tmp_path):
+    path = str(tmp_path / "roundtable.db")
+    marker = "zq-secret-words-" * 8
+    s = Store(path)
+    assert s.db.execute("PRAGMA secure_delete").fetchone()[0] == 1
+    oid = s.opening_open("usb-14212000", "20m", "usb", 14212000, 1000)
+    s.message_add(oid, "usb-14212000", "q" * 26, "K4ABC", 1, 2000, marker, None)
+    s.close()
+    s = Store(path)
+    assert len(s.messages_expire(3000)) == 1
+    s.close()
+    data = b""
+    for name in (path, path + "-wal"):
+        try:
+            with open(name, "rb") as f:
+                data += f.read()
+        except FileNotFoundError:
+            pass
+    assert marker.encode("utf-8") not in data

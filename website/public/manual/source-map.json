@@ -588,8 +588,8 @@
     },
     {
       "output": "roundtable/api.html",
-      "output_sha256": "89e3f19dfc45352805d4219c3c52e7417f23da4075bdfeec1ca7edf07424ea20",
-      "sha256": "55ecc9f365fd458c367dd11771787e83b4123ac9d640a7e1dd526c1ffb7b2dba",
+      "output_sha256": "d00aee4efdeb99930a3c9fe7384ae82cd10049745edf38394db1cfcb9717ae11",
+      "sha256": "14ac528b20b070ee2dab6babdb891ed860b9ae0623682546a4a39ce573475216",
       "source": "docs/architecture/2026-10-23-roundtable-v1.md"
     }
   ]

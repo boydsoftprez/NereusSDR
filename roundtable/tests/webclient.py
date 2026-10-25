@@ -36,14 +36,15 @@ class Browser:
         self,
         method: str,
         target: str,
-        headers: Optional[Dict[str, str]] = None,
+        headers: Optional[Dict[str, Any]] = None,
         body: bytes = b"",
         address: str = ADDRESS,
     ) -> Response:
         path, _, query = target.partition("?")
         hdrs: Dict[str, List[str]] = {}
         for name, value in (headers or {}).items():
-            hdrs.setdefault(name.lower(), []).append(value)
+            values = value if isinstance(value, list) else [value]
+            hdrs.setdefault(name.lower(), []).extend(values)
         request = Request(
             method, path, split_path(path) or [], parse_qs(query, keep_blank_values=True), hdrs, body, address
         )
@@ -61,7 +62,7 @@ class Browser:
         address: str = ADDRESS,
         content_type: str = FORM,
     ) -> Response:
-        headers = {"Content-Type": content_type}
+        headers: Dict[str, Any] = {"Content-Type": content_type}
         if origin is _UNSET:
             headers["Origin"] = self.origin
         elif origin is not None:

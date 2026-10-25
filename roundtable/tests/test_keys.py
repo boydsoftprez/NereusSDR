@@ -36,7 +36,16 @@ def _count(harness, table):
 
 
 @pytest.mark.parametrize("path", ["/key/new", "/key/signin", "/key/profile", "/key/move"])
-@pytest.mark.parametrize("origin", [None, "https://evil.example", "http://roundtable.conformance.invalid", "null"])
+@pytest.mark.parametrize(
+    "origin",
+    [
+        None,
+        "https://evil.example",
+        "http://roundtable.conformance.invalid",
+        "null",
+        ["https://roundtable.conformance.invalid", "https://roundtable.conformance.invalid"],
+    ],
+)
 def test_every_key_action_needs_the_site_origin(harness, browser, path, origin):
     key = browser.new_key()
     keys = _count(harness, "keys")
@@ -267,6 +276,34 @@ def test_key_move_moves_everything_revokes_the_old_key_and_closes_its_socket(har
     assert [s["reported"] for s in sessions] == [1]
     # The old key cannot move again.
     assert browser.post("/key/move", {"key": old_key}).status == 403
+
+
+@pytest.mark.parametrize("failure", ["database", "gone"])
+def test_a_key_move_that_does_not_commit_tells_the_station_to_try_later(harness, browser, monkeypatch, failure):
+    import sqlite3
+
+    old_key = browser.new_key(callsign="W4XYZ")
+    old_hash = identity.key_hash(identity.from_b64url(old_key))
+    station = sign_in_key(harness, old_key)
+    station.send(presence("W4XYZ", "EM73", [slice_(0, 14212000)]))
+    harness.advance(10000)
+    station.take()
+
+    def fail(*args, **kwargs):
+        if failure == "database":
+            raise sqlite3.OperationalError("disk I/O error")
+        return None
+
+    monkeypatch.setattr(harness.store, "key_move", fail)
+    r = browser.post("/key/move", {"key": old_key})
+    assert r.status == (503 if failure == "database" else 403)
+    # Never told its key was revoked: 1013, so it comes back with it.
+    assert station.take() == []
+    assert station.closed == 1013
+    assert harness.store.key_lookup(old_hash)["revoked"] is None
+    monkeypatch.undo()
+    again = sign_in_key(harness, old_key, address="192.0.2.51")
+    assert again.closed is None
 
 
 def test_key_move_renames_what_open_turns_hold_in_memory(harness, browser):

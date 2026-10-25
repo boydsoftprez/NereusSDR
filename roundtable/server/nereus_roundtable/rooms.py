@@ -315,8 +315,8 @@ class Room:
         self.book.store.tracks_write(turn.id, rows)
 
     @staticmethod
-    def _talker_pairs(turn: Turn) -> List[Tuple[str, str]]:
-        return [(row.station_id, row.callsign) for row in turn.talkers]
+    def _talker_pairs(turn: Turn) -> List[Tuple[str, str, int]]:
+        return [(row.station_id, row.callsign, row.nth) for row in turn.talkers]
 
     # ------------------------------------------------------------ views
 

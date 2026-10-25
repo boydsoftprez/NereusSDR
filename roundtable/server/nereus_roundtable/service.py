@@ -186,6 +186,18 @@ class Connection:
         self.queue.put_nowait(_Close(code))
         self.service.detach(self)
 
+    def leave(self) -> None:
+        """Leave now, as a close does, but send no close yet: `end` sends
+        it. For a step that must commit before the station hears why."""
+        if self.closing:
+            return
+        self.closing = True
+        self.service.detach(self)
+
+    def end(self, code: int) -> None:
+        """The close a `leave` held back."""
+        self.queue.put_nowait(_Close(code))
+
     def _discard_queue(self) -> None:
         while not self.queue.empty():
             self.queue.get_nowait()
@@ -938,6 +950,27 @@ class Service:
         if conn is not None:
             log.info("station %s: its key was revoked; closing", short(station_id))
             conn.close(protocol.CLOSE_REVOKED)
+
+    def leave_for_move(self, station_id: str) -> Optional[Connection]:
+        """Before a history move: the station's connection leaves (what its
+        leaving writes is then moved with the rest), with its close held
+        back until the move commits. `end_after_move` sends it."""
+        conn = self.stations.get(station_id)
+        if conn is None or conn.closing:
+            return None
+        conn.leave()
+        return conn
+
+    def end_after_move(self, conn: Optional[Connection], moved: bool) -> None:
+        """4004 once the old key is revoked; when the move did not commit,
+        1013, so the client tries again later with its key, still good."""
+        if conn is None:
+            return
+        if moved:
+            log.info("station %s: its key was revoked; closing", short(conn.station_id or ""))
+            conn.end(protocol.CLOSE_REVOKED)
+        else:
+            conn.end(protocol.CLOSE_TRY_LATER)
 
     def station_moved(self, old: str, new: str) -> None:
         """After a history move: what the rooms hold under the old id

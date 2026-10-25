@@ -162,3 +162,41 @@ def test_a_hidden_station_gets_no_live_mention_but_its_next_welcome_lists_it():
         assert [m["message"]["text"] for m in b.welcome["mentions"]] == ["kg4vcf are you there"]
     finally:
         h.close()
+
+
+def test_unread_mentions_reads_an_index_not_every_message(tmp_path):
+    from nereus_roundtable.store import Store
+
+    store = Store(str(tmp_path / "rt.db"))
+    try:
+        me = "m" * 26
+        store.db.execute(
+            "INSERT INTO stations (id, kind, callsign, first_seen, last_seen) VALUES (?, 'core', 'W4XYZ', 0, 0)", (me,)
+        )
+        oid = store.opening_open("usb-14212000", "20m", "usb", 14212000, 0)
+        other = "o" * 26
+        for i in range(300):
+            words = ["W4XYZ"] if i % 100 == 0 else ["N4DEF"]
+            store.message_add(oid, "usb-14212000", other, "K4ABC", 1, 1000 + i, f"m{i}", None, words)
+        assert [r["text"] for r in store.unread_mentions(me)] == ["m0", "m100", "m200"]
+        plan = " ".join(
+            str(r[-1])
+            for r in store.db.execute(
+                "EXPLAIN QUERY PLAN SELECT m.* FROM message_mentions x JOIN messages m ON m.id = x.message_id"
+                " WHERE x.base = ? AND m.state = 'shown' AND m.station_id != ? AND m.t > ?"
+                " ORDER BY x.message_id DESC LIMIT ?",
+                ("W4XYZ", me, -1, 50),
+            )
+        )
+        assert "SEARCH x USING PRIMARY KEY (base=?)" in plan, plan
+        assert "SCAN m" not in plan, plan
+        # Clearing the text clears the index rows with it.
+        store.messages_expire(1150)
+        assert [r["text"] for r in store.unread_mentions(me)] == ["m200"]
+        assert store.db.execute("SELECT COUNT(*) FROM message_mentions WHERE base = 'W4XYZ'").fetchone()[0] == 1
+        # So does the sender's Delete my archive.
+        store.delete_archive(other)
+        assert store.unread_mentions(me) == []
+        assert store.db.execute("SELECT COUNT(*) FROM message_mentions").fetchone()[0] == 0
+    finally:
+        store.close()

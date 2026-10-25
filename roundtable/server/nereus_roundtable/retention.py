@@ -11,7 +11,9 @@
   the database through SQLite's online backup, written to
   `roundtable-YYYY-MM-DD.db` (the UTC date of `now`) in `dir`, keeping the
   newest 2. While the disk holding `dir` is under 15% free it is skipped
-  with a warning.
+  with a warning. Either way, every snapshot dated more than 2 days before
+  the UTC date of `now` is removed first, so a skipped night never keeps an
+  old copy past its time (design 6.2: backups age out within 7 days).
 
 `free_disk(path)` gives `(total, free)` bytes of the disk holding `path`;
 it is `shutil.disk_usage` unless a test gives another. Readings are never
@@ -40,6 +42,8 @@ log = logging.getLogger("nereus_roundtable")
 RETENTION_MS = 365 * 86400000
 # Design 6.2 and C12.
 SNAPSHOTS_KEPT = 2
+# A snapshot dated more than this many days before today goes, written or not.
+SNAPSHOT_MAX_AGE_DAYS = 2
 SNAPSHOT_MIN_FREE = 0.15
 DISK_WARN_FREE = 0.20
 SNAPSHOT_NAME = re.compile(r"\Aroundtable-\d{4}-\d{2}-\d{2}\.db\Z")
@@ -50,9 +54,19 @@ def disk_usage(path: str) -> Tuple[int, int]:
     return int(usage.total), int(usage.free)
 
 
+def _utc_date(now: int) -> datetime.date:
+    return datetime.datetime.fromtimestamp(now / 1000, tz=datetime.timezone.utc).date()
+
+
 def snapshot_name(now: int) -> str:
-    day = datetime.datetime.fromtimestamp(now / 1000, tz=datetime.timezone.utc)
-    return f"roundtable-{day:%Y-%m-%d}.db"
+    return f"roundtable-{_utc_date(now):%Y-%m-%d}.db"
+
+
+def _name_date(name: str) -> Optional[datetime.date]:
+    try:
+        return datetime.date.fromisoformat(name[len("roundtable-") : -len(".db")])
+    except ValueError:
+        return None
 
 
 class Retention:
@@ -101,9 +115,22 @@ class Retention:
             if os.path.exists(name):
                 os.remove(name)
 
+    @staticmethod
+    def _prune_by_age(directory: str, now: int) -> None:
+        """Every snapshot dated more than SNAPSHOT_MAX_AGE_DAYS before the
+        UTC date of `now`, whether or not tonight's is written."""
+        today = _utc_date(now)
+        for name in os.listdir(directory):
+            if not SNAPSHOT_NAME.match(name):
+                continue
+            day = _name_date(name)
+            if day is not None and (today - day).days > SNAPSHOT_MAX_AGE_DAYS:
+                os.remove(os.path.join(directory, name))
+
     def snapshot(self, directory: str, now: int) -> Optional[str]:
         """The nightly snapshot; its path, or None when skipped."""
         os.makedirs(directory, exist_ok=True)
+        self._prune_by_age(directory, now)
         total, free = self.free_disk(directory)
         share = free / total if total > 0 else 0.0
         if share < SNAPSHOT_MIN_FREE:

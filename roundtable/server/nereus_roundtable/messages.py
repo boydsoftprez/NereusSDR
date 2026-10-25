@@ -2,11 +2,13 @@
 """Message text and callsigns: cleaning a posted message, the base
 callsign, mentions, and the link runs screens show (wire spec 4.5, 6.10).
 
-Cleaning runs in the wire spec's order: Unicode NFC; CR LF and a lone CR
-become LF; every other control character (category Cc) is removed; the
-invisible and direction-changing format characters of 6.10 are removed;
-leading and trailing white space is removed. U+200C and U+200D stay. The
-cleaned text must then be 1 to 500 code points and at most 10 lines.
+Cleaning runs in the wire spec's order: CR LF and a lone CR become LF;
+every other control character (category Cc) is removed; the invisible and
+direction-changing format characters of 6.10 are removed; Unicode NFC, after
+the removals, so what is stored is NFC even where a removed character stood
+between a letter and its mark; leading and trailing white space is removed.
+U+200C and U+200D stay. The cleaned text must then be 1 to 500 code points
+and at most 10 lines.
 
 Nothing here logs or keeps the text.
 """
@@ -25,7 +27,7 @@ LINES = 10
 # (zero width non-joiner and joiner) are not here: emoji sequences and some
 # scripts need them.
 REMOVED_FORMAT = frozenset(
-    [0x200B, 0x200E, 0x200F]
+    [0x061C, 0x200B, 0x200E, 0x200F]
     + list(range(0x202A, 0x202E + 1))
     + [0x2060]
     + list(range(0x2066, 0x2069 + 1))
@@ -41,7 +43,6 @@ _LINK_START = re.compile(r"https?://")
 def clean_text(text: str) -> str:
     """The cleaning of 6.10, with no length rule: what the server stores
     when the result passes check()."""
-    text = unicodedata.normalize("NFC", text)
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     out = []
     for c in text:
@@ -50,7 +51,7 @@ def clean_text(text: str) -> str:
         if ord(c) in REMOVED_FORMAT:
             continue
         out.append(c)
-    return "".join(out).strip()
+    return unicodedata.normalize("NFC", "".join(out)).strip()
 
 
 def check(cleaned: str, code_points: int = CODE_POINTS, lines: int = LINES) -> Optional[str]:

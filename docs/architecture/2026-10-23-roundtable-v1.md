@@ -1124,13 +1124,14 @@ member before any message read at that moment is applied.
 
 ### 6.10 Messages and mentions
 
-- **Cleaning** (design 12.4), in this order: Unicode NFC; CR LF and lone CR
-  become LF; every other control character (Unicode category Cc) is removed;
-  these invisible and direction-changing format characters are removed:
-  U+200B (zero width space), U+200E and U+200F (direction marks), U+202A to
-  U+202E (direction embeddings and overrides), U+2060 (word joiner), U+2066
-  to U+2069 (direction isolates) and U+FEFF (byte order mark); leading and
-  trailing white space is removed. U+200C and U+200D (zero width non-joiner
+- **Cleaning** (design 12.4), in this order: CR LF and lone CR become LF;
+  every other control character (Unicode category Cc) is removed; these
+  invisible and direction-changing format characters are removed: U+061C
+  (Arabic letter mark), U+200B (zero width space), U+200E and U+200F
+  (direction marks), U+202A to U+202E (direction embeddings and overrides),
+  U+2060 (word joiner), U+2066 to U+2069 (direction isolates) and U+FEFF
+  (byte order mark); Unicode NFC, after the removals, so the stored text is
+  NFC; leading and trailing white space is removed. U+200C and U+200D (zero width non-joiner
   and joiner) stay, since emoji sequences and some scripts need them. Then
   the text must be 1 to 500 code points and at most 10 lines (9 LFs); more is
   `too-long`, nothing is `not-allowed`. The server stores the cleaned text
