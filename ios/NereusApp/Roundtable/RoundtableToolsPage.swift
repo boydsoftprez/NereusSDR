@@ -4,6 +4,8 @@
 // Modification history (NereusSDR):
 // 2026-10-25: Roundtable plan Task 18, the Tools tab's Roundtable page and
 // its room page. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable plan Task 19, a room's row its own view for the
+// iPad's widened applet to share. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusBand
 import SwiftUI
@@ -150,8 +152,6 @@ struct RoundtableToolsPage: View {
     private static let chipOnFill = Color(red: 0x1E / 255, green: 0x3D / 255, blue: 0x5F / 255)
     private static let chipOnEdge = Color(red: 0x4A / 255, green: 0x7B / 255, blue: 0xA8 / 255)
     private static let chipOnCount = Color(red: 0xA9 / 255, green: 0xC4 / 255, blue: 0xDE / 255)
-    private static let mineFill = Color(red: 0x4A / 255, green: 0x7B / 255, blue: 0xA8 / 255).opacity(0.08)
-    private static let badgeText = Color(red: 0x04 / 255, green: 0x16 / 255, blue: 0x1C / 255)
 
     private var sliceLetter: String { slices.active?.slice.letter ?? "A" }
 
@@ -266,10 +266,30 @@ struct RoundtableToolsPage: View {
     }
 
     private func rowView(_ row: RoundtableToolsList.Row) -> some View {
-        Button {
+        RoundtableRoomRow(row: row) {
             if let room = roundtable.rooms.first(where: { $0.id == row.id }) {
                 open(room)
             }
+        }
+    }
+}
+
+/// One room in a list of rooms: the glyph, frequency, who and the line
+/// under it, your slices' letters and @N. The Tools page and the iPad's
+/// widened applet share it.
+struct RoundtableRoomRow: View {
+    let row: RoundtableToolsList.Row
+    /// The frequency column's width (the widened applet's list is narrower).
+    var frequencyWidth: CGFloat = 70
+    var identifier: String?
+    let open: () -> Void
+
+    private static let mineFill = Color(red: 0x4A / 255, green: 0x7B / 255, blue: 0xA8 / 255).opacity(0.08)
+    private static let badgeText = Color(red: 0x04 / 255, green: 0x16 / 255, blue: 0x1C / 255)
+
+    var body: some View {
+        Button {
+            open()
         } label: {
             HStack(spacing: 8) {
                 RoundtableGlyphView(glyph: row.glyph, size: 10)
@@ -277,7 +297,7 @@ struct RoundtableToolsPage: View {
                 Text(row.frequency)
                     .font(.system(size: 13, weight: .bold).monospaced())
                     .foregroundStyle(row.quiet ? RoundtableColours.dim : RoundtableColours.bright)
-                    .frame(width: 70, alignment: .leading)
+                    .frame(width: frequencyWidth, alignment: .leading)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(row.who).font(.system(size: 13))
                         .foregroundStyle(row.quiet ? RoundtableColours.dim : RoundtableColours.text)
@@ -318,7 +338,7 @@ struct RoundtableToolsPage: View {
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityHint("Reads this frequency. Your slices stay where they are.")
-        .accessibilityIdentifier("roundtableTools.row.\(row.id)")
+        .accessibilityIdentifier(identifier ?? "roundtableTools.row.\(row.id)")
     }
 }
 

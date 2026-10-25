@@ -4,6 +4,10 @@
 // Modification history (NereusSDR):
 // 2026-10-24: Roundtable plan Task 17, the phone's Roundtable sheet.
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable plan Task 19, the room's head, connection line and
+// message box made their own views for the iPad's applet to share, and the
+// first-run question asked in a form sheet on an iPad. J.J. Boyd (KG4VCF),
+// AI-assisted via Claude Code.
 
 import SwiftUI
 
@@ -41,10 +45,11 @@ struct RoundtableSheet: View {
     @Binding var firstRunNoteSeen: Bool
     let close: () -> Void
     var holdObserver: ((PttHold.Action) -> Void)?
+    /// On an iPad the first-run question is a form sheet in the middle of
+    /// the screen (spec 11.4): the sheet shows a line that asks it here,
+    /// and this opens it. Nil asks in the sheet itself, as on a phone.
+    var askFirstRun: (() -> Void)?
 
-    @State private var sending = false
-    @State private var failed: String?
-    @FocusState private var boxFocused: Bool
     /// The question was answered here: no note follows it.
     @State private var answeredHere = false
 
@@ -52,18 +57,12 @@ struct RoundtableSheet: View {
 
     private var keyed: Bool { transmit.ptt.transmitting }
     private var room: RoundtableModel.Room? { roundtable.room }
-    private var roomId: String? { roundtable.readingRoomId ?? roundtable.sliceRoomId }
-    private var you: RoundtableModel.Member? { room?.members.first(where: \.you) }
-    private var tunedHere: Bool {
-        guard let roomId else { return false }
-        return roundtable.sliceRooms.values.contains(roomId)
-    }
+    private var roomId: String? { roundtable.shownRoomId }
+    private var tunedHere: Bool { roundtable.tunedToShownRoom }
     private var activeLetter: String {
         slices.entries.first { $0.id == slices.activeSliceId }?.slice.letter ?? "A"
     }
-    private var asking: Bool {
-        roundtable.available && roundtable.linkState != .off && !roundtable.firstRunAnswered
-    }
+    private var asking: Bool { roundtable.askingFirstRun }
     private var noting: Bool {
         roundtable.available && roundtable.firstRunAnswered && !firstRunNoteSeen && !answeredHere
     }
@@ -74,7 +73,11 @@ struct RoundtableSheet: View {
             if !keyed {
                 handle
             }
-            if asking {
+            if asking, let askFirstRun {
+                header
+                RoundtableFirstRunPrompt(ask: askFirstRun)
+                Spacer(minLength: 0)
+            } else if asking {
                 RoundtableFirstRunSheet(roundtable: roundtable, callsign: stationCallsign, grid: stationGrid) {
                     answeredHere = true
                     firstRunNoteSeen = true
@@ -89,7 +92,14 @@ struct RoundtableSheet: View {
                 }
                 content
                 if !(dialOn && keyed) {
-                    boxRow
+                    RoundtableComposer(roundtable: roundtable, leadingWidth: dialOn ? 0
+                                       : PttButton.holdDiameter + PttButton.holdClearance) {
+                        if !dialOn {
+                            PttButton(transmit: transmit, linkUp: linkUp, mode: .hold(diameter: PttButton.holdDiameter),
+                                      holdObserver: holdObserver)
+                            Spacer().frame(width: PttButton.holdClearance)
+                        }
+                    }
                 }
             }
         }
@@ -136,17 +146,7 @@ struct RoundtableSheet: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text("Roundtable").font(.system(size: 14, weight: .bold)).foregroundStyle(RoundtableColours.bright)
             if let room {
-                Text(RoundtableText.headerFrequency(room.hz))
-                    .font(.system(size: 13, weight: .semibold).monospaced())
-                    .foregroundStyle(RoundtableColours.you)
-                Text(RoundtableText.modeLabel(room.family))
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(RoundtableColours.you)
-                Text("\(room.members.count) station\(room.members.count == 1 ? "" : "s")")
-                    .font(.system(size: 11)).foregroundStyle(RoundtableColours.dim)
-                if you?.away == true {
-                    Text("AWAY").font(.system(size: 11, weight: .bold)).foregroundStyle(RoundtableColours.dim)
-                }
+                RoundtableRoomHead(room: room)
             }
             Spacer(minLength: 4)
             Button(action: close) {
@@ -168,29 +168,7 @@ struct RoundtableSheet: View {
     }
 
     private var connection: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            let now = Int64(context.date.timeIntervalSince1970 * 1000)
-            let newest = room?.members.compactMap(\.reading?.t).max()
-            let line = RoundtableText.connectionLine(link: roundtable.linkState, newestReadingMs: newest,
-                                                     linkSince: roundtable.linkSince, now: now)
-            let colour: Color = switch line.tone {
-            case .live: RoundtableColours.talking
-            case .warn: RoundtableColours.unknown
-            case .you: RoundtableColours.you
-            case .dim: RoundtableColours.dim
-            }
-            HStack(spacing: 6) {
-                Circle().fill(colour).frame(width: 6, height: 6)
-                Text(line.text).font(.system(size: 11)).foregroundStyle(line.tone == .live ? RoundtableColours.dim
-                                                                         : colour)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 12)
-            .frame(height: 20)
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("roundtableConnection")
-        }
-        .overlay(alignment: .bottom) { Rectangle().fill(RoundtableColours.rule).frame(height: 1) }
+        RoundtableConnectionLine(roundtable: roundtable, room: room)
     }
 
     // MARK: The room
@@ -245,19 +223,6 @@ struct RoundtableSheet: View {
         roomId.map(roundtable.draft) ?? ""
     }
 
-    private var draftBinding: Binding<String> {
-        Binding(get: { draft }, set: { text in
-            if let roomId {
-                roundtable.setDraft(text, for: roomId)
-            }
-            failed = nil
-        })
-    }
-
-    private var away: Bool { you?.away ?? false }
-    private var live: Bool { roundtable.linkState == .live }
-    private var hiddenHere: Bool { roundtable.linkState == .hidden }
-
     /// Send is on while tuned here, live, not away, and the words fit.
     static func canSend(text: String, tunedHere: Bool, live: Bool, away: Bool, sending: Bool) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -279,6 +244,124 @@ struct RoundtableSheet: View {
         let count = text.unicodeScalars.count
         return count >= RoundtableText.counterFrom ? "\(count) / \(RoundtableText.messageLimit)" : nil
     }
+}
+
+// MARK: Pieces the sheet and the iPad's applet share
+
+extension RoundtableModel {
+    /// The room on screen: the one being read, else the active slice's.
+    var shownRoomId: String? { readingRoomId ?? sliceRoomId }
+
+    /// A slice of this device is tuned to the room on screen: it may post and name.
+    var tunedToShownRoom: Bool {
+        guard let shownRoomId else {
+            return false
+        }
+        return sliceRooms.values.contains(shownRoomId)
+    }
+
+    /// The station has not answered Roundtable's first question yet.
+    var askingFirstRun: Bool {
+        available && linkState != .off && !firstRunAnswered
+    }
+}
+
+/// The room's frequency, mode and station count (and AWAY when you are),
+/// as the sheet's header and the applet's head show them.
+struct RoundtableRoomHead: View {
+    let room: RoundtableModel.Room
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(RoundtableText.headerFrequency(room.hz))
+                .font(.system(size: 13, weight: .semibold).monospaced())
+                .foregroundStyle(RoundtableColours.you)
+            Text(RoundtableText.modeLabel(room.family))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(RoundtableColours.you)
+            Text("\(room.members.count) station\(room.members.count == 1 ? "" : "s")")
+                .font(.system(size: 11)).foregroundStyle(RoundtableColours.dim)
+            if room.members.first(where: \.you)?.away == true {
+                Text("AWAY").font(.system(size: 11, weight: .bold)).foregroundStyle(RoundtableColours.dim)
+            }
+        }
+        .lineLimit(1)
+    }
+}
+
+/// The one line under a room's header that says whether Roundtable is
+/// live (spec 11.1, U4).
+struct RoundtableConnectionLine: View {
+    @ObservedObject var roundtable: RoundtableModel
+    let room: RoundtableModel.Room?
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let now = Int64(context.date.timeIntervalSince1970 * 1000)
+            let newest = room?.members.compactMap(\.reading?.t).max()
+            let line = RoundtableText.connectionLine(link: roundtable.linkState, newestReadingMs: newest,
+                                                     linkSince: roundtable.linkSince, now: now)
+            let colour: Color = switch line.tone {
+            case .live: RoundtableColours.talking
+            case .warn: RoundtableColours.unknown
+            case .you: RoundtableColours.you
+            case .dim: RoundtableColours.dim
+            }
+            HStack(spacing: 6) {
+                Circle().fill(colour).frame(width: 6, height: 6)
+                Text(line.text).font(.system(size: 11)).foregroundStyle(line.tone == .live ? RoundtableColours.dim
+                                                                         : colour)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 20)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("roundtableConnection")
+        }
+        .overlay(alignment: .bottom) { Rectangle().fill(RoundtableColours.rule).frame(height: 1) }
+    }
+}
+
+/// The message box pinned at a room's foot: the box and Send, then why
+/// Send is off or why a post failed. `leading` sits before the box (the
+/// phone sheet's hold PTT); `leadingWidth` indents the line under it to
+/// match.
+struct RoundtableComposer<Leading: View>: View {
+    @ObservedObject var roundtable: RoundtableModel
+    let leadingWidth: CGFloat
+    let leading: Leading
+
+    @State private var sending = false
+    @State private var failed: String?
+    @FocusState private var boxFocused: Bool
+
+    init(roundtable: RoundtableModel, leadingWidth: CGFloat = 0, @ViewBuilder leading: () -> Leading) {
+        self.roundtable = roundtable
+        self.leadingWidth = leadingWidth
+        self.leading = leading()
+    }
+
+    private var room: RoundtableModel.Room? { roundtable.room }
+    private var roomId: String? { roundtable.shownRoomId }
+    private var tunedHere: Bool { roundtable.tunedToShownRoom }
+    private var you: RoundtableModel.Member? { room?.members.first(where: \.you) }
+    private var away: Bool { you?.away ?? false }
+    private var live: Bool { roundtable.linkState == .live }
+    private var hiddenHere: Bool { roundtable.linkState == .hidden }
+
+    private var draft: String {
+        roomId.map(roundtable.draft) ?? ""
+    }
+
+    private var draftBinding: Binding<String> {
+        Binding(get: { draft }, set: { text in
+            if let roomId {
+                roundtable.setDraft(text, for: roomId)
+            }
+            failed = nil
+        })
+    }
 
     /// The hint under the box: why Send is off, or what a post carries.
     private var hint: String? {
@@ -294,14 +377,10 @@ struct RoundtableSheet: View {
         return nil
     }
 
-    private var boxRow: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .center, spacing: 0) {
-                if !dialOn {
-                    PttButton(transmit: transmit, linkUp: linkUp, mode: .hold(diameter: PttButton.holdDiameter),
-                              holdObserver: holdObserver)
-                    Spacer().frame(width: PttButton.holdClearance)
-                }
+                leading
                 if hiddenHere {
                     Text("Hidden stations can't post. Go live to join in.")
                         .font(.system(size: 12))
@@ -324,11 +403,11 @@ struct RoundtableSheet: View {
                         .foregroundStyle(RoundtableColours.accent)
                         .accessibilityIdentifier("roundtableTryAgain")
                 }
-                .padding(.leading, dialOn ? 0 : PttButton.holdDiameter + PttButton.holdClearance)
+                .padding(.leading, leadingWidth)
             } else if let hint, !hiddenHere {
                 Text(hint).font(.system(size: 11)).foregroundStyle(RoundtableColours.dim)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, dialOn ? 0 : PttButton.holdDiameter + PttButton.holdClearance)
+                    .padding(.leading, leadingWidth)
                     .accessibilityIdentifier("roundtableHint")
             }
         }
@@ -352,14 +431,15 @@ struct RoundtableSheet: View {
                     .focused($boxFocused)
                     .disabled(!tunedHere || away)
                     .accessibilityIdentifier("roundtableBox")
-                if let counter = Self.counter(text) {
+                if let counter = RoundtableSheet.counter(text) {
                     Text(counter).font(.system(size: 11).monospacedDigit())
-                        .foregroundStyle(Self.fits(text) ? RoundtableColours.dim : RoundtableColours.unknown)
+                        .foregroundStyle(RoundtableSheet.fits(text) ? RoundtableColours.dim : RoundtableColours.unknown)
                 }
             }
             Button("Send") { send() }
                 .buttonStyle(RoundtableButtonStyle(main: true))
-                .disabled(!Self.canSend(text: text, tunedHere: tunedHere, live: live, away: away, sending: sending))
+                .disabled(!RoundtableSheet.canSend(text: text, tunedHere: tunedHere, live: live, away: away,
+                                                   sending: sending))
                 .accessibilityIdentifier("roundtableSend")
         }
         .padding(.leading, 14)
@@ -375,7 +455,7 @@ struct RoundtableSheet: View {
             return
         }
         let text = draft
-        guard Self.canSend(text: text, tunedHere: tunedHere, live: live, away: away, sending: sending) else {
+        guard RoundtableSheet.canSend(text: text, tunedHere: tunedHere, live: live, away: away, sending: sending) else {
             return
         }
         sending = true
@@ -393,5 +473,31 @@ struct RoundtableSheet: View {
                 failed = reason
             }
         }
+    }
+}
+
+/// Where the first-run question is asked elsewhere (the iPad's form
+/// sheet): one line in the room's place that says so and opens it.
+/// Nothing is sent before the answer.
+struct RoundtableFirstRunPrompt: View {
+    let ask: () -> Void
+
+    static let text = "Roundtable is public. Choose how your station shows before you join in."
+    static let button = "Choose"
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(Self.text)
+                .font(.system(size: 12))
+                .foregroundStyle(RoundtableColours.text)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(Self.button, action: ask)
+                .buttonStyle(RoundtableButtonStyle(main: true))
+                .accessibilityIdentifier("roundtableFirstRunChoose")
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("roundtableFirstRunPrompt")
     }
 }

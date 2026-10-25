@@ -7,6 +7,10 @@
 // 2026-10-25: Roundtable plan Task 18, Roundtable's tags on the band and the
 // swipes from its edges, the panels following the finger from the swipe's
 // side. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable plan Task 19, the iPad's Roundtable applet in the
+// column: the flag line scrolls to it, the tab bar's swipe widens it, the
+// phone's sheet with the column hidden, and the first run as a form sheet.
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -79,6 +83,14 @@ struct MainScreen: View {
     /// Where the keyed gauges end on the band, while keyed.
     @State private var gaugesFoot: CGFloat?
     @State private var firstRunNoteSeen: Bool
+    /// The arrangement the screen took last (an iPad's column, or not).
+    @State private var layoutNow: IPadLayout = .phone
+    /// The applet column widened to Roundtable's room list plus the room.
+    @State private var roundtableWide = false
+    /// Bumped to scroll the column to the Roundtable applet.
+    @State private var appletScrollRequest = 0
+    /// The first-run question in a form sheet (an iPad).
+    @State private var firstRunForm = false
     /// Told each press and release of the hold PTT (the UI tests' record).
     private let holdObserver: ((PttHold.Action) -> Void)?
     /// The Panadapter tab's swipes, shared with the root's tab bar.
@@ -99,7 +111,7 @@ struct MainScreen: View {
     init(app: AppModel, main: MainScreenModel, flow: ConnectionFlow? = nil, rxPanelOpen: Bool = false,
          txPanelOpen: Bool = false, sheet: OpenSheet? = nil, columnShown: Bool = true,
          roundtableSheet: RoundtableSheet.Detent? = nil, holdObserver: ((PttHold.Action) -> Void)? = nil,
-         swipes: SwipeShortcutModel? = nil,
+         swipes: SwipeShortcutModel? = nil, roundtableWide: Bool = false,
          openSetup: @escaping () -> Void = {}, openRadio: @escaping () -> Void = {},
          openPerformance: @escaping () -> Void = {}, openTransmitSettings: @escaping () -> Void = {}) {
         self.app = app
@@ -107,6 +119,7 @@ struct MainScreen: View {
         transmit = main.transmit
         roundtable = app.roundtable
         _roundtableSheet = State(initialValue: roundtableSheet)
+        _roundtableWide = State(initialValue: roundtableWide)
         _firstRunNoteSeen = State(initialValue: app.phoneSettings.roundtableFirstRunNoteSeen)
         self.holdObserver = holdObserver
         self.swipes = swipes ?? SwipeShortcutModel(settings: app.phoneSettings)
@@ -144,7 +157,8 @@ struct MainScreen: View {
                         HStack(spacing: 0) {
                             band(sideways: true, leadingInset: 0, trailingInset: 0)
                             if columnShown {
-                                AppletColumn(main: main, openRadio: openRadio, openSettings: openTransmitSettings)
+                                AppletColumn(main: main, openRadio: openRadio, openSettings: openTransmitSettings,
+                                             roundtable: roundtable.available ? appletConfig : nil)
                                     .transition(.move(edge: .trailing))
                             }
                         }
@@ -162,6 +176,30 @@ struct MainScreen: View {
             }
             .onAppear { main.setBandSideways(sideways) }
             .onChange(of: sideways) { main.setBandSideways(sideways) }
+            .onChange(of: layout, initial: true) { _, now in layoutNow = now }
+        }
+        .environment(\.roundtableInColumn, appletInColumn)
+        .onChange(of: appletInColumn) { _, inColumn in
+            if inColumn {
+                // The applet shows the room: the phone's sheet gives way to it.
+                roundtableSheet = nil
+            } else {
+                roundtableWide = false
+            }
+        }
+        .onChange(of: roundtable.askingFirstRun) { _, asking in
+            if !asking {
+                firstRunForm = false
+            }
+        }
+        .sheet(isPresented: $firstRunForm) {
+            // On an iPad the first-run question is a form sheet in the middle of the screen (spec 11.4).
+            RoundtableFirstRunSheet(roundtable: roundtable, callsign: app.freedv.callsign,
+                                    grid: app.freedv.gridSquare) {
+                firstRunForm = false
+                setFirstRunNoteSeen(true)
+            }
+            .background(RoundtableColours.ground)
         }
         .background(ChromeColours.bar.ignoresSafeArea())
         // Diversity..., from a flag's more menu.
@@ -228,8 +266,9 @@ struct MainScreen: View {
         let rxSide = rxDrag.map { Self.side($0.origin) } ?? rxPanelSide
         let txSide = txDrag.map { Self.side($0.origin) } ?? txPanelSide
         return ZStack(alignment: .topLeading) {
+            // The swipes act on every layout; on an iPad both edges start Off (spec 11.4, S2).
             bandLayers(sideways: sideways, leadingInset: sideways ? leadingInset : 0,
-                       trailingInset: sideways ? trailingInset : 0, swipesHere: phone && swipesOn)
+                       trailingInset: sideways ? trailingInset : 0, swipesHere: swipesOn)
             GeometryReader { proxy in
                 if let audio = app.audio {
                     SoundNotice(audio: audio, sideways: sideways, bandSize: proxy.size,
@@ -276,11 +315,9 @@ struct MainScreen: View {
                                                     set: { roundtableSheet = $0 }),
                                     dialOn: dialStrip, linkUp: pttLinkUp,
                                     stationCallsign: app.freedv.callsign, stationGrid: app.freedv.gridSquare,
-                                    firstRunNoteSeen: Binding(get: { firstRunNoteSeen }, set: { seen in
-                                        firstRunNoteSeen = seen
-                                        app.phoneSettings.roundtableFirstRunNoteSeen = seen
-                                    }),
-                                    close: closeRoundtable, holdObserver: holdObserver)
+                                    firstRunNoteSeen: firstRunNoteSeenBinding,
+                                    close: closeRoundtable, holdObserver: holdObserver,
+                                    askFirstRun: layoutNow.isIPad ? { firstRunForm = true } : nil)
                         .frame(maxWidth: sideways ? Self.roundtableSidewaysWidth : .infinity)
                         .frame(height: place.height)
                         .padding(.leading, sideways ? leadingInset : 0)
@@ -446,7 +483,39 @@ struct MainScreen: View {
         txPanelOpen = false
         main.slices.activate(sliceId)
         roundtable.activeSliceId = Int64(sliceId)
+        if appletInColumn {
+            // On an iPad with the column showing, the line scrolls the column to the applet (spec 11.4).
+            appletScrollRequest += 1
+            return
+        }
         roundtableSheet = .half
+    }
+
+    /// The Roundtable applet shows in the iPad's applet column.
+    private var appletInColumn: Bool {
+        layoutNow == .column && columnShown && roundtable.available
+    }
+
+    private var firstRunNoteSeenBinding: Binding<Bool> {
+        Binding(get: { firstRunNoteSeen }, set: { seen in setFirstRunNoteSeen(seen) })
+    }
+
+    private func setFirstRunNoteSeen(_ seen: Bool) {
+        firstRunNoteSeen = seen
+        app.phoneSettings.roundtableFirstRunNoteSeen = seen
+    }
+
+    private var appletConfig: RoundtableAppletConfig {
+        RoundtableAppletConfig(roundtable: roundtable, settings: app.phoneSettings,
+                               stationCallsign: app.freedv.callsign,
+                               wide: Binding(get: { roundtableWide }, set: { wide in
+                                   withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) {
+                                       roundtableWide = wide
+                                   }
+                               }),
+                               scrollRequest: appletScrollRequest,
+                               firstRunNoteSeen: firstRunNoteSeenBinding,
+                               askFirstRun: { firstRunForm = true })
     }
 
     private func closeRoundtable() {
@@ -510,8 +579,13 @@ struct MainScreen: View {
                 rxPanelOpen = false
                 txPanelOpen = true
             case .roundtableMine:
-                // As the flag line opens it: half height, for the active slice.
-                openRoundtable(main.slices.activeSliceId ?? main.slices.entries.first?.id ?? 0)
+                if appletInColumn {
+                    // On an iPad the same swipe widens the applet and puts it back (spec 11.4, S2).
+                    roundtableWide.toggle()
+                } else {
+                    // As the flag line opens it: half height, for the active slice.
+                    openRoundtable(main.slices.activeSliceId ?? main.slices.entries.first?.id ?? 0)
+                }
             case .off, .roundtableAll, .spotHub, .tools:
                 break
             }

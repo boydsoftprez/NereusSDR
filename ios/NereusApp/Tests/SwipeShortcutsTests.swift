@@ -5,6 +5,9 @@
 // 2026-10-25: Roundtable plan Task 18, the swipes on the panadapter and the
 // never-key rule for the TX panel opened by one. J.J. Boyd (KG4VCF),
 // AI-assisted via Claude Code.
+// 2026-10-25: Roundtable plan Task 19, the phone's defaults asked for as a
+// phone's, so the suite reads the same on an iPad. J.J. Boyd (KG4VCF),
+// AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -32,7 +35,7 @@ struct SwipeShortcutsTests {
 
     private static func settings() throws -> (PhoneSettings, UserDefaults) {
         let defaults = try #require(UserDefaults(suiteName: "SwipeShortcutsTests-\(UUID().uuidString)"))
-        return (PhoneSettings(defaults: defaults), defaults)
+        return (PhoneSettings(defaults: defaults, isPad: false), defaults)
     }
 
     @Test("the defaults are RX panel, TX panel and Roundtable on my frequency, and nothing is changed")
@@ -58,7 +61,7 @@ struct SwipeShortcutsTests {
         #expect(defaults.string(forKey: "phone.swipe.leftEdge") == "off")
         #expect(defaults.string(forKey: "phone.swipe.upTabBar") == "spotHub")
         // Kept: a new settings object on the same store reads them back.
-        let again = PhoneSettings(defaults: defaults)
+        let again = PhoneSettings(defaults: defaults, isPad: false)
         #expect(again.swipeLeftEdge == .off && again.swipeUpTabBar == .spotHub && again.swipeRightEdge == .txPanel)
         // Mapped back by hand, nothing is changed.
         settings.swipeLeftEdge = .rxPanel
@@ -324,7 +327,7 @@ struct SwipeShortcutsTests {
 
     private func connected(additions: FakeStation.Additions = [.remoteTx]) async throws -> (AppModel, FakeStation) {
         let defaults = try #require(UserDefaults(suiteName: "SwipeShortcutsTests-\(UUID().uuidString)"))
-        let model = AppModel(phoneSettings: PhoneSettings(defaults: defaults),
+        let model = AppModel(phoneSettings: PhoneSettings(defaults: defaults, isPad: false),
                              displaySettings: BandDisplaySettingsStore(defaults: defaults),
                              platform: platform.platform)
         model.main.transmit.thisDeviceId = TransmitScreenTests.thisDeviceId

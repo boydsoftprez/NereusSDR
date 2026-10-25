@@ -4,6 +4,8 @@
 // Modification history (NereusSDR):
 // 2026-10-24: Roundtable plan Task 17, the flag line read as the desktop's
 // roundtableFlagLineFor reads it. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable plan Task 19, the line's hint names where it takes
+// you (the iPad's applet column). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import SwiftUI
 
@@ -207,6 +209,11 @@ struct RoundtableFlagLineView: View {
     let line: RoundtableFlagLine
     let letter: String
     var open: (() -> Void)?
+    /// What a tap does, for VoiceOver.
+    var hint = Self.sheetHint
+
+    static let sheetHint = "Opens Roundtable"
+    static let columnHint = "Shows Roundtable in the applet column"
 
     var body: some View {
         Button {
@@ -243,7 +250,7 @@ struct RoundtableFlagLineView: View {
         }
         .accessibilityLabel(line.text.replacingOccurrences(of: " \u{00B7} ", with: ", ")
                             + (line.mentions > 0 ? ", \(line.mentions) naming you" : ""))
-        .accessibilityHint("Opens Roundtable")
+        .accessibilityHint(hint)
         .accessibilityIdentifier("roundtableLine\(letter)")
     }
 }

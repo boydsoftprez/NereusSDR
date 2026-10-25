@@ -3,6 +3,9 @@
 // Modification history (NereusSDR):
 // 2026-10-24: Roundtable plan Task 17, the Roundtable line at the flag's
 // foot. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable plan Task 19, on an iPad with the applet column
+// showing, the line scrolls the column to the Roundtable applet. J.J. Boyd
+// (KG4VCF), AI-assisted via Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -181,10 +184,13 @@ struct VfoFlagView: View {
     /// The Roundtable line at the flag's foot (spec 11.3, D17); nil draws
     /// none and the flag keeps its height.
     var roundtable: RoundtableFlagLine?
-    /// The Roundtable line's tap: opens the Roundtable sheet.
+    /// The Roundtable line's tap: opens the Roundtable sheet, or on an
+    /// iPad with the applet column showing, scrolls the column to the
+    /// Roundtable applet (spec 11.4).
     var openRoundtable: (() -> Void)?
 
     @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.roundtableInColumn) private var roundtableInColumn
 
     /// The words on the owner row's button.
     static let takeControlTitle = "Take control"
@@ -267,7 +273,9 @@ struct VfoFlagView: View {
             }
             tabs(metrics)
             if let roundtable {
-                RoundtableFlagLineView(line: roundtable, letter: letter, open: openRoundtable)
+                RoundtableFlagLineView(line: roundtable, letter: letter, open: openRoundtable,
+                                       hint: roundtableInColumn ? RoundtableFlagLineView.columnHint
+                                           : RoundtableFlagLineView.sheetHint)
                     .padding(.horizontal, -FlagMetrics.inset)
             }
         }

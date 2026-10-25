@@ -4,6 +4,8 @@
 // Modification history (NereusSDR):
 // 2026-10-25: Roundtable plan Task 18, the swipes on the panadapter and what
 // each opens. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable plan Task 19, the iPad's defaults: both edges Off.
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import SwiftUI
 
@@ -88,13 +90,16 @@ enum SwipeShortcuts {
     /// ...and so does a quicker one whose flick would carry it this far.
     static let openPredicted: CGFloat = 160
 
-    /// The defaults on a phone: RX panel, TX panel, Roundtable on my frequency.
-    static func defaultTarget(_ origin: SwipeOrigin) -> SwipeTarget {
+    /// The defaults on a phone: RX panel, TX panel, Roundtable on my
+    /// frequency. On an iPad both edges start Off, since the RX and TX
+    /// panels already sit in the applet column, and up from the tab bar is
+    /// Roundtable, which there widens the applet (spec 11.4, S2).
+    static func defaultTarget(_ origin: SwipeOrigin, iPad: Bool = false) -> SwipeTarget {
         switch origin {
         case .leftEdge:
-            return .rxPanel
+            return iPad ? .off : .rxPanel
         case .rightEdge:
-            return .txPanel
+            return iPad ? .off : .txPanel
         case .tabBar:
             return .roundtableMine
         }

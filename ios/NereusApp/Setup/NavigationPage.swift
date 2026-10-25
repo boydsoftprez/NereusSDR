@@ -4,6 +4,9 @@
 // 2026-10-25: Roundtable plan Task 18, the swipes on the panadapter beside
 // the tuning dial, with Reset to defaults. J.J. Boyd (KG4VCF), AI-assisted
 // via Claude Code.
+// 2026-10-25: Roundtable plan Task 19, Reset's line and the note name this
+// device's own defaults, Off on both edges on an iPad. J.J. Boyd (KG4VCF),
+// AI-assisted via Claude Code.
 
 import NereusBand
 import SwiftUI
@@ -56,7 +59,7 @@ struct NavigationPage: View {
                         Text(Self.swipeResetTitle)
                             .font(.body.weight(.semibold))
                             .foregroundStyle(settings.swipesChanged ? Self.resetLit : Self.resetDim)
-                        Text(Self.swipeResetDetail)
+                        Text(settings.swipeDefaultsText)
                             .font(.footnote)
                             .foregroundStyle(WorkspacePalette.textSecondary)
                     }
@@ -69,7 +72,7 @@ struct NavigationPage: View {
             } header: {
                 Text("Swipes on the panadapter")
             } footer: {
-                Text(Self.swipeNote)
+                Text(settings.isPad ? Self.swipeNoteIPad : Self.swipeNote)
             }
             SetupPanelSection {
                 toggle(Self.dragTitle, Self.dragDetail, isOn: Binding(get: { settings.dragToTune },
@@ -114,6 +117,9 @@ struct NavigationPage: View {
     static let swipeResetDetail = "RX panel, TX panel, Roundtable, my frequency"
     static let swipeNote = "Panadapter tab only. A swipe is another way in: the toolbar's RX and TX buttons stay "
         + "where they are. Saved on this phone."
+    /// On an iPad the RX and TX panels sit in the applet column, so the edges start Off.
+    static let swipeNoteIPad = "Panadapter tab only. The RX and TX panels sit in the applet column, so both edges "
+        + "start Off. Up from the tab bar widens Roundtable. Saved on this iPad."
     /// Reset lit in the accent's text colour (the board's #4a7ba8 reads under
     /// 4.5:1 on the panel), dimmed grey until a mapping has changed.
     private static let resetLit = ChromeColours.accentText

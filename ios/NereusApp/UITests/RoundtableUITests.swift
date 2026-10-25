@@ -4,6 +4,9 @@
 // Modification history (NereusSDR):
 // 2026-10-24: Roundtable plan Task 17, the phone's Roundtable sheet and its
 // press-and-hold PTT under a finger. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable plan Task 19, on an iPad the sheet asks through its
+// Choose line, which opens the centered form. J.J. Boyd (KG4VCF), AI-assisted
+// via Claude Code.
 
 import XCTest
 
@@ -127,6 +130,11 @@ final class RoundtableUITests: XCTestCase {
     func testTheFirstRunQuestionIsAskedAndItsAnswerNeedsTheCore() throws {
         let app = launch(firstRun: true)
         _ = try openSheet(app, dismissNote: false)
+        // On an iPad the sheet asks through its Choose line (spec 11.4).
+        let choose = app.buttons["roundtableFirstRunChoose"]
+        if UIDevice.current.userInterfaceIdiom == .pad, choose.waitForExistence(timeout: 10) {
+            choose.tap()
+        }
         let question = app.descendants(matching: .any)["roundtableFirstRun"]
         XCTAssertTrue(question.waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Roundtable is public"].exists)

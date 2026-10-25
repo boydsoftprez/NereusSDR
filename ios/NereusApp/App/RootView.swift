@@ -6,6 +6,8 @@
 // 2026-10-25: Roundtable plan Task 18, the swipe up from the tab bar, and
 // the swipes' pages on the Tools tab sliding in from the swipe's side.
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable plan Task 19, the swipe up from the tab bar on an
+// iPad too. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusBand
 import SwiftUI
@@ -105,8 +107,9 @@ struct RootView: View {
                 TabBar(selection: $selection, sideways: sideways, iPad: iPad)
                     // The Core's open question, over whichever tab is showing (D85).
                     .background(ConfirmationWindowAnchor(app: model))
-                    // Up from the tab bar, on the Panadapter tab of a phone (spec 11.3, S1).
-                    .simultaneousGesture(tabBarSwipe(on: !iPad && selection == .panadapter))
+                    // Up from the tab bar, on the Panadapter tab (spec 11.3, S1); on an iPad
+                    // it widens the Roundtable applet (spec 11.4, S2).
+                    .simultaneousGesture(tabBarSwipe(on: selection == .panadapter))
                     .onChange(of: tabBarDragging) { _, now in
                         // A swipe cut short (the touch taken away) springs back.
                         if !now, tabBarSwiping != nil {

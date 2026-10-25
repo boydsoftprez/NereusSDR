@@ -4,6 +4,9 @@
 // Modification history (NereusSDR):
 // 2026-10-24: Roundtable plan Task 17, the room as the desktop's panel
 // shows it, on the phone. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: Roundtable plan Task 19, the room laid in a scroll it does not
+// own (the iPad's applet column), its pills its own view, and the narrow
+// readings columns. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import SwiftUI
 import UIKit
@@ -37,12 +40,13 @@ enum RoundtableText {
         min(1, max(0.02, (dbm + 127) / 100))
     }
 
-    static func offsetText(_ hz: Int64) -> String {
+    static func offsetText(_ hz: Int64, unit: Bool = true) -> String {
         if abs(hz) < 50 {
             return "on"
         }
         let rounded = abs((hz + (hz > 0 ? 50 : -50)) / 100 * 100)
-        return (hz > 0 ? "+" : "-") + "\(rounded) Hz"
+        // The narrow applet column's Offset header carries the unit (the board's bare numbers).
+        return (hz > 0 ? "+" : "-") + "\(rounded)" + (unit ? " Hz" : "")
     }
 
     static func ageText(_ ms: Int64) -> String {
@@ -208,6 +212,133 @@ enum RoundtableReadings {
     }
 }
 
+/// Where a room's reader is in its scroll: at the newest message, and how
+/// many arrived below while it read further up, for a room laid in the
+/// iPad's applet column, which draws the pills above its pinned box from
+/// it. The sheet's room keeps its own in @State: a room view that observed
+/// this object re-laid its lazy stack on each write, and its end marker
+/// then appeared and went without end.
+@MainActor
+final class RoundtableRoomScroll: ObservableObject {
+    @Published private(set) var atEnd = true
+    @Published var waiting = 0
+
+    /// The newest message is on screen: nothing waits below.
+    func reachedEnd() {
+        // A @Published write tells every view even when the value is the same, and the end
+        // marker reports on each layout, so only a change is written (as @State did).
+        if !atEnd {
+            atEnd = true
+        }
+        clearWaiting()
+    }
+
+    /// The reader moved up off the newest message.
+    func leftEnd() {
+        if atEnd {
+            atEnd = false
+        }
+    }
+
+    func clearWaiting() {
+        if waiting != 0 {
+            waiting = 0
+        }
+    }
+}
+
+/// A room laid in a scroll it does not own (the iPad's applet column,
+/// spec 11.4): that scroll's reader, the room's place in it, and the
+/// scroll's coordinate space and the height of it a message is seen in
+/// (above the pinned box).
+struct RoundtableRoomEmbedding {
+    let reader: ScrollViewProxy
+    let scroll: RoundtableRoomScroll
+    let space: String
+    let visibleHeight: CGFloat
+}
+
+/// The readings table's columns: the phone's, with the bar, and the
+/// narrow applet column's (the board's), without it.
+struct RoundtableReadingColumns: Equatable {
+    var km: CGFloat
+    var offset: CGFloat
+    var reading: CGFloat
+    var age: CGFloat
+    var spacing: CGFloat
+    var bar: Bool
+    /// Offsets carry " Hz" (the narrow column's are bare numbers).
+    var hzUnit: Bool
+
+    static let regular = RoundtableReadingColumns(km: 46, offset: 52, reading: 92, age: 34, spacing: 6, bar: true,
+                                                  hzUnit: true)
+    static let narrow = RoundtableReadingColumns(km: 44, offset: 40, reading: 46, age: 42, spacing: 5, bar: false,
+                                                 hzUnit: false)
+    /// The row's side padding.
+    static let inset: CGFloat = 12
+
+    /// What is left for the station's callsign in a row `width` wide.
+    func stationWidth(rowWidth width: CGFloat) -> CGFloat {
+        width - 2 * Self.inset - km - offset - reading - age - 4 * spacing
+    }
+}
+
+/// The pills above a room's box (spec 11.1, U11): "@N A message names
+/// you" first, else "N new" while arrivals wait below a reader further up.
+struct RoundtableRoomPills: View {
+    /// Arrivals waiting below a reader further up, when the "N new" pill
+    /// shows; see `newCount`.
+    let waitingBelow: Int?
+    let mentions: [Int64]
+    let jump: (Int64) -> Void
+    let toEnd: () -> Void
+
+    var body: some View {
+        Self.stack(waitingBelow: waitingBelow, mentions: mentions, jump: jump, toEnd: toEnd)
+    }
+
+    /// The count the "N new" pill shows, or nil: arrivals wait, the reader is
+    /// up off the end and the messages are laid out (full height, or the
+    /// applet). `atEnd` is an autoclosure and read only once something waits:
+    /// the end marker sets it as it comes and goes, and a room body that read
+    /// it on every pass laid its lazy stack out again, which moved the marker
+    /// again, so a pull past the top never sprang back and the app hung.
+    static func newCount(waiting: Int, atEnd: @autoclosure () -> Bool, full: Bool) -> Int? {
+        waiting > 0 && full && !atEnd() ? waiting : nil
+    }
+
+    @ViewBuilder
+    static func stack(waitingBelow: Int?, mentions: [Int64], jump: @escaping (Int64) -> Void,
+                      toEnd: @escaping () -> Void) -> some View {
+        VStack(spacing: 6) {
+            if let first = mentions.first {
+                pill("@\(mentions.count) A message names you \u{2193}", identifier: "roundtableMentionPill") {
+                    jump(first)
+                }
+            } else if let waitingBelow {
+                pill("\(waitingBelow) new \u{2193}", identifier: "roundtableNewPill") {
+                    toEnd()
+                }
+            }
+        }
+        .padding(.bottom, 8)
+    }
+
+    private static func pill(_ text: String, identifier: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(text)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Color.white)
+                .padding(.horizontal, 12)
+                .frame(height: 28)
+                .background(RoundtableColours.mainButton, in: Capsule())
+                .overlay(Capsule().strokeBorder(RoundtableColours.accent, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(identifier)
+    }
+}
+
 /// One room in the Roundtable sheet (spec 11.1 and 11.3, D17): the hidden
 /// banner and the read bar, then the talker (or, keyed, the TX line), the
 /// readings with Offset and Age, and at full height the earlier turns
@@ -235,6 +366,10 @@ struct RoundtableRoomView: View {
     var tuneHere: (() -> Void)?
     /// Asks the sheet for full height (a pill's jump).
     var expand: (() -> Void)?
+    /// The iPad's narrow applet column: the readings without their bar.
+    var narrow = false
+    /// Laid in the iPad's applet column, whose scroll this is; nil scrolls itself.
+    var embedded: RoundtableRoomEmbedding?
 
     @State private var naming: Int64?
     @State private var nameText = ""
@@ -248,7 +383,10 @@ struct RoundtableRoomView: View {
     @State private var waiting = 0
     @State private var lastCount = 0
 
-    private static let endId = "roundtableEnd"
+    /// The marker after the room's last message.
+    static let endId = "roundtableEnd"
+
+    private var columns: RoundtableReadingColumns { narrow ? .narrow : .regular }
 
     private var you: RoundtableModel.Member? { room.members.first(where: \.you) }
     private var callsign: String { you?.callsign ?? stationCallsign }
@@ -258,45 +396,39 @@ struct RoundtableRoomView: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let now = Int64(context.date.timeIntervalSince1970 * 1000)
-            ScrollViewReader { reader in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        if roundtable.linkState == .hidden {
-                            hiddenBanner
+            Group {
+                if let embedded {
+                    // The column scrolls; its pills sit above the box it pins.
+                    VStack(alignment: .leading, spacing: 0) {
+                        sections(now: now)
+                    }
+                    .onChange(of: room.messages.count) { _, count in
+                        arrived(count: count, reader: embedded.reader)
+                    }
+                } else {
+                    ScrollViewReader { reader in
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 0) {
+                                sections(now: now)
+                            }
                         }
-                        if roundtable.readingRoomId != nil {
-                            readBar
+                        .scrollIndicators(.hidden)
+                        .overlay(alignment: .bottom) {
+                            // Keyed, the readings of you fill the sheet; the pills wait for the key to come off.
+                            if !keyed {
+                                pills(reader: reader)
+                            }
                         }
-                        if keyed {
-                            txLine
-                        } else {
-                            talker(now: now)
+                        .onChange(of: room.messages.count) { _, count in
+                            arrived(count: count, reader: reader)
                         }
-                        readings(now: now)
-                        if full {
-                            earlierTurns
-                            messages(now: now)
-                        }
-                        Color.clear.frame(height: 1).id(Self.endId)
-                            .onAppear { atEnd = true; waiting = 0 }
-                            .onDisappear { atEnd = false }
                     }
                 }
-                .scrollIndicators(.hidden)
-                .overlay(alignment: .bottom) {
-                    // Keyed, the readings of you fill the sheet; the pills wait for the key to come off.
-                    if !keyed {
-                        pills(reader: reader)
-                    }
-                }
-                .onChange(of: room.messages.count) { _, count in
-                    arrived(count: count, reader: reader)
-                }
-                .onAppear {
-                    if firstSeen == nil {
-                        firstSeen = Set(room.messages.map(\.id))
-                        lastCount = room.messages.count
-                    }
+            }
+            .onAppear {
+                if firstSeen == nil {
+                    firstSeen = Set(room.messages.map(\.id))
+                    lastCount = room.messages.count
                 }
             }
             .onChange(of: context.date) { _, date in
@@ -305,6 +437,73 @@ struct RoundtableRoomView: View {
             }
         }
         .accessibilityIdentifier("roundtableRoom")
+    }
+
+    @ViewBuilder
+    private func sections(now: Int64) -> some View {
+        if roundtable.linkState == .hidden {
+            hiddenBanner
+        }
+        if roundtable.readingRoomId != nil {
+            readBar
+        }
+        if keyed {
+            txLine
+        } else {
+            talker(now: now)
+        }
+        readings(now: now)
+        if full {
+            earlierTurns
+            messages(now: now)
+        }
+        tracked(Color.clear.frame(height: 1).id(Self.endId),
+                shown: {
+                    if let embedded {
+                        embedded.scroll.reachedEnd()
+                    } else {
+                        atEnd = true
+                        waiting = 0
+                    }
+                },
+                gone: {
+                    if let embedded {
+                        embedded.scroll.leftEnd()
+                    } else {
+                        atEnd = false
+                    }
+                })
+    }
+
+    /// Calls `shown` when `view` comes on screen and `gone` when it leaves:
+    /// as it appears in the room's own lazy scroll, or by its place in the
+    /// column's scroll when laid there.
+    @ViewBuilder
+    private func tracked(_ view: some View, shown: @escaping () -> Void, gone: @escaping () -> Void) -> some View {
+        if let embedded {
+            let space = embedded.space
+            let visibleHeight = embedded.visibleHeight
+            view.onGeometryChange(for: Bool.self) { proxy in
+                let frame = proxy.frame(in: .named(space))
+                return frame.maxY > 0 && frame.minY < visibleHeight
+            } action: { onScreen in
+                if onScreen {
+                    shown()
+                } else {
+                    gone()
+                }
+            }
+        } else {
+            view.onAppear(perform: shown).onDisappear(perform: gone)
+        }
+    }
+
+    /// The messages that name you, not yet read, oldest first.
+    static func unreadMentions(_ roundtable: RoundtableModel, room: RoundtableModel.Room,
+                               stationCallsign: String) -> [Int64] {
+        let you = room.members.first(where: \.you)
+        return RoundtableText.unreadMentionIds(room.messages, count: roundtable.mentionCounts[room.id] ?? 0,
+                                               myRef: you?.ref, callsign: you?.callsign ?? stationCallsign)
     }
 
     // MARK: Banner and read bar
@@ -536,13 +735,14 @@ struct RoundtableRoomView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: columns.spacing) {
             Text("Station").frame(maxWidth: .infinity, alignment: .leading)
-            Text("km").frame(width: 46, alignment: .trailing)
-            Text("Offset").frame(width: 52, alignment: .trailing)
-            Text("Reading").frame(width: 92, alignment: .trailing)
-            Text("Age").frame(width: 34, alignment: .trailing)
+            Text("km").frame(width: columns.km, alignment: .trailing)
+            Text("Offset").frame(width: columns.offset, alignment: .trailing)
+            Text("Reading").frame(width: columns.reading, alignment: .trailing)
+            Text("Age").frame(width: columns.age, alignment: .trailing)
         }
+        .lineLimit(1)
         .font(.system(size: 11))
         .foregroundStyle(RoundtableColours.dim2)
         .padding(.horizontal, 12)
@@ -555,7 +755,7 @@ struct RoundtableRoomView: View {
         let age = reading.map { now - $0.t } ?? 0
         let stale = age > RoundtableText.staleReadingMs
         let tint: Color = stale ? RoundtableColours.stale : member.you ? RoundtableColours.you : RoundtableColours.text
-        return HStack(spacing: 6) {
+        return HStack(spacing: columns.spacing) {
             HStack(spacing: 4) {
                 if member.you {
                     Circle().fill(RoundtableColours.you).frame(width: 6, height: 6)
@@ -574,22 +774,27 @@ struct RoundtableRoomView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Text(member.km.map { $0.formatted(.number.grouping(.automatic)) } ?? "")
-                .frame(width: 46, alignment: .trailing)
-            Text(RoundtableText.offsetText(member.offsetHz))
-                .frame(width: 52, alignment: .trailing)
+                .lineLimit(1)
+                .frame(width: columns.km, alignment: .trailing)
+            Text(RoundtableText.offsetText(member.offsetHz, unit: columns.hzUnit))
+                .lineLimit(1)
+                .frame(width: columns.offset, alignment: .trailing)
             HStack(spacing: 5) {
-                bar(reading?.dbm, stale: stale, you: member.you)
+                if columns.bar {
+                    bar(reading?.dbm, stale: stale, you: member.you)
+                }
                 Text(reading.map { RoundtableText.sText($0.dbm) } ?? "")
                     .font(.system(size: 12, weight: .bold).monospacedDigit())
                     .foregroundStyle(tint)
                     .lineLimit(1)
                     .frame(width: 46, alignment: .trailing)
             }
-            .frame(width: 92, alignment: .trailing)
+            .frame(width: columns.reading, alignment: .trailing)
             Text(RoundtableText.ageText(age))
                 .font(.system(size: 11, weight: stale ? .bold : .regular).monospacedDigit())
                 .foregroundStyle(stale ? RoundtableColours.unknown : RoundtableColours.dim)
-                .frame(width: 34, alignment: .trailing)
+                .lineLimit(1)
+                .frame(width: columns.age, alignment: .trailing)
         }
         .font(.system(size: 12).monospacedDigit())
         .foregroundStyle(stale ? RoundtableColours.stale : RoundtableColours.text)
@@ -673,16 +878,36 @@ struct RoundtableRoomView: View {
         let glyph: RoundtableFlagLine.Glyph = yours ? .you : turn.kind == "doubled" ? .doubled
             : unknown ? .unknown : .talking
         let length = RoundtableText.clockText((turn.end ?? turn.start) - turn.start)
-        return HStack(spacing: 6) {
+        let named = turn.names.isEmpty ? nil
+            : "named " + turn.names.map { $0.count > 1 ? "\($0.name) (\($0.count))" : $0.name }.joined(separator: ", ")
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                earlierLine(turn, glyph: glyph, who: who, yours: yours, unknown: unknown, length: length,
+                            named: narrow ? nil : named)
+            }
+            if narrow, let named {
+                // The narrow column puts the names under the turn, where they have the row's width.
+                Text(named)
+                    .font(.system(size: 11)).foregroundStyle(RoundtableColours.dim).lineLimit(2)
+                    .padding(.leading, 14)
+                    .padding(.bottom, 4)
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(minHeight: 28)
+    }
+
+    @ViewBuilder
+    private func earlierLine(_ turn: RoundtableModel.Turn, glyph: RoundtableFlagLine.Glyph, who: String, yours: Bool,
+                             unknown: Bool, length: String, named: String?) -> some View {
             RoundtableGlyphView(glyph: glyph, size: 8)
             Text(who)
                 .font(.system(size: 12, weight: .semibold).monospaced())
                 .foregroundStyle(yours ? RoundtableColours.you : unknown ? RoundtableColours.unknown
                                  : RoundtableColours.text)
                 .lineLimit(1)
-            if !turn.names.isEmpty {
-                Text("named " + turn.names.map { $0.count > 1 ? "\($0.name) (\($0.count))" : $0.name }
-                    .joined(separator: ", "))
+            if let named {
+                Text(named)
                     .font(.system(size: 11)).foregroundStyle(RoundtableColours.dim).lineLimit(1)
             }
             if unknown && !yours {
@@ -699,9 +924,7 @@ struct RoundtableRoomView: View {
                 .font(.system(size: 11).monospacedDigit())
                 .foregroundStyle(RoundtableColours.dim)
                 .lineLimit(1)
-        }
-        .padding(.horizontal, 12)
-        .frame(minHeight: 28)
+                .layoutPriority(1)
     }
 
     private var canName: Bool { tunedHere && live && !away }
@@ -759,8 +982,7 @@ struct RoundtableRoomView: View {
     private var myRef: String? { you?.ref }
 
     private var unreadMentions: [Int64] {
-        RoundtableText.unreadMentionIds(room.messages, count: roundtable.mentionCounts[room.id] ?? 0, myRef: myRef,
-                                        callsign: callsign)
+        Self.unreadMentions(roundtable, room: room, stationCallsign: stationCallsign)
     }
 
     private func isNew(_ message: RoundtableModel.Message) -> Bool {
@@ -787,10 +1009,13 @@ struct RoundtableRoomView: View {
                     .padding(.bottom, 8)
             }
             ForEach(room.messages) { message in
-                messageRow(message)
-                    .id(message.id)
-                    .onAppear { onScreen[message.id] = Int64(ProcessInfo.processInfo.systemUptime * 1000) }
-                    .onDisappear { onScreen[message.id] = nil }
+                tracked(messageRow(message).id(message.id),
+                        shown: {
+                            if onScreen[message.id] == nil {
+                                onScreen[message.id] = Int64(ProcessInfo.processInfo.systemUptime * 1000)
+                            }
+                        },
+                        gone: { onScreen[message.id] = nil })
             }
         }
         .accessibilityElement(children: .contain)
@@ -880,36 +1105,14 @@ struct RoundtableRoomView: View {
 
     // MARK: Pills and arrivals
 
-    @ViewBuilder
     private func pills(reader: ScrollViewProxy) -> some View {
-        let mentions = unreadMentions
-        VStack(spacing: 6) {
-            if let first = mentions.first {
-                pill("@\(mentions.count) A message names you \u{2193}", identifier: "roundtableMentionPill") {
-                    jump(to: first, reader: reader)
-                }
-            } else if waiting > 0, !atEnd, full {
-                pill("\(waiting) new \u{2193}", identifier: "roundtableNewPill") {
-                    withAnimation { reader.scrollTo(Self.endId, anchor: .bottom) }
-                    waiting = 0
-                }
-            }
-        }
-        .padding(.bottom, 8)
-    }
-
-    private func pill(_ text: String, identifier: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(text)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Color.white)
-                .padding(.horizontal, 12)
-                .frame(height: 28)
-                .background(RoundtableColours.mainButton, in: Capsule())
-                .overlay(Capsule().strokeBorder(RoundtableColours.accent, lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier(identifier)
+        let below = RoundtableRoomPills.newCount(waiting: waiting, atEnd: atEnd, full: full)
+        return RoundtableRoomPills.stack(waitingBelow: below, mentions: unreadMentions,
+                                         jump: { id in jump(to: id, reader: reader) },
+                                         toEnd: {
+                                             withAnimation { reader.scrollTo(Self.endId, anchor: .bottom) }
+                                             waiting = 0
+                                         })
     }
 
     private func jump(to id: Int64, reader: ScrollViewProxy) {
@@ -931,8 +1134,10 @@ struct RoundtableRoomView: View {
         guard added > 0, full else {
             return
         }
-        if atEnd {
+        if embedded?.scroll.atEnd ?? atEnd {
             withAnimation { reader.scrollTo(Self.endId, anchor: .bottom) }
+        } else if let embedded {
+            embedded.scroll.waiting += added
         } else {
             waiting += added
         }
