@@ -279,12 +279,14 @@ final class MainScreenModel: ObservableObject {
             saved.sideways = band.settings.sideways
             band.settings = saved
         }
-        // A weak local owner is filled only after initialization. The existing
-        // sheet/Core/pan callbacks then share this same scope/store transaction,
-        // without another subscriber, live pan registry or strong ownership cycle.
+        // A weak local owner is filled only after initialization. Pan 1's own
+        // sheet, Core and pan models write Pan 1, whatever pan Setup's strip
+        // or a pill has chosen, as every other pan's models write their own
+        // (``controls(for:)``); without another subscriber, live pan registry
+        // or strong ownership cycle.
         weak var displayOwner: MainScreenModel?
         let change: (_ change: (inout BandDisplaySettings) -> Void) -> Void = { change in
-            displayOwner?.changeDisplay(change)
+            displayOwner?.changeDisplay(pan: .first, change)
         }
         pan = PanSheetModel(store: mirror, slices: slices, catalogFeed: catalogFeed, commands: commands, band: band,
                             changeDisplay: change)
@@ -389,6 +391,12 @@ final class MainScreenModel: ObservableObject {
         panStack.$lastTouched.sink { [weak self] pan in
             self?.follow(pan)
         }.store(in: &watches)
+        // Diversity arrives when its sheet first appears: it acts on the pan last touched from then on.
+        flagControls.$diversity.compactMap { $0 }.sink { [weak self] diversity in
+            guard let self else { return }
+            let pan = self.panStack.open.contains(self.panStack.lastTouched) ? self.panStack.lastTouched : .first
+            diversity.follow(self.panStack.band(for: pan).slices)
+        }.store(in: &watches)
         panStack.$open.sink { [weak self] open in
             guard let self else { return }
             self.otherControls = self.otherControls.filter { pan, controls in
@@ -428,7 +436,12 @@ final class MainScreenModel: ObservableObject {
             self?.changeDisplay(pan: key, change)
         }
         let tuning = BandTuningModel(slices: shown.slices)
+        // The dial's haptics as Setup, Navigation sets them, as on Pan 1.
+        let haptics = self.tuning.dialHaptics
+        tuning.setDialHaptics(ticksOnDetents: haptics.ticksOnDetents, bumpsOnKilohertz: haptics.bumpsOnKilohertz)
         let flags = FlagControls(slices: shown.slices, modes: modes, tuning: tuning, store: mirror)
+        // Diversity from the pan's flags: the one Diversity context, as Pan 1's flags have it.
+        flags.diversity = flagControls.diversity
         let sheet = PanSheetModel(store: mirror, slices: shown.slices, catalogFeed: catalogFeed, commands: commands,
                                   band: shown.band, changeDisplay: change)
         let scale = CoreBandScale(band: shown.band, mirror: mirror, settingsProxy: settingsProxy,
@@ -443,12 +456,22 @@ final class MainScreenModel: ObservableObject {
         return made
     }
 
-    /// The panel, Modes, Match RX, the S-meter and the toolbar act on
-    /// `pan`'s active slice from now on.
+    /// Which of the dial's haptics play, as Setup, Navigation sets them:
+    /// on every open pan's dial, and on a pan opened later.
+    func setDialHaptics(ticksOnDetents: Bool, bumpsOnKilohertz: Bool) {
+        tuning.setDialHaptics(ticksOnDetents: ticksOnDetents, bumpsOnKilohertz: bumpsOnKilohertz)
+        for controls in otherControls.values {
+            controls.tuning.setDialHaptics(ticksOnDetents: ticksOnDetents, bumpsOnKilohertz: bumpsOnKilohertz)
+        }
+    }
+
+    /// The panel, Modes, Match RX, the S-meter, Diversity and the toolbar
+    /// act on `pan`'s active slice from now on.
     private func follow(_ pan: PanIdentity) {
         let shown = panStack.band(for: pan)
         rx.follow(shown.slices)
         modes.follow(shown.slices)
+        flagControls.diversity?.follow(shown.slices)
         sMeter.follow(slices: shown.slices, band: shown.band, subscriber: shown.subscriber)
         transmit.receiveSlices = shown.pan == .first ? nil : shown.slices
         if toolbarPan != shown.pan {
@@ -712,12 +735,9 @@ final class MainScreenModel: ObservableObject {
         // The band the pan is on, by the Core's number: the Core's scale for
         // it (CoreBandScale) and its 3D Floor follow it.
         if let bandNumber = slices.active?.band {
-            if case .pan(let chosen) = displayEditScope, chosen != .first {
-                // Another pan's pill is open: Pan 1's band still goes to Pan 1.
-                changeDisplay(pan: .first) { $0.enterBand(String(bandNumber)) }
-            } else {
-                changeDisplay { $0.enterBand(String(bandNumber)) }
-            }
+            // Pan 1's band goes to Pan 1, whatever pan Setup's strip or a pill
+            // has chosen: on All pans too, whose edit keeps the band it had.
+            changeDisplay(pan: .first) { $0.enterBand(String(bandNumber)) }
         }
         // Each other open pan follows its own slice's band the same way.
         for pan in panStack.open where pan != .first {

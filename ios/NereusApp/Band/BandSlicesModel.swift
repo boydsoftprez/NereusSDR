@@ -280,8 +280,8 @@ final class BandSlicesModel: ObservableObject {
 
     /// This phone's device id, as the Core's `access:<id>` names a
     /// controller; nil until the phone has its key, when every slice reads
-    /// as this phone's.
-    var thisDeviceId: String? {
+    /// as this phone's. Published, so the iPad's other pans keep in step.
+    @Published var thisDeviceId: String? {
         didSet {
             if thisDeviceId != oldValue {
                 rebuild()
@@ -304,6 +304,20 @@ final class BandSlicesModel: ObservableObject {
     var panKey: String? {
         didSet {
             if panKey != oldValue {
+                rebuild()
+            }
+        }
+    }
+
+    /// With ``panKey`` set, the pans this device shows: a band that also
+    /// draws this device's slices on a pan not shown (Pan 1's, set by
+    /// ``PanStackModel``) draws those whose pan is not among them, as the
+    /// desktop rehomes such slices to its first live pan
+    /// (`RadioModel::rehomeSlicesToPans`, src/models/RadioModel.cpp:35902-35925,
+    /// controlled slices only). Nil draws only ``panKey``'s.
+    var shownPanKeys: Set<String>? {
+        didSet {
+            if shownPanKeys != oldValue {
                 rebuild()
             }
         }
@@ -1197,8 +1211,13 @@ final class BandSlicesModel: ObservableObject {
                 continue
             }
             present.insert(id)
+            // A slice on a pan this device does not show, drawn here if it is this device's.
+            var offShownPans = false
             if let panKey, let pan = object["panKey"]?.text, !pan.isEmpty, pan != panKey {
-                continue
+                guard let shown = shownPanKeys, !shown.contains(pan) else {
+                    continue
+                }
+                offShownPans = true
             }
             guard let frequency = object["frequency"]?.number else {
                 continue
@@ -1237,6 +1256,11 @@ final class BandSlicesModel: ObservableObject {
                                 ? diversity?.live.map { $0.identity.sliceId == id
                                     && (access[id] == nil || access[id]?.incarnation == $0.identity.incarnation) } ?? false
                                 : id == 0 && object["diversityEnabled"]?.flag == true))
+            if offShownPans, next.last?.listening == true {
+                // Another device's slice stays where its controller put it.
+                next.removeLast()
+                continue
+            }
             if object["active"]?.flag == true {
                 // This phone's own active slice; a listened slice's flag is its owner's.
                 if next.last?.listening == false {

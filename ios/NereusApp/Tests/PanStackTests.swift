@@ -532,4 +532,143 @@ struct PanStackTests {
         #expect(first.subscriber.displayRefusal == nil)
         await rig.model.disconnect()
     }
+
+    // MARK: Each pan's controls act on that pan (final review, part A)
+
+    @Test("Pan 1's own 3D Floor, band-plan size and extended view stay Pan 1's whatever pan Setup or a pill has chosen")
+    func firstPanModelsIgnoreTheEditScope() async throws {
+        let rig = try await connected(media: true)
+        let main = rig.model.main
+        try await twoPans(rig)
+        let first = main.band
+        let second = rig.stack.band(for: Self.second).band
+        #expect(await settle { main.pan.extendedViewAvailable })
+        for scope in [MainScreenModel.DisplayEditScope.pan(Self.second), .all] {
+            main.displayEditScope = scope
+            let secondBefore = second.settings
+            let floor = first.settings.threeDFloorDb == 12 ? 18 : 12
+            main.display.setStackFloor(Double(floor))
+            let size: BandPlanSize = first.settings.bandPlanSize == .large ? .small : .large
+            main.display.setBandPlanSize(size)
+            let extended = first.settings.extendedView
+            main.pan.toggleExtendedView()
+            #expect(first.settings.threeDFloorDb == floor)
+            #expect(first.settings.bandPlanSize == size)
+            #expect(first.settings.extendedView == !extended)
+            #expect(second.settings == secondBefore)
+        }
+        await rig.model.disconnect()
+    }
+
+    @Test("Pan 2's flag Diversity is the one Diversity, acting on the active slice of the pan last touched")
+    func secondPanDiversityFollowsItsPan() async throws {
+        let rig = try await connected()
+        let main = rig.model.main
+        try await twoPans(rig)
+        main.flagControls.diversity = rig.model.diversity
+        let second = main.controls(for: Self.second)
+        #expect(second.flagControls !== main.flagControls)
+        #expect(second.flagControls.diversity === rig.model.diversity)
+        rig.stack.lastTouched = Self.second
+        #expect(await settle { rig.model.diversity.activeTargetLetter == "B" })
+        rig.stack.lastTouched = .first
+        #expect(await settle { rig.model.diversity.activeTargetLetter == "A" })
+        await rig.model.disconnect()
+    }
+
+    @Test("Pan 2's dial plays the haptics Setup sets, and so does a pan opened later")
+    func secondPanDialHaptics() async throws {
+        let rig = try await connected()
+        let main = rig.model.main
+        try await twoPans(rig)
+        let second = main.controls(for: Self.second)
+        rig.model.phoneSettings.dialDetentTicks = false
+        #expect(await settle { main.tuning.dialHaptics.ticksOnDetents == false })
+        #expect(second.tuning.dialHaptics.ticksOnDetents == false)
+        rig.stack.closePan(Self.second)
+        #expect(await settle { rig.station.panKey(ofSlice: 1) == "pan-0" })
+        rig.stack.addPan()
+        #expect(await settle { rig.stack.open.contains(Self.second) })
+        #expect(main.controls(for: Self.second).tuning.dialHaptics.ticksOnDetents == false)
+        rig.model.phoneSettings.dialDetentTicks = true
+        await rig.model.disconnect()
+    }
+
+    @Test("keyed on Pan 2's slice, Pan 2 shows the transmit display and Pan 1 does not, as the desktop's rise does")
+    func transmitDisplayOnTheTransmitPan() async throws {
+        let rig = try await connected()
+        let main = rig.model.main
+        try await twoPans(rig)
+        let second = rig.stack.band(for: Self.second).band
+        // The Core says its radio transmits on slice B (no key is sent: the fake's mirror says so).
+        let transmitting = LinkMessage.PropertyEntry(ordinal: 0, name: "transmitting", value: .bool(true))
+        if rig.model.mirror.object("radio") == nil {
+            await rig.station.deliver(.objectCreate(LinkMessage.ObjectCreate(key: "radio", className: "RadioModel",
+                                                                            properties: [transmitting])))
+        } else {
+            await rig.station.deliver(.delta(LinkMessage.Delta(key: "radio", properties: [transmitting])))
+        }
+        await rig.station.deliver(.delta(LinkMessage.Delta(key: "slice:1", properties: [
+            .init(ordinal: 20, name: "txSlice", value: .bool(true)),
+        ])))
+        #expect(await settle { second.transmit.keyedHere })
+        await quiet()
+        #expect(!main.band.transmit.keyedHere)
+        await rig.model.disconnect()
+    }
+
+    @Test("this device's slice on a pan not shown is drawn on Pan 1, as the desktop rehomes it")
+    func sliceOnAPanNotShownIsDrawnOnTheFirst() async throws {
+        let rig = try await connected()
+        let main = rig.model.main
+        try await twoPans(rig)
+        await rig.station.deliver(.delta(LinkMessage.Delta(key: "slice:1", properties: [
+            .init(ordinal: 27, name: "panKey", value: .utf8("pan-2")),
+        ])))
+        #expect(await settle { main.slices.entries.map(\.id) == [0, 1] })
+        #expect(rig.stack.band(for: Self.second).slices.entries.isEmpty)
+        await rig.model.disconnect()
+    }
+
+    @Test("with no spare slice and the radio's slices full, Add a pan greys with the slice limit's words")
+    func addGreysAtTheSliceLimit() async throws {
+        let rig = try await connected()
+        let main = rig.model.main
+        let limited = rig.model.mirror.capabilities.map { name, value in
+            LinkMessage.PropertyEntry(ordinal: 0, name: name, value: name == "effectiveMaxSlices" ? .i64(2)
+                                          : name == "userDdcCount" ? .i64(2) : value.wireValue)
+        }
+        await rig.station.deliver(.capabilities(LinkMessage.Capabilities(properties: limited)))
+        main.pan.addSlice(on: .first)
+        #expect(await settle { main.slices.entries.count == 2 })
+        #expect(rig.stack.addPanState() == (true, nil))
+        // Slice B on no pan: Pan 1 holds one slice, none is spare, and both the radio runs are taken.
+        await rig.station.deliver(.delta(LinkMessage.Delta(key: "slice:1", properties: [
+            .init(ordinal: 27, name: "panKey", value: .utf8("")),
+        ])))
+        #expect(await settle { rig.stack.addPanState() == (false, "The ANAN-G2 runs two slices.") })
+        let asked = invokes(rig.station, PanSheetModel.addSliceVerb).count
+        rig.stack.addPan()
+        await quiet()
+        #expect(invokes(rig.station, PanSheetModel.addSliceVerb).count == asked)
+        await rig.model.disconnect()
+    }
+
+    @Test("a later identity change reaches every pan's slices")
+    func identityReachesEveryPan() async throws {
+        let rig = try await connected()
+        let main = rig.model.main
+        try await twoPans(rig)
+        main.slices.thisDeviceId = "device-later"
+        #expect(rig.stack.band(for: Self.second).slices.thisDeviceId == "device-later")
+        await rig.model.disconnect()
+    }
+
+    @Test("Setup's strip knows each open pan's slices, so an open Pan 2 is never called not open")
+    func setupStripSeesEveryOpenPan() async throws {
+        let rig = try await connected()
+        try await twoPans(rig)
+        #expect(DisplayStripPans.slicesByPan(rig.stack) == [.first: ["A"], Self.second: ["B"]])
+        await rig.model.disconnect()
+    }
 }

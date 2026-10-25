@@ -589,6 +589,22 @@ struct BandSubscriberTests {
         #expect(rig.sent.subscriptions.map(\.revision) == [1, 1])
     }
 
+    @Test("a media connection lost lets the band's endpoint go, as the next one's IDs start again at 1; a band ID the subscriber never held stays")
+    func lostConnectionLetsTheEndpointGo() async {
+        for lost in [MediaPeer.State.failed, .closed] {
+            let rig = rig(budget: false)
+            rig.subscriber.receive(.mediaState(.connected))
+            #expect(await settle { rig.sent.subscriptions.count == 1 })
+            #expect(rig.band.endpointId == 1)
+            rig.subscriber.receive(.mediaState(lost))
+            #expect(rig.band.endpointId == nil)
+        }
+        let held = rig(budget: false)
+        held.band.endpointId = 7
+        held.subscriber.receive(.mediaState(.closed))
+        #expect(held.band.endpointId == 7)
+    }
+
     // MARK: Several pans (Task 9)
 
     /// Two pans' subscribers on one shared allocator, each on its own

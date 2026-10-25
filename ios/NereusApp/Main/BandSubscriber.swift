@@ -933,10 +933,15 @@ final class BandSubscriber: ObservableObject {
         requested = .none
         refused = nil
         stalled = false
+        if let held = endpointId, band.endpointId == held {
+            // The next connection's IDs start again at 1, so the ID this pan
+            // held may soon be another pan's: the band lets it go and draws
+            // no frame for it. It keeps the picture it last had (the frame
+            // and the waterfall stay) until its own next subscribe.
+            band.endpointId = nil
+        }
         endpointId = nil
         revision = 0
-        // The band keeps drawing what it last had until the next subscribe
-        // takes its ID, as it did when the first ID was fixed per pan.
         setRefusal(nil)
         noteClaim()
         noteSharing()

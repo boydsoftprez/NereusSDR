@@ -365,8 +365,8 @@ final class AppModel: ObservableObject {
     }
 
     private func applyDialHaptics() {
-        main.tuning.setDialHaptics(ticksOnDetents: phoneSettings.dialDetentTicks,
-                                   bumpsOnKilohertz: phoneSettings.dialKilohertzBumps)
+        main.setDialHaptics(ticksOnDetents: phoneSettings.dialDetentTicks,
+                            bumpsOnKilohertz: phoneSettings.dialKilohertzBumps)
     }
 
     /// Transmit and the phone's sound (Task 55): a call or Siri unkeys and

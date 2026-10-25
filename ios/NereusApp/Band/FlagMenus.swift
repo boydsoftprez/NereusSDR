@@ -699,3 +699,21 @@ struct FlagDiversitySheet: ViewModifier {
         }
     }
 }
+
+/// A stacked pan's Diversity sheet, from its own flag's more menu: Pan 1's
+/// sits on the main screen (``FlagDiversitySheet``), so only another pan
+/// adds one here, on that pan's own flag controls.
+struct PanDiversitySheet: ViewModifier {
+    let pan: PanIdentity
+    let controls: FlagControls
+    let app: AppModel
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if pan == .first {
+            content
+        } else {
+            content.modifier(FlagDiversitySheet(controls: controls, app: app))
+        }
+    }
+}

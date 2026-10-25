@@ -70,7 +70,7 @@ struct DescribedPage: View {
         if let page = pages.page(pageId, in: category) {
             SetupPageContainer {
                 if let main, !PhoneSetupKeys.pictureFields(on: page).isEmpty {
-                    DisplayV29Strip(main: main, slices: main.slices, page: page,
+                    DisplayV29Strip(main: main, slices: main.slices, stack: main.panStack, page: page,
                                     context: displayStrip ?? .following(main))
                 }
                 if let main, page.sections.flatMap(\.controls).contains(where: { $0.perBand != nil }) {
@@ -205,23 +205,36 @@ enum DisplayPageOwnRows {
     }
 }
 
+/// The pans open on this device, each with the letters of its slices:
+/// Pan 1, the band, and on the iPad every pan open below it (each pan's
+/// own slices, by the Core's pan key; Pan 1 also those on no pan).
+@MainActor
+enum DisplayStripPans {
+    static func slicesByPan(_ stack: PanStackModel) -> [PanIdentity: [String]] {
+        var byPan: [PanIdentity: [String]] = [:]
+        for pan in stack.open {
+            byPan[pan] = stack.band(for: pan).slices.entries
+                .filter { entry in
+                    entry.panKey.flatMap(PanIdentity.init(corePanKey:)).map { $0 == pan } ?? (pan == .first)
+                }
+                .map(\.slice.letter)
+        }
+        return byPan
+    }
+}
+
 /// The strip on a Display page, live on the model: the pans' own rows on
-/// this page, Pan 1's slices, and the choice carried to the model so every
-/// row edits the pans chosen.
+/// this page, each open pan's slices, and the choice carried to the model
+/// so every row edits the pans chosen.
 private struct DisplayV29Strip: View {
     @ObservedObject var main: MainScreenModel
     @ObservedObject var slices: BandSlicesModel
+    @ObservedObject var stack: PanStackModel
     let page: SetupDescription.Page
     let context: DisplayStripContext
     private var fields: Set<String> { PhoneSetupKeys.pictureFields(on: page) }
 
-    /// The pans open on this device: Pan 1, the band, with its slices.
-    private var slicesByPan: [PanIdentity: [String]] {
-        let letters = slices.entries
-            .filter { entry in entry.panKey.flatMap(PanIdentity.init(corePanKey:)).map { $0 == .first } ?? true }
-            .map(\.slice.letter)
-        return [.first: letters]
-    }
+    private var slicesByPan: [PanIdentity: [String]] { DisplayStripPans.slicesByPan(stack) }
 
     var body: some View {
         DisplaySettingsStrip(

@@ -174,6 +174,89 @@ struct IPadShotTests {
         await model.disconnect()
     }
 
+    /// A Core that refuses Pan 2's display: Pan 2 says so in the Core's
+    /// words, in the house card over its band, and Pan 1 says nothing.
+    @Test("a pan whose display the Core refused says so in the Core's words",
+          .enabled("The iPad's screens are drawn on an iPad simulator") {
+              await MainActor.run { UIDevice.current.userInterfaceIdiom == .pad }
+          },
+          .timeLimit(.minutes(10)))
+    func refusedPanShot() async throws {
+        let suite = "IPadShotTests-refused-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let station = try FakeStation(additions: .wideband)
+        let model = AppModel(mediaPeerFactory: station.mediaPeerFactory,
+                             displaySettings: BandDisplaySettingsStore(defaults: defaults))
+        model.main.panStack.allowsMorePans = true
+        await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
+                            transportFactory: station.transportFactory)
+        #expect(await station.waitUntilLive())
+        let json = try #require(MainScreenTests.catalogueJSON())
+        await station.deliver(.delta(LinkMessage.Delta(key: "catalog", properties: [
+            .init(ordinal: 0, name: "json", value: .utf8(station.catalogue(json))),
+            .init(ordinal: 1, name: "revision", value: .i64(2)),
+        ])))
+        #expect(await settle(seconds: 30) { model.main.catalogFeed.catalog != nil && model.main.pan.sliceLetter == "A" })
+        _ = model.main.band.prepareToDraw(size: CGSize(width: 1206, height: 1500), scale: 3)
+        let words = "The Core has no display free for another pan."
+        // Pan 1 subscribes on endpoint 1; Pan 2's first is the next.
+        station.refuseNext(FakeStation.subscribeRefusalKey(2), reason: words)
+        let stack = model.main.panStack
+        stack.addPan()
+        let second = PanIdentity(number: 2)
+        #expect(await settle(seconds: 30) { stack.status != nil && station.panKey(ofSlice: 1) == "pan-1" })
+        await station.deliver(.delta(LinkMessage.Delta(key: "slice:1", properties: [
+            .init(ordinal: 1, name: "frequency", value: .f64(7_213_000)),
+            .init(ordinal: 28, name: "sampleRateHz", value: .i64(192_000)),
+        ])))
+        _ = stack.band(for: second).band.prepareToDraw(size: CGSize(width: 1206, height: 700), scale: 3)
+        #expect(await settle(seconds: 30) { stack.displayRefusals[second] == words })
+
+        let size = CGSize(width: 1210, height: 834)
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(origin: CGPoint(x: 0, y: 120), size: size)
+        window.windowLevel = .alert + 1
+        let root = IPadShotRoot(model: model, columnShown: true)
+            .environment(\.horizontalSizeClass, .regular)
+            .preferredColorScheme(.dark)
+        let host = ShotHosting.host(root)
+        host.additionalSafeAreaInsets = UIEdgeInsets(top: 24, left: 0, bottom: 20, right: 0)
+        host.view.frame = CGRect(origin: .zero, size: size)
+        window.rootViewController = host
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        _ = try await ShotWait.requireBandLaidOut(stack.band(for: second).band, in: window)
+        let notice = await settleElement(seconds: 10, "panDisplayRefusal", in: window)
+        #expect(notice != nil)
+        #expect(notice?.accessibilityLabel == words)
+        let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        if let directory = ProcessInfo.processInfo.environment["NEREUS_IPAD_SHOTS"], !directory.isEmpty,
+           let data = image.pngData() {
+            let url = URL(fileURLWithPath: directory).appendingPathComponent("ipad-two-pans-pan-2-refused.png")
+            try data.write(to: url)
+            print("Wrote \(url.path)")
+        }
+        await model.disconnect()
+    }
+
+    private func settleElement(seconds: Double, _ id: String, in window: UIWindow) async -> NSObject? {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if let found = SetupTypedEntryTests.element(id, in: window) {
+                return found
+            }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return SetupTypedEntryTests.element(id, in: window)
+    }
+
     /// Draws the two pans with `touched` the pan last touched, each band fed.
     private func shootPans(_ screen: Screen, model: AppModel, touched: PanIdentity) async throws {
         model.main.panStack.lastTouched = touched

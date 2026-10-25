@@ -530,6 +530,25 @@ struct DisplayPillTests {
         #expect(router.displayScope == .pan(.first))
     }
 
+    /// On an iPhone a link never chooses a pan the strip greys there: Pan 1
+    /// is chosen in its place. The iPad keeps the pan the link names.
+    @Test func anIPhoneLinkNeverChoosesAGreyedPan() {
+        let second = PanIdentity(number: 2)
+        let router = SetupRouter()
+        let phone = RootView.navigation(setupRouter: router, toolsRouter: ToolsRouter(),
+                                        selectSetup: {}, selectTools: {}, isPhone: true)
+        #expect(phone.openDisplayPage("display.levels", .pan(second)))
+        #expect(router.displayScope == .pan(.first))
+        phone.followDisplayPan(second)
+        #expect(router.displayScope == .pan(.first))
+        let pad = RootView.navigation(setupRouter: router, toolsRouter: ToolsRouter(),
+                                      selectSetup: {}, selectTools: {}, isPhone: false)
+        pad.followDisplayPan(second)
+        #expect(router.displayScope == .pan(second))
+        #expect(pad.openDisplayPage("display.levels", .all))
+        #expect(router.displayScope == .all)
+    }
+
     /// A pill over the rig's main screen, its Core describing Display at
     /// version 29, off the air.
     static func pill() async throws -> (Rig, DisplayPillSource, UserDefaults) {

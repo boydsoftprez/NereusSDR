@@ -144,6 +144,24 @@ struct CoreBandScaleTests {
         await model.disconnect()
     }
 
+    @Test("on Setup's All pans, or a pan the phone does not show, Pan 1's band still follows its slice and the arrows write the new band's key")
+    func bandFollowsTheSliceWhateverTheScope() async throws {
+        let (model, station) = try await connected()
+        let main = model.main
+        let band = main.band
+        let display = main.display
+        let scale = main.bandScale
+        main.displayEditScope = .all
+        await slice(station, band: 3)
+        #expect(await settle { band.settings.scaleBand == "3" && scale.shownBand == 3 })
+        display.nudgeTop(up: true)
+        #expect(await settle { self.gridWrites(station).last?.key == "DisplayGridMax_40m" })
+        main.displayEditScope = .pan(PanIdentity(number: 2))
+        await slice(station, band: 6)
+        #expect(await settle { band.settings.scaleBand == "6" && scale.shownBand == 6 })
+        await model.disconnect()
+    }
+
     // MARK: Written to the Core
 
     @Test("the arrows, a drag, Top, Range and Setup's dB Max write 20 m's keys, shown at once and unconfirmed until the echo")

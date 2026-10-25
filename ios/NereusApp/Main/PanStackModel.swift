@@ -105,6 +105,9 @@ final class PanStackModel: ObservableObject {
     private let catalogFeed: CatalogFeed
     /// Every slice on the Core, whatever pan it is on, for the spare-slice rule.
     private let everySlice: BandSlicesModel
+    /// Each open pan's transmit display below Pan 1 (the main screen keeps
+    /// Pan 1's): the pan holding the transmit slice at the rise shows it.
+    private var transmitDisplays: [PanIdentity: TransmitDisplayModel] = [:]
     /// A pan whose opening waits for the Core's answer.
     private var adding: PanIdentity?
     private var mediaConnected = false
@@ -147,6 +150,15 @@ final class PanStackModel: ObservableObject {
         }.store(in: &watches)
         mirror.$capabilities.sink { [weak self] _ in self?.queueLimitCheck() }.store(in: &watches)
         mirror.$isSnapshotComplete.sink { [weak self] _ in self?.queueLimitCheck() }.store(in: &watches)
+        // This device's id reaches every pan's slices whenever it changes
+        // (published before it is stored: the new value is the one passed).
+        first.slices.$thisDeviceId.sink { [weak self] id in
+            guard let self else { return }
+            self.everySlice.thisDeviceId = id
+            for band in self.others {
+                band.slices.thisDeviceId = id
+            }
+        }.store(in: &watches)
     }
 
     /// Every open pan's band but Pan 1's.
@@ -176,6 +188,15 @@ final class PanStackModel: ObservableObject {
         guard adding == nil else {
             // The pan before it is still waiting for the Core.
             return (false, nil)
+        }
+        // With no slice already on the new pan and none spare, Add a pan asks
+        // the Core for a slice: greyed while the radio runs all it can.
+        let controlled = everySlice.entries.filter { !$0.listening }
+        let next = nextPan()
+        if !controlled.contains(where: { $0.panKey == next.corePanKey }), Self.spareSlice(controlled) == nil,
+           let slices = PanLimits.sliceCount(capabilities: mirror.capabilities),
+           mirror.objects(ofClass: BandSlicesModel.sliceClass).count >= slices {
+            return (false, RadioWords.sliceLimit(radio: radioName, limit: slices))
         }
         return (true, nil)
     }
@@ -415,6 +436,8 @@ final class PanStackModel: ObservableObject {
         subscriber.session = first.subscriber.session
         let opened = PanBand(pan: pan, band: band, slices: slices, subscriber: subscriber)
         bands[pan] = opened
+        // From src/gui/MoxDisplayController.cpp:393-447 (rise: the pan hosting the transmit slice takes the MOX display)
+        transmitDisplays[pan] = TransmitDisplayModel(band: band, slices: slices, mirror: mirror)
         open = (open + [pan]).sorted()
         applyFilters()
         watchRefusal(opened)
@@ -432,6 +455,7 @@ final class PanStackModel: ObservableObject {
         }
         band.subscriber.close()
         retiring.append(band.subscriber)
+        transmitDisplays[pan] = nil
         open.removeAll { $0 == pan }
         refusalWatches[pan] = nil
         displayRefusals[pan] = nil
@@ -456,8 +480,11 @@ final class PanStackModel: ObservableObject {
             for pan in open {
                 bands[pan]?.slices.panKey = pan.corePanKey
             }
+            // This device's slices on a pan not shown are drawn on Pan 1.
+            first.slices.shownPanKeys = Set(open.map(\.corePanKey))
         } else {
             first.slices.panKey = nil
+            first.slices.shownPanKeys = nil
         }
     }
 

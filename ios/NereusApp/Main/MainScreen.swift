@@ -472,6 +472,8 @@ struct MainScreen: View {
                               })
             }
         }
+        // Diversity..., from this pan's flag: Pan 1's sheet sits on the screen.
+        .modifier(PanDiversitySheet(pan: pan, controls: controls.flagControls, app: app))
     }
 
     /// The band itself: the trace, waterfall, scales, band-plan strip,
@@ -504,6 +506,7 @@ struct MainScreen: View {
             BandReadouts(band: band, trailingInset: trailingInset)
             TransmitDisplayBanner(band: band)
             StackNotice(band: band, sideways: sideways)
+            PanDisplayRefusalNotice(stack: panStack, band: band, pan: controls.pan, sideways: sideways)
             if first {
                 // Level calibration reads Pan 1's slices.
                 LevelCalBandLine(band: band, levelCal: app.levelCal, sideways: sideways)

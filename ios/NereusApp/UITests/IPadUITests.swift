@@ -248,6 +248,59 @@ final class IPadUITests: XCTestCase {
         XCTAssertTrue(waitUntil { panButton.label == "Pan 1" })
     }
 
+    /// R-IOS-60, DC12: Pan 2's pill's Setup defaults opens the tab's Setup
+    /// page with Pan 2 chosen on the strip, and the strip knows Pan 2 is open.
+    @MainActor
+    func testSecondPansSetupDefaultsChoosesPanTwo() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom != .pad, "A second pan is the iPad's")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = XCUIApplication()
+        app.launchArguments = ["-NereusShowBand", "-NereusFlagsOnBand", "-NereusBandMenuFixture",
+                               "-NereusTwoPansFixture"]
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+        app.launchEnvironment["NEREUS_UITEST_CATALOGUE"] = root
+            .appendingPathComponent("tests/data/link/v1/sessions/catalog-anan-g2.json").path
+        app.launchEnvironment["NEREUS_UITEST_DISPLAY"] = root.appendingPathComponent("resources/setup/display.json").path
+        app.launch()
+        let panButton = app.buttons["pan"]
+        XCTAssertTrue(panButton.waitForExistence(timeout: 30))
+        panButton.tap()
+        let add = app.buttons["panSheet.addPan"]
+        XCTAssertTrue(add.waitForExistence(timeout: 10), "The Pan sheet has no Add a pan")
+        add.tap()
+        let second = app.descendants(matching: .any)["pan.2"]
+        XCTAssertTrue(second.waitForExistence(timeout: 10), "Add a pan opened no Pan 2")
+        app.buttons["Close the sheet"].firstMatch
+            .coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.9)).tap()
+        XCTAssertTrue(app.descendants(matching: .any)["panSheet"].waitForNonExistence(timeout: 10))
+        let displays = app.buttons.matching(identifier: "bandColumn.display")
+        XCTAssertTrue(waitUntil { displays.count == 2 }, "Each pan has no column of its own")
+        let secondDisplay = displays.allElementsBoundByIndex.max { $0.frame.minY < $1.frame.minY }
+        secondDisplay?.tap()
+        let pillPan = app.staticTexts["displayPillPan"]
+        XCTAssertTrue(pillPan.waitForExistence(timeout: 10), "Pan 2's Display opened no pill")
+        XCTAssertTrue(pillPan.label.hasPrefix("Pan 2"), "The pill is \(pillPan.label)")
+        let tab = app.descendants(matching: .any)["displayPillTab.spectrum"]
+        XCTAssertTrue(tab.waitForExistence(timeout: 10))
+        tab.tap()
+        let link = app.buttons["displayPillSetupDefaults"]
+        XCTAssertTrue(link.waitForExistence(timeout: 5), "Pan 2's pill has no Setup defaults link")
+        link.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["display.spectrumDefaults.detector"].waitForExistence(timeout: 10),
+                      "Setup defaults did not open the Spectrum page")
+        let pan2 = app.descendants(matching: .any)["displayStrip.pan2"]
+        XCTAssertTrue(pan2.waitForExistence(timeout: 5), "The page's strip has no Pan 2")
+        XCTAssertTrue(pan2.isSelected, "Setup defaults on Pan 2's pill did not choose Pan 2")
+        XCTAssertFalse(app.descendants(matching: .any)["displayStrip.pan1"].isSelected)
+        let note = app.descendants(matching: .any)["displayStripNote"]
+        if note.exists {
+            XCTAssertFalse(note.label.contains("is not open now"), "The strip calls an open Pan 2 not open")
+        }
+        shoot(app, "ipad-ui-pan-2-setup-defaults")
+    }
+
     /// Each of the column's menus open in turn: one at a time, the PTT
     /// clear of it and of the column, closed by a tap elsewhere.
     @MainActor

@@ -40,8 +40,14 @@ struct RootView: View {
     /// The Setup and Tools pages other screens open, installed as the root
     /// appears so a link works before the Setup tab has ever been shown.
     /// The routers hold nothing of the model's, so no cycle.
+    /// On an iPhone a link never chooses a pan the strip greys there (it
+    /// shows one pan): Pan 1 is chosen in its place.
     static func navigation(setupRouter: SetupRouter, toolsRouter: ToolsRouter,
-                           selectSetup: @escaping () -> Void, selectTools: @escaping () -> Void) -> PhoneNavigation {
+                           selectSetup: @escaping () -> Void, selectTools: @escaping () -> Void,
+                           isPhone: Bool = UIDevice.current.userInterfaceIdiom == .phone) -> PhoneNavigation {
+        func shown(_ pan: PanIdentity) -> PanIdentity {
+            DisplaySettingsStrip.greyed(pan, isPhone: isPhone) ? .first : pan
+        }
         var navigation = PhoneNavigation(
             openSetupPage: { pageId in setupRouter.open(describedPage: pageId) },
             openTxEqualizer: {
@@ -49,11 +55,15 @@ struct RootView: View {
                 selectTools()
             })
         navigation.openDisplayPage = { pageId, scope in
-            guard setupRouter.open(describedPage: pageId, scope: scope) else { return false }
+            var chosen = scope
+            if case .pan(let pan) = scope {
+                chosen = .pan(shown(pan))
+            }
+            guard setupRouter.open(describedPage: pageId, scope: chosen) else { return false }
             selectSetup()
             return true
         }
-        navigation.followDisplayPan = { pan in setupRouter.followPill(pan) }
+        navigation.followDisplayPan = { pan in setupRouter.followPill(shown(pan)) }
         return navigation
     }
 
