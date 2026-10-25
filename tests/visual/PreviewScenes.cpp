@@ -11,6 +11,10 @@
 // transmit scene refuses to run if one exists).
 //
 // Modification history (NereusSDR):
+//   2026-10-25 - The roundtable-tags-hidden and roundtable-flag-hidden
+//                 scenes: you are hidden, the tags and flag line dimmed,
+//                 "Hidden" in place of Roundtable. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - Every roundtable-* scene runs with the workspace look on
 //                 (Scene::workspacePreview), the app's default. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -7288,6 +7292,12 @@ void appendRoundtableScenes(QVector<Scene>& scenes)
         rt.live(false);
         rt.setLink(RoundtableModel::LinkState::Connecting, kRoundtableNow - 4000);
     });
+    // You are hidden: every room as when live, the marking dimmed.
+    tagScene(QStringLiteral("roundtable-tags-hidden"), [](WindowRoundtable& rt) {
+        rt.live(false);
+        rt.rt.state.applyStationValue("hidden", true);
+        rt.setLink(RoundtableModel::LinkState::Hidden, kRoundtableNow);
+    });
 
     // Slice A's flag line: live in room 7.185 (six there, W1TLK talking),
     // two messages naming you, you transmitting there, offline and
@@ -7338,6 +7348,13 @@ void appendRoundtableScenes(QVector<Scene>& scenes)
                   rt.setLink(RoundtableModel::LinkState::Connecting, kRoundtableNow - 4000);
               },
               QStringLiteral("Roundtable") + dot + QStringLiteral("Connecting"), 0);
+    flagScene(QStringLiteral("roundtable-flag-hidden"),
+              [](WindowRoundtable& rt) {
+                  rt.live(false);
+                  rt.rt.state.applyStationValue("hidden", true);
+                  rt.setLink(RoundtableModel::LinkState::Hidden, kRoundtableNow);
+              },
+              QStringLiteral("Hidden") + dot + QStringLiteral("6") + dot + QStringLiteral("W1TLK"), 0);
 
     // Roundtable plan Task 15: the panel docked in a real MainWindow's
     // applet column, live in room 7.185 with W1TLK talking: the window, the

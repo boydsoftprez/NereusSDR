@@ -26,6 +26,9 @@
 //   2026-10-24: Roundtable plan Task 15: the toolbar collapse case; your
 //               own turn is the one you talk in, not `mine`.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-25: while you are hidden the pan shows its tags dimmed, the
+//               rooms, talkers and counts as when live.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -49,6 +52,7 @@
 #include "gui/SpectrumOverlayPanel.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/roundtable/RoundtableTagLayout.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "gui/widgets/VfoWidget.h"
 #include "models/BandPlanManager.h"
 #include "models/RadioModel.h"
@@ -456,7 +460,8 @@ private slots:
             {LinkState::Connecting, RoundtableTagDisplay::Hidden},
             {LinkState::Live, RoundtableTagDisplay::Live},
             {LinkState::Reconnecting, RoundtableTagDisplay::Live},
-            {LinkState::Hidden, RoundtableTagDisplay::Live},
+            // You are hidden: everything as when live, dimmed.
+            {LinkState::Hidden, RoundtableTagDisplay::Dimmed},
             {LinkState::Offline, RoundtableTagDisplay::Stale}};
         for (const auto& [link_state, display] : cases) {
             state.applyStationValue("linkState", static_cast<int>(link_state));
@@ -639,6 +644,74 @@ private slots:
         QSignalSpy tuned(&pan.widget, &SpectrumWidget::roundtableRoomClicked);
         QTest::mouseClick(&pan.widget, Qt::LeftButton, Qt::NoModifier, doubled.center());
         QCOMPARE(tuned.count(), 0);
+    }
+
+    void hiddenDimsThePansTagsAndKeepsTheirRooms()
+    {
+        Pan pan;
+        pan.widget.setRoundtableTags(panTags(), RoundtableTagDisplay::Live);
+        const QImage live = pan.draw();
+        const QList<SpectrumWidget::RoundtableTagHit> liveHits = pan.widget.roundtableTagHitsForTest();
+        const auto* doubledHit = hitFor(pan.widget, QStringLiteral("lsb-7250000"));
+        QVERIFY(doubledHit != nullptr);
+        const QRect doubled = doubledHit->rect;
+        const QPoint edge(doubled.center().x(), doubled.top());
+        QCOMPARE(QColor(live.pixel(edge)).name(), QStringLiteral("#c25a5c"));
+        // The glyph's center: the tag's 1 px border, 6 px pad, 9 px glyph.
+        const QPoint glyphCenter(doubled.left() + 1 + 6 + 4, doubled.center().y());
+
+        pan.widget.setRoundtableTags(panTags(), RoundtableTagDisplay::Dimmed);
+        const QImage dimmed = pan.draw();
+        // Every room still shows where it did, a click still tunes.
+        QCOMPARE(pan.widget.roundtableTagHitsForTest().size(), liveHits.size());
+        for (qsizetype i = 0; i < liveHits.size(); ++i) {
+            QCOMPARE(pan.widget.roundtableTagHitsForTest().at(i).rect, liveHits.at(i).rect);
+        }
+        // The border keeps its red, dimmed: neither the live red nor the
+        // last-known grey.
+        const QColor border(dimmed.pixel(edge));
+        QVERIFY2(border.name() != QStringLiteral("#c25a5c") && border.name() != QStringLiteral("#606066"),
+                 qPrintable(border.name()));
+        QVERIFY2(border.red() < 0xc2 * 0.7 && border.red() > border.green() + 20, qPrintable(border.name()));
+        const QColor liveGlyph(live.pixel(glyphCenter));
+        const QColor dimGlyph(dimmed.pixel(glyphCenter));
+        QVERIFY2(dimGlyph.red() < liveGlyph.red() * 0.7, qPrintable(dimGlyph.name() + liveGlyph.name()));
+        // The talker and count are drawn as when live.
+        const QRect text(glyphCenter.x() + 10, doubled.top() + 2, doubled.right() - glyphCenter.x() - 18,
+                         doubled.height() - 4);
+        QCOMPARE(dimmed.copy(text), live.copy(text));
+
+        QSignalSpy tuned(&pan.widget, &SpectrumWidget::roundtableRoomClicked);
+        QTest::mouseClick(&pan.widget, Qt::LeftButton, Qt::NoModifier, doubled.center());
+        QCOMPARE(tuned.count(), 1);
+    }
+
+    void theDimmedMarkingIsTheLooksRole()
+    {
+        // The look off: the fixed state color, dimmed.
+        QColor talking = roundtableGlyphColor(static_cast<int>(RoundtableGlyph::Talking));
+        talking.setAlphaF(kRoundtableDimmedAlpha);
+        QCOMPARE(roundtableDimmedColor(static_cast<int>(RoundtableGlyph::Talking)), talking);
+        // The look on: the look's status and accent roles, dimmed.
+        struct LookOff {
+            ~LookOff() { WorkspacePreview::setEnabledForTest(false); }
+        } restore;
+        WorkspacePreview::setEnabledForTest(true);
+        const QList<std::pair<RoundtableGlyph, QColor>> roles{
+            {RoundtableGlyph::Talking,
+             WorkspacePreview::statusColour(roundtableGlyphColor(static_cast<int>(RoundtableGlyph::Talking)), "ok")},
+            {RoundtableGlyph::Unknown,
+             WorkspacePreview::statusColour(roundtableGlyphColor(static_cast<int>(RoundtableGlyph::Unknown)), "warn")},
+            {RoundtableGlyph::Doubled,
+             WorkspacePreview::statusColour(roundtableGlyphColor(static_cast<int>(RoundtableGlyph::Doubled)),
+                                            "danger")},
+            {RoundtableGlyph::You,
+             WorkspacePreview::roleColour(roundtableGlyphColor(static_cast<int>(RoundtableGlyph::You)), "accent")}};
+        for (const auto& [g, role] : roles) {
+            QColor expected = role;
+            expected.setAlphaF(kRoundtableDimmedAlpha);
+            QCOMPARE(roundtableDimmedColor(static_cast<int>(g)), expected);
+        }
     }
 
     void newTagsMarkTheGpuOverlayForRedraw()

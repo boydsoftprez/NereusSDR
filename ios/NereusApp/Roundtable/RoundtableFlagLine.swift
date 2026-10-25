@@ -6,13 +6,17 @@
 // roundtableFlagLineFor reads it. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-25: Roundtable plan Task 19, the line's hint names where it takes
 // you (the iPad's applet column). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: while you are hidden the line reads "Hidden · 9 · K4ABC" with
+// its glyph dimmed, as the desktop's does (JJ's answer of 2026-10-25).
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import SwiftUI
 
 /// What a slice's flag says of Roundtable (spec 11.2 and 11.3, D17): the
 /// state glyph, "Roundtable · 9 · K4ABC", @N while a message names you,
 /// "9 hear you" while you talk there, and the link's state when it is not
-/// live. Read as the desktop reads it (src/gui/roundtable/RoundtableTagLayout.cpp,
+/// live. While you are hidden, the room as when live with Hidden in place
+/// of Roundtable, the glyph dimmed. Read as the desktop reads it (src/gui/roundtable/RoundtableTagLayout.cpp,
 /// roundtableFlagLineFor). Nil hides the line: no Roundtable on this Core,
 /// or Roundtable off.
 struct RoundtableFlagLine: Equatable {
@@ -31,10 +35,14 @@ struct RoundtableFlagLine: Equatable {
     var text: String
     /// Messages that name you, not yet read.
     var mentions: Int = 0
+    /// You are hidden: "Hidden · 9 · K4ABC", the glyph dimmed.
+    var dimmed = false
 
     /// The line's height at the foot of the flag.
     static let height: CGFloat = 24
     static let prefix = "Roundtable \u{00B7} "
+    /// In place of `prefix` while you are hidden ("You are hidden" on the sheet).
+    static let hiddenPrefix = "Hidden \u{00B7} "
 
     /// The line for one slice: its room (`roomId`, nil when the slice is in
     /// none), the band list's summary of it, and the room as followed.
@@ -53,20 +61,24 @@ struct RoundtableFlagLine: Equatable {
         case .offline:
             return RoundtableFlagLine(glyph: .offline, text: prefix + "Offline")
         case .live, .hidden:
-            // Hidden still sees everything (D21): the room, as when live.
+            // Hidden still sees everything (D21): the room, as when live,
+            // with Hidden in place of Roundtable and the glyph dimmed.
             break
         }
+        let dimmed = link == .hidden
+        let lead = dimmed ? hiddenPrefix : prefix
         guard let summary, summary.members > 0 else {
-            return RoundtableFlagLine(glyph: .quiet, text: prefix + "Nobody here")
+            return RoundtableFlagLine(glyph: .quiet, text: lead + "Nobody here", dimmed: dimmed)
         }
         if let room, youAreTalking(room) {
             // U3: while you transmit there, the others whose reading of you is present.
             let hearing = room.members.filter { !$0.you && ($0.reading?.present ?? false) }.count
-            return RoundtableFlagLine(glyph: .you, text: prefix + "\(hearing) hear you", mentions: mentions)
+            return RoundtableFlagLine(glyph: .you, text: lead + "\(hearing) hear you", mentions: mentions,
+                                      dimmed: dimmed)
         }
         let glyph = glyph(ofState: summary.state)
-        return RoundtableFlagLine(glyph: glyph, text: prefix + "\(summary.members) \u{00B7} "
-                                  + label(glyph, talkers: summary.talkers), mentions: mentions)
+        return RoundtableFlagLine(glyph: glyph, text: lead + "\(summary.members) \u{00B7} "
+                                  + label(glyph, talkers: summary.talkers), mentions: mentions, dimmed: dimmed)
     }
 
     /// The line for a slice, read from the model.
@@ -144,6 +156,14 @@ enum RoundtableColours {
     static let fieldEdge = Color(red: 0x3F / 255, green: 0x3F / 255, blue: 0x42 / 255)
     static let mainButton = Color(red: 0x2F / 255, green: 0x5F / 255, blue: 0x92 / 255)
     static let youRow = Color(red: 0x00 / 255, green: 0xD4 / 255, blue: 0xFF / 255).opacity(0.08)
+    /// How much of a state's marking shows while you are hidden (the
+    /// desktop's kRoundtableDimmedAlpha).
+    static let dimmedOpacity = 0.45
+
+    /// A state's colour while you are hidden: the same colour, dimmed.
+    static func dimmed(_ glyph: RoundtableFlagLine.Glyph) -> Color {
+        colour(glyph).opacity(dimmedOpacity)
+    }
 
     static func colour(_ glyph: RoundtableFlagLine.Glyph) -> Color {
         switch glyph {
@@ -163,13 +183,15 @@ enum RoundtableColours {
 
 /// A state glyph: a hollow ring quiet, a filled dot talking, an amber ring
 /// with a dot unknown, a striped red diamond doubled, a cyan dot you, an
-/// amber ring open at the top waiting, a red ring offline.
+/// amber ring open at the top waiting, a red ring offline. `dimmed` (you
+/// are hidden) draws it in RoundtableColours.dimmed.
 struct RoundtableGlyphView: View {
     let glyph: RoundtableFlagLine.Glyph
     var size: CGFloat = 9
+    var dimmed = false
 
     var body: some View {
-        let colour = RoundtableColours.colour(glyph)
+        let colour = dimmed ? RoundtableColours.dimmed(glyph) : RoundtableColours.colour(glyph)
         ZStack {
             switch glyph {
             case .quiet:
@@ -220,7 +242,7 @@ struct RoundtableFlagLineView: View {
             open?()
         } label: {
             HStack(spacing: 5) {
-                RoundtableGlyphView(glyph: line.glyph)
+                RoundtableGlyphView(glyph: line.glyph, dimmed: line.dimmed)
                 Text(line.text)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(RoundtableColours.text)

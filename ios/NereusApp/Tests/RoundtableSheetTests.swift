@@ -15,6 +15,9 @@
 // 2026-10-25: JJ's decision: a touch in either PTT's corners keys nothing
 // and never reaches the band under it; one just outside still does.
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: JJ's answer: hidden, the flag line reads "Hidden · 9 · K4ABC"
+// with its glyph dimmed; live and the other link states are unchanged.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import Foundation
 import NereusBand
@@ -86,7 +89,7 @@ struct RoundtableSheetTests {
         let talking = RoundtableFlagLine.line(available: true, link: .live, summary: Self.summary(members: 9),
                                               room: nil, mentions: 2)
         #expect(talking == RoundtableFlagLine(glyph: .talking, text: "Roundtable \u{00B7} 9 \u{00B7} K4ABC", mentions: 2))
-        #expect(RoundtableFlagLine.line(available: true, link: .hidden, summary: Self.summary(members: 6, state: "doubled"),
+        #expect(RoundtableFlagLine.line(available: true, link: .live, summary: Self.summary(members: 6, state: "doubled"),
                                         room: nil, mentions: 0)?.text == "Roundtable \u{00B7} 6 \u{00B7} Doubled")
         #expect(RoundtableFlagLine.line(available: true, link: .live,
                                         summary: Self.summary(members: 3, state: "quiet", talkers: []),
@@ -98,6 +101,38 @@ struct RoundtableSheetTests {
         #expect(RoundtableFlagLine.line(available: true, link: .live, summary: Self.summary(members: 4), room: room,
                                         mentions: 0) == RoundtableFlagLine(glyph: .you,
                                                                            text: "Roundtable \u{00B7} 2 hear you"))
+    }
+
+    @Test("hidden, the flag line shows the room with Hidden in place of Roundtable, its glyph dimmed")
+    func flagLineHidden() {
+        // Hidden still sees everything (D21): the room, the talker and the
+        // count as when live ("You are hidden" on the sheet).
+        let hidden = RoundtableFlagLine.line(available: true, link: .hidden, summary: Self.summary(members: 9),
+                                             room: nil, mentions: 2)
+        #expect(hidden == RoundtableFlagLine(glyph: .talking, text: "Hidden \u{00B7} 9 \u{00B7} K4ABC", mentions: 2,
+                                             dimmed: true))
+        #expect(RoundtableFlagLine.line(available: true, link: .hidden, summary: Self.summary(members: 6, state: "doubled"),
+                                        room: nil, mentions: 0)?.text == "Hidden \u{00B7} 6 \u{00B7} Doubled")
+        #expect(RoundtableFlagLine.line(available: true, link: .hidden, summary: nil, room: nil,
+                                        mentions: 0) == RoundtableFlagLine(glyph: .quiet,
+                                                                           text: "Hidden \u{00B7} Nobody here",
+                                                                           dimmed: true))
+        // Live, and every other link state: Roundtable, nothing dimmed.
+        for link in [RoundtableModel.LinkState.live, .connecting, .reconnecting, .offline] {
+            let line = RoundtableFlagLine.line(available: true, link: link, summary: Self.summary(members: 9),
+                                               room: nil, mentions: 0)
+            #expect(line?.dimmed == false)
+            #expect(line?.text.hasPrefix("Roundtable \u{00B7} ") == true)
+        }
+        // The dimmed glyph: the state's colour at RoundtableColours.dimmedOpacity.
+        var live: (CGFloat, CGFloat, CGFloat, CGFloat) = (0, 0, 0, 0)
+        var dim: (CGFloat, CGFloat, CGFloat, CGFloat) = (0, 0, 0, 0)
+        #expect(UIColor(RoundtableColours.colour(.talking)).getRed(&live.0, green: &live.1, blue: &live.2,
+                                                                   alpha: &live.3))
+        #expect(UIColor(RoundtableColours.dimmed(.talking)).getRed(&dim.0, green: &dim.1, blue: &dim.2,
+                                                                   alpha: &dim.3))
+        #expect(abs(dim.1 - live.1) < 0.01 && abs(dim.3 - CGFloat(RoundtableColours.dimmedOpacity)) < 0.01)
+        #expect(live.3 > 0.99)
     }
 
     @Test("readings drop the talker, and you while keyed, nearest first then by callsign")

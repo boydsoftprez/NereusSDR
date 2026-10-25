@@ -5,6 +5,10 @@
 // 2026-10-25: Roundtable plan Task 18, the pan tags laid out by the desktop's
 // rules (src/gui/roundtable/RoundtableTagLayout.cpp), a tap that tunes and
 // the +N list. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: while you are hidden the tags show every room as when live,
+// their marking dimmed (RoundtableTagDisplay.dimmed), as the desktop's do
+// (JJ's answer of 2026-10-25). J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code.
 
 import SwiftUI
 import UIKit
@@ -44,11 +48,13 @@ struct RoundtableKeepOut: Equatable {
 }
 
 /// How the pan shows its tags (design 11.1, U4): offline greys them as
-/// last known, connecting hides them.
+/// last known, connecting hides them. `dimmed` is live while you are
+/// hidden: the rooms and talkers as when live, the state marking dimmed.
 enum RoundtableTagDisplay: Equatable {
     case hidden
     case live
     case stale
+    case dimmed
 }
 
 /// The desktop's tag rules (RoundtableTagLayout.cpp), on the phone:
@@ -337,8 +343,8 @@ enum RoundtableTagLayout {
     }
 
     /// Hidden while Roundtable is off, unavailable or connecting; stale
-    /// while offline; live otherwise (live, reconnecting, or hidden, when
-    /// you still see everything).
+    /// while offline; dimmed while you are hidden (you still see
+    /// everything, D21); live otherwise (live or reconnecting).
     static func display(available: Bool, link: RoundtableModel.LinkState) -> RoundtableTagDisplay {
         guard available else {
             return .hidden
@@ -348,7 +354,9 @@ enum RoundtableTagLayout {
             return .hidden
         case .offline:
             return .stale
-        case .live, .reconnecting, .hidden:
+        case .hidden:
+            return .dimmed
+        case .live, .reconnecting:
             return .live
         }
     }
@@ -404,7 +412,7 @@ enum RoundtableTagLayout {
 /// strip and clear of the flags: a tap on one tunes the active slice to its
 /// room; a tap on +N lists its rooms by frequency, and a row tunes. Keyed,
 /// a tag tunes nothing. Offline greys them as last known; connecting hides
-/// them.
+/// them; while you are hidden their marking is dimmed.
 struct RoundtableTagLayer: View {
     @ObservedObject var roundtable: RoundtableModel
     let sliceIds: [Int64]
@@ -437,10 +445,11 @@ struct RoundtableTagLayer: View {
                                                         gap: RoundtableTagLayout.gap, keepOut: keepOut)
             let byId = Dictionary(tags.map { ($0.roomId, $0) }, uniquingKeysWith: { first, _ in first })
             let stale = display == .stale
+            let dimmed = display == .dimmed
             ZStack(alignment: .topLeading) {
-                ticks(placements, byId: byId, stale: stale)
+                ticks(placements, byId: byId, stale: stale, dimmed: dimmed)
                 ForEach(placements, id: \.roomIds) { placement in
-                    tagView(placement, byId: byId, stale: stale)
+                    tagView(placement, byId: byId, stale: stale, dimmed: dimmed)
                         .offset(x: CGFloat(placement.left), y: top)
                 }
                 if let fold = openFold, let placement = placements.first(where: { $0.roomIds == fold }) {
@@ -478,18 +487,19 @@ struct RoundtableTagLayer: View {
 
     /// A dashed tick from each tag down to its room's frequency.
     private func ticks(_ placements: [RoundtableTagPlacement], byId: [String: RoundtableTag],
-                       stale: Bool) -> some View {
+                       stale: Bool, dimmed: Bool) -> some View {
         let foot = tickFoot
         let start = top + RoundtableTagLayout.height
         return ZStack(alignment: .topLeading) {
             ForEach(placements.flatMap(\.roomIds), id: \.self) { id in
                 if let tag = byId[id] {
                     let x = CGFloat((Double(tag.hz) - lowHz) / hzPerPoint).rounded() + 0.5
+                    let colour = stale ? RoundtableColours.stale : Self.border(tag.glyph, dimmed: dimmed)
                     Path { path in
                         path.move(to: CGPoint(x: x, y: start))
                         path.addLine(to: CGPoint(x: x, y: max(start, foot - 1)))
                     }
-                    .stroke((stale ? RoundtableColours.stale : Self.border(tag.glyph)).opacity(0.7),
+                    .stroke(colour.opacity(0.7),
                             style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
                 }
             }
@@ -500,11 +510,11 @@ struct RoundtableTagLayer: View {
 
     @ViewBuilder
     private func tagView(_ placement: RoundtableTagPlacement, byId: [String: RoundtableTag],
-                         stale: Bool) -> some View {
+                         stale: Bool, dimmed: Bool) -> some View {
         let tags = placement.roomIds.compactMap { byId[$0] }
         let first = tags.first
         let border = stale ? Self.staleBorder : placement.folded ? Self.foldBorder
-            : first.map { Self.border($0.glyph) } ?? Self.foldBorder
+            : first.map { Self.border($0.glyph, dimmed: dimmed) } ?? Self.foldBorder
         let open = placement.folded && openFold == placement.roomIds
         Button {
             tapped(placement, byId: byId)
@@ -514,7 +524,7 @@ struct RoundtableTagLayer: View {
                     ZStack(alignment: .leading) {
                         ForEach(Array(tags.prefix(RoundtableTagLayout.foldStackMax).enumerated()), id: \.offset) {
                             index, tag in
-                            glyph(tag.glyph, stale: stale)
+                            glyph(tag.glyph, stale: stale, dimmed: dimmed)
                                 .offset(x: CGFloat(index) * RoundtableTagLayout.foldStackStep)
                         }
                     }
@@ -525,7 +535,7 @@ struct RoundtableTagLayer: View {
                         .font(.system(size: RoundtableTagLayout.labelFontSize, weight: .bold))
                         .foregroundStyle(stale ? RoundtableColours.dim : RoundtableColours.text)
                 } else if let tag = first {
-                    glyph(tag.glyph, stale: stale)
+                    glyph(tag.glyph, stale: stale, dimmed: dimmed)
                     (Text(tag.label)
                         .font(.system(size: RoundtableTagLayout.labelFontSize, weight: .bold))
                         .foregroundStyle(stale ? RoundtableColours.dim : Self.labelColour)
@@ -549,7 +559,8 @@ struct RoundtableTagLayer: View {
             .overlay {
                 if !placement.folded, first?.mine == true, !stale {
                     RoundedRectangle(cornerRadius: 5)
-                        .strokeBorder(Self.mineRing, lineWidth: 1)
+                        .strokeBorder(dimmed ? Self.mineRing.opacity(RoundtableColours.dimmedOpacity)
+                                             : Self.mineRing, lineWidth: 1)
                         .padding(-1)
                 }
             }
@@ -561,8 +572,8 @@ struct RoundtableTagLayer: View {
         .accessibilityIdentifier(placement.folded ? "roundtableFold" : "roundtableTag.\(placement.roomIds[0])")
     }
 
-    private func glyph(_ glyph: RoundtableFlagLine.Glyph, stale: Bool) -> some View {
-        RoundtableGlyphView(glyph: glyph, size: RoundtableTagLayout.glyphSize)
+    private func glyph(_ glyph: RoundtableFlagLine.Glyph, stale: Bool, dimmed: Bool) -> some View {
+        RoundtableGlyphView(glyph: glyph, size: RoundtableTagLayout.glyphSize, dimmed: dimmed && !stale)
             .saturation(stale ? 0 : 1)
             .opacity(stale ? 0.6 : 1)
     }
@@ -621,7 +632,8 @@ struct RoundtableTagLayer: View {
                     tuneTo(tag.roomId)
                 } label: {
                     HStack(spacing: 7) {
-                        RoundtableGlyphView(glyph: tag.glyph, size: RoundtableTagLayout.glyphSize)
+                        RoundtableGlyphView(glyph: tag.glyph, size: RoundtableTagLayout.glyphSize,
+                                            dimmed: RoundtableTagLayout.display(roundtable) == .dimmed)
                         Text(RoundtableTagLayout.frequencyText(tag.hz))
                             .font(.system(size: 12, weight: .bold, design: .monospaced))
                             .foregroundStyle(Self.labelColour)
@@ -670,8 +682,10 @@ struct RoundtableTagLayer: View {
     static let listRule = Color(red: 0x2A / 255, green: 0x2A / 255, blue: 0x2E / 255)
     static let rowRule = Color(red: 0x1E / 255, green: 0x1E / 255, blue: 0x22 / 255)
 
-    /// The tag's border: the state's colour, the quiet one darker than its glyph.
-    static func border(_ glyph: RoundtableFlagLine.Glyph) -> Color {
-        glyph == .quiet ? staleBorder : RoundtableColours.colour(glyph)
+    /// The tag's border: the state's colour, the quiet one darker than its
+    /// glyph; `dimmed` (you are hidden) at RoundtableColours.dimmedOpacity.
+    static func border(_ glyph: RoundtableFlagLine.Glyph, dimmed: Bool = false) -> Color {
+        let colour = glyph == .quiet ? staleBorder : RoundtableColours.colour(glyph)
+        return dimmed ? colour.opacity(RoundtableColours.dimmedOpacity) : colour
     }
 }

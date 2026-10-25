@@ -8,6 +8,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//                 while you are hidden the room tags show dimmed
+//                 (RoundtableTagDisplay::Dimmed), JJ's answer of
+//                 2026-10-25.
 //   2026-10-24  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: a move,
 //                 resize, show or hide of the pan's toolbar draws the room
 //                 tags again, in the GPU path too (Roundtable plan
@@ -12303,6 +12307,9 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
         return;
     }
     const bool stale = m_roundtableTagDisplay == RoundtableTagDisplay::Stale;
+    // You are hidden: the rooms as when live, each state's marking dimmed
+    // (roundtableDimmedColor, the workspace look's role).
+    const bool dimmed = m_roundtableTagDisplay == RoundtableTagDisplay::Dimmed;
     const QFont labelFont = roundtableTagFont(p.device(), 11, QFont::Bold);
     const QFont countFont = roundtableTagFont(p.device(), 11, QFont::DemiBold);
     const QFontMetrics labelMetrics(labelFont, p.device());
@@ -12375,8 +12382,10 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
             if (tag == nullptr) {
                 continue;
             }
-            QColor tick = stale ? roundtableStaleColor() : roundtableTagBorder(tag->state);
-            tick.setAlphaF(0.7);
+            QColor tick = stale ? roundtableStaleColor()
+                : dimmed        ? roundtableDimmedColor(tag->state)
+                                : roundtableTagBorder(tag->state);
+            tick.setAlphaF(tick.alphaF() * 0.7);
             p.setPen(QPen(tick, 1, Qt::DashLine));
             const int x = hzToX(static_cast<double>(tag->hz), specRect);
             p.drawLine(QPointF(x + 0.5, rect.bottom() + 1), QPointF(x + 0.5, bandTop - 1));
@@ -12384,10 +12393,14 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
 
         const QColor border = stale ? QColor(0x60, 0x60, 0x66)
             : placement.folded     ? QColor(0x71, 0x71, 0x75)
+            : dimmed               ? roundtableDimmedColor(first->state)
                                    : roundtableTagBorder(first->state);
         const QRectF body = QRectF(rect).adjusted(0.5, 0.5, -0.5, -0.5);
         if (!placement.folded && first->mine && !stale) {
-            p.setPen(QPen(QColor(0x00, 0xd4, 0xff, 89), 1));
+            QColor ring = dimmed ? roundtableDimmedColor(static_cast<int>(RoundtableGlyph::You))
+                                 : QColor(0x00, 0xd4, 0xff);
+            ring.setAlphaF(ring.alphaF() * (89.0 / 255.0));
+            p.setPen(QPen(ring, 1));
             p.setBrush(Qt::NoBrush);
             p.drawRoundedRect(body.adjusted(-1, -1, 1, 1), 5, 5);
         }
@@ -12405,7 +12418,7 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
             for (int k = 0; k < shown; ++k) {
                 const RoundtableTag* tag = byId.value(placement.roomIds.at(k));
                 paintRoundtableGlyph(p, QPointF(x, midY), kRoundtableGlyphSize,
-                                     tag != nullptr ? tag->state : 0, stale);
+                                     tag != nullptr ? tag->state : 0, stale, dimmed);
                 x += kRoundtableFoldStackStep;
             }
             const int textLeft = static_cast<int>(x - kRoundtableFoldStackStep + kRoundtableGlyphSize / 2.0) + 4;
@@ -12419,7 +12432,7 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
         }
 
         const qreal glyphX = rect.left() + 1 + kRoundtableTagPadLeft + kRoundtableGlyphSize / 2.0;
-        paintRoundtableGlyph(p, QPointF(glyphX, midY), kRoundtableGlyphSize, first->state, stale);
+        paintRoundtableGlyph(p, QPointF(glyphX, midY), kRoundtableGlyphSize, first->state, stale, dimmed);
         const int textLeft = static_cast<int>(glyphX + kRoundtableGlyphSize / 2.0) + kRoundtableTagInnerGap;
         const int textRight = rect.right() - kRoundtableTagPadRight;
         const QString members = QString::number(first->members);
@@ -12464,7 +12477,8 @@ void SpectrumWidget::buildRoundtableFoldMenu(const QStringList& roomIds, QMenu& 
         {
             QPainter gp(&glyph);
             paintRoundtableGlyph(gp, QPointF(6.0, 6.0), kRoundtableGlyphSize, tag.state,
-                                 m_roundtableTagDisplay == RoundtableTagDisplay::Stale);
+                                 m_roundtableTagDisplay == RoundtableTagDisplay::Stale,
+                                 m_roundtableTagDisplay == RoundtableTagDisplay::Dimmed);
         }
         const QString text = QStringLiteral("%1   %2   %3")
                                  .arg(roundtableFrequencyText(tag.hz), roundtableFoldWho(tag))

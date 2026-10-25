@@ -5,6 +5,8 @@
 // 2026-10-25: Roundtable plan Task 18, the phone's tag layout run through
 // the desktop's cases, and the Tools page that reads and never tunes.
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: JJ's answer: hidden, the tags show every room dimmed.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import Foundation
 import NereusBand
@@ -235,15 +237,29 @@ struct RoundtableToolsPageTests {
         #expect(notMine[0].glyph == .talking)
     }
 
-    @Test("offline greys the tags as last known, connecting and off hide them")
+    @Test("offline greys the tags as last known, connecting and off hide them, hidden dims them")
     func offlineGreysConnectingHides() {
         #expect(RoundtableTagLayout.display(available: false, link: .live) == .hidden)
+        #expect(RoundtableTagLayout.display(available: false, link: .hidden) == .hidden)
+        // You are hidden: every room as when live, its marking dimmed.
         let cases: [(RoundtableModel.LinkState, RoundtableTagDisplay)] = [
-            (.off, .hidden), (.connecting, .hidden), (.live, .live), (.reconnecting, .live), (.hidden, .live),
+            (.off, .hidden), (.connecting, .hidden), (.live, .live), (.reconnecting, .live), (.hidden, .dimmed),
             (.offline, .stale),
         ]
         for (link, display) in cases {
             #expect(RoundtableTagLayout.display(available: true, link: link) == display)
+        }
+        // The dimmed border keeps its state's colour at the dimmed opacity;
+        // live keeps it whole.
+        for glyph in [RoundtableFlagLine.Glyph.talking, .doubled, .unknown, .you] {
+            var live: (CGFloat, CGFloat, CGFloat, CGFloat) = (0, 0, 0, 0)
+            var dim: (CGFloat, CGFloat, CGFloat, CGFloat) = (0, 0, 0, 0)
+            #expect(UIColor(RoundtableTagLayer.border(glyph)).getRed(&live.0, green: &live.1, blue: &live.2,
+                                                                     alpha: &live.3))
+            #expect(UIColor(RoundtableTagLayer.border(glyph, dimmed: true)).getRed(&dim.0, green: &dim.1,
+                                                                                   blue: &dim.2, alpha: &dim.3))
+            #expect(abs(dim.0 - live.0) < 0.01 && abs(dim.1 - live.1) < 0.01 && abs(dim.2 - live.2) < 0.01)
+            #expect(live.3 > 0.99 && abs(dim.3 - CGFloat(RoundtableColours.dimmedOpacity)) < 0.01)
         }
     }
 

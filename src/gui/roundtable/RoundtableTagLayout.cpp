@@ -13,10 +13,15 @@
 //   2026-10-24: Roundtable plan Task 15: your own turn is found from the
 //               talkers and your row (roundtableTurnIsYours), not from
 //               `mine`. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-25: Hidden shows as Hidden: the flag line's "Hidden" and the
+//               dimmed marking, its color the workspace look's role (JJ's
+//               answer of 2026-10-25). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "RoundtableTagLayout.h"
 
+#include "gui/styles/WorkspacePreview.h"
 #include "models/RoundtableModel.h"
 
 #include <QJsonArray>
@@ -400,9 +405,11 @@ RoundtableTagDisplay roundtableTagDisplayFor(const RoundtableModel* model)
         return RoundtableTagDisplay::Hidden;
     case LinkState::Offline:
         return RoundtableTagDisplay::Stale;
+    case LinkState::Hidden:
+        // You still see everything (D21), the marking dimmed.
+        return RoundtableTagDisplay::Dimmed;
     case LinkState::Live:
     case LinkState::Reconnecting:
-    case LinkState::Hidden:
         return RoundtableTagDisplay::Live;
     }
     return RoundtableTagDisplay::Hidden;
@@ -415,7 +422,7 @@ RoundtableFlagLine roundtableFlagLineFor(const RoundtableModel* model, int slice
     if (model == nullptr || !model->available()) {
         return line;
     }
-    const QString prefix = QStringLiteral("Roundtable \u00b7 ");
+    QString prefix = QStringLiteral("Roundtable \u00b7 ");
     line.visible = true;
     switch (model->linkState()) {
     case LinkState::Off:
@@ -433,9 +440,14 @@ RoundtableFlagLine roundtableFlagLineFor(const RoundtableModel* model, int slice
         line.glyph = static_cast<int>(RoundtableGlyph::Offline);
         line.text = prefix + QStringLiteral("Offline");
         return line;
-    case LinkState::Live:
     case LinkState::Hidden:
-        // Hidden still sees everything (D21): the room, as when live.
+        // Hidden still sees everything (D21): the room, as when live, with
+        // Hidden in place of Roundtable (the line still fits the flag with
+        // @N and a long callsign) and the glyph dimmed.
+        prefix = QStringLiteral("Hidden \u00b7 ");
+        line.dimmed = true;
+        break;
+    case LinkState::Live:
         break;
     }
 
@@ -507,9 +519,41 @@ QColor roundtableStaleColor()
     return QColor(0x7e, 0x7e, 0x85);
 }
 
-void paintRoundtableGlyph(QPainter& p, const QPointF& center, qreal size, int glyph, bool grey)
+QColor roundtableDimmedColor(int glyph)
 {
-    const QColor color = grey ? roundtableStaleColor() : roundtableGlyphColor(glyph);
+    const QColor legacy = roundtableGlyphColor(glyph);
+    QColor color;
+    switch (static_cast<RoundtableGlyph>(glyph)) {
+    case RoundtableGlyph::Talking:
+        color = WorkspacePreview::statusColour(legacy, "ok");
+        break;
+    case RoundtableGlyph::Unknown:
+    case RoundtableGlyph::Waiting:
+        color = WorkspacePreview::statusColour(legacy, "warn");
+        break;
+    case RoundtableGlyph::Doubled:
+    case RoundtableGlyph::Offline:
+        color = WorkspacePreview::statusColour(legacy, "danger");
+        break;
+    case RoundtableGlyph::You:
+        color = WorkspacePreview::roleColour(legacy, "accent");
+        break;
+    case RoundtableGlyph::Quiet:
+        color = WorkspacePreview::roleColour(legacy, "text-secondary");
+        break;
+    }
+    if (!color.isValid()) {
+        color = legacy;
+    }
+    color.setAlphaF(kRoundtableDimmedAlpha);
+    return color;
+}
+
+void paintRoundtableGlyph(QPainter& p, const QPointF& center, qreal size, int glyph, bool grey, bool dimmed)
+{
+    const QColor color = grey     ? roundtableStaleColor()
+        : dimmed                  ? roundtableDimmedColor(glyph)
+                                  : roundtableGlyphColor(glyph);
     // The mockup's glyphs are 9 px across; their strokes scale with them.
     const qreal unit = size / 9.0;
     const qreal radius = size / 2.0;

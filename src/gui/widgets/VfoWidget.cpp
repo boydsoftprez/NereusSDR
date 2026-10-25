@@ -13,6 +13,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - While you are hidden the Roundtable line's glyph is
+//                dimmed (RoundtableFlagLine::dimmed). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code (Claude Opus 5.5).
 //   2026-10-24 - The Roundtable line at the foot of the flag: glyph,
 //                "Roundtable · 9 · K4ABC", @N in cyan; a click asks for the
 //                panel (Roundtable plan Task 14). J.J. Boyd (KG4VCF),
@@ -555,7 +558,7 @@ protected:
 
         const qreal midY = height() / 2.0;
         paintRoundtableGlyph(p, QPointF(kRoundtableLinePad + kRoundtableLineGlyph / 2.0, midY),
-                             kRoundtableLineGlyph, m_line.glyph);
+                             kRoundtableLineGlyph, m_line.glyph, false, m_line.dimmed);
 
         // The end: @N in cyan when a message names you, else a chevron.
         QFont end = lineFont();

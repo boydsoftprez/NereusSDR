@@ -20,12 +20,16 @@
 //   2026-10-24: Roundtable plan Task 15: the keyed room's turn is yours by
 //               its talker, as the server sends it. J.J. Boyd (KG4VCF),
 //               AI-assisted via Claude Code.
+//   2026-10-25: Hidden reads "Hidden · 9 · K4ABC" with the
+//               glyph dimmed; live and the other link states are unchanged.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 
 #include <QAbstractButton>
 #include <QFontMetrics>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QLoggingCategory>
@@ -161,6 +165,7 @@ private slots:
                                 + QStringLiteral("K4ABC"));
         QCOMPARE(line.glyph, glyph(RoundtableGlyph::Talking));
         QCOMPARE(line.mentions, 0);
+        QVERIFY(!line.dimmed);
 
         const RoundtableFlagLine doubled = roundtableFlagLineFor(&station.model, 1);
         QCOMPARE(doubled.text, QStringLiteral("Roundtable") + kDot + QStringLiteral("4") + kDot
@@ -223,15 +228,75 @@ private slots:
         line = roundtableFlagLineFor(&station.model, 0);
         QCOMPARE(line.text, QStringLiteral("Roundtable") + kDot + QStringLiteral("Offline"));
         QCOMPARE(line.glyph, glyph(RoundtableGlyph::Offline));
-
-        // Hidden still sees everything (D21): the room, as when live.
-        station.setLink(LinkState::Hidden);
-        line = roundtableFlagLineFor(&station.model, 0);
-        QCOMPARE(line.text, QStringLiteral("Roundtable") + kDot + QStringLiteral("9") + kDot
-                                + QStringLiteral("K4ABC"));
+        QVERIFY(!line.dimmed);
 
         station.setLink(LinkState::Off);
         QVERIFY(!roundtableFlagLineFor(&station.model, 0).visible);
+    }
+
+    void hiddenShowsTheRoomDimmedWithHidden()
+    {
+        // Hidden still sees everything (D21): the room, the talker and the
+        // count as when live, Hidden in place of Roundtable ("You are
+        // hidden" on the panel), the glyph dimmed.
+        using LinkState = RoundtableModel::LinkState;
+        Station station;
+        station.state.applyStationValue("mentionCounts", QStringLiteral("{\"lsb-7185000\":1}"));
+        station.setLink(LinkState::Hidden);
+        RoundtableFlagLine line = roundtableFlagLineFor(&station.model, 0);
+        QVERIFY(line.visible);
+        QCOMPARE(line.text, QStringLiteral("Hidden") + kDot
+                                + QStringLiteral("9") + kDot + QStringLiteral("K4ABC"));
+        QCOMPARE(line.glyph, glyph(RoundtableGlyph::Talking));
+        QVERIFY(line.dimmed);
+        QCOMPARE(line.mentions, 1);
+        const RoundtableFlagLine nobody = roundtableFlagLineFor(&station.model, 5);
+        QCOMPARE(nobody.text, QStringLiteral("Hidden") + kDot
+                                  + QStringLiteral("Nobody here"));
+        QVERIFY(nobody.dimmed);
+
+        // Live again: no Hidden, nothing dimmed.
+        station.setLink(LinkState::Live);
+        line = roundtableFlagLineFor(&station.model, 0);
+        QCOMPARE(line.text, QStringLiteral("Roundtable") + kDot + QStringLiteral("9") + kDot
+                                + QStringLiteral("K4ABC"));
+        QVERIFY(!line.dimmed);
+    }
+
+    void theFlagDrawsAHiddenLinesGlyphDimmed()
+    {
+        QWidget host;
+        host.resize(400, 600);
+        auto* flagWidget = new VfoWidget(&host);
+        host.show();
+        QAbstractButton* button = flagWidget->roundtableLineButtonForTest();
+        QVERIFY(button != nullptr);
+        RoundtableFlagLine line;
+        line.visible = true;
+        line.glyph = glyph(RoundtableGlyph::Talking);
+        line.text = QStringLiteral("Roundtable") + kDot + QStringLiteral("9") + kDot + QStringLiteral("K4ABC");
+        const auto glyphCenter = [&]() {
+            QImage image(button->size(), QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::black);
+            // On black, as on the flag's dark ground (no palette background).
+            button->render(&image, QPoint(), QRegion(), QWidget::RenderFlags());
+            // The glyph: 5 px in, 9 px across, on the line's middle.
+            return QColor(image.pixel(5 + 4, button->height() / 2));
+        };
+        flagWidget->setRoundtableLine(line);
+        const QColor live = glyphCenter();
+        QCOMPARE(live, roundtableGlyphColor(line.glyph));
+
+        line.dimmed = true;
+        line.text = QStringLiteral("Hidden") + kDot + QStringLiteral("9")
+            + kDot + QStringLiteral("K4ABC");
+        flagWidget->setRoundtableLine(line);
+        const QColor dimmed = glyphCenter();
+        // Still green, at about kRoundtableDimmedAlpha of the live green.
+        QVERIFY2(dimmed.green() < live.green() * 0.6 && dimmed.green() > live.green() * 0.3,
+                 qPrintable(dimmed.name()));
+        QVERIFY2(dimmed.green() > dimmed.red() && dimmed.green() > dimmed.blue(), qPrintable(dimmed.name()));
+        QCOMPARE(button->accessibleName(), line.text);
     }
 
     void nothingWithoutRoundtable()
@@ -252,7 +317,8 @@ private slots:
         for (int slice = 0; slice < 6; ++slice) {
             texts.append(roundtableFlagLineFor(&station.model, slice).text);
         }
-        for (LinkState linkState : {LinkState::Connecting, LinkState::Reconnecting, LinkState::Offline}) {
+        for (LinkState linkState :
+             {LinkState::Connecting, LinkState::Reconnecting, LinkState::Offline, LinkState::Hidden}) {
             station.setLink(linkState);
             texts.append(roundtableFlagLineFor(&station.model, 0).text);
         }
@@ -331,7 +397,14 @@ private slots:
             QStringLiteral("Roundtable") + kDot + QStringLiteral("Nobody here"),
             QStringLiteral("Roundtable") + kDot + QStringLiteral("99") + kDot + QStringLiteral("Unknown"),
             QStringLiteral("Roundtable") + kDot + QStringLiteral("99") + kDot + QStringLiteral("Doubled"),
-            QStringLiteral("Roundtable") + kDot + QStringLiteral("99 hear you")};
+            QStringLiteral("Roundtable") + kDot + QStringLiteral("99 hear you"),
+            QStringLiteral("Hidden") + kDot + QStringLiteral("99") + kDot
+                + QStringLiteral("KC1ABC/MM"),
+            QStringLiteral("Hidden") + kDot + QStringLiteral("99") + kDot
+                + QStringLiteral("Unknown"),
+            QStringLiteral("Hidden") + kDot + QStringLiteral("99") + kDot
+                + QStringLiteral("Doubled"),
+            QStringLiteral("Hidden") + kDot + QStringLiteral("Nobody here")};
         for (const QString& text : longest) {
             QVERIFY2(QFontMetrics(font).horizontalAdvance(text) <= room,
                      qPrintable(QStringLiteral("%1: %2 > %3")
