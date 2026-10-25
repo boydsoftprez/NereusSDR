@@ -30,6 +30,11 @@
 //                longer fed that stream before its channel's re-rate (the
 //                27 ms gap PR 630 found), so PR 630's guard is a safety net.
 //                J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-25 - the geometry barrier quiesces the external-diversity feed
+//                (hardwareIqDataStamped) with the stream feed, and
+//                reconnects it only if it was connected, so a diversity
+//                batch cannot reach a joining slice before its re-rate.
+//                J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-24 - limitFiltersToSidebands: the Core's LimitFiltersToSidebands
 //                setting (Setup's "Limit filter edges to sidebands", Thetis
 //                console.cs:7516-7521, setup.cs:22378-22381 [v2.10.3.15])
@@ -13800,9 +13805,18 @@ void RadioModel::applyStreamDspGeometry()
             // while the worker's thread runs, as before.
             const bool quiesce = worker != nullptr && receivers != nullptr
                                  && dspWorkerThreadRunning(worker);
+            // 2026-10-25: both feeds into the worker. The external-diversity
+            // fork hands its mixed chunk to every slice on the target's
+            // stream, so a batch of it between the new binding and the
+            // channel's re-rate would reach a joining slice at its old block.
+            // Reconnected below only if the route had it connected.
+            bool diversityFed = false;
             if (quiesce) {
                 QObject::disconnect(receivers, &ReceiverManager::iqDataForReceiverStamped,
                                     worker, &RxDspWorker::processStampedIqBatch);
+                diversityFed = QObject::disconnect(
+                    receivers, &ReceiverManager::hardwareIqDataStamped,
+                    worker, &RxDspWorker::processStampedExternalDiversityIqBatch);
                 runOnDspWorkerFromLane(worker, [worker]() { worker->resetAccumulator(); });
             }
             // Half 1: the worker's per-stream drain thresholds, queued to its
@@ -13831,12 +13845,19 @@ void RadioModel::applyStreamDspGeometry()
                         static_cast<Qt::ConnectionType>(Qt::QueuedConnection
                                                         | Qt::UniqueConnection));
             }
+            if (diversityFed) {
+                connect(receivers, &ReceiverManager::hardwareIqDataStamped,
+                        worker, &RxDspWorker::processStampedExternalDiversityIqBatch,
+                        static_cast<Qt::ConnectionType>(Qt::QueuedConnection
+                                                        | Qt::UniqueConnection));
+            }
         });
         return;
     }
 
     // ── Quiesce ──────────────────────────────────────────────────────────
-    // Mirrors setSampleRateLive steps 2 and 10. Disconnecting the feed and
+    // Mirrors setSampleRateLive steps 2 and 10. Disconnecting the feed
+    // (2026-10-25: both feeds, the external-diversity fork included) and
     // then reaching the worker through a BlockingQueuedConnection guarantees
     // two things: any in-flight processIqBatch has finished, and every event
     // already posted to the DSP thread has been consumed. (2026-10-25: the
@@ -13861,9 +13882,15 @@ void RadioModel::applyStreamDspGeometry()
     const bool quiesce = m_dspWorker != nullptr && m_receiverManager != nullptr
                          && m_dspThread != nullptr && m_dspThread->isRunning()
                          && QThread::currentThread() != m_dspThread;
+    // 2026-10-25: the external-diversity fork as well, as on the lane above,
+    // and reconnected only if it was connected.
+    bool diversityFed = false;
     if (quiesce) {
         QObject::disconnect(m_receiverManager, &ReceiverManager::iqDataForReceiverStamped,
                             m_dspWorker, &RxDspWorker::processStampedIqBatch);
+        diversityFed = QObject::disconnect(
+            m_receiverManager, &ReceiverManager::hardwareIqDataStamped,
+            m_dspWorker, &RxDspWorker::processStampedExternalDiversityIqBatch);
         QMetaObject::invokeMethod(m_dspWorker, &RxDspWorker::resetAccumulator,
                                   Qt::BlockingQueuedConnection);
     }
@@ -13932,6 +13959,12 @@ void RadioModel::applyStreamDspGeometry()
         connect(m_receiverManager, &ReceiverManager::iqDataForReceiverStamped,
                 m_dspWorker, &RxDspWorker::processStampedIqBatch,
                 Qt::QueuedConnection);
+    }
+    if (diversityFed) {
+        connect(m_receiverManager, &ReceiverManager::hardwareIqDataStamped,
+                m_dspWorker, &RxDspWorker::processStampedExternalDiversityIqBatch,
+                static_cast<Qt::ConnectionType>(Qt::QueuedConnection
+                                                | Qt::UniqueConnection));
     }
 }
 

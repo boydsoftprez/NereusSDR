@@ -18,6 +18,9 @@
 //                delivers them, after the quiesce when out of step, as a
 //                receive-lane job when in step. J.J. Boyd (KG4VCF),
 //                AI-assisted via Claude Code.
+//   2026-10-25 - applyStreamDspGeometry doc: the barrier quiesces the
+//                external-diversity feed too; deliverStagedStreamBindingsInStep
+//                is private. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-24 - limitFiltersToSidebands: Setup's "Limit filter edges to
 //                sidebands" (Thetis console.cs:7516-7521 [v2.10.3.15]), the
 //                Core's setting LimitFiltersToSidebands, applied to every
@@ -7669,7 +7672,11 @@ public:
     /// accumulator. Rather than order the two writes (the safe order inverts
     /// between widening and narrowing), this quiesces the I/Q feed for the
     /// duration exactly as setSampleRateLive steps 2 and 10 do, so no drain
-    /// can observe a half-applied geometry at all.
+    /// can observe a half-applied geometry at all. 2026-10-25: both feeds
+    /// into the worker, the stream feed and the external-diversity fork
+    /// (hardwareIqDataStamped, which hands its mixed chunk to every slice on
+    /// the target's stream); the fork is reconnected only if it was
+    /// connected.
     ///
     /// Cheap and side-effect-free when nothing is out of step, which is every
     /// call on a single-rate radio.
@@ -7696,9 +7703,6 @@ public:
     /// PR 630's input-size guard in RxChannel::processIq stays as the safety
     /// net if this ordering is ever broken.
     void applyStreamDspGeometry();
-    // 2026-10-25: applyStreamDspGeometry's in-step delivery of the staged
-    // bindings (see its declaration).
-    void deliverStagedStreamBindingsInStep();
 
     /// Re-run the codec after a MOX, effective PureSignal, or diversity
     /// transition through the same complete request used by slice binding.
@@ -7757,6 +7761,10 @@ public:
     }
 
 private:
+    // 2026-10-25: applyStreamDspGeometry's in-step delivery of the staged
+    // bindings (see its declaration).
+    void deliverStagedStreamBindingsInStep();
+
     /// Remote-daemon R2 Task 11. Emits BOTH activeSliceChanged(index) (the
     /// existing positional signal, unchanged) and activeSliceIdChanged(id)
     /// (new), resolving `index` against m_slices to find the id. `index`

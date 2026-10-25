@@ -21,9 +21,15 @@
 // step never overtakes one riding the geometry barrier, a removal reaches
 // the worker, and a single-rate bind still posts no barrier. J.J. Boyd
 // (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-25: an external-diversity batch arriving while the lane is inside
+// a joining slice's re-rate never reaches that slice at its old block; a
+// failing check during a lane hold lets go of the hold before it is
+// destroyed; a stack worker is detached before it dies. J.J. Boyd (KG4VCF),
+// AI-assisted via Claude Code.
 // =================================================================
 #include <QtTest/QtTest>
 #include <QRegularExpression>
+#include <QScopeGuard>
 #include <QSemaphore>
 #include <QSignalSpy>
 #include <QThread>
@@ -50,6 +56,7 @@
 #include "core/codec/P2CodecHermes.h"
 #include "core/codec/P2CodecOrionMkII.h"
 #include "core/codec/P2CodecSaturn.h"
+#include "core/wdsp_api.h"
 #include "models/RadioModel.h"
 #include "models/RxDspWorker.h"
 #include "models/SliceModel.h"
@@ -204,6 +211,53 @@ bool holdReceiveLane(RadioModel& model, LaneHold& hold)
     });
     return hold.entered.tryAcquire(1, 10000);
 }
+
+// Lets go of a LaneHold on every exit from the test, then waits for the lane,
+// so a failing check between the hold and its release cannot destroy the
+// hold while the lane job still waits on it. Declare it right after the
+// hold. A second release after the test's own is harmless: the job has
+// already taken the first.
+auto holdReleasedOnExit(RadioModel& model, LaneHold& hold)
+{
+    return qScopeGuard([&model, &hold]() {
+        hold.release.release();
+        model.waitForReceiveLaneForTest(10000);
+    });
+}
+
+#ifdef HAVE_WDSP
+// 2026-10-25: holds the receive lane inside one channel's re-rate. WDSP's
+// caller check runs on the calling thread at the start of WdspWaitWorkerExit,
+// which SetInputSamplerate reaches through pre_main_destroy
+// (third_party/wdsp/src/channel.c, dsplock.c), so the lane stops there: after
+// the barrier has posted the new bindings, before the channel's new
+// wdspInputSize(). One shot, for the armed channel only.
+std::atomic<int> g_rateHoldChannel {-1};
+QSemaphore g_rateHoldEntered;
+QSemaphore g_rateHoldRelease;
+std::atomic<bool> g_rateHoldTimedOut {false};
+
+void holdInsideRateChange(int channel, int kind)
+{
+    if (kind != kWdspCallerWaitWorkerExit || channel < 0) {
+        return;
+    }
+    int armed = channel;
+    if (!g_rateHoldChannel.compare_exchange_strong(armed, -1)) {
+        return;
+    }
+    g_rateHoldEntered.release();
+    if (!g_rateHoldRelease.tryAcquire(1, 10000)) {
+        g_rateHoldTimedOut.store(true);
+    }
+}
+
+// What the diversity fake does with the two legs: the primary, unmixed.
+void passPrimaryLeg(int, int samples, double** inputs, double* output)
+{
+    std::copy(inputs[0], inputs[0] + 2 * samples, output);
+}
+#endif
 
 // The worker's own binding for `stream`, read on its thread, sorted.
 QVector<int> workerStreamSlices(RxDspWorker* worker, int stream)
@@ -1119,6 +1173,10 @@ private slots:
         RxDspWorker worker;
         worker.setBufferSizes(kInSize, 64);
         model.attachDspWorkerForTest(&worker);
+        // 2026-10-25: the model keeps a pointer to the worker (its lane
+        // target); detach it before the worker, declared after the model,
+        // is destroyed, on every exit.
+        const auto detach = qScopeGuard([&model]() { model.attachDspWorkerForTest(nullptr); });
         model.republishAllStreamBindings();
         // 2026-10-25: the bindings reach the worker through a receive-lane
         // job (applyStreamDspGeometry, in step) and then a queued call;
@@ -1153,6 +1211,8 @@ private slots:
         RxDspWorker firstWorker;
         firstWorker.setBufferSizes(kInSize, 64);
         model.attachDspWorkerForTest(&firstWorker);
+        const auto detachFirst =
+            qScopeGuard([&model]() { model.attachDspWorkerForTest(nullptr); });
         model.republishAllStreamBindings();
         QCoreApplication::processEvents();
 
@@ -1177,6 +1237,8 @@ private slots:
         RxDspWorker secondWorker;
         secondWorker.setBufferSizes(kInSize, 64);
         model.attachDspWorkerForTest(&secondWorker);
+        const auto detachSecond =
+            qScopeGuard([&model]() { model.attachDspWorkerForTest(nullptr); });
         model.republishAllStreamBindings();
         // 2026-10-25: a receive-lane job, then a queued call.
         QVERIFY(model.waitForReceiveLaneForTest());
@@ -1646,6 +1708,7 @@ private slots:
         RxDspWorker worker;
         worker.setBufferSizes(bufferSizeForRate(192000), 64);
         model.attachDspWorkerForTest(&worker);
+        const auto detach = qScopeGuard([&model]() { model.attachDspWorkerForTest(nullptr); });
         model.republishAllStreamBindings();
         QCoreApplication::processEvents();
 
@@ -2423,6 +2486,7 @@ private slots:
 
         // The move, with the lane held so the re-rate cannot land yet.
         LaneHold hold;
+        const auto letGo = holdReleasedOnExit(model, hold);
         QVERIFY(holdReceiveLane(model, hold));
         model.sliceById(b)->setFrequency(7160000.0);
         QCOMPARE(model.sliceById(b)->streamIndex(), s1);
@@ -2466,6 +2530,137 @@ private slots:
         QVERIFY(r.watchedAtStreamBlock.load() >= 1);
     }
 
+    // External diversity feeds its mixed chunk to every slice on the
+    // target's stream, through its own fork of the hardware batches
+    // (hardwareIqDataStamped). Slice B joins the target's stream from one at
+    // another rate. The lane is stopped inside B's re-rate, after the barrier
+    // has handed the worker the new binding: a diversity batch then must not
+    // reach B at its old block, so the barrier quiesces that fork too.
+    void a_diversity_batch_inside_the_barrier_never_reaches_a_joining_slice()
+    {
+#ifndef HAVE_WDSP
+        QSKIP("needs WDSP's caller check to stop the lane inside the re-rate");
+#else
+        LaneRig r;
+        startLaneRig(r);
+        if (QTest::currentTestFailed()) { return; }
+        RadioModel& model = r.model;
+        RxDspWorker* const worker = r.worker.get();
+
+        // C keeps B's first stream alive, so B moves rather than retunes it.
+        const int a = tunedSlice(model, 14200000.0);
+        const int c = tunedSlice(model, 7150000.0);
+        const int b = tunedSlice(model, 7160000.0);
+        QVERIFY(a >= 0 && b >= 0 && c >= 0);
+        const int s0 = model.sliceById(a)->streamIndex();
+        const int s1 = model.sliceById(c)->streamIndex();
+        QVERIFY(s0 >= 0 && s1 >= 0 && s0 != s1 && s0 < 4 && s1 < 4);
+        QCOMPARE(model.sliceById(b)->streamIndex(), s1);
+        QVERIFY(model.setStreamSampleRate(s1, 1536000));
+        QVERIFY(model.waitForReceiveLaneForTest());
+        RxChannel* const rxB = r.engine->rxChannel(b);
+        QVERIFY(rxB != nullptr);
+        QCOMPARE(rxB->wdspInputSize(), bufferSizeForRate(1536000));
+
+        // The route on A, as wireConnectionSignals forks the hardware batches
+        // and the lane publishes a route, with a pass-through mix.
+        constexpr int kDivId = 0;
+        constexpr int kPrimaryDdc = 10;
+        constexpr int kSecondaryDdc = 11;
+        const int divChunk = bufferSizeForRate(192000);
+        connect(model.receiverManager(), &ReceiverManager::hardwareIqDataStamped,
+                worker, &RxDspWorker::processStampedExternalDiversityIqBatch,
+                Qt::QueuedConnection);
+        r.engine->setExternalDiversityApiForTest({
+            +[](int, int, int, int) {}, +[](int) {}, &passPrimaryLeg,
+            +[](int, int) {}, +[](int, int) {}, +[](int, int) {},
+            +[](int, int, double*, double*) {}});
+        QVERIFY(r.engine->createExternalDiversity(kDivId, 2, divChunk));
+        r.engine->setExternalDiversityRunning(kDivId, true);
+        QMetaObject::invokeMethod(worker, [worker, a]() {
+            worker->setExternalDiversityRoute(kDivId, a, kPrimaryDdc, kSecondaryDdc);
+        }, Qt::BlockingQueuedConnection);
+        const auto feedDiversity = [&model, divChunk]() {
+            emit model.receiverManager()->hardwareIqDataStamped(
+                kPrimaryDdc, oneChunk(divChunk), ReceiverManager::enqueueClockNs());
+            emit model.receiverManager()->hardwareIqDataStamped(
+                kSecondaryDdc, oneChunk(divChunk), ReceiverManager::enqueueClockNs());
+        };
+
+        // The route runs: A is handed the mix at its block.
+        r.watchedSlice.store(a);
+        feedDiversity();
+        QTRY_VERIFY_WITH_TIMEOUT(r.watchedAtStreamBlock.load() >= 1, 10000);
+        QCOMPARE(r.watchedMismatched.load(), 0);
+
+        // Watch B from here.
+        r.watchedSlice.store(b);
+        const int atBlockBefore = r.watchedAtStreamBlock.load();
+        RxChannel::InputSizeMismatch before;
+        rxB->takeInputSizeMismatch(before);
+        rxB->takeOutputNonFiniteSamples();
+
+        g_rateHoldEntered.tryAcquire(g_rateHoldEntered.available());
+        g_rateHoldRelease.tryAcquire(g_rateHoldRelease.available());
+        g_rateHoldTimedOut.store(false);
+        g_rateHoldChannel.store(b);
+        WDSPSetCallerCheckHook(&holdInsideRateChange);
+        // On every exit: disarm, let the lane go, wait for it, then unhook.
+        const auto unhook = qScopeGuard([&model]() {
+            g_rateHoldChannel.store(-1);
+            g_rateHoldRelease.release();
+            model.waitForReceiveLaneForTest(10000);
+            WDSPSetCallerCheckHook(nullptr);
+        });
+
+        // B joins A's stream while the lane is held, so the barrier queues.
+        LaneHold hold;
+        const auto letGo = holdReleasedOnExit(model, hold);
+        QVERIFY(holdReceiveLane(model, hold));
+        model.sliceById(b)->setFrequency(14210000.0);
+        QCOMPARE(model.sliceById(b)->streamIndex(), s0);
+        hold.release.release();
+
+        // The lane is now inside B's re-rate: the worker holds {A, B} for the
+        // stream, B's channel is still at its old block.
+        QVERIFY2(g_rateHoldEntered.tryAcquire(1, 10000),
+                 "the lane never reached slice B's re-rate");
+        QCOMPARE(workerStreamSlices(worker, s0), sorted(QVector<int>{a, b}));
+        QCOMPARE(rxB->wdspInputSize(), bufferSizeForRate(1536000));
+        for (int i = 0; i < 3; ++i) {
+            feedDiversity();
+        }
+        // Queued ahead of this round trip, so any batch the fork let in has run.
+        workerStreamSlices(worker, s0);
+        const int mismatchedInside = r.watchedMismatched.load();
+
+        g_rateHoldRelease.release();
+        QVERIFY(model.waitForReceiveLaneForTest(10000));
+        QVERIFY2(!g_rateHoldTimedOut.load(), "the re-rate hold timed out instead of being released");
+        QVERIFY2(!hold.timedOut.load(), "the lane hold timed out instead of being released");
+        QCOMPARE(rxB->wdspInputSize(), bufferSizeForRate(192000));
+
+        // After the barrier the fork is back: B is handed the mix at its new block.
+        feedDiversity();
+        QTRY_VERIFY_WITH_TIMEOUT(r.watchedAtStreamBlock.load() > atBlockBefore, 10000);
+
+        RxChannel::InputSizeMismatch taken;
+        rxB->takeInputSizeMismatch(taken);
+        const qint64 nonFinite = rxB->takeOutputNonFiniteSamples();
+        qInfo("slice B: %d diversity chunks handed to its channel at another block inside "
+              "the barrier, %d in all; guard count %lld (last chunk %d against block %d); "
+              "%d chunks at block %d after it; non-finite output %lld",
+              mismatchedInside, r.watchedMismatched.load(),
+              static_cast<long long>(taken.chunks), taken.chunkSize, taken.wdspInputSize,
+              r.watchedAtStreamBlock.load() - atBlockBefore, divChunk,
+              static_cast<long long>(nonFinite));
+        QCOMPARE(mismatchedInside, 0);
+        QCOMPARE(r.watchedMismatched.load(), 0);
+        QCOMPARE(taken.chunks, qint64(0));
+        QCOMPARE(nonFinite, qint64(0));
+#endif
+    }
+
     // B's move is out of step, so its binding rides the barrier; C then
     // joins the same stream in step. The in-step binding ({B, C}) is a
     // receive-lane job behind the barrier, so the barrier's {B} can never
@@ -2489,6 +2684,7 @@ private slots:
         QVERIFY(model.waitForReceiveLaneForTest());
 
         LaneHold hold;
+        const auto letGo = holdReleasedOnExit(model, hold);
         QVERIFY(holdReceiveLane(model, hold));
         model.sliceById(b)->setFrequency(7150000.0);
         const int target = model.sliceById(b)->streamIndex();
