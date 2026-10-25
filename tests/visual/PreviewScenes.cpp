@@ -11,6 +11,9 @@
 // transmit scene refuses to run if one exists).
 //
 // Modification history (NereusSDR):
+//   2026-10-25 - Every roundtable-* scene runs with the workspace look on
+//                 (Scene::workspacePreview), the app's default. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-24 - Roundtable plan Task 15: every roundtable-panel-* scene
 //                 and roundtable-keyed also at the applet column's widths
 //                 (--column, 298 px, the column at 1512x869; --min, its
@@ -7031,6 +7034,9 @@ QStringList roundtableOverruns(QWidget* content, int viewport)
 
 void appendRoundtableScenes(QVector<Scene>& scenes)
 {
+    // Every Roundtable scene shows the workspace look, the app's default:
+    // the scenes are marked after they are added (the loop at the end).
+    const qsizetype first = scenes.size();
     // The panel in the right column, 340 px wide: in a room, reading
     // another, on a frequency with nobody, and reconnecting.
     const auto panelScene = [&scenes](const QString& name, const std::function<void(PosedRoundtable&, RoundtablePanel&)>& pose,
@@ -7396,6 +7402,10 @@ void appendRoundtableScenes(QVector<Scene>& scenes)
             }
         });
     }});
+
+    for (qsizetype i = first; i < scenes.size(); ++i) {
+        scenes[i].workspacePreview = true;
+    }
 }
 
 void appendMenuScenes(QVector<Scene>& scenes)

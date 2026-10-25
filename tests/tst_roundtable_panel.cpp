@@ -29,6 +29,12 @@
 //               viewport and the design's 340 px, nothing past the
 //               viewport and long callsigns elided with a tooltip.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25: takesTheWorkspaceLook: with the look on every color the
+//               panel writes is a look role (or the slice's own color on
+//               its letter badge), with it off the classic one; a slice B
+//               room shows B in B's color. The stale age is the look's warn
+//               status. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -46,8 +52,10 @@
 #include <QMenu>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QSet>
 #include <QSignalSpy>
 #include <QSplitter>
 #include <QTemporaryDir>
@@ -58,6 +66,7 @@
 #include <qpa/qwindowsysteminterface.h>
 
 #include "core/AppSettings.h"
+#include "core/ControlRanges.h"
 #include "core/roundtable/RoundtableState.h"
 #include "core/session/IStationLink.h"
 #include "core/WdspTypes.h"
@@ -70,6 +79,9 @@
 #include "gui/containers/ContainerWorkspaceStore.h"
 #include "gui/roundtable/RoundtablePanel.h"
 #include "gui/roundtable/RoundtableWindow.h"
+#include "gui/StyleConstants.h"
+#include "gui/styles/WorkspacePalette.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "models/RadioModel.h"
 #include "models/RoundtableModel.h"
 #include "models/SliceModel.h"
@@ -474,8 +486,74 @@ private slots:
             if (row->property("stale").toBool()) {
                 QCOMPARE(row->property("callsign").toString(), QStringLiteral("W4ABC"));
                 auto* age = row->findChild<QLabel*>(QStringLiteral("roundtableReadingAge"));
-                QVERIFY(age->styleSheet().contains(QStringLiteral("#d8a55f")));
+                QVERIFY(age->styleSheet().contains(
+                    WorkspacePreview::statusColourName(Style::kAmberText, "warn")));
                 QCOMPARE(age->text(), QStringLiteral("20 s"));
+            }
+        }
+    }
+
+    void takesTheWorkspaceLook()
+    {
+        struct LookOff {
+            ~LookOff() { WorkspacePreview::setEnabledForTest(false); }
+        } restore;
+        const QString sliceB = QColor(static_cast<QRgb>(ControlRanges::sliceColour(1))).name();
+        QSet<QString> palette;
+        for (const auto& e : Workspace::WorkspacePalette::glassAndDepth().entries()) {
+            palette.insert(QString::fromLatin1(e.hex));
+        }
+        // A slice letter badge is in its slice's color, a data color.
+        for (const std::uint32_t rgb : ControlRanges::kSliceColours) {
+            palette.insert(QColor(static_cast<QRgb>(rgb)).name());
+        }
+        static const QRegularExpression hex(QStringLiteral("#[0-9a-fA-F]{6}\\b"));
+        for (const bool look : {true, false}) {
+            WorkspacePreview::setEnabledForTest(look);
+            Posed p;
+            // Slice B in the room: B in B's color.
+            p.state.applyStationValue("sliceRooms", QStringLiteral("{\"1\":\"%1\"}").arg(kRoom));
+            p.model.applyRoom(talkingRoom(QJsonArray{
+                message(1, QStringLiteral("a"), QStringLiteral("W4ABC"), QStringLiteral("good copy"))}));
+            RoundtablePanel panel(&p.model);
+            panel.resize(340, 1400);
+            panel.followSlice(1);
+            panel.show();
+            settle();
+            QCOMPARE(panel.roomId(), kRoom);
+            auto* tag = child<QLabel>(&panel, QStringLiteral("roundtableTag"));
+            QVERIFY(tag != nullptr);
+            QCOMPARE(tag->text(), QStringLiteral("B"));
+            QVERIFY2(tag->styleSheet().contains(QStringLiteral("background: %1").arg(sliceB)),
+                     qPrintable(tag->styleSheet()));
+            QList<QWidget*> widgets{&panel};
+            widgets.append(panel.findChildren<QWidget*>());
+            QStringList sheets;
+            for (QWidget* w : std::as_const(widgets)) {
+                sheets.append(w->styleSheet());
+            }
+            const QString all = sheets.join(QLatin1Char('\n'));
+            if (look) {
+                // No color of the panel's own outside the look's palette
+                // and the slice colors.
+                QStringList strays;
+                for (QWidget* w : std::as_const(widgets)) {
+                    for (auto it = hex.globalMatch(w->styleSheet()); it.hasNext();) {
+                        const QString v = it.next().captured(0).toLower();
+                        if (!palette.contains(v)) {
+                            strays.append(QStringLiteral("%1 in %2").arg(v, w->styleSheet()));
+                        }
+                    }
+                }
+                strays.removeDuplicates();
+                QVERIFY2(strays.isEmpty(), qPrintable(strays.join(QLatin1Char(' '))));
+                // The look's accent, not the classic one.
+                QVERIFY(all.contains(QStringLiteral("#4a7ba8")));
+                QVERIFY(!all.contains(QLatin1String(Style::kAccent)));
+            } else {
+                // The classic look: the classic accent, no workspace one.
+                QVERIFY(all.contains(QLatin1String(Style::kAccent)));
+                QVERIFY(!all.contains(QStringLiteral("#4a7ba8")));
             }
         }
     }

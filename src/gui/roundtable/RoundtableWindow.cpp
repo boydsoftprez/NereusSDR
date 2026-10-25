@@ -10,12 +10,18 @@
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 13).
+//   2026-10-25: every color is the workspace look's role (Style:: and
+//               WorkspacePreview::roleColourName / statusColour), the room
+//               states the look's status colors. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/roundtable/RoundtableWindow.h"
 
 #include "core/AppSettings.h"
+#include "gui/StyleConstants.h"
 #include "gui/roundtable/RoundtablePanel.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "models/RoundtableModel.h"
 
 #include <QCloseEvent>
@@ -37,18 +43,41 @@ namespace {
 
 constexpr int kRoomIdRole = Qt::UserRole + 1;
 
-constexpr const char* kListStyle =
-    "QListWidget { background: #0c0c0e; border: none; color: #dcdce1; font-size: 12px;"
-    "  outline: none; }"
-    "QListWidget::item { padding: 4px 8px; border-bottom: 1px solid #1c1c1f; }"
-    "QListWidget::item:selected { background: #16222c; color: #ffffff;"
-    "  border-left: 2px solid #00b4d8; }"
-    "QListWidget::item:disabled { color: #a6a6ac; background: #111114; }";
-constexpr const char* kSearchStyle =
-    "QLineEdit { background: #0f0f12; border: 1px solid #3f3f42; border-radius: 3px;"
-    "  color: #dcdce1; font-size: 12px; padding: 2px 5px; margin: 6px 8px;"
-    "  placeholder-text-color: #8e8e93; }"
-    "QLineEdit:focus { border-color: #00b4d8; }";
+// Every color is the workspace look's role; with the look off, the classic
+// Style:: value it stands for.
+QString role(const char* legacy, const char* name)
+{
+    return WorkspacePreview::roleColourName(legacy, name);
+}
+
+QString panelColor() { return role(Style::kPanelBg, "panel"); }
+QString ruleColor() { return role(Style::kBorderSubtle, "border-subtle"); }
+QString dimColor() { return role(Style::kTextSecondary, "text-secondary"); }
+
+QString listStyle()
+{
+    return QStringLiteral(
+               "QListWidget { background: %1; border: none; color: %2; font-size: 12px;"
+               "  outline: none; }"
+               "QListWidget::item { padding: 4px 8px; border-bottom: 1px solid %3; }"
+               "QListWidget::item:selected { background: %4; color: %5;"
+               "  border-left: 2px solid %6; }"
+               "QListWidget::item:disabled { color: %7; background: %8; }")
+        .arg(panelColor(), role(Style::kTextPrimary, "text"), ruleColor(), role(Style::kBlueBg, "selected-top"),
+             role(Style::kBlueText, "selected-text"), role(Style::kAccent, "accent"), dimColor(),
+             role(Style::kDisabledBg, "disabled-bg"));
+}
+
+QString searchStyle()
+{
+    return QStringLiteral(
+               "QLineEdit { background: %1; border: 1px solid %2; border-radius: 3px;"
+               "  color: %3; font-size: 12px; padding: 2px 5px; margin: 6px 8px;"
+               "  placeholder-text-color: %4; }"
+               "QLineEdit:focus { border-color: %5; }")
+        .arg(role(Style::kInsetBg, "inset"), role(Style::kBorder, "border-muted"), role(Style::kTextPrimary, "text"),
+             role(Style::kTextTertiary, "text-tertiary"), role(Style::kAccent, "accent"));
+}
 
 QString frequencyText(qint64 hz)
 {
@@ -74,7 +103,7 @@ RoundtableWindow::RoundtableWindow(RoundtableModel* model, QWidget* parent)
     setObjectName(QStringLiteral("RoundtableWindow"));
     setWindowTitle(QStringLiteral("Roundtable"));
     setAttribute(Qt::WA_StyledBackground, true);
-    setStyleSheet(QStringLiteral("QWidget#RoundtableWindow { background: #0d0d10; }"));
+    setStyleSheet(QStringLiteral("QWidget#RoundtableWindow { background: %1; }").arg(role(Style::kAppBg, "app-bg")));
     setMinimumSize(300, 320);
 
     m_body = new QHBoxLayout(this);
@@ -85,40 +114,42 @@ RoundtableWindow::RoundtableWindow(RoundtableModel* model, QWidget* parent)
     m_listColumn = new QWidget(this);
     m_listColumn->setObjectName(QStringLiteral("roundtableRoomListColumn"));
     m_listColumn->setAttribute(Qt::WA_StyledBackground, true);
-    m_listColumn->setStyleSheet(QStringLiteral("QWidget#roundtableRoomListColumn { background: #0c0c0e;"
-                                               " border-right: 1px solid #1f1f23; }"));
+    m_listColumn->setStyleSheet(QStringLiteral("QWidget#roundtableRoomListColumn { background: %1;"
+                                               " border-right: 1px solid %2; }")
+                                    .arg(panelColor(), ruleColor()));
     auto* listLayout = new QVBoxLayout(m_listColumn);
     listLayout->setContentsMargins(0, 0, 0, 0);
     listLayout->setSpacing(0);
     auto* head = new QWidget(m_listColumn);
     head->setObjectName(QStringLiteral("roundtableRoomListHead"));
     head->setAttribute(Qt::WA_StyledBackground, true);
-    head->setStyleSheet(QStringLiteral("QWidget#roundtableRoomListHead { border-bottom: 1px solid #1f1f23; }"));
+    head->setStyleSheet(QStringLiteral("QWidget#roundtableRoomListHead { border-bottom: 1px solid %1; }")
+                            .arg(ruleColor()));
     auto* headRow = new QHBoxLayout(head);
     headRow->setContentsMargins(8, 6, 8, 6);
     auto* title = new QLabel(QStringLiteral("FREQUENCIES"), head);
-    title->setStyleSheet(QStringLiteral("color: #a6a6ac; font-size: 11px; font-weight: bold;"));
+    title->setStyleSheet(QStringLiteral("color: %1; font-size: 11px; font-weight: bold;").arg(dimColor()));
     QFont spaced = title->font();
     spaced.setLetterSpacing(QFont::AbsoluteSpacing, 1.2);
     title->setFont(spaced);
     headRow->addWidget(title, 1);
     m_onAir = new QLabel(head);
     m_onAir->setObjectName(QStringLiteral("roundtableOnAir"));
-    m_onAir->setStyleSheet(QStringLiteral("color: #a6a6ac; font-size: 11px;"));
+    m_onAir->setStyleSheet(QStringLiteral("color: %1; font-size: 11px;").arg(dimColor()));
     headRow->addWidget(m_onAir);
     listLayout->addWidget(head);
     m_search = new QLineEdit(m_listColumn);
     m_search->setObjectName(QStringLiteral("roundtableRoomSearch"));
     m_search->setPlaceholderText(QStringLiteral("Search  /"));
     m_search->setToolTip(QStringLiteral("Find a frequency, band or callsign"));
-    m_search->setStyleSheet(QLatin1String(kSearchStyle));
+    m_search->setStyleSheet(searchStyle());
     m_search->setClearButtonEnabled(true);
     m_search->installEventFilter(this);
     connect(m_search, &QLineEdit::textChanged, this, &RoundtableWindow::rebuildList);
     listLayout->addWidget(m_search);
     m_rooms = new QListWidget(m_listColumn);
     m_rooms->setObjectName(QStringLiteral("roundtableRoomList"));
-    m_rooms->setStyleSheet(QLatin1String(kListStyle));
+    m_rooms->setStyleSheet(listStyle());
     m_rooms->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_rooms->installEventFilter(this);
     connect(m_rooms, &QListWidget::itemClicked, this, &RoundtableWindow::openItem);
@@ -341,11 +372,11 @@ void RoundtableWindow::rebuildList()
         item->setToolTip(QStringLiteral("Read %1 here").arg(frequencyText(hz)));
         const QString state = summary.value(QStringLiteral("state")).toString();
         if (state == QLatin1String("talking")) {
-            item->setForeground(QColor(0x7f, 0xd0, 0x95));
+            item->setForeground(WorkspacePreview::statusColour(QColor(Style::kGreenText), "ok"));
         } else if (state == QLatin1String("unknown")) {
-            item->setForeground(QColor(0xd8, 0xa5, 0x5f));
+            item->setForeground(WorkspacePreview::statusColour(QColor(Style::kAmberText), "warn"));
         } else if (state == QLatin1String("doubled")) {
-            item->setForeground(QColor(0xe0, 0x8a, 0x8c));
+            item->setForeground(WorkspacePreview::statusColour(QColor(Style::kRedBorder), "danger"));
         }
         if (id == keep) {
             m_rooms->setCurrentItem(item);

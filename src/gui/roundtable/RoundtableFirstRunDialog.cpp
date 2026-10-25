@@ -10,6 +10,12 @@
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 12).
+//   2026-10-25: every color is the workspace look's role (Style:: and
+//               WorkspacePreview::roleColourName / statusColourName): "you"
+//               is the look's accent, the main button the selection glass,
+//               the hide switch the look's lit green when on
+//               (kLitWhenOnProperty). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "gui/roundtable/RoundtableFirstRunDialog.h"
@@ -17,6 +23,8 @@
 #include "core/AppSettings.h"
 #include "core/SpotSourceHost.h"
 #include "core/roundtable/RoundtableWire.h"
+#include "gui/StyleConstants.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "models/RoundtableModel.h"
 
 #include <QFrame>
@@ -29,47 +37,91 @@ namespace NereusSDR {
 
 namespace {
 
-// The workspace roles the board mockup's first-run sheet uses
+// Every color is the workspace look's role; with the look off, the classic
+// Style:: value it stands for.
+QString role(const char* legacy, const char* name)
+{
+    return WorkspacePreview::roleColourName(legacy, name);
+}
+
+QString youColor() { return role(Style::kAccent, "accent"); }
+
+// The board mockup's first-run sheet
 // (docs/architecture/reporter-brainstorm/mockups/board.html, .rt-first).
-constexpr const char* kSheetStyle =
-    "QDialog#RoundtableFirstRunDialog { background: #0c0c0e; }"
-    "QLabel { color: #dcdce1; font-size: 13px; }"
-    "QLabel#roundtableFirstRunTitle { color: #ececf0; font-size: 18px; font-weight: bold; }"
-    "QLabel#roundtableFirstRunFoot { color: #a6a6ac; font-size: 12px; }"
-    "QLabel#roundtableFirstRunError { color: #d8a55f; font-size: 12px; }"
-    "QFrame#roundtableFirstRunItem { border-top: 1px solid #2a2a2e; }"
-    "QFrame#roundtableFirstRunHideRow { background: #111115; border: 1px solid #2c2c31;"
-    "  border-radius: 8px; }"
-    "QFrame#roundtableFirstRunHideRow QLabel { background: transparent; }"
-    "QLabel#roundtableFirstRunHideTitle { color: #ececf0; font-size: 14px; font-weight: bold; }"
-    "QLabel#roundtableFirstRunHideText { color: #a6a6ac; font-size: 12px; }"
-    "QPushButton#roundtableFirstRunHideSwitch { min-width: 52px; min-height: 26px;"
-    "  border-radius: 13px; border: 1px solid #3d3d41; background: #1a1a1e; color: #a6a6ac;"
-    "  font-size: 12px; font-weight: bold; }"
-    "QPushButton#roundtableFirstRunHideSwitch:checked { background: #1e3d5f;"
-    "  border-color: #4a7ba8; color: #ffffff; }";
+QString sheetStyle()
+{
+    return QStringLiteral(
+               "QDialog#RoundtableFirstRunDialog { background: %1; }"
+               "QLabel { color: %2; font-size: 13px; }"
+               "QLabel#roundtableFirstRunTitle { color: %2; font-size: 18px; font-weight: bold; }"
+               "QLabel#roundtableFirstRunFoot { color: %3; font-size: 12px; }"
+               "QLabel#roundtableFirstRunError { color: %4; font-size: 12px; }"
+               "QFrame#roundtableFirstRunItem { border-top: 1px solid %5; }"
+               "QFrame#roundtableFirstRunHideRow { background: %6; border: 1px solid %5;"
+               "  border-radius: 8px; }"
+               "QFrame#roundtableFirstRunHideRow QLabel { background: transparent; }"
+               "QLabel#roundtableFirstRunHideTitle { color: %2; font-size: 14px; font-weight: bold; }"
+               "QLabel#roundtableFirstRunHideText { color: %3; font-size: 12px; }")
+        .arg(role(Style::kPanelBg, "panel"), role(Style::kTextPrimary, "text"),
+             role(Style::kTextSecondary, "text-secondary"),
+             WorkspacePreview::statusColourName(Style::kAmberText, "warn"), role(Style::kBorder, "border"),
+             role(Style::kButtonBg, "panel-top"));
+}
 
-// The main button and the quiet one (.rt-mbtns .is-go / .is-quiet).
-constexpr const char* kMainButtonStyle =
-    "QPushButton { min-height: 44px; border-radius: 10px; font-size: 14px; font-weight: bold;"
-    "  background: #1e3d5f; border: 1px solid #4a7ba8; color: #ffffff; padding: 0 16px; }"
-    "QPushButton:hover { background: #2f5f92; }"
-    "QPushButton:disabled { background: #141417; border-color: #232327; color: #4e4e53; }";
-constexpr const char* kQuietButtonStyle =
-    "QPushButton { min-height: 44px; border-radius: 10px; font-size: 14px; font-weight: bold;"
-    "  background: transparent; border: 1px solid #2c2c31; color: #b4b4b8; padding: 0 16px; }"
-    "QPushButton:hover { background: #1a1a1e; }"
-    "QPushButton:disabled { background: #141417; border-color: #232327; color: #4e4e53; }";
+// The hide switch: the look's lit green while it is on (kLitWhenOnProperty,
+// as OPERATE on the tuner and RF2K-S applets), the raised button while off.
+QString switchStyle(bool on)
+{
+    const QString bg = on ? role(Style::kGreenBg, "ok-bg") : role(Style::kButtonBg, "button");
+    const QString border = on ? role(Style::kGreenBorder, "ok-border") : role(Style::kBorder, "border-muted");
+    const QString text = on ? role(Style::kGreenText, "ok") : role(Style::kTextSecondary, "text-secondary");
+    return QStringLiteral(
+               "QPushButton { min-width: 52px; min-height: 26px; border-radius: 13px;"
+               "  border: 1px solid %1; background: %2; color: %3; font-size: 12px; font-weight: bold; }")
+        .arg(border, bg, text);
+}
 
-// The state glyphs of design 11 (U7): you a filled cyan dot, talking a
-// filled green dot, unknown a ringed amber dot, quiet a hollow ring.
-QLabel* glyph(const char* fill, const char* ring)
+// The main button and the quiet one (.rt-mbtns .is-go / .is-quiet). The
+// main button is filled with the look's selection glass; the look's pass
+// leaves both alone (kSkipProperty), since it draws every unchecked action
+// button raised and the main one would read as the quiet one.
+QString mainButtonStyle()
+{
+    return QStringLiteral(
+               "QPushButton { min-height: 44px; border-radius: 10px; font-size: 14px; font-weight: bold;"
+               "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 %1, stop:1 %2);"
+               "  border: 1px solid %3; color: %4; padding: 0 16px; }"
+               "QPushButton:hover { background: %5; }"
+               "QPushButton:disabled { background: %6; border-color: %7; color: %8; }")
+        .arg(role(Style::kBlueBg, "selected-top"), role(Style::kBlueBg, "selected-bottom"),
+             role(Style::kBlueBorder, "selected-border"), role(Style::kBlueText, "selected-text"),
+             role(Style::kBlueHover, "selected-top"), role(Style::kDisabledBg, "disabled-bg"),
+             role(Style::kDisabledBorder, "disabled-border"), role(Style::kDisabledText, "disabled-text"));
+}
+QString quietButtonStyle()
+{
+    return QStringLiteral(
+               "QPushButton { min-height: 44px; border-radius: 10px; font-size: 14px; font-weight: bold;"
+               "  background: transparent; border: 1px solid %1; color: %2; padding: 0 16px; }"
+               "QPushButton:hover { background: %3; }"
+               "QPushButton:disabled { background: %4; border-color: %5; color: %6; }")
+        .arg(role(Style::kBorder, "border"), role(Style::kTextSecondary, "text-secondary"),
+             role(Style::kButtonBg, "button"), role(Style::kDisabledBg, "disabled-bg"),
+             role(Style::kDisabledBorder, "disabled-border"), role(Style::kDisabledText, "disabled-text"));
+}
+
+// The state glyphs of design 11 (U7): you a filled dot in the accent,
+// talking a filled green dot, unknown a ringed amber dot, quiet a hollow ring.
+QLabel* glyph(const QString& fill, const QString& ring)
 {
     auto* dot = new QLabel;
     dot->setFixedSize(12, 12);
+    // The look pass reads an accent-filled label as a badge and squares it
+    // off; the glyph already takes its colors from the look, so it skips.
+    dot->setProperty(WorkspacePreview::kSkipProperty, true);
     dot->setStyleSheet(QStringLiteral("QLabel { background: %1; border: 2px solid %2;"
                                       " border-radius: 6px; }")
-                           .arg(QLatin1String(fill), QLatin1String(ring)));
+                           .arg(fill, ring));
     return dot;
 }
 
@@ -90,8 +142,8 @@ QFrame* item(QLabel* dot, const QString& html)
 
 QString youMark(const QString& text)
 {
-    return QStringLiteral("<b style='color:#00d4ff; font-family:Menlo,monospace;'>%1</b>")
-        .arg(text.toHtmlEscaped());
+    return QStringLiteral("<b style='color:%1; font-family:Menlo,monospace;'>%2</b>")
+        .arg(youColor(), text.toHtmlEscaped());
 }
 
 } // namespace
@@ -114,7 +166,7 @@ RoundtableFirstRunDialog::RoundtableFirstRunDialog(RoundtableModel* model, QWidg
 {
     setObjectName(QStringLiteral("RoundtableFirstRunDialog"));
     setWindowTitle(QStringLiteral("Roundtable is public"));
-    setStyleSheet(QLatin1String(kSheetStyle));
+    setStyleSheet(sheetStyle());
     setMinimumWidth(480);
 
     auto* root = new QVBoxLayout(this);
@@ -173,13 +225,15 @@ void RoundtableFirstRunDialog::buildQuestion(QWidget* page)
     }
     auto* list = new QVBoxLayout;
     list->setSpacing(0);
-    list->addWidget(item(glyph("#00d4ff", "#00d4ff"), who));
-    list->addWidget(item(glyph("#4caf6a", "#4caf6a"),
+    list->addWidget(item(glyph(youColor(), youColor()), who));
+    const QString talking = WorkspacePreview::statusColourName(Style::kGreenText, "ok");
+    list->addWidget(item(glyph(talking, talking),
                          QStringLiteral("Your radio's reading of each talker, and how far you "
                                         "are from them")));
-    list->addWidget(item(glyph("#33280f", "#d8a55f"),
+    list->addWidget(item(glyph(role(Style::kAmberBg, "measured-bg"),
+                               WorkspacePreview::statusColourName(Style::kAmberText, "warn")),
                          QStringLiteral("Every station's reading of you while you talk")));
-    list->addWidget(item(glyph("transparent", "#909096"),
+    list->addWidget(item(glyph(QStringLiteral("transparent"), role(Style::kTextTertiary, "text-tertiary")),
                          QStringLiteral("Messages you post on your frequency")));
     layout->addLayout(list);
 
@@ -208,6 +262,9 @@ void RoundtableFirstRunDialog::buildQuestion(QWidget* page)
     m_hideSwitch = new QPushButton(QStringLiteral("Off"));
     m_hideSwitch->setObjectName(QStringLiteral("roundtableFirstRunHideSwitch"));
     m_hideSwitch->setCheckable(true);
+    // Workspace look: on is the lit green (JJ's D30). The property is read
+    // only by the workspace look's sheet pass.
+    m_hideSwitch->setProperty(WorkspacePreview::kLitWhenOnProperty, true);
     m_hideSwitch->setAccessibleName(QStringLiteral("Hide my station"));
     connect(m_hideSwitch, &QPushButton::toggled, this, [this](bool) { applySwitch(); });
     hideLayout->addWidget(m_hideSwitch, 0, Qt::AlignVCenter);
@@ -219,6 +276,9 @@ void RoundtableFirstRunDialog::buildQuestion(QWidget* page)
     m_stayHidden->setObjectName(QStringLiteral("roundtableFirstRunStayHidden"));
     m_goLive = new QPushButton(QStringLiteral("Go live"));
     m_goLive->setObjectName(QStringLiteral("roundtableFirstRunGoLive"));
+    for (QPushButton* button : {m_stayHidden, m_goLive}) {
+        button->setProperty(WorkspacePreview::kSkipProperty, true);
+    }
     connect(m_stayHidden, &QPushButton::clicked, this, [this] { answer(false); });
     connect(m_goLive, &QPushButton::clicked, this, [this] { answer(true); });
     buttons->addWidget(m_stayHidden, 1);
@@ -269,7 +329,8 @@ void RoundtableFirstRunDialog::buildNote(QWidget* page)
     row->addStretch(1);
     auto* ok = new QPushButton(QStringLiteral("OK"));
     ok->setObjectName(QStringLiteral("roundtableFirstRunNoteOk"));
-    ok->setStyleSheet(QLatin1String(kMainButtonStyle));
+    ok->setProperty(WorkspacePreview::kSkipProperty, true);
+    ok->setStyleSheet(mainButtonStyle());
     ok->setMinimumWidth(140);
     connect(ok, &QPushButton::clicked, this, &QDialog::accept);
     row->addWidget(ok);
@@ -294,8 +355,9 @@ void RoundtableFirstRunDialog::applySwitch()
     const bool on = hideSwitchOn();
     m_hideSwitch->setText(on ? QStringLiteral("On") : QStringLiteral("Off"));
     // The switch moves the main button; either button still answers.
-    m_stayHidden->setStyleSheet(QLatin1String(on ? kMainButtonStyle : kQuietButtonStyle));
-    m_goLive->setStyleSheet(QLatin1String(on ? kQuietButtonStyle : kMainButtonStyle));
+    m_hideSwitch->setStyleSheet(switchStyle(on));
+    m_stayHidden->setStyleSheet(on ? mainButtonStyle() : quietButtonStyle());
+    m_goLive->setStyleSheet(on ? quietButtonStyle() : mainButtonStyle());
     m_stayHidden->setDefault(on);
     m_goLive->setDefault(!on);
 }

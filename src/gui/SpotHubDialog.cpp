@@ -194,6 +194,9 @@
 //               this computer's two choices. The Core's settings go
 //               through RoundtableModel. NereusSDR-original.
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-25  J.J. Boyd (KG4VCF): the Roundtable tab's quiet labels, the
+//               danger hover and the delete confirm take workspace roles
+//               (roleColourName). AI-assisted via Anthropic Claude Code.
 
 #include "SpotHubDialog.h"
 #include "gui/styles/WorkspacePreview.h"
@@ -3693,11 +3696,22 @@ constexpr const char* kRtServerHost = "roundtable.nereussdr.com";
 constexpr const char* kRtHelpStyle = "QLabel { color: #8aa8c0; font-size: 12px; }";
 constexpr const char* kRtScopeStyle = "QLabel { color: #8aa8c0; font-size: 11px; }";
 constexpr const char* kRtNoticeStyle = "QLabel { color: #e6c200; font-size: 12px; }";
-constexpr const char* kRtDangerBtnStyle =
-    "QPushButton { background: #3f2224; color: #f0dcdc; border: 1px solid #a86b6d;"
-    "  padding: 4px 12px; border-radius: 3px; }"
-    "QPushButton:hover { background: #4d2a2c; }"
-    "QPushButton:disabled { background: #404060; color: #808080; }";
+QString rtDangerBtnStyle()
+{
+    return QStringLiteral(
+               "QPushButton { background: #3f2224; color: #f0dcdc; border: 1px solid #a86b6d;"
+               "  padding: 4px 12px; border-radius: 3px; }"
+               "QPushButton:hover { background: %1; }"
+               "QPushButton:disabled { background: #404060; color: #808080; }")
+        .arg(WorkspacePreview::roleColourName("#4d2a2c", "danger-bg"));
+}
+
+// The quiet Roundtable labels (server, archive, status).
+QString rtQuietLabelStyle(const QString& extra = QString())
+{
+    return QStringLiteral("QLabel { color: %1; %2}")
+        .arg(WorkspacePreview::roleColourName("#a0a8b0", "text-secondary"), extra);
+}
 constexpr const char* kRtPlainBtnStyle =
     "QPushButton { background: #1a1a2e; color: #c8d8e8; border: 1px solid #203040;"
     "  padding: 4px 12px; border-radius: 3px; }"
@@ -3749,7 +3763,7 @@ void SpotHubDialog::buildRoundtableTab(QTabWidget* tabs)
     serverRow->addWidget(new QLabel(QStringLiteral("Server:")));
     auto* serverLabel = new QLabel(QLatin1String(kRtServerHost));
     serverLabel->setObjectName(QStringLiteral("roundtableServerLabel"));
-    serverLabel->setStyleSheet(QStringLiteral("QLabel { color: #a0a8b0; }"));
+    serverLabel->setStyleSheet(rtQuietLabelStyle());
     serverRow->addWidget(serverLabel);
     serverRow->addStretch();
     m_rtPublicPageBtn = new QPushButton(QStringLiteral("Open public page"));
@@ -3965,7 +3979,7 @@ void SpotHubDialog::buildRoundtableTab(QTabWidget* tabs)
         "Who heard you, session by session, private to you. Sessions and readings are kept "
         "for good; message text for one year."));
     archiveText->setWordWrap(true);
-    archiveText->setStyleSheet(QStringLiteral("QLabel { color: #a0a8b0; }"));
+    archiveText->setStyleSheet(rtQuietLabelStyle());
     archiveLayout->addWidget(archiveText);
     auto* archiveRow = new QHBoxLayout;
     m_rtArchiveBtn = new QPushButton(QStringLiteral("Open Archive"));
@@ -3985,7 +3999,7 @@ void SpotHubDialog::buildRoundtableTab(QTabWidget* tabs)
     archiveRow->addStretch();
     m_rtDeleteBtn = new QPushButton(QStringLiteral("Delete My Archive…"));
     m_rtDeleteBtn->setObjectName(QStringLiteral("roundtableDeleteBtn"));
-    m_rtDeleteBtn->setStyleSheet(kRtDangerBtnStyle);
+    m_rtDeleteBtn->setStyleSheet(rtDangerBtnStyle());
     connect(m_rtDeleteBtn, &QPushButton::clicked, this, [this] {
         m_rtArchiveNotice->hide();
         m_rtDeleteConfirm->show();
@@ -3996,9 +4010,10 @@ void SpotHubDialog::buildRoundtableTab(QTabWidget* tabs)
     m_rtDeleteConfirm = new QFrame;
     m_rtDeleteConfirm->setObjectName(QStringLiteral("roundtableDeleteConfirm"));
     m_rtDeleteConfirm->setStyleSheet(QStringLiteral(
-        "QFrame#roundtableDeleteConfirm { background: #1e1012; border: 1px solid #a86b6d;"
+        "QFrame#roundtableDeleteConfirm { background: %1; border: 1px solid #a86b6d;"
         "  border-radius: 3px; }"
-        "QFrame#roundtableDeleteConfirm QLabel { color: #f0dcdc; }"));
+        "QFrame#roundtableDeleteConfirm QLabel { color: #f0dcdc; }")
+        .arg(WorkspacePreview::roleColourName("#1e1012", "badge-tx-bg")));
     auto* confirmLayout = new QVBoxLayout(m_rtDeleteConfirm);
     confirmLayout->setContentsMargins(10, 8, 10, 8);
     auto* confirmText = new QLabel(QStringLiteral(
@@ -4013,7 +4028,7 @@ void SpotHubDialog::buildRoundtableTab(QTabWidget* tabs)
     auto* confirmRow = new QHBoxLayout;
     auto* deleteAll = new QPushButton(QStringLiteral("Delete Everything"));
     deleteAll->setObjectName(QStringLiteral("roundtableDeleteEverythingBtn"));
-    deleteAll->setStyleSheet(kRtDangerBtnStyle);
+    deleteAll->setStyleSheet(rtDangerBtnStyle());
     connect(deleteAll, &QPushButton::clicked, this, [this] {
         m_rtDeleteConfirm->hide();
         if (!m_roundtable) {
@@ -4414,10 +4429,8 @@ void SpotHubDialog::refreshRoundtable()
         }
     }
     m_rtStatusLabel->setText(status);
-    m_rtStatusLabel->setStyleSheet(link == LinkState::Live ? kStatusActiveStyle
-                                                           : QStringLiteral(
-                                                                 "QLabel { color: #a0a8b0; "
-                                                                 "font-size: 12px; }"));
+    m_rtStatusLabel->setStyleSheet(link == LinkState::Live ? QString(kStatusActiveStyle)
+                                                           : rtQuietLabelStyle(QStringLiteral("font-size: 12px; ")));
     m_rtStartBtn->setText(link == LinkState::Off ? QStringLiteral("Start")
                                                  : QStringLiteral("Stop"));
 

@@ -18,12 +18,15 @@
 //               Claude Code.
 //   2026-10-24: tuneToRoom, for a panadapter tag (Roundtable plan Task 14).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25: the popped-out note takes the workspace look's roles.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "RoundtableApplet.h"
 
 #include "AppletPanelWidget.h"
 #include "core/WdspTypes.h"
+#include "gui/StyleConstants.h"
 #include "gui/roundtable/RoundtablePanel.h"
 #include "gui/roundtable/RoundtableWindow.h"
 #include "models/RadioModel.h"
@@ -112,14 +115,17 @@ void RoundtableApplet::build()
     note->setContentsMargins(8, 8, 8, 8);
     note->setSpacing(4);
     auto* text = new QLabel(QStringLiteral("Roundtable is in its own window."), m_poppedNote);
-    text->setStyleSheet(QStringLiteral("color: #a6a6ac; font-size: 11px;"));
+    text->setStyleSheet(QStringLiteral("color: %1; font-size: 11px;")
+                            .arg(WorkspacePreview::roleColourName(Style::kTextSecondary, "text-secondary")));
     note->addWidget(text);
     auto* back = new QPushButton(QStringLiteral("Put it back here"), m_poppedNote);
     back->setObjectName(QStringLiteral("roundtablePutBackBtn"));
     back->setCursor(Qt::PointingHandCursor);
-    back->setStyleSheet(QStringLiteral("QPushButton { background: transparent; border: none; color: #00b4d8;"
+    back->setStyleSheet(QStringLiteral("QPushButton { background: transparent; border: none; color: %1;"
                                        " font-size: 11px; padding: 0; }"
-                                       "QPushButton:hover { color: #ffffff; }"));
+                                       "QPushButton:hover { color: %2; }")
+                            .arg(WorkspacePreview::roleColourName(Style::kAccent, "accent"),
+                                 WorkspacePreview::roleColourName(Style::kBlueText, "sel-text")));
     connect(back, &QPushButton::clicked, this, &RoundtableApplet::putBack);
     note->addWidget(back);
     note->addStretch(1);

@@ -26,13 +26,22 @@
 //               SENT takes your row's km and Offset cells, and prose
 //               wraps. The fit leaves room for a scroll bar (roomWidth).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25: every color is the workspace look's role (Style:: and
+//               WorkspacePreview::roleColourName / statusColourName), with
+//               no private copy of the palette: "you" is the look's accent,
+//               one TX red, the reading bars and the slice letter badge in
+//               the slice's own color with readable ink. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/roundtable/RoundtablePanel.h"
 #include "gui/roundtable/RoundtableTagLayout.h"
 
 #include "core/AppSettings.h"
+#include "core/ControlRanges.h"
 #include "core/roundtable/RoundtableWire.h"
+#include "gui/StyleConstants.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "models/RoundtableModel.h"
 
 #include <QApplication>
@@ -70,22 +79,77 @@ namespace NereusSDR {
 
 namespace {
 
-// The workspace roles of the placement mockup (placement.html :root) and
-// Roundtable's state colors (design 11, U7, U8). The mockup's 9 and 10 px
-// text is 11 px here (U12: never under 11 px).
-constexpr const char* kGround = "#0c0c0e";
-constexpr const char* kRule = "#1f1f23";
-constexpr const char* kText = "#dcdce1";
-constexpr const char* kBright = "#e7e7eb";
-constexpr const char* kDim = "#a6a6ac";
-constexpr const char* kDim2 = "#7e7e85";
-constexpr const char* kAccent = "#00b4d8";
-constexpr const char* kYou = "#00d4ff";
-constexpr const char* kTalking = "#4caf6a";
-constexpr const char* kUnknown = "#d8a55f";
-constexpr const char* kDoubled = "#c25a5c";
+// The placement mockup's colors (placement.html :root) and Roundtable's
+// state colors (design 11, U7, U8), each the workspace look's role: with the
+// look off, the classic Style:: value the role stands for
+// (WorkspacePreview::roleColourName). The state colors are status roles:
+// talking is live, unknown is measured, a double is the transmit red. "You"
+// is the look's accent everywhere. The mockup's 9 and 10 px text is 11 px
+// here (U12: never under 11 px).
+QString groundColor() { return WorkspacePreview::roleColourName(Style::kPanelBg, "panel"); }
+QString ruleColor() { return WorkspacePreview::roleColourName(Style::kBorderSubtle, "border-subtle"); }
+QString textColor() { return WorkspacePreview::roleColourName(Style::kTextPrimary, "text"); }
+QString dimColor() { return WorkspacePreview::roleColourName(Style::kTextSecondary, "text-secondary"); }
+QString dim2Color() { return WorkspacePreview::roleColourName(Style::kTextScale, "text-scale"); }
+QString accentColor() { return WorkspacePreview::roleColourName(Style::kAccent, "accent"); }
+QString youColor() { return accentColor(); }
+QString talkingColor() { return WorkspacePreview::statusColourName(Style::kGreenText, "ok"); }
+QString unknownColor() { return WorkspacePreview::statusColourName(Style::kAmberText, "warn"); }
+QString doubledColor() { return WorkspacePreview::statusColourName(Style::kRedBorder, "danger"); }
 // Design 11.1: a stale row turns grey at about 5:1, not faded.
-constexpr const char* kStale = "#84848b";
+QString staleColor() { return WorkspacePreview::roleColourName(Style::kLabelMid, "label-mid"); }
+// Away readings, a step under the text.
+QString awayColor() { return WorkspacePreview::roleColourName(Style::kTextTertiary, "text-tertiary"); }
+// Text on a filled selection or under the pointer.
+QString brightColor() { return WorkspacePreview::roleColourName(Style::kBlueText, "sel-text"); }
+// The one TX red: the look's transmit status, its text the danger text.
+QString txColor() { return WorkspacePreview::statusColourName(Style::kRedBg, "danger"); }
+QString txTextColor() { return WorkspacePreview::roleColourName(Style::kRedText, "danger-text"); }
+// A focused row's wash.
+QString focusColor() { return WorkspacePreview::roleColourName(Style::kButtonAltHover, "badge-info-bg"); }
+QString role(const char* legacy, const char* name) { return WorkspacePreview::roleColourName(legacy, name); }
+
+// Your reading row's tint: the look's solid info tint, the classic look's
+// translucent accent.
+QString yourRowColor()
+{
+    return WorkspacePreview::enabled() ? role(Style::kAccent, "badge-info-bg")
+                                       : QStringLiteral("rgba(0, 180, 216, 20)");
+}
+
+// The WCAG relative luminance of a color (WCAG 2.x section 1.4.3).
+double luminance(const QColor& c)
+{
+    const auto channel = [](double v) {
+        return v <= 0.03928 ? v / 12.92 : std::pow((v + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * channel(c.redF()) + 0.7152 * channel(c.greenF()) + 0.0722 * channel(c.blueF());
+}
+
+double contrast(const QColor& a, const QColor& b)
+{
+    const double la = luminance(a);
+    const double lb = luminance(b);
+    return (std::max(la, lb) + 0.05) / (std::min(la, lb) + 0.05);
+}
+
+// The look's dark or light ink, whichever reads better on `fill`.
+QString inkOn(const QColor& fill)
+{
+    const QString dark = role(Style::kAppBg, "app-bg");
+    const QString light = brightColor();
+    return contrast(QColor::fromString(dark), fill) >= contrast(QColor::fromString(light), fill) ? dark : light;
+}
+
+// The slice letter badge in the slice's own color, the color the VFO flag's
+// letter badge has (VfoWidget::sliceColor, ControlRanges::kSliceColours).
+QString sliceBadgeStyle(int sliceId)
+{
+    const int count = static_cast<int>(ControlRanges::kSliceColours.size());
+    const QColor fill(static_cast<QRgb>(ControlRanges::sliceColour(std::max(sliceId, 0) % count)));
+    return QStringLiteral(" color: %1; background: %2; padding: 0 4px; border-radius: 2px;")
+        .arg(inkOn(fill), fill.name());
+}
 
 constexpr int kSmallPx = 11;
 constexpr int kBodyPx = 12;
@@ -110,38 +174,74 @@ constexpr int kBoxHeight = 46;
 constexpr double kS9Dbm = -73.0;
 constexpr double kDbPerSUnit = 6.0;
 
-constexpr const char* kButtonStyle =
-    "QPushButton { background: #1a1a1e; border: 1px solid #2c2c31; border-radius: 3px;"
-    "  color: #dcdce1; font-size: 11px; padding: 2px 8px; }"
-    "QPushButton:hover { border-color: #00b4d8; color: #ffffff; }"
-    "QPushButton:disabled { color: #5a5a60; border-color: #232327; }";
-constexpr const char* kPrimaryStyle =
-    "QPushButton { background: #2f5f92; border: 1px solid #00b4d8; border-radius: 3px;"
-    "  color: #ffffff; font-size: 11px; font-weight: bold; padding: 2px 10px; }"
-    "QPushButton:hover { background: #3a71ad; }"
-    "QPushButton:disabled { background: #141417; border-color: #48484b; color: #5a5a60; }";
-constexpr const char* kLinkStyle =
-    "QPushButton { background: transparent; border: none; color: #00b4d8; font-size: 11px;"
-    "  padding: 0 2px; }"
-    "QPushButton:hover { color: #ffffff; }";
-constexpr const char* kPillStyle =
-    "QPushButton { background: #1e3d5f; border: 1px solid #00b4d8; border-radius: 9px;"
-    "  color: #ffffff; font-size: 11px; font-weight: bold; padding: 1px 10px; }"
-    "QPushButton:hover { background: #2f5f92; }";
-constexpr const char* kMentionPillStyle =
-    "QPushButton { background: #00b4d8; border: 1px solid #00d4ff; border-radius: 9px;"
-    "  color: #001018; font-size: 11px; font-weight: bold; padding: 1px 10px; }";
-constexpr const char* kIconStyle =
-    "QToolButton { background: transparent; border: 1px solid transparent; border-radius: 3px;"
-    "  color: #a6a6ac; font-size: 12px; padding: 0 4px; }"
-    "QToolButton:hover { color: #ffffff; border-color: #2c2c31; }"
-    "QToolButton::menu-indicator { image: none; width: 0; }";
-constexpr const char* kInputStyle =
-    "QLineEdit, QPlainTextEdit { background: #0f0f12; border: 1px solid #3f3f42;"
-    "  border-radius: 3px; color: #dcdce1; font-size: 12px; padding: 2px 5px;"
-    "  placeholder-text-color: #8e8e93; }"
-    "QLineEdit:focus, QPlainTextEdit:focus { border-color: #00b4d8; }"
-    "QLineEdit:disabled, QPlainTextEdit:disabled { color: #6a6a70; border-color: #2a2a2e; }";
+QString buttonStyle()
+{
+    return QStringLiteral(
+               "QPushButton { background: %1; border: 1px solid %2; border-radius: 3px;"
+               "  color: %3; font-size: 11px; padding: 2px 8px; }"
+               "QPushButton:hover { border-color: %4; color: %5; }"
+               "QPushButton:disabled { color: %6; border-color: %7; }")
+        .arg(role(Style::kButtonBg, "button"), role(Style::kBorder, "border"), textColor(), accentColor(),
+             brightColor(), role(Style::kDisabledText, "disabled-text"),
+             role(Style::kDisabledBorder, "disabled-border"));
+}
+QString primaryStyle()
+{
+    return QStringLiteral(
+               "QPushButton { background: %1; border: 1px solid %2; border-radius: 3px;"
+               "  color: %3; font-size: 11px; font-weight: bold; padding: 2px 10px; }"
+               "QPushButton:hover { background: %4; }"
+               "QPushButton:disabled { background: %5; border-color: %6; color: %7; }")
+        .arg(role(Style::kBlueBg, "selected-top"), accentColor(), brightColor(),
+             role(Style::kBlueHover, "selected-border"), role(Style::kDisabledBg, "disabled-bg"),
+             role(Style::kDisabledBorder, "disabled-border"), role(Style::kDisabledText, "disabled-text"));
+}
+QString linkStyle()
+{
+    return QStringLiteral(
+               "QPushButton { background: transparent; border: none; color: %1; font-size: 11px;"
+               "  padding: 0 2px; }"
+               "QPushButton:hover { color: %2; }")
+        .arg(accentColor(), brightColor());
+}
+QString pillStyle()
+{
+    return QStringLiteral(
+               "QPushButton { background: %1; border: 1px solid %2; border-radius: 9px;"
+               "  color: %3; font-size: 11px; font-weight: bold; padding: 1px 10px; }"
+               "QPushButton:hover { background: %4; }")
+        .arg(role(Style::kBlueBg, "selected-bottom"), accentColor(), brightColor(),
+             role(Style::kBlueHover, "selected-top"));
+}
+QString mentionPillStyle()
+{
+    const QString fill = youColor();
+    return QStringLiteral(
+               "QPushButton { background: %1; border: 1px solid %1; border-radius: 9px;"
+               "  color: %2; font-size: 11px; font-weight: bold; padding: 1px 10px; }")
+        .arg(fill, inkOn(QColor::fromString(fill)));
+}
+QString iconStyle()
+{
+    return QStringLiteral(
+               "QToolButton { background: transparent; border: 1px solid transparent; border-radius: 3px;"
+               "  color: %1; font-size: 12px; padding: 0 4px; }"
+               "QToolButton:hover { color: %2; border-color: %3; }"
+               "QToolButton::menu-indicator { image: none; width: 0; }")
+        .arg(dimColor(), brightColor(), role(Style::kBorder, "border"));
+}
+QString inputStyle()
+{
+    return QStringLiteral(
+               "QLineEdit, QPlainTextEdit { background: %1; border: 1px solid %2;"
+               "  border-radius: 3px; color: %3; font-size: 12px; padding: 2px 5px;"
+               "  placeholder-text-color: %4; }"
+               "QLineEdit:focus, QPlainTextEdit:focus { border-color: %5; }"
+               "QLineEdit:disabled, QPlainTextEdit:disabled { color: %6; border-color: %7; }")
+        .arg(role(Style::kInsetBg, "inset"), role(Style::kBorder, "border-muted"), textColor(),
+             role(Style::kTextTertiary, "text-tertiary"), accentColor(),
+             role(Style::kDisabledText, "disabled-text"), role(Style::kDisabledBorder, "disabled-border"));
+}
 
 QString mono()
 {
@@ -149,10 +249,10 @@ QString mono()
     return family;
 }
 
-QString labelStyle(const char* color, int px, bool bold, bool isMono)
+QString labelStyle(const QString& color, int px, bool bold, bool isMono)
 {
     QString style = QStringLiteral("color: %1; font-size: %2px; background: transparent;")
-                        .arg(QLatin1String(color))
+                        .arg(color)
                         .arg(px);
     if (bold) {
         style += QStringLiteral(" font-weight: bold;");
@@ -163,7 +263,7 @@ QString labelStyle(const char* color, int px, bool bold, bool isMono)
     return style;
 }
 
-QLabel* makeLabel(QWidget* parent, const QString& text, const char* color, int px,
+QLabel* makeLabel(QWidget* parent, const QString& text, const QString& color, int px,
                   bool bold = false, bool isMono = false)
 {
     auto* label = new QLabel(text, parent);
@@ -174,23 +274,24 @@ QLabel* makeLabel(QWidget* parent, const QString& text, const char* color, int p
 // The AWAY and NOT SENT tags beside a reading's call.
 QString readingTagStyle()
 {
-    return labelStyle("#a5a5a9", kSmallPx, true, false)
-         + QStringLiteral(" border: 1px solid #48484b; border-radius: 2px; padding: 0 2px;");
+    return labelStyle(dimColor(), kSmallPx, true, false)
+         + QStringLiteral(" border: 1px solid %1; border-radius: 2px; padding: 0 2px;")
+               .arg(role(Style::kBorder, "border-muted"));
 }
 
 QLabel* capLabel(QWidget* parent, const QString& text)
 {
-    QLabel* label = makeLabel(parent, text, kDim, kSmallPx, true);
+    QLabel* label = makeLabel(parent, text, dimColor(), kSmallPx, true);
     QFont font = label->font();
     font.setLetterSpacing(QFont::AbsoluteSpacing, 1.2);
     label->setFont(font);
     return label;
 }
 
-QPushButton* makeButton(QWidget* parent, const QString& text, const char* style)
+QPushButton* makeButton(QWidget* parent, const QString& text, const QString& style)
 {
     auto* button = new QPushButton(text, parent);
-    button->setStyleSheet(QLatin1String(style));
+    button->setStyleSheet(style);
     button->setCursor(Qt::PointingHandCursor);
     button->setFocusPolicy(Qt::ClickFocus);
     return button;
@@ -225,7 +326,7 @@ QWidget* makeSection(QWidget* parent, const QString& name)
 
 QString rule()
 {
-    return QStringLiteral("border-bottom: 1px solid %1;").arg(QLatin1String(kRule));
+    return QStringLiteral("border-bottom: 1px solid %1;").arg(ruleColor());
 }
 
 QString compact(const QJsonValue& value)
@@ -335,7 +436,7 @@ QString formatted(const QString& text)
     static const QRegularExpression italic(QStringLiteral("\\*([^*\\n]+)\\*"));
     html.replace(bold, QStringLiteral("<b>\\1</b>"));
     html.replace(italic, QStringLiteral("<i>\\1</i>"));
-    html.replace(link, QStringLiteral("<a href=\"\\1\" style=\"color: #00b4d8;\">\\1</a>"));
+    html.replace(link, QStringLiteral("<a href=\"\\1\" style=\"color: %1;\">\\1</a>").arg(accentColor()));
     html.replace(QLatin1Char('\n'), QStringLiteral("<br>"));
     return html;
 }
@@ -356,24 +457,24 @@ protected:
     {
         QPainter p(this);
         const QRect frame = rect().adjusted(0, 0, -1, -1);
-        p.fillRect(frame, QColor(0x16, 0x16, 0x19));
-        p.setPen(QColor(0x29, 0x29, 0x2c));
+        p.fillRect(frame, WorkspacePreview::roleColour(QColor(Style::kInsetBg), "inset"));
+        p.setPen(WorkspacePreview::roleColour(QColor(Style::kBorder), "border"));
         p.drawRect(frame);
         const int width = static_cast<int>(std::lround(m_fraction * (frame.width() - 1)));
         const QRect fill(frame.left() + 1, frame.top() + 1, width, frame.height() - 1);
         if (m_stale) {
-            p.fillRect(fill, QColor(0x55, 0x55, 0x5a));
+            p.fillRect(fill, WorkspacePreview::roleColour(QColor(Style::kTextInactive), "text-inactive"));
         } else if (m_doubled) {
-            p.fillRect(fill, QColor(0x4a, 0x22, 0x24));
-            p.setPen(QPen(QColor(0xc2, 0x5a, 0x5c), 2));
+            p.fillRect(fill, WorkspacePreview::roleColour(QColor(Style::kRedBg), "badge-tx-bg"));
+            p.setPen(QPen(WorkspacePreview::statusColour(QColor(Style::kRedBorder), "danger"), 2));
             p.setClipRect(fill);
             for (int x = fill.left() - fill.height(); x < fill.right(); x += 6) {
                 p.drawLine(x, fill.bottom(), x + fill.height(), fill.top());
             }
         } else {
             QLinearGradient gradient(fill.topLeft(), fill.topRight());
-            gradient.setColorAt(0.0, QColor(0x2f, 0x7a, 0x4a));
-            gradient.setColorAt(1.0, QColor(0x4c, 0xaf, 0x6a));
+            gradient.setColorAt(0.0, WorkspacePreview::roleColour(QColor(Style::kGreenBorder), "ok-border"));
+            gradient.setColorAt(1.0, WorkspacePreview::statusColour(QColor(Style::kGreenText), "ok"));
             p.fillRect(fill, gradient);
         }
     }
@@ -443,7 +544,7 @@ constexpr int kCallsignKeep = 6;
 // Other one-line text keeps a word's worth.
 constexpr int kTextKeep = 4;
 
-ElideLabel* makeElided(QWidget* parent, const QString& text, const char* color, int px,
+ElideLabel* makeElided(QWidget* parent, const QString& text, const QString& color, int px,
                        bool bold = false, bool isMono = false, int keep = kCallsignKeep)
 {
     auto* label = new ElideLabel(text, keep, parent);
@@ -452,7 +553,7 @@ ElideLabel* makeElided(QWidget* parent, const QString& text, const char* color, 
 }
 
 // Prose that wraps at the room's width instead of widening it.
-QLabel* makeWrapped(QWidget* parent, const QString& text, const char* color, int px,
+QLabel* makeWrapped(QWidget* parent, const QString& text, const QString& color, int px,
                     bool bold = false)
 {
     QLabel* label = makeLabel(parent, text, color, px, bold);
@@ -463,17 +564,20 @@ QLabel* makeWrapped(QWidget* parent, const QString& text, const char* color, int
 
 QString messageRowStyle(bool isNew, bool mention)
 {
-    const char* edge = mention ? kYou : (isNew ? kAccent : "transparent");
+    const QString edge = mention ? youColor() : (isNew ? accentColor() : QStringLiteral("transparent"));
     return QStringLiteral("QFrame#roundtableMessageRow { border: none; border-left: 2px solid %1;"
-                          "  border-bottom: 1px solid #1c1c1f; background: transparent; }"
-                          "QFrame#roundtableMessageRow:focus { background: #16222c; }")
-        .arg(QLatin1String(edge));
+                          "  border-bottom: 1px solid %2; background: transparent; }"
+                          "QFrame#roundtableMessageRow:focus { background: %3; }")
+        .arg(edge, ruleColor(), focusColor());
 }
 
-constexpr const char* kTurnRowStyle =
-    "QFrame#roundtableTurnRow { border: none; border-bottom: 1px solid #1c1c1f;"
-    "  background: transparent; }"
-    "QFrame#roundtableTurnRow:focus { background: #16222c; }";
+QString turnRowStyle()
+{
+    return QStringLiteral("QFrame#roundtableTurnRow { border: none; border-bottom: 1px solid %1;"
+                          "  background: transparent; }"
+                          "QFrame#roundtableTurnRow:focus { background: %2; }")
+        .arg(ruleColor(), focusColor());
+}
 
 } // namespace
 
@@ -483,7 +587,7 @@ RoundtablePanel::RoundtablePanel(RoundtableModel* model, QWidget* parent)
 {
     setObjectName(QStringLiteral("RoundtablePanel"));
     setAttribute(Qt::WA_StyledBackground, true);
-    setStyleSheet(QStringLiteral("QWidget#RoundtablePanel { background: %1; }").arg(QLatin1String(kGround)));
+    setStyleSheet(QStringLiteral("QWidget#RoundtablePanel { background: %1; }").arg(groundColor()));
     setFocusPolicy(Qt::TabFocus);
     setMinimumWidth(260);
     installEventFilter(this);
@@ -507,14 +611,14 @@ RoundtablePanel::RoundtablePanel(RoundtableModel* model, QWidget* parent)
     m_scroll->setFocusPolicy(Qt::NoFocus);
     m_scroll->viewport()->installEventFilter(this);
     m_scroll->setStyleSheet(QStringLiteral("QScrollArea { background: %1; border: none; }")
-                                .arg(QLatin1String(kGround)));
+                                .arg(groundColor()));
     mainLayout->addWidget(m_scroll, 1);
 
     m_content = new QWidget();
     m_content->setObjectName(QStringLiteral("roundtableContent"));
     m_content->setAttribute(Qt::WA_StyledBackground, true);
     m_content->setStyleSheet(QStringLiteral("QWidget#roundtableContent { background: %1; }")
-                                 .arg(QLatin1String(kGround)));
+                                 .arg(groundColor()));
     m_contentLayout = new QVBoxLayout(m_content);
     m_contentLayout->setContentsMargins(0, 0, 0, 0);
     m_contentLayout->setSpacing(0);
@@ -523,8 +627,8 @@ RoundtablePanel::RoundtablePanel(RoundtableModel* model, QWidget* parent)
     m_readBar = new QWidget(m_content);
     m_readBar->setObjectName(QStringLiteral("roundtableReadBar"));
     m_readBar->setAttribute(Qt::WA_StyledBackground, true);
-    m_readBar->setStyleSheet(QStringLiteral("QWidget#roundtableReadBar { background: #151518; %1 }")
-                                 .arg(rule()));
+    m_readBar->setStyleSheet(QStringLiteral("QWidget#roundtableReadBar { background: %1; %2 }")
+                                 .arg(role(Style::kButtonBg, "tile-active-bg"), rule()));
     {
         // "Reading 7.249 · Tune A here · Back to my slice", one line where
         // it fits, else Back to my slice on a second (fitReadBar).
@@ -540,15 +644,15 @@ RoundtablePanel::RoundtablePanel(RoundtableModel* model, QWidget* parent)
         m_readSecondLine->addStretch(1);
         lines->addLayout(m_readSecondLine);
         const auto separator = [this]() {
-            QLabel* dot = makeLabel(m_readBar, QStringLiteral("·"), kDim, kSmallPx);
+            QLabel* dot = makeLabel(m_readBar, QStringLiteral("·"), dimColor(), kSmallPx);
             dot->setObjectName(QStringLiteral("roundtableReadSeparator"));
             return dot;
         };
-        m_readLabel = makeLabel(m_readBar, QString(), kText, kSmallPx, true);
+        m_readLabel = makeLabel(m_readBar, QString(), textColor(), kSmallPx, true);
         m_readLabel->setObjectName(QStringLiteral("roundtableReadLabel"));
         row->addWidget(m_readLabel);
         row->addWidget(separator());
-        QPushButton* tune = makeButton(m_readBar, QStringLiteral("Tune A here"), kPrimaryStyle);
+        QPushButton* tune = makeButton(m_readBar, QStringLiteral("Tune A here"), primaryStyle());
         tune->setObjectName(QStringLiteral("roundtableTuneHereBtn"));
         tune->setToolTip(QStringLiteral("Tune the slice to this room"));
         connect(tune, &QPushButton::clicked, this, [this]() {
@@ -560,7 +664,7 @@ RoundtablePanel::RoundtablePanel(RoundtableModel* model, QWidget* parent)
         row->addWidget(tune);
         m_readBackSeparator = separator();
         row->addWidget(m_readBackSeparator);
-        QPushButton* back = makeButton(m_readBar, QStringLiteral("Back to my slice"), kLinkStyle);
+        QPushButton* back = makeButton(m_readBar, QStringLiteral("Back to my slice"), linkStyle());
         back->setObjectName(QStringLiteral("roundtableBackBtn"));
         connect(back, &QPushButton::clicked, this, &RoundtablePanel::backToSlice);
         row->addWidget(back);
@@ -571,7 +675,7 @@ RoundtablePanel::RoundtablePanel(RoundtableModel* model, QWidget* parent)
 
     m_head = makeSection(m_content, QStringLiteral("roundtableHeader"));
     m_contentLayout->addWidget(m_head);
-    m_connection = makeLabel(m_content, QString(), kDim, kSmallPx);
+    m_connection = makeLabel(m_content, QString(), dimColor(), kSmallPx);
     m_connection->setObjectName(QStringLiteral("roundtableConnectionLine"));
     m_connection->setWordWrap(true);
     m_connection->setContentsMargins(8, 3, 8, 3);
@@ -587,7 +691,7 @@ RoundtablePanel::RoundtablePanel(RoundtableModel* model, QWidget* parent)
     m_messages = makeSection(m_content, QStringLiteral("roundtableMessages"));
     m_messages->setAttribute(Qt::WA_StyledBackground, true);
     m_messages->setStyleSheet(QStringLiteral("QWidget#roundtableMessages { background: %1; }")
-                                  .arg(QLatin1String(kGround)));
+                                  .arg(groundColor()));
     m_contentLayout->addWidget(m_messages);
     m_empty = makeSection(m_content, QStringLiteral("roundtableEmpty"));
     m_contentLayout->addWidget(m_empty);
@@ -600,7 +704,7 @@ RoundtablePanel::RoundtablePanel(RoundtableModel* model, QWidget* parent)
     m_msgColumn->setAttribute(Qt::WA_StyledBackground, true);
     m_msgColumn->setStyleSheet(QStringLiteral("QWidget#roundtableMessagesColumn { background: %1;"
                                               " border-left: 1px solid %2; }")
-                                   .arg(QLatin1String(kGround), QLatin1String(kRule)));
+                                   .arg(groundColor(), ruleColor()));
     m_msgColumn->setFixedWidth(kMessagesColumnWidth);
     auto* msgLayout = new QVBoxLayout(m_msgColumn);
     msgLayout->setContentsMargins(0, 0, 0, 0);
@@ -622,18 +726,18 @@ RoundtablePanel::RoundtablePanel(RoundtableModel* model, QWidget* parent)
     m_footer->setAttribute(Qt::WA_StyledBackground, true);
     m_footer->setStyleSheet(QStringLiteral("QWidget#roundtableFooter { background: %1;"
                                            " border-top: 1px solid %2; }")
-                                .arg(QLatin1String(kGround), QLatin1String(kRule)));
+                                .arg(groundColor(), ruleColor()));
     {
         auto* foot = new QVBoxLayout(m_footer);
         foot->setContentsMargins(8, 5, 8, 5);
         foot->setSpacing(4);
         auto* pills = new QHBoxLayout();
         pills->setSpacing(6);
-        m_mentionPill = makeButton(m_footer, QString(), kMentionPillStyle);
+        m_mentionPill = makeButton(m_footer, QString(), mentionPillStyle());
         m_mentionPill->setObjectName(QStringLiteral("roundtableMentionPill"));
         connect(m_mentionPill, &QPushButton::clicked, this, &RoundtablePanel::jumpToMention);
         pills->addWidget(m_mentionPill);
-        m_newPill = makeButton(m_footer, QString(), kPillStyle);
+        m_newPill = makeButton(m_footer, QString(), pillStyle());
         m_newPill->setObjectName(QStringLiteral("roundtableNewPill"));
         connect(m_newPill, &QPushButton::clicked, this, [this]() { scrollMessagesToEnd(); });
         pills->addWidget(m_newPill);
@@ -647,11 +751,11 @@ RoundtablePanel::RoundtablePanel(RoundtableModel* model, QWidget* parent)
         auto* notSentRow = new QHBoxLayout(m_notSent);
         notSentRow->setContentsMargins(0, 0, 0, 0);
         notSentRow->setSpacing(4);
-        QLabel* notSentLabel = makeLabel(m_notSent, QStringLiteral("Not sent \u00b7"), kUnknown,
+        QLabel* notSentLabel = makeLabel(m_notSent, QStringLiteral("Not sent \u00b7"), unknownColor(),
                                          kSmallPx, true);
         notSentLabel->setObjectName(QStringLiteral("roundtableNotSentLabel"));
         notSentRow->addWidget(notSentLabel);
-        QPushButton* again = makeButton(m_notSent, QStringLiteral("Try again"), kLinkStyle);
+        QPushButton* again = makeButton(m_notSent, QStringLiteral("Try again"), linkStyle());
         again->setObjectName(QStringLiteral("roundtableTryAgainBtn"));
         connect(again, &QPushButton::clicked, this, &RoundtablePanel::send);
         notSentRow->addWidget(again);
@@ -663,7 +767,7 @@ RoundtablePanel::RoundtablePanel(RoundtableModel* model, QWidget* parent)
         boxRow->setSpacing(5);
         m_box = new QPlainTextEdit(m_footer);
         m_box->setObjectName(QStringLiteral("roundtableBox"));
-        m_box->setStyleSheet(QLatin1String(kInputStyle));
+        m_box->setStyleSheet(inputStyle());
         m_box->setFixedHeight(kBoxHeight);
         m_box->setTabChangesFocus(true);
         m_box->installEventFilter(this);
@@ -674,7 +778,7 @@ RoundtablePanel::RoundtablePanel(RoundtableModel* model, QWidget* parent)
             updateFooter();
         });
         boxRow->addWidget(m_box, 1);
-        m_send = makeButton(m_footer, QStringLiteral("Send"), kPrimaryStyle);
+        m_send = makeButton(m_footer, QStringLiteral("Send"), primaryStyle());
         m_send->setObjectName(QStringLiteral("roundtableSendBtn"));
         connect(m_send, &QPushButton::clicked, this, &RoundtablePanel::send);
         boxRow->addWidget(m_send, 0, Qt::AlignBottom);
@@ -682,11 +786,11 @@ RoundtablePanel::RoundtablePanel(RoundtableModel* model, QWidget* parent)
 
         auto* hintRow = new QHBoxLayout();
         hintRow->setSpacing(6);
-        m_hint = makeLabel(m_footer, QString(), kDim2, kSmallPx);
+        m_hint = makeLabel(m_footer, QString(), dim2Color(), kSmallPx);
         m_hint->setObjectName(QStringLiteral("roundtableHint"));
         m_hint->setWordWrap(true);
         hintRow->addWidget(m_hint, 1);
-        m_counter = makeLabel(m_footer, QString(), kDim, kSmallPx, false, true);
+        m_counter = makeLabel(m_footer, QString(), dimColor(), kSmallPx, false, true);
         m_counter->setObjectName(QStringLiteral("roundtableCounter"));
         m_counter->hide();
         hintRow->addWidget(m_counter, 0, Qt::AlignTop);
@@ -1113,10 +1217,11 @@ void RoundtablePanel::rebuildHead(const QJsonObject& room)
 
     const QChar letter(QLatin1Char(static_cast<char>('A' + std::clamp(m_sliceId, 0, 25))));
     const auto notTunedTag = [body]() {
-        QLabel* label = makeLabel(body, QStringLiteral("NOT TUNED HERE"), kUnknown, kSmallPx, true);
+        QLabel* label = makeLabel(body, QStringLiteral("NOT TUNED HERE"), unknownColor(), kSmallPx, true);
         label->setStyleSheet(label->styleSheet()
-                             + QStringLiteral(" border: 1px solid #6b5426; padding: 0 4px;"
-                                              " border-radius: 2px;"));
+                             + QStringLiteral(" border: 1px solid %1; padding: 0 4px;"
+                                              " border-radius: 2px;")
+                                   .arg(role(Style::kAmberBorder, "measured-border")));
         label->setObjectName(QStringLiteral("roundtableTag"));
         return label;
     };
@@ -1124,10 +1229,8 @@ void RoundtablePanel::rebuildHead(const QJsonObject& room)
     m_tagAbove = nullptr;
     QLabel* tag = nullptr;
     if (tunedHere()) {
-        tag = makeLabel(body, QString(letter), "#001018", kSmallPx, true);
-        tag->setStyleSheet(tag->styleSheet()
-                           + QStringLiteral(" background: %1; padding: 0 4px; border-radius: 2px;")
-                                 .arg(QLatin1String(kAccent)));
+        tag = makeLabel(body, QString(letter), textColor(), kSmallPx, true);
+        tag->setStyleSheet(tag->styleSheet() + sliceBadgeStyle(m_sliceId));
         tag->setObjectName(QStringLiteral("roundtableTag"));
     } else {
         tag = notTunedTag();
@@ -1144,12 +1247,13 @@ void RoundtablePanel::rebuildHead(const QJsonObject& room)
     }
     stack->addLayout(row);
     row->addWidget(tag);
-    QLabel* freq = makeLabel(body, headerFrequency(roomHz(id)), kAccent, 15, false, true);
+    QLabel* freq = makeLabel(body, headerFrequency(roomHz(id)), accentColor(), 15, false, true);
     freq->setObjectName(QStringLiteral("roundtableFrequency"));
     row->addWidget(freq);
-    QLabel* mode = makeLabel(body, modeLabel(roomFamily(id)), "#c3c3c7", kSmallPx);
+    QLabel* mode = makeLabel(body, modeLabel(roomFamily(id)), role(Style::kTitleText, "title-text"), kSmallPx);
     mode->setStyleSheet(mode->styleSheet()
-                        + QStringLiteral(" border: 1px solid #48484b; padding: 0 4px; border-radius: 2px;"));
+                        + QStringLiteral(" border: 1px solid %1; padding: 0 4px; border-radius: 2px;")
+                              .arg(role(Style::kBorder, "border-muted")));
     row->addWidget(mode);
     row->addStretch(1);
 
@@ -1170,7 +1274,7 @@ void RoundtablePanel::rebuildHead(const QJsonObject& room)
         m_countTwoLines = m_countOneLine + QStringLiteral("\n%1 away").arg(away);
         m_countOneLine += QStringLiteral(" \u00b7 %1 away").arg(away);
     }
-    QLabel* countLabel = makeLabel(body, m_countOneLine, kDim, kSmallPx);
+    QLabel* countLabel = makeLabel(body, m_countOneLine, dimColor(), kSmallPx);
     countLabel->setObjectName(QStringLiteral("roundtableCount"));
     countLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     row->addWidget(countLabel);
@@ -1180,7 +1284,7 @@ void RoundtablePanel::rebuildHead(const QJsonObject& room)
     pop->setObjectName(QStringLiteral("roundtablePopBtn"));
     pop->setText(QString(QChar(0x2197)));
     pop->setToolTip(QStringLiteral("Pop out into its own window"));
-    pop->setStyleSheet(QLatin1String(kIconStyle));
+    pop->setStyleSheet(iconStyle());
     pop->setFocusPolicy(Qt::ClickFocus);
     pop->setVisible(!m_popped);
     connect(pop, &QToolButton::clicked, this, &RoundtablePanel::popOutRequested);
@@ -1192,11 +1296,11 @@ void RoundtablePanel::rebuildHead(const QJsonObject& room)
     menu->setText(QStringLiteral("\u22ef"));
     menu->setToolTip(m_popped ? QStringLiteral("Archive, settings and the wide window")
                               : QStringLiteral("Archive, settings and pop out"));
-    menu->setStyleSheet(QLatin1String(kIconStyle));
+    menu->setStyleSheet(iconStyle());
     menu->setFocusPolicy(Qt::ClickFocus);
     connect(menu, &QToolButton::clicked, this, &RoundtablePanel::showPanelMenu);
     row->addWidget(menu);
-    m_countBelow = makeLabel(body, m_countOneLine, kDim, kSmallPx);
+    m_countBelow = makeLabel(body, m_countOneLine, dimColor(), kSmallPx);
     m_countBelow->setObjectName(QStringLiteral("roundtableCount"));
     m_countBelow->hide();
     stack->addWidget(m_countBelow);
@@ -1375,7 +1479,7 @@ void RoundtablePanel::updateConnectionLine(const QJsonObject& room)
     const LinkState state = m_model ? m_model->linkState() : LinkState::Off;
     const qint64 since = m_model ? m_model->linkSince() : 0;
     QString text;
-    const char* color = kDim;
+    QString color = dimColor();
     switch (state) {
     case LinkState::Live: {
         qint64 newest = 0;
@@ -1387,24 +1491,24 @@ void RoundtablePanel::updateConnectionLine(const QJsonObject& room)
         }
         text = newest > 0 ? QStringLiteral("Live \u00b7 last reading %1 ago").arg(ageText(now - newest))
                           : QStringLiteral("Live");
-        color = kTalking;
+        color = talkingColor();
         break;
     }
     case LinkState::Reconnecting:
         text = QStringLiteral("Reconnecting \u00b7 nothing new for %1").arg(ageText(now - since));
-        color = kUnknown;
+        color = unknownColor();
         break;
     case LinkState::Offline:
         text = since > 0 ? QStringLiteral("Offline since %1 UTC").arg(utcText(since))
                          : QStringLiteral("Offline");
-        color = kUnknown;
+        color = unknownColor();
         break;
     case LinkState::Connecting:
         text = QStringLiteral("Connecting");
         break;
     case LinkState::Hidden:
         text = QStringLiteral("You are hidden");
-        color = kYou;
+        color = youColor();
         break;
     case LinkState::Off:
         text = QStringLiteral("Roundtable is off");
@@ -1462,19 +1566,20 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
         auto* row = new QHBoxLayout(body);
         row->setContentsMargins(8, 6, 8, 6);
         row->setSpacing(8);
-        QLabel* tx = makeLabel(body, QStringLiteral("TX"), "#ffffff", kSmallPx, true);
-        tx->setStyleSheet(tx->styleSheet() + QStringLiteral(" background: #c02020; padding: 0 4px;"
-                                                            " border-radius: 2px;"));
+        QLabel* tx = makeLabel(body, QStringLiteral("TX"), txTextColor(), kSmallPx, true);
+        tx->setStyleSheet(tx->styleSheet() + QStringLiteral(" background: %1; padding: 0 4px;"
+                                                            " border-radius: 2px;")
+                                                 .arg(txColor()));
         row->addWidget(tx);
-        QLabel* who = makeWrapped(body, QStringLiteral("You \u00b7 %1 hear you").arg(hearing), kYou,
+        QLabel* who = makeWrapped(body, QStringLiteral("You \u00b7 %1 hear you").arg(hearing), youColor(),
                                   kBodyPx, true);
         who->setObjectName(QStringLiteral("roundtableTxText"));
         row->addWidget(who);
-        QLabel* time = makeLabel(body, keyedText, kText, kBodyPx, false, true);
+        QLabel* time = makeLabel(body, keyedText, textColor(), kBodyPx, false, true);
         time->setObjectName(QStringLiteral("roundtableKeyedTime"));
         row->addWidget(time);
         row->addStretch(1);
-        row->addWidget(makeLabel(body, headerFrequency(roomHz(roomId())), kAccent, kBodyPx, false, true));
+        row->addWidget(makeLabel(body, headerFrequency(roomHz(roomId())), accentColor(), kBodyPx, false, true));
     }
     if (keyed) {
         return;
@@ -1489,7 +1594,7 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
     col->setSpacing(2);
     if (room.isEmpty()) {
         col->addWidget(makeLabel(body, QStringLiteral("Opening %1").arg(headerFrequency(roomHz(roomId()))),
-                                 kDim, kBodyPx));
+                                 dimColor(), kBodyPx));
         return;
     }
 
@@ -1508,16 +1613,17 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
         return row;
     };
     const auto txBadge = [body]() {
-        QLabel* tx = makeLabel(body, QStringLiteral("TX"), "#ffffff", kSmallPx, true);
-        tx->setStyleSheet(tx->styleSheet() + QStringLiteral(" background: #c03030; padding: 0 4px;"
-                                                            " border-radius: 2px;"));
+        QLabel* tx = makeLabel(body, QStringLiteral("TX"), txTextColor(), kSmallPx, true);
+        tx->setStyleSheet(tx->styleSheet() + QStringLiteral(" background: %1; padding: 0 4px;"
+                                                            " border-radius: 2px;")
+                                                 .arg(txColor()));
         return tx;
     };
     const QJsonArray talkers = turn.value(QStringLiteral("talkers")).toArray();
 
     if (turn.isEmpty()) {
         col->addWidget(capLabel(body, QStringLiteral("QUIET")));
-        QLabel* big = makeLabel(body, QStringLiteral("Nobody is talking"), kDim, 14, true, true);
+        QLabel* big = makeLabel(body, QStringLiteral("Nobody is talking"), dimColor(), 14, true, true);
         big->setObjectName(QStringLiteral("roundtableTalkerName"));
         col->addWidget(big);
         if (!earlier.isEmpty()) {
@@ -1534,7 +1640,7 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
             } else {
                 text = QStringLiteral("Last turn by an unknown talker, %1 ago").arg(ageText(ago));
             }
-            col->addWidget(makeWrapped(body, text, kDim, kSmallPx));
+            col->addWidget(makeWrapped(body, text, dimColor(), kSmallPx));
         }
         return;
     }
@@ -1548,17 +1654,18 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
         for (qsizetype i = 0; i < talkers.size(); ++i) {
             QList<QWidget*> part;
             part.append(txBadge());
-            QLabel* name = makeElided(body, withNth(talkers.at(i).toObject()), kDoubled, 17, true, true);
+            QLabel* name = makeElided(body, withNth(talkers.at(i).toObject()), doubledColor(), 17, true, true);
             name->setObjectName(QStringLiteral("roundtableTalkerName"));
             part.append(name);
             if (i + 1 < talkers.size()) {
-                part.append(makeLabel(body, QStringLiteral("+"), kDim, 17, true, true));
+                part.append(makeLabel(body, QStringLiteral("+"), dimColor(), 17, true, true));
             }
             parts.append(part);
         }
-        QLabel* tag = makeLabel(body, QStringLiteral("DOUBLED"), "#f0dcdc", kSmallPx, true);
-        tag->setStyleSheet(tag->styleSheet() + QStringLiteral(" background: #5a1616; border: 1px solid"
-                                                              " #c25a5c; padding: 0 4px;"));
+        QLabel* tag = makeLabel(body, QStringLiteral("DOUBLED"), txTextColor(), kSmallPx, true);
+        tag->setStyleSheet(tag->styleSheet() + QStringLiteral(" background: %1; border: 1px solid"
+                                                              " %2; padding: 0 4px;")
+                                                   .arg(role(Style::kRedBg, "danger-bg"), doubledColor()));
         if (parts.isEmpty()) {
             parts.append(QList<QWidget*>{});
         }
@@ -1585,12 +1692,12 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
         row->addStretch(1);
         auto* sub = new QHBoxLayout();
         sub->setSpacing(4);
-        sub->addWidget(makeLabel(body, QStringLiteral("for"), kDim, kSmallPx));
-        QLabel* time = makeLabel(body, keyedText, kDim, kSmallPx, false, true);
+        sub->addWidget(makeLabel(body, QStringLiteral("for"), dimColor(), kSmallPx));
+        QLabel* time = makeLabel(body, keyedText, dimColor(), kSmallPx, false, true);
         time->setObjectName(QStringLiteral("roundtableKeyedTime"));
         sub->addWidget(time);
         sub->addWidget(makeWrapped(body, QStringLiteral("\u00b7 each reading is both signals together"),
-                                   kDim, kSmallPx));
+                                   dimColor(), kSmallPx));
         sub->addStretch(1);
         col->addLayout(sub);
         return;
@@ -1598,13 +1705,13 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
 
     if (kind == QLatin1String("unknown")) {
         col->addWidget(capLabel(body, QStringLiteral("TALKING NOW")));
-        QLabel* big = makeLabel(body, QStringLiteral("? Unknown"), kUnknown, 17, true, true);
+        QLabel* big = makeLabel(body, QStringLiteral("? Unknown"), unknownColor(), 17, true, true);
         big->setObjectName(QStringLiteral("roundtableTalkerName"));
         col->addWidget(big);
         auto* sub = new QHBoxLayout();
         sub->setSpacing(4);
-        sub->addWidget(makeLabel(body, QStringLiteral("not on NereusSDR \u00b7 on air"), kDim, kSmallPx));
-        QLabel* time = makeLabel(body, keyedText, kDim, kSmallPx, false, true);
+        sub->addWidget(makeLabel(body, QStringLiteral("not on NereusSDR \u00b7 on air"), dimColor(), kSmallPx));
+        QLabel* time = makeLabel(body, keyedText, dimColor(), kSmallPx, false, true);
         time->setObjectName(QStringLiteral("roundtableKeyedTime"));
         sub->addWidget(time);
         sub->addStretch(1);
@@ -1617,7 +1724,7 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
         }
         if (!given.isEmpty()) {
             QLabel* named = makeWrapped(body, QStringLiteral("Named %1").arg(given.join(QStringLiteral(", "))),
-                                        kUnknown, kSmallPx);
+                                        unknownColor(), kSmallPx);
             named->setObjectName(QStringLiteral("roundtableNamesGiven"));
             col->addWidget(named);
         }
@@ -1628,7 +1735,7 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
         names->addWidget(nameCaption);
         const qint64 turnId = turn.value(QStringLiteral("id")).toInteger();
         for (const QString& suggestion : nameSuggestions(room)) {
-            QPushButton* chip = makeButton(body, suggestion, kButtonStyle);
+            QPushButton* chip = makeButton(body, suggestion, buttonStyle());
             chip->setObjectName(QStringLiteral("roundtableNameChip"));
             chip->setEnabled(canName);
             chip->setToolTip(canName ? QStringLiteral("Name this turn %1").arg(suggestion)
@@ -1657,12 +1764,12 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
         auto* input = new QLineEdit(body);
         input->setObjectName(QStringLiteral("roundtableTalkerNameInput"));
         input->setPlaceholderText(QStringLiteral("Callsign"));
-        input->setStyleSheet(QLatin1String(kInputStyle));
+        input->setStyleSheet(inputStyle());
         input->setMaxLength(16);
         input->setEnabled(canName);
         input->setFixedWidth(110);
         inputRow->addWidget(input);
-        QPushButton* nameButton = makeButton(body, QStringLiteral("Name"), kButtonStyle);
+        QPushButton* nameButton = makeButton(body, QStringLiteral("Name"), buttonStyle());
         nameButton->setEnabled(canName);
         connect(nameButton, &QPushButton::clicked, this, [this, turnId, input]() {
             submitName(turnId, input->text());
@@ -1681,20 +1788,20 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
     QHBoxLayout* row = bigRow();
     row->addWidget(txBadge());
     const QJsonObject talker = talkers.isEmpty() ? QJsonObject() : talkers.first().toObject();
-    QLabel* name = makeElided(body, withNth(talker), kTalking, 17, true, true);
+    QLabel* name = makeElided(body, withNth(talker), talkingColor(), 17, true, true);
     name->setObjectName(QStringLiteral("roundtableTalkerName"));
     row->addWidget(name);
-    row->addWidget(makeLabel(body, gridOf(talker.value(QStringLiteral("ref")).toString()), kDim,
+    row->addWidget(makeLabel(body, gridOf(talker.value(QStringLiteral("ref")).toString()), dimColor(),
                              kSmallPx));
     row->addStretch(1);
     auto* sub = new QHBoxLayout();
     sub->setSpacing(4);
-    sub->addWidget(makeLabel(body, QStringLiteral("keyed"), kDim, kSmallPx));
-    QLabel* time = makeLabel(body, keyedText, kDim, kSmallPx, false, true);
+    sub->addWidget(makeLabel(body, QStringLiteral("keyed"), dimColor(), kSmallPx));
+    QLabel* time = makeLabel(body, keyedText, dimColor(), kSmallPx, false, true);
     time->setObjectName(QStringLiteral("roundtableKeyedTime"));
     sub->addWidget(time);
     sub->addWidget(makeWrapped(body, QStringLiteral("\u00b7 on NereusSDR, so the talker is known"),
-                               kDim, kSmallPx));
+                               dimColor(), kSmallPx));
     sub->addStretch(1);
     col->addLayout(sub);
 }
@@ -1808,14 +1915,14 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
     if (!turn.isEmpty() && !rows.isEmpty()) {
         head->addWidget(makeLabel(body, byDistance ? QStringLiteral("nearest first")
                                                    : QStringLiteral("by callsign"),
-                                  kDim2, kSmallPx));
+                                  dim2Color(), kSmallPx));
     }
     col->addLayout(head);
 
     if (others.isEmpty()) {
         QLabel* lonely = makeLabel(body, QStringLiteral("Nobody else is here. Your readings of the next "
                                                         "talker will appear here."),
-                                   kDim, kSmallPx);
+                                   dimColor(), kSmallPx);
         lonely->setObjectName(QStringLiteral("roundtableNobodyElse"));
         lonely->setWordWrap(true);
         lonely->setContentsMargins(8, 2, 8, 6);
@@ -1824,7 +1931,7 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
     }
     if (turn.isEmpty()) {
         // Quiet: who is in the room.
-        QLabel* list = makeLabel(body, others.join(QStringLiteral("  ")), kText, kSmallPx, false, true);
+        QLabel* list = makeLabel(body, others.join(QStringLiteral("  ")), textColor(), kSmallPx, false, true);
         list->setObjectName(QStringLiteral("roundtableInTheRoom"));
         list->setWordWrap(true);
         list->setContentsMargins(8, 2, 8, 6);
@@ -1840,13 +1947,13 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
     // what they hold, then the gaps.
     const QFont callFont = [body]() {
         QLabel probe(body);
-        probe.setStyleSheet(labelStyle(kText, kSmallPx, true, true));
+        probe.setStyleSheet(labelStyle(textColor(), kSmallPx, true, true));
         probe.ensurePolished();
         return probe.font();
     }();
     const QFont valueFont = [body]() {
         QLabel probe(body);
-        probe.setStyleSheet(labelStyle(kText, kSmallPx, false, true));
+        probe.setStyleSheet(labelStyle(textColor(), kSmallPx, false, true));
         probe.ensurePolished();
         return probe.font();
     }();
@@ -1899,7 +2006,7 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
     // The column heads stay whole too.
     const QFontMetrics headMetrics([body]() {
         QLabel probe(body);
-        probe.setStyleSheet(labelStyle(kDim2, kSmallPx, false, false));
+        probe.setStyleSheet(labelStyle(dim2Color(), kSmallPx, false, false));
         probe.ensurePolished();
         return probe.font();
     }());
@@ -1970,7 +2077,7 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
         auto* header = new QHBoxLayout();
         columns(header);
         const auto cell = [body](const QString& text, int width, Qt::Alignment align) {
-            QLabel* label = makeElided(body, text, kDim2, kSmallPx, false, false, 3);
+            QLabel* label = makeElided(body, text, dim2Color(), kSmallPx, false, false, 3);
             if (width > 0) {
                 label->setFixedWidth(width);
             }
@@ -2003,7 +2110,8 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
         rowWidget->setFixedHeight(20);
         if (isYou) {
             rowWidget->setStyleSheet(QStringLiteral("QFrame#roundtableReadingRow {"
-                                                    " background: rgba(0, 180, 216, 20); }"));
+                                                    " background: %1; }")
+                                         .arg(yourRowColor()));
         }
         if (away) {
             rowWidget->setToolTip(QStringLiteral("Nobody at the radio. Its Core keeps reporting what it "
@@ -2014,7 +2122,7 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
                 [this, rowWidget, member]() { showReadingMenu(rowWidget, member); });
         auto* row = new QHBoxLayout(rowWidget);
         columns(row);
-        const char* text = stale ? kStale : (isYou ? kYou : (away ? "#959599" : kText));
+        const QString text = stale ? staleColor() : (isYou ? youColor() : (away ? awayColor() : textColor()));
 
         auto* callCell = new QWidget(rowWidget);
         callCell->setObjectName(QStringLiteral("roundtableReadingCallCell"));
@@ -2060,13 +2168,13 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
             QLabel* km = makeLabel(rowWidget,
                                    entry.hasKm ? QString::number(std::lround(entry.km))
                                                : member.value(QStringLiteral("grid")).toString(),
-                                   stale ? kStale : kDim, kSmallPx, false, true);
+                                   stale ? staleColor() : dimColor(), kSmallPx, false, true);
             km->setFixedWidth(kmWidth);
             km->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
             row->addWidget(km);
             const qint64 offsetHz = member.value(QStringLiteral("offsetHz")).toInteger();
             QLabel* offset = makeLabel(rowWidget, offsetText(offsetHz),
-                                       stale ? kStale : (std::llabs(offsetHz) >= 50 ? kUnknown : kDim),
+                                       stale ? staleColor() : (std::llabs(offsetHz) >= 50 ? unknownColor() : dimColor()),
                                        kSmallPx, false, true);
             offset->setFixedWidth(offsetWidth);
             offset->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -2080,7 +2188,7 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
         value->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         row->addWidget(value);
         // The age turns amber once stale (U4).
-        QLabel* ageLabel = makeLabel(rowWidget, ageText(age), stale ? kUnknown : kDim, kSmallPx,
+        QLabel* ageLabel = makeLabel(rowWidget, ageText(age), stale ? unknownColor() : dimColor(), kSmallPx,
                                      stale, true);
         ageLabel->setObjectName(QStringLiteral("roundtableReadingAge"));
         ageLabel->setFixedWidth(ageWidth);
@@ -2091,7 +2199,7 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
     if (anyAway) {
         QLabel* note = makeLabel(body, QStringLiteral("AWAY: nobody at the radio. Its readings still "
                                                       "count, but it can't post or name turns."),
-                                 kDim, kSmallPx);
+                                 dimColor(), kSmallPx);
         note->setObjectName(QStringLiteral("roundtableAwayNote"));
         note->setWordWrap(true);
         note->setContentsMargins(8, 3, 8, 5);
@@ -2135,7 +2243,7 @@ void RoundtablePanel::rebuildEarlier(const QJsonObject& room)
     auto* head = new QHBoxLayout();
     head->setContentsMargins(8, 6, 8, 3);
     head->addWidget(capLabel(body, QStringLiteral("EARLIER TURNS")), 1);
-    head->addWidget(makeLabel(body, QStringLiteral("last 30 minutes"), kDim2, kSmallPx));
+    head->addWidget(makeLabel(body, QStringLiteral("last 30 minutes"), dim2Color(), kSmallPx));
     col->addLayout(head);
 
     QList<QPointer<QWidget>> turnItems;
@@ -2147,7 +2255,7 @@ void RoundtablePanel::rebuildEarlier(const QJsonObject& room)
         const bool mine = roundtableTurnIsYours(room, turn, false);
         auto* row = new QFrame(body);
         row->setObjectName(QStringLiteral("roundtableTurnRow"));
-        row->setStyleSheet(QLatin1String(kTurnRowStyle));
+        row->setStyleSheet(turnRowStyle());
         row->setFocusPolicy(Qt::ClickFocus);
         row->setProperty("navKey", QStringLiteral("t:%1").arg(id));
         row->setProperty("turnId", id);
@@ -2161,23 +2269,23 @@ void RoundtablePanel::rebuildEarlier(const QJsonObject& room)
         auto* line = new QHBoxLayout(row);
         line->setContentsMargins(8, 3, 8, 3);
         line->setSpacing(6);
-        line->addWidget(makeLabel(row, utcText(turn.value(QStringLiteral("start")).toInteger()), kDim,
+        line->addWidget(makeLabel(row, utcText(turn.value(QStringLiteral("start")).toInteger()), dimColor(),
                                   kSmallPx, false, true));
         QStringList talkers;
         for (const QJsonValue& value : turn.value(QStringLiteral("talkers")).toArray()) {
             talkers.append(withNth(value.toObject()));
         }
         QString who;
-        const char* color = kTalking;
+        QString color = talkingColor();
         if (mine) {
             who = QStringLiteral("You");
-            color = kYou;
+            color = youColor();
         } else if (kind == QLatin1String("doubled")) {
             who = talkers.join(QStringLiteral(" + "));
-            color = kDoubled;
+            color = doubledColor();
         } else if (kind == QLatin1String("unknown")) {
             who = QStringLiteral("Unknown");
-            color = kUnknown;
+            color = unknownColor();
         } else {
             who = talkers.isEmpty() ? QStringLiteral("Unknown") : talkers.first();
         }
@@ -2192,14 +2300,14 @@ void RoundtablePanel::rebuildEarlier(const QJsonObject& room)
         }
         if (!given.isEmpty()) {
             QLabel* named = makeWrapped(row, QStringLiteral("named %1").arg(given.join(QStringLiteral(", "))),
-                                        kDim, kSmallPx);
+                                        dimColor(), kSmallPx);
             named->setObjectName(QStringLiteral("roundtableTurnNames"));
             line->addWidget(named);
         }
         line->addStretch(1);
         if (nameable) {
             // U9: name a turn after it ends.
-            QPushButton* name = makeButton(row, QStringLiteral("Name"), kButtonStyle);
+            QPushButton* name = makeButton(row, QStringLiteral("Name"), buttonStyle());
             name->setObjectName(QStringLiteral("roundtableTurnNameBtn"));
             name->setEnabled(canName);
             if (!canName) {
@@ -2224,7 +2332,7 @@ void RoundtablePanel::rebuildEarlier(const QJsonObject& room)
             edit->setSpacing(4);
             editLines->addLayout(edit);
             for (const QString& suggestion : nameSuggestions(room)) {
-                QPushButton* chip = makeButton(editor, suggestion, kButtonStyle);
+                QPushButton* chip = makeButton(editor, suggestion, buttonStyle());
                 chip->setObjectName(QStringLiteral("roundtableNameChip"));
                 connect(chip, &QPushButton::clicked, this,
                         [this, id, suggestion]() { submitName(id, suggestion); });
@@ -2233,7 +2341,7 @@ void RoundtablePanel::rebuildEarlier(const QJsonObject& room)
             auto* input = new QLineEdit(editor);
             input->setObjectName(QStringLiteral("roundtableNameInput"));
             input->setPlaceholderText(QStringLiteral("Callsign"));
-            input->setStyleSheet(QLatin1String(kInputStyle));
+            input->setStyleSheet(inputStyle());
             input->setMaxLength(16);
             input->setFixedWidth(100);
             input->setProperty("nameEditorFor", id);
@@ -2334,7 +2442,7 @@ void RoundtablePanel::rebuildMessages(const QJsonObject& room)
     }
     QLabel* tally = makeLabel(body, newCount > 0 ? QStringLiteral("%1, %2 new").arg(messages.size()).arg(newCount)
                                                  : QString::number(messages.size()),
-                              kDim2, kSmallPx, false, true);
+                              dim2Color(), kSmallPx, false, true);
     tally->setObjectName(QStringLiteral("roundtableMessagesTally"));
     head->addWidget(tally);
     col->addLayout(head);
@@ -2342,7 +2450,7 @@ void RoundtablePanel::rebuildMessages(const QJsonObject& room)
     if (messages.isEmpty()) {
         QLabel* none = makeLabel(body, QStringLiteral("No messages on %1 so far.")
                                            .arg(headerFrequency(roomHz(roomId()))),
-                                 kDim, kSmallPx);
+                                 dimColor(), kSmallPx);
         none->setContentsMargins(8, 4, 8, 6);
         col->addWidget(none);
     }
@@ -2383,7 +2491,7 @@ void RoundtablePanel::rebuildMessages(const QJsonObject& room)
             fold->setSpacing(4);
             QLabel* text = makeLabel(row, QStringLiteral("Message from %1 hidden, you muted them.")
                                               .arg(withNth(message)),
-                                     kDim2, kSmallPx);
+                                     dim2Color(), kSmallPx);
             text->setObjectName(QStringLiteral("roundtableMutedFold"));
             // Wraps, so the fold never widens the 340 px panel.
             text->setWordWrap(true);
@@ -2392,14 +2500,14 @@ void RoundtablePanel::rebuildMessages(const QJsonObject& room)
             italic.setItalic(true);
             text->setFont(italic);
             fold->addWidget(text, 1);
-            QPushButton* show = makeButton(row, QStringLiteral("Show"), kLinkStyle);
+            QPushButton* show = makeButton(row, QStringLiteral("Show"), linkStyle());
             show->setObjectName(QStringLiteral("roundtableShowMutedBtn"));
             connect(show, &QPushButton::clicked, this, [this, id]() {
                 m_showMuted.insert(id);
                 rebuild();
             });
             fold->addWidget(show);
-            QPushButton* unmute = makeButton(row, QStringLiteral("Unmute %1").arg(callsign), kLinkStyle);
+            QPushButton* unmute = makeButton(row, QStringLiteral("Unmute %1").arg(callsign), linkStyle());
             connect(unmute, &QPushButton::clicked, this, [this, callsign]() {
                 if (m_model) {
                     m_model->unmute(callsign);
@@ -2413,31 +2521,32 @@ void RoundtablePanel::rebuildMessages(const QJsonObject& room)
 
         auto* top = new QHBoxLayout();
         top->setSpacing(6);
-        QLabel* who = makeElided(row, withNth(message), isMine ? kYou : kBright, kSmallPx, true, true);
+        QLabel* who = makeElided(row, withNth(message), isMine ? youColor() : textColor(), kSmallPx, true, true);
         who->setObjectName(QStringLiteral("roundtableMessageWho"));
         top->addWidget(who);
         const QJsonValue dbm = message.value(QStringLiteral("dbm"));
         if (dbm.isDouble()) {
-            QLabel* chip = makeLabel(row, sText(dbm.toDouble()), "#aeaeb2", kSmallPx, false, true);
+            QLabel* chip = makeLabel(row, sText(dbm.toDouble()), dimColor(), kSmallPx, false, true);
             chip->setToolTip(QStringLiteral("Their reading of the talker when they sent it"));
             chip->setStyleSheet(chip->styleSheet()
-                                + QStringLiteral(" background: #18181b; border: 1px solid #2b2b2e;"
-                                                 " border-radius: 3px; padding: 0 4px;"));
+                                + QStringLiteral(" background: %1; border: 1px solid %2;"
+                                                 " border-radius: 3px; padding: 0 4px;")
+                                      .arg(role(Style::kInsetBg, "inset"), role(Style::kInsetBorder, "inset-border")));
             top->addWidget(chip);
         }
         top->addStretch(1);
-        QLabel* fresh = makeLabel(row, QStringLiteral("new"), kAccent, kSmallPx, true);
+        QLabel* fresh = makeLabel(row, QStringLiteral("new"), accentColor(), kSmallPx, true);
         fresh->setObjectName(QStringLiteral("roundtableNewMark"));
         fresh->setVisible(isNew);
         top->addWidget(fresh);
-        top->addWidget(makeLabel(row, utcText(message.value(QStringLiteral("t")).toInteger()), kDim2,
+        top->addWidget(makeLabel(row, utcText(message.value(QStringLiteral("t")).toInteger()), dim2Color(),
                                  kSmallPx, false, true));
         if (state == QLatin1String("shown")) {
             auto* more = new QToolButton(row);
             more->setObjectName(QStringLiteral("roundtableMessageMenuBtn"));
             more->setText(QStringLiteral("\u22ef"));
             more->setToolTip(isMine ? QStringLiteral("Delete") : QStringLiteral("Mute, report or copy"));
-            more->setStyleSheet(QLatin1String(kIconStyle));
+            more->setStyleSheet(iconStyle());
             more->setFocusPolicy(Qt::NoFocus);
             connect(more, &QToolButton::clicked, this,
                     [this, more, message]() { showMessageMenu(more, message); });
@@ -2447,13 +2556,13 @@ void RoundtablePanel::rebuildMessages(const QJsonObject& room)
 
         QLabel* text = nullptr;
         if (state == QLatin1String("removed")) {
-            text = makeLabel(row, QStringLiteral("Message removed"), kDim2, kSmallPx);
+            text = makeLabel(row, QStringLiteral("Message removed"), dim2Color(), kSmallPx);
         } else if (state == QLatin1String("deleted")) {
-            text = makeLabel(row, QStringLiteral("Deleted by sender"), kDim2, kSmallPx);
+            text = makeLabel(row, QStringLiteral("Deleted by sender"), dim2Color(), kSmallPx);
         } else if (state == QLatin1String("expired")) {
-            text = makeLabel(row, QStringLiteral("Message removed after a year"), kDim2, kSmallPx);
+            text = makeLabel(row, QStringLiteral("Message removed after a year"), dim2Color(), kSmallPx);
         } else {
-            text = makeLabel(row, QString(), "#e1e1e5", kBodyPx);
+            text = makeLabel(row, QString(), textColor(), kBodyPx);
             text->setTextFormat(Qt::RichText);
             text->setText(formatted(message.value(QStringLiteral("text")).toString()));
             text->setOpenExternalLinks(true);
@@ -2491,20 +2600,18 @@ void RoundtablePanel::rebuildEmpty()
     head->setContentsMargins(8, 6, 8, 4);
     head->setSpacing(6);
     const QChar letter(QLatin1Char(static_cast<char>('A' + std::clamp(m_sliceId, 0, 25))));
-    QLabel* tag = makeLabel(body, QString(letter), "#001018", kSmallPx, true);
-    tag->setStyleSheet(tag->styleSheet()
-                       + QStringLiteral(" background: %1; padding: 0 4px; border-radius: 2px;")
-                             .arg(QLatin1String(kAccent)));
+    QLabel* tag = makeLabel(body, QString(letter), textColor(), kSmallPx, true);
+    tag->setStyleSheet(tag->styleSheet() + sliceBadgeStyle(m_sliceId));
     head->addWidget(tag);
     if (m_sliceHz > 0) {
-        head->addWidget(makeLabel(body, headerFrequency(m_sliceHz), kAccent, 15, false, true));
+        head->addWidget(makeLabel(body, headerFrequency(m_sliceHz), accentColor(), 15, false, true));
     }
     head->addStretch(1);
     auto* pop = new QToolButton(body);
     pop->setObjectName(QStringLiteral("roundtablePopBtn"));
     pop->setText(QString(QChar(0x2197)));
     pop->setToolTip(QStringLiteral("Pop out into its own window"));
-    pop->setStyleSheet(QLatin1String(kIconStyle));
+    pop->setStyleSheet(iconStyle());
     pop->setFocusPolicy(Qt::ClickFocus);
     pop->setVisible(!m_popped);
     connect(pop, &QToolButton::clicked, this, &RoundtablePanel::popOutRequested);
@@ -2514,13 +2621,13 @@ void RoundtablePanel::rebuildEmpty()
     menu->setText(QStringLiteral("\u22ef"));
     menu->setToolTip(m_popped ? QStringLiteral("Archive, settings and the wide window")
                               : QStringLiteral("Archive, settings and pop out"));
-    menu->setStyleSheet(QLatin1String(kIconStyle));
+    menu->setStyleSheet(iconStyle());
     menu->setFocusPolicy(Qt::ClickFocus);
     connect(menu, &QToolButton::clicked, this, &RoundtablePanel::showPanelMenu);
     head->addWidget(menu);
     col->addLayout(head);
 
-    QLabel* title = makeLabel(body, QStringLiteral("Nobody on Roundtable is tuned here."), kBright,
+    QLabel* title = makeLabel(body, QStringLiteral("Nobody on Roundtable is tuned here."), textColor(),
                               kBodyPx, true);
     title->setObjectName(QStringLiteral("roundtableEmptyTitle"));
     title->setWordWrap(true);
@@ -2528,7 +2635,7 @@ void RoundtablePanel::rebuildEmpty()
     col->addWidget(title);
     QLabel* how = makeLabel(body, QStringLiteral("Click a callsign on the panadapter to tune there, or "
                                                  "one of these to read it."),
-                            kDim, kSmallPx);
+                            dimColor(), kSmallPx);
     how->setWordWrap(true);
     how->setContentsMargins(8, 0, 8, 4);
     col->addWidget(how);
@@ -2557,7 +2664,7 @@ void RoundtablePanel::rebuildEmpty()
                                        QStringLiteral("%1  %2  \u00b7  %3")
                                            .arg(headerFrequency(roomHz(id)), modeLabel(roomFamily(id)))
                                            .arg(summary.value(QStringLiteral("members")).toInt()),
-                                       kButtonStyle);
+                                       buttonStyle());
         read->setObjectName(QStringLiteral("roundtableEmptyRoom"));
         read->setProperty("roomId", id);
         read->setToolTip(QStringLiteral("Read this room without tuning"));
@@ -2641,7 +2748,7 @@ void RoundtablePanel::updateFooter()
         m_counter->setText(lines > kMessageLines
                                ? QStringLiteral("%1 lines, up to %2").arg(lines).arg(kMessageLines)
                                : QStringLiteral("%1 / %2").arg(points).arg(kMessageLimit));
-        m_counter->setStyleSheet(labelStyle(fits ? kDim : kUnknown, kSmallPx, !fits, true));
+        m_counter->setStyleSheet(labelStyle(fits ? dimColor() : unknownColor(), kSmallPx, !fits, true));
         m_counter->show();
     } else {
         m_counter->hide();
